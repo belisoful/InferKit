@@ -5666,6 +5666,16 @@
       "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_LAYERS=0,23 | IK_PROBE_STREAM_F32=1 t5_layer_probe --checkpoint <Wan2.1-T2V-1.3B-Diffusers>/text_encoder with IK_PROBE_TOKENIZER=<validation root>/umt5-tokenizer | <stable-diffusion-3.5-medium>/text_encoder_3 with IK_PROBE_TOKENIZER=<stable-diffusion-3.5-medium>/tokenizer_3 (transformers 5.17)"
     },
     {
+      "records": "flux_clip_l_bf16 / flux_clip_l_f32",
+      "environment": "llm",
+      "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_BLOCK_FLOOR=1 | (float32) clip_text_probe --checkpoint $IK_VAL_FLUX_SCHNELL_FULL/text_encoder (the tokenizer the sibling tokenizer/; one prompt padded to 77; the float32 run rounds every parameter to bf16 and back)"
+    },
+    {
+      "records": "madlad_3b_bf16 / madlad_3b_f32",
+      "environment": "llm",
+      "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_BLOCK_FLOOR=1 | (float32) t5_seq2seq_probe --checkpoint $IK_VAL_MADLAD (decoder blocks 0 and 31 probed; the float32 run rounds every parameter to bf16 and back)"
+    },
+    {
       "records": "sa2va_1b_bf16 / sa2va_1b_f32",
       "environment": "llm",
       "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_LAYERS=0,23 | IK_PROBE_LAYERS=0,23 sa2va_probe --checkpoint $IK_VAL_SA2VA_1B (the float32 run rounds every parameter to bf16 and back)"

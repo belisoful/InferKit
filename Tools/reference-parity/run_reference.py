@@ -6757,7 +6757,8 @@ def _piece_floor_hooks(layers, probed, names, extra, prefix="", batched=True, re
 def _probe_layer_states(layers, extra, prefix, probed, batched=True):
     """Hooks `layers` so each layer's input is kept as `<prefix>.hidden.i` and the last layer's output as
     `<prefix>.hidden.L`, and every submodule of the layers `probed` names as `<prefix>.<i>.<name>.in` /
-    `.out` (the whole layer as `block`). `batched` drops a leading batch of one."""
+    `.out` (the whole layer as `block`). `batched` drops a leading batch of one. `IK_PROBE_BLOCK_FLOOR=1`
+    floors each layer and each recorded submodule (`_piece_floor_hooks`)."""
     def keep(value):
         value = value[0] if batched else value
         return value.detach().float().clone().contiguous()
@@ -6770,6 +6771,7 @@ def _probe_layer_states(layers, extra, prefix, probed, batched=True):
     layers[-1].register_forward_hook(lambda module, args, output: extra.__setitem__(
         f"{prefix}.hidden.{len(layers)}", keep(first(output))) and None)
     _block_floor_hooks(layers, [f"{prefix}.hidden.{index + 1}" for index in range(len(layers))], extra, batched)
+    _piece_floor_hooks(layers, probed, None, extra, prefix=f"{prefix}.", batched=batched, verify=True)
     for index in probed:
         for name, module in layers[index].named_modules():
             label = f"{prefix}.{index}.{name}" if name else f"{prefix}.{index}.block"
@@ -9743,6 +9745,45 @@ def run_clip_probe(image):
                   "text_embeds": (text_features / text_features.norm(dim=-1, keepdim=True))[0].float().contiguous()})
     globals()["_extra"] = extra
     return (image_features / image_features.norm(dim=-1, keepdim=True))[0].float().contiguous()
+
+
+def run_clip_text_probe(image, checkpoint):
+    """A CLIP text encoder release on its own, at a half precision or on its float32 floor (`IK_PROBE_DTYPE` /
+    `IK_PROBE_FLOOR`, as `clip_probe` reads them), layer by layer with eager attention, over one prompt padded
+    to 77 tokens as FLUX.1 and Stable Diffusion pad it. `--checkpoint` is a `CLIPTextModel` directory (a
+    diffusers release's `text_encoder/`); the tokenizer is `IK_PROBE_TOKENIZER`, default the sibling
+    `tokenizer/`. Records `tokens`, `text.hidden.i` (layer `i`'s input, `text.hidden.L` the last layer's
+    output), every submodule of the first and last layers as `text.<i>.<name>.in` / `.out`, and `text.final`
+    (the final layer norm); returns the pooled state, the final state at the end-of-text token.
+    `IK_PROBE_BLOCK_FLOOR=1` adds a floor to the embeddings, each layer, the probed layers' submodules, the
+    final norm, and the output. `image` unused."""
+    from transformers import CLIPTextModel, CLIPTokenizer
+
+    model = CLIPTextModel.from_pretrained(checkpoint).eval()
+    tokenizer = CLIPTokenizer.from_pretrained(os.environ.get(
+        "IK_PROBE_TOKENIZER", os.path.join(os.path.dirname(os.path.normpath(checkpoint)), "tokenizer")))
+    _probe_half(model)
+    model.set_attn_implementation("eager")
+    tokens = tokenizer("a photograph of an astronaut riding a horse on the moon", padding="max_length",
+                       max_length=77, truncation=True, return_tensors="pt").input_ids
+
+    extra = {}
+    text = model.text_model
+    layers = text.encoder.layers
+    _probe_layer_states(layers, extra, "text", [0, len(layers) - 1])
+    text.final_layer_norm.register_forward_hook(lambda m, a, o: extra.__setitem__(
+        "text.final", o[0].detach().float().clone().contiguous()) and None)
+    _block_floor_hooks([text.embeddings], ["text.hidden.0"], extra, verify=True)
+    _block_floor_hooks([text.final_layer_norm], ["text.final"], extra)
+    with torch.no_grad():
+        out = model(input_ids=tokens)
+    # The release's pooling reads the end-of-text token as the sequence's highest id, its first occurrence.
+    end = int(tokens[0].argmax())
+    if "text.final.floor" in extra:
+        extra["output.floor"] = extra["text.final.floor"][end].clone().contiguous()
+    extra["tokens"] = tokens[0].to(torch.int32).contiguous()
+    globals()["_extra"] = extra
+    return out.pooler_output[0].float().contiguous()
 
 
 def _probe_half(model):
@@ -19466,6 +19507,43 @@ def run_madlad(image, checkpoint):
                                source_lang, target_lang)
 
 
+def run_t5_seq2seq_probe(image, checkpoint):
+    """A T5 encoder-decoder release (`T5ForConditionalGeneration`, MADLAD-400) at bf16 or on its float32 floor
+    (`IK_PROBE_DTYPE`, see `_probe_precision`), block by block: MADLAD's `<2de>` marker and the second English
+    translation probe as the source, and the German target teacher-forced behind the decoder start token.
+    Records `source_ids`, `decoder_input`, `enc.hidden.i` / `dec.hidden.i` (each stack's block inputs, `.L`
+    the last block's output), every submodule of the decoder blocks `IK_PROBE_LAYERS` names (default the
+    first and last) as `dec.<i>.<name>.in` / `.out`, and `enc.final` / `dec.final` (each stack's final norm);
+    returns the logits. `IK_PROBE_BLOCK_FLOOR=1` adds a floor to each block, the probed blocks' submodules,
+    both final norms, and the logits. Runs under the `llm` oracle env. `image` unused."""
+    from transformers import AutoTokenizer, T5ForConditionalGeneration
+
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint, use_fast=True)
+    model = T5ForConditionalGeneration.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    _probe_precision([model])
+    source = torch.tensor([tokenizer("<2de> " + TRANSLATION_PROBES["en"][1]).input_ids])
+    target = tokenizer(text_target=TRANSLATION_TARGETS["de"]).input_ids
+    decoder_input = torch.tensor([[model.config.decoder_start_token_id] + target[:-1]])
+
+    extra = {}
+    decoder = model.decoder.block
+    probed = [int(x) for x in os.environ.get("IK_PROBE_LAYERS", f"0,{len(decoder) - 1}").split(",")]
+    _probe_layer_states(model.encoder.block, extra, "enc", [])
+    _probe_layer_states(decoder, extra, "dec", probed)
+    for stack, key in ((model.encoder, "enc.final"), (model.decoder, "dec.final")):
+        stack.final_layer_norm.register_forward_hook(lambda m, a, o, key=key: extra.__setitem__(
+            key, o[0].detach().float().clone().contiguous()) and None)
+        _block_floor_hooks([stack.final_layer_norm], [key], extra)
+    _block_floor_hooks([model.lm_head], ["output"], extra)
+    with torch.no_grad():
+        logits = model(input_ids=source, attention_mask=torch.ones_like(source), decoder_input_ids=decoder_input,
+                       use_cache=False).logits
+    extra["source_ids"] = source[0].to(torch.int32).contiguous()
+    extra["decoder_input"] = decoder_input[0].to(torch.int32).contiguous()
+    globals()["_extra"] = extra
+    return logits[0].float().contiguous()
+
+
 def run_florence2_loss(image, checkpoint):
     """Florence-2's fine-tuning objective: the release's own `labels=` loss
     (`Florence2LanguageForConditionalGeneration`: the labels shifted right behind the decoder start
@@ -21054,7 +21132,7 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
           "snac": run_snac, "siglip2_probe": run_siglip2_probe, "clip_probe": run_clip_probe, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
           "gemma4_shared_kv": run_gemma4_shared_kv}
-CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
+CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "clip_text_probe": run_clip_text_probe, "t5_seq2seq_probe": run_t5_seq2seq_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,

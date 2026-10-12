@@ -609,6 +609,173 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         return (states, keys, isolated, isolatedKeys)
     }
 
+    // FLUX.1's CLIP-L text encoder (`IK_VAL_FLUX_SCHNELL_FULL`'s `text_encoder/`, released bf16) as FLUX
+    // loads it, against transformers' `CLIPTextModel` at bf16 with eager attention (`clip_text_probe`, the
+    // float32 side on the same bf16 weights), over one prompt padded to 77 tokens: the embeddings, every
+    // layer, the final norm, and the pooled end-of-text state, then each piece of the first and last layers
+    // on the reference's own input.
+    func testFluxCLIPLInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_FLUX_SCHNELL_FULL"], "IK_VAL_FLUX_SCHNELL_FULL"))
+        let bf16 = try record("flux_clip_l_bf16.safetensors"), f32 = try record("flux_clip_l_f32.safetensors")
+        let net = try NFKMLXSDTextEncoder.net(configuration: .stableDiffusion15,
+                                              weightsURL: directory.appendingPathComponent("text_encoder/model.safetensors"),
+                                              precision: .checkpoint)
+        func recorded(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16).expandedDimensions(axis: 0)
+        }
+        let tokenIds = try XCTUnwrap(bf16["tokens"]).asArray(Int32.self).map(Int.init)
+        let length = tokenIds.count
+        let mask = NFKCLIPInit.causalMask(length)
+        let blocks = net.transformer.resblocks
+
+        var hidden = net.tokenEmbedding(MLXArray(tokenIds.map(Int32.init)).reshaped([1, length]))
+            + net.positionalEmbedding[0 ..< length]
+        XCTAssertEqual(hidden.dtype, .bfloat16, "a bf16 load embeds at bf16")
+        var states = [("embeddings", hidden[0])], keys = ["text.hidden.0"]
+        var isolated = [(String, MLXArray)](), isolatedKeys = [String]()
+        for (index, block) in blocks.enumerated() {
+            hidden = block(hidden, mask: mask)
+            states.append(("layer \(index)", hidden[0]))
+            keys.append("text.hidden.\(index + 1)")
+            isolated.append(("layer \(index)", block(try recorded("text.hidden.\(index)"), mask: mask)[0]))
+            isolatedKeys.append("text.hidden.\(index + 1)")
+        }
+        let final = net.lnFinal(hidden)
+        let end = tokenIds.firstIndex(of: tokenIds.max() ?? 0) ?? (length - 1)
+        states += [("final norm", final[0]), ("pooled", final[0, end])]
+        keys += ["text.final", "output"]
+        isolated.append(("final norm", net.lnFinal(try recorded("text.hidden.\(blocks.count)"))[0]))
+        isolatedKeys.append("text.final")
+        eval(states.map(\.1) + isolated.map(\.1))
+        let rows = try seams(states, bf16: bf16, f32: f32, keys: keys)
+        report("flux-clip-l", rows)
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolatedKeys)
+        report("flux-clip-l isolated", isolatedRows)
+        assertRoundingPlacement("flux-clip-l", endToEnd: rows, isolated: isolatedRows)
+
+        var lines = [String]()
+        for index in [0, blocks.count - 1] {
+            let block = blocks[index], p = "text.\(index)."
+            func input(_ name: String) throws -> MLXArray { try recorded(p + name + ".in") }
+            lines.append("layer \(index)")
+            lines.append(try piece("layer_norm1", block.ln1(input("layer_norm1")), bf16, p + "layer_norm1.out"))
+            lines.append(try piece("self_attn", block.attn(try recorded(p + "layer_norm1.out"), mask: mask)[0], bf16,
+                                   p + "self_attn.out"))
+            lines.append(try piece("out_proj", block.attn.outProj(input("self_attn.out_proj")), bf16, p + "self_attn.out_proj.out"))
+            lines.append(try piece("layer_norm2", block.ln2(input("layer_norm2")), bf16, p + "layer_norm2.out"))
+            lines.append(try piece("fc1", block.mlp.cFc(input("mlp.fc1")), bf16, p + "mlp.fc1.out"))
+            lines.append(try piece("quick_gelu", block.mlp.activation(input("mlp.activation_fn")), bf16, p + "mlp.activation_fn.out"))
+            lines.append(try piece("fc2", block.mlp.cProj(input("mlp.fc2")), bf16, p + "mlp.fc2.out"))
+            lines.append(try piece("mlp", block.mlp(input("mlp")), bf16, p + "mlp.out"))
+            lines.append(try piece("block", block(input("block"), mask: mask)[0], bf16, p + "block.out"))
+        }
+        print("VALIDATION bf16 flux-clip-l pieces:\n" + lines.joined(separator: "\n"))
+    }
+
+    // MADLAD-400 3B (`IK_VAL_MADLAD`, released float32) at bf16 as its registered backend loads it, against
+    // transformers' `T5ForConditionalGeneration` at bf16 (`t5_seq2seq_probe`, the float32 side on the same bf16
+    // weights) over the `<2de>` source with the German target teacher-forced: every encoder and decoder block,
+    // both final norms, and the logits, then each piece of the first and last decoder blocks on the
+    // reference's own input.
+    func testMADLAD3BInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_MADLAD"], "IK_VAL_MADLAD"))
+        let bf16 = try record("madlad_3b_bf16.safetensors"), f32 = try record("madlad_3b_f32.safetensors")
+        let net = try NFKMLXMADLAD.translator(directoryURL: directory, half: true).net
+        func recorded(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16).expandedDimensions(axis: 0)
+        }
+        let source = try XCTUnwrap(bf16["source_ids"]).asType(.int32).reshaped([1, -1])
+        let target = try XCTUnwrap(bf16["decoder_input"]).asType(.int32).reshaped([1, -1])
+        let encoderBlocks = net.encoder.block, decoderBlocks = net.decoder.block
+
+        var states = [(String, MLXArray)](), keys = [String]()
+        var isolated = [(String, MLXArray)](), isolatedKeys = [String]()
+        func measure(_ label: String, _ ours: MLXArray, _ key: String, alone: MLXArray) {
+            states.append((label, ours))
+            keys.append(key)
+            isolated.append((label, alone))
+            isolatedKeys.append(key)
+        }
+        var hidden = net.shared(source)
+        XCTAssertEqual(hidden.dtype, .bfloat16, "a bf16 load embeds at bf16")
+        states.append(("encoder input", hidden[0]))
+        keys.append("enc.hidden.0")
+        let encoderBias = encoderBlocks[0].selfAttention.attention.computeBias(source.dim(1))
+        for (index, block) in encoderBlocks.enumerated() {
+            hidden = block(hidden, bias: encoderBias)
+            measure("encoder block \(index)", hidden[0], "enc.hidden.\(index + 1)",
+                    alone: block(try recorded("enc.hidden.\(index)"), bias: encoderBias)[0])
+        }
+        let memory = net.encoder.finalLayerNorm(hidden)
+        measure("encoder final norm", memory[0], "enc.final",
+                alone: net.encoder.finalLayerNorm(try recorded("enc.hidden.\(encoderBlocks.count)"))[0])
+        let recordedMemory = try recorded("enc.final")
+        let decoderBias = decoderBlocks[0].selfAttention.attention.causalBias(queryLength: target.dim(1), offset: 0)
+        hidden = net.shared(target)
+        states.append(("decoder input", hidden[0]))
+        keys.append("dec.hidden.0")
+        let cache = net.makeCache(), aloneCache = net.makeCache()
+        for (index, block) in decoderBlocks.enumerated() {
+            hidden = block(hidden, memory: memory, bias: decoderBias, cache: cache, index: index)
+            measure("decoder block \(index)", hidden[0], "dec.hidden.\(index + 1)",
+                    alone: block(try recorded("dec.hidden.\(index)"), memory: recordedMemory, bias: decoderBias,
+                                 cache: aloneCache, index: index)[0])
+        }
+        let final = net.decoder.finalLayerNorm(hidden)
+        measure("decoder final norm", final[0], "dec.final",
+                alone: net.decoder.finalLayerNorm(try recorded("dec.hidden.\(decoderBlocks.count)"))[0])
+        let head = try XCTUnwrap(net.lmHead, "MADLAD's head is untied")
+        measure("logits", head(final)[0], "output", alone: head(try recorded("dec.final"))[0])
+        eval(states.map(\.1) + isolated.map(\.1))
+        let rows = try seams(states, bf16: bf16, f32: f32, keys: keys)
+        report("madlad-3b", rows)
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolatedKeys)
+        report("madlad-3b isolated", isolatedRows)
+        assertRoundingPlacement("madlad-3b", endToEnd: rows, isolated: isolatedRows)
+
+        var lines = [String]()
+        for index in [0, decoderBlocks.count - 1] {
+            let block = decoderBlocks[index], p = "dec.\(index).layer."
+            func input(_ name: String) throws -> MLXArray { try recorded(p + name + ".in") }
+            let selfAttention = block.selfAttention.attention, crossAttention = block.crossAttention.attention
+            let ff = block.feedForward.ff
+            var keys: MLXArray? = nil, values: MLXArray? = nil
+            var crossKeys: MLXArray? = nil, crossValues: MLXArray? = nil
+            lines.append("decoder block \(index)")
+            lines.append(try piece("self-attention norm", block.selfAttention.layerNorm(input("0.layer_norm")), bf16,
+                                   p + "0.layer_norm.out"))
+            for (name, projection) in [("q", selfAttention.q), ("k", selfAttention.k), ("v", selfAttention.v), ("o", selfAttention.o)] {
+                lines.append(try piece("self-attention \(name)", projection(input("0.SelfAttention.\(name)")), bf16,
+                                       p + "0.SelfAttention.\(name).out"))
+            }
+            lines.append(try piece("self-attention", selfAttention(input("0.SelfAttention"), bias: decoderBias,
+                                                                   cachedKeys: &keys, cachedValues: &values),
+                                   bf16, p + "0.SelfAttention.out"))
+            lines.append(try piece("cross-attention norm", block.crossAttention.layerNorm(input("1.layer_norm")), bf16,
+                                   p + "1.layer_norm.out"))
+            for (name, projection) in [("q", crossAttention.q), ("k", crossAttention.k), ("v", crossAttention.v), ("o", crossAttention.o)] {
+                lines.append(try piece("cross-attention \(name)", projection(input("1.EncDecAttention.\(name)")), bf16,
+                                       p + "1.EncDecAttention.\(name).out"))
+            }
+            lines.append(try piece("cross-attention", crossAttention(input("1.EncDecAttention"), memory: recordedMemory,
+                                                                     cachedKeys: &crossKeys, cachedValues: &crossValues),
+                                   bf16, p + "1.EncDecAttention.out"))
+            lines.append(try piece("feed-forward norm", block.feedForward.layerNorm(input("2.layer_norm")), bf16,
+                                   p + "2.layer_norm.out"))
+            lines.append(try piece("wi_0", ff.wi0(input("2.DenseReluDense.wi_0")), bf16, p + "2.DenseReluDense.wi_0.out"))
+            lines.append(try piece("wi_1", ff.wi1(input("2.DenseReluDense.wi_1")), bf16, p + "2.DenseReluDense.wi_1.out"))
+            lines.append(try piece("gelu_new", NFKReferenceRounding.geluNew(input("2.DenseReluDense.act")), bf16,
+                                   p + "2.DenseReluDense.act.out"))
+            lines.append(try piece("wo", ff.wo(input("2.DenseReluDense.wo")), bf16, p + "2.DenseReluDense.wo.out"))
+            lines.append(try piece("feed-forward", ff(input("2.DenseReluDense")), bf16, p + "2.DenseReluDense.out"))
+            lines.append(try piece("block", block(try recorded("dec.\(index).block.in"), memory: recordedMemory, bias: decoderBias,
+                                                  cache: net.makeCache(), index: index), bf16, "dec.\(index).block.out"))
+        }
+        print("VALIDATION bf16 madlad-3b pieces:\n" + lines.joined(separator: "\n"))
+    }
+
     // MARK: Gemma 4
 
     // The E2B decoder at the released bf16 against transformers built at bf16 (`hf_layer_probe`,
