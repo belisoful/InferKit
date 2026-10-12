@@ -1046,7 +1046,8 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         var states = [(String, MLXArray)](), keys = [String]()
         var isolated = [(String, MLXArray)](), isolatedKeys = [String]()
         func measure(_ label: String, _ ours: MLXArray, _ key: String, alone: MLXArray) {
-            states.append((label, ours)); keys.append(key)
+            states.append((label, ours))
+            keys.append(key)
             isolated.append((label, alone)); isolatedKeys.append(key)
         }
         let typedMel = net.typed(mel)
@@ -1058,7 +1059,8 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
                 alone: encoder.conv2(NFKReferenceRounding.wide(try recorded("enc.conv1")) { gelu($0) })[0])
         var audio = (NFKReferenceRounding.wide(conv2) { gelu($0) } + NFKMLXWhisperNet.sinusoids(length: conv2.shape[1],
             channels: conv2.shape[2])).asType(conv2.dtype)
-        states.append(("encoder input", audio[0])); keys.append("enc.hidden.0")
+        states.append(("encoder input", audio[0]))
+        keys.append("enc.hidden.0")
         for (index, block) in encoder.blocks.enumerated() {
             audio = block(audio, audio: nil, mask: nil)
             measure("encoder layer \(index)", audio[0], "enc.hidden.\(index + 1)",
@@ -1071,7 +1073,8 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         let length = tokens.dim(1)
         let mask = NFKMLXWhisperNet.causalMask(length)
         var hidden = decoder.tokenEmbedding(tokens) + decoder.positionalEmbedding[0 ..< length]
-        states.append(("decoder input", hidden[0])); keys.append("dec.hidden.0")
+        states.append(("decoder input", hidden[0]))
+        keys.append("dec.hidden.0")
         for (index, block) in decoder.blocks.enumerated() {
             hidden = block(hidden, audio: memory, mask: mask)
             measure("decoder layer \(index)", hidden[0], "dec.hidden.\(index + 1)",

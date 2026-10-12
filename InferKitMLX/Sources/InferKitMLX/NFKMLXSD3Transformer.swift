@@ -149,7 +149,7 @@ final class NFKSD3PatchEmbed: Module {
         self.patchSize = config.patchSize
         self.maxSize = config.posEmbedMaxSize
         _proj.wrappedValue = NFKConv2d(inputChannels: config.inChannels, outputChannels: config.innerDim,
-                                    kernelSize: IntOrPair(config.patchSize), stride: IntOrPair(config.patchSize))
+                                       kernelSize: IntOrPair(config.patchSize), stride: IntOrPair(config.patchSize))
         _posEmbed.wrappedValue = MLXArray.zeros([1, config.posEmbedMaxSize * config.posEmbedMaxSize, config.innerDim])
     }
 

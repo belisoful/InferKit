@@ -165,10 +165,10 @@ final class NFKGemma3nAudioConvBlock: Module {
         let kernel = c.convKernels[index], stride = c.convStrides[index]
         timePadding = kernel.time - 1
         _convolution.wrappedValue = NFKConv2d(inputChannels: inputChannels,
-                                           outputChannels: c.convChannels[index],
-                                           kernelSize: IntOrPair((kernel.time, kernel.frequency)),
-                                           stride: IntOrPair((stride.time, stride.frequency)),
-                                           padding: IntOrPair((0, 0)), bias: false)
+                                              outputChannels: c.convChannels[index],
+                                              kernelSize: IntOrPair((kernel.time, kernel.frequency)),
+                                              stride: IntOrPair((stride.time, stride.frequency)),
+                                              padding: IntOrPair((0, 0)), bias: false)
         _norm.wrappedValue = NFKGemma3nAudioCumulativeGroupNorm(
             channels: c.convChannels[index], frequencyWidth: c.convFrequencyWidths[index],
             eps: c.convGroupNormEpsilon)
@@ -486,8 +486,8 @@ final class NFKGemma3nAudioLightConvolution: Module {
         _preNorm.wrappedValue = NFKGemma3nNorm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
         _start.wrappedValue = Linear(c.hiddenSize, c.hiddenSize * 2, bias: false)
         _depthwise.wrappedValue = NFKConv1d(inputChannels: c.hiddenSize, outputChannels: c.hiddenSize,
-                                         kernelSize: c.convolutionKernelSize, stride: 1, padding: 0,
-                                         groups: c.hiddenSize, bias: false)
+                                            kernelSize: c.convolutionKernelSize, stride: 1, padding: 0,
+                                            groups: c.hiddenSize, bias: false)
         _convNorm.wrappedValue = NFKGemma3nNorm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
         _end.wrappedValue = Linear(c.hiddenSize, c.hiddenSize, bias: false)
         super.init()

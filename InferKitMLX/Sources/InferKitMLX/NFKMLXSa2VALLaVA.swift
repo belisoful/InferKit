@@ -100,8 +100,8 @@ final class NFKLLaVAVisionModel: Module {
         @ModuleInfo(key: "position_embedding") var positionEmbedding: Embedding
         init(_ c: NFKLLaVAVisionConfiguration) {
             _patchEmbedding.wrappedValue = NFKConv2d(inputChannels: 3, outputChannels: c.hiddenSize,
-                                                  kernelSize: IntOrPair(c.patchSize), stride: IntOrPair(c.patchSize),
-                                                  bias: false)
+                                                     kernelSize: IntOrPair(c.patchSize), stride: IntOrPair(c.patchSize),
+                                                     bias: false)
             _classEmbedding.wrappedValue = MLXArray.zeros([c.hiddenSize])
             _positionEmbedding.wrappedValue = Embedding(embeddingCount: c.grid * c.grid + 1, dimensions: c.hiddenSize)
         }
