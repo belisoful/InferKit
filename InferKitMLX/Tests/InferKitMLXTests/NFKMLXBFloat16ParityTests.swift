@@ -2540,6 +2540,91 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         assertRoundingPlacement("sd3", endToEnd: rows, isolated: rows)
     }
 
+    // Z-Image-Turbo's transformer (`IK_VAL_Z_IMAGE_TURBO`, released float32) at bf16 as its generator loads it,
+    // cut to its refiners and its first two unified layers, against diffusers' `ZImageTransformer2DModel` at
+    // bf16 (`z_image_release_probe`; the float32 side widens the same bf16 weights) over a seeded 16×24 latent
+    // and 37 caption features padded to 64: the timestep, patch, and caption embedders, every block, and the
+    // final layer on the reference's own input, the velocity end to end, then each piece of the first unified
+    // layer.
+    func testZImageTurboTransformerInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_Z_IMAGE_TURBO"], "IK_VAL_Z_IMAGE_TURBO"))
+            .appendingPathComponent("transformer")
+        let bf16 = try record("z_image_turbo_cut2_bf16.safetensors")
+        let f32 = try record("z_image_turbo_cut2_f32.safetensors")
+        var configuration = try NFKMLXZImageRelease.transformerConfiguration(
+            fromHuggingFace: directory.appendingPathComponent("config.json"))
+        configuration.layers = 2
+        let net = NFKMLXZImageTransformerNet(configuration)
+        let kept = try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: .bfloat16) { key in
+            key.hasPrefix("layers.") && Int(key.split(separator: ".")[1])! >= configuration.layers ? nil : key
+        }
+        try NFKMLXWeights.apply(kept, to: net, verifyShapes: true)
+        func recorded(_ key: String) throws -> MLXArray { try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16) }
+        let adaln = try recorded("t_embedder.out")
+        let tables = net.ropeTables(captionLength: 64, grid: (1, 8, 12), imagePad: 0)
+        let unified = (cos: concatenated([tables.image.cos, tables.caption.cos], axis: 0),
+                       sin: concatenated([tables.image.sin, tables.caption.sin], axis: 0))
+
+        var isolated = [(String, MLXArray)](), keys = [String]()
+        func stage(_ name: String, _ run: (MLXArray) -> MLXArray) throws {
+            isolated.append((name, run(try recorded(name + ".in"))))
+            keys.append(name + ".out")
+        }
+        isolated.append(("t_embedder", net.tEmbedder(try XCTUnwrap(bf16["t_embedder.in"]))[0]))
+        keys.append("t_embedder.out")
+        try stage("x_embedder") { net.allXEmbedder.entry($0) }
+        try stage("cap_embedder") { (net.capEmbedder[1] as! Linear)((net.capEmbedder[0] as! RMSNorm)($0)) }
+        for (i, block) in net.noiseRefiner.enumerated() {
+            try stage("noise_refiner.\(i)") { block($0, cos: tables.image.cos, sin: tables.image.sin, adaln: adaln) }
+        }
+        for (i, block) in net.contextRefiner.enumerated() {
+            try stage("context_refiner.\(i)") {
+                block($0, cos: tables.caption.cos, sin: tables.caption.sin, adaln: nil)
+            }
+        }
+        for (i, block) in net.layers.enumerated() {
+            try stage("layers.\(i)") { block($0, cos: unified.cos, sin: unified.sin, adaln: adaln) }
+        }
+        try stage("final") { net.allFinalLayer.entry($0, adaln: adaln) }
+
+        let velocity = net(try recorded("latent"), capFeats: try recorded("cap_feats"),
+                           t: try XCTUnwrap(bf16["timestep"]))
+        XCTAssertEqual(velocity.dtype, .bfloat16, "a bf16 load runs the transformer at bf16")
+        let states = [("velocity", velocity)]
+        eval(isolated.map(\.1) + states.map(\.1))
+        let rows = try seams(states, bf16: bf16, f32: f32, keys: ["output"])
+        report("z-image-turbo", rows)
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: keys)
+        report("z-image-turbo isolated", isolatedRows)
+        assertRoundingPlacement("z-image-turbo", endToEnd: rows, isolated: isolatedRows)
+
+        let block = net.layers[0], attention = block.attention
+        func input(_ name: String) throws -> MLXArray { try recorded("piece." + name + ".in") }
+        func output(_ name: String) -> String { "piece." + name + ".out" }
+        let lines = [
+            try piece("adaLN", (block.adaLNModulation![0] as! Linear)(input("adaLN_modulation.0")), bf16,
+                      output("adaLN_modulation.0")),
+            try piece("attention_norm1", block.attentionNorm1(input("attention_norm1")), bf16,
+                      output("attention_norm1")),
+            try piece("to_q", attention.toQ(input("attention.to_q")), bf16, output("attention.to_q")),
+            try piece("norm_q", attention.normQ(input("attention.norm_q")), bf16, output("attention.norm_q")),
+            try piece("norm_k", attention.normK(input("attention.norm_k")), bf16, output("attention.norm_k")),
+            try piece("attention", attention(input("attention"), cos: unified.cos, sin: unified.sin), bf16,
+                      output("attention")),
+            try piece("to_out", (attention.toOut[0] as! Linear)(input("attention.to_out.0")), bf16,
+                      output("attention.to_out.0")),
+            try piece("attention_norm2", block.attentionNorm2(input("attention_norm2")), bf16,
+                      output("attention_norm2")),
+            try piece("ffn_norm1", block.ffnNorm1(input("ffn_norm1")), bf16, output("ffn_norm1")),
+            try piece("w1", block.feedForward.w1(input("feed_forward.w1")), bf16, output("feed_forward.w1")),
+            try piece("feed_forward", block.feedForward(input("feed_forward")), bf16, output("feed_forward")),
+            try piece("w2", block.feedForward.w2(input("feed_forward.w2")), bf16, output("feed_forward.w2")),
+            try piece("ffn_norm2", block.ffnNorm2(input("ffn_norm2")), bf16, output("ffn_norm2")),
+        ]
+        print("VALIDATION bf16 z-image-turbo pieces:\n" + lines.joined(separator: "\n"))
+    }
+
     func testFlux2TransformerInBFloat16MatchesTheBFloat16Reference() throws {
         try requireMLXRuntime()
         let (bf16, f32, weights) = try tinyDiT("flux2")

@@ -611,6 +611,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   downloaded weights.
 - Measured at float16 on tiny: every encoder and decoder layer within 0.35 of its own block floor.
 
+#### Z-Image computes at bfloat16 as diffusers does
+
+- Z-Image's timestep embedding ran in float32 at a bf16 load: its float32 sinusoids promoted the
+  embedding MLP. They now take the MLP's type, as diffusers casts them.
+- The feed-forward, the timestep MLP, and the final layer's modulation use torch's `silu`, which rounds
+  once. The attention follows torch's CPU flash kernel. The tanh gates and the final norm compute in
+  float32 and round once.
+- Measured at bf16 on Z-Image-Turbo's refiners and first two unified layers: every embedder and block
+  within 0.023 of its own block floor.
+
 #### Sa2VA-LLaVA loads at bfloat16
 
 - `NFKMLXSa2VALLaVANet.load(directoryURL:dtype:)` loads at bf16 by default, as the other Sa2VA families do,

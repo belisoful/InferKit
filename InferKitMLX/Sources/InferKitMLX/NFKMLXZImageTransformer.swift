@@ -146,7 +146,7 @@ final class NFKZImageAttention: Module {
         let kh = k.transposed(1, 0, 2).expandedDimensions(axis: 0)
         let vh = v.transposed(1, 0, 2).expandedDimensions(axis: 0)
         let scale = 1.0 / sqrt(Float(headDim))
-        let out = MLXFast.scaledDotProductAttention(queries: qh, keys: kh, values: vh, scale: scale, mask: .none)
+        let out = NFKReferenceRounding.flashAttention(queries: qh, keys: kh, values: vh, scale: scale, mask: nil)
         let merged = out[0].transposed(1, 0, 2).reshaped([n, heads * headDim])
         return (toOut[0] as! Linear)(merged)
     }
@@ -165,7 +165,7 @@ final class NFKZImageFeedForward: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        w2(silu(w1(x)) * w3(x))
+        w2(NFKReferenceRounding.silu(w1(x)) * w3(x))
     }
 }
 
@@ -203,9 +203,9 @@ final class NFKZImageBlock: Module {
             let params = (mod[0] as! Linear)(adaln)                        // [4·dim]
             let dim = x.dim(1)
             let scaleMSA = 1.0 + params[0 ..< dim].reshaped([1, dim])
-            let gateMSA = tanh(params[dim ..< 2 * dim].reshaped([1, dim]))
+            let gateMSA = NFKReferenceRounding.wide(params[dim ..< 2 * dim].reshaped([1, dim])) { tanh($0) }
             let scaleMLP = 1.0 + params[2 * dim ..< 3 * dim].reshaped([1, dim])
-            let gateMLP = tanh(params[3 * dim ..< 4 * dim].reshaped([1, dim]))
+            let gateMLP = NFKReferenceRounding.wide(params[3 * dim ..< 4 * dim].reshaped([1, dim])) { tanh($0) }
             let attnOut = attention(attentionNorm1(x) * scaleMSA, cos: c, sin: s)
             var h = x + gateMSA * attentionNorm2(attnOut)
             h = h + gateMLP * ffnNorm2(feedForward(ffnNorm1(h) * scaleMLP))
@@ -220,18 +220,18 @@ final class NFKZImageBlock: Module {
 
 /// The final layer: an affine-free LayerNorm scaled by an adaptive term, then the projection to patches.
 final class NFKZImageFinalLayer: Module {
-    @ModuleInfo(key: "norm_final") var normFinal: LayerNorm
+    @ModuleInfo(key: "norm_final") var normFinal: NFKLayerNorm
     @ModuleInfo(key: "linear") var linear: Linear
     @ModuleInfo(key: "adaLN_modulation") var adaLNModulation: [Module]     // [SiLU-marker, Linear]
 
     init(dim: Int, outChannels: Int) {
-        _normFinal.wrappedValue = LayerNorm(dimensions: dim, eps: 1e-6, affine: false)
+        _normFinal.wrappedValue = NFKLayerNorm(dimensions: dim, eps: 1e-6, affine: false)
         _linear.wrappedValue = Linear(dim, outChannels)
         _adaLNModulation.wrappedValue = [Module(), Linear(min(dim, 256), dim)]
     }
 
     func callAsFunction(_ x: MLXArray, adaln: MLXArray) -> MLXArray {
-        let scale = 1.0 + (adaLNModulation[1] as! Linear)(silu(adaln))     // [dim]
+        let scale = 1.0 + (adaLNModulation[1] as! Linear)(NFKReferenceRounding.silu(adaln))  // [dim]
         let h = normFinal(x) * scale.reshaped([1, -1])
         return linear(h)
     }
@@ -243,7 +243,8 @@ final class NFKZImagePatchDict<T: Module>: Module {
     init(_ entry: T) { _entry.wrappedValue = entry }
 }
 
-/// The timestep embedder: sinusoidal features through `Linear → SiLU → Linear`.
+/// The timestep embedder: float32 sinusoidal features, cast to the first layer's type as the reference casts
+/// them, through `Linear → SiLU → Linear`.
 final class NFKZImageTimestepEmbedder: Module {
     @ModuleInfo(key: "mlp") var mlp: [Module]                              // [Linear, SiLU-marker, Linear]
     let frequencySize: Int
@@ -257,8 +258,9 @@ final class NFKZImageTimestepEmbedder: Module {
         let half = frequencySize / 2
         let freqs = exp(-log(10000.0) * MLXArray(0 ..< half).asType(.float32) / Float(half))
         let args = t.reshaped([-1, 1]).asType(.float32) * freqs.reshaped([1, -1])
-        let emb = concatenated([cos(args), sin(args)], axis: -1)           // [B, 256]
-        return (mlp[2] as! Linear)(silu((mlp[0] as! Linear)(emb)))
+        let first = mlp[0] as! Linear
+        let emb = concatenated([cos(args), sin(args)], axis: -1).asType(first.weight.dtype)  // [B, 256]
+        return (mlp[2] as! Linear)(NFKReferenceRounding.silu(first(emb)))
     }
 }
 
@@ -317,6 +319,29 @@ public final class NFKMLXZImageTransformerNet: Module {
         (multiple - length % multiple) % multiple
     }
 
+    /// The rotary tables of a caption padded to `captionLength` tokens, at positions `(1 + i, 0, 0)`, and of
+    /// an image grid of `grid` tokens after it, with `imagePad` padding tokens at `(0, 0, 0)`.
+    func ropeTables(captionLength: Int, grid: (f: Int, h: Int, w: Int), imagePad: Int)
+        -> (caption: (cos: MLXArray, sin: MLXArray), image: (cos: MLXArray, sin: MLXArray)) {
+        let capPositions = MLXArray((0 ..< captionLength).map { Float(1 + $0) }).reshaped([captionLength, 1])
+        let capPos = concatenated([capPositions, MLXArray.zeros([captionLength, 2])], axis: 1)
+        var pf_ = [Float](), ph_ = [Float](), pw_ = [Float]()
+        let base = Float(captionLength + 1)
+        for fi in 0 ..< grid.f {
+            for hi in 0 ..< grid.h {
+                for wi in 0 ..< grid.w {
+                    pf_.append(base + Float(fi)); ph_.append(Float(hi)); pw_.append(Float(wi))
+                }
+            }
+        }
+        for _ in 0 ..< imagePad { pf_.append(0); ph_.append(0); pw_.append(0) }
+        let imageLen = pf_.count
+        let imgPos = concatenated([MLXArray(pf_).reshaped([imageLen, 1]),
+                                   MLXArray(ph_).reshaped([imageLen, 1]),
+                                   MLXArray(pw_).reshaped([imageLen, 1])], axis: 1)
+        return (rope.table(positions: capPos), rope.table(positions: imgPos))
+    }
+
     /// Velocity prediction. `x` `[C, F, H, W]`, `capFeats` `[Lc, captionFeatureDim]`, `t` scalar in `0...1`.
     public func callAsFunction(_ x: MLXArray, capFeats: MLXArray, t: MLXArray) -> MLXArray {
         let f = x.dim(1), h = x.dim(2), w = x.dim(3)
@@ -338,9 +363,6 @@ public final class NFKMLXZImageTransformerNet: Module {
             let mask = concatenated([MLXArray.zeros([capOri]), MLXArray.ones([capPad])]).asType(.bool)
             cap = MLX.where(mask.reshaped([capLen, 1]), capPadToken, cap)
         }
-        let capPositions = MLXArray((0 ..< capLen).map { Float(1 + $0) }).reshaped([capLen, 1])
-        let capPos = concatenated([capPositions, MLXArray.zeros([capLen, 2])], axis: 1)
-        let (capCos, capSin) = rope.table(positions: capPos)
 
         // Image tokens: patchify, embed, pad to a multiple of 32 with the learned pad token at (0,0,0).
         let imageOri = ft * ht * wt
@@ -355,21 +377,8 @@ public final class NFKMLXZImageTransformerNet: Module {
             let mask = concatenated([MLXArray.zeros([imageOri]), MLXArray.ones([imagePad])]).asType(.bool)
             img = MLX.where(mask.reshaped([imageLen, 1]), xPadToken, img)
         }
-        // Image position ids: the (f, h, w) grid starting after the caption, then (0,0,0) for padding.
-        var pf_ = [Float](), ph_ = [Float](), pw_ = [Float]()
-        let base = Float(capLen + 1)
-        for fi in 0 ..< ft {
-            for hi in 0 ..< ht {
-                for wi in 0 ..< wt {
-                    pf_.append(base + Float(fi)); ph_.append(Float(hi)); pw_.append(Float(wi))
-                }
-            }
-        }
-        for _ in 0 ..< imagePad { pf_.append(0); ph_.append(0); pw_.append(0) }
-        let imgPos = concatenated([MLXArray(pf_).reshaped([imageLen, 1]),
-                                   MLXArray(ph_).reshaped([imageLen, 1]),
-                                   MLXArray(pw_).reshaped([imageLen, 1])], axis: 1)
-        let (imgCos, imgSin) = rope.table(positions: imgPos)
+        let tables = ropeTables(captionLength: capLen, grid: (ft, ht, wt), imagePad: imagePad)
+        let (capCos, capSin) = tables.caption, (imgCos, imgSin) = tables.image
 
         // Refine each stream, then run the unified sequence.
         for block in noiseRefiner { img = block(img, cos: imgCos, sin: imgSin, adaln: adaln) }

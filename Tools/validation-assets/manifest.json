@@ -5656,6 +5656,11 @@
       "command": "IK_PROBE_DTYPE=float16 IK_PROBE_BLOCK_FLOOR=1 | (float32) whisper_f16_probe --checkpoint <validation root>/raw/whisper_tiny.pt (transformers' WhisperForConditionalGeneration built in process with its own key renames; eager; each float16 convolution in float32 rounded once)"
     },
     {
+      "records": "z_image_turbo_cut2_bf16 / z_image_turbo_cut2_f32",
+      "environment": "ltx",
+      "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_BLOCK_FLOOR=1 | (float32) z_image_release_probe --checkpoint $IK_VAL_Z_IMAGE_TURBO/transformer (cut to the refiners and the first 2 unified layers, IK_PROBE_CUT; the release stores float32 and the bf16 run rounds it as from_pretrained(torch_dtype=bfloat16) does; the float32 run widens the same bf16 weights; a seeded 16x24 latent, 37 caption features padded to 64, timestep 0.6)"
+    },
+    {
       "records": "sa2va_llava_cut4_bf16 / sa2va_llava_cut4_f32",
       "environment": "llm",
       "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_BLOCK_FLOOR=1 | (float32) sa2va_llava_probe --checkpoint $IK_VAL_SA2VA_LLAVA_CUT4 (eager; CLIP layers 0 and 23 probed; the float32 run rounds every parameter to bf16 and back)"
