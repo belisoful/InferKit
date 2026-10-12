@@ -287,8 +287,13 @@ An isolated seam's floor is the reference's bf16 run against its float32 run at 
 the drift of every block before it, so a deep block passes it while 10% to 60% of its elements differ.
 `IK_PROBE_BLOCK_FLOOR=1` records each block's own floor beside its seam: once the block has run in the
 bf16 model, a float32 copy of it runs on the same arguments widened, and its output is kept as
-`<key>.floor` (`_block_floor_hooks`). Every bf16 record a test holds a seam to carries them.
+`<key>.floor` (`_block_floor_hooks`). A test holds each seam and each piece (`piece()`) whose record
+carries one inside it. A seam without one is held only to its fraction of the end-to-end floor, and a
+piece without one is only reported.
 
+- A module without parameters (an activation) is re-run when its input is half precision. A seam a
+  release forms inline from two recorded terms (Qwen-VL's patch plus position embedding) takes their sum
+  in float32 as its floor.
 - The copy carries no hooks and no instance-level `forward`, since transformers 4.57 binds an
   output-recording wrapper to each layer that would call the bf16 original. It drops a key-value cache
   argument and copies a shared key-value mapping (Gemma 3n and 4).

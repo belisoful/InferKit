@@ -6542,6 +6542,17 @@ def _floor_copy(module):
     return wide
 
 
+def _runs_wide(module, args, kwargs=None):
+    """Whether `module` ran in float32: its first parameter's type, or for a module without parameters (an
+    activation), its first floating input's."""
+    for parameter in module.parameters():
+        return parameter.dtype == torch.float32
+    for value in list(args) + list((kwargs or {}).values()):
+        if torch.is_tensor(value) and value.is_floating_point():
+            return value.dtype == torch.float32
+    return True
+
+
 def _check_floor_composite(extra, key, recorded):
     """Keeps `<key>.floor` only where the composite it was formed through reproduces the half run's
     recorded state at `key` bit for bit; a final state formed some other way (a hyper-connection read
@@ -6574,8 +6585,8 @@ def _block_floor_hooks(blocks, keys, extra, batched=True, indices=None, finals=N
     seam, for a seam recorded from something other than the hooked module's own output. `prepare(wide)`
     adjusts each float32 copy before it runs (replaying a selection the half run made), and `during()`
     gives a context the copy runs in (a release function that casts to bf16 by name, computed instead as
-    the float32 oracle computes it). Does nothing unless the variable is set and the block's parameters
-    are half precision."""
+    the float32 oracle computes it). Does nothing unless the variable is set and the block runs at half
+    precision (`_runs_wide`)."""
     import collections.abc
     import contextlib
     import copy
@@ -6600,7 +6611,7 @@ def _block_floor_hooks(blocks, keys, extra, batched=True, indices=None, finals=N
     for position, (block, key) in enumerate(zip(blocks, keys)):
         def hook(module, args, kwargs, output, key=key, layer=None if indices is None else indices[position],
                  final=(finals or {}).get(position)):
-            if next(module.parameters()).dtype == torch.float32 or f"{key}.floor" in extra:
+            if _runs_wide(module, args, kwargs) or f"{key}.floor" in extra:
                 return None
             wide = _floor_copy(module)
             wide_final = _floor_copy(final) if final is not None else None
@@ -6660,7 +6671,7 @@ def _composite_floor_hook(entry, modules, compose, key, extra, batched=True):
         return (value[0] if batched else value).detach().float().clone().contiguous()
 
     def hook(module, args, output):
-        if next(module.parameters()).dtype == torch.float32 or f"{key}.floor" in extra:
+        if _runs_wide(module, args) or f"{key}.floor" in extra:
             return None
         wide = {name: _floor_copy(m) if isinstance(m, torch.nn.Module) else m for name, m in modules.items()}
         _BLOCK_FLOOR_RUNNING[0] = True
@@ -6712,12 +6723,13 @@ def _sam_decoder_floor(sam, extra, seg_embedding):
     del wide
 
 
-def _piece_floor_hooks(layers, probed, names, extra, prefix=""):
+def _piece_floor_hooks(layers, probed, names, extra, prefix="", batched=True):
     """Block floors for the submodules `names` of each of `layers` that `probed` lists, keyed
-    `<prefix><layer>.<name>.out` as the probes record them (`block` is the layer itself)."""
+    `<prefix><layer>.<name>.out` as the probes record them (`block` is the layer itself). `batched` drops a
+    leading batch of one, as in `_block_floor_hooks`."""
     pieces = [(index, name) for index in probed for name in names]
     _block_floor_hooks([layers[index].get_submodule("" if name == "block" else name) for index, name in pieces],
-                       [f"{prefix}{index}.{name}.out" for index, name in pieces], extra)
+                       [f"{prefix}{index}.{name}.out" for index, name in pieces], extra, batched)
 
 
 def _probe_layer_states(layers, extra, prefix, probed, batched=True):
@@ -13422,7 +13434,9 @@ def run_sa2va_qwen_probe(image, checkpoint):
     output, raster order), `fused` (the decoder's input embeddings), `dec.layer.i.in` / `.out` (each
     decoder layer's own input and output, before the deepstack adds to it), and `dec.norm.out`. Records
     `pixel_values`, `image_grid_thw`, and `input_ids` (prompt and answer); returns the logits over the
-    answer and the position before it. A checkpoint without Sa2VA's remote code is a plain Qwen-VL
+    answer and the position before it. `IK_PROBE_BLOCK_FLOOR=1` adds a floor to each tower block, decoder
+    layer, merger, and deepstack merger, to every recorded submodule of the probed blocks and the merger,
+    and to `vit.patch`, `vit.pos`, `vit.hidden.0`, `dec.norm.out`, and the output. A checkpoint without Sa2VA's remote code is a plain Qwen-VL
     release (or a cut of one), run as `AutoModelForImageTextToText` at its processor's own pixel bounds.
     `IK_PROBE_ROUTES=1` also records each mixture layer's routing (`_route_hooks`). A release that ships no
     output head (Qwen3-VL-Embedding) returns the final norm's states over those positions instead, and
@@ -13514,6 +13528,14 @@ def run_sa2va_qwen_probe(image, checkpoint):
         def recorded_pos(grid_thw):
             result = interpolate(grid_thw)
             extra["vit.pos"] = keep(result)
+            if os.environ.get("IK_PROBE_BLOCK_FLOOR") == "1" and visual.pos_embed.weight.dtype != torch.float32:
+                half = visual.pos_embed
+                visual.pos_embed = _floor_copy(half)
+                try:
+                    with torch.no_grad():
+                        extra["vit.pos.floor"] = keep(interpolate(grid_thw))
+                finally:
+                    visual.pos_embed = half
             return result
         visual.fast_pos_embed_interpolate = recorded_pos
 
@@ -13550,6 +13572,17 @@ def run_sa2va_qwen_probe(image, checkpoint):
     _block_floor_hooks([visual.merger] + deepstack_mergers,
                        ["merger.block.out"] + [f"deepstack.{i}.block.out" for i in range(len(deepstack_mergers))],
                        extra, batched=False)
+    _piece_floor_hooks(blocks, probed, [name for name, _ in blocks[probed[0]].named_modules() if name] + ["block"],
+                       extra, prefix="vit.", batched=False)
+    merger_pieces = [name for name, _ in visual.merger.named_modules() if name]
+    _block_floor_hooks([visual.merger.get_submodule(name) for name in merger_pieces],
+                       [f"merger.{name}.out" for name in merger_pieces], extra, batched=False)
+    _block_floor_hooks([visual.patch_embed], ["vit.patch"], extra, batched=False)
+    _block_floor_hooks([language.norm], ["dec.norm.out"], extra)
+    answer_rows = len(answer) + 1
+    if getattr(qwen, "lm_head", None) is not None:
+        _block_floor_hooks([qwen.lm_head], ["output"], extra,
+                           keep=lambda value: value[0, -answer_rows:].detach().float().clone().contiguous())
 
     restore_routes = _route_hooks(qwen, extra) if os.environ.get("IK_PROBE_ROUTES") == "1" else None
     with torch.no_grad():
@@ -13561,6 +13594,9 @@ def run_sa2va_qwen_probe(image, checkpoint):
     modeling.eager_attention_forward = original
     if restore_routes is not None:
         restore_routes()
+    if "vit.pos.floor" in extra:
+        # The tower's input is the patch embedding plus the position embedding, added inline in one rounding.
+        extra["vit.hidden.0.floor"] = (extra["vit.patch"] + extra["vit.pos"]).contiguous()
     extra["pixel_values"] = inputs["pixel_values"].float().contiguous()
     extra["image_grid_thw"] = inputs["image_grid_thw"].to(torch.int32).contiguous()
     extra["input_ids"] = ids[0].to(torch.int32).contiguous()
@@ -13569,6 +13605,9 @@ def run_sa2va_qwen_probe(image, checkpoint):
     globals()["_extra"] = extra
     if names and not any(name.endswith("lm_head.weight") for name in names) and not qwen.config.tie_word_embeddings:
         extra["no_head"] = torch.tensor([1], dtype=torch.int32)
+        extra.pop("output.floor", None)
+        if "dec.norm.out.floor" in extra:
+            extra["output.floor"] = extra["dec.norm.out.floor"][-len(answer) - 1:].clone().contiguous()
         return extra["dec.norm.out"][-len(answer) - 1:].clone().contiguous()
     return out.logits[0, -len(answer) - 1:].float().contiguous()
 

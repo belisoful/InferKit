@@ -3295,14 +3295,27 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         if measured == 0 { throw XCTSkip("set IK_VAL_GEMMA3_12B_CUT4 or IK_VAL_GEMMA3_27B_CUT4") }
     }
 
-    /// Counts the elements where `ours` and the record's `key` differ, as a report line.
-    private func piece(_ label: String, _ ours: MLXArray, _ arrays: [String: MLXArray], _ key: String) throws -> String {
+    /// Counts the elements where `ours` and the record's `key` differ, as a report line. Where the record holds
+    /// a block floor at `<key>.floor`, the piece stays inside it, as `assertWithinBlockFloors` holds a seam.
+    private func piece(_ label: String, _ ours: MLXArray, _ arrays: [String: MLXArray], _ key: String,
+                       file: StaticString = #filePath, line: UInt = #line) throws -> String {
         eval(ours)
         let mine = floats(ours), theirs = floats(try XCTUnwrap(arrays[key], "no \(key)"))
-        guard mine.count == theirs.count else { return "  \(label): shape \(ours.shape) vs \(arrays[key]!.shape)" }
+        guard mine.count == theirs.count else {
+            XCTFail("\(label): shape \(ours.shape) vs the record's \(arrays[key]!.shape)", file: file, line: line)
+            return "  \(label): shape \(ours.shape) vs \(arrays[key]!.shape)"
+        }
         let differing = zip(mine, theirs).filter { $0 != $1 }.count
-        return String(format: "  %-22s %6d / %-7d differ  1-cos %.3e", (label as NSString).utf8String!,
-                      differing, mine.count, distance(mine, theirs))
+        let ours = distance(mine, theirs)
+        var text = String(format: "  %-22s %6d / %-7d differ  1-cos %.3e", (label as NSString).utf8String!,
+                          differing, mine.count, ours)
+        let seam = Seam(label: label, differing: 0, ours: ours, floor: 0, exact: 0,
+                        blockFloor: arrays["\(key).floor"].map { distance(theirs, floats($0)) })
+        if let ratio = seam.blockRatio {
+            text += String(format: "  %.4f of its block floor", ratio)
+        }
+        assertWithinBlockFloors(key, [seam], file: file, line: line)
+        return text
     }
 
     // Each piece of a Gemma 3 block on the reference's own bf16 input, from `run_reference.py
