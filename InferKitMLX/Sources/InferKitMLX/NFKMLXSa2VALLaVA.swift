@@ -61,10 +61,9 @@ final class NFKLLaVAVisionLayer: Module {
             _fc1.wrappedValue = Linear(width, inner)
             _fc2.wrappedValue = Linear(inner, width)
         }
-        /// CLIP's `quick_gelu`, `x · σ(1.702 x)`.
+        /// CLIP's `quick_gelu`, `x · σ(1.702 x)`, each step rounding at half precision as the reference's does.
         func callAsFunction(_ x: MLXArray) -> MLXArray {
-            let h = fc1(x)
-            return fc2(h * sigmoid(1.702 * h))
+            fc2(NFKCLIPInit.quickGELU(fc1(x)))
         }
     }
     @ModuleInfo(key: "layer_norm1") var norm1: LayerNorm
@@ -75,9 +74,9 @@ final class NFKLLaVAVisionLayer: Module {
 
     init(_ c: NFKLLaVAVisionConfiguration) {
         heads = c.heads
-        _norm1.wrappedValue = LayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEps)
+        _norm1.wrappedValue = NFKLayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEps)
         _attention.wrappedValue = Attention(c.hiddenSize)
-        _norm2.wrappedValue = LayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEps)
+        _norm2.wrappedValue = NFKLayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEps)
         _mlp.wrappedValue = MLP(c.hiddenSize, c.intermediateSize)
     }
 
@@ -85,7 +84,7 @@ final class NFKLLaVAVisionLayer: Module {
         let n = norm1(x)
         let headDim = x.dim(2) / heads
         func split(_ t: MLXArray) -> MLXArray { t.reshaped([t.dim(0), t.dim(1), heads, headDim]).transposed(0, 2, 1, 3) }
-        let attended = MLXFast.scaledDotProductAttention(
+        let attended = NFKReferenceRounding.attention(
             queries: split(attention.q(n)), keys: split(attention.k(n)), values: split(attention.v(n)),
             scale: 1 / sqrt(Float(headDim)), mask: nil)
         let h = x + attention.out(attended.transposed(0, 2, 1, 3).reshaped(x.shape))
@@ -100,7 +99,7 @@ final class NFKLLaVAVisionModel: Module {
         @ParameterInfo(key: "class_embedding") var classEmbedding: MLXArray
         @ModuleInfo(key: "position_embedding") var positionEmbedding: Embedding
         init(_ c: NFKLLaVAVisionConfiguration) {
-            _patchEmbedding.wrappedValue = Conv2d(inputChannels: 3, outputChannels: c.hiddenSize,
+            _patchEmbedding.wrappedValue = NFKConv2d(inputChannels: 3, outputChannels: c.hiddenSize,
                                                   kernelSize: IntOrPair(c.patchSize), stride: IntOrPair(c.patchSize),
                                                   bias: false)
             _classEmbedding.wrappedValue = MLXArray.zeros([c.hiddenSize])
@@ -120,9 +119,9 @@ final class NFKLLaVAVisionModel: Module {
 
     init(_ c: NFKLLaVAVisionConfiguration) {
         _embeddings.wrappedValue = Embeddings(c)
-        _preNorm.wrappedValue = LayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEps)
+        _preNorm.wrappedValue = NFKLayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEps)
         _encoder.wrappedValue = Encoder(c)
-        _postNorm.wrappedValue = LayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEps)
+        _postNorm.wrappedValue = NFKLayerNorm(dimensions: c.hiddenSize, eps: c.layerNormEps)
     }
 
     /// The hidden state after `layerCount` encoder layers (transformers' `hidden_states[layerCount]`),
@@ -148,7 +147,7 @@ final class NFKLLaVAProjector: Module {
         _linear1.wrappedValue = Linear(visionWidth, decoderWidth)
         _linear2.wrappedValue = Linear(decoderWidth, decoderWidth)
     }
-    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(gelu(linear1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(NFKReferenceRounding.wide(linear1(x)) { gelu($0) }) }
 }
 
 /// Sa2VA on LLaVA-1.5: the CLIP tower, the projector, the Llama decoder, the `[SEG]` bridge, and SAM 2
@@ -191,8 +190,10 @@ public final class NFKMLXSa2VALLaVANet: Module {
         super.init()
     }
 
-    /// Builds the network from a released directory and loads it at float32.
-    public static func load(directoryURL: URL) throws -> NFKMLXSa2VALLaVANet {
+    /// Builds the network from a released directory and loads it at `dtype`: bfloat16 by default, the type
+    /// the release declares, which halves the 7B's resident footprint as the other Sa2VA families load;
+    /// float32 computes as the reference's float32 run does.
+    public static func load(directoryURL: URL, dtype: DType = .bfloat16) throws -> NFKMLXSa2VALLaVANet {
         let data = try Data(contentsOf: directoryURL.appendingPathComponent("config.json"))
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let text = json["text_config"] as? [String: Any],
@@ -208,7 +209,7 @@ public final class NFKMLXSa2VALLaVANet: Module {
             imageTokenId: (json["image_token_index"] as? NSNumber)?.intValue ?? 32_000,
             segmentationTokenId: NFKMLXSa2VAProcessor.tokenId("[SEG]", inDirectory: directoryURL) ?? 32_004,
             featureLayer: layer)
-        try net.loadWeights(fromDirectory: directoryURL)
+        try net.loadWeights(fromDirectory: directoryURL, dtype: dtype)
         return net
     }
 
@@ -216,12 +217,12 @@ public final class NFKMLXSa2VALLaVANet: Module {
     /// `model.model.multi_modal_projector.` → `projector.`, `model.model.language_model.` →
     /// `language_model.model.`, `model.lm_head.` → `language_model.lm_head.`, and the bridge and
     /// grounding through Sa2VA-4B's remaps.
-    func loadWeights(fromDirectory directory: URL) throws {
+    func loadWeights(fromDirectory directory: URL, dtype: DType = .bfloat16) throws {
         // A directory `NFKMLXSa2VA.save` wrote (a fine-tune) holds this module's own names and layout.
         let saved = directory.appendingPathComponent("model.safetensors")
         if FileManager.default.fileExists(atPath: saved.path),
            let checkpoint = try? NFKMLXWeights.loadCheckpoint(url: saved), !checkpoint.needsConvTranspose {
-            try NFKMLXWeights.apply(checkpoint.arrays.map { ($0.key, $0.value) }, to: self)
+            try NFKMLXWeights.apply(checkpoint.arrays.map { ($0.key, $0.value.asType(dtype)) }, to: self)
             return
         }
         var mapped = [(String, MLXArray)]()
@@ -230,7 +231,8 @@ public final class NFKMLXSa2VALLaVANet: Module {
                        ("model.model.multi_modal_projector.", "projector."),
                        ("model.model.language_model.", "language_model.model."),
                        ("model.lm_head.", "language_model.lm_head.")]
-        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, remap: { key in
+        // Read and converted in groups, so a float32 release never sits whole beside its converted copy.
+        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: dtype, remap: { key in
             if key.hasPrefix(grounding) {
                 return NFKMLXSAM2.remapTrackerKey(String(key.dropFirst(grounding.count))) == nil ? nil : key
             }
@@ -247,7 +249,7 @@ public final class NFKMLXSa2VALLaVANet: Module {
                 let name = to + key.dropFirst(from.count)
                 let converted = name == "vision.embeddings.patch_embedding.weight" && value.ndim == 4
                     ? value.transposed(0, 2, 3, 1) : value
-                mapped.append((name, converted.asType(.float32)))
+                mapped.append((name, converted))
             }
         }
         try NFKMLXWeights.apply(mapped, to: self)
@@ -256,7 +258,8 @@ public final class NFKMLXSa2VALLaVANet: Module {
     /// The projected patch features `[1, patches, decoderHidden]` of normalized pixels `[1, 336, 336, 3]`.
     public func imageFeatures(_ pixels: MLXArray) -> MLXArray {
         let layers = featureLayer < 0 ? visionConfiguration.layers + 1 + featureLayer : featureLayer
-        let hidden = vision.hiddenState(pixels, afterLayers: layers)
+        // The reference casts the pixels to the tower's type.
+        let hidden = vision.hiddenState(pixels.asType(NFKReferenceRounding.parameterType(of: vision)), afterLayers: layers)
         return projector(hidden[0..., 1...])
     }
 

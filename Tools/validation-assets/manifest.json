@@ -5651,6 +5651,11 @@
       "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_BLOCK_FLOOR=1 | (float32) gemma3n_audio_probe --checkpoint $IK_VAL_GEMMA3N_E2B (the bf16 run loads the whole release through from_pretrained, which builds the audio tower's non-persistent buffers at bf16; the float32 run builds the tower alone with every parameter rounded to bf16 and back; Conformer blocks 0 and 11 probed; each bf16 convolution in float32 rounded once)"
     },
     {
+      "records": "sa2va_llava_cut4_bf16 / sa2va_llava_cut4_f32",
+      "environment": "llm",
+      "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_BLOCK_FLOOR=1 | (float32) sa2va_llava_probe --checkpoint $IK_VAL_SA2VA_LLAVA_CUT4 (eager; CLIP layers 0 and 23 probed; the float32 run rounds every parameter to bf16 and back)"
+    },
+    {
       "records": "sdxl_turbo_unet_f16 / sdxl_turbo_unet_f32",
       "environment": "sd",
       "command": "IK_PROBE_DTYPE=float16 IK_PROBE_BLOCK_FLOOR=1 | (float32) sd_unet_probe --checkpoint $IK_VAL_SDXL_DIR/unet (the release's float16 weights, widened exactly for the float32 run; a seeded 32x32 latent; each float16 convolution in float32 rounded once)"

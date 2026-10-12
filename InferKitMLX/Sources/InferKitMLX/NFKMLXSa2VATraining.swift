@@ -468,7 +468,7 @@ extension NFKMLXSa2VA {
         try write(net, toDirectoryURL: directory, release: release)
     }
 
-    /// Writes the fine-tuned LLaVA release; ``NFKMLXSa2VALLaVANet/load(directoryURL:)`` and
+    /// Writes the fine-tuned LLaVA release; ``NFKMLXSa2VALLaVANet/load(directoryURL:dtype:)`` and
     /// ``backend(directoryURL:)`` load it.
     ///
     /// Introduced in InferKit 0.4.0.

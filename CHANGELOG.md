@@ -601,6 +601,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   within 0.036 of its own block floor, and the SD3 transformer's velocity matches the reference's bit for
   bit.
 
+#### Sa2VA-LLaVA loads at bfloat16
+
+- `NFKMLXSa2VALLaVANet.load(directoryURL:dtype:)` loads at bf16 by default, as the other Sa2VA families do,
+  and the backend builds it that way. The 7B release at float32 is about 28 GB before SAM 2; at bf16 it
+  is half. The weights are read and converted in groups, so the float32 checkpoint never sits whole.
+- Its CLIP tower rounds as the reference does at bf16: the layer norms, QuickGELU's three steps, the eager
+  attention, and the projector's GELU, with the pixels cast to the tower's type.
+- Measured at bf16 on the four-layer cut: every tower and decoder layer within 0.20 of its own block floor.
+
 #### The Stable Diffusion UNet computes at float16 at a float16 load
 
 - The UNet's timestep sinusoids, and SDXL's size descriptor beside the pooled embedding, take the

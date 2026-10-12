@@ -2796,6 +2796,91 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         print("VALIDATION bf16 \(label) pieces:\n" + lines.joined(separator: "\n"))
     }
 
+    // Sa2VA-LLaVA-1.5-7B cut to its first four decoder layers (`IK_VAL_SA2VA_LLAVA_CUT4`) at its default bf16
+    // load, against the release's own code at bf16 with eager attention (`sa2va_llava_probe`, the float32 side
+    // on the same bf16 weights): every CLIP layer and decoder layer on the reference's own input, the projector,
+    // the final norm, and the logits over the answer, then each piece of the first and last CLIP layers.
+    func testSa2VALLaVACutInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_SA2VA_LLAVA_CUT4"], "IK_VAL_SA2VA_LLAVA_CUT4"))
+        let bf16 = try record("sa2va_llava_cut4_bf16.safetensors"), f32 = try record("sa2va_llava_cut4_f32.safetensors")
+        let net = try NFKMLXSa2VALLaVANet.load(directoryURL: directory)
+        func recorded(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16).expandedDimensions(axis: 0)
+        }
+        let pixels = try recorded("pixel_values")
+        let ids = try XCTUnwrap(bf16["input_ids"]).asArray(Int32.self).map(Int.init)
+        let layers = net.vision.encoder.layers
+
+        var states = [(String, MLXArray)](), keys = [String]()
+        var isolated = [(String, MLXArray)](), isolatedKeys = [String]()
+        var hidden = net.vision.hiddenState(pixels, afterLayers: 0)
+        XCTAssertEqual(hidden.dtype, .bfloat16, "a bf16 load computes the tower at bf16")
+        states.append(("tower input", hidden[0]))
+        keys.append("vit.hidden.0")
+        for (index, layer) in layers.enumerated() {
+            hidden = layer(hidden)
+            states.append(("tower layer \(index)", hidden[0]))
+            keys.append("vit.hidden.\(index + 1)")
+            isolated.append(("tower layer \(index)", layer(try recorded("vit.hidden.\(index)"))[0]))
+            isolatedKeys.append("vit.hidden.\(index + 1)")
+        }
+        let selected = layers.count - 1
+        let features = net.imageFeatures(pixels)
+        states.append(("projector", features[0]))
+        keys.append("features")
+        isolated.append(("projector", net.projector(try recorded("vit.hidden.\(selected)")[0..., 1...])[0]))
+        isolatedKeys.append("features")
+        let fused = net.fusedEmbeddings(inputIds: ids, imageFeatures: features)
+        states.append(("fused", fused[0]))
+        keys.append("fused")
+        let decoder = net.language.model.layers
+        let mask = NFKMLXLanguageNet.causalMask(ids.count, offset: 0)
+        var h = fused
+        for (index, layer) in decoder.enumerated() {
+            h = layer(h, mask: mask, cache: nil, layer: index)
+            states.append(("decoder layer \(index)", h[0]))
+            keys.append("dec.hidden.\(index + 1)")
+            isolated.append(("decoder layer \(index)",
+                             layer(try recorded("dec.hidden.\(index)"), mask: mask, cache: nil, layer: index)[0]))
+            isolatedKeys.append("dec.hidden.\(index + 1)")
+        }
+        let normed = net.language.model.norm(h)
+        states.append(("final norm", normed[0]))
+        keys.append("dec.final")
+        isolated.append(("final norm", net.language.model.norm(try recorded("dec.hidden.\(decoder.count)"))[0]))
+        isolatedKeys.append("dec.final")
+        let answer = try XCTUnwrap(bf16["output"]).dim(0)
+        let tail = ids.count - answer
+        states.append(("logits", net.language.logits(fromHidden: normed)[0, tail...]))
+        keys.append("output")
+        isolated.append(("logits", net.language.logits(fromHidden: try recorded("dec.final"))[0, tail...]))
+        isolatedKeys.append("output")
+        eval(states.map(\.1) + isolated.map(\.1))
+        let rows = try seams(states, bf16: bf16, f32: f32, keys: keys)
+        report("sa2va-llava-cut4", rows)
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolatedKeys)
+        report("sa2va-llava-cut4 isolated", isolatedRows)
+        assertRoundingPlacement("sa2va-llava-cut4", endToEnd: rows, isolated: isolatedRows)
+
+        var lines = [String]()
+        for index in [0, layers.count - 1] {
+            let layer = layers[index], p = "vit.\(index)."
+            func input(_ name: String) throws -> MLXArray { try recorded(p + name + ".in") }
+            lines.append("tower layer \(index)")
+            lines.append(try piece("layer_norm1", layer.norm1(input("layer_norm1")), bf16, p + "layer_norm1.out"))
+            lines.append(try piece("q_proj", layer.attention.q(input("self_attn.q_proj")), bf16, p + "self_attn.q_proj.out"))
+            lines.append(try piece("out_proj", layer.attention.out(input("self_attn.out_proj")), bf16, p + "self_attn.out_proj.out"))
+            lines.append(try piece("layer_norm2", layer.norm2(input("layer_norm2")), bf16, p + "layer_norm2.out"))
+            lines.append(try piece("fc1", layer.mlp.fc1(input("mlp.fc1")), bf16, p + "mlp.fc1.out"))
+            lines.append(try piece("quick_gelu", NFKCLIPInit.quickGELU(input("mlp.activation_fn")), bf16, p + "mlp.activation_fn.out"))
+            lines.append(try piece("fc2", layer.mlp.fc2(input("mlp.fc2")), bf16, p + "mlp.fc2.out"))
+            lines.append(try piece("mlp", layer.mlp(input("mlp")), bf16, p + "mlp.out"))
+            lines.append(try piece("block", layer(input("block")), bf16, p + "block.out"))
+        }
+        print("VALIDATION bf16 sa2va-llava-cut4 pieces:\n" + lines.joined(separator: "\n"))
+    }
+
     // Sa2VA-1B's SAM 2 grounding branch at bf16 against the release's own code at bf16
     // (`sa2va_grounding_probe`, Hiera blocks 43 and 44 probed), from the reference's own grounding
     // image and `[SEG]` embedding. The reference keeps the top-down neck level and the conditioned feature

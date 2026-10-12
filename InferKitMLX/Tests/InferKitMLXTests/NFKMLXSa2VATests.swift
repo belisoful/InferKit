@@ -1042,7 +1042,7 @@ final class NFKMLXSa2VALLaVATests: XCTestCase {
             throw XCTSkip("set IK_VAL_SA2VA_LLAVA_CUT4 and IK_PARITY_SA2VA_LLAVA_CUT4 (run_reference.py sa2va_llava_teacher)")
         }
         let url = URL(fileURLWithPath: directory)
-        let net = try NFKMLXSa2VALLaVANet.load(directoryURL: url)
+        let net = try NFKMLXSa2VALLaVANet.load(directoryURL: url, dtype: .float32)
         let rec = try NFKMLXWeights.loadCheckpoint(url: URL(fileURLWithPath: path)).arrays
 
         let rgb = rec["input_rgb"]!
@@ -1363,7 +1363,7 @@ final class NFKMLXSa2VAFamilyTrainingTests: XCTestCase {
 
     func testALLaVAFineTuneTrainsTheReferencesSetAndReloads() throws {
         let release = try directory("LLAVA_CUT4")
-        let net = try NFKMLXSa2VALLaVANet.load(directoryURL: release)
+        let net = try NFKMLXSa2VALLaVANet.load(directoryURL: release, dtype: .float32)
         let image = NFKMLXSa2VATests.plate()
         let grid = net.visionConfiguration.grid
         let text = NFKMLXSa2VALLaVA.promptText("Please segment the bright object.", imageTokens: grid * grid)
@@ -1386,7 +1386,7 @@ final class NFKMLXSa2VAFamilyTrainingTests: XCTestCase {
         let saved = FileManager.default.temporaryDirectory.appendingPathComponent("sa2va-llava-\(UUID().uuidString)")
         addTeardownBlock { try? FileManager.default.removeItem(at: saved) }
         try NFKMLXSa2VA.save(net, toDirectoryURL: saved, release: release)
-        let reloaded = try NFKMLXSa2VALLaVANet.load(directoryURL: saved)
+        let reloaded = try NFKMLXSa2VALLaVANet.load(directoryURL: saved, dtype: .float32)
         let objective = NFKMLXSa2VAObjective()
         let points = MLXRandom.uniform(low: 0, high: 1, [5, 12_544, 2])
         let before = objective.terms(net, example, points: points), after = objective.terms(reloaded, example, points: points)
