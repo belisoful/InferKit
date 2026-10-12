@@ -5676,9 +5676,22 @@ def _probe_hooks(model, probed, extra, layers=None):
         if attention is not None:
             layer_of[id(attention)] = i
 
+    def widened(value):
+        return value.float() if torch.is_tensor(value) and value.is_floating_point() else value
+
     def recording(module, query, key, value, attention_mask, **kwargs):
         output, weights = original(module, query, key, value, attention_mask, **kwargs)
         index = layer_of.get(id(module))
+        # `IK_PROBE_BLOCK_FLOOR=1`: the attention function's floor, the same call on its inputs widened.
+        if (index is not None and not _BLOCK_FLOOR_RUNNING[0] and os.environ.get("IK_PROBE_BLOCK_FLOOR") == "1"
+                and query.dtype != torch.float32):
+            try:
+                with torch.no_grad():
+                    wide, _ = original(module, widened(query), widened(key), widened(value),
+                                       widened(attention_mask), **kwargs)
+                extra[f"{index}.attn.out.floor"] = keep(wide[0])
+            except Exception as error:
+                print(f"no floor for {index}.attn.out: {type(error).__name__}: {error}")
         if index is not None and not _BLOCK_FLOOR_RUNNING[0]:
             extra[f"{index}.attn.q"] = keep(query[0])
             extra[f"{index}.attn.k"] = keep(key[0])
@@ -5772,6 +5785,7 @@ def run_t5_layer_probe(image, checkpoint):
     if not stream:
         _block_floor_hooks(list(blocks), [f"hidden.{i + 1}" for i in range(len(blocks))], extra)
         _block_floor_hooks([model.encoder.final_layer_norm], ["output"], extra)
+        _piece_floor_hooks(blocks, probed, None, extra, verify=True)
     with torch.no_grad():
         out = model(input_ids=tokens, attention_mask=mask)
     restore()
@@ -6014,6 +6028,8 @@ def run_hf_layer_probe(image, checkpoint):
                            batched=False, indices=list(range(count)))
     else:
         _decoder_floor_hooks(model, extra)
+    if not stream and os.environ.get("IK_PROBE_FLOOR_BLOCKS") != "0":
+        _piece_floor_hooks(decoder_layers, probed, None, extra, replay=restore_routes is not None, verify=True)
     restore_replay = (_floor_route_replay(extra)
                       if restore_routes is not None and os.environ.get("IK_PROBE_BLOCK_FLOOR") == "1" else None)
     # `IK_PROBE_PROMPT_FILE` replaces the five-token prompt with a text file's, cut to its first
@@ -6723,13 +6739,19 @@ def _sam_decoder_floor(sam, extra, seg_embedding):
     del wide
 
 
-def _piece_floor_hooks(layers, probed, names, extra, prefix="", batched=True):
+def _piece_floor_hooks(layers, probed, names, extra, prefix="", batched=True, replay=False, verify=False):
     """Block floors for the submodules `names` of each of `layers` that `probed` lists, keyed
-    `<prefix><layer>.<name>.out` as the probes record them (`block` is the layer itself). `batched` drops a
-    leading batch of one, as in `_block_floor_hooks`."""
-    pieces = [(index, name) for index in probed for name in names]
+    `<prefix><layer>.<name>.out` as the probes record them (`block` is the layer itself); `names=None` takes
+    every submodule of each layer, as `_probe_hooks` records them. `batched` drops a leading batch of one,
+    `replay` names each piece's layer for `_floor_route_replay`, and `verify` keeps a floor only where the
+    piece's first half-precision output is the recorded seam (a module called twice is recorded at its last
+    call), as in `_block_floor_hooks`."""
+    pieces = [(index, name) for index in probed
+              for name in (names if names is not None
+                           else [n for n, _ in layers[index].named_modules() if n] + ["block"])]
     _block_floor_hooks([layers[index].get_submodule("" if name == "block" else name) for index, name in pieces],
-                       [f"{prefix}{index}.{name}.out" for index, name in pieces], extra, batched)
+                       [f"{prefix}{index}.{name}.out" for index, name in pieces], extra, batched,
+                       indices=[index for index, _ in pieces] if replay else None, verify=verify)
 
 
 def _probe_layer_states(layers, extra, prefix, probed, batched=True):
@@ -13209,7 +13231,9 @@ def run_sa2va_probe(image, checkpoint):
     are recorded under `hf_layer_probe`'s keys. Records `pixel_values`, `input_ids`, `vit.hidden.i`
     (tower block `i`'s input, `vit.hidden.L` the last block's output), `mlp1.<slot>.in` / `.out`,
     `vit_embeds`, `fused`, and `dec.hidden.i` (the decoder's hidden states, the last after its final
-    norm); returns the logits over the answer and the position before it. Runs under the `llm` oracle
+    norm); returns the logits over the answer and the position before it. `IK_PROBE_BLOCK_FLOOR=1` adds a
+    floor to each tower block and decoder layer, the probed blocks' submodules, the embeddings, `mlp1`
+    and its slots, and the output. Runs under the `llm` oracle
     env. `image` unused."""
     import sys
     from PIL import Image
@@ -13264,9 +13288,19 @@ def run_sa2va_probe(image, checkpoint):
             extra.__setitem__(f"mlp1.{slot}.in", keep(args[0])), extra.__setitem__(f"mlp1.{slot}.out", keep(output)))
             and None)
     _block_floor_hooks(list(blocks), [f"vit.hidden.{i + 1}" for i in range(len(blocks))], extra, batched=False)
-    # The decoder's last hidden state is normed, so its last layer carries no floor.
+    _piece_floor_hooks(blocks, probed, None, extra, verify=True)
+    _block_floor_hooks([model.vision_model.embeddings], ["vit.hidden.0"], extra, batched=False, verify=True)
+    projector = list(model.mlp1.named_children())
+    _block_floor_hooks([child for _, child in projector], [f"mlp1.{slot}.out" for slot, _ in projector], extra,
+                       batched=False)
+    _block_floor_hooks([model.mlp1], ["vit_embeds"], extra, batched=False, verify=True)
+    # The decoder's last hidden state is normed, so its last layer's floor runs through the final norm.
     decoder = model.language_model.model.layers
-    _block_floor_hooks(list(decoder)[:-1], [f"dec.hidden.{i + 1}" for i in range(len(decoder) - 1)], extra)
+    _block_floor_hooks(list(decoder), [f"dec.hidden.{i + 1}" for i in range(len(decoder))], extra,
+                       finals={len(decoder) - 1: model.language_model.model.norm})
+    answer_rows = len(answer_ids) + 1
+    _block_floor_hooks([model.language_model.lm_head], ["output"], extra,
+                       keep=lambda value: value[0, -answer_rows:].detach().float().clone().contiguous())
 
     with torch.no_grad():
         vit_embeds = model.extract_feature(pixel_values)
@@ -13283,6 +13317,7 @@ def run_sa2va_probe(image, checkpoint):
     extra["fused"] = keep(fused[0])
     for index, state in enumerate(out.hidden_states):
         extra[f"dec.hidden.{index}"] = keep(state[0])
+    _check_floor_composite(extra, f"dec.hidden.{len(decoder)}", out.hidden_states[-1])
     globals()["_extra"] = extra
     return out.logits[0, -len(answer_ids) - 1:].float().contiguous()
 
