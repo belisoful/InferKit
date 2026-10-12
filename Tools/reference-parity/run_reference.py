@@ -19733,12 +19733,19 @@ def run_t5_seq2seq_probe(image, checkpoint):
     the last block's output), every submodule of the decoder blocks `IK_PROBE_LAYERS` names (default the
     first and last) as `dec.<i>.<name>.in` / `.out`, and `enc.final` / `dec.final` (each stack's final norm);
     returns the logits. `IK_PROBE_BLOCK_FLOOR=1` adds a floor to each block, the probed blocks' submodules,
-    both final norms, and the logits. Runs under the `llm` oracle env. `image` unused."""
+    both final norms, and the logits. The bf16 run loads at bf16, so a release too large for float32 here
+    (the 7B) loads; `IK_PROBE_STREAM_F32=1` takes the float32 run from a bf16 load one module at a time
+    (`_stream_loaded`). Runs under the `llm` oracle env. `image` unused."""
     from transformers import AutoTokenizer, T5ForConditionalGeneration
 
     tokenizer = AutoTokenizer.from_pretrained(checkpoint, use_fast=True)
-    model = T5ForConditionalGeneration.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
-    _probe_precision([model])
+    if os.environ.get("IK_PROBE_DTYPE") == "bfloat16":
+        model = T5ForConditionalGeneration.from_pretrained(checkpoint, torch_dtype=torch.bfloat16).eval()
+    elif os.environ.get("IK_PROBE_STREAM_F32") == "1":
+        model = _stream_loaded(T5ForConditionalGeneration, checkpoint)
+    else:
+        model = T5ForConditionalGeneration.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+        _probe_precision([model])
     source = torch.tensor([tokenizer("<2de> " + TRANSLATION_PROBES["en"][1]).input_ids])
     target = tokenizer(text_target=TRANSLATION_TARGETS["de"]).input_ids
     decoder_input = torch.tensor([[model.config.decoder_start_token_id] + target[:-1]])

@@ -679,9 +679,19 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     // both final norms, and the logits, then each piece of the first and last decoder blocks on the
     // reference's own input.
     func testMADLAD3BInBFloat16MatchesTheBFloat16Reference() throws {
+        try madladInBFloat16("madlad-3b", directoryKey: "IK_VAL_MADLAD", records: "madlad_3b")
+    }
+
+    // MADLAD-400 7B (`IK_VAL_MADLAD_7B`, released float32, 33 GB) the same way; its float32 side is streamed
+    // from a bf16 load one module at a time (`IK_PROBE_STREAM_F32=1`).
+    func testMADLAD7BInBFloat16MatchesTheBFloat16Reference() throws {
+        try madladInBFloat16("madlad-7b", directoryKey: "IK_VAL_MADLAD_7B", records: "madlad_7b")
+    }
+
+    private func madladInBFloat16(_ name: String, directoryKey: String, records: String) throws {
         try requireMLXRuntime()
-        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_MADLAD"], "IK_VAL_MADLAD"))
-        let bf16 = try record("madlad_3b_bf16.safetensors"), f32 = try record("madlad_3b_f32.safetensors")
+        let directory = URL(fileURLWithPath: try existing(config[directoryKey], directoryKey))
+        let bf16 = try record("\(records)_bf16.safetensors"), f32 = try record("\(records)_f32.safetensors")
         let net = try NFKMLXMADLAD.translator(directoryURL: directory, half: true).net
         func recorded(_ key: String) throws -> MLXArray {
             try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16).expandedDimensions(axis: 0)
@@ -730,10 +740,10 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         measure("logits", head(final)[0], "output", alone: head(try recorded("dec.final"))[0])
         eval(states.map(\.1) + isolated.map(\.1))
         let rows = try seams(states, bf16: bf16, f32: f32, keys: keys)
-        report("madlad-3b", rows)
+        report(name, rows)
         let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolatedKeys)
-        report("madlad-3b isolated", isolatedRows)
-        assertRoundingPlacement("madlad-3b", endToEnd: rows, isolated: isolatedRows)
+        report("\(name) isolated", isolatedRows)
+        assertRoundingPlacement(name, endToEnd: rows, isolated: isolatedRows)
 
         var lines = [String]()
         for index in [0, decoderBlocks.count - 1] {
@@ -773,7 +783,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
             lines.append(try piece("block", block(try recorded("dec.\(index).block.in"), memory: recordedMemory, bias: decoderBias,
                                                   cache: net.makeCache(), index: index), bf16, "dec.\(index).block.out"))
         }
-        print("VALIDATION bf16 madlad-3b pieces:\n" + lines.joined(separator: "\n"))
+        print("VALIDATION bf16 \(name) pieces:\n" + lines.joined(separator: "\n"))
     }
 
     // FLUX.1's autoencoder (`IK_VAL_FLUX_SCHNELL_FULL`'s `vae/`, released bf16) at bf16 as the FLUX pipeline
