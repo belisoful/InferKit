@@ -13336,11 +13336,13 @@ def run_sa2va_probe(image, checkpoint):
                        batched=False)
     _block_floor_hooks([model.mlp1], ["vit_embeds"], extra, batched=False, verify=True)
     # The decoder's last hidden state is normed, so its last layer's floor runs through the final norm.
-    decoder = model.language_model.model.layers
+    # InternLM2 (Sa2VA-8B and 26B) names its head `output`.
+    language = model.language_model
+    decoder = language.model.layers
     _block_floor_hooks(list(decoder), [f"dec.hidden.{i + 1}" for i in range(len(decoder))], extra,
-                       finals={len(decoder) - 1: model.language_model.model.norm})
+                       finals={len(decoder) - 1: language.model.norm})
     answer_rows = len(answer_ids) + 1
-    _block_floor_hooks([model.language_model.lm_head], ["output"], extra,
+    _block_floor_hooks([getattr(language, "lm_head", None) or language.output], ["output"], extra,
                        keep=lambda value: value[0, -answer_rows:].detach().float().clone().contiguous())
 
     with torch.no_grad():
@@ -14447,10 +14449,15 @@ def run_internlm2_tiny(image, checkpoint):
 def _release_tokenizer(checkpoint, **kwargs):
     """The release's tokenizer. transformers 4.57's `AutoTokenizer` hands back a bool for an `auto_map`
     that names a slow class and no fast one (the InternLM2 Sa2VA releases'), so that class is then
-    loaded from the release's own module directly."""
+    loaded from the release's own module directly. transformers also returns a bool where sentencepiece
+    refuses the model file: sentencepiece 0.2.2 rejects the InternLM2 `tokenizer.model`, whose piece 354
+    is a lone NUL. That piece is renamed in a copy of the file the tokenizer then reads; no probe's text
+    holds a NUL, so every id the probes encode or decode is the release's."""
     import importlib
     import json
+    import tempfile
     import types
+    import uuid
     from transformers import AutoTokenizer
     tok = AutoTokenizer.from_pretrained(checkpoint, trust_remote_code=True, **kwargs)
     if not isinstance(tok, bool):
@@ -14460,7 +14467,24 @@ def _release_tokenizer(checkpoint, **kwargs):
     package = types.ModuleType("sa2va_remote")
     package.__path__ = [checkpoint]
     sys.modules["sa2va_remote"] = package
-    return getattr(importlib.import_module("sa2va_remote." + module_name), class_name).from_pretrained(checkpoint)
+    slow = getattr(importlib.import_module("sa2va_remote." + module_name), class_name)
+    tok = slow.from_pretrained(checkpoint)
+    vocabulary = os.path.join(checkpoint, "tokenizer.model")
+    if not isinstance(tok, bool) or not os.path.exists(vocabulary):
+        return tok
+    from transformers.utils import sentencepiece_model_pb2
+    proto = sentencepiece_model_pb2.ModelProto()
+    proto.ParseFromString(open(vocabulary, "rb").read())
+    names = {piece.piece for piece in proto.pieces}
+    for piece in proto.pieces:
+        if "\x00" in piece.piece:
+            renamed = piece.piece.replace("\x00", "\u2400")
+            assert renamed not in names, renamed
+            piece.piece = renamed
+    patched = os.path.join(tempfile.gettempdir(), f"ik-tokenizer-{uuid.uuid4().hex}.model")
+    with open(patched, "wb") as handle:
+        handle.write(proto.SerializeToString())
+    return slow.from_pretrained(checkpoint, vocab_file=patched)
 
 
 INTERNLM2_TOKENIZER_CASES = [

@@ -5701,6 +5701,16 @@
       "command": "IK_PROBE_DTYPE=bfloat16 | (float32) sa2va_qwen_probe --checkpoint $IK_VAL_SA2VA_QWEN3_VL_2B | $IK_VAL_SA2VA_QWEN3_VL_4B | $IK_VAL_SA2VA_QWEN3_VL_4B_SAM3 | $IK_VAL_SA2VA_QWEN2_5_VL_3B (transformers 4.57, eager, the all-ones attention mask passed; NFKMLXSa2VAQwenTests reads its bf16-load floors from these pairs; the float32 run rounds every parameter to bf16 and back; the first and last tower blocks probed)"
     },
     {
+      "records": "sa2va_internvl3_2b_bf16 / _f32, sa2va_8b_cut4_bf16 / _f32, sa2va_26b_cut4_bf16 / _f32, sa2va_internvl3_8b_cut4_bf16 / _f32, sa2va_internvl3_14b_cut4_bf16 / _f32",
+      "environment": "llm",
+      "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_BLOCK_FLOOR=1 | (float32) sa2va_probe --checkpoint $IK_VAL_SA2VA_INTERNVL3_2B | $IK_VAL_SA2VA_8B_CUT4 | $IK_VAL_SA2VA_26B_CUT4 | $IK_VAL_SA2VA_INTERNVL3_8B_CUT4 | $IK_VAL_SA2VA_INTERNVL3_14B_CUT4, each with IK_PROBE_LAYERS=0,<its last tower block> (the float32 run rounds every parameter to bf16 and back; the InternLM2 releases' tokenizer.model is read with its NUL piece renamed, which sentencepiece 0.2.2 otherwise refuses)"
+    },
+    {
+      "records": "sa2va_qwen2_5_vl_7b_cut4_bf16 / _f32",
+      "environment": "llm",
+      "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_BLOCK_FLOOR=1 | (float32) sa2va_qwen_probe --checkpoint $IK_VAL_SA2VA_QWEN2_5_VL_7B_CUT4 (transformers 4.57, eager, the first and last tower blocks probed)"
+    },
+    {
       "records": "qwen3_vl_8b_cut4_bf16 / _f32, qwen3_vl_32b_cut4_bf16 / _f32, qwen3_vl_30b_a3b_cut2_bf16 / _f32, qwen3_vl_embedding_8b_cut4_bf16 / _f32",
       "environment": "llm",
       "command": "IK_PROBE_DTYPE=bfloat16 | (float32) sa2va_qwen_probe --checkpoint <the cut> (a plain Qwen3-VL release runs as AutoModelForImageTextToText; the 30B-A3B cut with IK_PROBE_ROUTES=1 on both runs; the Embedding release, which ships no head, records its final states as the output; the probe passes the all-ones attention mask, without which transformers 4.57 reads M-RoPE's position jumps as packed sequences when there is no cache, as under the Embedding release's use_cache false)"

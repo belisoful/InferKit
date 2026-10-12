@@ -2398,7 +2398,52 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     // release's own code at bf16 (`sa2va_probe`, transformers 4.57, tower blocks 0 and 23 probed).
     func testSa2VA1BInBFloat16MatchesTheBFloat16Reference() throws {
         try requireMLXRuntime()
-        let (net, bf16, f32) = try sa2va1B()
+        let (net, bf16, f32) = try sa2vaInternVL("sa2va_1b", directoryKey: "IK_VAL_SA2VA_1B")
+        try sa2vaInternVLSeams("sa2va-1b", net, bf16, f32)
+    }
+
+    // Each piece of Sa2VA-1B's tower blocks 0 and 23 and of its projector on the reference's own bf16
+    // input, so a rounding placed differently shows as a count at the one seam that places it.
+    func testSa2VA1BTowerPiecesMatchTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let (net, probe, _) = try sa2vaInternVL("sa2va_1b", directoryKey: "IK_VAL_SA2VA_1B")
+        try sa2vaInternVLPieces("sa2va-1b", net, probe)
+    }
+
+    private static let internVLReleases = [
+        ("sa2va_internvl3_2b", "IK_VAL_SA2VA_INTERNVL3_2B"), ("sa2va_8b_cut4", "IK_VAL_SA2VA_8B_CUT4"),
+        ("sa2va_26b_cut4", "IK_VAL_SA2VA_26B_CUT4"), ("sa2va_internvl3_8b_cut4", "IK_VAL_SA2VA_INTERNVL3_8B_CUT4"),
+        ("sa2va_internvl3_14b_cut4", "IK_VAL_SA2VA_INTERNVL3_14B_CUT4"),
+    ]
+
+    // The other InternVL-based Sa2VA releases as Sa2VA-1B is measured: InternVL3-2B whole, and Sa2VA-8B,
+    // Sa2VA-26B (InternViT-6B, with its query and key norms, and InternLM2), InternVL3-8B, and InternVL3-14B
+    // cut to their first four decoder layers (`truncate.py`; the 26B's tower to its first four blocks), each
+    // with its first and last tower blocks probed. `IK_SA2VA_ONLY=<record name>` measures one release.
+    func testSa2VAInternVLReleasesInBFloat16MatchTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        var measured = 0
+        let only = ProcessInfo.processInfo.environment["IK_SA2VA_ONLY"]
+        for (name, key) in Self.internVLReleases where only == nil || only == name {
+            do {
+                try autoreleasepool {
+                    let (net, bf16, f32) = try sa2vaInternVL(name, directoryKey: key)
+                    let label = name.replacingOccurrences(of: "_", with: "-")
+                    try sa2vaInternVLSeams(label, net, bf16, f32)
+                    try sa2vaInternVLPieces(label, net, bf16)
+                }
+            } catch is XCTSkip {
+                continue
+            }
+            Memory.clearCache()
+            measured += 1
+        }
+        if measured == 0 { throw XCTSkip("set IK_VAL_SA2VA_INTERNVL3_2B or a Sa2VA cut (IK_VAL_SA2VA_8B_CUT4, ...)") }
+    }
+
+    /// One InternVL release's tower, projector, and decoder seams against its `sa2va_probe` pair.
+    private func sa2vaInternVLSeams(_ label: String, _ net: NFKMLXSa2VANet, _ bf16: [String: MLXArray],
+                                    _ f32: [String: MLXArray]) throws {
         let pixels = try XCTUnwrap(bf16["pixel_values"])
         let inputIds = try XCTUnwrap(bf16["input_ids"]).reshaped([-1]).asArray(Int32.self).map(Int.init)
         let blocks = net.vision.encoder.layers
@@ -2422,7 +2467,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         let keys = (0 ... blocks.count).map { "vit.hidden.\($0)" } + ["vit_embeds", "fused"]
             + decoder.indices.map { "dec.hidden.\($0)" } + ["output"]
         let rows = try seams(states, bf16: bf16, f32: f32, keys: keys)
-        report("sa2va-1b", rows)
+        report(label, rows)
 
         func recorded(_ key: String) throws -> MLXArray { try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16) }
         var isolated = [(String, MLXArray)]()
@@ -2443,15 +2488,13 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         let isolatedKeys = (1 ... blocks.count).map { "vit.hidden.\($0)" } + ["vit_embeds"]
             + (1 ... layers.count).map { "dec.hidden.\($0)" } + ["output"]
         let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolatedKeys)
-        report("sa2va-1b isolated", isolatedRows)
-        assertRoundingPlacement("sa2va-1b", endToEnd: rows, isolated: isolatedRows)
+        report("\(label) isolated", isolatedRows)
+        assertRoundingPlacement(label, endToEnd: rows, isolated: isolatedRows)
     }
 
-    // Each piece of Sa2VA-1B's tower blocks 0 and 23 and of its projector on the reference's own bf16
-    // input, so a rounding placed differently shows as a count at the one seam that places it.
-    func testSa2VA1BTowerPiecesMatchTheBFloat16Reference() throws {
-        try requireMLXRuntime()
-        let (net, probe, _) = try sa2va1B()
+    /// Each piece of one InternVL release's first and last tower blocks and of its projector on the
+    /// reference's own bf16 input.
+    private func sa2vaInternVLPieces(_ label: String, _ net: NFKMLXSa2VANet, _ probe: [String: MLXArray]) throws {
         func input(_ key: String) throws -> MLXArray {
             try XCTUnwrap(probe[key], "no \(key)").asType(.bfloat16).expandedDimensions(axis: 0)
         }
@@ -2465,6 +2508,10 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
             lines.append("tower block \(index)")
             lines.append(try piece("norm1", block.norm1(input(p + "norm1.in")), probe, p + "norm1.out"))
             lines.append(try piece("qkv", block.attention.qkv(input(p + "attn.qkv.in")), probe, p + "attn.qkv.out"))
+            if let queryNorm = block.attention.queryNorm, let keyNorm = block.attention.keyNorm {
+                lines.append(try piece("q_norm", queryNorm(input(p + "attn.q_norm.in")), probe, p + "attn.q_norm.out"))
+                lines.append(try piece("k_norm", keyNorm(input(p + "attn.k_norm.in")), probe, p + "attn.k_norm.out"))
+            }
             lines.append(try piece("attn", block.attention(input(p + "attn.in")), probe, p + "attn.out"))
             lines.append(try piece("proj", block.attention.proj(input(p + "attn.proj.in")), probe, p + "attn.proj.out"))
             lines.append(try piece("norm2", block.norm2(input(p + "norm2.in")), probe, p + "norm2.out"))
@@ -2480,7 +2527,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         lines.append(try piece("fc1", projector.fc1(input("mlp1.1.in")), probe, "mlp1.1.out"))
         lines.append(try piece("gelu", NFKReferenceRounding.wide(input("mlp1.2.in")) { gelu($0) }, probe, "mlp1.2.out"))
         lines.append(try piece("fc2", projector.fc2(input("mlp1.3.in")), probe, "mlp1.3.out"))
-        print("VALIDATION bf16 sa2va-1b pieces:\n" + lines.joined(separator: "\n"))
+        print("VALIDATION bf16 \(label) pieces:\n" + lines.joined(separator: "\n"))
     }
 
     // Sa2VA-1B's SAM 2 grounding branch at bf16 against the release's own code at bf16
@@ -2833,7 +2880,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     private static let qwenVLReleases = [
         ("sa2va_qwen3_vl_2b", "IK_VAL_SA2VA_QWEN3_VL_2B"), ("sa2va_qwen2_5_vl_3b", "IK_VAL_SA2VA_QWEN2_5_VL_3B"),
         ("sa2va_qwen3_vl_4b", "IK_VAL_SA2VA_QWEN3_VL_4B"), ("sa2va_qwen3_vl_4b_sam3", "IK_VAL_SA2VA_QWEN3_VL_4B_SAM3"),
-        ("qwen3_vl_8b_cut4", "IK_VAL_QWEN3_VL_8B_CUT4"), ("qwen3_vl_32b_cut4", "IK_VAL_QWEN3_VL_32B_CUT4"),
+        ("sa2va_qwen2_5_vl_7b_cut4", "IK_VAL_SA2VA_QWEN2_5_VL_7B_CUT4"), ("qwen3_vl_8b_cut4", "IK_VAL_QWEN3_VL_8B_CUT4"), ("qwen3_vl_32b_cut4", "IK_VAL_QWEN3_VL_32B_CUT4"),
         ("qwen3_vl_30b_a3b_cut2", "IK_VAL_QWEN3_VL_30B_A3B_CUT2"),
         ("qwen3_vl_embedding_8b_cut4", "IK_VAL_QWEN3_VL_EMBEDDING_8B_CUT4"),
     ]
@@ -3082,9 +3129,10 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         return (QwenVLParts(tower: .qwen3(vision), decoder: decoder, layout: .interleaved), bf16, f32)
     }
 
-    private func sa2va1B() throws -> (net: NFKMLXSa2VANet, bf16: [String: MLXArray], f32: [String: MLXArray]) {
-        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_SA2VA_1B"], "IK_VAL_SA2VA_1B"))
-        let bf16 = try record("sa2va_1b_bf16.safetensors"), f32 = try record("sa2va_1b_f32.safetensors")
+    private func sa2vaInternVL(_ name: String, directoryKey: String) throws
+        -> (net: NFKMLXSa2VANet, bf16: [String: MLXArray], f32: [String: MLXArray]) {
+        let directory = URL(fileURLWithPath: try existing(config[directoryKey], directoryKey))
+        let bf16 = try record("\(name)_bf16.safetensors"), f32 = try record("\(name)_f32.safetensors")
         let net = NFKMLXSa2VANet(try NFKMLXSa2VANet.configuration(fromDirectory: directory))
         try net.loadWeights(fromDirectory: directory, dtype: .bfloat16)
         return (net, bf16, f32)
