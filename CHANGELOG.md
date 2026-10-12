@@ -601,6 +601,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   within 0.036 of its own block floor, and the SD3 transformer's velocity matches the reference's bit for
   bit.
 
+#### SDXL decodes in float32 where its release asks
+
+- A two-tower Stable Diffusion release (SDXL, SDXL-Turbo) loaded at its published float16 widens its
+  autoencoder to float32 when the release's `vae/config.json` sets `force_upcast`, as diffusers' SDXL
+  pipelines do, because the autoencoder's activations leave float16's range. The UNet and the text towers
+  stay float16. The Objective-C factories load a release as published, so this is their path.
+- The latent takes the autoencoder's type before it is unscaled, and the scale divides with the factor
+  held in float32, rounded once.
+
 #### The Gemma 3n audio encoder computes in bfloat16 at a bfloat16 load
 
 - The audio encoder's activation clamp built its bounds in float32, which promoted every activation it

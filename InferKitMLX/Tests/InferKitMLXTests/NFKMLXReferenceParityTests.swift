@@ -12682,6 +12682,30 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                               record: "IK_PARITY_SDXL_T2I_ZERONEG", directory: "IK_VAL_SDXL_DIR")
     }
 
+    // SDXL-Turbo loaded as published (float16), the Objective-C default: its release sets `force_upcast`, so
+    // the autoencoder is widened to float32 as diffusers' SDXL pipeline upcasts it, while the UNet stays
+    // float16. A float16 latent decodes exactly as through the autoencoder loaded at float32.
+    func testSDXLTurboAtItsReleasedPrecisionUpcastsTheAutoencoderAsDiffusersDoes() throws {
+        try requireMLXRuntime()
+        let directory = try weights("IK_VAL_SDXL_DIR")
+        let files = try NFKMLXSDReleaseFiles(directoryURL: directory)
+        let model = try NFKMLXSDTextToImageModel(configuration: .sdxlTurbo, files: files, precision: .checkpoint)
+        XCTAssertEqual(NFKReferenceRounding.parameterType(of: model.pipeline.unet), .float16, "the UNet loads as published")
+        XCTAssertEqual(NFKReferenceRounding.parameterType(of: model.pipeline.vae), .float32, "force_upcast widens the autoencoder")
+
+        let wide = NFKMLXSDAutoencoder(configuration: NFKMLXSDTextToImageConfiguration.sdxlTurbo.vae)
+        try NFKMLXStableDiffusionModels.loadVAEWeights(into: wide, from: files.vae, precision: .float32)
+        wide.train(false)
+        let latent = MLXRandom.normal([1, 16, 16, 4], key: MLXRandom.key(5)).asType(.float16)
+        let scale = NFKMLXSDTextToImageConfiguration.sdxlTurbo.vae.scaleFactor
+        let decoded = model.pipeline.image(from: latent, scale: scale)
+        let expected = wide.decode(latent.asType(.float32) / scale)
+        eval(decoded, expected)
+        XCTAssertEqual(decoded.dtype, .float32)
+        XCTAssertTrue(all(isFinite(decoded)).item(Bool.self), "the decode stays finite")
+        XCTAssertTrue(arrayEqual(decoded, expected).item(Bool.self), "decodes as the float32 autoencoder does")
+    }
+
     private func verifyTextToImage(_ name: String, _ configuration: NFKMLXSDTextToImageConfiguration,
                                    record: String, directory key: String) throws {
         try requireMLXRuntime()

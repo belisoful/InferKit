@@ -287,6 +287,13 @@ final class NFKMLXSDTextToImageModel {
         self.configuration = configuration
         pipeline = NFKMLXSDPipeline(unet: configuration.unet, vae: configuration.vae)
         try pipeline.loadWeights(unetURL: files.unet, vaeURL: files.vae, precision: precision)
+        // diffusers' SDXL pipelines decode a float16 autoencoder in float32 where the release sets
+        // `force_upcast`: its activations leave float16's range.
+        let vaeType = NFKReferenceRounding.parameterType(of: pipeline.vae)
+        if configuration.secondaryTextEncoder != nil, vaeType == .float16,
+           NFKMLXStableDiffusionModels.forcesUpcast(vaeWeightsURL: files.vae) {
+            pipeline.vae.update(parameters: pipeline.vae.parameters().mapValues { $0.asType(.float32) })
+        }
         pipeline.train(false)
         textEncoder = try NFKMLXSDTextEncoder.net(configuration: configuration.textEncoder,
                                                   weightsURL: files.textEncoder, precision: precision)

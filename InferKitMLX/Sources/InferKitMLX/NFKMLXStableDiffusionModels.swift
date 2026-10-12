@@ -1063,6 +1063,15 @@ public final class NFKMLXStableDiffusionModels: NSObject {
         return configuration
     }
 
+    /// Whether the release's `config.json` beside an autoencoder checkpoint sets `force_upcast`, which a
+    /// diffusers SDXL pipeline reads to decode a float16 autoencoder in float32.
+    static func forcesUpcast(vaeWeightsURL url: URL) -> Bool {
+        let configURL = url.deletingLastPathComponent().appendingPathComponent("config.json")
+        guard let data = try? Data(contentsOf: configURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return json["force_upcast"] as? Bool ?? false
+    }
+
     /// Loads a diffusers autoencoder checkpoint into `net`.
     public static func loadVAEWeights(into net: NFKMLXSDAutoencoder, from url: URL,
                                       precision: NFKMLXWeightPrecision = .float32) throws {
@@ -1143,7 +1152,10 @@ public final class NFKMLXSDPipeline: Module {
         vae.encode(image).mean * scale
     }
 
+    /// The image a latent decodes to. The latent takes the autoencoder's type before it is unscaled, as a
+    /// diffusers pipeline casts it, so an autoencoder upcast to float32 decodes a float32 latent.
     func image(from latent: MLXArray, scale: Float) -> MLXArray {
-        vae.decode(latent / scale)
+        let typed = latent.asType(NFKReferenceRounding.parameterType(of: vae))
+        return vae.decode(NFKReferenceRounding.divided(typed, by: scale))
     }
 }
