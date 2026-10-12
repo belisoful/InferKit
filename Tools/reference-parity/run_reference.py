@@ -5782,6 +5782,15 @@ def _probe_hooks(model, probed, extra, layers=None):
         modeling.eager_attention_forward = recording
     # `IK_PROBE_FUNCTIONS` names module-level functions (a recurrence, a convolution) that no hook
     # sees; each call's tensor arguments and outputs are kept as `fn.<name>.<call>.arg<i>` / `.out<i>`.
+    # `IK_PROBE_BLOCK_FLOOR=1` runs a call with a half-precision argument again on its arguments widened
+    # to float32, and keeps each output as `fn.<name>.<call>.out<i>.floor`.
+    def widened_value(value):
+        if torch.is_tensor(value) and value.is_floating_point():
+            return value.float()
+        if isinstance(value, (tuple, list)):
+            return type(value)(widened_value(v) for v in value)
+        return value
+
     for function in filter(None, os.environ.get("IK_PROBE_FUNCTIONS", "").split(",")):
         def wrap(inner, name=function, calls=[0]):
             def recorded(*args, **kwargs):
@@ -5790,13 +5799,29 @@ def _probe_hooks(model, probed, extra, layers=None):
                     return result
                 call = calls[0]
                 calls[0] += 1
-                for i, value in enumerate(list(args) + [kwargs[k] for k in sorted(kwargs)]):
+                arguments = list(args) + [kwargs[k] for k in sorted(kwargs)]
+                for i, value in enumerate(arguments):
                     if torch.is_tensor(value):
                         extra[f"fn.{name}.{call}.arg{i}"] = keep(value)
                 outputs = result if isinstance(result, tuple) else (result,)
                 for i, value in enumerate(outputs):
                     if torch.is_tensor(value):
                         extra[f"fn.{name}.{call}.out{i}"] = keep(value)
+                half = any(torch.is_tensor(v) and v.dtype in (torch.bfloat16, torch.float16) for v in arguments)
+                if os.environ.get("IK_PROBE_BLOCK_FLOOR") == "1" and half:
+                    # The re-run records nothing, so a probed function it calls (`l2norm` inside the delta
+                    # rule) keeps its own call numbering.
+                    _BLOCK_FLOOR_RUNNING[0] = True
+                    try:
+                        with torch.no_grad():
+                            wide = inner(*widened_value(list(args)), **{k: widened_value(v) for k, v in kwargs.items()})
+                        for i, value in enumerate(wide if isinstance(wide, tuple) else (wide,)):
+                            if torch.is_tensor(value) and f"fn.{name}.{call}.out{i}" in extra:
+                                extra[f"fn.{name}.{call}.out{i}.floor"] = keep(value)
+                    except Exception as error:
+                        print(f"no floor for fn.{name}.{call}: {type(error).__name__}: {error}")
+                    finally:
+                        _BLOCK_FLOOR_RUNNING[0] = False
                 return result
             return recorded
         setattr(modeling, function, wrap(getattr(modeling, function)))
@@ -6784,6 +6809,16 @@ def _composite_floor_hook(entry, modules, compose, key, extra, batched=True):
     entry.register_forward_hook(hook)
 
 
+def _sam_decoder_piece_floors(sam, extra):
+    """`IK_PROBE_BLOCK_FLOOR=1`: a floor for each submodule of SAM's mask decoder, keyed `sam.<name>.out` as
+    the grounding probes record them, whole tensors, kept only where the module's first half-precision
+    output is the recorded seam."""
+    named = [(name, module) for name, module in sam.named_modules()
+             if name.startswith("sam_mask_decoder.")]
+    _block_floor_hooks([module for _, module in named], [f"sam.{name}.out" for name, _ in named], extra,
+                       batched=False, verify=True)
+
+
 def _sam_decoder_floor(sam, extra, seg_embedding):
     """`IK_PROBE_BLOCK_FLOOR=1`: `low_res_multi`'s floor, the mask decoder's heads in float32 (autocast
     suspended) on the half run's own recorded inputs: the high-resolution levels before `conv_s0` /
@@ -6814,19 +6849,20 @@ def _sam_decoder_floor(sam, extra, seg_embedding):
     del wide
 
 
-def _piece_floor_hooks(layers, probed, names, extra, prefix="", batched=True, replay=False, verify=False):
+def _piece_floor_hooks(layers, probed, names, extra, prefix="", batched=True, replay=False, verify=False,
+                       during=None):
     """Block floors for the submodules `names` of each of `layers` that `probed` lists, keyed
     `<prefix><layer>.<name>.out` as the probes record them (`block` is the layer itself); `names=None` takes
     every submodule of each layer, as `_probe_hooks` records them. `batched` drops a leading batch of one,
     `replay` names each piece's layer for `_floor_route_replay`, and `verify` keeps a floor only where the
     piece's first half-precision output is the recorded seam (a module called twice is recorded at its last
-    call), as in `_block_floor_hooks`."""
+    call), and `during` gives the context each float32 copy runs in, as in `_block_floor_hooks`."""
     pieces = [(index, name) for index in probed
               for name in (names if names is not None
                            else [n for n, _ in layers[index].named_modules() if n] + ["block"])]
     _block_floor_hooks([layers[index].get_submodule("" if name == "block" else name) for index, name in pieces],
                        [f"{prefix}{index}.{name}.out" for index, name in pieces], extra, batched,
-                       indices=[index for index, _ in pieces] if replay else None, verify=verify)
+                       indices=[index for index, _ in pieces] if replay else None, verify=verify, during=during)
 
 
 def _probe_layer_states(layers, extra, prefix, probed, batched=True):
@@ -13614,6 +13650,8 @@ def run_sa2va_grounding_probe(image, checkpoint):
             if torch.is_tensor(out):
                 keep(f"sam.{name}.out", out)
         module.register_forward_hook(hook)
+    _piece_floor_hooks(trunk.blocks, probed, None, extra, batched=False, verify=True)
+    _sam_decoder_piece_floors(sam, extra)
 
     with torch.no_grad():
         vit_embeds = model.extract_feature(pixel_values)
@@ -14187,6 +14225,12 @@ def run_sa2va_sam3_probe(image, checkpoint):
         record_tree(blocks[index], str(index))
     for level, convs in enumerate(vision.sam2_convs):
         record_tree(convs, f"sam.neck.{level}")
+    _piece_floor_hooks(blocks, probed, None, extra, batched=False, verify=True, during=fused_at_input_type)
+    for level, convs in enumerate(vision.sam2_convs):
+        named = [(name, module) for name, module in convs.named_modules() if name]
+        _block_floor_hooks([module for _, module in named], [f"sam.neck.{level}.{name}.out" for name, _ in named],
+                           extra, batched=False, verify=True)
+    _sam_decoder_piece_floors(sam, extra)
     for name, module in sam.named_modules():
         if name.startswith("sam_mask_decoder") or name == "sam_prompt_encoder.pe_layer":
             def hook(m, args, output, name=name):

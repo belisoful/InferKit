@@ -303,8 +303,15 @@ piece without one is only reported.
   convolution that way in float32 (`sd_vae_probe`), equal to torch to accumulation order.
 - A probed layer's pieces (`_piece_floor_hooks`) keep a floor only where the piece's first half-precision
   output is the recorded seam, since a module called twice (Gemma 3n's AltUp router) is recorded at its
-  last call. The eager attention function's floor (`L.attn.out`) is the same call on its inputs widened.
-  Rotary pieces have none: the rotation runs inside the attention module, which records only its result.
+  last call. The eager attention function's floor (`L.attn.out`) is the same call on its inputs widened, and
+  so is each `IK_PROBE_FUNCTIONS` call's (`fn.<name>.<call>.out<i>.floor`, a delta rule, a causal
+  convolution).
+- Pieces that stay reported without a floor: a rotation (applied inside the attention module, which
+  records only its result), a composite a port forms from a recorded input (Qwen3.5's q, k, and v from the
+  normed input), a module called twice (Gemma 3n's AltUp router, whose recorded call is not its first),
+  `scaled_dot_product_attention` inside a SAM block, and SAM 3's fused `addmm_act`. A piece computed in
+  float32 under emulated CUDA autocast (SAM 3's ViT norms) has a floor of 0 and its float32 last-bit
+  differences are reported.
 - The copy carries no hooks and no instance-level `forward`, since transformers 4.57 binds an
   output-recording wrapper to each layer that would call the bf16 original. It drops a key-value cache
   argument and copies a shared key-value mapping (Gemma 3n and 4).
