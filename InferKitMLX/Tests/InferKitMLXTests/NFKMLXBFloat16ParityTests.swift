@@ -1025,6 +1025,92 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         print("VALIDATION f16 sdxl-turbo-unet pieces:\n" + lines.joined(separator: "\n"))
     }
 
+    // Whisper tiny from OpenAI's float16 `.pt` (`IK_RAW_WHISPER`) loaded as published, against transformers'
+    // `WhisperForConditionalGeneration` built from the same file at float16 with eager attention
+    // (`whisper_f16_probe`, the float32 side on the same float16 weights) over a seeded log-mel and a
+    // teacher-forced prompt: both convolutions, every encoder and decoder layer, both final norms, and the
+    // logits, then each piece of the first and last layers of each stack.
+    func testWhisperTinyInFloat16MatchesTheFloat16Reference() throws {
+        try requireMLXRuntime()
+        let weights = URL(fileURLWithPath: try existing(config["IK_RAW_WHISPER"], "IK_RAW_WHISPER"))
+        let half = try record("whisper_tiny_f16.safetensors"), f32 = try record("whisper_tiny_f32.safetensors")
+        let net = NFKMLXWhisperNet(.tiny)
+        try NFKMLXWhisper.loadWeights(into: net, from: weights, precision: .checkpoint)
+        func recorded(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(half[key], "no \(key)").asType(.float16).expandedDimensions(axis: 0)
+        }
+        let mel = try XCTUnwrap(half["mel"]).expandedDimensions(axis: 0)
+        let tokens = try XCTUnwrap(half["tokens"]).reshaped([1, -1])
+        let encoder = net.encoder, decoder = net.decoder
+
+        var states = [(String, MLXArray)](), keys = [String]()
+        var isolated = [(String, MLXArray)](), isolatedKeys = [String]()
+        func measure(_ label: String, _ ours: MLXArray, _ key: String, alone: MLXArray) {
+            states.append((label, ours)); keys.append(key)
+            isolated.append((label, alone)); isolatedKeys.append(key)
+        }
+        let typedMel = net.typed(mel)
+        XCTAssertEqual(typedMel.dtype, .float16, "a float16 file computes at float16")
+        let conv1 = encoder.conv1(typedMel)
+        measure("conv1", conv1[0], "enc.conv1", alone: conv1[0])
+        let conv2 = encoder.conv2(NFKReferenceRounding.wide(conv1) { gelu($0) })
+        measure("conv2", conv2[0], "enc.conv2",
+                alone: encoder.conv2(NFKReferenceRounding.wide(try recorded("enc.conv1")) { gelu($0) })[0])
+        var audio = (NFKReferenceRounding.wide(conv2) { gelu($0) } + NFKMLXWhisperNet.sinusoids(length: conv2.shape[1],
+            channels: conv2.shape[2])).asType(conv2.dtype)
+        states.append(("encoder input", audio[0])); keys.append("enc.hidden.0")
+        for (index, block) in encoder.blocks.enumerated() {
+            audio = block(audio, audio: nil, mask: nil)
+            measure("encoder layer \(index)", audio[0], "enc.hidden.\(index + 1)",
+                    alone: block(try recorded("enc.hidden.\(index)"), audio: nil, mask: nil)[0])
+        }
+        let memory = encoder.lnPost(audio)
+        measure("encoder final norm", memory[0], "enc.final",
+                alone: encoder.lnPost(try recorded("enc.hidden.\(encoder.blocks.count)"))[0])
+        let recordedMemory = try recorded("enc.final")
+        let length = tokens.dim(1)
+        let mask = NFKMLXWhisperNet.causalMask(length)
+        var hidden = decoder.tokenEmbedding(tokens) + decoder.positionalEmbedding[0 ..< length]
+        states.append(("decoder input", hidden[0])); keys.append("dec.hidden.0")
+        for (index, block) in decoder.blocks.enumerated() {
+            hidden = block(hidden, audio: memory, mask: mask)
+            measure("decoder layer \(index)", hidden[0], "dec.hidden.\(index + 1)",
+                    alone: block(try recorded("dec.hidden.\(index)"), audio: recordedMemory, mask: mask)[0])
+        }
+        let final = decoder.ln(hidden)
+        measure("decoder final norm", final[0], "dec.final",
+                alone: decoder.ln(try recorded("dec.hidden.\(decoder.blocks.count)"))[0])
+        let embedding = decoder.tokenEmbedding.weight.transposed(1, 0)
+        measure("logits", final.matmul(embedding)[0], "output", alone: try recorded("dec.final").matmul(embedding)[0])
+        eval(states.map(\.1) + isolated.map(\.1))
+        let rows = try seams(states, bf16: half, f32: f32, keys: keys)
+        report("whisper-tiny f16", rows)
+        let isolatedRows = try seams(isolated, bf16: half, f32: f32, keys: isolatedKeys)
+        report("whisper-tiny f16 isolated", isolatedRows)
+        assertRoundingPlacement("whisper-tiny f16", endToEnd: rows, isolated: isolatedRows)
+
+        var lines = [String]()
+        for (stack, blocks) in [("enc", encoder.blocks), ("dec", decoder.blocks)] {
+            for index in [0, blocks.count - 1] {
+                let block = blocks[index], p = "\(stack).\(index)."
+                func input(_ name: String) throws -> MLXArray { try recorded(p + name + ".in") }
+                lines.append("\(stack) layer \(index)")
+                lines.append(try piece("self-attention norm", block.attnLN(input("self_attn_layer_norm")), half,
+                                       p + "self_attn_layer_norm.out"))
+                lines.append(try piece("q_proj", block.attn.query(input("self_attn.q_proj")), half, p + "self_attn.q_proj.out"))
+                lines.append(try piece("out_proj", block.attn.out(input("self_attn.out_proj")), half, p + "self_attn.out_proj.out"))
+                if let crossLN = block.crossAttnLN {
+                    lines.append(try piece("cross-attention norm", crossLN(input("encoder_attn_layer_norm")), half,
+                                           p + "encoder_attn_layer_norm.out"))
+                }
+                lines.append(try piece("mlp norm", block.mlpLN(input("final_layer_norm")), half, p + "final_layer_norm.out"))
+                lines.append(try piece("fc1", (block.mlp[0] as! Linear)(input("fc1")), half, p + "fc1.out"))
+                lines.append(try piece("fc2", (block.mlp[2] as! Linear)(input("fc2")), half, p + "fc2.out"))
+            }
+        }
+        print("VALIDATION f16 whisper-tiny pieces:\n" + lines.joined(separator: "\n"))
+    }
+
     // MARK: Gemma 4
 
     // The E2B decoder at the released bf16 against transformers built at bf16 (`hf_layer_probe`,

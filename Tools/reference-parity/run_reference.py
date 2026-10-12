@@ -3256,6 +3256,72 @@ def run_bisenet(image, checkpoint):
     return logits[0].permute(1, 2, 0).contiguous()              # [H, W, classes] to match NHWC
 
 
+def run_whisper_f16_probe(image, checkpoint):
+    """Whisper from an OpenAI release (`--checkpoint` its `.pt`, stored float16) as transformers'
+    `WhisperForConditionalGeneration`, built in process with transformers' own key renames, at float16 or on
+    its float32 floor (`IK_PROBE_DTYPE=float16`; the float32 run widens the same float16 weights, exactly),
+    block by block with eager attention, over a seeded log-mel and a teacher-forced English prompt. Records
+    `mel` (`[frames, mels]`), `tokens`, `enc.conv1` / `enc.conv2` (each convolution before its GELU, channels
+    last), `enc.hidden.i` and `dec.hidden.i` (each stack's layer inputs, `.L` the last layer's output) with
+    every submodule of the first and last layers as `<stack>.<i>.<name>.in` / `.out`, and `enc.final` /
+    `dec.final` (each stack's final norm); returns the logits. `IK_PROBE_BLOCK_FLOOR=1` floors each
+    convolution, layer, probed piece, final norm, and the logits. Each float16 convolution computes in
+    float32 and rounds once (`_widened_convolutions`). Runs under the `sd` oracle env. `image` unused."""
+    import contextlib
+    import io
+    from transformers import WhisperConfig, WhisperForConditionalGeneration
+    from transformers.models.whisper.convert_openai_to_hf import (make_linear_from_emb, remove_ignore_keys_,
+                                                                  rename_keys)
+
+    original = torch.load(checkpoint, map_location="cpu")
+    dims, state = original["dims"], original["model_state_dict"]
+    remove_ignore_keys_(state)
+    with contextlib.redirect_stdout(io.StringIO()):
+        rename_keys(state)
+    ffn = state["decoder.layers.0.fc1.weight"].shape[0]
+    end = 50257 if dims["n_vocab"] > 51865 else 50256
+    config = WhisperConfig(vocab_size=dims["n_vocab"], encoder_ffn_dim=ffn, decoder_ffn_dim=ffn,
+                           num_mel_bins=dims["n_mels"], d_model=dims["n_audio_state"],
+                           max_target_positions=dims["n_text_ctx"], encoder_layers=dims["n_audio_layer"],
+                           encoder_attention_heads=dims["n_audio_head"], decoder_layers=dims["n_text_layer"],
+                           decoder_attention_heads=dims["n_text_head"], max_source_positions=dims["n_audio_ctx"],
+                           eos_token_id=end, bos_token_id=end, pad_token_id=end, decoder_start_token_id=end + 1)
+    config._attn_implementation = "eager"
+    model = WhisperForConditionalGeneration(config).eval()
+    model.model.load_state_dict({k: v.float() for k, v in state.items()}, strict=False)
+    model.proj_out = make_linear_from_emb(model.model.decoder.embed_tokens)
+    half = os.environ.get("IK_PROBE_DTYPE") == "float16"
+    dtype = torch.float16 if half else torch.float32
+    model.to(dtype)
+
+    generator = torch.Generator().manual_seed(5)
+    mel = (torch.randn(1, dims["n_mels"], 3000, generator=generator) * 0.4).to(torch.float16).to(dtype)
+    # The multilingual prompt (start, English, transcribe, no timestamps) and a few English tokens.
+    tokens = torch.tensor([[50258, 50259, 50359, 50363, 440, 1349, 2068, 3699, 13]])
+
+    extra = {}
+    encoder, decoder = model.model.encoder, model.model.decoder
+    def channels_last(m, args, output, key):
+        extra[key] = output[0].transpose(0, 1).detach().float().clone().contiguous()
+    encoder.conv1.register_forward_hook(lambda m, a, o: channels_last(m, a, o, "enc.conv1") and None)
+    encoder.conv2.register_forward_hook(lambda m, a, o: channels_last(m, a, o, "enc.conv2") and None)
+    keep_conv = lambda value: value[0].transpose(0, 1).detach().float().clone().contiguous()
+    _block_floor_hooks([encoder.conv1, encoder.conv2], ["enc.conv1", "enc.conv2"], extra, keep=keep_conv)
+    _probe_layer_states(encoder.layers, extra, "enc", [0, len(encoder.layers) - 1])
+    _probe_layer_states(decoder.layers, extra, "dec", [0, len(decoder.layers) - 1])
+    for stack, key in ((encoder, "enc.final"), (decoder, "dec.final")):
+        stack.layer_norm.register_forward_hook(lambda m, a, o, key=key: extra.__setitem__(
+            key, o[0].detach().float().clone().contiguous()) and None)
+        _block_floor_hooks([stack.layer_norm], [key], extra)
+    _block_floor_hooks([model.proj_out], ["output"], extra)
+    with torch.no_grad(), _widened_convolutions():
+        logits = model(input_features=mel, decoder_input_ids=tokens).logits
+    extra["mel"] = mel[0].transpose(0, 1).float().contiguous()
+    extra["tokens"] = tokens[0].to(torch.int32).contiguous()
+    globals()["_extra"] = extra
+    return logits[0].float().contiguous()
+
+
 def run_whisper(image, checkpoint):
     """Whisper tiny transcription, from openai-whisper itself.
 
@@ -21519,7 +21585,7 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
           "snac": run_snac, "siglip2_probe": run_siglip2_probe, "clip_probe": run_clip_probe, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
           "gemma4_shared_kv": run_gemma4_shared_kv}
-CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "clip_text_probe": run_clip_text_probe, "sd_vae_probe": run_sd_vae_probe, "gemma3n_audio_probe": run_gemma3n_audio_probe, "sd_unet_probe": run_sd_unet_probe, "sa2va_llava_probe": run_sa2va_llava_probe, "t5_seq2seq_probe": run_t5_seq2seq_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
+CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "clip_text_probe": run_clip_text_probe, "sd_vae_probe": run_sd_vae_probe, "gemma3n_audio_probe": run_gemma3n_audio_probe, "sd_unet_probe": run_sd_unet_probe, "sa2va_llava_probe": run_sa2va_llava_probe, "whisper_f16_probe": run_whisper_f16_probe, "t5_seq2seq_probe": run_t5_seq2seq_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,

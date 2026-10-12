@@ -601,6 +601,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   within 0.036 of its own block floor, and the SD3 transformer's velocity matches the reference's bit for
   bit.
 
+#### Whisper computes at the precision it loads
+
+- Whisper loaded from OpenAI's float16 `.pt` held float16 weights but computed in float32, because the
+  log-mel entered as float32. The mel now takes the encoder's type, so a float16 release computes at
+  float16 at half the memory.
+- The variant factories take a precision, `NFKMLXWeightPrecisionCheckpoint` (the file's type, which the
+  existing factories keep) or `NFKMLXWeightPrecisionFloat32`, for local, downloaded, and asynchronously
+  downloaded weights.
+- Measured at float16 on tiny: every encoder and decoder layer within 0.35 of its own block floor.
+
 #### Sa2VA-LLaVA loads at bfloat16
 
 - `NFKMLXSa2VALLaVANet.load(directoryURL:dtype:)` loads at bf16 by default, as the other Sa2VA families do,

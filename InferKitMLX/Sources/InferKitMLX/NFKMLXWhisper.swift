@@ -453,6 +453,12 @@ public final class NFKMLXWhisperNet: Module {
         return values.withUnsafeBufferPointer { MLXArray($0, [length, length]) }
     }
 
+    /// The float32 log-mel in the encoder's type, so a half-precision load computes at half precision as
+    /// the reference does with its input features cast to the model's type.
+    func typed(_ mel: MLXArray) -> MLXArray {
+        mel.asType(NFKReferenceRounding.parameterType(of: encoder))
+    }
+
     /// Greedy transcription: seeds the decode prompt, applies the decoder's suppression rules, and
     /// returns the generated token ids (prompt excluded).
     ///
@@ -461,7 +467,7 @@ public final class NFKMLXWhisperNet: Module {
     /// immediate `<|endoftext|>`, and applies only to the first sampled position, which is the
     /// reference's `SuppressBlank`.
     func transcribe(_ mel: MLXArray) -> [Int] {
-        let audio = encoder(mel)
+        let audio = encoder(typed(mel))
         var tokens = configuration.promptTokens
         let promptCount = tokens.count
         let standing = suppressionMask()
@@ -502,7 +508,7 @@ public final class NFKMLXWhisperNet: Module {
     ///
     /// Introduced in InferKit 0.1.0.
     public func transcribeWithTimestamps(_ mel: MLXArray) -> (segments: [TimedSegment], tokens: [Int]) {
-        let audio = encoder(mel)
+        let audio = encoder(typed(mel))
         let prompt = configuration.promptTokens.filter { $0 != noTimestampsToken }
         var tokens = prompt
         let standing = suppressionMask(through: configuration.timestampBegin)
@@ -776,17 +782,30 @@ public final class NFKMLXWhisper: NSObject {
     }
 
     /// Builds Whisper at one of the released sizes — the enum's whole point. Every size is at parity in
-    /// the tests, and this is the only factory that reaches small, medium, and large-v3.
+    /// the tests, and this is the only factory that reaches small, medium, and large-v3. The weights load
+    /// as the file stores them (`NFKMLXWeightPrecisionCheckpoint`).
     @objc(backendWithVariant:weightsURL:tokenizer:timestamps:error:)
     public static func backend(variant: NFKMLXWhisperVariant, weightsURL: URL?,
                                tokenizer: NFKTokenizer?, timestamps: Bool) throws -> any NFKInferenceBackend {
+        try backend(variant: variant, weightsURL: weightsURL, tokenizer: tokenizer, timestamps: timestamps,
+                    precision: .checkpoint)
+    }
+
+    /// Builds a size at a chosen precision. `NFKMLXWeightPrecisionCheckpoint` keeps the file's type, so
+    /// OpenAI's float16 `.pt` releases compute at float16, half the memory of float32;
+    /// `NFKMLXWeightPrecisionFloat32` widens a half-precision file and computes in float32.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(backendWithVariant:weightsURL:tokenizer:timestamps:precision:error:)
+    public static func backend(variant: NFKMLXWhisperVariant, weightsURL: URL?, tokenizer: NFKTokenizer?,
+                               timestamps: Bool, precision: NFKMLXWeightPrecision) throws -> any NFKInferenceBackend {
         var configuration = self.configuration(for: variant)
         if let tokenizer {
             configuration.suppressTokens = NFKMLXWhisperSuppression.nonSpeechTokens(using: tokenizer)
         }
         let net = NFKMLXWhisperNet(configuration)
         if let weightsURL {
-            try loadWeights(into: net, from: weightsURL)
+            try loadWeights(into: net, from: weightsURL, precision: precision)
         }
         let holder = NFKMLXWhisperHolder(net)
         let backend = NFKMLXWhisperBackend(net: holder.net, tokenizer: tokenizer, identifier: modelName)
@@ -798,6 +817,15 @@ public final class NFKMLXWhisper: NSObject {
     @objc(backendWithVariant:weightsURL:error:)
     public static func backend(variant: NFKMLXWhisperVariant, weightsURL: URL?) throws -> any NFKInferenceBackend {
         try backend(variant: variant, weightsURL: weightsURL, tokenizer: nil, timestamps: false)
+    }
+
+    /// Builds a size from local weights at a chosen precision, ids-only.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(backendWithVariant:weightsURL:precision:error:)
+    public static func backend(variant: NFKMLXWhisperVariant, weightsURL: URL?,
+                               precision: NFKMLXWeightPrecision) throws -> any NFKInferenceBackend {
+        try backend(variant: variant, weightsURL: weightsURL, tokenizer: nil, timestamps: false, precision: precision)
     }
 
     /// Downloads the checkpoint from Hugging Face, then builds — no registry required.
@@ -829,6 +857,29 @@ public final class NFKMLXWhisper: NSObject {
         return try backend(variant: variant, weightsURL: url)
     }
 
+    /// The download factory at a chosen size and precision. Blocking; run off the render thread.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:precision:error:)
+    public static func backend(variant: NFKMLXWhisperVariant, repo: String, weightsPath: String, revision: String?,
+                               cacheDirectoryURL: URL?, precision: NFKMLXWeightPrecision) throws -> any NFKInferenceBackend {
+        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        return try backend(variant: variant, weightsURL: url, precision: precision)
+    }
+
+    /// The asynchronous form of the download factory at a chosen size and precision.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:precision:completionHandler:)
+    public static func backend(variant: NFKMLXWhisperVariant, repo: String, weightsPath: String, revision: String?,
+                               cacheDirectoryURL: URL?, precision: NFKMLXWeightPrecision,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXDownload.backend(repo: repo, weightsPath: weightsPath, revision: revision,
+                               cacheDirectoryURL: cacheDirectoryURL,
+                               build: { try backend(variant: variant, weightsURL: $0, precision: precision) },
+                               completionHandler: completionHandler)
+    }
+
     /// The asynchronous form of the variant download factory.
     @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
     public static func backend(variant: NFKMLXWhisperVariant, repo: String, weightsPath: String,
@@ -847,7 +898,8 @@ public final class NFKMLXWhisper: NSObject {
 
     /// Loads a safetensors checkpoint, transposing convolution weights: 4-D `[out,in,kH,kW]` →
     /// `[out,kH,kW,in]`, 3-D Conv1d `[out,in,k]` → `[out,k,in]`.
-    static func loadWeights(into net: NFKMLXWhisperNet, from url: URL, remap: (String) -> String = { $0 }) throws {
+    static func loadWeights(into net: NFKMLXWhisperNet, from url: URL, remap: (String) -> String = { $0 },
+                            precision: NFKMLXWeightPrecision = .checkpoint) throws {
         let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         // A transformers export names the same tensors its own way; translate rather than reject.
@@ -858,7 +910,7 @@ public final class NFKMLXWhisper: NSObject {
             if checkpoint.needsConvTranspose, value.ndim == 3 { return (name, value.transposed(0, 2, 1)) }
             return (name, value)
         }
-        try NFKMLXWeights.apply(mapped, to: net)
+        try NFKMLXWeights.apply(NFKMLXWeights.converted(mapped, to: precision), to: net)
     }
 
     /// The OpenAI-layout name a transformers Whisper tensor maps to, or nil for one with no
