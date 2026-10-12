@@ -601,6 +601,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   within 0.036 of its own block floor, and the SD3 transformer's velocity matches the reference's bit for
   bit.
 
+#### The Gemma 3n audio encoder computes in bfloat16 at a bfloat16 load
+
+- The audio encoder's activation clamp built its bounds in float32, which promoted every activation it
+  touched to float32, so a bf16 load ran the whole tower in float32. The bounds take the input's type, as
+  the reference's 0-dimensional bounds do, and the tower computes at bf16.
+- Its gated linear unit, the tanh around the attention's logit cap, the per-dimension query scale's
+  softplus, and its SiLUs round once, as torch's do, and its convolutions round once with their bias.
+- Measured at bf16: every Conformer block within 0.17 of its own block floor, and every piece of the first
+  and last blocks within 0.012.
+
 #### Local language models call tools
 
 - The MLX language backends render `NFKParameterTools` into the release's own chat template and

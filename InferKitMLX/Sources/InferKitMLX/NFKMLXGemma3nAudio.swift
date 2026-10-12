@@ -164,7 +164,7 @@ final class NFKGemma3nAudioConvBlock: Module {
         let inputChannels = index == 0 ? 1 : c.convChannels[index - 1]
         let kernel = c.convKernels[index], stride = c.convStrides[index]
         timePadding = kernel.time - 1
-        _convolution.wrappedValue = Conv2d(inputChannels: inputChannels,
+        _convolution.wrappedValue = NFKConv2d(inputChannels: inputChannels,
                                            outputChannels: c.convChannels[index],
                                            kernelSize: IntOrPair((kernel.time, kernel.frequency)),
                                            stride: IntOrPair((stride.time, stride.frequency)),
@@ -243,10 +243,7 @@ final class NFKGemma3nAudioRelativePosition: Module {
         let context = keys.shape[2]
 
         // The spans run from the furthest key behind to the furthest ahead.
-        let spans = MLXArray(stride(from: maximumBackward, through: -maximumForward, by: -1).map(Float.init))
-            .reshaped([1, -1, 1])
-        let scaled = spans * MLXArray(inverseTimescales).reshaped([1, 1, inverseTimescales.count])
-        let timing = concatenated([sin(scaled), cos(scaled)], axis: -1).asType(queries.dtype)
+        let timing = timing(dtype: queries.dtype)
         let span = timing.shape[1]
         let embedded = positionProjection(timing).reshaped([span, heads, headDimensions])
 
@@ -258,6 +255,15 @@ final class NFKGemma3nAudioRelativePosition: Module {
             .reshaped([batch, heads, blocks, chunk, span])
 
         return content + shifted(position, chunk: chunk, context: context, span: span)
+    }
+
+    /// The sinusoids `[1, span, channels]` over the relative positions, the furthest key behind first and the
+    /// furthest ahead last, computed in float32 and taken to `dtype`.
+    func timing(dtype: DType) -> MLXArray {
+        let spans = MLXArray(stride(from: maximumBackward, through: -maximumForward, by: -1).map(Float.init))
+            .reshaped([1, -1, 1])
+        let scaled = spans * MLXArray(inverseTimescales).reshaped([1, 1, inverseTimescales.count])
+        return concatenated([sin(scaled), cos(scaled)], axis: -1).asType(dtype)
     }
 
     /// The Transformer-XL relative shift: a pad, a reshape, a drop, and a reshape, which turns a
@@ -339,7 +345,8 @@ final class NFKGemma3nAudioAttention: Module {
         let blocks = queryBlocks.shape[1]
 
         var logits = relativePosition(queries: queryBlocks, keys: keyBlocks)
-        logits = tanh(logits / softcap) * softcap
+        logits = NFKReferenceRounding.scaled(
+            NFKReferenceRounding.wide(NFKReferenceRounding.divided(logits, by: softcap)) { tanh($0) }, by: softcap)
 
         // The validity mask is never skipped, even when every frame carries audio: the context a block
         // reads is ZERO-PADDED at both ends, and the reference marks those padded frames invalid by
@@ -399,9 +406,10 @@ enum NFKGemma3nAudioBlocking {
     }
 }
 
-/// The numerically stable softplus, which MLX does not vend as a free function.
+/// The numerically stable softplus, which MLX does not vend as a free function, rounded once at half
+/// precision as torch's is.
 private func softplus(_ x: MLXArray) -> MLXArray {
-    maximum(x, 0) + log1p(exp(-abs(x)))
+    NFKReferenceRounding.wide(x) { maximum($0, 0) + log1p(exp(-abs($0))) }
 }
 
 // MARK: - Conformer
@@ -428,7 +436,7 @@ final class NFKGemma3nAudioFeedForward: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let widened = contract(silu(expand(preNorm(clipped(x, clip)))))
+        let widened = contract(NFKReferenceRounding.silu(expand(preNorm(clipped(x, clip)))))
         return x + postNorm(clipped(widened, clip)) * residualWeight
     }
 }
@@ -477,7 +485,7 @@ final class NFKGemma3nAudioLightConvolution: Module {
         causalPadding = c.convolutionKernelSize - 1
         _preNorm.wrappedValue = NFKGemma3nNorm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
         _start.wrappedValue = Linear(c.hiddenSize, c.hiddenSize * 2, bias: false)
-        _depthwise.wrappedValue = Conv1d(inputChannels: c.hiddenSize, outputChannels: c.hiddenSize,
+        _depthwise.wrappedValue = NFKConv1d(inputChannels: c.hiddenSize, outputChannels: c.hiddenSize,
                                          kernelSize: c.convolutionKernelSize, stride: 1, padding: 0,
                                          groups: c.hiddenSize, bias: false)
         _convNorm.wrappedValue = NFKGemma3nNorm(dimensions: c.hiddenSize, eps: c.rmsEpsilon)
@@ -488,10 +496,16 @@ final class NFKGemma3nAudioLightConvolution: Module {
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let widened = start(preNorm(x))
         let half = widened.shape[2] / 2
-        let gated = widened[0..., 0..., 0 ..< half] * sigmoid(widened[0..., 0..., half...])
+        let gated = glu(widened[0..., 0..., 0 ..< half], widened[0..., 0..., half...])
         // The convolution sees no future: the padding is entirely on the left.
         let padded = padded(gated, widths: [IntOrPair(0), IntOrPair((causalPadding, 0)), IntOrPair(0)])
-        return x + end(silu(convNorm(clipped(depthwise(padded), clip))))
+        return x + end(NFKReferenceRounding.silu(convNorm(clipped(depthwise(padded), clip))))
+    }
+
+    /// torch's `glu`, `a · sigmoid(b)` computed in float32 and rounded once at half precision.
+    private func glu(_ a: MLXArray, _ b: MLXArray) -> MLXArray {
+        guard NFKReferenceRounding.isReduced(a) else { return a * sigmoid(b) }
+        return (a.asType(.float32) * sigmoid(b.asType(.float32))).asType(a.dtype)
     }
 }
 
@@ -581,9 +595,11 @@ public final class NFKMLXGemma3nAudioNet: Module {
     }
 }
 
-/// The activation clamp Gemma 3n's audio blocks apply, at inference as well as in training.
+/// The activation clamp Gemma 3n's audio blocks apply, at inference as well as in training. The bounds
+/// take `x`'s type, as the reference's are a 0-dimensional tensor that leaves a half-precision input in its
+/// type; a float32 bound array would promote the whole tower.
 private func clipped(_ x: MLXArray, _ bound: Float) -> MLXArray {
-    MLX.clip(x, min: MLXArray(-bound), max: MLXArray(bound))
+    MLX.clip(x, min: MLXArray(-bound).asType(x.dtype), max: MLXArray(bound).asType(x.dtype))
 }
 
 // MARK: - Building from a release

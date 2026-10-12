@@ -5281,6 +5281,81 @@ def run_gemma3n_mel(image, checkpoint):
     return features["input_features"][0].float().contiguous()
 
 
+def _widened_convolutions():
+    """A context in which torch's `conv1d` and `conv2d` at bf16 compute in float32 and round once. torch's CPU
+    kernels at bf16 take a reference path some 500 times slower than float32's; they accumulate in float32
+    and round once, so the two agree to accumulation order."""
+    import contextlib
+    import torch.nn.functional as F
+
+    @contextlib.contextmanager
+    def widened():
+        originals = {"conv1d": F.conv1d, "conv2d": F.conv2d}
+        def wrap(convolution):
+            def widened_convolution(input, weight, bias=None, *args, **kwargs):
+                if input.dtype != torch.bfloat16:
+                    return convolution(input, weight, bias, *args, **kwargs)
+                return convolution(input.float(), weight.float(), None if bias is None else bias.float(),
+                                   *args, **kwargs).to(torch.bfloat16)
+            return widened_convolution
+        for name, convolution in originals.items():
+            setattr(F, name, wrap(convolution))
+        try:
+            yield
+        finally:
+            for name, convolution in originals.items():
+                setattr(F, name, convolution)
+    return widened()
+
+
+def run_gemma3n_audio_probe(image, checkpoint):
+    """`gemma3n_audio_real`'s encoder and seeded mel at bf16 or on its float32 floor (`IK_PROBE_DTYPE`),
+    block by block. The bf16 run loads the release as `from_pretrained` does, which builds the attention's
+    `q_scale`, the position timescales, and the clamp bounds at the load's type; the float32 floor builds
+    the encoder alone with every parameter rounded to bf16 and back. The mel is rounded to bf16 for both.
+    Records `mel`, `audio.hidden.i` (Conformer block `i`'s input, `.L` the last block's output), every
+    submodule of the blocks `IK_PROBE_LAYERS` names (default the first and last) as
+    `audio.<i>.<name>.in` / `.out`, and returns the encoder's output. `IK_PROBE_BLOCK_FLOOR=1` adds a floor
+    to the front end, each block, and the probed blocks' submodules. Each convolution at bf16 computes in
+    float32 and rounds once (`_widened_convolutions`). Runs under `gemmavenv`."""
+    import glob
+    from safetensors.torch import load_file
+    from transformers import AutoConfig, Gemma3nForConditionalGeneration
+    from transformers.models.gemma3n.modeling_gemma3n import Gemma3nAudioEncoder
+
+    config = AutoConfig.from_pretrained(checkpoint).audio_config
+    bf16 = os.environ.get("IK_PROBE_DTYPE") == "bfloat16"
+    if bf16:
+        tower = _loaded(Gemma3nForConditionalGeneration, checkpoint, torch.bfloat16).model.audio_tower
+    else:
+        tower = Gemma3nAudioEncoder(config).eval().float()
+        prefix, collected = "model.audio_tower.", {}
+        for shard in sorted(glob.glob(os.path.join(checkpoint, "*.safetensors"))):
+            for key, value in load_file(shard).items():
+                if key.startswith(prefix):
+                    collected[key[len(prefix):]] = value.to(torch.bfloat16).float()
+        missing, unexpected = tower.load_state_dict(collected, strict=False)
+        if missing or unexpected:
+            raise SystemExit(f"audio tower did not load strictly: missing {missing[:5]} unexpected {unexpected[:5]}")
+    dtype = torch.bfloat16 if bf16 else torch.float32
+
+    torch.manual_seed(11)
+    frames = 300
+    mel = torch.randn(1, frames, config.input_feat_size).to(torch.bfloat16).to(dtype)
+    mask = torch.zeros(1, frames, dtype=torch.bool)
+    blocks = tower.conformer
+    probed = [int(x) for x in os.environ.get("IK_PROBE_LAYERS", f"0,{len(blocks) - 1}").split(",")]
+    extra = {}
+    _probe_layer_states(blocks, extra, "audio", probed)
+    _block_floor_hooks([tower.subsample_conv_projection], ["audio.hidden.0"], extra, verify=True)
+    with torch.no_grad(), _widened_convolutions():
+        out = tower(audio_mel=mel, audio_mel_mask=mask)
+    encoded = out.last_hidden_state if hasattr(out, "last_hidden_state") else out[0]
+    extra["mel"] = mel[0].float().contiguous()
+    globals()["_extra"] = extra
+    return encoded[0].float().contiguous()
+
+
 def run_gemma3n_audio_real(image, checkpoint):
     """The Gemma 3n audio encoder on the RELEASED weights, loaded on its own out of the tri-modal
     checkpoint (the decoder and the vision tower stay on disk).
@@ -21231,7 +21306,7 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
           "snac": run_snac, "siglip2_probe": run_siglip2_probe, "clip_probe": run_clip_probe, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
           "gemma4_shared_kv": run_gemma4_shared_kv}
-CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "clip_text_probe": run_clip_text_probe, "sd_vae_probe": run_sd_vae_probe, "t5_seq2seq_probe": run_t5_seq2seq_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
+CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "clip_text_probe": run_clip_text_probe, "sd_vae_probe": run_sd_vae_probe, "gemma3n_audio_probe": run_gemma3n_audio_probe, "t5_seq2seq_probe": run_t5_seq2seq_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,

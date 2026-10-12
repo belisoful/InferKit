@@ -855,6 +855,82 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         print("VALIDATION bf16 flux-vae pieces:\n" + lines.joined(separator: "\n"))
     }
 
+    // The Gemma 3n E2B audio encoder (`IK_VAL_GEMMA3N_E2B`, released bf16) at bf16 against transformers'
+    // `Gemma3nAudioEncoder` as `from_pretrained` loads it at bf16 (`gemma3n_audio_probe`, the float32 side on the
+    // same bf16 weights), over a seeded mel: the front end, every Conformer block, and the output, then each
+    // piece of the first and last blocks on the reference's own input.
+    func testGemma3nAudioInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_GEMMA3N_E2B"], "IK_VAL_GEMMA3N_E2B"))
+        let bf16 = try record("gemma3n_audio_bf16.safetensors"), f32 = try record("gemma3n_audio_f32.safetensors")
+        let net = NFKMLXGemma3nAudioNet(try NFKMLXGemma3nAudio.configuration(
+            fromHuggingFace: directory.appendingPathComponent("config.json")))
+        try NFKMLXGemma3nAudio.loadWeights(into: net, fromDirectory: directory, precision: .checkpoint)
+        func recorded(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16).expandedDimensions(axis: 0)
+        }
+        let mel = try recorded("mel")
+        let blocks = net.conformer
+
+        var hidden = net.subsample(mel)
+        XCTAssertEqual(hidden.dtype, .bfloat16, "a bf16 load computes the encoder at bf16")
+        var states = [("front end", hidden[0])], keys = ["audio.hidden.0"]
+        var isolated = [("front end", hidden[0])], isolatedKeys = ["audio.hidden.0"]
+        for (index, block) in blocks.enumerated() {
+            hidden = block(hidden, valid: nil)
+            states.append(("block \(index)", hidden[0]))
+            keys.append("audio.hidden.\(index + 1)")
+            isolated.append(("block \(index)", block(try recorded("audio.hidden.\(index)"), valid: nil)[0]))
+            isolatedKeys.append("audio.hidden.\(index + 1)")
+        }
+        let (encoded, _) = net(mel)
+        XCTAssertEqual(encoded.dtype, .bfloat16, "the encoder's output stays bf16")
+        states.append(("output", encoded[0]))
+        keys.append("output")
+        eval(states.map(\.1) + isolated.map(\.1))
+        let rows = try seams(states, bf16: bf16, f32: f32, keys: keys)
+        report("gemma3n-audio", rows)
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolatedKeys)
+        report("gemma3n-audio isolated", isolatedRows)
+        assertRoundingPlacement("gemma3n-audio", endToEnd: rows, isolated: isolatedRows)
+
+        var lines = [String]()
+        for index in [0, blocks.count - 1] {
+            let block = blocks[index], p = "audio.\(index)."
+            func input(_ name: String) throws -> MLXArray { try recorded(p + name + ".in") }
+            let start = block.feedForwardStart, attention = block.attention, light = block.convolution
+            lines.append("block \(index)")
+            lines.append(try piece("ffw_start", start(input("ffw_layer_start")), bf16, p + "ffw_layer_start.out"))
+            lines.append(try piece("ffw_start pre norm", start.preNorm(input("ffw_layer_start.pre_layer_norm")), bf16,
+                                   p + "ffw_layer_start.pre_layer_norm.out"))
+            lines.append(try piece("ffw_start layer 1", start.expand(input("ffw_layer_start.ffw_layer_1")), bf16,
+                                   p + "ffw_layer_start.ffw_layer_1.out"))
+            lines.append(try piece("ffw_start layer 2", start.contract(input("ffw_layer_start.ffw_layer_2")), bf16,
+                                   p + "ffw_layer_start.ffw_layer_2.out"))
+            lines.append(try piece("attention", attention(input("attention"), valid: nil), bf16, p + "attention.out"))
+            lines.append(try piece("attention core", attention.attention(input("attention.attn"), valid: nil), bf16,
+                                   p + "attention.attn.out"))
+            lines.append(try piece("q_proj", attention.attention.queryProjection(input("attention.attn.q_proj")), bf16,
+                                   p + "attention.attn.q_proj.out"))
+            let timing = attention.attention.relativePosition.timing(dtype: .bfloat16)
+            lines.append(try piece("position sinusoids", timing, bf16, p + "attention.attn.relative_position_embedding.pos_proj.in"))
+            lines.append(try piece("pos_proj", attention.attention.relativePosition.positionProjection(
+                input("attention.attn.relative_position_embedding.pos_proj")), bf16,
+                p + "attention.attn.relative_position_embedding.pos_proj.out"))
+            lines.append(try piece("attention post", attention.post(input("attention.post")), bf16, p + "attention.post.out"))
+            lines.append(try piece("lconv1d", light(input("lconv1d")), bf16, p + "lconv1d.out"))
+            lines.append(try piece("linear_start", light.start(input("lconv1d.linear_start")), bf16, p + "lconv1d.linear_start.out"))
+            lines.append(try piece("depthwise", light.depthwise(try XCTUnwrap(bf16[p + "lconv1d.depthwise_conv1d.in"], "no depthwise input")
+                .asType(.bfloat16).transposed(1, 0).expandedDimensions(axis: 0)).transposed(0, 2, 1), bf16,
+                p + "lconv1d.depthwise_conv1d.out"))
+            lines.append(try piece("conv_norm", light.convNorm(input("lconv1d.conv_norm")), bf16, p + "lconv1d.conv_norm.out"))
+            lines.append(try piece("linear_end", light.end(input("lconv1d.linear_end")), bf16, p + "lconv1d.linear_end.out"))
+            lines.append(try piece("ffw_end", block.feedForwardEnd(input("ffw_layer_end")), bf16, p + "ffw_layer_end.out"))
+            lines.append(try piece("norm", block.norm(input("norm")), bf16, p + "norm.out"))
+        }
+        print("VALIDATION bf16 gemma3n-audio pieces:\n" + lines.joined(separator: "\n"))
+    }
+
     // MARK: Gemma 4
 
     // The E2B decoder at the released bf16 against transformers built at bf16 (`hf_layer_probe`,
