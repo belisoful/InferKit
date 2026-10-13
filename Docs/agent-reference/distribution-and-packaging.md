@@ -58,6 +58,11 @@ iOS device, iOS simulator):
 A static consumer's binary grows by about 29 MB plus the shaders. A dynamic consumer ships the
 21 MB framework binary, which carries them.
 
+Run the script from a checkout whose root folder is named `InferKit`. SwiftPM takes a path dependency's
+identity from its folder name, so InferKitMLX's `../` dependency on the core fails to resolve from a
+differently named copy ("unknown package 'InferKit' in dependencies of target 'InferKitMLX'"), as the
+workspace's `group:../InferKit` reference does.
+
 What made it possible. MLX needs `default.metallib`, which SwiftPM delivers as a
 `mlx-swift_Cmlx.bundle` resource, and a bare library carries no resources. MLX's loader
 (`mlx/backend/metal/device.cpp`) tries four places, and `current_binary_dir()` is `dladdr` on MLX's
