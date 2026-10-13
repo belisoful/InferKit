@@ -354,6 +354,8 @@ final class NFKSDAttention: Module {
     let heads: Int
     let dimensions: Int
     let contextDimensions: Int
+    /// The release's `upcast_attention`, which diffusers' classic processor honors.
+    var upcasts = false
 
     init(dimensions: Int, contextDimensions: Int, heads: Int) {
         self.heads = heads
@@ -387,9 +389,11 @@ final class NFKSDAttention: Module {
             value.reshaped([value.shape[0], value.shape[1], heads, headDimensions]).transposed(0, 2, 1, 3)
         }
         let queries = split(toQ(x))
-        var out = NFKReferenceRounding.flashAttention(
-            queries: queries, keys: split(toK(source)), values: split(toV(source)),
-            scale: 1 / sqrt(Float(headDimensions)), mask: nil)
+        var out = upcasts
+            ? NFKReferenceRounding.upcastAttention(queries: queries, keys: split(toK(source)), values: split(toV(source)),
+                                                   scale: 1 / sqrt(Float(headDimensions)))
+            : NFKReferenceRounding.flashAttention(queries: queries, keys: split(toK(source)), values: split(toV(source)),
+                                                  scale: 1 / sqrt(Float(headDimensions)), mask: nil)
         // The image-conditioned attention shares the query and reads its own projections of the image
         // tokens, added at the adapter's scale — the IP-Adapter's decoupled cross-attention.
         if let ip, let toKIP, let toVIP {
@@ -398,7 +402,7 @@ final class NFKSDAttention: Module {
             let imageAttention = NFKReferenceRounding.flashAttention(
                 queries: queries, keys: split(toKIP(tokens)), values: split(toVIP(tokens)),
                 scale: 1 / sqrt(Float(headDimensions)), mask: nil)
-            out = out + ip.scale * imageAttention
+            out = out + NFKReferenceRounding.scaled(imageAttention, by: ip.scale)
         }
         return toOut(out.transposed(0, 2, 1, 3).reshaped([batch, x.shape[1], dimensions]))
     }
@@ -711,6 +715,17 @@ public final class NFKMLXSDUNet: Module {
         self._convOut.wrappedValue = NFKConv2d(inputChannels: c.blockChannels[0],
                                                outputChannels: c.outputChannels,
                                                kernelSize: 3, padding: 1)
+    }
+
+    /// Whether every attention computes its scores in float32, as a release that sets `upcast_attention`
+    /// asks. ``NFKMLXStableDiffusionModels/loadUNetWeights(into:from:precision:)`` reads it from the release.
+    var upcastsAttention: Bool {
+        get { modules().contains { ($0 as? NFKSDAttention)?.upcasts == true } }
+        set {
+            for case let attention as NFKSDAttention in modules() {
+                attention.upcasts = newValue
+            }
+        }
     }
 
     /// - Parameters:
@@ -1050,6 +1065,17 @@ public final class NFKMLXStableDiffusionModels: NSObject {
             return (name, value)
         }
         try NFKMLXWeights.apply(NFKMLXWeights.converted(mapped, to: precision), to: net)
+        net.upcastsAttention = upcastsAttention(unetWeightsURL: url)
+    }
+
+    /// Whether the release's `config.json` beside a UNet checkpoint sets `upcast_attention` (Stable
+    /// Diffusion 2.1), under which diffusers' classic attention forms its scores in float32. A half-precision
+    /// run that rounds the raw scores overflows on this release.
+    static func upcastsAttention(unetWeightsURL url: URL) -> Bool {
+        let configURL = url.deletingLastPathComponent().appendingPathComponent("config.json")
+        guard let data = try? Data(contentsOf: configURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return json["upcast_attention"] as? Bool ?? false
     }
 
     /// The autoencoder geometry a diffusers `vae/config.json` describes: its widths, depth, groups,

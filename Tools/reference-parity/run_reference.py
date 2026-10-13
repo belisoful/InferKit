@@ -5386,8 +5386,12 @@ def run_sd_unet_probe(image, checkpoint):
     `conv_norm_out`, `conv_act`, and `conv_out`; and every
     submodule of the first transformer block of the first down-block attention as
     `piece.<name>.in` / `.out`. `IK_PROBE_BLOCK_FLOOR=1` floors each stage and piece. Each convolution at a
-    half precision computes in float32 and rounds once (`_widened_convolutions`). Returns the predicted
-    noise, channels last. Runs under the `sd` oracle env. `image` unused."""
+    half precision computes in float32 and rounds once (`_widened_convolutions`). A float32 release runs at
+    float16 cast as `from_pretrained(torch_dtype=float16)` casts it, and its float32 side rounds every
+    parameter to float16 and back. `IK_PROBE_IP_ADAPTER` names an IP-Adapter file to attach as diffusers'
+    `load_ip_adapter` does (at the UNet's type), at scale 0.6 over a seeded image embedding; it records
+    `image_embeds` and the projected `ip.tokens`. Returns the predicted noise, channels last. Runs under the
+    `sd` oracle env. `image` unused."""
     from diffusers import UNet2DConditionModel
 
     half = os.environ.get("IK_PROBE_DTYPE") == "float16"
@@ -5395,6 +5399,25 @@ def run_sd_unet_probe(image, checkpoint):
     unet = UNet2DConditionModel.from_pretrained(checkpoint, variant=variant,
                                                 torch_dtype=torch.float16 if half else torch.float32).eval()
     dtype = torch.float16 if half else torch.float32
+    if not half:
+        with torch.no_grad():
+            for parameter in unet.parameters():
+                parameter.data = parameter.data.to(torch.float16).float()
+    if unet.config.upcast_attention:
+        # Stable Diffusion 2.1 asks for float32 attention scores, which only the classic processor computes;
+        # torch's half-precision flash kernel rounds the raw scores and overflows on this release.
+        from diffusers.models.attention_processor import AttnProcessor
+        unet.set_attn_processor(AttnProcessor())
+    adapter = os.environ.get("IK_PROBE_IP_ADAPTER")
+    if adapter:
+        from safetensors.torch import load_file
+        state = load_file(adapter)
+        unet._load_ip_adapter_weights([{
+            "image_proj": {k[len("image_proj."):]: v for k, v in state.items() if k.startswith("image_proj.")},
+            "ip_adapter": {k[len("ip_adapter."):]: v for k, v in state.items() if k.startswith("ip_adapter.")}}])
+        for processor in unet.attn_processors.values():
+            if hasattr(processor, "scale"):
+                processor.scale = [0.6]
     config = unet.config
     size = int(os.environ.get("IK_SD_SIZE", "32"))
     generator = torch.Generator().manual_seed(3)
@@ -5412,6 +5435,15 @@ def run_sd_unet_probe(image, checkpoint):
         kwargs["added_cond_kwargs"] = {"text_embeds": pooled, "time_ids": time_ids}
         extra["pooled"] = pooled[0].float().contiguous()
         extra["time_ids"] = time_ids[0].float().contiguous()
+    if adapter:
+        image_embeds = seeded(1, 1, 1024)
+        kwargs.setdefault("added_cond_kwargs", {})["image_embeds"] = [image_embeds]
+        extra["image_embeds"] = image_embeds[0, 0].float().contiguous()
+        projection = unet.encoder_hid_proj.image_projection_layers[0]
+        projection.register_forward_hook(
+            lambda m, a, o: extra.__setitem__("ip.tokens", o[0].detach().float().clone().contiguous()) and None)
+        _block_floor_hooks([projection], ["ip.tokens"], extra,
+                           keep=lambda value: value[0].detach().float().clone().contiguous())
 
     def channels_last(value):
         value = (value[0] if isinstance(value, tuple) else value)[0].detach().float()
@@ -10131,13 +10163,24 @@ def run_sd_vae_probe(image, checkpoint):
     with open(os.path.join(checkpoint, "config.json")) as handle:
         kind = getattr(diffusers, json.load(handle).get("_class_name", "AutoencoderKL"))
     vae = kind.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
-    bf16 = _probe_precision([vae])
-    dtype = torch.bfloat16 if bf16 else torch.float32
+    # IK_PROBE_DTYPE=float16 runs at float16, and IK_PROBE_FLOOR=float16 rounds the float32 side's weights to it.
+    rounding = getattr(torch, os.environ.get("IK_PROBE_DTYPE") or os.environ.get("IK_PROBE_FLOOR", "bfloat16"))
+    if os.environ.get("IK_PROBE_DTYPE") == "float16":
+        vae.to(torch.float16)
+        bf16 = True
+    elif os.environ.get("IK_PROBE_DTYPE") == "bfloat16" or rounding == torch.bfloat16:
+        bf16 = _probe_precision([vae])
+    else:
+        with torch.no_grad():
+            for parameter in vae.parameters():
+                parameter.data = parameter.data.to(rounding).float()
+        bf16 = False
+    dtype = rounding if bf16 else torch.float32
     generator = torch.Generator().manual_seed(0)
     latent = torch.randn(1, vae.config.latent_channels, size // 8, size // 8, generator=generator)
-    latent = latent.to(torch.bfloat16).to(dtype)
+    latent = latent.to(rounding).to(dtype)
     yy, xx = torch.meshgrid(torch.linspace(-1, 1, size), torch.linspace(-1, 1, size), indexing="ij")
-    plate = torch.stack([xx, yy, (xx * yy).sin()]).unsqueeze(0).to(torch.bfloat16).to(dtype)
+    plate = torch.stack([xx, yy, (xx * yy).sin()]).unsqueeze(0).to(rounding).to(dtype)
 
     extra = {}
     def keep(value):
@@ -10175,19 +10218,9 @@ def run_sd_vae_probe(image, checkpoint):
     # torch's CPU `conv2d` at bf16 takes a reference kernel some 500 times slower than float32's. It
     # accumulates in float32 and rounds once, so the bf16 run computes each convolution that way; the two
     # agree to accumulation order (a few elements in 10^4, a step apart).
-    convolution = torch.nn.functional.conv2d
-    def widened_conv2d(input, weight, bias=None, *args, **kwargs):
-        if input.dtype != torch.bfloat16:
-            return convolution(input, weight, bias, *args, **kwargs)
-        return convolution(input.float(), weight.float(), None if bias is None else bias.float(),
-                           *args, **kwargs).to(torch.bfloat16)
-    torch.nn.functional.conv2d = widened_conv2d
-    try:
-        with torch.no_grad():
-            decoded = vae.decode(latent).sample
-            vae.encode(plate)
-    finally:
-        torch.nn.functional.conv2d = convolution
+    with torch.no_grad(), _widened_convolutions():
+        decoded = vae.decode(latent).sample
+        vae.encode(plate)
     extra["latent"] = keep(latent)
     extra["image"] = keep(plate)
     bn = getattr(vae, "bn", None)

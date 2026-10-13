@@ -27,7 +27,7 @@ public final class NFKMLXIPAdapterImageProjection: Module {
     public init(imageEmbedDim: Int = 1024, crossAttentionDim: Int = 768, numTokens: Int = 4) {
         self.numTokens = numTokens
         _imageEmbeds.wrappedValue = Linear(imageEmbedDim, numTokens * crossAttentionDim)
-        _norm.wrappedValue = LayerNorm(dimensions: crossAttentionDim)
+        _norm.wrappedValue = NFKLayerNorm(dimensions: crossAttentionDim)
     }
 
     /// `imageEmbeds` `[B, imageEmbedDim]` → `[B, numTokens, crossAttentionDim]`.

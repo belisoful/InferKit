@@ -237,6 +237,17 @@ enum NFKReferenceRounding {
         return (accumulated! / total!).asType(queries.dtype)
     }
 
+    /// diffusers' classic attention under `upcast_attention`: the queries and keys widened to float32, the
+    /// scores scaled and softmaxed in float32 and rounded to the operands' type, then the product with the
+    /// values at that type. A float32 input takes the fused kernel.
+    static func upcastAttention(queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float) -> MLXArray {
+        guard isReduced(queries) else {
+            return MLXFast.scaledDotProductAttention(queries: queries, keys: keys, values: values, scale: scale, mask: nil)
+        }
+        let scores = matmul(queries.asType(.float32), keys.asType(.float32).swappedAxes(-1, -2)) * scale
+        return matmul(softmax(scores, axis: -1).asType(queries.dtype), values)
+    }
+
     /// The `active` experts a router keeps from `scores` `[..., experts]`: the given `forced` choice
     /// (`[tokens][active]`, the tokens flattened), or else the top `active` scores. A parity test forces
     /// the reference's recorded choice, because `torch.topk` breaks a tie at the `active`-th score

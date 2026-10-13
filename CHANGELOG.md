@@ -611,6 +611,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   downloaded weights.
 - Measured at float16 on tiny: every encoder and decoder layer within 0.35 of its own block floor.
 
+#### Stable Diffusion 1.5 and 2.1 at float16
+
+- A UNet whose release sets `upcast_attention` (Stable Diffusion 2.1) forms its attention scores and softmax
+  in float32, as diffusers' classic attention does. At float16 the raw scores overflowed and the run
+  returned NaN. `loadUNetWeights(into:from:precision:)` reads the flag from the release's `config.json`.
+- The IP-Adapter's image projection normalizes as torch does at float16, and its attention is added at a
+  scale multiplied in float32.
+- Measured at float16, cast from the float32 releases: Stable Diffusion 1.5's UNet with the IP-Adapter,
+  2.1's UNet, and 1.5's autoencoder, every stage within its own block floor.
+
 #### FLUX.2 decodes at bfloat16 as diffusers does
 
 - The latent codec read its batch-norm statistics at float32, so a bf16 latent left un-whitening as

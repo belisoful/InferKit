@@ -852,15 +852,30 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
                         extra: [("codec.whiten", { codec.whiten($0) }), ("codec.unwhiten", { codec.unwhiten($0) })])
     }
 
-    // An autoencoder at bf16 against its `sd_vae_probe` records: every decoder stage over a seeded latent and
+    // Stable Diffusion 1.5's autoencoder (`IK_SD15_DIR`'s `vae/`, released float32) at float16, cast as a
+    // float16 release loads, against diffusers' `AutoencoderKL` at float16 (`sd_vae_probe`, the float32 side on
+    // the same float16-rounded weights) at 256 pixels.
+    func testSD15AutoencoderInFloat16MatchesTheFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_SD15_DIR"], "IK_SD15_DIR"))
+        let vae = NFKMLXSDAutoencoder(configuration: NFKMLXSDTextToImageConfiguration.stableDiffusion15.vae)
+        try NFKMLXStableDiffusionModels.loadVAEWeights(
+            into: vae, from: directory.appendingPathComponent("vae/diffusion_pytorch_model.safetensors"), precision: .float32)
+        vae.update(parameters: vae.parameters().mapValues { $0.asType(.float16) })
+        try autoencoder("sd15-vae", vae, bf16: try record("sd15_vae_f16.safetensors"),
+                        f32: try record("sd15_vae_f32.safetensors"), dtype: .float16)
+    }
+
+    // An autoencoder at a half precision against its `sd_vae_probe` records: every decoder stage over a seeded latent and
     // every encoder stage over a plate, each `extra` seam on its `<prefix>.in` record, then each piece of the
     // decoder's first mid resnet and of its mid attention, on the reference's input.
     private func autoencoder(_ name: String, _ vae: NFKMLXSDAutoencoder, bf16: [String: MLXArray],
-                             f32: [String: MLXArray], extra: [(String, (MLXArray) -> MLXArray)] = []) throws {
+                             f32: [String: MLXArray], extra: [(String, (MLXArray) -> MLXArray)] = [],
+                             dtype: DType = .bfloat16) throws {
         vae.train(false)
         /// A recorded channels-first map as the port's channels-last batch.
         func recorded(_ key: String) throws -> MLXArray {
-            try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16).transposed(1, 2, 0).expandedDimensions(axis: 0)
+            try XCTUnwrap(bf16[key], "no \(key)").asType(dtype).transposed(1, 2, 0).expandedDimensions(axis: 0)
         }
         func channelsFirst(_ x: MLXArray) -> MLXArray { x[0].transposed(2, 0, 1) }
 
@@ -904,7 +919,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
             isolated.append((key, channelsFirst(state(try recorded(key.components(separatedBy: ".")[0] + ".in")))))
             isolatedKeys.append(key)
         }
-        XCTAssertEqual(states[0].1.dtype, .bfloat16, "a bf16 load decodes at bf16")
+        XCTAssertEqual(states[0].1.dtype, dtype, "a half-precision load decodes at its precision")
         eval(states.map(\.1) + isolated.map(\.1))
         let rows = try seams(states, bf16: bf16, f32: f32, keys: keys)
         report(name, rows)
@@ -913,7 +928,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         assertRoundingPlacement(name, endToEnd: rows, isolated: isolatedRows)
 
         let resnet = decoder.midBlock.resnets[0].block, attention = decoder.midBlock.attentions[0]
-        func tokens(_ key: String) throws -> MLXArray { try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16) }
+        func tokens(_ key: String) throws -> MLXArray { try XCTUnwrap(bf16[key], "no \(key)").asType(dtype) }
         let r = "dec.mid.resnet0.", a = "dec.mid.attention."
         let normedTokens = try tokens(a + "group_norm.in")                       // [channels, positions]
         let grouped = attention.groupNorm(normedTokens.transposed(1, 0).reshaped([1, 1, normedTokens.dim(1), normedTokens.dim(0)]))
@@ -928,7 +943,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
             try piece("attention to_v", matmul(tokens(a + "to_v.in"), attention.toV.weight.T) + attention.toV.bias!, bf16, a + "to_v.out"),
             try piece("attention to_out", attention.toOut(tokens(a + "to_out.0.in")), bf16, a + "to_out.0.out"),
         ]
-        print("VALIDATION bf16 \(name) pieces:\n" + lines.joined(separator: "\n"))
+        print("VALIDATION \(dtype == .float16 ? "f16" : "bf16") \(name) pieces:\n" + lines.joined(separator: "\n"))
     }
 
     // The Gemma 3n E2B audio encoder (`IK_VAL_GEMMA3N_E2B`, released bf16) at bf16 against transformers'
@@ -1008,23 +1023,71 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     }
 
     // SDXL-Turbo's UNet (`IK_VAL_SDXL_DIR`'s `unet/`, released float16) at float16 as the Objective-C factories
-    // load it, against diffusers' `UNet2DConditionModel` at float16 (`sd_unet_probe`, each convolution in
-    // float32 rounded once; the float32 side widens the same float16 weights) over a seeded 32×32 latent:
-    // every resnet, sampler, and transformer block, with each transformer's norm and projections, on the
-    // reference's own input, the noise end to end, then each piece of the first transformer block.
+    // load it, against diffusers' `UNet2DConditionModel` at float16 (`sd_unet_probe`) over a seeded 32×32 latent.
     func testSDXLTurboUNetInFloat16MatchesTheFloat16Reference() throws {
         try requireMLXRuntime()
         let directory = URL(fileURLWithPath: try existing(config["IK_VAL_SDXL_DIR"], "IK_VAL_SDXL_DIR"))
-        let half = try record("sdxl_turbo_unet_f16.safetensors"), f32 = try record("sdxl_turbo_unet_f32.safetensors")
+        let half = try record("sdxl_turbo_unet_f16.safetensors")
         let unet = NFKMLXSDUNet(configuration: NFKMLXSDTextToImageConfiguration.sdxlTurbo.unet)
         try NFKMLXStableDiffusionModels.loadUNetWeights(
             into: unet, from: directory.appendingPathComponent("unet/diffusion_pytorch_model.fp16.safetensors"),
             precision: .checkpoint)
+        let added = NFKSDAddedConditioning(
+            pooled: try XCTUnwrap(half["pooled"]).asType(.float16).expandedDimensions(axis: 0),
+            timeIds: try XCTUnwrap(half["time_ids"]).expandedDimensions(axis: 0))
+        try unetInFloat16("sdxl-turbo-unet", unet, half: half, f32: try record("sdxl_turbo_unet_f32.safetensors"),
+                          added: added)
+    }
+
+    // Stable Diffusion 1.5's UNet (`IK_SD15_DIR`'s `unet/`, released float32) at float16, cast as a float16
+    // release loads, with the IP-Adapter (`IK_VAL_IPADAPTER`, released float16) attached at scale 0.6, against
+    // diffusers' `UNet2DConditionModel` at float16 with the adapter loaded at its type (`sd_unet_probe`
+    // `IK_PROBE_IP_ADAPTER`; the float32 side on the same float16-rounded weights): the image projection and
+    // every stage, each cross-attention reading the image tokens. Its first level attends over 4,096 positions,
+    // where the float16 kernel's accumulation order alone takes a transformer block to 0.3 of the accumulated
+    // floor with every piece within 0.14 of its own, so its isolated bar is 0.5; each block stays inside its
+    // own block floor.
+    func testSD15UNetWithIPAdapterInFloat16MatchesTheFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_SD15_DIR"], "IK_SD15_DIR"))
+        let adapterURL = URL(fileURLWithPath: try existing(config["IK_VAL_IPADAPTER"], "IK_VAL_IPADAPTER"))
+        var configuration = NFKMLXSDTextToImageConfiguration.stableDiffusion15.unet
+        configuration.inputChannels = 4
+        let unet = NFKMLXSDUNet(configuration: configuration)
+        try NFKMLXStableDiffusionModels.loadUNetWeights(
+            into: unet, from: directory.appendingPathComponent("unet/diffusion_pytorch_model.safetensors"), precision: .float32)
+        unet.update(parameters: unet.parameters().mapValues { $0.asType(.float16) })
+        let adapter = try NFKMLXIPAdapter.load(from: adapterURL, into: unet)
+        try unetInFloat16("sd15-unet-ip", unet, half: try record("sd15_unet_ip_f16.safetensors"),
+                          f32: try record("sd15_unet_ip_f32.safetensors"), adapter: adapter, isolatedBar: 0.5)
+    }
+
+    // Stable Diffusion 2.1's UNet (`IK_VAL_SD21_DIR`'s `unet/`, released float32) at float16, cast as a float16
+    // release loads, against diffusers' `UNet2DConditionModel` at float16 (`sd_unet_probe`). Its
+    // `upcast_attention` reaches only diffusers' classic attention processor, not the scaled-dot-product one.
+    func testSD21UNetInFloat16MatchesTheFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_SD21_DIR"], "IK_VAL_SD21_DIR"))
+        let unet = NFKMLXSDUNet(configuration: NFKMLXSDTextToImageConfiguration.stableDiffusion21.unet)
+        try NFKMLXStableDiffusionModels.loadUNetWeights(
+            into: unet, from: directory.appendingPathComponent("unet/diffusion_pytorch_model.safetensors"), precision: .float32)
+        unet.update(parameters: unet.parameters().mapValues { $0.asType(.float16) })
+        try unetInFloat16("sd21-unet", unet, half: try record("sd21_unet_f16.safetensors"),
+                          f32: try record("sd21_unet_f32.safetensors"))
+    }
+
+    // A Stable Diffusion UNet at float16 against its `sd_unet_probe` records: every resnet, sampler, and
+    // transformer block, with each transformer's norm and projections, on the reference's own input, the noise
+    // end to end, then each piece of the first transformer block.
+    private func unetInFloat16(_ name: String, _ unet: NFKMLXSDUNet, half: [String: MLXArray], f32: [String: MLXArray],
+                               added: NFKSDAddedConditioning? = nil, adapter: NFKMLXIPAdapter? = nil,
+                               isolatedBar: Double = 0.25) throws {
         unet.train(false)
         func recorded(_ key: String) throws -> MLXArray {
             try XCTUnwrap(half[key], "no \(key)").asType(.float16).expandedDimensions(axis: 0)
         }
         let time = try recorded("temb"), context = try recorded("context")
+        let ip = try adapter.map { _ in NFKSDImageConditioning(tokens: try recorded("ip.tokens"), scale: 0.6) }
 
         var isolated = [(String, MLXArray)](), keys = [String]()
         func stage(_ name: String, _ run: (MLXArray) -> MLXArray) throws {
@@ -1033,11 +1096,11 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         }
         func transformer(_ name: String, _ t: NFKSDTransformer2D) throws {
             try stage(name + ".norm") { t.norm($0) }
-            try stage(name + ".proj_in") { t.projectedIn($0, t.projInLinear!) }
+            try stage(name + ".proj_in") { x in t.projInLinear.map { t.projectedIn(x, $0) } ?? t.projInConv!(x) }
             for (k, block) in t.blocks.enumerated() {
-                try stage(name + ".transformer_blocks.\(k)") { block($0, context: context) }
+                try stage(name + ".transformer_blocks.\(k)") { block($0, context: context, ip: ip) }
             }
-            try stage(name + ".proj_out") { t.projOutLinear!($0) }
+            try stage(name + ".proj_out") { x in t.projOutLinear.map { $0(x) } ?? t.projOutConv!(x) }
         }
         try stage("conv_in") { unet.convIn($0) }
         for (i, block) in unet.downBlocks.enumerated() {
@@ -1062,17 +1125,23 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         try stage("conv_act") { NFKReferenceRounding.silu($0) }
         try stage("conv_out") { unet.convOut($0) }
 
-        let added = NFKSDAddedConditioning(pooled: try XCTUnwrap(half["pooled"]).asType(.float16).expandedDimensions(axis: 0),
-                                           timeIds: try XCTUnwrap(half["time_ids"]).expandedDimensions(axis: 0))
-        let noise = unet(try recorded("latent"), timestep: try XCTUnwrap(half["timestep"]), context: context, added: added)
+        var conditioning: NFKSDImageConditioning?
+        if let adapter {
+            let embeds = try XCTUnwrap(half["image_embeds"]).asType(.float16).reshaped([1, -1])
+            isolated.append(("ip.tokens", adapter.imageProjection(embeds)[0]))
+            keys.append("ip.tokens")
+            conditioning = adapter.conditioning(imageEmbedding: embeds, scale: 0.6)
+        }
+        let noise = unet(try recorded("latent"), timestep: try XCTUnwrap(half["timestep"]), context: context, added: added,
+                         imageConditioning: conditioning)
         XCTAssertEqual(noise.dtype, .float16, "a float16 load runs the UNet at float16")
         let states = [("noise", noise[0])]
         eval(isolated.map(\.1) + states.map(\.1))
         let rows = try seams(states, bf16: half, f32: f32, keys: ["output"])
-        report("sdxl-turbo-unet f16", rows)
+        report("\(name) f16", rows)
         let isolatedRows = try seams(isolated, bf16: half, f32: f32, keys: keys)
-        report("sdxl-turbo-unet f16 isolated", isolatedRows)
-        assertRoundingPlacement("sdxl-turbo-unet f16", endToEnd: rows, isolated: isolatedRows)
+        report("\(name) f16 isolated", isolatedRows)
+        assertRoundingPlacement("\(name) f16", endToEnd: rows, isolated: isolatedRows, isolatedBar: isolatedBar)
 
         let block = try XCTUnwrap(unet.downBlocks.first { !$0.attentions.isEmpty }).attentions[0].blocks[0]
         func input(_ name: String) throws -> MLXArray { try recorded("piece." + name + ".in") }
@@ -1082,13 +1151,13 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
             try piece("self-attention", block.attn1(input("attn1")), half, "piece.attn1.out"),
             try piece("to_out", block.attn1.toOut(input("attn1.to_out.0")), half, "piece.attn1.to_out.0.out"),
             try piece("norm2", block.norm2(input("norm2")), half, "piece.norm2.out"),
-            try piece("cross-attention", block.attn2(input("attn2"), context: context), half, "piece.attn2.out"),
+            try piece("cross-attention", block.attn2(input("attn2"), context: context, ip: ip), half, "piece.attn2.out"),
             try piece("norm3", block.norm3(input("norm3")), half, "piece.norm3.out"),
             try piece("geglu proj", block.ff.proj(input("ff.net.0.proj")), half, "piece.ff.net.0.proj.out"),
             try piece("feed-forward", block.ff(input("ff")), half, "piece.ff.out"),
             try piece("ff out", block.ff.out(input("ff.net.2")), half, "piece.ff.net.2.out"),
         ]
-        print("VALIDATION f16 sdxl-turbo-unet pieces:\n" + lines.joined(separator: "\n"))
+        print("VALIDATION f16 \(name) pieces:\n" + lines.joined(separator: "\n"))
     }
 
     // Whisper tiny from OpenAI's float16 `.pt` (`IK_RAW_WHISPER`) loaded as published, against transformers'

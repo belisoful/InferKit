@@ -5667,6 +5667,11 @@
       "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_BLOCK_FLOOR=1 | (float32) sa2va_llava_probe --checkpoint $IK_VAL_SA2VA_LLAVA_CUT4 (eager; CLIP layers 0 and 23 probed; the float32 run rounds every parameter to bf16 and back)"
     },
     {
+      "records": "sd15_unet_ip_f16 / sd15_unet_ip_f32, sd21_unet_f16 / sd21_unet_f32, sd15_vae_f16 / sd15_vae_f32",
+      "environment": "sd",
+      "command": "IK_PROBE_DTYPE=float16 IK_PROBE_BLOCK_FLOOR=1 | (float32) sd_unet_probe --checkpoint $IK_SD15_DIR/unet with IK_PROBE_IP_ADAPTER=$IK_VAL_IPADAPTER | $IK_VAL_SD21_DIR/unet (upcast_attention: the classic AttnProcessor) ; sd_vae_probe --checkpoint $IK_SD15_DIR/vae with IK_PROBE_DTYPE=float16 | (float32) IK_PROBE_FLOOR=float16. The releases store float32: the float16 run casts them as from_pretrained(torch_dtype=float16) does and the float32 run rounds every parameter to float16 and back; each float16 convolution in float32 rounded once"
+    },
+    {
       "records": "sdxl_turbo_unet_f16 / sdxl_turbo_unet_f32",
       "environment": "sd",
       "command": "IK_PROBE_DTYPE=float16 IK_PROBE_BLOCK_FLOOR=1 | (float32) sd_unet_probe --checkpoint $IK_VAL_SDXL_DIR/unet (the release's float16 weights, widened exactly for the float32 run; a seeded 32x32 latent; each float16 convolution in float32 rounded once)"
