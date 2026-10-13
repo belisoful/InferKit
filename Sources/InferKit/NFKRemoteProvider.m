@@ -9,16 +9,72 @@
 #import <InferKit/NFKTypeSafeBackend.h>
 #import <InferKit/NFKRemoteModelCatalog.h>
 #import <InferKit/NFKRemoteInferKitBackend.h>
+#import <InferKit/NFKRemoteResponsesBackend.h>
+#import <InferKit/NFKErrors.h>
 #import <InferKit/NFKInferenceServer.h>
 #import "NFKInferKitDiscovery.h"
 
 const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
+
+static NSDictionary<NSString *, NSNumber *> *NFKModelAPIStyles(NSDictionary<NSNumber *, NSArray<NSString *> *> *modelsByStyle)
+{
+	NSMutableDictionary<NSString *, NSNumber *> *styles = [NSMutableDictionary dictionary];
+	[modelsByStyle enumerateKeysAndObjectsUsingBlock:^(NSNumber *style, NSArray<NSString *> *models, BOOL *stop) {
+		for (NSString *model in models) {
+			styles[model] = style;
+		}
+	}];
+	return styles;
+}
+
+/*! The backend for a model a provider serves on a protocol no InferKit backend speaks. It is never
+	ready, and every request fails with kNFKError_InferenceUnsupported before anything is sent. */
+@interface NFKRemoteUnspokenProtocolBackend : NSObject <NFKInferenceBackend>
+@property (nonatomic, copy, nullable) NSString *modelName;
+@property (nonatomic, copy) NSString *providerName;
++ (instancetype)backendWithProvider:(NFKRemoteProvider *)provider modelName:(nullable NSString *)modelName;
+@end
+
+@implementation NFKRemoteUnspokenProtocolBackend
+
++ (instancetype)backendWithProvider:(NFKRemoteProvider *)provider modelName:(nullable NSString *)modelName
+{
+	NFKRemoteUnspokenProtocolBackend *backend = [[self alloc] init];
+	backend.providerName = provider.displayName;
+	backend.modelName = modelName;
+	return backend;
+}
+
+- (BOOL)isReady
+{
+	return NO;
+}
+
+- (NSString *)backendIdentifier
+{
+	return @"remote-unspoken-protocol";
+}
+
+- (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
+												  error:(NSError * _Nullable *)outError
+{
+	if (outError != NULL) {
+		NSString *reason = [NSString stringWithFormat:@"%@ serves %@ over Google's generateContent protocol, "
+							"which no InferKit backend speaks yet.", self.providerName, self.modelName ?: @"this model"];
+		*outError = [NSError errorWithDomain:NFKInferenceErrorDomain code:kNFKError_InferenceUnsupported
+									userInfo:@{ NSLocalizedDescriptionKey: reason }];
+	}
+	return nil;
+}
+
+@end
 
 @interface NFKRemoteProvider ()
 @property (nonatomic, copy, readwrite) NSString *identifier;
 @property (nonatomic, copy, readwrite) NSString *displayName;
 @property (nonatomic, copy, readwrite) NSURL *baseURL;
 @property (nonatomic, assign, readwrite) NFKRemoteAPIStyle apiStyle;
+@property (nonatomic, copy, readwrite) NSDictionary<NSString *, NSNumber *> *modelAPIStyles;
 @property (nonatomic, assign, readwrite) BOOL requiresAPIKey;
 @property (nonatomic, copy, readwrite) NSDictionary<NSString *, NSString *> *advertisedProperties;
 @end
@@ -45,6 +101,7 @@ const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 	self = [super init];
 	if (self != nil) {
 		_advertisedProperties = @{};
+		_modelAPIStyles = @{};
 	}
 	return self;
 }
@@ -61,8 +118,24 @@ const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 	provider.displayName = self.displayName;
 	provider.baseURL = baseURL;
 	provider.apiStyle = self.apiStyle;
+	provider.modelAPIStyles = self.modelAPIStyles;
 	provider.requiresAPIKey = self.requiresAPIKey;
 	return provider;
+}
+
+- (instancetype)providerWithAPIStyle:(NFKRemoteAPIStyle)apiStyle forModelName:(NSString *)modelName
+{
+	NFKRemoteProvider *provider = [self providerWithBaseURL:self.baseURL];
+	NSMutableDictionary<NSString *, NSNumber *> *styles = [self.modelAPIStyles mutableCopy];
+	styles[modelName] = apiStyle == self.apiStyle ? nil : @(apiStyle);
+	provider.modelAPIStyles = styles;
+	return provider;
+}
+
+- (NFKRemoteAPIStyle)apiStyleForModelName:(nullable NSString *)modelName
+{
+	NSNumber *style = modelName != nil ? self.modelAPIStyles[modelName] : nil;
+	return style != nil ? (NFKRemoteAPIStyle)style.integerValue : self.apiStyle;
 }
 
 // Each preset getter builds a new instance, and a discovered provider is a fresh one, so a value
@@ -79,6 +152,7 @@ const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 	return [self.identifier isEqualToString:other.identifier] &&
 		   [self.baseURL isEqual:other.baseURL] &&
 		   self.apiStyle == other.apiStyle &&
+		   [self.modelAPIStyles isEqualToDictionary:other.modelAPIStyles] &&
 		   self.requiresAPIKey == other.requiresAPIKey;
 }
 
@@ -99,10 +173,23 @@ const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 
 - (NSURL *)endpointURL
 {
-	switch (self.apiStyle) {
+	return [self endpointURLForAPIStyle:self.apiStyle modelName:nil];
+}
+
+- (NSURL *)endpointURLForModelName:(nullable NSString *)modelName
+{
+	return [self endpointURLForAPIStyle:[self apiStyleForModelName:modelName] modelName:modelName];
+}
+
+- (NSURL *)endpointURLForAPIStyle:(NFKRemoteAPIStyle)apiStyle modelName:(nullable NSString *)modelName
+{
+	switch (apiStyle) {
 		case NFKRemoteAPIStyleAnthropicMessages: return [self URLForPath:@"messages"];
 		case NFKRemoteAPIStyleSystemOne: return [self URLForPath:@"systemone"];
 		case NFKRemoteAPIStyleInferKit: return [self URLForPath:@"inferkit/run"];
+		case NFKRemoteAPIStyleOpenAIResponses: return [self URLForPath:@"responses"];
+		case NFKRemoteAPIStyleGeminiGenerateContent:
+			return [self URLForPath:[NSString stringWithFormat:@"models/%@:generateContent", modelName ?: @""]];
 		case NFKRemoteAPIStyleOpenAIChat: break;
 	}
 	return [self URLForPath:@"chat/completions"];
@@ -186,6 +273,55 @@ const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 								  style:NFKRemoteAPIStyleSystemOne requiresKey:YES];
 }
 
+// OpenCode's published endpoint tables (opencode.ai/docs/zen and opencode.ai/docs/go, read
+// 2026-10-13), with muse-spark-1.2-contributor-free from models.dev, which OpenCode's own client reads.
+// Every model the tables send to chat completions is left out, since that is the presets' apiStyle.
++ (NFKRemoteProvider *)openCodeZen
+{
+	NFKRemoteProvider *provider = [self providerWithIdentifier:@"opencode" displayName:@"OpenCode Zen"
+														  base:@"https://opencode.ai/inference/v1"
+														 style:NFKRemoteAPIStyleOpenAIChat requiresKey:YES];
+	provider.modelAPIStyles = NFKModelAPIStyles(@{
+		@(NFKRemoteAPIStyleOpenAIResponses): @[
+			@"gpt-5", @"gpt-5-codex", @"gpt-5-nano", @"gpt-5.1", @"gpt-5.1-codex",
+			@"gpt-5.1-codex-max", @"gpt-5.1-codex-mini", @"gpt-5.2", @"gpt-5.2-codex",
+			@"gpt-5.3-codex", @"gpt-5.3-codex-spark", @"gpt-5.4", @"gpt-5.4-mini", @"gpt-5.4-nano",
+			@"gpt-5.4-pro", @"gpt-5.5", @"gpt-5.5-pro", @"gpt-5.6-luna", @"gpt-5.6-sol",
+			@"gpt-5.6-terra", @"gpt-6-astra", @"gpt-6-luna", @"gpt-6-sol", @"gpt-6.1-sol",
+			@"grok-4.5", @"grok-4.6", @"grok-4.7", @"grok-build-0.1", @"muse-spark-1.2",
+			@"muse-spark-1.2-contributor-free", @"muse-spark-1.3",
+			@"muse-spark-1.3-contributor-free" ],
+		@(NFKRemoteAPIStyleAnthropicMessages): @[
+			@"claude-fable-5", @"claude-fable-5-1", @"claude-haiku-4-5", @"claude-haiku-5-5",
+			@"claude-opus-4-5", @"claude-opus-4-6", @"claude-opus-4-7", @"claude-opus-4-8",
+			@"claude-opus-5", @"claude-opus-5-5", @"claude-sonnet-4-5", @"claude-sonnet-4-6",
+			@"claude-sonnet-5", @"claude-sonnet-5-5", @"qwen3.5-plus", @"qwen3.6-plus",
+			@"qwen3.7-max", @"qwen3.7-plus", @"qwen3.8-flash" ],
+		@(NFKRemoteAPIStyleSystemOne): @[
+			@"jev-1.13", @"jev-1.13-free" ],
+		@(NFKRemoteAPIStyleGeminiGenerateContent): @[
+			@"gemini-3-flash", @"gemini-3.1-pro", @"gemini-3.5-flash", @"gemini-3.5-flash-lite",
+			@"gemini-3.6-flash", @"gemini-3.7-flash", @"gemini-3.8-flash" ],
+	});
+	return provider;
+}
+
++ (NFKRemoteProvider *)openCodeGo
+{
+	NFKRemoteProvider *provider = [self providerWithIdentifier:@"opencode-go" displayName:@"OpenCode Go"
+														  base:@"https://opencode.ai/inference/go/v1"
+														 style:NFKRemoteAPIStyleOpenAIChat requiresKey:YES];
+	provider.modelAPIStyles = NFKModelAPIStyles(@{
+		@(NFKRemoteAPIStyleOpenAIResponses): @[
+			@"gpt-5.6-luna", @"gpt-6-luna", @"grok-4.6", @"grok-4.7",
+			@"muse-spark-1.2-contributor", @"muse-spark-1.3-contributor" ],
+		@(NFKRemoteAPIStyleAnthropicMessages): @[
+			@"claude-haiku-5-5", @"minimax-m2.7", @"minimax-m3", @"qwen3.7-plus", @"qwen3.8-flash",
+			@"qwen3.8-max" ],
+	});
+	return provider;
+}
+
 #pragma mark Local
 
 + (NFKRemoteProvider *)ollama
@@ -228,7 +364,7 @@ const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 + (NSArray<NFKRemoteProvider *> *)allProviders
 {
 	return @[ self.openAI, self.anthropic, self.xAI, self.googleGemini, self.groq, self.mistral,
-			  self.deepSeek, self.together, self.openRouter, self.typeSafe,
+			  self.deepSeek, self.together, self.openRouter, self.typeSafe, self.openCodeZen, self.openCodeGo,
 			  self.ollama, self.lmStudio, self.llamaCpp, self.vLLM, self.inferKit ];
 }
 
@@ -366,25 +502,36 @@ const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 									   apiKey:(nullable NSString *)apiKey
 									modelName:(nullable NSString *)modelName
 {
-	if (provider.apiStyle == NFKRemoteAPIStyleAnthropicMessages) {
-		NFKAnthropicBackend *backend = [NFKAnthropicBackend backendWithEndpointURL:provider.endpointURL];
+	NFKRemoteAPIStyle apiStyle = [provider apiStyleForModelName:modelName];
+	NSURL *endpointURL = [provider endpointURLForModelName:modelName];
+	if (apiStyle == NFKRemoteAPIStyleAnthropicMessages) {
+		NFKAnthropicBackend *backend = [NFKAnthropicBackend backendWithEndpointURL:endpointURL];
 		backend.apiKey = apiKey;
 		backend.modelName = modelName;
 		return backend;
 	}
-	if (provider.apiStyle == NFKRemoteAPIStyleInferKit) {
-		NFKRemoteInferKitBackend *backend = [NFKRemoteInferKitBackend backendWithEndpointURL:provider.endpointURL];
+	if (apiStyle == NFKRemoteAPIStyleInferKit) {
+		NFKRemoteInferKitBackend *backend = [NFKRemoteInferKitBackend backendWithEndpointURL:endpointURL];
 		backend.apiKey = apiKey;
 		backend.modelName = modelName;
 		return backend;
 	}
-	if (provider.apiStyle == NFKRemoteAPIStyleSystemOne) {
-		NFKTypeSafeBackend *backend = [NFKTypeSafeBackend backendWithEndpointURL:provider.endpointURL];
+	if (apiStyle == NFKRemoteAPIStyleSystemOne) {
+		NFKTypeSafeBackend *backend = [NFKTypeSafeBackend backendWithEndpointURL:endpointURL];
 		backend.apiKey = apiKey;
 		backend.modelName = modelName;
 		return backend;
 	}
-	NFKRemoteBackend *backend = [NFKRemoteBackend backendWithEndpointURL:provider.endpointURL];
+	if (apiStyle == NFKRemoteAPIStyleOpenAIResponses) {
+		NFKRemoteResponsesBackend *backend = [NFKRemoteResponsesBackend backendWithEndpointURL:endpointURL];
+		backend.apiKey = apiKey;
+		backend.modelName = modelName;
+		return backend;
+	}
+	if (apiStyle == NFKRemoteAPIStyleGeminiGenerateContent) {
+		return [NFKRemoteUnspokenProtocolBackend backendWithProvider:provider modelName:modelName];
+	}
+	NFKRemoteBackend *backend = [NFKRemoteBackend backendWithEndpointURL:endpointURL];
 	backend.apiKey = apiKey;
 	backend.modelName = modelName;
 	NSDictionary<NSString *, NSNumber *> *dialects = @{ @"mistral": @(NFKRemoteChatDialectMistral),

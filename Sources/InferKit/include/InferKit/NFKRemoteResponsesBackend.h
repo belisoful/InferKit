@@ -74,8 +74,10 @@ NS_ASSUME_NONNULL_BEGIN
 	@method     backendForProvider:apiKey:modelName:
 	@abstract   A backend pointed at the provider's responses endpoint, or nil for a provider that
 				serves none.
-	@discussion openai, xai, groq, deepseek, openrouter, lmstudio, ollama, vllm, and llamacpp serve
-				one; anthropic, gemini, mistral, together, and typesafe return nil.
+	@discussion openai, xai, groq, deepseek, openrouter, opencode, opencode-go, lmstudio, ollama,
+				vllm, and llamacpp serve one; anthropic, gemini, mistral, together, and typesafe return
+				nil. OpenCode answers this route only for the models it routes to Responses (see
+				NFKRemoteProvider's modelAPIStyles).
 */
 + (nullable instancetype)backendForProvider:(NFKRemoteProvider *)provider
 									 apiKey:(nullable NSString *)apiKey

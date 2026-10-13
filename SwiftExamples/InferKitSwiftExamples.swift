@@ -238,6 +238,18 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(claude.backendIdentifier, "anthropic-messages")
     }
 
+    // OpenCode from Swift: one preset, a backend per model's route, and a hand-made route.
+    func testOpenCodeGateway() {
+        let zen = NFKRemoteProvider.openCodeZen
+        let gpt = NFKRemoteProvider.backend(for: zen, apiKey: "sk-…", modelName: "gpt-5.5")
+        XCTAssertEqual(gpt.backendIdentifier, "remote-responses")
+        XCTAssertEqual(zen.apiStyle(forModelName: "claude-sonnet-5-5"), .anthropicMessages)
+        XCTAssertEqual(zen.apiStyle(forModelName: "gemini-3.5-flash"), .geminiGenerateContent)
+
+        let routed = zen.withAPIStyle(.anthropicMessages, forModelName: "claude-next")
+        XCTAssertEqual(routed.apiStyle(forModelName: "claude-next"), .anthropicMessages)
+    }
+
     // Model discovery from Swift: the importer's naming for the list, the re-based preset, and the
     // unreachable-runner error. A picker is filled from `models(withAPIKey:)`, which throws.
     func testRemoteModelDiscovery() {

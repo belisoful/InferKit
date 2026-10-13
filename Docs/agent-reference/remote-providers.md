@@ -725,14 +725,50 @@ type omits. So a `speakers` array parameter goes out as `{speakers}` without `mo
 checked against a live call. The live test (`testALiveListingNamesThePrebuiltVoices`) is
 gated on `INFERKIT_GEMINI_API_KEY`.
 
+**OpenCode gateways (`opencode`, `opencode-go`, 2026-10-13).** OpenCode runs two inference gateways
+behind one console key: Zen (pay-as-you-go, `https://opencode.ai/inference/v1`) and Go (subscription,
+`https://opencode.ai/inference/go/v1`). The earlier "deliberately absent" note probed
+`opencode.ai/api/…`, which is the site and answers 404; the gateways were never under `/api`. The
+older `opencode.ai/zen/v1` and `opencode.ai/zen/go/v1` bases still answer the same model lists, and
+the presets use the documented `/inference/` bases.
+
+- Each model is served on its maker's protocol. OpenCode's docs (`opencode.ai/docs/zen`,
+  `opencode.ai/docs/go`) publish a table of model → endpoint → AI SDK package. The presets carry the
+  routes that are not chat completions in `modelAPIStyles`; every other model goes to
+  `/chat/completions`.
+- The tables differ between the gateways for the same name: `qwen3.8-max`, `minimax-m3`, and
+  `minimax-m2.7` are chat on Zen and Messages on Go. Model-family prefixes do not predict a route.
+- `GET /models` returns ids only (`id`, `object`, `created`, `owned_by`), so the route cannot be read
+  from the service. models.dev (`https://models.dev/api.json`, providers `opencode` and `opencode-go`)
+  carries the same routes as a per-model `provider.npm` and agreed with the docs on every model both
+  listed on 2026-10-13. models.dev also lists about 37 retired Zen models, so the docs table is the
+  source and models.dev the cross-check. `muse-spark-1.2-contributor-free` is live and absent from
+  the docs table; models.dev routes it to Responses, and the preset follows.
+  `claude-opus-5-5-backup` is live and in neither source, so it has no route.
+- Gemini models (Zen only) use `@ai-sdk/google`, which posts to `{base}/models/{id}:generateContent`
+  with an `x-goog-api-key` header. No InferKit backend speaks that protocol, so
+  `NFKRemoteAPIStyleGeminiGenerateContent` exists for the route and the factory returns a private
+  `NFKRemoteUnspokenProtocolBackend` (`remote-unspoken-protocol`), never ready, failing with
+  `kNFKError_InferenceUnsupported` before sending. Whether Zen's `/chat/completions` also answers a
+  Gemini id is unknown without a key.
+- Authentication: the docs show a Bearer token for chat and System One. `NFKAnthropicBackend` sends
+  `x-api-key` on the Messages route, which is what `@ai-sdk/anthropic` sends. No request has been
+  made with a key; `testOpenCodeAnswersOnEachRoutedProtocol` (gated on `INFERKIT_OPENCODE_API_KEY`)
+  lists both gateways and asks one free model per text protocol on Zen.
+- Every per-capability factory except `NFKRemoteResponsesBackend` returns nil for both presets:
+  OpenCode documents no embeddings, audio, image, file, or usage routes.
+- Refreshing the table: extract the endpoint tables from both docs pages, diff them against the live
+  `/models` lists and models.dev, and update `openCodeZen` / `openCodeGo` in `NFKRemoteProvider.m`
+  with the date. A caller reaches a newer model before a release through
+  `providerWithAPIStyle:forModelName:`.
+
 **Deliberately absent.** Midjourney has no official public API (its API host does not resolve), so
-shipping a preset would imply one exists. `opencode.ai` answers `Not Found` on its API path — it is a
-coding agent that calls other providers rather than an inference service. Codex is OpenAI's coding
-agent, not a separate endpoint; it is the `openai` preset.
+shipping a preset would imply one exists. Codex is OpenAI's coding agent, not a separate endpoint; it
+is the `openai` preset.
 
 `NFKRemoteProviderTests` stubs the transport to assert Anthropic's request shape without a network, and
-carries one live test gated on `INFERKIT_LIVE_LOCAL_MODEL` that runs against a local server when one is
-listening.
+carries two live tests: one gated on `INFERKIT_LIVE_LOCAL_MODEL` that runs against a local server when
+one is listening, and the OpenCode one gated on `INFERKIT_OPENCODE_API_KEY`.
 
 **Serving (`NFKInferenceServer`, 2026-09-30).** The server side of the remote subsystem: another
 machine's remote clients reach a model this process hosts. Files:

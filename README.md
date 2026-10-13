@@ -44,9 +44,10 @@ packages in this repository — see **[Installation](Docs/installation.md)** for
   submit-poll-fetch base for job-style services.
 - **Apple-framework engines** — Vision, VideoToolbox, Speech, SoundAnalysis, AVFoundation's voices, and
   NaturalLanguage, each behind the same protocol with no weights to ship.
-- **Remote providers** — `NFKRemoteProvider` names fifteen services (OpenAI, Anthropic, xAI, Gemini,
-  Groq, Mistral, DeepSeek, Together, OpenRouter, TypeSafe, the local runners Ollama, LM Studio,
-  llama.cpp, and vLLM, and an InferKit server), lists each one's models from the server rather than a constant, probes the local ports to
+- **Remote providers** — `NFKRemoteProvider` names seventeen services (OpenAI, Anthropic, xAI, Gemini,
+  Groq, Mistral, DeepSeek, Together, OpenRouter, TypeSafe, OpenCode Zen and Go, the local runners
+  Ollama, LM Studio, llama.cpp, and vLLM, and an InferKit server), routes each model on a gateway to
+  its maker's protocol, lists each one's models from the server rather than a constant, probes the local ports to
   find which runner is actually up so calling code names none, and reaches a local runner's native
   API — what is installed and loaded, and Ollama's pull and delete.
 - **Serving** — `NFKInferenceServer` hosts any backend for other machines on the network. It answers

@@ -581,6 +581,19 @@ name the provider does not know, so it is the cheap check before a request carri
   request on the `openai` preset, through `NFKOpenAIDecisionsBackend`, which
   `[NFKOpenAIDecisionsBackend backendForProvider:NFKRemoteProvider.openAI apiKey:key modelName:@"gpt-6-luna"]`
   builds.
+- **`opencode`** (OpenCode Zen) and **`opencode-go`** (OpenCode Go): gateways that serve each model
+  on its maker's protocol behind one key. `modelAPIStyles` holds the routes OpenCode publishes, and
+  `backendForProvider:apiKey:modelName:` follows the model's route:
+  - GPT, Grok, and Muse Spark models → `NFKRemoteResponsesBackend` (`/responses`)
+  - Claude models, and on Zen most Qwen models → `NFKAnthropicBackend` (`/messages`)
+  - Jev (Zen) → `NFKTypeSafeBackend` (`/systemone`)
+  - Gemini models (Zen) → Google's `generateContent`, which no backend speaks yet; the backend is
+    never ready and fails with `kNFKError_InferenceUnsupported`
+  - every other model → `NFKRemoteBackend` (`/chat/completions`)
+
+  The two gateways route some names differently (Qwen3.8 Max and the MiniMax models are on
+  `/messages` on Go and on chat on Zen). `providerWithAPIStyle:forModelName:` routes a model the
+  shipped table does not know.
 
 ```objc
 NFKRemoteProvider *provider = [NFKRemoteProvider providerWithIdentifier:@"ollama"];

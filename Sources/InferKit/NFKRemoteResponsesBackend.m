@@ -53,7 +53,7 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 								  modelName:(nullable NSString *)modelName
 {
 	NSArray<NSString *> *serving = @[ @"openai", @"xai", @"groq", @"deepseek", @"openrouter",
-									  @"lmstudio", @"ollama", @"vllm", @"llamacpp" ];
+									  @"opencode", @"opencode-go", @"lmstudio", @"ollama", @"vllm", @"llamacpp" ];
 	if (![serving containsObject:provider.identifier]) {
 		return nil;
 	}

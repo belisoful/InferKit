@@ -23,7 +23,9 @@ extern const NSTimeInterval NFKRemoteProviderProbeTimeout;
 				field, its separate system prompt, and its response envelope, so it has its own backend.
 				TypeSafe's System One API answers typed decisions rather than text, so it has its own
 				backend too. An InferKit server speaks the OpenAI shape and a native route that carries
-				a whole request, so its backend is the native one.
+				a whole request, so its backend is the native one. A gateway such as OpenCode serves
+				each model on its maker's protocol, so its preset names a style per model
+				(apiStyleForModelName:), and the Responses and generateContent styles appear only there.
 */
 typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	/*! POST /chat/completions with a Bearer token; the reply carries choices[0].message.content. */
@@ -37,6 +39,14 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 		whole NFKInferenceRequest and is what NFKRemoteInferKitBackend posts to. Introduced in
 		InferKit 0.4.0. */
 	NFKRemoteAPIStyleInferKit = 3,
+	/*! POST /responses with a Bearer token, served by NFKRemoteResponsesBackend. Introduced in
+		InferKit 0.4.0. */
+	NFKRemoteAPIStyleOpenAIResponses = 4,
+	/*! Google's native POST /models/{model}:generateContent. No InferKit backend speaks it yet, so
+		backendForProvider:apiKey:modelName: returns a backend that is never ready and fails every
+		request with kNFKError_InferenceUnsupported before anything is sent. Introduced in InferKit
+		0.4.0. */
+	NFKRemoteAPIStyleGeminiGenerateContent = 5,
 };
 
 /*!
@@ -72,8 +82,14 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 /*! Where the provider lists the models it serves: the base plus /models. */
 @property (nonatomic, copy, readonly) NSURL *modelsURL;
 
-/*! The wire protocol this provider speaks. */
+/*! The wire protocol this provider speaks, and the one a model without its own route uses. */
 @property (nonatomic, assign, readonly) NFKRemoteAPIStyle apiStyle;
+
+/*! The models served on a protocol other than apiStyle, keyed by model name, each value an
+	NFKRemoteAPIStyle. Empty for a provider that speaks one protocol. The OpenCode presets carry the
+	routes OpenCode documents; providerWithAPIStyle:forModelName: adds or replaces one. Introduced in
+	InferKit 0.4.0. */
+@property (nonatomic, copy, readonly) NSDictionary<NSString *, NSNumber *> *modelAPIStyles;
 
 /*! Whether a key is required. A local server does not need one. */
 @property (nonatomic, assign, readonly) BOOL requiresAPIKey;
@@ -85,9 +101,9 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 
 - (instancetype)init NS_UNAVAILABLE;
 
-/*! Two providers are equal when their identifier, base, protocol, and key requirement match. Each
-	preset getter builds a new instance and a discovered provider is a fresh one, so equality is by
-	value rather than by identity. Introduced in InferKit 0.3.1. */
+/*! Two providers are equal when their identifier, base, protocol, model routes, and key requirement
+	match. Each preset getter builds a new instance and a discovered provider is a fresh one, so
+	equality is by value rather than by identity. Introduced in InferKit 0.3.1. */
 - (BOOL)isEqual:(nullable id)object;
 
 /*!
@@ -103,11 +119,38 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 /*!
 	@method     providerWithBaseURL:
 	@abstract   This provider at another address.
-	@discussion The identifier, display name, protocol, and key requirement are kept; every derived
-				URL follows the new base. A runner on another port, or on another machine on the
-				network, is the same preset with this one field changed. Introduced in InferKit 0.3.0.
+	@discussion The identifier, display name, protocol, model routes, and key requirement are kept;
+				every derived URL follows the new base. A runner on another port, or on another machine
+				on the network, is the same preset with this one field changed. Introduced in InferKit
+				0.3.0.
 */
 - (instancetype)providerWithBaseURL:(NSURL *)baseURL;
+
+/*!
+	@method     apiStyleForModelName:
+	@abstract   The protocol this provider serves a model on.
+	@discussion The model's entry in modelAPIStyles, or apiStyle for a model without one and for nil.
+				backendForProvider:apiKey:modelName: builds the backend this names. Introduced in
+				InferKit 0.4.0.
+*/
+- (NFKRemoteAPIStyle)apiStyleForModelName:(nullable NSString *)modelName;
+
+/*!
+	@method     endpointURLForModelName:
+	@abstract   The endpoint a request for this model posts to.
+	@discussion The base plus the path of apiStyleForModelName:. The generateContent style names the
+				model in the path (models/{model}:generateContent). Introduced in InferKit 0.4.0.
+*/
+- (NSURL *)endpointURLForModelName:(nullable NSString *)modelName;
+
+/*!
+	@method     providerWithAPIStyle:forModelName:
+	@abstract   This provider with one model routed to another protocol.
+	@discussion Every other field is kept. A model a gateway added after this release, or one whose
+				route changed, is reached this way until the shipped routes catch up; routing a model to
+				apiStyle removes its entry. Introduced in InferKit 0.4.0.
+*/
+- (instancetype)providerWithAPIStyle:(NFKRemoteAPIStyle)apiStyle forModelName:(NSString *)modelName;
 
 /*! Every preset this release ships. */
 @property (class, nonatomic, copy, readonly) NSArray<NFKRemoteProvider *> *allProviders;
@@ -206,6 +249,10 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 				NFKAnthropicBackend for Anthropic, an NFKTypeSafeBackend for TypeSafe, and an
 				NFKRemoteInferKitBackend for an InferKit server. The model name is required except
 				on llama.cpp and on an InferKit server that hosts one model: see the class discussion.
+
+				The backend follows apiStyleForModelName:, so on a gateway the model picks it: an
+				NFKRemoteResponsesBackend for the Responses style, and for the generateContent style a
+				backend that is never ready and fails every request with kNFKError_InferenceUnsupported.
 */
 + (id<NFKInferenceBackend>)backendForProvider:(NFKRemoteProvider *)provider
 									   apiKey:(nullable NSString *)apiKey
@@ -240,6 +287,18 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 /*! TypeSafe AI's System One API, which serves Jev: typed decisions about a state rather than text.
 	Served by NFKTypeSafeBackend. Introduced in InferKit 0.4.0. */
 @property (class, nonatomic, readonly) NFKRemoteProvider *typeSafe;
+/*! OpenCode Zen, the pay-as-you-go gateway of the OpenCode console, at
+	https://opencode.ai/inference/v1. One key (OPENCODE_API_KEY in OpenCode's own tools) reaches models
+	from many makers, each on its maker's protocol: modelAPIStyles routes the GPT, Grok, and Muse
+	Spark models to Responses, Claude and most Qwen models to Messages, Jev to System One, and Gemini
+	to generateContent, which no backend speaks yet. A model without a route goes to chat
+	completions. The routes are OpenCode's published table of 2026-10-13. Introduced in InferKit
+	0.4.0. */
+@property (class, nonatomic, readonly) NFKRemoteProvider *openCodeZen;
+/*! OpenCode Go, the subscription gateway, at https://opencode.ai/inference/go/v1, with the same key
+	as Zen. Go routes some model names differently from Zen (Qwen3.8 Max and the MiniMax models are on
+	Messages here), so each preset carries its own table. Introduced in InferKit 0.4.0. */
+@property (class, nonatomic, readonly) NFKRemoteProvider *openCodeGo;
 
 // Local servers. Each is the project's own default address; nothing is assumed to be running.
 @property (class, nonatomic, readonly) NFKRemoteProvider *ollama;

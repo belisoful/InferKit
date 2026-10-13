@@ -143,6 +143,31 @@ Chat Completions is marked legacy; new features ship on `/v1/responses` first.
 | rerank, video | `/rerank`, `/videos` | covered |
 | web search tool | `openrouter:web_search` | by wire shape; `url_citation` annotations under `NFKOutputCitations` |
 
+### OpenCode Zen (`opencode`)
+
+A gateway that serves each model on its maker's protocol; the route per model is in the preset's
+`modelAPIStyles` (2026-10-13). Detail in `remote-providers.md` ("OpenCode gateways").
+
+| Mode | Endpoint | Status |
+|---|---|---|
+| text + image → text, tools (GLM, Kimi, DeepSeek, MiniMax, Mistral, Qwen3.8 Max, the free models) | `/chat/completions` | covered (`NFKRemoteBackend`) |
+| text + image → text, tools, reasoning (GPT, Grok, Muse Spark) | `/responses` | covered (`NFKRemoteResponsesBackend`) |
+| text + image → text, tools, thinking (Claude, most Qwen) | `/messages` | covered (`NFKAnthropicBackend`) |
+| state → typed decisions (Jev) | `/systemone` | covered (`NFKTypeSafeBackend`) |
+| text + image → text (Gemini) | `/models/{id}:generateContent` | gap: no backend speaks generateContent; the factory's backend fails with `kNFKError_InferenceUnsupported` |
+| model list | `/models` | covered (ids only) |
+
+### OpenCode Go (`opencode-go`)
+
+The subscription gateway, same key as Zen. Its routes differ from Zen's for some names.
+
+| Mode | Endpoint | Status |
+|---|---|---|
+| text + image → text, tools (GLM, Kimi, DeepSeek, MiMo, LongCat, Hy, the free models) | `/chat/completions` | covered (`NFKRemoteBackend`) |
+| text + image → text, tools, reasoning (GPT Luna, Grok, Muse Spark Contributor) | `/responses` | covered (`NFKRemoteResponsesBackend`) |
+| text + image → text, tools (Claude Haiku 5.5, MiniMax, Qwen3.7 Plus and Qwen3.8) | `/messages` | covered (`NFKAnthropicBackend`) |
+| model list | `/models` | covered (ids only) |
+
 ### Local servers
 
 | Server | Beyond the OpenAI layer | Status |
@@ -206,6 +231,11 @@ registered, so what a mode does depends on that backend.
   and key management stay out. Usage and cost reporting ships because an app built on InferKit may
   offer its own users an admin key as a feature; the reporting class documents that an admin key is a
   credential to keep off shipped binaries unless the app's user supplies it.
+- **Gemini's generateContent on OpenCode: recorded as a gap (decided 2026-10-13).** The OpenCode
+  presets shipped with their chat, Messages, Responses, and System One routes; the Gemini models'
+  route names `NFKRemoteAPIStyleGeminiGenerateContent` and fails before sending. A generateContent
+  backend is the follow-up, once a live key settles the route's auth header and whether chat
+  completions already answers a Gemini id.
 - **Files and hosted retrieval (decided 2026-09-22):** file management (upload, list, fetch, delete,
   and file references in requests) and retrieval stores with management (create, add and remove files,
   search, delete) are in scope.

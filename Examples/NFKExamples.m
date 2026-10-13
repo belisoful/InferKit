@@ -333,6 +333,25 @@
 	XCTAssertEqual(chat.messages.count, 2);
 }
 
+- (void)testExampleOpenCodeGateway
+{
+	// OpenCode Zen and Go serve each model on its maker's protocol behind one key. The factory reads
+	// the model's route, so the same call returns the backend that model needs.
+	NFKRemoteProvider *zen = NFKRemoteProvider.openCodeZen;
+	id<NFKInferenceBackend> claude = [NFKRemoteProvider backendForProvider:zen apiKey:@"sk-…" modelName:@"claude-sonnet-5-5"];
+	id<NFKInferenceBackend> gpt = [NFKRemoteProvider backendForProvider:zen apiKey:@"sk-…" modelName:@"gpt-5.5"];
+	id<NFKInferenceBackend> glm = [NFKRemoteProvider backendForProvider:zen apiKey:@"sk-…" modelName:@"glm-5.3"];
+	XCTAssertEqualObjects(claude.backendIdentifier, @"anthropic-messages");
+	XCTAssertEqualObjects(gpt.backendIdentifier, @"remote-responses");
+	XCTAssertEqualObjects(glm.backendIdentifier, @"remote");
+
+	// Gemini models are served over Google's generateContent protocol, which no backend speaks yet;
+	// their backend is never ready. A model added after this release is routed by hand.
+	XCTAssertFalse([NFKRemoteProvider backendForProvider:zen apiKey:@"sk-…" modelName:@"gemini-3.5-flash"].isReady);
+	NFKRemoteProvider *routed = [zen providerWithAPIStyle:NFKRemoteAPIStyleAnthropicMessages forModelName:@"claude-next"];
+	XCTAssertEqual([routed apiStyleForModelName:@"claude-next"], NFKRemoteAPIStyleAnthropicMessages);
+}
+
 - (void)testExampleRemoteModelDiscovery
 {
 	// No preset carries a default model name; the provider's own list is where a picker is filled

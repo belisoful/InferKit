@@ -87,6 +87,23 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   records a backend's own form of a turn, `recordOfMessage:format:source:` reads it back, and the tool
   turn's name, text, error flag, and images are read through the class.
 
+#### OpenCode Zen and Go
+
+- `NFKRemoteProvider.openCodeZen` (`opencode`, `https://opencode.ai/inference/v1`) and
+  `openCodeGo` (`opencode-go`, `https://opencode.ai/inference/go/v1`) reach OpenCode's two
+  gateways with one key. Each serves a model on its maker's protocol, so a provider now carries
+  `modelAPIStyles`, the routes that differ from its `apiStyle`, read through
+  `apiStyleForModelName:` and `endpointURLForModelName:`. `backendForProvider:apiKey:modelName:`
+  builds the backend the model's route names. The presets carry OpenCode's published table of
+  2026-10-13; a model it does not list goes to chat completions.
+- `NFKRemoteAPIStyleOpenAIResponses` routes a model to `NFKRemoteResponsesBackend`, whose factory
+  now answers for both OpenCode presets.
+- `NFKRemoteAPIStyleGeminiGenerateContent` names Google's native protocol, which OpenCode uses for
+  its Gemini models. No backend speaks it yet, so the factory returns a backend that is never ready
+  and fails every request with `kNFKError_InferenceUnsupported` before sending anything.
+- `providerWithAPIStyle:forModelName:` routes one model by hand, for a model added after the
+  release or a route that changed.
+
 #### Gemini's voice library
 
 - `NFKGeminiVoiceLibrary` reaches the Gemini API's Voices endpoint (`/v1beta/voices`). It lists the

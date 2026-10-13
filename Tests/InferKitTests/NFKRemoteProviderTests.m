@@ -12,6 +12,8 @@
 #import <InferKit/NFKAnthropicBackend.h>
 #import <InferKit/NFKTypeSafeBackend.h>
 #import <InferKit/NFKRemoteBackend.h>
+#import <InferKit/NFKRemoteResponsesBackend.h>
+#import <InferKit/NFKRemoteModel.h>
 #import <InferKit/NFKInferenceRequest.h>
 #import <InferKit/NFKInferenceResult.h>
 #import <InferKit/NFKInferenceKeys.h>
@@ -222,7 +224,8 @@ static const uint16_t NFKDeadPort = 9;
 - (void)testHostedProvidersRequireAKey
 {
 	for (NSString *identifier in @[ @"openai", @"anthropic", @"xai", @"gemini", @"groq",
-									@"mistral", @"deepseek", @"together", @"openrouter", @"typesafe" ]) {
+									@"mistral", @"deepseek", @"together", @"openrouter", @"typesafe",
+									@"opencode", @"opencode-go" ]) {
 		NFKRemoteProvider *provider = [NFKRemoteProvider providerWithIdentifier:identifier];
 		XCTAssertNotNil(provider, @"%@ is missing", identifier);
 		XCTAssertTrue(provider.requiresAPIKey, @"%@ is hosted", identifier);
@@ -250,6 +253,8 @@ static const uint16_t NFKDeadPort = 9;
 		@"groq": @"https://api.groq.com/openai/v1",
 		@"openrouter": @"https://openrouter.ai/api/v1",
 		@"typesafe": @"https://api.typesafe.ai/v1",
+		@"opencode": @"https://opencode.ai/inference/v1",
+		@"opencode-go": @"https://opencode.ai/inference/go/v1",
 		@"ollama": @"http://localhost:11434/v1",
 	};
 	NSDictionary<NSNumber *, NSString *> *pathsByStyle = @{ @(NFKRemoteAPIStyleOpenAIChat): @"/chat/completions",
@@ -323,6 +328,93 @@ static const uint16_t NFKDeadPort = 9;
 	id<NFKInferenceBackend> openAI = [NFKRemoteProvider backendForProvider:NFKRemoteProvider.openAI
 																	apiKey:@"k" modelName:@"m"];
 	XCTAssertTrue([openAI isKindOfClass:NFKRemoteBackend.class]);
+}
+
+#pragma mark Per-model routes
+
+- (void)testASingleProtocolProviderRoutesEveryModelToItsOwnStyle
+{
+	NFKRemoteProvider *anthropic = NFKRemoteProvider.anthropic;
+	XCTAssertEqual(anthropic.modelAPIStyles.count, 0u);
+	XCTAssertEqual([anthropic apiStyleForModelName:@"claude-opus-5-5"], NFKRemoteAPIStyleAnthropicMessages);
+	XCTAssertEqual([anthropic apiStyleForModelName:nil], NFKRemoteAPIStyleAnthropicMessages);
+	XCTAssertEqualObjects([anthropic endpointURLForModelName:@"claude-opus-5-5"], anthropic.endpointURL);
+}
+
+// Each row is a model from OpenCode's published table, the protocol it lists, and the class that speaks it.
+- (void)testOpenCodeZenSendsEachModelToItsMakersProtocol
+{
+	NFKRemoteProvider *zen = NFKRemoteProvider.openCodeZen;
+	NSArray<NSArray *> *rows = @[
+		@[ @"claude-opus-5-5", @"https://opencode.ai/inference/v1/messages", NFKAnthropicBackend.class ],
+		@[ @"qwen3.8-flash", @"https://opencode.ai/inference/v1/messages", NFKAnthropicBackend.class ],
+		@[ @"gpt-5.5", @"https://opencode.ai/inference/v1/responses", NFKRemoteResponsesBackend.class ],
+		@[ @"grok-4.7", @"https://opencode.ai/inference/v1/responses", NFKRemoteResponsesBackend.class ],
+		@[ @"jev-1.13", @"https://opencode.ai/inference/v1/systemone", NFKTypeSafeBackend.class ],
+		@[ @"glm-5.3", @"https://opencode.ai/inference/v1/chat/completions", NFKRemoteBackend.class ],
+		@[ @"qwen3.8-max", @"https://opencode.ai/inference/v1/chat/completions", NFKRemoteBackend.class ],
+		@[ @"a-model-added-later", @"https://opencode.ai/inference/v1/chat/completions", NFKRemoteBackend.class ],
+	];
+	for (NSArray *row in rows) {
+		XCTAssertEqualObjects([zen endpointURLForModelName:row[0]].absoluteString, row[1], @"%@", row[0]);
+		id<NFKInferenceBackend> backend = [NFKRemoteProvider backendForProvider:zen apiKey:@"k" modelName:row[0]];
+		XCTAssertTrue([backend isKindOfClass:row[2]], @"%@ got %@", row[0], backend.class);
+		XCTAssertEqualObjects([(id)backend endpointURL].absoluteString, row[1], @"%@", row[0]);
+		XCTAssertEqualObjects([(id)backend modelName], row[0]);
+	}
+}
+
+// Go routes some names Zen also serves to a different protocol, so the two presets keep separate tables.
+- (void)testOpenCodeGoRoutesSomeModelsDifferentlyFromZen
+{
+	NFKRemoteProvider *go = NFKRemoteProvider.openCodeGo;
+	XCTAssertEqual([go apiStyleForModelName:@"qwen3.8-max"], NFKRemoteAPIStyleAnthropicMessages);
+	XCTAssertEqual([NFKRemoteProvider.openCodeZen apiStyleForModelName:@"qwen3.8-max"], NFKRemoteAPIStyleOpenAIChat);
+	XCTAssertEqual([go apiStyleForModelName:@"minimax-m3"], NFKRemoteAPIStyleAnthropicMessages);
+	XCTAssertEqual([NFKRemoteProvider.openCodeZen apiStyleForModelName:@"minimax-m3"], NFKRemoteAPIStyleOpenAIChat);
+	XCTAssertEqual([go apiStyleForModelName:@"gpt-6-luna"], NFKRemoteAPIStyleOpenAIResponses);
+	XCTAssertEqual([go apiStyleForModelName:@"kimi-k3"], NFKRemoteAPIStyleOpenAIChat);
+	XCTAssertEqualObjects([go endpointURLForModelName:@"claude-haiku-5-5"].absoluteString,
+						  @"https://opencode.ai/inference/go/v1/messages");
+}
+
+- (void)testAGeminiModelOnOpenCodeFailsBeforeAnythingIsSent
+{
+	NFKRemoteProvider *zen = NFKRemoteProvider.openCodeZen;
+	XCTAssertEqual([zen apiStyleForModelName:@"gemini-3.5-flash"], NFKRemoteAPIStyleGeminiGenerateContent);
+	XCTAssertEqualObjects([zen endpointURLForModelName:@"gemini-3.5-flash"].absoluteString,
+						  @"https://opencode.ai/inference/v1/models/gemini-3.5-flash:generateContent");
+
+	id<NFKInferenceBackend> backend = [NFKRemoteProvider backendForProvider:zen apiKey:@"k" modelName:@"gemini-3.5-flash"];
+	XCTAssertFalse(backend.isReady);
+	XCTAssertEqualObjects([(id)backend modelName], @"gemini-3.5-flash");
+	NSError *error = nil;
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello" }];
+	XCTAssertNil([backend runInferenceForRequest:request error:&error]);
+	XCTAssertEqualObjects(error.domain, NFKInferenceErrorDomain);
+	XCTAssertEqual(error.code, kNFKError_InferenceUnsupported);
+	XCTAssertTrue([error.localizedDescription containsString:@"gemini-3.5-flash"]);
+}
+
+- (void)testARouteOverrideReplacesTheShippedRoute
+{
+	NFKRemoteProvider *zen = NFKRemoteProvider.openCodeZen;
+	NFKRemoteProvider *viaChat = [zen providerWithAPIStyle:NFKRemoteAPIStyleOpenAIChat forModelName:@"gemini-3.5-flash"];
+	XCTAssertNil(viaChat.modelAPIStyles[@"gemini-3.5-flash"], @"routing a model to apiStyle removes its entry");
+	XCTAssertEqual(viaChat.modelAPIStyles.count, zen.modelAPIStyles.count - 1);
+	id<NFKInferenceBackend> backend = [NFKRemoteProvider backendForProvider:viaChat apiKey:@"k" modelName:@"gemini-3.5-flash"];
+	XCTAssertTrue([backend isKindOfClass:NFKRemoteBackend.class]);
+	XCTAssertEqual([zen apiStyleForModelName:@"gemini-3.5-flash"], NFKRemoteAPIStyleGeminiGenerateContent,
+				   @"the preset itself is unchanged");
+
+	NFKRemoteProvider *added = [zen providerWithAPIStyle:NFKRemoteAPIStyleAnthropicMessages forModelName:@"claude-next"];
+	XCTAssertEqual([added apiStyleForModelName:@"claude-next"], NFKRemoteAPIStyleAnthropicMessages);
+	XCTAssertNotEqualObjects(added, zen, @"another route is another provider");
+	XCTAssertEqualObjects(added.identifier, @"opencode");
+
+	NFKRemoteProvider *moved = [added providerWithBaseURL:[NSURL URLWithString:@"https://proxy.test/v1"]];
+	XCTAssertEqualObjects([moved endpointURLForModelName:@"claude-next"].absoluteString, @"https://proxy.test/v1/messages",
+						  @"the routes travel with a re-based provider");
 }
 
 #pragma mark Anthropic's wire format
@@ -596,6 +688,45 @@ static const uint16_t NFKDeadPort = 9;
 	NFKInferenceResult *result = [backend runInferenceForRequest:request error:&error];
 	XCTAssertNotNil(result, @"%@", error.localizedDescription);
 	XCTAssertGreaterThan([[result outputForKey:NFKRemoteBackendTextKey] length], 0);
+}
+
+#pragma mark Live OpenCode
+
+// Runs only with INFERKIT_OPENCODE_API_KEY set. Lists both gateways, then asks one free model per
+// routed protocol on Zen, so the shipped routes are checked against the service. Free models change,
+// so each is picked from the live list.
+- (void)testOpenCodeAnswersOnEachRoutedProtocol
+{
+	NSString *key = NSProcessInfo.processInfo.environment[@"INFERKIT_OPENCODE_API_KEY"];
+	if (key.length == 0) {
+		XCTSkip("set INFERKIT_OPENCODE_API_KEY to exercise the live path");
+	}
+	NSError *error = nil;
+	NSArray<NFKRemoteModel *> *goModels = [NFKRemoteProvider.openCodeGo modelsWithAPIKey:key error:&error];
+	XCTAssertGreaterThan(goModels.count, 0u, @"%@", error.localizedDescription);
+
+	NFKRemoteProvider *zen = NFKRemoteProvider.openCodeZen;
+	NSArray<NFKRemoteModel *> *zenModels = [zen modelsWithAPIKey:key error:&error];
+	XCTAssertGreaterThan(zenModels.count, 0u, @"%@", error.localizedDescription);
+	NSMutableSet<NSNumber *> *asked = [NSMutableSet set];
+	for (NFKRemoteModel *model in zenModels) {
+		NFKRemoteAPIStyle style = [zen apiStyleForModelName:model.identifier];
+		BOOL textStyle = style == NFKRemoteAPIStyleOpenAIChat || style == NFKRemoteAPIStyleOpenAIResponses ||
+						 style == NFKRemoteAPIStyleAnthropicMessages;
+		if (![model.identifier hasSuffix:@"-free"] || !textStyle || [asked containsObject:@(style)]) {
+			continue;
+		}
+		[asked addObject:@(style)];
+		id<NFKInferenceBackend> backend = [NFKRemoteProvider backendForProvider:zen apiKey:key modelName:model.identifier];
+		NFKInferenceRequest *request =
+			[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Reply with exactly: OK" }
+										parameters:@{ NFKParameterMaxTokens: @256 }
+									outputModality:NFKModalityText];
+		NFKInferenceResult *result = [backend runInferenceForRequest:request error:&error];
+		XCTAssertNotNil(result, @"%@: %@", model.identifier, error.localizedDescription);
+		XCTAssertGreaterThan([[result outputForKey:NFKOutputText] length], 0, @"%@", model.identifier);
+	}
+	XCTAssertTrue([asked containsObject:@(NFKRemoteAPIStyleOpenAIChat)], @"no free chat model was listed");
 }
 
 @end

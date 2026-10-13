@@ -40,7 +40,8 @@ Pure Apple frameworks, always available:
 - ``NFKRemoteBackend`` and ``NFKAnthropicBackend`` — the chat clients: one OpenAI-compatible, one for
   Anthropic's Messages API, which differs in its headers, its required `max_tokens`, and its top-level
   system prompt. ``NFKRemoteProvider`` names the services
-  it is pointed at (hosted APIs and the local runners Ollama, LM Studio, llama.cpp, and vLLM), and
+  it is pointed at (hosted APIs, the OpenCode gateways that route each model to its maker's protocol,
+  and the local runners Ollama, LM Studio, llama.cpp, and vLLM), and
   ``NFKRemoteModelCatalog`` lists the models a provider serves so a caller chooses one from the
   server's own list. Discovery probes the local ports and answers which runner is up, so calling code
   names none. A local runner's native API — what is installed and loaded, and Ollama's

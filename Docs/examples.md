@@ -3098,6 +3098,22 @@ id<NFKInferenceBackend> claude =
                                 modelName:@"claude-sonnet-4-5"];
 ```
 
+OpenCode Zen and Go serve each model on its maker's protocol behind one key, and the factory follows
+the model's route:
+
+```objc
+NFKRemoteProvider *zen = NFKRemoteProvider.openCodeZen;
+id<NFKInferenceBackend> sonnet = [NFKRemoteProvider backendForProvider:zen apiKey:key modelName:@"claude-sonnet-5-5"]; // Messages
+id<NFKInferenceBackend> gpt = [NFKRemoteProvider backendForProvider:zen apiKey:key modelName:@"gpt-5.5"];              // Responses
+id<NFKInferenceBackend> glm = [NFKRemoteProvider backendForProvider:zen apiKey:key modelName:@"glm-5.3"];              // chat
+
+// A model added after this release is routed by hand.
+NFKRemoteProvider *routed = [zen providerWithAPIStyle:NFKRemoteAPIStyleAnthropicMessages forModelName:@"claude-next"];
+```
+
+Zen's Gemini models use Google's `generateContent` protocol, which no InferKit backend speaks yet, so
+their backend is never ready and fails with `kNFKError_InferenceUnsupported`.
+
 A system turn is written the same way for both; Anthropic's backend lifts it into the top-level field
 the Messages API expects:
 
@@ -3622,9 +3638,9 @@ because the service reads a string or user messages only. A question already in 
 (`{type, name, instructions, choices | levels}`) passes through. `safety_identifier` and any other body
 field go in as request parameters.
 
-Midjourney has no official public API, so there is no preset for it; `opencode.ai` is a coding agent
-rather than an inference service; and Codex is OpenAI's agent using the OpenAI API, so it is the
-`openai` preset.
+Midjourney has no official public API, so there is no preset for it. Codex is OpenAI's agent using
+the OpenAI API, so it is the `openai` preset. OpenCode's gateways are the `opencode` and `opencode-go`
+presets.
 
 ## Serving a model to other machines
 
