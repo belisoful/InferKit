@@ -5476,7 +5476,8 @@ def run_z_image_release_probe(image, checkpoint):
     Records the inputs, and each stage's input and output as `<stage>.in` / `.out`: the embedders
     (`t_embedder` on the scaled timestep, `x_embedder` on the patch tokens, `cap_embedder` on the padded
     caption, each before the pad tokens are placed), the blocks (`noise_refiner.<i>`, `context_refiner.<i>`,
-    `layers.<i>`), and `final`; and every submodule of the first unified layer as `piece.<name>.in` / `.out`. `IK_PROBE_BLOCK_FLOOR=1` floors each. Returns the velocity `[C, F, H, W]`.
+    `layers.<i>`), and `final`; and every submodule of the first unified layer as `piece.<name>.in` / `.out`.
+    `IK_PROBE_BLOCK_FLOOR=1` floors each. Returns the velocity `[C, F, H, W]`.
     Runs under the `ltx` oracle env."""
     import json
     from safetensors import safe_open
