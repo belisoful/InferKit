@@ -27,6 +27,7 @@
 //    element count carries no signal; the distance from exact arithmetic does.
 //
 
+import CryptoKit
 import XCTest
 import Foundation
 import MLX
@@ -35,7 +36,13 @@ import MLXNN
 
 final class NFKMLXBFloat16ParityTests: XCTestCase {
 
+    override func setUp() {
+        super.setUp()
+        NFKMLXHalfPrecision.arithmetic = .reference
+    }
+
     override func tearDown() {
+        NFKMLXHalfPrecision.arithmetic = .fast
         if NFKMLXGPU.metalLibraryURL != nil {
             NFKMLXGPU.clearCache()
         }
@@ -83,6 +90,15 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         /// `1 - cosine` of the reference's bf16 against the same block run in float32 on the bf16 run's own
         /// input (`<key>.floor`, `IK_PROBE_BLOCK_FLOOR=1`): the rounding that block adds, where recorded.
         var blockFloor: Double? = nil
+        /// `1 - cosine` of the reference's half output against the farthest of its own block's reruns, each with its
+        /// products, moments, and convolutions summed in another float32 order (`<key>.orderfloor`,
+        /// `IK_PROBE_ORDER_FLOOR=1`), where recorded.
+        var orderFloor: Double? = nil
+        /// Each summation order's distance from the reference's half output (`<key>.order.<order>`, one value).
+        var orders: [(String, Double)] = []
+        /// Each summation order's whole-model rerun (`<key>.order.<order>`, the seam's shape,
+        /// `IK_PROBE_OUTPUT_ORDER_FLOOR=1`) as its `1 - cosine` against the reference's float32.
+        var orderRuns: [(String, Double)] = []
 
         /// `ours` as a fraction of the block floor, or nil where none is recorded or the block adds no rounding
         /// (a layer norm CUDA autocast computes in float32 has a block floor of 0).
@@ -104,7 +120,17 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
             return Seam(label: state.0, differing: Double(differing) / Double(max(ours.count, 1)),
                         ours: distance(ours, reference), floor: distance(reference, exact),
                         exact: distance(ours, exact),
-                        blockFloor: bf16["\(key).floor"].map { distance(reference, floats($0)) })
+                        blockFloor: bf16["\(key).floor"].map { distance(reference, floats($0)) },
+                        orderFloor: bf16["\(key).orderfloor"].map { distance(reference, floats($0)) },
+                        orders: orderValues(key, bf16).filter { $0.1.count == 1 }.map { ($0.0, $0.1[0]) },
+                        orderRuns: orderValues(key, bf16).filter { $0.1.count > 1 }.map { ($0.0, distance($0.1, exact)) })
+        }
+    }
+
+    /// Each `<key>.order.<order>` of `record`, by order.
+    private func orderValues(_ key: String, _ record: [String: MLXArray]) -> [(String, [Double])] {
+        record.keys.filter { $0.hasPrefix("\(key).order.") }.sorted().map {
+            (String($0.dropFirst("\(key).order.".count)), floats(record[$0]!))
         }
     }
 
@@ -113,15 +139,28 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     /// distance against one block's floor measures nothing.
     private func report(_ name: String, _ rows: [Seam]) {
         let blockFloors = (name.contains("isolated") || name.contains("pieces")) && rows.contains { $0.blockFloor != nil }
+        let orderFloors = rows.contains { $0.orderFloor != nil }
         var lines = ["VALIDATION bf16 \(name):  seam  differing  ours-vs-ref-bf16  floor(ref bf16 vs f32)  ours-vs-f32"
-                     + (blockFloors ? "  block-floor  ours/block-floor" : "")]
+                     + (blockFloors ? "  block-floor  ours/block-floor" : "")
+                     + (orderFloors ? "  order-floor  ours/order-floor" : "")]
         for row in rows {
             let block = !blockFloors ? "" : row.blockFloor.map {
                 String(format: "  %.3e  %@", $0, row.blockRatio.map { String(format: "%.4f", $0) } ?? "float32")
             } ?? ""
-            lines.append(String(format: "  %-16s %8.4f%%  %.3e  %.3e  %.3e%@%@", (row.label as NSString).utf8String!,
-                                row.differing * 100, row.ours, row.floor, row.exact, block,
+            let order = row.orderFloor.map { String(format: "  %.3e  %.4f", $0, row.ours / max($0, 1e-30)) } ?? ""
+            lines.append(String(format: "  %-16s %8.4f%%  %.3e  %.3e  %.3e%@%@%@", (row.label as NSString).utf8String!,
+                                row.differing * 100, row.ours, row.floor, row.exact, block, order,
                                 row.exact > 2 * row.floor ? "  <- farther from f32 than twice the floor" : ""))
+            if !row.orders.isEmpty {
+                lines.append("      summation orders: "
+                             + row.orders.map { String(format: "%@ %.3e", $0.0, $0.1) }.joined(separator: ", "))
+            }
+            if !row.orderRuns.isEmpty {
+                lines.append("      summation orders vs f32, of the floor: "
+                             + row.orderRuns.map { String(format: "%@ %.2f", $0.0, $0.1 / max(row.floor, 1e-30)) }
+                                 .joined(separator: ", ")
+                             + String(format: "; ours %.2f", row.exact / max(row.floor, 1e-30)))
+            }
         }
         print(lines.joined(separator: "\n"))
     }
@@ -354,7 +393,10 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     }
 
     /// The two checks the file header states, over a report's rows.
-    /// `isolatedBar` is the fraction of the floor a layer run alone on the reference's input may reach.
+    /// `isolatedBar` is the fraction of the floor a layer run alone on the reference's input may reach. A seam
+    /// with a recorded order floor is held to that instead: the farthest the reference's own block moves when
+    /// its products, moments, and convolutions sum in another float32 order. An end-to-end state whose record
+    /// carries whole-model reruns is held to the farthest of them from the float32 run in place of twice the floor.
     private func assertRoundingPlacement(_ name: String, endToEnd: [Seam], isolated: [Seam], isolatedBar: Double = 0.25,
                                          file: StaticString = #filePath, line: UInt = #line) {
         let worst = isolated.max { $0.ours / max($0.floor, 1e-30) < $1.ours / max($1.floor, 1e-30) }!
@@ -370,12 +412,24 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
                          ratios[ratios.count / 2], worstBlock.label, worstBlock.blockRatio!))
         }
         for row in isolated {
+            if let orderFloor = row.orderFloor {
+                XCTAssertLessThanOrEqual(row.ours, orderFloor,
+                                         "\(name) \(row.label) on the reference's input: farther from it than a summation order moves it",
+                                         file: file, line: line)
+                continue
+            }
             XCTAssertLessThan(row.ours, isolatedBar * row.floor,
                               "\(name) \(row.label) on the reference's input: a rounding placed unlike the reference's",
                               file: file, line: line)
         }
         assertWithinBlockFloors(name, isolated, file: file, line: line)
         for row in endToEnd.suffix(2) {
+            if let widest = row.orderRuns.map(\.1).max() {
+                XCTAssertLessThanOrEqual(row.exact, widest,
+                                         "\(name) \(row.label): farther from float32 than the reference's widest summation order",
+                                         file: file, line: line)
+                continue
+            }
             XCTAssertLessThanOrEqual(row.exact, 2 * row.floor,
                                      "\(name) \(row.label): farther from float32 than twice the reference's bf16",
                                      file: file, line: line)
@@ -1043,10 +1097,10 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     // release loads, with the IP-Adapter (`IK_VAL_IPADAPTER`, released float16) attached at scale 0.6, against
     // diffusers' `UNet2DConditionModel` at float16 with the adapter loaded at its type (`sd_unet_probe`
     // `IK_PROBE_IP_ADAPTER`; the float32 side on the same float16-rounded weights): the image projection and
-    // every stage, each cross-attention reading the image tokens. Its first level attends over 4,096 positions,
-    // where the float16 kernel's accumulation order alone takes a transformer block to 0.3 of the accumulated
-    // floor with every piece within 0.14 of its own, so its isolated bar is 0.5; each block stays inside its
-    // own block floor.
+    // every stage, each cross-attention reading the image tokens. Each transformer block is held to its order
+    // floor (`IK_PROBE_ORDER_FLOOR`): MLX's half-precision GPU matmul splits its inner dimension into 1, 2, 4,
+    // or 8 parts, each a running float32 sum, which alone takes a block at the first level's 1,024 positions to
+    // 0.3 of the accumulated floor.
     func testSD15UNetWithIPAdapterInFloat16MatchesTheFloat16Reference() throws {
         try requireMLXRuntime()
         let directory = URL(fileURLWithPath: try existing(config["IK_SD15_DIR"], "IK_SD15_DIR"))
@@ -1059,7 +1113,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         unet.update(parameters: unet.parameters().mapValues { $0.asType(.float16) })
         let adapter = try NFKMLXIPAdapter.load(from: adapterURL, into: unet)
         try unetInFloat16("sd15-unet-ip", unet, half: try record("sd15_unet_ip_f16.safetensors"),
-                          f32: try record("sd15_unet_ip_f32.safetensors"), adapter: adapter, isolatedBar: 0.5)
+                          f32: try record("sd15_unet_ip_f32.safetensors"), adapter: adapter)
     }
 
     // Stable Diffusion 2.1's UNet (`IK_VAL_SD21_DIR`'s `unet/`, released float32) at float16, cast as a float16
@@ -1080,8 +1134,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     // transformer block, with each transformer's norm and projections, on the reference's own input, the noise
     // end to end, then each piece of the first transformer block.
     private func unetInFloat16(_ name: String, _ unet: NFKMLXSDUNet, half: [String: MLXArray], f32: [String: MLXArray],
-                               added: NFKSDAddedConditioning? = nil, adapter: NFKMLXIPAdapter? = nil,
-                               isolatedBar: Double = 0.25) throws {
+                               added: NFKSDAddedConditioning? = nil, adapter: NFKMLXIPAdapter? = nil) throws {
         unet.train(false)
         func recorded(_ key: String) throws -> MLXArray {
             try XCTUnwrap(half[key], "no \(key)").asType(.float16).expandedDimensions(axis: 0)
@@ -1141,7 +1194,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         report("\(name) f16", rows)
         let isolatedRows = try seams(isolated, bf16: half, f32: f32, keys: keys)
         report("\(name) f16 isolated", isolatedRows)
-        assertRoundingPlacement("\(name) f16", endToEnd: rows, isolated: isolatedRows, isolatedBar: isolatedBar)
+        assertRoundingPlacement("\(name) f16", endToEnd: rows, isolated: isolatedRows)
 
         let block = try XCTUnwrap(unet.downBlocks.first { !$0.attentions.isEmpty }).attentions[0].blocks[0]
         func input(_ name: String) throws -> MLXArray { try recorded("piece." + name + ".in") }
@@ -2698,6 +2751,247 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
                            "\(name): the record tells an offset added in float32 from torch's, which rounds it first")
         }
     }
+
+    // torch's exact GELU at bf16 and float16 over every finite value (`run_reference.py gelu_rounding`) of
+    // magnitude at least twice the least normal float32, so `x · 0.5` is normal: the GPU flushes a subnormal
+    // product to zero, and torch's CPU keeps it. One float16 input rounds apart, where torch fuses a
+    // multiply-add. MLX's own error function, faithfully rounded, rounds hundreds apart, which the record tells
+    // from torch's.
+    func testHalfGELUComputesTorchsErrorFunction() throws {
+        try requireMLXRuntime()
+        let record = try self.record("gelu_rounding.safetensors")
+        for (name, dtype, apart) in [("bf16", DType.bfloat16, 0), ("f16", .float16, 1)] {
+            let input = try XCTUnwrap(record["\(name).in"]).asType(dtype)
+            let expected = try XCTUnwrap(record["\(name).out"])
+            let normal = abs(input.asType(.float32)) .>= 2 * Float.leastNormalMagnitude
+            func differing(_ result: MLXArray) -> Int {
+                logicalAnd(normal, result.asType(.float32) .!= expected).sum().item(Int.self)
+            }
+            XCTAssertEqual(differing(NFKReferenceRounding.gelu(input)), apart, "\(name): torch's GELU")
+            XCTAssertGreaterThan(differing(MLXNN.gelu(input.asType(.float32)).asType(dtype)), 100,
+                                 "\(name): the record tells MLX's error function from torch's")
+        }
+    }
+
+    // torch's float32 `exp`, Sleef's `expf`, at x = −15i/512 for i in 0..<1024. The kernel matches every one.
+    // MLX operations round each multiply-add Sleef fuses and leave 9 one unit apart; MLX's own `exp` leaves 230.
+    func testReferenceArithmeticComputesTorchsExp() throws {
+        try requireMLXRuntime()
+        let input = MLXArray((0 ..< 1024).map { -Float($0) * 15 / 512 })
+        let expected = MLXArray(Self.torchExponentialBits).view(dtype: .float32)
+        func differing(_ result: MLXArray) -> Int { (result .!= expected).sum().item(Int.self) }
+        XCTAssertEqual(differing(NFKReferenceRounding.torchExp(input)), 0, "the kernel")
+        XCTAssertEqual(differing(NFKReferenceRounding.torchExpOperations(input)), 9, "MLX operations")
+        XCTAssertGreaterThan(differing(exp(input)), 100, "the grid tells MLX's exp from torch's")
+        let edges = NFKReferenceRounding.torchExp(MLXArray([-Float.infinity, -104.5, 89, Float.infinity]))
+        XCTAssertEqual(edges.asArray(Float.self), [0, 0, .infinity, .infinity])
+    }
+
+    // torch's `layer_norm` over float16 and bf16 rows of 320, 1,001, and 7 (whole vectors, a remainder, and a
+    // row narrower than a vector), each input, weight, and bias an exact formula, against the SHA-256 of
+    // torch's output. MLX's fused kernel rounds 4 and 2 of the float16 outputs apart.
+    func testReferenceArithmeticComputesTorchsLayerNorm() throws {
+        try requireMLXRuntime()
+        let cases: [(DType, Int, Int, String)] = [
+            (.float16, 64, 320, "7a0dc7af5e43d2734439bc51bb2eabdd581cc1423829aceab2efe7ab36679f91"),
+            (.float16, 16, 1001, "46d1fa7072d6e4d0922c957f307667fb2de9a90430cf769882e8ada67eace2a3"),
+            (.float16, 16, 7, "8d7f7ee68c5d41a4f98d3140423f1d978ee1da6c556d1861cb0c315b5221f701"),
+            (.bfloat16, 64, 320, "33fcce31ee9a6fffcd72a81c77996f73611fda9afc985f88ee9cd279ba6a8a7f"),
+            (.bfloat16, 16, 1001, "597ba1814b5ba569c62b1fb09e64d83b7d7e2cc9d56fbdd0c705cc226960f7d4"),
+            (.bfloat16, 16, 7, "4b8ed3d970271f4e9ca026bc2d8c1c9ce9fe771f179481043173e63eda552d1a"),
+        ]
+        func digest(_ y: MLXArray) -> String {
+            let words = y.view(dtype: .uint16).asArray(UInt16.self)
+            return SHA256.hash(data: words.withUnsafeBufferPointer { Data(buffer: $0) })
+                .map { String(format: "%02x", $0) }.joined()
+        }
+        for (dtype, rows, width, expected) in cases {
+            let (modulus, scale) = dtype == .float16 ? (2001, Float(256)) : (511, Float(64))
+            let x = MLXArray((0 ..< rows * width).map { index -> Float in
+                let (row, column) = index.quotientAndRemainder(dividingBy: width)
+                return Float((row * 131 + column * 37) % modulus - modulus / 2) / scale
+            }, [rows, width]).asType(dtype)
+            let weight = MLXArray((0 ..< width).map { 1 + Float(($0 * 29) % 33 - 16) / 64 }).asType(dtype)
+            let bias = MLXArray((0 ..< width).map { Float(($0 * 17) % 41 - 20) / 128 }).asType(dtype)
+            let label = "\(dtype) \(rows)×\(width)"
+            XCTAssertEqual(digest(NFKReferenceRounding.torchLayerNorm(x, weight: weight, bias: bias, eps: 1e-5)),
+                           expected, label)
+            if dtype == .float16, width > 8 {
+                let fused = MLXFast.layerNorm(x.asType(.float32), weight: weight.asType(.float32),
+                                              bias: bias.asType(.float32), eps: 1e-5).asType(dtype)
+                XCTAssertNotEqual(digest(fused), expected, "\(label): the case tells MLX's kernel from torch's")
+            }
+        }
+    }
+
+    func testReferenceKernelsTakeTheGradientsOfTheirOperations() throws {
+        try requireMLXRuntime()
+        let x = MLXArray((0 ..< 64).map { -Float($0) / 4 })
+        XCTAssertEqual(grad({ NFKReferenceRounding.torchExp($0).sum() })(x).asArray(Float.self),
+                       exp(x).asArray(Float.self))
+        MLXRandom.seed(5)
+        let hidden = MLXRandom.normal([8, 320]) * 3, weight = MLXRandom.normal([320]) * 0.2 + 1
+        let probe = MLXRandom.normal([8, 320])
+        func loss(_ norm: @escaping (MLXArray) -> MLXArray) -> MLXArray {
+            grad({ (norm($0.asType(.float16)).asType(.float32) * probe).sum() })(hidden)
+        }
+        let kernel = loss { NFKReferenceRounding.torchLayerNorm($0, weight: weight.asType(.float16), bias: nil, eps: 1e-5) }
+        let fused = loss { MLXFast.layerNorm($0.asType(.float32), weight: weight, bias: nil, eps: 1e-5).asType(.float16) }
+        XCTAssertTrue(allClose(kernel, fused, rtol: 1e-2, atol: 1e-3).item(Bool.self))
+    }
+
+    // The switch selects flash attention's exponential and a half-precision layer norm's arithmetic.
+    func testHalfPrecisionArithmeticSelectsTheReferenceKernels() throws {
+        try requireMLXRuntime()
+        XCTAssertEqual(NFKMLXHalfPrecision.arithmetic, .reference)
+        MLXRandom.seed(3)
+        let (queries, keys, values) = ((MLXRandom.normal([1, 4, 1024, 64]) * 2).asType(.float16),
+                                       (MLXRandom.normal([1, 4, 1024, 64]) * 2).asType(.float16),
+                                       MLXRandom.normal([1, 4, 1024, 64]).asType(.float16))
+        let hidden = (MLXRandom.normal([512, 320]) * 3).asType(.float16)
+        let norm = NFKLayerNorm(dimensions: 320)
+        func run() -> [MLXArray] {
+            [NFKReferenceRounding.flashAttention(queries: queries, keys: keys, values: values, scale: 0.125, mask: nil),
+             norm(hidden)]
+        }
+        let reference = run()
+        NFKMLXHalfPrecision.arithmetic = .fast
+        let fast = run()
+        for (label, index) in [("flash attention", 0), ("layer norm", 1)] {
+            XCTAssertGreaterThan((fast[index] .!= reference[index]).sum().item(Int.self), 0, label)
+        }
+    }
+
+    private static let torchExponentialBits: [UInt32] = [
+        0x3f800000, 0x3f789bda, 0x3f716e56, 0x3f6a75de, 0x3f63b0ed, 0x3f5d1e04, 0x3f56bbb1, 0x3f50888e,
+        0x3f4a833e, 0x3f44aa6e, 0x3f3efcd6, 0x3f397935, 0x3f341e56, 0x3f2eeb0b, 0x3f29de30, 0x3f24f6a9,
+        0x3f203362, 0x3f1b934e, 0x3f17156a, 0x3f12b8ba, 0x3f0e7c47, 0x3f0a5f23, 0x3f066068, 0x3f027f34,
+        0x3efd7558, 0x3ef623fc, 0x3eef08b5, 0x3ee821f6, 0x3ee16e38, 0x3edaec04, 0x3ed499ec, 0x3ece768b,
+        0x3ec88088, 0x3ec2b695, 0x3ebd176a, 0x3eb7a1ce, 0x3eb2548b, 0x3ead2e78, 0x3ea82e73, 0x3ea35362,
+        0x3e9e9c36, 0x3e9a07e4, 0x3e95956b, 0x3e9143d1, 0x3e8d1222, 0x3e88ff73, 0x3e850adf, 0x3e813387,
+        0x3e7af126, 0x3e73b263, 0x3e6ca92d, 0x3e65d3f7, 0x3e5f3143, 0x3e58bf9a, 0x3e527d92, 0x3e4c69cb,
+        0x3e4682ef, 0x3e40c7b2, 0x3e3b36d2, 0x3e35cf14, 0x3e308f4b, 0x3e2b764e, 0x3e2682fe, 0x3e21b446,
+        0x3e1d0916, 0x3e188067, 0x3e14193c, 0x3e0fd29b, 0x3e0bab96, 0x3e07a341, 0x3e03b8ba, 0x3dffd64b,
+        0x3df8735a, 0x3df14700, 0x3dea4fac, 0x3de38bd5, 0x3ddcf9fe, 0x3dd698b6, 0x3dd06695, 0x3dca6240,
+        0x3dc48a64, 0x3dbeddb8, 0x3db95afe, 0x3db400fe, 0x3daece8c, 0x3da9c284, 0x3da4dbc9, 0x3da01948,
+        0x3d9b79f6, 0x3d96fccd, 0x3d92a0d3, 0x3d8e6510, 0x3d8a4899, 0x3d864a84, 0x3d8269f1, 0x3d7d4c0e,
+        0x3d75fbe2, 0x3d6ee1c4, 0x3d67fc24, 0x3d61497f, 0x3d5ac85a, 0x3d547749, 0x3d4e54e8, 0x3d485fde,
+        0x3d4296dc, 0x3d3cf89c, 0x3d3783e4, 0x3d32377e, 0x3d2d1241, 0x3d28130c, 0x3d2338c7, 0x3d1e825f,
+        0x3d19eecc, 0x3d157d0d, 0x3d112c26, 0x3d0cfb27, 0x3d08e922, 0x3d04f532, 0x3d011e7b, 0x3cfac845,
+        0x3cf38ab0, 0x3cec829f, 0x3ce5ae86, 0x3cdf0ce6, 0x3cd89c4a, 0x3cd25b47, 0x3ccc487e, 0x3cc66298,
+        0x3cc0a84a, 0x3cbb1852, 0x3cb5b176, 0x3cb07288, 0x3cab5a60, 0x3ca667de, 0x3ca199ee, 0x3c9cef80,
+        0x3c98678f, 0x3c94011b, 0x3c8fbb2d, 0x3c8b94d5, 0x3c878d28, 0x3c83a345, 0x3c7fac9d, 0x3c784ae0,
+        0x3c711fb2, 0x3c6a2980, 0x3c6366c3, 0x3c5cd5fe, 0x3c5675c0, 0x3c5044a2, 0x3c4a4148, 0x3c446a60,
+        0x3c3ebea0, 0x3c393ccc, 0x3c33e3ab, 0x3c2eb212, 0x3c29a6dc, 0x3c24c0ee, 0x3c1fff33, 0x3c1b60a1,
+        0x3c16e434, 0x3c1288f0, 0x3c0e4dde, 0x3c0a3211, 0x3c0634a3, 0x3c0254b2, 0x3bfd22ca, 0x3bf5d3cf,
+        0x3beebada, 0x3be7d659, 0x3be124cb, 0x3bdaa4b6, 0x3bd454ac, 0x3bce334b, 0x3bc83f3a, 0x3bc27729,
+        0x3bbcd9d4, 0x3bb765fe, 0x3bb21a74, 0x3bacf60f, 0x3ba7f7aa, 0x3ba31e30, 0x3b9e688c, 0x3b99d5b8,
+        0x3b9564b2, 0x3b911480, 0x3b8ce42f, 0x3b88d2d4, 0x3b84df89, 0x3b810972, 0x3b7a9f6a, 0x3b736302,
+        0x3b6c5c17, 0x3b65891b, 0x3b5ee890, 0x3b587900, 0x3b523902, 0x3b4c2736, 0x3b464246, 0x3b4088e6,
+        0x3b3af9d6, 0x3b3593dc, 0x3b3055c9, 0x3b2b3e75, 0x3b264cc2, 0x3b217f9a, 0x3b1cd5ef, 0x3b184ebb,
+        0x3b13e8ff, 0x3b0fa3c3, 0x3b0b7e17, 0x3b077713, 0x3b038dd3, 0x3aff82f6, 0x3af8226d, 0x3af0f86a,
+        0x3aea035a, 0x3ae341b7, 0x3adcb204, 0x3ad652cf, 0x3ad022b4, 0x3aca2054, 0x3ac44a60, 0x3abe9f8d,
+        0x3ab91e9e, 0x3ab3c65c, 0x3aae959c, 0x3aa98b38, 0x3aa4a616, 0x3a9fe522, 0x3a9b4751, 0x3a96cb9f,
+        0x3a927110, 0x3a8e36af, 0x3a8a1b8e, 0x3a861ec6, 0x3a823f76, 0x3a7cf98c, 0x3a75abc3, 0x3a6e93f5,
+        0x3a67b094, 0x3a61001d, 0x3a5a8117, 0x3a543215, 0x3a4e11b3, 0x3a481e9a, 0x3a42577a, 0x3a3cbb0f,
+        0x3a37481c, 0x3a31fd70, 0x3a2cd9e1, 0x3a27dc4e, 0x3a23039d, 0x3a1e4ebe, 0x3a19bca8, 0x3a154c5c,
+        0x3a10fcdd, 0x3a0ccd3b, 0x3a08bc89, 0x3a04c9e4, 0x3a00f46c, 0x39fa7695, 0x39f33b5c, 0x39ec3595,
+        0x39e563b6, 0x39dec440, 0x39d855bc, 0x39d216c3, 0x39cc05f4, 0x39c621f9, 0x39c06989, 0x39badb60,
+        0x39b57648, 0x39b0390e, 0x39ab228f, 0x39a631aa, 0x39a1654a, 0x399cbc62, 0x399835eb, 0x3993d0e6,
+        0x398f8c5c, 0x398b675e, 0x39876101, 0x39837864, 0x397f5956, 0x3977fa00, 0x3970d128, 0x3969dd3a,
+        0x39631cb1, 0x395c8e0f, 0x39562fe5, 0x395000cb, 0x3949ff66, 0x39442a65, 0x393e807f, 0x39390075,
+        0x3933a912, 0x392e792a, 0x39296f99, 0x39248b43, 0x391fcb16, 0x391b2e05, 0x3916b30e, 0x39125935,
+        0x390e1f84, 0x390a050e, 0x390608ec, 0x39022a3e, 0x38fcd056, 0x38f583bd, 0x38ee6d17, 0x38e78ad6,
+        0x38e0db75, 0x38da5d7e, 0x38d40f83, 0x38cdf021, 0x38c7fe00, 0x38c237d1, 0x38bc9c50, 0x38b72a40,
+        0x38b1e072, 0x38acbdb8, 0x38a7c0f5, 0x38a2e90e, 0x389e34f4, 0x3899a39d, 0x38953409, 0x3890e53e,
+        0x388cb64b, 0x3888a643, 0x3884b442, 0x3880df6a, 0x387a4dc7, 0x387313bc, 0x386c0f1a, 0x38653e57,
+        0x385e9ff5, 0x3858327e, 0x3851f488, 0x384be4b6, 0x384601b2, 0x38404a30, 0x383abcf0, 0x383558b8,
+        0x38301c59, 0x382b06ae, 0x38261697, 0x38214b00, 0x381ca2d9, 0x38181d1f, 0x3813b8d1, 0x380f74f9,
+        0x380b50a8, 0x38074af3, 0x380362f9, 0x37ff2fbc, 0x37f7d19a, 0x37f0a9ec, 0x37e9b721, 0x37e2f7b1,
+        0x37dc6a21, 0x37d60d00, 0x37cfdee8, 0x37c9de7e, 0x37c40a70, 0x37be6176, 0x37b8e252, 0x37b38bce,
+        0x37ae5cbe, 0x37a953ff, 0x37a47075, 0x379fb10e, 0x379b14bd, 0x37969a81, 0x3792415d, 0x378e085c,
+        0x3789ee92, 0x3785f316, 0x3782150a, 0x377ca726, 0x37755bbd, 0x376e463f, 0x3767651d, 0x3760b6d3,
+        0x375a39eb, 0x3753ecf7, 0x374dce94, 0x3747dd6b, 0x3742182d, 0x373c7d96, 0x37370c6a, 0x3731c377,
+        0x372ca194, 0x3727a5a0, 0x3722ce84, 0x371e1b2d, 0x37198a95, 0x37151bba, 0x3710cda3, 0x370c9f5e,
+        0x37089000, 0x37049ea3, 0x3700ca6b, 0x36fa2500, 0x36f2ec22, 0x36ebe8a5, 0x36e518ff, 0x36de7bb0,
+        0x36d80f45, 0x36d1d254, 0x36cbc37f, 0x36c5e170, 0x36c02adc, 0x36ba9e84, 0x36b53b2c, 0x36afffa8,
+        0x36aaead1, 0x36a5fb88, 0x36a130b9, 0x369c8955, 0x36980457, 0x3693a0c0, 0x368f5d9a, 0x368b39f5,
+        0x368734e8, 0x36834d92, 0x367f062a, 0x3677a93a, 0x367082b7, 0x3669910e, 0x3662d2b7, 0x365c4638,
+        0x3655ea21, 0x364fbd0b, 0x3649bd9b, 0x3643ea80, 0x363e4272, 0x3638c433, 0x36336e8e, 0x362e4056,
+        0x36293869, 0x362455ab, 0x361f970a, 0x361afb7a, 0x361681f8, 0x36122989, 0x360df139, 0x3609d819,
+        0x3605dd44, 0x3601ffd9, 0x35fc7dfd, 0x35f533c5, 0x35ee1f6e, 0x35e73f6a, 0x35e09238, 0x35da165e,
+        0x35d3ca70, 0x35cdad0d, 0x35c7bcdc, 0x35c1f88e, 0x35bc5ee0, 0x35b6ee98, 0x35b1a681, 0x35ac8574,
+        0x35a78a51, 0x35a2b3fe, 0x359e016b, 0x35997192, 0x35950370, 0x3590b60c, 0x358c8875, 0x358879c0,
+        0x35848908, 0x3580b570, 0x3579fc40, 0x3572c48f, 0x356bc236, 0x3564f3ac, 0x355e5771, 0x3557ec12,
+        0x3551b026, 0x354ba24c, 0x3545c133, 0x35400b8e, 0x353a801c, 0x35351da6, 0x352fe2fc, 0x352acef9,
+        0x3525e07e, 0x35211676, 0x351c6fd4, 0x3517eb93, 0x351388b3, 0x350f463f, 0x350b2347, 0x35071ee2,
+        0x3503382d, 0x34fedc9e, 0x34f780e2, 0x34f05b88, 0x34e96b00, 0x34e2adc3, 0x34dc2256, 0x34d5c747,
+        0x34cf9b33, 0x34c99cbd, 0x34c3ca95, 0x34be2373, 0x34b8a619, 0x34b35152, 0x34ae23f3, 0x34a91cd7,
+        0x34a43ae5, 0x349f7d0a, 0x349ae23a, 0x34966973, 0x349211ba, 0x348dda19, 0x3489c1a4, 0x3485c775,
+        0x3481eaab, 0x347c54db, 0x34750bd2, 0x346df8a3, 0x346719be, 0x34606da2, 0x3459f2d6, 0x3453a7ef,
+        0x344d8b8b, 0x34479c51, 0x3441d8f4, 0x343c4030, 0x3436d0ca, 0x34318990, 0x342c695a, 0x34276f06,
+        0x3422997c, 0x341de7ae, 0x34195892, 0x3414eb29, 0x34109e79, 0x340c7190, 0x34086384, 0x34047371,
+        0x3400a078, 0x33f9d386, 0x33f29d02, 0x33eb9bce, 0x33e4ce5f, 0x33de3338, 0x33d7c8e5, 0x33d18dfc,
+        0x33cb8120, 0x33c5a0fc, 0x33bfec45, 0x33ba61ba, 0x33b50024, 0x33afc654, 0x33aab325, 0x33a5c578,
+        0x33a0fc38, 0x339c5658, 0x3397d2d3, 0x339370aa, 0x338f2ee8, 0x338b0c9c, 0x338708de, 0x338322cd,
+        0x337eb318, 0x3377588f, 0x33703460, 0x336944fa, 0x336288d5, 0x335bfe79, 0x3355a474, 0x334f7960,
+        0x33497be5, 0x3343aaaf, 0x333e0479, 0x33388804, 0x3333341b, 0x332e0794, 0x3329014a, 0x33242024,
+        0x331f630e, 0x331ac8fe, 0x331650f2, 0x3311f9ee, 0x330dc2fd, 0x3309ab33, 0x3305b1a9, 0x3301d581,
+        0x32fc2bbf, 0x32f4e3e6, 0x32edd1de, 0x32e6f418, 0x32e04912, 0x32d9cf54, 0x32d38574, 0x32cd6a0e,
+        0x32c77bcc, 0x32c1b960, 0x32bc2185, 0x32b6b302, 0x32b16ca4, 0x32ac4d42, 0x32a753be, 0x32a27eff,
+        0x329dcdf4, 0x32993f97, 0x3294d2e6, 0x329086e9, 0x328c5aaf, 0x32884d4c, 0x32845ddd, 0x32808b83,
+        0x3279aad3, 0x3272757b, 0x326b756b, 0x3264a919, 0x325e0f05, 0x3257a5be, 0x32516bd9, 0x324b5ff9,
+        0x324580c9, 0x323fcd00, 0x323a435d, 0x3234e2a8, 0x322fa9b2, 0x322a9756, 0x3225aa76, 0x3220e1fe,
+        0x321c3ce0, 0x3217ba17, 0x321358a5, 0x320f1794, 0x320af5f5, 0x3206f2de, 0x32030d70, 0x31fe899a,
+        0x31f73043, 0x31f00d3e, 0x31e91ef9, 0x31e263ee, 0x31dbdaa2, 0x31d581a6, 0x31cf5794, 0x31c95b12,
+        0x31c38acf, 0x31bde584, 0x31b869f4, 0x31b316ea, 0x31adeb3a, 0x31a8e5c2, 0x31a40567, 0x319f4916,
+        0x319aafc7, 0x31963875, 0x3191e226, 0x318dabe5, 0x318994c5, 0x31859be2, 0x3181c05a, 0x317c02aa,
+        0x3174bc01, 0x316dab1f, 0x3166ce78, 0x31602488, 0x3159abd8, 0x315362fe, 0x314d4898, 0x31475b4c,
+        0x314199d0, 0x313c02df, 0x3136953e, 0x31314fbc, 0x312c3131, 0x3127387c, 0x31226486, 0x311db43f,
+        0x3119269f, 0x3114baa7, 0x31106f5e, 0x310c43d1, 0x31083717, 0x3104484c, 0x31007692, 0x30f98226,
+        0x30f24dfb, 0x30eb4f0f, 0x30e483d8, 0x30ddead8, 0x30d7829c, 0x30d149ba, 0x30cb3ed7, 0x30c5609c,
+        0x30bfadc1, 0x30ba2504, 0x30b4c530, 0x30af8d14, 0x30aa7b8b, 0x30a58f79, 0x30a0c7c8, 0x309c236c,
+        0x3097a15f, 0x309340a4, 0x308f0044, 0x308adf51, 0x3086dce2, 0x3082f816, 0x307e6022, 0x307707fe,
+        0x306fe623, 0x3068f8fe, 0x30623f0c, 0x305bb6d0, 0x30555edd, 0x304f35cc, 0x30493a44, 0x30436af4,
+        0x303dc694, 0x30384be8, 0x3032f9bc, 0x302dcee4, 0x3028ca3e, 0x3023eaae, 0x301f2f23, 0x301a9694,
+        0x30161ffc, 0x3011ca61, 0x300d94d0, 0x30097e5b, 0x3005861d, 0x3001ab36, 0x2ffbd99c, 0x2ff49422,
+        0x2fed8467, 0x2fe6a8de, 0x2fe00004, 0x2fd98862, 0x2fd3408e, 0x2fcd2726, 0x2fc73ad2, 0x2fc17a46,
+        0x2fbbe43e, 0x2fb67780, 0x2fb132d9, 0x2fac1523, 0x2fa71d3e, 0x2fa24a11, 0x2f9d9a8e, 0x2f990dac,
+        0x2f94a26c, 0x2f9057d6, 0x2f8c2cf8, 0x2f8820e6, 0x2f8432bf, 0x2f8061a5, 0x2f795980, 0x2f722682,
+        0x2f6b28ba, 0x2f645e9e, 0x2f5dc6b1, 0x2f575f80, 0x2f5127a2, 0x2f4b1dba, 0x2f454074, 0x2f3f8e87,
+        0x2f3a06b2, 0x2f34a7bc, 0x2f2f707a, 0x2f2a5fc5, 0x2f257480, 0x2f20ad96, 0x2f1c09fc, 0x2f1788ab,
+        0x2f1328a7, 0x2f0ee8f8, 0x2f0ac8b2, 0x2f06c6ea, 0x2f02e2c0, 0x2efe36b1, 0x2ef6dfc0, 0x2eefbf0e,
+        0x2ee8d30a, 0x2ee21a30, 0x2edb9305, 0x2ed53c1a, 0x2ecf140a, 0x2ec9197c, 0x2ec34b1e, 0x2ebda7aa,
+        0x2eb82de2, 0x2eb2dc94, 0x2eadb294, 0x2ea8aebe, 0x2ea3cffa, 0x2e9f1535, 0x2e9a7d64, 0x2e960787,
+        0x2e91b2a1, 0x2e8d7dbf, 0x2e8967f5, 0x2e85705c, 0x2e819616, 0x2e7bb094, 0x2e746c4a, 0x2e6d5db5,
+        0x2e66834a, 0x2e5fdb86, 0x2e5964f2, 0x2e531e24, 0x2e4d05ba, 0x2e471a5e, 0x2e415ac1, 0x2e3bc5a2,
+        0x2e3659c6, 0x2e3115fb, 0x2e2bf91a, 0x2e270204, 0x2e222fa0, 0x2e1d80e1, 0x2e18f4bd, 0x2e148a36,
+        0x2e104052, 0x2e0c1621, 0x2e080ab9, 0x2e041d36, 0x2e004cba, 0x2df930e1, 0x2df1ff0f, 0x2deb026a,
+        0x2de43969, 0x2ddda290, 0x2dd73c6a, 0x2dd1058f, 0x2dcafca3, 0x2dc52052, 0x2dbf6f52, 0x2db9e863,
+        0x2db48a4e, 0x2daf53e5, 0x2daa4404, 0x2da5598c, 0x2da09369, 0x2d9bf090, 0x2d976ffb, 0x2d9310ad,
+        0x2d8ed1b0, 0x2d8ab215, 0x2d86b0f5, 0x2d82cd6d, 0x2d7e0d47, 0x2d76b788, 0x2d6f97ff, 0x2d68ad1c,
+        0x2d61f55a, 0x2d5b6f40, 0x2d55195d, 0x2d4ef24e, 0x2d48f8b8, 0x2d432b4d, 0x2d3d88c4, 0x2d380fe2,
+        0x2d32bf71, 0x2d2d9648, 0x2d289343, 0x2d23b54a, 0x2d1efb4a, 0x2d1a6439, 0x2d15ef16, 0x2d119ae4,
+        0x2d0d66b2, 0x2d095192, 0x2d055a9f, 0x2d0180fa, 0x2cfb8793, 0x2cf44478, 0x2ced370a, 0x2ce65dbc,
+        0x2cdfb70d, 0x2cd94187, 0x2cd2fbbf, 0x2ccce453, 0x2cc6f9ee, 0x2cc13b41, 0x2cbba70a, 0x2cb63c10,
+        0x2cb0f922, 0x2cabdd16, 0x2ca6e6cf, 0x2ca21534, 0x2c9d6738, 0x2c98dbd2, 0x2c947202, 0x2c9028d2,
+        0x2c8bff4f, 0x2c87f48f, 0x2c8407b0, 0x2c8037d4, 0x2c790848, 0x2c71d7a2, 0x2c6adc21, 0x2c64143b,
+        0x2c5d7e74, 0x2c571959, 0x2c50e382, 0x2c4adb91, 0x2c450035, 0x2c3f5022, 0x2c39ca1a, 0x2c346ce4,
+        0x2c2f3755, 0x2c2a2846, 0x2c253e9c, 0x2c207940, 0x2c1bd728, 0x2c17574f, 0x2c12f8b8, 0x2c0eba6c,
+        0x2c0a9b7d, 0x2c069b03, 0x2c02b81e, 0x2bfde3e4, 0x2bf68f56, 0x2bef70f6, 0x2be88734, 0x2be1d08a,
+        0x2bdb4b80, 0x2bd4f6a6, 0x2bced097, 0x2bc8d7fb, 0x2bc30b81, 0x2bbd69e4, 0x2bb7f1e5, 0x2bb2a252,
+        0x2bad7a00, 0x2ba877cc, 0x2ba39a9e, 0x2b9ee163, 0x2b9a4b12, 0x2b95d6a9, 0x2b91832c, 0x2b8d4fa9,
+        0x2b893b33, 0x2b8544e6, 0x2b816be1, 0x2b7b5e99, 0x2b741cad, 0x2b6d1065, 0x2b663834, 0x2b5f929b,
+        0x2b591e22, 0x2b52d960, 0x2b4cc2f2, 0x2b46d983, 0x2b411bc6, 0x2b3b8878, 0x2b361e60, 0x2b30dc4c,
+        0x2b2bc116, 0x2b26cb9e, 0x2b21facc, 0x2b1d4d93, 0x2b18c2ea, 0x2b1459d3, 0x2b101156, 0x2b0be880,
+        0x2b07de69, 0x2b03f22d, 0x2b0022f0, 0x2af8dfb6, 0x2af1b03c, 0x2aeab5de, 0x2ae3ef13, 0x2add5a5e,
+        0x2ad6f64e, 0x2ad0c17a, 0x2acaba85, 0x2ac4e01c, 0x2abf30f7, 0x2ab9abd5, 0x2ab44f80, 0x2aaf1aca,
+        0x2aaa0c8e, 0x2aa523b0, 0x2aa05f1c, 0x2a9bbdc5, 0x2a973ea8, 0x2a92e0c6, 0x2a8ea32b, 0x2a8a84e8,
+        0x2a868516, 0x2a82a2d2, 0x2a7dba87, 0x2a76672b, 0x2a6f49f4, 0x2a686152, 0x2a61abc1, 0x2a5b27c6,
+        0x2a54d3f4, 0x2a4eaee6, 0x2a48b743, 0x2a42ebba, 0x2a3d4b08, 0x2a37d3ed, 0x2a328538, 0x2a2d5dbd,
+        0x2a285c5a, 0x2a237ff7, 0x2a1ec781, 0x2a1a31ef, 0x2a15be40, 0x2a116b77, 0x2a0d38a4, 0x2a0924d8,
+        0x2a052f30, 0x2a0156cb, 0x29fb35a5, 0x29f3f4e8, 0x29ece9c6, 0x29e612b3, 0x29df6e2f, 0x29d8fac4
+    ]
 
     // Z-Image-Turbo's transformer (`IK_VAL_Z_IMAGE_TURBO`, released float32) at bf16 as its generator loads it,
     // cut to its refiners and its first two unified layers, against diffusers' `ZImageTransformer2DModel` at

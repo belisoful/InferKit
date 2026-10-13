@@ -113,7 +113,7 @@ final class NFKVoxtralProjector: Module {
         super.init()
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(NFKReferenceRounding.wide(linear1(x)) { gelu($0) }) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(NFKReferenceRounding.gelu(linear1(x))) }
 }
 
 /// Voxtral end to end: the Whisper encoder and the projector turn log-mel features into audio

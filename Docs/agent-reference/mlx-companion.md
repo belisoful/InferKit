@@ -209,6 +209,48 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   the global device; a caller wanting a whole inference on the CPU runs the synchronous call inside the
   block on their own thread, which is where the contract puts a multi-second inference anyway. The `@objc`
   case names are given explicitly (`NFKMLXDeviceTypeCPU`/`…GPU`), since Swift would generate `…Cpu`/`…Gpu`.
+- `NFKMLXHalfPrecision` / `NFKMLXArithmetic` (`@objc`): the arithmetic of a half-precision forward's flash
+  attention exponentials (`softmaxExponential`) and layer norms (`NFKReferenceRounding.layerNorm`, reached by
+  `NFKLayerNorm` and `sd3AffineFreeLayerNorm`). `.fast` is the default and the code that ran before the
+  switch. `.reference` runs two Metal kernels in `NFKMLXReferenceKernels.swift`, each wrapped in a
+  `CustomFunction` whose VJP is the gradient of the MLX operations it stands for. A kernel cannot dispatch on
+  the CPU stream, so there the exponential takes `torchExpOperations` and the layer norm takes `MLXFast`.
+  `NFKMLXBFloat16ParityTests` sets `.reference` in `setUp` and `.fast` in `tearDown`.
+  - `torchExp` is Sleef's `expf` (`Sleef_expf4_u10`), which torch 2.8 computes for every vectorized float32
+    exponential on ARM, `exp_u20` included, with `fma` where Sleef fuses. 0 of 1,048,576 results differ from
+    torch's. `torchExpOperations` rounds each multiply-add and leaves 1.1% one unit apart.
+  - `torchLayerNorm` is torch's `RowwiseMoments` and `LayerNormKernelImpl` for a half-precision input: 8-wide
+    vectors widened to two 4-lane float32 vectors, Welford updates over chunks of 16 vectors, a binary
+    cascade, the remainder one element at a time, the lanes joined, then
+    `(x · rstd + (−rstd · mean)) · γ + β`. torch's vector code rounds every operation, and its compiled
+    scalar code fuses the lanes' join, each remaining element's second moment, and the output of a row
+    narrower than 8. A missing γ or β behaves as 1 or 0. 0 of 13.7 million outputs differ from torch's.
+    `testReferenceArithmeticComputesTorchsLayerNorm` holds exact formula inputs to the SHA-256 of torch's
+    output.
+  - torch's float32-input layer norm follows another algorithm: neither the fused nor the unfused form of
+    this one comes within 25% of its outputs. Wan's `FP32LayerNorm` and SAM 3's autocast norms keep `MLXFast`.
+  - Overall, a whole half-precision forward in `.reference` takes 1.00 to 1.16 times the time of the fast
+    mode in a diffusion denoiser, and up to 2.8 times in a short-sequence encoder (CLIP's text encoder over
+    77 tokens), because the layer-norm kernel computes a row on one thread
+    (`NFKMLXHalfPrecisionArithmeticTimingTests`, `IK_ARITHMETIC_TIMING=1`; the table is in
+    `Docs/examples.md`).
+  Measured, and kept out of the switch:
+  - Sigmoid, SiLU, and swish, over every float16 and bf16 input: Sleef's exponential and MLX's leave the
+    same count of rounded outputs apart from torch's.
+  - The softmax kernels of eager, math, and upcast attention: the exponential changes the count of rounded
+    outputs apart from torch's by at most 1 of 262,144.
+  - Sleef's `expf` from MLX operations on the GPU: 20 to 25 times MLX's `exp`, and a whole denoiser forward
+    2.3 to 4.7 times slower. `compile` of it is 3.2 times faster and 98% of its results are wrong.
+  Open items:
+  - A row's 4 lanes stay independent until their join, so a layer-norm kernel with a thread per lane keeps
+    torch's order and spreads a short sequence's few rows over more of the GPU.
+  - torch's SiLU is `x / (1 + exp(-x))`, which rounds 1 float16 and 3 bf16 inputs closer than
+    `x · sigmoid(x)`.
+  - torch's softmax multiplies by the reciprocal of the sum, which lowers the differing bf16 outputs of a
+    composed softmax from 20 to 4 of 262,144.
+  - torch's float32-input layer norm.
+  - `flashAttention` without a `queryBlock` holds a key block's float32 scores for every query: Wan at
+    480×832 and 33 frames holds 9.5 GB, and at 81 frames 51 GB.
 - `NFKMLXModelDescription` (internal) is what a backend's `modelInfo` reads: it walks
   `parameters().flattened()` and matches each key's owner against `namedModules()` paths, which use
   the same dotted form. A `Quantized` owner's `weight` counts `size × 32 / bits` parameters and its

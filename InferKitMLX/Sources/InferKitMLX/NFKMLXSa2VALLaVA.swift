@@ -147,7 +147,7 @@ final class NFKLLaVAProjector: Module {
         _linear1.wrappedValue = Linear(visionWidth, decoderWidth)
         _linear2.wrappedValue = Linear(decoderWidth, decoderWidth)
     }
-    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(NFKReferenceRounding.wide(linear1(x)) { gelu($0) }) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(NFKReferenceRounding.gelu(linear1(x))) }
 }
 
 /// Sa2VA on LLaVA-1.5: the CLIP tower, the projector, the Llama decoder, the `[SEG]` bridge, and SAM 2

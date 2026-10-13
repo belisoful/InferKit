@@ -208,6 +208,15 @@ byte-identical.
   bf16 and float16, with `run_reference.py glue_rounding` holding both rules.
 - A diffusers pipeline combines classifier-free guidance at the transformer's type with a Python-float
   scale (`guided`).
+- torch's exact `gelu` on a half input forms in float32 with the error function of its vectorized CPU kernels,
+  the Abramowitz–Stegun 7.1.26 polynomial, and rounds once. MLX's error function is faithfully rounded, and
+  widened it rounds 277 of all finite float16 inputs apart from torch. `NFKReferenceRounding.gelu` writes
+  torch's polynomial in MLX operations: one float16 input rounds apart where torch fuses a multiply-add, and
+  none at bf16 (`run_reference.py gelu_rounding`). The record is held where `x · 0.5` is a normal float32,
+  `|x|` at least twice the least normal: the GPU flushes a subnormal float32 result to zero, and torch's CPU
+  keeps it. That leaves out zero and, at bf16, the 254 subnormal inputs and the 256 normal ones below
+  `2^-125`, where the GPU's first product `x · 0.5` is already subnormal (at ±2.34e-38 torch rounds the result
+  up to the least normal and the GPU returns 0).
 - A float32 array mixed into a bf16 expression promotes the rest of the layer to float32. Gemma 3n's
   AltUp floor `MLXArray(Float(1e-5))` and the M-RoPE tables did this; both now take the stream's type.
   So did Voxtral's computed Whisper sinusoids, FLUX's rotary tables, and every diffusion transformer's
@@ -346,6 +355,66 @@ piece without one is only reported.
   recorded levels.
 - Only a block's first call is kept, so a prefill's floor survives the decode steps after it, and a
   streamed float32 run records none.
+
+A half-precision block whose reductions sum wide rows can sit past a quarter of the accumulated floor
+from summation order alone. Such a block carries an order floor. `IK_PROBE_ORDER_FLOOR=1` reruns the
+reference's half-precision block on its own input once per summation order, every reduction it names summed
+in that order and rounded as torch rounds it (`_order_floor_hooks`). The set is fixed for every order floor
+(`_SUMMATION_ORDERS`). Each order names three groups of reductions, and a group it does not name keeps
+torch's own:
+
+- The products: every linear, and the attention's `QKᵀ` and `P·V`.
+- The moments: the layer and group norms' mean and variance, and the softmax's sum over the keys.
+- The convolutions' sum over input channels.
+
+| Order | Products | Moments | Convolutions |
+| --- | --- | --- | --- |
+| `sequential`, `pairwise` | one running float32 sum, a pairwise float32 tree | the same | torch's |
+| `tile8` to `tile64` | running sums of 8- to 64-wide float32 tiles | torch's (a chunked Welford update) | torch's |
+| `split2`, `split4` | 2 or 4 equal parts, each a running float32 sum, added in order | torch's | the same split |
+| `split8` | 8 such parts | torch's | torch's |
+| `float64` | float64 | float64 | float64 |
+| `two-pass` | torch's | two-pass, by torch's float32 `sum` | torch's |
+
+Beside these paired orders, each group reruns alone in each of its orders with the other two torch's own
+(`products.<order>`, `moments.<order>`, `convolutions.<order>`), where that differs from every paired rerun.
+
+The set grew four times after a result fell short of the port, each addition a real kernel's reduction:
+
+1. The split and layer-norm orders, after SD 1.5's first order floor, each measured exactly. MLX's GPU
+   matmul splits the inner dimension into 1, 2, 4, or 8 parts by shape, each a running float32 sum. torch's
+   CPU layer norm sums its moments by a 4-lane Welford update in 16-vector chunks, and `MLXFast.layerNorm`
+   sums them another way, which alone moves an SD 1.5 transformer block by 0.16 to 0.86 of its block floor.
+2. The attention products, after three of SD 1.5's blocks stood up to 1.7% past the floor. An attention
+   rerun goes through `_ordered_flash_attention`, a model of torch's CPU flash kernel (key blocks of 512, the
+   raw scores and each block's `P·V` rounded at float16), and through diffusers' classic processor's
+   `baddbmm` and `bmm`. At torch's own order the model differs from torch's kernel in 794 of 327,680
+   elements of SD 1.5's first self-attention, and that difference is part of the floor.
+3. The group-norm moments, the convolution channel sums, and the softmax sum, after SD 1.5 stood 0.8% and
+   2% past two block floors and SD 2.1 1% past its end-to-end floor. Each alone moves SD 2.1's end-to-end
+   distance from float32 past the port's 3.00 times its floor (the convolutions split in two 4.21, the
+   softmax summed two-pass 3.11), and the softmax sum alone moves an SD 1.5 block by up to 0.044 of its
+   block floor.
+4. The single-group reruns, after SD 2.1's end-to-end distance stood 7% past the paired set's farthest. How
+   the groups pair moves the farthest rerun: the convolutions split in two reach 4.21 alone and 1.73 beside
+   the split linears.
+
+Each order's distance from the block's own output is kept as `<key>.order.<order>`, and the farthest rerun
+as `<key>.orderfloor`. A seam with one is held to it (`Seam.orderFloor`, at most 1.0 of it) in place of the
+quarter of the accumulated floor, and the report prints every order's distance.
+
+A network whose end-to-end state is one draw of that spread carries an end-to-end order floor as well.
+`IK_PROBE_OUTPUT_ORDER_FLOOR=1` reruns the whole half-precision model once per order of the same set
+(`_output_order_floor`) and keeps each output as `output.order.<order>`. The test holds this side's distance
+from the float32 run to the farthest rerun's (`Seam.orderRuns`, at most 1.0 of it) in place of twice the
+floor, and prints each order's multiple of the floor. SD 2.1's UNet at float16 is the case: one reduction
+changed alone takes the reference's own end-to-end distance from 1.0 to as much as 4.21 times its floor.
+
+A custom GPU kernel that copies torch's summation order is written only if a repository Issue requests it.
+
+The half-precision parity tests compute PyTorch's arithmetic: `NFKMLXBFloat16ParityTests` sets
+`NFKMLXHalfPrecision.arithmetic` to `.reference` for each test, so flash attention's exponentials and every
+half-precision layer norm match torch's bit for bit (`mlx-companion.md`).
 
 `seams` reads each floor into `Seam.blockFloor`, and every isolated seam with one is held inside it
 (`assertWithinBlockFloors`), beside the quarter of the accumulated floor. Across the families, the median

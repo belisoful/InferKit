@@ -412,7 +412,7 @@ final class NFKGraniteSpeechQFormerIntermediate: Module {
         super.init()
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { NFKReferenceRounding.wide(dense(x)) { gelu($0) } }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { NFKReferenceRounding.gelu(dense(x)) }
 }
 
 /// The gelu feed-forward's residual down projection.

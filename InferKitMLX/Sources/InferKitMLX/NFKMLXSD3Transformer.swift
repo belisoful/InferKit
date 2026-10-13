@@ -89,10 +89,11 @@ public struct NFKMLXSD3Configuration: Sendable {
 }
 
 /// An affine-free layer normalization over the last axis (the reference's `elementwise_affine=False`),
-/// computed in float32 and rounded once on a half-precision input, as torch's `layer_norm` is.
+/// computed in float32 and rounded once on a half-precision input, as torch's `layer_norm` is
+/// (``NFKReferenceRounding/layerNorm(_:weight:bias:eps:)``).
 func sd3AffineFreeLayerNorm(_ x: MLXArray, eps: Float = 1e-6) -> MLXArray {
     if NFKReferenceRounding.isReduced(x) {
-        return MLXFast.layerNorm(x.asType(.float32), weight: nil, bias: nil, eps: eps).asType(x.dtype)
+        return NFKReferenceRounding.layerNorm(x, weight: nil, bias: nil, eps: eps)
     }
     let mean = x.mean(axis: -1, keepDims: true)
     let variance = (x - mean).square().mean(axis: -1, keepDims: true)

@@ -76,6 +76,28 @@ enum NFKReferenceRounding {
         return (weight.map { normalized * $0.asType(.float32) } ?? normalized).asType(x.dtype)
     }
 
+    /// torch's exact `gelu`, `x · 0.5 · (1 + erf(x · √½))`. A half-precision input forms it in float32 with the
+    /// error function torch's CPU kernels compute, the Abramowitz–Stegun 7.1.26 polynomial, and rounds once.
+    /// MLX's own error function is faithfully rounded, so its GELU rounds apart from torch's at float16.
+    /// A float32 input takes MLXNN's `gelu`.
+    static func gelu(_ x: MLXArray) -> MLXArray {
+        guard isReduced(x) else { return MLXNN.gelu(x) }
+        let wide = x.asType(.float32)
+        return (wide * 0.5 * (1 + torchErf(wide * Float(0.5.squareRoot())))).asType(x.dtype)
+    }
+
+    /// The float32 error function of torch's vectorized CPU kernels:
+    /// `1 − t · e^(−y²) · (p₁ + t(p₂ + t(p₃ + t(p₄ + t·p₅))))` with `t = 1 / (1 + p·|y|)`, signed as `y`.
+    /// torch fuses its multiply-adds and MLX rounds each step, which leaves one float16 input of all
+    /// finite ones rounding apart.
+    private static func torchErf(_ y: MLXArray) -> MLXArray {
+        let t = 1 / (Float(0.3275911) * abs(y) + 1)
+        let polynomial = (((Float(1.061405429) * t - Float(1.453152027)) * t + Float(1.421413741)) * t
+                          - Float(0.284496736)) * t + Float(0.254829592)
+        let magnitude = (t * -exp(-(y * y))) * polynomial + 1
+        return which(y .< 0, -magnitude, magnitude)
+    }
+
     /// torch's `gelu(approximate="tanh")`, which widens a half-precision input and rounds its result once.
     static func geluTanh(_ x: MLXArray) -> MLXArray {
         guard isReduced(x) else { return geluApproximate(x) }
@@ -190,12 +212,13 @@ enum NFKReferenceRounding {
     /// in blocks of `keyBlock` (512): each block's scores formed and scaled in float32 with the mask
     /// added, the running row max and the float32 sum of the exponentials updated, the exponentials
     /// rounded to the operands' type for the product with the values, and the float32 accumulator
-    /// rescaled when the max moves; the output divides by the sum and rounds once. At float16 the kernel's
-    /// matrix products round as well: each block's raw scores, before the scale, and each block's product
-    /// with the values, before it joins the accumulator. A float32 input takes the fused kernel.
-    /// `queryBlock` attends that many query rows at a time, each row computed as
-    /// before, and evaluates each block before the next: MLX schedules one lazy graph as a whole and holds
-    /// every block's float32 scores at once, which over a long sequence is the whole score matrix.
+    /// rescaled when the max moves, each exponential as ``softmaxExponential(_:)`` takes it; the output
+    /// divides by the sum and rounds once. At float16 the kernel's matrix products round as well: each
+    /// block's raw scores, before the scale, and each block's product with the values, before it joins the
+    /// accumulator. A float32 input takes the fused kernel.
+    /// `queryBlock` attends that many query rows at a time, each row computed as before, and evaluates each
+    /// block before the next: MLX schedules one lazy graph as a whole and holds every block's float32
+    /// scores at once, which over a long sequence is the whole score matrix.
     static func flashAttention(queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float,
                                mask: MLXArray?, keyBlock: Int = 512, queryBlock: Int? = nil) -> MLXArray {
         guard isReduced(queries) else {
@@ -229,11 +252,11 @@ enum NFKReferenceRounding {
             }
             let blockMaximum = scores.max(axis: -1, keepDims: true)
             let updated = maximum.map { MLX.maximum($0, blockMaximum) } ?? blockMaximum
-            let exponentials = exp(scores - updated)
+            let exponentials = softmaxExponential(scores - updated)
             var product = matmul(exponentials.asType(queries.dtype).asType(.float32), wideValues[.ellipsis, block, 0...])
             if queries.dtype == .float16 { product = product.asType(.float16).asType(.float32) }
             if let previous = maximum, let sum = total, let running = accumulated {
-                let correction = exp(previous - updated)
+                let correction = softmaxExponential(previous - updated)
                 total = sum * correction + exponentials.sum(axis: -1, keepDims: true)
                 accumulated = running * correction + product
             } else {
@@ -365,13 +388,13 @@ enum NFKReferenceRounding {
 }
 
 /// MLXNN's `LayerNorm`, rounding as torch's `layer_norm` does in half precision: normalized and
-/// scaled in float32, rounded once. MLX's fused kernel rounds a half-precision input differently. A
-/// float32 input takes the fused kernel unchanged.
+/// scaled in float32, rounded once, by the arithmetic ``NFKMLXHalfPrecision/arithmetic`` selects
+/// (``NFKReferenceRounding/layerNorm(_:weight:bias:eps:)``). MLX's fused kernel rounds a half-precision
+/// input differently. A float32 input takes the fused kernel unchanged.
 final class NFKLayerNorm: LayerNorm {
     override func callAsFunction(_ x: MLXArray) -> MLXArray {
         guard NFKReferenceRounding.isReduced(x) else { return super.callAsFunction(x) }
-        return MLXFast.layerNorm(x.asType(.float32), weight: weight?.asType(.float32),
-                                 bias: bias?.asType(.float32), eps: eps).asType(x.dtype)
+        return NFKReferenceRounding.layerNorm(x, weight: weight, bias: bias, eps: eps)
     }
 }
 

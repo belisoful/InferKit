@@ -366,7 +366,7 @@ final class NFKPhi4MMAudioProjection: Module {
 
     func callAsFunction(_ x: MLXArray, mode: NFKMLXPhi4MMModality) -> MLXArray {
         let head = mode == .vision ? vision : speech
-        return (head[2] as! Linear)(NFKReferenceRounding.wide((head[0] as! Linear)(x)) { gelu($0) })
+        return (head[2] as! Linear)(NFKReferenceRounding.gelu((head[0] as! Linear)(x)))
     }
 }
 

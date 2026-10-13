@@ -131,7 +131,7 @@ final class NFKQwen25VLMerger: Module {
 
     func callAsFunction(_ x: MLXArray, mergeUnit: Int) -> MLXArray {
         let grouped = norm(x).reshaped([-1, x.dim(1) * mergeUnit])
-        return mlp[1](NFKReferenceRounding.wide(mlp[0](grouped)) { gelu($0) })
+        return mlp[1](NFKReferenceRounding.gelu(mlp[0](grouped)))
     }
 }
 

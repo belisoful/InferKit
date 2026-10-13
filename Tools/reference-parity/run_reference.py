@@ -5417,7 +5417,9 @@ def run_sd_unet_probe(image, checkpoint):
     float16 cast as `from_pretrained(torch_dtype=float16)` casts it, and its float32 side rounds every
     parameter to float16 and back. `IK_PROBE_IP_ADAPTER` names an IP-Adapter file to attach as diffusers'
     `load_ip_adapter` does (at the UNet's type), at scale 0.6 over a seeded image embedding; it records
-    `image_embeds` and the projected `ip.tokens`. Returns the predicted noise, channels last. Runs under the
+    `image_embeds` and the projected `ip.tokens`. `IK_PROBE_ORDER_FLOOR=1` keeps each transformer block's
+    order floor (`_order_floor_hooks`), and `IK_PROBE_OUTPUT_ORDER_FLOOR=1` the whole UNet's
+    (`_output_order_floor`, as `output.order.<order>`). Returns the predicted noise, channels last. Runs under the
     `sd` oracle env. `image` unused."""
     from diffusers import UNet2DConditionModel
 
@@ -5505,6 +5507,9 @@ def run_sd_unet_probe(image, checkpoint):
     _block_floor_hooks([module for name, module in stages if name != "conv_act"],
                        [f"{name}.out" for name, _ in stages if name != "conv_act"], extra,
                        keep=channels_last, verify=True)
+    transformer_blocks = [(name, module) for name, module in stages if ".transformer_blocks." in name]
+    _order_floor_hooks([module for _, module in transformer_blocks],
+                       [f"{name}.out" for name, _ in transformer_blocks], extra, keep=channels_last)
     first_attention = next(block.attentions[0] for block in unet.down_blocks if getattr(block, "attentions", None))
     probed = first_attention.transformer_blocks[0]
     pieces = [(name, module) for name, module in probed.named_modules() if name]
@@ -5520,6 +5525,8 @@ def run_sd_unet_probe(image, checkpoint):
                        verify=True)
     with torch.no_grad(), _widened_convolutions():
         noise = unet(latent, timestep, encoder_hidden_states=context, **kwargs).sample
+        extra.update(_output_order_floor(unet, lambda net: net(latent, timestep, encoder_hidden_states=context,
+                                                                **kwargs).sample, noise, channels_last))
     if os.environ.get("IK_PROBE_BLOCK_FLOOR") == "1" and half:
         extra["conv_act.out.floor"] = torch.nn.functional.silu(
             extra["conv_act.in"].to(torch.float16).float()).contiguous()
@@ -7014,19 +7021,24 @@ _FLOOR_HALVES = {}
 
 
 def _floor_copy(module):
-    """A float32 copy of `module` that runs as its class does: no hooks, and no `forward` set on an
-    instance. While `output_hidden_states` is set, transformers 4.57 binds an output-recording wrapper to
-    each layer's `forward`, and a copied wrapper still calls the original half-precision layer."""
+    """A float32 copy of `module` that runs as its class does (`_hookless_copy`)."""
+    return _hookless_copy(module).float()
+
+
+def _hookless_copy(module):
+    """A copy of `module` that runs as its class does: no hooks, and no `forward` set on an instance. While
+    `output_hidden_states` is set, transformers 4.57 binds an output-recording wrapper to each layer's
+    `forward`, and a copied wrapper still calls the original layer."""
     import copy
 
-    wide = copy.deepcopy(module).float()
-    for sub in wide.modules():
+    duplicate = copy.deepcopy(module)
+    for sub in duplicate.modules():
         sub._forward_hooks.clear()
         sub._forward_pre_hooks.clear()
         for name in ("_forward_hooks_with_kwargs", "_forward_pre_hooks_with_kwargs", "_forward_hooks_always_called"):
             getattr(sub, name, {}).clear()
         sub.__dict__.pop("forward", None)
-    return wide
+    return duplicate
 
 
 def _runs_wide(module, args, kwargs=None):
@@ -7133,6 +7145,408 @@ def _block_floor_hooks(blocks, keys, extra, batched=True, indices=None, finals=N
             if verify:
                 _FLOOR_HALVES[key] = laid_out(first(output))
             del wide, wide_final
+            return None
+        block.register_forward_hook(hook, with_kwargs=True)
+
+
+# The summation orders of the reruns `_order_floor_hooks` and `_output_order_floor` make, fixed for every order
+# floor. Each paired order names the order of every reduction it reaches, applied together: the linear products
+# and the attention's `QKᵀ` and `P·V` (`_LINEAR_ORDER`), the layer and group norms' moment sums and the
+# softmax's sum over the keys (`_MOMENT_ORDER`), and the convolutions' sum over input channels (`_CONV_ORDER`).
+# A reduction an order does not name keeps torch's own.
+# - `sequential`, `pairwise`, `float64`: the products and the moment and softmax sums as one running float32
+#   sum, a pairwise float32 tree, or float64; the convolutions in float64 for `float64`.
+# - `tile8` to `tile64`: the products as running float32 sums of 8- to 64-wide tiles that torch's float32 matmul
+#   sums within. `split2` to `split8`: the products split into 2 to 8 equal parts, each a running float32 sum,
+#   added in order, as MLX's GPU matmul sums; `split2` and `split4` split the convolutions' input channels too.
+# - `two-pass`: torch's own products and convolutions, the moment and softmax sums two-pass by torch's float32
+#   `sum`.
+# The set grew four times after a result fell short of the port, each addition a real kernel's reduction: the
+# split and layer-norm orders after SD 1.5's first order floor, measured exactly from MLX's GPU matmul and
+# torch's CPU layer norm; the attention products after the second; and the group-norm moments, the convolution
+# channel sums, and the softmax sum after the third, when each alone moved SD 2.1's end-to-end distance past the
+# port's. The attention runs through `_ordered_flash_attention`, a model of torch's CPU flash kernel that differs
+# from it in 794 of SD 1.5's 327,680 first self-attention elements at torch's own order; that difference is part
+# of the floor. Beside the paired orders, each group reruns alone in each of its orders with the others torch's
+# own (`products.<order>`, `moments.<order>`, `convolutions.<order>`), since how the groups pair moves the
+# farthest rerun; these joined after SD 2.1's end-to-end distance stood 7% past the paired set's farthest.
+_SUMMATION_ORDERS = ("sequential", "pairwise", "tile8", "tile16", "tile32", "tile64", "split2", "split4",
+                     "split8", "float64", "two-pass")
+_LINEAR_ORDER = {order: order for order in _SUMMATION_ORDERS if order != "two-pass"}
+_MOMENT_ORDER = {"sequential": "sequential", "pairwise": "pairwise", "float64": "float64", "two-pass": "two-pass"}
+_CONV_ORDER = {"split2": "split2", "split4": "split4", "float64": "float64"}
+
+
+def _summation_reruns():
+    """Each rerun's name and its (products, moments, convolutions) orders, `None` for torch's own: the paired
+    orders, then each group alone where that differs from every paired rerun."""
+    reruns = [(order, (_LINEAR_ORDER.get(order), _MOMENT_ORDER.get(order), _CONV_ORDER.get(order)))
+              for order in _SUMMATION_ORDERS]
+    singles = [(f"products.{order}", (order, None, None)) for order in _LINEAR_ORDER]
+    singles += [(f"moments.{order}", (None, order, None)) for order in _MOMENT_ORDER]
+    singles += [(f"convolutions.{order}", (None, None, order)) for order in _CONV_ORDER]
+    paired = {spec for _, spec in reruns}
+    return reruns + [(name, spec) for name, spec in singles if spec not in paired]
+
+
+_SUMMATION_RERUNS = _summation_reruns()
+
+
+def _moment_sum(terms, order):
+    """The sum of `terms` over its last axis in the moment order `order`: in float64 for `float64`, else in
+    float32."""
+    if order == "float64":
+        return terms.double().sum(-1)
+    if order == "sequential":
+        return _sequential_sum(terms)
+    if order == "pairwise":
+        return _pairwise_sum(terms)
+    return terms.sum(-1)
+
+
+def _sequential_sum(terms):
+    """The running float32 sum of `terms` over its last axis."""
+    total = torch.zeros(terms.shape[:-1])
+    for k in range(terms.shape[-1]):
+        total = total + terms[..., k]
+    return total
+
+
+def _pairwise_sum(terms):
+    """The pairwise float32 tree over the last axis of `terms`, an odd level padded with a zero."""
+    while terms.shape[-1] > 1:
+        if terms.shape[-1] % 2:
+            terms = torch.cat([terms, torch.zeros_like(terms[..., :1])], -1)
+        terms = terms[..., 0::2] + terms[..., 1::2]
+    return terms[..., 0]
+
+
+def _ordered_product(x, weight, order):
+    """`x · weightᵀ` over the last axis of `x`, summed in the linear order `order`."""
+    if order == "float64":
+        return x.double() @ weight.double().T
+    x, weight = x.float(), weight.float().T
+    if order == "sequential":
+        total = torch.zeros(x.shape[:-1] + (weight.shape[1],))
+        for k in range(x.shape[-1]):
+            total = total + x[..., k:k + 1] * weight[k]
+        return total
+    if order.startswith("split"):
+        bounds = torch.linspace(0, x.shape[-1], int(order[len("split"):]) + 1).round().long().tolist()
+        total = None
+        for start, end in zip(bounds, bounds[1:]):
+            part = _ordered_product(x[..., start:end], weight[start:end].T, "sequential")
+            total = part if total is None else total + part
+        return total
+    if order == "pairwise":
+        rows, parts = x.reshape(-1, x.shape[-1]), []
+        # 64 rows at a time bound the [rows, outputs, inner] products to a few hundred megabytes.
+        for start in range(0, rows.shape[0], 64):
+            parts.append(_pairwise_sum(rows[start:start + 64, None, :] * weight.T[None]))
+        return torch.cat(parts).reshape(x.shape[:-1] + (weight.shape[1],))
+    tile, total = int(order[len("tile"):]), None
+    for start in range(0, x.shape[-1], tile):
+        part = x[..., start:start + tile] @ weight[start:start + tile]
+        total = part if total is None else total + part
+    return total
+
+
+def _ordered_linear(module, order):
+    """A `forward` for the half-precision linear `module` with its product summed in `order`, rounded as
+    torch's half-precision `linear` rounds: once with the bias on a contiguous input, and the product before
+    the bias on a strided one."""
+    def forward(x):
+        total = _ordered_product(x, module.weight, order)
+        if module.bias is not None:
+            if not x.is_contiguous():
+                total = total.to(x.dtype).to(total.dtype)
+            total = total + module.bias.to(total.dtype)
+        return total.to(x.dtype)
+    return forward
+
+
+def _ordered_layer_norm(module, order):
+    """A `forward` for the half-precision `nn.LayerNorm` `module` with its mean and variance summed two-pass in
+    the norm order `order`, then formed as torch's CPU kernel forms it in float32: `rstd = 1 / sqrt(var + eps)`
+    and `((x · rstd) + (−rstd · mean)) · γ + β`, each step rounded, the result rounded once."""
+    def total(terms):
+        return _moment_sum(terms, order)
+
+    def forward(x):
+        wide = x.float()
+        count = wide.shape[-1]
+        mean = total(wide) / count
+        centered = wide.to(mean.dtype) - mean[..., None]
+        variance = (total(centered * centered) / count).float()
+        mean = mean.float()[..., None]
+        rstd = 1 / torch.sqrt(variance + module.eps)[..., None]
+        y = wide * rstd + (-rstd * mean)
+        if module.weight is not None:
+            y = y * module.weight.float()
+        if module.bias is not None:
+            y = y + module.bias.float()
+        return y.to(x.dtype)
+    return forward
+
+
+def _ordered_group_norm(module, order):
+    """A `forward` for the half-precision `nn.GroupNorm` `module` with each group's mean and variance summed
+    two-pass in the moment order `order`, then applied as torch's CPU kernel applies them in float32: a
+    per-channel scale `rstd · γ` and shift `β − scale · mean`, `x · scale + shift`, rounded once."""
+    def forward(x):
+        n, channels = x.shape[:2]
+        groups = x.float().reshape(n, module.num_groups, -1)
+        count = groups.shape[-1]
+        mean = _moment_sum(groups, order) / count
+        centered = groups.to(mean.dtype) - mean[..., None]
+        variance = (_moment_sum(centered * centered, order) / count).float()
+        mean = mean.float()
+        rstd = 1 / torch.sqrt(variance + module.eps)
+        per_group = channels // module.num_groups
+        scale = rstd.repeat_interleave(per_group, dim=1)
+        if module.weight is not None:
+            scale = scale * module.weight.float()
+        shift = -scale * mean.repeat_interleave(per_group, dim=1)
+        if module.bias is not None:
+            shift = shift + module.bias.float()
+        shape = (n, channels) + (1,) * (x.dim() - 2)
+        return (x.float() * scale.reshape(shape) + shift.reshape(shape)).to(x.dtype)
+    return forward
+
+
+def _ordered_conv2d(module, order):
+    """A `forward` for the half-precision `nn.Conv2d` `module` summed over its input channels in the convolution
+    order `order`: in float64 for `float64`, or for `split2` / `split4` as that many equal channel parts, each
+    torch's float32 convolution, added in order, the bias after. Rounded once, as `_widened_convolutions`
+    rounds."""
+    import torch.nn.functional as F
+
+    def forward(x):
+        if module.groups != 1 or module.padding_mode != "zeros":
+            raise ValueError("the ordered convolution covers an ungrouped, zero-padded convolution only")
+        arguments = (module.stride, module.padding, module.dilation, 1)
+        if order == "float64":
+            bias = None if module.bias is None else module.bias.double()
+            return F.conv2d(x.double(), module.weight.double(), bias, *arguments).float().to(x.dtype)
+        bounds = torch.linspace(0, x.shape[1], int(order[len("split"):]) + 1).round().long().tolist()
+        total = None
+        for start, end in zip(bounds, bounds[1:]):
+            if start == end:
+                continue
+            part = F.conv2d(x[:, start:end].float(), module.weight[:, start:end].float(), None, *arguments)
+            total = part if total is None else total + part
+        if module.bias is not None:
+            total = total + module.bias.float().reshape(1, -1, 1, 1)
+        return total.to(x.dtype)
+    return forward
+
+
+def _ordered_matmul(a, b, order):
+    """`a @ b` for `a` [..., M, K] and `b` [..., K, N], summed over K in the linear order `order`: in float32, or
+    in float64 for `float64`; `None` takes torch's float32 matmul."""
+    if order is None:
+        return a.float() @ b.float()
+    if order == "float64":
+        return a.double() @ b.double()
+    a, b = a.float(), b.float()
+
+    def running(start, end):
+        total = None
+        for k in range(start, end):
+            term = a[..., :, k:k + 1] * b[..., k:k + 1, :]
+            total = term if total is None else total + term
+        return total
+
+    if order == "sequential":
+        return running(0, a.shape[-1])
+    if order.startswith("split"):
+        bounds = torch.linspace(0, a.shape[-1], int(order[len("split"):]) + 1).round().long().tolist()
+        total = None
+        # A split wider than the inner dimension (an IP-Adapter's four image tokens) leaves empty parts.
+        for start, end in zip(bounds, bounds[1:]):
+            if start == end:
+                continue
+            part = running(start, end)
+            total = part if total is None else total + part
+        return total
+    if order == "pairwise":
+        # 64 rows at a time bound the [rows, inner, outputs] products to a few hundred megabytes.
+        return torch.cat([_pairwise_sum((a[..., start:start + 64, :, None] * b[..., None, :, :]).transpose(-1, -2))
+                          for start in range(0, a.shape[-2], 64)], dim=-2)
+    tile, total = int(order[len("tile"):]), None
+    for start in range(0, a.shape[-1], tile):
+        part = a[..., start:start + tile] @ b[..., start:start + tile, :]
+        total = part if total is None else total + part
+    return total
+
+
+def _ordered_flash_attention(order, softmax_order=None, key_block=512):
+    """`F.scaled_dot_product_attention` as torch's CPU flash kernel computes it at a half precision, with `QKᵀ`
+    and `P·V` summed in the linear order `order` (`None`, torch's float32 matmul) and each key block's softmax
+    sum in the moment order `softmax_order` (`None`, torch's). Keys run in blocks of 512 with an online softmax
+    in float32. At float16 the raw scores and each block's `P·V` round to float16; at bf16 only the exponentials
+    round before their product with the values. No mask, causal flag, or dropout."""
+    def attention(query, key, value, attn_mask=None, dropout_p=0.0, is_causal=False, scale=None, enable_gqa=False):
+        if attn_mask is not None or is_causal or dropout_p or enable_gqa or query.dtype == torch.float32:
+            raise ValueError("the ordered flash model covers an unmasked half-precision attention only")
+        half = query.dtype
+        fp16 = half == torch.float16
+        scale = scale if scale is not None else query.shape[-1] ** -0.5
+        keys_t = key.transpose(-1, -2)
+        peak = total = accumulated = None
+        for start in range(0, key.shape[-2], key_block):
+            raw = _ordered_matmul(query, keys_t[..., start:start + key_block], order).float()
+            scores = (raw.to(half).float() if fp16 else raw) * scale
+            block_peak = scores.amax(-1, keepdim=True)
+            new_peak = block_peak if peak is None else torch.maximum(peak, block_peak)
+            weights = torch.exp(scores - new_peak)
+            products = _ordered_matmul(weights.to(half), value[..., start:start + key_block, :], order).float()
+            products = products.to(half).float() if fp16 else products
+            block_total = (weights.sum(-1, keepdim=True) if softmax_order is None
+                           else _moment_sum(weights, softmax_order).float()[..., None])
+            if peak is None:
+                total, accumulated = block_total, products
+            else:
+                correction = torch.exp(peak - new_peak)
+                total = total * correction + block_total
+                accumulated = accumulated * correction + products
+            peak = new_peak
+        return (accumulated / total).to(half)
+    return attention
+
+
+def _ordered_attention(spec):
+    """A context in which attention sums as the rerun `spec` (products, moments, convolutions) names: `QKᵀ` and
+    `P·V` in its products order and the softmax over the keys in its moments order. The scaled-dot-product
+    attention runs through `_ordered_flash_attention`; the classic processor (diffusers' `AttnProcessor`, which
+    SD 2.1's `upcast_attention` takes) through an ordered `baddbmm` and `bmm`, each rounded once to its operands'
+    type, and an ordered `Tensor.softmax`. `None` leaves torch's own."""
+    import contextlib
+    import torch.nn.functional as F
+
+    products, softmax_order, _ = spec or (None, None, None)
+
+    def softmax(self, dim=-1, dtype=None):
+        if dim not in (-1, self.dim() - 1) or dtype is not None:
+            return originals[3](self, dim, dtype=dtype)
+        wide = self.float()
+        weights = torch.exp(wide - wide.amax(-1, keepdim=True))
+        return (weights / _moment_sum(weights, softmax_order).float()[..., None]).to(self.dtype)
+
+    @contextlib.contextmanager
+    def ordered():
+        if products is None and softmax_order is None:
+            yield
+            return
+        F.scaled_dot_product_attention = _ordered_flash_attention(products, softmax_order)
+        if products is not None:
+            torch.baddbmm, torch.bmm = baddbmm, bmm
+        if softmax_order is not None:
+            torch.Tensor.softmax = softmax
+        try:
+            yield
+        finally:
+            F.scaled_dot_product_attention, torch.baddbmm, torch.bmm, torch.Tensor.softmax = originals
+
+    originals = (F.scaled_dot_product_attention, torch.baddbmm, torch.bmm, torch.Tensor.softmax)
+
+    def baddbmm(input, batch1, batch2, *, beta=1, alpha=1, out=None):
+        if beta != 0 or out is not None:
+            raise ValueError("the ordered baddbmm covers beta 0 only")
+        return (alpha * _ordered_matmul(batch1, batch2, products)).to(batch1.dtype)
+
+    def bmm(input, mat2, *, out=None):
+        if out is not None:
+            raise ValueError("the ordered bmm returns a new tensor only")
+        return _ordered_matmul(input, mat2, products).to(input.dtype)
+
+    return ordered()
+
+
+def _set_orders(model, spec):
+    """Sets each `nn.Linear`, `nn.LayerNorm`, `nn.GroupNorm`, and `nn.Conv2d` of the hookless copy `model` to sum
+    as the rerun `spec` (products, moments, convolutions) names, or, for `None`, back to its class's own
+    `forward`."""
+    products, moments, convolutions = spec or (None, None, None)
+    for sub in model.modules():
+        sub.__dict__.pop("forward", None)
+        if isinstance(sub, torch.nn.Linear) and products is not None:
+            sub.forward = _ordered_linear(sub, products)
+        if isinstance(sub, torch.nn.LayerNorm) and moments is not None:
+            sub.forward = _ordered_layer_norm(sub, moments)
+        if isinstance(sub, torch.nn.GroupNorm) and moments is not None:
+            sub.forward = _ordered_group_norm(sub, moments)
+        if isinstance(sub, torch.nn.Conv2d) and convolutions is not None:
+            sub.forward = _ordered_conv2d(sub, convolutions)
+
+
+def _output_order_floor(model, run, output, keep):
+    """`IK_PROBE_OUTPUT_ORDER_FLOOR=1`: the whole half-precision `model` reruns once per rerun of
+    `_SUMMATION_RERUNS`, every reduction summed as `_order_floor_hooks` sums a block's, and each rerun's output,
+    laid out by `keep`, is returned as `output.order.<name>`. The test holds the port's
+    distance from the float32 run to the farthest of these distances. A copy that does not reproduce `output` as
+    torch computes it keeps none. `run(model)` returns the model's output; call it where the half run ran (inside
+    `_widened_convolutions`)."""
+    if os.environ.get("IK_PROBE_OUTPUT_ORDER_FLOOR") != "1" or _runs_wide(model, ()):
+        return {}
+    duplicate = _hookless_copy(model)
+
+    def rerun(spec):
+        _set_orders(duplicate, spec)
+        _BLOCK_FLOOR_RUNNING[0] = True
+        try:
+            with torch.no_grad(), _ordered_attention(spec):
+                return keep(run(duplicate))
+        finally:
+            _BLOCK_FLOOR_RUNNING[0] = False
+
+    if not torch.equal(rerun(None), keep(output)):
+        print("no output order floor: a copy of the model does not reproduce its output")
+        return {}
+    return {f"output.order.{name}": rerun(spec) for name, spec in _SUMMATION_RERUNS}
+
+
+def _order_floor_hooks(blocks, keys, extra, keep):
+    """`IK_PROBE_ORDER_FLOOR=1`: each of `blocks`, after it runs at half precision, runs again as a copy at its
+    type whose every linear, attention, norm, and convolution sums as one rerun of `_SUMMATION_RERUNS`, once per
+    rerun. Each rerun's `1 - cosine` from the block's own output is kept as `<key>.order.<name>`, and the
+    farthest rerun's output, laid out by `keep`, as `<key>.orderfloor`: the spread the summation order of the
+    reference's own reductions leaves at that block. A port whose reductions sum in another order is held to
+    it. The copy first reruns as torch computes it, and a block that does not reproduce its output that way
+    keeps no order floor. Only a block's first call is kept."""
+    if os.environ.get("IK_PROBE_ORDER_FLOOR") != "1":
+        return
+
+    def distance(a, b):
+        a, b = a.double().flatten(), b.double().flatten()
+        return float(1 - (a @ b) / (a.norm() * b.norm() + 1e-30))
+
+    def rerun(module, args, kwargs, spec):
+        duplicate = _hookless_copy(module)
+        _set_orders(duplicate, spec)
+        _BLOCK_FLOOR_RUNNING[0] = True
+        try:
+            with torch.no_grad(), _ordered_attention(spec):
+                return keep(duplicate(*args, **kwargs))
+        finally:
+            _BLOCK_FLOOR_RUNNING[0] = False
+
+    for block, key in zip(blocks, keys):
+        def hook(module, args, kwargs, output, key=key):
+            if _runs_wide(module, args, kwargs) or f"{key}.orderfloor" in extra:
+                return None
+            own = keep(output)
+            if not torch.equal(rerun(module, args, kwargs, None), own):
+                print(f"no order floor for {key}: a copy of the block does not reproduce its output")
+                return None
+            widest = None
+            for name, spec in _SUMMATION_RERUNS:
+                result = rerun(module, args, kwargs, spec)
+                gap = distance(own, result)
+                extra[f"{key}.order.{name}"] = torch.tensor([gap], dtype=torch.float32)
+                if widest is None or gap > widest[0]:
+                    widest = (gap, result)
+            extra[f"{key}.orderfloor"] = widest[1]
             return None
         block.register_forward_hook(hook, with_kwargs=True)
 
@@ -10546,6 +10960,20 @@ def run_glue_rounding(image):
         x = (torch.randn(4096, generator=generator) * 3).to(dtype)
         extra.update({f"{name}.u": u, f"{name}.c": c, f"{name}.x": x,
                       f"{name}.guided": u + 3.3 * (c - u), f"{name}.normalized": (x - 0.1159) * 0.3611})
+    globals()["_extra"] = {key: value.float().contiguous() for key, value in extra.items()}
+    return torch.zeros(1)
+
+
+def run_gelu_rounding(image):
+    """torch's exact `F.gelu` at a half precision over every finite value of the type, for bf16 and float16
+    (`bf16.in` / `bf16.out`, `f16.in` / `f16.out`). torch's CPU kernels form it in float32 with their own
+    error-function polynomial and round once. `image` unused."""
+    bits = torch.arange(0, 1 << 16, dtype=torch.int32).to(torch.int16)
+    extra = {}
+    for name, dtype in (("bf16", torch.bfloat16), ("f16", torch.float16)):
+        values = bits.view(dtype)
+        values = values[torch.isfinite(values)]
+        extra.update({f"{name}.in": values, f"{name}.out": torch.nn.functional.gelu(values)})
     globals()["_extra"] = {key: value.float().contiguous() for key, value in extra.items()}
     return torch.zeros(1)
 
@@ -21969,7 +22397,7 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "segformer_loss": run_segformer_loss, "basic_pitch_targets": run_basic_pitch_targets, "gtcrn_loss": run_gtcrn_loss, "yolo_training_setup": run_yolo_training_setup, "yolo_e2e_loss": run_yolo_e2e_loss, "rtdetr_loss": run_rtdetr_loss, "rtdetr_training_forward": run_rtdetr_training_forward, "rtdetr_training_setup": run_rtdetr_training_setup, "yolo_loss": run_yolo_loss, "convtasnet_loss": run_convtasnet_loss, "allin1_training": run_allin1_training, "vjepa2_probe": run_vjepa2_probe,
           "clip_text": run_clip_text, "sd_tokenizer": run_sd_tokenizer,
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
-          "snac": run_snac, "siglip2_probe": run_siglip2_probe, "clip_probe": run_clip_probe, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "glue_rounding": run_glue_rounding, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
+          "snac": run_snac, "siglip2_probe": run_siglip2_probe, "clip_probe": run_clip_probe, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "glue_rounding": run_glue_rounding, "gelu_rounding": run_gelu_rounding, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
           "gemma4_shared_kv": run_gemma4_shared_kv}
 CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "clip_text_probe": run_clip_text_probe, "sd_vae_probe": run_sd_vae_probe, "gemma3n_audio_probe": run_gemma3n_audio_probe, "sd_unet_probe": run_sd_unet_probe, "z_image_release_probe": run_z_image_release_probe, "sa2va_llava_probe": run_sa2va_llava_probe, "whisper_f16_probe": run_whisper_f16_probe, "t5_seq2seq_probe": run_t5_seq2seq_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "madlad_layerwise": run_madlad_layerwise, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,

@@ -5684,7 +5684,7 @@
     {
       "records": "sd15_unet_ip_f16 / sd15_unet_ip_f32, sd21_unet_f16 / sd21_unet_f32, sd15_vae_f16 / sd15_vae_f32",
       "environment": "sd",
-      "command": "IK_PROBE_DTYPE=float16 IK_PROBE_BLOCK_FLOOR=1 | (float32) sd_unet_probe --checkpoint $IK_SD15_DIR/unet with IK_PROBE_IP_ADAPTER=$IK_VAL_IPADAPTER | $IK_VAL_SD21_DIR/unet (upcast_attention: the classic AttnProcessor) ; sd_vae_probe --checkpoint $IK_SD15_DIR/vae with IK_PROBE_DTYPE=float16 | (float32) IK_PROBE_FLOOR=float16. The releases store float32: the float16 run casts them as from_pretrained(torch_dtype=float16) does and the float32 run rounds every parameter to float16 and back; each float16 convolution in float32 rounded once"
+      "command": "IK_PROBE_DTYPE=float16 IK_PROBE_BLOCK_FLOOR=1 | (float32) sd_unet_probe --checkpoint $IK_SD15_DIR/unet with IK_PROBE_IP_ADAPTER=$IK_VAL_IPADAPTER and IK_PROBE_ORDER_FLOOR=1 (each transformer block's order floor) | $IK_VAL_SD21_DIR/unet (upcast_attention: the classic AttnProcessor) with IK_PROBE_OUTPUT_ORDER_FLOOR=1 (the whole UNet's end-to-end order floor) ; sd_vae_probe --checkpoint $IK_SD15_DIR/vae with IK_PROBE_DTYPE=float16 | (float32) IK_PROBE_FLOOR=float16. The releases store float32: the float16 run casts them as from_pretrained(torch_dtype=float16) does and the float32 run rounds every parameter to float16 and back; each float16 convolution in float32 rounded once"
     },
     {
       "records": "sdxl_turbo_unet_f16 / sdxl_turbo_unet_f32",
@@ -5700,6 +5700,11 @@
       "records": "glue_rounding",
       "environment": "ltx",
       "command": "glue_rounding (no checkpoint: torch's own guidance combine at a scale of 3.3 and latent normalization (x - 0.1159) * 0.3611 over seeded bf16 and float16 vectors)"
+    },
+    {
+      "records": "gelu_rounding",
+      "environment": "sd",
+      "command": "gelu_rounding (no checkpoint: torch's own F.gelu over every finite bf16 and float16 value)"
     },
     {
       "records": "flux_vae_bf16 / flux_vae_f32",

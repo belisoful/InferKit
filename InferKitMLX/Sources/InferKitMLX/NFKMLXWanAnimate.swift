@@ -303,7 +303,7 @@ final class NFKWanAnimateImageProjection: Module {
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let normalized = (proj[0] as! LayerNorm)(x)
-        let hidden = NFKReferenceRounding.wide((proj[1] as! Linear)(normalized)) { gelu($0) }
+        let hidden = NFKReferenceRounding.gelu((proj[1] as! Linear)(normalized))
         return (proj[4] as! LayerNorm)((proj[3] as! Linear)(hidden))
     }
 }

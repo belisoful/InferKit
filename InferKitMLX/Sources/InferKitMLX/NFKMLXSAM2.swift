@@ -70,7 +70,7 @@ final class NFKSAM2MLP: Module {
         _layers.wrappedValue = [Linear(dimensions, hidden), Linear(hidden, dimensions)]
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { layers[1](NFKReferenceRounding.wide(layers[0](x)) { gelu($0) }) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { layers[1](NFKReferenceRounding.gelu(layers[0](x))) }
 }
 
 /// Multi-scale attention: one fused projection for queries, keys, and values, with the queries
@@ -674,8 +674,8 @@ final class NFKMLXSAM2Decoder: Module {
         // 1×1 projections live here even though the reference applies them in its base model before
         // calling the decoder, so this takes the FPN levels as they come off the neck.
         var upscaled = upscale1(image.reshaped([1, height, width, channels])) + convS1(highResolution[1])
-        upscaled = NFKReferenceRounding.wide(upscaleNorm(upscaled)) { gelu($0) }
-        upscaled = NFKReferenceRounding.wide(upscale2(upscaled) + convS0(highResolution[0])) { gelu($0) }
+        upscaled = NFKReferenceRounding.gelu(upscaleNorm(upscaled))
+        upscaled = NFKReferenceRounding.gelu(upscale2(upscaled) + convS0(highResolution[0]))
 
         let hyperIn = concatenated((0 ..< maskCount).map { index in
             hyper[index](maskOut[0..., index]).reshaped([1, 1, -1])

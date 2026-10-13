@@ -24,6 +24,45 @@ public final class NFKMLXRandom: NSObject {
     }
 }
 
+/// The arithmetic of the operations in a bfloat16 or float16 forward whose result depends on how they are
+/// computed: the exponentials of a flash attention's softmax and a half-precision layer norm. A float32
+/// forward computes the same in either mode. Each mode's measured precision and its overall time per model
+/// are in `Docs/examples.md` ("Half-precision arithmetic").
+@objc(NFKMLXArithmetic)
+public enum NFKMLXArithmetic: Int {
+
+    /// MLX's own kernels: `exp`, and `MLXFast.layerNorm` in float32, rounded once. It is the default.
+    /// - Speed: MLX's.
+    /// - Precision: 24% of float32 exponentials, and about 1 in 4,000 float16 layer-norm outputs, differ
+    ///   from PyTorch's, so a forward sits farther from the PyTorch reference's.
+    @objc(NFKMLXArithmeticFast) case fast = 0
+
+    /// PyTorch's CPU arithmetic in Metal kernels: Sleef's `expf`, and the layer norm's Welford moments in
+    /// torch's order. The half-precision parity tests run in it.
+    /// - Precision: each exponential and each layer-norm output equals PyTorch's.
+    /// - Speed: the exponential runs at MLX's speed. The layer norm computes each row on one GPU thread, so a
+    ///   norm over few rows takes several times MLX's time.
+    @objc(NFKMLXArithmeticReference) case reference = 1
+}
+
+/// Objective-C access to the half-precision arithmetic InferKitMLX selects at run time.
+@objc(NFKMLXHalfPrecision)
+public final class NFKMLXHalfPrecision: NSObject {
+
+    private static let lock = NSLock()
+    private static var storedArithmetic = NFKMLXArithmetic.fast
+
+    /// The arithmetic a half-precision forward computes, ``NFKMLXArithmetic/fast`` unless set. A forward
+    /// reads it as it builds its graph, so a change applies to the forwards that start after it.
+    /// Objective-C: `NFKMLXHalfPrecision.arithmetic = NFKMLXArithmeticReference;`.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc public static var arithmetic: NFKMLXArithmetic {
+        get { lock.withLock { storedArithmetic } }
+        set { lock.withLock { storedArithmetic = newValue } }
+    }
+}
+
 /// Objective-C access to MLX GPU memory management: the cache and soft-memory limits, cache clearing, and
 /// live memory statistics. A production app running large models uses these to cap memory and avoid
 /// out-of-memory, and to observe usage. All values are in bytes.

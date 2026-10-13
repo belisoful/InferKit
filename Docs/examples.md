@@ -2859,6 +2859,76 @@ whose queue takes the global device. Run the synchronous call inside the block f
 thread. Selecting the CPU does not avoid shipping the Metal library: MLX builds the Metal device when it
 initializes, whichever device the work names.
 
+### Half-precision arithmetic
+
+Two operations in a bfloat16 or float16 forward give a result that depends on how they are computed: the
+exponentials of a flash attention's softmax (the diffusion UNets and transformers, the Wan autoencoder,
+SAM, SAM 2, SAM 3, and MiniMax Music 3) and a half-precision layer norm (those models and the CLIP,
+SigLIP, Whisper, Wav2Vec2, and vision-language towers). `NFKMLXHalfPrecision.arithmetic` selects how both
+are computed. A float32 model computes the same in either mode. A forward reads the setting as it starts,
+so set it before the inference it applies to.
+
+```objc
+NFKMLXHalfPrecision.arithmetic = NFKMLXArithmeticReference;   // PyTorch's arithmetic, as parity is measured
+NFKMLXHalfPrecision.arithmetic = NFKMLXArithmeticFast;        // MLX's own kernels (default)
+```
+
+`NFKMLXArithmeticFast`, the default, computes MLX's `exp` and `MLXFast.layerNorm` in float32, rounded once.
+
+- Pro: every forward runs at MLX's own speed.
+- Con: 24% of float32 exponentials differ from PyTorch's by one unit. A layer norm rounds 1 float16 output
+  in 4,000 to 5,300, and 1 bfloat16 output in 30,000 to 55,000, apart from PyTorch's. A forward sits
+  farther from the reference's: in Stable Diffusion 1.5's UNet at float16, MLX's layer norm moves a
+  transformer block by up to 9% of the spread its reference shows from summation order, and MLX's
+  exponential by up to 1.8%.
+
+`NFKMLXArithmeticReference` computes PyTorch's CPU arithmetic in two Metal kernels: Sleef's `expf`, and the
+layer norm's Welford moments in PyTorch's order with its rounding at each step.
+
+- Pro: each exponential and each half-precision layer-norm output equals PyTorch's: 0 of 1,048,576
+  exponentials, and 0 of 13.7 million layer-norm outputs over rows 7 to 4,096 wide at float16 and bfloat16.
+  Every half-precision parity figure is measured in this mode.
+- Con: the layer-norm kernel computes each row on one GPU thread, so a norm over few rows takes several
+  times `MLXFast.layerNorm`'s time. A diffusion denoiser's forward takes 1.00 to 1.16 times its fast time,
+  and a short sequence's more: CLIP's text encoder over 2×77 tokens 2.8 times, one Whisper decode step 2.2
+  times. The exponential runs at MLX's speed. On the CPU stream the exponential takes MLX operations, which
+  leave 1.1% of results one unit from PyTorch's, and the layer norm takes `MLXFast`'s.
+
+A layer norm the reference computes on a float32 input (Wan's `FP32LayerNorm`, SAM 3's under autocast)
+keeps MLX's kernel in both modes.
+
+The overall change in one whole forward of each network, measured on an M1 Max at the network's released
+width and input with random weights at its half precision (`NFKMLXHalfPrecisionArithmeticTimingTests`,
+`IK_ARITHMETIC_TIMING=1`). A network cut to fewer blocks keeps each block whole, so its ratio is the full
+network's to within its embeddings and head. Each time is the median of three rounds, the two modes
+alternating.
+
+| Network | Measured as | Reference | Fast | Reference ÷ fast |
+| --- | --- | --- | --- | --- |
+| SD 1.5 UNet | released, float16, 64×64 latent at batch 2 | 893 ms | 816 ms | 1.09 |
+| SDXL UNet | released, float16, 128×128 latent at batch 2 | 4,589 ms | 3,971 ms | 1.16 |
+| SD 3.5 Medium transformer | released, bfloat16, 1024×1024 | 4,758 ms | 4,167 ms | 1.14 |
+| FLUX.1 schnell transformer | 3 of 19 double and 6 of 38 single blocks, 1024×1024 | 2,614 ms | 2,508 ms | 1.04 |
+| FLUX.2 klein 4B transformer | 3 of 5 double and 12 of 20 single blocks, 1024×1024 | 4,190 ms | 4,035 ms | 1.04 |
+| Qwen-Image 2.1 transformer | 12 of 32 layers, 1024×1024 | 5,016 ms | 4,988 ms | 1.01 |
+| Z-Image transformer | 10 of 30 layers and both refiners, 1024×1024 | 4,848 ms | 4,864 ms | 1.00 |
+| Wan 2.1 T2V 1.3B transformer | released, 480×832, 17 frames | 9,249 ms | 9,242 ms | 1.00 |
+| Wan 2.2 Animate 14B, extract pass | 6 of 40 layers, 480×832, one reference frame | 1,204 ms | 1,155 ms | 1.04 |
+| Wan 2.2 Animate 14B, generation pass | 6 of 40 layers, 480×832, a two-latent-frame chunk | 2,907 ms | 2,870 ms | 1.01 |
+| LTX-2.3 transformer | 5 of 48 layers, 512×768, 49 frames | 4,029 ms | 3,923 ms | 1.03 |
+| SD 1.5 autoencoder decode | released, float16, 512×512 | 530 ms | 522 ms | 1.01 |
+| FLUX autoencoder decode | released, bfloat16, 1024×1024 (rounds overlap: 17.6–19.6 s against 17.0–18.6 s) | 18,458 ms | 17,034 ms | 1.08 |
+| SD 1.5 CLIP text encoder | released, float16, 2×77 tokens | 54.5 ms | 19.4 ms | 2.80 |
+| SigLIP 2 so400m vision tower | released, 384×384 | 255 ms | 178 ms | 1.43 |
+| Gemma 3 vision tower | released, 896×896 | 1,620 ms | 1,523 ms | 1.06 |
+| Whisper large-v3 encoder | released, float16, 30 s | 613 ms | 495 ms | 1.24 |
+| Whisper large-v3 decode step | released, float16, a 100-token prefix | 250 ms | 112 ms | 2.23 |
+| SAM ViT-B, an image and one click | released, 1024×1024 | 256 ms | 238 ms | 1.07 |
+| SAM ViT-B mask decoder, one click | released | 60.8 ms | 22.5 ms | 2.70 |
+| SAM 2 Hiera-tiny grounding | released, 1024×1024 | 263 ms | 202 ms | 1.30 |
+| SAM 3 grounding | released, 1008×1008 | 2,441 ms | 1,837 ms | 1.33 |
+| MiniMax Music 3 depth decoder, one frame | released, 7 steps at batch 2 | 119 ms | 88.0 ms | 1.36 |
+
 ## Text → video
 
 `NFKMLXLTXVideoGenerator` (LTX-Video 0.9.0) and `NFKMLXWanVideoGenerator` (Wan 2.1 T2V and Wan 2.2

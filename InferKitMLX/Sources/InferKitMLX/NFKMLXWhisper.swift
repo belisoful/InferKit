@@ -377,8 +377,8 @@ final class NFKWhisperEncoder: Module {
     }
 
     func callAsFunction(_ mel: MLXArray) -> MLXArray {
-        var x = NFKReferenceRounding.wide(conv1(mel)) { gelu($0) }
-        x = NFKReferenceRounding.wide(conv2(x)) { gelu($0) }
+        var x = NFKReferenceRounding.gelu(conv1(mel))
+        x = NFKReferenceRounding.gelu(conv2(x))
         // The float32 table would promote a half-precision encoder to float32; the reference keeps its
         // table in float32 and rounds the sum once.
         x = (x + NFKMLXWhisperNet.sinusoids(length: x.shape[1], channels: x.shape[2])).asType(x.dtype)

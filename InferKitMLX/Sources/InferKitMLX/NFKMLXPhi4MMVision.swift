@@ -188,6 +188,6 @@ public final class NFKMLXPhi4MMImageNet: Module {
     }
 
     private func project(_ x: MLXArray) -> MLXArray {
-        (projection[2] as! Linear)(NFKReferenceRounding.wide((projection[0] as! Linear)(x)) { gelu($0) })
+        (projection[2] as! Linear)(NFKReferenceRounding.gelu((projection[0] as! Linear)(x)))
     }
 }

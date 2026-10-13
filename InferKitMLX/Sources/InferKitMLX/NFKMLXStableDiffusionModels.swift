@@ -323,7 +323,7 @@ final class NFKSDFeedForward: Module {
         let inner = projected.shape[projected.ndim - 1] / 2
         let value = projected[.ellipsis, 0 ..< inner]
         let gate = projected[.ellipsis, inner ..< (2 * inner)]
-        return out(value * NFKReferenceRounding.wide(gate) { gelu($0) })
+        return out(value * NFKReferenceRounding.gelu(gate))
     }
 }
 

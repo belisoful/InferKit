@@ -613,6 +613,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Half-precision forwards compute MLX's arithmetic, or PyTorch's
+
+- `NFKMLXHalfPrecision.arithmetic` (`@objc`, `NFKMLXArithmetic`) selects the arithmetic of a bfloat16 or
+  float16 forward's flash-attention exponentials and layer norms.
+- `NFKMLXArithmeticFast`, the default, computes MLX's `exp` and `MLXFast.layerNorm`.
+- `NFKMLXArithmeticReference` computes PyTorch's CPU arithmetic in two Metal kernels: Sleef's `expf`, and the
+  layer norm's Welford moments in PyTorch's order. Each output equals PyTorch's. A whole half-precision
+  forward in this mode takes 1.00 to 1.16 times the time of the fast mode in a diffusion denoiser, and up to
+  2.8 times in a short-sequence encoder (CLIP's text encoder over 77 tokens).
+- The half-precision parity tests run in `NFKMLXArithmeticReference`.
+
 #### The FLUX autoencoder and the SD3 transformer compute in bfloat16 as diffusers does
 
 - The autoencoder FLUX and SD3.5 share, and the Stable Diffusion UNet's blocks, round as torch does at a
@@ -642,6 +653,30 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   existing factories keep) or `NFKMLXWeightPrecisionFloat32`, for local, downloaded, and asynchronously
   downloaded weights.
 - Measured at float16 on tiny: every encoder and decoder layer within 0.35 of its own block floor.
+
+#### The exact GELU computes torch's error function at a half precision
+
+- `NFKReferenceRounding.gelu` forms the exact GELU of a half-precision input in float32 with the error
+  function torch's CPU kernels compute, and rounds once. MLX's own, faithfully rounded error function
+  rounded 277 of all finite float16 inputs apart from torch.
+- Every exact GELU at a half precision takes it: the Stable Diffusion UNets' feed-forward, CLIP's OpenCLIP
+  towers, SAM 2, Qwen2.5-VL and Qwen3-VL, Phi-4's audio and vision projections, Granite Speech, Sa2VA,
+  Wan Animate, Whisper, Voxtral, and DeepSeek's vision aligner. A float32 input is unchanged.
+- Over every finite input whose magnitude is at least twice the least normal float32, torch's polynomial
+  leaves no bf16 input and 1 float16 input apart from torch's GELU, where MLXNN's GELU leaves 133 and 277.
+
+#### Stable Diffusion 1.5's transformer blocks are held to the reference's summation-order spread
+
+- `sd_unet_probe` with `IK_PROBE_ORDER_FLOOR=1` reruns each of the reference's float16 transformer blocks
+  with every reduction summed in a fixed set of orders, and records the farthest as the block's order
+  floor. The set covers the linears and the attention's two products (including the split-K order MLX's GPU
+  matmul uses), the layer and group norms' moments, the softmax's sum, and the convolutions' channel sums,
+  paired and each group alone.
+- `IK_PROBE_OUTPUT_ORDER_FLOOR=1` reruns the whole UNet once per order, and SD 2.1's end-to-end noise is held
+  to the farthest rerun from float32.
+- Each transformer block is held to its order floor, and every other stage to a quarter of the accumulated
+  floor. In PyTorch's arithmetic (`NFKMLXArithmeticReference`) every SD 1.5 transformer block sits within its
+  order floor, the farthest at 0.89 of it, and SD 2.1's end-to-end distance from float32 is 0.98 of its floor.
 
 #### The ControlNets, LTX-2, Wan Animate, and the Wan autoencoders are held at bf16
 

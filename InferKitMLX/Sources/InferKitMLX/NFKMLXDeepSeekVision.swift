@@ -273,9 +273,7 @@ public final class NFKMLXDeepSeekAligner: Module {
             .reshaped([paddedRows / ratio, ratio, paddedColumns / ratio, ratio, hiddenSize])
             .transposed(0, 2, 4, 1, 3)
             .reshaped([(paddedRows / ratio) * (paddedColumns / ratio), hiddenSize * ratio * ratio])
-        // MLX composes gelu from narrow operations, each rounding; torch rounds it once.
-        let widened = input(folded)
-        return output(gelu(widened.asType(.float32)).asType(widened.dtype))
+        return output(NFKReferenceRounding.gelu(input(folded)))
     }
 }
 

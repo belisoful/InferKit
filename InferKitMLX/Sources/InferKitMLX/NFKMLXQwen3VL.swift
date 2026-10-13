@@ -318,7 +318,7 @@ final class NFKQwen3VLMerger: Module {
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let folded = postShuffle ? norm(x.reshaped([-1, mergedSize])) : norm(x).reshaped([-1, mergedSize])
-        return fc2(NFKReferenceRounding.wide(fc1(folded)) { gelu($0) })
+        return fc2(NFKReferenceRounding.gelu(fc1(folded)))
     }
 }
 

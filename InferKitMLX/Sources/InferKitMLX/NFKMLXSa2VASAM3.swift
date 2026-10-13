@@ -223,8 +223,8 @@ enum NFKSAM3Autocast {
         return weight.asType(.float32) * normalized + bias.asType(.float32)
     }
 
-    /// The exact GELU in `x`'s type, rounded once.
-    static func gelu(_ x: MLXArray) -> MLXArray { NFKReferenceRounding.wide(x) { MLXNN.gelu($0) } }
+    /// The exact GELU in `x`'s type, as torch computes it.
+    static func gelu(_ x: MLXArray) -> MLXArray { NFKReferenceRounding.gelu(x) }
 
     /// The ViT on the float32 image → its float32 feature map `[1, H/patch, W/patch, hidden]`.
     static func backbone(_ net: NFKMLXSAM3BackboneNet, _ image: MLXArray) -> MLXArray {

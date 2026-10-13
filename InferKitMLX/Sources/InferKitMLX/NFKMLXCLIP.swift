@@ -137,7 +137,7 @@ public enum NFKCLIPActivation: Sendable {
         case .quickGELU: return NFKCLIPInit.quickGELU(x)
         // The reference's `gelu` is the exact error-function form, not the tanh approximation its
         // neighbour `gelu_new` selects.
-        case .gelu: return NFKReferenceRounding.wide(x) { MLXNN.gelu($0) }
+        case .gelu: return NFKReferenceRounding.gelu(x)
         }
     }
 }

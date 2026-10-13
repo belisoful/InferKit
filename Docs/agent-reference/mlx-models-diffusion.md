@@ -132,6 +132,17 @@ The diffusion backend seam and schedulers, the SD networks and pipelines, IP-Ada
   0.9999999999841). `NFKMLXWeightPrecision` makes that a choice rather than an accident.
   `force_zeros_for_empty_prompt` acts on an absent negative prompt, not an empty one: the reference's
   condition is `negative_prompt is None`, and an empty string is a sentence the model is asked to encode.
+  At float16 the SD 1.5 UNet with the IP-Adapter is held to diffusers at float16. Its transformer blocks
+  sit at 0.3 of the accumulated floor from summation order alone. MLX's GPU matmul splits the inner
+  dimension into parts summed as running float32 sums (the first transformer's `to_q` differs from torch's
+  in 498 of 327,680 elements, exactly as torch's own linear summed that way does), and its layer norm sums
+  its moments apart from torch's Welford update. Each transformer block is held to its order floor
+  (`mlx-parity-checklist.md`). SD 2.1's UNet at float16 carries an end-to-end order floor: one reduction
+  changed alone moves the reference's own end-to-end distance to as much as 4.21 times its floor. In
+  PyTorch's arithmetic (`NFKMLXArithmeticReference`) every SD 1.5 transformer block sits within its order
+  floor, the farthest at 0.89 of it, and SD 2.1's end-to-end distance from float32 is 0.98 of its floor.
+  A custom GPU kernel that copies torch's summation order is written only if a repository Issue requests
+  it.
 - `NFKMLXSDTextEncoderNet` / `NFKMLXSDTextEncoder` — the CLIP text tower the releases cross-attend to,
   built from `NFKMLXCLIP`'s own blocks (one implementation, four configurations). `NFKSDTextOutput`
   spells the difference between the releases: SD 1.x and 2.x read the last hidden state after the final

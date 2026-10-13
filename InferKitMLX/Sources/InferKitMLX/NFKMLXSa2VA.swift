@@ -226,7 +226,7 @@ final class NFKSa2VAMLP: Module {
         super.init()
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(NFKReferenceRounding.wide(fc1(x)) { gelu($0) }) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(NFKReferenceRounding.gelu(fc1(x))) }
 }
 
 /// A pre-norm block with per-channel LayerScale on each residual. LayerScale multiplies the sub-block
@@ -355,7 +355,7 @@ final class NFKSa2VAProjector: Module {
     /// `x` is the vision features with the class token already dropped, `[tiles, patches, hidden]`.
     /// Returns `[tiles, patches · scale², decoderHidden]`.
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        fc2(NFKReferenceRounding.wide(fc1(norm(pixelShuffle(x)))) { gelu($0) })
+        fc2(NFKReferenceRounding.gelu(fc1(norm(pixelShuffle(x)))))
     }
 
     /// InternVL's pixel shuffle (ps_version v2), ported step for step. It folds a `scale` factor of the
