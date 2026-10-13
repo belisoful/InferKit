@@ -373,6 +373,36 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	[self.running addObject:run];
 }
 
+/*! Gives each free slot to the next waiting run while the backend is resident, and returns the runs to
+	start. Runs on the lock. */
+- (NSArray<NFKServedRun *> *)takeStartableRuns
+{
+	NSMutableArray<NFKServedRun *> *starting = [NSMutableArray array];
+	while (self.residency == NFKServerModelResidencyResident && self.pending.count > 0 && self.running.count < self.limit) {
+		NFKServedRun *next = self.pending.firstObject;
+		[self.pending removeObjectAtIndex:0];
+		[self beginRun:next];
+		[starting addObject:next];
+	}
+	return starting;
+}
+
+/*! Changes the model's concurrency and queue limits. A raised concurrency limit starts waiting runs at
+	once; a lowered one takes effect as running runs end, and a lowered queue limit refuses only later
+	arrivals. */
+- (void)applyLimit:(NSUInteger)limit queueLimit:(NSUInteger)queueLimit
+{
+	NSArray<NFKServedRun *> *starting = nil;
+	@synchronized (self) {
+		self.limit = MAX(limit, 1);
+		self.queueLimit = queueLimit;
+		starting = [self takeStartableRuns];
+	}
+	for (NFKServedRun *run in starting) {
+		[self start:run];
+	}
+}
+
 #pragma mark Building
 
 /*! Marks a build as started when the model is not loaded and can be built. Runs on the lock. */
@@ -424,12 +454,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 			self.failed += refused.count;
 		} else {
 			[self becomeResidentWithBackend:backend description:description];
-			while (self.pending.count > 0 && self.running.count < self.limit) {
-				NFKServedRun *next = self.pending.firstObject;
-				[self.pending removeObjectAtIndex:0];
-				[self beginRun:next];
-				[starting addObject:next];
-			}
+			[starting addObjectsFromArray:[self takeStartableRuns]];
 		}
 	}
 	for (NFKServedRun *run in refused) {
@@ -661,22 +686,19 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	requested unload when none waits. */
 - (void)run:(NFKServedRun *)run endedWithResult:(nullable NFKInferenceResult *)result error:(nullable NSError *)error
 {
-	NFKServedRun *next = nil;
+	NSArray<NFKServedRun *> *starting = nil;
 	@synchronized (self) {
 		[self.running removeObjectIdenticalTo:run];
 		[self recordRun:run result:result error:error];
 		self.lastUsedAt = [self now];
-		if (self.pending.count > 0 && self.running.count < self.limit && self.residency == NFKServerModelResidencyResident) {
-			next = self.pending.firstObject;
-			[self.pending removeObjectAtIndex:0];
-			[self beginRun:next];
-		}
+		starting = [self takeStartableRuns];
 	}
-	if (next != nil) {
+	for (NFKServedRun *next in starting) {
 		[self start:next];
-		return;
 	}
-	[self unloadIfRequested];
+	if (starting.count == 0) {
+		[self unloadIfRequested];
+	}
 }
 
 /*! Runs on the lock. Only a run that returned a result feeds the averages, so a fast refusal does
@@ -767,13 +789,19 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	if (self.running.count < self.limit && queued == 0) {
 		return building;
 	}
-	NSMutableArray<NSNumber *> *slots = [NSMutableArray arrayWithCapacity:self.limit];
+	NSMutableArray<NSNumber *> *slots = [NSMutableArray arrayWithCapacity:self.running.count];
 	for (NFKServedRun *run in self.running) {
 		NSNumber *remaining = [self estimatedRemainingForRun:run now:now];
 		if (remaining == nil) {
 			return nil;
 		}
 		[slots addObject:remaining];
+	}
+	// After a lowered limit more runs hold slots than the limit allows: the first slot opens only when
+	// the surplus runs and one more have ended, so the soonest-ending surplus is dropped.
+	if (slots.count > self.limit) {
+		[slots sortUsingSelector:@selector(compare:)];
+		[slots removeObjectsInRange:NSMakeRange(0, slots.count - self.limit)];
 	}
 	while (slots.count < self.limit) {
 		[slots addObject:@0];
@@ -836,12 +864,13 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 }
 
 /*! The model's residency for a status reading. timeout is its idle timeout now, INFINITY for none. */
-- (NSDictionary<NSString *, id> *)residencyJSONObjectWithTimeout:(NSTimeInterval)timeout
+- (NSDictionary<NSString *, id> *)residencyJSONObjectWithTimeout:(NSTimeInterval)timeout pinned:(BOOL)pinned
 {
 	@synchronized (self) {
 		NSMutableDictionary<NSString *, id> *residency = [NSMutableDictionary dictionary];
 		residency[@"state"] = NFKServedResidencyName(self.residency);
 		residency[@"unloadable"] = @(self.provider != nil);
+		residency[@"pinned"] = @(pinned);
 		if (self.loads > 0 || self.provider == nil) {
 			NSTimeInterval idle = MAX([self now] - self.lastUsedAt, 0.0);
 			residency[@"last_used"] = @(NSDate.date.timeIntervalSince1970 - idle);
@@ -929,6 +958,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 /*! Guards the unloading state below and the per-model idle intervals. */
 @property (nonatomic, strong) NSObject *residencyLock;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *idleUnloadIntervals;
+@property (nonatomic, strong) NSMutableSet<NSString *> *pinnedNames;
 @property (nonatomic, assign) double heldPressure;
 @property (nonatomic, assign) NSTimeInterval heldPressureAt;
 @property (nonatomic, assign) BOOL hasHeldPressure;
@@ -959,6 +989,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		};
 		_residencyLock = [[NSObject alloc] init];
 		_idleUnloadIntervals = [NSMutableDictionary dictionary];
+		_pinnedNames = [NSMutableSet set];
 		_memoryPressureOnset = 0.6;
 		_shortestIdleUnloadInterval = 10;
 		_pressureUnloadInterval = 600;
@@ -1086,6 +1117,8 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		replaced = self.models[model.name];
 		self.models[model.name] = model;
 	}
+	// A limit set while the model was being made reaches it here.
+	[model applyLimit:self.maximumConcurrentRunsPerModel queueLimit:self.maximumQueuedRunsPerModel];
 	[replaced retire];
 }
 
@@ -1235,6 +1268,52 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	}
 }
 
+- (void)setMaximumConcurrentRunsPerModel:(NSUInteger)maximumConcurrentRunsPerModel
+{
+	_maximumConcurrentRunsPerModel = maximumConcurrentRunsPerModel;
+	[self applyLimitsToHostedModels];
+}
+
+- (void)setMaximumQueuedRunsPerModel:(NSUInteger)maximumQueuedRunsPerModel
+{
+	_maximumQueuedRunsPerModel = maximumQueuedRunsPerModel;
+	[self applyLimitsToHostedModels];
+}
+
+- (void)applyLimitsToHostedModels
+{
+	NSUInteger limit = self.maximumConcurrentRunsPerModel;
+	NSUInteger queueLimit = self.maximumQueuedRunsPerModel;
+	for (NFKServedModel *model in [self hostedModels]) {
+		[model applyLimit:limit queueLimit:queueLimit];
+	}
+}
+
+- (void)setPinned:(BOOL)pinned forModelName:(NSString *)modelName
+{
+	@synchronized (self.residencyLock) {
+		if (pinned) {
+			[self.pinnedNames addObject:modelName];
+		} else {
+			[self.pinnedNames removeObject:modelName];
+		}
+	}
+}
+
+- (NSArray<NSString *> *)pinnedModelNames
+{
+	@synchronized (self.residencyLock) {
+		return [self.pinnedNames.allObjects sortedArrayUsingSelector:@selector(compare:)];
+	}
+}
+
+- (BOOL)isPinnedModelNamed:(NSString *)modelName
+{
+	@synchronized (self.residencyLock) {
+		return [self.pinnedNames containsObject:modelName];
+	}
+}
+
 - (void)setIdleUnloadInterval:(nullable NSNumber *)seconds forModelName:(NSString *)modelName
 {
 	@synchronized (self.residencyLock) {
@@ -1269,7 +1348,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 
 - (NSTimeInterval)idleTimeoutForModel:(NFKServedModel *)model
 {
-	if (![model isUnloadable]) {
+	if (![model isUnloadable] || [self isPinnedModelNamed:model.name]) {
 		return INFINITY;
 	}
 	return [self timeoutForIdleInterval:[self idleIntervalForModelNamed:model.name] pressure:self.memoryPressure];
@@ -1291,7 +1370,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		NSMutableArray<NFKServedModel *> *pressured = [NSMutableArray array];
 		NSMutableDictionary<NSString *, NSNumber *> *timeouts = [NSMutableDictionary dictionary];
 		for (NFKServedModel *model in [self hostedModels]) {
-			if (![model isUnloadable]) {
+			if (![model isUnloadable] || [self isPinnedModelNamed:model.name]) {
 				continue;
 			}
 			NSTimeInterval idle = [self idleIntervalForModelNamed:model.name];
@@ -1695,7 +1774,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		description[@"ready"] = @YES;
 	}
 	description[@"load"] = [model loadJSONObject];
-	description[@"residency"] = [model residencyJSONObjectWithTimeout:timeout];
+	description[@"residency"] = [model residencyJSONObjectWithTimeout:timeout pinned:[self isPinnedModelNamed:model.name]];
 	return description;
 }
 

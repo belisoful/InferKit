@@ -188,7 +188,8 @@ NS_SWIFT_SENDABLE
 				X-InferKit-Queued, and X-InferKit-Estimated-Wait, taken when the reply's head is
 				written.
 
-				Residency. A model hosted with addBackendProvider:forModelName: is listed before its
+				Residency. A model hosted with addBackendProvider:forModelName: (or
+				addBackendBuilder:forModelName:) is listed before its
 				backend exists, and its first request builds it:
 				- A request that finds the model not loaded starts the build and waits in the model's
 				  queue. Requests that arrive during the build wait for the same build.
@@ -201,8 +202,8 @@ NS_SWIFT_SENDABLE
 				- A model that is not resident reports ready, since a request builds it, and describes
 				  the backend it last held: its identifier, inputs, parameters, and modelInfo.
 				Each model's "residency" object carries state (not_loaded, loading, or resident),
-				unloadable, last_used (seconds since 1970), idle_timeout_seconds (absent when the model
-				is not unloaded for idleness), load_seconds, load_error, loads, and unloads.
+				unloadable, pinned, last_used (seconds since 1970), idle_timeout_seconds (absent when
+				the model is not unloaded for idleness), load_seconds, load_error, loads, and unloads.
 
 				Unloading. Two independent options release a provider-hosted model that sits unused:
 				- idleUnloadInterval (and setIdleUnloadInterval:forModelName:) unloads a model after a
@@ -214,6 +215,7 @@ NS_SWIFT_SENDABLE
 				  shortestIdleUnloadInterval.
 				The model's timeout is the shorter of the two, an option that is off contributing no
 				limit. With both off, a model stays until unloadModelNamed:. Guards:
+				- A pinned model (setPinned:forModelName:) is never unloaded by either option.
 				- A model is not unloaded within unloadGracePeriod of its build finishing, or while a run
 				  is in flight or queued.
 				- A model past its idle interval is unloaded. Of the models past only their
@@ -240,9 +242,12 @@ NS_SWIFT_SENDABLE
 				The status route needs a key under the same rules as every other route.
 
 				apiKey, requiresAPIKey, requiresAPIKeyOnLoopback, reportsHostDetails,
-				storageDirectoryURL, and the hosted models take effect on the next request. The other
-				settings take effect on the next start; the advertisement's host entries follow
-				reportsHostDetails as it was at start.
+				storageDirectoryURL, and the hosted models take effect on the next request, and
+				maximumConcurrentRunsPerModel and maximumQueuedRunsPerModel at once for every hosted
+				model. The other settings take effect on the next start; the advertisement's host
+				entries follow reportsHostDetails as it was at start. stop keeps the hosted models and
+				their residency, so a listener setting changes with stop, change, and start on the same
+				object.
 				Introduced in InferKit 0.4.0.
 */
 @interface NFKInferenceServer : NSObject
@@ -276,12 +281,14 @@ NS_SWIFT_SENDABLE
 @property (nonatomic, assign) NSUInteger maximumRequestBodyBytes;
 
 /*! How many runs one hosted backend serves at once. Defaults to 1, since a backend is not assumed to
-	be safe to run concurrently; applies to models added after it is set. */
+	be safe to run concurrently. A change applies to every hosted model: a raised limit starts waiting
+	runs at once, and a lowered one takes effect as running runs end, never cancelling one. */
 @property (nonatomic, assign) NSUInteger maximumConcurrentRunsPerModel;
 
 /*! How many runs wait for one hosted backend before later requests are refused with
-	NFKInferenceServerErrorBusy. Defaults to 0, which queues without limit; applies to models added
-	after it is set. */
+	NFKInferenceServerErrorBusy. Defaults to 0, which queues without limit. A change applies to every
+	hosted model; runs already queued beyond a lowered limit stay queued, and later requests are refused
+	until the queue falls below it. */
 @property (nonatomic, assign) NSUInteger maximumQueuedRunsPerModel;
 
 /*! Whether the status route, run replies, and the Bonjour advertisement describe this machine.
@@ -401,6 +408,20 @@ NS_SWIFT_SENDABLE
 	pressure, or INFINITY when it is not unloaded for idleness. Introduced in InferKit 0.4.0. */
 - (NSTimeInterval)idleTimeoutForModelName:(NSString *)modelName;
 
+/*!
+	@method     setPinned:forModelName:
+	@abstract   Pins or unpins a model, by name, hosted now or later.
+	@discussion A pinned model is never unloaded by idle or memory-pressure unloading, and its idle
+				timeout reads INFINITY. unloadModelNamed: still unloads it. Pinning builds nothing: a
+				pinned model that is not loaded stays so until a request or loadModelNamed: builds it.
+				The pin is kept when the model is removed and applies if the name is hosted again. The
+				status route reports it as the residency object's pinned. Introduced in InferKit 0.4.0.
+*/
+- (void)setPinned:(BOOL)pinned forModelName:(NSString *)modelName;
+
+/*! The names of the pinned models, sorted. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSArray<NSString *> *pinnedModelNames;
+
 /*! Applies the unloading options now, as the periodic check does, and returns the names of the models it
 	unloaded. Introduced in InferKit 0.4.0. */
 - (NSArray<NSString *> *)unloadIdleModels;
@@ -446,7 +467,10 @@ NS_SWIFT_SENDABLE
 */
 - (BOOL)startWithError:(NSError * _Nullable *)outError;
 
-/*! Stops listening, closes every connection, and cancels the runs they were waiting on. */
+/*! Stops listening, closes every connection, and cancels the runs they were waiting on. The hosted
+	models, their residency and counts, the tools, and every setting stay, so startWithError: on the same
+	object listens again with the settings as they are then: a port, loopbackOnly, advertisesService, or
+	TLSIdentity change is stop, change, start. */
 - (void)stop;
 
 @end

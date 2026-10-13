@@ -104,6 +104,7 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 @property (nonatomic, readwrite, copy) NSArray<NFKServerRunStatus *> *runs;
 @property (nonatomic, readwrite) NFKServerModelResidency residency;
 @property (nonatomic, readwrite, getter=isUnloadable) BOOL unloadable;
+@property (nonatomic, readwrite, getter=isPinned) BOOL pinned;
 @property (nonatomic, readwrite, copy, nullable) NSDate *lastUsedDate;
 @property (nonatomic, readwrite, copy, nullable) NSNumber *idleTimeoutSeconds;
 @property (nonatomic, readwrite, copy, nullable) NSNumber *loadSeconds;
@@ -162,6 +163,7 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 													  @"resident": @(NFKServerModelResidencyResident) };
 	self.residency = (NFKServerModelResidency)states[NFKStatusString(residency[@"state"])].integerValue;
 	self.unloadable = [NFKStatusNumber(residency[@"unloadable"]) boolValue];
+	self.pinned = [NFKStatusNumber(residency[@"pinned"]) boolValue];
 	NSNumber *lastUsed = NFKStatusNumber(residency[@"last_used"]);
 	self.lastUsedDate = lastUsed != nil ? [NSDate dateWithTimeIntervalSince1970:lastUsed.doubleValue] : nil;
 	self.idleTimeoutSeconds = NFKStatusNumber(residency[@"idle_timeout_seconds"]);

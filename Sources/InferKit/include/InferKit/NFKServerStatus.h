@@ -167,6 +167,10 @@ typedef NS_ENUM(NSInteger, NFKServerModelResidency) {
 	with a ready backend answers NO. Introduced in InferKit 0.4.0. */
 @property (nonatomic, readonly, getter=isUnloadable) BOOL unloadable;
 
+/*! Whether the host pinned the model, so idle and pressure unloading leave it resident. Introduced in
+	InferKit 0.4.0. */
+@property (nonatomic, readonly, getter=isPinned) BOOL pinned;
+
 /*! When a run last took or released a slot, or the backend last finished building, whichever is later;
 	nil before the first build. Introduced in InferKit 0.4.0. */
 @property (nonatomic, readonly, copy, nullable) NSDate *lastUsedDate;

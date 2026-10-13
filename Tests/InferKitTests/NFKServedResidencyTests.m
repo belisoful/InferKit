@@ -453,4 +453,189 @@
 	XCTAssertEqualWithAccuracy(server.memoryPressure, 0.9, 1e-12, @"a rise takes effect at once");
 }
 
+#pragma mark Limits on hosted models
+
+/*! Starts count requests for modelName on background queues; the group ends when every one has
+	answered, and texts collects each reply's text or error description. */
+- (void)startRequests:(NSUInteger)count for:(NSString *)modelName on:(NFKInferenceServer *)server
+				group:(dispatch_group_t)group texts:(NSMutableArray<NSString *> *)texts
+{
+	for (NSUInteger index = 0; index < count; index++) {
+		dispatch_group_async(group, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+			NSError *error = nil;
+			NSString *text = [self run:modelName on:server error:&error].text ?: error.localizedDescription ?: @"";
+			@synchronized (texts) {
+				[texts addObject:text];
+			}
+		});
+	}
+}
+
+- (nullable NFKServerModelStatus *)status:(NSString *)modelName on:(NFKInferenceServer *)server
+{
+	return [[NFKServerStatus fetchFromBaseURL:server.localBaseURL apiKey:nil error:NULL] modelNamed:modelName];
+}
+
+- (void)testRaisingTheConcurrencyLimitStartsWaitingRuns
+{
+	NFKInferenceServer *server = [self startedServer:[self server]];
+	NFKResidencyTestBackend *backend = [[NFKResidencyTestBackend alloc] init];
+	backend.gate = dispatch_semaphore_create(0);
+	[server addBackend:backend forModelName:@"gated"];
+
+	dispatch_group_t group = dispatch_group_create();
+	NSMutableArray<NSString *> *texts = [NSMutableArray array];
+	[self startRequests:3 for:@"gated" on:server group:group texts:texts];
+	[self waitUntil:^BOOL {
+		return backend.running == 1 && [self status:@"gated" on:server].queued == 2;
+	} description:@"one run holds the only slot and two wait"];
+
+	server.maximumConcurrentRunsPerModel = 3;
+	[self waitUntil:^BOOL {
+		return backend.running == 3;
+	} description:@"the raised limit starts the waiting runs"];
+	XCTAssertEqual([self status:@"gated" on:server].limit, 3);
+
+	for (NSUInteger index = 0; index < 3; index++) {
+		dispatch_semaphore_signal(backend.gate);
+	}
+	XCTAssertEqual(dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC)), 0);
+	XCTAssertEqualObjects(texts, (@[ @"ok", @"ok", @"ok" ]));
+}
+
+- (void)testLoweringTheConcurrencyLimitTakesEffectAsRunsEnd
+{
+	NFKInferenceServer *server = [self server];
+	server.maximumConcurrentRunsPerModel = 2;
+	[self startedServer:server];
+	NFKResidencyTestBackend *backend = [[NFKResidencyTestBackend alloc] init];
+	backend.gate = dispatch_semaphore_create(0);
+	[server addBackend:backend forModelName:@"gated"];
+
+	dispatch_group_t group = dispatch_group_create();
+	NSMutableArray<NSString *> *texts = [NSMutableArray array];
+	[self startRequests:2 for:@"gated" on:server group:group texts:texts];
+	[self waitUntil:^BOOL {
+		return backend.running == 2;
+	} description:@"two runs hold the two slots"];
+
+	server.maximumConcurrentRunsPerModel = 1;
+	[self startRequests:1 for:@"gated" on:server group:group texts:texts];
+	[self waitUntil:^BOOL {
+		NFKServerModelStatus *status = [self status:@"gated" on:server];
+		return status.queued == 1 && status.running == 2 && status.limit == 1;
+	} description:@"the running runs keep their slots and the new one waits"];
+
+	dispatch_semaphore_signal(backend.gate);
+	[self waitUntil:^BOOL {
+		return [self status:@"gated" on:server].completed == 1;
+	} description:@"one run ends"];
+	NFKServerModelStatus *status = [self status:@"gated" on:server];
+	XCTAssertEqual(status.running, 1, @"the run that ended freed no slot under the lowered limit");
+	XCTAssertEqual(status.queued, 1);
+
+	dispatch_semaphore_signal(backend.gate);
+	dispatch_semaphore_signal(backend.gate);
+	XCTAssertEqual(dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC)), 0);
+	XCTAssertEqualObjects(texts, (@[ @"ok", @"ok", @"ok" ]));
+}
+
+- (void)testLoweringTheQueueLimitKeepsQueuedRunsAndRefusesLaterOnes
+{
+	NFKInferenceServer *server = [self startedServer:[self server]];
+	NFKResidencyTestBackend *backend = [[NFKResidencyTestBackend alloc] init];
+	backend.gate = dispatch_semaphore_create(0);
+	[server addBackend:backend forModelName:@"gated"];
+
+	dispatch_group_t group = dispatch_group_create();
+	NSMutableArray<NSString *> *texts = [NSMutableArray array];
+	[self startRequests:3 for:@"gated" on:server group:group texts:texts];
+	[self waitUntil:^BOOL {
+		return backend.running == 1 && [self status:@"gated" on:server].queued == 2;
+	} description:@"one run holds the slot and two wait"];
+
+	server.maximumQueuedRunsPerModel = 1;
+	NFKServerModelStatus *status = [self status:@"gated" on:server];
+	XCTAssertEqual(status.queued, 2, @"runs already queued stay queued");
+	XCTAssertEqual(status.queueLimit, 1);
+	NSError *error = nil;
+	XCTAssertNil([self run:@"gated" on:server error:&error]);
+	XCTAssertEqualObjects(error.domain, NFKInferenceServerErrorDomain);
+	XCTAssertEqual(error.code, NFKInferenceServerErrorBusy, @"%@", error);
+
+	for (NSUInteger index = 0; index < 3; index++) {
+		dispatch_semaphore_signal(backend.gate);
+	}
+	XCTAssertEqual(dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC)), 0);
+	XCTAssertEqualObjects(texts, (@[ @"ok", @"ok", @"ok" ]));
+	XCTAssertEqual([self status:@"gated" on:server].refused, 1);
+}
+
+#pragma mark Restarting
+
+- (void)testStopKeepsHostedModelsAndTheSameServerStartsAgain
+{
+	NFKInferenceServer *server = [self startedServer:[self server]];
+	[server addBackendProvider:[self providerReturning:[[NFKResidencyTestBackend alloc] init]] forModelName:@"lazy"];
+	NSError *error = nil;
+	XCTAssertEqualObjects([self run:@"lazy" on:server error:&error].text, @"ok", @"%@", error);
+
+	[server stop];
+	XCTAssertFalse(server.isRunning);
+	XCTAssertNil(server.localBaseURL);
+	XCTAssertEqual([server residencyForModelName:@"lazy"], NFKServerModelResidencyResident, @"stop keeps the built backend");
+
+	server.loopbackOnly = NO;
+	server.apiKey = @"restart-key";
+	server.advertisesService = YES;
+	server.serviceName = [@"InferKit restart " stringByAppendingString:NSUUID.UUID.UUIDString];
+	XCTAssertTrue([server startWithError:&error], @"%@", error);
+	XCTAssertTrue(server.isRunning);
+	XCTAssertGreaterThan(server.listeningPort, 0);
+	XCTAssertEqualObjects([self run:@"lazy" on:server error:&error].text, @"ok", @"%@", error);
+	XCTAssertEqual(self.builds, 1, @"the restarted server serves the backend built before the stop");
+
+	[server stop];
+	server.loopbackOnly = YES;
+	XCTAssertTrue([server startWithError:&error], @"%@", error);
+	NFKServerModelStatus *status = [self status:@"lazy" on:server];
+	XCTAssertEqual(status.residency, NFKServerModelResidencyResident);
+	XCTAssertEqual(status.completed, 2, @"the counts survive the restarts");
+	XCTAssertEqual(status.loads, 1);
+}
+
+#pragma mark Pinning
+
+- (void)testAPinnedModelIsNeverUnloadedForIdlenessOrPressure
+{
+	NFKInferenceServer *server = [self startedServer:[self server]];
+	server.idleUnloadInterval = 10;
+	server.unloadsUnderMemoryPressure = YES;
+	server.pressureUnloadHysteresis = 0;
+	[server addBackendProvider:[self providerReturning:[[NFKResidencyTestBackend alloc] init]] forModelName:@"pinned"];
+	[server setPinned:YES forModelName:@"pinned"];
+	XCTAssertEqualObjects(server.pinnedModelNames, @[ @"pinned" ]);
+	XCTAssertEqual([server residencyForModelName:@"pinned"], NFKServerModelResidencyNotLoaded, @"pinning builds nothing");
+	[self load:@"pinned" on:server];
+
+	self.pressure = 1;
+	self.now += 1000;
+	XCTAssertEqualObjects([server unloadIdleModels], @[]);
+	XCTAssertEqual([server residencyForModelName:@"pinned"], NFKServerModelResidencyResident);
+	XCTAssertEqual([server idleTimeoutForModelName:@"pinned"], INFINITY);
+	NFKServerModelStatus *status = [self status:@"pinned" on:server];
+	XCTAssertTrue(status.isPinned);
+	XCTAssertNil(status.idleTimeoutSeconds);
+
+	XCTAssertTrue([server unloadModelNamed:@"pinned"], @"an explicit unload still unloads a pinned model");
+	XCTAssertEqual([server residencyForModelName:@"pinned"], NFKServerModelResidencyNotLoaded);
+
+	[server setPinned:NO forModelName:@"pinned"];
+	XCTAssertEqualObjects(server.pinnedModelNames, @[]);
+	[self load:@"pinned" on:server];
+	self.now += 1000;
+	XCTAssertEqualObjects([server unloadIdleModels], @[ @"pinned" ]);
+	XCTAssertFalse([self status:@"pinned" on:server].isPinned);
+}
+
 @end

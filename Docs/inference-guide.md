@@ -723,7 +723,9 @@ A client on another machine presents `apiKey` as a Bearer token unless the host 
 `loopbackOnly` keeps other machines out entirely, and `TLSIdentity` serves HTTPS.
 
 The server keeps each backend's contract. A hosted backend runs one request at a time unless the host
-raises `maximumConcurrentRunsPerModel`, and later requests queue in order. A client that disconnects
+raises `maximumConcurrentRunsPerModel`, and later requests queue in order. A change to that limit or to
+`maximumQueuedRunsPerModel` applies to the models already hosted, and `stop` keeps the hosted models in
+memory, so a port or exposure change is a stop and a start of the same server. A client that disconnects
 cancels its run. A failure reaches the client with its code: the native client receives the hosted
 backend's error with its domain and code, and the OpenAI-compatible clients read the code the server
 names in its error body.
@@ -774,7 +776,8 @@ Two options unload a model that sits unused, each independent of the other:
   off, models leave only under pressure, after `pressureUnloadInterval`.
 
 A model just built is kept for `unloadGracePeriod`, a model with a run in flight or queued is never
-unloaded, and under pressure the least recently used model goes first. Each model's entry in the
+unloaded, a model pinned with `setPinned:forModelName:` is never unloaded by either option, and under
+pressure the least recently used model goes first. Each model's entry in the
 status route reports its `residency`: whether it is loaded, when it was last used, and its idle
 timeout at the current pressure. After an unload, the server asks MLX to return its buffer cache to
 the system.

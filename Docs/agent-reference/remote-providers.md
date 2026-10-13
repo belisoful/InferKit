@@ -1089,6 +1089,29 @@ keeping them in memory, and unloads idle ones.
   so every timing is exact and no timer races the test. `NFKMLXModelInfoTests` checks that an unload
   empties MLX's cache.
 
+**Hosting updates (2026-10-13).** Asked for by an app's service, which restarts the same server for a
+port or exposure change and pins models its user marks.
+
+- `maximumConcurrentRunsPerModel` and `maximumQueuedRunsPerModel` have setters that apply the pair to
+  every hosted model (`applyLimit:queueLimit:`), and `host:` applies them again after inserting a model,
+  so a value set while a model was being made reaches it. A raised limit starts waiting runs at once
+  through `takeStartableRuns`, the one drain the build's end and a run's end also use. A lowered limit
+  cancels nothing: the admission test (`running.count < limit`) keeps later runs waiting until enough
+  running runs end. A lowered queue limit refuses only later arrivals; runs already queued beyond it
+  stay queued.
+- The wait estimate with more running runs than the limit drops the soonest-ending surplus, since the
+  first slot opens only when the surplus and one more run have ended.
+- `stop` closes the listener and keeps everything else (models, residency, counts, tools, the residency
+  timer); `startWithError:` builds a new listener from the current settings. The status route's
+  `started` is the latest start.
+- Pinning is by name, like the per-model idle intervals, under `residencyLock`: a pinned model is
+  skipped by `unloadIdleModels`, its idle timeout is INFINITY (so `idle_timeout_seconds` is absent), and
+  `unloadModelNamed:` still unloads it. The residency object carries `pinned`, which
+  `NFKServerModelStatus.isPinned` reads. Pinning builds nothing; the host loads a pinned model itself.
+- Tests (`NFKServedResidencyTests`): raising and lowering the concurrency limit with gated runs, lowering
+  the queue limit with runs queued past it, a stop and two starts of one server across a
+  loopback/network/advertising change, and a pinned model under idle and full pressure.
+
 **Sendable blocks (2026-10-13).** An app's Swift 6 service (`-default-isolation MainActor`) trapped in
 `_swift_task_checkIsolatedSwift` → `dispatch_assert_queue_fail` when the server called a provider
 closure written inline: the block type was not Sendable, so Swift inferred the closure main-actor
