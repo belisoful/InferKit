@@ -5475,7 +5475,8 @@ def run_sd_unet_probe(image, checkpoint):
         lambda m, args, kwargs, output: extra.__setitem__(
             "temb", (args[1] if len(args) > 1 else kwargs["temb"])[0].detach().float().clone().contiguous()) and None,
         with_kwargs=True)
-    _block_floor_hooks([module for _, module in stages], [f"{name}.out" for name, _ in stages], extra,
+    _block_floor_hooks([module for name, module in stages if name != "conv_act"],
+                       [f"{name}.out" for name, _ in stages if name != "conv_act"], extra,
                        keep=channels_last, verify=True)
     first_attention = next(block.attentions[0] for block in unet.down_blocks if getattr(block, "attentions", None))
     probed = first_attention.transformer_blocks[0]
@@ -5492,6 +5493,9 @@ def run_sd_unet_probe(image, checkpoint):
                        verify=True)
     with torch.no_grad(), _widened_convolutions():
         noise = unet(latent, timestep, encoder_hidden_states=context, **kwargs).sample
+    if os.environ.get("IK_PROBE_BLOCK_FLOOR") == "1" and half:
+        extra["conv_act.out.floor"] = torch.nn.functional.silu(
+            extra["conv_act.in"].to(torch.float16).float()).contiguous()
     extra["latent"] = channels_last(latent)
     extra["context"] = context[0].float().contiguous()
     extra["timestep"] = timestep.to(torch.float32)
@@ -6349,6 +6353,65 @@ def _decoder_floor_hooks(model, extra, final=True):
     return count
 
 
+def _gemma3n_altup_floor_hooks(model, decoder_layers, extra):
+    """`IK_PROBE_BLOCK_FLOOR=1`: Gemma 3n's two seams outside its blocks, written inline in the text model's
+    `forward`, rerun in float32 on the half run's own input: the AltUp expansion of the embedding into the
+    four copies (`0.block.in.whole.floor`) and the output path from the last block's four copies (the
+    collapse, the final norm, the head, and the softcap; `output.floor`)."""
+    if os.environ.get("IK_PROBE_BLOCK_FLOOR") != "1":
+        return
+    text = next(m for m in model.modules() if hasattr(m, "altup_projections") and hasattr(m, "altup_unembed_projections"))
+    head = model.get_output_embeddings()
+    softcap = getattr(getattr(model.config, "text_config", model.config), "final_logit_softcapping", None)
+
+    def magnitude_matched(first, others, projections):
+        target = torch.mean(first ** 2, dim=-1, keepdim=True) ** 0.5
+        copies = [first]
+        for projection, other in zip(projections, others):
+            current = projection(other)
+            magnitude = torch.sqrt(torch.maximum(torch.mean(current ** 2, dim=-1, keepdim=True), torch.tensor(1e-5)))
+            copies.append(current * target / magnitude)
+        return copies
+
+    def expansion(module, args, output):
+        if "0.block.in.whole.floor" in extra or _runs_wide(module, args):
+            return None
+        projections = [_floor_copy(p) for p in text.altup_projections]
+        _BLOCK_FLOOR_RUNNING[0] = True
+        try:
+            with torch.no_grad():
+                embedding = args[0].float()
+                copies = magnitude_matched(embedding, [embedding] * len(projections), projections)
+                extra["0.block.in.whole.floor"] = torch.stack(copies, dim=0).detach().float().clone().contiguous()
+        finally:
+            _BLOCK_FLOOR_RUNNING[0] = False
+        return None
+
+    def collapse(module, args, output):
+        if "output.floor" in extra:
+            return None
+        whole = output[0] if isinstance(output, tuple) else output
+        if whole.dtype == torch.float32:
+            return None
+        projections = [_floor_copy(p) for p in text.altup_unembed_projections]
+        norm, wide_head = _floor_copy(text.norm), _floor_copy(head)
+        _BLOCK_FLOOR_RUNNING[0] = True
+        try:
+            with torch.no_grad():
+                copies = whole.float()
+                matched = magnitude_matched(copies[0], list(copies[1:]), projections)
+                logits = wide_head(norm(torch.mean(torch.stack(matched), dim=0)))
+                if softcap is not None:
+                    logits = torch.tanh(logits / softcap) * softcap
+                extra["output.floor"] = logits[0].detach().float().clone().contiguous()
+        finally:
+            _BLOCK_FLOOR_RUNNING[0] = False
+        return None
+
+    text.altup_projections[0].register_forward_hook(expansion)
+    decoder_layers[len(decoder_layers) - 1].register_forward_hook(collapse)
+
+
 def run_hf_layer_probe(image, checkpoint):
     """Every submodule's input and output inside chosen decoder layers of a transformers release.
 
@@ -6406,6 +6469,7 @@ def run_hf_layer_probe(image, checkpoint):
     elif config.get("model_type") == "gemma3n" or config.get("text_config", {}).get("model_type") == "gemma3n_text":
         _block_floor_hooks(list(decoder_layers), [f"{i}.block.out.whole" for i in range(count)], extra,
                            batched=False, indices=list(range(count)))
+        _gemma3n_altup_floor_hooks(model, decoder_layers, extra)
     else:
         _decoder_floor_hooks(model, extra)
     if not stream and os.environ.get("IK_PROBE_FLOOR_BLOCKS") != "0":
@@ -7219,6 +7283,8 @@ def run_gemma3_vision_probe(image, checkpoint):
     projector.avg_pool.register_forward_hook(lambda m, a, o: extra.__setitem__(
         "proj.pooled", keep(o.flatten(2).transpose(1, 2))) and None)
     projector.mm_soft_emb_norm.register_forward_hook(lambda m, a, o: extra.__setitem__("proj.norm", keep(o)) and None)
+    _block_floor_hooks([tower.post_layernorm, projector.mm_soft_emb_norm, projector], ["vit.post", "proj.norm", "output"],
+                       extra)
     with torch.no_grad():
         hidden = vision(pixel_values=pixel_values).last_hidden_state
         projected = projector(hidden)
@@ -7467,6 +7533,8 @@ def run_gemma4_vision_probe(image, checkpoint):
     _probe_layer_states(layers, extra, "vit", [0, len(layers) - 1])
     vision.patch_embedder.register_forward_hook(lambda m, a, o: extra.__setitem__(
         "vit.patch", o[0].detach().float().clone().contiguous()) and None)
+    _block_floor_hooks([embedder], ["output"], extra,
+                       keep=lambda value: value.detach().float().reshape(-1, value.shape[-1]).contiguous())
     with torch.no_grad():
         pooled = vision(pixel_values, pixel_position_ids=position_ids).last_hidden_state
         projected = embedder(pooled)

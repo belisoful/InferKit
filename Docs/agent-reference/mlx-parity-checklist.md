@@ -319,6 +319,11 @@ piece without one is only reported.
   `scaled_dot_product_attention` inside a SAM block, and SAM 3's fused `addmm_act`. A piece computed in
   float32 under emulated CUDA autocast (SAM 3's ViT norms) has a floor of 0 and its float32 last-bit
   differences are reported.
+- A seam written inline in a model's `forward` (Gemma 3n's AltUp expansion and its output path) takes a
+  composite float32 rerun from the half run's own input (`_gemma3n_altup_floor_hooks`).
+- diffusers 0.31's `get_activation` returns one shared `nn.SiLU` for a whole UNet, so a hook on a named
+  activation fires first inside a resnet. The UNet's `conv_act` floor is the float32 SiLU of its own
+  recorded input instead.
 - The copy carries no hooks and no instance-level `forward`, since transformers 4.57 binds an
   output-recording wrapper to each layer that would call the bf16 original. It drops a key-value cache
   argument and copies a shared key-value mapping (Gemma 3n and 4).

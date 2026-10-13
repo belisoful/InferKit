@@ -611,6 +611,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   downloaded weights.
 - Measured at float16 on tiny: every encoder and decoder layer within 0.35 of its own block floor.
 
+#### Every held bf16 seam carries a block floor
+
+- Gemma 3 4B's vision post-norm, soft-token norm, and projector; Gemma 4 E2B's vision projection; Gemma 3n
+  E4B's AltUp expansion and output path; and the Stable Diffusion UNets' final SiLU now record a block floor,
+  so each is held inside the rounding its own step adds.
+- Measured: every one within its floor (Gemma 3 4B vision at most 0.214, Gemma 4 E2B vision 0.142, Gemma 3n
+  E4B 0.104).
+
 #### Stable Diffusion 1.5 and 2.1 at float16
 
 - A UNet whose release sets `upcast_attention` (Stable Diffusion 2.1) forms its attention scores and softmax
