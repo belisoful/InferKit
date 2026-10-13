@@ -250,6 +250,67 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   Support/InferKit/models` location, and the `NFKMLXDownload`/`NFKMLXHub` factories substitute it when a
   caller passes `nil`. The core hub stays strict (explicit `nil` cache → fails, asserted by a test).
 
+## Objective-C reachability gaps
+
+`CLAUDE.md` requires every model to run from Objective-C as an `NFKInferenceBackend`. The inventory below was
+taken 2026-10-13 against af45407. Closing a gap removes its row in the same change. InferKitFoundationModels and
+InferKitAppleSwift have no gaps. Paths are under `InferKitMLX/Sources/InferKitMLX/`.
+
+**No backend; Objective-C builds the object and calls its methods (14).** Each needs `@objc` backend factories
+(`backendWithDirectoryURL:[residency:]error:` plus the repo and async peers) that wrap the existing object:
+
+| Model | Objective-C reaches today | Entry | Backend inputs → outputs |
+| --- | --- | --- | --- |
+| LTX-Video 0.9.0 | `generatorWith…`, `framesForPrompt:` | `NFKMLXLTXVideoGenerator.swift:51` | prompt, negative prompt, seed, frame and size keys → `NFKOutputVideo` |
+| Wan 2.1 / 2.2 TI2V | `generatorWith…`, `framesForPrompt:` | `NFKMLXWanVideoGenerator.swift:132` | as LTX-Video |
+| Z-Image | `generatorWith…`, `imageForPrompt:` | `NFKMLXZImageGenerator.swift:101` | prompt, negative prompt, seed → `NFKOutputImage` |
+| Qwen-Image 2.1 | `generatorWith…`, `imageForPrompt:` | `NFKMLXQwenImageGenerator.swift:49` | as Z-Image |
+| SD3 / 3.5 | `generatorWith…`, `imageForPrompt:` | `NFKMLXSD3Generator.swift:97` | as Z-Image |
+| FLUX.1 | `fluxWith…`, `imageForPrompt:width:height:seed:` | `NFKMLXFlux.swift:91` | as Z-Image |
+| FLUX.2 [klein] | `flux2With…`, `imageForPrompt:`, references, `inpaintImage:mask:` | `NFKMLXFlux2Pipeline.swift:267` | prompt, optional `NFKInputImages` (references), `NFKInputImage` + `NFKInputMask` (inpaint) → `NFKOutputImage` |
+| Chronos-Bolt | `chronosWith…`, `medianForecastForContext:horizon:` | `NFKMLXChronos.swift:343` | series + horizon key → `NFKOutputStructured`; also add the async download peer |
+| TimesFM 2.5 | `timesFMWith…`, `forecastForContext:horizon:options:error:` | `NFKMLXTimesFMForecast.swift:73` | as Chronos; the forecast options become request keys |
+| SmolVLM2 | `smolVLMWith…`, `answerForImage:question:` | `NFKMLXSmolVLM.swift:459` | `NFKInputImage` + prompt or messages → `NFKOutputText` |
+| Qwen3-VL 2B | `modelWithDirectoryURL:`, `answerForImage:question:maxTokens:` | `NFKMLXQwen3VL.swift:450` | as SmolVLM2 |
+| Pixtral 12B | `modelWith…`, `answerForImage:question:maxTokens:` | `NFKMLXPixtral.swift:273` | as SmolVLM2 |
+| gte-reranker ModernBERT | `rerankerWith…`, `scoresForQuery:documents:` | `NFKMLXModernBERT.swift:313` | prompt + `NFKInputDocuments` → scores |
+| Qwen3-VL-Reranker | `rerankerWith…`, `scoresForQuery:documents:` | `NFKMLXQwen3VLRetrieval.swift:289` | as ModernBERT, plus image documents |
+
+**Objective-C reaches nothing (10).**
+
+| Model | Swift-only today | Entry | Bridge |
+| --- | --- | --- | --- |
+| SANA | `pipeline(directoryURL:)`, `generate(promptEmbeds:…)`, the Gemma 2 encoder | `NFKMLXSANAPipeline.swift:30` | a generator owning Gemma 2 and its tokenizer; prompt → `NFKOutputImage` |
+| SAM 3 / 3.1 | `makeImageModel`, `detect(image:tokens:valid:)`; `NFKMLXSAM3` has no `@objc` members | `NFKMLXSAM3Detector.swift:714` | `NFKInputImage` + prompt → `NFKOutputDetections` + `NFKOutputMask` |
+| LTX-2 | the transformer only; the pipeline is unbuilt | `NFKMLXLTX2Transformer.swift:535` | after the VAEs, text front end, and vocoder exist: → `NFKOutputVideo` + `NFKOutputAudio` |
+| Wan 2.2 Animate | `makeNet`, `extractReference`, `generate` | `NFKMLXWanAnimate.swift:559` | `NFKInputImage` (reference) + `NFKInputVideo` (driving) → `NFKOutputVideo` |
+| FLUX.1 ControlNet | the pipeline | `NFKMLXFluxControlNetPipeline.swift:35` | prompt + `NFKInputControl` + mode key → `NFKOutputImage`, reusing `NFKMLXFluxTextEncoder` |
+| SD3 ControlNet | the pipeline | `NFKMLXSD3ControlNetPipeline.swift:36` | as FLUX.1 ControlNet, reusing the SD3 encoders |
+| FastSpeech2 + HiFi-GAN (`NFKMLXVoice`) | `voice(…)`, `makeSpeechBackend(phonemize:)`; `fastspeech2-voice` is not registered | `NFKMLXFastSpeech2.swift:430` | a factory taking the acoustic, vocoder, vocabulary, and G2P files; the phonemizer through an `@objc` protocol; prompt → `NFKOutputAudio`; register it |
+| Hand-chained TTS (`NFKMLXTTS`) | `init(phonemizer:)`, `makeSpeechBackend` | `NFKMLXTTS.swift:78` | folded into the `NFKMLXVoice` factory |
+| CLIP probe | `probeBackend(net:probe:labels:)`; `clip-probe` is not registered | `NFKMLXCLIPProbe.swift:85` | as SigLIP 2: `probeBackendWithVariant:weightsURL:probeURL:labels:error:` → `NFKOutputClassifications` |
+| Gemma 4 image and audio | `NFKMLXGemma4ConditionalGeneration`; the backend is text-only | `NFKMLXGemma4Fusion.swift:74` | `NFKMLXGemmaBackend` reads `NFKInputImage` and `NFKInputAudio` as `NFKMLXGemma3nBackend` does |
+
+**Reachable, with Swift-only options or missing factories (11).**
+
+| Model | Gap | Entry |
+| --- | --- | --- |
+| DeepSeek V4 / V4.1 | directory factories only; no repo or async peers | `NFKMLXDeepSeekRelease.swift:671` |
+| Depth Anything 3 estimator | no async download peer; camera and ray outputs absent from the backend | `NFKMLXDepthAnything3.swift:1166` |
+| Cosmos tokenizer object | no download peers (its backend has them) | `NFKMLXCosmosTokenizerBackend.swift:336` |
+| SigLIP 2 probe | `modelWithVariant:weightsURL:` has no download peer | `NFKMLXSigLIP2Probe.swift:23` |
+| RetinaFace detector | no download peer | `NFKMLXRetinaFace.swift:521` |
+| CodeFormer whole-photo | no download peer | `NFKMLXCodeFormer.swift:520` |
+| RIFE / BasicVSR clip | no download peer; no registered `NFKMLXVideoBackend` instance | `NFKMLXRIFE.swift:240`, `NFKMLXVideoSR.swift:375` |
+| SD text-to-image, IP-Adapter | no download peers; `NFKMLXInputImageEmbedding` is a plain `public let` | `NFKMLXTextToImage.swift:196`, `:239` |
+| Chatterbox | `exaggeration` is Swift-only | `NFKMLXChatterboxPipeline.swift:163` |
+| SAM 2 video tracking | single frames only; `makeTracker` is Swift-only | `NFKMLXSAM2Tracker.swift:490` |
+| RVM recurrent video | single frames only; the recurrent forward is Swift-only | `NFKMLXRVM.swift:649` |
+
+`Docs/model-index.md` lists `fastspeech2-voice` and `clip-probe` as registered names; neither is registered in
+`NFKMLXReferenceModels.registerAll`. The variant check covered download peers only; each variant factory's
+internal use of the variant is unverified.
+
 ## Residency: staging, paging, and streaming
 
 `NFKMLXResidency` (`NFKMLXResidency.swift`) is how a model holds its weights against the working set,

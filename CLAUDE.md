@@ -243,6 +243,21 @@ A model that loads a whole release directory takes a `backendWith[Model:]directo
 instead of the repo/weightsPath set (the directory reads its own `config.json`), which is how an
 ObjC caller reaches a model whose geometry lives in a Swift-only configuration.
 
+**Every model runs from Objective-C as a backend.** Each shipped model, pipeline, and generator is
+reachable from Objective-C as an `NFKInferenceBackend` through an `@objc` factory. No model ships with
+a Swift-only entry point. The Swift-only list above applies to building blocks only.
+
+- A pipeline or generator whose public API is Swift-only (a `generate(…)` taking Swift options, an
+  `MLXArray`, or a closure) gets an `@objc` backend that wraps it: inputs and outputs through the core
+  keys (`NFKInputPrompt`, `NFKInputImage`, `NFKOutputVideo`, …), options through `@objc` request-parameter
+  keys, and a `backendWith…directoryURL:error:` or repo factory set.
+- A model that needs a pluggable component (a phonemizer, a text encoder, a vocoder) takes that
+  component through an `@objc` protocol, so Objective-C supplies or selects it.
+- An app over InferKit reaches models only through
+  this backend surface and the model catalog, so a model Objective-C cannot run, the app cannot run.
+- The open gaps are listed in `Docs/agent-reference/mlx-companion.md` ("Objective-C reachability gaps").
+  Closing one removes its row in the same change.
+
 ## Code Comments
 
 The bar for a comment is high. Code should explain itself through clear naming and structure;
