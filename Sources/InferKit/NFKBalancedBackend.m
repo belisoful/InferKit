@@ -250,14 +250,24 @@ static BOOL NFKBalancedFailsOver(NSError * _Nullable error)
 
 - (void)mergeDiscoveredProviders:(NSArray<NFKRemoteProvider *> *)providers
 {
-	NSSet<NSURL *> *found = [NSSet setWithArray:[providers valueForKey:@"baseURL"]];
+	NSMutableDictionary<NSURL *, NFKRemoteProvider *> *found = [NSMutableDictionary dictionary];
+	NSMutableSet<NSURL *> *changed = [NSMutableSet set];
+	for (NFKRemoteProvider *provider in providers) {
+		if (provider.discoveredPinning == NFKDiscoveredPinningChanged) {
+			[changed addObject:provider.baseURL];
+		} else {
+			found[provider.baseURL] = provider;
+		}
+	}
 	@synchronized (self) {
 		for (NFKBalancedServer *server in [self.servers copy]) {
 			if (!server.discovered) {
 				continue;
 			}
-			server.missedBrowses = [found containsObject:server.baseURL] ? 0 : server.missedBrowses + 1;
-			if (server.missedBrowses >= 2) {
+			NFKRemoteProvider *provider = found[server.baseURL];
+			server.missedBrowses = provider != nil ? 0 : server.missedBrowses + 1;
+			server.pinnedCertificateSHA256 = provider != nil ? provider.pinnedCertificateSHA256 : server.pinnedCertificateSHA256;
+			if (server.missedBrowses >= 2 || [changed containsObject:server.baseURL]) {
 				[self.servers removeObjectIdenticalTo:server];
 			}
 		}
@@ -267,10 +277,19 @@ static BOOL NFKBalancedFailsOver(NSError * _Nullable error)
 			}
 			NFKBalancedServer *server = [[NFKBalancedServer alloc] init];
 			server.baseURL = baseURL;
+			server.pinnedCertificateSHA256 = found[baseURL].pinnedCertificateSHA256;
 			server.discovered = YES;
 			server.dispatches = [NSMutableArray array];
 			[self.servers addObject:server];
 		}
+	}
+}
+
+- (nullable NSString *)pinnedCertificateSHA256ForServerWithBaseURL:(NSURL *)baseURL
+{
+	@synchronized (self) {
+		NFKBalancedServer *server = [self serverWithBaseURL:baseURL];
+		return server != nil ? (server.pinnedCertificateSHA256 ?: self.pinnedCertificateSHA256) : nil;
 	}
 }
 

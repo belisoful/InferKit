@@ -14,6 +14,7 @@
 #import <InferKit/NFKInferenceServer.h>
 #import <InferKit/NFKRemoteTransport.h>
 #import "NFKInferKitDiscovery.h"
+#import "NFKPinnedServersPrivate.h"
 
 const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 
@@ -37,7 +38,10 @@ static NSDictionary<NSString *, NSNumber *> *NFKModelAPIStyles(NSDictionary<NSNu
 @property (nonatomic, assign, readwrite) BOOL requiresAPIKey;
 @property (nonatomic, copy, readwrite) NSDictionary<NSString *, NSString *> *advertisedProperties;
 @property (nonatomic, copy, readwrite, nullable) NSString *pinnedCertificateSHA256;
+@property (nonatomic, assign, readwrite) NFKDiscoveredPinning discoveredPinning;
 @end
+
+static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 
 @implementation NFKRemoteProvider
 
@@ -355,19 +359,68 @@ static NSDictionary<NSString *, NSNumber *> *NFKModelAPIStyles(NSDictionary<NSNu
 	return @[ self.ollama, self.lmStudio, self.llamaCpp, self.vLLM, self.inferKit ];
 }
 
++ (nullable NFKPinnedServers *)discoveryPinnedServers
+{
+	@synchronized (NFKRemoteProvider.class) {
+		return NFKRemoteDiscoveryPinnedServers;
+	}
+}
+
++ (void)setDiscoveryPinnedServers:(nullable NFKPinnedServers *)discoveryPinnedServers
+{
+	@synchronized (NFKRemoteProvider.class) {
+		NFKRemoteDiscoveryPinnedServers = discoveryPinnedServers;
+	}
+}
+
++ (nullable instancetype)providerForInferKitServiceNamed:(NSString *)name
+													host:(NSString *)host
+													port:(NSInteger)port
+											   TXTRecord:(NSDictionary<NSString *, NSString *> *)TXTRecord
+										   pinnedServers:(nullable NFKPinnedServers *)pinnedServers
+{
+	if (host.length == 0 || port <= 0 || port > UINT16_MAX) {
+		return nil;
+	}
+	NFKInferKitService *service = [[NFKInferKitService alloc] init];
+	service.name = name;
+	service.host = host;
+	service.port = (uint16_t)port;
+	service.TXTRecord = TXTRecord;
+	return [self providerForService:service pinnedServers:pinnedServers];
+}
+
++ (nullable instancetype)providerForService:(NFKInferKitService *)service pinnedServers:(nullable NFKPinnedServers *)pinnedServers
+{
+	NSURL *baseURL = service.baseURL;
+	if (baseURL == nil) {
+		return nil;
+	}
+	NFKRemoteProvider *provider = [self.inferKit providerWithBaseURL:baseURL];
+	provider.displayName = service.name;
+	provider.requiresAPIKey = [service.TXTRecord[@"auth"] isEqualToString:@"1"];
+	provider.advertisedProperties = service.TXTRecord ?: @{};
+	if (pinnedServers == nil) {
+		return provider;
+	}
+	NSString *pin = nil;
+	provider.discoveredPinning = [pinnedServers pinningForServiceName:service.name
+															servesTLS:[baseURL.scheme isEqualToString:@"https"]
+												advertisedFingerprint:service.TXTRecord[@"cert_sha256"]
+													pinnedFingerprint:&pin];
+	provider.pinnedCertificateSHA256 = pin;
+	return provider;
+}
+
 + (NSArray<NFKRemoteProvider *> *)discoverInferKitServersWithTimeout:(NSTimeInterval)timeout
 {
+	NFKPinnedServers *pinnedServers = self.discoveryPinnedServers;
 	NSMutableArray<NFKRemoteProvider *> *providers = [NSMutableArray array];
 	for (NFKInferKitService *service in NFKDiscoverInferKitServices(NFKInferenceServerServiceType, timeout)) {
-		NSURL *baseURL = service.baseURL;
-		if (baseURL == nil) {
-			continue;
+		NFKRemoteProvider *provider = [self providerForService:service pinnedServers:pinnedServers];
+		if (provider != nil) {
+			[providers addObject:provider];
 		}
-		NFKRemoteProvider *provider = [self.inferKit providerWithBaseURL:baseURL];
-		provider.displayName = service.name;
-		provider.requiresAPIKey = [service.TXTRecord[@"auth"] isEqualToString:@"1"];
-		provider.advertisedProperties = service.TXTRecord ?: @{};
-		[providers addObject:provider];
 	}
 	return providers;
 }

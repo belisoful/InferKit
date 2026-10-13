@@ -1033,8 +1033,11 @@ and start times on `systemUptime`, and the job's last reported progress.
 **HTTPS with a self-signed identity (2026-10-13).** `NFKServerIdentity` makes and keeps the identity
 `TLSIdentity` takes, and clients pin its SHA-256 fingerprint (`pinnedCertificateSHA256` on
 `NFKRemoteInferKitBackend`, `NFKRemoteProvider`, and `NFKBalancedBackend`; `NFKServerStatus`'s pinned fetch).
-The Bonjour TXT record carries the fingerprint under `cert_sha256`, which is advisory. The persistence
-measurements and the trust model are in `core-runtime-notes.md` ("Serving identity and certificate pinning").
+The Bonjour TXT record carries the fingerprint under `cert_sha256`, which is advisory unless the client
+turns automatic pinning on (`NFKRemoteProvider.discoveryPinnedServers`, an `NFKPinnedServers`); then
+discovery and `NFKBalancedBackend` pin it on trust-on-first-use terms. The persistence measurements, the
+trust model, and the automatic-pinning decisions are in `core-runtime-notes.md` ("Serving identity and
+certificate pinning").
 
 **Residency and unloading (2026-10-13).** Asked for by an app's service, which lists models without
 keeping them in memory, and unloads idle ones.

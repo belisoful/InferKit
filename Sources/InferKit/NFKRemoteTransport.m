@@ -5,6 +5,7 @@
 
 #import <InferKit/NFKRemoteTransport.h>
 #import <InferKit/NFKServerIdentity.h>
+#import "NFKRemoteTransportPrivate.h"
 #import <objc/runtime.h>
 
 NSString * const NFKAnthropicAPIVersion = @"2023-06-01";
@@ -23,8 +24,7 @@ typedef void (^NFKRemoteChallengeCompletion)(NSURLSessionAuthChallengeDispositio
 
 static const void * const NFKRemotePinRefusedKey = &NFKRemotePinRefusedKey;
 
-/*! 64 lowercase hexadecimal digits, or nil when the value is not a SHA-256 fingerprint. */
-static NSString * _Nullable NFKRemoteNormalizedFingerprint(NSString *value)
+NSString * _Nullable NFKRemoteNormalizedFingerprint(NSString *value)
 {
 	NSCharacterSet *separators = [NSCharacterSet characterSetWithCharactersInString:@": "];
 	NSString *hex = [[value componentsSeparatedByCharactersInSet:separators] componentsJoinedByString:@""].lowercaseString;

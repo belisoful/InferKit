@@ -12,6 +12,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class NFKRemoteProvider;
+
 /*!
 	@enum       NFKBalancingPolicy
 	@abstract   How an NFKBalancedBackend picks the server for a request.
@@ -76,6 +78,16 @@ typedef NS_ENUM(NSInteger, NFKBalancingPolicy) {
 				startDiscoveryWithInterval: adds the servers Bonjour finds and drops a discovered
 				server once two browses in a row miss it. A server added by URL stays until it is
 				removed. A server reached both ways counts as two.
+
+				With NFKRemoteProvider's discoveryPinnedServers set, discovered servers are pinned
+				automatically on trust-on-first-use terms:
+				- A TLS server whose fingerprint is first seen or matches the remembered one is pinned
+				  to it.
+				- A server whose fingerprint differs from the remembered one, or that dropped TLS, is
+				  skipped, and removed when it was already discovered. It returns once the app accepts
+				  the new fingerprint or forgets the server in its NFKPinnedServers.
+				- A TLS server without a fingerprint, and a plain HTTP server never pinned, are added
+				  unpinned and trust pinnedCertificateSHA256 or the system's trust store.
 				Introduced in InferKit 0.4.0.
 */
 @interface NFKBalancedBackend : NSObject <NFKInferenceBackend>
@@ -90,8 +102,8 @@ typedef NS_ENUM(NSInteger, NFKBalancingPolicy) {
 @property (atomic, copy, nullable) NSString *apiKey;
 
 /*! The SHA-256 certificate fingerprint trusted for a server added without a pin of its own, and for
-	discovered servers, or nil to trust the system's trust store. A fleet whose servers share one
-	NFKServerIdentity sets it once. Introduced in InferKit 0.4.0. */
+	discovered servers automatic pinning did not pin, or nil to trust the system's trust store. A fleet
+	whose servers share one NFKServerIdentity sets it once. Introduced in InferKit 0.4.0. */
 @property (atomic, copy, nullable) NSString *pinnedCertificateSHA256;
 
 /*! Defaults to NFKBalancingPolicyShortestExpectedWait. */
@@ -152,6 +164,20 @@ typedef NS_ENUM(NSInteger, NFKBalancingPolicy) {
 
 /*! Stops browsing. Discovered servers stay until removed. */
 - (void)stopDiscovery;
+
+/*! Merges one browse's answer as startDiscoveryWithInterval: does, for an app that browses itself
+	and makes each provider with NFKRemoteProvider's
+	providerForInferKitServiceNamed:host:port:TXTRecord:pinnedServers:. Each provider is added as a
+	discovered server with its pinnedCertificateSHA256, a discovered server's pin follows its
+	provider's, a provider reporting NFKDiscoveredPinningChanged is skipped and removes the
+	discovered server at its URL, and a discovered server absent from two answers in a row is dropped.
+	Introduced in InferKit 0.4.0. */
+- (void)mergeDiscoveredProviders:(NSArray<NFKRemoteProvider *> *)providers;
+
+/*! The fingerprint trusted for a server's status readings and runs: its own pin, else
+	pinnedCertificateSHA256. nil when it trusts the system's trust store or is not one of the
+	servers. Introduced in InferKit 0.4.0. */
+- (nullable NSString *)pinnedCertificateSHA256ForServerWithBaseURL:(NSURL *)baseURL;
 
 /*! Reads every server's status; YES when at least one can take the model now. */
 - (BOOL)prepareWithError:(NSError * _Nullable *)outError;

@@ -130,9 +130,11 @@ typedef id<NFKInferenceBackend> _Nullable (^NFKServedBackendProvider)(NSError * 
 
 				advertisesService publishes the server over Bonjour as NFKInferenceServerServiceType,
 				carrying the base path, whether TLS is on, whether a key is required, and with TLS the
-				certificate's SHA-256 fingerprint under cert_sha256. Bonjour is unauthenticated, so a
-				client confirms that fingerprint with its user before pinning it;
-				NFKRemoteProvider's discoverInferKitServersWithTimeout: finds it. On iOS, listening on
+				certificate's SHA-256 fingerprint under cert_sha256. Bonjour is unauthenticated, so the
+				fingerprint is advisory: a client confirms it with its user before pinning it, unless
+				the client turns on automatic pinning (NFKRemoteProvider's discoveryPinnedServers),
+				which trusts the first fingerprint seen for each service name and reports a later
+				different one. NFKRemoteProvider's discoverInferKitServersWithTimeout: finds the server. On iOS, listening on
 				or browsing the local network needs NSLocalNetworkUsageDescription in the Info.plist.
 
 				Runs follow the backends' contract: each backend serves at most

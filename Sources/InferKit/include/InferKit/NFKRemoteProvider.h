@@ -5,6 +5,7 @@
 
 #import <Foundation/Foundation.h>
 #import <InferKit/NFKInferenceBackend.h>
+#import <InferKit/NFKPinnedServers.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -99,8 +100,17 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 
 /*! The SHA-256 fingerprint of the server certificate this provider's backends and model catalog
 	trust in place of the system's trust store, or nil. Set it with
-	providerWithPinnedCertificateSHA256:. Introduced in InferKit 0.4.0. */
+	providerWithPinnedCertificateSHA256:, or let discovery set it (see discoveryPinnedServers).
+	Introduced in InferKit 0.4.0. */
 @property (nonatomic, copy, readonly, nullable) NSString *pinnedCertificateSHA256;
+
+/*! What automatic pinning did when discovery made this provider. NFKDiscoveredPinningChanged means
+	the server's certificate fingerprint differs from the one remembered for its service name, so
+	pinnedCertificateSHA256 is nil and advertisedProperties' cert_sha256 is the new fingerprint.
+	NFKDiscoveredPinningNone for a preset and for a provider derived with providerWithBaseURL:,
+	providerWithPinnedCertificateSHA256:, or providerWithAPIStyle:forModelName:. Introduced in
+	InferKit 0.4.0. */
+@property (nonatomic, assign, readonly) NFKDiscoveredPinning discoveredPinning;
 
 - (instancetype)init NS_UNAVAILABLE;
 
@@ -325,16 +335,51 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 @property (class, nonatomic, readonly) NFKRemoteProvider *inferKit;
 
 /*!
+	@property   discoveryPinnedServers
+	@abstract   The fingerprints automatic pinning remembers, or nil to leave discovered servers
+				unpinned. Defaults to nil.
+	@discussion Setting an NFKPinnedServers turns automatic pinning on for
+				discoverInferKitServersWithTimeout:, its completion-handler form, and the servers
+				NFKBalancedBackend's startDiscoveryWithInterval: finds. A discovered TLS server is then
+				pinned to the cert_sha256 fingerprint its Bonjour record advertises, on the
+				trust-on-first-use terms NFKPinnedServers describes, and discoveredPinning reports the
+				decision. Plain HTTP servers that were never pinned are unaffected. The app keeps the
+				set across launches by saving its dictionaryRepresentation and restoring it here at
+				launch. Introduced in InferKit 0.4.0.
+*/
+@property (class, atomic, strong, nullable) NFKPinnedServers *discoveryPinnedServers;
+
+/*!
+	@method     providerForInferKitServiceNamed:host:port:TXTRecord:pinnedServers:
+	@abstract   The provider discovery makes for one resolved Bonjour advertisement.
+	@discussion For an app that browses NFKInferenceServerServiceType itself (with NWBrowser, for
+				example) and wants the provider discoverInferKitServersWithTimeout: would make: the
+				inferkit preset at host and port, https when TXTRecord's tls is 1, at TXTRecord's path
+				or /v1. displayName is name, requiresAPIKey is TXTRecord's auth, and
+				advertisedProperties is TXTRecord. With pinnedServers, the provider is pinned
+				automatically as discoveryPinnedServers describes; nil leaves it unpinned. nil when
+				host is empty or port is not a TCP port. Introduced in InferKit 0.4.0.
+*/
++ (nullable instancetype)providerForInferKitServiceNamed:(NSString *)name
+													host:(NSString *)host
+													port:(NSInteger)port
+											   TXTRecord:(NSDictionary<NSString *, NSString *> *)TXTRecord
+										   pinnedServers:(nullable NFKPinnedServers *)pinnedServers;
+
+/*!
 	@method     discoverInferKitServersWithTimeout:
 	@abstract   The InferKit servers advertising on the local network, found over Bonjour.
 	@discussion Browses NFKInferenceServerServiceType for the timeout and resolves each advertisement
 				to a provider: the inferkit preset at the advertising machine's host name and port,
 				with https when the server serves TLS. displayName is the advertised name, and
 				requiresAPIKey is what the server advertised. The answer is sorted by name; a
-				server on this machine is included when it advertises. Blocks for the timeout; run it
-				off the render thread, or use the completion-handler form. On iOS, the app lists
-				NFKInferenceServerServiceType under NSBonjourServices and carries
-				NSLocalNetworkUsageDescription. Introduced in InferKit 0.4.0.
+				server on this machine is included when it advertises. With discoveryPinnedServers set,
+				each TLS provider is pinned automatically and reports the decision in
+				discoveredPinning; a server whose fingerprint changed is still listed, unpinned, so the
+				app can ask its user. Blocks for the timeout; run it off the render thread, or use the
+				completion-handler form. On iOS, the app lists NFKInferenceServerServiceType under
+				NSBonjourServices and carries NSLocalNetworkUsageDescription. Introduced in InferKit
+				0.4.0.
 */
 + (NSArray<NFKRemoteProvider *> *)discoverInferKitServersWithTimeout:(NSTimeInterval)timeout
 	NS_SWIFT_NAME(discoverInferKitServers(timeout:));

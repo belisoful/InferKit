@@ -89,6 +89,9 @@ Pure Apple frameworks, always available:
   Clients find it by address or over Bonjour.
 - ``NFKServerIdentity`` — a self-signed TLS identity for the server, kept in a directory across
   launches without the keychain. Clients pin its certificate's SHA-256 fingerprint.
+- ``NFKPinnedServers`` — the fingerprints automatic pinning remembers, one per Bonjour service
+  name. Set as `NFKRemoteProvider.discoveryPinnedServers`, discovery pins each TLS server's advertised
+  fingerprint on first use and reports a later different one.
 - ``NFKRemoteInferKitBackend`` — the native route's client: every key of a request crosses, and the
   hosted backend's result and error come back as they were.
 - ``NFKBalancedBackend`` — sends each request to one of several servers hosting the model, by expected
@@ -185,6 +188,8 @@ the core discovers it by name at runtime — see <doc:DynamicDiscovery>.
 - ``NFKInferenceServer``
 - ``NFKServerIdentity``
 - ``NFKServerIdentityError``
+- ``NFKPinnedServers``
+- ``NFKDiscoveredPinning``
 - ``NFKRemoteInferKitBackend``
 - ``NFKInferenceServerError``
 - ``NFKBalancedBackend``

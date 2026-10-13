@@ -7,6 +7,10 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+/*! A SHA-256 fingerprint as 64 lowercase hexadecimal digits, from 64 hexadecimal digits in either case
+	with or without colons or spaces between the byte pairs, or nil when the value is not one. */
+NSString * _Nullable NFKRemoteNormalizedFingerprint(NSString *value);
+
 @interface NFKRemoteTransport (NFKPrivate)
 
 /*! One attempt, with no retry, for a caller that answers a busy server by going elsewhere. A failure

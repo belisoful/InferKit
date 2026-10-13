@@ -129,6 +129,7 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 
 - ``NFKInferenceServer``
 - ``NFKServerIdentity``
+- ``NFKPinnedServers``
 - ``NFKRemoteInferKitBackend``
 - ``NFKBalancedBackend``
 - ``NFKServerStatus``

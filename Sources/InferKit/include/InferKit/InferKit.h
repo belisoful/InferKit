@@ -78,6 +78,7 @@
 #import <InferKit/NFKRemoteInferKitBackend.h>
 #import <InferKit/NFKInferenceServer.h>
 #import <InferKit/NFKServerIdentity.h>
+#import <InferKit/NFKPinnedServers.h>
 #import <InferKit/NFKServerStatus.h>
 #import <InferKit/NFKBalancedBackend.h>
 #import <InferKit/NFKAsyncGenerationBackend.h>

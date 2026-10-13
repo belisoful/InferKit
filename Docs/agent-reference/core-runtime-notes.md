@@ -325,3 +325,29 @@ remote classes trust it by pinning its certificate's SHA-256 fingerprint. The se
   model catalog apply. `providerWithBaseURL:` drops the pin because a pin names one server.
   `+[NFKServerStatus fetchFromBaseURL:apiKey:error:]` takes no pin; a pinned
   `NFKRemoteInferKitBackend`'s `fetchServerStatusWithError:` reads the same route.
+- The Bonjour TXT `cert_sha256` is advisory by default: discovery reports it in `advertisedProperties`
+  and pins nothing. Automatic pinning (2026-10-13) is opt-in through
+  `NFKRemoteProvider.discoveryPinnedServers`, an `NFKPinnedServers` (nil by default). With it set,
+  `discoverInferKitServersWithTimeout:` (both forms), `startDiscoveryWithInterval:`, and the public
+  per-advertisement factory `providerForInferKitServiceNamed:host:port:TXTRecord:pinnedServers:`
+  (the seam for an app browsing with `NWBrowser`, and for the tests) decide per server, reported in
+  `discoveredPinning`:
+  - No remembered fingerprint for the service name: TLS with a well-formed fingerprint → remembered
+    and pinned (`FirstUse`); TLS without one, or plain HTTP → unpinned (`None`), which refuses an
+    untrusted self-signed certificate as before.
+  - A remembered fingerprint: TLS advertising it or none → pinned to it (`Remembered`), so stripping
+    the fingerprint from the record cannot unpin a server; a different fingerprint, or plain HTTP →
+    unpinned (`Changed`). Discovery still lists the provider; the balancer skips it and removes it if
+    it was already discovered. `NFKPinnedServersFingerprintChangedNotification` is posted once per
+    advertised value until `acceptFingerprint:forServiceName:` or `forgetServiceName:`.
+  - The key is the service name alone, compared case-insensitively as mDNS compares names. Host and
+    port stay out: a server on port 0 moves at each launch, a machine can be renamed, and keying by
+    host would let another machine advertising a remembered name be trusted as a new server. A new name is a new server and is trusted on first use, the inherent limit of TOFU.
+  - The library persists nothing. `dictionaryRepresentation` (name → 64 lowercase hex digits) is a
+    property list the app saves on `NFKPinnedServersDidChangeNotification` and restores with
+    `initWithDictionaryRepresentation:`, which skips malformed values. Both notifications post
+    synchronously on the deciding thread, outside the set's lock.
+  - `NFKBalancedBackend mergeDiscoveredProviders:` (public, the browse's merge) applies each
+    provider's pin to its discovered server on every browse, so an accepted fingerprint takes effect
+    on the next browse; `pinnedCertificateSHA256ForServerWithBaseURL:` reads the effective pin
+    (server's own, else the fleet's). Tests: `NFKPinnedServersTests`, weight-free and network-free.
