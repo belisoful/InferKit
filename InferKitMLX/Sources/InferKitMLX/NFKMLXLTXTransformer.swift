@@ -91,7 +91,7 @@ final class NFKLTXLinearAct: Module {
         _linear2.wrappedValue = Linear(hidden, outDim)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(silu(linear1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(NFKReferenceRounding.silu(linear1(x))) }
 }
 
 /// The PixArt caption projection: `linear_1` → tanh-GELU → `linear_2`, mapping the text embedding to the
@@ -105,7 +105,7 @@ final class NFKLTXCaptionProjection: Module {
         _linear2.wrappedValue = Linear(innerDim, innerDim)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(geluApproximate(linear1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(NFKReferenceRounding.geluTanh(linear1(x))) }
 }
 
 /// The 3D rotary position embedding over the (frame, height, width) latent grid.

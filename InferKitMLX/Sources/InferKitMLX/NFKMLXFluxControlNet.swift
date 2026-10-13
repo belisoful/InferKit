@@ -33,26 +33,27 @@ final class NFKFluxControlNetHintEmbedding: Module {
     @ModuleInfo(key: "conv_out") var convOut: Conv2d
 
     init(conditioningChannels: Int, conditioningEmbeddingChannels: Int, blockOutChannels: [Int] = [16, 16, 16, 16]) {
-        _convIn.wrappedValue = Conv2d(inputChannels: conditioningChannels, outputChannels: blockOutChannels[0],
-                                      kernelSize: IntOrPair(3), padding: IntOrPair(1))
+        _convIn.wrappedValue = NFKConv2d(inputChannels: conditioningChannels, outputChannels: blockOutChannels[0],
+                                         kernelSize: IntOrPair(3), padding: IntOrPair(1))
         var convs: [Conv2d] = []
         for i in 0 ..< (blockOutChannels.count - 1) {
             let cin = blockOutChannels[i], cout = blockOutChannels[i + 1]
-            convs.append(Conv2d(inputChannels: cin, outputChannels: cin, kernelSize: IntOrPair(3), padding: IntOrPair(1)))
-            convs.append(Conv2d(inputChannels: cin, outputChannels: cout, kernelSize: IntOrPair(3),
-                                stride: IntOrPair(2), padding: IntOrPair(1)))
+            convs.append(NFKConv2d(inputChannels: cin, outputChannels: cin, kernelSize: IntOrPair(3),
+                                   padding: IntOrPair(1)))
+            convs.append(NFKConv2d(inputChannels: cin, outputChannels: cout, kernelSize: IntOrPair(3),
+                                   stride: IntOrPair(2), padding: IntOrPair(1)))
         }
         _blocks.wrappedValue = convs
-        _convOut.wrappedValue = Conv2d(inputChannels: blockOutChannels.last!,
-                                       outputChannels: conditioningEmbeddingChannels,
-                                       kernelSize: IntOrPair(3), padding: IntOrPair(1))
+        _convOut.wrappedValue = NFKConv2d(inputChannels: blockOutChannels.last!,
+                                          outputChannels: conditioningEmbeddingChannels,
+                                          kernelSize: IntOrPair(3), padding: IntOrPair(1))
     }
 
     /// `image` `[B, C, H, W]` (NCHW) → `[B, (H/8)·(W/8), condEmbedChannels]`.
     func callAsFunction(_ image: MLXArray) -> MLXArray {
-        var embedding = silu(convIn(image.transposed(0, 2, 3, 1)))          // NHWC
+        var embedding = NFKReferenceRounding.silu(convIn(image.transposed(0, 2, 3, 1)))  // NHWC
         for block in blocks {
-            embedding = silu(block(embedding))
+            embedding = NFKReferenceRounding.silu(block(embedding))
         }
         embedding = convOut(embedding)                                     // [B, H', W', cec]
         return embedding.reshaped([embedding.dim(0), embedding.dim(1) * embedding.dim(2), embedding.dim(3)])
@@ -162,6 +163,16 @@ public final class NFKMLXFluxControlNetNet: Module {
         _controlnetSingleBlocks.wrappedValue = (0 ..< config.numSingleLayers).map { _ in Linear(dim, dim) }
     }
 
+    /// A double block's residual through its zero-initialized projection.
+    func zeroProjected(double index: Int, _ residual: MLXArray) -> MLXArray { controlnetBlocks[index](residual) }
+
+    /// A single block's residual through its zero-initialized projection. The reference's residual is the image
+    /// part sliced past the text, strided over a batch of more than one.
+    func zeroProjected(single index: Int, _ residual: MLXArray) -> MLXArray {
+        residual.dim(0) > 1 ? NFKReferenceRounding.stridedLinear(controlnetSingleBlocks[index], residual)
+            : controlnetSingleBlocks[index](residual)
+    }
+
     /// Runs the ControlNet and returns `(double, single)` residual lists, scaled by `conditioningScale`.
     ///
     /// `hidden` is the packed noisy latent `[B, imgSeq, inChannels]`. `controlnetCond` is the packed
@@ -205,10 +216,10 @@ public final class NFKMLXFluxControlNetNet: Module {
         }
 
         let double = doubleResiduals.enumerated().map { index, residual in
-            controlnetBlocks[index](residual) * conditioningScale
+            NFKReferenceRounding.scaled(zeroProjected(double: index, residual), by: conditioningScale)
         }
         let single = singleResiduals.enumerated().map { index, residual in
-            controlnetSingleBlocks[index](residual) * conditioningScale
+            NFKReferenceRounding.scaled(zeroProjected(single: index, residual), by: conditioningScale)
         }
         return (double, single)
     }

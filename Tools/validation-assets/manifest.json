@@ -5647,6 +5647,21 @@
       "command": "IK_DIT_DTYPE=bfloat16 | bfloat16-weights flux | wan | sd3"
     },
     {
+      "records": "flux_controlnet_bf16 / _bf16in, sd3_controlnet_bf16 / _bf16in, wan_vae_bf16 / _bf16in, wan_vae_21_bf16 / _bf16in",
+      "environment": "ltx",
+      "command": "IK_DIT_DTYPE=bfloat16 | bfloat16-weights flux_controlnet | sd3_controlnet | wan_vae | wan_vae_21 (the Wan autoencoders record every decoder stage per latent frame as probe.decoder[.<stage>].call<k>)"
+    },
+    {
+      "records": "ltx2_bf16 / _bf16in",
+      "environment": "qwenimage",
+      "command": "IK_DIT_DTYPE=bfloat16 | bfloat16-weights ltx2"
+    },
+    {
+      "records": "wan_animate_bf16 / _bf16in",
+      "environment": "wananimate",
+      "command": "IK_DIT_DTYPE=bfloat16 | bfloat16-weights wan_animate"
+    },
+    {
       "records": "gemma3n_audio_bf16 / gemma3n_audio_f32",
       "environment": "gemma",
       "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_BLOCK_FLOOR=1 | (float32) gemma3n_audio_probe --checkpoint $IK_VAL_GEMMA3N_E2B (the bf16 run loads the whole release through from_pretrained, which builds the audio tower's non-persistent buffers at bf16; the float32 run builds the tower alone with every parameter rounded to bf16 and back; Conformer blocks 0 and 11 probed; each bf16 convolution in float32 rounded once)"

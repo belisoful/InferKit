@@ -35,8 +35,8 @@ final class NFKSD3InputPatchEmbed: Module {
 
     init(inChannels: Int, innerDim: Int, patchSize: Int) {
         self.patchSize = patchSize
-        _proj.wrappedValue = Conv2d(inputChannels: inChannels, outputChannels: innerDim,
-                                    kernelSize: IntOrPair(patchSize), stride: IntOrPair(patchSize))
+        _proj.wrappedValue = NFKConv2d(inputChannels: inChannels, outputChannels: innerDim,
+                                       kernelSize: IntOrPair(patchSize), stride: IntOrPair(patchSize))
     }
 
     func callAsFunction(_ latent: MLXArray) -> MLXArray {
@@ -197,6 +197,12 @@ public final class NFKMLXSD3ControlNetNet: Module {
             patchSize: config.patchSize)
     }
 
+    /// A block's residual through its zero-initialized projection. The reference's image stream keeps the patch
+    /// embedding's transposed layout, so the projection reads a strided input.
+    func zeroProjected(_ index: Int, _ residual: MLXArray) -> MLXArray {
+        NFKReferenceRounding.stridedLinear(controlnetBlocks[index], residual)
+    }
+
     /// Runs the ControlNet and returns its per-block residuals, scaled by `conditioningScale`.
     ///
     /// `hidden` is the noisy latent — `[B, C, H, W]` for the InstantX (position-embedded) shape, or the
@@ -222,7 +228,7 @@ public final class NFKMLXSD3ControlNetNet: Module {
             residuals.append(image)
         }
         return residuals.enumerated().map { index, residual in
-            controlnetBlocks[index](residual) * conditioningScale
+            NFKReferenceRounding.scaled(zeroProjected(index, residual), by: conditioningScale)
         }
     }
 

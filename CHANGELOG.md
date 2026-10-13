@@ -643,6 +643,24 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   downloaded weights.
 - Measured at float16 on tiny: every encoder and decoder layer within 0.35 of its own block floor.
 
+#### The ControlNets, LTX-2, Wan Animate, and the Wan autoencoders are held at bf16
+
+- The FLUX and SD3 ControlNets multiply their conditioning scale in float32 and compute their
+  convolutions and SiLU in float32, rounded once. Their zero-initialized projections read a strided
+  residual in the reference, so they round the product before the bias
+  (`NFKReferenceRounding.stridedLinear`).
+- The Wan autoencoders compute each causal 3-D convolution in float32 and round once, normalize as
+  torch's `F.normalize`, and take SiLU, attention, and the resample convolutions as torch does. The
+  upsampler's first-frame cache pads with zeros at the frame's type: float32 zeros had promoted every
+  later frame's time convolution to float32.
+- LTX-2 and Wan Animate form each step at bf16 as diffusers does, their timestep sinusoids, rotary
+  tables, norms, and attention included. Wan Animate's caption padding takes the stream's type.
+- The tiny oracles round every input of a bf16 record, a list's tensors included, and record each Wan
+  decoder stage per latent frame.
+- Measured at bf16: the FLUX ControlNet within 0.0044 of the floor, the SD3 ControlNet's velocity at its
+  floor, LTX-2 within 0.041, Wan Animate within 0.10, and every stage of both Wan autoencoders, on every
+  frame, at 0.0000.
+
 #### Pipeline glue rounds as torch does at a half precision
 
 - Adding a Python float to a half-precision tensor rounds the float to the tensor's type first in torch,

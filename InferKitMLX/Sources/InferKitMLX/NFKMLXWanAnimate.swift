@@ -222,16 +222,16 @@ final class NFKWanAnimateCrossAttention: Module {
         let q = normQ(toQ(x)).reshaped([n, heads, headDim]).transposed(1, 0, 2).expandedDimensions(axis: 0)
         let k = normK(toK(text)).reshaped([lt, heads, headDim]).transposed(1, 0, 2).expandedDimensions(axis: 0)
         let v = toV(text).reshaped([lt, heads, headDim]).transposed(1, 0, 2).expandedDimensions(axis: 0)
-        var attended = MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v,
-                                                         scale: scale, mask: .none)[0]
+        var attended = NFKReferenceRounding.flashAttention(queries: q, keys: k, values: v,
+                                                           scale: scale, mask: nil)[0]
         if let image, let addK, let addV, let normAddedK {
             let li = image.dim(0)
             let ki = normAddedK(addK(image)).reshaped([li, heads, headDim])
                 .transposed(1, 0, 2).expandedDimensions(axis: 0)
             let vi = addV(image).reshaped([li, heads, headDim])
                 .transposed(1, 0, 2).expandedDimensions(axis: 0)
-            attended = attended + MLXFast.scaledDotProductAttention(queries: q, keys: ki, values: vi,
-                                                                    scale: scale, mask: .none)[0]
+            attended = attended + NFKReferenceRounding.flashAttention(queries: q, keys: ki, values: vi,
+                                                                      scale: scale, mask: nil)[0]
         }
         return (toOut[0] as! Linear)(attended.transposed(1, 0, 2).reshaped([n, heads * headDim]))
     }
@@ -254,8 +254,8 @@ final class NFKWanAnimateBlock: Module {
         self.dim = config.dim
         _selfAttention.wrappedValue = NFKWanAnimateSelfAttention(config)
         _crossAttention.wrappedValue = NFKWanAnimateCrossAttention(config)
-        _norm3.wrappedValue = LayerNorm(dimensions: config.dim, eps: config.eps,
-                                        affine: config.crossAttentionNorm)
+        _norm3.wrappedValue = NFKLayerNorm(dimensions: config.dim, eps: config.eps,
+                                           affine: config.crossAttentionNorm)
         _ffn.wrappedValue = [Linear(config.dim, config.ffnDim), Module(), Linear(config.ffnDim, config.dim)]
         _modulation.wrappedValue = MLXArray.zeros([1, 6, config.dim])
         self.norm1 = LayerNorm(dimensions: config.dim, eps: config.eps, affine: false)
@@ -263,7 +263,21 @@ final class NFKWanAnimateBlock: Module {
     }
 
     func feedForward(_ x: MLXArray) -> MLXArray {
-        (ffn[2] as! Linear)(geluApproximate((ffn[0] as! Linear)(x)))
+        (ffn[2] as! Linear)(NFKReferenceRounding.geluTanh((ffn[0] as! Linear)(x)))
+    }
+
+    /// `norm(x) · (1 + scale) + shift` as the reference forms it: the non-affine norm in float32, `1 + scale`
+    /// at the modulation's type, the rest in float32, rounded once to `x`'s type.
+    func modulated(_ x: MLXArray, scale: MLXArray, shift: MLXArray) -> MLXArray {
+        guard NFKReferenceRounding.isReduced(x) else { return norm1(x) * (1.0 + scale) + shift }
+        let normed = MLXFast.layerNorm(x.asType(.float32), weight: nil, bias: nil, eps: norm1.eps)
+        return (normed * (1 + scale).asType(.float32) + shift.asType(.float32)).asType(x.dtype)
+    }
+
+    /// `x + update`, the sum in float32 and rounded once to `x`'s type, as the reference adds a gated branch.
+    func residual(_ x: MLXArray, _ update: MLXArray) -> MLXArray {
+        guard NFKReferenceRounding.isReduced(x) else { return x + update }
+        return (x.asType(.float32) + update.asType(.float32)).asType(x.dtype)
     }
 
     /// The six modulation rows this block applies, each `[1, dim]`.
@@ -280,16 +294,16 @@ final class NFKWanAnimateImageProjection: Module {
     @ModuleInfo(key: "proj") var proj: [Module]                            // [LayerNorm, Linear, marker, Linear, LayerNorm]
 
     init(_ config: NFKMLXWanAnimateConfiguration) {
-        _proj.wrappedValue = [LayerNorm(dimensions: config.imageDim),
+        _proj.wrappedValue = [NFKLayerNorm(dimensions: config.imageDim),
                               Linear(config.imageDim, config.imageDim),
                               Module(),
                               Linear(config.imageDim, config.dim),
-                              LayerNorm(dimensions: config.dim)]
+                              NFKLayerNorm(dimensions: config.dim)]
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let normalized = (proj[0] as! LayerNorm)(x)
-        let hidden = gelu((proj[1] as! Linear)(normalized))
+        let hidden = NFKReferenceRounding.wide((proj[1] as! Linear)(normalized)) { gelu($0) }
         return (proj[4] as! LayerNorm)((proj[3] as! Linear)(hidden))
     }
 }
@@ -313,9 +327,16 @@ final class NFKWanAnimateHead: Module {
 
     /// `x` `[N, dim]`, `temb` `[dim]`.
     func callAsFunction(_ x: MLXArray, temb: MLXArray) -> MLXArray {
-        let combined = modulation[0] + temb.reshaped([1, dim])             // [2, dim]
+        guard NFKReferenceRounding.isReduced(x) else {
+            let combined = modulation[0] + temb.reshaped([1, dim])         // [2, dim]
+            let shift = combined[0].reshaped([1, dim]), scale = combined[1].reshaped([1, dim])
+            return head(norm(x) * (1.0 + scale) + shift)
+        }
+        // The reference forms the modulation and the modulated norm in float32 and rounds once.
+        let combined = modulation[0].asType(.float32) + temb.reshaped([1, dim]).asType(.float32)
         let shift = combined[0].reshaped([1, dim]), scale = combined[1].reshaped([1, dim])
-        return head(norm(x) * (1.0 + scale) + shift)
+        let normed = MLXFast.layerNorm(x.asType(.float32), weight: nil, bias: nil, eps: norm.eps)
+        return head((normed * (1 + scale) + shift).asType(x.dtype))
     }
 }
 
@@ -408,6 +429,15 @@ public final class NFKMLXWanAnimateNet: Module {
                              MLXArray(columns).reshaped([n, 1])], axis: 1)
     }
 
+    /// The patch convolution and its bias, accumulated in float32 and rounded once on a half-precision input,
+    /// as torch's `conv3d` computes it.
+    private func patchEmbedded(_ x: MLXArray) -> MLXArray {
+        guard NFKReferenceRounding.isReduced(x), let bias = patchEmbedding.bias else { return patchEmbedding(x) }
+        let stride = IntOrTriple((config.patchSize[0], config.patchSize[1], config.patchSize[2]))
+        return (conv3d(x.asType(.float32), patchEmbedding.weight.asType(.float32), stride: stride)
+            + bias.asType(.float32)).asType(x.dtype)
+    }
+
     /// The generation pass's self-attention: dense over the chunk's own tokens plus, per frame, the
     /// reference tokens at that frame's index, with the video buffer's zero-filled positions entering
     /// the denominator.
@@ -481,22 +511,23 @@ public final class NFKMLXWanAnimateNet: Module {
         // 1. Patch embedding over the latent and its conditioning latent, concatenated by channel.
         let stacked = concatenated([latent, condition], axis: 0)           // [inChannels, F, H, W]
         let ndhwc = stacked.transposed(1, 2, 3, 0).expandedDimensions(axis: 0)
-        var hidden = patchEmbedding(ndhwc).reshaped([grid.tokens, dim])
+        var hidden = patchEmbedded(ndhwc).reshaped([grid.tokens, dim])
 
         // 2. Time and text conditioning. The reference pass is modulated at a fixed timestep, which
         //    `extractReference` supplies.
-        let sinusoid = ltxTimestepEmbedding(timestep, channels: config.freqDim)
-        let temb = (timeEmbedding[2] as! Linear)(silu((timeEmbedding[0] as! Linear)(sinusoid)))
-        let projection = (timeProjection[1] as! Linear)(silu(temb))        // [1, 6·dim]
+        let first = timeEmbedding[0] as! Linear
+        let sinusoid = ltxTimestepEmbedding(timestep, channels: config.freqDim).asType(first.weight.dtype)
+        let temb = (timeEmbedding[2] as! Linear)(NFKReferenceRounding.silu(first(sinusoid)))
+        let projection = (timeProjection[1] as! Linear)(NFKReferenceRounding.silu(temb))  // [1, 6·dim]
         let blockModulation = projection.reshaped([6, dim])
 
         var padded = text
         if text.dim(0) < config.textLength {
-            padded = concatenated([text, MLXArray.zeros([config.textLength - text.dim(0), text.dim(1)])],
-                                  axis: 0)
+            padded = concatenated([text, MLXArray.zeros([config.textLength - text.dim(0), text.dim(1)],
+                                                         dtype: text.dtype)], axis: 0)
         }
         let context = (textEmbedding[2] as! Linear)(
-            geluApproximate((textEmbedding[0] as! Linear)(padded)))
+            NFKReferenceRounding.geluTanh((textEmbedding[0] as! Linear)(padded)))
         let image = imageEmbeddings.flatMap { embeddings in
             imageProjection.map { $0(embeddings) }
         }
@@ -517,7 +548,7 @@ public final class NFKMLXWanAnimateNet: Module {
         // 4. Blocks.
         for (index, block) in blocks.enumerated() {
             let rows = block.modulationRows(blockModulation)
-            let normalized = block.norm1(hidden) * (1.0 + rows[1]) + rows[0]
+            let normalized = block.modulated(hidden, scale: rows[1], shift: rows[0])
             let (query, key, value) = block.selfAttention.project(normalized)
 
             var attended: MLXArray
@@ -537,14 +568,17 @@ public final class NFKMLXWanAnimateNet: Module {
                 let k = zImageApplyRope(key, cos: referenceCos, sin: referenceSin)
                         .transposed(1, 0, 2).expandedDimensions(axis: 0)
                 let v = value.transposed(1, 0, 2).expandedDimensions(axis: 0)
-                attended = MLXFast.scaledDotProductAttention(
+                attended = NFKReferenceRounding.flashAttention(
                     queries: q, keys: k, values: v, scale: 1.0 / sqrt(Float(config.headDim)),
-                    mask: .none)[0].transposed(1, 0, 2)
+                    mask: nil)[0].transposed(1, 0, 2)
             }
             let merged = block.selfAttention.output(attended.reshaped([grid.tokens, dim]))
-            hidden = hidden + merged * rows[2]
+            hidden = block.residual(hidden, merged * rows[2])
             hidden = hidden + block.crossAttention(block.norm3(hidden), text: context, image: image)
-            hidden = hidden + block.feedForward(block.norm2(hidden) * (1.0 + rows[4]) + rows[3]) * rows[5]
+            let fed = block.feedForward(block.modulated(hidden, scale: rows[4], shift: rows[3]))
+            hidden = NFKReferenceRounding.isReduced(hidden)
+                ? (hidden.asType(.float32) + fed.asType(.float32) * rows[5].asType(.float32)).asType(hidden.dtype)
+                : hidden + fed * rows[5]
         }
 
         // 5. Head and unpatchify.

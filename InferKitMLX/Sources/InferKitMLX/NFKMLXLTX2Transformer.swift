@@ -161,7 +161,9 @@ public struct NFKMLXLTX2Configuration: Sendable {
 
 /// An affine-free RMS normalization over the channel axis.
 func ltx2AffineFreeRMSNorm(_ x: MLXArray, eps: Float) -> MLXArray {
-    x * rsqrt(x.square().mean(axis: -1, keepDims: true) + eps)
+    guard NFKReferenceRounding.isReduced(x) else { return x * rsqrt(x.square().mean(axis: -1, keepDims: true) + eps) }
+    let wide = x.asType(.float32)
+    return (wide * rsqrt(wide.square().mean(axis: -1, keepDims: true) + eps)).asType(x.dtype)
 }
 
 /// The `split` rotary of LTX-2: the channel axis of each head halves into a real and an imaginary
@@ -172,13 +174,14 @@ func applyLTX2SplitRotary(_ x: MLXArray, cos c: MLXArray, sin s: MLXArray, heads
     let batch = x.dim(0), sequence = x.dim(1)
     let headDim = x.dim(2) / heads
     let half = headDim / 2
-    let headed = x.reshaped([batch, sequence, heads, headDim]).transposed(0, 2, 1, 3)
+    // The reference rotates in float32 and rounds once to the input's type.
+    let headed = x.asType(.float32).reshaped([batch, sequence, heads, headDim]).transposed(0, 2, 1, 3)
     let first = headed[0..., 0..., 0..., 0 ..< half]
     let second = headed[0..., 0..., 0..., half...]
     let rotatedFirst = first * c - s * second
     let rotatedSecond = second * c + s * first
     return concatenated([rotatedFirst, rotatedSecond], axis: -1)
-        .transposed(0, 2, 1, 3).reshaped([batch, sequence, heads * headDim])
+        .transposed(0, 2, 1, 3).reshaped([batch, sequence, heads * headDim]).asType(x.dtype)
 }
 
 /// The LTX-2 rotary table. The position of a token is the MIDPOINT of the pixel-space (or, for audio,
@@ -293,7 +296,7 @@ final class NFKLTX2AdaptiveNorm: Module {
 
     func callAsFunction(_ timestep: MLXArray) -> (modulation: MLXArray, embedded: MLXArray) {
         let embedded = emb(timestep)
-        return (linear(silu(embedded)), embedded)
+        return (linear(NFKReferenceRounding.silu(embedded)), embedded)
     }
 }
 
@@ -304,7 +307,10 @@ final class NFKLTX2TimestepEmbedder: Module {
 
     init(_ dim: Int) { _embedder.wrappedValue = NFKLTXLinearAct(256, dim, dim) }
 
-    func callAsFunction(_ timestep: MLXArray) -> MLXArray { embedder(ltxTimestepEmbedding(timestep)) }
+    /// The float32 sinusoid takes the embedder's type, as the reference casts it to the hidden states'.
+    func callAsFunction(_ timestep: MLXArray) -> MLXArray {
+        embedder(ltxTimestepEmbedding(timestep).asType(NFKReferenceRounding.parameterType(of: embedder)))
+    }
 }
 
 /// An LTX-2 attention. The query and key take an across-heads RMS norm before the heads are split, the
@@ -342,7 +348,7 @@ final class NFKLTX2Attention: Module {
                         queryRotary: (MLXArray, MLXArray)?,
                         keyRotary: (MLXArray, MLXArray)?) -> MLXArray {
         let batch = hidden.dim(0)
-        let gates = toGateLogits.map { 2 * sigmoid($0(hidden)) }
+        let gates = toGateLogits.map { 2 * NFKReferenceRounding.sigmoid($0(hidden)) }
         var query = normQ(toQ(hidden))
         var key = normK(toK(context))
         let value = toV(context)
@@ -354,7 +360,7 @@ final class NFKLTX2Attention: Module {
         func split(_ t: MLXArray) -> MLXArray {
             t.reshaped([batch, -1, heads, headDim]).transposed(0, 2, 1, 3)
         }
-        let attended = MLXFast.scaledDotProductAttention(
+        let attended = NFKReferenceRounding.flashAttention(
             queries: split(query), keys: split(key), values: split(value),
             scale: 1 / sqrt(Float(headDim)), mask: nil)
         var merged = attended.transposed(0, 2, 1, 3)                       // [B, S, heads, headDim]
@@ -376,7 +382,7 @@ final class NFKLTX2FeedForward: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        (net[2] as! Linear)(geluApproximate((net[0] as! NFKLTX2GELUProjection)(x)))
+        (net[2] as! Linear)(NFKReferenceRounding.geluTanh((net[0] as! NFKLTX2GELUProjection)(x)))
     }
 }
 

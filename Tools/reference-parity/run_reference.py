@@ -4473,6 +4473,8 @@ def _randomized(model, seed=11, scale=0.05):
         def rounded(value):
             if torch.is_tensor(value) and value.is_floating_point():
                 return value.to(torch.bfloat16).to(target)
+            if isinstance(value, (list, tuple)):
+                return type(value)(rounded(v) for v in value)
             return value
 
         def round_inputs(module, args, kwargs):
@@ -4496,6 +4498,31 @@ def _randomized(model, seed=11, scale=0.05):
 
 
 _DIT_PROBES = {}
+
+
+def _wan_decoder_call_probes(model):
+    """`IK_DIT_DTYPE`: every call's input and output of a Wan decoder and its stages while it is active, as
+    `probe.decoder[.<stage>].call<k>.in` / `.out` in `_DIT_PROBES`. The decoder runs once per latent frame and
+    threads its causal cache from one frame to the next, so a port can run a later frame's stage on the
+    reference's own input over the cache its earlier frames filled. Returns a function that removes the hooks."""
+    if not os.environ.get("IK_DIT_DTYPE"):
+        return lambda: None
+    decoder = model.decoder
+    named = [("decoder", decoder), ("decoder.conv_in", decoder.conv_in), ("decoder.mid_block", decoder.mid_block)]
+    named += [(f"decoder.up_blocks.{i}", block) for i, block in enumerate(decoder.up_blocks)]
+    named += [("decoder.norm_out", decoder.norm_out), ("decoder.conv_out", decoder.conv_out)]
+    handles = []
+    for name, module in named:
+        calls = [0]
+
+        def hook(module, args, output, name=name, calls=calls):
+            call = calls[0]
+            calls[0] += 1
+            out = output[0] if isinstance(output, tuple) else output
+            _DIT_PROBES[f"probe.{name}.call{call}.in"] = args[0].detach().float().clone().contiguous()
+            _DIT_PROBES[f"probe.{name}.call{call}.out"] = out.detach().float().clone().contiguous()
+        handles.append(module.register_forward_hook(hook))
+    return lambda: [handle.remove() for handle in handles]
 
 
 def run_qwen3_moe(image, checkpoint):
@@ -11581,6 +11608,9 @@ def run_wan_vae(image):
 
     generator = torch.Generator().manual_seed(13)
     video = torch.randn(1, 3, 5, 16, 16, generator=generator)              # [B, C, T, H, W], 5 frames
+    if os.environ.get("IK_DIT_DTYPE"):
+        # `encode` and `decode` bypass `_randomized`'s input rounding, so the clip takes the model's type here.
+        video = video.to(torch.bfloat16).to(next(model.parameters()).dtype)
     seams = {}
     model.decoder.conv_in.register_forward_hook(lambda m, i, o: seams.__setitem__("dec_conv_in", o.detach()))
     model.decoder.mid_block.register_forward_hook(lambda m, i, o: seams.__setitem__("dec_mid", o.detach()))
@@ -11589,7 +11619,9 @@ def run_wan_vae(image):
         latent = model.encode(video).latent_dist.mean
         enc_raw = model._encode(video)                                     # pre-quant-split moments
         enc_1frame = model._encode(video[:, :, 0:1])                       # single-chunk encode
+        remove_call_probes = _wan_decoder_call_probes(model)
         decoded = model.decode(latent).sample
+        remove_call_probes()
         decoded_f0 = model.decode(latent[:, :, 0:1]).sample                # first latent frame alone (hooks fire here)
 
     def ndhwc(t):
@@ -11614,15 +11646,19 @@ def run_wan_vae_21(image):
     from diffusers import AutoencoderKLWan
 
     model = AutoencoderKLWan(
-        base_dim=8, decoder_base_dim=8, z_dim=4, dim_mult=[2, 2], num_res_blocks=1, attn_scales=[],
+        base_dim=8, decoder_base_dim=8, z_dim=4, dim_mult=[1, 2], num_res_blocks=1, attn_scales=[],
         temperal_downsample=[True], is_residual=False, patch_size=None, in_channels=3, out_channels=3)
     model = _randomized(model, seed=53)
 
     generator = torch.Generator().manual_seed(17)
     video = torch.randn(1, 3, 5, 16, 16, generator=generator)
+    if os.environ.get("IK_DIT_DTYPE"):
+        video = video.to(torch.bfloat16).to(next(model.parameters()).dtype)
     with torch.no_grad():
         latent = model.encode(video).latent_dist.mean
+        remove_call_probes = _wan_decoder_call_probes(model)
         decoded = model.decode(latent).sample
+        remove_call_probes()
 
     def ndhwc(t):
         return t[0].permute(1, 2, 3, 0).contiguous()

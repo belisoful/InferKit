@@ -177,6 +177,14 @@ final class NFKWanCausalConv3d: Module {
         return prefix.map { concatenated([zeros, $0], axis: 1) } ?? zeros
     }
 
+    /// The convolution and its bias, accumulated in float32 and rounded once on a half-precision input, as
+    /// torch's `conv3d` computes it.
+    private func widened(_ x: MLXArray, _ convolution: (MLXArray, MLXArray) -> MLXArray) -> MLXArray {
+        let bias = self.bias.reshaped([1, 1, 1, 1, -1])
+        guard NFKReferenceRounding.isReduced(x) else { return convolution(x, weight) + bias }
+        return (convolution(x.asType(.float32), weight.asType(.float32)) + bias.asType(.float32)).asType(x.dtype)
+    }
+
     /// The convolution of `prefix` followed by `x` along time, the spatial padding applied by the
     /// convolution.
     ///
@@ -189,13 +197,12 @@ final class NFKWanCausalConv3d: Module {
     /// the output is held.
     private func convolved(_ x: MLXArray, after prefix: MLXArray?) -> MLXArray {
         let padding = IntOrTriple((0, spatialPad, spatialPad))
-        let bias = self.bias.reshaped([1, 1, 1, 1, -1])
         let kernelT = weight.dim(1)
         let lead = prefix?.dim(1) ?? 0
         let frames = lead + x.dim(1) - kernelT + 1
         guard strideT == 1, frames > 1 else {
             let h = prefix.map { concatenated([$0, x], axis: 1) } ?? x
-            return conv3d(h, weight, stride: IntOrTriple((strideT, 1, 1)), padding: padding) + bias
+            return widened(h) { conv3d($0, $1, stride: IntOrTriple((strideT, 1, 1)), padding: padding) }
         }
         func window(_ t: Int) -> MLXArray {
             guard let prefix, t < lead else { return x[0..., (t - lead) ..< (t - lead + kernelT)] }
@@ -205,7 +212,7 @@ final class NFKWanCausalConv3d: Module {
         }
         var out: MLXArray?
         for t in 0 ..< frames {
-            let frame = conv3d(window(t), weight, padding: padding) + bias
+            let frame = widened(window(t)) { conv3d($0, $1, padding: padding) }
             if out == nil {
                 var shape = frame.shape
                 shape[1] = frames
@@ -220,7 +227,7 @@ final class NFKWanCausalConv3d: Module {
 
 /// Runs a causal convolution through its cache slot: reads the previous chunk's frames, applies the
 /// convolution, and stores this chunk's trailing frames.
-private func wanCausal(_ conv: NFKWanCausalConv3d, _ x: MLXArray, _ cache: NFKWanCache) -> MLXArray {
+func wanCausal(_ conv: NFKWanCausalConv3d, _ x: MLXArray, _ cache: NFKWanCache) -> MLXArray {
     let i = cache.next()
     var cacheX = wanTail(x, wanCacheFrames)
     if cacheX.dim(1) < 2, case .frames(let prev) = cache.slot(i) {
@@ -242,6 +249,14 @@ final class NFKWanRMSNorm: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
+        // The reference's `F.normalize(x) · scale · gamma`: the norm accumulated in float32 and rounded, a
+        // half-precision divide, then the Python-float scale and the weight.
+        if NFKReferenceRounding.isReduced(x) {
+            let wide = x.asType(.float32)
+            let norm = MLX.sqrt(sum(wide * wide, axis: -1, keepDims: true)).asType(x.dtype)
+            let normalized = x / MLX.maximum(norm, MLXArray(Float(1e-12)).asType(x.dtype))
+            return NFKReferenceRounding.scaled(normalized, by: scale) * gamma
+        }
         let normed = x * rsqrt(sum(x * x, axis: -1, keepDims: true) + 1e-12)
         return normed * scale * gamma
     }
@@ -282,10 +297,10 @@ final class NFKWanResidualBlock: Module {
     /// element as the whole tensor does, and holds one frame's temporaries instead of the clip's.
     private static func activated(_ norm: NFKWanRMSNorm, _ x: MLXArray) -> MLXArray {
         let frames = x.dim(1)
-        guard frames > 1 else { return silu(norm(x)) }
+        guard frames > 1 else { return NFKReferenceRounding.silu(norm(x)) }
         let out = MLXArray.zeros(x.shape, dtype: x.dtype)
         for t in 0 ..< frames {
-            out[0..., t ..< (t + 1)] = silu(norm(x[0..., t ..< (t + 1)]))
+            out[0..., t ..< (t + 1)] = NFKReferenceRounding.silu(norm(x[0..., t ..< (t + 1)]))
             eval(out)
         }
         return out
@@ -302,8 +317,8 @@ final class NFKWanAttentionBlock: Module {
     init(_ dim: Int) {
         self.dim = dim
         _norm.wrappedValue = NFKWanRMSNorm(dim)
-        _toQKV.wrappedValue = Conv2d(inputChannels: dim, outputChannels: dim * 3, kernelSize: 1)
-        _proj.wrappedValue = Conv2d(inputChannels: dim, outputChannels: dim, kernelSize: 1)
+        _toQKV.wrappedValue = NFKConv2d(inputChannels: dim, outputChannels: dim * 3, kernelSize: 1)
+        _proj.wrappedValue = NFKConv2d(inputChannels: dim, outputChannels: dim, kernelSize: 1)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -314,8 +329,8 @@ final class NFKWanAttentionBlock: Module {
         let q = qkv[0..., 0..., 0 ..< dim].expandedDimensions(axis: 1)
         let k = qkv[0..., 0..., dim ..< 2 * dim].expandedDimensions(axis: 1)
         let v = qkv[0..., 0..., 2 * dim ..< 3 * dim].expandedDimensions(axis: 1)
-        let attended = MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v,
-                                                         scale: 1.0 / sqrt(Float(dim)), mask: .none)
+        let attended = NFKReferenceRounding.flashAttention(queries: q, keys: k, values: v,
+                                                           scale: 1.0 / sqrt(Float(dim)), mask: nil)
         let out = proj(attended[0..., 0].reshaped([b * t, h, w, dim]))
         return out.reshaped([b, t, h, w, dim]) + x
     }
@@ -356,7 +371,8 @@ private func wanAvgDown(_ x: MLXArray, factorT: Int, factorS: Int, outChannels: 
         .transposed(0, 1, 3, 5, 7, 2, 4, 6)
         .reshaped([b, tt, hh, ww, c * factorT * factorS * factorS])
     let groupSize = c * factorT * factorS * factorS / outChannels
-    return mean(grouped.reshaped([b, tt, hh, ww, outChannels, groupSize]), axis: -1)
+    return NFKReferenceRounding.mean(grouped.reshaped([b, tt, hh, ww, outChannels, groupSize]), axis: -1,
+                                     keepDims: false)
 }
 
 /// The cacheless duplicate-and-shuffle upsample shortcut (repeats the channel and interleaves it into the
@@ -391,11 +407,13 @@ final class NFKWanResample: Module {
         let outDim = upsampleOutDim ?? dim / 2
         switch mode {
         case "upsample2d", "upsample3d":
-            _resample.wrappedValue = [Module(), Conv2d(inputChannels: dim, outputChannels: outDim, kernelSize: 3, padding: 1)]
+            _resample.wrappedValue = [Module(), NFKConv2d(inputChannels: dim, outputChannels: outDim, kernelSize: 3,
+                                                          padding: 1)]
             _timeConv.wrappedValue = mode == "upsample3d"
                 ? NFKWanCausalConv3d(dim, dim * 2, kernel: (3, 1, 1), padTime: 1, imageOnly: imageOnly) : nil
         case "downsample2d", "downsample3d":
-            _resample.wrappedValue = [Module(), Conv2d(inputChannels: dim, outputChannels: dim, kernelSize: 3, stride: 2)]
+            _resample.wrappedValue = [Module(), NFKConv2d(inputChannels: dim, outputChannels: dim, kernelSize: 3,
+                                                          stride: 2)]
             _timeConv.wrappedValue = mode == "downsample3d"
                 ? NFKWanCausalConv3d(dim, dim, kernel: (3, 1, 1), stride: 2, imageOnly: imageOnly) : nil
         default:
@@ -445,7 +463,7 @@ final class NFKWanResample: Module {
                 if cacheX.dim(1) < 2 {
                     switch cache.slot(i) {
                     case .frames(let prev): cacheX = concatenated([wanTail(prev, 1), cacheX], axis: 1)
-                    case .rep: cacheX = concatenated([MLXArray.zeros(cacheX.shape), cacheX], axis: 1)
+                    case .rep: cacheX = concatenated([MLXArray.zeros(cacheX.shape, dtype: cacheX.dtype), cacheX], axis: 1)
                     case .empty: break
                     }
                 }
@@ -647,7 +665,7 @@ final class NFKWanEncoder3d: Module {
         var h = wanCausal(convIn, x, cache)
         for block in downBlocks { h = wanEncBlock(block, h, cache) }
         h = midBlock(h, cache)
-        h = silu(normOut(h))
+        h = NFKReferenceRounding.silu(normOut(h))
         return wanCausal(convOut, h, cache)
     }
 }
@@ -698,7 +716,7 @@ final class NFKWanDecoder3d: Module {
             if let b = block as? NFKWanResidualUpBlock { h = b(h, cache, firstChunk: firstChunk) }
             else if let b = block as? NFKWanUpBlock { h = b(h, cache) }
         }
-        h = silu(normOut(h))
+        h = NFKReferenceRounding.silu(normOut(h))
         return wanCausal(convOut, h, cache)
     }
 }

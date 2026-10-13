@@ -256,6 +256,13 @@ enum NFKReferenceRounding {
         return matmul(softmax(scores, axis: -1).asType(queries.dtype), values)
     }
 
+    /// torch's half-precision `linear` on a strided input: the product rounded, then the bias added and rounded.
+    /// On a contiguous input it rounds once, as MLX's `Linear` does.
+    static func stridedLinear(_ linear: Linear, _ x: MLXArray) -> MLXArray {
+        guard isReduced(x), let bias = linear.bias else { return linear(x) }
+        return matmul(x, linear.weight.T) + bias
+    }
+
     /// The `active` experts a router keeps from `scores` `[..., experts]`: the given `forced` choice
     /// (`[tokens][active]`, the tokens flattened), or else the top `active` scores. A parity test forces
     /// the reference's recorded choice, because `torch.topk` breaks a tie at the `active`-th score

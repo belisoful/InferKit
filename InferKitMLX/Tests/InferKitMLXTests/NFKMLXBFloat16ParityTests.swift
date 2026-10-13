@@ -2872,6 +2872,293 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         assertRoundingPlacement("wan", endToEnd: rows, isolated: rows)
     }
 
+    // MARK: Opt-in half precision at the tiny configurations
+
+    /// A tiny record's weights under `prefix` at bf16, each laid out as its float32 test loads it.
+    private func tinyWeights(_ record: [String: MLXArray], prefix: String,
+                             _ layout: (String, MLXArray) -> MLXArray = { $1 }) -> [(String, MLXArray)] {
+        record.compactMap { key, value in
+            guard key.hasPrefix(prefix) else { return nil }
+            let name = String(key.dropFirst(prefix.count))
+            return (name, layout(name, value).asType(.bfloat16))
+        }
+    }
+
+    // The FLUX ControlNet at `run_reference.py flux_controlnet`'s tiny configuration with its three-block base,
+    // at bf16 against diffusers at bf16 (`IK_DIT_DTYPE`): each double- and single-block residual and the steered
+    // velocity end to end; and on the reference's own inputs (its first-call `probe.*` seams) both embedders,
+    // the timestep embedding, each double and single block, each zero-initialized projection, and the base on
+    // the reference's residuals. A residual carries every block before it, so it is an end-to-end state.
+    func testFluxControlNetInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let bf16 = try record("flux_controlnet_bf16.safetensors"), f32 = try record("flux_controlnet_bf16in.safetensors")
+        func input(_ key: String) throws -> MLXArray { try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16) }
+        let control = NFKMLXFluxControlNetNet(.tiny)
+        try NFKMLXWeights.apply(tinyWeights(bf16, prefix: "w::"), to: control)
+        let base = NFKMLXFluxTransformerNet(NFKMLXFluxConfiguration(
+            inChannels: 8, outChannels: 8, numLayers: 3, numSingleLayers: 3, attentionHeadDim: 6,
+            numAttentionHeads: 2, jointAttentionDim: 24, pooledProjectionDim: 10, guidanceEmbeds: true,
+            axesDimsRope: [2, 2, 2]))
+        try NFKMLXWeights.apply(tinyWeights(bf16, prefix: "t::"), to: base)
+        let imageIds = try XCTUnwrap(bf16["img_ids"])
+        let (double, single) = control(try input("hidden"), controlnetCond: try input("control_cond"),
+                                       encoder: try input("encoder"), pooled: try input("pooled"),
+                                       timestep: try input("timestep"), guidance: try input("guidance"),
+                                       imageIds: imageIds, conditioningScale: 0.6)
+        func velocity(_ double: [MLXArray], _ single: [MLXArray]) throws -> MLXArray {
+            base(try input("hidden"), encoderHidden: try input("encoder"), pooled: try input("pooled"),
+                 timestep: try input("timestep"), guidance: try input("guidance"), imageIds: imageIds,
+                 controlnetBlockSamples: double, controlnetSingleBlockSamples: single)
+        }
+        let residuals = double.enumerated().map { ("double \($0.offset)", $0.element) }
+            + single.enumerated().map { ("single \($0.offset)", $0.element) }
+        let keys = double.indices.map { "double_\($0)" } + single.indices.map { "single_\($0)" } + ["output"]
+        let output = try velocity(double, single)
+        let isolated = try velocity(double.indices.map { try input("double_\($0)") },
+                                    single.indices.map { try input("single_\($0)") })
+        XCTAssertEqual(output.dtype, .bfloat16, "a bf16 load runs the ControlNet and its base at bf16")
+        eval(residuals.map(\.1) + [output, isolated])
+        let rows = try seams(residuals + [("velocity", output)], bf16: bf16, f32: f32, keys: keys)
+        report("flux-controlnet", rows)
+        let textLength = try input("encoder").dim(1)
+        let (cos, sin) = control.rope.table(ids: concatenated([MLXArray.zeros([textLength, imageIds.dim(1)]), imageIds],
+                                                              axis: 0))
+        let temb = try input("probe.time_text_embed.out")
+        var pieces: [(String, MLXArray)] = [
+            ("x embedder", control.xEmbedder(try input("probe.x_embedder.in"))),
+            ("control embedder", control.controlnetXEmbedder(try input("probe.controlnet_x_embedder.in"))),
+            ("timestep embedding", control.timeTextEmbed(timestep: try input("timestep") * 1000,
+                                                         guidance: try input("guidance") * 1000, pooled: try input("pooled"))),
+        ]
+        var pieceKeys = ["probe.x_embedder.out", "probe.controlnet_x_embedder.out", "probe.time_text_embed.out"]
+        for (i, block) in control.transformerBlocks.enumerated() {
+            let p = "probe.transformer_blocks.\(i)."
+            pieces.append(("double block \(i)", block(try input(p + "norm1.in"), encoder: try input(p + "norm1_context.in"),
+                                                      temb: temb, cos: cos, sin: sin).1))
+            pieceKeys.append("probe.controlnet_blocks.\(i).in")
+            pieces.append(("zero projection \(i)", control.zeroProjected(double: i, try input("probe.controlnet_blocks.\(i).in"))))
+            pieceKeys.append("probe.controlnet_blocks.\(i).out")
+        }
+        for (i, block) in control.singleTransformerBlocks.enumerated() {
+            let joined = try input("probe.single_transformer_blocks.\(i).norm.in")
+            pieces.append(("single block \(i)", block(joined[0..., textLength...], encoder: joined[0..., 0 ..< textLength],
+                                                      temb: temb, cos: cos, sin: sin).1))
+            pieceKeys.append("probe.controlnet_single_blocks.\(i).in")
+            pieces.append(("single zero projection \(i)",
+                           control.zeroProjected(single: i, try input("probe.controlnet_single_blocks.\(i).in"))))
+            pieceKeys.append("probe.controlnet_single_blocks.\(i).out")
+        }
+        pieces.append(("velocity on the reference's residuals", isolated))
+        pieceKeys.append("output")
+        eval(pieces.map(\.1))
+        let isolatedRows = try seams(pieces, bf16: bf16, f32: f32, keys: pieceKeys)
+        report("flux-controlnet isolated", isolatedRows)
+        assertRoundingPlacement("flux-controlnet", endToEnd: rows, isolated: isolatedRows)
+    }
+
+    // The SD3 ControlNet at `run_reference.py sd3_controlnet`'s tiny configuration with its four-block base, at
+    // bf16 against diffusers at bf16 (`IK_DIT_DTYPE`): each residual and the steered velocity end to end; and on
+    // the reference's own inputs (its first-call `probe.*` seams) both patch embeddings, the timestep embedding,
+    // each joint block, each zero-initialized projection, and the base on the reference's residuals. A residual
+    // carries every block before it.
+    func testSD3ControlNetInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let bf16 = try record("sd3_controlnet_bf16.safetensors"), f32 = try record("sd3_controlnet_bf16in.safetensors")
+        func input(_ key: String) throws -> MLXArray { try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16) }
+        let channelsLast: (String, MLXArray) -> MLXArray = { $1.ndim == 4 ? $1.transposed(0, 2, 3, 1) : $1 }
+        let control = NFKMLXSD3ControlNetNet(.tiny)
+        try NFKMLXWeights.apply(tinyWeights(bf16, prefix: "w::", channelsLast), to: control)
+        let base = NFKMLXSD3TransformerNet(NFKMLXSD3Configuration(
+            sampleSize: 16, inChannels: 4, outChannels: 4, numLayers: 4, attentionHeadDim: 8,
+            numAttentionHeads: 2, jointAttentionDim: 24, captionProjectionDim: 16, pooledProjectionDim: 20,
+            posEmbedMaxSize: 8, dualAttentionLayers: [], qkNorm: true))
+        try NFKMLXWeights.apply(tinyWeights(bf16, prefix: "t::", channelsLast), to: base)
+        let residuals = control(try input("latent"), controlnetCond: try input("control_cond"), encoder: try input("encoder"),
+                                pooled: try input("pooled"), timestep: try input("timestep"), conditioningScale: 0.7)
+        func velocity(_ residuals: [MLXArray]) throws -> MLXArray {
+            base(try input("latent"), encoderHidden: try input("encoder"), pooled: try input("pooled"),
+                 timestep: try input("timestep"), blockControlnetHiddenStates: residuals)
+        }
+        let named = residuals.enumerated().map { ("residual \($0.offset)", $0.element) }
+        let keys = residuals.indices.map { "residual_\($0)" } + ["output"]
+        let output = try velocity(residuals)
+        let isolated = try velocity(residuals.indices.map { try input("residual_\($0)") })
+        XCTAssertEqual(output.dtype, .bfloat16, "a bf16 load runs the ControlNet and its base at bf16")
+        eval(named.map(\.1) + [output, isolated])
+        let rows = try seams(named + [("velocity", output)], bf16: bf16, f32: f32, keys: keys)
+        report("sd3-controlnet", rows)
+        let temb = try input("probe.time_text_embed.out")
+        var pieces: [(String, MLXArray)] = [
+            ("patch embedding", control.posEmbed!(try input("probe.pos_embed.in"))),
+            ("control patch embedding", control.posEmbedInput(try input("probe.pos_embed_input.in"))),
+            ("timestep embedding", control.timeTextEmbed(timestep: try input("timestep"), pooled: try input("pooled"))),
+        ]
+        var pieceKeys = ["probe.pos_embed.out", "probe.pos_embed_input.out", "probe.time_text_embed.out"]
+        for (i, module) in control.transformerBlocks.enumerated() {
+            guard let block = module as? NFKSD3JointBlock else { continue }
+            let p = "probe.transformer_blocks.\(i)."
+            pieces.append(("joint block \(i)", block(try input(p + "norm1.in"), encoder: try input(p + "norm1_context.in"),
+                                                     temb: temb).1))
+            pieceKeys.append("probe.controlnet_blocks.\(i).in")
+            pieces.append(("zero projection \(i)", control.zeroProjected(i, try input("probe.controlnet_blocks.\(i).in"))))
+            pieceKeys.append("probe.controlnet_blocks.\(i).out")
+        }
+        pieces.append(("velocity on the reference's residuals", isolated))
+        pieceKeys.append("output")
+        eval(pieces.map(\.1))
+        let isolatedRows = try seams(pieces, bf16: bf16, f32: f32, keys: pieceKeys)
+        report("sd3-controlnet isolated", isolatedRows)
+        assertRoundingPlacement("sd3-controlnet", endToEnd: rows, isolated: isolatedRows)
+    }
+
+    // The LTX-2 audio-video transformer at `run_reference.py ltx2`'s tiny configurations (LTX-2.0's caption
+    // projections, LTX-2.3, and LTX-2.5's switches), at bf16 against diffusers at bf16 (`IK_DIT_DTYPE`): both
+    // velocities of each.
+    func testLTX2TransformerInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let bf16 = try record("ltx2_bf16.safetensors"), f32 = try record("ltx2_bf16in.safetensors")
+        func input(_ key: String) throws -> MLXArray { try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16) }
+        var tiny20 = NFKMLXLTX2Configuration.tiny
+        tiny20.usesPromptEmbeddings = true
+        let audio = try input("audio_hidden")
+        for (prefix, configuration) in [("l20", tiny20), ("l23", NFKMLXLTX2Configuration.tiny),
+                                        ("l25", NFKMLXLTX2Configuration.tiny25)] {
+            let net = NFKMLXLTX2TransformerNet(configuration)
+            try NFKMLXWeights.apply(tinyWeights(bf16, prefix: "w::\(prefix)."), to: net)
+            let (video, audioVelocity) = net(
+                video: try input("hidden"), audio: audio,
+                text: try input(prefix == "l20" ? "caption" : "encoder"),
+                audioText: try input(prefix == "l20" ? "audio_caption" : "audio_encoder"),
+                timestep: try input("timestep"), audioTimestep: try input("audio_timestep"), sigma: try input("sigma"),
+                frames: 2, height: 2, width: 3, audioFrames: audio.dim(1),
+                keyframes: prefix == "l25" ? try input("keyframes").reshaped([1, -1]) : nil)
+            XCTAssertEqual(video.dtype, .bfloat16, "a bf16 load runs LTX-2 at bf16")
+            eval(video, audioVelocity)
+            let rows = try seams([("video velocity", video), ("audio velocity", audioVelocity)], bf16: bf16, f32: f32,
+                                 keys: ["\(prefix).video", "\(prefix).audio"])
+            report("ltx2-\(prefix)", rows)
+            assertRoundingPlacement("ltx2-\(prefix)", endToEnd: rows, isolated: rows)
+        }
+    }
+
+    // The Wan Animate DiT at `run_reference.py wan_animate`'s tiny configuration, at bf16 against diffusers at
+    // bf16 (`IK_DIT_DTYPE`): the extract pass that fills the reference cache, the generation pass over it, and a
+    // shorter chunk.
+    func testWanAnimateInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let bf16 = try record("wan_animate_bf16.safetensors"), f32 = try record("wan_animate_bf16in.safetensors")
+        func input(_ key: String) throws -> MLXArray { try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16) }
+        let net = NFKMLXWanAnimateNet(.tiny)
+        try NFKMLXWeights.apply(tinyWeights(bf16, prefix: "w::") { $1.ndim == 5 ? $1.transposed(0, 2, 3, 4, 1) : $1 },
+                                to: net)
+        let text = try input("text"), imageEmbeddings = try input("image_embeds"), timestep = try input("timestep")
+        let cache = NFKMLXWanAnimateKVCache(layerCount: 2)
+        let extract = try net.extractReference(latent: try input("reference_latent"),
+                                               condition: try input("reference_condition"),
+                                               text: text, imageEmbeddings: imageEmbeddings, into: cache)
+        let generated = try net.generate(latent: try input("latent"), condition: try input("condition"), text: text,
+                                         imageEmbeddings: imageEmbeddings, timestep: timestep, cache: cache,
+                                         referenceGrid: (2, 4, 4), videoFrames: 2, videoArea: 16)
+        let chunk = try net.generate(latent: try input("chunk_latent"), condition: try input("chunk_condition"),
+                                     text: text, imageEmbeddings: imageEmbeddings, timestep: timestep, cache: cache,
+                                     referenceGrid: (2, 4, 4), videoFrames: 4, videoArea: 16)
+        XCTAssertEqual(generated.dtype, .bfloat16, "a bf16 load runs Wan Animate at bf16")
+        eval(extract, generated, chunk)
+        let rows = try seams([("extract", extract), ("generation", generated), ("chunk", chunk)], bf16: bf16, f32: f32,
+                             keys: ["extract", "output", "chunk"])
+        report("wan-animate", rows)
+        assertRoundingPlacement("wan-animate", endToEnd: rows, isolated: rows)
+    }
+
+    // The Wan autoencoders at `run_reference.py wan_vae` (2.2, residual, patchified) and `wan_vae_21`'s tiny
+    // configurations, at bf16 against diffusers at bf16 (`IK_DIT_DTYPE`): the encoded latent of a 5-frame clip,
+    // the decode of the reference's latent, and the decode of ours. Qwen-Image 2.1's autoencoder is this
+    // network specialized to one frame. On the reference's own first-chunk inputs (its first-call `probe.*`
+    // seams), each encoder and decoder stage and both quant convolutions, each from an empty cache as the
+    // reference's first chunk runs; then each decoder stage of every later latent frame on the reference's
+    // input for that frame, over the cache the reference's earlier frames fill.
+    func testWanVideoVAEInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        for (name, configuration) in [("wan_vae", NFKMLXWanVAEConfiguration.tiny), ("wan_vae_21", .tiny21)] {
+            let bf16 = try record("\(name)_bf16.safetensors"), f32 = try record("\(name)_bf16in.safetensors")
+            func input(_ key: String) throws -> MLXArray { try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16) }
+            let net = NFKMLXWanVideoVAENet(configuration)
+            try NFKMLXWeights.apply(tinyWeights(bf16, prefix: "w::") { name, value in
+                if name.hasSuffix(".gamma") { return value.reshaped([-1]) }
+                if value.ndim == 5 { return value.transposed(0, 2, 3, 4, 1) }
+                return value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value
+            }, to: net)
+            let latent = net.encode(try input("video").expandedDimensions(axis: 0))
+            let decoded = net.decode(latent)
+            let isolated = net.decode(try input("latent").expandedDimensions(axis: 0))
+            XCTAssertEqual(latent.dtype, .bfloat16, "a bf16 load runs the autoencoder at bf16")
+            eval(latent, decoded, isolated)
+            let label = name.replacingOccurrences(of: "_", with: "-")
+            let rows = try seams([("latent", latent[0]), ("decode", decoded[0])], bf16: bf16, f32: f32,
+                                 keys: ["latent", "output"])
+            report(label, rows)
+            func probe(_ key: String) throws -> MLXArray { try input("probe." + key).transposed(0, 2, 3, 4, 1) }
+            func channelsFirst(_ x: MLXArray) -> MLXArray { x.transposed(0, 4, 1, 2, 3) }
+            let encoder = net.encoder, decoder = net.decoder
+            var stages: [(String, (MLXArray) -> MLXArray)] = [("encoder.conv_in", { encoder.convIn($0, cache: .empty) })]
+            for (i, block) in encoder.downBlocks.enumerated() {
+                stages.append(("encoder.down_blocks.\(i)", { x in
+                    if let b = block as? NFKWanResidualDownBlock { return b(x, NFKWanCache()) }
+                    if let b = block as? NFKWanResidualBlock { return b(x, NFKWanCache()) }
+                    return (block as! NFKWanResample)(x, NFKWanCache())
+                }))
+            }
+            stages += [("encoder.mid_block", { encoder.midBlock($0, NFKWanCache()) }),
+                       ("encoder.norm_out", { encoder.normOut($0) }),
+                       ("encoder.conv_out", { encoder.convOut($0, cache: .empty) }),
+                       ("quant_conv", { net.quantConv($0, cache: .empty) }),
+                       ("post_quant_conv", { net.postQuantConv($0, cache: .empty) }),
+                       ("decoder.conv_in", { decoder.convIn($0, cache: .empty) }),
+                       ("decoder.mid_block", { decoder.midBlock($0, NFKWanCache()) })]
+            for (i, block) in decoder.upBlocks.enumerated() {
+                stages.append(("decoder.up_blocks.\(i)", { x in
+                    if let b = block as? NFKWanResidualUpBlock { return b(x, NFKWanCache(), firstChunk: true) }
+                    return (block as! NFKWanUpBlock)(x, NFKWanCache())
+                }))
+            }
+            stages += [("decoder.norm_out", { decoder.normOut($0) }),
+                       ("decoder.conv_out", { decoder.convOut($0, cache: .empty) })]
+            var staged = try stages.map { name, run in (name, channelsFirst(run(try probe(name + ".in")))) }
+            var stagedKeys = staged.map { "probe.\($0.0).out" }
+            // Each later latent frame: the decoder runs the reference's earlier frames to fill its cache as the
+            // reference's does, then each stage runs on the reference's own input for this frame over that cache.
+            var frame = 1
+            while bf16["probe.decoder.call\(frame).in"] != nil {
+                let cache = NFKWanCache()
+                for earlier in 0 ..< frame {
+                    cache.resetIndex()
+                    _ = decoder(try probe("decoder.call\(earlier).in"), cache, firstChunk: earlier == 0)
+                }
+                cache.resetIndex()
+                var frameStages: [(String, (MLXArray) -> MLXArray)] = [
+                    ("decoder.conv_in", { wanCausal(decoder.convIn, $0, cache) }), ("decoder.mid_block", { decoder.midBlock($0, cache) })]
+                for (i, block) in decoder.upBlocks.enumerated() {
+                    frameStages.append(("decoder.up_blocks.\(i)", { x in
+                        if let b = block as? NFKWanResidualUpBlock { return b(x, cache, firstChunk: false) }
+                        return (block as! NFKWanUpBlock)(x, cache)
+                    }))
+                }
+                frameStages += [("decoder.norm_out", { decoder.normOut($0) }),
+                                ("decoder.conv_out", { wanCausal(decoder.convOut, $0, cache) })]
+                for (name, run) in frameStages {
+                    staged.append(("\(name) frame \(frame)", channelsFirst(run(try probe(name + ".call\(frame).in")))))
+                    stagedKeys.append("probe.\(name).call\(frame).out")
+                }
+                frame += 1
+            }
+            eval(staged.map(\.1))
+            let isolatedRows = try seams(staged + [("decode of the reference's latent", isolated[0])], bf16: bf16, f32: f32,
+                                         keys: stagedKeys + ["output"])
+            report("\(label) isolated", isolatedRows)
+            assertRoundingPlacement(label, endToEnd: rows, isolated: isolatedRows)
+        }
+    }
+
     // MARK: The T5 text encoders
 
     // Wan's umT5-XXL (`IK_VAL_WAN21_T2V_1_3B`) at bf16, the precision its generator takes when float32

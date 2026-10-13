@@ -211,8 +211,10 @@ byte-identical.
 - A float32 array mixed into a bf16 expression promotes the rest of the layer to float32. Gemma 3n's
   AltUp floor `MLXArray(Float(1e-5))` and the M-RoPE tables did this; both now take the stream's type.
   So did Voxtral's computed Whisper sinusoids, FLUX's rotary tables, and every diffusion transformer's
-  sinusoidal timestep projection. The signature is this side sitting closer to float32 than the
-  reference does.
+  sinusoidal timestep projection. So did `MLXArray.zeros`, float32 unless given a type, in Wan Animate's
+  caption padding and the Wan autoencoder's first-frame upsampler cache, where it promoted every later
+  frame's time convolution. The signature is this side sitting closer to float32 than the reference
+  does.
 - `NFKLayerNorm`, `NFKGroupNorm`, `NFKBatchNorm`, `NFKConv1d` and `NFKConv2d` compute in float32 and
   round once, as torch does. MLXNN's `BatchNorm` adds `eps` to the half-precision variance and takes
   its `rsqrt` there, so widening the input alone leaves it wrong; `NFKBatchNorm` forms the scale and
