@@ -137,6 +137,27 @@ module InferKitMLX {
 MODULEMAP
 }
 
+# The C modules the Swift interfaces import: `Cmlx` (from MLX, MLXFast, MLXRandom) and `_NumericsShims`
+# (from swift-numerics' RealModule). SwiftPM finds them in the package checkouts; a binary consumer has
+# only the framework, so they ship in its Modules directory. A Swift consumer already passes that
+# directory with `-I` to reach the dependency `.swiftmodule`s, and clang looks up a module named X in
+# `<search dir>/X/module.modulemap`, so these need no further flag. Cmlx's headers include each other
+# as "mlx/c/array.h", resolved through the header search path, so its `mlx/` tree sits at the Modules
+# root while its module map and umbrella header sit in `Cmlx/`.
+write_c_modules() {                     # write_c_modules <Modules directory> <package checkouts>
+    local modules="$1" checkouts="$2"
+    local cmlx="$checkouts/mlx-swift/Source/Cmlx/include"
+    local shims="$checkouts/swift-numerics/Sources/_NumericsShims/include"
+    [ -f "$cmlx/module.modulemap" ] || { echo "no Cmlx module map at $cmlx"; exit 1; }
+    [ -f "$shims/module.modulemap" ] || { echo "no _NumericsShims module map at $shims"; exit 1; }
+    mkdir -p "$modules/Cmlx" "$modules/_NumericsShims"
+    cp "$cmlx/module.modulemap" "$cmlx/mlx.h" "$modules/Cmlx/"
+    cp -R "$cmlx/mlx" "$modules/"
+    cp "$shims/"* "$modules/_NumericsShims/"
+    # The checkouts are read-only, and the copies would be too.
+    chmod -R u+w "$modules/Cmlx" "$modules/mlx" "$modules/_NumericsShims"
+}
+
 # A hand-linked framework needs its own Info.plist. `-create-xcframework` reads the identifier and the
 # supported platform from it, and the loader reads the executable name.
 write_framework_plist() {               # write_framework_plist <framework inner directory> <tag>
@@ -259,6 +280,7 @@ slice() {               # slice <destination> <tag> <swift lib dir> <clang targe
     # which the Objective-C verification cannot notice — hence the note in the summary.
     if [ "$INTERFACES" = yes ]; then
         cp -R "$WORK/dd-$tag/Build/Products/Release"*/*.swiftmodule "$inner/Modules/" 2>/dev/null || true
+        write_c_modules "$inner/Modules" "$WORK/dd-$tag/SourcePackages/checkouts"
     fi
     if [ "$tag" = macos ]; then
         ln -sfn A "$framework/Versions/Current"
@@ -334,7 +356,7 @@ if wants static; then
 fi
 if wants dynamic; then
     echo "==> $OUTPUT/InferKitMLXDynamic.xcframework   (dynamic, $SLICES)"
-    echo "==> $OUTPUT/CoreHeaders                      (for Objective-C consumers of the dynamic one)"
+    echo "==> $OUTPUT/CoreHeaders                      (the core module, for consumers of the dynamic one)"
     if [ "$INTERFACES" = no ]; then
         echo "    carries NO Swift module interfaces: importable from Objective-C only"
     fi

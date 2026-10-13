@@ -52,7 +52,8 @@ iOS device, iOS simulator):
 - `InferKitMLXDynamic.xcframework` — dynamic: `InferKitMLX.framework`, Metal library inside. A slice is
   a 21 MB binary, 3.7 MB of shaders, and 19 MB of Swift module interfaces an Objective-C consumer
   never reads; 130 MB in all.
-- `CoreHeaders/` (the core's headers beside a modulemap) for Objective-C consumers of the dynamic one.
+- `CoreHeaders/` (the core's headers beside a modulemap), the core's module for consumers of the
+  dynamic one in either language.
 
 A static consumer's binary grows by about 29 MB plus the shaders. A dynamic consumer ships the
 21 MB framework binary, which carries them.
@@ -96,11 +97,13 @@ whenever a release is built. Measured 2026-09-15. So the choice is deployment me
 - Dynamic is one self-contained drop-in and is shared between several consumers, but clang refuses a
   non-framework module inside a framework, so its `InferKit` module needs a modulemap passed with
   `-fmodule-map-file`. An Objective-C consumer is better served by the static variant.
+- A Swift consumer takes the dynamic variant. The static library carries no Swift interfaces.
 
 Linking recipes and the release matrix live in `Docs/installation.md`, one per consumer shape, each
 verified by building and running it: Xcode static and dynamic, SwiftPM `binaryTarget` for both variants
 (SwiftPM wires the static one's headers and modulemap automatically; the dynamic one still needs
-`CoreHeaders` passed through `-fmodule-map-file`), plug-in bundles, and a consumer's own static library.
+`CoreHeaders` passed through `-fmodule-map-file`, and a Swift target the framework's `Modules`
+directory), plug-in bundles, and a consumer's own static library.
 The artifacts are not committed — this repository is source-distributed, so a consumer resolving it
 clones its history. Three compressed release assets, one per variant carrying every slice: core 1.3 MB,
 static 38 MB, dynamic 25 MB. The core's `build.sh` cleans only its own artifact — both scripts share
@@ -126,6 +129,36 @@ The dylib links `-all_load` and **without `-dead_strip`**: `NFKDynamicBackend` r
 through `NSClassFromString`, so a class with no static reference is still reachable. It costs about
 1.3 MB against a dead-stripped link, which is the right trade for a binary whose discovery mechanism
 is by name.
+
+### Swift consumers of the dynamic framework
+
+The framework's `Modules` directory carries the `.swiftinterface` of InferKitMLX and of every Swift
+module it imports (MLX, MLXNN, MLXFast, MLXRandom, MLXFFT, MLXOptimizers, swift-numerics). Those
+interfaces import two C modules: `Cmlx` (MLX, MLXFast, MLXRandom) and `_NumericsShims` (RealModule).
+SwiftPM supplies both from the package checkouts, so a framework that ships only the interfaces fails
+a binary consumer with `no such module 'Cmlx'`. `build-mlx.sh` copies them from the build's
+`SourcePackages/checkouts` into `Modules`:
+
+- `Modules/Cmlx/` holds mlx-swift's `module.modulemap` and umbrella `mlx.h`.
+- `Modules/mlx/c/` holds the mlx-c headers. They include each other as `"mlx/c/array.h"`, resolved
+  through the header search path, so the tree sits at the `Modules` root.
+- `Modules/_NumericsShims/` holds swift-numerics' module map and header.
+
+The consumer passes `-I <slice>/InferKitMLX.framework/Modules` to reach the dependency interfaces, and
+clang looks up a module named X in `<search dir>/X/module.modulemap`, so the C modules need no further
+flag. The core's module comes from `-I CoreHeaders`; Swift reads that module map through the import
+path, so `-fmodule-map-file` is an Objective-C requirement only. In Xcode the import path is
+`$(BUILT_PRODUCTS_DIR)/InferKitMLX.framework/Modules`, because Xcode copies the slice's framework into
+the build products. SwiftPM rejects `$(BUILT_PRODUCTS_DIR)` in `unsafeFlags` and runs the compiler
+outside the package root, so a relative `-I` does not resolve there; the SwiftPM recipe builds
+absolute paths from `#filePath` and names the slice. Both recipes were built and run on 2026-10-13
+(Xcode 27, Swift 6.4): `xcodebuild` with `SWIFT_INCLUDE_PATHS`, and `swift build`.
+
+Removing the swiftmodules does not give a working Objective-C-only import from Swift: Swift then sees
+the generated `InferKitMLX-Swift.h` and imports its classes with no members. `--no-swift-interfaces`
+drops the interfaces and the C modules together. `verify-mlx.sh` compiles and runs a Swift probe
+(`import InferKitMLX`, `import MLX`, an evaluated `MLXArray`) against the dynamic slice with a private
+module cache, so each interface is rebuilt from the shipped text.
 
 ## The mlx-swift pin blocks shipping the companion
 

@@ -9,8 +9,9 @@
 #
 #   Tools/xcframework/verify-mlx.sh [xcframework-build]
 #
-# Called by build-mlx.sh --verify. Both probes are Objective-C: that is the surface a binary artifact
-# vends. A Swift consumer needs MLX's own module interfaces, which is what SwiftPM is for.
+# Called by build-mlx.sh --verify. Each variant gets an Objective-C probe. The dynamic framework also
+# gets a Swift probe, compiled from its module interfaces alone, because a missing C module beneath
+# them (`Cmlx`, `_NumericsShims`) fails only a Swift consumer.
 
 set -euo pipefail
 
@@ -93,10 +94,7 @@ echo "    static: a one-model consumer links to $(du -h "$WORK/static-run/probe"
 report "static (Objective-C)" "$(cd "$WORK/static-run" && ./probe 2>&1 | tail -1)"
 fi
 
-# ---- dynamic: the framework alone, Metal library inside it ----
-# Objective-C, because that is what this variant is for. A SWIFT consumer of the dynamic framework
-# additionally needs MLX's module interfaces and the C module maps beneath them (`Cmlx`,
-# `_NumericsShims`), which a binary artifact does not carry; that consumer wants SwiftPM.
+# ---- dynamic, Objective-C: the framework alone, Metal library inside it ----
 if [ -n "$DYNAMIC_SLICE" ]; then
 mkdir -p "$WORK/dynamic-run"
 xcrun clang -fobjc-arc -fmodules -target "$TARGET" -w \
@@ -110,4 +108,44 @@ xcrun clang -fobjc-arc -fmodules -target "$TARGET" -w \
 echo "    dynamic: a one-model consumer links to $(du -h "$WORK/dynamic-run/probe" | awk '{print $1}') beside a $(du -h "$DYNAMIC_SLICE/InferKitMLX.framework/Versions/A/InferKitMLX" | awk '{print $1}') framework binary"
 # Nothing is copied beside it: the Metal library has to come from inside the framework.
 report "dynamic (Objective-C)" "$("$WORK/dynamic-run/probe" 2>&1 | tail -1)"
+fi
+
+# ---- dynamic, Swift: the interfaces and the C modules beneath them, from the framework alone ----
+# The flags are the ones a consumer passes: `-F` for the framework, `-I` for its Modules directory (the
+# dependency interfaces and the C modules), `-I` for the core's module. A private module cache makes
+# the compiler build every interface from the shipped text instead of reusing an earlier result.
+if [ -n "$DYNAMIC_SLICE" ]; then
+if [ ! -d "$DYNAMIC_SLICE/InferKitMLX.framework/Modules/InferKitMLX.swiftmodule" ]; then
+    echo "    dynamic (Swift): skipped, the framework was built with --no-swift-interfaces"
+    exit 0
+fi
+cat > "$WORK/probe.swift" <<'SWIFTPROBE'
+import Foundation
+import InferKit
+import InferKitMLX
+import MLX
+
+_ = NFKMLXModelRegistry.registeredModelNames
+guard NFKMLXGPU.metalLibraryURL != nil else {
+    print("FAIL: no Metal library")
+    exit(1)
+}
+let sum = (MLXArray([1, 2, 3] as [Int32]) * 2).sum().item(Int32.self)
+guard sum == 12 else {
+    print("FAIL: evaluated \(sum), expected 12")
+    exit(1)
+}
+print("OK")
+SWIFTPROBE
+mkdir -p "$WORK/swift-run"
+xcrun swiftc -target "$TARGET" \
+    -F "$DYNAMIC_SLICE" -I "$DYNAMIC_SLICE/InferKitMLX.framework/Modules" -I "$OUTPUT/CoreHeaders" \
+    -module-cache-path "$WORK/module-cache" \
+    "$WORK/probe.swift" -framework InferKitMLX -Xlinker -rpath -Xlinker "$DYNAMIC_SLICE" \
+    -o "$WORK/swift-run/probe" > "$WORK/swift.log" 2>&1 || true
+if [ ! -x "$WORK/swift-run/probe" ]; then
+    grep ": error:" "$WORK/swift.log" | sort -u | head -5 | sed 's/^/      /'
+    echo "    dynamic (Swift): FAILED — did not compile"; exit 1
+fi
+report "dynamic (Swift)" "$("$WORK/swift-run/probe" 2>&1 | tail -1)"
 fi

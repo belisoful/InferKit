@@ -71,12 +71,14 @@ Three flags trim what gets built and written:
   shared, so this costs no build time and halves the output.
 - `--slices macos,ios,iossim` — each slice is a full compile of MLX's 289 translation units, so this
   is the difference between roughly seven minutes and twenty, and it scales the output the same way.
-- `--no-swift-interfaces` — drops the Swift module interfaces from the **dynamic** framework, about
-  13 MB a slice. The static library never carried interfaces, so the flag does nothing for it.
+- `--no-swift-interfaces` — drops the Swift module interfaces, and the C modules they import, from
+  the **dynamic** framework, about 13 MB a slice. The framework is then importable from Objective-C
+  only. The static library never carried interfaces, so the flag does nothing for it.
 
-`--verify` links a consumer against each artifact and runs a model on the GPU. A binary that links can
-still fail to find its Metal library, so linking alone is not the check. It reports what it skipped
-rather than failing when a variant or the macOS slice was not built.
+`--verify` links a consumer against each artifact and runs a model on the GPU, and builds and runs a
+Swift consumer against the dynamic framework's interfaces. A binary that links can still fail to find
+its Metal library, so linking alone is not the check. It reports what it skipped rather than failing
+when a variant or the macOS slice was not built.
 
 ## Linking the binary artifacts
 
@@ -87,7 +89,7 @@ rather than failing when a variant or the macOS slice was not built.
 | an app, a framework, or a plug-in in Objective-C | `InferKitMLX.xcframework` (static) | nothing to embed or sign, and one modulemap vends both `InferKit` and `InferKitMLX` |
 | an app that wants one self-contained drop-in | `InferKitMLXDynamic.xcframework` | the Metal library rides inside it |
 | several plug-ins in one host | `InferKitMLXDynamic.xcframework` | they share one copy instead of one each |
-| anything in Swift using `MLXArray` closures | the SwiftPM package, not a binary | the closure backends expose MLX types, so you need MLX's own module interfaces |
+| anything in Swift | `InferKitMLXDynamic.xcframework` | it carries the Swift module interfaces of InferKitMLX and MLX, and the C modules beneath them; the static library carries none |
 | the core alone, no MLX | `InferKit.xcframework` | 4.7 MB, no MLX runtime at all |
 
 Both MLX artifacts are arm64 only, with macOS, iOS device, and iOS simulator slices. **Do not add
@@ -137,7 +139,27 @@ xcframework's own link metadata, and a hand-rolled link command must name them.
 2. For Objective-C, add `CoreHeaders` to **Header Search Paths** and
    `-fmodule-map-file=$(SRCROOT)/path/to/CoreHeaders/module.modulemap` to **Other C Flags** — clang
    refuses a non-framework module inside a framework, so the core's module travels beside it.
-3. `@import InferKit;` and `@import InferKitMLX;`.
+3. For Swift, add `$(BUILT_PRODUCTS_DIR)/InferKitMLX.framework/Modules` and
+   `$(SRCROOT)/path/to/CoreHeaders` to **Import Paths**. Xcode copies the slice's framework into the
+   build products, so one path serves every platform.
+4. `@import InferKit;` and `@import InferKitMLX;`, or in Swift `import InferKitMLX`, and `import MLX`
+   to use MLX's types directly.
+
+The framework's `Modules` directory holds the Swift interfaces of InferKitMLX and of every module it
+imports (MLX, MLXNN, MLXFast, MLXRandom, MLXFFT, MLXOptimizers, swift-numerics), plus the two C modules
+those interfaces import, `Cmlx` and `_NumericsShims`. A Swift consumer reaches all of them through that
+one import path, and the core's module through `CoreHeaders`. From the command line:
+
+```bash
+swiftc -F InferKitMLXDynamic.xcframework/macos-arm64 \
+       -I InferKitMLXDynamic.xcframework/macos-arm64/InferKitMLX.framework/Modules \
+       -I CoreHeaders \
+       App.swift -framework InferKitMLX
+```
+
+Swift needs no `-fmodule-map-file`: it finds `CoreHeaders/module.modulemap` through the import path.
+The framework must stay a single unit. Removing its Swift interfaces leaves only the generated
+Objective-C header, whose classes Swift then imports with no members.
 
 ### Swift Package Manager, either variant
 
@@ -159,6 +181,23 @@ The dynamic variant needs the core's module passed in, exactly as in Xcode:
                   cSettings: [.unsafeFlags(["-I", "CoreHeaders",
                                             "-fmodule-map-file=CoreHeaders/module.modulemap"])]),
 ```
+
+A Swift target also needs the framework's `Modules` directory. SwiftPM does not resolve a relative
+path in `unsafeFlags` against the package root, so the manifest builds absolute paths from its own
+location. The slice path names one platform:
+
+```swift
+let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path   // import Foundation
+let slice = "\(root)/InferKitMLXDynamic.xcframework/macos-arm64"
+
+.binaryTarget(name: "InferKitMLX", path: "InferKitMLXDynamic.xcframework"),
+.executableTarget(name: "App", dependencies: ["InferKitMLX"],
+                  swiftSettings: [.unsafeFlags(["-I", "\(slice)/InferKitMLX.framework/Modules",
+                                                "-I", "\(root)/CoreHeaders"])],
+                  linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path"])]),
+```
+
+The `rpath` lets an executable target load the framework SwiftPM copies beside it.
 
 SwiftPM does not copy the Metal bundle either. For an executable target, copy it beside the built
 binary; for an app, it goes in the bundle. The rule above applies unchanged.
