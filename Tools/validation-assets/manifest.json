@@ -5696,6 +5696,11 @@
       "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_LAYERS=0,23 | IK_PROBE_STREAM_F32=1 t5_layer_probe --checkpoint <Wan2.1-T2V-1.3B-Diffusers>/text_encoder with IK_PROBE_TOKENIZER=<validation root>/umt5-tokenizer | <stable-diffusion-3.5-medium>/text_encoder_3 with IK_PROBE_TOKENIZER=<stable-diffusion-3.5-medium>/tokenizer_3 (transformers 5.17)"
     },
     {
+      "records": "sdxl_clip_l_f16 / sdxl_clip_l_f32, sdxl_clip_g_f16 / sdxl_clip_g_f32",
+      "environment": "llm",
+      "command": "IK_PROBE_DTYPE=float16 IK_PROBE_BLOCK_FLOOR=1 | (float32) IK_PROBE_FLOOR=float16 clip_text_probe --checkpoint $IK_VAL_SDXL_DIR/text_encoder (IK_PROBE_TOKENIZER=$IK_VAL_SDXL_DIR/tokenizer) | text_encoder_2 (tokenizer_2; a CLIPTextModelWithProjection, its pooled state and projection recorded); the fp16 variant files; one prompt padded to 77"
+    },
+    {
       "records": "flux_clip_l_bf16 / flux_clip_l_f32",
       "environment": "llm",
       "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_BLOCK_FLOOR=1 | (float32) clip_text_probe --checkpoint $IK_VAL_FLUX_SCHNELL_FULL/text_encoder (the tokenizer the sibling tokenizer/; one prompt padded to 77; the float32 run rounds every parameter to bf16 and back)"

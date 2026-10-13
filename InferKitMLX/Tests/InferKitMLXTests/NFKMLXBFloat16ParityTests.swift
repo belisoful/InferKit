@@ -611,27 +611,54 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
 
     // FLUX.1's CLIP-L text encoder (`IK_VAL_FLUX_SCHNELL_FULL`'s `text_encoder/`, released bf16) as FLUX
     // loads it, against transformers' `CLIPTextModel` at bf16 with eager attention (`clip_text_probe`, the
-    // float32 side on the same bf16 weights), over one prompt padded to 77 tokens: the embeddings, every
-    // layer, the final norm, and the pooled end-of-text state, then each piece of the first and last layers
-    // on the reference's own input.
+    // float32 side on the same bf16 weights), over one prompt padded to 77 tokens.
     func testFluxCLIPLInBFloat16MatchesTheBFloat16Reference() throws {
         try requireMLXRuntime()
         let directory = URL(fileURLWithPath: try existing(config["IK_VAL_FLUX_SCHNELL_FULL"], "IK_VAL_FLUX_SCHNELL_FULL"))
-        let bf16 = try record("flux_clip_l_bf16.safetensors"), f32 = try record("flux_clip_l_f32.safetensors")
         let net = try NFKMLXSDTextEncoder.net(configuration: .stableDiffusion15,
                                               weightsURL: directory.appendingPathComponent("text_encoder/model.safetensors"),
                                               precision: .checkpoint)
-        func recorded(_ key: String) throws -> MLXArray {
-            try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16).expandedDimensions(axis: 0)
+        try clipText("flux-clip-l", net: net, half: try record("flux_clip_l_bf16.safetensors"),
+                     f32: try record("flux_clip_l_f32.safetensors"), dtype: .bfloat16)
+    }
+
+    // SDXL-Turbo's two text towers (`IK_VAL_SDXL_DIR`'s `text_encoder/` CLIP-L and `text_encoder_2/`
+    // OpenCLIP-bigG, released float16) at float16 as the Objective-C factories load them, against
+    // transformers' `CLIPTextModel` and `CLIPTextModelWithProjection` at float16 with eager attention
+    // (`clip_text_probe`, the float32 side on the same float16 weights), over one prompt padded to 77 tokens
+    // by each tower's own tokenizer; bigG's pooled state and its projection as well.
+    func testSDXLTextTowersInFloat16MatchTheFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_SDXL_DIR"], "IK_VAL_SDXL_DIR"))
+        let towers: [(String, String, NFKMLXSDTextEncoderConfiguration)] = [
+            ("sdxl-clip-l", "text_encoder", .sdxlPrimary), ("sdxl-clip-g", "text_encoder_2", .sdxlSecondary)]
+        for (name, tower, configuration) in towers {
+            let net = try NFKMLXSDTextEncoder.net(
+                configuration: configuration,
+                weightsURL: directory.appendingPathComponent("\(tower)/model.fp16.safetensors"), precision: .checkpoint)
+            let records = name.replacingOccurrences(of: "-", with: "_")
+            try clipText(name, net: net, half: try record("\(records)_f16.safetensors"),
+                         f32: try record("\(records)_f32.safetensors"), dtype: .float16)
+            Memory.clearCache()
         }
-        let tokenIds = try XCTUnwrap(bf16["tokens"]).asArray(Int32.self).map(Int.init)
+    }
+
+    // A CLIP text tower at `dtype` against its `clip_text_probe` records: the embeddings, every layer, the
+    // final norm, and the pooled end-of-text state (and a projecting tower's projection), then each piece of
+    // the first and last layers on the reference's own input.
+    private func clipText(_ name: String, net: NFKMLXSDTextEncoderNet, half: [String: MLXArray],
+                          f32: [String: MLXArray], dtype: DType) throws {
+        func recorded(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(half[key], "no \(key)").asType(dtype).expandedDimensions(axis: 0)
+        }
+        let tokenIds = try XCTUnwrap(half["tokens"]).asArray(Int32.self).map(Int.init)
         let length = tokenIds.count
         let mask = NFKCLIPInit.causalMask(length)
         let blocks = net.transformer.resblocks
 
         var hidden = net.tokenEmbedding(MLXArray(tokenIds.map(Int32.init)).reshaped([1, length]))
             + net.positionalEmbedding[0 ..< length]
-        XCTAssertEqual(hidden.dtype, .bfloat16, "a bf16 load embeds at bf16")
+        XCTAssertEqual(hidden.dtype, dtype, "a half-precision load embeds at its precision")
         var states = [("embeddings", hidden[0])], keys = ["text.hidden.0"]
         var isolated = [(String, MLXArray)](), isolatedKeys = [String]()
         for (index, block) in blocks.enumerated() {
@@ -643,34 +670,44 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         }
         let final = net.lnFinal(hidden)
         let end = tokenIds.firstIndex(of: tokenIds.max() ?? 0) ?? (length - 1)
-        states += [("final norm", final[0]), ("pooled", final[0, end])]
-        keys += ["text.final", "output"]
+        states.append(("final norm", final[0]))
+        keys.append("text.final")
         isolated.append(("final norm", net.lnFinal(try recorded("text.hidden.\(blocks.count)"))[0]))
         isolatedKeys.append("text.final")
+        if let projection = net.textProjection {
+            states += [("pooled", final[0, end]), ("projected", final[0, end].reshaped([1, -1]).matmul(projection)[0])]
+            keys += ["pooled", "output"]
+            isolated.append(("projection", try recorded("pooled").matmul(projection)[0]))
+            isolatedKeys.append("output")
+        } else {
+            states.append(("pooled", final[0, end]))
+            keys.append("output")
+        }
         eval(states.map(\.1) + isolated.map(\.1))
-        let rows = try seams(states, bf16: bf16, f32: f32, keys: keys)
-        report("flux-clip-l", rows)
-        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolatedKeys)
-        report("flux-clip-l isolated", isolatedRows)
-        assertRoundingPlacement("flux-clip-l", endToEnd: rows, isolated: isolatedRows)
+        let rows = try seams(states, bf16: half, f32: f32, keys: keys)
+        report(name, rows)
+        let isolatedRows = try seams(isolated, bf16: half, f32: f32, keys: isolatedKeys)
+        report("\(name) isolated", isolatedRows)
+        assertRoundingPlacement(name, endToEnd: rows, isolated: isolatedRows)
 
         var lines = [String]()
         for index in [0, blocks.count - 1] {
             let block = blocks[index], p = "text.\(index)."
             func input(_ name: String) throws -> MLXArray { try recorded(p + name + ".in") }
             lines.append("layer \(index)")
-            lines.append(try piece("layer_norm1", block.ln1(input("layer_norm1")), bf16, p + "layer_norm1.out"))
-            lines.append(try piece("self_attn", block.attn(try recorded(p + "layer_norm1.out"), mask: mask)[0], bf16,
+            lines.append(try piece("layer_norm1", block.ln1(input("layer_norm1")), half, p + "layer_norm1.out"))
+            lines.append(try piece("self_attn", block.attn(try recorded(p + "layer_norm1.out"), mask: mask)[0], half,
                                    p + "self_attn.out"))
-            lines.append(try piece("out_proj", block.attn.outProj(input("self_attn.out_proj")), bf16, p + "self_attn.out_proj.out"))
-            lines.append(try piece("layer_norm2", block.ln2(input("layer_norm2")), bf16, p + "layer_norm2.out"))
-            lines.append(try piece("fc1", block.mlp.cFc(input("mlp.fc1")), bf16, p + "mlp.fc1.out"))
-            lines.append(try piece("quick_gelu", block.mlp.activation(input("mlp.activation_fn")), bf16, p + "mlp.activation_fn.out"))
-            lines.append(try piece("fc2", block.mlp.cProj(input("mlp.fc2")), bf16, p + "mlp.fc2.out"))
-            lines.append(try piece("mlp", block.mlp(input("mlp")), bf16, p + "mlp.out"))
-            lines.append(try piece("block", block(input("block"), mask: mask)[0], bf16, p + "block.out"))
+            lines.append(try piece("out_proj", block.attn.outProj(input("self_attn.out_proj")), half, p + "self_attn.out_proj.out"))
+            lines.append(try piece("layer_norm2", block.ln2(input("layer_norm2")), half, p + "layer_norm2.out"))
+            lines.append(try piece("fc1", block.mlp.cFc(input("mlp.fc1")), half, p + "mlp.fc1.out"))
+            lines.append(try piece("activation", block.mlp.activation(input("mlp.activation_fn")), half,
+                                   p + "mlp.activation_fn.out"))
+            lines.append(try piece("fc2", block.mlp.cProj(input("mlp.fc2")), half, p + "mlp.fc2.out"))
+            lines.append(try piece("mlp", block.mlp(input("mlp")), half, p + "mlp.out"))
+            lines.append(try piece("block", block(input("block"), mask: mask)[0], half, p + "block.out"))
         }
-        print("VALIDATION bf16 flux-clip-l pieces:\n" + lines.joined(separator: "\n"))
+        print("VALIDATION \(dtype == .float16 ? "f16" : "bf16") \(name) pieces:\n" + lines.joined(separator: "\n"))
     }
 
     // MADLAD-400 3B (`IK_VAL_MADLAD`, released float32) at bf16 as its registered backend loads it, against

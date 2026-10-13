@@ -611,6 +611,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   downloaded weights.
 - Measured at float16 on tiny: every encoder and decoder layer within 0.35 of its own block floor.
 
+#### SDXL's text towers are held at float16
+
+- SDXL-Turbo's CLIP-L and OpenCLIP-bigG towers, which the Objective-C factories load at the release's
+  float16, are measured against transformers at float16, bigG's pooled projection included.
+- `clip_text_probe` reads a `CLIPTextModelWithProjection` tower and a release that ships only fp16 files.
+- Measured: every layer of CLIP-L within 0.032 of its own block floor, and of bigG within 0.39.
+
 #### Z-Image computes at bfloat16 as diffusers does
 
 - Z-Image's timestep embedding ran in float32 at a bf16 load: its float32 sinusoids promoted the

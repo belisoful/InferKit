@@ -10185,15 +10185,22 @@ def run_clip_text_probe(image, checkpoint):
     """A CLIP text encoder release on its own, at a half precision or on its float32 floor (`IK_PROBE_DTYPE` /
     `IK_PROBE_FLOOR`, as `clip_probe` reads them), layer by layer with eager attention, over one prompt padded
     to 77 tokens as FLUX.1 and Stable Diffusion pad it. `--checkpoint` is a `CLIPTextModel` directory (a
-    diffusers release's `text_encoder/`); the tokenizer is `IK_PROBE_TOKENIZER`, default the sibling
-    `tokenizer/`. Records `tokens`, `text.hidden.i` (layer `i`'s input, `text.hidden.L` the last layer's
-    output), every submodule of the first and last layers as `text.<i>.<name>.in` / `.out`, and `text.final`
-    (the final layer norm); returns the pooled state, the final state at the end-of-text token.
-    `IK_PROBE_BLOCK_FLOOR=1` adds a floor to the embeddings, each layer, the probed layers' submodules, the
-    final norm, and the output. `image` unused."""
-    from transformers import CLIPTextModel, CLIPTokenizer
+    diffusers release's `text_encoder/`), or a `CLIPTextModelWithProjection` one (SDXL's `text_encoder_2/`);
+    the tokenizer is `IK_PROBE_TOKENIZER`, default the sibling `tokenizer/`. Records `tokens`, `text.hidden.i`
+    (layer `i`'s input, `text.hidden.L` the last layer's output), every submodule of the first and last
+    layers as `text.<i>.<name>.in` / `.out`, and `text.final` (the final layer norm); returns the pooled
+    state, the final state at the end-of-text token, or for a projecting tower its projection, with the
+    pooled state recorded as `pooled`. `IK_PROBE_BLOCK_FLOOR=1` adds a floor to the embeddings, each layer,
+    the probed layers' submodules, the final norm, and the output. `image` unused."""
+    import json
+    from transformers import CLIPTextModel, CLIPTextModelWithProjection, CLIPTokenizer
 
-    model = CLIPTextModel.from_pretrained(checkpoint).eval()
+    with open(os.path.join(checkpoint, "config.json")) as handle:
+        projects = "CLIPTextModelWithProjection" in json.load(handle).get("architectures", [])
+    variant = "fp16" if not os.path.exists(os.path.join(checkpoint, "model.safetensors")) and os.path.exists(
+        os.path.join(checkpoint, "model.fp16.safetensors")) else None
+    model = (CLIPTextModelWithProjection if projects else CLIPTextModel).from_pretrained(
+        checkpoint, variant=variant).eval()
     tokenizer = CLIPTokenizer.from_pretrained(os.environ.get(
         "IK_PROBE_TOKENIZER", os.path.join(os.path.dirname(os.path.normpath(checkpoint)), "tokenizer")))
     _probe_half(model)
@@ -10209,14 +10216,21 @@ def run_clip_text_probe(image, checkpoint):
         "text.final", o[0].detach().float().clone().contiguous()) and None)
     _block_floor_hooks([text.embeddings], ["text.hidden.0"], extra, verify=True)
     _block_floor_hooks([text.final_layer_norm], ["text.final"], extra)
+    if projects:
+        _block_floor_hooks([model.text_projection], ["output"], extra)
     with torch.no_grad():
         out = model(input_ids=tokens)
     # The release's pooling reads the end-of-text token as the sequence's highest id, its first occurrence.
     end = int(tokens[0].argmax())
+    pooled_key = "pooled" if projects else "output"
     if "text.final.floor" in extra:
-        extra["output.floor"] = extra["text.final.floor"][end].clone().contiguous()
+        extra[f"{pooled_key}.floor"] = extra["text.final.floor"][end].clone().contiguous()
     extra["tokens"] = tokens[0].to(torch.int32).contiguous()
+    if projects:
+        extra["pooled"] = out.last_hidden_state[0, end].float().contiguous()
     globals()["_extra"] = extra
+    if projects:
+        return out.text_embeds[0].float().contiguous()
     return out.pooler_output[0].float().contiguous()
 
 
