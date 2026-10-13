@@ -238,6 +238,14 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(claude.backendIdentifier, "anthropic-messages")
     }
 
+    // Gemini's generateContent API from Swift: the factory on the gemini preset.
+    func testGeminiGenerateContent() {
+        let gemini = NFKGeminiGenerateContentBackend(for: .googleGemini, apiKey: "AIza…", modelName: "gemini-3.8-flash")
+        XCTAssertEqual(gemini?.endpointURL.absoluteString, "https://generativelanguage.googleapis.com/v1beta/models")
+        XCTAssertEqual(gemini?.backendIdentifier, "gemini-generatecontent")
+        XCTAssertNil(NFKGeminiGenerateContentBackend(for: .openAI, apiKey: "k", modelName: "m"))
+    }
+
     // OpenCode from Swift: one preset, a backend per model's route, and a hand-made route.
     func testOpenCodeGateway() {
         let zen = NFKRemoteProvider.openCodeZen
@@ -245,6 +253,9 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(gpt.backendIdentifier, "remote-responses")
         XCTAssertEqual(zen.apiStyle(forModelName: "claude-sonnet-5-5"), .anthropicMessages)
         XCTAssertEqual(zen.apiStyle(forModelName: "gemini-3.5-flash"), .geminiGenerateContent)
+
+        let gemini = NFKRemoteProvider.backend(for: zen, apiKey: "sk-…", modelName: "gemini-3.5-flash")
+        XCTAssertEqual(gemini.backendIdentifier, "gemini-generatecontent")
 
         let routed = zen.withAPIStyle(.anthropicMessages, forModelName: "claude-next")
         XCTAssertEqual(routed.apiStyle(forModelName: "claude-next"), .anthropicMessages)

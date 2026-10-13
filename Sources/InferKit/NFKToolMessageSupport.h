@@ -18,6 +18,7 @@ extern NSString * const NFKProviderTurnFormatOpenAIChat;
 extern NSString * const NFKProviderTurnFormatAnthropicMessages;
 extern NSString * const NFKProviderTurnFormatOpenAIResponses;
 extern NSString * const NFKProviderTurnFormatGeminiInteractions;
+extern NSString * const NFKProviderTurnFormatGeminiGenerateContent;
 
 /*! The assistant turn: the chat fields from text and calls (NFKOutputToolCalls shape), and the
 	provider's record under NFKMessageMetadataKey when turn is non-nil. source names the service the

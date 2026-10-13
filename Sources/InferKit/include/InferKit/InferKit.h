@@ -64,6 +64,7 @@
 #import <InferKit/NFKRemoteClassifierBackend.h>
 #import <InferKit/NFKRemoteResponsesBackend.h>
 #import <InferKit/NFKGeminiInteractionsBackend.h>
+#import <InferKit/NFKGeminiGenerateContentBackend.h>
 #import <InferKit/NFKGeminiVoiceLibrary.h>
 #import <InferKit/NFKRealtimeSession.h>
 #import <InferKit/NFKRemoteFileStore.h>

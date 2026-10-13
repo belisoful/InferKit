@@ -55,6 +55,7 @@ The Interactions API (`POST /v1beta/interactions`, GA 2026-06) is Google's recom
 | Mode | Endpoint | Status |
 |---|---|---|
 | text + image + audio + video + PDF → text, tools, structured output | Interactions / OpenAI-layer chat | covered (`NFKGeminiInteractionsBackend`) |
+| text + image + audio + video + PDF → text, tools, thinking, structured output, grounding | `/v1beta/models/{id}:generateContent` | covered (`NFKGeminiGenerateContentBackend`) |
 | text + images → image (generate and edit, Nano Banana) | Interactions `response_format: image` | covered |
 | text → speech (30 voices, two speakers) | Interactions `response_format: audio` | covered (Interactions) |
 | voice library: list, get, design, replicate, delete | `/v1beta/voices` (2026-09-22) | covered (`NFKGeminiVoiceLibrary`) |
@@ -154,7 +155,7 @@ A gateway that serves each model on its maker's protocol; the route per model is
 | text + image → text, tools, reasoning (GPT, Grok, Muse Spark) | `/responses` | covered (`NFKRemoteResponsesBackend`) |
 | text + image → text, tools, thinking (Claude, most Qwen) | `/messages` | covered (`NFKAnthropicBackend`) |
 | state → typed decisions (Jev) | `/systemone` | covered (`NFKTypeSafeBackend`) |
-| text + image → text (Gemini) | `/models/{id}:generateContent` | gap: no backend speaks generateContent; the factory's backend fails with `kNFKError_InferenceUnsupported` |
+| text + image → text, tools, thinking (Gemini) | `/models/{id}:generateContent` | covered (`NFKGeminiGenerateContentBackend`) |
 | model list | `/models` | covered (ids only) |
 
 ### OpenCode Go (`opencode-go`)
@@ -231,11 +232,10 @@ registered, so what a mode does depends on that backend.
   and key management stay out. Usage and cost reporting ships because an app built on InferKit may
   offer its own users an admin key as a feature; the reporting class documents that an admin key is a
   credential to keep off shipped binaries unless the app's user supplies it.
-- **Gemini's generateContent on OpenCode: recorded as a gap (decided 2026-10-13).** The OpenCode
-  presets shipped with their chat, Messages, Responses, and System One routes; the Gemini models'
-  route names `NFKRemoteAPIStyleGeminiGenerateContent` and fails before sending. A generateContent
-  backend is the follow-up, once a live key settles the route's auth header and whether chat
-  completions already answers a Gemini id.
+- **Gemini's generateContent (decided 2026-10-13).** The OpenCode presets first shipped with the
+  Gemini route recorded as a gap; `NFKGeminiGenerateContentBackend` closed it the same day and also
+  serves the `gemini` preset. Open until a live key: OpenCode's auth header on that route, and
+  whether its chat completions answers a Gemini id.
 - **Files and hosted retrieval (decided 2026-09-22):** file management (upload, list, fetch, delete,
   and file references in requests) and retrieval stores with management (create, add and remove files,
   search, delete) are in scope.

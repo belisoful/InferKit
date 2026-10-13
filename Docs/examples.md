@@ -3111,8 +3111,8 @@ id<NFKInferenceBackend> glm = [NFKRemoteProvider backendForProvider:zen apiKey:k
 NFKRemoteProvider *routed = [zen providerWithAPIStyle:NFKRemoteAPIStyleAnthropicMessages forModelName:@"claude-next"];
 ```
 
-Zen's Gemini models use Google's `generateContent` protocol, which no InferKit backend speaks yet, so
-their backend is never ready and fails with `kNFKError_InferenceUnsupported`.
+Zen's Gemini models use Google's `generateContent` protocol, so their backend is an
+`NFKGeminiGenerateContentBackend`.
 
 A system turn is written the same way for both; Anthropic's backend lifts it into the top-level field
 the Messages API expects:
@@ -3472,6 +3472,15 @@ gemini.voice = @"Kore";
 NFKAudioAsset *spoken = [[gemini runInferenceForRequest:
     [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Say cheerfully: good morning!" }
                                 parameters:@{} outputModality:NFKModalityAudio] error:&error] outputForKey:NFKOutputAudio];
+
+// Gemini's generateContent API: the native chat surface Google serves beside Interactions, and the
+// one OpenCode Zen serves its Gemini models on.
+NFKGeminiGenerateContentBackend *flash = [NFKGeminiGenerateContentBackend backendForProvider:NFKRemoteProvider.googleGemini
+                                                                                      apiKey:key modelName:@"gemini-3.8-flash"];
+NFKInferenceResult *plan = [flash runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Plan a day in Oslo." }
+                                parameters:@{ NFKParameterReasoningEffort: NFKReasoningEffortModerate }] error:&error];
+NSString *thoughts = [plan outputForKey:NFKOutputReasoning];           // thought summaries
 
 // Gemini's voice library: list the voices, design one from a description, and speak with it.
 NFKGeminiVoiceLibrary *voices = [NFKGeminiVoiceLibrary voiceLibraryForProvider:NFKRemoteProvider.googleGemini apiKey:key];

@@ -98,11 +98,25 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   2026-10-13; a model it does not list goes to chat completions.
 - `NFKRemoteAPIStyleOpenAIResponses` routes a model to `NFKRemoteResponsesBackend`, whose factory
   now answers for both OpenCode presets.
-- `NFKRemoteAPIStyleGeminiGenerateContent` names Google's native protocol, which OpenCode uses for
-  its Gemini models. No backend speaks it yet, so the factory returns a backend that is never ready
-  and fails every request with `kNFKError_InferenceUnsupported` before sending anything.
+- `NFKRemoteAPIStyleGeminiGenerateContent` routes a model to `NFKGeminiGenerateContentBackend`;
+  OpenCode Zen serves its Gemini models this way.
 - `providerWithAPIStyle:forModelName:` routes one model by hand, for a model added after the
   release or a route that changed.
+
+#### Gemini's generateContent API
+
+- `NFKGeminiGenerateContentBackend` calls `POST {models}/{model}:generateContent` with the key as
+  `x-goog-api-key`, and streams through `streamGenerateContent` with `alt=sse`. A system turn becomes
+  `systemInstruction`, the media ride as `inlineData` parts, a tool answer is a `functionResponse`
+  part, and the model's parts come back under `NFKOutputAssistantMessage` with their thought
+  signatures, which the API requires on the next turn.
+- The contract keys map onto `generationConfig`: `NFKParameterReasoningEffort` becomes a thinking
+  level or budget with thought summaries under `NFKOutputReasoning`, and `NFKParameterJSONSchema`
+  becomes `responseFormat.text`. Grounding and recitation sources come back under
+  `NFKOutputCitations`, and a blocked prompt or a withheld reply fails with
+  `kNFKError_InferenceRefused`.
+- `backendForProvider:apiKey:modelName:` builds it for the `gemini` preset and for OpenCode Zen, whose
+  Gemini models `NFKRemoteProvider` now routes to it.
 
 #### Gemini's voice library
 

@@ -55,7 +55,8 @@ typedef BOOL (^NFKToolCallApproval)(NSString *toolName, NSDictionary<NSString *,
 				returns the results to the model, and repeats until the model answers.
 	@discussion The model is any backend that returns NFKOutputToolCalls: a remote chat model
 				(NFKRemoteBackend, NFKAnthropicBackend, NFKRemoteResponsesBackend,
-				NFKGeminiInteractionsBackend), or an on-device language model. The tools are any
+				NFKGeminiInteractionsBackend, NFKGeminiGenerateContentBackend), or an on-device
+				language model. The tools are any
 				NFKInferenceTool, so one model reaches another through NFKBackendTool:
 
 				- A remote Claude model with a local Qwen model as a tool.

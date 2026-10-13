@@ -142,6 +142,7 @@ companion packages add engines the core cannot host, without raising the core's 
 | `NFKRemoteImageBackend` | core | OpenAI-compatible image generation and edits | Prompt → image; `NFKInputImage` → edit; `+ NFKInputMask` → inpaint. 32BGRA `CVPixelBuffer` under `NFKOutputImage`. |
 | `NFKRemoteVideoBackend` | core | A hosted video service (job-style): Gemini Veo (Sora-compatible or native), xAI, Together, OpenRouter, OpenAI | Prompt, first and last frame, reference images, or a source clip to edit or extend → an `NFKVideoAsset` under `NFKOutputVideo` (every clip under `NFKOutputVideos`); `apiStyle` picks the service's wire shape; submit, poll, download on `NFKAsyncGenerationBackend`. |
 | `NFKRemoteResponsesBackend` | core | A Responses API endpoint (OpenAI, xAI, Groq, DeepSeek, OpenRouter, local runners) | Text, images, files → text, reasoning summaries, function calls, service-run tools (web search, code, image generation), citations; background jobs and continuation by response id. |
+| `NFKGeminiGenerateContentBackend` | core | Gemini's generateContent API (Google, OpenCode Zen) | Text, images, audio, video, PDFs → text, thought summaries, function calls, structured output, grounding citations; replays its own parts with their thought signatures. |
 | `NFKGeminiInteractionsBackend` | core | Gemini's Interactions API | Text, images, audio, video, PDFs → text, images, speech, music, a transcription with speakers, or video, chosen by `outputModality`. |
 | `NFKGeminiVoiceLibrary` | core | Gemini's Voices API | Lists the prebuilt and custom voices, designs a voice from a description, replicates one from a recording, and deletes a stored one. Its voice identifiers are what `NFKGeminiInteractionsBackend` speaks with. |
 | `NFKRemoteCompletionBackend` | core | A raw completion or fill-in-the-middle endpoint | `NFKInputPrompt` (+ `NFKInputSuffix`) → the continuation or the code between. |
@@ -587,8 +588,7 @@ name the provider does not know, so it is the cheap check before a request carri
   - GPT, Grok, and Muse Spark models → `NFKRemoteResponsesBackend` (`/responses`)
   - Claude models, and on Zen most Qwen models → `NFKAnthropicBackend` (`/messages`)
   - Jev (Zen) → `NFKTypeSafeBackend` (`/systemone`)
-  - Gemini models (Zen) → Google's `generateContent`, which no backend speaks yet; the backend is
-    never ready and fails with `kNFKError_InferenceUnsupported`
+  - Gemini models (Zen) → `NFKGeminiGenerateContentBackend` (`/models/{id}:generateContent`)
   - every other model → `NFKRemoteBackend` (`/chat/completions`)
 
   The two gateways route some names differently (Qwen3.8 Max and the MiniMax models are on
@@ -850,8 +850,9 @@ whether each call runs, and `invocationHandler` reports each one as it finishes.
 **The conversation's shape.** The turns keep the OpenAI chat shape that `NFKInputMessages` already
 takes: the assistant turn's `tool_calls`, then one `{role: "tool", tool_call_id, content}` per call.
 `NFKAnthropicBackend` sends them as `tool_use` and `tool_result` blocks, `NFKRemoteResponsesBackend`
-as `function_call` and `function_call_output` items, and `NFKGeminiInteractionsBackend` as
-`function_call` and `function_result` steps. Each backend records its own form of an assistant turn
+as `function_call` and `function_call_output` items, `NFKGeminiInteractionsBackend` as
+`function_call` and `function_result` steps, and `NFKGeminiGenerateContentBackend` as `functionCall`
+and `functionResponse` parts. Each backend records its own form of an assistant turn
 under `NFKMessageMetadataKey` and replays it to the endpoint that wrote it, which keeps what the
 provider requires back during tool use: Claude's signed thinking blocks, Gemini's thought signatures,
 the Responses reasoning items, and DeepSeek's `reasoning_content`. A tool's error flag and images go

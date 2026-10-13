@@ -68,6 +68,8 @@ Pure Apple frameworks, always available:
 - ``NFKRemoteReranker`` — query-and-documents relevance scores, the shape of the on-device reranker.
 - ``NFKRemoteResponsesBackend`` — the Responses API: service-run tools, reasoning summaries, background
   jobs, and continuation by response id.
+- ``NFKGeminiGenerateContentBackend`` — Gemini's generateContent API, the native chat surface Google
+  serves beside Interactions and OpenCode Zen serves its Gemini models on.
 - ``NFKGeminiInteractionsBackend`` — Gemini's native Interactions API: text, images, speech, music,
   transcription, and video from one endpoint.
 - ``NFKGeminiVoiceLibrary`` — Gemini's voice library: list, design, replicate, and delete the voices
@@ -202,6 +204,7 @@ the core discovers it by name at runtime — see <doc:DynamicDiscovery>.
 - ``NFKRemoteModerationBackend``
 - ``NFKRemoteReranker``
 - ``NFKRemoteResponsesBackend``
+- ``NFKGeminiGenerateContentBackend``
 - ``NFKGeminiInteractionsBackend``
 - ``NFKGeminiVoiceLibrary``
 - ``NFKRemoteCompletionBackend``

@@ -13,6 +13,7 @@
 #import <InferKit/NFKTypeSafeBackend.h>
 #import <InferKit/NFKRemoteBackend.h>
 #import <InferKit/NFKRemoteResponsesBackend.h>
+#import <InferKit/NFKGeminiGenerateContentBackend.h>
 #import <InferKit/NFKRemoteModel.h>
 #import <InferKit/NFKInferenceRequest.h>
 #import <InferKit/NFKInferenceResult.h>
@@ -378,7 +379,7 @@ static const uint16_t NFKDeadPort = 9;
 						  @"https://opencode.ai/inference/go/v1/messages");
 }
 
-- (void)testAGeminiModelOnOpenCodeFailsBeforeAnythingIsSent
+- (void)testAGeminiModelOnOpenCodeGoesToGenerateContent
 {
 	NFKRemoteProvider *zen = NFKRemoteProvider.openCodeZen;
 	XCTAssertEqual([zen apiStyleForModelName:@"gemini-3.5-flash"], NFKRemoteAPIStyleGeminiGenerateContent);
@@ -386,14 +387,12 @@ static const uint16_t NFKDeadPort = 9;
 						  @"https://opencode.ai/inference/v1/models/gemini-3.5-flash:generateContent");
 
 	id<NFKInferenceBackend> backend = [NFKRemoteProvider backendForProvider:zen apiKey:@"k" modelName:@"gemini-3.5-flash"];
-	XCTAssertFalse(backend.isReady);
-	XCTAssertEqualObjects([(id)backend modelName], @"gemini-3.5-flash");
-	NSError *error = nil;
-	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello" }];
-	XCTAssertNil([backend runInferenceForRequest:request error:&error]);
-	XCTAssertEqualObjects(error.domain, NFKInferenceErrorDomain);
-	XCTAssertEqual(error.code, kNFKError_InferenceUnsupported);
-	XCTAssertTrue([error.localizedDescription containsString:@"gemini-3.5-flash"]);
+	XCTAssertTrue([backend isKindOfClass:NFKGeminiGenerateContentBackend.class]);
+	XCTAssertTrue(backend.isReady);
+	NFKGeminiGenerateContentBackend *gemini = (NFKGeminiGenerateContentBackend *)backend;
+	XCTAssertEqualObjects(gemini.endpointURL.absoluteString, @"https://opencode.ai/inference/v1/models");
+	XCTAssertEqualObjects(gemini.modelName, @"gemini-3.5-flash");
+	XCTAssertEqualObjects(gemini.apiKey, @"k");
 }
 
 - (void)testARouteOverrideReplacesTheShippedRoute
@@ -712,7 +711,7 @@ static const uint16_t NFKDeadPort = 9;
 	for (NFKRemoteModel *model in zenModels) {
 		NFKRemoteAPIStyle style = [zen apiStyleForModelName:model.identifier];
 		BOOL textStyle = style == NFKRemoteAPIStyleOpenAIChat || style == NFKRemoteAPIStyleOpenAIResponses ||
-						 style == NFKRemoteAPIStyleAnthropicMessages;
+						 style == NFKRemoteAPIStyleAnthropicMessages || style == NFKRemoteAPIStyleGeminiGenerateContent;
 		if (![model.identifier hasSuffix:@"-free"] || !textStyle || [asked containsObject:@(style)]) {
 			continue;
 		}

@@ -360,6 +360,38 @@ Anthropic reads `citations[]` on text blocks (and `citations_delta` when streame
   `GET /responses/{id}` until `completed` / `failed` / `cancelled` / `incomplete`; cancelling the job
   posts `/responses/{id}/cancel`. Stream: `response.output_text.delta`, `response.reasoning*.delta`,
   `response.completed` / `.incomplete` carry the whole response, `response.failed` / `error`.
+- `NFKGeminiGenerateContentBackend` (`POST {models}/{model}:generateContent`, `x-goog-api-key`,
+  2026-10-13; read from the API reference at `ai.google.dev/api/generate-content`). Google serves it
+  at `/v1beta/models` beside the OpenAI layer the `gemini` preset points at, and OpenCode Zen at
+  `/inference/v1/models`.
+  - Request: `contents[] {role: user | model, parts[]}`, `systemInstruction {parts}`, media as
+    `inlineData {mimeType, data}` on the last user turn, an `NFKRemoteFile` as `fileData {mimeType,
+    fileUri}`, a tool answer as `functionResponse {id?, name, response: {output | error}, parts?}`
+    with consecutive answers in one user turn. Tools are `[{functionDeclarations: [{name,
+    description, parametersJsonSchema}]}]`; an entry without a name (`{googleSearch: {}}`) passes as
+    its own tool.
+  - `generationConfig`: `maxOutputTokens`, `temperature`, `topP`, `topK`, `seed`, `stopSequences`,
+    `thinkingConfig {thinkingLevel: LOW | MEDIUM | HIGH | thinkingBudget, includeThoughts: true}`, and
+    `responseFormat {text: {mimeType: APPLICATION_JSON, schema}}`. The reference marks
+    `responseSchema` and `_responseJsonSchema` deprecated in favor of `responseFormat`.
+    `safetySettings`, `toolConfig`, `cachedContent`, `labels`, `serviceTier`, and `store` go to the
+    top level; the contract keys without a field (repetition penalty, conversation key, MCP servers)
+    are dropped.
+  - Reply: `candidates[0].content.parts[]`. A `thought: true` part is a summary, a `functionCall`
+    `{id?, name, args}` a call (one without an id gets `gemini-call-N`, and its answer goes back
+    without an id), an image `inlineData` an image output. `usageMetadata` `promptTokenCount`,
+    `cachedContentTokenCount`, `candidatesTokenCount + thoughtsTokenCount` (output), and
+    `thoughtsTokenCount` (reasoning). `groundingSupports` pair a segment with `groundingChunks[].web`;
+    `citationMetadata.citationSources` spans are byte offsets into the reply.
+  - Thought signatures: the thinking guide says generateContent has no thought blocks, so a
+    `thoughtSignature` can sit on any part (a `functionCall`, or the last part). The backend records
+    the parts verbatim under the `gemini-generatecontent` turn format and replays them to the same
+    endpoint. The stream merges text into the previous part of the same kind until that part is
+    signed, so a signature that arrives on an empty trailing text part lands on the text it closes.
+  - Refusals: `promptFeedback.blockReason`, and a finish reason of SAFETY, RECITATION, BLOCKLIST,
+    PROHIBITED_CONTENT, SPII, or an image-safety reason with no text, call, or image.
+  - Not verified live: no Gemini or OpenCode key is set on this machine.
+    `testALiveGenerateContentCallAnswers` is gated on `INFERKIT_GEMINI_API_KEY`.
 - `NFKGeminiInteractionsBackend` (`POST /v1beta/interactions`, `x-goog-api-key`, which Google's curl
   uses although the reference page shows a Bearer header): a prompt alone goes as the string `input`;
   otherwise steps `{type: user_input | model_output, content: [blocks]}` with `system_instruction`, and
@@ -746,11 +778,9 @@ the presets use the documented `/inference/` bases.
   the docs table; models.dev routes it to Responses, and the preset follows.
   `claude-opus-5-5-backup` is live and in neither source, so it has no route.
 - Gemini models (Zen only) use `@ai-sdk/google`, which posts to `{base}/models/{id}:generateContent`
-  with an `x-goog-api-key` header. No InferKit backend speaks that protocol, so
-  `NFKRemoteAPIStyleGeminiGenerateContent` exists for the route and the factory returns a private
-  `NFKRemoteUnspokenProtocolBackend` (`remote-unspoken-protocol`), never ready, failing with
-  `kNFKError_InferenceUnsupported` before sending. Whether Zen's `/chat/completions` also answers a
-  Gemini id is unknown without a key.
+  with an `x-goog-api-key` header. The factory builds an `NFKGeminiGenerateContentBackend` on
+  `{base}/models` for them. Whether OpenCode takes the key in that header, and whether Zen's
+  `/chat/completions` also answers a Gemini id, is unknown without a key.
 - Authentication: the docs show a Bearer token for chat and System One. `NFKAnthropicBackend` sends
   `x-api-key` on the Messages route, which is what `@ai-sdk/anthropic` sends. No request has been
   made with a key; `testOpenCodeAnswersOnEachRoutedProtocol` (gated on `INFERKIT_OPENCODE_API_KEY`)

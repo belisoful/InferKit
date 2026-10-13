@@ -10,7 +10,7 @@
 #import <InferKit/NFKRemoteModelCatalog.h>
 #import <InferKit/NFKRemoteInferKitBackend.h>
 #import <InferKit/NFKRemoteResponsesBackend.h>
-#import <InferKit/NFKErrors.h>
+#import <InferKit/NFKGeminiGenerateContentBackend.h>
 #import <InferKit/NFKInferenceServer.h>
 #import "NFKInferKitDiscovery.h"
 
@@ -26,48 +26,6 @@ static NSDictionary<NSString *, NSNumber *> *NFKModelAPIStyles(NSDictionary<NSNu
 	}];
 	return styles;
 }
-
-/*! The backend for a model a provider serves on a protocol no InferKit backend speaks. It is never
-	ready, and every request fails with kNFKError_InferenceUnsupported before anything is sent. */
-@interface NFKRemoteUnspokenProtocolBackend : NSObject <NFKInferenceBackend>
-@property (nonatomic, copy, nullable) NSString *modelName;
-@property (nonatomic, copy) NSString *providerName;
-+ (instancetype)backendWithProvider:(NFKRemoteProvider *)provider modelName:(nullable NSString *)modelName;
-@end
-
-@implementation NFKRemoteUnspokenProtocolBackend
-
-+ (instancetype)backendWithProvider:(NFKRemoteProvider *)provider modelName:(nullable NSString *)modelName
-{
-	NFKRemoteUnspokenProtocolBackend *backend = [[self alloc] init];
-	backend.providerName = provider.displayName;
-	backend.modelName = modelName;
-	return backend;
-}
-
-- (BOOL)isReady
-{
-	return NO;
-}
-
-- (NSString *)backendIdentifier
-{
-	return @"remote-unspoken-protocol";
-}
-
-- (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
-												  error:(NSError * _Nullable *)outError
-{
-	if (outError != NULL) {
-		NSString *reason = [NSString stringWithFormat:@"%@ serves %@ over Google's generateContent protocol, "
-							"which no InferKit backend speaks yet.", self.providerName, self.modelName ?: @"this model"];
-		*outError = [NSError errorWithDomain:NFKInferenceErrorDomain code:kNFKError_InferenceUnsupported
-									userInfo:@{ NSLocalizedDescriptionKey: reason }];
-	}
-	return nil;
-}
-
-@end
 
 @interface NFKRemoteProvider ()
 @property (nonatomic, copy, readwrite) NSString *identifier;
@@ -529,7 +487,10 @@ static NSDictionary<NSString *, NSNumber *> *NFKModelAPIStyles(NSDictionary<NSNu
 		return backend;
 	}
 	if (apiStyle == NFKRemoteAPIStyleGeminiGenerateContent) {
-		return [NFKRemoteUnspokenProtocolBackend backendWithProvider:provider modelName:modelName];
+		NFKGeminiGenerateContentBackend *backend = [NFKGeminiGenerateContentBackend backendWithEndpointURL:[provider URLForPath:@"models"]];
+		backend.apiKey = apiKey;
+		backend.modelName = modelName;
+		return backend;
 	}
 	NFKRemoteBackend *backend = [NFKRemoteBackend backendWithEndpointURL:endpointURL];
 	backend.apiKey = apiKey;

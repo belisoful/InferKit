@@ -92,6 +92,7 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 - ``NFKRemoteModerationBackend``
 - ``NFKRemoteReranker``
 - ``NFKRemoteResponsesBackend``
+- ``NFKGeminiGenerateContentBackend``
 - ``NFKGeminiInteractionsBackend``
 - ``NFKRemoteCompletionBackend``
 - ``NFKRemoteOCRBackend``

@@ -42,10 +42,8 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	/*! POST /responses with a Bearer token, served by NFKRemoteResponsesBackend. Introduced in
 		InferKit 0.4.0. */
 	NFKRemoteAPIStyleOpenAIResponses = 4,
-	/*! Google's native POST /models/{model}:generateContent. No InferKit backend speaks it yet, so
-		backendForProvider:apiKey:modelName: returns a backend that is never ready and fails every
-		request with kNFKError_InferenceUnsupported before anything is sent. Introduced in InferKit
-		0.4.0. */
+	/*! Google's native POST /models/{model}:generateContent with an x-goog-api-key header, served by
+		NFKGeminiGenerateContentBackend. Introduced in InferKit 0.4.0. */
 	NFKRemoteAPIStyleGeminiGenerateContent = 5,
 };
 
@@ -251,8 +249,8 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 				on llama.cpp and on an InferKit server that hosts one model: see the class discussion.
 
 				The backend follows apiStyleForModelName:, so on a gateway the model picks it: an
-				NFKRemoteResponsesBackend for the Responses style, and for the generateContent style a
-				backend that is never ready and fails every request with kNFKError_InferenceUnsupported.
+				NFKRemoteResponsesBackend for the Responses style and an
+				NFKGeminiGenerateContentBackend for the generateContent style.
 */
 + (id<NFKInferenceBackend>)backendForProvider:(NFKRemoteProvider *)provider
 									   apiKey:(nullable NSString *)apiKey
@@ -291,8 +289,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	https://opencode.ai/inference/v1. One key (OPENCODE_API_KEY in OpenCode's own tools) reaches models
 	from many makers, each on its maker's protocol: modelAPIStyles routes the GPT, Grok, and Muse
 	Spark models to Responses, Claude and most Qwen models to Messages, Jev to System One, and Gemini
-	to generateContent, which no backend speaks yet. A model without a route goes to chat
-	completions. The routes are OpenCode's published table of 2026-10-13. Introduced in InferKit
+	to generateContent. A model without a route goes to chat completions. The routes are OpenCode's published table of 2026-10-13. Introduced in InferKit
 	0.4.0. */
 @property (class, nonatomic, readonly) NFKRemoteProvider *openCodeZen;
 /*! OpenCode Go, the subscription gateway, at https://opencode.ai/inference/go/v1, with the same key

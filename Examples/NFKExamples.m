@@ -345,11 +345,27 @@
 	XCTAssertEqualObjects(gpt.backendIdentifier, @"remote-responses");
 	XCTAssertEqualObjects(glm.backendIdentifier, @"remote");
 
-	// Gemini models are served over Google's generateContent protocol, which no backend speaks yet;
-	// their backend is never ready. A model added after this release is routed by hand.
-	XCTAssertFalse([NFKRemoteProvider backendForProvider:zen apiKey:@"sk-…" modelName:@"gemini-3.5-flash"].isReady);
+	// Gemini models are served over Google's generateContent protocol, by its own backend. A model
+	// added after this release is routed by hand.
+	id<NFKInferenceBackend> gemini = [NFKRemoteProvider backendForProvider:zen apiKey:@"sk-…" modelName:@"gemini-3.5-flash"];
+	XCTAssertEqualObjects(gemini.backendIdentifier, @"gemini-generatecontent");
 	NFKRemoteProvider *routed = [zen providerWithAPIStyle:NFKRemoteAPIStyleAnthropicMessages forModelName:@"claude-next"];
 	XCTAssertEqual([routed apiStyleForModelName:@"claude-next"], NFKRemoteAPIStyleAnthropicMessages);
+}
+
+- (void)testExampleGeminiGenerateContent
+{
+	// Gemini's native generateContent API, beside the OpenAI-compatible layer the gemini preset
+	// points at. The model's parts come back with their thought signatures, so a tool conversation
+	// continues on the same backend.
+	NFKGeminiGenerateContentBackend *gemini = [NFKGeminiGenerateContentBackend backendForProvider:NFKRemoteProvider.googleGemini
+																						 apiKey:@"AIza…"
+																					  modelName:@"gemini-3.8-flash"];
+	XCTAssertEqualObjects(gemini.endpointURL.absoluteString, @"https://generativelanguage.googleapis.com/v1beta/models");
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Plan a day in Oslo." }
+															   parameters:@{ NFKParameterReasoningEffort: NFKReasoningEffortModerate }];
+	XCTAssertEqualObjects(request.prompt, @"Plan a day in Oslo.");
+	XCTAssertTrue(gemini.isReady);
 }
 
 - (void)testExampleRemoteModelDiscovery
