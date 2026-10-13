@@ -69,6 +69,14 @@ blocks take from their prose. A block that differs uses an `<!-- objc-check: …
 its fence (`given`, `continues`, or `skip`); the script's own help lists them. The check is step 7 of
 the Full Check in `Docs/agent-reference/build-and-verification.md`.
 
+### Swift isolation probe — `swift-isolation-probe/`
+
+`run.sh` builds the core, compiles `main.swift` as Swift 6 with `-default-isolation MainActor`, and runs
+it. The probe passes closures written in main-actor code to blocks InferKit calls on its own queues
+(the server's provider and builder, its load handler and pressure provider, a job's handlers, a tool's
+handler). Exit 0 means each imports as Sendable; an isolation trap exits with SIGTRAP (133). The
+reasons are in `Docs/agent-reference/remote-providers.md` ("Sendable blocks").
+
 ## Requirements
 
 The converters need `torch` and `safetensors`; the reference oracles additionally need the model's own

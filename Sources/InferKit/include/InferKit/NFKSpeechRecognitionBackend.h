@@ -49,7 +49,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (class, nonatomic, readonly, getter=isAuthorized) BOOL authorized;
 
 /*! Asks the user for speech recognition, once per app. The handler runs on an arbitrary thread. */
-+ (void)requestAuthorizationWithCompletionHandler:(void (^)(BOOL authorized))handler;
++ (void)requestAuthorizationWithCompletionHandler:(void (^ NS_SWIFT_SENDABLE)(BOOL authorized))handler;
 
 + (instancetype)backend;
 

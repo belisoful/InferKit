@@ -256,7 +256,7 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 			revision:(nullable NSString *)revision
 				path:(NSString *)path
 			  sha256:(nullable NSString *)expectedSHA256
-   completionHandler:(void (^)(NSURL * _Nullable localURL, NSError * _Nullable error))completionHandler;
+   completionHandler:(void (^ NS_SWIFT_SENDABLE)(NSURL * _Nullable localURL, NSError * _Nullable error))completionHandler;
 
 /*!
 	@method     fetchURL:toFileURL:error:

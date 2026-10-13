@@ -80,8 +80,26 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 
 /*! Builds a hosted model's backend: returns it, or nil with an error. A server calls it on a background
 	queue at user-initiated quality of service when a request needs the model and its backend is not in
-	memory, one build at a time per model. Introduced in InferKit 0.4.0. */
-typedef id<NFKInferenceBackend> _Nullable (^NFKServedBackendProvider)(NSError * _Nullable * _Nullable error);
+	memory, one build at a time per model. Swift imports it as a Sendable closure, so a closure written in
+	main-actor code is nonisolated and runs on the server's queue. Introduced in InferKit 0.4.0. */
+typedef id<NFKInferenceBackend> _Nullable (^ NS_SWIFT_SENDABLE NFKServedBackendProvider)(NSError * _Nullable * _Nullable error);
+
+/*!
+	@protocol   NFKServedBackendBuilder
+	@abstract   An object that builds hosted models' backends, the throwing form of NFKServedBackendProvider.
+	@discussion Swift imports the method as backend(forModelName:) throws, so a Swift builder throws its
+				error. The protocol is Sendable in Swift: a server calls the method on a background queue
+				at user-initiated quality of service, one build at a time per model, and a conformance
+				declared in main-actor code runs nonisolated. One builder may serve several models.
+				Introduced in InferKit 0.4.0.
+*/
+NS_SWIFT_SENDABLE
+@protocol NFKServedBackendBuilder <NSObject>
+
+/*! The backend for the model hosted under modelName, or nil with an error. */
+- (nullable id<NFKInferenceBackend>)backendForModelName:(NSString *)modelName error:(NSError * _Nullable * _Nullable)error;
+
+@end
 
 /*!
 	@class      NFKInferenceServer
@@ -314,8 +332,9 @@ typedef id<NFKInferenceBackend> _Nullable (^NFKServedBackendProvider)(NSError * 
 /*! Reads memory pressure in 0...1 for unloadsUnderMemoryPressure. The default is the higher of the
 	kernel's level (normal 0, warning 0.6, critical 1) and this process's footprint as a share of
 	NFKHardwareProfile's recommendedWorkingSetSize. A host with its own memory budget sets its own;
-	nil restores the default. Called on a background queue. Introduced in InferKit 0.4.0. */
-@property (nonatomic, copy, null_resettable) double (^memoryPressureProvider)(void);
+	nil restores the default. Called on the thread that reads the pressure: the server's residency queue,
+	a request's queue, or the caller of memoryPressure. Introduced in InferKit 0.4.0. */
+@property (nonatomic, copy, null_resettable) double (^ NS_SWIFT_SENDABLE memoryPressureProvider)(void);
 
 /*! The pressure the unloading options act on now: the provider's reading, held while it falls (see
 	pressureUnloadHysteresis). 0 while unloadsUnderMemoryPressure is NO. Introduced in InferKit 0.4.0. */
@@ -347,6 +366,12 @@ typedef id<NFKInferenceBackend> _Nullable (^NFKServedBackendProvider)(NSError * 
 - (void)addBackendProvider:(NFKServedBackendProvider)provider forModelName:(NSString *)modelName
 	NS_SWIFT_NAME(addBackendProvider(_:forModelName:));
 
+/*! Hosts a model whose backend builder builds when a request first needs it, as
+	addBackendProvider:forModelName: does. The server keeps the builder while it hosts the model.
+	Introduced in InferKit 0.4.0. */
+- (void)addBackendBuilder:(id<NFKServedBackendBuilder>)builder forModelName:(NSString *)modelName
+	NS_SWIFT_NAME(addBackendBuilder(_:forModelName:));
+
 /*!
 	@method     loadModelNamed:completionHandler:
 	@abstract   Builds a provider-hosted model's backend ahead of its first request.
@@ -356,7 +381,7 @@ typedef id<NFKInferenceBackend> _Nullable (^NFKServedBackendProvider)(NSError * 
 				runs on a background queue. Introduced in InferKit 0.4.0.
 */
 - (void)loadModelNamed:(NSString *)modelName
-	 completionHandler:(nullable void (^)(NSError * _Nullable error))completionHandler;
+	 completionHandler:(nullable void (^ NS_SWIFT_SENDABLE)(NSError * _Nullable error))completionHandler;
 
 /*!
 	@method     unloadModelNamed:

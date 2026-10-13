@@ -105,9 +105,9 @@ classifier as macOS 12, so every use sits under `@available`; the zero-warning g
 unguarded call.
 
 1. `swift build` + `swift test` on the host — **0 warnings**, all tests green. Grep the log for
-   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 881 tests
+   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 882 tests
    (2026-10-13): the Objective-C `- (void)test` methods under `Tests/` (838) plus the `func test`
-   methods in `SwiftExamples/` (43).
+   methods in `SwiftExamples/` (44).
 2. `xcodebuild build` for a `generic/platform=iOS` destination (cross-platform compile), and for tvOS
    through the SDK: `-workspace InferKit.xcworkspace -scheme InferKit -sdk appletvos -arch arm64`.
    A tvOS destination does not resolve here and that is not the same as tvOS being unbuildable.

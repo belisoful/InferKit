@@ -1109,6 +1109,14 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	[self host:model];
 }
 
+- (void)addBackendBuilder:(id<NFKServedBackendBuilder>)builder forModelName:(NSString *)modelName
+{
+	NSString *name = [modelName copy];
+	[self addBackendProvider:^id<NFKInferenceBackend>(NSError **error) {
+		return [builder backendForModelName:name error:error];
+	} forModelName:name];
+}
+
 - (nullable NFKServedModel *)hostedModelNamed:(NSString *)modelName
 {
 	@synchronized (self.models) {

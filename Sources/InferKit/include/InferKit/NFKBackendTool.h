@@ -15,11 +15,11 @@ NS_ASSUME_NONNULL_BEGIN
 
 /*! Builds the request a backend tool runs from the model's arguments, or returns nil with an error
 	the model reads. */
-typedef NFKInferenceRequest * _Nullable (^NFKBackendToolRequestBuilder)(NSDictionary<NSString *, id> *arguments,
+typedef NFKInferenceRequest * _Nullable (^ NS_SWIFT_SENDABLE NFKBackendToolRequestBuilder)(NSDictionary<NSString *, id> *arguments,
 																		NSError * _Nullable * _Nullable error);
 
 /*! Turns the backend's result into what the model reads and is shown. */
-typedef NFKToolResult * _Nonnull (^NFKBackendToolResultDescriber)(NFKInferenceResult *result);
+typedef NFKToolResult * _Nonnull (^ NS_SWIFT_SENDABLE NFKBackendToolResultDescriber)(NFKInferenceResult *result);
 
 /*!
 	@class      NFKBackendTool
@@ -66,10 +66,10 @@ typedef NFKToolResult * _Nonnull (^NFKBackendToolResultDescriber)(NFKInferenceRe
 /*! Parameters every request carries, under the model's own arguments. */
 @property (nonatomic, copy) NSDictionary<NSString *, id> *fixedParameters;
 
-/*! Builds each request in place of the default mapping. */
+/*! Builds each request in place of the default mapping, on the thread that invokes the tool. */
 @property (nonatomic, copy, nullable) NFKBackendToolRequestBuilder requestBuilder;
 
-/*! Describes each result in place of the default description. */
+/*! Describes each result in place of the default description, on the thread that invokes the tool. */
 @property (nonatomic, copy, nullable) NFKBackendToolResultDescriber resultDescriber;
 
 /*!

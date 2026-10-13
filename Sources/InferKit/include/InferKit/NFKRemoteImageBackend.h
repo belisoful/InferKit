@@ -119,9 +119,9 @@ typedef NS_ENUM(NSInteger, NFKRemoteImageAPIStyle) {
 
 /*! The transport seam for the streamed form; the default delegates to NFKRemoteTransport and
 	returns the block that cancels the request. Introduced in InferKit 0.4.0. */
-- (void (^)(void))streamRequest:(NSURLRequest *)request
-					lineHandler:(void (^)(NSString *line))lineHandler
-			  completionHandler:(void (^)(NSHTTPURLResponse * _Nullable response,
+- (void (^ NS_SWIFT_SENDABLE)(void))streamRequest:(NSURLRequest *)request
+					lineHandler:(void (^ NS_SWIFT_SENDABLE)(NSString *line))lineHandler
+			  completionHandler:(void (^ NS_SWIFT_SENDABLE)(NSHTTPURLResponse * _Nullable response,
 										  NSData * _Nullable errorBody,
 										  NSError * _Nullable error))completionHandler;
 

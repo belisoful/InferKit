@@ -60,9 +60,10 @@ NS_ASSUME_NONNULL_BEGIN
 	@typedef    NFKToolHandler
 	@abstract   Runs a tool on the model's arguments and returns its result, or nil with an error.
 	@discussion The arguments are the parsed JSON object the model wrote. A returned error reaches the
-				model as an error result carrying its localized description.
+				model as an error result carrying its localized description. It runs on the thread that
+				invokes the tool: a tool loop's thread, or a server's background queue for an MCP call.
 */
-typedef NFKToolResult * _Nullable (^NFKToolHandler)(NSDictionary<NSString *, id> *arguments,
+typedef NFKToolResult * _Nullable (^ NS_SWIFT_SENDABLE NFKToolHandler)(NSDictionary<NSString *, id> *arguments,
 													NSError * _Nullable * _Nullable error);
 
 /*!

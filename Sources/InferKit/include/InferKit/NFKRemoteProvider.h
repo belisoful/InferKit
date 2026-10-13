@@ -246,13 +246,13 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	user-initiated quality of service. Swift's async import of a completion handler drops the
 	handler from the name, which would take the blocking call's name and leave it unreachable, so
 	the awaited form is named probeAvailableLocalProviders(). Introduced in InferKit 0.3.1. */
-+ (void)availableLocalProvidersWithCompletionHandler:(void (^)(NSArray<NFKRemoteProvider *> *providers))completionHandler
++ (void)availableLocalProvidersWithCompletionHandler:(void (^ NS_SWIFT_SENDABLE)(NSArray<NFKRemoteProvider *> *providers))completionHandler
 	NS_SWIFT_ASYNC_NAME(probeAvailableLocalProviders());
 
 /*! The asynchronous form of firstAvailableLocalProvider, named probeFirstAvailableLocalProvider()
 	in Swift for the reason above. The handler runs on a background queue at user-initiated quality
 	of service. Introduced in InferKit 0.3.1. */
-+ (void)firstAvailableLocalProviderWithCompletionHandler:(void (^)(NFKRemoteProvider * _Nullable provider))completionHandler
++ (void)firstAvailableLocalProviderWithCompletionHandler:(void (^ NS_SWIFT_SENDABLE)(NFKRemoteProvider * _Nullable provider))completionHandler
 	NS_SWIFT_ASYNC_NAME(probeFirstAvailableLocalProvider());
 
 /*!
@@ -296,7 +296,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 
 /*! The asynchronous form of modelsWithAPIKey:error:. The handler runs on a background queue. Introduced in InferKit 0.3.0. */
 - (void)modelsWithAPIKey:(nullable NSString *)apiKey
-	   completionHandler:(void (^)(NSArray<NFKRemoteModel *> * _Nullable models,
+	   completionHandler:(void (^ NS_SWIFT_SENDABLE)(NSArray<NFKRemoteModel *> * _Nullable models,
 								   NSError * _Nullable error))completionHandler;
 
 // Hosted providers, each endpoint verified to exist at the time of release.
@@ -388,7 +388,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	in Swift so the awaited form does not take the blocking call's name. The handler runs on a
 	background queue at user-initiated quality of service. Introduced in InferKit 0.4.0. */
 + (void)discoverInferKitServersWithTimeout:(NSTimeInterval)timeout
-						 completionHandler:(void (^)(NSArray<NFKRemoteProvider *> *providers))completionHandler
+						 completionHandler:(void (^ NS_SWIFT_SENDABLE)(NSArray<NFKRemoteProvider *> *providers))completionHandler
 	NS_SWIFT_ASYNC_NAME(probeInferKitServers(timeout:));
 
 @end

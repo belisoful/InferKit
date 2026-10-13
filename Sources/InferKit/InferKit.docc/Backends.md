@@ -186,6 +186,7 @@ the core discovers it by name at runtime — see <doc:DynamicDiscovery>.
 ### Serving
 
 - ``NFKInferenceServer``
+- ``NFKServedBackendBuilder``
 - ``NFKServerIdentity``
 - ``NFKServerIdentityError``
 - ``NFKPinnedServers``

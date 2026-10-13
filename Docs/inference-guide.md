@@ -789,6 +789,19 @@ server.unloadsUnderMemoryPressure = YES;      // and sooner as memory runs short
 [server startWithError:&error];
 ```
 
+Swift imports the provider, and every other block InferKit calls on its own queue, as `@Sendable`, so a
+closure written in main-actor code runs nonisolated on the server's queue. `addBackendBuilder:forModelName:`
+takes an object whose build method Swift imports as throwing, and one builder can serve several models:
+
+```swift
+final class Builder: NSObject, NFKServedBackendBuilder {
+    func backend(forModelName modelName: String) throws -> any NFKInferenceBackend {
+        try BackendFactory.makeBackend(named: modelName)
+    }
+}
+server.addBackendBuilder(Builder(), forModelName: "qwen3")
+```
+
 ### A pool of chat servers
 
 Several machines serving one chat model to OpenAI clients, each chat keeping its prompt on the

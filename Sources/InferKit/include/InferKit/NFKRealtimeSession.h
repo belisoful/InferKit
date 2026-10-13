@@ -22,8 +22,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 /*! Opens the channel. messageHandler receives each text frame as text and each binary frame as data;
 	closeHandler runs once, with an error when the channel failed. */
-- (void)openWithMessageHandler:(void (^)(NSString * _Nullable text, NSData * _Nullable data))messageHandler
-				  closeHandler:(void (^)(NSError * _Nullable error))closeHandler;
+- (void)openWithMessageHandler:(void (^ NS_SWIFT_SENDABLE)(NSString * _Nullable text, NSData * _Nullable data))messageHandler
+				  closeHandler:(void (^ NS_SWIFT_SENDABLE)(NSError * _Nullable error))closeHandler;
 
 /*! Sends a text frame. */
 - (void)sendText:(NSString *)text;
@@ -174,13 +174,13 @@ typedef NS_ENUM(NSInteger, NFKRealtimeTextKind) {
 /*! Whether the socket is open. */
 @property (nonatomic, readonly, getter=isConnected) BOOL connected;
 
-@property (nonatomic, copy, nullable) void (^audioHandler)(NSData *pcm);
-@property (nonatomic, copy, nullable) void (^textHandler)(NSString *text, NFKRealtimeTextKind kind);
-@property (nonatomic, copy, nullable) void (^toolCallHandler)(NSDictionary<NSString *, id> *call);
-@property (nonatomic, copy, nullable) void (^turnHandler)(void);
-@property (nonatomic, copy, nullable) void (^errorHandler)(NSError *error);
-@property (nonatomic, copy, nullable) void (^eventHandler)(NSDictionary<NSString *, id> *event);
-@property (nonatomic, copy, nullable) void (^closeHandler)(NSError * _Nullable error);
+@property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE audioHandler)(NSData *pcm);
+@property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE textHandler)(NSString *text, NFKRealtimeTextKind kind);
+@property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE toolCallHandler)(NSDictionary<NSString *, id> *call);
+@property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE turnHandler)(void);
+@property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE errorHandler)(NSError *error);
+@property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE eventHandler)(NSDictionary<NSString *, id> *event);
+@property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE closeHandler)(NSError * _Nullable error);
 
 /*!
 	@method     sessionForProvider:apiStyle:apiKey:modelName:

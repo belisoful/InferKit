@@ -47,7 +47,7 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 /*! Decides whether a call runs. A declined call reaches the model as an error result. */
-typedef BOOL (^NFKToolCallApproval)(NSString *toolName, NSDictionary<NSString *, id> *arguments);
+typedef BOOL (^ NS_SWIFT_SENDABLE NFKToolCallApproval)(NSString *toolName, NSDictionary<NSString *, id> *arguments);
 
 /*!
 	@class      NFKToolLoop
@@ -94,12 +94,12 @@ typedef BOOL (^NFKToolCallApproval)(NSString *toolName, NSDictionary<NSString *,
 /*! The most model turns one run takes. Defaults to 8. */
 @property (nonatomic) NSUInteger maximumTurns;
 
-/*! Decides whether each call runs; nil runs every call. */
+/*! Decides whether each call runs, on the loop's thread; nil runs every call. */
 @property (nonatomic, copy, nullable) NFKToolCallApproval approvalHandler;
 
 /*! Invoked after each tool runs, on the loop's thread, so an application acts on a result (plays the
 	audio a speech tool generated) before the model answers. */
-@property (nonatomic, copy, nullable) void (^invocationHandler)(NFKToolInvocation *invocation);
+@property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE invocationHandler)(NFKToolInvocation *invocation);
 
 - (instancetype)initWithBackend:(id<NFKInferenceBackend>)backend
 						  tools:(NSArray<NFKInferenceTool *> *)tools NS_DESIGNATED_INITIALIZER;

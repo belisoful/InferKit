@@ -56,12 +56,12 @@ typedef NS_ENUM(NSInteger, NFKInferenceJobStatus) {
 /*! The error once the job has failed, otherwise nil. */
 @property (nonatomic, readonly, nullable) NSError *error;
 
-/*! Invoked once when the job reaches a terminal state. Set after the job has finished, it fires
-	immediately. */
-@property (nonatomic, copy, nullable) void (^completionHandler)(NFKInferenceJob *job);
+/*! Invoked once when the job reaches a terminal state, on the thread that finished it. Set after the
+	job has finished, it fires immediately on the setting thread. */
+@property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE completionHandler)(NFKInferenceJob *job);
 
 /*! Invoked whenever progress changes, on the thread that reported it. */
-@property (nonatomic, copy, nullable) void (^progressHandler)(NFKInferenceJob *job);
+@property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE progressHandler)(NFKInferenceJob *job);
 
 /*! Cancels the job. Runs the backend's cancellationHandler and moves to the cancelled state,
 	unless the job has already finished. */
@@ -69,8 +69,9 @@ typedef NS_ENUM(NSInteger, NFKInferenceJobStatus) {
 
 #pragma mark Producer (backends)
 
-/*! A block the job runs on cancel so the backend can abort the underlying work. */
-@property (nonatomic, copy, nullable) void (^cancellationHandler)(void);
+/*! A block the job runs on cancel so the backend can abort the underlying work, on the thread that
+	calls cancel. */
+@property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE cancellationHandler)(void);
 
 /*! Moves a queued job to running and records progress. Ignored once terminal. */
 - (void)reportProgress:(double)progress;

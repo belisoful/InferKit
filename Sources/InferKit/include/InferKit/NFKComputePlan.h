@@ -64,7 +64,7 @@ NS_ASSUME_NONNULL_BEGIN
 */
 + (void)planForCompiledModelAtURL:(NSURL *)url
 					 computeUnits:(MLComputeUnits)computeUnits
-				completionHandler:(void (^)(NFKComputePlan * _Nullable plan,
+				completionHandler:(void (^ NS_SWIFT_SENDABLE)(NFKComputePlan * _Nullable plan,
 											NSError * _Nullable error))completionHandler;
 
 /*! Operations Core ML prefers to run on the Neural Engine. */

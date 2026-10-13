@@ -26,7 +26,7 @@ extern NSString * const NFKRemoteErrorRetryAfterKey;
 
 /*! What a streamed request ends with: the response, the body collected when the status was not a
 	success (the provider's explanation), and the transport error when the connection failed. */
-typedef void (^NFKRemoteStreamCompletion)(NSHTTPURLResponse * _Nullable response,
+typedef void (^ NS_SWIFT_SENDABLE NFKRemoteStreamCompletion)(NSHTTPURLResponse * _Nullable response,
 										  NSData * _Nullable errorBody,
 										  NSError * _Nullable error);
 
@@ -81,9 +81,9 @@ typedef void (^NFKRemoteStreamCompletion)(NSHTTPURLResponse * _Nullable response
 				headers carry over, and so does the pin of a session from
 				sessionWithPinnedCertificateSHA256:.
 */
-+ (void (^)(void))streamRequest:(NSURLRequest *)request
++ (void (^ NS_SWIFT_SENDABLE)(void))streamRequest:(NSURLRequest *)request
 						session:(NSURLSession *)session
-					lineHandler:(void (^)(NSString *line))lineHandler
+					lineHandler:(void (^ NS_SWIFT_SENDABLE)(NSString *line))lineHandler
 			  completionHandler:(NFKRemoteStreamCompletion)completionHandler;
 
 /*!

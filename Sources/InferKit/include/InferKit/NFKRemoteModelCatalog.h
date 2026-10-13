@@ -54,7 +54,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (nullable NSArray<NFKRemoteModel *> *)modelsWithError:(NSError * _Nullable *)outError;
 
 /*! The asynchronous form of modelsWithError:. The handler runs on a background queue. */
-- (void)modelsWithCompletionHandler:(void (^)(NSArray<NFKRemoteModel *> * _Nullable models,
+- (void)modelsWithCompletionHandler:(void (^ NS_SWIFT_SENDABLE)(NSArray<NFKRemoteModel *> * _Nullable models,
 											  NSError * _Nullable error))completionHandler;
 
 /*!

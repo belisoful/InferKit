@@ -97,9 +97,9 @@ NS_ASSUME_NONNULL_BEGIN
 				NFKRemoteTransport. Returns the block that cancels the request. A test overrides it
 				to feed staged lines. Introduced in InferKit 0.3.0.
 */
-- (void (^)(void))streamRequest:(NSURLRequest *)request
-					lineHandler:(void (^)(NSString *line))lineHandler
-			  completionHandler:(void (^)(NSHTTPURLResponse * _Nullable response,
+- (void (^ NS_SWIFT_SENDABLE)(void))streamRequest:(NSURLRequest *)request
+					lineHandler:(void (^ NS_SWIFT_SENDABLE)(NSString *line))lineHandler
+			  completionHandler:(void (^ NS_SWIFT_SENDABLE)(NSHTTPURLResponse * _Nullable response,
 										  NSData * _Nullable errorBody,
 										  NSError * _Nullable error))completionHandler;
 

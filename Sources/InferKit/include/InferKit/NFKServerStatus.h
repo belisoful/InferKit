@@ -279,7 +279,7 @@ typedef NS_ENUM(NSInteger, NFKServerModelResidency) {
 	user-initiated quality of service. */
 + (void)fetchFromBaseURL:(NSURL *)baseURL
 				  apiKey:(nullable NSString *)apiKey
-	   completionHandler:(void (^)(NFKServerStatus * _Nullable status, NSError * _Nullable error))completionHandler
+	   completionHandler:(void (^ NS_SWIFT_SENDABLE)(NFKServerStatus * _Nullable status, NSError * _Nullable error))completionHandler
 	NS_SWIFT_ASYNC_NAME(fetchStatus(baseURL:apiKey:));
 
 /*! fetchFromBaseURL:apiKey:error: over HTTPS trusting only the certificate whose SHA-256 fingerprint
@@ -296,7 +296,7 @@ typedef NS_ENUM(NSInteger, NFKServerModelResidency) {
 + (void)fetchFromBaseURL:(NSURL *)baseURL
 				  apiKey:(nullable NSString *)apiKey
  pinnedCertificateSHA256:(nullable NSString *)pinnedCertificateSHA256
-	   completionHandler:(void (^)(NFKServerStatus * _Nullable status, NSError * _Nullable error))completionHandler
+	   completionHandler:(void (^ NS_SWIFT_SENDABLE)(NFKServerStatus * _Nullable status, NSError * _Nullable error))completionHandler
 	NS_SWIFT_ASYNC_NAME(fetchStatus(baseURL:apiKey:pinnedCertificateSHA256:));
 
 @end

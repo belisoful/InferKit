@@ -331,6 +331,45 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertTrue(found.allSatisfy { $0.apiStyle == .inferKit })
     }
 
+    // A provider and a builder written in main-actor code: both import as Sendable, so neither closure
+    // nor conformance is main-actor isolated, and the server's build on its own queue does not trap.
+    // Tools/swift-isolation-probe compiles the same calls as Swift 6 with main-actor default isolation.
+    final class EchoBuilder: NSObject, NFKServedBackendBuilder {
+        func backend(forModelName modelName: String) throws -> any NFKInferenceBackend {
+            guard modelName == "built" else {
+                throw NSError(domain: NFKInferenceServerErrorDomain, code: NFKInferenceServerError.modelNotFound.rawValue)
+            }
+            return NFKPassthroughBackend()
+        }
+    }
+
+    @MainActor
+    func testServingModelsBuiltOnDemandFromMainActorCode() {
+        let server = NFKInferenceServer()
+        server.residencyCheckInterval = 0
+        server.addBackendProvider({ _ in NFKPassthroughBackend() }, forModelName: "provided")
+        server.addBackendBuilder(EchoBuilder(), forModelName: "built")
+        server.addBackendBuilder(EchoBuilder(), forModelName: "refused")
+
+        let loaded = expectation(description: "both models built")
+        loaded.expectedFulfillmentCount = 2
+        for name in ["provided", "built"] {
+            server.loadModelNamed(name) { error in
+                XCTAssertNil(error)
+                loaded.fulfill()
+            }
+        }
+        let refused = expectation(description: "the builder's error reaches the handler")
+        server.loadModelNamed("refused") { error in
+            XCTAssertEqual((error as NSError?)?.code, NFKInferenceServerError.modelNotFound.rawValue)
+            refused.fulfill()
+        }
+        wait(for: [loaded, refused], timeout: 10)
+        XCTAssertEqual(server.residency(forModelName: "provided"), .resident)
+        XCTAssertEqual(server.residency(forModelName: "built"), .resident)
+        XCTAssertEqual(server.residency(forModelName: "refused"), .notLoaded)
+    }
+
     // MARK: Models as tools (Docs/examples.md: Models as tools)
 
     // A Swift backend adopts the protocol by its imported names; this one calls the tool it is

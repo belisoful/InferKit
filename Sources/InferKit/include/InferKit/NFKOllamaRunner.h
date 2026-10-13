@@ -64,9 +64,9 @@ NS_ASSUME_NONNULL_BEGIN
 				overrides it to feed staged lines.
 */
 - (void)streamRequest:(NSURLRequest *)request
-		  lineHandler:(void (^)(NSDictionary<NSString *, id> *line))lineHandler
-	completionHandler:(void (^)(NSError * _Nullable error))completionHandler
-		 cancellation:(void (^)(void (^cancel)(void)))cancellation;
+		  lineHandler:(void (^ NS_SWIFT_SENDABLE)(NSDictionary<NSString *, id> *line))lineHandler
+	completionHandler:(void (^ NS_SWIFT_SENDABLE)(NSError * _Nullable error))completionHandler
+		 cancellation:(void (^ NS_SWIFT_SENDABLE)(void (^ NS_SWIFT_SENDABLE cancel)(void)))cancellation;
 
 @end
 

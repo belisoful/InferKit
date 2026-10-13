@@ -1089,6 +1089,45 @@ keeping them in memory, and unloads idle ones.
   so every timing is exact and no timer races the test. `NFKMLXModelInfoTests` checks that an unload
   empties MLX's cache.
 
+**Sendable blocks (2026-10-13).** An app's Swift 6 service (`-default-isolation MainActor`) trapped in
+`_swift_task_checkIsolatedSwift` → `dispatch_assert_queue_fail` when the server called a provider
+closure written inline: the block type was not Sendable, so Swift inferred the closure main-actor
+isolated and checked the queue when the server called it on its own. Every block InferKit calls off the
+caller's queue is now `NS_SWIFT_SENDABLE` (written `(^ NS_SWIFT_SENDABLE)` in a parameter,
+`(^ NS_SWIFT_SENDABLE name)` in a typedef or property), which imports as `@Sendable` and leaves the
+closure nonisolated. The attribute changes nothing for Objective-C callers or overriders. The audit:
+
+- Server: `NFKServedBackendProvider` → a global user-initiated queue; `loadModelNamed:`'s handler → a
+  global user-initiated queue; `memoryPressureProvider` → the residency queue, a request's queue, or
+  the reader of `memoryPressure`.
+- `NFKInferenceJob`: `completionHandler` → the thread that finished the job; `progressHandler` → the
+  reporting thread; `cancellationHandler` → the thread that calls `cancel`.
+- Tools: `NFKToolHandler`, `NFKBackendToolRequestBuilder`, `NFKBackendToolResultDescriber` → the
+  invoking thread (a loop's thread, the MCP route's global queue); `NFKToolLoop.approvalHandler` and
+  `invocationHandler` → the loop's thread.
+- Completion handlers on a background queue: `NFKRemoteModelCatalog`, `NFKRemoteProvider` (local
+  providers, first local provider, models, Bonjour discovery), `NFKServerStatus` fetches, `NFKHFHub`
+  download, `NFKComputePlan` (Core ML's queue), `NFKSpeechRecognitionBackend` authorization (an
+  arbitrary thread).
+- Transport seams: `NFKRemoteTransport`'s stream (line handler and `NFKRemoteStreamCompletion` on the
+  session's delegate queue, the returned cancel block on the cancelling thread) and every backend's
+  `streamRequest:lineHandler:completionHandler:` override point; `NFKOllamaRunner`'s pull seam.
+- `NFKRealtimeSession`: the seven handler properties and the `NFKRealtimeSocket` open handlers → the
+  socket's queue.
+
+Not annotated: blocks InferKit calls synchronously on the caller's thread, and notifications
+(`NFKPinnedServers` posts on the thread that changed the pins). `NFKServedBackendBuilder` is the
+throwing Swift form of the provider: a protocol (Swift cannot write a throwing `@convention(block)`
+closure, and a pure Objective-C target ships no Swift overlay) whose method imports as
+`backend(forModelName:) throws`. The protocol itself is `NS_SWIFT_SENDABLE`; measured with the probe
+below, a conformance declared in main-actor code then runs nonisolated, and without the attribute the
+same conformance traps. `Tools/swift-isolation-probe/run.sh` compiles `main.swift` as Swift 6 with
+`-default-isolation MainActor` against the built core and calls each kind of block from InferKit's
+queues; it exits 0, and the same file against headers stripped of the attribute exits with SIGTRAP
+(133) at the first provider. `SwiftExamples` stays in Swift 5 mode (tools version 5.9), where the
+isolation check is not emitted, so its `testServingModelsBuiltOnDemandFromMainActorCode` pins the
+imported shapes and the probe pins the behavior.
+
 Errors carry `inferkit_domain`, `inferkit_code`, and `inferkit_user_info` beside the OpenAI `message`,
 `type`, and `code`. The transport takes an `NFKInferenceErrorDomain` code from that body over its
 status reading, and the native client rebuilds the whole `NSError`. Status mapping: not ready 503,
