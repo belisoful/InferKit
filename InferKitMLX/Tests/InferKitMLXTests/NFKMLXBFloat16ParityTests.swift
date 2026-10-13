@@ -2675,6 +2675,30 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         assertRoundingPlacement("sd3", endToEnd: rows, isolated: rows)
     }
 
+    // Pipeline glue against torch at bf16 and float16 (`run_reference.py glue_rounding`), element for element:
+    // classifier-free guidance at a scale exact in neither type, and Z-Image's image-to-image latent
+    // normalization. MLX rounds a `Float` factor to the tensor's type first, which the record tells apart.
+    func testPipelineGlueRoundsAsTorchDoes() throws {
+        try requireMLXRuntime()
+        let record = try self.record("glue_rounding.safetensors")
+        for (name, dtype) in [("bf16", DType.bfloat16), ("f16", .float16)] {
+            func value(_ key: String) throws -> MLXArray {
+                try XCTUnwrap(record["\(name).\(key)"], "no \(name).\(key)").asType(dtype)
+            }
+            let (u, c, x) = (try value("u"), try value("c"), try value("x"))
+            let guided = NFKReferenceRounding.guided(u, c, scale: 3.3)
+            let normalized = NFKReferenceRounding.scaled(NFKReferenceRounding.shifted(x, by: -0.1159), by: 0.3611)
+            XCTAssertTrue(arrayEqual(guided, try value("guided")).item(Bool.self), "\(name): guidance as torch rounds it")
+            XCTAssertTrue(arrayEqual(normalized, try value("normalized")).item(Bool.self),
+                          "\(name): the latent normalization as torch rounds it")
+            XCTAssertFalse(arrayEqual(u + 3.3 * (c - u), try value("guided")).item(Bool.self),
+                           "\(name): the record tells a factor rounded first from torch's")
+            let wideShift = NFKReferenceRounding.scaled((x.asType(.float32) - 0.1159).asType(dtype), by: 0.3611)
+            XCTAssertFalse(arrayEqual(wideShift, try value("normalized")).item(Bool.self),
+                           "\(name): the record tells an offset added in float32 from torch's, which rounds it first")
+        }
+    }
+
     // Z-Image-Turbo's transformer (`IK_VAL_Z_IMAGE_TURBO`, released float32) at bf16 as its generator loads it,
     // cut to its refiners and its first two unified layers, against diffusers' `ZImageTransformer2DModel` at
     // bf16 (`z_image_release_probe`; the float32 side widens the same bf16 weights) over a seeded 16×24 latent

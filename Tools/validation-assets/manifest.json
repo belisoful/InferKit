@@ -5682,6 +5682,11 @@
       "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_BLOCK_FLOOR=1 | (float32) sd_vae_probe --checkpoint $IK_VAL_FLUX2_KLEIN_4B_VAE (AutoencoderKLFlux2 read from the config's class; both quant convolutions; codec.whiten / codec.unwhiten over a seeded patched latent at the latent's type, as Flux2KleinPipeline computes them; each bf16 convolution in float32 rounded once; 256 pixels)"
     },
     {
+      "records": "glue_rounding",
+      "environment": "ltx",
+      "command": "glue_rounding (no checkpoint: torch's own guidance combine at a scale of 3.3 and latent normalization (x - 0.1159) * 0.3611 over seeded bf16 and float16 vectors)"
+    },
+    {
       "records": "flux_vae_bf16 / flux_vae_f32",
       "environment": "sd",
       "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_BLOCK_FLOOR=1 | (float32) sd_vae_probe --checkpoint $IK_VAL_FLUX_SCHNELL_FULL/vae (256 pixels; the bf16 run computes each convolution in float32 and rounds once, as torch's CPU kernel does to accumulation order, which at bf16 takes a reference kernel some 500 times slower; the float32 run rounds every parameter to bf16 and back)"

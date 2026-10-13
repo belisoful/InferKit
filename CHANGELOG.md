@@ -595,8 +595,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - SD3's timestep sinusoids take the pooled projection's type before the conditioning MLP, as diffusers
   casts them. A float32 table had promoted the whole conditioning to float32 under a bf16 load. The
   patch embedding's convolution rounds once.
-- The FLUX, FLUX ControlNet, SD3, SD3 ControlNet, and SANA pipelines scale and shift a half-precision
-  latent with the factor held in float32 and the result rounded once.
+- The FLUX, FLUX ControlNet, SD3, SD3 ControlNet, and SANA pipelines scale a half-precision latent by a
+  factor held in float32 and round the result once. The four that shift add the shift at the latent's
+  type, as torch adds a Python float.
 - Measured at bf16: the FLUX.1 autoencoder holds every resnet, sampler, and attention of both coders
   within 0.036 of its own block floor, and the SD3 transformer's velocity matches the reference's bit for
   bit.
@@ -610,6 +611,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   existing factories keep) or `NFKMLXWeightPrecisionFloat32`, for local, downloaded, and asynchronously
   downloaded weights.
 - Measured at float16 on tiny: every encoder and decoder layer within 0.35 of its own block floor.
+
+#### Pipeline glue rounds as torch does at a half precision
+
+- Adding a Python float to a half-precision tensor rounds the float to the tensor's type first in torch,
+  unlike a multiply or a divide. `shifted` had added in float32, so the FLUX, FLUX ControlNet, SD3, and
+  SD3 ControlNet pipelines shifted their bf16 latents, and FLUX.2 added its batch-norm epsilon, apart
+  from diffusers. It now adds as MLX does.
+- Classifier-free guidance combines with the scale multiplied in float32 (`guided`) in the Stable Diffusion,
+  FLUX.2, Qwen-Image, Wan, LTX-Video, SANA, and SD3 ControlNet pipelines. SD3 combines at the
+  transformer's type before its float32 step, as diffusers does.
+- Z-Image's image-to-image encodes at the autoencoder's type and normalizes its latent there.
 
 #### Every held bf16 seam carries a block floor
 
@@ -634,8 +646,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - The latent codec read its batch-norm statistics at float32, so a bf16 latent left un-whitening as
   float32 and the bf16 autoencoder decoded in float32. The codec now loads at the release's type with the
   autoencoder (`codec(fromReleaseDirectory:epsilon:patch:precision:)`), and the decoder takes its type.
-- Whitening divides by `sqrt(variance + epsilon)`, the epsilon added in float32 and rounded once, as the
-  pipeline computes it.
+- Whitening divides by `sqrt(variance + epsilon)` as the pipeline computes it: the epsilon added at the
+  statistics' type, then the root taken in float32 and rounded once.
 - Images encode at the autoencoder's type, for references and inpainting alike.
 - Measured at bf16 on klein 4B: every stage of both coders and both codec directions within 0.045 of its
   own block floor.

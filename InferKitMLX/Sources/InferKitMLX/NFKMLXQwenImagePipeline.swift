@@ -163,7 +163,7 @@ public final class NFKMLXQwenImagePipeline {
                     latents: tokens, encoderHidden: negativeEmbeddings, timestep: timestep,
                     imageShapes: shapes, imageMask: negativeSlots, encoderMask: nil)
                 let negative = unconditioned[(unconditioned.dim(0) - tokens.dim(0))...]
-                velocity = negative + guidance * (velocity - negative)
+                velocity = NFKReferenceRounding.guided(negative, velocity, scale: guidance)
             }
             tokens = scheduler.step(velocity: velocity, sample: tokens, index: index)
             eval(tokens)

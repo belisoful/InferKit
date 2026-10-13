@@ -203,6 +203,11 @@ byte-identical.
 - A tensor times a Python float multiplies in float32 (`scaled`, `divided`). MLX rounds a `Float`
   literal to bf16 first, which changes the product when the factor is not exact in bf16 (0.22,
   `1536^-0.5`, `2^-0.5`, `144^-0.5`).
+- A tensor plus or minus a Python float is the other way round: torch's CPU kernels round the scalar to
+  the half type first, which MLX's own `x + offset` does (`shifted`). Measured on torch 2.8 and 2.14, at
+  bf16 and float16, with `run_reference.py glue_rounding` holding both rules.
+- A diffusers pipeline combines classifier-free guidance at the transformer's type with a Python-float
+  scale (`guided`).
 - A float32 array mixed into a bf16 expression promotes the rest of the layer to float32. Gemma 3n's
   AltUp floor `MLXArray(Float(1e-5))` and the M-RoPE tables did this; both now take the stream's type.
   So did Voxtral's computed Whisper sinusoids, FLUX's rotary tables, and every diffusion transformer's

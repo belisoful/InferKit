@@ -69,8 +69,10 @@ public final class NFKMLXZImagePipeline {
     public func generate(image: MLXArray, promptEmbeds: MLXArray, negativeEmbeds: MLXArray?,
                          strength: Float = 0.6, steps: Int = 20, guidance: Float = 4, seed: UInt64 = 0) -> MLXArray {
         MLXRandom.seed(seed)
-        let mean = holder.vae.encode(image).mean                          // [1, lh, lw, 16]
-        let imageLatent = ((mean - shiftFactor) * scaleFactor)[0].transposed(2, 0, 1).expandedDimensions(axis: 1)
+        // diffusers encodes the image at the autoencoder's type and normalizes the latent there.
+        let mean = holder.vae.encode(image.asType(NFKReferenceRounding.parameterType(of: holder.vae))).mean
+        let normalized = NFKReferenceRounding.scaled(NFKReferenceRounding.shifted(mean, by: -shiftFactor), by: scaleFactor)
+        let imageLatent = normalized[0].transposed(2, 0, 1).expandedDimensions(axis: 1)
         let scheduler = self.scheduler(steps: steps, latent: imageLatent)
         let startIndex = steps - min(Int(Float(steps) * strength), steps)
 

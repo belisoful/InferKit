@@ -114,7 +114,7 @@ public final class NFKMLXLTXPipeline {
                 let unconditioned = holder.transformer(latent, text: negativeText, timestep: step,
                                                        grid: (frames, height, width), ropeScale: ropeScale,
                                                        textMask: negativeMask)
-                velocity = unconditioned + guidance * (conditioned - unconditioned)
+                velocity = NFKReferenceRounding.guided(unconditioned, conditioned, scale: guidance)
             }
             latent = scheduler.step(velocity: velocity, sample: latent, index: index)
             eval(latent)

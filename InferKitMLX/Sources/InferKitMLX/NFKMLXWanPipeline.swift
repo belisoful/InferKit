@@ -82,7 +82,7 @@ public final class NFKMLXWanPipeline {
             var velocity = conditioned
             if guides, let negativeEmbeds {
                 let unconditioned = holder.transformer(latent.asType(dtype), text: negativeEmbeds, t: step)
-                velocity = unconditioned + guidance * (conditioned - unconditioned)
+                velocity = NFKReferenceRounding.guided(unconditioned, conditioned, scale: guidance)
             }
             latent = scheduler.step(velocity: velocity, sample: latent, index: index)
             eval(latent)

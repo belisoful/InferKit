@@ -71,7 +71,7 @@ public final class NFKMLXSANAPipeline {
             var velocity = conditioned
             if let negativeEmbeds {
                 let unconditioned = holder.transformer(latent, capFeats: negativeEmbeds, t: step)
-                velocity = unconditioned + guidance * (conditioned - unconditioned)
+                velocity = NFKReferenceRounding.guided(unconditioned, conditioned, scale: guidance)
             }
             latent = scheduler.step(velocity: velocity, sample: latent, index: index)
             eval(latent)

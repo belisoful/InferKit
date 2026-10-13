@@ -441,7 +441,7 @@ final class NFKMLXSDTextToImageModel {
                                        context: concatenated([unconditional, conditional], axis: 0),
                                        added: added(context, key: "unpooled", other: "pooled", batch: 2),
                                        imageConditioning: image)
-        let guided = prediction[0] + guidanceScale * (prediction[1] - prediction[0])
+        let guided = NFKReferenceRounding.guided(prediction[0], prediction[1], scale: guidanceScale)
         return guided.reshaped(latent.shape).asType(latent.dtype)
     }
 

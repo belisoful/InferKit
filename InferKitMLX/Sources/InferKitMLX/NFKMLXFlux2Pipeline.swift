@@ -241,7 +241,7 @@ public final class NFKMLXFlux2Pipeline {
             return conditional
         }
         let unconditional = predict(negativeEmbeds.asType(latentType))
-        return unconditional + guidanceScale * (conditional - unconditional)
+        return NFKReferenceRounding.guided(unconditional, conditional, scale: guidanceScale)
     }
 
     /// The autoencoder's latent mean of `image` in `[-1, 1]`, encoded at the autoencoder's type as the

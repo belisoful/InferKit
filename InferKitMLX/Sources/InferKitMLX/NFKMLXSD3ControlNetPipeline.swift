@@ -99,7 +99,7 @@ public final class NFKMLXSD3ControlNetPipeline {
                                                 pooled: uncondPooled, timestep: t, scale: controlnetScale)
                 let unconditioned = holder.transformer(latent, encoderHidden: uncond, pooled: uncondPooled,
                                                        timestep: t, blockControlnetHiddenStates: uncondResiduals)
-                prediction = unconditioned + guidance * (conditioned - unconditioned)
+                prediction = NFKReferenceRounding.guided(unconditioned, conditioned, scale: guidance)
             }
             latent = scheduler.step(velocity: prediction, sample: latent, index: index)
             eval(latent)

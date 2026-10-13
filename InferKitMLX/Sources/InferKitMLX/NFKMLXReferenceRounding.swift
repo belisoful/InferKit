@@ -38,10 +38,18 @@ enum NFKReferenceRounding {
         return (x.asType(.float32) / divisor).asType(x.dtype)
     }
 
-    /// `x + offset` as torch adds a Python float to a tensor: in float32, rounded once.
+    /// Classifier-free guidance as a diffusers pipeline combines two predictions with a Python-float scale:
+    /// `unconditional + scale · (conditional − unconditional)`, the difference rounded to the predictions'
+    /// type, the product formed in float32 and rounded once, and the sum rounded.
+    static func guided(_ unconditional: MLXArray, _ conditional: MLXArray, scale: Float) -> MLXArray {
+        unconditional + scaled(conditional - unconditional, by: scale)
+    }
+
+    /// `x + offset` as torch adds a Python float to a tensor. torch's CPU kernels round the offset to a
+    /// half-precision tensor's type before an add or a subtraction (a multiply or a divide keeps it float32),
+    /// which MLX's own `x + offset` does.
     static func shifted(_ x: MLXArray, by offset: Float) -> MLXArray {
-        guard isReduced(x) else { return x + offset }
-        return (x.asType(.float32) + offset).asType(x.dtype)
+        x + offset
     }
 
     /// transformers' Gemma RMS norm: `x · rsqrt(mean(x²) + eps) · (1 + w)` in float32 throughout,

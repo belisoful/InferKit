@@ -813,8 +813,8 @@ public final class NFKMLXFlux2LatentCodec: Module {
     }
 
     /// The running mean and `sqrt(variance + epsilon)` cast to `dtype`. The deviation forms in the
-    /// statistics' own type as the reference pipeline forms it: the epsilon added in float32 and rounded once,
-    /// then the root rounded once.
+    /// statistics' own type as the reference pipeline forms it: the epsilon added at that type, as torch adds a
+    /// Python float, then the root taken in float32 and rounded once.
     private func statistics(as dtype: DType) -> (mean: MLXArray, deviation: MLXArray) {
         let deviation = NFKReferenceRounding.wide(NFKReferenceRounding.shifted(runningVariance, by: epsilon)) { sqrt($0) }
         return (runningMean.asType(dtype), deviation.asType(dtype))

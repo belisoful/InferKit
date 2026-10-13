@@ -81,14 +81,13 @@ public final class NFKMLXSD3Pipeline {
         for index in 0 ..< scheduler.timesteps.count {
             let t = MLXArray([scheduler.timesteps[index]])
             let input = latent.asType(dtype)
+            // diffusers combines the two predictions at the transformer's type.
             var prediction = holder.transformer(input, encoderHidden: cond, pooled: condPooled, timestep: t)
-                .asType(.float32)
             if let uncond, let uncondPooled {
                 let unconditioned = holder.transformer(input, encoderHidden: uncond, pooled: uncondPooled, timestep: t)
-                    .asType(.float32)
-                prediction = unconditioned + guidance * (prediction - unconditioned)
+                prediction = NFKReferenceRounding.guided(unconditioned, prediction, scale: guidance)
             }
-            latent = scheduler.step(velocity: prediction, sample: latent, index: index)
+            latent = scheduler.step(velocity: prediction.asType(.float32), sample: latent, index: index)
             eval(latent)
         }
         return latent
