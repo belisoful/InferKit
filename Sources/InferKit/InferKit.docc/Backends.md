@@ -187,6 +187,7 @@ the core discovers it by name at runtime — see <doc:DynamicDiscovery>.
 - ``NFKBalancingPolicy``
 - ``NFKServerStatus``
 - ``NFKServerModelStatus``
+- ``NFKServerModelResidency``
 - ``NFKServerRunStatus``
 - ``NFKServerHostStatus``
 - ``NFKServerLoad``

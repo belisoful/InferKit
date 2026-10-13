@@ -1030,6 +1030,56 @@ and start times on `systemUptime`, and the job's last reported progress.
   it only when it conforms to `NFKServingRuntimeStatus`, so the core names `NFKMLXGPU` without linking
   MLX. A `Class<Protocol>` variable takes message sends, not dot syntax, for class properties.
 
+**Residency and unloading (2026-10-13).** Asked for by an app's service, which lists models without
+keeping them in memory, and unloads idle ones.
+
+- `addBackendProvider:forModelName:` hosts a model as a block that builds its backend.
+  `NFKServedModel` holds `residency` (not loaded, loading, resident) on its lock. A run that arrives
+  while the model is not resident joins `pending`, and the first one starts the build on a global
+  user-initiated queue; later ones wait in the same queue. A finished build starts up to `limit`
+  waiting runs. A failed one fails every waiting run with the provider's error unchanged (so its
+  status mapping holds), records `load_error`, and returns to not loaded. Runs waiting for a build
+  that will start them at once (up to `limit`) do not count against `maximumQueuedRunsPerModel`.
+- Every unload goes through `unloadPassingTest:`, which releases the backend only when the model is
+  provider-hosted, resident, and has nothing in `running` or `pending`, and takes the check and the
+  release under one lock hold. The backend is released off the lock inside an `@autoreleasepool`, so it
+  is gone before the runtime-cache release. `unloadModelNamed:` sets `unloadRequested`, which the end
+  of the last run (or of a build) acts on, so an unload never cuts a run. `loadModelNamed:` clears it.
+- An `addBackend:` model has no provider and is never unloaded; `unloadModelNamed:` answers NO. A model
+  that is not resident reports `ready: true`, since `NFKRemoteInferKitBackend.prepareWithError:` and
+  the balancer refuse a model that is not ready, and it describes the backend it last held (identifier,
+  inputs, parameters, `modelInfo`), snapshotted when the build finished.
+- The estimated wait of a model that is not resident adds the last build's duration (less the time
+  this build has run), and is nil before any build has finished.
+- Idle timeout = min(idle interval, pressure timeout). An idle interval of 0 (server or per model) is
+  infinity. The pressure timeout is infinity below `memoryPressureOnset`; from the onset it runs
+  linearly from the idle interval (or `pressureUnloadInterval` when idle unloading is off) at the onset
+  to `shortestIdleUnloadInterval` at 1. The onset is inclusive, so the kernel's warning level (0.6)
+  at the default onset (0.6) already applies `pressureUnloadInterval` to a model whose idle unloading
+  is off.
+- The default pressure is `NFKServedHostStatus.memoryPressureFraction`: the higher of the kernel's
+  level (normal 0, warning 0.6, critical 1, read as the status route reads it) and the process
+  footprint over `NFKHardwareProfile.recommendedWorkingSetSize`, clamped to 1.
+- `unloadIdleModels` (the timer, every `residencyCheckInterval` on a utility serial queue, or the
+  host) unloads every model past its idle interval, then of the models past only a pressure-shortened
+  timeout, the least recently used one, at most once per `pressureUnloadHysteresis`. A falling pressure
+  reading is held for the same interval, a rising one is taken at once. `unloadGracePeriod` counts from
+  the build's end. `lastUsedAt` moves when a run takes or releases a slot and when a build finishes.
+- After an unload the server asks each registered runtime class that implements the optional
+  `NFKServingRuntimeStatus.releaseCachedMemory` to return its cache, from the residency queue and only
+  when no hosted model has a run in flight or a build in progress, because an MLX cache trim frees
+  buffers in-flight work still reads (`mlx-runtime-gotchas.md`). `NFKMLXGPU` implements it as
+  `synchronize()` then `clearCache()`, and does nothing without the Metal library. Without it an
+  unloaded MLX model's buffers stay in MLX's cache and the footprint does not fall.
+- Status: each model's `residency` object (`state`, `unloadable`, `last_used` in seconds since 1970,
+  `idle_timeout_seconds` when finite, `load_seconds`, `load_error`, `loads`, `unloads`) in both the
+  status route and the `/models` entry; `NFKServerModelStatus` reads it. A server without it reads as
+  `NFKServerModelResidencyUnknown`.
+- Tests: `NFKServedResidencyTests` replaces the server's clock (`uptimeProvider`, a private property
+  the test declares in a category) and its pressure provider, and sets `residencyCheckInterval` to 0,
+  so every timing is exact and no timer races the test. `NFKMLXModelInfoTests` checks that an unload
+  empties MLX's cache.
+
 Errors carry `inferkit_domain`, `inferkit_code`, and `inferkit_user_info` beside the OpenAI `message`,
 `type`, and `code`. The transport takes an `NFKInferenceErrorDomain` code from that body over its
 status reading, and the native client rebuilds the whole `NSError`. Status mapping: not ready 503,

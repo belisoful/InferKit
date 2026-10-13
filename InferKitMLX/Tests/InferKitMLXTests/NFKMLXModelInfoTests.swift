@@ -207,4 +207,27 @@ final class NFKMLXModelInfoTests: XCTestCase {
         XCTAssertNotNil(mlx?["memory_limit_bytes"])
         XCTAssertNil(mlx?["cache_limit_bytes"], "reading the cache limit would trim the cache")
     }
+
+    func testUnloadingAServedModelReturnsMLXsCacheToTheSystem() throws {
+        try requireMLXRuntime()
+        let server = NFKInferenceServer()
+        server.residencyCheckInterval = 0
+        server.addBackendProvider({ _ in
+            let net = NFKMLXLanguage.makeNet(.tiny)
+            eval(net)
+            return NFKMLXLanguageBackend(net: net, tokenizer: nil, identifier: "tiny")
+        }, forModelName: "tiny")
+        let loaded = expectation(description: "the provider built the model")
+        server.loadModelNamed("tiny") { error in
+            XCTAssertNil(error)
+            loaded.fulfill()
+        }
+        wait(for: [loaded], timeout: 60)
+        XCTAssertEqual(server.residency(forModelName: "tiny"), .resident)
+
+        XCTAssertTrue(server.unloadModelNamed("tiny"))
+        XCTAssertEqual(server.residency(forModelName: "tiny"), .notLoaded)
+        let released = expectation(for: NSPredicate { _, _ in NFKMLXGPU.cacheMemory == 0 }, evaluatedWith: nil)
+        wait(for: [released], timeout: 10)
+    }
 }

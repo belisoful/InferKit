@@ -190,6 +190,22 @@ static NSNumber * _Nullable NFKServedGPUUtilization(void)
 	return NFKServedPressureName((unsigned long)level);
 }
 
+- (double)memoryPressureFraction
+{
+	int level = NFKServedKernelPressureLevel();
+	unsigned long observed = level != 0 ? (unsigned long)level : self.observedPressure;
+	double levelFraction = 0.0;
+	if (observed & DISPATCH_MEMORYPRESSURE_CRITICAL) {
+		levelFraction = 1.0;
+	} else if (observed & DISPATCH_MEMORYPRESSURE_WARN) {
+		levelFraction = 0.6;
+	}
+	NSInteger budget = NFKHardwareProfile.currentProfile.recommendedWorkingSetSize;
+	NSNumber *footprint = NFKServedProcessFootprint();
+	double used = budget > 0 && footprint != nil ? footprint.doubleValue / (double)budget : 0.0;
+	return MIN(MAX(levelFraction, used), 1.0);
+}
+
 - (NSDictionary<NSString *, id> *)memoryJSONObject
 {
 	NFKHardwareProfile *profile = NFKHardwareProfile.currentProfile;

@@ -24,6 +24,10 @@ NS_ASSUME_NONNULL_BEGIN
 	describe; nil uses the app's caches directory. */
 - (NSDictionary<NSString *, id> *)JSONObjectForStorageURL:(nullable NSURL *)storageURL;
 
+/*! Memory pressure in 0...1: the higher of the kernel's level (normal 0, warning 0.6, critical 1) and
+	this process's footprint as a share of Metal's recommended working set. */
+- (double)memoryPressureFraction;
+
 /*! The thermal state's name: nominal, fair, serious, or critical. */
 + (NSString *)thermalStateName;
 

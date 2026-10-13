@@ -757,6 +757,38 @@ server a load balancer for the others. `reportsHostDetails` set to NO leaves out
 the machine and keeps the models' load. GPU utilization counts every process and stays high while
 one run executes, so a balancer routes on the queue figures and the estimated wait.
 
+### Models loaded on demand
+
+A server can list a model before it is in memory. `addBackendProvider:forModelName:` hosts a block
+that builds the backend, and the model's first request builds it. Requests that arrive during the
+build wait for the same build. A failed build fails those requests with its error, and the next
+request builds again. `unloadModelNamed:` releases the backend and keeps the model listed; it waits
+for the model's runs to end. A model added with `addBackend:forModelName:` stays resident.
+
+Two options unload a model that sits unused, each independent of the other:
+
+- `idleUnloadInterval` unloads a model after a fixed idle time, and `setIdleUnloadInterval:forModelName:`
+  sets one model's own.
+- `unloadsUnderMemoryPressure` shortens that time as memory pressure rises past
+  `memoryPressureOnset`, down to `shortestIdleUnloadInterval` at full pressure. With idle unloading
+  off, models leave only under pressure, after `pressureUnloadInterval`.
+
+A model just built is kept for `unloadGracePeriod`, a model with a run in flight or queued is never
+unloaded, and under pressure the least recently used model goes first. Each model's entry in the
+status route reports its `residency`: whether it is loaded, when it was last used, and its idle
+timeout at the current pressure. After an unload, the server asks MLX to return its buffer cache to
+the system.
+
+```objc
+NFKInferenceServer *server = [[NFKInferenceServer alloc] init];
+[server addBackendProvider:^id<NFKInferenceBackend>(NSError **buildError) {
+	return [NFKMLXLanguage backendWithDirectoryURL:releaseDirectory error:buildError];
+} forModelName:@"qwen3"];
+server.idleUnloadInterval = 15 * 60;          // unload after fifteen idle minutes
+server.unloadsUnderMemoryPressure = YES;      // and sooner as memory runs short
+[server startWithError:&error];
+```
+
 ### A pool of chat servers
 
 Several machines serving one chat model to OpenAI clients, each chat keeping its prompt on the

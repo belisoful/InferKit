@@ -321,4 +321,15 @@ extension NFKMLXGPU: NFKServingRuntimeStatus {
                 "peak_memory_bytes": peakMemory,
                 "memory_limit_bytes": memoryLimit]
     }
+
+    /// Returns MLX's buffer cache to the system once the GPU stream has drained, which
+    /// `NFKInferenceServer` asks for after it unloads a model. A process without MLX's Metal library
+    /// has no cache and is left alone. Introduced in InferKit 0.4.0.
+    @objc public static func releaseCachedMemory() {
+        guard metalLibraryURL != nil else {
+            return
+        }
+        synchronize()
+        clearCache()
+    }
 }

@@ -10,6 +10,7 @@
 #import <Security/Security.h>
 #import <InferKit/NFKInferenceBackend.h>
 #import <InferKit/NFKInferenceTool.h>
+#import <InferKit/NFKServerStatus.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -68,7 +69,19 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 /*! The runtime's state now, as strings and numbers. */
 @property (class, nonatomic, readonly, copy) NSDictionary<NSString *, id> *runtimeStatus;
 
+@optional
+
+/*! Returns the memory the runtime keeps cached for reuse to the system. A server calls it after it
+	unloads a model, when none of its models has a run in flight or a backend being built. Introduced in
+	InferKit 0.4.0. */
++ (void)releaseCachedMemory;
+
 @end
+
+/*! Builds a hosted model's backend: returns it, or nil with an error. A server calls it on a background
+	queue at user-initiated quality of service when a request needs the model and its backend is not in
+	memory, one build at a time per model. Introduced in InferKit 0.4.0. */
+typedef id<NFKInferenceBackend> _Nullable (^NFKServedBackendProvider)(NSError * _Nullable * _Nullable error);
 
 /*!
 	@class      NFKInferenceServer
@@ -152,6 +165,43 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 				X-InferKit-Queued, and X-InferKit-Estimated-Wait, taken when the reply's head is
 				written.
 
+				Residency. A model hosted with addBackendProvider:forModelName: is listed before its
+				backend exists, and its first request builds it:
+				- A request that finds the model not loaded starts the build and waits in the model's
+				  queue. Requests that arrive during the build wait for the same build.
+				- A build that fails fails every request waiting for it with the provider's error and
+				  leaves the model not loaded, so the next request builds again.
+				- unloadModelNamed: releases the backend and keeps the model hosted. It waits until the
+				  model has no run in flight or queued, and never cuts a run.
+				- A model hosted with addBackend:forModelName: is resident from the start and stays
+				  resident, since the server has no way to build its backend again.
+				- A model that is not resident reports ready, since a request builds it, and describes
+				  the backend it last held: its identifier, inputs, parameters, and modelInfo.
+				Each model's "residency" object carries state (not_loaded, loading, or resident),
+				unloadable, last_used (seconds since 1970), idle_timeout_seconds (absent when the model
+				is not unloaded for idleness), load_seconds, load_error, loads, and unloads.
+
+				Unloading. Two independent options release a provider-hosted model that sits unused:
+				- idleUnloadInterval (and setIdleUnloadInterval:forModelName:) unloads a model after a
+				  fixed idle time.
+				- unloadsUnderMemoryPressure shortens that time as memory pressure rises. Pressure is a
+				  value in 0...1 from memoryPressureProvider. Below memoryPressureOnset it changes
+				  nothing. From the onset to 1 the timeout falls linearly from the model's idle interval,
+				  or from pressureUnloadInterval when idle unloading is off, to
+				  shortestIdleUnloadInterval.
+				The model's timeout is the shorter of the two, an option that is off contributing no
+				limit. With both off, a model stays until unloadModelNamed:. Guards:
+				- A model is not unloaded within unloadGracePeriod of its build finishing, or while a run
+				  is in flight or queued.
+				- A model past its idle interval is unloaded. Of the models past only their
+				  pressure-shortened timeout, the least recently used one is unloaded per check, and the
+				  next such unload waits pressureUnloadHysteresis.
+				- A pressure reading that falls takes effect once it has held for
+				  pressureUnloadHysteresis; a rising one takes effect at once.
+				The server checks every residencyCheckInterval seconds. After an unload, when none of its
+				models has a run in flight or a backend being built, it asks each registered runtime that
+				implements releaseCachedMemory to return its cache.
+
 				The status route's "host" object describes the machine: chip, model identifier, and
 				core counts; thermal_state (nominal, fair, serious, critical) and low_power_mode;
 				memory (physical, available, recommended working set, pressure as normal, warning,
@@ -219,6 +269,53 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 	are stored. nil uses the app's caches directory. */
 @property (nonatomic, copy, nullable) NSURL *storageDirectoryURL;
 
+/*! The seconds a provider-hosted model may sit idle before it is unloaded, for every model without its
+	own interval. Defaults to 0, which turns idle unloading off. Introduced in InferKit 0.4.0. */
+@property (nonatomic, assign) NSTimeInterval idleUnloadInterval;
+
+/*! Sets one model's idle interval, which overrides idleUnloadInterval; 0 turns idle unloading off for
+	it, and nil returns it to the server's interval. Applies to the model hosted under the name now or
+	later. Introduced in InferKit 0.4.0. */
+- (void)setIdleUnloadInterval:(nullable NSNumber *)seconds forModelName:(NSString *)modelName;
+
+/*! Whether memory pressure shortens a provider-hosted model's idle timeout. Defaults to NO. Introduced
+	in InferKit 0.4.0. */
+@property (nonatomic, assign) BOOL unloadsUnderMemoryPressure;
+
+/*! The pressure, in 0...1, at which the timeout starts to shorten. Defaults to 0.6, the kernel's warning
+	level. Introduced in InferKit 0.4.0. */
+@property (nonatomic, assign) double memoryPressureOnset;
+
+/*! The timeout at full pressure. Defaults to 10 seconds; a shorter idle interval is kept. Introduced in
+	InferKit 0.4.0. */
+@property (nonatomic, assign) NSTimeInterval shortestIdleUnloadInterval;
+
+/*! The timeout at the onset for a model whose idle unloading is off, which then leaves only under
+	pressure. Defaults to 600 seconds. Introduced in InferKit 0.4.0. */
+@property (nonatomic, assign) NSTimeInterval pressureUnloadInterval;
+
+/*! How long after its build finishes a model is kept from idle and pressure unloading. Defaults to 30
+	seconds. Introduced in InferKit 0.4.0. */
+@property (nonatomic, assign) NSTimeInterval unloadGracePeriod;
+
+/*! How long a falling pressure reading must hold before it takes effect, and the least time between two
+	pressure-driven unloads. Defaults to 10 seconds. Introduced in InferKit 0.4.0. */
+@property (nonatomic, assign) NSTimeInterval pressureUnloadHysteresis;
+
+/*! How often the server applies the unloading options, in seconds. Defaults to 1; 0 stops the periodic
+	check, and the host calls unloadIdleModels itself. Introduced in InferKit 0.4.0. */
+@property (nonatomic, assign) NSTimeInterval residencyCheckInterval;
+
+/*! Reads memory pressure in 0...1 for unloadsUnderMemoryPressure. The default is the higher of the
+	kernel's level (normal 0, warning 0.6, critical 1) and this process's footprint as a share of
+	NFKHardwareProfile's recommendedWorkingSetSize. A host with its own memory budget sets its own;
+	nil restores the default. Called on a background queue. Introduced in InferKit 0.4.0. */
+@property (nonatomic, copy, null_resettable) double (^memoryPressureProvider)(void);
+
+/*! The pressure the unloading options act on now: the provider's reading, held while it falls (see
+	pressureUnloadHysteresis). 0 while unloadsUnderMemoryPressure is NO. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly) double memoryPressure;
+
 /*! Whether the server is listening. */
 @property (nonatomic, readonly, getter=isRunning) BOOL running;
 
@@ -229,9 +326,54 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 	stopped. A client elsewhere uses this machine's name or address, or discovery. */
 @property (nonatomic, readonly, copy, nullable) NSURL *localBaseURL;
 
-/*! Hosts a backend under a model name, replacing any backend already under it. */
+/*! Hosts a backend under a model name, replacing any backend already under it. The model is resident
+	until it is removed. */
 - (void)addBackend:(id<NFKInferenceBackend>)backend forModelName:(NSString *)modelName
 	NS_SWIFT_NAME(addBackend(_:forModelName:));
+
+/*!
+	@method     addBackendProvider:forModelName:
+	@abstract   Hosts a model whose backend the server builds when a request first needs it, replacing
+				any model already under the name.
+	@discussion The model is listed at once and is not loaded until a request or loadModelNamed: builds
+				it. The provider is called again after an unload or a failed build. Introduced in
+				InferKit 0.4.0.
+*/
+- (void)addBackendProvider:(NFKServedBackendProvider)provider forModelName:(NSString *)modelName
+	NS_SWIFT_NAME(addBackendProvider(_:forModelName:));
+
+/*!
+	@method     loadModelNamed:completionHandler:
+	@abstract   Builds a provider-hosted model's backend ahead of its first request.
+	@discussion The handler receives nil once the model is resident, or the build's error. A model that
+				is already resident, or hosted with a ready backend, completes at once; one being built
+				completes with that build. Cancels an unload that is waiting for runs to end. The handler
+				runs on a background queue. Introduced in InferKit 0.4.0.
+*/
+- (void)loadModelNamed:(NSString *)modelName
+	 completionHandler:(nullable void (^)(NSError * _Nullable error))completionHandler;
+
+/*!
+	@method     unloadModelNamed:
+	@abstract   Releases a provider-hosted model's backend and keeps the model hosted.
+	@discussion Returns at once. A model with a run in flight or queued, or a build in progress, is
+				unloaded when the last of them ends; its next request builds it again. Returns NO when
+				no model is hosted under the name or it was hosted with a ready backend, which the server
+				cannot build again. Introduced in InferKit 0.4.0.
+*/
+- (BOOL)unloadModelNamed:(NSString *)modelName;
+
+/*! Whether a hosted model's backend is in memory, or NFKServerModelResidencyUnknown when no model is
+	hosted under the name. Introduced in InferKit 0.4.0. */
+- (NFKServerModelResidency)residencyForModelName:(NSString *)modelName;
+
+/*! The seconds a provider-hosted model may sit idle before it is unloaded, at the current memory
+	pressure, or INFINITY when it is not unloaded for idleness. Introduced in InferKit 0.4.0. */
+- (NSTimeInterval)idleTimeoutForModelName:(NSString *)modelName;
+
+/*! Applies the unloading options now, as the periodic check does, and returns the names of the models it
+	unloaded. Introduced in InferKit 0.4.0. */
+- (NSArray<NSString *> *)unloadIdleModels;
 
 /*! Stops hosting the model. Its queued runs fail; its running ones finish. */
 - (void)removeBackendForModelName:(NSString *)modelName;
@@ -240,7 +382,8 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 	status route carries. A name whose class is absent or does not adopt the protocol is skipped. */
 + (void)registerRuntimeStatusClassName:(NSString *)className;
 
-/*! The backend hosted under a model name, or nil. */
+/*! The backend hosted under a model name, or nil, which a provider-hosted model that is not resident
+	also answers. */
 - (nullable id<NFKInferenceBackend>)backendForModelName:(NSString *)modelName;
 
 /*! The hosted model names, sorted. */

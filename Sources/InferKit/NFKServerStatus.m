@@ -102,6 +102,14 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 @property (nonatomic, readwrite, copy, nullable) NSNumber *cachedInputShare;
 @property (nonatomic, readwrite, copy, nullable) NSNumber *estimatedWaitSeconds;
 @property (nonatomic, readwrite, copy) NSArray<NFKServerRunStatus *> *runs;
+@property (nonatomic, readwrite) NFKServerModelResidency residency;
+@property (nonatomic, readwrite, getter=isUnloadable) BOOL unloadable;
+@property (nonatomic, readwrite, copy, nullable) NSDate *lastUsedDate;
+@property (nonatomic, readwrite, copy, nullable) NSNumber *idleTimeoutSeconds;
+@property (nonatomic, readwrite, copy, nullable) NSNumber *loadSeconds;
+@property (nonatomic, readwrite, copy, nullable) NSString *loadError;
+@property (nonatomic, readwrite) NSInteger loads;
+@property (nonatomic, readwrite) NSInteger unloads;
 @end
 
 @implementation NFKServerModelStatus
@@ -143,7 +151,24 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 		[runs addObject:run];
 	}
 	status.runs = runs;
+	[status readResidency:NFKStatusDictionary(entry[@"residency"]) ?: @{}];
 	return status;
+}
+
+- (void)readResidency:(NSDictionary *)residency
+{
+	NSDictionary<NSString *, NSNumber *> *states = @{ @"not_loaded": @(NFKServerModelResidencyNotLoaded),
+													  @"loading": @(NFKServerModelResidencyLoading),
+													  @"resident": @(NFKServerModelResidencyResident) };
+	self.residency = (NFKServerModelResidency)states[NFKStatusString(residency[@"state"])].integerValue;
+	self.unloadable = [NFKStatusNumber(residency[@"unloadable"]) boolValue];
+	NSNumber *lastUsed = NFKStatusNumber(residency[@"last_used"]);
+	self.lastUsedDate = lastUsed != nil ? [NSDate dateWithTimeIntervalSince1970:lastUsed.doubleValue] : nil;
+	self.idleTimeoutSeconds = NFKStatusNumber(residency[@"idle_timeout_seconds"]);
+	self.loadSeconds = NFKStatusNumber(residency[@"load_seconds"]);
+	self.loadError = [residency[@"load_error"] isKindOfClass:NSString.class] ? residency[@"load_error"] : nil;
+	self.loads = NFKStatusInteger(residency[@"loads"]);
+	self.unloads = NFKStatusInteger(residency[@"unloads"]);
 }
 
 @end

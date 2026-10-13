@@ -38,6 +38,23 @@ typedef NS_ENUM(NSInteger, NFKServerMemoryPressure) {
 };
 
 /*!
+	@enum       NFKServerModelResidency
+	@abstract   Whether a served model's backend is in memory.
+	@constant   NFKServerModelResidencyUnknown The server did not report one, or hosts no such model.
+	@constant   NFKServerModelResidencyNotLoaded The model is hosted and its backend is not built; the next
+				request builds it.
+	@constant   NFKServerModelResidencyLoading The backend is being built; requests wait for it.
+	@constant   NFKServerModelResidencyResident The backend is in memory and serves runs.
+	Introduced in InferKit 0.4.0.
+*/
+typedef NS_ENUM(NSInteger, NFKServerModelResidency) {
+	NFKServerModelResidencyUnknown = 0,
+	NFKServerModelResidencyNotLoaded,
+	NFKServerModelResidencyLoading,
+	NFKServerModelResidencyResident,
+};
+
+/*!
 	@class      NFKServerLoad
 	@abstract   A served model's load as one reply's X-InferKit-* headers carried it.
 	@discussion NFKInferenceServer writes the headers on every run reply, taken when the reply's head is
@@ -142,6 +159,34 @@ typedef NS_ENUM(NSInteger, NFKServerMemoryPressure) {
 
 /*! The runs executing now. */
 @property (nonatomic, readonly, copy) NSArray<NFKServerRunStatus *> *runs;
+
+/*! Whether the model's backend is in memory. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly) NFKServerModelResidency residency;
+
+/*! Whether the server builds the backend on demand, so it can unload and build it again. A model hosted
+	with a ready backend answers NO. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, getter=isUnloadable) BOOL unloadable;
+
+/*! When a run last took or released a slot, or the backend last finished building, whichever is later;
+	nil before the first build. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSDate *lastUsedDate;
+
+/*! The idle seconds after which the server unloads the model, at the memory pressure of the reading, or
+	nil when it does not unload it. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSNumber *idleTimeoutSeconds;
+
+/*! How long the last successful build took, or nil before one. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSNumber *loadSeconds;
+
+/*! The last failed build's error description, or nil when the last build succeeded or none failed.
+	Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSString *loadError;
+
+/*! Successful builds since the server started. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly) NSInteger loads;
+
+/*! Unloads since the server started. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly) NSInteger unloads;
 
 @end
 

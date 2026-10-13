@@ -205,11 +205,51 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 
 @end
 
-/*! A hosted backend, the queue of runs waiting for it, and what its runs have measured. Every
-	property past backend is read and written on the model's lock. */
+/*! What a request does on arrival. */
+typedef NS_ENUM(NSInteger, NFKServedAdmission) {
+	NFKServedAdmissionStart,
+	NFKServedAdmissionQueue,
+	NFKServedAdmissionQueueAndBuild,
+	NFKServedAdmissionFull,
+	NFKServedAdmissionRemoved,
+};
+
+static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
+{
+	switch (residency) {
+		case NFKServerModelResidencyLoading:
+			return @"loading";
+		case NFKServerModelResidencyResident:
+			return @"resident";
+		default:
+			return @"not_loaded";
+	}
+}
+
+/*! A hosted model: its backend or the provider that builds it, the queue of runs waiting for it, and
+	what its runs have measured. Every property past uptime is read and written on the model's lock. */
 @interface NFKServedModel : NSObject
 @property (nonatomic, copy) NSString *name;
-@property (nonatomic, strong) id<NFKInferenceBackend> backend;
+/*! The server's monotonic clock. */
+@property (nonatomic, copy) NSTimeInterval (^uptime)(void);
+/*! Called after the backend is released by an unload, off the model's lock. */
+@property (nonatomic, copy, nullable) void (^unloadHandler)(void);
+@property (nonatomic, strong, nullable) id<NFKInferenceBackend> backend;
+/*! Builds the backend; nil for a model hosted with a ready backend, which is never unloaded. */
+@property (nonatomic, copy, nullable) NFKServedBackendProvider provider;
+@property (nonatomic, assign) NFKServerModelResidency residency;
+/*! An unload waiting for the model's runs and build to end. */
+@property (nonatomic, assign) BOOL unloadRequested;
+@property (nonatomic, strong) NSMutableArray<void (^)(NSError * _Nullable)> *loadHandlers;
+/*! The backend, inputs, parameters, and model entries of the backend the model last held. */
+@property (nonatomic, copy) NSDictionary<NSString *, id> *lastDescription;
+@property (nonatomic, assign) NSTimeInterval loadStartedAt;
+@property (nonatomic, assign) NSTimeInterval loadedAt;
+@property (nonatomic, assign) NSTimeInterval lastUsedAt;
+@property (nonatomic, assign) NSTimeInterval lastLoadSeconds;
+@property (nonatomic, copy, nullable) NSString *loadError;
+@property (nonatomic, assign) NSUInteger loads;
+@property (nonatomic, assign) NSUInteger unloads;
 @property (nonatomic, assign) NSUInteger limit;
 /*! The most runs that wait for a slot; 0 queues without limit. */
 @property (nonatomic, assign) NSUInteger queueLimit;
@@ -233,51 +273,346 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 
 @implementation NFKServedModel
 
+- (instancetype)init
+{
+	self = [super init];
+	if (self != nil) {
+		_running = [NSMutableArray array];
+		_pending = [NSMutableArray array];
+		_loadHandlers = [NSMutableArray array];
+		_lastDescription = @{ @"backend": @"", @"model": @{} };
+		_uptime = ^NSTimeInterval {
+			return NFKServedNow();
+		};
+	}
+	return self;
+}
+
+- (NSTimeInterval)now
+{
+	return self.uptime();
+}
+
+/*! What a backend says about itself in a model entry: its identifier, inputs, parameters, and model. */
++ (NSDictionary<NSString *, id> *)descriptionOfBackend:(id<NFKInferenceBackend>)backend
+{
+	NSMutableDictionary<NSString *, id> *description = [NSMutableDictionary dictionary];
+	description[@"backend"] = backend.backendIdentifier ?: @"";
+	if ([backend respondsToSelector:@selector(supportedInputKeys)]) {
+		description[@"inputs"] = [backend.supportedInputKeys.allObjects sortedArrayUsingSelector:@selector(compare:)];
+	}
+	if ([backend respondsToSelector:@selector(supportedParameterKeys)]) {
+		description[@"parameters"] = [backend.supportedParameterKeys.allObjects sortedArrayUsingSelector:@selector(compare:)];
+	}
+	description[@"model"] = [backend respondsToSelector:@selector(modelInfo)] ? NFKServedJSONValues(backend.modelInfo) : @{};
+	return description;
+}
+
+- (NSError *)notServedError
+{
+	return NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorModelNotFound,
+						  [NSString stringWithFormat:@"the model \"%@\" is no longer served", self.name]);
+}
+
+#pragma mark Admission
+
 - (void)enqueue:(NFKServedRun *)run
 {
-	run.enqueuedAt = NFKServedNow();
-	BOOL startNow = NO;
-	BOOL refused = NO;
-	BOOL full = NO;
+	run.enqueuedAt = [self now];
+	NFKServedAdmission admission = NFKServedAdmissionRemoved;
 	@synchronized (self) {
-		refused = self.removed;
-		if (!refused && self.running.count < self.limit) {
-			[self beginRun:run];
-			startNow = YES;
-		} else if (!refused && self.queueLimit > 0 && [self queuedCount] >= self.queueLimit) {
-			self.refused += 1;
-			full = YES;
-		} else if (!refused) {
-			[self.pending addObject:run];
-		}
+		admission = [self admit:run];
 	}
-	if (refused) {
-		[run finishWithResult:nil error:NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorModelNotFound,
-													   [NSString stringWithFormat:@"the model \"%@\" is no longer served", self.name])];
-	} else if (full) {
-		[run finishWithResult:nil error:[self busyError]];
-	} else if (startNow) {
-		[self start:run];
+	switch (admission) {
+		case NFKServedAdmissionRemoved:
+			[run finishWithResult:nil error:[self notServedError]];
+			break;
+		case NFKServedAdmissionFull:
+			[run finishWithResult:nil error:[self busyError]];
+			break;
+		case NFKServedAdmissionStart:
+			[self start:run];
+			break;
+		case NFKServedAdmissionQueueAndBuild:
+			[self build];
+			break;
+		case NFKServedAdmissionQueue:
+			break;
 	}
+}
+
+/*! Starts, queues, or refuses an arriving run. Runs on the lock. */
+- (NFKServedAdmission)admit:(NFKServedRun *)run
+{
+	if (self.removed) {
+		return NFKServedAdmissionRemoved;
+	}
+	BOOL resident = self.residency == NFKServerModelResidencyResident;
+	if (resident && self.running.count < self.limit) {
+		[self beginRun:run];
+		return NFKServedAdmissionStart;
+	}
+	// Runs that take a slot as soon as the build ends do not count against the queue limit.
+	NSUInteger room = self.queueLimit + (resident ? 0 : self.limit);
+	if (self.queueLimit > 0 && [self queuedCount] >= room) {
+		self.refused += 1;
+		return NFKServedAdmissionFull;
+	}
+	[self.pending addObject:run];
+	return [self beginBuildIfNeeded] ? NFKServedAdmissionQueueAndBuild : NFKServedAdmissionQueue;
 }
 
 /*! Takes a slot for a run. Runs on the lock. */
 - (void)beginRun:(NFKServedRun *)run
 {
-	run.startedAt = NFKServedNow();
+	run.startedAt = [self now];
+	self.lastUsedAt = run.startedAt;
 	self.averageWaitSeconds = NFKServedAveraged(self.averageWaitSeconds, run.startedAt - run.enqueuedAt, self.started);
 	self.started += 1;
 	[self.running addObject:run];
 }
 
+#pragma mark Building
+
+/*! Marks a build as started when the model is not loaded and can be built. Runs on the lock. */
+- (BOOL)beginBuildIfNeeded
+{
+	if (self.residency != NFKServerModelResidencyNotLoaded || self.provider == nil) {
+		return NO;
+	}
+	self.residency = NFKServerModelResidencyLoading;
+	self.loadStartedAt = [self now];
+	return YES;
+}
+
+- (void)build
+{
+	NFKServedBackendProvider provider = nil;
+	@synchronized (self) {
+		provider = self.provider;
+	}
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		NSError *error = nil;
+		id<NFKInferenceBackend> backend = provider(&error);
+		[self buildEndedWithBackend:backend error:error];
+	});
+}
+
+- (void)buildEndedWithBackend:(nullable id<NFKInferenceBackend>)backend error:(nullable NSError *)error
+{
+	NSDictionary<NSString *, id> *description = backend != nil ? [NFKServedModel descriptionOfBackend:backend] : nil;
+	NSError *failure = nil;
+	if (backend == nil) {
+		failure = error ?: NFKServedError(NFKInferenceErrorDomain, kNFKError_InferenceBackendFailure,
+										  [NSString stringWithFormat:@"the provider for the model \"%@\" returned no backend and no error", self.name]);
+	}
+	NSArray<NFKServedRun *> *refused = @[];
+	NSMutableArray<NFKServedRun *> *starting = [NSMutableArray array];
+	NSArray<void (^)(NSError * _Nullable)> *handlers = nil;
+	@synchronized (self) {
+		handlers = [self.loadHandlers copy];
+		[self.loadHandlers removeAllObjects];
+		if (self.removed) {
+			failure = failure ?: [self notServedError];
+		} else if (failure != nil) {
+			self.residency = NFKServerModelResidencyNotLoaded;
+			self.loadError = failure.localizedDescription;
+			self.unloadRequested = NO;
+			refused = [self.pending copy];
+			[self.pending removeAllObjects];
+			self.failed += refused.count;
+		} else {
+			[self becomeResidentWithBackend:backend description:description];
+			while (self.pending.count > 0 && self.running.count < self.limit) {
+				NFKServedRun *next = self.pending.firstObject;
+				[self.pending removeObjectAtIndex:0];
+				[self beginRun:next];
+				[starting addObject:next];
+			}
+		}
+	}
+	for (NFKServedRun *run in refused) {
+		[run finishWithResult:nil error:failure];
+	}
+	for (NFKServedRun *run in starting) {
+		[self start:run];
+	}
+	for (void (^handler)(NSError * _Nullable) in handlers) {
+		handler(failure);
+	}
+	[self unloadIfRequested];
+}
+
+/*! Runs on the lock. */
+- (void)becomeResidentWithBackend:(id<NFKInferenceBackend>)backend description:(NSDictionary<NSString *, id> *)description
+{
+	NSTimeInterval now = [self now];
+	self.backend = backend;
+	self.lastDescription = description;
+	self.residency = NFKServerModelResidencyResident;
+	self.loadedAt = now;
+	self.lastUsedAt = now;
+	self.lastLoadSeconds = now - self.loadStartedAt;
+	self.loads += 1;
+	self.loadError = nil;
+}
+
+- (void)loadWithCompletionHandler:(nullable void (^)(NSError * _Nullable error))completionHandler
+{
+	BOOL settled = NO;
+	BOOL build = NO;
+	NSError *error = nil;
+	@synchronized (self) {
+		self.unloadRequested = NO;
+		if (self.removed) {
+			error = [self notServedError];
+			settled = YES;
+		} else if (self.residency == NFKServerModelResidencyResident) {
+			settled = YES;
+		} else {
+			if (completionHandler != nil) {
+				[self.loadHandlers addObject:completionHandler];
+			}
+			build = [self beginBuildIfNeeded];
+		}
+	}
+	if (settled && completionHandler != nil) {
+		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+			completionHandler(error);
+		});
+	}
+	if (build) {
+		[self build];
+	}
+}
+
+#pragma mark Unloading
+
+/*! Whether the model could release its backend now. Runs on the lock. */
+- (BOOL)isUnloadableNow
+{
+	return self.provider != nil && !self.removed && self.residency == NFKServerModelResidencyResident
+		&& self.running.count == 0 && self.pending.count == 0;
+}
+
+/*! Whether a run holds a slot or a backend is being built, which a runtime's cache release must not
+	overlap. */
+- (BOOL)isBusy
+{
+	@synchronized (self) {
+		return self.running.count > 0 || self.residency == NFKServerModelResidencyLoading;
+	}
+}
+
+- (NSTimeInterval)lastUse
+{
+	@synchronized (self) {
+		return self.lastUsedAt;
+	}
+}
+
+/*! Releases the backend when the model could release it now and test, run on the lock, agrees; YES when
+	it did. The backend is released off the lock. */
+- (BOOL)unloadPassingTest:(BOOL (^)(NFKServedModel *model))test
+{
+	BOOL unloaded = NO;
+	@autoreleasepool {
+		id<NFKInferenceBackend> released = nil;
+		@synchronized (self) {
+			if ([self isUnloadableNow] && test(self)) {
+				released = self.backend;
+				self.backend = nil;
+				self.residency = NFKServerModelResidencyNotLoaded;
+				self.unloads += 1;
+				self.unloadRequested = NO;
+			}
+		}
+		unloaded = released != nil;
+	}
+	if (unloaded && self.unloadHandler != nil) {
+		self.unloadHandler();
+	}
+	return unloaded;
+}
+
+- (void)unloadIfRequested
+{
+	[self unloadPassingTest:^BOOL(NFKServedModel *model) {
+		return model.unloadRequested;
+	}];
+}
+
+/*! Unloads now, or once the model's runs and build end. NO when the model cannot be built again. */
+- (BOOL)requestUnload
+{
+	@synchronized (self) {
+		if (self.provider == nil || self.removed) {
+			return NO;
+		}
+		self.unloadRequested = self.residency != NFKServerModelResidencyNotLoaded;
+	}
+	[self unloadIfRequested];
+	return YES;
+}
+
+/*! Unloads when the model has gone unused for at least idle seconds and was built at least grace
+	seconds ago. */
+- (BOOL)unloadIfUnusedFor:(NSTimeInterval)idle grace:(NSTimeInterval)grace at:(NSTimeInterval)now
+{
+	return [self unloadPassingTest:^BOOL(NFKServedModel *model) {
+		return now - model.loadedAt >= grace && now - model.lastUsedAt >= idle;
+	}];
+}
+
+/*! Whether unloadIfUnusedFor:grace:at: would unload the model. */
+- (BOOL)isUnusedFor:(NSTimeInterval)idle grace:(NSTimeInterval)grace at:(NSTimeInterval)now
+{
+	@synchronized (self) {
+		return [self isUnloadableNow] && now - self.loadedAt >= grace && now - self.lastUsedAt >= idle;
+	}
+}
+
+- (BOOL)isUnloadable
+{
+	@synchronized (self) {
+		return self.provider != nil;
+	}
+}
+
+- (NFKServerModelResidency)currentResidency
+{
+	@synchronized (self) {
+		return self.residency;
+	}
+}
+
+- (nullable id<NFKInferenceBackend>)residentBackend
+{
+	@synchronized (self) {
+		return self.backend;
+	}
+}
+
+- (NSDictionary<NSString *, id> *)lastBackendDescription
+{
+	@synchronized (self) {
+		return self.lastDescription;
+	}
+}
+
+#pragma mark Runs
+
 - (void)start:(NFKServedRun *)run
 {
-	if (run.cancelled) {
-		[self run:run endedWithResult:nil error:NFKServedCancellation()];
-		[run finishWithResult:nil error:NFKServedCancellation()];
+	id<NFKInferenceBackend> backend = [self residentBackend];
+	if (run.cancelled || backend == nil) {
+		NSError *error = run.cancelled ? NFKServedCancellation()
+			: NFKServedError(NFKInferenceErrorDomain, kNFKError_InferenceNotReady,
+							 [NSString stringWithFormat:@"the model \"%@\" is not loaded", self.name]);
+		[self run:run endedWithResult:nil error:error];
+		[run finishWithResult:nil error:error];
 		return;
 	}
-	id<NFKInferenceBackend> backend = self.backend;
 	if (run.work == nil && [backend respondsToSelector:@selector(submitInferenceJobForRequest:)]) {
 		NFKInferenceJob *job = [backend submitInferenceJobForRequest:run.request];
 		BOOL cancelled = NO;
@@ -321,14 +656,16 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	});
 }
 
-/*! Releases a run's slot, records how it ended, and starts the next waiting run. */
+/*! Releases a run's slot, records how it ended, and starts the next waiting run, or performs a
+	requested unload when none waits. */
 - (void)run:(NFKServedRun *)run endedWithResult:(nullable NFKInferenceResult *)result error:(nullable NSError *)error
 {
 	NFKServedRun *next = nil;
 	@synchronized (self) {
 		[self.running removeObjectIdenticalTo:run];
 		[self recordRun:run result:result error:error];
-		if (self.pending.count > 0 && self.running.count < self.limit) {
+		self.lastUsedAt = [self now];
+		if (self.pending.count > 0 && self.running.count < self.limit && self.residency == NFKServerModelResidencyResident) {
 			next = self.pending.firstObject;
 			[self.pending removeObjectAtIndex:0];
 			[self beginRun:next];
@@ -336,7 +673,9 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	}
 	if (next != nil) {
 		[self start:next];
+		return;
 	}
+	[self unloadIfRequested];
 }
 
 /*! Runs on the lock. Only a run that returned a result feeds the averages, so a fast refusal does
@@ -351,7 +690,7 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 		self.failed += 1;
 		return;
 	}
-	double seconds = NFKServedNow() - run.startedAt;
+	double seconds = [self now] - run.startedAt;
 	self.averageRunSeconds = NFKServedAveraged(self.averageRunSeconds, seconds, self.completed);
 	self.completed += 1;
 	NSDictionary *usage = [result outputForKey:NFKOutputUsage];
@@ -372,6 +711,8 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 		self.cachedRunInputTokens += input.unsignedLongLongValue;
 	}
 }
+
+#pragma mark Load
 
 /*! Waiting runs whose clients are still there. Runs on the lock. */
 - (NSUInteger)queuedCount
@@ -398,14 +739,32 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	return @(MAX(self.averageRunSeconds - elapsed, 0.0));
 }
 
-/*! Seconds until a run that arrives now would start, or nil when no estimate exists yet. Each slot
-	frees when its run ends, and each waiting run then holds the soonest free slot for an average
-	run. Runs on the lock. */
+/*! Seconds until the backend is resident: 0 when it is, else the last build's duration less the time
+	this build has taken, or nil before any build has finished. Runs on the lock. */
+- (nullable NSNumber *)estimatedBuildRemainingAt:(NSTimeInterval)now
+{
+	if (self.residency == NFKServerModelResidencyResident) {
+		return @0;
+	}
+	if (self.loads == 0) {
+		return nil;
+	}
+	NSTimeInterval elapsed = self.residency == NFKServerModelResidencyLoading ? now - self.loadStartedAt : 0;
+	return @(MAX(self.lastLoadSeconds - elapsed, 0.0));
+}
+
+/*! Seconds until a run that arrives now would start, or nil when no estimate exists yet. The backend is
+	resident first; then each slot frees when its run ends, and each waiting run holds the soonest
+	free slot for an average run. Runs on the lock. */
 - (nullable NSNumber *)estimatedWaitAt:(NSTimeInterval)now
 {
+	NSNumber *building = [self estimatedBuildRemainingAt:now];
+	if (building == nil) {
+		return nil;
+	}
 	NSUInteger queued = [self queuedCount];
 	if (self.running.count < self.limit && queued == 0) {
-		return @0;
+		return building;
 	}
 	NSMutableArray<NSNumber *> *slots = [NSMutableArray arrayWithCapacity:self.limit];
 	for (NFKServedRun *run in self.running) {
@@ -425,7 +784,7 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 		NSUInteger soonest = [slots indexOfObject:[slots valueForKeyPath:@"@min.self"]];
 		slots[soonest] = @(slots[soonest].doubleValue + self.averageRunSeconds);
 	}
-	return [slots valueForKeyPath:@"@min.self"];
+	return @([[slots valueForKeyPath:@"@min.self"] doubleValue] + building.doubleValue);
 }
 
 - (NSDictionary<NSString *, id> *)loadJSONObject
@@ -458,7 +817,7 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 			load[@"cached_input_tokens"] = @(self.cachedInputTokens);
 			load[@"cached_input_share"] = @((double)self.cachedInputTokens / (double)self.cachedRunInputTokens);
 		}
-		NSTimeInterval now = NFKServedNow();
+		NSTimeInterval now = [self now];
 		load[@"estimated_wait_seconds"] = [self estimatedWaitAt:now];
 		NSMutableArray *runs = [NSMutableArray arrayWithCapacity:self.running.count];
 		for (NFKServedRun *run in self.running) {
@@ -475,6 +834,30 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	}
 }
 
+/*! The model's residency for a status reading. timeout is its idle timeout now, INFINITY for none. */
+- (NSDictionary<NSString *, id> *)residencyJSONObjectWithTimeout:(NSTimeInterval)timeout
+{
+	@synchronized (self) {
+		NSMutableDictionary<NSString *, id> *residency = [NSMutableDictionary dictionary];
+		residency[@"state"] = NFKServedResidencyName(self.residency);
+		residency[@"unloadable"] = @(self.provider != nil);
+		if (self.loads > 0 || self.provider == nil) {
+			NSTimeInterval idle = MAX([self now] - self.lastUsedAt, 0.0);
+			residency[@"last_used"] = @(NSDate.date.timeIntervalSince1970 - idle);
+		}
+		if (self.provider != nil && isfinite(timeout)) {
+			residency[@"idle_timeout_seconds"] = @(timeout);
+		}
+		if (self.loads > 0) {
+			residency[@"load_seconds"] = @(self.lastLoadSeconds);
+		}
+		residency[@"load_error"] = self.loadError;
+		residency[@"loads"] = @(self.loads);
+		residency[@"unloads"] = @(self.unloads);
+		return residency;
+	}
+}
+
 - (NSDictionary<NSString *, NSString *> *)loadHeaders
 {
 	@synchronized (self) {
@@ -482,7 +865,7 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 		headers[@"X-InferKit-Limit"] = [NSString stringWithFormat:@"%lu", (unsigned long)self.limit];
 		headers[@"X-InferKit-Running"] = [NSString stringWithFormat:@"%lu", (unsigned long)self.running.count];
 		headers[@"X-InferKit-Queued"] = [NSString stringWithFormat:@"%lu", (unsigned long)[self queuedCount]];
-		NSNumber *wait = [self estimatedWaitAt:NFKServedNow()];
+		NSNumber *wait = [self estimatedWaitAt:[self now]];
 		if (wait != nil) {
 			headers[@"X-InferKit-Estimated-Wait"] = [NSString stringWithFormat:@"%.3f", wait.doubleValue];
 		}
@@ -496,7 +879,7 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	NSNumber *wait = nil;
 	NSUInteger queued = 0;
 	@synchronized (self) {
-		wait = [self estimatedWaitAt:NFKServedNow()];
+		wait = [self estimatedWaitAt:[self now]];
 		queued = [self queuedCount];
 	}
 	NSTimeInterval retry = MAX(1.0, ceil(wait.doubleValue));
@@ -510,15 +893,20 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 - (void)retire
 {
 	NSArray<NFKServedRun *> *waiting = nil;
+	NSArray<void (^)(NSError * _Nullable)> *handlers = nil;
 	@synchronized (self) {
 		self.removed = YES;
 		waiting = [self.pending copy];
 		[self.pending removeAllObjects];
+		handlers = [self.loadHandlers copy];
+		[self.loadHandlers removeAllObjects];
 	}
-	NSError *error = NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorModelNotFound,
-									[NSString stringWithFormat:@"the model \"%@\" is no longer served", self.name]);
+	NSError *error = [self notServedError];
 	for (NFKServedRun *run in waiting) {
 		[run finishWithResult:nil error:error];
+	}
+	for (void (^handler)(NSError * _Nullable) in handlers) {
+		handler(error);
 	}
 }
 
@@ -535,6 +923,19 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 @property (nonatomic, assign, readwrite) uint16_t listeningPort;
 @property (nonatomic, assign) NSInteger startTime;
 @property (nonatomic, strong) NFKServedHostStatus *hostStatus;
+/*! The monotonic clock every timing reads. */
+@property (nonatomic, copy) NSTimeInterval (^uptimeProvider)(void);
+/*! Guards the unloading state below and the per-model idle intervals. */
+@property (nonatomic, strong) NSObject *residencyLock;
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *idleUnloadIntervals;
+@property (nonatomic, assign) double heldPressure;
+@property (nonatomic, assign) NSTimeInterval heldPressureAt;
+@property (nonatomic, assign) BOOL hasHeldPressure;
+@property (nonatomic, assign) NSTimeInterval lastPressureUnloadAt;
+@property (nonatomic, assign) BOOL hasPressureUnloaded;
+@property (nonatomic, strong) dispatch_queue_t residencyQueue;
+@property (nonatomic, strong, nullable) dispatch_source_t residencyTimer;
+@property (nonatomic, copy, nullable) double (^customMemoryPressureProvider)(void);
 @end
 
 @implementation NFKInferenceServer
@@ -552,6 +953,20 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 		_maximumConcurrentRunsPerModel = 1;
 		_reportsHostDetails = YES;
 		_hostStatus = [[NFKServedHostStatus alloc] init];
+		_uptimeProvider = ^NSTimeInterval {
+			return NFKServedNow();
+		};
+		_residencyLock = [[NSObject alloc] init];
+		_idleUnloadIntervals = [NSMutableDictionary dictionary];
+		_memoryPressureOnset = 0.6;
+		_shortestIdleUnloadInterval = 10;
+		_pressureUnloadInterval = 600;
+		_unloadGracePeriod = 30;
+		_pressureUnloadHysteresis = 10;
+		_residencyCheckInterval = 1;
+		_residencyQueue = dispatch_queue_create("NFKInferenceServer.residency",
+												dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0));
+		[self scheduleResidencyChecks];
 	}
 	return self;
 }
@@ -559,6 +974,9 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 - (void)dealloc
 {
 	[_listener stop];
+	if (_residencyTimer != nil) {
+		dispatch_source_cancel(_residencyTimer);
+	}
 }
 
 - (nullable SecIdentityRef)TLSIdentity
@@ -623,21 +1041,98 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 
 #pragma mark Models
 
-- (void)addBackend:(id<NFKInferenceBackend>)backend forModelName:(NSString *)modelName
+- (NSTimeInterval)now
+{
+	return self.uptimeProvider();
+}
+
+/*! A model under a name with the server's limits and clock, not yet hosted. */
+- (NFKServedModel *)servedModelNamed:(NSString *)modelName
 {
 	NFKServedModel *model = [[NFKServedModel alloc] init];
 	model.name = modelName;
-	model.backend = backend;
 	model.limit = MAX(self.maximumConcurrentRunsPerModel, 1);
 	model.queueLimit = self.maximumQueuedRunsPerModel;
-	model.running = [NSMutableArray array];
-	model.pending = [NSMutableArray array];
+	__weak NFKInferenceServer *weakSelf = self;
+	model.uptime = ^NSTimeInterval {
+		NFKInferenceServer *server = weakSelf;
+		return server != nil ? [server now] : NFKServedNow();
+	};
+	model.unloadHandler = ^{
+		[weakSelf releaseRuntimeCachesWhenIdle];
+	};
+	return model;
+}
+
+- (void)host:(NFKServedModel *)model
+{
 	NFKServedModel *replaced = nil;
 	@synchronized (self.models) {
-		replaced = self.models[modelName];
-		self.models[modelName] = model;
+		replaced = self.models[model.name];
+		self.models[model.name] = model;
 	}
 	[replaced retire];
+}
+
+- (void)addBackend:(id<NFKInferenceBackend>)backend forModelName:(NSString *)modelName
+{
+	NFKServedModel *model = [self servedModelNamed:modelName];
+	NSTimeInterval now = [self now];
+	model.backend = backend;
+	model.lastDescription = [NFKServedModel descriptionOfBackend:backend];
+	model.residency = NFKServerModelResidencyResident;
+	model.loadedAt = now;
+	model.lastUsedAt = now;
+	[self host:model];
+}
+
+- (void)addBackendProvider:(NFKServedBackendProvider)provider forModelName:(NSString *)modelName
+{
+	NFKServedModel *model = [self servedModelNamed:modelName];
+	model.provider = provider;
+	model.residency = NFKServerModelResidencyNotLoaded;
+	[self host:model];
+}
+
+- (nullable NFKServedModel *)hostedModelNamed:(NSString *)modelName
+{
+	@synchronized (self.models) {
+		return self.models[modelName];
+	}
+}
+
+- (NSArray<NFKServedModel *> *)hostedModels
+{
+	@synchronized (self.models) {
+		return [self.models.allValues copy];
+	}
+}
+
+- (void)loadModelNamed:(NSString *)modelName completionHandler:(nullable void (^)(NSError * _Nullable error))completionHandler
+{
+	NFKServedModel *model = [self hostedModelNamed:modelName];
+	if (model != nil) {
+		[model loadWithCompletionHandler:completionHandler];
+		return;
+	}
+	if (completionHandler != nil) {
+		NSError *error = NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorModelNotFound,
+										[NSString stringWithFormat:@"the model \"%@\" is not served here", modelName]);
+		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+			completionHandler(error);
+		});
+	}
+}
+
+- (BOOL)unloadModelNamed:(NSString *)modelName
+{
+	return [[self hostedModelNamed:modelName] requestUnload];
+}
+
+- (NFKServerModelResidency)residencyForModelName:(NSString *)modelName
+{
+	NFKServedModel *model = [self hostedModelNamed:modelName];
+	return model != nil ? [model currentResidency] : NFKServerModelResidencyUnknown;
 }
 
 - (void)removeBackendForModelName:(NSString *)modelName
@@ -650,6 +1145,180 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	[removed retire];
 }
 
+#pragma mark Unloading
+
+- (void)setResidencyCheckInterval:(NSTimeInterval)residencyCheckInterval
+{
+	_residencyCheckInterval = residencyCheckInterval;
+	[self scheduleResidencyChecks];
+}
+
+- (void)scheduleResidencyChecks
+{
+	dispatch_source_t previous = self.residencyTimer;
+	if (previous != nil) {
+		dispatch_source_cancel(previous);
+	}
+	self.residencyTimer = nil;
+	NSTimeInterval interval = self.residencyCheckInterval;
+	if (!(interval > 0)) {
+		return;
+	}
+	dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, self.residencyQueue);
+	uint64_t nanoseconds = (uint64_t)(interval * NSEC_PER_SEC);
+	dispatch_source_set_timer(timer, dispatch_time(DISPATCH_TIME_NOW, (int64_t)nanoseconds), nanoseconds, nanoseconds / 10);
+	__weak NFKInferenceServer *weakSelf = self;
+	dispatch_source_set_event_handler(timer, ^{
+		[weakSelf unloadIdleModels];
+	});
+	dispatch_resume(timer);
+	self.residencyTimer = timer;
+}
+
+- (double (^)(void))memoryPressureProvider
+{
+	double (^provider)(void) = self.customMemoryPressureProvider;
+	if (provider != nil) {
+		return provider;
+	}
+	NFKServedHostStatus *host = self.hostStatus;
+	return ^double {
+		return [host memoryPressureFraction];
+	};
+}
+
+- (void)setMemoryPressureProvider:(nullable double (^)(void))memoryPressureProvider
+{
+	self.customMemoryPressureProvider = memoryPressureProvider;
+}
+
+- (double)memoryPressure
+{
+	if (!self.unloadsUnderMemoryPressure) {
+		return 0;
+	}
+	double reading = self.memoryPressureProvider();
+	reading = isfinite(reading) ? MIN(MAX(reading, 0.0), 1.0) : 0.0;
+	NSTimeInterval now = [self now];
+	@synchronized (self.residencyLock) {
+		BOOL holding = self.hasHeldPressure && reading < self.heldPressure
+			&& now - self.heldPressureAt < self.pressureUnloadHysteresis;
+		if (!holding) {
+			self.heldPressure = reading;
+			self.heldPressureAt = now;
+			self.hasHeldPressure = YES;
+		}
+		return self.heldPressure;
+	}
+}
+
+- (void)setIdleUnloadInterval:(nullable NSNumber *)seconds forModelName:(NSString *)modelName
+{
+	@synchronized (self.residencyLock) {
+		self.idleUnloadIntervals[modelName] = seconds;
+	}
+}
+
+/*! The model's idle interval, its own or the server's, or INFINITY when idle unloading is off for it. */
+- (NSTimeInterval)idleIntervalForModelNamed:(NSString *)modelName
+{
+	NSNumber *own = nil;
+	@synchronized (self.residencyLock) {
+		own = self.idleUnloadIntervals[modelName];
+	}
+	NSTimeInterval interval = own != nil ? own.doubleValue : self.idleUnloadInterval;
+	return interval > 0 ? interval : INFINITY;
+}
+
+/*! The idle timeout for an idle interval at a pressure: the interval, shortened once pressure reaches
+	the onset, linearly to the shortest interval at full pressure. */
+- (NSTimeInterval)timeoutForIdleInterval:(NSTimeInterval)idle pressure:(double)pressure
+{
+	double onset = self.memoryPressureOnset;
+	if (!self.unloadsUnderMemoryPressure || pressure < onset) {
+		return idle;
+	}
+	NSTimeInterval base = isfinite(idle) ? idle : MAX(self.pressureUnloadInterval, 0.0);
+	NSTimeInterval shortest = MIN(MAX(self.shortestIdleUnloadInterval, 0.0), base);
+	double fraction = onset < 1 ? MIN(MAX((pressure - onset) / (1 - onset), 0.0), 1.0) : 1.0;
+	return MIN(idle, base - (base - shortest) * fraction);
+}
+
+- (NSTimeInterval)idleTimeoutForModel:(NFKServedModel *)model
+{
+	if (![model isUnloadable]) {
+		return INFINITY;
+	}
+	return [self timeoutForIdleInterval:[self idleIntervalForModelNamed:model.name] pressure:self.memoryPressure];
+}
+
+- (NSTimeInterval)idleTimeoutForModelName:(NSString *)modelName
+{
+	NFKServedModel *model = [self hostedModelNamed:modelName];
+	return model != nil ? [self idleTimeoutForModel:model] : INFINITY;
+}
+
+- (NSArray<NSString *> *)unloadIdleModels
+{
+	NSMutableArray<NSString *> *unloaded = [NSMutableArray array];
+	double pressure = self.memoryPressure;
+	NSTimeInterval grace = MAX(self.unloadGracePeriod, 0.0);
+	@synchronized (self.residencyLock) {
+		NSTimeInterval now = [self now];
+		NSMutableArray<NFKServedModel *> *pressured = [NSMutableArray array];
+		NSMutableDictionary<NSString *, NSNumber *> *timeouts = [NSMutableDictionary dictionary];
+		for (NFKServedModel *model in [self hostedModels]) {
+			if (![model isUnloadable]) {
+				continue;
+			}
+			NSTimeInterval idle = [self idleIntervalForModelNamed:model.name];
+			NSTimeInterval timeout = [self timeoutForIdleInterval:idle pressure:pressure];
+			if ([model unloadIfUnusedFor:idle grace:grace at:now]) {
+				[unloaded addObject:model.name];
+			} else if (timeout < idle && [model isUnusedFor:timeout grace:grace at:now]) {
+				[pressured addObject:model];
+				timeouts[model.name] = @(timeout);
+			}
+		}
+		BOOL spaced = !self.hasPressureUnloaded || now - self.lastPressureUnloadAt >= self.pressureUnloadHysteresis;
+		NSArray<NFKServedModel *> *leastRecentFirst = [pressured sortedArrayUsingComparator:^NSComparisonResult(NFKServedModel *left, NFKServedModel *right) {
+			return [@([left lastUse]) compare:@([right lastUse])];
+		}];
+		for (NFKServedModel *model in spaced ? leastRecentFirst : @[]) {
+			if ([model unloadIfUnusedFor:timeouts[model.name].doubleValue grace:grace at:now]) {
+				[unloaded addObject:model.name];
+				self.lastPressureUnloadAt = now;
+				self.hasPressureUnloaded = YES;
+				break;
+			}
+		}
+	}
+	return unloaded;
+}
+
+/*! Asks each registered runtime to return its cache once no hosted model has a run in flight or a
+	backend being built, since a runtime may free buffers in-flight work still reads. */
+- (void)releaseRuntimeCachesWhenIdle
+{
+	__weak NFKInferenceServer *weakSelf = self;
+	dispatch_async(self.residencyQueue, ^{
+		NFKInferenceServer *server = weakSelf;
+		if (server == nil) {
+			return;
+		}
+		for (NFKServedModel *model in [server hostedModels]) {
+			if ([model isBusy]) {
+				return;
+			}
+		}
+		for (Class<NFKServingRuntimeStatus> runtime in [NFKInferenceServer runtimeStatusClasses]) {
+			if ([(Class)runtime respondsToSelector:@selector(releaseCachedMemory)]) {
+				[runtime releaseCachedMemory];
+			}
+		}
+	});
+}
+
 + (void)registerRuntimeStatusClassName:(NSString *)className
 {
 	NSMutableArray<NSString *> *names = NFKServedRuntimeStatusClassNames();
@@ -660,30 +1329,32 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	}
 }
 
-/*! Each linked runtime's report, keyed by its name. */
-+ (NSDictionary<NSString *, id> *)runtimeStatuses
+/*! The registered runtime classes that are linked and adopt NFKServingRuntimeStatus. */
++ (NSArray<Class<NFKServingRuntimeStatus>> *)runtimeStatusClasses
 {
 	NSArray<NSString *> *names = nil;
 	NSMutableArray<NSString *> *registered = NFKServedRuntimeStatusClassNames();
 	@synchronized (registered) {
 		names = [registered copy];
 	}
-	NSMutableDictionary<NSString *, id> *statuses = [NSMutableDictionary dictionary];
+	NSMutableArray<Class<NFKServingRuntimeStatus>> *classes = [NSMutableArray array];
 	for (NSString *name in names) {
 		Class runtime = NSClassFromString(name);
-		if (runtime == Nil || ![runtime conformsToProtocol:@protocol(NFKServingRuntimeStatus)]) {
-			continue;
+		if (runtime != Nil && [runtime conformsToProtocol:@protocol(NFKServingRuntimeStatus)]) {
+			[classes addObject:runtime];
 		}
-		Class<NFKServingRuntimeStatus> reporter = runtime;
+	}
+	return classes;
+}
+
+/*! Each linked runtime's report, keyed by its name. */
++ (NSDictionary<NSString *, id> *)runtimeStatuses
+{
+	NSMutableDictionary<NSString *, id> *statuses = [NSMutableDictionary dictionary];
+	for (Class<NFKServingRuntimeStatus> reporter in [self runtimeStatusClasses]) {
 		statuses[[reporter runtimeStatusName]] = NFKServedJSONValues([reporter runtimeStatus]);
 	}
 	return statuses;
-}
-
-/*! What a backend reports about its loaded model, reduced to JSON values. */
-+ (NSDictionary<NSString *, id> *)modelInfoOfBackend:(id<NFKInferenceBackend>)backend
-{
-	return [backend respondsToSelector:@selector(modelInfo)] ? NFKServedJSONValues(backend.modelInfo) : @{};
 }
 
 /*! What a backend reports about its state now, reduced to JSON, or nil when it reports nothing. */
@@ -698,9 +1369,7 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 
 - (nullable id<NFKInferenceBackend>)backendForModelName:(NSString *)modelName
 {
-	@synchronized (self.models) {
-		return self.models[modelName].backend;
-	}
+	return [[self hostedModelNamed:modelName] residentBackend];
 }
 
 - (NSArray<NSString *> *)modelNames
@@ -982,23 +1651,31 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 
 #pragma mark Models
 
+/*! A model's description: its backend's identifier, readiness, inputs, parameters, model, and status,
+	with its load and residency. A model that is not resident describes the backend it last held and
+	reports ready, since a request builds it. */
+- (NSMutableDictionary<NSString *, id> *)descriptionOfModel:(NFKServedModel *)model
+{
+	NSTimeInterval timeout = [self idleTimeoutForModel:model];
+	id<NFKInferenceBackend> backend = [model residentBackend];
+	NSMutableDictionary<NSString *, id> *description = nil;
+	if (backend != nil) {
+		description = [[NFKServedModel descriptionOfBackend:backend] mutableCopy];
+		description[@"ready"] = @(backend.isReady);
+		description[@"status"] = [NFKInferenceServer statusOfBackend:backend];
+	} else {
+		description = [[model lastBackendDescription] mutableCopy];
+		description[@"ready"] = @YES;
+	}
+	description[@"load"] = [model loadJSONObject];
+	description[@"residency"] = [model residencyJSONObjectWithTimeout:timeout];
+	return description;
+}
+
 - (NSDictionary<NSString *, id> *)entryForModel:(NFKServedModel *)model
 {
-	id<NFKInferenceBackend> backend = model.backend;
-	NSMutableDictionary *description = [NSMutableDictionary dictionary];
-	description[@"backend"] = backend.backendIdentifier ?: @"";
-	description[@"ready"] = @(backend.isReady);
-	if ([backend respondsToSelector:@selector(supportedInputKeys)]) {
-		description[@"inputs"] = [backend.supportedInputKeys.allObjects sortedArrayUsingSelector:@selector(compare:)];
-	}
-	if ([backend respondsToSelector:@selector(supportedParameterKeys)]) {
-		description[@"parameters"] = [backend.supportedParameterKeys.allObjects sortedArrayUsingSelector:@selector(compare:)];
-	}
-	description[@"model"] = [NFKInferenceServer modelInfoOfBackend:backend];
-	description[@"status"] = [NFKInferenceServer statusOfBackend:backend];
-	description[@"load"] = [model loadJSONObject];
 	return @{ @"id": model.name, @"object": @"model", @"created": @(self.startTime), @"owned_by": @"inferkit",
-			  @"inferkit": description };
+			  @"inferkit": [self descriptionOfModel:model] };
 }
 
 - (void)serveModelListWithResponse:(NFKHTTPResponse *)response
@@ -1036,11 +1713,9 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 			model = self.models[name];
 		}
 		if (model != nil) {
-			NSMutableDictionary<NSString *, id> *entry = [@{ @"id": model.name, @"backend": model.backend.backendIdentifier ?: @"",
-															@"ready": @(model.backend.isReady),
-															@"model": [NFKInferenceServer modelInfoOfBackend:model.backend],
-															@"load": [model loadJSONObject] } mutableCopy];
-			entry[@"status"] = [NFKInferenceServer statusOfBackend:model.backend];
+			NSMutableDictionary<NSString *, id> *entry = [self descriptionOfModel:model];
+			[entry removeObjectsForKeys:@[ @"inputs", @"parameters" ]];
+			entry[@"id"] = model.name;
 			[models addObject:entry];
 		}
 	}

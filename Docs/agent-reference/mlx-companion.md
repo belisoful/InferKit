@@ -196,6 +196,10 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   process, and it never reads `cacheLimit`: mlx-swift 0.32's getter calls `mlx_set_cache_limit` twice
   on the first read in a process (to learn the value), which trims the cache. `memoryLimit`,
   `activeMemory`, `cacheMemory`, and `peakMemory` are plain reads.
+  It also implements the protocol's optional `releaseCachedMemory` (2026-10-13), which the server calls
+  after it unloads a model while none of its models runs or builds: `synchronize()` then
+  `clearCache()`, skipped without the Metal library. Without it an unloaded model's buffers stay in
+  MLX's cache.
   There is deliberately no `setWiredLimit:`. mlx-swift 0.31.6 admits a wired limit only through an
   async, scoped ticket — its synchronous `withWiredLimit` is deprecated and a documented no-op — so a
   persistent setter could only be a knob that silently did nothing. `NFKMLXGPU.withWiredLimit(_:_:)` is
