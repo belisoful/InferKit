@@ -42,6 +42,7 @@ public final class NFKMLXTranslateGemmaTranslator: NFKMLXTranslator {
 
     public var fixedSourceLanguage: String? { nil }
     public var fixedTargetLanguage: String? { nil }
+    public var layerStreams: [NFKMLXLayerStream] { [model.decoder.layerStream].compactMap { $0 } }
 
     /// The table's spelling of a BCP-47 tag: the tag as written (primary lowercase, script title case,
     /// region upper case), then primary with script, then the primary alone; nil when none is named.

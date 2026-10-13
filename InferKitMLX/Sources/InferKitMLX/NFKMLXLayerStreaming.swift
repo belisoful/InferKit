@@ -70,8 +70,9 @@ private final class NFKMLXPendingLayer: @unchecked Sendable {
 ///   read, ready for the next pass.
 ///
 /// A layer streams with the values a resident load gives it: the same stored tensors, widened to
-/// float32 by the same exact conversion at `.float32` precision. A streamed pass therefore computes
-/// what a resident one does, read for read.
+/// float32 by the same exact conversion at `.float32` precision, or converted to the element type a
+/// resident load converts them to. A streamed pass therefore computes what a resident one does, read
+/// for read.
 ///
 /// Introduced in InferKit 0.4.0.
 public final class NFKMLXLayerStream: @unchecked Sendable {
@@ -81,6 +82,7 @@ public final class NFKMLXLayerStream: @unchecked Sendable {
     /// The streamed layer indices, ascending, the order a pass reads them in.
     public let layers: [Int]
     private let precision: NFKMLXWeightPrecision
+    private let conversion: DType?
     private let reader = DispatchQueue(label: "inferkit.mlx.layer-stream", qos: .userInitiated)
     private let lock = NSLock()
     private var pending = [Int: NFKMLXPendingLayer]()
@@ -95,7 +97,10 @@ public final class NFKMLXLayerStream: @unchecked Sendable {
     ///   - files: the release's weight files.
     ///   - tensors: each streamed layer's tensors, named as the layer's module names its parameters.
     ///   - precision: `.float32` widens a 16-bit tensor as it is installed; `.checkpoint` keeps it.
-    init(files: [URL], tensors: [Int: [NFKMLXStreamedTensor]], precision: NFKMLXWeightPrecision) throws {
+    ///   - conversion: the element type every floating tensor takes as it is installed, in place of
+    ///     what `precision` says; a bfloat16 load of a float32 release passes `.bfloat16`.
+    init(files: [URL], tensors: [Int: [NFKMLXStreamedTensor]], precision: NFKMLXWeightPrecision,
+         converting conversion: DType? = nil) throws {
         var descriptors = [Int32]()
         for url in files {
             let descriptor = Darwin.open(url.path, O_RDONLY)
@@ -112,6 +117,7 @@ public final class NFKMLXLayerStream: @unchecked Sendable {
         self.tensors = tensors
         self.layers = tensors.keys.sorted()
         self.precision = precision
+        self.conversion = conversion
     }
 
     deinit {
@@ -164,6 +170,9 @@ public final class NFKMLXLayerStream: @unchecked Sendable {
             let arrays = try layer.wait().map { buffer -> (String, MLXArray) in
                 let array = MLXArray(rawPointer: buffer.pointer, buffer.shape, dtype: buffer.dtype) {
                     free(buffer.pointer)
+                }
+                if let conversion, buffer.dtype.isFloatingPoint {
+                    return (buffer.name, buffer.dtype == conversion ? array : array.asType(conversion))
                 }
                 let widens = precision == .float32 && (buffer.dtype == .float16 || buffer.dtype == .bfloat16)
                 return (buffer.name, widens ? array.asType(.float32) : array)
@@ -263,9 +272,11 @@ extension NFKMLXLayerStream {
     /// - Parameters:
     ///   - directory: the release, single-file or sharded.
     ///   - streamed: the layer indices to stream.
+    ///   - conversion: as ``init(files:tensors:precision:converting:)``.
     ///   - layerOf: a checkpoint key's layer index and its name inside the layer's module, or nil for a
     ///     key outside the repeated layers.
     static func streaming(directory: URL, layers streamed: Set<Int>, precision: NFKMLXWeightPrecision,
+                          converting conversion: DType? = nil,
                           layerOf: (String) -> (layer: Int, name: String)?) throws -> NFKMLXLayerStream {
         let files = try NFKMLXReleaseWeights.files(inDirectory: directory)
         var tensors = [Int: [NFKMLXStreamedTensor]]()
@@ -288,7 +299,7 @@ extension NFKMLXLayerStream {
         for layer in tensors.keys {
             tensors[layer]?.sort { ($0.file, $0.entry.start) < ($1.file, $1.entry.start) }
         }
-        return try NFKMLXLayerStream(files: files, tensors: tensors, precision: precision)
+        return try NFKMLXLayerStream(files: files, tensors: tensors, precision: precision, converting: conversion)
     }
 
     /// The layer a key of the form `<prefix>layers.<n>.<rest>` belongs to, after `decoderName` strips

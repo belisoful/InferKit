@@ -4146,7 +4146,7 @@
       "config": {
         "IK_VAL_MADLAD_7B": ""
       },
-      "note": "MADLAD-400 7B-MT (Google, Apache-2.0), 33 GB of float32 in 7 shards. NFKMLXMADLAD.translator(directoryURL:half: true) converts the shards to bfloat16 as they are read (about 15 GB resident). The reference runs at bfloat16: `MADLAD_DTYPE=bfloat16 run_reference.py madlad <out> --checkpoint <this directory>` (llmvenv); the test reads IK_PARITY_MADLAD_7B and holds bfloat16 tolerances."
+      "note": "MADLAD-400 7B-MT (Google, Apache-2.0), 33 GB of float32 in 7 shards. NFKMLXMADLAD.translator(directoryURL:half: true) converts the shards to bfloat16 as they are read (about 15 GB resident). The reference runs at bfloat16: `MADLAD_DTYPE=bfloat16 run_reference.py madlad <out> --checkpoint <this directory>` (llmvenv); the test reads IK_PARITY_MADLAD_7B and holds bfloat16 tolerances. At float32 the reference reads each block as its forward reaches it: `MADLAD_HELD_DECODER_BLOCKS=32 run_reference.py madlad_layerwise <out> --checkpoint <this directory>` (llmvenv, about 15 GB) → IK_PARITY_MADLAD_7B_F32 (records/madlad-7b-f32.safetensors); the test streams the blocks .automatic cannot hold."
     },
     {
       "key": "TRANSLATEGEMMA_27B",
@@ -4826,7 +4826,8 @@
         "sa2va_llava_teacher",
         "marian",
         "m2m100",
-        "madlad"
+        "madlad",
+        "madlad_layerwise"
       ]
     },
     "voicerestore": {

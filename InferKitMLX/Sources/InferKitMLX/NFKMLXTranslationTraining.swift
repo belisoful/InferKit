@@ -196,7 +196,8 @@ extension NFKMLXNLLB {
 extension NFKMLXMADLAD {
     /// Adapts a MADLAD network's decoder `q` and `v` projections with LoRA: source ids from
     /// ``NFKMLXMADLADTranslator/sourceIds(for:target:)``, target ids as the pieces and the end token.
-    /// Adapt a float32 load; a `half` load holds bfloat16 weights that LoRA does not train.
+    /// Adapt a float32 load; a `half` load holds bfloat16 weights that LoRA does not train, and a
+    /// streamed load holds no weights between passes, so it throws.
     @discardableResult
     public static func fineTune(
         _ net: NFKMLXT5Seq2SeqNet,
@@ -211,7 +212,8 @@ extension NFKMLXMADLAD {
         checkpoint: NFKMLXTrainingCheckpoint? = nil,
         observer: NFKMLXTrainer.Observer? = nil
     ) throws -> [Float] {
-        try NFKMLXTranslationTraining.fineTune(
+        try net.requireHeldLayers()
+        return try NFKMLXTranslationTraining.fineTune(
             net, adapting: NFKMLXTranslationTraining.isT5DecoderProjection, examples: examples,
             rank: rank, alpha: alpha, loss: objective.callAsFunction, optimizer: optimizer, steps: steps,
             clipGradientNorm: clipGradientNorm, accumulationSteps: accumulationSteps, checkpoint: checkpoint, observer: observer)

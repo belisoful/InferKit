@@ -561,6 +561,8 @@ NFKMLXM2M100.backend(variant: .m418M, revision: nil, cacheDirectoryURL: nil)
 NFKMLXNLLB.backend(variant: .distilled600M, directoryURL:)
 // MADLAD-400 3B-MT, bfloat16
 NFKMLXMADLAD.backend(directoryURL:, half: true)
+// MADLAD-400 7B-MT at float32, the blocks that do not fit streamed
+NFKMLXMADLAD.backend(directoryURL:, half: false, residency: .automatic)
 // TranslateGemma, at the checkpoint's bfloat16
 NFKMLXTranslateGemma.backend(directoryURL:, precision: .checkpoint)
 // Fine-tuning
@@ -579,6 +581,8 @@ NFKMLXMarian.network(directoryURL:) / NFKMLXM2M100.network(directoryURL:) / NFKM
 [NFKMLXNLLB backendWithVariant:NFKMLXNLLBVariantDistilled600M directoryURL:dir error:&error]
 // MADLAD-400 3B-MT, bfloat16
 [NFKMLXMADLAD backendWithDirectoryURL:dir halfPrecision:YES error:&error]
+// MADLAD-400 7B-MT at float32, the blocks that do not fit streamed
+[NFKMLXMADLAD backendWithDirectoryURL:dir halfPrecision:NO residency:NFKMLXResidencyAutomatic error:&error]
 // TranslateGemma, at the checkpoint's bfloat16
 [NFKMLXTranslateGemma backendWithDirectoryURL:dir precision:NFKMLXWeightPrecisionCheckpoint error:&error]
 ```

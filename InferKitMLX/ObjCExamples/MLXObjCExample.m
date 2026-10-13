@@ -1162,6 +1162,14 @@
 	XCTAssertTrue([NFKMLXGemma3 instancesRespondToSelector:@selector(streamedLayerCount)]);
 	XCTAssertTrue([NFKMLXTranslateGemma respondsToSelector:@selector(backendWithDirectoryURL:precision:residency:error:)]);
 	XCTAssertNotEqual(NFKMLXResidencyStreamed, NFKMLXResidencyPaged);
+	// MADLAD-400 streams both T5 stacks the same way, the decoder's blocks held first; the 7B at its
+	// released float32 (33 GB) streams under NFKMLXResidencyAutomatic:
+	//   id<NFKInferenceBackend> full = [NFKMLXMADLAD backendWithDirectoryURL:dir halfPrecision:NO
+	//                                                              residency:NFKMLXResidencyAutomatic error:&error];
+	//   NSInteger blocks = ((NFKMLXTranslationBackend *)full).streamedLayerCount;
+	XCTAssertTrue([NFKMLXMADLAD respondsToSelector:@selector(backendWithDirectoryURL:halfPrecision:residency:error:)]);
+	XCTAssertTrue([NFKMLXTranslationBackend instancesRespondToSelector:@selector(streamedLayerCount)]);
+	XCTAssertTrue([NFKMLXTranslationBackend instancesRespondToSelector:@selector(streamedBytesPerPass)]);
 	// A smaller release of the same vocabulary drafts for it: each pass of the streamed decoder verifies
 	// several of the draft's proposals. NFKMLXGenerationParameterKey.draftTokens sets how many.
 	//   id<NFKInferenceBackend> drafted = [NFKMLXGemma3 backendWithDirectoryURL:dir draftDirectoryURL:smallDir

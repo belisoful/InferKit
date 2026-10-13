@@ -271,7 +271,7 @@ layers' bytes).
   Qwen4-Exp, Granite 4.0-H's mixtures and DeepSeek page.
 - Streaming changes WHEN one stage's layers are loaded. A dense stage too large to hold whole holds
   the repeated layers that fit and reads each of the others from the release in its turn, on every pass
-  (`NFKMLXLayerStreaming.swift`). Gemma 3 and TranslateGemma stream.
+  (`NFKMLXLayerStreaming.swift`). Gemma 3, TranslateGemma, and MADLAD-400's T5 encoder-decoder stream.
 
 The cases: `.resident` holds everything and throws where it is known not to fit; `.staged` stages and
 never pages; `.paged` stages and pages; `.streamed` stages and streams each stage with layers that is
@@ -380,6 +380,19 @@ Streaming:
   where `verifyFits` passes, so every load that worked before loads the same way, and plans only where
   it fails. `.resident`, `.staged`, and `.paged` keep `verifyFits`'s refusal. A streamed decoder does
   not fine-tune (`requireHeldLayers`).
+- MADLAD-400 (`NFKMLXT5Seq2SeqNet`) streams both T5 stacks through two streams, one a stack, each
+  cyclic over its own blocks. The plan is one stage (`NFKMLXMADLAD.footprint`) whose `layerBytes` list
+  the decoder's blocks from 1 and then the encoder's, so the decoder, which runs on every token, is held
+  before the encoder, which runs once per source. Block 0 of each stack stays fixed: it carries the
+  relative-position table every block's bias is computed from before the loop. The fixed bytes also
+  count one more block, because each stream keeps its next pass's first block read while the other
+  stack runs. `.automatic` holds the network whole where its bytes at the load precision fit Metal's
+  working set (`NFKMLXMADLAD.verifyFits`; the release-wide `verifyFits` doubles every stored byte at
+  `.float32` and would refuse the 3B). A `half` load streams through `converting: .bfloat16`, the
+  conversion its held blocks take. A failed read stops every block of every later pass
+  (`streamFailed`): a skipped decoder block leaves no cache entry, and the next pass would attend over
+  keys of the wrong length. `NFKMLXTranslationBackend.streamedLayerCount` and `streamedBytesPerPass`
+  report any translator's streams through `NFKMLXTranslator.layerStreams`. Measured on the 7B at float32 on this M1 Max: 38 of 48 decoder blocks and encoder block 0 held, the rest streamed; the parity test read 63.4 GB of encoder blocks at 1.76 GB/s and 181.5 GB of decoder blocks at 2.32 GB/s in 332 s, and its footprint peaked at 18.0 GB, above the planner's budget of 0.85 of Metal's recommended working set. On the 3B with half its decoder streamed, the decoder read 45.6 GB at 1.92 GB/s.
 - A draft cuts the passes (`NFKMLXGemma3Model.useDraft(_:)`, `speculate`): a smaller release of the
   same vocabulary, held, proposes `draftTokens` tokens a round and one pass of the streamed decoder scores
   them, through the language family's `verifyGreedily` / `verifyBySampling`. The target's rollback of

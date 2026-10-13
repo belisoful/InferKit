@@ -44,6 +44,13 @@ public protocol NFKMLXTranslator: AnyObject {
     /// Translates one segment.
     func translate(_ text: String, from source: String?, to target: String,
                    decoding: NFKMLXSeq2SeqDecoding) throws -> String
+    /// The streams the model reads its unheld layers through on every pass; empty where it holds every
+    /// layer, which is the default. Introduced in InferKit 0.4.0.
+    var layerStreams: [NFKMLXLayerStream] { get }
+}
+
+extension NFKMLXTranslator {
+    public var layerStreams: [NFKMLXLayerStream] { [] }
 }
 
 /// The `NFKInferenceBackend` face of an MLX translation model.
@@ -67,6 +74,14 @@ public final class NFKMLXTranslationBackend: NSObject, NFKInferenceBackend {
 
     @objc public var isReady: Bool { true }
     @objc public var backendIdentifier: String { translator.identifier }
+
+    /// The repeated layers the model reads from its release in their turn rather than holding; zero
+    /// where it holds every layer. Introduced in InferKit 0.4.0.
+    @objc public var streamedLayerCount: Int { translator.layerStreams.reduce(0) { $0 + $1.layers.count } }
+
+    /// The bytes those layers occupy: what one encoding and one decoder step read between them, or one
+    /// pass of a decoder-only model. Introduced in InferKit 0.4.0.
+    @objc public var streamedBytesPerPass: Int { translator.layerStreams.reduce(0) { $0 + $1.bytesPerPass } }
 
     /// The request parameters the backend reads.
     @objc public var supportedParameterKeys: Set<String> {

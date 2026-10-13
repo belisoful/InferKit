@@ -146,6 +146,9 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   `google/madlad400-3b-mt`: every probe tokenization id-exact, encoder cosine 1.0, teacher-forced logit
   cosine 1.0000001 with argmax 16/16, greedy and 4-beam outputs token-exact, and the training loss
   1.0395428 against 1.0395255.
+  At its released float32 the 7B fits this machine on neither side. The reference reads each block as
+  its forward reaches it (`run_reference.py madlad_layerwise`) and the port streams the blocks
+  `.automatic` cannot hold (`mlx-companion.md`, "Residency"). Float32 against float32: tokenizations id-exact, encoder cosine 1.0000001, logit cosine 1.0 with argmax 17/17, greedy and 4-beam outputs token-exact ("Der schnelle braune Fuchs springt über den faulen Hund."), loss 0.1659758 against 0.16605085. On this 32 GB machine the port streamed the 47 encoder blocks past block 0 and 10 of the 48 decoder blocks: 63.4 GB of encoder reads at 1.76 GB/s and 181.5 GB of decoder reads at 2.32 GB/s over the test, 332 s with an 18.0 GB peak footprint.
 
 - `NFKMLXTranslateGemma` (`@objc`) / `NFKMLXTranslateGemmaTranslator` — TranslateGemma
   (`Gemma3ForConditionalGeneration`, Google, Gemma terms; 4B, 12B, 27B, gated): Gemma 3 fine-tuned for
@@ -226,6 +229,11 @@ the reference's decoded greedy and beam text as UTF-8 (`greedy_text`, `beam_text
 byte for byte against `translate`. Further runners: `nllb` (NllbTokenizer with `NLLB_CODES` mapping the probe tags to
 `xxx_Xxxx`), `small100` (imports the release's own
 `tokenization_small100.py`), `madlad` with `MADLAD_DTYPE=bfloat16` for the 7B, and
+`madlad_layerwise`, which records what `run_madlad` records for a release too large to hold whole at its
+precision: the T5 is built on the meta device, the embedding, the untied head, and both final norms are
+filled, and each encoder and decoder block is read from the release (`F_NOCACHE`) as its forward reaches
+it and freed after; `MADLAD_HELD_DECODER_BLOCKS` keeps that many leading decoder blocks resident, which
+changes the reads and nothing recorded. On the 3B at float32 its record equals `run_madlad`'s bit for bit (17 keys); the 7B float32 record took 177 s with 32 decoder blocks held. Then
 `translategemma_layerwise`, which records what `run_translategemma` records for a release too large to
 hold whole: the model is built on the meta device and each decoder layer's tensors are read from the
 release (`F_NOCACHE`, in reads under 1 GiB, since macOS refuses longer ones) as the forward reaches the
@@ -281,10 +289,11 @@ Coordinator and every run through the Testing Coordinator.
   runner that imports that file from the directory; the record otherwise matches `run_m2m100`. Keys
   `IK_VAL_SMALL100` / `IK_PARITY_SMALL100`.
 - `google/madlad400-7b-mt` (48 + 48 at 2048, about 33 GB float32): float32 does not fit beside anything
-  on 32 GB, so the reference records at bfloat16 (`MADLAD_DTYPE=bfloat16`, added to `run_madlad`) and the
-  port loads `half`, held to bf16 tolerances as the TranslateGemma 12B is. Each side runs alone at
-  about 17 GB. Keys `IK_VAL_MADLAD_7B` / `IK_PARITY_MADLAD_7B`. `madlad400-7b-mt-bt` is the same
-  geometry and is not separately measured.
+  on 32 GB, so the reference first recorded at bfloat16 (`MADLAD_DTYPE=bfloat16`, added to `run_madlad`)
+  and the port loaded `half`, held to bf16 tolerances as the TranslateGemma 12B is. Each side runs alone at
+  about 17 GB. Keys `IK_VAL_MADLAD_7B` / `IK_PARITY_MADLAD_7B`. At float32 the reference runs
+  `madlad_layerwise` and the port streams; key `IK_PARITY_MADLAD_7B_F32`. `madlad400-7b-mt-bt` is the
+  same geometry and is not separately measured.
 - `google/translategemma-27b-it` (62 layers at 5376, about 54 GB bfloat16, gated): neither side fits
   whole, and the model is dense. The port streams the decoder layers it cannot hold (`.streamed`), and
   the reference runs `translategemma_layerwise`, the whole-model record built one layer at a time.

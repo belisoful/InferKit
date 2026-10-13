@@ -60,8 +60,9 @@ struct NFKMLXStageFootprint: Equatable {
     /// The stage at a wider precision it takes where the plan can afford it, such as a text encoder
     /// stored at bfloat16 and run at float32; nil for a stage with one precision.
     let widenedBytes: Int?
-    /// Each repeated layer's bytes, in the order a pass runs them, counted inside ``bytes``; empty for a
-    /// stage that cannot stream.
+    /// Each repeated layer's bytes, in the order a streamed load holds them, counted inside ``bytes``;
+    /// empty for a stage that cannot stream. For one stack that is the order a pass runs them; an
+    /// encoder-decoder lists the decoder's first, since it runs on every token.
     let layerBytes: [Int]
 
     init(bytes: Int, pageableBytes: Int = 0, widenedBytes: Int? = nil, layerBytes: [Int] = []) {

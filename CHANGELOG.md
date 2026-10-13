@@ -730,6 +730,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   refuses to fine-tune.
 - The planner gains streamed stages: a stage declares its layers' bytes, needs everything outside them
   plus two layers in flight, and holds its first layers while they fit what the budget leaves.
+- MADLAD-400 streams both T5 stacks the same way, holding the decoder's blocks before the encoder's.
+  `NFKMLXMADLAD.network`, `translator`, and `backend` gain a `residency:` argument, reached from
+  Objective-C through `backendWithDirectoryURL:halfPrecision:residency:error:`. Under `.automatic` the
+  7B at its released float32 streams on a 32 GB machine and matches a float32 reference that reads one
+  block at a time. `NFKMLXTranslationBackend` reports `streamedLayerCount` and `streamedBytesPerPass`
+  for any translator through `NFKMLXTranslator.layerStreams`.
 - A smaller Gemma 3 release of the same vocabulary drafts for a larger one
   (`NFKMLXGemma3Model.useDraft(_:)`, the `draftDirectoryURL:` factories on `NFKMLXGemma3` and
   `NFKMLXTranslateGemma`): it proposes `NFKMLXGenerationParameterKey.draftTokens` tokens a round and one

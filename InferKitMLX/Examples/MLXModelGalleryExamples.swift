@@ -1536,7 +1536,8 @@ final class MLXModelGalleryExamples: XCTestCase {
         // (one OPUS-MT pair, or backend(sourceLanguage:targetLanguage:cacheDirectoryURL:) to download it),
         // NFKMLXM2M100.backend(variant:directoryURL:) (100 languages, or SMaLL-100),
         // NFKMLXNLLB.backend(variant:directoryURL:) (202 languages on the same network), and
-        // NFKMLXMADLAD.backend(directoryURL:half:) (400+ languages, T5). Each answers NFKInputPrompt with
+        // NFKMLXMADLAD.backend(directoryURL:half:residency:) (400+ languages, T5; the 7B at float32 streams
+        // the blocks it cannot hold). Each answers NFKInputPrompt with
         // NFKOutputText for the NFKParameterTargetLanguage asked. Here tiny random networks exercise the
         // two architectures and the shared greedy/beam decoder without a download.
         let marian = try NFKMLXMarian.network(directoryURL: nil, configuration: .tinyMarian)

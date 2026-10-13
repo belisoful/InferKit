@@ -617,16 +617,27 @@ final class NFKMLXTranslationTests: XCTestCase {
         try checkMADLAD(weightsKey: "IK_VAL_MADLAD", recordKey: "IK_PARITY_MADLAD", half: false, name: "madlad")
     }
 
-    /// The 7B is 33 GB of float32, so the reference records at bfloat16 (`MADLAD_DTYPE=bfloat16`) and
-    /// the port loads `half`: two bfloat16 stacks, held to the tolerances the TranslateGemma 12B set.
+    /// The 7B loaded `half` against a bfloat16 record (`MADLAD_DTYPE=bfloat16`): two bfloat16 stacks,
+    /// held to the tolerances the TranslateGemma 12B set.
     func testMADLAD7BMatchesTheReference() throws {
         try checkMADLAD(weightsKey: "IK_VAL_MADLAD_7B", recordKey: "IK_PARITY_MADLAD_7B", half: true, name: "madlad-7b")
     }
 
-    private func checkMADLAD(weightsKey: String, recordKey: String, half: Bool, name: String) throws {
+    /// The 7B at the release's float32, 33 GB that this machine holds on neither side. The reference
+    /// reads each block as its forward reaches it (`run_reference.py madlad_layerwise`), and the port
+    /// streams the blocks `.automatic` cannot hold.
+    func testMADLAD7BStreamedAtFloat32MatchesTheReference() throws {
+        try checkMADLAD(weightsKey: "IK_VAL_MADLAD_7B", recordKey: "IK_PARITY_MADLAD_7B_F32", half: false,
+                        name: "madlad-7b-f32", streams: true)
+    }
+
+    private func checkMADLAD(weightsKey: String, recordKey: String, half: Bool, name: String, streams: Bool = false) throws {
         try requireMLXRuntime()
         let (directory, record) = try release(weightsKey, recordKey)
         let translator = try NFKMLXMADLAD.translator(directoryURL: directory, half: half)
+        let streamsBlocks = translator.net.encoderStream != nil || translator.net.decoderStream != nil
+        XCTAssertEqual(streamsBlocks, streams, "\(name) streams only what this machine cannot hold")
+        XCTAssertEqual(NFKMLXTranslationBackend(translator: translator).streamedLayerCount > 0, streams)
         for (index, sentence) in Self.sentences.enumerated() {
             XCTAssertEqual(translator.sourceIds(for: sentence, target: "de"), ints(record["tokens_\(index)"]!), "tokens of \(sentence)")
         }
@@ -642,6 +653,14 @@ final class NFKMLXTranslationTests: XCTestCase {
         let loss = NFKMLXTranslationObjective()(translator.net, record["source_ids"]!, record["target_ids"]!)
         XCTAssertEqual(loss.item(Float.self), record["loss"]!.asArray(Float.self)[0], accuracy: half ? 0.1 : 1e-2, "training loss")
         print("loss mine \(loss.item(Float.self)) reference \(record["loss"]!.asArray(Float.self)[0])")
+        try translator.net.verifyStream()
+        for (stack, stream, blocks) in [("encoder", translator.net.encoderStream, translator.net.configuration.encoder.layers),
+                                        ("decoder", translator.net.decoderStream, translator.net.configuration.decoderLayers)] {
+            guard let stream else { continue }
+            let (bytes, seconds) = stream.readStatistics
+            print("\(name) \(stack): \(stream.layers.count) of \(blocks) blocks streamed, "
+                  + String(format: "%.1f GB read at %.2f GB/s", Double(bytes) / 1e9, Double(bytes) / 1e9 / max(seconds, 1e-9)))
+        }
     }
 
     // MARK: TranslateGemma

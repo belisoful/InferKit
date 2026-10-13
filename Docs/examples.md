@@ -483,8 +483,21 @@ fit the machine's working set and reads each of the others from the release in i
 pass, the next one read while the current one computes. `.automatic`, the default, streams only where
 the release does not fit whole, so a release that loads today loads the same way. A streamed decoder
 computes the held decoder's values exactly, and each pass costs a read of every layer it does not
-hold: the 27B TranslateGemma streams about 40 GB a pass from a 2 GB/s drive. Gemma 3 and TranslateGemma
-stream; a streamed decoder runs and does not fine-tune.
+hold: the 27B TranslateGemma streams about 40 GB a pass from a 2 GB/s drive. Gemma 3, TranslateGemma,
+and MADLAD-400 stream; a streamed model runs and does not fine-tune. MADLAD-400's T5 holds its
+decoder's blocks first, since the decoder runs on every token and the encoder once per source; the 7B at
+its released float32 (33 GB) streams under `.automatic`.
+
+```swift
+let madlad = try NFKMLXMADLAD.backend(directoryURL: releaseDirectory, half: false, residency: .automatic)
+print((madlad as? NFKMLXTranslationBackend)?.streamedLayerCount ?? 0)   // blocks read in their turn
+```
+
+```objc
+id<NFKInferenceBackend> madlad = [NFKMLXMADLAD backendWithDirectoryURL:releaseDirectory halfPrecision:NO
+                                                             residency:NFKMLXResidencyAutomatic error:&error];
+NSLog(@"%ld blocks streamed", (long)((NFKMLXTranslationBackend *)madlad).streamedLayerCount);
+```
 
 ```swift
 let big = try NFKMLXGemma3.backend(directoryURL: releaseDirectory, precision: .checkpoint, residency: .streamed)

@@ -244,6 +244,12 @@ public final class NFKMLXT5Seq2SeqNet: Module {
 
     public let configuration: NFKMLXMADLADConfiguration
     private let rates = NFKDropoutRates()
+    /// The encoder blocks a streamed load leaves in the release, read in their turn on every encoding;
+    /// nil where every encoder block is held. Introduced in InferKit 0.4.0.
+    public internal(set) var encoderStream: NFKMLXLayerStream?
+    /// The decoder blocks a streamed load leaves in the release, read in their turn on every decoder
+    /// pass; nil where every decoder block is held. Introduced in InferKit 0.4.0.
+    public internal(set) var decoderStream: NFKMLXLayerStream?
 
     /// The dropout the network applies while it trains; none by default. T5 applies one rate,
     /// `dropout_rate`, at the positions ``NFKMLXSeq2SeqDropout`` names `dropout`, `attentionDropout`,
@@ -275,8 +281,10 @@ public final class NFKMLXT5Seq2SeqNet: Module {
     public func encode(_ tokens: MLXArray) -> MLXArray {
         var hidden = NFKDropout.apply(shared(tokens), rate: dropout.dropout, active: encoder.training)
         let bias = encoder.block[0].selfAttention.attention.computeBias(tokens.dim(1))
-        for block in encoder.block {
-            hidden = block(hidden, bias: bias)
+        for (index, block) in encoder.block.enumerated() where !streamFailed {
+            hidden = pass(block, index, stream: encoderStream, hidden: hidden, keeping: { [] }) {
+                block(hidden, bias: bias)
+            }
         }
         return NFKDropout.apply(encoder.finalLayerNorm(hidden), rate: dropout.dropout, active: encoder.training)
     }
@@ -286,8 +294,11 @@ public final class NFKMLXT5Seq2SeqNet: Module {
         let offset = cache.length
         var hidden = NFKDropout.apply(shared(tokens), rate: dropout.dropout, active: decoder.training)
         let bias = decoder.block[0].selfAttention.attention.causalBias(queryLength: tokens.dim(1), offset: offset)
-        for (index, block) in decoder.block.enumerated() {
-            hidden = block(hidden, memory: memory, bias: bias, cache: cache, index: index)
+        for (index, block) in decoder.block.enumerated() where !streamFailed {
+            let state = { [cache.selfKeys[index], cache.selfValues[index], cache.crossKeys[index], cache.crossValues[index]] }
+            hidden = pass(block, index, stream: decoderStream, hidden: hidden, keeping: { state().compactMap { $0 } }) {
+                block(hidden, memory: memory, bias: bias, cache: cache, index: index)
+            }
         }
         hidden = NFKDropout.apply(decoder.finalLayerNorm(hidden), rate: dropout.dropout, active: decoder.training)
         if let lmHead {
@@ -303,15 +314,79 @@ public final class NFKMLXT5Seq2SeqNet: Module {
 
     public func makeCache() -> NFKMLXSeq2SeqCache { NFKMLXSeq2SeqCache(layers: configuration.decoderLayers) }
 
+    /// Throws the first failed read of a streamed block. After a failed read every pass skips every
+    /// block, so a caller holding a streamed network checks after each translation. Nothing is thrown
+    /// where every block is held. Introduced in InferKit 0.4.0.
+    public func verifyStream() throws {
+        if let failure = encoderStream?.readFailure ?? decoderStream?.readFailure {
+            throw failure
+        }
+    }
+
+    /// Throws for a streamed network: its streamed blocks are read from the release on every pass and
+    /// hold no parameters between passes for an optimizer to update.
+    func requireHeldLayers() throws {
+        guard encoderStream == nil, decoderStream == nil else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "a streamed MADLAD network does not train; load it with a residency that holds every block")
+        }
+    }
+
+    // A block skipped after a failed read leaves no cache entry for its position, and the next pass
+    // would attend over cached keys of the wrong length, so a failure stops every block.
+    private var streamFailed: Bool {
+        encoderStream?.readFailure != nil || decoderStream?.readFailure != nil
+    }
+
+    /// `body` over block `index`, filled from `stream` for its turn where the stream holds it, and its
+    /// weights let go once the output and the `keeping` state it wrote are evaluated.
+    private func pass(_ block: Module, _ index: Int, stream: NFKMLXLayerStream?, hidden: MLXArray,
+                      keeping state: () -> [MLXArray], _ body: () -> MLXArray) -> MLXArray {
+        guard let stream, stream.streams(index) else { return body() }
+        guard stream.install(index, into: block) else { return hidden }
+        let output = body()
+        stream.release(index, from: block, after: [output] + state())
+        return output
+    }
+
     /// Loads a release directory (`model.safetensors` or shards). `half` converts the weights to
     /// `bfloat16` as they are read, in groups, so the stored float32 never sits whole beside the
     /// converted copy (the 7B is 33 GB on disk); the 3B reference runs float32, which is what its
     /// parity measurement uses.
     public func loadWeights(fromDirectory directory: URL, half: Bool = false) throws {
+        try loadWeights(fromDirectory: directory, half: half, streaming: ([], []))
+    }
+
+    /// ``loadWeights(fromDirectory:half:)`` leaving the `streamed` blocks of each stack in the release,
+    /// read in their turn on every pass. Call it before anything evaluates the network, so the random
+    /// weights the streamed blocks were built with are never materialized.
+    func loadWeights(fromDirectory directory: URL, half: Bool,
+                     streaming streamed: (encoder: Set<Int>, decoder: Set<Int>)) throws {
+        var placeholders = [(String, MLXArray)]()
+        func stream(_ layers: Set<Int>, stack: String, blocks: [Module]) throws -> NFKMLXLayerStream? {
+            guard !layers.isEmpty else { return nil }
+            let stream = try NFKMLXLayerStream.streaming(directory: directory, layers: layers, precision: .checkpoint,
+                                                         converting: half ? .bfloat16 : .float32) { key in
+                NFKMLXMADLAD.block(of: key).flatMap { $0.stack == stack ? ($0.layer, $0.name) : nil }
+            }
+            for index in layers.sorted() {
+                stream.vacate(index, module: blocks[index])
+                placeholders += blocks[index].parameters().flattened().map { ("\(stack).block.\(index).\($0)", $1) }
+            }
+            return stream
+        }
+        encoderStream = try stream(streamed.encoder, stack: "encoder", blocks: encoder.block)
+        decoderStream = try stream(streamed.decoder, stack: "decoder", blocks: decoder.block)
+        let held: (String) -> String? = { key in
+            guard let block = NFKMLXMADLAD.block(of: key) else { return key }
+            return (block.stack == "encoder" ? streamed.encoder : streamed.decoder).contains(block.layer) ? nil : key
+        }
         let arrays = half
-            ? try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: .bfloat16)
-            : try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: .checkpoint)
-        try load(arrays, half: half)
+            ? try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: .bfloat16, remap: held)
+            : try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: .checkpoint, remap: held)
+        try load(arrays, half: half, placeholders: placeholders)
+        encoderStream?.prime()
+        decoderStream?.prime()
     }
 
     /// Loads one checkpoint file, such as one ``NFKMLXWeights/save(_:extraArrays:to:)`` wrote after a fine-tune.
@@ -322,14 +397,14 @@ public final class NFKMLXT5Seq2SeqNet: Module {
     /// A release stores the shared embedding under `shared.weight`, or only as an `embed_tokens`
     /// copy on one or both stacks (the 3B release keeps the decoder's alone); the first one seen
     /// becomes `shared` and the rest are dropped.
-    private func load(_ arrays: [(String, MLXArray)], half: Bool) throws {
+    private func load(_ arrays: [(String, MLXArray)], half: Bool, placeholders: [(String, MLXArray)] = []) throws {
         var mapped = [String: MLXArray]()
         for (key, value) in arrays {
             let name = key.hasSuffix("embed_tokens.weight") ? "shared.weight" : key
             if name == "shared.weight", mapped[name] != nil { continue }
             mapped[name] = half ? value.asType(.bfloat16) : value.asType(.float32)
         }
-        try NFKMLXWeights.apply(Array(mapped), to: self)
+        try NFKMLXWeights.apply(Array(mapped) + placeholders, to: self)
     }
 }
 
@@ -376,6 +451,7 @@ public final class NFKMLXMADLADTranslator: NFKMLXTranslator {
 
     public var fixedSourceLanguage: String? { nil }
     public var fixedTargetLanguage: String? { nil }
+    public var layerStreams: [NFKMLXLayerStream] { [net.encoderStream, net.decoderStream].compactMap { $0 } }
 
     /// The marker id for a BCP-47 tag: the primary subtag with its script where the release
     /// distinguishes one (`zh-Hant` and `zh-TW` → `<2zh_Hant>`), or nil when the release has no such
@@ -409,6 +485,7 @@ public final class NFKMLXMADLADTranslator: NFKMLXTranslator {
             throw NFKMLXTranslationBackend.error(.error_InferenceUnsupported, "\(identifier) does not translate into \(target)")
         }
         let generated = NFKMLXSeq2SeqDecoder.generate(net, source: ids, decoding: decoding)
+        try net.verifyStream()
         return segmenter.decode(generated)
     }
 }
@@ -417,6 +494,15 @@ public final class NFKMLXMADLADTranslator: NFKMLXTranslator {
 ///
 /// @discussion A release directory holds `config.json`, `spiece.model`, and `model.safetensors`.
 /// The 3B release is 11.8 GB of float32 on disk; `half` loads it as bfloat16.
+///
+/// A residency decides how a release larger than the machine's working set loads; the 7B is 33 GB of
+/// float32. `.automatic` (the default) holds the network whole where it fits and streams it where it
+/// does not: the blocks that fit are held, the decoder's first because the decoder runs on every
+/// token and the encoder once per source, and each other block is read from the release in its turn
+/// on every pass (``NFKMLXLayerStream``). Block 0 of each stack is always held, since it carries the
+/// relative-position table every block's bias comes from. `.streamed` plans a stream wherever the
+/// network does not fit; `.resident`, `.staged`, and `.paged` hold it whole and refuse a release known
+/// not to fit. A streamed network computes what a held one does, and does not train.
 ///
 /// Introduced in InferKit 0.4.0.
 @objc(NFKMLXMADLAD)
@@ -427,9 +513,10 @@ public final class NFKMLXMADLAD: NSObject {
     static let optionalFiles = ["generation_config.json"]
     static let weightFiles = ["model.safetensors"]
 
-    /// Loads a release directory as a translator.
-    public static func translator(directoryURL directory: URL, half: Bool = false) throws -> NFKMLXMADLADTranslator {
-        try translator(net: try network(directoryURL: directory, half: half), directoryURL: directory)
+    /// Loads a release directory as a translator, held as `residency` says.
+    public static func translator(directoryURL directory: URL, half: Bool = false,
+                                  residency: NFKMLXResidency = .automatic) throws -> NFKMLXMADLADTranslator {
+        try translator(net: try network(directoryURL: directory, half: half, residency: residency), directoryURL: directory)
     }
 
     /// Wraps a network with the release's tokenizer.
@@ -442,18 +529,114 @@ public final class NFKMLXMADLAD: NSObject {
     }
 
     /// Builds the network alone, ready to adapt. A release directory supplies its own geometry from its
-    /// `config.json` and its weights. Without a directory the network takes `configuration` (the tiny
-    /// test geometry when nil) and random weights. A `configuration` passed with a directory overrides
-    /// the release's `config.json`.
+    /// `config.json` and its weights, held as `residency` says; a network that streams does not adapt.
+    /// Without a directory the network takes `configuration` (the tiny test geometry when nil) and
+    /// random weights. A `configuration` passed with a directory overrides the release's `config.json`.
     public static func network(directoryURL directory: URL?, configuration: NFKMLXMADLADConfiguration? = nil,
-                               half: Bool = false) throws -> NFKMLXT5Seq2SeqNet {
+                               half: Bool = false, residency: NFKMLXResidency = .automatic) throws -> NFKMLXT5Seq2SeqNet {
+        try network(directoryURL: directory, configuration: configuration, half: half, residency: residency,
+                    budget: NFKMLXResidencyBudget.current())
+    }
+
+    /// ``network(directoryURL:configuration:half:residency:)`` planned against `budget`.
+    static func network(directoryURL directory: URL?, configuration: NFKMLXMADLADConfiguration?, half: Bool,
+                        residency: NFKMLXResidency, budget: Int) throws -> NFKMLXT5Seq2SeqNet {
         guard let directory else {
             return NFKMLXT5Seq2SeqNet(configuration ?? .tiny)
         }
         let net = NFKMLXT5Seq2SeqNet(try configuration ?? NFKMLXMADLADConfiguration(
             huggingFaceConfigURL: directory.appendingPathComponent("config.json")))
-        try net.loadWeights(fromDirectory: directory, half: half)
+        let streamed = try streamedBlocks(directory: directory, half: half, residency: residency, budget: budget)
+        try net.loadWeights(fromDirectory: directory, half: half, streaming: streamed)
         return net
+    }
+
+    /// The stack, block index, and name inside the block of a checkpoint key under `encoder.block.` or
+    /// `decoder.block.`, or nil for a key outside the blocks.
+    static func block(of key: String) -> (stack: String, layer: Int, name: String)? {
+        for stack in ["encoder", "decoder"] where key.hasPrefix(stack + ".") {
+            return NFKMLXLayerStream.layer(ofDecoderName: String(key.dropFirst(stack.count + 1)), layersKey: "block")
+                .map { (stack, $0.layer, $0.name) }
+        }
+        return nil
+    }
+
+    /// What a load of `directory` holds at the precision `half` picks. `whole` is every byte a held
+    /// load holds. `stage` lists the blocks a stream may leave in the release in the order a streamed
+    /// load holds them, the decoder's blocks from 1 and then the encoder's; block 0 of each stack and
+    /// everything outside the blocks are fixed. Two streams each keep one read ahead, so while one
+    /// stack runs the other holds a block read for its next pass, and the fixed bytes count it.
+    static func footprint(directory: URL, half: Bool) throws
+        -> (whole: Int, stage: NFKMLXStageFootprint, encoderBlocks: Int, decoderBlocks: Int) {
+        var blocks = ["encoder": [Int: Int](), "decoder": [Int: Int]()]
+        var fixed = 0, embedding = 0
+        for url in try NFKMLXReleaseWeights.files(inDirectory: directory) {
+            for (key, entry) in try NFKMLXSafetensors.entries(inFile: url) {
+                let stored = NFKMLXSafetensors.dtype(entry.dtype)
+                let bytes = stored?.isFloatingPoint == true
+                    ? entry.byteCount / stored!.size * (half ? 2 : 4) : entry.byteCount
+                if let block = block(of: key) {
+                    blocks[block.stack]![block.layer, default: 0] += bytes
+                } else if key == "shared.weight" || key.hasSuffix("embed_tokens.weight") {
+                    // A release may store the embedding more than once; the load keeps one copy.
+                    embedding = max(embedding, bytes)
+                } else {
+                    fixed += bytes
+                }
+            }
+        }
+        func ordered(_ stack: String) -> [Int] {
+            let sizes = blocks[stack]!
+            return (0 ..< (sizes.keys.max().map { $0 + 1 } ?? 0)).map { sizes[$0] ?? 0 }
+        }
+        let encoder = ordered("encoder"), decoder = ordered("decoder")
+        let whole = fixed + embedding + encoder.reduce(0, +) + decoder.reduce(0, +)
+        let layers = Array(decoder.dropFirst()) + Array(encoder.dropFirst())
+        let held = fixed + embedding + (encoder.first ?? 0) + (decoder.first ?? 0) + (layers.max() ?? 0)
+        return (whole, NFKMLXStageFootprint(bytes: held + layers.reduce(0, +), layerBytes: layers),
+                encoder.count, decoder.count)
+    }
+
+    /// The blocks of each stack a load leaves in the release under `residency`; both empty where it
+    /// holds every block. `.automatic` holds the network whole where it fits the machine's working set,
+    /// and plans a stream only where it does not; `.streamed` always plans; every other residency holds
+    /// the network whole and refuses a release known not to fit.
+    static func streamedBlocks(directory: URL, half: Bool, residency: NFKMLXResidency,
+                               budget: Int) throws -> (encoder: Set<Int>, decoder: Set<Int>) {
+        let footprint = try footprint(directory: directory, half: half)
+        let fitsWhole = { try verifyFits(footprint.whole, directory: directory, half: half) }
+        switch residency {
+        case .automatic where (try? fitsWhole()) != nil, .resident, .staged, .paged:
+            try fitsWhole()
+            return ([], [])
+        case .automatic, .streamed:
+            let plan = try NFKMLXResidencyBudget.plan([footprint.stage], residency: residency, budget: budget)
+            guard plan.streams(0) else {
+                try fitsWhole()
+                return ([], [])
+            }
+            let decoderLayers = footprint.decoderBlocks - 1
+            var streamed: (encoder: Set<Int>, decoder: Set<Int>) = ([], [])
+            for position in plan.heldLayers(0, of: footprint.stage).upperBound ..< footprint.stage.layerBytes.count {
+                if position < decoderLayers {
+                    streamed.decoder.insert(position + 1)
+                } else {
+                    streamed.encoder.insert(position - decoderLayers + 1)
+                }
+            }
+            return streamed
+        }
+    }
+
+    /// Throws where `bytes` of weights are known not to fit the machine's working set, before any is
+    /// read, so a load that would end in a process kill becomes an error naming the shortfall.
+    static func verifyFits(_ bytes: Int, directory: URL, half: Bool,
+                           budget: Int = NFKMLXGPU.recommendedWorkingSetSize) throws {
+        guard budget > 0, bytes > budget else { return }
+        throw NFKMLXError.unsupportedConfiguration(
+            "\(directory.lastPathComponent) needs about \(NFKMLXResidencyBudget.gib(bytes)) resident at "
+            + (half ? "bfloat16" : "float32") + ", but the machine's working set is \(NFKMLXResidencyBudget.gib(budget)); "
+            + (half ? "" : "load it half, or ") + "load it with .streamed residency")
     }
 
     /// Builds the backend from a release directory at float32.
@@ -465,7 +648,14 @@ public final class NFKMLXMADLAD: NSObject {
     /// Builds the backend from a release directory, at bfloat16 when `half` is set.
     @objc(backendWithDirectoryURL:halfPrecision:error:)
     public static func backend(directoryURL: URL, half: Bool) throws -> any NFKInferenceBackend {
-        NFKMLXTranslationBackend(translator: try translator(directoryURL: directoryURL, half: half))
+        try backend(directoryURL: directoryURL, half: half, residency: .automatic)
+    }
+
+    /// Builds the backend from a release directory, at bfloat16 when `half` is set, held as `residency`
+    /// says. Introduced in InferKit 0.4.0.
+    @objc(backendWithDirectoryURL:halfPrecision:residency:error:)
+    public static func backend(directoryURL: URL, half: Bool, residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        NFKMLXTranslationBackend(translator: try translator(directoryURL: directoryURL, half: half, residency: residency))
     }
 
     /// Downloads a release (`google/madlad400-3b-mt`) and builds the backend. Blocking on the network.

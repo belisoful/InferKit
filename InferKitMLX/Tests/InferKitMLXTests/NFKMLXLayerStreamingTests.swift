@@ -2,9 +2,10 @@
 //  NFKMLXLayerStreamingTests.swift
 //  InferKitMLXTests
 //
-//  Weight-free tests for streaming a dense decoder's layers: a random Gemma 3 is written out as a
-//  bfloat16 release, and the same release loaded with every layer held and with its layers streamed
-//  must compute the same values, element for element, at both precisions.
+//  Weight-free tests for streaming a dense model's layers: a random Gemma 3 is written out as a
+//  bfloat16 release and a random MADLAD-geometry T5 as a float32 one, and each release loaded with
+//  every layer held and with its layers streamed must compute the same values, element for element,
+//  at both precisions.
 //
 
 import XCTest
@@ -247,5 +248,187 @@ final class NFKMLXLayerStreamingTests: XCTestCase {
         let (bytes, seconds) = stream.readStatistics
         print("translategemma-4b streamed: \(stream.layers.count) of \(decoder.configuration.layerCount) layers, "
               + String(format: "%.1f GB read at %.2f GB/s", Double(bytes) / 1e9, Double(bytes) / 1e9 / max(seconds, 1e-9)))
+    }
+
+    // MARK: T5 encoder-decoder
+
+    private let sourceIds: [Int32] = [5, 17, 42, 99, 7, 61, 2]
+
+    /// A random MADLAD-geometry T5, four blocks a stack and an untied head, written as a float32 release.
+    private func t5Release() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t5-stream-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let config: [String: Any] = [
+            "model_type": "t5", "d_model": 32, "num_layers": 4, "num_decoder_layers": 4, "num_heads": 2, "d_kv": 16,
+            "d_ff": 64, "vocab_size": 128, "relative_attention_num_buckets": 16, "relative_attention_max_distance": 32,
+            "tie_word_embeddings": false, "pad_token_id": 1, "eos_token_id": 2, "decoder_start_token_id": 0,
+        ]
+        try JSONSerialization.data(withJSONObject: config).write(to: directory.appendingPathComponent("config.json"))
+        NFKMLXRandom.seed(13)
+        let net = NFKMLXT5Seq2SeqNet(try NFKMLXMADLADConfiguration(huggingFaceConfigURL: directory.appendingPathComponent("config.json")))
+        var stored = [String: MLXArray]()
+        for (key, value) in net.parameters().flattened() {
+            // T5's norm weights start at one; random ones make every norm count.
+            stored[key] = key.hasSuffix("layer_norm.weight") ? 1 + MLXRandom.normal(value.shape) * 0.1 : value
+        }
+        try save(arrays: stored, url: directory.appendingPathComponent("model.safetensors"))
+        return directory
+    }
+
+    /// A load of `directory` holding the first `count` blocks a streamed load holds (the decoder's from
+    /// block 1), every other block but each stack's block 0 streamed.
+    private func streamedT5(_ directory: URL, half: Bool, holding count: Int) throws -> NFKMLXT5Seq2SeqNet {
+        let stage = try NFKMLXMADLAD.footprint(directory: directory, half: half).stage
+        let budget = NFKMLXResidencyBudget.reserve + stage.streamedMinimumBytes + stage.layerBytes.prefix(count).reduce(0, +)
+        return try NFKMLXMADLAD.network(directoryURL: directory, configuration: nil, half: half, residency: .streamed,
+                                        budget: budget)
+    }
+
+    func testAStreamedT5ComputesWhatAHeldOneDoes() throws {
+        try requireMLXRuntime()
+        let directory = try t5Release()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for half in [false, true] {
+            let held = try NFKMLXMADLAD.network(directoryURL: directory, configuration: nil, half: half,
+                                                residency: .resident, budget: 0)
+            let streamed = try streamedT5(directory, half: half, holding: 2)
+            XCTAssertNil(held.encoderStream)
+            XCTAssertNil(held.decoderStream)
+            XCTAssertEqual(streamed.decoderStream?.layers, [3], "decoder blocks 1 and 2 are held before any encoder block")
+            XCTAssertEqual(streamed.encoderStream?.layers, [1, 2, 3], "each stack's block 0 is held")
+
+            let source = MLXArray(sourceIds).reshaped([1, sourceIds.count])
+            let target = MLXArray([Int32(0), 9, 10, 11, 12]).reshaped([1, 5])
+            let memory = held.encode(source)
+            XCTAssertEqual(maxDifference(memory, streamed.encode(source)), 0, "half \(half): the encoder output")
+            XCTAssertEqual(maxDifference(held(source: source, target: target), streamed(source: source, target: target)), 0,
+                           "half \(half): the teacher-forced logits")
+
+            let heldCache = held.makeCache(), streamedCache = streamed.makeCache()
+            for t in 0 ..< 5 {
+                let step = target[0..., t ..< t + 1]
+                XCTAssertEqual(maxDifference(held.decode(step, memory: memory, cache: heldCache),
+                                             streamed.decode(step, memory: memory, cache: streamedCache)), 0,
+                               "half \(half): the cached step \(t)")
+            }
+
+            let ids = sourceIds.map { Int($0) }
+            var decoding = NFKMLXSeq2SeqDecoding(beams: 1, maxTokens: 8, startToken: 0, endToken: 2)
+            decoding.suppressedTokens = [2]
+            XCTAssertEqual(NFKMLXSeq2SeqDecoder.generate(streamed, source: ids, decoding: decoding),
+                           NFKMLXSeq2SeqDecoder.generate(held, source: ids, decoding: decoding), "half \(half): greedy")
+            decoding.beams = 3
+            XCTAssertEqual(NFKMLXSeq2SeqDecoder.generate(streamed, source: ids, decoding: decoding),
+                           NFKMLXSeq2SeqDecoder.generate(held, source: ids, decoding: decoding), "half \(half): beams")
+            try streamed.verifyStream()
+
+            let decoderStream = try XCTUnwrap(streamed.decoderStream)
+            XCTAssertGreaterThan(decoderStream.readStatistics.bytes, 5 * decoderStream.bytesPerPass,
+                                 "every decoder pass reads every streamed decoder block")
+            for index in [1, 2, 3] {
+                XCTAssertTrue(streamed.encoder.block[index].parameters().flattened().allSatisfy { $0.1.size == 0 },
+                              "encoder block \(index) holds nothing between its turns")
+            }
+            XCTAssertFalse(streamed.encoder.block[0].parameters().flattened().contains { $0.1.size == 0 })
+            XCTAssertFalse(streamed.decoder.block[2].parameters().flattened().contains { $0.1.size == 0 })
+        }
+    }
+
+    func testAutomaticHoldsAT5ThatFitsAndOrdersTheDecoderFirst() throws {
+        try requireMLXRuntime()
+        let directory = try t5Release()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let net = try NFKMLXMADLAD.network(directoryURL: directory)
+        XCTAssertNil(net.encoderStream, "a release that fits loads whole, as it always has")
+        XCTAssertNil(net.decoderStream)
+
+        let full = try NFKMLXMADLAD.footprint(directory: directory, half: false)
+        let half = try NFKMLXMADLAD.footprint(directory: directory, half: true)
+        XCTAssertEqual(full.whole, 2 * half.whole, "a float32 release halves at bfloat16")
+        XCTAssertEqual(full.stage.layerBytes.count, 6, "blocks 1 to 3 of each stack")
+        XCTAssertGreaterThan(full.stage.layerBytes[0], full.stage.layerBytes[5],
+                             "decoder blocks, which carry a cross-attention, come first")
+        XCTAssertEqual(try NFKMLXMADLAD.streamedBlocks(directory: directory, half: false, residency: .streamed,
+                                                       budget: 1 << 40).decoder, [],
+                       "streamed where everything fits, nothing streams")
+        XCTAssertThrowsError(try NFKMLXMADLAD.verifyFits(full.whole, directory: directory, half: false, budget: 1024),
+                             "a held load refuses a release known not to fit")
+    }
+
+    func testAFailedT5ReadIsReportedRatherThanComputedAround() throws {
+        try requireMLXRuntime()
+        let directory = try t5Release()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let streamed = try streamedT5(directory, half: false, holding: 0)
+        let file = directory.appendingPathComponent("model.safetensors")
+        let header = try XCTUnwrap(NFKMLXSafetensors.entries(inFile: file).values.map(\.start).min())
+        let handle = try FileHandle(forWritingTo: file)
+        try handle.truncate(atOffset: UInt64(header))
+        try handle.close()
+
+        let decoding = NFKMLXSeq2SeqDecoding(beams: 2, maxTokens: 6, startToken: 0, endToken: 2)
+        _ = NFKMLXSeq2SeqDecoder.generate(streamed, source: sourceIds.map { Int($0) }, decoding: decoding)
+        XCTAssertThrowsError(try streamed.verifyStream(), "the truncated release cannot be read")
+    }
+
+    func testAStreamedT5DoesNotTrain() throws {
+        try requireMLXRuntime()
+        let directory = try t5Release()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let streamed = try streamedT5(directory, half: false, holding: 2)
+        let source = MLXArray(sourceIds).reshaped([1, sourceIds.count])
+        let target = MLXArray([Int32(9), 10, 11, 2]).reshaped([1, 4])
+        XCTAssertThrowsError(try NFKMLXMADLAD.fineTune(streamed, examples: { _ in (source, target) }, steps: 1))
+    }
+
+    /// The released MADLAD-400 3B at float32, held and then with every encoder block and half the
+    /// decoder's streamed: the same values, element for element, through the encoder output, the
+    /// teacher-forced logits, and a greedy translation. The two loads run one after the other, about
+    /// 12 GB each.
+    func testAReleasedT5StreamsToTheValuesItsHeldLoadComputes() throws {
+        try requireMLXRuntime()
+        guard let path = NFKMLXValidationConfig.environment["IK_VAL_MADLAD"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_VAL_MADLAD to the madlad400-3b-mt release directory")
+        }
+        let directory = URL(fileURLWithPath: path)
+        func run(_ translator: NFKMLXMADLADTranslator) throws -> (memory: MLXArray, logits: MLXArray, produced: [Int]) {
+            let ids = try XCTUnwrap(translator.sourceIds(for: "The quick brown fox jumps over the lazy dog.", target: "de"))
+            let source = MLXArray(ids.map { Int32($0) }).reshaped([1, ids.count])
+            let memory = translator.net.encode(source)
+            let logits = translator.net(source: source, target: MLXArray([Int32(0), 1000, 2000, 3000]).reshaped([1, 4]))
+            eval(memory, logits)
+            var decoding = translator.defaultDecoding
+            decoding.maxTokens = 24
+            let produced = NFKMLXSeq2SeqDecoder.generate(translator.net, source: ids, decoding: decoding)
+            try translator.net.verifyStream()
+            return (memory, logits, produced)
+        }
+        let held = try run(NFKMLXMADLAD.translator(directoryURL: directory, half: false, residency: .resident))
+        NFKMLXGPU.clearCache()
+
+        let footprint = try NFKMLXMADLAD.footprint(directory: directory, half: false)
+        let decoderHalf = (footprint.decoderBlocks - 1) / 2
+        let budget = NFKMLXResidencyBudget.reserve + footprint.stage.streamedMinimumBytes
+            + footprint.stage.layerBytes.prefix(decoderHalf).reduce(0, +)
+        let net = try NFKMLXMADLAD.network(directoryURL: directory, configuration: nil, half: false, residency: .streamed,
+                                           budget: budget)
+        let encoderStream = try XCTUnwrap(net.encoderStream), decoderStream = try XCTUnwrap(net.decoderStream)
+        XCTAssertEqual(encoderStream.layers.count, footprint.encoderBlocks - 1)
+        XCTAssertEqual(decoderStream.layers.count, footprint.decoderBlocks - 1 - decoderHalf)
+        let translator = try NFKMLXMADLAD.translator(net: net, directoryURL: directory)
+        let backend = NFKMLXTranslationBackend(translator: translator)
+        XCTAssertEqual(backend.streamedLayerCount, encoderStream.layers.count + decoderStream.layers.count)
+        XCTAssertEqual(backend.streamedBytesPerPass, encoderStream.bytesPerPass + decoderStream.bytesPerPass)
+        let streamed = try run(translator)
+
+        XCTAssertEqual(maxDifference(held.memory, streamed.memory), 0, "the encoder output")
+        XCTAssertEqual(maxDifference(held.logits, streamed.logits), 0, "the teacher-forced logits")
+        XCTAssertEqual(held.produced, streamed.produced, "the greedy translation")
+        for (name, stream) in [("encoder", encoderStream), ("decoder", decoderStream)] {
+            let (bytes, seconds) = stream.readStatistics
+            print("madlad-3b streamed \(name): \(stream.layers.count) blocks, "
+                  + String(format: "%.1f GB read at %.2f GB/s", Double(bytes) / 1e9, Double(bytes) / 1e9 / max(seconds, 1e-9)))
+        }
     }
 }
