@@ -805,6 +805,25 @@ final class Builder: NSObject, NFKServedBackendBuilder {
 server.addBackendBuilder(Builder(), forModelName: "qwen3")
 ```
 
+### The app's own routes
+
+An app serves its own requests on the server's port with `addRouteForPathPrefix:handler:error:`. The
+route shares the listener, TLS, the Bonjour advertisement, the body limit, and the key checks. A handler
+runs on a background queue with the parsed request (method, path, query, headers, body, and the client's
+address) and replies through its response object, at once or later, whole or as a stream. The root, `/v1`,
+and `/mcp` stay the server's.
+
+<!-- objc-check: given NFKInferenceServer *server = nil; -->
+```objc
+[server addRouteForPathPrefix:@"/myapp/" handler:^(NFKServerRouteRequest *request, NFKServerRouteResponse *response) {
+	if (![request.method isEqualToString:@"GET"]) {
+		[response sendStatus:405 headers:@{ @"Allow": @"GET" } body:nil];
+		return;
+	}
+	[response sendStatus:200 JSONObject:@{ @"path": request.path, @"client": request.clientAddress } headers:nil];
+} error:&error];
+```
+
 ### A pool of chat servers
 
 Several machines serving one chat model to OpenAI clients, each chat keeping its prompt on the

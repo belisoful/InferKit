@@ -18,6 +18,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, copy, readonly) NSData *body;
 /*! Whether the peer's address is a loopback address, which is to say the client runs on this machine. */
 @property (nonatomic, readonly) BOOL fromLoopback;
+/*! The peer's IP address as text; an IPv4-mapped IPv6 address reads as its IPv4 address. */
+@property (nonatomic, copy, readonly) NSString *clientAddress;
 - (nullable NSString *)valueForHeader:(NSString *)name;
 @end
 

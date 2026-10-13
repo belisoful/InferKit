@@ -11,6 +11,7 @@
 #import <InferKit/NFKInferenceBackend.h>
 #import <InferKit/NFKInferenceTool.h>
 #import <InferKit/NFKServerStatus.h>
+#import <InferKit/NFKServerRoute.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -118,6 +119,9 @@ NS_SWIFT_SENDABLE
 				  and partial results.
 				- The status route, GET /inferkit/status, which reports each model's load and the
 				  machine's state for a load balancer or a dashboard (see Status).
+
+				An app adds its own routes under a path prefix of its choosing with
+				addRouteForPathPrefix:handler:error:; they share the listener and the key checks.
 
 				Beside them, POST /mcp serves the tools added with addTool: over the Model Context
 				Protocol (Streamable HTTP), so an MCP client reaches them: Claude Code, Claude
@@ -456,6 +460,31 @@ NS_SWIFT_SENDABLE
 /*! The MCP endpoint a client on this machine uses (http://localhost:<port>/mcp, or https), or nil
 	while stopped. Introduced in InferKit 0.4.0. */
 @property (nonatomic, readonly, copy, nullable) NSURL *localMCPURL;
+
+/*!
+	@method     addRouteForPathPrefix:handler:error:
+	@abstract   Serves an app's own requests under a path prefix, beside the server's routes.
+	@discussion The route shares the server's listener, TLS identity, Bonjour advertisement, body limit
+				(maximumRequestBodyBytes), and key checks. A request whose path is the prefix, or lies
+				below it, reaches handler on a background queue after its key is checked; the longest
+				matching prefix wins, and a path no route matches is answered 404. The prefix starts
+				with "/" and names one or more non-empty segments; a trailing "/" is added. The root and
+				every prefix under /v1 or /mcp, in any case, belong to the server and are refused with
+				NFKInferenceServerErrorInvalidConfiguration. Adding a prefix again replaces its handler.
+				The handler checks the request's method itself, and a browser-facing route checks the
+				Origin header itself. Takes effect on the next request. Introduced in InferKit 0.4.0.
+*/
+- (BOOL)addRouteForPathPrefix:(NSString *)pathPrefix
+					  handler:(NFKServerRouteHandler)handler
+						error:(NSError * _Nullable * _Nullable)error
+	NS_SWIFT_NAME(addRoute(pathPrefix:handler:));
+
+/*! Stops serving the route under pathPrefix, given as it was added or as routePathPrefixes lists it.
+	Introduced in InferKit 0.4.0. */
+- (void)removeRouteForPathPrefix:(NSString *)pathPrefix;
+
+/*! The app routes' prefixes, each with its trailing "/", sorted. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSArray<NSString *> *routePathPrefixes;
 
 /*!
 	@method     startWithError:

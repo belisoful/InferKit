@@ -15,6 +15,7 @@
 #import "NFKServedMCP.h"
 #import "NFKInferenceWireCoding.h"
 #import "NFKServedHostStatus.h"
+#import "NFKServerRoutePrivate.h"
 
 const uint16_t NFKInferenceServerDefaultPort = 11480;
 NSString * const NFKInferenceServerServiceType = @"_inferkit._tcp";
@@ -947,6 +948,8 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 @interface NFKInferenceServer ()
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NFKServedModel *> *models;
 @property (nonatomic, strong) NSMutableArray<NFKInferenceTool *> *servedTools;
+/*! The app routes by normalized prefix; guarded by itself. */
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NFKServerRouteHandler> *appRoutes;
 @property (nonatomic, strong, nullable) NFKHTTPListener *listener;
 @property (nonatomic, strong, nullable) id identity;
 @property (nonatomic, assign, readwrite, getter=isRunning) BOOL running;
@@ -977,6 +980,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	if (self != nil) {
 		_models = [NSMutableDictionary dictionary];
 		_servedTools = [NSMutableArray array];
+		_appRoutes = [NSMutableDictionary dictionary];
 		_port = NFKInferenceServerDefaultPort;
 		_requiresAPIKey = YES;
 		_advertisesService = YES;
@@ -1083,6 +1087,72 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	@synchronized (self.servedTools) {
 		return [self.servedTools copy];
 	}
+}
+
+#pragma mark App routes
+
+- (BOOL)addRouteForPathPrefix:(NSString *)pathPrefix handler:(NFKServerRouteHandler)handler error:(NSError * _Nullable *)error
+{
+	NSString *prefix = NFKServerRouteNormalizedPrefix(pathPrefix, error);
+	if (prefix == nil) {
+		return NO;
+	}
+	@synchronized (self.appRoutes) {
+		self.appRoutes[prefix] = [handler copy];
+	}
+	return YES;
+}
+
+- (void)removeRouteForPathPrefix:(NSString *)pathPrefix
+{
+	NSString *prefix = NFKServerRouteNormalizedPrefix(pathPrefix, NULL);
+	if (prefix == nil) {
+		return;
+	}
+	@synchronized (self.appRoutes) {
+		[self.appRoutes removeObjectForKey:prefix];
+	}
+}
+
+- (NSArray<NSString *> *)routePathPrefixes
+{
+	@synchronized (self.appRoutes) {
+		return [self.appRoutes.allKeys sortedArrayUsingSelector:@selector(compare:)];
+	}
+}
+
+/*! The longest app-route prefix path lies under, or nil. */
+- (nullable NSString *)appRoutePrefixForPath:(NSString *)path
+{
+	NSString *matched = nil;
+	@synchronized (self.appRoutes) {
+		for (NSString *prefix in self.appRoutes) {
+			if (NFKServerRoutePathMatchesPrefix(path, prefix) && prefix.length > matched.length) {
+				matched = prefix;
+			}
+		}
+	}
+	return matched;
+}
+
+- (void)serveAppRoute:(NSString *)prefix request:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response
+{
+	NFKServerRouteHandler handler = nil;
+	@synchronized (self.appRoutes) {
+		handler = self.appRoutes[prefix];
+	}
+	if (handler == nil) {
+		[self sendNoRouteFor:request response:response];
+		return;
+	}
+	handler([NFKServerRouteRequest requestWithHTTPRequest:request pathPrefix:prefix],
+			[NFKServerRouteResponse responseWithHTTPResponse:response]);
+}
+
+- (void)sendNoRouteFor:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response
+{
+	[response sendStatus:404 JSONObject:@{ @"error": @{ @"message": [NSString stringWithFormat:@"no route %@ %@", request.method, request.path],
+														 @"type": @"invalid_request_error" } } headers:nil];
 }
 
 #pragma mark Models
@@ -1643,10 +1713,15 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 													  @"/images/edits": @"POST",
 													  @"/inferkit/run": @"POST",
 													  @"/inferkit/status": @"GET" };
-	NSString *route = [path hasPrefix:NFKServedBasePath] ? [path substringFromIndex:NFKServedBasePath.length] : nil;
+	BOOL underBase = [path isEqualToString:NFKServedBasePath] || [path hasPrefix:[NFKServedBasePath stringByAppendingString:@"/"]];
+	NSString *route = underBase ? [path substringFromIndex:NFKServedBasePath.length] : nil;
 	if (route == nil || routes[route] == nil) {
-		[response sendStatus:404 JSONObject:@{ @"error": @{ @"message": [NSString stringWithFormat:@"no route %@ %@", request.method, request.path],
-															 @"type": @"invalid_request_error" } } headers:nil];
+		NSString *prefix = route == nil ? [self appRoutePrefixForPath:request.path] : nil;
+		if (prefix != nil) {
+			[self serveAppRoute:prefix request:request response:response];
+		} else {
+			[self sendNoRouteFor:request response:response];
+		}
 		return;
 	}
 	if (![self requireMethod:routes[route] of:request response:response]) {

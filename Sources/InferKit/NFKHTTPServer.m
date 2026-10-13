@@ -12,7 +12,9 @@ static const NSUInteger NFKHTTPMaximumHeadBytes = 64 * 1024;
 
 static NSString *NFKHTTPReasonPhrase(NSInteger status)
 {
-	NSDictionary<NSNumber *, NSString *> *phrases = @{ @200: @"OK", @204: @"No Content", @400: @"Bad Request",
+	NSDictionary<NSNumber *, NSString *> *phrases = @{ @200: @"OK", @201: @"Created", @202: @"Accepted",
+													   @204: @"No Content", @301: @"Moved Permanently", @302: @"Found",
+													   @304: @"Not Modified", @400: @"Bad Request", @409: @"Conflict",
 													   @401: @"Unauthorized", @403: @"Forbidden", @404: @"Not Found",
 													   @405: @"Method Not Allowed", @408: @"Request Timeout",
 													   @413: @"Payload Too Large", @415: @"Unsupported Media Type",
@@ -42,6 +44,7 @@ static NSData *NFKHTTPHeadEnd(void)
 @property (nonatomic, copy, readwrite) NSDictionary<NSString *, NSString *> *headers;
 @property (nonatomic, copy, readwrite) NSData *body;
 @property (nonatomic, assign, readwrite) BOOL fromLoopback;
+@property (nonatomic, copy, readwrite) NSString *clientAddress;
 @end
 
 @implementation NFKHTTPRequest
@@ -236,6 +239,7 @@ static NFKHTTPChunkedState NFKHTTPDecodeChunked(NSData *buffer, NSUInteger start
 @property (nonatomic, assign) BOOL closed;
 @property (nonatomic, assign) BOOL sentContinue;
 @property (nonatomic, assign) BOOL fromLoopback;
+@property (nonatomic, copy) NSString *clientAddress;
 @property (nonatomic, assign) NSUInteger maximumBodyBytes;
 @property (nonatomic, assign) NSTimeInterval idleTimeout;
 @property (nonatomic, assign) CFAbsoluteTime lastActivity;
@@ -262,13 +266,37 @@ static BOOL NFKHTTPEndpointIsLoopback(nw_endpoint_t _Nullable endpoint)
 	return NO;
 }
 
+/*! An address endpoint's IP address as text, an IPv4-mapped IPv6 address as its IPv4 form; empty for
+	any other endpoint. */
+static NSString *NFKHTTPEndpointAddress(nw_endpoint_t _Nullable endpoint)
+{
+	if (endpoint == nil || nw_endpoint_get_type(endpoint) != nw_endpoint_type_address) {
+		return @"";
+	}
+	const struct sockaddr *address = nw_endpoint_get_address(endpoint);
+	char text[INET6_ADDRSTRLEN] = { 0 };
+	if (address != NULL && address->sa_family == AF_INET) {
+		inet_ntop(AF_INET, &((const struct sockaddr_in *)(const void *)address)->sin_addr, text, sizeof(text));
+	} else if (address != NULL && address->sa_family == AF_INET6) {
+		const struct in6_addr *host = &((const struct sockaddr_in6 *)(const void *)address)->sin6_addr;
+		if (IN6_IS_ADDR_V4MAPPED(host)) {
+			inet_ntop(AF_INET, &host->s6_addr[12], text, sizeof(text));
+		} else {
+			inet_ntop(AF_INET6, host, text, sizeof(text));
+		}
+	}
+	return [NSString stringWithUTF8String:text] ?: @"";
+}
+
 @implementation NFKHTTPConnection
 
 - (void)start
 {
 	self.buffer = [NSMutableData data];
 	self.lastActivity = CFAbsoluteTimeGetCurrent();
-	self.fromLoopback = NFKHTTPEndpointIsLoopback(nw_connection_copy_endpoint(self.connection));
+	nw_endpoint_t peer = nw_connection_copy_endpoint(self.connection);
+	self.fromLoopback = NFKHTTPEndpointIsLoopback(peer);
+	self.clientAddress = NFKHTTPEndpointAddress(peer);
 	nw_connection_set_queue(self.connection, self.queue);
 	nw_connection_set_state_changed_handler(self.connection, ^(nw_connection_state_t state, nw_error_t error) {
 		if (state == nw_connection_state_failed || state == nw_connection_state_cancelled) {
@@ -441,6 +469,7 @@ static BOOL NFKHTTPEndpointIsLoopback(nw_endpoint_t _Nullable endpoint)
 	request.headers = headers;
 	request.body = body;
 	request.fromLoopback = self.fromLoopback;
+	request.clientAddress = self.clientAddress;
 
 	NSString *connectionHeader = headers[@"connection"].lowercaseString ?: @"";
 	BOOL keepAlive = [requestLine[2] isEqualToString:@"HTTP/1.1"]

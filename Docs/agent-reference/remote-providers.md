@@ -1112,6 +1112,30 @@ port or exposure change and pins models its user marks.
   the queue limit with runs queued past it, a stop and two starts of one server across a
   loopback/network/advertising change, and a pinned model under idle and full pressure.
 
+**App routes (2026-10-13).** An app's service serves its own HTTP API beside the models, on the same
+port, TLS identity, Bonjour name, and keys. `addRouteForPathPrefix:handler:error:` registers a handler
+under a prefix; `NFKServerRoute.h/.m` holds the public request and response classes and the prefix
+rules.
+
+- Prefixes are normalized to one leading and one trailing slash. Refused with
+  `NFKInferenceServerErrorInvalidConfiguration`: no leading slash, the root, an empty, `.`, or `..`
+  segment, and a first segment of `v1` or `mcp` in any case. `/v1beta/` is the app's: the server's own
+  base test is `/v1` exactly or `/v1/…`, which the routing now uses too (it used `hasPrefix:@"/v1"`).
+- Routing order: the key check, `/mcp`, the `/v1` routes, then the app routes by the longest matching
+  prefix (`/myapp/admin/` before `/myapp/`; a prefix matches whole segments, so `/myapp/administer`
+  is `/myapp/`'s), then 404. A path under `/v1` that no server route answers stays a 404 of the
+  server's.
+- The handler runs on the request's global user-initiated queue, the same one the server's routes run
+  on. `NFKServerRouteResponse` forwards to `NFKHTTPResponse`, whose writes may come from any thread and
+  whose first reply wins; a handler that never replies holds the connection until the client leaves
+  (`disconnectHandler` fires then). Both classes are `NS_SWIFT_SENDABLE`.
+- `NFKHTTPRequest.clientAddress` is new: `inet_ntop` of the peer endpoint, an IPv4-mapped IPv6
+  address printed as IPv4. A loopback client over `localhost` reads `::1`.
+- The body limit is the listener's (`maximumRequestBodyBytes`): an oversized body is a 413 before
+  routing, so the handler never sees it. The reason-phrase table gained 201, 202, 301, 302, 304, and
+  409 for app replies; an unlisted status still writes "Status".
+- Tests: `NFKServerRouteTests` (7), over NSURLSession on a loopback port.
+
 **Sendable blocks (2026-10-13).** An app's Swift 6 service (`-default-isolation MainActor`) trapped in
 `_swift_task_checkIsolatedSwift` → `dispatch_assert_queue_fail` when the server called a provider
 closure written inline: the block type was not Sendable, so Swift inferred the closure main-actor
