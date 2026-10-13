@@ -611,6 +611,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   downloaded weights.
 - Measured at float16 on tiny: every encoder and decoder layer within 0.35 of its own block floor.
 
+#### FLUX.2 decodes at bfloat16 as diffusers does
+
+- The latent codec read its batch-norm statistics at float32, so a bf16 latent left un-whitening as
+  float32 and the bf16 autoencoder decoded in float32. The codec now loads at the release's type with the
+  autoencoder (`codec(fromReleaseDirectory:epsilon:patch:precision:)`), and the decoder takes its type.
+- Whitening divides by `sqrt(variance + epsilon)`, the epsilon added in float32 and rounded once, as the
+  pipeline computes it.
+- Images encode at the autoencoder's type, for references and inpainting alike.
+- Measured at bf16 on klein 4B: every stage of both coders and both codec directions within 0.045 of its
+  own block floor.
+
 #### SDXL's text towers are held at float16
 
 - SDXL-Turbo's CLIP-L and OpenCLIP-bigG towers, which the Objective-C factories load at the release's

@@ -800,14 +800,24 @@ public final class NFKMLXFlux2LatentCodec: Module {
             .reshaped([batch, height * patch, width * patch, channels])
     }
 
-    /// `(patched - mean) / sqrt(variance + epsilon)`, over the channel axis.
+    /// `(patched - mean) / sqrt(variance + epsilon)`, over the channel axis, in `patched`'s type.
     public func whiten(_ patched: MLXArray) -> MLXArray {
-        (patched - runningMean) * rsqrt(runningVariance + epsilon)
+        let (mean, deviation) = statistics(as: patched.dtype)
+        return (patched - mean) / deviation
     }
 
-    /// The inverse of ``whiten(_:)``.
+    /// The inverse of ``whiten(_:)``: `whitened · sqrt(variance + epsilon) + mean`, in `whitened`'s type.
     public func unwhiten(_ whitened: MLXArray) -> MLXArray {
-        whitened * sqrt(runningVariance + epsilon) + runningMean
+        let (mean, deviation) = statistics(as: whitened.dtype)
+        return whitened * deviation + mean
+    }
+
+    /// The running mean and `sqrt(variance + epsilon)` cast to `dtype`. The deviation forms in the
+    /// statistics' own type as the reference pipeline forms it: the epsilon added in float32 and rounded once,
+    /// then the root rounded once.
+    private func statistics(as dtype: DType) -> (mean: MLXArray, deviation: MLXArray) {
+        let deviation = NFKReferenceRounding.wide(NFKReferenceRounding.shifted(runningVariance, by: epsilon)) { sqrt($0) }
+        return (runningMean.asType(dtype), deviation.asType(dtype))
     }
 
     /// Flattens the spatial grid into the transformer's token sequence. `[B, H, W, C]` → `[B, H·W, C]`.
@@ -828,10 +838,11 @@ public final class NFKMLXFlux2LatentCodec: Module {
         unpatchify(unwhiten(unpack(tokens, height: height, width: width)))
     }
 
-    /// Reads `bn.running_mean` / `bn.running_var` from a released `vae/` directory.
-    public static func codec(fromReleaseDirectory directory: URL,
-                             epsilon: Float = 1e-4, patch: Int = 2) throws -> NFKMLXFlux2LatentCodec {
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: .float32)
+    /// Reads `bn.running_mean` / `bn.running_var` from a released `vae/` directory at `precision`. The
+    /// FLUX.2 pipeline reads them as it reads the autoencoder, at the release's type.
+    public static func codec(fromReleaseDirectory directory: URL, epsilon: Float = 1e-4, patch: Int = 2,
+                             precision: NFKMLXWeightPrecision = .float32) throws -> NFKMLXFlux2LatentCodec {
+        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, precision: precision)
         let wanted = arrays.compactMap { name, value -> (String, MLXArray)? in
             name.hasPrefix("bn.") && !name.hasSuffix("num_batches_tracked")
                 ? (String(name.dropFirst(3)), value) : nil

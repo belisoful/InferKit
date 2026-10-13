@@ -10116,13 +10116,21 @@ def run_sd_vae_probe(image, checkpoint):
     `dec.act`, and `dec.out`; for the encoder `enc.conv_in`, each down block's `enc.down.<i>.resnet.<j>` and
     `enc.down.<i>.downsample`, `enc.mid.resnet0`, `enc.mid.attention`, `enc.mid.resnet1`, `enc.norm_out`,
     `enc.act`, and `enc.out`; and every submodule of the decoder's first mid resnet and of its mid attention as
-    `dec.mid.<resnet0|attention>.<name>.in` / `.out`. `IK_PROBE_BLOCK_FLOOR=1` adds a floor to each stage and
-    piece. The bf16 run computes each convolution in float32 and rounds once, as torch's CPU kernel does
-    up to accumulation order. Returns the decoded image. Runs under the `sd` oracle env. `image` unused."""
-    from diffusers import AutoencoderKL
+    `dec.mid.<resnet0|attention>.<name>.in` / `.out`. A release with quant convolutions records
+    `dec.post_quant_conv` before the decoder and `enc.quant_conv` after the encoder. FLUX.2's
+    `AutoencoderKLFlux2` also records the pipeline's batch-norm latent statistics over a seeded patched latent
+    `codec.in`, at the latent's type as `Flux2KleinPipeline` takes them: `codec.whiten` (`(x - mean) / std`,
+    before the transformer) and `codec.unwhiten` (`x * std + mean`, before the decoder). `IK_PROBE_BLOCK_FLOOR=1`
+    adds a floor to each stage and piece. The bf16 run computes each convolution in float32 and rounds once,
+    as torch's CPU kernel does up to accumulation order. Returns the decoded image. Runs under the `sd` oracle
+    env, or for FLUX.2 the `ltx` one. `image` unused."""
+    import json
+    import diffusers
 
     size = int(os.environ.get("IK_VAE_SIZE", "256"))
-    vae = AutoencoderKL.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
+    with open(os.path.join(checkpoint, "config.json")) as handle:
+        kind = getattr(diffusers, json.load(handle).get("_class_name", "AutoencoderKL"))
+    vae = kind.from_pretrained(checkpoint, torch_dtype=torch.float32).eval()
     bf16 = _probe_precision([vae])
     dtype = torch.bfloat16 if bf16 else torch.float32
     generator = torch.Generator().manual_seed(0)
@@ -10149,6 +10157,11 @@ def run_sd_vae_probe(image, checkpoint):
                            verify=True)
     stages(vae.decoder, "dec")
     stages(vae.encoder, "enc")
+    for key, conv in (("dec.post_quant_conv", getattr(vae, "post_quant_conv", None)),
+                      ("enc.quant_conv", getattr(vae, "quant_conv", None))):
+        if conv is not None:
+            conv.register_forward_hook(lambda m, a, o, key=key: extra.__setitem__(key, keep(o)) and None)
+            _block_floor_hooks([conv], [key], extra, verify=True)
     for name, root in (("resnet0", vae.decoder.mid_block.resnets[0]), ("attention", vae.decoder.mid_block.attentions[0])):
         pieces = [(n, m) for n, m in root.named_modules() if n]
         for n, module in pieces:
@@ -10177,6 +10190,24 @@ def run_sd_vae_probe(image, checkpoint):
         torch.nn.functional.conv2d = convolution
     extra["latent"] = keep(latent)
     extra["image"] = keep(plate)
+    bn = getattr(vae, "bn", None)
+    if bn is not None:
+        patched = torch.randn(1, bn.num_features, size // 16, size // 16, generator=generator)
+        patched = patched.to(torch.bfloat16).to(dtype)
+
+        def statistics(variance, mean, kind):
+            return (mean.view(1, -1, 1, 1).to(kind),
+                    torch.sqrt(variance.view(1, -1, 1, 1) + vae.config.batch_norm_eps).to(kind))
+        with torch.no_grad():
+            mean, std = statistics(bn.running_var, bn.running_mean, patched.dtype)
+            extra["codec.whiten"] = keep((patched - mean) / std)
+            extra["codec.unwhiten"] = keep(patched * std + mean)
+            if os.environ.get("IK_PROBE_BLOCK_FLOOR") == "1" and bf16:
+                mean, std = statistics(bn.running_var.float(), bn.running_mean.float(), torch.float32)
+                wide = patched.float()
+                extra["codec.whiten.floor"] = keep((wide - mean) / std)
+                extra["codec.unwhiten.floor"] = keep(wide * std + mean)
+        extra["codec.in"] = keep(patched)
     globals()["_extra"] = extra
     return keep(decoded)
 

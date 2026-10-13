@@ -825,15 +825,38 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
 
     // FLUX.1's autoencoder (`IK_VAL_FLUX_SCHNELL_FULL`'s `vae/`, released bf16) at bf16 as the FLUX pipeline
     // loads it, against diffusers' `AutoencoderKL` at bf16 (`sd_vae_probe`, the float32 side on the same bf16
-    // weights) at 256 pixels: every decoder stage over a seeded latent and every encoder stage over a plate,
-    // then each piece of the decoder's first mid resnet and of its mid attention, on the reference's input.
+    // weights) at 256 pixels.
     func testFluxAutoencoderInBFloat16MatchesTheBFloat16Reference() throws {
         try requireMLXRuntime()
         let directory = URL(fileURLWithPath: try existing(config["IK_VAL_FLUX_SCHNELL_FULL"], "IK_VAL_FLUX_SCHNELL_FULL"))
-        let bf16 = try record("flux_vae_bf16.safetensors"), f32 = try record("flux_vae_f32.safetensors")
         let vae = NFKMLXSDAutoencoder(configuration: .flux)
         try NFKMLXStableDiffusionModels.loadVAEWeights(
             into: vae, from: directory.appendingPathComponent("vae/diffusion_pytorch_model.safetensors"), precision: .checkpoint)
+        try autoencoder("flux-vae", vae, bf16: try record("flux_vae_bf16.safetensors"),
+                        f32: try record("flux_vae_f32.safetensors"))
+    }
+
+    // FLUX.2 [klein]'s autoencoder and latent codec (`IK_VAL_FLUX2_KLEIN_4B_VAE`, released bf16) at bf16 as the
+    // FLUX.2 pipeline loads them, against diffusers' `AutoencoderKLFlux2` at bf16 (`sd_vae_probe`, the float32
+    // side on the same bf16 weights) at 256 pixels, with both quant convolutions, and the pipeline's batch-norm
+    // whitening and its inverse over a seeded patched latent.
+    func testFlux2AutoencoderInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_FLUX2_KLEIN_4B_VAE"], "IK_VAL_FLUX2_KLEIN_4B_VAE"))
+        let vae = NFKMLXSDAutoencoder(configuration: .flux2)
+        try NFKMLXStableDiffusionModels.loadVAEWeights(
+            into: vae, from: directory.appendingPathComponent("diffusion_pytorch_model.safetensors"), precision: .checkpoint)
+        let codec = try NFKMLXFlux2LatentCodec.codec(fromReleaseDirectory: directory, precision: .checkpoint)
+        try autoencoder("flux2-vae", vae, bf16: try record("flux2_vae_bf16.safetensors"),
+                        f32: try record("flux2_vae_f32.safetensors"),
+                        extra: [("codec.whiten", { codec.whiten($0) }), ("codec.unwhiten", { codec.unwhiten($0) })])
+    }
+
+    // An autoencoder at bf16 against its `sd_vae_probe` records: every decoder stage over a seeded latent and
+    // every encoder stage over a plate, each `extra` seam on its `<prefix>.in` record, then each piece of the
+    // decoder's first mid resnet and of its mid attention, on the reference's input.
+    private func autoencoder(_ name: String, _ vae: NFKMLXSDAutoencoder, bf16: [String: MLXArray],
+                             f32: [String: MLXArray], extra: [(String, (MLXArray) -> MLXArray)] = []) throws {
         vae.train(false)
         /// A recorded channels-first map as the port's channels-last batch.
         func recorded(_ key: String) throws -> MLXArray {
@@ -856,7 +879,8 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
             }
         }
         let decoder = vae.decoder, encoder = vae.encoder
-        var decoding: [(String, (MLXArray) -> MLXArray)] = [
+        var decoding: [(String, (MLXArray) -> MLXArray)] = vae.postQuantConv.map { conv in [("post_quant_conv", { conv($0) })] } ?? []
+        decoding += [
             ("conv_in", { decoder.convIn($0) }), ("mid.resnet0", { decoder.midBlock.resnets[0]($0) }),
             ("mid.attention", { decoder.midBlock.attentions[0]($0) }), ("mid.resnet1", { decoder.midBlock.resnets[1]($0) })]
         for (index, block) in decoder.upBlocks.enumerated() {
@@ -874,14 +898,19 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         encoding += [("mid.resnet0", { encoder.midBlock.resnets[0]($0) }), ("mid.attention", { encoder.midBlock.attentions[0]($0) }),
                      ("mid.resnet1", { encoder.midBlock.resnets[1]($0) }), ("norm_out", { encoder.normOut($0) }),
                      ("act", { NFKReferenceRounding.silu($0) }), ("out", { encoder.convOut($0) })]
+        encoding += vae.quantConv.map { conv in [("quant_conv", { conv($0) })] } ?? []
         try run("enc", try recorded("image"), encoding)
+        for (key, state) in extra {
+            isolated.append((key, channelsFirst(state(try recorded(key.components(separatedBy: ".")[0] + ".in")))))
+            isolatedKeys.append(key)
+        }
         XCTAssertEqual(states[0].1.dtype, .bfloat16, "a bf16 load decodes at bf16")
         eval(states.map(\.1) + isolated.map(\.1))
         let rows = try seams(states, bf16: bf16, f32: f32, keys: keys)
-        report("flux-vae", rows)
+        report(name, rows)
         let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolatedKeys)
-        report("flux-vae isolated", isolatedRows)
-        assertRoundingPlacement("flux-vae", endToEnd: rows, isolated: isolatedRows)
+        report("\(name) isolated", isolatedRows)
+        assertRoundingPlacement(name, endToEnd: rows, isolated: isolatedRows)
 
         let resnet = decoder.midBlock.resnets[0].block, attention = decoder.midBlock.attentions[0]
         func tokens(_ key: String) throws -> MLXArray { try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16) }
@@ -899,7 +928,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
             try piece("attention to_v", matmul(tokens(a + "to_v.in"), attention.toV.weight.T) + attention.toV.bias!, bf16, a + "to_v.out"),
             try piece("attention to_out", attention.toOut(tokens(a + "to_out.0.in")), bf16, a + "to_out.0.out"),
         ]
-        print("VALIDATION bf16 flux-vae pieces:\n" + lines.joined(separator: "\n"))
+        print("VALIDATION bf16 \(name) pieces:\n" + lines.joined(separator: "\n"))
     }
 
     // The Gemma 3n E2B audio encoder (`IK_VAL_GEMMA3N_E2B`, released bf16) at bf16 against transformers'

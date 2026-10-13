@@ -168,7 +168,7 @@ public final class NFKMLXFlux2Pipeline {
                 "a strength of \(strength) over \(steps) steps leaves no step to denoise")
         }
 
-        let encoded = autoencoder.encode(image).mean
+        let encoded = encodedMean(image)
         let latentHeight = encoded.dim(1) / codec.patch, latentWidth = encoded.dim(2) / codec.patch
         let conditioning = referenceConditioning([encoded] + references)
         let original = conditioning.tokens[0].asType(latentType)
@@ -244,11 +244,17 @@ public final class NFKMLXFlux2Pipeline {
         return unconditional + guidanceScale * (conditional - unconditional)
     }
 
+    /// The autoencoder's latent mean of `image` in `[-1, 1]`, encoded at the autoencoder's type as the
+    /// reference pipeline casts the image to it.
+    func encodedMean(_ image: MLXArray) -> MLXArray {
+        autoencoder.encode(image.asType(NFKReferenceRounding.parameterType(of: autoencoder))).mean
+    }
+
     /// The token sequence back to pixels: unpack, unwhiten, unpatchify, decode, and map the
     /// autoencoder's `[-1, 1]` to `[0, 1]`.
     public func decode(latents: MLXArray, latentHeight: Int, latentWidth: Int) -> MLXArray {
         let latent = codec.decode(tokens: latents, height: latentHeight, width: latentWidth)
-        let image = autoencoder.decode(latent)
+        let image = autoencoder.decode(latent.asType(NFKReferenceRounding.parameterType(of: autoencoder)))
         return clip((image + 1) / 2, min: 0, max: 1)
     }
 }
@@ -396,7 +402,8 @@ public final class NFKMLXFlux2: NSObject {
                     from: vaeDirectory.appendingPathComponent("diffusion_pytorch_model.safetensors"),
                     precision: .checkpoint)
                 return NFKMLXFlux2Pipeline(transformer: transformer, autoencoder: autoencoder,
-                                           codec: try NFKMLXFlux2LatentCodec.codec(fromReleaseDirectory: vaeDirectory))
+                                           codec: try NFKMLXFlux2LatentCodec.codec(fromReleaseDirectory: vaeDirectory,
+                                                                                   precision: .checkpoint))
             },
             tokenizer: tokenizer, chatTemplate: template,
             isDistilled: isDistilled(releaseDirectory: directoryURL),
@@ -542,7 +549,7 @@ public final class NFKMLXFlux2: NSObject {
         try staging.exclusively {
             let (embeds, negative) = try conditioning(prompt, negativePrompt: negativePrompt)
             return try staging.with(pipelineStage) { pipeline in
-                let referenceLatents = references.map { pipeline.autoencoder.encode($0 * 2 - 1).mean }
+                let referenceLatents = references.map { pipeline.encodedMean($0 * 2 - 1) }
                 if cachesReferences, !referenceLatents.isEmpty {
                     return pipeline.generateCachingReferences(promptEmbeds: embeds, latentHeight: height / 16,
                                                               latentWidth: width / 16, steps: steps,
@@ -572,7 +579,7 @@ public final class NFKMLXFlux2: NSObject {
         try staging.exclusively {
             let (embeds, negative) = try conditioning(prompt, negativePrompt: negativePrompt)
             return try staging.with(pipelineStage) { pipeline in
-                let referenceLatents = references.map { pipeline.autoencoder.encode($0 * 2 - 1).mean }
+                let referenceLatents = references.map { pipeline.encodedMean($0 * 2 - 1) }
                 return try pipeline.inpaint(promptEmbeds: embeds, negativeEmbeds: negative,
                                             image: image * 2 - 1, mask: mask, strength: strength,
                                             steps: steps, guidanceScale: guidance, seed: seed,
