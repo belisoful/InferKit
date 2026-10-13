@@ -89,6 +89,11 @@ typedef NS_ENUM(NSInteger, NFKBalancingPolicy) {
 /*! The key sent to a server added without one of its own, and to discovered servers. */
 @property (atomic, copy, nullable) NSString *apiKey;
 
+/*! The SHA-256 certificate fingerprint trusted for a server added without a pin of its own, and for
+	discovered servers, or nil to trust the system's trust store. A fleet whose servers share one
+	NFKServerIdentity sets it once. Introduced in InferKit 0.4.0. */
+@property (atomic, copy, nullable) NSString *pinnedCertificateSHA256;
+
 /*! Defaults to NFKBalancingPolicyShortestExpectedWait. */
 @property (atomic, assign) NFKBalancingPolicy policy;
 
@@ -131,6 +136,14 @@ typedef NS_ENUM(NSInteger, NFKBalancingPolicy) {
 	for apiKey. Adding a URL already present replaces its key. */
 - (void)addServerWithBaseURL:(NSURL *)baseURL apiKey:(nullable NSString *)apiKey;
 
+/*! Adds a server as addServerWithBaseURL:apiKey: does, trusting only the certificate with this
+	SHA-256 fingerprint for its status readings and runs (see NFKRemoteTransport's
+	sessionWithPinnedCertificateSHA256:), or nil for pinnedCertificateSHA256. A pinned server's base
+	URL is https. Adding a URL already present replaces its key and pin. Introduced in InferKit 0.4.0. */
+- (void)addServerWithBaseURL:(NSURL *)baseURL
+					  apiKey:(nullable NSString *)apiKey
+	 pinnedCertificateSHA256:(nullable NSString *)pinnedCertificateSHA256;
+
 /*! Stops sending to a server; a run already sent to it finishes there. */
 - (void)removeServerWithBaseURL:(NSURL *)baseURL;
 
@@ -147,7 +160,8 @@ typedef NS_ENUM(NSInteger, NFKBalancingPolicy) {
 	runInferenceForRequest:error: does, and cancelling it cancels the run on the server. */
 - (NFKInferenceJob *)submitInferenceJobForRequest:(NFKInferenceRequest *)request;
 
-/*! The status seam: reads one server's status route. The default reads it with statusTimeout. */
+/*! The status seam: reads one server's status route. The default reads it with statusTimeout, trusting
+	the server's pin when it has one. */
 - (nullable NFKServerStatus *)fetchStatusFromBaseURL:(NSURL *)baseURL
 											 apiKey:(nullable NSString *)apiKey
 											  error:(NSError * _Nullable *)outError;

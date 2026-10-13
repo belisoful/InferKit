@@ -87,6 +87,8 @@ Pure Apple frameworks, always available:
 - ``NFKInferenceServer`` — serves the backends this process hosts to other machines: the
   OpenAI-compatible routes the clients above speak, and a native route that carries a whole request.
   Clients find it by address or over Bonjour.
+- ``NFKServerIdentity`` — a self-signed TLS identity for the server, kept in a directory across
+  launches without the keychain. Clients pin its certificate's SHA-256 fingerprint.
 - ``NFKRemoteInferKitBackend`` — the native route's client: every key of a request crosses, and the
   hosted backend's result and error come back as they were.
 - ``NFKBalancedBackend`` — sends each request to one of several servers hosting the model, by expected
@@ -181,6 +183,8 @@ the core discovers it by name at runtime — see <doc:DynamicDiscovery>.
 ### Serving
 
 - ``NFKInferenceServer``
+- ``NFKServerIdentity``
+- ``NFKServerIdentityError``
 - ``NFKRemoteInferKitBackend``
 - ``NFKInferenceServerError``
 - ``NFKBalancedBackend``

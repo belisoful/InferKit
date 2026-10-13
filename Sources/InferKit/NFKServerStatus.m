@@ -286,9 +286,33 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 
 + (nullable instancetype)fetchFromBaseURL:(NSURL *)baseURL apiKey:(nullable NSString *)apiKey error:(NSError **)error
 {
+	return [self fetchFromBaseURL:baseURL apiKey:apiKey pinnedCertificateSHA256:nil error:error];
+}
+
++ (nullable instancetype)fetchFromBaseURL:(NSURL *)baseURL
+								   apiKey:(nullable NSString *)apiKey
+				  pinnedCertificateSHA256:(nullable NSString *)pinnedCertificateSHA256
+									error:(NSError **)error
+{
 	NFKRemoteInferKitBackend *client = [NFKRemoteInferKitBackend backendWithBaseURL:baseURL];
 	client.apiKey = apiKey;
+	if (pinnedCertificateSHA256 != nil) {
+		client.pinnedCertificateSHA256 = pinnedCertificateSHA256;
+	}
 	return (NFKServerStatus *)[client fetchServerStatusWithError:error];
+}
+
++ (void)fetchFromBaseURL:(NSURL *)baseURL
+				  apiKey:(nullable NSString *)apiKey
+ pinnedCertificateSHA256:(nullable NSString *)pinnedCertificateSHA256
+	   completionHandler:(void (^)(NFKServerStatus * _Nullable status, NSError * _Nullable error))completionHandler
+{
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		NSError *error = nil;
+		NFKServerStatus *status = [self fetchFromBaseURL:baseURL apiKey:apiKey
+								 pinnedCertificateSHA256:pinnedCertificateSHA256 error:&error];
+		completionHandler(status, status != nil ? nil : error);
+	});
 }
 
 + (void)fetchFromBaseURL:(NSURL *)baseURL

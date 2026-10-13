@@ -1030,6 +1030,12 @@ and start times on `systemUptime`, and the job's last reported progress.
   it only when it conforms to `NFKServingRuntimeStatus`, so the core names `NFKMLXGPU` without linking
   MLX. A `Class<Protocol>` variable takes message sends, not dot syntax, for class properties.
 
+**HTTPS with a self-signed identity (2026-10-13).** `NFKServerIdentity` makes and keeps the identity
+`TLSIdentity` takes, and clients pin its SHA-256 fingerprint (`pinnedCertificateSHA256` on
+`NFKRemoteInferKitBackend`, `NFKRemoteProvider`, and `NFKBalancedBackend`; `NFKServerStatus`'s pinned fetch).
+The Bonjour TXT record carries the fingerprint under `cert_sha256`, which is advisory. The persistence
+measurements and the trust model are in `core-runtime-notes.md` ("Serving identity and certificate pinning").
+
 **Residency and unloading (2026-10-13).** Asked for by an app's service, which lists models without
 keeping them in memory, and unloads idle ones.
 

@@ -12,6 +12,7 @@
 #import <InferKit/NFKRemoteResponsesBackend.h>
 #import <InferKit/NFKGeminiGenerateContentBackend.h>
 #import <InferKit/NFKInferenceServer.h>
+#import <InferKit/NFKRemoteTransport.h>
 #import "NFKInferKitDiscovery.h"
 
 const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
@@ -35,6 +36,7 @@ static NSDictionary<NSString *, NSNumber *> *NFKModelAPIStyles(NSDictionary<NSNu
 @property (nonatomic, copy, readwrite) NSDictionary<NSString *, NSNumber *> *modelAPIStyles;
 @property (nonatomic, assign, readwrite) BOOL requiresAPIKey;
 @property (nonatomic, copy, readwrite) NSDictionary<NSString *, NSString *> *advertisedProperties;
+@property (nonatomic, copy, readwrite, nullable) NSString *pinnedCertificateSHA256;
 @end
 
 @implementation NFKRemoteProvider
@@ -87,6 +89,15 @@ static NSDictionary<NSString *, NSNumber *> *NFKModelAPIStyles(NSDictionary<NSNu
 	NSMutableDictionary<NSString *, NSNumber *> *styles = [self.modelAPIStyles mutableCopy];
 	styles[modelName] = apiStyle == self.apiStyle ? nil : @(apiStyle);
 	provider.modelAPIStyles = styles;
+	provider.pinnedCertificateSHA256 = self.pinnedCertificateSHA256;
+	return provider;
+}
+
+- (instancetype)providerWithPinnedCertificateSHA256:(nullable NSString *)fingerprint
+{
+	NFKRemoteProvider *provider = [self providerWithBaseURL:self.baseURL];
+	provider.advertisedProperties = self.advertisedProperties;
+	provider.pinnedCertificateSHA256 = fingerprint;
 	return provider;
 }
 
@@ -111,7 +122,8 @@ static NSDictionary<NSString *, NSNumber *> *NFKModelAPIStyles(NSDictionary<NSNu
 		   [self.baseURL isEqual:other.baseURL] &&
 		   self.apiStyle == other.apiStyle &&
 		   [self.modelAPIStyles isEqualToDictionary:other.modelAPIStyles] &&
-		   self.requiresAPIKey == other.requiresAPIKey;
+		   self.requiresAPIKey == other.requiresAPIKey &&
+		   (self.pinnedCertificateSHA256 == other.pinnedCertificateSHA256 || [self.pinnedCertificateSHA256 isEqualToString:other.pinnedCertificateSHA256]);
 }
 
 - (NSUInteger)hash
@@ -459,6 +471,17 @@ static NSDictionary<NSString *, NSNumber *> *NFKModelAPIStyles(NSDictionary<NSNu
 + (id<NFKInferenceBackend>)backendForProvider:(NFKRemoteProvider *)provider
 									   apiKey:(nullable NSString *)apiKey
 									modelName:(nullable NSString *)modelName
+{
+	id<NFKInferenceBackend> backend = [self unpinnedBackendForProvider:provider apiKey:apiKey modelName:modelName];
+	if (provider.pinnedCertificateSHA256 != nil) {
+		[(id)backend setSession:[NFKRemoteTransport sessionWithPinnedCertificateSHA256:provider.pinnedCertificateSHA256]];
+	}
+	return backend;
+}
+
++ (id<NFKInferenceBackend>)unpinnedBackendForProvider:(NFKRemoteProvider *)provider
+											   apiKey:(nullable NSString *)apiKey
+											modelName:(nullable NSString *)modelName
 {
 	NFKRemoteAPIStyle apiStyle = [provider apiStyleForModelName:modelName];
 	NSURL *endpointURL = [provider endpointURLForModelName:modelName];

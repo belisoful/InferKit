@@ -78,7 +78,8 @@ typedef void (^NFKRemoteStreamCompletion)(NSHTTPURLResponse * _Nullable response
 				rather than a stream. A connection failure arrives as kNFKError_RemoteUnreachable. The
 				returned block cancels the request; a cancelled request completes with
 				NSURLErrorCancelled. The session's configuration is reused, so a caller's proxy or
-				headers carry over.
+				headers carry over, and so does the pin of a session from
+				sessionWithPinnedCertificateSHA256:.
 */
 + (void (^)(void))streamRequest:(NSURLRequest *)request
 						session:(NSURLSession *)session
@@ -126,6 +127,41 @@ typedef void (^NFKRemoteStreamCompletion)(NSHTTPURLResponse * _Nullable response
 
 /*! An error in NFKInferenceErrorDomain with the given code and description. */
 + (NSError *)errorWithCode:(NFKInferenceError)code reason:(NSString *)reason;
+
+/*!
+	@method     sessionWithPinnedCertificateSHA256:
+	@abstract   A session that trusts a server only when its certificate has this SHA-256 fingerprint.
+	@discussion The fingerprint is the SHA-256 digest of the server's leaf certificate in DER, as 64
+				hexadecimal digits in either case, with or without colons or spaces between the byte
+				pairs: NFKServerIdentity's SHA256Fingerprint and colonSeparatedSHA256Fingerprint
+				both work. Set the session as any remote class's session to pin that class.
+
+				Through a pinned session:
+				- A server whose leaf certificate matches is trusted. The match replaces the system's
+				  evaluation of the chain, the host name, and the dates, so a self-signed
+				  certificate reached by any name or address is trusted.
+				- A server whose certificate does not match is refused before the request is sent.
+				  The failure is kNFKError_RemoteUnreachable whose underlying error is
+				  NSURLErrorServerCertificateUntrusted, for blocking and streamed requests alike.
+				- A request or redirect to a URL that is not https is refused unsent, with
+				  kNFKError_InferenceBackendFailure, so a credential never crosses in clear text.
+				- A fingerprint that is not 64 hexadecimal digits matches no server, and every
+				  request fails with kNFKError_InferenceBackendFailure naming it.
+
+				Calls with the same fingerprint return the same session, built on the default
+				configuration, so a client created per request does not create a session per request.
+				Introduced in InferKit 0.4.0.
+*/
++ (NSURLSession *)sessionWithPinnedCertificateSHA256:(NSString *)fingerprint;
+
+/*! A pinned session as sessionWithPinnedCertificateSHA256: builds it, on the caller's configuration
+	(a timeout, a proxy, extra headers). Each call creates a new session. Introduced in InferKit 0.4.0. */
++ (NSURLSession *)sessionWithPinnedCertificateSHA256:(NSString *)fingerprint
+									   configuration:(NSURLSessionConfiguration *)configuration;
+
+/*! The fingerprint a pinned session trusts, as 64 lowercase hexadecimal digits (or as given when it
+	is malformed), or nil for a session that is not pinned. Introduced in InferKit 0.4.0. */
++ (nullable NSString *)pinnedCertificateSHA256ForSession:(NSURLSession *)session;
 
 @end
 

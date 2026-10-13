@@ -261,3 +261,67 @@ brought by the consumer and discovered at runtime.
   UUID folder, and the round-trip test waits for the cleared state to hold for 0.5 s.
 - `Tools/validation-assets/fetch.py` sets the same exclusion on its asset root and on the
   huggingface_hub cache the reference oracles fill (`--keep-in-backup` skips it).
+
+## Serving identity and certificate pinning
+
+`NFKServerIdentity` makes the `SecIdentityRef` that `NFKInferenceServer.TLSIdentity` takes; the
+remote classes trust it by pinning its certificate's SHA-256 fingerprint. The server needs no change.
+
+- The certificate is built by hand in DER (`NFKServerIdentity.m`): X.509 v3, ECDSA P-256,
+  ecdsa-with-SHA256 signed by `SecKeyCreateSignature`, subject = issuer = the common name, a random
+  16-byte serial, notBefore an hour back, extensions basicConstraints (critical, not a CA), keyUsage
+  digitalSignature (critical), extendedKeyUsage serverAuth, subjectAltName (IP entry when
+  `inet_pton` parses the name, DNS entry otherwise), and subjectKeyIdentifier. Default validity is
+  825 days, the most Apple accepts for a server certificate a client trusts through its trust
+  settings. `openssl x509 -text`, `openssl verify`, and `SecTrust` with the certificate as its own
+  anchor (SSL policy, localhost) all accept it (checked 2026-10-13, OpenSSL 4.0.3, LibreSSL 3.3.6).
+- The key never touches a keychain. It is stored as PEM SEC 1 with the certificate in
+  `identity.pem` (0600, written under a temporary name with that mode and renamed into place) and
+  rebuilt with `SecKeyCreateWithData` + `SecIdentityCreate`. `SecIdentityCreate` is public in the
+  Xcode 27 SDK headers for every platform and available at runtime since macOS 10.12 / iOS 11.2, so
+  the macOS 11 floor holds. `kSecImportToMemoryOnly` (`SecPKCS12Import`) is the other in-memory
+  route but is macOS 15 / iOS 18 only and needs a PKCS#12 builder.
+- Why not the keychain (measured 2026-10-13, macOS 26.6.2, ad-hoc signed probes in `Local/`, user
+  interaction disabled so a prompt reports an error instead of a dialog):
+  - Login keychain, default ACL: the creating binary signs; a rebuilt binary (new cdhash) finds the
+    item and fails to sign with `errSecAuthFailed` (-25293), which is the access prompt when
+    interaction is allowed.
+  - Login keychain with an any-application ACL passed through `kSecAttrAccess` to
+    `SecKeyCreateRandomKey`: the same failure. `security dump-keychain -a` shows the attribute was
+    ignored (the sign ACL names the creator's cdhash) and the item carries a `partition_id` of
+    `cdhash:<creator>`, which no ACL setting lifts without the keychain password.
+  - Data-protection keychain (`kSecUseDataProtectionKeychain`): `errSecMissingEntitlement` (-34018)
+    for a tool without a keychain-access-groups entitlement.
+  - File key + in-memory identity: no keychain call, so nothing prompts. Two differently built
+    ad-hoc binaries loaded the same identity (same fingerprint), and a probe run as a LaunchAgent
+    (`launchctl submit`) created, served, and was reached by pinned clients.
+  A Developer ID tool has a stable designated requirement and `teamid:` partition, so the login
+  keychain would stop prompting after its first approval; that was not measured.
+- Trust model: the key is as safe as the user account. Any process running as the user, or an
+  administrator, reads `identity.pem`. Loading refuses a file another user owns or a symlink, and
+  narrows a looser mode to 0600. A lock file serializes load-or-create across processes.
+- Pinning lives in `NFKRemoteTransport`: `sessionWithPinnedCertificateSHA256:` returns a session
+  (one per fingerprint, cached) whose delegate is a private `NFKRemotePinnedTrust`. Every remote
+  class already takes a `session`, so that is the whole seam. The transport recognizes a pinned
+  session by its delegate's class and:
+  - refuses an http URL or a malformed pin before sending (`kNFKError_InferenceBackendFailure`);
+  - accepts the server trust challenge only when the leaf certificate's SHA-256 matches, skipping
+    chain, host name, and date evaluation; otherwise cancels it and marks the task, and the marked
+    task's failure is `kNFKError_RemoteUnreachable` with underlying
+    `NSURLErrorServerCertificateUntrusted`;
+  - refuses a redirect to http;
+  - carries the pin into a stream: `streamRequest:` makes its own session with a line-stream
+    delegate, which forwards the challenge to the pin. Any other session delegate a caller set is
+    still not consulted by a stream.
+  The challenge is the task-level delegate method only, which `NSURLSession` uses for server trust
+  when the session-level one is absent. A refusal after a matching connection to the same server
+  holds (TLS session reuse does not skip the challenge), measured in the probe and asserted in
+  `NFKServerIdentityTests`.
+- Entry points: `NFKRemoteInferKitBackend.pinnedCertificateSHA256` (sets `session`; reading reports
+  the session's pin), `NFKBalancedBackend` `addServerWithBaseURL:apiKey:pinnedCertificateSHA256:`
+  plus a fleet-wide `pinnedCertificateSHA256` used for servers without one and for discovered
+  servers (applied to both status readings and runs without changing the overridable status seam),
+  and `NFKRemoteProvider` `providerWithPinnedCertificateSHA256:`, which `backendForProvider:` and the
+  model catalog apply. `providerWithBaseURL:` drops the pin because a pin names one server.
+  `+[NFKServerStatus fetchFromBaseURL:apiKey:error:]` takes no pin; a pinned
+  `NFKRemoteInferKitBackend`'s `fetchServerStatusWithError:` reads the same route.

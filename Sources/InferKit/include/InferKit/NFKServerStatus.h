@@ -282,6 +282,23 @@ typedef NS_ENUM(NSInteger, NFKServerModelResidency) {
 	   completionHandler:(void (^)(NFKServerStatus * _Nullable status, NSError * _Nullable error))completionHandler
 	NS_SWIFT_ASYNC_NAME(fetchStatus(baseURL:apiKey:));
 
+/*! fetchFromBaseURL:apiKey:error: over HTTPS trusting only the certificate whose SHA-256 fingerprint
+	is pinnedCertificateSHA256, as NFKRemoteInferKitBackend's pinnedCertificateSHA256 does. A nil pin
+	reads the route as fetchFromBaseURL:apiKey:error: does. Introduced in InferKit 0.4.0. */
++ (nullable instancetype)fetchFromBaseURL:(NSURL *)baseURL
+								   apiKey:(nullable NSString *)apiKey
+				  pinnedCertificateSHA256:(nullable NSString *)pinnedCertificateSHA256
+									error:(NSError **)error
+	NS_SWIFT_NAME(fetch(baseURL:apiKey:pinnedCertificateSHA256:));
+
+/*! The asynchronous form of fetchFromBaseURL:apiKey:pinnedCertificateSHA256:error:. The handler runs
+	on a background queue at user-initiated quality of service. Introduced in InferKit 0.4.0. */
++ (void)fetchFromBaseURL:(NSURL *)baseURL
+				  apiKey:(nullable NSString *)apiKey
+ pinnedCertificateSHA256:(nullable NSString *)pinnedCertificateSHA256
+	   completionHandler:(void (^)(NFKServerStatus * _Nullable status, NSError * _Nullable error))completionHandler
+	NS_SWIFT_ASYNC_NAME(fetchStatus(baseURL:apiKey:pinnedCertificateSHA256:));
+
 @end
 
 NS_ASSUME_NONNULL_END

@@ -4,6 +4,8 @@
 //
 
 #import <InferKit/NFKRemoteTransport.h>
+#import <InferKit/NFKServerIdentity.h>
+#import <objc/runtime.h>
 
 NSString * const NFKAnthropicAPIVersion = @"2023-06-01";
 NSString * const NFKRemoteErrorStatusCodeKey = @"NFKRemoteErrorStatusCode";
@@ -15,6 +17,133 @@ static NSTimeInterval NFKRemoteMaximumRetryDelay = 8.0;
 
 static NSError *NFKRemoteUnreachableError(NSURL * _Nullable url, NSError * _Nullable underlying);
 
+#pragma mark - Certificate pinning
+
+typedef void (^NFKRemoteChallengeCompletion)(NSURLSessionAuthChallengeDisposition disposition, NSURLCredential * _Nullable credential);
+
+static const void * const NFKRemotePinRefusedKey = &NFKRemotePinRefusedKey;
+
+/*! 64 lowercase hexadecimal digits, or nil when the value is not a SHA-256 fingerprint. */
+static NSString * _Nullable NFKRemoteNormalizedFingerprint(NSString *value)
+{
+	NSCharacterSet *separators = [NSCharacterSet characterSetWithCharactersInString:@": "];
+	NSString *hex = [[value componentsSeparatedByCharactersInSet:separators] componentsJoinedByString:@""].lowercaseString;
+	NSCharacterSet *nonHex = [NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdef"].invertedSet;
+	if (hex.length != 64 || [hex rangeOfCharacterFromSet:nonHex].location != NSNotFound) {
+		return nil;
+	}
+	return hex;
+}
+
+static NSString * _Nullable NFKRemoteLeafFingerprint(SecTrustRef trust)
+{
+	SecCertificateRef leaf = NULL;
+	NSArray *chain = nil;
+	if (@available(macOS 12.0, iOS 15.0, tvOS 15.0, *)) {
+		chain = CFBridgingRelease(SecTrustCopyCertificateChain(trust));
+		leaf = chain.count > 0 ? (__bridge SecCertificateRef)chain.firstObject : NULL;
+	} else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+		leaf = SecTrustGetCertificateCount(trust) > 0 ? SecTrustGetCertificateAtIndex(trust, 0) : NULL;
+#pragma clang diagnostic pop
+	}
+	NSData *certificateData = leaf != NULL ? CFBridgingRelease(SecCertificateCopyData(leaf)) : nil;
+	return certificateData != nil ? [NFKServerIdentity SHA256FingerprintOfCertificateData:certificateData] : nil;
+}
+
+/*! Whether a task's server presented a certificate other than the pinned one. */
+static BOOL NFKRemotePinRefused(NSURLSessionTask * _Nullable task)
+{
+	return task != nil && [objc_getAssociatedObject(task, NFKRemotePinRefusedKey) boolValue];
+}
+
+static NSError *NFKRemotePinMismatchError(NSURL * _Nullable url)
+{
+	NSString *host = url.host ?: @"the endpoint";
+	NSString *reason = [NSString stringWithFormat:@"%@ presented a certificate other than the pinned one", host];
+	NSMutableDictionary *underlyingInfo = [NSMutableDictionary dictionaryWithObject:reason forKey:NSLocalizedDescriptionKey];
+	NSMutableDictionary *userInfo = [NSMutableDictionary dictionaryWithObject:reason forKey:NSLocalizedDescriptionKey];
+	if (url != nil) {
+		underlyingInfo[NSURLErrorFailingURLErrorKey] = url;
+		userInfo[NSURLErrorFailingURLErrorKey] = url;
+	}
+	userInfo[NSUnderlyingErrorKey] = [NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorServerCertificateUntrusted userInfo:underlyingInfo];
+	return [NSError errorWithDomain:NFKInferenceErrorDomain code:kNFKError_RemoteUnreachable userInfo:userInfo];
+}
+
+/*! A session delegate that trusts only the server certificate with the pinned SHA-256 fingerprint and
+	follows only HTTPS redirects. */
+@interface NFKRemotePinnedTrust : NSObject <NSURLSessionTaskDelegate>
+/*! The fingerprint as the caller gave it. */
+@property (nonatomic, copy) NSString *pinnedValue;
+/*! The fingerprint as 64 lowercase hexadecimal digits, or nil when pinnedValue is malformed. */
+@property (nonatomic, copy, nullable) NSString *fingerprint;
+@end
+
+@implementation NFKRemotePinnedTrust
+
+- (void)evaluateChallenge:(NSURLAuthenticationChallenge *)challenge
+				  forTask:(NSURLSessionTask *)task
+		completionHandler:(NFKRemoteChallengeCompletion)completionHandler
+{
+	if (![challenge.protectionSpace.authenticationMethod isEqualToString:NSURLAuthenticationMethodServerTrust]) {
+		completionHandler(NSURLSessionAuthChallengePerformDefaultHandling, nil);
+		return;
+	}
+	SecTrustRef trust = challenge.protectionSpace.serverTrust;
+	NSString *presented = trust != NULL ? NFKRemoteLeafFingerprint(trust) : nil;
+	if (self.fingerprint != nil && [presented isEqualToString:self.fingerprint]) {
+		completionHandler(NSURLSessionAuthChallengeUseCredential, [NSURLCredential credentialForTrust:trust]);
+		return;
+	}
+	objc_setAssociatedObject(task, NFKRemotePinRefusedKey, @YES, OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+	completionHandler(NSURLSessionAuthChallengeCancelAuthenticationChallenge, nil);
+}
+
+- (void)URLSession:(NSURLSession *)session
+			  task:(NSURLSessionTask *)task
+didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
+ completionHandler:(NFKRemoteChallengeCompletion)completionHandler
+{
+	[self evaluateChallenge:challenge forTask:task completionHandler:completionHandler];
+}
+
+- (void)URLSession:(NSURLSession *)session
+					  task:(NSURLSessionTask *)task
+willPerformHTTPRedirection:(NSHTTPURLResponse *)response
+				newRequest:(NSURLRequest *)request
+		 completionHandler:(void (^)(NSURLRequest * _Nullable))completionHandler
+{
+	completionHandler([request.URL.scheme.lowercaseString isEqualToString:@"https"] ? request : nil);
+}
+
+@end
+
+static NFKRemotePinnedTrust * _Nullable NFKRemotePinOfSession(NSURLSession *session)
+{
+	id delegate = session.delegate;
+	return [delegate isKindOfClass:NFKRemotePinnedTrust.class] ? delegate : nil;
+}
+
+/*! Why a pinned session will not send a request, or nil when it will or the session is not pinned. */
+static NSError * _Nullable NFKRemotePinPreflightError(NSURLSession *session, NSURL * _Nullable url)
+{
+	NFKRemotePinnedTrust *pin = NFKRemotePinOfSession(session);
+	if (pin == nil) {
+		return nil;
+	}
+	if (pin.fingerprint == nil) {
+		NSString *reason = [NSString stringWithFormat:@"the pinned certificate fingerprint \"%@\" is not 64 hexadecimal digits", pin.pinnedValue];
+		return [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:reason];
+	}
+	if (![url.scheme.lowercaseString isEqualToString:@"https"]) {
+		NSString *reason = [NSString stringWithFormat:@"a pinned session sends only HTTPS, and %@ is not", url.absoluteString ?: @"the URL"];
+		return [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:reason];
+	}
+	return nil;
+}
+
 #pragma mark - Line stream
 
 /*! Splits a streamed body into lines as the bytes arrive; collects a failing status's body whole. */
@@ -24,9 +153,36 @@ static NSError *NFKRemoteUnreachableError(NSURL * _Nullable url, NSError * _Null
 @property (nonatomic, strong) NSMutableData *buffer;
 @property (nonatomic, strong, nullable) NSHTTPURLResponse *response;
 @property (nonatomic, assign) BOOL collectsWholeBody;
+/*! The pin of the session the stream was started on, which the stream's own session applies. */
+@property (nonatomic, strong, nullable) NFKRemotePinnedTrust *pin;
 @end
 
 @implementation NFKRemoteLineStream
+
+- (void)URLSession:(NSURLSession *)session
+			  task:(NSURLSessionTask *)task
+didReceiveChallenge:(NSURLAuthenticationChallenge *)challenge
+ completionHandler:(NFKRemoteChallengeCompletion)completionHandler
+{
+	if (self.pin == nil) {
+		completionHandler(NSURLSessionAuthChallengePerformDefaultHandling, nil);
+		return;
+	}
+	[self.pin evaluateChallenge:challenge forTask:task completionHandler:completionHandler];
+}
+
+- (void)URLSession:(NSURLSession *)session
+					  task:(NSURLSessionTask *)task
+willPerformHTTPRedirection:(NSHTTPURLResponse *)response
+				newRequest:(NSURLRequest *)request
+		 completionHandler:(void (^)(NSURLRequest * _Nullable))completionHandler
+{
+	if (self.pin == nil) {
+		completionHandler(request);
+		return;
+	}
+	[self.pin URLSession:session task:task willPerformHTTPRedirection:response newRequest:request completionHandler:completionHandler];
+}
 
 - (void)URLSession:(NSURLSession *)session
 		  dataTask:(NSURLSessionDataTask *)dataTask
@@ -61,7 +217,9 @@ didReceiveResponse:(NSURLResponse *)response
 	}
 	self.buffer = nil;
 	NSError *reported = error;
-	if (error != nil && self.response == nil && error.code != NSURLErrorCancelled) {
+	if (NFKRemotePinRefused(task)) {
+		reported = NFKRemotePinMismatchError(task.originalRequest.URL);
+	} else if (error != nil && self.response == nil && error.code != NSURLErrorCancelled) {
 		reported = NFKRemoteUnreachableError(task.originalRequest.URL, error);
 	}
 	self.completionHandler(self.response, errorBody, reported);
@@ -163,6 +321,16 @@ static NSError *NFKRemoteUnreachableError(NSURL * _Nullable url, NSError * _Null
 					 response:(NSHTTPURLResponse * _Nullable * _Nullable)outResponse
 						error:(NSError * _Nullable *)outError
 {
+	NSError *pinError = NFKRemotePinPreflightError(session, request.URL);
+	if (pinError != nil) {
+		if (outResponse != NULL) {
+			*outResponse = nil;
+		}
+		if (outError != NULL) {
+			*outError = pinError;
+		}
+		return nil;
+	}
 	__block NSData *resultData = nil;
 	__block NSURLResponse *resultResponse = nil;
 	__block NSError *resultError = nil;
@@ -187,7 +355,7 @@ static NSError *NFKRemoteUnreachableError(NSURL * _Nullable url, NSError * _Null
 		return resultData;
 	}
 	if (httpResponse == nil) {
-		*outError = NFKRemoteUnreachableError(request.URL, resultError);
+		*outError = NFKRemotePinRefused(task) ? NFKRemotePinMismatchError(request.URL) : NFKRemoteUnreachableError(request.URL, resultError);
 	} else {
 		*outError = resultError != nil ? resultError
 									  : [self errorWithCode:kNFKError_InferenceBackendFailure
@@ -220,9 +388,17 @@ static NSError *NFKRemoteUnreachableError(NSURL * _Nullable url, NSError * _Null
 					lineHandler:(void (^)(NSString *))lineHandler
 			  completionHandler:(NFKRemoteStreamCompletion)completionHandler
 {
+	NSError *pinError = NFKRemotePinPreflightError(session, request.URL);
+	if (pinError != nil) {
+		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+			completionHandler(nil, nil, pinError);
+		});
+		return ^{};
+	}
 	NFKRemoteLineStream *stream = [[NFKRemoteLineStream alloc] init];
 	stream.lineHandler = lineHandler;
 	stream.completionHandler = completionHandler;
+	stream.pin = NFKRemotePinOfSession(session);
 	NSURLSession *streamingSession = [NSURLSession sessionWithConfiguration:session.configuration
 																  delegate:stream
 															 delegateQueue:nil];
@@ -339,6 +515,41 @@ static NSError *NFKRemoteUnreachableError(NSURL * _Nullable url, NSError * _Null
 	return [NSError errorWithDomain:NFKInferenceErrorDomain
 							   code:code
 						   userInfo:@{ NSLocalizedDescriptionKey: reason }];
+}
+
+#pragma mark Pinned sessions
+
++ (NSURLSession *)sessionWithPinnedCertificateSHA256:(NSString *)fingerprint
+{
+	static NSMutableDictionary<NSString *, NSURLSession *> *sessions;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		sessions = [NSMutableDictionary dictionary];
+	});
+	NSString *key = NFKRemoteNormalizedFingerprint(fingerprint) ?: fingerprint;
+	@synchronized (sessions) {
+		NSURLSession *session = sessions[key];
+		if (session == nil) {
+			session = [self sessionWithPinnedCertificateSHA256:fingerprint configuration:NSURLSessionConfiguration.defaultSessionConfiguration];
+			sessions[key] = session;
+		}
+		return session;
+	}
+}
+
++ (NSURLSession *)sessionWithPinnedCertificateSHA256:(NSString *)fingerprint
+									   configuration:(NSURLSessionConfiguration *)configuration
+{
+	NFKRemotePinnedTrust *pin = [[NFKRemotePinnedTrust alloc] init];
+	pin.pinnedValue = fingerprint;
+	pin.fingerprint = NFKRemoteNormalizedFingerprint(fingerprint);
+	return [NSURLSession sessionWithConfiguration:configuration delegate:pin delegateQueue:nil];
+}
+
++ (nullable NSString *)pinnedCertificateSHA256ForSession:(NSURLSession *)session
+{
+	NFKRemotePinnedTrust *pin = NFKRemotePinOfSession(session);
+	return pin.fingerprint ?: pin.pinnedValue;
 }
 
 @end

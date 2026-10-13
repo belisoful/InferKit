@@ -91,6 +91,7 @@ static BOOL NFKBalancedFailsOver(NSError * _Nullable error)
 @interface NFKBalancedServer : NSObject
 @property (nonatomic, copy) NSURL *baseURL;
 @property (nonatomic, copy, nullable) NSString *apiKey;
+@property (nonatomic, copy, nullable) NSString *pinnedCertificateSHA256;
 @property (nonatomic, assign) BOOL discovered;
 @property (nonatomic, assign) NSUInteger missedBrowses;
 /*! The model's entry in the last status reading, or nil when the server cannot take the model. */
@@ -185,6 +186,13 @@ static BOOL NFKBalancedFailsOver(NSError * _Nullable error)
 
 - (void)addServerWithBaseURL:(NSURL *)baseURL apiKey:(nullable NSString *)apiKey
 {
+	[self addServerWithBaseURL:baseURL apiKey:apiKey pinnedCertificateSHA256:nil];
+}
+
+- (void)addServerWithBaseURL:(NSURL *)baseURL
+					  apiKey:(nullable NSString *)apiKey
+	 pinnedCertificateSHA256:(nullable NSString *)pinnedCertificateSHA256
+{
 	@synchronized (self) {
 		NFKBalancedServer *server = [self serverWithBaseURL:baseURL];
 		if (server == nil) {
@@ -194,6 +202,7 @@ static BOOL NFKBalancedFailsOver(NSError * _Nullable error)
 			[self.servers addObject:server];
 		}
 		server.apiKey = apiKey;
+		server.pinnedCertificateSHA256 = pinnedCertificateSHA256;
 		server.discovered = NO;
 	}
 }
@@ -274,6 +283,13 @@ static BOOL NFKBalancedFailsOver(NSError * _Nullable error)
 	NFKRemoteInferKitBackend *client = [NFKRemoteInferKitBackend backendWithBaseURL:baseURL];
 	client.apiKey = apiKey;
 	client.timeout = self.statusTimeout;
+	NSString *pin = nil;
+	@synchronized (self) {
+		pin = [self serverWithBaseURL:baseURL].pinnedCertificateSHA256 ?: self.pinnedCertificateSHA256;
+	}
+	if (pin != nil) {
+		client.pinnedCertificateSHA256 = pin;
+	}
 	return [client fetchServerStatusWithError:outError];
 }
 
@@ -579,6 +595,10 @@ typedef struct {
 	@synchronized (self) {
 		client = [NFKBalancedClient backendWithBaseURL:server.baseURL];
 		client.apiKey = server.apiKey ?: self.apiKey;
+		NSString *pin = server.pinnedCertificateSHA256 ?: self.pinnedCertificateSHA256;
+		if (pin != nil) {
+			client.pinnedCertificateSHA256 = pin;
+		}
 		[server.dispatches addObject:sent];
 	}
 	client.modelName = self.modelName;

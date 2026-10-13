@@ -31,6 +31,9 @@ static NSString * const NFKAnthropicPageLimit = @"1000";
 	if (self != nil) {
 		_provider = [provider copy];
 		_timeout = 30.0;
+		if (provider.pinnedCertificateSHA256 != nil) {
+			_session = [NFKRemoteTransport sessionWithPinnedCertificateSHA256:provider.pinnedCertificateSHA256];
+		}
 	}
 	return self;
 }

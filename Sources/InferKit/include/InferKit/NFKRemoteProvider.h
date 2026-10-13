@@ -97,6 +97,11 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	and for a provider re-pointed with providerWithBaseURL:. Introduced in InferKit 0.4.0. */
 @property (nonatomic, copy, readonly) NSDictionary<NSString *, NSString *> *advertisedProperties;
 
+/*! The SHA-256 fingerprint of the server certificate this provider's backends and model catalog
+	trust in place of the system's trust store, or nil. Set it with
+	providerWithPinnedCertificateSHA256:. Introduced in InferKit 0.4.0. */
+@property (nonatomic, copy, readonly, nullable) NSString *pinnedCertificateSHA256;
+
 - (instancetype)init NS_UNAVAILABLE;
 
 /*! Two providers are equal when their identifier, base, protocol, model routes, and key requirement
@@ -118,11 +123,23 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	@method     providerWithBaseURL:
 	@abstract   This provider at another address.
 	@discussion The identifier, display name, protocol, model routes, and key requirement are kept;
-				every derived URL follows the new base. A runner on another port, or on another machine
+				every derived URL follows the new base, and a certificate pin is dropped. A runner on another port, or on another machine
 				on the network, is the same preset with this one field changed. Introduced in InferKit
 				0.3.0.
 */
 - (instancetype)providerWithBaseURL:(NSURL *)baseURL;
+
+/*!
+	@method     providerWithPinnedCertificateSHA256:
+	@abstract   This provider trusting only the server certificate with this SHA-256 fingerprint.
+	@discussion Every other field is kept; nil removes the pin. backendForProvider:apiKey:modelName:
+				and NFKRemoteModelCatalog's catalogForProvider:apiKey: then use NFKRemoteTransport's
+				sessionWithPinnedCertificateSHA256: for the fingerprint, which sends only to an https
+				base. providerWithBaseURL: drops the pin, since a pin names one server's certificate.
+				For an NFKInferenceServer serving an NFKServerIdentity, the fingerprint is the
+				identity's SHA256Fingerprint. Introduced in InferKit 0.4.0.
+*/
+- (instancetype)providerWithPinnedCertificateSHA256:(nullable NSString *)fingerprint;
 
 /*!
 	@method     apiStyleForModelName:

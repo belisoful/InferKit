@@ -47,6 +47,17 @@
 	return _session;
 }
 
+- (nullable NSString *)pinnedCertificateSHA256
+{
+	return [NFKRemoteTransport pinnedCertificateSHA256ForSession:self.session];
+}
+
+- (void)setPinnedCertificateSHA256:(nullable NSString *)pinnedCertificateSHA256
+{
+	self.session = pinnedCertificateSHA256 != nil ? [NFKRemoteTransport sessionWithPinnedCertificateSHA256:pinnedCertificateSHA256]
+												   : NSURLSession.sharedSession;
+}
+
 #pragma mark NFKInferenceBackend
 
 - (BOOL)isReady

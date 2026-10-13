@@ -125,10 +125,13 @@ typedef id<NFKInferenceBackend> _Nullable (^NFKServedBackendProvider)(NSError * 
 
 				Setting TLSIdentity serves HTTPS with that identity. A client's URL session trusts
 				the certificate only if the system does, so a self-signed identity needs the client to
-				install it or to evaluate trust in its session delegate.
+				install it or to pin its SHA-256 fingerprint. NFKServerIdentity makes and keeps such an
+				identity; a client pins it with pinnedCertificateSHA256.
 
 				advertisesService publishes the server over Bonjour as NFKInferenceServerServiceType,
-				carrying the base path, whether TLS is on, and whether a key is required;
+				carrying the base path, whether TLS is on, whether a key is required, and with TLS the
+				certificate's SHA-256 fingerprint under cert_sha256. Bonjour is unauthenticated, so a
+				client confirms that fingerprint with its user before pinning it;
 				NFKRemoteProvider's discoverInferKitServersWithTimeout: finds it. On iOS, listening on
 				or browsing the local network needs NSLocalNetworkUsageDescription in the Info.plist.
 

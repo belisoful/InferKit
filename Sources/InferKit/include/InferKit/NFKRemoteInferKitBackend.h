@@ -51,8 +51,15 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The session used for the call. Defaults to the shared session. */
 @property (nonatomic, strong) NSURLSession *session;
 
+/*! The SHA-256 fingerprint of the server certificate to trust in place of the system's trust store,
+	or nil. Setting it sets session to NFKRemoteTransport's sessionWithPinnedCertificateSHA256: for the
+	fingerprint, and setting nil restores the shared session; reading it reports session's pin. A
+	pinned backend sends only to an https endpoint. Pin a server serving an NFKServerIdentity with its
+	SHA256Fingerprint. Introduced in InferKit 0.4.0. */
+@property (nonatomic, copy, nullable) NSString *pinnedCertificateSHA256;
+
 /*! A backend posting to the native route under a server's base URL (for example
-	http://studio.local:11480/v1). */
+	http://studio.local:11480/v1, or https for a server with a TLSIdentity). */
 + (instancetype)backendWithBaseURL:(NSURL *)baseURL;
 
 /*! A backend posting to this endpoint. */

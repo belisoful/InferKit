@@ -9,6 +9,7 @@
 #import <InferKit/NFKErrors.h>
 #import <InferKit/NFKRemoteTransport.h>
 #import <InferKit/NFKImageCoding.h>
+#import <InferKit/NFKServerIdentity.h>
 #import "NFKHTTPServer.h"
 #import "NFKServedOpenAI.h"
 #import "NFKServedMCP.h"
@@ -979,6 +980,20 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	}
 }
 
+- (nullable NSString *)TLSCertificateSHA256Fingerprint
+{
+	if (self.identity == nil) {
+		return nil;
+	}
+	SecCertificateRef certificate = NULL;
+	if (SecIdentityCopyCertificate((__bridge SecIdentityRef)self.identity, &certificate) != errSecSuccess) {
+		return nil;
+	}
+	NSData *der = CFBridgingRelease(SecCertificateCopyData(certificate));
+	CFRelease(certificate);
+	return [NFKServerIdentity SHA256FingerprintOfCertificateData:der];
+}
+
 - (nullable SecIdentityRef)TLSIdentity
 {
 	return (__bridge SecIdentityRef)self.identity;
@@ -1447,6 +1462,10 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 																  @"auth": self.requiresAPIKey ? @"1" : @"0",
 																  @"mcp": @"/mcp",
 																  @"version": NFKInferKit.version } mutableCopy];
+		NSString *fingerprint = [self TLSCertificateSHA256Fingerprint];
+		if (fingerprint != nil) {
+			record[@"cert_sha256"] = fingerprint;
+		}
 		if (self.reportsHostDetails) {
 			[record addEntriesFromDictionary:[NFKServedHostStatus TXTRecordEntries]];
 		}
