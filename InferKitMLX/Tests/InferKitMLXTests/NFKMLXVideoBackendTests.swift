@@ -122,6 +122,43 @@ final class NFKMLXVideoBackendTests: XCTestCase {
         XCTAssertEqual(asset.durationSeconds, 7.0 / 60.0, accuracy: 0.01)
     }
 
+    func testARequestedFrameRateOverridesTheDerivedOne() throws {
+        try requireMLXRuntime()
+        let sourceURL = try writeClip(4)
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+
+        var configuration = NFKMLXVideoConfiguration()
+        configuration.frameRateMultiplier = 2
+        let backend = NFKMLXVideoBackend(identifier: "identity", configuration: configuration) { $0 }
+        XCTAssertEqual(backend.supportedParameterKeys, [NFKParameterFramesPerSecond])
+        func written(_ parameters: [String: Any]) throws -> (asset: Double, file: Double) {
+            let request = NFKInferenceRequest(inputs: [NFKInputVideo: NFKVideoAsset(fileURL: sourceURL)],
+                                              parameters: parameters)
+            let asset = try XCTUnwrap(try backend.runInference(for: request)
+                .output(forKey: NFKOutputVideo) as? NFKVideoAsset)
+            let outputURL = try XCTUnwrap(asset.fileURL)
+            defer { try? FileManager.default.removeItem(at: outputURL) }
+            return (asset.framesPerSecond, try NFKMLXVideoFile.read(outputURL).framesPerSecond)
+        }
+
+        let requested = try written([NFKParameterFramesPerSecond: 12])
+        XCTAssertEqual(requested.asset, 12)
+        XCTAssertEqual(requested.file, 12, accuracy: 0.5, "the movie is written at the requested rate")
+        let derived = try written([:])
+        XCTAssertEqual(derived.asset, 60, accuracy: 0.5, "without the key the configured rate holds")
+        XCTAssertEqual(derived.file, 60, accuracy: 0.5)
+    }
+
+    func testANonPositiveRequestedFrameRateIsRefused() throws {
+        try requireMLXRuntime()
+        let sourceURL = try writeClip(2)
+        defer { try? FileManager.default.removeItem(at: sourceURL) }
+        let backend = NFKMLXVideoBackend(identifier: "identity") { $0 }
+        let request = NFKInferenceRequest(inputs: [NFKInputVideo: NFKVideoAsset(fileURL: sourceURL)],
+                                          parameters: [NFKParameterFramesPerSecond: 0])
+        XCTAssertThrowsError(try backend.runInference(for: request))
+    }
+
     func testARequestWithNoVideoIsRejected() throws {
         let backend = NFKMLXVideoBackend(identifier: "identity") { $0 }
         XCTAssertThrowsError(try backend.runInference(for: NFKInferenceRequest(inputs: [:])))

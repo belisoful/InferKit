@@ -308,8 +308,8 @@ private final class NFKRerankerHolder: @unchecked Sendable {
 /// @discussion A reranker scores a query against each candidate document and orders them, which is what
 /// turns an embedder's approximate shortlist into a precise ranking. It reads the query and document
 /// together as one `[CLS] query [SEP] document [SEP]` sequence and returns a single relevance logit; a
-/// higher score is more relevant. Because it takes a query and a LIST of documents rather than one input,
-/// it is a scoring object rather than an `NFKInferenceBackend`. Run scoring off the render thread.
+/// higher score is more relevant. ``inferenceBackend()`` runs it behind the InferKit contract: the query
+/// under `NFKInputPrompt` and the candidates under `NFKInputDocuments`. Run scoring off the render thread.
 @objc(NFKMLXModernBERTReranker)
 public final class NFKMLXModernBERTReranker: NSObject {
 

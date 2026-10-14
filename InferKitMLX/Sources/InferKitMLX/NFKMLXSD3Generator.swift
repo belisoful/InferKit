@@ -101,7 +101,7 @@ public final class NFKMLXSD3Generator: NSObject {
     @objc public static let modelName = "sd3"
 
     /// The Hugging Face repository the download factories read when none is named. The repository is
-    /// gated: its license is accepted once on the Hub, and the token is `NFKHubClient`'s.
+    /// gated: its license is accepted once on the Hub, and the token is `NFKHFHub.defaultAccessToken`.
     @objc public static let releaseRepo = "stabilityai/stable-diffusion-3.5-medium"
 
     /// The CLIP context length and the T5 length the reference pipeline pads to.

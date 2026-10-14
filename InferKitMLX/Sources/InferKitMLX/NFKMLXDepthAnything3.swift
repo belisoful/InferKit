@@ -1154,7 +1154,7 @@ final class NFKMLXDepthAnything3Net: Module {
 /// - Since: InferKit 0.3.1
 @objc(NFKMLXDepth3Estimator)
 public final class NFKMLXDepth3Estimator: NSObject {
-    private let net: NFKMLXDepthAnything3Net
+    let net: NFKMLXDepthAnything3Net
 
     init(net: NFKMLXDepthAnything3Net) {
         self.net = net
@@ -1180,6 +1180,23 @@ public final class NFKMLXDepth3Estimator: NSObject {
         let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
                                                 cacheDirectoryURL: cacheDirectoryURL)
         return try estimator(variant: variant, weightsURL: url)
+    }
+
+    /// The asynchronous form of ``estimator(variant:repo:weightsPath:revision:cacheDirectoryURL:)``. The
+    /// download and the build run at user-initiated quality of service off the calling thread, and the
+    /// handler runs on that background queue. Introduced in InferKit 0.4.0.
+    @objc(estimatorWithVariant:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
+    public static func estimator(variant: NFKMLXDepth3Variant, repo: String, weightsPath: String,
+                                 revision: String?, cacheDirectoryURL: URL?,
+                                 completionHandler: @escaping (NFKMLXDepth3Estimator?, Error?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                completionHandler(try estimator(variant: variant, repo: repo, weightsPath: weightsPath,
+                                                revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
+            } catch {
+                completionHandler(nil, error)
+            }
+        }
     }
 
     /// The camera the model reads off the image: where it is and what it sees.

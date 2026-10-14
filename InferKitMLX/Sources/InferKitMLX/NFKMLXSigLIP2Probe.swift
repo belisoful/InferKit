@@ -25,6 +25,34 @@ extension NFKMLXSigLIP2 {
         try model(configuration: specs(for: variant).configuration, weightsURL: weightsURL)
     }
 
+    /// Downloads a checkpoint from Hugging Face, then builds the model object at one of the released
+    /// sizes. A file already in the cache is not fetched again. The call blocks on the network, so run it
+    /// off the render thread. Introduced in InferKit 0.4.0.
+    @objc(modelWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
+    public static func model(variant: NFKMLXSigLIP2Variant, repo: String, weightsPath: String,
+                             revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXSigLIP2 {
+        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
+                                                cacheDirectoryURL: cacheDirectoryURL)
+        return try model(variant: variant, weightsURL: url)
+    }
+
+    /// The asynchronous form of ``model(variant:repo:weightsPath:revision:cacheDirectoryURL:)``. The
+    /// download and the build run at user-initiated quality of service off the calling thread, and the
+    /// handler runs on that background queue. Introduced in InferKit 0.4.0.
+    @objc(modelWithVariant:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
+    public static func model(variant: NFKMLXSigLIP2Variant, repo: String, weightsPath: String,
+                             revision: String?, cacheDirectoryURL: URL?,
+                             completionHandler: @escaping (NFKMLXSigLIP2?, Error?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                completionHandler(try model(variant: variant, repo: repo, weightsPath: weightsPath,
+                                            revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
+            } catch {
+                completionHandler(nil, error)
+            }
+        }
+    }
+
     /// The width of the image embedding, which is the width a probe over this model reads.
     ///
     /// - Since: InferKit 0.4.0

@@ -393,6 +393,7 @@ public final class NFKMLXFastSpeech2Net: Module {
 }
 
 /// Building the acoustic model and loading the released checkpoint.
+@objc(NFKMLXFastSpeech2)
 public final class NFKMLXFastSpeech2: NSObject {
 
     /// An acoustic model at `configuration`, in evaluation mode, with random weights until

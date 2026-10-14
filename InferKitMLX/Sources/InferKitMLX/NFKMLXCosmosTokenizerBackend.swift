@@ -346,6 +346,67 @@ public final class NFKMLXCosmosTokenizer: NSObject {
                               variant: variant)
     }
 
+    /// Downloads one checkpoint holding both halves from Hugging Face, then builds the tokenizer. The
+    /// release's own file is `autoencoder.jit` in the variant's ``NFKMLXCosmosTokenizerVariant/repository``.
+    /// A file already in the cache is not fetched again. The call blocks on the network, so run it off
+    /// the render thread. Introduced in InferKit 0.4.0.
+    @objc(tokenizerWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
+    public static func tokenizer(variant: NFKMLXCosmosTokenizerVariant, repo: String, weightsPath: String,
+                                 revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXCosmosTokenizer {
+        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
+                                                cacheDirectoryURL: cacheDirectoryURL)
+        return try tokenizer(variant: variant, weightsURL: url)
+    }
+
+    /// The asynchronous form of ``tokenizer(variant:repo:weightsPath:revision:cacheDirectoryURL:)``. The
+    /// download and the build run at user-initiated quality of service off the calling thread, and the
+    /// handler runs on that background queue. Introduced in InferKit 0.4.0.
+    @objc(tokenizerWithVariant:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
+    public static func tokenizer(variant: NFKMLXCosmosTokenizerVariant, repo: String, weightsPath: String,
+                                 revision: String?, cacheDirectoryURL: URL?,
+                                 completionHandler: @escaping (NFKMLXCosmosTokenizer?, Error?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                completionHandler(try tokenizer(variant: variant, repo: repo, weightsPath: weightsPath,
+                                                revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
+            } catch {
+                completionHandler(nil, error)
+            }
+        }
+    }
+
+    /// Downloads a release's separate `encoder.jit` and `decoder.jit` from Hugging Face, then builds the
+    /// tokenizer. A file already in the cache is not fetched again. The call blocks on the network, so
+    /// run it off the render thread. Introduced in InferKit 0.4.0.
+    @objc(tokenizerWithVariant:repo:encoderWeightsPath:decoderWeightsPath:revision:cacheDirectoryURL:error:)
+    public static func tokenizer(variant: NFKMLXCosmosTokenizerVariant, repo: String, encoderWeightsPath: String,
+                                 decoderWeightsPath: String, revision: String?,
+                                 cacheDirectoryURL: URL?) throws -> NFKMLXCosmosTokenizer {
+        let encoderURL = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: encoderWeightsPath,
+                                                       revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        let decoderURL = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: decoderWeightsPath,
+                                                       revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        return try tokenizer(variant: variant, encoderWeightsURL: encoderURL, decoderWeightsURL: decoderURL)
+    }
+
+    /// The asynchronous form of
+    /// ``tokenizer(variant:repo:encoderWeightsPath:decoderWeightsPath:revision:cacheDirectoryURL:)``. The
+    /// handler runs on a background queue. Introduced in InferKit 0.4.0.
+    @objc(tokenizerWithVariant:repo:encoderWeightsPath:decoderWeightsPath:revision:cacheDirectoryURL:completionHandler:)
+    public static func tokenizer(variant: NFKMLXCosmosTokenizerVariant, repo: String, encoderWeightsPath: String,
+                                 decoderWeightsPath: String, revision: String?, cacheDirectoryURL: URL?,
+                                 completionHandler: @escaping (NFKMLXCosmosTokenizer?, Error?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                completionHandler(try tokenizer(variant: variant, repo: repo, encoderWeightsPath: encoderWeightsPath,
+                                                decoderWeightsPath: decoderWeightsPath, revision: revision,
+                                                cacheDirectoryURL: cacheDirectoryURL), nil)
+            } catch {
+                completionHandler(nil, error)
+            }
+        }
+    }
+
     /// The reconstruction backend over one checkpoint holding both halves. Nil weights build it randomly
     /// initialized.
     @objc(backendWithVariant:weightsURL:error:)

@@ -23,7 +23,7 @@ public final class NFKMLXFluxTextEncoder {
     private let clipTokenizer: NFKMLXSDPromptTokenizer
     private let t5: NFKMLXT5Encoder
     private let t5Segmenter: NFKMLXSentencePieceSegmenter
-    private let t5Context: Int
+    let t5Context: Int
     private let t5EndToken: Int
     private let t5PadToken: Int
 
@@ -37,6 +37,12 @@ public final class NFKMLXFluxTextEncoder {
         self.t5Context = t5Context
         self.t5EndToken = t5EndToken
         self.t5PadToken = t5PadToken
+    }
+
+    /// The T5 sequence length diffusers' `FluxPipeline` runs a release at: 512 for a transformer that
+    /// embeds guidance ([dev]), 256 for one that does not ([schnell]).
+    static func t5Context(for transformer: NFKMLXFluxConfiguration) -> Int {
+        transformer.guidanceEmbeds ? 512 : 256
     }
 
     /// Loads CLIP-L (`text_encoder/` + `tokenizer/`) and T5-XXL (`text_encoder_2/` + `tokenizer_2/`) from a
@@ -87,7 +93,8 @@ public final class NFKMLXFluxTextEncoder {
 /// The release layout is the diffusers one: `transformer/`, `vae/`, `text_encoder/` (CLIP-L),
 /// `text_encoder_2/` (T5-XXL), `tokenizer/` (CLIP byte-level BPE), and `tokenizer_2/` (the T5
 /// SentencePiece model). FLUX.1 [schnell] is the four-step distilled variant with no guidance embedding;
-/// FLUX.1 [dev] is guidance-distilled and read the same way, its schedule set by the caller.
+/// FLUX.1 [dev] is guidance-distilled and read the same way, its schedule set by the caller. The T5
+/// sequence follows the transformer: 512 tokens where it embeds guidance ([dev]), 256 where it does not.
 @objc(NFKMLXFlux)
 public final class NFKMLXFlux: NSObject {
 
@@ -242,7 +249,10 @@ public final class NFKMLXFlux: NSObject {
 
         let flux = NFKMLXFlux(
             resident: plan.holdsStagesResident,
-            loadTextEncoder: { try NFKMLXFluxTextEncoder.textEncoder(directoryURL: directoryURL) },
+            loadTextEncoder: {
+                try NFKMLXFluxTextEncoder.textEncoder(directoryURL: directoryURL,
+                                                      t5Context: NFKMLXFluxTextEncoder.t5Context(for: configuration))
+            },
             loadPipeline: {
                 let transformer = NFKMLXFluxTransformerNet(configuration)
                 try NFKMLXFluxTransformerNet.loadWeights(into: transformer, from: transformerDirectory,
@@ -280,10 +290,12 @@ public final class NFKMLXFlux: NSObject {
         }
     }
 
-    /// Generates an image for `prompt` and returns it as a `CGImage`.
+    /// Generates an image for `prompt` and returns it as a `CGImage`. The decode's `[-1, 1]` range maps to the
+    /// image's `[0, 1]`.
     @objc(imageForPrompt:width:height:seed:error:)
     public func cgImage(forPrompt prompt: String, width: Int, height: Int, seed: UInt64) throws -> CGImage {
         let array = try image(forPrompt: prompt, width: width, height: height, seed: seed)
-        return try NFKMLXImageBridge.cgImage(from: array[0], options: NFKMLXImageOptions())
+        return try NFKMLXImageBridge.cgImage(from: clip(array[0].asType(.float32) / 2 + 0.5, min: 0, max: 1),
+                                             options: NFKMLXImageOptions())
     }
 }

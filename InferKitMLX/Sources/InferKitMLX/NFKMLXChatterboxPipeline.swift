@@ -159,7 +159,10 @@ extension NFKMLXChatterbox {
     /// `NFKOutputAudio`. `voiceURL` is a WAV of the voice to clone; nil uses the release's built-in
     /// voice (`conds.pt` in the release directory). T3 samples at the reference defaults from a fixed
     /// seed; the flow's initial noise and the vocoder's source noise come from MLX's global random state,
-    /// so seed it (`NFKMLXRandom.seed`) when a run must repeat.
+    /// so seed it (`NFKMLXRandom.seed`) when a run must repeat. A request overrides `exaggeration` with
+    /// ``NFKMLXChatterboxParameterKey/exaggeration``, and T3's temperature, guidance weight, and seed
+    /// with `NFKParameterTemperature`, `NFKParameterGuidanceScale`, and `NFKParameterSeed`, for that
+    /// request only.
     public static func speechBackend(directoryURL: URL, voiceURL: URL? = nil,
                                      exaggeration: Float = 0.5) throws -> NFKMLXSpeechBackend {
         let tts = try NFKMLXChatterboxTTS(directoryURL: directoryURL)
@@ -175,8 +178,11 @@ extension NFKMLXChatterbox {
         }
         let holder = NFKChatterboxHolder(tts, conditionals: conditionals)
         return NFKMLXSpeechBackend(identifier: "chatterbox",
-                                   configuration: NFKMLXSpeechConfiguration(sampleRate: tts.sampleRate)) { text, _ in
-            MLXArray(holder.tts.synthesize(text: text, conditionals: holder.conditionals))
+                                   configuration: NFKMLXSpeechConfiguration(sampleRate: tts.sampleRate),
+                                   parameterKeys: requestParameterKeys) { text, _, request in
+            MLXArray(holder.tts.synthesize(text: text,
+                                           conditionals: NFKMLXChatterbox.conditionals(holder.conditionals, for: request),
+                                           t3Options: NFKMLXChatterbox.samplingOptions(for: request)))
         }
     }
 

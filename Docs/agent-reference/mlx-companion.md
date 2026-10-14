@@ -169,7 +169,7 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   (`real-esrgan-x4` + `-anime` + `real-esrgan-general-x4v3` + `real-esrgan-anime-video-x4v3`, `depth-anything-v2-small`/`-base`/`-large`, `depth-anything-3-small`/`-base`/`-large`, `lama-inpaint`, `sd-inpaint`,
   `fast-style-transfer`, `adain`, `clip-vit-b-32`/`-b-16`/`-l-14`/`-l-14-336`, `siglip2-base-patch16-224` and every other SigLIP 2 release under its own name, `taesd`, `robust-video-matting` + `-resnet50`, `codeformer`, `zero-dce`, `zero-dce-plus`, `modnet`, `yolo`, every YOLOv9/v10/11/12/26 release under its checkpoint stem (`yolo11n` … `yolo26x`),
   `segformer-b0`, `swinir-x4`, `hat-x4`/`hat-l-x4`/`real-hat-gan-x4`, `colorizer-eccv16`, `ddcolor`/`ddcolor-paper`/`-artistic`, `pose-simplebaseline`, `vitpose-base-simple`/`vitpose-base`, `deeplabv3`, `conv-tasnet`, `denoiser`,
-  `vad-marblenet`, `silero-vad`, `dac`, `snac`/`snac-32khz`/`snac-44khz`, `bigvgan-v2-24khz`, `mimi`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `cosmos-tokenizer-ci8x8`/`-ci16x16`/`-di8x8`/`-di16x16`/`-cv4x8x8`/`-cv8x8x8`/`-cv8x16x16`/`-dv4x8x8`/`-dv8x8x8`/`-dv8x16x16`, `htdemucs`/`htdemucs-6s`, `rtdetr`/`rtdetr-r18vd`/`-r34vd`/`-r101vd`, `rtdetr-v2-r18vd`/`-r34vd`/`-r50vd`/`-r101vd`, `rf-detr`/`rf-detr-nano`/`-small`/`-medium`/`-large`, `rf-detr-seg`/`rf-detr-seg-small`/`-preview`/`-medium`/`-large`/`-xlarge`/`-xxlarge`, `birefnet`, `sam`, `sam2`, `u2net`/`u2netp`, `isnet`, `mpsenet`, `gtcrn`, `sgmse`, `storm`, `mossformer2-se`, `deepfilternet3`, `voicerestore`, `resemble-enhance`, `metricgan-plus`, `cmgan`, `frcrn`, `mossformer2-sr`, `nuwave2`, `apollo`, `basic-pitch`, `allin1`, `muscriptor`/`muscriptor-small`/`muscriptor-large`, `hft-transformer`, `opus-mt`, `m2m100`, `small100`, `nllb-200`, `madlad400-3b-mt`, `translategemma`, `real-esrgan-x2`, `nafnet`, `colorizer-siggraph17`, `marigold-depth`, `sd-x4-upscaler`, `retinaface-mobile025`, `bisenet-v2`, `rife`, `rife-v4`, `raft`, `whisper-tiny`, `demucs`, `minimax-music3`, and the release-directory models `parakeet-tdt`, `canary-1b-v2`, `voxtral-mini-3b`, `granite-speech-3.3-2b`, `phi-4-multimodal`, `codestral-mamba`, `granite-4.0-h`, `nemotron-nano-2`, `qwen4-exp`, `qwen3.5`, which refuse to build without a directory URL)
+  `vad-marblenet`, `silero-vad`, `dac`, `snac`/`snac-32khz`/`snac-44khz`, `bigvgan-v2-24khz`, `mimi`, `audio-tagger-panns`, `bisenet`, `video-super-resolution`, `cosmos-tokenizer-ci8x8`/`-ci16x16`/`-di8x8`/`-di16x16`/`-cv4x8x8`/`-cv8x8x8`/`-cv8x16x16`/`-dv4x8x8`/`-dv8x8x8`/`-dv8x16x16`, `htdemucs`/`htdemucs-6s`, `rtdetr`/`rtdetr-r18vd`/`-r34vd`/`-r101vd`, `rtdetr-v2-r18vd`/`-r34vd`/`-r50vd`/`-r101vd`, `rf-detr`/`rf-detr-nano`/`-small`/`-medium`/`-large`, `rf-detr-seg`/`rf-detr-seg-small`/`-preview`/`-medium`/`-large`/`-xlarge`/`-xxlarge`, `birefnet`, `sam`, `sam2`, `u2net`/`u2netp`, `isnet`, `mpsenet`, `gtcrn`, `sgmse`, `storm`, `mossformer2-se`, `deepfilternet3`, `voicerestore`, `resemble-enhance`, `metricgan-plus`, `cmgan`, `frcrn`, `mossformer2-sr`, `nuwave2`, `apollo`, `basic-pitch`, `allin1`, `muscriptor`/`muscriptor-small`/`muscriptor-large`, `hft-transformer`, `opus-mt`, `m2m100`, `small100`, `nllb-200`, `madlad400-3b-mt`, `translategemma`, `real-esrgan-x2`, `nafnet`, `colorizer-siggraph17`, `marigold-depth`, `sd-x4-upscaler`, `retinaface-mobile025`, `bisenet-v2`, `rife`, `rife-v4`, `raft`, `whisper-tiny`, `demucs`, `minimax-music3`, `chronos-bolt-base`, the clip backends `rife-clip`, `video-super-resolution-clip`, `robust-video-matting-clip`/`-resnet50-clip`, `sam2-video`, and the release-directory models `parakeet-tdt`, `canary-1b-v2`, `voxtral-mini-3b`, `granite-speech-3.3-2b`, `phi-4-multimodal`, `codestral-mamba`, `granite-4.0-h`, `nemotron-nano-2`, `qwen4-exp`, `qwen3.5`, `ltx-video-0.9.0`, `wan`, `z-image`, `qwen-image-2.1`, `sd3`, `flux.1-schnell`, `flux.2-klein-4b`, `sana`, `flux.1-controlnet`, `sd3-controlnet`, `smolvlm2-500m`, `qwen3-vl-2b`, `pixtral-12b`, `gemma4-multimodal`, `gte-reranker-modernbert-base`, `qwen3-vl-reranker-2b`, `timesfm-2.5-200m`, `sam3`, `fastspeech2-voice`, `clip-probe`, which refuse to build without a directory URL)
   and the reference stand-ins (`green-screen-keyer`, `tone-speech`, and the `diffusion-*` oracle
   pipelines, which are distinct from the real models of the same task). Depth `register` uses the
   `NFKMLXDepthConfiguration.small`/`.base`/`.large` presets; Real-ESRGAN `register` varies `blocks`
@@ -294,64 +294,52 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
 
 ## Objective-C reachability gaps
 
-`CLAUDE.md` requires every model to run from Objective-C as an `NFKInferenceBackend`. The inventory below was
-taken 2026-10-13 against af45407. Closing a gap removes its row in the same change. InferKitFoundationModels and
-InferKitAppleSwift have no gaps. Paths are under `InferKitMLX/Sources/InferKitMLX/`.
+`CLAUDE.md` requires every model to run from Objective-C as an `NFKInferenceBackend`. The 2026-10-13 inventory
+found 35 gaps; 33 are closed. A model object wraps itself through `-inferenceBackend`, and its class carries
+`backendWith…` factories beside its object factories. The shared closure backend is `NFKMLXGenerationBackend`
+(`NFKMLXGenerationBackend.swift`): one request at a time, so a request's settings apply to that request only.
+`MLXObjCExample.testEveryModelReachesObjectiveCAsABackend` asserts every factory selector and registered name.
 
-**No backend; Objective-C builds the object and calls its methods (14).** Each needs `@objc` backend factories
-(`backendWithDirectoryURL:[residency:]error:` plus the repo and async peers) that wrap the existing object:
+New request and result keys from the closure:
 
-| Model | Objective-C reaches today | Entry | Backend inputs → outputs |
-| --- | --- | --- | --- |
-| LTX-Video 0.9.0 | `generatorWith…`, `framesForPrompt:` | `NFKMLXLTXVideoGenerator.swift:51` | prompt, negative prompt, seed, frame and size keys → `NFKOutputVideo` |
-| Wan 2.1 / 2.2 TI2V | `generatorWith…`, `framesForPrompt:` | `NFKMLXWanVideoGenerator.swift:132` | as LTX-Video |
-| Z-Image | `generatorWith…`, `imageForPrompt:` | `NFKMLXZImageGenerator.swift:101` | prompt, negative prompt, seed → `NFKOutputImage` |
-| Qwen-Image 2.1 | `generatorWith…`, `imageForPrompt:` | `NFKMLXQwenImageGenerator.swift:49` | as Z-Image |
-| SD3 / 3.5 | `generatorWith…`, `imageForPrompt:` | `NFKMLXSD3Generator.swift:97` | as Z-Image |
-| FLUX.1 | `fluxWith…`, `imageForPrompt:width:height:seed:` | `NFKMLXFlux.swift:91` | as Z-Image |
-| FLUX.2 [klein] | `flux2With…`, `imageForPrompt:`, references, `inpaintImage:mask:` | `NFKMLXFlux2Pipeline.swift:267` | prompt, optional `NFKInputImages` (references), `NFKInputImage` + `NFKInputMask` (inpaint) → `NFKOutputImage` |
-| Chronos-Bolt | `chronosWith…`, `medianForecastForContext:horizon:` | `NFKMLXChronos.swift:343` | series + horizon key → `NFKOutputStructured`; also add the async download peer |
-| TimesFM 2.5 | `timesFMWith…`, `forecastForContext:horizon:options:error:` | `NFKMLXTimesFMForecast.swift:73` | as Chronos; the forecast options become request keys |
-| SmolVLM2 | `smolVLMWith…`, `answerForImage:question:` | `NFKMLXSmolVLM.swift:459` | `NFKInputImage` + prompt or messages → `NFKOutputText` |
-| Qwen3-VL 2B | `modelWithDirectoryURL:`, `answerForImage:question:maxTokens:` | `NFKMLXQwen3VL.swift:450` | as SmolVLM2 |
-| Pixtral 12B | `modelWith…`, `answerForImage:question:maxTokens:` | `NFKMLXPixtral.swift:273` | as SmolVLM2 |
-| gte-reranker ModernBERT | `rerankerWith…`, `scoresForQuery:documents:` | `NFKMLXModernBERT.swift:313` | prompt + `NFKInputDocuments` → scores |
-| Qwen3-VL-Reranker | `rerankerWith…`, `scoresForQuery:documents:` | `NFKMLXQwen3VLRetrieval.swift:289` | as ModernBERT, plus image documents |
+- `NFKMLXRerankKey`: results under `NFKOutputStructured` (`scores`, `rankedIndices`) and the reranker
+  `instruction` parameter.
+- `NFKMLXForecastKey`: the input `series` (`NSArray<NSNumber>`), the `horizon` parameter, and the forecast fields
+  (`median`, `mean`, `quantiles`, `quantileLevels`). `NFKMLXTimesFMParameterKey` carries TimesFM's options.
+- `NFKMLXControlNetParameterKey` (`conditioningScale`, `controlMode`), `NFKMLXSAM3ParameterKey`,
+  `NFKMLXSAM2ParameterKey.box`, `NFKMLXChatterboxParameterKey.exaggeration`, `NFKMLXFlux2ParameterKey`,
+  `NFKMLXTextToImageInputKey.imageEmbedding`.
+- `NFKMLXPhonemizing`: the Objective-C phonemizer protocol. `NFKMLXNeuralG2P` adopts it; a caller's own object
+  can supply phonemes to the FastSpeech2 voice and the hand-chained TTS.
 
-**Objective-C reaches nothing (10).**
+**Open (2).**
 
-| Model | Swift-only today | Entry | Bridge |
-| --- | --- | --- | --- |
-| SANA | `pipeline(directoryURL:)`, `generate(promptEmbeds:…)`, the Gemma 2 encoder | `NFKMLXSANAPipeline.swift:30` | a generator owning Gemma 2 and its tokenizer; prompt → `NFKOutputImage` |
-| SAM 3 / 3.1 | `makeImageModel`, `detect(image:tokens:valid:)`; `NFKMLXSAM3` has no `@objc` members | `NFKMLXSAM3Detector.swift:714` | `NFKInputImage` + prompt → `NFKOutputDetections` + `NFKOutputMask` |
-| LTX-2 | the transformer only; the pipeline is unbuilt | `NFKMLXLTX2Transformer.swift:535` | after the VAEs, text front end, and vocoder exist: → `NFKOutputVideo` + `NFKOutputAudio` |
-| Wan 2.2 Animate | `makeNet`, `extractReference`, `generate` | `NFKMLXWanAnimate.swift:559` | `NFKInputImage` (reference) + `NFKInputVideo` (driving) → `NFKOutputVideo` |
-| FLUX.1 ControlNet | the pipeline | `NFKMLXFluxControlNetPipeline.swift:35` | prompt + `NFKInputControl` + mode key → `NFKOutputImage`, reusing `NFKMLXFluxTextEncoder` |
-| SD3 ControlNet | the pipeline | `NFKMLXSD3ControlNetPipeline.swift:36` | as FLUX.1 ControlNet, reusing the SD3 encoders |
-| FastSpeech2 + HiFi-GAN (`NFKMLXVoice`) | `voice(…)`, `makeSpeechBackend(phonemize:)`; `fastspeech2-voice` is not registered | `NFKMLXFastSpeech2.swift:430` | a factory taking the acoustic, vocoder, vocabulary, and G2P files; the phonemizer through an `@objc` protocol; prompt → `NFKOutputAudio`; register it |
-| Hand-chained TTS (`NFKMLXTTS`) | `init(phonemizer:)`, `makeSpeechBackend` | `NFKMLXTTS.swift:78` | folded into the `NFKMLXVoice` factory |
-| CLIP probe | `probeBackend(net:probe:labels:)`; `clip-probe` is not registered | `NFKMLXCLIPProbe.swift:85` | as SigLIP 2: `probeBackendWithVariant:weightsURL:probeURL:labels:error:` → `NFKOutputClassifications` |
-| Gemma 4 image and audio | `NFKMLXGemma4ConditionalGeneration`; the backend is text-only | `NFKMLXGemma4Fusion.swift:74` | `NFKMLXGemmaBackend` reads `NFKInputImage` and `NFKInputAudio` as `NFKMLXGemma3nBackend` does |
+| Model | Blocker |
+| --- | --- |
+| Wan 2.2 Animate | Its `CLIPVisionModel` image encoder (open-clip XLM-RoBERTa ViT-H/14) and the modular pipeline's segment loop (`diffusers/modular_pipelines/wan_animate_2/denoise.py`: fps resample, letterbox, zigzag padding, per-segment i2v encode, reference pass, per-segment decode with carry-over) are not ported. The pipeline needs about 50 GB. |
+| LTX-2 | Only the transformer is ported. The video and audio autoencoders, the text front end, and the vocoder are not. |
 
-**Reachable, with Swift-only options or missing factories (11).**
+**Limits of closed bridges.**
 
-| Model | Gap | Entry |
-| --- | --- | --- |
-| DeepSeek V4 / V4.1 | directory factories only; no repo or async peers | `NFKMLXDeepSeekRelease.swift:671` |
-| Depth Anything 3 estimator | no async download peer; camera and ray outputs absent from the backend | `NFKMLXDepthAnything3.swift:1166` |
-| Cosmos tokenizer object | no download peers (its backend has them) | `NFKMLXCosmosTokenizerBackend.swift:336` |
-| SigLIP 2 probe | `modelWithVariant:weightsURL:` has no download peer | `NFKMLXSigLIP2Probe.swift:23` |
-| RetinaFace detector | no download peer | `NFKMLXRetinaFace.swift:521` |
-| CodeFormer whole-photo | no download peer | `NFKMLXCodeFormer.swift:520` |
-| RIFE / BasicVSR clip | no download peer; no registered `NFKMLXVideoBackend` instance | `NFKMLXRIFE.swift:240`, `NFKMLXVideoSR.swift:375` |
-| SD text-to-image, IP-Adapter | no download peers; `NFKMLXInputImageEmbedding` is a plain `public let` | `NFKMLXTextToImage.swift:196`, `:239` |
-| Chatterbox | `exaggeration` is Swift-only | `NFKMLXChatterboxPipeline.swift:163` |
-| SAM 2 video tracking | single frames only; `makeTracker` is Swift-only | `NFKMLXSAM2Tracker.swift:490` |
-| RVM recurrent video | single frames only; the recurrent forward is Swift-only | `NFKMLXRVM.swift:649` |
+- SAM 3.1: `facebook/sam3.1` ships `sam3.1_multiplex.pt` only, whose names the loader does not read; a 3.1
+  checkpoint in the transformers layout loads through the directory factory. Preprocessing omits the reference's
+  antialiasing when shrinking.
+- SANA: no resolution binning and no `clean_caption`. The pipeline loads its Gemma 2 encoder through its own
+  loader, because `NFKMLXGemma2Net.load(directoryURL:)` keeps only `model.`-prefixed keys and SANA's are unprefixed.
+- Z-Image: the backend is text-to-image; `NFKMLXZImageGenerator` does not expose the pipeline's image-to-image path.
+- SAM 2 video: the prompt applies to the first frame. The mask clip comes back under `NFKOutputVideo` with
+  per-frame scores under `NFKOutputStructured`, since `NFKOutputMask` holds one image.
+- The variant check covered download peers only; each variant factory's internal use of the variant is
+  unverified.
+- Five download peers are covered by no test (they need a full-size checkpoint or the network): Cosmos,
+  SigLIP 2, Depth Anything 3, CodeFormer photo, SD and IP-Adapter.
 
-`Docs/model-index.md` lists `fastspeech2-voice` and `clip-probe` as registered names; neither is registered in
-`NFKMLXReferenceModels.registerAll`. The variant check covered download peers only; each variant factory's
-internal use of the variant is unverified.
+**Defect found while bridging (not fixed).**
+
+- `NFKMLXGemma4Vision` runs the encoder's attention without a padding mask and pools padding hidden states
+  without zeroing them; the reference does both. Padding falls in cell 0, so a padded grid (most real images)
+  changes the first real soft token. The parity records use full grids only, so a fix needs a padded-grid
+  record.
 
 ## Residency: staging, paging, and streaming
 

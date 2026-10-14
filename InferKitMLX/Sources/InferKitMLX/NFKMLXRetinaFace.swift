@@ -528,6 +528,40 @@ extension NFKMLXRetinaFace {
         return NFKMLXRetinaFaceDetector(net: net, confidenceThreshold: confidenceThreshold,
                                         suppressionThreshold: suppressionThreshold)
     }
+
+    /// Downloads the checkpoint from Hugging Face, then builds a detector as
+    /// ``detector(weightsURL:confidenceThreshold:suppressionThreshold:)`` does. A file already in the
+    /// cache is not fetched again. The call blocks on the network, so run it off the render thread.
+    /// Introduced in InferKit 0.4.0.
+    @objc(detectorWithRepo:weightsPath:revision:cacheDirectoryURL:confidenceThreshold:suppressionThreshold:error:)
+    public static func detector(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?,
+                                confidenceThreshold: Float = 0.8,
+                                suppressionThreshold: Float = 0.4) throws -> NFKMLXRetinaFaceDetector {
+        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
+                                                cacheDirectoryURL: cacheDirectoryURL)
+        return try detector(weightsURL: url, confidenceThreshold: confidenceThreshold,
+                            suppressionThreshold: suppressionThreshold)
+    }
+
+    /// The asynchronous form of
+    /// ``detector(repo:weightsPath:revision:cacheDirectoryURL:confidenceThreshold:suppressionThreshold:)``.
+    /// The download and the build run at user-initiated quality of service off the calling thread, and
+    /// the handler runs on that background queue. Introduced in InferKit 0.4.0.
+    @objc(detectorWithRepo:weightsPath:revision:cacheDirectoryURL:confidenceThreshold:suppressionThreshold:completionHandler:)
+    public static func detector(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?,
+                                confidenceThreshold: Float, suppressionThreshold: Float,
+                                completionHandler: @escaping (NFKMLXRetinaFaceDetector?, Error?) -> Void) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                completionHandler(try detector(repo: repo, weightsPath: weightsPath, revision: revision,
+                                               cacheDirectoryURL: cacheDirectoryURL,
+                                               confidenceThreshold: confidenceThreshold,
+                                               suppressionThreshold: suppressionThreshold), nil)
+            } catch {
+                completionHandler(nil, error)
+            }
+        }
+    }
 }
 
 extension NFKMLXRetinaFace {

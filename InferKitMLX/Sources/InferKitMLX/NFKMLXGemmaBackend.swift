@@ -8,8 +8,9 @@
 //  sequence each step; this is quadratic and suits the short outputs an on-device assistant produces.
 //
 //  Gemma's tokenizer is a byte-fallback BPE the core reader cannot produce (its `tokenizer.model`
-//  scores are merge ranks, not unigram log-probabilities), so this backend uses `NFKMLXGemmaTokenizer`
-//  and builds the chat turn sequence from the release's own special-token ids.
+//  scores are merge ranks, not unigram log-probabilities), so this backend uses `NFKMLXGemmaTokenizer`.
+//  A conversation renders through the release's chat template, Gemma 4's `<|turn>` format; a tokenizer
+//  that carries `<start_of_turn>` takes its turns from those special-token ids instead.
 //
 
 import Foundation
@@ -39,8 +40,11 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     private let startOfTurn: Int?
     private let endOfTurn: Int?
     private let stopTokens: Set<Int>
-    /// The release's chat template, which a tool request renders through.
+    /// The release's chat template, which a tool request and a Gemma 4 conversation render through.
     private let chatTemplate: String?
+    /// Whether the tokenizer carries Gemma 4's turn markers, which a conversation without a template
+    /// is built from.
+    private let carriesTurnMarkers: Bool
     /// What ends a turn the template opened: the hand-built turn's stops, Gemma 4's `<turn|>`, the
     /// `<|tool_response>` a model writes when it waits on a call, and every id the generation config
     /// lists.
@@ -70,6 +74,7 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
         stopTokens = Set([tokenizer.id(forToken: "<eos>"), tokenizer.id(forToken: "<end_of_turn>")]
             .compactMap { $0 })
         chatTemplate = releaseDirectoryURL.flatMap(NFKMLXLanguage.chatTemplate(inDirectory:))
+        carriesTurnMarkers = tokenizer.id(forToken: "<|turn>") != nil && tokenizer.id(forToken: "<turn|>") != nil
         templateStopTokens = stopTokens
             .union([tokenizer.id(forToken: "<turn|>"), tokenizer.id(forToken: "<|tool_response>")].compactMap { $0 })
             .union(NFKMLXToolCalling.generationConfigStops(directoryURL: releaseDirectoryURL))
@@ -114,8 +119,7 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
         }
 
         try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
-        // A tool request renders the release's own template, which writes Gemma 4's tool syntax; a plain
-        // chat keeps the hand-built turns.
+        // A tool request renders the release's own template, which writes Gemma 4's tool syntax.
         if let (text, format) = try NFKMLXToolCalling.toolPrompt(for: request, template: chatTemplate, source: identifier,
                                                                 bosToken: "<bos>", eosToken: "<eos>") {
             let promptTokens = holder.tokenizer.encode(text)
@@ -129,7 +133,7 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
         }
         let promptTokens = try tokens(for: request)
         let produced = generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed,
-                                stops: stopTokens)
+                                stops: rendersConversation(request) ? templateStopTokens : stopTokens)
         return NFKInferenceResult(outputs: [
             NFKOutputText: holder.tokenizer.decode(produced),
             NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
@@ -137,10 +141,22 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
         ])
     }
 
-    /// The prompt as token ids: a raw prompt is encoded after the begin-of-sequence marker; a message
-    /// list is rendered into Gemma's turn format, with the special markers taken as ids rather than
-    /// encoded as text.
-    private func tokens(for request: NFKInferenceRequest) throws -> [Int] {
+    /// Whether a request's messages render as a Gemma 4 conversation: a message list without a raw
+    /// prompt, on a tokenizer that has no `<start_of_turn>` turns.
+    private func rendersConversation(_ request: NFKInferenceRequest) -> Bool {
+        request.prompt == nil && request.messages != nil && (startOfTurn == nil || endOfTurn == nil)
+    }
+
+    /// The prompt as token ids. A raw prompt is encoded after the begin-of-sequence marker. A message
+    /// list on a tokenizer with `<start_of_turn>` is built into those turns, with the special markers
+    /// taken as ids. Otherwise it renders as a Gemma 4 conversation through
+    /// `NFKMLXGemmaLanguage.conversationText(_:template:mediaPrefix:)`, which needs the release's
+    /// chat template or the tokenizer's `<|turn>` markers.
+    func tokens(for request: NFKInferenceRequest) throws -> [Int] {
+        if rendersConversation(request), let messages = request.messages {
+            guard chatTemplate != nil || carriesTurnMarkers else { throw NFKMLXError.unsupportedInput }
+            return holder.tokenizer.encode(try NFKMLXGemmaLanguage.conversationText(messages, template: chatTemplate))
+        }
         var ids = [Int]()
         if let bos = beginOfSequence { ids.append(bos) }
         if let prompt = request.prompt {
@@ -299,6 +315,53 @@ public extension NFKMLXGemmaLanguage {
     @objc static let gemmaModelName = "gemma4"
 
     private static var modelName: String { gemmaModelName }
+
+    /// A conversation in Gemma 4's turn format: the release's chat template when `template` is set,
+    /// and otherwise the same text built here for plain-text turns.
+    ///
+    /// @discussion The release's template writes `<bos>`, a `<|turn>system\n…<turn|>\n` turn from a leading
+    /// system or developer message, a `<|turn>user\n…<turn|>\n` or `<|turn>model\n…<turn|>\n` turn per
+    /// message (a user turn trimmed, a model turn without its thinking channel), and the generation prompt
+    /// `<|turn>model\n<|channel>thought\n<channel|>`, which opens the reply with an empty thinking
+    /// channel. A non-empty `mediaPrefix` opens the first user turn, where the release's processor places
+    /// an image or a clip; messages with no user turn then throw.
+    internal static func conversationText(_ messages: [[String: Any]], template: String?,
+                                 mediaPrefix: String = "") throws -> String {
+        var messages = messages
+        if !mediaPrefix.isEmpty {
+            guard let index = messages.firstIndex(where: { $0["role"] as? String == "user" }) else {
+                throw NFKMLXError.unsupportedConfiguration("the messages carry no user turn to place the media in")
+            }
+            let content = ((messages[index]["content"] as? String) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            messages[index]["content"] = mediaPrefix + content
+        }
+        if let template {
+            return try NFKMLXChatTemplateRenderer.render(template, messages: messages, bosToken: "<bos>", eosToken: "<eos>")
+        }
+        var text = "<bos>"
+        if let first = messages.first, let role = first["role"] as? String, role == "system" || role == "developer" {
+            text += "<|turn>system\n" + turnContent(first, ofModel: false) + "<turn|>\n"
+            messages.removeFirst()
+        }
+        for message in messages where message["role"] as? String != "tool" {
+            let role = message["role"] as? String ?? "user"
+            let turn = role == "assistant" ? "model" : role
+            text += "<|turn>\(turn)\n" + turnContent(message, ofModel: turn == "model") + "<turn|>\n"
+        }
+        return text + "<|turn>model\n<|channel>thought\n<channel|>"
+    }
+
+    /// A message's text as the template writes it: trimmed, and for a model turn without the
+    /// `<|channel>…<channel|>` thinking it carried.
+    private static func turnContent(_ message: [String: Any], ofModel: Bool) -> String {
+        var content = (message["content"] as? String) ?? ""
+        if ofModel {
+            content = content.components(separatedBy: "<channel|>").map { part in
+                part.range(of: "<|channel>").map { String(part[..<$0.lowerBound]) } ?? part
+            }.joined()
+        }
+        return content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 
     /// Whether a config describes the unified decoder rather than the E-series or the mixture.
     private static func isUnified(_ configURL: URL) throws -> Bool {

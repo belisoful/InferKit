@@ -125,13 +125,42 @@ public final class NFKMLXGemma4ConditionalGeneration {
         return (embeddings, ids)
     }
 
-    /// The projected vision soft tokens for an image, or nil when no vision tower is configured.
+    /// The projected vision soft tokens for an image, `[count, hidden]`, or nil when no vision tower is
+    /// configured.
+    ///
+    /// @discussion `count` is the image's own soft tokens: `(rows / k) · (columns / k)` for the resized
+    /// patch grid and the pooling kernel `k`, which is the count the release's processor writes
+    /// placeholders for. The pooled cells only the processor's padding reaches are dropped, as the
+    /// reference's `Gemma4VisionModel` strips them after its pooler.
     public func visionSoftTokens(for image: CGImage) -> MLXArray? {
         guard let visionTower, let visionEmbedder else { return nil }
         let (pixels, positions) = imageProcessor.process(image)
         let soft = visionTower.softTokens(pixels.reshaped([1, pixels.shape[0], pixels.shape[1]]),
                                           positionIds: positions.reshaped([1, positions.shape[0], 2]))
-        return visionEmbedder(soft).reshaped([-1, soft.shape[soft.ndim - 1]]).reshaped([-1, decoderHidden])
+        let projected = visionEmbedder(soft).reshaped([-1, decoderHidden])
+        let kept = Self.pooledCells(positionIds: positions, kernel: visionTower.configuration.poolingKernelSize,
+                                    cellCount: projected.dim(0))
+        guard kept.count < projected.dim(0) else { return projected }
+        return projected.take(MLXArray(kept), axis: 0)
+    }
+
+    /// The pooled cells at least one patch averages into, ascending: the reference pooler's mask, which
+    /// keeps a cell whose one-hot column is not all zero. A cell is `x / k + (maxX + 1) / k · (y / k)` for
+    /// a patch at `(x, y)`; a padding patch `(-1, -1)` is clamped to `(0, 0)` and lands in cell 0, as in
+    /// the reference.
+    static func pooledCells(positionIds: MLXArray, kernel: Int, cellCount: Int) -> [Int32] {
+        let flat = positionIds.asType(.int32).asArray(Int32.self).map { max(Int($0), 0) }
+        let xs = stride(from: 0, to: flat.count, by: 2).map { flat[$0] }
+        let ys = stride(from: 1, to: flat.count, by: 2).map { flat[$0] }
+        let columnsPerRow = ((xs.max() ?? 0) + 1) / kernel
+        var reached = [Bool](repeating: false, count: cellCount)
+        for (x, y) in zip(xs, ys) {
+            let cell = x / kernel + columnsPerRow * (y / kernel)
+            if cell < cellCount {
+                reached[cell] = true
+            }
+        }
+        return reached.indices.filter { reached[$0] }.map(Int32.init)
     }
 
     /// The projected audio soft tokens for a waveform, or nil when no audio tower is configured.
@@ -144,7 +173,9 @@ public final class NFKMLXGemma4ConditionalGeneration {
 
     private var decoderHidden: Int { decoder.configuration.hiddenSize }
 
-    /// Greedy prefill-only generation from an image and/or audio and a placeholder-carrying prompt.
+    /// Greedy prefill-only generation from an image and/or audio and a placeholder-carrying prompt. The
+    /// prompt carries one image placeholder per ``visionSoftTokens(for:)`` token and one audio
+    /// placeholder per ``audioSoftTokens(for:)`` token.
     public func generate(promptTokens: [Int], image: CGImage? = nil, waveform: [Float]? = nil,
                          maxTokens: Int = 64) -> [Int] {
         let visionSoft = image.flatMap(visionSoftTokens)

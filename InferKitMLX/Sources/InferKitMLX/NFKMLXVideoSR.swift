@@ -350,6 +350,9 @@ public final class NFKMLXVideoSR: NSObject {
     /// The registry name the model builds under.
     @objc public static let modelName = "video-super-resolution"
 
+    /// The registry name and identifier of the clip backend. Introduced in InferKit 0.4.0.
+    @objc public static let clipModelName = "video-super-resolution-clip"
+
     /// Builds a video-SR backend directly from optional local weights — no registry required. A nil
     /// `weightsURL` builds random weights (`isReady` is true). Run
     /// inference off the render thread.
@@ -379,7 +382,7 @@ public final class NFKMLXVideoSR: NSObject {
             try loadWeights(into: net, from: weightsURL)
         }
         let holder = NFKVideoSRHolder(net)
-        return NFKMLXVideoBackend(identifier: "\(modelName)-clip") { frames in
+        return NFKMLXVideoBackend(identifier: clipModelName) { frames in
             holder.net.upscaleSequence(frames).map { clip($0, min: 0, max: 1) }
         }
     }
@@ -403,12 +406,40 @@ public final class NFKMLXVideoSR: NSObject {
                                completionHandler: completionHandler)
     }
 
+    /// Downloads the checkpoint from Hugging Face, then builds the clip backend
+    /// (``clipBackend(weightsURL:)``). A file already in the cache is not fetched again. The call blocks
+    /// on the network, so run it off the render thread. Introduced in InferKit 0.4.0.
+    @objc(clipBackendWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
+    public static func clipBackend(repo: String, weightsPath: String, revision: String?,
+                                   cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
+                                                cacheDirectoryURL: cacheDirectoryURL)
+        return try clipBackend(weightsURL: url)
+    }
+
+    /// The asynchronous form of ``clipBackend(repo:weightsPath:revision:cacheDirectoryURL:)``. The handler
+    /// runs on the download's background queue. Introduced in InferKit 0.4.0.
+    @objc(clipBackendWithRepo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
+    public static func clipBackend(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?,
+                                   completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXDownload.backend(repo: repo, weightsPath: weightsPath, revision: revision,
+                               cacheDirectoryURL: cacheDirectoryURL,
+                               build: { try clipBackend(weightsURL: $0) },
+                               completionHandler: completionHandler)
+    }
+
     /// Registers video SR (`video-super-resolution`) with `NFKMLXModelRegistry`, delegating to
     /// `backend(weightsURL:)`.
     @objc public static func register() {
         NFKMLXModelRegistry.register(name: modelName) { weightsURL in
             try backend(weightsURL: weightsURL)
         }
+    }
+
+    /// Registers the clip backend (`video-super-resolution-clip`) with `NFKMLXModelRegistry`, delegating
+    /// to ``clipBackend(weightsURL:)``. Introduced in InferKit 0.4.0.
+    @objc public static func registerClip() {
+        NFKMLXModelRegistry.register(name: clipModelName) { weightsURL in try clipBackend(weightsURL: weightsURL) }
     }
 
     /// Maps the released checkpoint's names onto the module's: the `generator.` wrapper prefix is

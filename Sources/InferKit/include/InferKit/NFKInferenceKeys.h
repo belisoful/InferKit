@@ -130,7 +130,8 @@ extern NSString * const NFKParameterAudioOutput;
 extern NSString * const NFKParameterSampleCount;
 /*! The number of video frames to generate (NSNumber). */
 extern NSString * const NFKParameterFrameCount;
-/*! The output frame rate (NSNumber). */
+/*! The output frame rate in frames per second (NSNumber). The value sets the rate the output movie is
+	written at. A model conditioned on frame rate (LTX-Video) also generates its motion at that rate. */
 extern NSString * const NFKParameterFramesPerSecond;
 /*! The output duration in seconds (NSNumber). */
 extern NSString * const NFKParameterDurationSeconds;
