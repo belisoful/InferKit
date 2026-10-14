@@ -235,7 +235,13 @@ NS_SWIFT_SENDABLE
 				sessions.
 	@discussion Every method is optional and runs on the server's delegateQueue, in the order the
 				events happened. The protocol is Sendable in Swift, so a conformance declared in
-				main-actor code runs nonisolated on that queue. Introduced in InferKit 0.4.0.
+				main-actor code runs nonisolated on that queue.
+
+				Swift imports the methods as inferenceServer(_:didStartRun:),
+				inferenceServer(_:didFinishRun:), inferenceServer(_:didChangeModel:),
+				inferenceServer(_:didConnectClient:), inferenceServer(_:didStartMCPSession:), and
+				inferenceServer(_:didEndMCPSession:). The methods are optional, so a Swift method
+				whose name differs from these compiles and is never called. Introduced in InferKit 0.4.0.
 */
 NS_SWIFT_SENDABLE
 @protocol NFKInferenceServerDelegate <NSObject>
