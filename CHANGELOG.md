@@ -669,6 +669,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   Wan Animate, Whisper, Voxtral, and DeepSeek's vision aligner. A float32 input is unchanged.
 - Over every finite input whose magnitude is at least twice the least normal float32, torch's polynomial
   leaves no bf16 input and 1 float16 input apart from torch's GELU, where MLXNN's GELU leaves 133 and 277.
+- Sa2VA-Qwen3-VL-4B-SAM3 at bfloat16 answers `Sure, [SEG].`, as the release's own code does at bfloat16. Its
+  float32 reference scores ` the`, ` it`, and ` ` within 0.075 of each other at the third step, under one
+  bfloat16 spacing (0.125), and MLXNN's GELU had broken that tie toward the float32 answer. The Qwen-VL
+  releases' bfloat16 generation and backend answer are held to the float32 reference as the InternVL
+  releases' are: token for token, or departing where the reference's own top scores tie within one bfloat16
+  spacing (`run_reference.py sa2va_qwen_generate`).
 
 #### Stable Diffusion 1.5's transformer blocks are held to the reference's summation-order spread
 

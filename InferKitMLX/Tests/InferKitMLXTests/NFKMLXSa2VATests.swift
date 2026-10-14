@@ -360,7 +360,10 @@ final class NFKMLXSa2VATests: XCTestCase {
     }
 
     /// End to end through the public factory on the oracle's plate and request: the answer is the
-    /// reference's generated text, decoded by the release's tokenizer and trimmed, and it drives a mask.
+    /// reference's generated text, decoded by the release's tokenizer and trimmed, and it drives a mask. The
+    /// backend loads bf16, so an answer that departs from the float32 text is held as a bf16 generation is
+    /// (``checkDeparture(_:from:label:)``, the release's `sa2va_<release>_generate_f32` record), on the
+    /// answer's ids.
     static func checkBackend(directory: String, recordPath: String, name: String) throws {
         let url = URL(fileURLWithPath: directory)
         // The backend is released inside the closure, so the clearCache below returns its buffers.
@@ -378,9 +381,15 @@ final class NFKMLXSa2VATests: XCTestCase {
         let reference = (rec["sequence"] ?? rec["generated"])!.reshaped([-1]).asArray(Int32.self)
         let tokenizer = try XCTUnwrap(NFKMLXSa2VA.tokenizer(inDirectory: url))
         let expected = tokenizer.decode(reference.map { NSNumber(value: $0) }).trimmingCharacters(in: .whitespacesAndNewlines)
-        let answer = result.output(forKey: NFKOutputText) as? String
-        print("VALIDATION BACKEND sa2va \(name): \(answer ?? "nil")")
-        XCTAssertEqual(answer, expected, "\(name) backend answer")
+        let answer = try XCTUnwrap(result.output(forKey: NFKOutputText) as? String, "\(name) backend answer")
+        print("VALIDATION BACKEND sa2va \(name): \(answer)")
+        if answer != expected {
+            let ids = tokenizer.encode(answer).map(\.intValue)
+            XCTAssertEqual(tokenizer.decode(ids.map { NSNumber(value: $0) }), answer, "\(name) backend answer's ids")
+            let generation = try NFKMLXWeights.loadCheckpoint(url: URL(fileURLWithPath: try float32Generation(name))).arrays
+            XCTAssertNotNil(try checkDeparture(ids, from: generation, label: "\(name) backend"),
+                            "\(name) backend answer: \(answer.debugDescription) against the float32 \(expected.debugDescription)")
+        }
         XCTAssertNotNil(result.output(forKey: NFKOutputMask), "\(name) the [SEG] answer produces a mask")
         NFKMLXGPU.clearCache()
     }
@@ -505,6 +514,15 @@ final class NFKMLXSa2VATests: XCTestCase {
         return URL(fileURLWithPath: records).appendingPathComponent("\(name).safetensors").path
     }
 
+    /// A Qwen-VL release's `sa2va_<release>_generate_f32` record (`run_reference.py sa2va_qwen_generate`).
+    static func float32Generation(_ name: String) throws -> String {
+        let path = generationRecord("sa2va_\(name.lowercased())_generate_f32")
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("no sa2va_\(name.lowercased())_generate_f32 record")
+        }
+        return path
+    }
+
     /// The public factory's bf16 net generates as the float32 reference (`run_reference.py sa2va`, with
     /// each step's top scores) does up to the first step where its choice differs, and there it takes a
     /// token the reference scores within one bf16 step of its best: a tie bf16 cannot resolve, which the
@@ -546,16 +564,7 @@ final class NFKMLXSa2VATests: XCTestCase {
             print("VALIDATION BF16 sa2va \(name) \(label) generation: \(generated) against the float32 \(reference), first differing step \(step)")
             if label == "backend" { backendRun = (run.tokens, run.ending) }
             XCTAssertTrue(generated.contains(c.segmentationTokenId), "\(name) \(label): the bf16 answer reaches [SEG]")
-            guard step < min(generated.count, reference.count) else { continue }
-            let ids = rec["step_top_ids"]![step].asArray(Int32.self).map(Int.init)
-            let scores = rec["step_top_scores"]![step].asArray(Float.self)
-            let spacing = Float(pow(2.0, floor(log2(Double(abs(scores[0])))) - 7))
-            let index = try XCTUnwrap(ids.firstIndex(of: generated[step]),
-                                      "\(name) \(label) step \(step): \(generated[step]) is not among the reference's top five")
-            print("VALIDATION BF16 sa2va \(name) \(label) step \(step): chose \(generated[step]) at \(scores[index]), "
-                  + "the reference's best \(scores[0]), bf16 spacing \(spacing)")
-            XCTAssertLessThanOrEqual(scores[0] - scores[index], spacing,
-                                     "\(name) \(label): the bf16 choice departs from the reference beyond a bf16 tie")
+            try checkDeparture(generated, from: rec, label: "\(name) \(label)")
         }
         let result = try NFKMLXSa2VABackend(net: net, tokenizer: tokenizer).runInference(for: NFKInferenceRequest(
             inputs: [NFKInputImage: plate(), NFKInputPrompt: prompt]))
@@ -565,6 +574,27 @@ final class NFKMLXSa2VATests: XCTestCase {
                        "\(name): the backend answers with the tokens its own inputs generate")
         XCTAssertNotNil(result.output(forKey: NFKOutputMask), "\(name): the bf16 [SEG] answer produces a mask")
         NFKMLXGPU.clearCache()
+    }
+
+    /// The first step where a bf16 `generated` (the end token included) departs from the float32 reference's
+    /// `sequence` in `rec` (a `sa2va` or `sa2va_qwen_generate` record with each step's top five), or nil where
+    /// it follows the reference to the shorter's end. At that step the choice is among the reference's five
+    /// highest scores and within one bf16 spacing of its best: a tie bf16 cannot resolve.
+    @discardableResult
+    static func checkDeparture(_ generated: [Int], from rec: [String: MLXArray], label: String) throws -> Int? {
+        let reference = rec["sequence"]!.reshaped([-1]).asArray(Int32.self).map(Int.init)
+        let step = zip(generated, reference).prefix { $0 == $1 }.count
+        guard step < min(generated.count, reference.count) else { return nil }
+        let ids = rec["step_top_ids"]![step].asArray(Int32.self).map(Int.init)
+        let scores = rec["step_top_scores"]![step].asArray(Float.self)
+        let spacing = Float(pow(2.0, floor(log2(Double(abs(scores[0])))) - 7))
+        let index = try XCTUnwrap(ids.firstIndex(of: generated[step]),
+                                  "\(label) step \(step): \(generated[step]) is not among the reference's top five")
+        print("VALIDATION BF16 sa2va \(label) step \(step): chose \(generated[step]) at \(scores[index]), "
+              + "the reference's best \(scores[0]), bf16 spacing \(spacing)")
+        XCTAssertLessThanOrEqual(scores[0] - scores[index], spacing,
+                                 "\(label): the bf16 choice departs from the reference beyond a bf16 tie")
+        return step
     }
 
     /// The decoder's greedy generation reproduces the reference's generated ids token for token.
@@ -831,6 +861,16 @@ final class NFKMLXSa2VAQwenTests: XCTestCase {
                     XCTAssertEqual(generated.tokens, expected, "\(name) greedy generation")
                 }
                 generation = generated.tokens == expected ? "token-exact" : "DIVERGES"
+                XCTAssertTrue(generated.tokens.contains(net.segmentationTokenId), "\(name): the answer reaches [SEG]")
+                if dtype != .float32 && generation == "DIVERGES" {
+                    let record = try NFKMLXWeights.loadCheckpoint(url: URL(fileURLWithPath: try NFKMLXSa2VATests.float32Generation(name))).arrays
+                    XCTAssertEqual(record["sequence"]!.asArray(Int32.self).map(Int.init), referenceGenerated,
+                                   "\(name): the generation record's float32 answer is the parity record's")
+                    if let step = try NFKMLXSa2VATests.checkDeparture(generated.tokens + [generated.ending].compactMap { $0 },
+                                                                      from: record, label: name) {
+                        generation = "a bf16 tie at step \(step)"
+                    }
+                }
             }
 
             let full = inputIds + referenceGenerated
@@ -862,7 +902,10 @@ final class NFKMLXSa2VAQwenTests: XCTestCase {
     /// deepstack, and the decoder state the bridge reads are each held to twice the release's own
     /// bfloat16 distance from float32 at that seam, read from its `sa2va_qwen_probe` pair (same image,
     /// same prompt). The decoder state is the last layer before the final norm on Qwen3-VL and the
-    /// normalized state on Qwen2.5-VL. The generation and the mask decision are the backend's answer.
+    /// normalized state on Qwen2.5-VL. The generation and the mask decision are the backend's answer. The
+    /// generation follows the float32 reference token for token, or departs at a step where the reference's
+    /// own scores tie within one bf16 spacing (``NFKMLXSa2VATests/checkDeparture(_:from:label:)``, the
+    /// release's `sa2va_<release>_generate_f32` record), as the InternVL releases' bf16 generation is held.
     func testTheBFloat16LoadStaysNearTheFloat32Reference() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil, "no Metal library for MLX; run Tools/mlx-metallib.sh")
         let env = NFKMLXValidationConfig.environment
@@ -884,7 +927,7 @@ final class NFKMLXSa2VAQwenTests: XCTestCase {
                     XCTAssertGreaterThan(similarity, 0.998, "\(name) \(seam) at bfloat16")
                 }
             }
-            XCTAssertEqual(generation, "token-exact", "\(name) greedy generation at bfloat16")
+            XCTAssertNotEqual(generation, "DIVERGES", "\(name) greedy generation at bfloat16")
             XCTAssertGreaterThan(iou, 0.98, "\(name) mask decision at bfloat16")
             NFKMLXGPU.clearCache()
             measured.append(name)
