@@ -721,7 +721,11 @@ discovery: the server advertises `_inferkit._tcp` over Bonjour, and
 machine's host name. Access follows where the client is. A client on the same machine needs no key.
 A client on another machine presents `apiKey` as a Bearer token unless the host sets
 `requiresAPIKey` to NO, and a server that would admit other machines refuses to start without a key.
-`loopbackOnly` keeps other machines out entirely, and `TLSIdentity` serves HTTPS.
+`loopbackOnly` keeps other machines out entirely, and `TLSIdentity` serves HTTPS. With HTTPS on,
+`servesPlainHTTPOnLoopback` adds a plain-HTTP listener on loopback only, for local clients such as agent
+CLIs that do not trust a self-signed certificate. Both listeners serve the same models and keys;
+`localBaseURL` and `localMCPURL` name the plain one, and `networkBaseURL` and `networkMCPURL` the HTTPS
+one.
 
 A server can hold several keys, each named and limited to the routes it opens: inference, the status
 route, MCP, and the app's own routes. Removing a key refuses it from the next request.

@@ -1162,6 +1162,25 @@ discovery and `NFKBalancedBackend` pin it on trust-on-first-use terms. The persi
 trust model, and the automatic-pinning decisions are in `core-runtime-notes.md` ("Serving identity and
 certificate pinning").
 
+**Plain loopback listener (2026-10-14).** Asked for by an app's service: the agent CLIs it registers
+`/mcp` with (Claude Code, OpenCode, Gemini CLI) trust no self-signed certificate, so HTTPS for other
+Macs broke every local agent link, and a second `NFKInferenceServer` would build every model twice.
+
+- `servesPlainHTTPOnLoopback` starts a second `NFKHTTPListener` on `plainLoopbackPort` (0 lets the
+  system choose; `plainLoopbackListeningPort` reads the bound one), loopback-only, without TLS, and
+  never advertised. Both listeners hand requests to the same `routeRequest:response:`, so models,
+  residency, counts, keys, app routes, MCP sessions, and observation are one set. A request on it has
+  `fromLoopback` set, so `loopbackExemptScopes` applies as it does on the main listener's loopback side.
+- `localBaseURL` and `localMCPURL` name the plain listener while it runs (a stable local endpoint
+  whether TLS is on or off), otherwise the main one. `networkBaseURL` and `networkMCPURL` name the main
+  listener by `gethostname()`, with `.local` added to a bare name; nil while stopped or `loopbackOnly`.
+- `startWithError:` starts both or neither: a plain listener that fails to bind stops the main one and
+  reports `NFKInferenceServerErrorListenFailed`. `stop` stops both.
+- Tests: `NFKServerPlainLoopbackTests` (6): one model serving both listeners (counts shared, the main
+  listener still pinned), the local URLs without the option, the network URLs, a taken plain port
+  starting neither and a stop releasing it, keys and a revocation applying on both, and an MCP session
+  issued on one listener starting on the other.
+
 **Residency and unloading (2026-10-13).** Asked for by an app's service, which lists models without
 keeping them in memory, and unloads idle ones.
 

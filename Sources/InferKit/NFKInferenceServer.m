@@ -18,6 +18,7 @@
 #import "NFKServerRoutePrivate.h"
 #import "NFKServerObservationPrivate.h"
 #import <CommonCrypto/CommonDigest.h>
+#import <unistd.h>
 
 const uint16_t NFKInferenceServerDefaultPort = 11480;
 NSString * const NFKInferenceServerServiceType = @"_inferkit._tcp";
@@ -1091,6 +1092,9 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 /*! The app routes by normalized prefix; guarded by itself. */
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NFKServerRouteHandler> *appRoutes;
 @property (nonatomic, strong, nullable) NFKHTTPListener *listener;
+/*! The plain-HTTP loopback listener, while servesPlainHTTPOnLoopback has it running. */
+@property (nonatomic, strong, nullable) NFKHTTPListener *plainListener;
+@property (nonatomic, assign, readwrite) uint16_t plainLoopbackListeningPort;
 @property (nonatomic, strong, nullable) id identity;
 @property (nonatomic, assign, readwrite, getter=isRunning) BOOL running;
 @property (nonatomic, assign, readwrite) uint16_t listeningPort;
@@ -1192,22 +1196,70 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	self.identity = (__bridge id)TLSIdentity;
 }
 
-- (nullable NSURL *)localBaseURL
+/*! scheme://host:port followed by path. */
++ (nullable NSURL *)originWithScheme:(NSString *)scheme host:(NSString *)host port:(uint16_t)port path:(NSString *)path
+{
+	NSURLComponents *components = [[NSURLComponents alloc] init];
+	components.scheme = scheme;
+	components.host = host;
+	components.port = @(port);
+	components.path = path;
+	return components.URL;
+}
+
+/*! The URL at path on the listener a client on this machine uses, or nil while stopped. */
+- (nullable NSURL *)localURLWithPath:(NSString *)path
 {
 	if (!self.isRunning) {
 		return nil;
 	}
-	NSString *scheme = self.identity != nil ? @"https" : @"http";
-	return [NSURL URLWithString:[NSString stringWithFormat:@"%@://localhost:%u%@", scheme, (unsigned)self.listeningPort, NFKServedBasePath]];
+	if (self.plainLoopbackListeningPort != 0) {
+		return [NFKInferenceServer originWithScheme:@"http" host:@"localhost" port:self.plainLoopbackListeningPort path:path];
+	}
+	return [NFKInferenceServer originWithScheme:self.identity != nil ? @"https" : @"http" host:@"localhost"
+										   port:self.listeningPort path:path];
+}
+
+/*! The URL at path on the main listener as another machine names it, or nil while stopped or
+	loopbackOnly. */
+- (nullable NSURL *)networkURLWithPath:(NSString *)path
+{
+	if (!self.isRunning || self.loopbackOnly) {
+		return nil;
+	}
+	return [NFKInferenceServer originWithScheme:self.identity != nil ? @"https" : @"http" host:[NFKInferenceServer networkHostName]
+										   port:self.listeningPort path:path];
+}
+
+/*! This machine's host name, with the mDNS domain added to a bare name so another machine resolves it. */
++ (NSString *)networkHostName
+{
+	char name[256] = { 0 };
+	if (gethostname(name, sizeof(name) - 1) != 0 || name[0] == '\0') {
+		return @"localhost";
+	}
+	NSString *host = [NSString stringWithUTF8String:name] ?: @"localhost";
+	return [host containsString:@"."] ? host : [host stringByAppendingString:@".local"];
+}
+
+- (nullable NSURL *)localBaseURL
+{
+	return [self localURLWithPath:NFKServedBasePath];
 }
 
 - (nullable NSURL *)localMCPURL
 {
-	if (!self.isRunning) {
-		return nil;
-	}
-	NSString *scheme = self.identity != nil ? @"https" : @"http";
-	return [NSURL URLWithString:[NSString stringWithFormat:@"%@://localhost:%u/mcp", scheme, (unsigned)self.listeningPort]];
+	return [self localURLWithPath:@"/mcp"];
+}
+
+- (nullable NSURL *)networkBaseURL
+{
+	return [self networkURLWithPath:NFKServedBasePath];
+}
+
+- (nullable NSURL *)networkMCPURL
+{
+	return [self networkURLWithPath:@"/mcp"];
 }
 
 #pragma mark Tools
@@ -2038,21 +2090,10 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		}
 		return NO;
 	}
-	__weak NFKInferenceServer *weakSelf = self;
-	NFKHTTPListener *listener = [[NFKHTTPListener alloc] initWithHandler:^(NFKHTTPRequest *request, NFKHTTPResponse *response) {
-		NFKInferenceServer *server = weakSelf;
-		if (server == nil) {
-			[response sendStatus:503 headers:nil body:nil];
-			return;
-		}
-		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-			[server routeRequest:request response:response];
-		});
-	}];
+	NFKHTTPListener *listener = [self makeListener];
 	listener.port = self.port;
 	listener.loopbackOnly = self.loopbackOnly;
 	listener.TLSIdentity = self.identity;
-	listener.maximumBodyBytes = self.maximumRequestBodyBytes;
 	if (self.advertisesService && !self.loopbackOnly) {
 		listener.serviceType = NFKInferenceServerServiceType;
 		listener.serviceName = self.serviceName;
@@ -2070,28 +2111,67 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		}
 		listener.TXTRecord = record;
 	}
+	NFKHTTPListener *plainListener = nil;
+	if (self.servesPlainHTTPOnLoopback) {
+		plainListener = [self makeListener];
+		plainListener.port = self.plainLoopbackPort;
+		plainListener.loopbackOnly = YES;
+	}
 	NSError *listenError = nil;
 	if (![listener startWithError:&listenError]) {
-		if (outError != NULL) {
-			NSMutableDictionary *userInfo = [listenError.userInfo mutableCopy] ?: [NSMutableDictionary dictionary];
-			*outError = [NSError errorWithDomain:NFKInferenceServerErrorDomain code:NFKInferenceServerErrorListenFailed userInfo:userInfo];
-		}
-		return NO;
+		return [NFKInferenceServer listenFailure:listenError error:outError];
+	}
+	if (plainListener != nil && ![plainListener startWithError:&listenError]) {
+		[listener stop];
+		return [NFKInferenceServer listenFailure:listenError error:outError];
 	}
 	self.listener = listener;
 	self.listeningPort = listener.boundPort;
+	self.plainListener = plainListener;
+	self.plainLoopbackListeningPort = plainListener.boundPort;
 	self.startTime = (NSInteger)NSDate.date.timeIntervalSince1970;
 	self.running = YES;
 	return YES;
+}
+
+/*! A listener that routes every request to this server and takes its body limit. */
+- (NFKHTTPListener *)makeListener
+{
+	__weak NFKInferenceServer *weakSelf = self;
+	NFKHTTPListener *listener = [[NFKHTTPListener alloc] initWithHandler:^(NFKHTTPRequest *request, NFKHTTPResponse *response) {
+		NFKInferenceServer *server = weakSelf;
+		if (server == nil) {
+			[response sendStatus:503 headers:nil body:nil];
+			return;
+		}
+		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+			[server routeRequest:request response:response];
+		});
+	}];
+	listener.maximumBodyBytes = self.maximumRequestBodyBytes;
+	return listener;
+}
+
+/*! Reports a listener's failure to start as NFKInferenceServerErrorListenFailed; always NO. */
++ (BOOL)listenFailure:(nullable NSError *)listenError error:(NSError * _Nullable *)outError
+{
+	if (outError != NULL) {
+		NSMutableDictionary *userInfo = [listenError.userInfo mutableCopy] ?: [NSMutableDictionary dictionary];
+		*outError = [NSError errorWithDomain:NFKInferenceServerErrorDomain code:NFKInferenceServerErrorListenFailed userInfo:userInfo];
+	}
+	return NO;
 }
 
 - (void)stop
 {
 	[self.mcpSessions endAllSessionsWithReason:NFKServerMCPSessionEndReasonServerStopped];
 	[self.listener stop];
+	[self.plainListener stop];
 	self.listener = nil;
+	self.plainListener = nil;
 	self.running = NO;
 	self.listeningPort = 0;
+	self.plainLoopbackListeningPort = 0;
 }
 
 #pragma mark Routing

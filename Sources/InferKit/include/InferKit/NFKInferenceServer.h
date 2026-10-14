@@ -170,7 +170,10 @@ NS_SWIFT_SENDABLE
 				Setting TLSIdentity serves HTTPS with that identity. A client's URL session trusts
 				the certificate only if the system does, so a self-signed identity needs the client to
 				install it or to pin its SHA-256 fingerprint. NFKServerIdentity makes and keeps such an
-				identity; a client pins it with pinnedCertificateSHA256.
+				identity; a client pins it with pinnedCertificateSHA256. servesPlainHTTPOnLoopback adds
+				a second listener, plain HTTP on the loopback interface only, for local clients that
+				trust no self-signed certificate (agent CLIs registered with localMCPURL). Both
+				listeners serve the same models, routes, keys, MCP sessions, and observation.
 
 				advertisesService publishes the server over Bonjour as NFKInferenceServerServiceType,
 				carrying the base path, whether TLS is on, whether a key is required, and with TLS the
@@ -333,6 +336,22 @@ NS_SWIFT_SENDABLE
 /*! The identity to serve HTTPS with, or NULL for plain HTTP. The server retains it. */
 @property (nonatomic, assign, nullable) SecIdentityRef TLSIdentity;
 
+/*!
+	@property   servesPlainHTTPOnLoopback
+	@abstract   Whether the server also listens for plain HTTP on the loopback interface. Defaults to NO.
+	@discussion The second listener binds plainLoopbackPort on loopback only and never uses TLS, so a
+				client on this machine reaches the server without trusting its certificate while
+				clients on other machines use HTTPS. It is never advertised. A request on it is a
+				loopback request, so loopbackExemptScopes applies. While it runs, localBaseURL and
+				localMCPURL name it. startWithError: starts both listeners or neither. Introduced in
+				InferKit 0.4.0.
+*/
+@property (nonatomic, assign) BOOL servesPlainHTTPOnLoopback;
+
+/*! The port of the plain loopback listener. Defaults to 0, which lets the system choose. Introduced in
+	InferKit 0.4.0. */
+@property (nonatomic, assign) uint16_t plainLoopbackPort;
+
 /*! Whether the server advertises itself over Bonjour. Defaults to YES; a loopback-only server is
 	never advertised. */
 @property (nonatomic, assign) BOOL advertisesService;
@@ -416,9 +435,19 @@ NS_SWIFT_SENDABLE
 /*! The port the server is listening on, which is the chosen one when port is 0; 0 while stopped. */
 @property (nonatomic, readonly) uint16_t listeningPort;
 
-/*! The base URL a client on this machine uses (http://localhost:<port>/v1, or https), or nil while
-	stopped. A client elsewhere uses this machine's name or address, or discovery. */
+/*! The port the plain loopback listener is bound to, which is the chosen one when plainLoopbackPort is
+	0; 0 while it is not running. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly) uint16_t plainLoopbackListeningPort;
+
+/*! The base URL a client on this machine uses, or nil while stopped: http://localhost:<port>/v1 on the
+	plain loopback listener while it runs, otherwise on listeningPort with https when TLSIdentity is
+	set. */
 @property (nonatomic, readonly, copy, nullable) NSURL *localBaseURL;
+
+/*! The base URL a client on another machine uses: https (or http without TLSIdentity), this machine's
+	host name, and listeningPort. nil while stopped or loopbackOnly. Discovery finds the same listener.
+	Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSURL *networkBaseURL;
 
 /*! Hosts a backend under a model name, replacing any backend already under it. The model is resident
 	until it is removed. */
@@ -516,9 +545,13 @@ NS_SWIFT_SENDABLE
 	tools to prefer, or nil for nothing. Introduced in InferKit 0.4.0. */
 @property (nonatomic, copy, nullable) NSString *MCPInstructions;
 
-/*! The MCP endpoint a client on this machine uses (http://localhost:<port>/mcp, or https), or nil
-	while stopped. Introduced in InferKit 0.4.0. */
+/*! The MCP endpoint a client on this machine uses, on the listener localBaseURL names, or nil while
+	stopped. Introduced in InferKit 0.4.0. */
 @property (nonatomic, readonly, copy, nullable) NSURL *localMCPURL;
+
+/*! The MCP endpoint a client on another machine uses, on the listener networkBaseURL names, or nil
+	while stopped or loopbackOnly. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSURL *networkMCPURL;
 
 /*!
 	@method     addRouteForPathPrefix:handler:error:
@@ -595,7 +628,7 @@ NS_SWIFT_SENDABLE
 /*! Stops listening, closes every connection, cancels the runs they were waiting on, and ends every MCP
 	session. The hosted models, their residency and counts, the tools, and every setting stay, so
 	startWithError: on the same object listens again with the settings as they are then: a port,
-	loopbackOnly, advertisesService, or TLSIdentity change is stop, change, start. */
+	loopbackOnly, advertisesService, TLSIdentity, or plain loopback change is stop, change, start. */
 - (void)stop;
 
 @end
