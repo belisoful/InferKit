@@ -8,6 +8,7 @@
 #import <InferKit/NFKRemoteTransport.h>
 #import <InferKit/NFKInferenceRequest.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteTransportPrivate.h"
 
 @implementation NFKRemoteTokenCounter
 
@@ -34,6 +35,10 @@
 		counter.apiStyle = NFKRemoteTokenCounterAPIStyleLlamaCpp;
 	} else {
 		return nil;
+	}
+	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
+	if (pinned != nil) {
+		counter.session = pinned;
 	}
 	counter.apiKey = apiKey;
 	counter.modelName = modelName;

@@ -5,6 +5,7 @@
 
 #import <InferKit/NFKRemoteTransport.h>
 #import <InferKit/NFKServerIdentity.h>
+#import <InferKit/NFKRemoteProvider.h>
 #import "NFKRemoteTransportPrivate.h"
 #import <objc/runtime.h>
 
@@ -553,3 +554,9 @@ static NSError *NFKRemoteUnreachableError(NSURL * _Nullable url, NSError * _Null
 }
 
 @end
+
+NSURLSession * _Nullable NFKRemotePinnedSessionForProvider(NFKRemoteProvider *provider)
+{
+	NSString *fingerprint = provider.pinnedCertificateSHA256;
+	return fingerprint != nil ? [NFKRemoteTransport sessionWithPinnedCertificateSHA256:fingerprint] : nil;
+}

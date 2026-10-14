@@ -34,6 +34,15 @@ static NSString * const NFKPinTestHost = @"Studio.local";
 	return [self fingerprintRepeating:@"cd"];
 }
 
+- (NSString *)colonSeparatedFirstFingerprint
+{
+	NSMutableArray<NSString *> *pairs = [NSMutableArray array];
+	for (NSUInteger index = 0; index < 32; index++) {
+		[pairs addObject:@"AB"];
+	}
+	return [pairs componentsJoinedByString:@":"];
+}
+
 /*! The provider discovery makes for an advertisement of name on the test host. */
 - (nullable NFKRemoteProvider *)providerNamed:(NSString *)name
 										 port:(NSInteger)port
@@ -314,6 +323,205 @@ static NSString * const NFKPinTestHost = @"Studio.local";
 	XCTAssertEqualObjects([balancer pinnedCertificateSHA256ForServerWithBaseURL:unpinned.baseURL], fleet);
 	XCTAssertEqualObjects([balancer pinnedCertificateSHA256ForServerWithBaseURL:bare.baseURL], fleet);
 	XCTAssertNil([balancer pinnedCertificateSHA256ForServerWithBaseURL:[NSURL URLWithString:@"https://elsewhere.local:1/v1"]]);
+}
+
+#pragma mark Provider equality
+
+- (void)testEachSpellingOfOnePinMakesEqualProviders
+{
+	NFKRemoteProvider *lowercase = [NFKRemoteProvider.inferKit providerWithPinnedCertificateSHA256:self.firstFingerprint];
+	NFKRemoteProvider *colons = [NFKRemoteProvider.inferKit providerWithPinnedCertificateSHA256:self.colonSeparatedFirstFingerprint];
+	XCTAssertEqualObjects(lowercase, colons);
+	XCTAssertEqual(lowercase.hash, colons.hash);
+	XCTAssertNotEqualObjects(lowercase, [NFKRemoteProvider.inferKit providerWithPinnedCertificateSHA256:self.secondFingerprint]);
+	XCTAssertNotEqualObjects(lowercase, NFKRemoteProvider.inferKit);
+}
+
+#pragma mark Per-class factories
+
+/*! Builds a client from the preset pinned with the colon-separated spelling of firstFingerprint and from
+	the bare preset, and checks that only the first sends through a pinned session. */
+- (void)assertClientSessionFor:(NFKRemoteProvider *)preset
+					   honorsPin:(NSURLSession * _Nullable (^)(NFKRemoteProvider *provider))sessionOfClient
+{
+	NFKRemoteProvider *pinned = [preset providerWithPinnedCertificateSHA256:self.colonSeparatedFirstFingerprint];
+	NSURLSession *session = sessionOfClient(pinned);
+	XCTAssertNotNil(session, @"%@ builds no client", preset.identifier);
+	if (session != nil) {
+		XCTAssertEqualObjects([NFKRemoteTransport pinnedCertificateSHA256ForSession:session], self.firstFingerprint, @"%@", preset.identifier);
+	}
+	NSURLSession *unpinned = sessionOfClient(preset);
+	if (unpinned != nil) {
+		XCTAssertNil([NFKRemoteTransport pinnedCertificateSHA256ForSession:unpinned], @"%@", preset.identifier);
+	}
+}
+
+- (void)testTheTranscriptionFactoryHonorsThePin
+{
+	for (NFKRemoteProvider *preset in @[ NFKRemoteProvider.inferKit, NFKRemoteProvider.openAI, NFKRemoteProvider.mistral, NFKRemoteProvider.xAI ]) {
+		[self assertClientSessionFor:preset honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+			return [NFKRemoteTranscriptionBackend backendForProvider:provider apiKey:nil modelName:@"m"].session;
+		}];
+	}
+}
+
+- (void)testTheSpeechFactoryHonorsThePin
+{
+	for (NFKRemoteProvider *preset in @[ NFKRemoteProvider.inferKit, NFKRemoteProvider.mistral, NFKRemoteProvider.xAI ]) {
+		[self assertClientSessionFor:preset honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+			return [NFKRemoteSpeechBackend backendForProvider:provider apiKey:nil modelName:@"m" voice:@"v"].session;
+		}];
+	}
+}
+
+- (void)testTheImageFactoryHonorsThePin
+{
+	[self assertClientSessionFor:NFKRemoteProvider.inferKit honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKRemoteImageBackend backendForProvider:provider apiKey:nil modelName:@"m"].session;
+	}];
+}
+
+- (void)testTheEmbeddingFactoryHonorsThePin
+{
+	for (NFKRemoteProvider *preset in @[ NFKRemoteProvider.inferKit, NFKRemoteProvider.googleGemini ]) {
+		[self assertClientSessionFor:preset honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+			return [NFKRemoteEmbeddingBackend backendForProvider:provider apiKey:nil modelName:@"m"].session;
+		}];
+	}
+}
+
+- (void)testTheCompletionFactoryHonorsThePin
+{
+	[self assertClientSessionFor:NFKRemoteProvider.vLLM honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKRemoteCompletionBackend backendForProvider:provider apiKey:nil modelName:@"m"].session;
+	}];
+}
+
+- (void)testTheResponsesFactoryHonorsThePin
+{
+	[self assertClientSessionFor:NFKRemoteProvider.openAI honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKRemoteResponsesBackend backendForProvider:provider apiKey:nil modelName:@"m"].session;
+	}];
+}
+
+- (void)testTheGenerateContentFactoryHonorsThePin
+{
+	[self assertClientSessionFor:NFKRemoteProvider.googleGemini honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKGeminiGenerateContentBackend backendForProvider:provider apiKey:nil modelName:@"m"].session;
+	}];
+}
+
+- (void)testTheDecisionsFactoryHonorsThePin
+{
+	[self assertClientSessionFor:NFKRemoteProvider.openAI honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKOpenAIDecisionsBackend backendForProvider:provider apiKey:nil modelName:@"m"].session;
+	}];
+}
+
+- (void)testTheModerationFactoryHonorsThePin
+{
+	[self assertClientSessionFor:NFKRemoteProvider.mistral honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKRemoteModerationBackend backendForProvider:provider apiKey:nil modelName:@"m"].session;
+	}];
+}
+
+- (void)testTheOCRFactoryHonorsThePin
+{
+	[self assertClientSessionFor:NFKRemoteProvider.mistral honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKRemoteOCRBackend backendForProvider:provider apiKey:nil modelName:@"m"].session;
+	}];
+}
+
+- (void)testTheClassifierFactoryHonorsThePin
+{
+	[self assertClientSessionFor:NFKRemoteProvider.vLLM honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKRemoteClassifierBackend backendForProvider:provider apiKey:nil modelName:@"m"].session;
+	}];
+}
+
+- (void)testTheVideoFactoryHonorsThePin
+{
+	[self assertClientSessionFor:NFKRemoteProvider.openAI honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKRemoteVideoBackend backendForProvider:provider apiKey:nil modelName:@"m"].session;
+	}];
+}
+
+- (void)testTheRerankerFactoryHonorsThePin
+{
+	[self assertClientSessionFor:NFKRemoteProvider.vLLM honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKRemoteReranker rerankerForProvider:provider apiKey:nil modelName:@"m"].session;
+	}];
+}
+
+- (void)testTheTokenCounterFactoryHonorsThePin
+{
+	[self assertClientSessionFor:NFKRemoteProvider.llamaCpp honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKRemoteTokenCounter counterForProvider:provider apiKey:nil modelName:@"m"].session;
+	}];
+}
+
+- (void)testTheVoiceLibraryFactoryHonorsThePin
+{
+	[self assertClientSessionFor:NFKRemoteProvider.googleGemini honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKGeminiVoiceLibrary voiceLibraryForProvider:provider apiKey:nil].session;
+	}];
+}
+
+- (void)testTheUsageReporterFactoryHonorsThePin
+{
+	[self assertClientSessionFor:NFKRemoteProvider.openAI honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKRemoteUsageReporter reporterForProvider:provider apiKey:nil].session;
+	}];
+}
+
+- (void)testTheFileStoreFactoryHonorsThePin
+{
+	[self assertClientSessionFor:NFKRemoteProvider.openAI honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKRemoteFileStore fileStoreForProvider:provider apiKey:nil].session;
+	}];
+}
+
+- (void)testTheRetrievalStoreFactoryHonorsThePin
+{
+	[self assertClientSessionFor:NFKRemoteProvider.openAI honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKRemoteRetrievalStore retrievalStoreForProvider:provider apiKey:nil].session;
+	}];
+}
+
+- (void)testTheLocalRunnersHonorThePin
+{
+	[self assertClientSessionFor:NFKRemoteProvider.ollama honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKOllamaRunner runnerWithProvider:provider].session;
+	}];
+	[self assertClientSessionFor:NFKRemoteProvider.lmStudio honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKLMStudioRunner runnerWithProvider:provider].session;
+	}];
+}
+
+- (void)testTheRealtimeSessionFactoryHonorsThePin
+{
+	[self assertClientSessionFor:NFKRemoteProvider.openAI honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKRealtimeSession sessionForProvider:provider apiStyle:NFKRealtimeAPIStyleOpenAIConversation apiKey:nil modelName:@"m"].URLSession;
+	}];
+	XCTAssertNil([NFKRealtimeSession sessionForProvider:NFKRemoteProvider.openAI apiStyle:NFKRealtimeAPIStyleOpenAIConversation apiKey:nil modelName:@"m"].URLSession);
+}
+
+- (void)testAPinnedSocketRefusesAPlainWebSocketURLUnopened
+{
+	NSURLSession *pinned = [NFKRemoteTransport sessionWithPinnedCertificateSHA256:self.firstFingerprint];
+	NSURLRequest *request = [NSURLRequest requestWithURL:[NSURL URLWithString:@"ws://127.0.0.1:9/v1/realtime"]];
+	NFKRealtimeWebSocket *socket = [[NFKRealtimeWebSocket alloc] initWithRequest:request session:pinned];
+	XCTestExpectation *closed = [self expectationWithDescription:@"closed"];
+	__block NSError *closeError = nil;
+	[socket openWithMessageHandler:^(NSString *text, NSData *data) {
+		XCTFail(@"a refused socket receives nothing");
+	} closeHandler:^(NSError *error) {
+		closeError = error;
+		[closed fulfill];
+	}];
+	[self waitForExpectations:@[ closed ] timeout:5.0];
+	XCTAssertEqual(closeError.code, kNFKError_InferenceBackendFailure);
+	XCTAssertTrue([closeError.localizedDescription containsString:@"wss://"], @"%@", closeError);
 }
 
 @end

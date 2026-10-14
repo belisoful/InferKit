@@ -279,7 +279,8 @@ slice() {               # slice <destination> <tag> <swift lib dir> <clang targe
     # so `--no-swift-interfaces` drops them. The framework is then importable from Objective-C only,
     # which the Objective-C verification cannot notice — hence the note in the summary.
     if [ "$INTERFACES" = yes ]; then
-        cp -R "$WORK/dd-$tag/Build/Products/Release"*/*.swiftmodule "$inner/Modules/" 2>/dev/null || true
+        cp -R "$WORK/dd-$tag/Build/Products/Release"*/*.swiftmodule "$inner/Modules/"
+        [ -d "$inner/Modules/InferKitMLX.swiftmodule" ] || { echo "no InferKitMLX.swiftmodule in the $tag build"; exit 1; }
         write_c_modules "$inner/Modules" "$WORK/dd-$tag/SourcePackages/checkouts"
     fi
     if [ "$tag" = macos ]; then

@@ -401,4 +401,16 @@
 	XCTAssertNil([self.server currentStatus].host);
 }
 
+- (void)testAServerThatHasNotStartedHasNoStartDateAndNoUptime
+{
+	NFKInferenceServer *server = [[NFKInferenceServer alloc] init];
+	XCTAssertNil([server currentStatus].startDate);
+	XCTAssertEqual([server currentStatus].uptime, 0.0);
+
+	XCTAssertLessThan(fabs([self.server currentStatus].startDate.timeIntervalSinceNow), 60.0);
+	[self.server stop];
+	XCTAssertNotNil([self.server currentStatus].startDate, @"a stopped server keeps its last start");
+	XCTAssertEqual([self.server currentStatus].uptime, 0.0);
+}
+
 @end

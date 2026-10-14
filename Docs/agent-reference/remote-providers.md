@@ -837,8 +837,7 @@ machine's remote clients reach a model this process hosts. Files:
   `tls`, `auth`, `mcp`, and `version`.
 - `NFKServedMCP.h/.m` (private, 2026-10-11): MCP over Streamable HTTP at `/mcp`, outside `/v1`
   because MCP clients take the endpoint as one URL. Choices:
-  - Sessions since 2026-10-13 (see "MCP sessions" below); before that the endpoint was stateless and
-    answered GET and DELETE with 405. A POST reply is plain JSON, never an event stream.
+  - Sessions: see "MCP sessions" below. A POST reply is plain JSON, never an event stream.
   - A batch answers in order. Notifications get 202. A parse error is 400 with -32700, an unknown tool
     is -32602 (the spec's protocol error), and an unknown method -32601.
   - A failing call is an `isError` result, never a protocol error, so the client's model reads it.
@@ -1033,6 +1032,8 @@ and start times on `systemUptime`, and the job's last reported progress.
 **HTTPS with a self-signed identity (2026-10-13).** `NFKServerIdentity` makes and keeps the identity
 `TLSIdentity` takes, and clients pin its SHA-256 fingerprint (`pinnedCertificateSHA256` on
 `NFKRemoteInferKitBackend`, `NFKRemoteProvider`, and `NFKBalancedBackend`; `NFKServerStatus`'s pinned fetch).
+A pinned `NFKRemoteProvider` pins every client a factory builds from it: each backend class's
+`backendForProvider:`, the realtime session, the stores, reporters, runners, and the model catalog.
 The Bonjour TXT record carries the fingerprint under `cert_sha256`, which is advisory unless the client
 turns automatic pinning on (`NFKRemoteProvider.discoveryPinnedServers`, an `NFKPinnedServers`); then
 discovery and `NFKBalancedBackend` pin it on trust-on-first-use terms. The persistence measurements, the
@@ -1117,27 +1118,38 @@ imports.
   `+[NFKServerStatus statusWithJSONObject:]`, so the in-process reading and the route cannot drift.
 - The delegate protocol is `NS_SWIFT_SENDABLE`; measured with the isolation probe, a main-actor
   conformance runs on the delegate queue without a trap, and traps without the attribute.
-- Tests: `NFKServerObservationTests` (7): a run's two events and a failed run, a refused run with no
+- Tests: `NFKServerObservationTests` (8): a run's two events and a failed run, a refused run with no
   start, the seven model events of a load/unload/idle/failed-build/removal sequence in order, a
   pressure unload, one client event for two keep-alive requests with the key's name and scope, the
-  delegate queue, and the snapshot against the route.
+  delegate queue, the snapshot against the route, and a server that has not started (no start date,
+  no uptime).
 
 **MCP sessions (2026-10-13).** Per the Streamable HTTP transport (2025-06-18 and later), asked for so
 an app can list the agents connected to its `/mcp` and see them leave.
 
-- `initialize` (alone or in a batch) creates a session (`NFKServedMCPSessionStore`, private, in
-  `NFKServedMCP.m`) whose id is a UUID, returned as `Mcp-Session-Id` on that reply, and records
+- `initialize` (alone or in a batch) issues an id (a UUID, returned as `Mcp-Session-Id` on that reply)
+  and holds a pending record in `NFKServedMCPSessionStore` (private, in `NFKServedMCP.m`) with
   `clientInfo.name`, `clientInfo.version`, the negotiated `protocolVersion`, the client address, and
-  the key name. An `Mcp-Session-Id` sent with `initialize` is ignored: initialize always starts a new
-  session.
+  the key name. An `Mcp-Session-Id` sent with `initialize` is ignored: initialize always issues a new
+  id.
+- Decision: the session starts at the first POST or GET carrying the id under the same key (a
+  conforming client sends `notifications/initialized` with it at once). Only then is it listed in
+  `MCPSessions` and reported to the delegate, so a client that never echoes the id leaves no session
+  and fires no event. A pending record lapses after 60 s, or the idle timeout when that is shorter and
+  positive, even with the idle timeout off; at most 256 wait, and one more drops the oldest. A DELETE
+  of a pending id is 204 with no event; a revocation and a stop discard pending records.
+- The start and end events are queued under the store's lock, so a session's end is never reported
+  before its start. `openStream` installs the stream's `disconnectHandler` before publishing the
+  stream and clears it when the client already left, so a drop in between cannot leave a dead stream.
 - A later request with an id: an unknown or ended id, or one started under another key name, is 404
   (the spec's signal to initialize again). Decision: a request without an id is served statelessly,
   since the spec lets a server not require sessions, and clients that drop the id keep working. A GET
-  without an id is 405 (`Allow: GET, POST, DELETE`), which the TypeScript SDK treats as "no stream
-  offered" rather than an error; a DELETE without one is 400.
+  without an id is 405 (`Allow: GET, POST, DELETE`), which the TypeScript SDK reads as "no stream
+  offered"; a DELETE without one is 400.
 - GET with an id opens the event stream (200, `text/event-stream`, the id echoed); a second GET
-  replaces and closes the first. The store's timer, on its own serial utility queue and running only
-  while a session exists, ticks at a quarter of the shorter of `MCPPingInterval` and
+  replaces and closes the first. The store's timer, on its own serial utility queue, runs while an
+  active session has a ping or idle interval or a pending record waits, starts or stops whenever a
+  session or a setting changes, and ticks at a quarter of the shorter of `MCPPingInterval` and
   `MCPSessionIdleTimeout` (within 10 ms and 1 s). Each tick sends `{"jsonrpc":"2.0","id":
   "inferkit-ping-<n>","method":"ping"}` on every stream due one, and ends a session with
   `MCPMissedPingLimit` pings outstanding. A POSTed JSON-RPC response whose id starts with
@@ -1154,10 +1166,12 @@ an app can list the agents connected to its `/mcp` and see them leave.
   is never closed for idleness; pings are what detect a client that went away without closing.
 - In process: `MCPSessions` (snapshots, oldest first) and the delegate's start and end events; the
   status route does not list sessions, since their key names stay in process (the scoped-keys decision).
-- Tests: `NFKServedMCPSessionTests` (7): the issued id and client info, unknown ids on every method,
-  DELETE, idle expiry, the host's end and a stop, answered pings keeping a session past its idle
-  timeout and missed ones ending it and closing the stream, and a session bound to its key and ended
-  by the key's revocation. `NFKServedMCPTests`' bare GET now expects `Allow: GET, POST, DELETE`.
+- Tests: `NFKServedMCPSessionTests` (9): the issued id and client info, a client that never echoes the
+  id, unknown ids on every method, DELETE, idle expiry, the host's end and a stop, answered pings
+  keeping a session past its idle timeout and missed ones ending it and closing the stream, raising an
+  interval starting the timer, and a session bound to its key and ended by the key's revocation. The
+  expiry tests drive the store's injected clock (`uptimeProvider`) and call its sweep, so no
+  wall-clock interval decides them. `NFKServedMCPTests`' bare GET expects `Allow: GET, POST, DELETE`.
 
 **Hosting updates (2026-10-13).** Asked for by an app's service, which restarts the same server for a
 port or exposure change and pins models its user marks.
@@ -1173,7 +1187,10 @@ port or exposure change and pins models its user marks.
   first slot opens only when the surplus and one more run have ended.
 - `stop` closes the listener and keeps everything else (models, residency, counts, tools, the residency
   timer); `startWithError:` builds a new listener from the current settings. The status route's
-  `started` is the latest start.
+  `started` is the latest start and is absent before the first (`NFKServerStatus.startDate` nil);
+  `uptime_seconds` is 0 while the server is stopped. `unloadIdleModels` takes the backends out under
+  `residencyLock` and releases them after leaving it, so an MLX teardown does not hold the status route
+  or the pin and idle accessors; the unload events and the handler follow the release.
 - Pinning is by name, like the per-model idle intervals, under `residencyLock`: a pinned model is
   skipped by `unloadIdleModels`, its idle timeout is INFINITY (so `idle_timeout_seconds` is absent), and
   `unloadModelNamed:` still unloads it. The residency object carries `pinned`, which
@@ -1182,7 +1199,7 @@ port or exposure change and pins models its user marks.
   the queue limit with runs queued past it, a stop and two starts of one server across a
   loopback/network/advertising change, and a pinned model under idle and full pressure.
 
-**Scoped keys (2026-10-13).** The single `apiKey` became a set of named keys, each opening a set of
+**Scoped keys (2026-10-13).** The server holds a set of named keys, each opening a set of
 `NFKServerKeyScope`s, for an app service's per-client keys (a balancer, an agent, its own app API).
 
 - Scopes: Inference (every `/v1` route but status, unknown `/v1` paths included), Status
@@ -1194,19 +1211,22 @@ port or exposure change and pins models its user marks.
   (`default`): setting it adds that key with every scope, nil removes it, and reading returns that
   key's value whatever its scopes. `requiresAPIKeyOnLoopback` is computed over `loopbackExemptScopes`:
   YES empties it, NO fills it, and it reads YES when any scope needs a key on loopback. A loopback
-  client exempt from a scope passes whatever it presents, as before.
+  client exempt from a scope passes whatever it presents.
 - Matching: the presented token's SHA-256 digest is compared in constant time with every key's
   digest, without stopping at a match, so neither the length of a guess nor which key matched shows in
-  the timing (the old comparison returned early on a length mismatch). The first matching name in
+  the timing. The first matching name in
   sorted order wins. The keys are read under their lock on each request, so a revocation applies to the
   next request; a streamed reply already authorized finishes.
-- The routing order is now: trim the path, find its scope and the app prefix that claims it, check the
+- The routing order: trim the path, find its scope and the app prefix that claims it, check the
   key for that scope, then dispatch. The matched key's name is stored on `NFKHTTPRequest.keyName` and
   reaches app routes as `NFKServerRouteRequest.keyName`.
 - Decision: neither key values nor key names are reported over HTTP, in the status route or in a
   refusal, since a client with only the Status scope would otherwise learn the server's key inventory.
   `apiKeyNames` and `scopesForAPIKeyNamed:` list them in process. The Bonjour `auth` entry still
   follows `requiresAPIKey`.
+- Refusals: no key or an unknown one is 401 (`NFKInferenceServerErrorUnauthorized`, `WWW-Authenticate:
+  Bearer`); a held key without the route's scope is 403 (`NFKInferenceServerErrorInsufficientScope`,
+  `WWW-Authenticate: Bearer error="insufficient_scope"`), as RFC 6750 specifies.
 - `startWithError:` refuses with `NFKInferenceServerErrorAPIKeyRequired` when another machine needs a
   key or any scope needs one on loopback, and no key is set.
 - Tests: `NFKServerKeyTests` (5): each scope and a two-scope key against one route of each scope, a
@@ -1221,7 +1241,7 @@ rules.
 - Prefixes are normalized to one leading and one trailing slash. Refused with
   `NFKInferenceServerErrorInvalidConfiguration`: no leading slash, the root, an empty, `.`, or `..`
   segment, and a first segment of `v1` or `mcp` in any case. `/v1beta/` is the app's: the server's own
-  base test is `/v1` exactly or `/v1/…`, which the routing now uses too (it used `hasPrefix:@"/v1"`).
+  base test is `/v1` exactly or `/v1/…`, which the routing uses too.
 - Routing order: the key check, `/mcp`, the `/v1` routes, then the app routes by the longest matching
   prefix (`/myapp/admin/` before `/myapp/`; a prefix matches whole segments, so `/myapp/administer`
   is `/myapp/`'s), then 404. A path under `/v1` that no server route answers stays a 404 of the
@@ -1235,13 +1255,14 @@ rules.
 - The body limit is the listener's (`maximumRequestBodyBytes`): an oversized body is a 413 before
   routing, so the handler never sees it. The reason-phrase table gained 201, 202, 301, 302, 304, and
   409 for app replies; an unlisted status still writes "Status".
-- Tests: `NFKServerRouteTests` (7), over NSURLSession on a loopback port.
+- Tests: `NFKServerRouteTests` (8), over NSURLSession on a loopback port, one of them a finished
+  reply releasing a disconnect handler that captures it.
 
 **Sendable blocks (2026-10-13).** An app's Swift 6 service (`-default-isolation MainActor`) trapped in
 `_swift_task_checkIsolatedSwift` → `dispatch_assert_queue_fail` when the server called a provider
 closure written inline: the block type was not Sendable, so Swift inferred the closure main-actor
 isolated and checked the queue when the server called it on its own. Every block InferKit calls off the
-caller's queue is now `NS_SWIFT_SENDABLE` (written `(^ NS_SWIFT_SENDABLE)` in a parameter,
+caller's queue is `NS_SWIFT_SENDABLE` (written `(^ NS_SWIFT_SENDABLE)` in a parameter,
 `(^ NS_SWIFT_SENDABLE name)` in a typedef or property), which imports as `@Sendable` and leaves the
 closure nonisolated. The attribute changes nothing for Objective-C callers or overriders. The audit:
 
@@ -1281,7 +1302,9 @@ Errors carry `inferkit_domain`, `inferkit_code`, and `inferkit_user_info` beside
 status reading, and the native client rebuilds the whole `NSError`. Status mapping: not ready 503,
 missing input, unsupported, and refused 400, rate limited 429 (with `Retry-After` from
 `NFKRemoteErrorRetryAfterKey`), upstream unreachable 502, other failures 500, unknown model 404,
-missing or wrong key 401 with `WWW-Authenticate: Bearer`, a full queue
+missing or unknown key 401 with `WWW-Authenticate: Bearer`, a held key without the route's scope 403
+(`NFKInferenceServerErrorInsufficientScope`) with `WWW-Authenticate: Bearer error="insufficient_scope"`
+as RFC 6750 specifies, a full queue
 (`NFKInferenceServerErrorBusy`) 503 with `Retry-After`. The transport retries that 503 only when the
 `Retry-After` is within `maximumRetryDelay` (8 s by default).
 

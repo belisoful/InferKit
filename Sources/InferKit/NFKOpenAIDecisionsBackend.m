@@ -11,6 +11,7 @@
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
 #import "NFKRemoteMediaSupport.h"
+#import "NFKRemoteTransportPrivate.h"
 
 /*! The body fields this backend writes itself; a request parameter of the same name does not
 	overwrite them. */
@@ -45,6 +46,10 @@ static NSSet<NSString *> *NFKOpenAIDecisionsReservedFields(void)
 		return nil;
 	}
 	NFKOpenAIDecisionsBackend *backend = [self backendWithEndpointURL:[provider URLForPath:@"decisions"]];
+	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
+	if (pinned != nil) {
+		backend.session = pinned;
+	}
 	backend.apiKey = apiKey;
 	backend.modelName = modelName;
 	return backend;

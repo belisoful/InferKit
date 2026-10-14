@@ -13,6 +13,7 @@
 #import <InferKit/NFKErrors.h>
 #import "NFKRemoteMediaSupport.h"
 #import <InferKit/NFKRemoteFileStore.h>
+#import "NFKRemoteTransportPrivate.h"
 
 @implementation NFKRemoteEmbeddingBackend
 
@@ -38,6 +39,10 @@
 	if ([provider.identifier isEqualToString:@"gemini"]) {
 		backend.endpointURL = [provider.baseURL.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"models"];
 		backend.apiStyle = NFKRemoteEmbeddingAPIStyleGeminiNative;
+	}
+	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
+	if (pinned != nil) {
+		backend.session = pinned;
 	}
 	backend.apiKey = apiKey;
 	backend.modelName = modelName;

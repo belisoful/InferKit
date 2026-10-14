@@ -17,6 +17,7 @@
 #import "NFKToolMessageSupport.h"
 #import <InferKit/NFKToolMessages.h>
 #import <InferKit/NFKRemoteFileStore.h>
+#import "NFKRemoteTransportPrivate.h"
 
 /*! The contract keys this backend translates; every other parameter goes out under its own name. */
 static NSSet<NSString *> *NFKResponsesMappedParameters(void)
@@ -58,6 +59,10 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 		return nil;
 	}
 	NFKRemoteResponsesBackend *backend = [self backendWithEndpointURL:[provider URLForPath:@"responses"]];
+	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
+	if (pinned != nil) {
+		backend.session = pinned;
+	}
 	backend.apiKey = apiKey;
 	backend.modelName = modelName;
 	return backend;

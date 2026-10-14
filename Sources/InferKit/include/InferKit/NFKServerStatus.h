@@ -249,9 +249,10 @@ typedef NS_ENUM(NSInteger, NFKServerModelResidency) {
 /*! The server's InferKit version. */
 @property (nonatomic, readonly, copy) NSString *version;
 
-/*! When the server started listening. */
-@property (nonatomic, readonly, copy) NSDate *startDate;
+/*! When the server last started listening, or nil when it has not started. */
+@property (nonatomic, readonly, copy, nullable) NSDate *startDate;
 
+/*! Seconds since startDate while the server runs, and 0 while it is stopped. */
 @property (nonatomic, readonly) NSTimeInterval uptime;
 
 /*! The served models, sorted by name. */

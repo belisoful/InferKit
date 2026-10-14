@@ -105,9 +105,10 @@ classifier as macOS 12, so every use sits under `@available`; the zero-warning g
 unguarded call.
 
 1. `swift build` + `swift test` on the host — **0 warnings**, all tests green. Grep the log for
-   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 914 tests
-   (2026-10-13): the Objective-C `- (void)test` methods under `Tests/` (869) plus the `func test`
-   methods in `SwiftExamples/` (45).
+   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 988 tests
+   (2026-10-14): the Objective-C `- (void)test` methods under `Tests/` (895) and in
+   `Examples/NFKExamples.m` (48, the `InferKitExamples` target), plus the `func test` methods in
+   `SwiftExamples/` (45).
 2. `xcodebuild build` for a `generic/platform=iOS` destination (cross-platform compile), and for tvOS
    through the SDK: `-workspace InferKit.xcworkspace -scheme InferKit -sdk appletvos -arch arm64`.
    A tvOS destination does not resolve here and that is not the same as tvOS being unbuildable.
@@ -211,7 +212,7 @@ unguarded call.
    reported success. The examples targets are what keeps a documented snippet from rotting, which is
    exactly what a silent skip defeats. The per-target schemes exist to make that impossible; keep one
    testable in each. Only MLX is forced onto xcodebuild — `swift test` runs every test target a
-   package declares, so the core (877), `InferKitFoundationModels` (95), and `InferKitAppleSwift`
+   package declares, so the core (step 1's count), `InferKitFoundationModels` (95), and `InferKitAppleSwift`
    (26) are covered by steps 1, 5, and 6 whatever Xcode does with their schemes.
 5. `InferKitFoundationModels/` `swift build` + `swift test` when a change touches that companion. That
    covers all 95 tests across its three test targets. Through Xcode it collapses the same way MLX does

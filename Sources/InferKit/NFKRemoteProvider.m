@@ -15,6 +15,7 @@
 #import <InferKit/NFKRemoteTransport.h>
 #import "NFKInferKitDiscovery.h"
 #import "NFKPinnedServersPrivate.h"
+#import "NFKRemoteTransportPrivate.h"
 
 const NSTimeInterval NFKRemoteProviderProbeTimeout = 2.0;
 
@@ -39,6 +40,9 @@ static NSDictionary<NSString *, NSNumber *> *NFKModelAPIStyles(NSDictionary<NSNu
 @property (nonatomic, copy, readwrite) NSDictionary<NSString *, NSString *> *advertisedProperties;
 @property (nonatomic, copy, readwrite, nullable) NSString *pinnedCertificateSHA256;
 @property (nonatomic, assign, readwrite) NFKDiscoveredPinning discoveredPinning;
+/*! The pin as 64 lowercase hexadecimal digits, so each spelling of one fingerprint compares equal; a
+	malformed pin as given. */
+@property (nonatomic, readonly, nullable) NSString *comparablePin;
 @end
 
 static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
@@ -127,7 +131,13 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 		   self.apiStyle == other.apiStyle &&
 		   [self.modelAPIStyles isEqualToDictionary:other.modelAPIStyles] &&
 		   self.requiresAPIKey == other.requiresAPIKey &&
-		   (self.pinnedCertificateSHA256 == other.pinnedCertificateSHA256 || [self.pinnedCertificateSHA256 isEqualToString:other.pinnedCertificateSHA256]);
+		   (self.comparablePin == other.comparablePin || [self.comparablePin isEqualToString:other.comparablePin]);
+}
+
+- (nullable NSString *)comparablePin
+{
+	NSString *pin = self.pinnedCertificateSHA256;
+	return pin != nil ? (NFKRemoteNormalizedFingerprint(pin) ?: pin) : nil;
 }
 
 - (NSUInteger)hash
@@ -526,8 +536,9 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 									modelName:(nullable NSString *)modelName
 {
 	id<NFKInferenceBackend> backend = [self unpinnedBackendForProvider:provider apiKey:apiKey modelName:modelName];
-	if (provider.pinnedCertificateSHA256 != nil) {
-		[(id)backend setSession:[NFKRemoteTransport sessionWithPinnedCertificateSHA256:provider.pinnedCertificateSHA256]];
+	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
+	if (pinned != nil) {
+		[(id)backend setSession:pinned];
 	}
 	return backend;
 }

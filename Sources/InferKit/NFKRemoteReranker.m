@@ -7,6 +7,7 @@
 #import <InferKit/NFKRemoteProvider.h>
 #import <InferKit/NFKRemoteTransport.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteTransportPrivate.h"
 
 @implementation NFKRemoteReranker
 
@@ -27,6 +28,10 @@
 		return nil;
 	}
 	NFKRemoteReranker *reranker = [self rerankerWithEndpointURL:[provider URLForPath:@"rerank"]];
+	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
+	if (pinned != nil) {
+		reranker.session = pinned;
+	}
 	reranker.apiKey = apiKey;
 	reranker.modelName = modelName;
 	return reranker;

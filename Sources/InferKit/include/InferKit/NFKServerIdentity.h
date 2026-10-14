@@ -24,8 +24,9 @@ extern NSString * const NFKServerIdentityErrorDomain;
 				not be created, read, or written, or belongs to another user.
 	@constant   NFKServerIdentityErrorInvalidStoredIdentity The stored identity file is not a P-256
 				private key and a certificate whose public key is that key's.
-	@constant   NFKServerIdentityErrorInvalidName The common name is empty, or a subject alternative
-				name is empty or longer than a DNS name may be.
+	@constant   NFKServerIdentityErrorInvalidName The common name is empty, the list of subject
+				alternative names is empty, or a subject alternative name is neither an IP address nor
+				an ASCII DNS name of 1 to 253 characters without whitespace.
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ERROR_ENUM(NFKServerIdentityErrorDomain, NFKServerIdentityError) {
@@ -133,12 +134,12 @@ extern const NSTimeInterval NFKServerIdentityDefaultValidity;
 /*!
 	@method     renewedIdentityWithNewKey:error:
 	@abstract   An identity with a new certificate for the same names, stored where this one is.
-	@discussion The new certificate is valid for NFKServerIdentityDefaultValidity from now. newKey NO
-				keeps the private key; YES generates a new one, which a caller does when the key may
-				have been read by someone else. Either way the fingerprint changes. When this
-				identity has a directoryURL, the new identity replaces it there. This identity is
-				left as it is, so a running server keeps serving it until its TLSIdentity is set to
-				the new one and it restarts.
+	@discussion The new certificate is valid for NFKServerIdentityDefaultValidity from an hour before
+				now. newKey NO keeps the private key; YES generates a new one, which a caller does when
+				the key may have been read by someone else. Either way the fingerprint changes. When
+				this identity has a directoryURL, the new identity replaces it there. This identity is
+				left as it is, so a running server keeps serving it until its TLSIdentity is set to the
+				new one and it restarts.
 */
 - (nullable NFKServerIdentity *)renewedIdentityWithNewKey:(BOOL)newKey error:(NSError * _Nullable *)outError;
 

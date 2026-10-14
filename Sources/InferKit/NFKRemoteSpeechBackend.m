@@ -12,6 +12,7 @@
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKAudioAsset.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteTransportPrivate.h"
 
 /*! The contract keys this backend translates; every other parameter goes out under its own name. */
 static NSSet<NSString *> *NFKSpeechMappedParameters(void)
@@ -112,6 +113,10 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 	} else if ([identifier isEqualToString:@"xai"]) {
 		backend = [self backendWithEndpointURL:[provider URLForPath:@"tts"]];
 		backend.apiStyle = NFKRemoteSpeechAPIStyleXAI;
+	}
+	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
+	if (pinned != nil) {
+		backend.session = pinned;
 	}
 	backend.apiKey = apiKey;
 	backend.modelName = modelName;

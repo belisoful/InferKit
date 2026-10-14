@@ -116,6 +116,10 @@ fi
 # the compiler build every interface from the shipped text instead of reusing an earlier result.
 if [ -n "$DYNAMIC_SLICE" ]; then
 if [ ! -d "$DYNAMIC_SLICE/InferKitMLX.framework/Modules/InferKitMLX.swiftmodule" ]; then
+    # The C modules ship only beside the Swift interfaces, so their presence marks an interfaces build.
+    if [ -d "$DYNAMIC_SLICE/InferKitMLX.framework/Modules/Cmlx" ]; then
+        echo "    dynamic (Swift): FAILED — the framework carries the C modules but no InferKitMLX.swiftmodule"; exit 1
+    fi
     echo "    dynamic (Swift): skipped, the framework was built with --no-swift-interfaces"
     exit 0
 fi
@@ -144,7 +148,7 @@ xcrun swiftc -target "$TARGET" \
     "$WORK/probe.swift" -framework InferKitMLX -Xlinker -rpath -Xlinker "$DYNAMIC_SLICE" \
     -o "$WORK/swift-run/probe" > "$WORK/swift.log" 2>&1 || true
 if [ ! -x "$WORK/swift-run/probe" ]; then
-    grep ": error:" "$WORK/swift.log" | sort -u | head -5 | sed 's/^/      /'
+    grep ": error:" "$WORK/swift.log" | sort -u | head -5 | sed 's/^/      /' || true
     echo "    dynamic (Swift): FAILED — did not compile"; exit 1
 fi
 report "dynamic (Swift)" "$("$WORK/swift-run/probe" 2>&1 | tail -1)"

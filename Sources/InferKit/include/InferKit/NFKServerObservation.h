@@ -57,6 +57,7 @@ NS_SWIFT_SENDABLE
 /*! The name of the key the request presented, or nil. */
 @property (nonatomic, readonly, copy, nullable) NSString *keyName;
 
+/*! Started for a start event; the run's outcome for an end event. */
 @property (nonatomic, readonly) NFKServerRunState state;
 
 /*! Seconds from the request's arrival to its start, or to its end when it never started. */
@@ -112,8 +113,13 @@ typedef NS_ENUM(NSInteger, NFKServerModelEventReason) {
 NS_SWIFT_SENDABLE
 @interface NFKServerModelEvent : NSObject
 
+/*! The hosted name of the model. */
 @property (nonatomic, readonly, copy) NSString *modelName;
+
+/*! Whether the backend loaded, failed to load, or was released. */
 @property (nonatomic, readonly) NFKServerModelEventKind kind;
+
+/*! Why the model was built or released. */
 @property (nonatomic, readonly) NFKServerModelEventReason reason;
 
 /*! How long the build took, for a load or a failed load; 0 for an unload. */
@@ -142,6 +148,7 @@ NS_SWIFT_SENDABLE
 /*! The client's IP address as text. */
 @property (nonatomic, readonly, copy) NSString *clientAddress;
 
+/*! Whether the client connected over a loopback address. */
 @property (nonatomic, readonly) BOOL fromLoopback;
 
 /*! The name of the key the first request presented, or nil when it presented none. */
@@ -187,8 +194,9 @@ typedef NS_ENUM(NSInteger, NFKServerMCPSessionEndReason) {
 /*!
 	@class      NFKServerMCPSession
 	@abstract   An MCP client's session on the server, as it stood when the object was made.
-	@discussion The server issues a session at initialize and reads the client's name, version, and
-				protocol version from it. Introduced in InferKit 0.4.0.
+	@discussion initialize issues the session's id and gives the client's name, version, and protocol
+				version. The session starts at the client's first request that carries the id; a
+				client that never sends it back has no session. Introduced in InferKit 0.4.0.
 */
 NS_SWIFT_SENDABLE
 @interface NFKServerMCPSession : NSObject
@@ -211,6 +219,7 @@ NS_SWIFT_SENDABLE
 /*! The name of the key initialize presented, or nil. */
 @property (nonatomic, readonly, copy, nullable) NSString *keyName;
 
+/*! When the session started: the client's first request carrying its id. */
 @property (nonatomic, readonly, copy) NSDate *startDate;
 
 /*! When the client last sent a request, a notification, or a ping's answer, or closed its stream. */
@@ -260,7 +269,7 @@ NS_SWIFT_SENDABLE
 /*! A client's connection passed its first key check. */
 - (void)inferenceServer:(NFKInferenceServer *)server didConnectClient:(NFKServerClientEvent *)event;
 
-/*! An MCP client initialized a session. */
+/*! An MCP session started: its client sent the issued id back for the first time. */
 - (void)inferenceServer:(NFKInferenceServer *)server didStartMCPSession:(NFKServerMCPSession *)session;
 
 /*! An MCP session ended; endReason says why. */

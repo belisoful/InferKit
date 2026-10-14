@@ -38,11 +38,14 @@ extern NSString * const NFKInferenceServerErrorDomain;
 	@constant   NFKInferenceServerErrorInvalidConfiguration The configuration cannot be served:
 				maximumConcurrentRunsPerModel or maximumRequestBodyBytes is zero.
 	@constant   NFKInferenceServerErrorModelNotFound A request named a model the server does not host.
-	@constant   NFKInferenceServerErrorUnauthorized A request carried no key, or none whose scopes include
-				the route's.
+	@constant   NFKInferenceServerErrorUnauthorized A request needed a key and carried none, or one the
+				server does not hold. The reply is 401 with WWW-Authenticate: Bearer.
 	@constant   NFKInferenceServerErrorBusy A request found its model's queue full
 				(maximumQueuedRunsPerModel). The reply is 503 with a Retry-After of the estimated wait,
 				and NFKRemoteErrorRetryAfterKey carries the same moment.
+	@constant   NFKInferenceServerErrorInsufficientScope A request carried a key the server holds whose
+				scopes do not include the route's. The reply is 403 with WWW-Authenticate: Bearer
+				error="insufficient_scope".
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
@@ -52,6 +55,7 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 	NFKInferenceServerErrorModelNotFound = 4,
 	NFKInferenceServerErrorUnauthorized = 5,
 	NFKInferenceServerErrorBusy = 6,
+	NFKInferenceServerErrorInsufficientScope = 7,
 };
 
 /*! The name apiKey reads and writes among the server's keys. Introduced in InferKit 0.4.0. */
@@ -130,16 +134,17 @@ NS_SWIFT_SENDABLE
 
 				Beside them, POST /mcp serves the tools added with addTool: over the Model Context
 				Protocol (Streamable HTTP), so an MCP client reaches them: Claude Code, Claude
-				Desktop, an agent framework, or NFKMCPClient. initialize issues an Mcp-Session-Id; a
-				client that sends it back is in a session, which a DELETE ends, and a GET opens the
-				session's event stream, on which the server pings the client every MCPPingInterval. A
-				session ends when its client misses MCPMissedPingLimit pings, or, with no stream open,
-				sends nothing for MCPSessionIdleTimeout; its id is then answered 404. A client that
-				never sends the id back is served without a session. MCPSessions lists the sessions. Only the added tools are listed; a hosted
-				model is a tool when an NFKBackendTool for it is added. A tool's text, the images it
-				shows the model, and the audio it generates come back as MCP content. The route takes
-				a key with NFKServerKeyScopeMCP, and refuses a browser request whose Origin names
-				another host.
+				Desktop, an agent framework, or NFKMCPClient. initialize issues an Mcp-Session-Id, and
+				the session starts at the client's first request that carries it. A DELETE ends the
+				session, and a GET opens its event stream, on which the server pings the client every
+				MCPPingInterval. A session ends when its client misses MCPMissedPingLimit pings, or,
+				with no stream open, sends nothing for MCPSessionIdleTimeout; its id is then answered
+				404. A client that never sends the id back is served without a session, and the id it
+				was issued lapses unreported. MCPSessions lists the sessions. Only the added tools are
+				listed; a hosted model is a tool when an NFKBackendTool for it is added. A tool's text,
+				the images it shows the model, and the audio it generates come back as MCP content. The
+				route takes a key with NFKServerKeyScopeMCP, and refuses a browser request whose Origin
+				names another host.
 
 				A request names its model in the body's model field. When the server hosts exactly
 				one model, a request that names none runs on it.
@@ -313,8 +318,10 @@ NS_SWIFT_SENDABLE
 - (void)addAPIKey:(NSString *)key named:(NSString *)name scopes:(NFKServerKeyScope)scopes
 	NS_SWIFT_NAME(addAPIKey(_:named:scopes:));
 
-/*! Revokes the key under name: the next request that presents it is refused, and the MCP sessions it
-	started end. A reply already being written finishes. Introduced in InferKit 0.4.0. */
+/*! Revokes the key under name: the next request that presents it is treated as presenting no key, and
+	the MCP sessions it started end. Where a route needs a key, that request is refused; a loopback
+	client in loopbackExemptScopes, or any client while requiresAPIKey is NO, is still served. A reply
+	already being written finishes. Introduced in InferKit 0.4.0. */
 - (void)removeAPIKeyNamed:(NSString *)name;
 
 /*! The names of the server's keys, sorted. Introduced in InferKit 0.4.0. */
@@ -551,7 +558,9 @@ NS_SWIFT_SENDABLE
 	InferKit 0.4.0. */
 @property (nonatomic, assign) NSUInteger MCPMissedPingLimit;
 
-/*! The active MCP sessions, oldest first, as they stand now. Introduced in InferKit 0.4.0. */
+/*! The active MCP sessions, oldest first, as they stand now. A session starts at its client's first
+	request that carries the Mcp-Session-Id initialize issued, so a client that never sends the id back
+	is not listed. Introduced in InferKit 0.4.0. */
 @property (nonatomic, readonly, copy) NSArray<NFKServerMCPSession *> *MCPSessions;
 
 /*! Ends the MCP session with the identifier, closing its stream; the client's next request is answered
@@ -560,7 +569,8 @@ NS_SWIFT_SENDABLE
 - (BOOL)endMCPSessionWithIdentifier:(NSString *)identifier;
 
 /*! Receives the server's runs, model loads and unloads, client connections, and MCP sessions in
-	process. Held weakly. Introduced in InferKit 0.4.0. */
+	process. An MCP session starts, and the delegate learns of it, at its client's first request that
+	carries the issued Mcp-Session-Id. Held weakly. Introduced in InferKit 0.4.0. */
 @property (atomic, weak, nullable) id<NFKInferenceServerDelegate> delegate;
 
 /*! The queue the delegate's methods run on. Defaults to a serial queue of the server's, so the events
@@ -583,10 +593,9 @@ NS_SWIFT_SENDABLE
 - (BOOL)startWithError:(NSError * _Nullable *)outError;
 
 /*! Stops listening, closes every connection, cancels the runs they were waiting on, and ends every MCP
-	session. The hosted
-	models, their residency and counts, the tools, and every setting stay, so startWithError: on the same
-	object listens again with the settings as they are then: a port, loopbackOnly, advertisesService, or
-	TLSIdentity change is stop, change, start. */
+	session. The hosted models, their residency and counts, the tools, and every setting stay, so
+	startWithError: on the same object listens again with the settings as they are then: a port,
+	loopbackOnly, advertisesService, or TLSIdentity change is stop, change, start. */
 - (void)stop;
 
 @end

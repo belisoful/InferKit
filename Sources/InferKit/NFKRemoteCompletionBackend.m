@@ -12,6 +12,7 @@
 #import <InferKit/NFKInferenceJob.h>
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteTransportPrivate.h"
 
 @implementation NFKRemoteCompletionBackend
 
@@ -41,6 +42,10 @@
 	} else if ([identifier isEqualToString:@"llamacpp"]) {
 		backend = [self backendWithEndpointURL:versionRoot];
 		backend.apiStyle = NFKRemoteCompletionAPIStyleLlamaCpp;
+	}
+	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
+	if (pinned != nil) {
+		backend.session = pinned;
 	}
 	backend.apiKey = apiKey;
 	backend.modelName = modelName;

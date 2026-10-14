@@ -7,6 +7,7 @@
 #import <InferKit/NFKRemoteTransport.h>
 #import <InferKit/NFKErrors.h>
 #import "NFKLocalRunnerSupport.h"
+#import "NFKRemoteTransportPrivate.h"
 
 @interface NFKLMStudioRunner ()
 @property (nonatomic, copy, readwrite) NFKRemoteProvider *provider;
@@ -34,7 +35,7 @@
 - (NSURLSession *)session
 {
 	if (_session == nil) {
-		_session = [NSURLSession sharedSession];
+		_session = NFKRemotePinnedSessionForProvider(self.provider) ?: NSURLSession.sharedSession;
 	}
 	return _session;
 }

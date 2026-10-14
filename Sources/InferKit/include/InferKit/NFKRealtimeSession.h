@@ -44,7 +44,9 @@ NS_ASSUME_NONNULL_BEGIN
 @interface NFKRealtimeWebSocket : NSObject <NFKRealtimeSocket>
 
 /*! A socket for the request, whose URL is the ws:// or wss:// endpoint and whose headers carry the
-	key. */
+	key, on the session, or on the shared session for nil. On a session from NFKRemoteTransport's
+	sessionWithPinnedCertificateSHA256:, the socket opens only to a wss:// URL whose server presents
+	the pinned certificate; any other URL closes it unopened with kNFKError_InferenceBackendFailure. */
 - (instancetype)initWithRequest:(NSURLRequest *)request session:(nullable NSURLSession *)session NS_DESIGNATED_INITIALIZER;
 - (instancetype)init NS_UNAVAILABLE;
 
@@ -142,6 +144,11 @@ typedef NS_ENUM(NSInteger, NFKRealtimeTextKind) {
 /*! The service's ws:// or wss:// endpoint, without the query the session adds. */
 @property (nonatomic, copy, nullable) NSURL *endpointURL;
 
+/*! The URL session the socket opens on, or nil for the shared session.
+	sessionForProvider:apiStyle:apiKey:modelName: sets NFKRemoteTransport's pinned session for a
+	provider that carries a pinnedCertificateSHA256. Introduced in InferKit 0.4.0. */
+@property (nonatomic, strong, nullable) NSURLSession *URLSession;
+
 /*! The key, sent the way the service reads it. */
 @property (nonatomic, copy, nullable) NSString *apiKey;
 
@@ -188,7 +195,8 @@ typedef NS_ENUM(NSInteger, NFKRealtimeTextKind) {
 				provider does not serve it.
 	@discussion openai serves the three OpenAI styles; xai its conversation, transcription, and
 				speech; gemini Live and live music; mistral and vllm transcription; together
-				transcription and speech.
+				transcription and speech. A provider's pinnedCertificateSHA256 sets URLSession to
+				NFKRemoteTransport's pinned session for that fingerprint.
 */
 + (nullable instancetype)sessionForProvider:(NFKRemoteProvider *)provider
 								   apiStyle:(NFKRealtimeAPIStyle)apiStyle

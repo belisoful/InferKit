@@ -12,6 +12,7 @@
 #import <InferKit/NFKInferenceResult.h>
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteTransportPrivate.h"
 
 @implementation NFKRemoteClassifierBackend
 
@@ -30,6 +31,10 @@
 		backend.apiStyle = NFKRemoteClassifierAPIStyleVLLM;
 	} else {
 		return nil;
+	}
+	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
+	if (pinned != nil) {
+		backend.session = pinned;
 	}
 	backend.apiKey = apiKey;
 	backend.modelName = modelName;

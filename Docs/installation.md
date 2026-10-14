@@ -77,8 +77,9 @@ Three flags trim what gets built and written:
 
 `--verify` links a consumer against each artifact and runs a model on the GPU, and builds and runs a
 Swift consumer against the dynamic framework's interfaces. A binary that links can still fail to find
-its Metal library, so linking alone is not the check. It reports what it skipped rather than failing
-when a variant or the macOS slice was not built.
+its Metal library, so linking alone is not the check. A variant or macOS slice that was not built is
+reported as skipped. A dynamic framework that carries the C modules but no `InferKitMLX.swiftmodule`
+fails.
 
 ## Linking the binary artifacts
 

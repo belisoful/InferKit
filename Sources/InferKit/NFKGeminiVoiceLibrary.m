@@ -7,6 +7,7 @@
 #import <InferKit/NFKRemoteProvider.h>
 #import <InferKit/NFKRemoteTransport.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteTransportPrivate.h"
 
 /*! The voice fields the library writes itself; an attribute of the same name does not overwrite them. */
 static NSSet<NSString *> *NFKGeminiVoiceReservedFields(void)
@@ -31,6 +32,10 @@ static NSSet<NSString *> *NFKGeminiVoiceReservedFields(void)
 	NFKGeminiVoiceLibrary *library = [[self alloc] init];
 	// The preset's base is the OpenAI layer under v1beta; the voices collection is its sibling.
 	library.endpointURL = [provider.baseURL.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"voices"];
+	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
+	if (pinned != nil) {
+		library.session = pinned;
+	}
 	library.apiKey = apiKey;
 	return library;
 }

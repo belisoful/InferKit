@@ -7,6 +7,7 @@
 #import <InferKit/NFKRemoteProvider.h>
 #import <InferKit/NFKRemoteTransport.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteTransportPrivate.h"
 
 static NSISO8601DateFormatter *NFKUsageTimestampFormatter(void)
 {
@@ -141,6 +142,10 @@ static NSArray *NFKUsageArray(id value)
 	NFKRemoteUsageReporter *reporter = [[self alloc] init];
 	reporter.apiStyle = [route[0] integerValue];
 	reporter.endpointURL = [NSURL URLWithString:route[1]];
+	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
+	if (pinned != nil) {
+		reporter.session = pinned;
+	}
 	reporter.apiKey = apiKey;
 	return reporter;
 }

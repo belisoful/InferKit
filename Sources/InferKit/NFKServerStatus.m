@@ -242,7 +242,7 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 
 @interface NFKServerStatus ()
 @property (nonatomic, readwrite, copy) NSString *version;
-@property (nonatomic, readwrite, copy) NSDate *startDate;
+@property (nonatomic, readwrite, copy, nullable) NSDate *startDate;
 @property (nonatomic, readwrite) NSTimeInterval uptime;
 @property (nonatomic, readwrite, copy) NSArray<NFKServerModelStatus *> *models;
 @property (nonatomic, readwrite, strong, nullable) NFKServerHostStatus *host;
@@ -260,7 +260,8 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 	NFKServerStatus *status = [[self alloc] init];
 	NSDictionary *server = NFKStatusDictionary(reply[@"server"]) ?: @{};
 	status.version = NFKStatusString(server[@"version"]);
-	status.startDate = [NSDate dateWithTimeIntervalSince1970:NFKStatusNumber(server[@"started"]).doubleValue];
+	NSNumber *started = NFKStatusNumber(server[@"started"]);
+	status.startDate = started != nil ? [NSDate dateWithTimeIntervalSince1970:started.doubleValue] : nil;
 	status.uptime = NFKStatusNumber(server[@"uptime_seconds"]).doubleValue;
 	NSMutableArray<NFKServerModelStatus *> *models = [NSMutableArray array];
 	for (id value in [reply[@"models"] isKindOfClass:NSArray.class] ? reply[@"models"] : @[]) {

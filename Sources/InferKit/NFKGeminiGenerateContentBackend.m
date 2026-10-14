@@ -17,6 +17,7 @@
 #import <InferKit/NFKErrors.h>
 #import "NFKRemoteMediaSupport.h"
 #import "NFKToolMessageSupport.h"
+#import "NFKRemoteTransportPrivate.h"
 
 /*! The contract keys this backend translates or has no field for; every other parameter goes into
 	generationConfig, or the request's top level for the names in NFKGenerateContentTopLevelParameters. */
@@ -130,6 +131,10 @@ static NSString * _Nullable NFKGenerateContentTextInBytes(NSString *text, id sta
 		return nil;
 	}
 	NFKGeminiGenerateContentBackend *backend = [self backendWithEndpointURL:endpointURL];
+	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
+	if (pinned != nil) {
+		backend.session = pinned;
+	}
 	backend.apiKey = apiKey;
 	backend.modelName = modelName;
 	return backend;

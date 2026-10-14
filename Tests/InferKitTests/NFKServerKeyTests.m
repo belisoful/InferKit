@@ -50,12 +50,13 @@
 	return statuses;
 }
 
-/*! The statuses statusesWithKey: expects when exactly the scopes in open answer. */
-- (NSDictionary<NSNumber *, NSNumber *> *)statusesOpening:(NFKServerKeyScope)open
+/*! The statuses statusesWithKey: expects when exactly the scopes in open answer and the others refuse
+	with refusal. */
+- (NSDictionary<NSNumber *, NSNumber *> *)statusesOpening:(NFKServerKeyScope)open refusing:(NSInteger)refusal
 {
 	NSMutableDictionary<NSNumber *, NSNumber *> *statuses = [NSMutableDictionary dictionary];
 	for (NSNumber *scope in @[ @(NFKServerKeyScopeInference), @(NFKServerKeyScopeStatus), @(NFKServerKeyScopeMCP), @(NFKServerKeyScopeAppRoutes) ]) {
-		statuses[scope] = (open & scope.unsignedIntegerValue) != 0 ? @200 : @401;
+		statuses[scope] = (open & scope.unsignedIntegerValue) != 0 ? @200 : @(refusal);
 	}
 	return statuses;
 }
@@ -100,20 +101,22 @@
 	XCTAssertEqual([self.server scopesForAPIKeyNamed:@"balancer"], NFKServerKeyScopeInference | NFKServerKeyScopeStatus);
 	XCTAssertEqual([self.server scopesForAPIKeyNamed:@"absent"], 0);
 
-	XCTAssertEqualObjects([self statusesWithKey:@"key-inference"], [self statusesOpening:NFKServerKeyScopeInference]);
-	XCTAssertEqualObjects([self statusesWithKey:@"key-status"], [self statusesOpening:NFKServerKeyScopeStatus]);
-	XCTAssertEqualObjects([self statusesWithKey:@"key-mcp"], [self statusesOpening:NFKServerKeyScopeMCP]);
-	XCTAssertEqualObjects([self statusesWithKey:@"key-app"], [self statusesOpening:NFKServerKeyScopeAppRoutes]);
-	XCTAssertEqualObjects([self statusesWithKey:@"key-balancer"], [self statusesOpening:NFKServerKeyScopeInference | NFKServerKeyScopeStatus]);
-	XCTAssertEqualObjects([self statusesWithKey:nil], [self statusesOpening:0]);
-	XCTAssertEqualObjects([self statusesWithKey:@"key-app-and-more"], [self statusesOpening:0], @"a key must match whole");
+	XCTAssertEqualObjects([self statusesWithKey:@"key-inference"], [self statusesOpening:NFKServerKeyScopeInference refusing:403]);
+	XCTAssertEqualObjects([self statusesWithKey:@"key-status"], [self statusesOpening:NFKServerKeyScopeStatus refusing:403]);
+	XCTAssertEqualObjects([self statusesWithKey:@"key-mcp"], [self statusesOpening:NFKServerKeyScopeMCP refusing:403]);
+	XCTAssertEqualObjects([self statusesWithKey:@"key-app"], [self statusesOpening:NFKServerKeyScopeAppRoutes refusing:403]);
+	XCTAssertEqualObjects([self statusesWithKey:@"key-balancer"], [self statusesOpening:NFKServerKeyScopeInference | NFKServerKeyScopeStatus refusing:403]);
+	XCTAssertEqualObjects([self statusesWithKey:nil], [self statusesOpening:0 refusing:401]);
+	XCTAssertEqualObjects([self statusesWithKey:@"key-app-and-more"], [self statusesOpening:0 refusing:401], @"a key must match whole");
 
 	NSData *data = nil;
 	[self responseTo:@"GET" path:@"/myapp/x" body:nil key:@"key-app" data:&data];
 	NSDictionary *reply = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
 	XCTAssertEqualObjects(reply[@"key"], @"app", @"an app route learns the key's name");
+	NSHTTPURLResponse *unknown = [self responseTo:@"GET" path:@"/v1/models" body:nil key:@"key-absent" data:NULL];
+	XCTAssertEqualObjects([unknown valueForHTTPHeaderField:@"WWW-Authenticate"], @"Bearer");
 	NSHTTPURLResponse *refused = [self responseTo:@"GET" path:@"/v1/models" body:nil key:@"key-app" data:&data];
-	XCTAssertEqualObjects([refused valueForHTTPHeaderField:@"WWW-Authenticate"], @"Bearer");
+	XCTAssertEqualObjects([refused valueForHTTPHeaderField:@"WWW-Authenticate"], @"Bearer error=\"insufficient_scope\"");
 	NSString *text = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
 	XCTAssertFalse([text containsString:@"key-app"], @"a refusal does not echo the key");
 	XCTAssertFalse([text containsString:@"\"app\""], @"a refusal does not name the key");
@@ -142,20 +145,20 @@
 {
 	XCTAssertEqual(self.server.loopbackExemptScopes, NFKServerKeyScopeAll);
 	XCTAssertFalse(self.server.requiresAPIKeyOnLoopback);
-	XCTAssertEqualObjects([self statusesWithKey:nil], [self statusesOpening:NFKServerKeyScopeAll]);
+	XCTAssertEqualObjects([self statusesWithKey:nil], [self statusesOpening:NFKServerKeyScopeAll refusing:401]);
 
 	[self.server addAPIKey:@"key-inference" named:@"inference" scopes:NFKServerKeyScopeInference];
 	self.server.loopbackExemptScopes = NFKServerKeyScopeStatus | NFKServerKeyScopeAppRoutes;
 	XCTAssertTrue(self.server.requiresAPIKeyOnLoopback, @"some scope needs a key on loopback");
-	XCTAssertEqualObjects([self statusesWithKey:nil], [self statusesOpening:NFKServerKeyScopeStatus | NFKServerKeyScopeAppRoutes]);
+	XCTAssertEqualObjects([self statusesWithKey:nil], [self statusesOpening:NFKServerKeyScopeStatus | NFKServerKeyScopeAppRoutes refusing:401]);
 	XCTAssertEqualObjects([self statusesWithKey:@"key-inference"],
-						  [self statusesOpening:NFKServerKeyScopeStatus | NFKServerKeyScopeAppRoutes | NFKServerKeyScopeInference]);
+						  [self statusesOpening:NFKServerKeyScopeStatus | NFKServerKeyScopeAppRoutes | NFKServerKeyScopeInference refusing:403]);
 
 	self.server.requiresAPIKeyOnLoopback = NO;
 	XCTAssertEqual(self.server.loopbackExemptScopes, NFKServerKeyScopeAll);
 	self.server.requiresAPIKeyOnLoopback = YES;
 	XCTAssertEqual(self.server.loopbackExemptScopes, 0);
-	XCTAssertEqualObjects([self statusesWithKey:nil], [self statusesOpening:0]);
+	XCTAssertEqualObjects([self statusesWithKey:nil], [self statusesOpening:0 refusing:401]);
 }
 
 - (void)testStartRequiresAKeyWhenAScopeNeedsOne
@@ -182,15 +185,15 @@
 	XCTAssertEqualObjects(self.server.apiKeyNames, @[ NFKInferenceServerDefaultAPIKeyName ]);
 	XCTAssertEqualObjects(NFKInferenceServerDefaultAPIKeyName, @"default");
 	XCTAssertEqual([self.server scopesForAPIKeyNamed:@"default"], NFKServerKeyScopeAll);
-	XCTAssertEqualObjects([self statusesWithKey:@"legacy"], [self statusesOpening:NFKServerKeyScopeAll]);
+	XCTAssertEqualObjects([self statusesWithKey:@"legacy"], [self statusesOpening:NFKServerKeyScopeAll refusing:403]);
 
 	[self.server addAPIKey:@"narrowed" named:NFKInferenceServerDefaultAPIKeyName scopes:NFKServerKeyScopeMCP];
 	XCTAssertEqualObjects(self.server.apiKey, @"narrowed", @"apiKey reads the key named default");
-	XCTAssertEqualObjects([self statusesWithKey:@"narrowed"], [self statusesOpening:NFKServerKeyScopeMCP]);
+	XCTAssertEqualObjects([self statusesWithKey:@"narrowed"], [self statusesOpening:NFKServerKeyScopeMCP refusing:403]);
 
 	self.server.apiKey = nil;
 	XCTAssertEqualObjects(self.server.apiKeyNames, @[]);
-	XCTAssertEqualObjects([self statusesWithKey:@"narrowed"], [self statusesOpening:0]);
+	XCTAssertEqualObjects([self statusesWithKey:@"narrowed"], [self statusesOpening:0 refusing:401]);
 }
 
 @end

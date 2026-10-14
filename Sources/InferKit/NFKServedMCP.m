@@ -64,9 +64,20 @@ NSDictionary<NSString *, id> *NFKMCPCallResult(NFKToolResult *result)
 
 static NSString * const NFKMCPPingPrefix = @"inferkit-ping-";
 
+/*! The seconds an issued session waits for its client to send the id back, unless idleTimeout is shorter. */
+static NSTimeInterval const NFKMCPPendingWindow = 60;
+
+/*! The issued sessions that wait at once; issuing one more discards the oldest. */
+static NSUInteger const NFKMCPPendingLimit = 256;
+
 static NSTimeInterval NFKMCPNow(void)
 {
 	return NSProcessInfo.processInfo.systemUptime;
+}
+
+static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable right)
+{
+	return left == right || [left isEqualToString:right];
 }
 
 /*! One session's state. Every property is read and written on the store's lock. */
@@ -78,6 +89,7 @@ static NSTimeInterval NFKMCPNow(void)
 @property (nonatomic, copy) NSString *clientAddress;
 @property (nonatomic, copy, nullable) NSString *keyName;
 @property (nonatomic, copy) NSDate *startDate;
+/*! When initialize issued the session, then when the client's first request carrying its id started it. */
 @property (nonatomic, assign) NSTimeInterval startedAt;
 @property (nonatomic, assign) NSTimeInterval lastActivity;
 @property (nonatomic, strong, nullable) NFKHTTPResponse *stream;
@@ -109,11 +121,18 @@ static NSTimeInterval NFKMCPNow(void)
 @end
 
 @interface NFKServedMCPSessionStore ()
+/*! The active sessions by identifier. */
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NFKServedMCPSessionRecord *> *records;
+/*! The issued sessions whose clients have not yet sent the id back, by identifier. */
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NFKServedMCPSessionRecord *> *pendingRecords;
 @property (nonatomic, strong) dispatch_queue_t queue;
 /*! Delivers the event handler's calls in order. */
 @property (nonatomic, strong) dispatch_queue_t eventQueue;
 @property (nonatomic, strong, nullable) dispatch_source_t timer;
+/*! The period the timer runs at, or 0 while it is stopped. */
+@property (nonatomic, assign) NSTimeInterval timerInterval;
+/*! The monotonic clock in seconds that every activity and expiry reads, which a test replaces. */
+@property (atomic, copy) NSTimeInterval (^uptimeProvider)(void);
 @end
 
 @implementation NFKServedMCPSessionStore
@@ -123,11 +142,15 @@ static NSTimeInterval NFKMCPNow(void)
 	self = [super init];
 	if (self != nil) {
 		_records = [NSMutableDictionary dictionary];
+		_pendingRecords = [NSMutableDictionary dictionary];
 		_idleTimeout = 1800;
 		_pingInterval = 30;
 		_missedPingLimit = 3;
 		_queue = dispatch_queue_create("NFKInferenceServer.mcp", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0));
 		_eventQueue = dispatch_queue_create("NFKInferenceServer.mcp.events", dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0));
+		_uptimeProvider = ^NSTimeInterval {
+			return NFKMCPNow();
+		};
 	}
 	return self;
 }
@@ -139,6 +162,12 @@ static NSTimeInterval NFKMCPNow(void)
 	}
 }
 
+- (NSTimeInterval)uptime
+{
+	return self.uptimeProvider();
+}
+
+/*! Runs on the lock, so the handler receives the events in the order they happened. */
 - (void)report:(NFKServerMCPSession *)session ended:(BOOL)ended
 {
 	void (^handler)(NFKServerMCPSession *, BOOL) = self.eventHandler;
@@ -152,11 +181,12 @@ static NSTimeInterval NFKMCPNow(void)
 
 #pragma mark Lifecycle
 
-- (NFKServedMCPSessionRecord *)beginSessionForRequest:(NFKHTTPRequest *)request
-										   clientInfo:(nullable NSDictionary *)clientInfo
-									  protocolVersion:(NSString *)protocolVersion
+/*! Issues a session for an initialize and returns its identifier. The session waits, unlisted and
+	unreported, for the client's first request that carries the identifier. */
+- (NSString *)issueSessionForRequest:(NFKHTTPRequest *)request
+						  clientInfo:(nullable NSDictionary *)clientInfo
+					 protocolVersion:(NSString *)protocolVersion
 {
-	NSTimeInterval now = NFKMCPNow();
 	NFKServedMCPSessionRecord *record = [[NFKServedMCPSessionRecord alloc] init];
 	record.identifier = NSUUID.UUID.UUIDString;
 	record.clientName = [clientInfo[@"name"] isKindOfClass:NSString.class] ? clientInfo[@"name"] : nil;
@@ -165,26 +195,79 @@ static NSTimeInterval NFKMCPNow(void)
 	record.clientAddress = request.clientAddress ?: @"";
 	record.keyName = request.keyName;
 	record.startDate = [NSDate date];
-	record.startedAt = now;
-	record.lastActivity = now;
-	NFKServerMCPSession *snapshot = nil;
 	@synchronized (self) {
-		self.records[record.identifier] = record;
-		snapshot = [record snapshotAt:now endReason:NFKServerMCPSessionEndReasonNone];
-		[self scheduleTimer];
+		record.startedAt = [self uptime];
+		record.lastActivity = record.startedAt;
+		[self makeRoomForPendingSession];
+		self.pendingRecords[record.identifier] = record;
+		[self updateTimer];
 	}
-	[self report:snapshot ended:NO];
-	return record;
+	return record.identifier;
 }
 
-/*! The active session a request names, when it started with the same key name, or nil. */
-- (nullable NFKServedMCPSessionRecord *)activeSessionWithIdentifier:(NSString *)identifier keyName:(nullable NSString *)keyName
+/*! Discards the oldest issued sessions until one more fits. Runs on the lock. */
+- (void)makeRoomForPendingSession
+{
+	while (self.pendingRecords.count >= NFKMCPPendingLimit) {
+		NFKServedMCPSessionRecord *oldest = nil;
+		for (NFKServedMCPSessionRecord *record in self.pendingRecords.allValues) {
+			if (oldest == nil || record.startedAt < oldest.startedAt) {
+				oldest = record;
+			}
+		}
+		[self.pendingRecords removeObjectForKey:oldest.identifier];
+	}
+}
+
+/*! The session a request names when it started with the same key name, or nil. A request that names an
+	issued session starts it: the session joins sessions and the event handler learns of it. */
+- (nullable NFKServedMCPSessionRecord *)sessionWithIdentifier:(NSString *)identifier keyName:(nullable NSString *)keyName
 {
 	@synchronized (self) {
 		NFKServedMCPSessionRecord *record = self.records[identifier];
-		BOOL sameKey = record.keyName == keyName || [record.keyName isEqualToString:keyName];
-		return sameKey ? record : nil;
+		if (record == nil) {
+			return [self startPendingSessionWithIdentifier:identifier keyName:keyName];
+		}
+		return NFKMCPSameKeyName(record.keyName, keyName) ? record : nil;
 	}
+}
+
+/*! Runs on the lock. */
+- (nullable NFKServedMCPSessionRecord *)startPendingSessionWithIdentifier:(NSString *)identifier keyName:(nullable NSString *)keyName
+{
+	NFKServedMCPSessionRecord *record = self.pendingRecords[identifier];
+	if (record == nil || !NFKMCPSameKeyName(record.keyName, keyName)) {
+		return nil;
+	}
+	NSTimeInterval now = [self uptime];
+	[self.pendingRecords removeObjectForKey:identifier];
+	record.startDate = [NSDate date];
+	record.startedAt = now;
+	record.lastActivity = now;
+	self.records[identifier] = record;
+	[self report:[record snapshotAt:now endReason:NFKServerMCPSessionEndReasonNone] ended:NO];
+	[self updateTimer];
+	return record;
+}
+
+/*! Ends the active session a DELETE names, or discards the issued session it names without reporting
+	it; NO when it names neither under the same key name. */
+- (BOOL)deleteSessionWithIdentifier:(NSString *)identifier keyName:(nullable NSString *)keyName
+{
+	NFKServedMCPSessionRecord *record = nil;
+	@synchronized (self) {
+		NFKServedMCPSessionRecord *pending = self.pendingRecords[identifier];
+		if (pending != nil && NFKMCPSameKeyName(pending.keyName, keyName)) {
+			[self.pendingRecords removeObjectForKey:identifier];
+			[self updateTimer];
+			return YES;
+		}
+		record = self.records[identifier];
+		if (record == nil || !NFKMCPSameKeyName(record.keyName, keyName)) {
+			return NO;
+		}
+	}
+	return [self endSession:record reason:NFKServerMCPSessionEndReasonDeleted];
 }
 
 - (BOOL)endSessionWithIdentifier:(NSString *)identifier reason:(NFKServerMCPSessionEndReason)reason
@@ -200,21 +283,17 @@ static NSTimeInterval NFKMCPNow(void)
 - (BOOL)endSession:(NFKServedMCPSessionRecord *)record reason:(NFKServerMCPSessionEndReason)reason
 {
 	NFKHTTPResponse *stream = nil;
-	NFKServerMCPSession *snapshot = nil;
 	@synchronized (self) {
 		if (self.records[record.identifier] != record) {
 			return NO;
 		}
 		[self.records removeObjectForKey:record.identifier];
-		snapshot = [record snapshotAt:NFKMCPNow() endReason:reason];
+		[self report:[record snapshotAt:[self uptime] endReason:reason] ended:YES];
 		stream = record.stream;
 		record.stream = nil;
-		if (self.records.count == 0) {
-			[self cancelTimer];
-		}
+		[self updateTimer];
 	}
 	[stream endStream];
-	[self report:snapshot ended:YES];
 	return YES;
 }
 
@@ -225,6 +304,11 @@ static NSTimeInterval NFKMCPNow(void)
 		matching = [self.records.allValues filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NFKServedMCPSessionRecord *record, NSDictionary *bindings) {
 			return [record.keyName isEqualToString:keyName];
 		}]];
+		NSSet<NSString *> *pending = [self.pendingRecords keysOfEntriesPassingTest:^BOOL(NSString *identifier, NFKServedMCPSessionRecord *record, BOOL *stop) {
+			return [record.keyName isEqualToString:keyName];
+		}];
+		[self.pendingRecords removeObjectsForKeys:pending.allObjects];
+		[self updateTimer];
 	}
 	for (NFKServedMCPSessionRecord *record in matching) {
 		[self endSession:record reason:reason];
@@ -236,6 +320,8 @@ static NSTimeInterval NFKMCPNow(void)
 	NSArray<NFKServedMCPSessionRecord *> *all = nil;
 	@synchronized (self) {
 		all = [self.records.allValues copy];
+		[self.pendingRecords removeAllObjects];
+		[self updateTimer];
 	}
 	for (NFKServedMCPSessionRecord *record in all) {
 		[self endSession:record reason:reason];
@@ -244,8 +330,8 @@ static NSTimeInterval NFKMCPNow(void)
 
 - (NSArray<NFKServerMCPSession *> *)sessions
 {
-	NSTimeInterval now = NFKMCPNow();
 	@synchronized (self) {
+		NSTimeInterval now = [self uptime];
 		NSArray<NFKServedMCPSessionRecord *> *oldestFirst = [self.records.allValues sortedArrayUsingComparator:^NSComparisonResult(NFKServedMCPSessionRecord *left, NFKServedMCPSessionRecord *right) {
 			return [@(left.startedAt) compare:@(right.startedAt)];
 		}];
@@ -263,7 +349,7 @@ static NSTimeInterval NFKMCPNow(void)
 {
 	@synchronized (self) {
 		record.inFlight += 1;
-		record.lastActivity = NFKMCPNow();
+		record.lastActivity = [self uptime];
 	}
 }
 
@@ -271,7 +357,7 @@ static NSTimeInterval NFKMCPNow(void)
 {
 	@synchronized (self) {
 		record.inFlight -= record.inFlight > 0 ? 1 : 0;
-		record.lastActivity = NFKMCPNow();
+		record.lastActivity = [self uptime];
 	}
 }
 
@@ -283,7 +369,7 @@ static NSTimeInterval NFKMCPNow(void)
 	}
 	@synchronized (self) {
 		record.outstandingPings = 0;
-		record.lastActivity = NFKMCPNow();
+		record.lastActivity = [self uptime];
 	}
 }
 
@@ -293,6 +379,12 @@ static NSTimeInterval NFKMCPNow(void)
 	ended. */
 - (BOOL)openStream:(NFKHTTPResponse *)response forSession:(NFKServedMCPSessionRecord *)record
 {
+	__weak NFKServedMCPSessionStore *weakSelf = self;
+	__weak NFKServedMCPSessionRecord *weakRecord = record;
+	__weak NFKHTTPResponse *weakResponse = response;
+	response.disconnectHandler = ^{
+		[weakSelf streamClosed:weakResponse inSession:weakRecord];
+	};
 	NFKHTTPResponse *replaced = nil;
 	@synchronized (self) {
 		if (self.records[record.identifier] != record) {
@@ -301,17 +393,15 @@ static NSTimeInterval NFKMCPNow(void)
 		replaced = record.stream;
 		record.stream = response;
 		record.outstandingPings = 0;
-		record.lastPingAt = NFKMCPNow();
+		record.lastPingAt = [self uptime];
 		record.lastActivity = record.lastPingAt;
 	}
-	__weak NFKServedMCPSessionStore *weakSelf = self;
-	__weak NFKServedMCPSessionRecord *weakRecord = record;
-	__weak NFKHTTPResponse *weakResponse = response;
-	response.disconnectHandler = ^{
-		[weakSelf streamClosed:weakResponse inSession:weakRecord];
-	};
 	[response beginStreamWithStatus:200 headers:@{ @"Content-Type": @"text/event-stream", @"Mcp-Session-Id": record.identifier }];
 	[replaced endStream];
+	// A client that left before the handler was installed never fires it.
+	if (response.disconnected) {
+		[self streamClosed:response inSession:record];
+	}
 	return YES;
 }
 
@@ -321,7 +411,7 @@ static NSTimeInterval NFKMCPNow(void)
 		if (response != nil && record.stream == response) {
 			record.stream = nil;
 			record.outstandingPings = 0;
-			record.lastActivity = NFKMCPNow();
+			record.lastActivity = [self uptime];
 		}
 	}
 }
@@ -331,31 +421,44 @@ static NSTimeInterval NFKMCPNow(void)
 - (void)settingsChanged
 {
 	@synchronized (self) {
-		if (self.timer != nil) {
-			[self cancelTimer];
-			[self scheduleTimer];
-		}
+		[self updateTimer];
 	}
 }
 
-/*! A quarter of the shortest enabled interval, within 10 ms and 1 s, or 0 when neither is enabled. */
+/*! The seconds an issued session waits for its client: NFKMCPPendingWindow, or idleTimeout when shorter. */
+- (NSTimeInterval)pendingWindow
+{
+	NSTimeInterval idleTimeout = self.idleTimeout;
+	return idleTimeout > 0 ? MIN(idleTimeout, NFKMCPPendingWindow) : NFKMCPPendingWindow;
+}
+
+/*! A quarter of the shortest interval the held sessions need watched, within 10 ms and 1 s, or 0 when
+	none needs watching. Runs on the lock. */
 - (NSTimeInterval)tickInterval
 {
 	NSTimeInterval shortest = INFINITY;
-	if (self.pingInterval > 0) {
+	if (self.records.count > 0 && self.pingInterval > 0) {
 		shortest = MIN(shortest, self.pingInterval);
 	}
-	if (self.idleTimeout > 0) {
+	if (self.records.count > 0 && self.idleTimeout > 0) {
 		shortest = MIN(shortest, self.idleTimeout);
+	}
+	if (self.pendingRecords.count > 0) {
+		shortest = MIN(shortest, [self pendingWindow]);
 	}
 	return isfinite(shortest) ? MIN(MAX(shortest / 4.0, 0.01), 1.0) : 0;
 }
 
-/*! Runs on the lock. */
-- (void)scheduleTimer
+/*! Runs the timer at the tick interval the held sessions and the settings call for, or stops it. Runs on
+	the lock. */
+- (void)updateTimer
 {
 	NSTimeInterval tick = [self tickInterval];
-	if (self.timer != nil || tick <= 0) {
+	if (self.timer != nil && tick == self.timerInterval) {
+		return;
+	}
+	[self cancelTimer];
+	if (tick <= 0) {
 		return;
 	}
 	dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, self.queue);
@@ -367,6 +470,7 @@ static NSTimeInterval NFKMCPNow(void)
 	});
 	dispatch_resume(timer);
 	self.timer = timer;
+	self.timerInterval = tick;
 }
 
 /*! Runs on the lock. */
@@ -376,19 +480,26 @@ static NSTimeInterval NFKMCPNow(void)
 		dispatch_source_cancel(self.timer);
 		self.timer = nil;
 	}
+	self.timerInterval = 0;
 }
 
-/*! Pings each open stream that is due one and ends the sessions that missed too many pings or sat idle. */
+/*! Discards the issued sessions whose clients never sent the id back, pings each open stream that is due
+	one, and ends the sessions that missed too many pings or sat idle. */
 - (void)sweep
 {
-	NSTimeInterval now = NFKMCPNow();
 	NSTimeInterval pingInterval = self.pingInterval;
 	NSTimeInterval idleTimeout = self.idleTimeout;
+	NSTimeInterval pendingWindow = [self pendingWindow];
 	NSUInteger missedLimit = MAX(self.missedPingLimit, (NSUInteger)1);
 	NSMutableArray<NFKServedMCPSessionRecord *> *missed = [NSMutableArray array];
 	NSMutableArray<NFKServedMCPSessionRecord *> *idle = [NSMutableArray array];
 	NSMutableArray<NSArray *> *pings = [NSMutableArray array];
 	@synchronized (self) {
+		NSTimeInterval now = [self uptime];
+		NSSet<NSString *> *unclaimed = [self.pendingRecords keysOfEntriesPassingTest:^BOOL(NSString *identifier, NFKServedMCPSessionRecord *record, BOOL *stop) {
+			return now - record.startedAt >= pendingWindow;
+		}];
+		[self.pendingRecords removeObjectsForKeys:unclaimed.allObjects];
 		for (NFKServedMCPSessionRecord *record in self.records.allValues) {
 			if (record.stream != nil) {
 				if (pingInterval <= 0 || now - record.lastPingAt < pingInterval) {
@@ -407,6 +518,7 @@ static NSTimeInterval NFKMCPNow(void)
 				[idle addObject:record];
 			}
 		}
+		[self updateTimer];
 	}
 	for (NSArray *ping in pings) {
 		NSDictionary *message = @{ @"jsonrpc": @"2.0", @"id": ping[1], @"method": @"ping" };
@@ -466,7 +578,7 @@ static NSTimeInterval NFKMCPNow(void)
 	}
 	NFKServedMCPSessionRecord *session = nil;
 	if (!initializes && sessionIdentifier != nil) {
-		session = [sessions activeSessionWithIdentifier:sessionIdentifier keyName:request.keyName];
+		session = [sessions sessionWithIdentifier:sessionIdentifier keyName:request.keyName];
 		if (session == nil) {
 			[self sendUnknownSession:response];
 			return;
@@ -475,7 +587,7 @@ static NSTimeInterval NFKMCPNow(void)
 	[sessions beginRequestInSession:session];
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 		NSMutableArray *replies = [NSMutableArray array];
-		NFKServedMCPSessionRecord *issued = nil;
+		NSString *issued = nil;
 		for (id message in messages) {
 			if ([self isResponse:message]) {
 				[sessions receivedResponseWithIdentifier:message[@"id"] inSession:session];
@@ -490,11 +602,11 @@ static NSTimeInterval NFKMCPNow(void)
 			if (issued == nil && [message[@"method"] isEqual:@"initialize"] && [result isKindOfClass:NSDictionary.class]) {
 				NSDictionary *params = [message[@"params"] isKindOfClass:NSDictionary.class] ? message[@"params"] : @{};
 				NSDictionary *clientInfo = [params[@"clientInfo"] isKindOfClass:NSDictionary.class] ? params[@"clientInfo"] : nil;
-				issued = [sessions beginSessionForRequest:request clientInfo:clientInfo protocolVersion:result[@"protocolVersion"]];
+				issued = [sessions issueSessionForRequest:request clientInfo:clientInfo protocolVersion:result[@"protocolVersion"]];
 			}
 		}
 		[sessions endRequestInSession:session];
-		NSDictionary *headers = issued != nil ? @{ @"Mcp-Session-Id": issued.identifier } : nil;
+		NSDictionary *headers = issued != nil ? @{ @"Mcp-Session-Id": issued } : nil;
 		if (replies.count == 0) {
 			[response sendStatus:202 headers:headers body:nil];
 			return;
@@ -519,19 +631,18 @@ static NSTimeInterval NFKMCPNow(void)
 		}
 		return;
 	}
-	NFKServedMCPSessionRecord *session = [sessions activeSessionWithIdentifier:identifier keyName:request.keyName];
-	if (session == nil) {
-		[self sendUnknownSession:response];
-		return;
-	}
-	if (opensStream) {
-		if (![sessions openStream:response forSession:session]) {
+	if (!opensStream) {
+		if ([sessions deleteSessionWithIdentifier:identifier keyName:request.keyName]) {
+			[response sendStatus:204 headers:nil body:nil];
+		} else {
 			[self sendUnknownSession:response];
 		}
 		return;
 	}
-	[sessions endSession:session reason:NFKServerMCPSessionEndReasonDeleted];
-	[response sendStatus:204 headers:nil body:nil];
+	NFKServedMCPSessionRecord *session = [sessions sessionWithIdentifier:identifier keyName:request.keyName];
+	if (session == nil || ![sessions openStream:response forSession:session]) {
+		[self sendUnknownSession:response];
+	}
 }
 
 + (void)sendUnknownSession:(NFKHTTPResponse *)response

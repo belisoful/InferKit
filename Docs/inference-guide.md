@@ -845,7 +845,8 @@ duration, and outcome; each model's load, failed load, and unload with its reaso
 idleness, pressure, or removal); each client connection; and each MCP session's start and end.
 `currentStatus` reads what the status route would answer, without a request.
 
-An MCP client that initializes gets a session (`Mcp-Session-Id`). The server pings it on its event
+An MCP client that initializes is issued a session id (`Mcp-Session-Id`), and its session starts at its
+first request that carries the id. The server pings it on its event
 stream every `MCPPingInterval` and ends the session when it misses `MCPMissedPingLimit` pings, or,
 without a stream, after `MCPSessionIdleTimeout` of silence; `MCPSessions` lists the clients connected
 now, with their names and versions.

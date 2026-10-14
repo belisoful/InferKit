@@ -321,10 +321,27 @@ remote classes trust it by pinning its certificate's SHA-256 fingerprint. The se
   the session's pin), `NFKBalancedBackend` `addServerWithBaseURL:apiKey:pinnedCertificateSHA256:`
   plus a fleet-wide `pinnedCertificateSHA256` used for servers without one and for discovered
   servers (applied to both status readings and runs without changing the overridable status seam),
-  and `NFKRemoteProvider` `providerWithPinnedCertificateSHA256:`, which `backendForProvider:` and the
-  model catalog apply. `providerWithBaseURL:` drops the pin because a pin names one server.
-  `+[NFKServerStatus fetchFromBaseURL:apiKey:error:]` takes no pin; a pinned
-  `NFKRemoteInferKitBackend`'s `fetchServerStatusWithError:` reads the same route.
+  and `NFKRemoteProvider` `providerWithPinnedCertificateSHA256:`. Every factory that takes a provider
+  applies it through the private `NFKRemotePinnedSessionForProvider` (`NFKRemoteTransportPrivate.h`):
+  `backendForProvider:` on `NFKRemoteProvider` and on each remote backend class, the model catalog,
+  `NFKRealtimeSession`'s `sessionForProvider:apiStyle:apiKey:modelName:` (its `URLSession`), the
+  file, retrieval, usage, token-count, rerank, and voice-library factories, and the Ollama and LM
+  Studio runners. A factory whose service has its own fixed host (usage reporters, Gemini's file and
+  retrieval stores) sends there through the same pin, so it fails closed. A new factory that takes
+  an `NFKRemoteProvider` applies the helper too. `NFKRemoteProvider`'s `isEqual:` compares pins
+  normalized, so the colon-separated and plain spellings of one fingerprint are equal.
+  `providerWithBaseURL:` drops the pin because a pin names one server.
+  `+[NFKServerStatus fetchFromBaseURL:apiKey:pinnedCertificateSHA256:error:]` (and its
+  completion-handler form) reads the status route through the pinned session; the unpinned
+  `fetchFromBaseURL:apiKey:error:` is that call with a nil pin. A pinned `NFKRemoteInferKitBackend`'s
+  `fetchServerStatusWithError:` reads the same route.
+- A realtime socket on a pinned session opens only a `wss://` URL: the trust delegate checks the
+  certificate, and `NFKRealtimeWebSocket` closes a `ws://` socket unopened with
+  `kNFKError_InferenceBackendFailure`, since the transport's https preflight does not see socket tasks.
+- The pinned-session cache is unbounded by design. Clients keep the shared session they were given,
+  and a session cannot be reused once invalidated, so evicting one would break live clients, while
+  dropping it uninvalidated leaks it anyway (a session holds its delegate until invalidated). It
+  grows by one session per distinct fingerprint a process pins.
 - The Bonjour TXT `cert_sha256` is advisory by default: discovery reports it in `advertisedProperties`
   and pins nothing. Automatic pinning (2026-10-13) is opt-in through
   `NFKRemoteProvider.discoveryPinnedServers`, an `NFKPinnedServers` (nil by default). With it set,
@@ -334,7 +351,7 @@ remote classes trust it by pinning its certificate's SHA-256 fingerprint. The se
   `discoveredPinning`:
   - No remembered fingerprint for the service name: TLS with a well-formed fingerprint → remembered
     and pinned (`FirstUse`); TLS without one, or plain HTTP → unpinned (`None`), which refuses an
-    untrusted self-signed certificate as before.
+    untrusted self-signed certificate.
   - A remembered fingerprint: TLS advertising it or none → pinned to it (`Remembered`), so stripping
     the fingerprint from the record cannot unpin a server; a different fingerprint, or plain HTTP →
     unpinned (`Changed`). Discovery still lists the provider; the balancer skips it and removes it if
@@ -342,7 +359,8 @@ remote classes trust it by pinning its certificate's SHA-256 fingerprint. The se
     advertised value until `acceptFingerprint:forServiceName:` or `forgetServiceName:`.
   - The key is the service name alone, compared case-insensitively as mDNS compares names. Host and
     port stay out: a server on port 0 moves at each launch, a machine can be renamed, and keying by
-    host would let another machine advertising a remembered name be trusted as a new server. A new name is a new server and is trusted on first use, the inherent limit of TOFU.
+    host would let another machine advertising a remembered name be trusted as a new server. A new
+    name is a new server and is trusted on first use, the inherent limit of TOFU.
   - The library persists nothing. `dictionaryRepresentation` (name → 64 lowercase hex digits) is a
     property list the app saves on `NFKPinnedServersDidChangeNotification` and restores with
     `initWithDictionaryRepresentation:`, which skips malformed values. Both notifications post

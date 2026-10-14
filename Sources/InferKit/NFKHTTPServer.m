@@ -613,6 +613,8 @@ static NSString *NFKHTTPEndpointAddress(nw_endpoint_t _Nullable endpoint)
 			return NO;
 		}
 		self.finished = YES;
+		// A finished reply never fires the handler; releasing it frees a handler that captures this reply.
+		self.disconnectHandler = nil;
 		return YES;
 	}
 }

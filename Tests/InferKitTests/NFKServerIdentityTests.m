@@ -156,7 +156,7 @@
 	XCTAssertEqualObjects(identity.commonName, @"studio");
 	NSArray<NSString *> *names = @[ @"studio.local", @"192.168.1.20", @"fe80::1" ];
 	XCTAssertEqualObjects(identity.subjectAlternativeNames, names);
-	XCTAssertEqualWithAccuracy([identity.notAfter timeIntervalSinceDate:identity.notBefore], 86400.0 + 3600.0, 1.0);
+	XCTAssertEqualWithAccuracy([identity.notAfter timeIntervalSinceDate:identity.notBefore], 86400.0, 1.0);
 	XCTAssertTrue(identity.identity != NULL);
 	XCTAssertTrue(identity.certificate != NULL);
 	XCTAssertTrue([identity.PEMEncodedCertificate hasPrefix:@"-----BEGIN CERTIFICATE-----\n"]);
@@ -168,7 +168,8 @@
 	XCTAssertEqualObjects(identity.commonName, @"InferKit");
 	NSArray<NSString *> *names = @[ @"localhost", @"127.0.0.1", @"::1" ];
 	XCTAssertEqualObjects(identity.subjectAlternativeNames, names);
-	XCTAssertEqualWithAccuracy([identity.notAfter timeIntervalSinceDate:identity.notBefore], NFKServerIdentityDefaultValidity + 3600.0, 1.0);
+	XCTAssertEqualWithAccuracy([identity.notAfter timeIntervalSinceDate:identity.notBefore], NFKServerIdentityDefaultValidity, 1.0);
+	XCTAssertEqualWithAccuracy(identity.notBefore.timeIntervalSinceNow, -3600.0, 5.0, @"the certificate is valid from an hour before now");
 }
 
 - (void)testTheCertificateIsTrustedAsItsOwnAnchorForTLSService

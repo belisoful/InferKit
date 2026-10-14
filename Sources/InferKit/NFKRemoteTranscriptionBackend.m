@@ -13,6 +13,7 @@
 #import "NFKAudioAsset.h"
 #import "NFKAudioSegment.h"
 #import "NFKErrors.h"
+#import "NFKRemoteTransportPrivate.h"
 
 /*! The contract keys this backend translates; every other parameter goes out as a form field. */
 static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
@@ -83,6 +84,10 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 		backend = [self backendWithEndpointURL:[provider URLForPath:@"stt"]];
 		backend.apiStyle = NFKRemoteTranscriptionAPIStyleXAI;
 		backend.audioURLFieldName = @"url";
+	}
+	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
+	if (pinned != nil) {
+		backend.session = pinned;
 	}
 	backend.apiKey = apiKey;
 	backend.modelName = modelName;

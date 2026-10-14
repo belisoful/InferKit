@@ -8,6 +8,7 @@
 #import <InferKit/NFKRemoteProvider.h>
 #import <InferKit/NFKRemoteTransport.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteTransportPrivate.h"
 
 static NSString * _Nullable NFKRetrievalString(id value)
 {
@@ -106,6 +107,10 @@ static NSDictionary *NFKRetrievalDictionary(id value)
 		? [NSURL URLWithString:@"https://generativelanguage.googleapis.com/v1beta"] : provider.baseURL;
 	if (store.apiStyle == NFKRemoteRetrievalAPIStyleXAI) {
 		store.managementURL = [NSURL URLWithString:@"https://management-api.x.ai/v1"];
+	}
+	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
+	if (pinned != nil) {
+		store.session = pinned;
 	}
 	return store;
 }

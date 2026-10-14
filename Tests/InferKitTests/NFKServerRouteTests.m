@@ -119,6 +119,28 @@
 	XCTAssertEqualObjects(reply, payload);
 }
 
+- (void)testAFinishedReplyReleasesADisconnectHandlerThatCapturesIt
+{
+	__block __weak NFKServerRouteResponse *captured = nil;
+	[self.server addRouteForPathPrefix:@"/myapp/" handler:^(NFKServerRouteRequest *request, NFKServerRouteResponse *response) {
+		captured = response;
+		NFKServerRouteResponse *reply = response;
+		response.disconnectHandler = ^{
+			[reply sendStatus:500 headers:nil body:nil];
+		};
+		[response sendStatus:204 headers:nil body:nil];
+	} error:NULL];
+
+	NSHTTPURLResponse *response = nil;
+	[self send:@"GET" to:@"/myapp/ping" body:nil headers:nil response:&response];
+	XCTAssertEqual(response.statusCode, 204);
+	NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5];
+	while (captured != nil && deadline.timeIntervalSinceNow > 0) {
+		[NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+	}
+	XCTAssertNil(captured, @"the reply is released once it finishes");
+}
+
 - (void)testAHandlerStreamsServerSentEvents
 {
 	[self.server addRouteForPathPrefix:@"/myapp/" handler:^(NFKServerRouteRequest *request, NFKServerRouteResponse *response) {

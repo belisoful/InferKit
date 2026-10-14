@@ -9,6 +9,7 @@
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
 #import "NFKLocalRunnerSupport.h"
+#import "NFKRemoteTransportPrivate.h"
 
 /*! A pull streams status lines with gigabytes between them; an hour idle is a dead pull. */
 static const NSTimeInterval NFKOllamaPullTimeout = 3600.0;
@@ -39,7 +40,7 @@ static const NSTimeInterval NFKOllamaPullTimeout = 3600.0;
 - (NSURLSession *)session
 {
 	if (_session == nil) {
-		_session = [NSURLSession sharedSession];
+		_session = NFKRemotePinnedSessionForProvider(self.provider) ?: NSURLSession.sharedSession;
 	}
 	return _session;
 }

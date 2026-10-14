@@ -6,6 +6,7 @@
 #import <InferKit/NFKRemoteModelCatalog.h>
 #import <InferKit/NFKRemoteTransport.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteTransportPrivate.h"
 
 /*! Anthropic's page size ceiling; its default is 20, which for its list means several round trips. */
 static NSString * const NFKAnthropicPageLimit = @"1000";
@@ -31,9 +32,7 @@ static NSString * const NFKAnthropicPageLimit = @"1000";
 	if (self != nil) {
 		_provider = [provider copy];
 		_timeout = 30.0;
-		if (provider.pinnedCertificateSHA256 != nil) {
-			_session = [NFKRemoteTransport sessionWithPinnedCertificateSHA256:provider.pinnedCertificateSHA256];
-		}
+		_session = NFKRemotePinnedSessionForProvider(provider);
 	}
 	return self;
 }

@@ -7,9 +7,16 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class NFKRemoteProvider;
+
 /*! A SHA-256 fingerprint as 64 lowercase hexadecimal digits, from 64 hexadecimal digits in either case
 	with or without colons or spaces between the byte pairs, or nil when the value is not one. */
 NSString * _Nullable NFKRemoteNormalizedFingerprint(NSString *value);
+
+/*! NFKRemoteTransport's pinned session for the provider's pinnedCertificateSHA256, or nil for a
+	provider without a pin. Every class that builds a client from an NFKRemoteProvider sends through
+	this session when it is non-nil. */
+NSURLSession * _Nullable NFKRemotePinnedSessionForProvider(NFKRemoteProvider *provider);
 
 @interface NFKRemoteTransport (NFKPrivate)
 

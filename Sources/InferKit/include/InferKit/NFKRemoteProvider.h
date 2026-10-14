@@ -98,8 +98,9 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	and for a provider re-pointed with providerWithBaseURL:. Introduced in InferKit 0.4.0. */
 @property (nonatomic, copy, readonly) NSDictionary<NSString *, NSString *> *advertisedProperties;
 
-/*! The SHA-256 fingerprint of the server certificate this provider's backends and model catalog
-	trust in place of the system's trust store, or nil. Set it with
+/*! The SHA-256 fingerprint of the server certificate trusted in place of the system's trust store by
+	every client a class builds from this provider: backends, the realtime session, stores, reporters,
+	runners, and the model catalog. Nil trusts the system's store. Set it with
 	providerWithPinnedCertificateSHA256:, or let discovery set it (see discoveryPinnedServers).
 	Introduced in InferKit 0.4.0. */
 @property (nonatomic, copy, readonly, nullable) NSString *pinnedCertificateSHA256;
@@ -114,9 +115,10 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 
 - (instancetype)init NS_UNAVAILABLE;
 
-/*! Two providers are equal when their identifier, base, protocol, model routes, and key requirement
-	match. Each preset getter builds a new instance and a discovered provider is a fresh one, so
-	equality is by value rather than by identity. Introduced in InferKit 0.3.1. */
+/*! Two providers are equal when their identifier, base, protocol, model routes, key requirement, and
+	certificate pin match. Pins compare as fingerprints, so the colon-separated uppercase and the plain
+	lowercase spellings of one fingerprint are equal. Each preset getter builds a new instance and a
+	discovered provider is a fresh one, so equality is by value. Introduced in InferKit 0.3.1. */
 - (BOOL)isEqual:(nullable id)object;
 
 /*!
@@ -142,10 +144,14 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 /*!
 	@method     providerWithPinnedCertificateSHA256:
 	@abstract   This provider trusting only the server certificate with this SHA-256 fingerprint.
-	@discussion Every other field is kept; nil removes the pin. backendForProvider:apiKey:modelName:
-				and NFKRemoteModelCatalog's catalogForProvider:apiKey: then use NFKRemoteTransport's
+	@discussion Every other field is kept; nil removes the pin. Every factory that takes a provider
+				(backendForProvider:apiKey:modelName: here and on each remote backend class,
+				NFKRealtimeSession's sessionForProvider:apiStyle:apiKey:modelName:, the store, reporter,
+				counter, reranker, and voice-library factories, the local runners, and
+				NFKRemoteModelCatalog's catalogForProvider:apiKey:) then uses NFKRemoteTransport's
 				sessionWithPinnedCertificateSHA256: for the fingerprint, which sends only to an https
-				base. providerWithBaseURL: drops the pin, since a pin names one server's certificate.
+				base. A factory whose service has a fixed host of its own (a usage reporter, Gemini's
+				file and retrieval stores) sends there through the same pin. providerWithBaseURL: drops the pin, since a pin names one server's certificate.
 				For an NFKInferenceServer serving an NFKServerIdentity, the fingerprint is the
 				identity's SHA256Fingerprint. Introduced in InferKit 0.4.0.
 */

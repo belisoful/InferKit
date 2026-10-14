@@ -12,6 +12,7 @@
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKClassification.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteTransportPrivate.h"
 
 @implementation NFKRemoteModerationBackend
 
@@ -33,6 +34,10 @@
 	}
 	NFKRemoteModerationBackend *backend = [self backendWithEndpointURL:[provider URLForPath:@"moderations"]];
 	backend.moderatesConversations = [provider.identifier isEqualToString:@"mistral"];
+	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
+	if (pinned != nil) {
+		backend.session = pinned;
+	}
 	backend.apiKey = apiKey;
 	backend.modelName = modelName;
 	return backend;

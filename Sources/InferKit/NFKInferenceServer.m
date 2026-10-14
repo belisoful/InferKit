@@ -639,29 +639,42 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	}
 }
 
-/*! Releases the backend when the model could release it now and test, run on the lock, agrees; YES when
-	it did. The backend is released off the lock, and the unload is reported with reason. */
+/*! Takes the backend out of the model when the model could release it now and test, run on the lock,
+	agrees, and returns it; nil when it did not. The caller releases it, then calls finishUnloadWithReason:. */
+- (nullable id<NFKInferenceBackend>)takeBackendPassingTest:(BOOL (^)(NFKServedModel *model))test
+{
+	@synchronized (self) {
+		if (![self isUnloadableNow] || !test(self)) {
+			return nil;
+		}
+		id<NFKInferenceBackend> taken = self.backend;
+		self.backend = nil;
+		self.residency = NFKServerModelResidencyNotLoaded;
+		self.unloads += 1;
+		self.unloadRequested = NO;
+		return taken;
+	}
+}
+
+/*! Reports an unload with reason and runs the unload handler; called once the backend is released. */
+- (void)finishUnloadWithReason:(NFKServerModelEventReason)reason
+{
+	[self reportModelEvent:NFKServerModelEventKindUnloaded reason:reason loadSeconds:0 error:nil];
+	if (self.unloadHandler != nil) {
+		self.unloadHandler();
+	}
+}
+
+/*! Releases the backend when takeBackendPassingTest: takes it, then reports the unload with reason; YES
+	when it did. The backend is released off the lock. */
 - (BOOL)unloadPassingTest:(BOOL (^)(NFKServedModel *model))test reason:(NFKServerModelEventReason)reason
 {
 	BOOL unloaded = NO;
 	@autoreleasepool {
-		id<NFKInferenceBackend> released = nil;
-		@synchronized (self) {
-			if ([self isUnloadableNow] && test(self)) {
-				released = self.backend;
-				self.backend = nil;
-				self.residency = NFKServerModelResidencyNotLoaded;
-				self.unloads += 1;
-				self.unloadRequested = NO;
-			}
-		}
-		unloaded = released != nil;
+		unloaded = [self takeBackendPassingTest:test] != nil;
 	}
 	if (unloaded) {
-		[self reportModelEvent:NFKServerModelEventKindUnloaded reason:reason loadSeconds:0 error:nil];
-	}
-	if (unloaded && self.unloadHandler != nil) {
-		self.unloadHandler();
+		[self finishUnloadWithReason:reason];
 	}
 	return unloaded;
 }
@@ -686,17 +699,16 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	return YES;
 }
 
-/*! Unloads when the model has gone unused for at least idle seconds and was built at least grace
-	seconds ago, reporting reason. */
-- (BOOL)unloadIfUnusedFor:(NSTimeInterval)idle grace:(NSTimeInterval)grace at:(NSTimeInterval)now
-				   reason:(NFKServerModelEventReason)reason
+/*! Takes the backend when the model has gone unused for at least idle seconds and was built at least
+	grace seconds ago, as takeBackendPassingTest: does. */
+- (nullable id<NFKInferenceBackend>)takeBackendIfUnusedFor:(NSTimeInterval)idle grace:(NSTimeInterval)grace at:(NSTimeInterval)now
 {
-	return [self unloadPassingTest:^BOOL(NFKServedModel *model) {
+	return [self takeBackendPassingTest:^BOOL(NFKServedModel *model) {
 		return now - model.loadedAt >= grace && now - model.lastUsedAt >= idle;
-	} reason:reason];
+	}];
 }
 
-/*! Whether unloadIfUnusedFor:grace:at: would unload the model. */
+/*! Whether takeBackendIfUnusedFor:grace:at: would take the backend. */
 - (BOOL)isUnusedFor:(NSTimeInterval)idle grace:(NSTimeInterval)grace at:(NSTimeInterval)now
 {
 	@synchronized (self) {
@@ -1841,6 +1853,9 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 - (NSArray<NSString *> *)unloadIdleModels
 {
 	NSMutableArray<NSString *> *unloaded = [NSMutableArray array];
+	NSMutableArray<id<NFKInferenceBackend>> *released = [NSMutableArray array];
+	NSMutableArray<NFKServedModel *> *idleUnloads = [NSMutableArray array];
+	NSMutableArray<NFKServedModel *> *pressureUnloads = [NSMutableArray array];
 	double pressure = self.memoryPressure;
 	NSTimeInterval grace = MAX(self.unloadGracePeriod, 0.0);
 	@synchronized (self.residencyLock) {
@@ -1853,7 +1868,10 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 			}
 			NSTimeInterval idle = [self idleIntervalForModelNamed:model.name];
 			NSTimeInterval timeout = [self timeoutForIdleInterval:idle pressure:pressure];
-			if ([model unloadIfUnusedFor:idle grace:grace at:now reason:NFKServerModelEventReasonIdle]) {
+			id<NFKInferenceBackend> taken = [model takeBackendIfUnusedFor:idle grace:grace at:now];
+			if (taken != nil) {
+				[released addObject:taken];
+				[idleUnloads addObject:model];
 				[unloaded addObject:model.name];
 			} else if (timeout < idle && [model isUnusedFor:timeout grace:grace at:now]) {
 				[pressured addObject:model];
@@ -1865,13 +1883,26 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 			return [@([left lastUse]) compare:@([right lastUse])];
 		}];
 		for (NFKServedModel *model in spaced ? leastRecentFirst : @[]) {
-			if ([model unloadIfUnusedFor:timeouts[model.name].doubleValue grace:grace at:now reason:NFKServerModelEventReasonPressure]) {
+			id<NFKInferenceBackend> taken = [model takeBackendIfUnusedFor:timeouts[model.name].doubleValue grace:grace at:now];
+			if (taken != nil) {
+				[released addObject:taken];
+				[pressureUnloads addObject:model];
 				[unloaded addObject:model.name];
 				self.lastPressureUnloadAt = now;
 				self.hasPressureUnloaded = YES;
 				break;
 			}
 		}
+	}
+	// A backend's teardown can take seconds (an MLX model frees its weights), so it runs off the lock.
+	@autoreleasepool {
+		[released removeAllObjects];
+	}
+	for (NFKServedModel *model in idleUnloads) {
+		[model finishUnloadWithReason:NFKServerModelEventReasonIdle];
+	}
+	for (NFKServedModel *model in pressureUnloads) {
+		[model finishUnloadWithReason:NFKServerModelEventReasonPressure];
 	}
 	return unloaded;
 }
@@ -2062,14 +2093,22 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 
 #pragma mark Routing
 
-/*! Whether the request may reach a route of scope, recording the name of the key it presented. A client
-	exempt from the check passes whatever it presents. */
-- (BOOL)authorizes:(NFKHTTPRequest *)request scope:(NFKServerKeyScope)scope
+/*! The refusal of a request for a route of scope, or nil when it may reach the route, recording the name
+	of the key it presented. A client exempt from the check passes whatever it presents. */
+- (nullable NSError *)refusalOf:(NFKHTTPRequest *)request scope:(NFKServerKeyScope)scope
 {
 	NFKServedAPIKey *key = [self keyPresentedBy:request];
 	request.keyName = key.name;
 	BOOL keyRequired = request.fromLoopback ? (self.loopbackExemptScopes & scope) == 0 : self.requiresAPIKey;
-	return !keyRequired || (key.scopes & scope) != 0;
+	if (!keyRequired || (key.scopes & scope) != 0) {
+		return nil;
+	}
+	if (key == nil) {
+		return NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorUnauthorized,
+							  @"a valid key for this route is required; send it as Authorization: Bearer <key>");
+	}
+	return NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorInsufficientScope,
+						  @"the key does not open this route");
 }
 
 /*! The scope a path's route belongs to, and the app route's prefix when an app route claims it. */
@@ -2094,10 +2133,9 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	}
 	NSString *appRoutePrefix = nil;
 	NFKServerKeyScope scope = [self scopeOfPath:path appRoutePrefix:&appRoutePrefix];
-	if (![self authorizes:request scope:scope]) {
-		[self sendError:NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorUnauthorized,
-									   @"a valid key for this route is required; send it as Authorization: Bearer <key>")
-			   response:response];
+	NSError *refusal = [self refusalOf:request scope:scope];
+	if (refusal != nil) {
+		[self sendError:refusal response:response];
 		return;
 	}
 	if (request.firstOnConnection) {
@@ -2174,6 +2212,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	if ([error.domain isEqualToString:NFKInferenceServerErrorDomain]) {
 		NSDictionary<NSNumber *, NSNumber *> *statuses = @{ @(NFKInferenceServerErrorModelNotFound): @404,
 															@(NFKInferenceServerErrorUnauthorized): @401,
+															@(NFKInferenceServerErrorInsufficientScope): @403,
 															@(NFKInferenceServerErrorBusy): @503 };
 		return statuses[@(error.code)].integerValue ?: 400;
 	}
@@ -2197,8 +2236,10 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	if ([retryAfter isKindOfClass:NSDate.class]) {
 		headers[@"Retry-After"] = [NSString stringWithFormat:@"%ld", (long)MAX(0.0, ceil(retryAfter.timeIntervalSinceNow))];
 	}
-	if (error.code == NFKInferenceServerErrorUnauthorized && [error.domain isEqualToString:NFKInferenceServerErrorDomain]) {
-		headers[@"WWW-Authenticate"] = @"Bearer";
+	if ([error.domain isEqualToString:NFKInferenceServerErrorDomain]) {
+		NSDictionary<NSNumber *, NSString *> *challenges = @{ @(NFKInferenceServerErrorUnauthorized): @"Bearer",
+															  @(NFKInferenceServerErrorInsufficientScope): @"Bearer error=\"insufficient_scope\"" };
+		headers[@"WWW-Authenticate"] = challenges[@(error.code)];
 	}
 	[response sendStatus:[self statusForError:error] JSONObject:[NFKInferenceWireCoding JSONObjectForError:error] headers:headers];
 }
@@ -2321,8 +2362,12 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	}
 	NSMutableDictionary<NSString *, id> *status = [NSMutableDictionary dictionary];
 	status[@"object"] = @"inferkit.status";
-	status[@"server"] = @{ @"version": NFKInferKit.version, @"started": @(self.startTime),
-						   @"uptime_seconds": @(MAX(NSDate.date.timeIntervalSince1970 - (NSTimeInterval)self.startTime, 0.0)) };
+	NSMutableDictionary<NSString *, id> *server = [NSMutableDictionary dictionaryWithObject:NFKInferKit.version forKey:@"version"];
+	if (self.startTime > 0) {
+		server[@"started"] = @(self.startTime);
+	}
+	server[@"uptime_seconds"] = @(self.running ? MAX(NSDate.date.timeIntervalSince1970 - (NSTimeInterval)self.startTime, 0.0) : 0.0);
+	status[@"server"] = server;
 	status[@"models"] = models;
 	if (self.reportsHostDetails) {
 		NSMutableDictionary<NSString *, id> *host = [[self.hostStatus JSONObjectForStorageURL:self.storageDirectoryURL] mutableCopy];

@@ -13,6 +13,7 @@
 #import <InferKit/NFKInferenceJob.h>
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteTransportPrivate.h"
 
 /*! The contract keys this backend translates; every other parameter goes out under its own name. */
 static NSSet<NSString *> *NFKImageMappedParameters(void)
@@ -84,6 +85,10 @@ static NSInteger NFKImageGreatestCommonDivisor(NSInteger a, NSInteger b)
 		NSURL *images = [provider URLForPath:@"images"];
 		backend = [self backendWithGenerationsURL:images editsURL:images];
 		backend.apiStyle = NFKRemoteImageAPIStyleOpenRouter;
+	}
+	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
+	if (pinned != nil) {
+		backend.session = pinned;
 	}
 	backend.apiKey = apiKey;
 	backend.modelName = modelName;

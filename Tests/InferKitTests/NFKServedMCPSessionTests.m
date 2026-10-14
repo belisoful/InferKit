@@ -2,13 +2,34 @@
 //  NFKServedMCPSessionTests.m
 //  InferKitTests
 //
-//  MCP sessions on the server's endpoint over real HTTP on a loopback port: initialize issues one,
-//  DELETE and idleness end it, the event stream carries pings whose answers keep it, and an unknown or
-//  ended session is 404. Intervals are short so each expiry happens within the test.
+//  MCP sessions on the server's endpoint over real HTTP on a loopback port: initialize issues one, the
+//  client's first request that carries its id starts it, DELETE and idleness end it, the event stream
+//  carries pings whose answers keep it, and an unknown or ended session is 404. Expiry runs on a clock
+//  the test advances, with intervals long enough that the store's own timer never reaches them.
 //
 
 #import <XCTest/XCTest.h>
 #import <InferKit/InferKit.h>
+
+/*! The session store's clock and expiry pass, which a test drives. */
+@protocol NFKMCPSessionStoreTesting <NSObject>
+@property (atomic, copy) NSTimeInterval (^uptimeProvider)(void);
+@property (nonatomic, readonly, nullable) dispatch_source_t timer;
+- (void)sweep;
+@end
+
+/*! The server's session store. */
+@interface NFKInferenceServer (NFKMCPSessionTesting)
+@property (nonatomic, readonly) id<NFKMCPSessionStoreTesting> mcpSessions;
+@end
+
+/*! A clock that moves only when the test advances it. */
+@interface NFKMCPTestClock : NSObject
+@property (atomic, assign) NSTimeInterval now;
+@end
+
+@implementation NFKMCPTestClock
+@end
 
 /*! Records the session events the server reports. */
 @interface NFKSessionRecorder : NSObject <NFKInferenceServerDelegate>
@@ -118,6 +139,7 @@
 @interface NFKServedMCPSessionTests : XCTestCase
 @property (nonatomic, strong) NFKInferenceServer *server;
 @property (nonatomic, strong) NFKSessionRecorder *recorder;
+@property (nonatomic, strong) NFKMCPTestClock *clock;
 @end
 
 @implementation NFKServedMCPSessionTests
@@ -130,6 +152,12 @@
 	self.server.port = 0;
 	self.server.loopbackOnly = YES;
 	self.server.delegate = self.recorder;
+	self.clock = [[NFKMCPTestClock alloc] init];
+	self.clock.now = 1000;
+	NFKMCPTestClock *clock = self.clock;
+	self.server.mcpSessions.uptimeProvider = ^NSTimeInterval {
+		return clock.now;
+	};
 	NSError *error = nil;
 	XCTAssertTrue([self.server startWithError:&error], @"%@", error);
 }
@@ -160,6 +188,12 @@
 	return data.length > 0 ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
 }
 
+/*! The Authorization header that presents key, or no headers when it is nil. */
+- (nullable NSDictionary<NSString *, NSString *> *)headersPresentingKey:(nullable NSString *)key
+{
+	return key != nil ? @{ @"Authorization": [@"Bearer " stringByAppendingString:key] } : nil;
+}
+
 /*! Initializes a session, presenting key when it is set, and returns the id the reply issued. */
 - (NSString *)initializeAs:(NSString *)clientName key:(nullable NSString *)key
 {
@@ -167,11 +201,23 @@
 							   @"params": @{ @"protocolVersion": @"2025-06-18",
 											 @"clientInfo": @{ @"name": clientName, @"version": @"2.1.0" } } };
 	NSHTTPURLResponse *response = nil;
-	[self send:@"POST" body:message headers:key != nil ? @{ @"Authorization": [@"Bearer " stringByAppendingString:key] } : nil response:&response];
+	[self send:@"POST" body:message headers:[self headersPresentingKey:key] response:&response];
 	XCTAssertEqual(response.statusCode, 200);
 	NSString *identifier = [response valueForHTTPHeaderField:@"Mcp-Session-Id"];
 	XCTAssertGreaterThan(identifier.length, 0, @"initialize issues a session");
 	return identifier ?: @"";
+}
+
+/*! Initializes a session and starts it with the notification a client sends next, carrying the id. */
+- (NSString *)startSessionAs:(NSString *)clientName key:(nullable NSString *)key
+{
+	NSString *identifier = [self initializeAs:clientName key:key];
+	NSMutableDictionary<NSString *, NSString *> *headers = [NSMutableDictionary dictionaryWithDictionary:[self headersPresentingKey:key] ?: @{}];
+	headers[@"Mcp-Session-Id"] = identifier;
+	NSHTTPURLResponse *response = nil;
+	[self send:@"POST" body:@{ @"jsonrpc": @"2.0", @"method": @"notifications/initialized" } headers:headers response:&response];
+	XCTAssertEqual(response.statusCode, 202, @"the id sent back starts the session");
+	return identifier;
 }
 
 - (NSInteger)pingStatusInSession:(nullable NSString *)identifier
@@ -182,8 +228,14 @@
 	return response.statusCode;
 }
 
-// XCTNSPredicateExpectation evaluates about once a second, longer than the sub-second intervals these
-// tests set, so the wait polls every 10 ms.
+/*! Moves the store's clock forward and runs its expiry pass. */
+- (void)advanceClockBy:(NSTimeInterval)seconds
+{
+	self.clock.now += seconds;
+	[self.server.mcpSessions sweep];
+}
+
+// XCTNSPredicateExpectation evaluates about once a second, so the wait polls every 10 ms.
 - (void)waitUntil:(BOOL (^)(void))condition description:(NSString *)description
 {
 	NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:10];
@@ -209,12 +261,33 @@
 	return reader;
 }
 
+/*! The pings the stream has carried so far, oldest first. */
+- (NSArray<NSDictionary *> *)pingsOnStream:(NFKEventStreamReader *)reader
+{
+	return [[reader messages] filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NSDictionary *message, NSDictionary *bindings) {
+		return [message[@"method"] isEqual:@"ping"];
+	}]];
+}
+
+/*! Moves the clock a ping interval forward and waits for the ping that sends; returns its id. */
+- (id)nextPingOnStream:(NFKEventStreamReader *)reader interval:(NSTimeInterval)interval
+{
+	NSUInteger seen = [self pingsOnStream:reader].count;
+	[self advanceClockBy:interval];
+	[self waitUntil:^BOOL {
+		return [self pingsOnStream:reader].count > seen;
+	} description:@"the stream carries a ping"];
+	return [self pingsOnStream:reader].lastObject[@"id"] ?: NSNull.null;
+}
+
 #pragma mark Issuing
 
 - (void)testInitializeIssuesASessionCarryingTheClientsInfo
 {
 	NSString *identifier = [self initializeAs:@"claude-code" key:nil];
+	XCTAssertEqual(self.server.MCPSessions.count, 0, @"an issued session waits for its client");
 
+	XCTAssertEqual([self pingStatusInSession:identifier], 200);
 	NSArray<NFKServerMCPSession *> *sessions = self.server.MCPSessions;
 	XCTAssertEqual(sessions.count, 1);
 	NFKServerMCPSession *session = sessions.firstObject;
@@ -228,13 +301,35 @@
 	XCTAssertLessThan(fabs(session.startDate.timeIntervalSinceNow), 5.0);
 
 	XCTAssertEqual([self pingStatusInSession:identifier], 200);
-	XCTAssertEqual([self pingStatusInSession:nil], 200, @"a client that never sends the id back is served without a session");
+	XCTAssertEqual(self.server.MCPSessions.count, 1, @"later requests stay in the one session");
 	[self waitUntil:^BOOL {
 		@synchronized (self.recorder) {
 			return self.recorder.started.count == 1;
 		}
 	} description:@"the delegate learns of the session"];
 	XCTAssertEqualObjects(self.recorder.started.firstObject.clientName, @"claude-code");
+}
+
+- (void)testAClientThatNeverSendsTheIdBackLeavesNoSession
+{
+	NSString *stateless = [self initializeAs:@"stateless" key:nil];
+	XCTAssertEqual([self pingStatusInSession:nil], 200, @"a client that never sends the id back is served without a session");
+	XCTAssertEqual(self.server.MCPSessions.count, 0);
+
+	NSString *identifier = [self startSessionAs:@"stateful" key:nil];
+	[self waitUntil:^BOOL {
+		@synchronized (self.recorder) {
+			return self.recorder.started.count > 0;
+		}
+	} description:@"the delegate learns of the started session"];
+	@synchronized (self.recorder) {
+		XCTAssertEqual(self.recorder.started.count, 1, @"the events arrive in order, so the unclaimed id would have come first");
+		XCTAssertEqualObjects(self.recorder.started.firstObject.identifier, identifier);
+	}
+
+	[self advanceClockBy:61];
+	XCTAssertEqual([self pingStatusInSession:stateless], 404, @"an unclaimed id lapses");
+	XCTAssertNil([self.recorder endedSessionWithIdentifier:stateless], @"a session that never started never ends");
 }
 
 - (void)testAnUnknownSessionIsNotFound
@@ -253,7 +348,7 @@
 
 - (void)testDeleteEndsTheSession
 {
-	NSString *identifier = [self initializeAs:@"agent" key:nil];
+	NSString *identifier = [self startSessionAs:@"agent" key:nil];
 	NSHTTPURLResponse *response = nil;
 	[self send:@"DELETE" body:nil headers:@{ @"Mcp-Session-Id": identifier } response:&response];
 	XCTAssertEqual(response.statusCode, 204);
@@ -270,12 +365,16 @@
 
 - (void)testAnIdleSessionEnds
 {
-	self.server.MCPSessionIdleTimeout = 0.3;
-	NSString *identifier = [self initializeAs:@"agent" key:nil];
-	XCTAssertEqual([self pingStatusInSession:identifier], 200, @"activity within the timeout keeps the session");
-	[self waitUntil:^BOOL {
-		return self.server.MCPSessions.count == 0;
-	} description:@"the idle session ends"];
+	self.server.MCPSessionIdleTimeout = 1000;
+	NSString *identifier = [self startSessionAs:@"agent" key:nil];
+	[self advanceClockBy:999];
+	XCTAssertEqual(self.server.MCPSessions.count, 1, @"the session lasts its idle timeout");
+	XCTAssertEqual([self pingStatusInSession:identifier], 200);
+	[self advanceClockBy:999];
+	XCTAssertEqual(self.server.MCPSessions.count, 1, @"activity within the timeout keeps the session");
+
+	[self advanceClockBy:2];
+	XCTAssertEqual(self.server.MCPSessions.count, 0, @"the idle session ends");
 	XCTAssertEqual([self pingStatusInSession:identifier], 404);
 	[self waitUntil:^BOOL {
 		return [self.recorder endedSessionWithIdentifier:identifier] != nil;
@@ -285,8 +384,8 @@
 
 - (void)testTheHostAndAStoppingServerEndSessions
 {
-	NSString *first = [self initializeAs:@"first" key:nil];
-	NSString *second = [self initializeAs:@"second" key:nil];
+	NSString *first = [self startSessionAs:@"first" key:nil];
+	NSString *second = [self startSessionAs:@"second" key:nil];
 	XCTAssertTrue([self.server endMCPSessionWithIdentifier:first]);
 	XCTAssertFalse([self.server endMCPSessionWithIdentifier:first]);
 	XCTAssertEqual([self pingStatusInSession:first], 404);
@@ -300,41 +399,55 @@
 	XCTAssertEqual([self.recorder endedSessionWithIdentifier:second].endReason, NFKServerMCPSessionEndReasonServerStopped);
 }
 
+#pragma mark Expiry timer
+
+- (void)testRaisingAnIntervalStartsTheExpiryTimer
+{
+	self.server.MCPPingInterval = 0;
+	self.server.MCPSessionIdleTimeout = 0;
+	NSString *identifier = [self initializeAs:@"agent" key:nil];
+	XCTAssertNotNil(self.server.mcpSessions.timer, @"an issued session is watched until its client claims it");
+	XCTAssertEqual([self pingStatusInSession:identifier], 200);
+	XCTAssertNil(self.server.mcpSessions.timer, @"with both intervals 0 nothing needs watching");
+
+	self.server.MCPSessionIdleTimeout = 1000;
+	XCTAssertNotNil(self.server.mcpSessions.timer, @"raising an interval watches the running session");
+	self.server.MCPSessionIdleTimeout = 0;
+	XCTAssertNil(self.server.mcpSessions.timer);
+	self.server.MCPPingInterval = 1000;
+	XCTAssertNotNil(self.server.mcpSessions.timer);
+}
+
 #pragma mark The stream
 
 - (void)testAnsweredPingsKeepASessionAndMissedOnesEndIt
 {
-	self.server.MCPPingInterval = 0.1;
+	self.server.MCPPingInterval = 1000;
 	self.server.MCPMissedPingLimit = 3;
-	self.server.MCPSessionIdleTimeout = 0.2;
+	self.server.MCPSessionIdleTimeout = 1500;
 	NSString *identifier = [self initializeAs:@"agent" key:nil];
 	NFKEventStreamReader *reader = [self openStreamForSession:identifier];
 	[self waitUntil:^BOOL {
 		return self.server.MCPSessions.firstObject.isStreamOpen && reader.response != nil;
-	} description:@"the stream opens and its response reaches the client"];
+	} description:@"opening the stream starts the session, and its response reaches the client"];
 	XCTAssertEqual(reader.response.statusCode, 200);
 	XCTAssertEqualObjects([reader.response valueForHTTPHeaderField:@"Content-Type"], @"text/event-stream");
 
-	NSMutableSet *answered = [NSMutableSet set];
-	NSDate *until = [NSDate dateWithTimeIntervalSinceNow:1.0];
-	while (until.timeIntervalSinceNow > 0) {
-		for (NSDictionary *message in [reader messages]) {
-			if ([message[@"method"] isEqual:@"ping"] && ![answered containsObject:message[@"id"]]) {
-				[answered addObject:message[@"id"]];
-				NSHTTPURLResponse *response = nil;
-				[self send:@"POST" body:@{ @"jsonrpc": @"2.0", @"id": message[@"id"], @"result": @{} }
-				   headers:@{ @"Mcp-Session-Id": identifier } response:&response];
-				XCTAssertEqual(response.statusCode, 202, @"an answer is acknowledged");
-			}
-		}
-		[NSThread sleepForTimeInterval:0.02];
+	for (NSUInteger answered = 0; answered < 3; answered++) {
+		id ping = [self nextPingOnStream:reader interval:1000];
+		NSHTTPURLResponse *response = nil;
+		[self send:@"POST" body:@{ @"jsonrpc": @"2.0", @"id": ping, @"result": @{} }
+		   headers:@{ @"Mcp-Session-Id": identifier } response:&response];
+		XCTAssertEqual(response.statusCode, 202, @"an answer is acknowledged");
 	}
-	XCTAssertGreaterThanOrEqual(answered.count, 3);
 	XCTAssertEqual(self.server.MCPSessions.count, 1, @"answered pings keep the session past its idle timeout");
 
-	[self waitUntil:^BOOL {
-		return self.server.MCPSessions.count == 0;
-	} description:@"unanswered pings end the session"];
+	for (NSUInteger missed = 0; missed < 3; missed++) {
+		[self nextPingOnStream:reader interval:1000];
+	}
+	XCTAssertEqual(self.server.MCPSessions.count, 1, @"the session lasts until its last ping goes unanswered");
+	[self advanceClockBy:1000];
+	XCTAssertEqual(self.server.MCPSessions.count, 0, @"unanswered pings end the session");
 	[self waitUntil:^BOOL {
 		return reader.completed;
 	} description:@"the session's end closes its stream"];
@@ -352,14 +465,17 @@
 	[self.server addAPIKey:@"key-one" named:@"one" scopes:NFKServerKeyScopeMCP];
 	[self.server addAPIKey:@"key-two" named:@"two" scopes:NFKServerKeyScopeMCP];
 	NSString *identifier = [self initializeAs:@"agent" key:@"key-one"];
-	XCTAssertEqualObjects(self.server.MCPSessions.firstObject.keyName, @"one");
 
 	NSHTTPURLResponse *response = nil;
 	NSDictionary *ping = @{ @"jsonrpc": @"2.0", @"id": @2, @"method": @"ping" };
 	[self send:@"POST" body:ping headers:@{ @"Mcp-Session-Id": identifier, @"Authorization": @"Bearer key-two" } response:&response];
-	XCTAssertEqual(response.statusCode, 404, @"another key cannot use the session");
+	XCTAssertEqual(response.statusCode, 404, @"another key cannot start the session");
+	XCTAssertEqual(self.server.MCPSessions.count, 0);
 	[self send:@"POST" body:ping headers:@{ @"Mcp-Session-Id": identifier, @"Authorization": @"Bearer key-one" } response:&response];
 	XCTAssertEqual(response.statusCode, 200);
+	XCTAssertEqualObjects(self.server.MCPSessions.firstObject.keyName, @"one");
+	[self send:@"POST" body:ping headers:@{ @"Mcp-Session-Id": identifier, @"Authorization": @"Bearer key-two" } response:&response];
+	XCTAssertEqual(response.statusCode, 404, @"another key cannot use the session");
 
 	[self.server removeAPIKeyNamed:@"one"];
 	XCTAssertEqual(self.server.MCPSessions.count, 0);

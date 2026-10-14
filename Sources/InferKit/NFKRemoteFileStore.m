@@ -7,6 +7,7 @@
 #import <InferKit/NFKRemoteProvider.h>
 #import <InferKit/NFKRemoteTransport.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteTransportPrivate.h"
 
 /*! A date from Unix seconds or an RFC 3339 string, the two forms the services write. */
 static NSDate * _Nullable NFKRemoteFileDate(id value)
@@ -142,6 +143,10 @@ static NSString * _Nullable NFKRemoteFileString(id value)
 		store.uploadPathComponent = [identifier isEqualToString:@"together"] ? @"upload" : nil;
 	} else {
 		return nil;
+	}
+	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
+	if (pinned != nil) {
+		store.session = pinned;
 	}
 	return store;
 }

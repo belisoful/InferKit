@@ -382,12 +382,12 @@ static NSData * _Nullable NFKPEMBlockData(NSString *text, NSString *label)
 		NFKIdentityFail(NFKServerIdentityErrorKeyFailure, @"the key's public half is not a P-256 point", nil, outError);
 		return nil;
 	}
-	NSDate *now = [NSDate dateWithTimeIntervalSince1970:floor(NSDate.date.timeIntervalSince1970)];
+	NSDate *notBefore = [NSDate dateWithTimeIntervalSince1970:floor(NSDate.date.timeIntervalSince1970) - 3600.0];
 	NSData *tbs = [self toBeSignedWithPublicKey:publicBytes
 									 commonName:commonName
 							   alternativeNames:alternativeNames
-									  notBefore:[now dateByAddingTimeInterval:-3600.0]
-									   notAfter:[now dateByAddingTimeInterval:validityInterval]];
+									  notBefore:notBefore
+									   notAfter:[notBefore dateByAddingTimeInterval:validityInterval]];
 	CFErrorRef signError = NULL;
 	NSData *signature = CFBridgingRelease(SecKeyCreateSignature(privateKey, kSecKeyAlgorithmECDSASignatureMessageX962SHA256,
 																(__bridge CFDataRef)tbs, &signError));

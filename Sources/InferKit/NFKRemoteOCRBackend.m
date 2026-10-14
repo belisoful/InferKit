@@ -13,6 +13,7 @@
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
 #import <InferKit/NFKRemoteFileStore.h>
+#import "NFKRemoteTransportPrivate.h"
 
 @implementation NFKRemoteOCRBackend
 
@@ -33,6 +34,10 @@
 		return nil;
 	}
 	NFKRemoteOCRBackend *backend = [self backendWithEndpointURL:[provider URLForPath:@"ocr"]];
+	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
+	if (pinned != nil) {
+		backend.session = pinned;
+	}
 	backend.apiKey = apiKey;
 	backend.modelName = modelName;
 	return backend;

@@ -7,6 +7,7 @@
 #import <InferKit/NFKRemoteProvider.h>
 #import <InferKit/NFKRemoteTransport.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteTransportPrivate.h"
 
 #pragma mark - WebSocket
 
@@ -35,9 +36,29 @@
 {
 	self.messageHandler = messageHandler;
 	self.closeHandler = closeHandler;
+	NSError *refusal = [self pinRefusal];
+	if (refusal != nil) {
+		// Asynchronous, as a network failure arrives, so the caller's connect finishes first.
+		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+			[self finishWithError:refusal];
+		});
+		return;
+	}
 	self.task = [self.session webSocketTaskWithRequest:self.request];
 	[self.task resume];
 	[self receive];
+}
+
+// The pinned session's trust delegate checks the certificate; only the scheme is left to check here.
+- (nullable NSError *)pinRefusal
+{
+	if ([NFKRemoteTransport pinnedCertificateSHA256ForSession:self.session] == nil
+		|| [self.request.URL.scheme.lowercaseString isEqualToString:@"wss"]) {
+		return nil;
+	}
+	NSString *reason = [NSString stringWithFormat:@"a pinned session opens only wss:// sockets, and %@ is %@://",
+						self.request.URL.host ?: @"the endpoint", self.request.URL.scheme ?: @""];
+	return [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:reason];
 }
 
 // One receive per message; the next is asked for once this one is handled.
@@ -109,6 +130,7 @@
 	NFKRealtimeSession *session = [[self alloc] init];
 	session.apiStyle = apiStyle;
 	session.endpointURL = endpoint;
+	session.URLSession = NFKRemotePinnedSessionForProvider(provider);
 	session.apiKey = apiKey;
 	session.modelName = modelName;
 	return session;
@@ -196,7 +218,7 @@
 
 - (id<NFKRealtimeSocket>)socketForRequest:(NSURLRequest *)request
 {
-	return [[NFKRealtimeWebSocket alloc] initWithRequest:request session:nil];
+	return [[NFKRealtimeWebSocket alloc] initWithRequest:request session:self.URLSession];
 }
 
 // The query each style's handshake reads, and the key: Gemini's in the query, every other's in a

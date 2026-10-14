@@ -20,10 +20,16 @@ FOUNDATION_EXPORT NSDictionary<NSString *, id> *NFKMCPCallResult(NFKToolResult *
 /*!
 	@class      NFKServedMCPSessionStore
 	@abstract   The MCP sessions a server issued, their server-to-client streams, and their expiry.
-	@discussion Every property and method may be used from any thread. A timer on the store's serial
-				queue pings each open stream every pingInterval and ends a session whose client left
-				missedPingLimit pings unanswered, or one with no stream, no request in flight, and no
-				activity for idleTimeout. The timer runs only while a session exists.
+	@discussion Every property and method may be used from any thread. An initialize issues a session
+				that waits, unlisted and unreported, for the client's first request carrying its id;
+				that request starts it. An issued session whose client never sends the id back is
+				discarded after 60 seconds, or idleTimeout when shorter, and at most 256 wait at once,
+				so issuing one more discards the oldest.
+
+				A timer on the store's serial queue pings each open stream every pingInterval and ends
+				a session whose client left missedPingLimit pings unanswered, or one with no stream, no
+				request in flight, and no activity for idleTimeout. The timer runs only while a session
+				is active or waits for its client.
 */
 @interface NFKServedMCPSessionStore : NSObject
 
@@ -39,19 +45,21 @@ FOUNDATION_EXPORT NSDictionary<NSString *, id> *NFKMCPCallResult(NFKToolResult *
 /*! Called off the store's lock, in order, with a snapshot when a session starts (ended NO) or ends. */
 @property (atomic, copy, nullable) void (^eventHandler)(NFKServerMCPSession *session, BOOL ended);
 
-/*! A snapshot of each active session, oldest first. */
+/*! A snapshot of each active session, oldest first. An issued session that waits for its client is
+	not listed. */
 - (NSArray<NFKServerMCPSession *> *)sessions;
 
-/*! Ends the session; NO when no active session has the identifier. */
+/*! Ends the active session; NO when no active session has the identifier. */
 - (BOOL)endSessionWithIdentifier:(NSString *)identifier reason:(NFKServerMCPSessionEndReason)reason;
 
-/*! Ends every session started with the key named keyName. */
+/*! Ends every session started with the key named keyName and discards the issued ones it presented. */
 - (void)endSessionsWithKeyName:(NSString *)keyName reason:(NFKServerMCPSessionEndReason)reason;
 
-/*! Ends every session. */
+/*! Ends every session and discards every issued one. */
 - (void)endAllSessionsWithReason:(NFKServerMCPSessionEndReason)reason;
 
-/*! Applies a changed idleTimeout or pingInterval to the timer. */
+/*! Applies a changed idleTimeout or pingInterval to the timer, starting or stopping it as the change
+	requires. */
 - (void)settingsChanged;
 
 @end
@@ -64,11 +72,12 @@ FOUNDATION_EXPORT NSDictionary<NSString *, id> *NFKMCPCallResult(NFKToolResult *
 				acknowledged with 202. initialize, ping, tools/list, and tools/call are answered; any
 				other method is not found.
 
-				Sessions: initialize issues an Mcp-Session-Id in its reply. A later request that carries
-				one names an active session started with the same key name, or is answered 404, which
-				tells the client to initialize again. A request without one is served statelessly. GET
-				with a session opens the server-to-client event stream, which carries the server's
-				pings; DELETE with a session ends it. GET without a session is 405.
+				Sessions: initialize issues an Mcp-Session-Id in its reply, and the session starts at
+				the client's first request that carries it. A request that carries one names an active
+				or issued session of the same key name, or is answered 404, which tells the client to
+				initialize again. A request without one is served statelessly. GET with a session opens
+				the server-to-client event stream, which carries the server's pings; DELETE with a
+				session ends it. GET without a session is 405.
 
 				An Origin header naming another host is refused with 403, which keeps a web page from
 				reaching a local server through DNS rebinding. A tools/call runs off the connection's
