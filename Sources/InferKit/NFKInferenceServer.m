@@ -19,6 +19,7 @@
 #import "NFKServerObservationPrivate.h"
 #import <CommonCrypto/CommonDigest.h>
 #import <unistd.h>
+#import <arpa/inet.h>
 
 const uint16_t NFKInferenceServerDefaultPort = 11480;
 NSString * const NFKInferenceServerServiceType = @"_inferkit._tcp";
@@ -2177,12 +2178,46 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 
 #pragma mark Routing
 
+/*! Whether a Host header names this machine's loopback: localhost, an address in 127.0.0.0/8, or ::1,
+	with or without a port. A request without the header names no other host either. */
+static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
+{
+	if (host.length == 0) {
+		return YES;
+	}
+	NSString *name = host.lowercaseString;
+	if ([name hasPrefix:@"["]) {
+		NSRange close = [name rangeOfString:@"]"];
+		name = close.location != NSNotFound ? [name substringWithRange:NSMakeRange(1, close.location - 1)] : name;
+	} else if ([name componentsSeparatedByString:@":"].count == 2) {
+		name = [name componentsSeparatedByString:@":"].firstObject;
+	}
+	if ([name isEqualToString:@"localhost"] || [name isEqualToString:@"localhost."]) {
+		return YES;
+	}
+	struct in_addr v4;
+	if (inet_pton(AF_INET, name.UTF8String, &v4) == 1) {
+		return (ntohl(v4.s_addr) >> 24) == 127;
+	}
+	struct in6_addr v6;
+	return inet_pton(AF_INET6, name.UTF8String, &v6) == 1 && IN6_IS_ADDR_LOOPBACK(&v6);
+}
+
 /*! The refusal of a request for a route of scope, or nil when it may reach the route, recording the name
-	of the key it presented. A client exempt from the check passes whatever it presents. */
+	of the key it presented. A client exempt from the check passes whatever it presents. A loopback
+	request whose Host names another host, which is how a browser page reaches this machine by DNS
+	rebinding, is served only with a key that opens the route. */
 - (nullable NSError *)refusalOf:(NFKHTTPRequest *)request scope:(NFKServerKeyScope)scope
 {
 	NFKServedAPIKey *key = [self keyPresentedBy:request];
 	request.keyName = key.name;
+	if (request.fromLoopback && !NFKHostNamesLoopback([request valueForHeader:@"host"])) {
+		if ((key.scopes & scope) != 0) {
+			return nil;
+		}
+		return NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorMisdirected,
+							  @"a request from this machine names another host; connect to localhost or present a key");
+	}
 	BOOL keyRequired = request.fromLoopback ? (self.loopbackExemptScopes & scope) == 0 : self.requiresAPIKey;
 	if (!keyRequired || (key.scopes & scope) != 0) {
 		return nil;
@@ -2297,6 +2332,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		NSDictionary<NSNumber *, NSNumber *> *statuses = @{ @(NFKInferenceServerErrorModelNotFound): @404,
 															@(NFKInferenceServerErrorUnauthorized): @401,
 															@(NFKInferenceServerErrorInsufficientScope): @403,
+															@(NFKInferenceServerErrorMisdirected): @421,
 															@(NFKInferenceServerErrorBusy): @503 };
 		return statuses[@(error.code)].integerValue ?: 400;
 	}

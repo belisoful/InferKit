@@ -100,8 +100,8 @@ typedef void (^NFKHTTPRequestHandler)(NFKHTTPRequest *request, NFKHTTPResponse *
 
 /*! Binds and starts listening; blocks until the listener is ready or has failed. */
 - (BOOL)startWithError:(NSError * _Nullable *)outError;
-/*! Stops listening and closes every connection. Returns once the port is free, or after 2 seconds. Not
-	called on the listener's own queue. */
+/*! Stops listening and closes every connection. Returns once the port is free, or after 2 seconds;
+	called on a listener's queue, it returns at once. */
 - (void)stop;
 @end
 

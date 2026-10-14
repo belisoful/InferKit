@@ -9,6 +9,9 @@
 
 #import <XCTest/XCTest.h>
 #import <InferKit/InferKit.h>
+#import <arpa/inet.h>
+#import <sys/socket.h>
+#import <unistd.h>
 
 /*! A backend that answers every request with "ok". */
 @interface NFKPlainLoopbackTestBackend : NSObject <NFKInferenceBackend>
@@ -107,6 +110,42 @@
 	return response;
 }
 
+/*! The status of a request written by hand to the plain listener, so its Host and Origin headers are the
+	test's own; URL sessions replace Host. 0 when no reply arrives. */
+- (NSInteger)statusOf:(NSString *)method path:(NSString *)path host:(NSString *)host
+			  headers:(NSDictionary<NSString *, NSString *> *)headers body:(nullable NSString *)body
+{
+	int socketDescriptor = socket(AF_INET, SOCK_STREAM, 0);
+	XCTAssertGreaterThanOrEqual(socketDescriptor, 0);
+	struct timeval timeout = { 5, 0 };
+	setsockopt(socketDescriptor, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+	struct sockaddr_in address = { 0 };
+	address.sin_len = sizeof(address);
+	address.sin_family = AF_INET;
+	address.sin_port = htons(self.server.plainLoopbackListeningPort);
+	address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	if (connect(socketDescriptor, (struct sockaddr *)&address, sizeof(address)) != 0) {
+		close(socketDescriptor);
+		return 0;
+	}
+	NSMutableString *text = [NSMutableString stringWithFormat:@"%@ %@ HTTP/1.1\r\nHost: %@\r\nConnection: close\r\n", method, path, host];
+	[headers enumerateKeysAndObjectsUsingBlock:^(NSString *field, NSString *value, BOOL *stop) {
+		[text appendFormat:@"%@: %@\r\n", field, value];
+	}];
+	NSData *bodyData = [body dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
+	[text appendFormat:@"Content-Length: %lu\r\n\r\n", (unsigned long)bodyData.length];
+	NSMutableData *message = [[text dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
+	[message appendData:bodyData];
+	write(socketDescriptor, message.bytes, message.length);
+	char reply[64] = { 0 };
+	ssize_t length = read(socketDescriptor, reply, sizeof(reply) - 1);
+	close(socketDescriptor);
+	if (length < 12) {
+		return 0;
+	}
+	return [[[NSString alloc] initWithBytes:reply + 9 length:3 encoding:NSASCIIStringEncoding] integerValue];
+}
+
 #pragma mark Listeners
 
 - (void)testBothListenersServeTheSameModels
@@ -173,6 +212,41 @@
 	XCTAssertTrue([second startWithError:&error], @"the stopped server released the plain port: %@", error);
 	XCTAssertEqual(second.plainLoopbackListeningPort, plainPort);
 	[second stop];
+}
+
+#pragma mark Host checks
+
+- (void)testAForeignHostNeedsAKeyOnThePlainListener
+{
+	[self.server addAPIKey:@"key-one" named:@"one" scopes:NFKServerKeyScopeInference];
+	[self start];
+	NSString *port = [NSString stringWithFormat:@"%u", (unsigned)self.server.plainLoopbackListeningPort];
+	XCTAssertEqual([self statusOf:@"GET" path:@"/v1/models" host:[@"attacker.example:" stringByAppendingString:port] headers:@{} body:nil], 421,
+				   @"a rebound browser page gets no key-free access");
+	XCTAssertEqual([self statusOf:@"GET" path:@"/v1/inferkit/status" host:@"attacker.example" headers:@{} body:nil], 421);
+	XCTAssertEqual([self statusOf:@"GET" path:@"/v1/models" host:[@"localhost:" stringByAppendingString:port] headers:@{} body:nil], 200);
+	XCTAssertEqual([self statusOf:@"GET" path:@"/v1/models" host:@"127.0.0.1" headers:@{} body:nil], 200);
+	XCTAssertEqual([self statusOf:@"GET" path:@"/v1/models" host:[@"[::1]:" stringByAppendingString:port] headers:@{} body:nil], 200);
+	NSDictionary *key = @{ @"Authorization": @"Bearer key-one" };
+	XCTAssertEqual([self statusOf:@"GET" path:@"/v1/models" host:@"attacker.example" headers:key body:nil], 200,
+				   @"a key that opens the route serves any Host, as a reverse proxy sends");
+	XCTAssertEqual([self statusOf:@"GET" path:@"/v1/inferkit/status" host:@"attacker.example" headers:key body:nil], 421,
+				   @"the key must open the route");
+}
+
+- (void)testTheMCPOriginCheckStillRefusesAnotherSite
+{
+	[self start];
+	NSString *host = [NSString stringWithFormat:@"localhost:%u", (unsigned)self.server.plainLoopbackListeningPort];
+	NSString *ping = @"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"ping\"}";
+	NSDictionary *json = @{ @"Content-Type": @"application/json", @"Accept": @"application/json, text/event-stream" };
+	NSMutableDictionary *foreign = [json mutableCopy];
+	foreign[@"Origin"] = @"http://attacker.example";
+	NSMutableDictionary *local = [json mutableCopy];
+	local[@"Origin"] = [@"http://" stringByAppendingString:host];
+	XCTAssertEqual([self statusOf:@"POST" path:@"/mcp" host:host headers:foreign body:ping], 403);
+	XCTAssertEqual([self statusOf:@"POST" path:@"/mcp" host:host headers:local body:ping], 200);
+	XCTAssertEqual([self statusOf:@"POST" path:@"/mcp" host:host headers:json body:ping], 200, @"an agent CLI sends no Origin");
 }
 
 #pragma mark Shared state

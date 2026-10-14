@@ -725,7 +725,8 @@ A client on another machine presents `apiKey` as a Bearer token unless the host 
 `servesPlainHTTPOnLoopback` adds a plain-HTTP listener on loopback only, for local clients such as agent
 CLIs that do not trust a self-signed certificate. Both listeners serve the same models and keys;
 `localBaseURL` and `localMCPURL` name the plain one, and `networkBaseURL` and `networkMCPURL` the HTTPS
-one.
+one. A request from this machine whose `Host` header names another host, as a browser page reaching the
+server through DNS rebinding sends, needs a key whatever the exemptions.
 
 A server can hold several keys, each named and limited to the routes it opens: inference, the status
 route, MCP, and the app's own routes. Removing a key refuses it from the next request.

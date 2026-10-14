@@ -1171,6 +1171,14 @@ Macs broke every local agent link, and a second `NFKInferenceServer` would build
   never advertised. Both listeners hand requests to the same `routeRequest:response:`, so models,
   residency, counts, keys, app routes, MCP sessions, and observation are one set. A request on it has
   `fromLoopback` set, so `loopbackExemptScopes` applies as it does on the main listener's loopback side.
+- DNS rebinding (the Commit Manager's review, 2026-10-14): TLS kept a browser page out, since a page on
+  `attacker.example` re-resolved to 127.0.0.1 fails the handshake on a certificate that does not name
+  it; a plain listener with every scope loopback-exempt would serve that page with no key. Decision:
+  a loopback request whose `Host` names anything but `localhost`, 127.0.0.0/8, or `::1` (port optional;
+  no `Host` passes) gets no exemption on any listener. It is served only with a key that opens the
+  route, and is otherwise 421 (`NFKInferenceServerErrorMisdirected`) before routing. A browser cannot
+  forge `Host`; agent CLIs send `localhost`; a reverse proxy that forwards a public `Host` presents a
+  key, as the proxy advice already says. `/mcp` keeps its `Origin` check.
 - `localBaseURL` and `localMCPURL` name the plain listener while it runs (a stable local endpoint
   whether TLS is on or off), otherwise the main one. `networkBaseURL` and `networkMCPURL` name the main
   listener by `gethostname()`, with `.local` added to a bare name; nil while stopped or `loopbackOnly`.
@@ -1178,11 +1186,14 @@ Macs broke every local agent link, and a second `NFKInferenceServer` would build
   reports `NFKInferenceServerErrorListenFailed`. `stop` stops both, and `NFKHTTPListener.stop` waits
   (up to 2 s) for the listener's cancelled state, since `nw_listener_cancel` frees the port
   asynchronously: in the full suite a start on the just-stopped port failed with EADDRINUSE
-  (2026-10-14), which a fixed-port restart (stop, change, start) would hit too.
-- Tests: `NFKServerPlainLoopbackTests` (6): one model serving both listeners (counts shared, the main
+  (2026-10-14), which a fixed-port restart (stop, change, start) would hit too. On a listener's own
+  queue, where the cancelled state is delivered, stop skips the wait (a queue-specific key marks it).
+- Tests: `NFKServerPlainLoopbackTests` (8): one model serving both listeners (counts shared, the main
   listener still pinned), the local URLs without the option, the network URLs, a taken plain port
-  starting neither and a stop releasing it, keys and a revocation applying on both, and an MCP session
-  issued on one listener starting on the other.
+  starting neither and a stop releasing it, keys and a revocation applying on both, an MCP session
+  issued on one listener starting on the other, and, over hand-written requests (a URL session
+  replaces `Host`), a foreign `Host` refused with 421 unless its key opens the route and `/mcp`'s
+  `Origin` check.
 
 **Residency and unloading (2026-10-13).** Asked for by an app's service, which lists models without
 keeping them in memory, and unloads idle ones.
@@ -1458,7 +1469,7 @@ missing input, unsupported, and refused 400, rate limited 429 (with `Retry-After
 `NFKRemoteErrorRetryAfterKey`), upstream unreachable 502, other failures 500, unknown model 404,
 missing or unknown key 401 with `WWW-Authenticate: Bearer`, a held key without the route's scope 403
 (`NFKInferenceServerErrorInsufficientScope`) with `WWW-Authenticate: Bearer error="insufficient_scope"`
-as RFC 6750 specifies, a full queue
-(`NFKInferenceServerErrorBusy`) 503 with `Retry-After`. The transport retries that 503 only when the
+as RFC 6750 specifies, a loopback request naming another host without a key that opens the route 421
+(`NFKInferenceServerErrorMisdirected`), a full queue (`NFKInferenceServerErrorBusy`) 503 with `Retry-After`. The transport retries that 503 only when the
 `Retry-After` is within `maximumRetryDelay` (8 s by default).
 

@@ -46,6 +46,9 @@ extern NSString * const NFKInferenceServerErrorDomain;
 	@constant   NFKInferenceServerErrorInsufficientScope A request carried a key the server holds whose
 				scopes do not include the route's. The reply is 403 with WWW-Authenticate: Bearer
 				error="insufficient_scope".
+	@constant   NFKInferenceServerErrorMisdirected A request from this machine named another host in its
+				Host header, as a browser page does that reaches the server by DNS rebinding, and
+				presented no key that opens the route. The reply is 421.
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
@@ -56,6 +59,7 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 	NFKInferenceServerErrorUnauthorized = 5,
 	NFKInferenceServerErrorBusy = 6,
 	NFKInferenceServerErrorInsufficientScope = 7,
+	NFKInferenceServerErrorMisdirected = 8,
 };
 
 /*! The name apiKey reads and writes among the server's keys. Introduced in InferKit 0.4.0. */
@@ -160,6 +164,11 @@ NS_SWIFT_SENDABLE
 				- A client on this machine (a loopback peer) needs no key for the scopes in
 				  loopbackExemptScopes, every scope by default. requiresAPIKeyOnLoopback set to YES
 				  empties the set.
+				- A loopback request whose Host header names another host needs a key that opens the
+				  route, whatever the exemptions; without one it is refused with 421
+				  (NFKInferenceServerErrorMisdirected). A browser page that reaches the server through
+				  DNS rebinding sends its own host name, so it gets no key-free access. localhost,
+				  127.0.0.1, and [::1] are loopback names.
 				- startWithError: fails with NFKInferenceServerErrorAPIKeyRequired when the
 				  configuration requires a key and none is set.
 				Keys are compared by their SHA-256 digests in constant time. Neither a key's value nor

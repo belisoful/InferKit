@@ -10,6 +10,9 @@
 
 static const NSUInteger NFKHTTPMaximumHeadBytes = 64 * 1024;
 
+/*! Marks a listener's queue, where its cancelled state arrives, so stop does not wait for it there. */
+static char NFKHTTPListenerQueueKey;
+
 static NSString *NFKHTTPReasonPhrase(NSInteger status)
 {
 	NSDictionary<NSNumber *, NSString *> *phrases = @{ @200: @"OK", @201: @"Created", @202: @"Accepted",
@@ -17,7 +20,7 @@ static NSString *NFKHTTPReasonPhrase(NSInteger status)
 													   @304: @"Not Modified", @400: @"Bad Request", @409: @"Conflict",
 													   @401: @"Unauthorized", @403: @"Forbidden", @404: @"Not Found",
 													   @405: @"Method Not Allowed", @408: @"Request Timeout",
-													   @413: @"Payload Too Large", @415: @"Unsupported Media Type",
+													   @413: @"Payload Too Large", @415: @"Unsupported Media Type", @421: @"Misdirected Request",
 													   @422: @"Unprocessable Content", @429: @"Too Many Requests",
 													   @431: @"Request Header Fields Too Large",
 													   @500: @"Internal Server Error", @501: @"Not Implemented",
@@ -736,6 +739,7 @@ static NSString *NFKHTTPEndpointAddress(nw_endpoint_t _Nullable endpoint)
 		_idleTimeout = 120.0;
 		dispatch_queue_attr_t attributes = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0);
 		_listenerQueue = dispatch_queue_create("com.inferkit.http.listener", attributes);
+		dispatch_queue_set_specific(_listenerQueue, &NFKHTTPListenerQueueKey, &NFKHTTPListenerQueueKey, NULL);
 	}
 	return self;
 }
@@ -850,8 +854,10 @@ static NSString *NFKHTTPEndpointAddress(nw_endpoint_t _Nullable endpoint)
 		nw_listener_cancel(self.listener);
 		self.listener = nil;
 		// Cancellation is asynchronous; waiting for it frees the port before stop returns, so a start
-		// on the same port right after succeeds.
-		dispatch_semaphore_wait(self.listenerCancelled, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)));
+		// on the same port right after succeeds. On a listener queue the state could not arrive.
+		if (dispatch_get_specific(&NFKHTTPListenerQueueKey) == NULL) {
+			dispatch_semaphore_wait(self.listenerCancelled, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)));
+		}
 		self.listenerCancelled = nil;
 	}
 	NSArray<NFKHTTPConnection *> *open = nil;
