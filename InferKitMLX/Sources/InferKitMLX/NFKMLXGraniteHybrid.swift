@@ -309,7 +309,9 @@ final class NFKMLXGraniteMoE: Module {
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let logits = router(x).asType(.float32)
         let chosen = NFKReferenceRounding.chosen(logits, active: expertsPerToken, forced: forcedChoice)
-        let gates = softmax(takeAlong(logits, chosen, axis: -1), axis: -1, precise: true).asType(x.dtype)
+        let kept = takeAlong(logits, chosen, axis: -1)
+        let gates = (NFKReferenceRounding.isReduced(x) ? NFKReferenceRounding.softmaxProbabilities(kept)
+                                                       : softmax(kept, axis: -1, precise: true)).asType(x.dtype)
         let expanded = x.expandedDimensions(axes: [-2, -3])
         let fused = inputLinear(expanded, experts: chosen)
         let parts = split(fused, parts: 2, axis: -1)

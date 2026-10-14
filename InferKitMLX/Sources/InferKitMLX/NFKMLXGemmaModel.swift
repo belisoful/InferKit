@@ -537,14 +537,27 @@ final class NFKGemmaRouter: Module {
     /// this router's, computed for the given experts. See ``NFKReferenceRounding/chosen(_:active:forced:)``.
     var forcedChoice: [[Int32]]?
 
+    /// `x` `[tokens, hidden]` → every expert's probability `[tokens, experts]` in float32, a half-precision
+    /// `x`'s by ``NFKReferenceRounding/softmaxProbabilities(_:)``.
+    func probabilities(_ x: MLXArray) -> MLXArray {
+        let scores = scores(x).asType(.float32)
+        return NFKReferenceRounding.isReduced(x) ? NFKReferenceRounding.softmaxProbabilities(scores)
+                                                 : softmax(scores, axis: -1, precise: true)
+    }
+
     /// `x` `[tokens, hidden]` → the kept routing weights and expert indices, each `[tokens, k]`.
     func callAsFunction(_ x: MLXArray) -> (weights: MLXArray, indices: MLXArray) {
         // The reference keeps the probabilities, their renormalization, and the per-expert scale in
         // float32, so the weights reach the experts unrounded.
-        let probabilities = softmax(scores(x).asType(.float32), axis: -1, precise: true)
-        let chosen = NFKReferenceRounding.chosen(probabilities, active: activeExperts, forced: forcedChoice)
+        let probabilities = probabilities(x)
+        var chosen = NFKReferenceRounding.chosen(probabilities, active: activeExperts, forced: forcedChoice)
+        if forcedChoice == nil {
+            // `torch.topk` keeps the experts in descending probability, the order the experts sum them in.
+            chosen = takeAlong(chosen, argSort(-takeAlong(probabilities, chosen, axis: -1), axis: -1), axis: -1)
+        }
         var weights = takeAlong(probabilities, chosen, axis: -1)
-        weights = weights / weights.sum(axis: -1, keepDims: true)
+        weights = weights / (NFKReferenceRounding.isReduced(x) ? NFKReferenceRounding.routingSum(weights)
+                                                               : weights.sum(axis: -1, keepDims: true))
         weights = weights * take(perExpertScale, chosen, axis: 0).asType(.float32)
         return (weights, chosen)
     }
@@ -552,7 +565,9 @@ final class NFKGemmaRouter: Module {
 
 /// The Gemma 4 experts: one fused gate-and-up projection and one down projection, each stored as a
 /// stacked `[experts, …]` tensor and dispatched through `gatherMM`. The output is the routing-weighted
-/// sum of the selected experts, so the router's weights are applied here rather than by the block.
+/// sum of the selected experts, so the router's weights are applied here rather than by the block. The
+/// sum is the one transformers' default `grouped_mm` experts implementation forms, which the reference runs
+/// (``NFKReferenceRounding/groupedCombined(_:weights:)``).
 final class NFKGemmaExperts: Module, NFKMLXPagedParameters {
     /// Nil where the experts are paged: each projection is then read from ``pagers``.
     @ParameterInfo(key: "gate_up_proj") var gateUp: MLXArray?
@@ -592,7 +607,7 @@ final class NFKGemmaExperts: Module, NFKMLXPagedParameters {
         let activated = NFKReferenceRounding.geluTanh(gate) * up
         let projected = pagers?.down.gatherMM(activated, experts: indices)
             ?? gatherMM(activated, down!.swappedAxes(-1, -2), rhsIndices: indices)
-        return NFKReferenceRounding.combined(projected.squeezed(axis: -2), weights: weights, chosen: indices)
+        return NFKReferenceRounding.groupedCombined(projected.squeezed(axis: -2), weights: weights)
     }
 }
 

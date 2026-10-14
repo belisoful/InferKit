@@ -69,9 +69,11 @@ soft tokens 3.365e-03 against 3.480e-03; Gemma 3n E2B's worst block 0.029, its p
 2.530e-04. `NFKMLXReleaseWeights.arrays(inDirectory:)` defaults to `.float32`, so a test of a stored bf16
 tower passes `precision: .checkpoint`; without it the first Gemma 4 run measured float32.
 
-Routed as the reference, the worst isolated layer reads 0.29 of the floor (layer 0), layer 5 reads
-0.003, and the logits sit at 8.118e-04 from float32 against a floor of 8.321e-04
-(`testGemma4MixturePrefixMatchesTheReferenceAtBothPrecisionsRoutedAsTheReference`).
+Routed as the reference and with its experts summed as transformers' default `grouped_mm` sums them,
+the worst isolated layer reads 0.11 of the floor (layer 0), layer 5 reads 0.000, and the logits sit at
+8.114e-04 from float32 against a floor of 8.321e-04
+(`testGemma4MixturePrefixMatchesTheReferenceAtBothPrecisionsRoutedAsTheReference`). Each layer is held to a
+quarter of the floor.
 
 - `NFKMLXGemma3` / `NFKMLXGemma3Net` / `NFKMLXGemma3Model` / `NFKMLXGemma3Backend` — the Gemma 3 line,
   end to end (`gemma3_text` for the 270M and 1B, the multimodal `gemma3` for the 4B and up), at
@@ -333,7 +335,9 @@ Routed as the reference, the worst isolated layer reads 0.29 of the floor (layer
   times `hidden^-0.5`, a projection to the experts, a softmax, the top-k, a renormalization, and a
   learned `per_expert_scale` on the kept weights; the experts are a fused `gate_up_proj` `[E, 2·inter,
   hidden]` and a `down_proj` `[E, hidden, inter]` dispatched through `gatherMM`, and they apply the
-  routing weights themselves (the reference's index-add), so the block sums rather than re-weights.
+  routing weights themselves, so the block sums rather than re-weights. The reference runs transformers'
+  default `grouped_mm` experts implementation, which sums the weighted outputs in float32 in top-k order and
+  rounds once (`NFKReferenceRounding.groupedCombined`); the router keeps its experts in that order.
   Reference parity against transformers' own `Gemma4ForCausalLM` at a tiny two-layer configuration
   (`run_reference.py gemma4_moe`, `IK_PARITY_GEMMA4_MOE`, the gemma oracle): every hidden state exact
   layer by layer, logit cosine 0.9999999999996, on the first numeric run after the geometry was

@@ -214,47 +214,45 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   block on their own thread, which is where the contract puts a multi-second inference anyway. The `@objc`
   case names are given explicitly (`NFKMLXDeviceTypeCPU`/`…GPU`), since Swift would generate `…Cpu`/`…Gpu`.
 - `NFKMLXHalfPrecision` / `NFKMLXArithmetic` (`@objc`): the arithmetic of a half-precision forward's flash
-  attention exponentials (`softmaxExponential`) and layer norms (`NFKReferenceRounding.layerNorm`, reached by
-  `NFKLayerNorm` and `sd3AffineFreeLayerNorm`). `.fast` is the default and the code that ran before the
-  switch. `.reference` runs two Metal kernels in `NFKMLXReferenceKernels.swift`, each wrapped in a
-  `CustomFunction` whose VJP is the gradient of the MLX operations it stands for. A kernel cannot dispatch on
-  the CPU stream, so there the exponential takes `torchExpOperations` and the layer norm takes `MLXFast`.
-  `NFKMLXBFloat16ParityTests` sets `.reference` in `setUp` and `.fast` in `tearDown`.
+  attention exponentials (`softmaxExponential`), its shared softmax (`softmaxProbabilities`: the eager, math,
+  and upcast attentions and the routers), a router's kept-weight sum (`routingSum`), its layer norms
+  (`NFKReferenceRounding.layerNorm`, reached by `NFKLayerNorm` and `sd3AffineFreeLayerNorm`), and SiLU.
+  `.fast` is the default and the code that ran before the switch. `.reference` runs four Metal kernels in
+  `NFKMLXReferenceKernels.swift` (`torchExp`, `torchSiLU`, `torchSoftmax`, and `torchLayerNorm`), each
+  wrapped in a `CustomFunction` whose VJP is the gradient of the MLX operations it stands for. A kernel
+  cannot dispatch on the CPU stream, so there the exponential and SiLU take MLX operations
+  (`torchExpOperations`) and the softmax and layer norm take MLX's own. `NFKMLXBFloat16ParityTests` sets
+  `.reference` in `setUp` and `.fast` in `tearDown`.
   - `torchExp` is Sleef's `expf` (`Sleef_expf4_u10`), which torch 2.8 computes for every vectorized float32
     exponential on ARM, `exp_u20` included, with `fma` where Sleef fuses. 0 of 1,048,576 results differ from
     torch's. `torchExpOperations` rounds each multiply-add and leaves 1.1% one unit apart.
+  - `torchSoftmax` is torch's float32 `softmax`: the row maximum, Sleef's exponential of each
+    `x − maximum`, their sum over 4 lanes (each lane's elements in order, a partial last vector into the
+    first lanes, the lanes joined as `(a₀ + a₂) + (a₁ + a₃)`, a row shorter than 4 in order), and each
+    exponential times `1 / sum`. A row gets a threadgroup of 32 threads, 4 of them carrying the lanes.
+  - `torchRowSum` is torch's float32 `sum` over a row of up to 19 values: 4-lane vectors, the values past
+    them summed in order and added into the first lane, then the lanes in order. MLX's sums in order and
+    differs on 44% of 8-wide rows.
   - `torchLayerNorm` is torch's `RowwiseMoments` and `LayerNormKernelImpl` for a half-precision input: 8-wide
     vectors widened to two 4-lane float32 vectors, Welford updates over chunks of 16 vectors, a binary
     cascade, the remainder one element at a time, the lanes joined, then
     `(x · rstd + (−rstd · mean)) · γ + β`. torch's vector code rounds every operation, and its compiled
     scalar code fuses the lanes' join, each remaining element's second moment, and the output of a row
-    narrower than 8. A missing γ or β behaves as 1 or 0. 0 of 13.7 million outputs differ from torch's.
-    `testReferenceArithmeticComputesTorchsLayerNorm` holds exact formula inputs to the SHA-256 of torch's
-    output.
+    narrower than 8. A row gets a threadgroup that computes up to 32 chunks in parallel and replays torch's
+    cascade; a wider row's lanes compute their chunks in order. 0 of 13.7 million outputs differ from torch's.
   - torch's float32-input layer norm follows another algorithm: neither the fused nor the unfused form of
     this one comes within 25% of its outputs. Wan's `FP32LayerNorm` and SAM 3's autocast norms keep `MLXFast`.
-  - Overall, a whole half-precision forward in `.reference` takes 1.00 to 1.16 times the time of the fast
-    mode in a diffusion denoiser, and up to 2.8 times in a short-sequence encoder (CLIP's text encoder over
-    77 tokens), because the layer-norm kernel computes a row on one thread
-    (`NFKMLXHalfPrecisionArithmeticTimingTests`, `IK_ARITHMETIC_TIMING=1`; the table is in
-    `Docs/examples.md`).
+  - Overall, a whole half-precision forward in `.reference` takes 1.01 to 1.13 times the time of the fast
+    mode in a diffusion denoiser and up to 2.5 times in an encoder (`NFKMLXHalfPrecisionArithmeticTimingTests`,
+    `IK_ARITHMETIC_TIMING=1`; the table is in `Docs/examples.md`).
   Measured, and kept out of the switch:
-  - Sigmoid, SiLU, and swish, over every float16 and bf16 input: Sleef's exponential and MLX's leave the
-    same count of rounded outputs apart from torch's.
-  - The softmax kernels of eager, math, and upcast attention: the exponential changes the count of rounded
-    outputs apart from torch's by at most 1 of 262,144.
+  - Sigmoid and swish, over every float16 and bf16 input: Sleef's exponential and MLX's leave the same
+    count of rounded outputs apart from torch's.
   - Sleef's `expf` from MLX operations on the GPU: 20 to 25 times MLX's `exp`, and a whole denoiser forward
     2.3 to 4.7 times slower. `compile` of it is 3.2 times faster and 98% of its results are wrong.
-  Open items:
-  - A row's 4 lanes stay independent until their join, so a layer-norm kernel with a thread per lane keeps
-    torch's order and spreads a short sequence's few rows over more of the GPU.
-  - torch's SiLU is `x / (1 + exp(-x))`, which rounds 1 float16 and 3 bf16 inputs closer than
-    `x · sigmoid(x)`.
-  - torch's softmax multiplies by the reciprocal of the sum, which lowers the differing bf16 outputs of a
-    composed softmax from 20 to 4 of 262,144.
-  - torch's float32-input layer norm.
-  - `flashAttention` without a `queryBlock` holds a key block's float32 scores for every query: Wan at
-    480×832 and 33 frames holds 9.5 GB, and at 81 frames 51 GB.
+  A half-precision flash attention without a `queryBlock` attends `automaticQueryBlock` rows at a time when
+  its float32 scores would pass 1 GiB, each row computed as before: Wan at 480×832 and 33 frames held 9.5 GB
+  of scores, and at 81 frames would hold 51 GB. torch's float32-input layer norm is an open item.
 - `NFKMLXModelDescription` (internal) is what a backend's `modelInfo` reads: it walks
   `parameters().flattened()` and matches each key's owner against `namedModules()` paths, which use
   the same dotted form. A `Quantized` owner's `weight` counts `size × 32 / bits` parameters and its

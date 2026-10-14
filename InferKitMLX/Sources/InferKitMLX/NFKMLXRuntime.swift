@@ -25,23 +25,27 @@ public final class NFKMLXRandom: NSObject {
 }
 
 /// The arithmetic of the operations in a bfloat16 or float16 forward whose result depends on how they are
-/// computed: the exponentials of a flash attention's softmax and a half-precision layer norm. A float32
-/// forward computes the same in either mode. Each mode's measured precision and its overall time per model
-/// are in `Docs/examples.md` ("Half-precision arithmetic").
+/// computed: a flash attention's exponentials, the softmax of an eager, math, or upcast attention and of a
+/// mixture-of-experts router, a half-precision layer norm, and SiLU. A float32 forward computes the same in
+/// either mode. Each mode's measured precision and its overall time per model are in `Docs/examples.md`
+/// ("Half-precision arithmetic").
 @objc(NFKMLXArithmetic)
 public enum NFKMLXArithmetic: Int {
 
-    /// MLX's own kernels: `exp`, and `MLXFast.layerNorm` in float32, rounded once. It is the default.
+    /// MLX's own kernels: `exp`, `softmax`, `MLXFast.layerNorm` in float32 rounded once, and SiLU as
+    /// `x · sigmoid(x)`. It is the default.
     /// - Speed: MLX's.
     /// - Precision: 24% of float32 exponentials, and about 1 in 4,000 float16 layer-norm outputs, differ
     ///   from PyTorch's, so a forward sits farther from the PyTorch reference's.
     @objc(NFKMLXArithmeticFast) case fast = 0
 
-    /// PyTorch's CPU arithmetic in Metal kernels: Sleef's `expf`, and the layer norm's Welford moments in
-    /// torch's order. The half-precision parity tests run in it.
-    /// - Precision: each exponential and each layer-norm output equals PyTorch's.
-    /// - Speed: the exponential runs at MLX's speed. The layer norm computes each row on one GPU thread, so a
-    ///   norm over few rows takes several times MLX's time.
+    /// PyTorch's CPU arithmetic in Metal kernels: Sleef's `expf`, the softmax's sum in torch's lane order,
+    /// and the layer norm's Welford moments in torch's order; SiLU as torch's `x / (1 + exp(−x))`. The
+    /// half-precision parity tests run in it.
+    /// - Precision: each exponential, softmax, and layer-norm output equals PyTorch's, and each SiLU output
+    ///   does wherever the GPU keeps the input's magnitude normal.
+    /// - Speed: the exponential and the layer norm run near MLX's speed, and the softmax takes up to twice
+    ///   MLX's time.
     @objc(NFKMLXArithmeticReference) case reference = 1
 }
 
