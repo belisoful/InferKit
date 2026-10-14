@@ -140,7 +140,8 @@ The diffusion backend seam and schedulers, the SD networks and pipelines, IP-Ada
   (`mlx-parity-checklist.md`). SD 2.1's UNet at float16 carries an end-to-end order floor: one reduction
   changed alone moves the reference's own end-to-end distance to as much as 4.21 times its floor. In
   PyTorch's arithmetic (`NFKMLXArithmeticReference`) every SD 1.5 transformer block sits within its order
-  floor, the farthest at 0.89 of it, and SD 2.1's end-to-end distance from float32 is 0.98 of its floor.
+  floor, the farthest at 0.89 of it, and SD 2.1's end-to-end distance from float32 is 1.37 of its floor,
+  inside its widest rerun's 4.21.
   A custom GPU kernel that copies torch's summation order is written only if a repository Issue requests
   it.
 - `NFKMLXSDTextEncoderNet` / `NFKMLXSDTextEncoder` — the CLIP text tower the releases cross-attend to,

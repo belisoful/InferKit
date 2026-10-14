@@ -1261,7 +1261,8 @@ final class NFKLMMixtureFeedForward: NFKLMMLP {
         let weights: MLXArray, chosen: MLXArray
         if softmaxesKeptLogits && NFKReferenceRounding.isReduced(logits) {
             chosen = NFKReferenceRounding.chosen(logits, active: activeExpertCount, forced: forcedChoice)
-            weights = softmax(takeAlong(logits, chosen, axis: -1).asType(.float32), axis: -1).asType(logits.dtype)
+            weights = NFKReferenceRounding.softmaxProbabilities(takeAlong(logits, chosen, axis: -1).asType(.float32))
+                .asType(logits.dtype)
         } else if NFKReferenceRounding.isReduced(logits) {
             (weights, chosen) = NFKReferenceRounding.routed(logits, active: activeExpertCount, normalize: normalizesWeights,
                                                             forced: forcedChoice)

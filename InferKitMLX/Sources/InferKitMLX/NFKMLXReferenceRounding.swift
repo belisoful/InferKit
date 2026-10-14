@@ -119,11 +119,15 @@ enum NFKReferenceRounding {
         return (rounded(wide * 0.5) * gate).asType(type)
     }
 
-    /// torch's `silu`, which widens a half-precision input and rounds `x · sigmoid(x)` once; MLX's
-    /// composed `silu` rounds the sigmoid and then the product.
+    /// torch's `silu`, which widens a half-precision input and rounds once: torch's `x / (1 + exp(−x))`
+    /// with Sleef's exponential in the reference arithmetic (``NFKMLXHalfPrecision/arithmetic``,
+    /// ``torchSiLU(_:)``), and `x · sigmoid(x)` otherwise. MLX's composed `silu` rounds the sigmoid and then the product.
     static func silu(_ x: MLXArray) -> MLXArray {
         guard isReduced(x) else { return MLXNN.silu(x) }
         let wide = x.asType(.float32)
+        if NFKMLXHalfPrecision.arithmetic == .reference {
+            return torchSiLU(x)
+        }
         return (wide * sigmoid(wide)).asType(x.dtype)
     }
 
@@ -193,8 +197,8 @@ enum NFKReferenceRounding {
 
     /// torch's MATH `scaled_dot_product_attention` on half-precision operands: widened to float32, the
     /// scale split as its square root on the queries and on the keys, the additive `mask` (already in
-    /// the operands' type) added, and only the output rounded. A float32 input takes the explicit
-    /// float32 form it names.
+    /// the operands' type) added, the softmax as ``softmaxProbabilities(_:)`` takes it, and only the output
+    /// rounded. A float32 input takes the explicit float32 form it names.
     static func mathAttention(queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float,
                               mask: MLXArray?) -> MLXArray {
         guard isReduced(queries) else {
@@ -205,7 +209,7 @@ enum NFKReferenceRounding {
         let root = scale.squareRoot()
         var scores = matmul(queries.asType(.float32) * root, (keys.asType(.float32) * root).swappedAxes(-1, -2))
         if let mask { scores = scores + mask.asType(.float32) }
-        return matmul(softmax(scores, axis: -1), values.asType(.float32)).asType(queries.dtype)
+        return matmul(softmaxProbabilities(scores), values.asType(.float32)).asType(queries.dtype)
     }
 
     /// torch's CPU flash `scaled_dot_product_attention` on half-precision operands, which walks the keys
@@ -218,7 +222,8 @@ enum NFKReferenceRounding {
     /// accumulator. A float32 input takes the fused kernel.
     /// `queryBlock` attends that many query rows at a time, each row computed as before, and evaluates each
     /// block before the next: MLX schedules one lazy graph as a whole and holds every block's float32
-    /// scores at once, which over a long sequence is the whole score matrix.
+    /// scores at once, which over a long sequence is the whole score matrix. Without a `queryBlock`, a call
+    /// whose float32 scores pass 1 GiB attends ``automaticQueryBlock(queryShape:keyLength:)`` rows at a time.
     static func flashAttention(queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float,
                                mask: MLXArray?, keyBlock: Int = 512, queryBlock: Int? = nil) -> MLXArray {
         guard isReduced(queries) else {
@@ -226,6 +231,7 @@ enum NFKReferenceRounding {
                                                      scale: scale, mask: mask)
         }
         let rows = queries.dim(-2)
+        let queryBlock = queryBlock ?? automaticQueryBlock(queryShape: queries.shape, keyLength: keys.dim(-2))
         if let queryBlock, rows > queryBlock {
             let chunks = stride(from: 0, to: rows, by: queryBlock).map { start -> MLXArray in
                 let block = start ..< min(start + queryBlock, rows)
@@ -268,15 +274,24 @@ enum NFKReferenceRounding {
         return (accumulated! / total!).asType(queries.dtype)
     }
 
+    /// The query rows a half-precision flash attention over `queryShape` (`[..., rows, width]`) and
+    /// `keyLength` keys attends at a time so that one block's float32 scores stay within 1 GiB, or nil when
+    /// every row's fit.
+    static func automaticQueryBlock(queryShape: [Int], keyLength: Int) -> Int? {
+        let rowBytes = queryShape.dropLast(2).reduce(1, *) * keyLength * MemoryLayout<Float>.size
+        let rows = (1 << 30) / max(rowBytes, 1)
+        return rows < queryShape[queryShape.count - 2] ? max(rows, 1) : nil
+    }
+
     /// diffusers' classic attention under `upcast_attention`: the queries and keys widened to float32, the
-    /// scores scaled and softmaxed in float32 and rounded to the operands' type, then the product with the
-    /// values at that type. A float32 input takes the fused kernel.
+    /// scores scaled and softmaxed in float32 (``softmaxProbabilities(_:)``) and rounded to the operands'
+    /// type, then the product with the values at that type. A float32 input takes the fused kernel.
     static func upcastAttention(queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float) -> MLXArray {
         guard isReduced(queries) else {
             return MLXFast.scaledDotProductAttention(queries: queries, keys: keys, values: values, scale: scale, mask: nil)
         }
         let scores = matmul(queries.asType(.float32), keys.asType(.float32).swappedAxes(-1, -2)) * scale
-        return matmul(softmax(scores, axis: -1).asType(queries.dtype), values)
+        return matmul(softmaxProbabilities(scores).asType(queries.dtype), values)
     }
 
     /// torch's half-precision `linear` on a strided input: the product rounded, then the bias added and rounded.
@@ -298,16 +313,18 @@ enum NFKReferenceRounding {
             .reshaped(Array(scores.shape.dropLast()) + [active])
     }
 
-    /// A top-k router as transformers runs it: the softmax over every expert in float32, the kept
-    /// weights renormalized in float32 when `normalize`, then rounded to the logits' type. Returns the
+    /// A top-k router as transformers runs it: the softmax over every expert in float32 (half-precision
+    /// logits as ``softmaxProbabilities(_:)`` takes it), the kept weights renormalized in float32 when
+    /// `normalize` (half-precision ones by ``routingSum(_:)``), then rounded to the logits' type. Returns the
     /// weights and the chosen expert indices, `[..., active]` each; `forced` is as ``chosen(_:active:forced:)``.
     static func routed(_ logits: MLXArray, active: Int, normalize: Bool,
                        forced: [[Int32]]? = nil) -> (weights: MLXArray, chosen: MLXArray) {
-        let scores = softmax(logits.asType(.float32), axis: -1, precise: true)
+        let scores = isReduced(logits) ? softmaxProbabilities(logits.asType(.float32))
+                                       : softmax(logits.asType(.float32), axis: -1, precise: true)
         let chosen = chosen(scores, active: active, forced: forced)
         var weights = takeAlong(scores, chosen, axis: -1)
         if normalize {
-            weights = weights / weights.sum(axis: -1, keepDims: true)
+            weights = weights / (isReduced(logits) ? routingSum(weights) : weights.sum(axis: -1, keepDims: true))
         }
         return (weights.asType(logits.dtype), chosen)
     }
@@ -327,6 +344,19 @@ enum NFKReferenceRounding {
             total = total + ordered[.ellipsis, slot, 0...]
         }
         return total
+    }
+
+    /// The routed experts' outputs `[..., active, hidden]` combined by their weights `[..., active]` as
+    /// transformers' `grouped_mm` experts implementation does in half precision: each output times its
+    /// weight in float32, the products summed in float32 in the routing's order, and rounded once.
+    static func groupedCombined(_ outputs: MLXArray, weights: MLXArray) -> MLXArray {
+        guard isReduced(outputs) else { return (outputs * weights.expandedDimensions(axis: -1)).sum(axis: -2) }
+        let scaled = outputs.asType(.float32) * weights.expandedDimensions(axis: -1).asType(.float32)
+        var total = scaled[.ellipsis, 0, 0...]
+        for slot in 1 ..< scaled.dim(-2) {
+            total = total + scaled[.ellipsis, slot, 0...]
+        }
+        return total.asType(outputs.dtype)
     }
 
     /// The rotate-half rotary over `[batch, heads, length, headDim]`, as transformers applies it: the
@@ -363,7 +393,8 @@ enum NFKReferenceRounding {
 
     /// Scaled dot-product attention over `[batch, heads, length, headDim]` queries and grouped keys and
     /// values. In half precision it is transformers' eager path: the scores round to the input's type,
-    /// scale and mask round again, the softmax runs in float32 and rounds, and the weighted sum rounds.
+    /// scale and mask round again, the softmax runs in float32 and rounds (``softmaxProbabilities(_:)``),
+    /// and the weighted sum rounds.
     static func attention(queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float,
                           mask: MLXArray?, softcap: Float = 0) -> MLXArray {
         guard isReduced(queries) || softcap > 0 else {
@@ -383,7 +414,8 @@ enum NFKReferenceRounding {
             scores = wide(scores / cap) { tanh($0) } * cap
         }
         if let mask { scores = scores + mask.asType(scores.dtype) }
-        return matmul(softmax(scores, axis: -1, precise: true), spread(values))
+        let probabilities = isReduced(queries) ? softmaxProbabilities(scores) : softmax(scores, axis: -1, precise: true)
+        return matmul(probabilities, spread(values))
     }
 }
 

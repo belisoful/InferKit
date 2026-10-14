@@ -1837,7 +1837,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         eval(isolated.map(\.1))
         let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolated.indices.map { "hidden.\($0 + 1)" })
         report("\(name) isolated", isolatedRows)
-        assertRoundingPlacement(name, endToEnd: rows, isolated: isolatedRows, isolatedBar: routes == nil ? 0.25 : 0.5)
+        assertRoundingPlacement(name, endToEnd: rows, isolated: isolatedRows)
     }
 
     /// The experts the reference kept at `layer` (`route.L.index`, `[tokens, k]`) as `[tokens][k]`, or nil
@@ -1971,7 +1971,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         eval(isolated.map(\.1))
         let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolated.indices.map { "hidden.\($0 + 1)" })
         report("granite-tiny-cut6 isolated", isolatedRows)
-        assertRoundingPlacement("granite-tiny-cut6", endToEnd: rows, isolated: isolatedRows, isolatedBar: 0.5)
+        assertRoundingPlacement("granite-tiny-cut6", endToEnd: rows, isolated: isolatedRows)
     }
 
     // Qwen3.8-Flash-Next (Qwen4-Exp) cut to its first two layers (`IK_VAL_QWEN4_EXP_CUT2`): linear attention
@@ -2024,7 +2024,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         eval(isolated.map(\.1))
         let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolated.indices.map { "hidden.\($0 + 1)" })
         report("qwen4-exp-cut2 isolated", isolatedRows)
-        assertRoundingPlacement("qwen4-exp-cut2", endToEnd: rows, isolated: isolatedRows, isolatedBar: 0.5)
+        assertRoundingPlacement("qwen4-exp-cut2", endToEnd: rows, isolated: isolatedRows)
     }
 
     // Qwen3.8-Flash-Next cut to its first four layers (`IK_VAL_QWEN4_EXP_CUT4`), the fourth its first
@@ -2432,7 +2432,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         eval(isolated.map(\.1))
         let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolated.indices.map { "hidden.\($0 + 1)" })
         report("qwen4-exp isolated", isolatedRows)
-        assertRoundingPlacement("qwen4-exp", endToEnd: rows, isolated: isolatedRows, isolatedBar: 0.5)
+        assertRoundingPlacement("qwen4-exp", endToEnd: rows, isolated: isolatedRows)
     }
 
     // MARK: Granite Speech
@@ -2838,9 +2838,80 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         let kernel = loss { NFKReferenceRounding.torchLayerNorm($0, weight: weight.asType(.float16), bias: nil, eps: 1e-5) }
         let fused = loss { MLXFast.layerNorm($0.asType(.float32), weight: weight, bias: nil, eps: 1e-5).asType(.float16) }
         XCTAssertTrue(allClose(kernel, fused, rtol: 1e-2, atol: 1e-3).item(Bool.self))
+        let scores = MLXRandom.normal([8, 77]) * 3, weights = MLXRandom.normal([8, 77])
+        XCTAssertTrue(allClose(grad({ (NFKReferenceRounding.torchSoftmax($0) * weights).sum() })(scores),
+                               grad({ (softmax($0, axis: -1, precise: true) * weights).sum() })(scores)).item(Bool.self))
     }
 
-    // The switch selects flash attention's exponential and a half-precision layer norm's arithmetic.
+    // torch's float32 `softmax` over 8 rows of 1, 3, 5, 77 (keys 10 to 29 masked), and 1,025 values, each an
+    // exact formula, against the SHA-256 of torch's output. MLX's softmax sums apart from torch's on every
+    // row longer than one.
+    func testReferenceArithmeticComputesTorchsSoftmax() throws {
+        try requireMLXRuntime()
+        let cases: [(Int, String)] = [
+            (1, "4f05df05f8da9356bd66425351f166a5f7305b7c805e6900d9ec0f50790c9886"),
+            (3, "94e3c5c96e7c974d7d3cb675eee28e43b828cc79c02b8eccda49fdb6cc5ffdbf"),
+            (5, "c3cca8329789fdca0459ef472ac1862789004d40edcb318647a3f300bfd799de"),
+            (77, "91d51ba97edd0e36f6b4f96ca39f36dc3101275579229c39763ba7b36bb3f724"),
+            (1025, "6b0dc5a369af6ff3e6ac72c4c38cfcb0cab3a0d4f52e7951e22e6102897e0fff"),
+        ]
+        func digest(_ y: MLXArray) -> String {
+            let values = y.asArray(Float.self)
+            return SHA256.hash(data: values.withUnsafeBufferPointer { Data(buffer: $0) })
+                .map { String(format: "%02x", $0) }.joined()
+        }
+        for (size, expected) in cases {
+            let values = (0 ..< 8 * size).map { index -> Float in
+                let (row, column) = index.quotientAndRemainder(dividingBy: size)
+                if size == 77, (10 ..< 30).contains(column) { return -.infinity }
+                return Float((row * 131 + column * 37) % 2001 - 1000) / 128
+            }
+            let x = MLXArray(values, [8, size])
+            XCTAssertEqual(digest(NFKReferenceRounding.torchSoftmax(x)), expected, "\(size)")
+            if size > 1 {
+                XCTAssertNotEqual(digest(softmax(x, axis: -1, precise: true)), expected,
+                                  "\(size): the row tells MLX's softmax from torch's")
+            }
+        }
+    }
+
+    // torch's `silu` over every finite float16 and bf16 input whose magnitude is at least twice the least
+    // normal float32 (the GPU flushes a subnormal product to zero), against the SHA-256 of torch's output.
+    // MLX's `x · sigmoid(x)` rounds some of them apart in each type.
+    func testReferenceArithmeticComputesTorchsSiLU() throws {
+        try requireMLXRuntime()
+        let cases: [(DType, String)] = [
+            (.float16, "1566bbfe43d1dd25f74708d8780406b0a0b5ed23ae5f7c0a9d183a6b4d071733"),
+            (.bfloat16, "85668a9aed34df2a68e6b64c6eb2339347e707779feb7c4f8115a10e4ba15d7b"),
+        ]
+        for (dtype, expected) in cases {
+            let input = MLXArray((0 ..< 1 << 16).map { UInt16($0) }).view(dtype: dtype)
+            let magnitudes = abs(input.asType(.float32)).asArray(Float.self)
+            let kept = magnitudes.indices.filter {
+                magnitudes[$0].isFinite && magnitudes[$0] >= 2 * Float.leastNormalMagnitude
+            }
+            func digest(_ y: MLXArray) -> String {
+                let words = y.view(dtype: .uint16).asArray(UInt16.self)
+                let selected = kept.map { words[$0] }
+                return SHA256.hash(data: selected.withUnsafeBufferPointer { Data(buffer: $0) })
+                    .map { String(format: "%02x", $0) }.joined()
+            }
+            XCTAssertEqual(digest(NFKReferenceRounding.silu(input)), expected, "\(dtype)")
+            let wide = input.asType(.float32)
+            XCTAssertNotEqual(digest((wide * MLX.sigmoid(wide)).asType(dtype)), expected,
+                              "\(dtype): the domain tells MLX's SiLU from torch's")
+        }
+    }
+
+    // Wan 2.1 1.3B's 12 heads over 33 frames at 480×832 (14,040 tokens) attend 1,593 query rows at a time,
+    // and SD 1.5's 8 heads over 4,096 positions at batch 2 attend at once.
+    func testFlashAttentionBlocksItsQueriesWithinOneGibibyte() {
+        XCTAssertEqual(NFKReferenceRounding.automaticQueryBlock(queryShape: [1, 12, 14040, 128], keyLength: 14040), 1593)
+        XCTAssertNil(NFKReferenceRounding.automaticQueryBlock(queryShape: [2, 8, 4096, 40], keyLength: 4096))
+    }
+
+    // The switch selects flash attention's exponential, a half-precision layer norm's arithmetic, and the
+    // shared softmax's.
     func testHalfPrecisionArithmeticSelectsTheReferenceKernels() throws {
         try requireMLXRuntime()
         XCTAssertEqual(NFKMLXHalfPrecision.arithmetic, .reference)
@@ -2850,14 +2921,15 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
                                        MLXRandom.normal([1, 4, 1024, 64]).asType(.float16))
         let hidden = (MLXRandom.normal([512, 320]) * 3).asType(.float16)
         let norm = NFKLayerNorm(dimensions: 320)
+        let scores = MLXRandom.normal([64, 1025]) * 4
         func run() -> [MLXArray] {
             [NFKReferenceRounding.flashAttention(queries: queries, keys: keys, values: values, scale: 0.125, mask: nil),
-             norm(hidden)]
+             norm(hidden), NFKReferenceRounding.softmaxProbabilities(scores)]
         }
         let reference = run()
         NFKMLXHalfPrecision.arithmetic = .fast
         let fast = run()
-        for (label, index) in [("flash attention", 0), ("layer norm", 1)] {
+        for (label, index) in [("flash attention", 0), ("layer norm", 1), ("softmax", 2)] {
             XCTAssertGreaterThan((fast[index] .!= reference[index]).sum().item(Int.self), 0, label)
         }
     }
@@ -4286,7 +4358,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         report(name, rows)
         let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolatedKeys)
         report("\(name) isolated", isolatedRows)
-        assertRoundingPlacement(name, endToEnd: rows, isolated: isolatedRows, isolatedBar: routed ? 0.5 : 0.25)
+        assertRoundingPlacement(name, endToEnd: rows, isolated: isolatedRows)
     }
 
     // Each piece of the probed Qwen-VL tower blocks and of the merger on the reference's own bf16 input,
@@ -4626,6 +4698,85 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
 
     /// A Gemma 4 cut at float32 against the float32 record, then at bf16 end to end and layer by layer
     /// against the bf16 record. `routes` (`route.L.index` per mixture layer) fixes the bf16 run's experts.
+    // Gemma 4 26B-A4B's first layer piece by piece on the reference's own bf16 inputs, in the reference
+    // arithmetic and in MLX's: the cut's bf16 record probes layer 0, its router and experts records hold the
+    // first token, and the layer routes as the reference routed.
+    func testGemma4MixtureFirstLayerPiecesMatchTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_GEMMA4_26B_CUT6"], "IK_VAL_GEMMA4_26B_CUT6"))
+        let probe = try record("gemma4_26b_cut6_bf16.safetensors")
+        let routes = try record("gemma4_26b_cut6_bf16_routes.safetensors")
+        let net = NFKMLXGemmaLanguage.makeNet(
+            try NFKMLXGemmaLanguage.configuration(fromHuggingFace: directory.appendingPathComponent("config.json")))
+        try NFKMLXGemmaLanguage.loadWeights(into: net, fromDirectory: directory, precision: .checkpoint,
+                                            residency: .resident)
+        let block = net.layers[0], attention = net.layers[0].attention
+        let router = try XCTUnwrap(block.router), experts = try XCTUnwrap(block.experts)
+        let choice = try XCTUnwrap(recordedChoice(routes, layer: 0), "no route.0.index")
+        func input(_ key: String) throws -> MLXArray {
+            let recorded = try XCTUnwrap(probe["0." + key], "no 0.\(key)").asType(.bfloat16)
+            return recorded.ndim == 1 ? recorded.reshaped([1, -1]) : recorded.expandedDimensions(axis: 0)
+        }
+        let mask = NFKMLXLanguageNet.causalMask(try input("block.in").dim(1), offset: 0)
+        func pieces() throws -> [String] {
+            router.forcedChoice = choice
+            var lines = [try piece("block", block(input("block.in"), perLayerInput: nil, mask: mask, shared: nil).output,
+                                   probe, "0.block.out")]
+            lines.append(try piece("input_layernorm", block.inputNorm(input("input_layernorm.in")), probe,
+                                   "0.input_layernorm.out"))
+            for (name, projection) in [("q_proj", attention.queryProjection), ("k_proj", attention.keyProjection)] {
+                lines.append(try piece(name, projection(input("self_attn.\(name).in")), probe, "0.self_attn.\(name).out"))
+            }
+            if let valueProjection = attention.valueProjection {
+                lines.append(try piece("v_proj", valueProjection(input("self_attn.v_proj.in")), probe, "0.self_attn.v_proj.out"))
+            }
+            lines.append(try piece("q_norm", attention.queryNorm(input("self_attn.q_norm.in")), probe, "0.self_attn.q_norm.out"))
+            lines.append(try piece("k_norm", attention.keyNorm(input("self_attn.k_norm.in")), probe, "0.self_attn.k_norm.out"))
+            lines.append(try piece("v_norm", NFKReferenceRounding.scaledNorm(input("self_attn.v_norm.in"), weight: nil,
+                                                                             eps: attention.valueEpsilon),
+                                   probe, "0.self_attn.v_norm.out"))
+            lines.append(try piece("o_proj", attention.outputProjection(input("self_attn.o_proj.in")), probe,
+                                   "0.self_attn.o_proj.out"))
+            lines.append(try piece("self_attn", attention(input("input_layernorm.out"), mask: mask, shared: nil).output,
+                                   probe, "0.self_attn.out"))
+            lines.append(try piece("post_attention_layernorm", block.postAttentionNorm(input("post_attention_layernorm.in")),
+                                   probe, "0.post_attention_layernorm.out"))
+            lines.append(try piece("pre_feedforward_layernorm", block.preFeedForwardNorm(input("pre_feedforward_layernorm.in")),
+                                   probe, "0.pre_feedforward_layernorm.out"))
+            for (name, projection) in [("gate_proj", block.feedForward.gate), ("up_proj", block.feedForward.up),
+                                       ("down_proj", block.feedForward.down)] {
+                lines.append(try piece("mlp.\(name)", projection(input("mlp.\(name).in")), probe, "0.mlp.\(name).out"))
+            }
+            lines.append(try piece("mlp", block.feedForward(input("mlp.in")), probe, "0.mlp.out"))
+            lines.append(try piece("post_feedforward_layernorm_1",
+                                   try XCTUnwrap(block.postFeedForwardNorm1)(input("post_feedforward_layernorm_1.in")),
+                                   probe, "0.post_feedforward_layernorm_1.out"))
+            lines.append(try piece("router.norm", NFKReferenceRounding.scaledNorm(input("router.norm.in"), weight: nil,
+                                                                                  eps: router.epsilon),
+                                   probe, "0.router.norm.out"))
+            lines.append(try piece("router.proj", router.proj(input("router.proj.in")), probe, "0.router.proj.out"))
+            lines.append(try piece("router (probabilities)", router.probabilities(input("router.in")), probe, "0.router.out"))
+            router.forcedChoice = [choice[0]]
+            let (weights, indices) = router(try input("router.in"))
+            lines.append(try piece("pre_feedforward_layernorm_2",
+                                   try XCTUnwrap(block.preFeedForwardNorm2)(input("pre_feedforward_layernorm_2.in")),
+                                   probe, "0.pre_feedforward_layernorm_2.out"))
+            lines.append(try piece("experts (routed as recorded)",
+                                   experts(input("experts.in"), indices: indices, weights: weights), probe, "0.experts.out"))
+            lines.append(try piece("post_feedforward_layernorm_2",
+                                   try XCTUnwrap(block.postFeedForwardNorm2)(input("post_feedforward_layernorm_2.in")),
+                                   probe, "0.post_feedforward_layernorm_2.out"))
+            lines.append(try piece("post_feedforward_layernorm", block.postFeedForwardNorm(input("post_feedforward_layernorm.in")),
+                                   probe, "0.post_feedforward_layernorm.out"))
+            return lines
+        }
+        let reference = try pieces()
+        NFKMLXHalfPrecision.arithmetic = .fast
+        let fast = try pieces()
+        print("VALIDATION bf16 gemma4_26b_cut6 layer 0 pieces, reference arithmetic:\n" + reference.joined(separator: "\n"))
+        print("VALIDATION bf16 gemma4_26b_cut6 layer 0 pieces, MLX's arithmetic:\n" + fast.joined(separator: "\n"))
+    }
+
     private func gemma4Prefix(_ name: String, directory: URL, unified: Bool, bf16: [String: MLXArray],
                               f32: [String: MLXArray], routes: [String: MLXArray]? = nil) throws {
         let configURL = directory.appendingPathComponent("config.json")
@@ -4687,7 +4838,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
             // Accumulation order alone moves a mixture layer farther than a dense one: transformers' own
             // layer with its eight experts' matmuls summed in float32 at the same roundings reads 0.27 of
             // the floor at the 26B-A4B's layer 0.
-            assertRoundingPlacement(name, endToEnd: rows, isolated: isolatedRows, isolatedBar: routes == nil ? 0.25 : 0.5)
+            assertRoundingPlacement(name, endToEnd: rows, isolated: isolatedRows)
         }
         Memory.clearCache()
     }

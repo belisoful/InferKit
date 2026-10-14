@@ -616,12 +616,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 #### Half-precision forwards compute MLX's arithmetic, or PyTorch's
 
 - `NFKMLXHalfPrecision.arithmetic` (`@objc`, `NFKMLXArithmetic`) selects the arithmetic of a bfloat16 or
-  float16 forward's flash-attention exponentials and layer norms.
-- `NFKMLXArithmeticFast`, the default, computes MLX's `exp` and `MLXFast.layerNorm`.
-- `NFKMLXArithmeticReference` computes PyTorch's CPU arithmetic in two Metal kernels: Sleef's `expf`, and the
-  layer norm's Welford moments in PyTorch's order. Each output equals PyTorch's. A whole half-precision
-  forward in this mode takes 1.00 to 1.16 times the time of the fast mode in a diffusion denoiser, and up to
-  2.8 times in a short-sequence encoder (CLIP's text encoder over 77 tokens).
+  float16 forward's flash-attention exponentials, its softmax and router sums, its layer norms, and SiLU.
+- `NFKMLXArithmeticFast`, the default, computes MLX's `exp`, `softmax`, `sum`, `MLXFast.layerNorm`, and
+  `x · sigmoid(x)`.
+- `NFKMLXArithmeticReference` computes PyTorch's CPU arithmetic: Sleef's `expf`, the softmax, the layer norm,
+  and SiLU in Metal kernels that sum in PyTorch's order, and a router's kept-weight sum in PyTorch's order.
+  Each output equals PyTorch's. A whole half-precision forward in this mode takes 1.01 to 1.13 times the time
+  of the fast mode in a diffusion denoiser, and up to 2.5 times in an encoder.
+- A half-precision flash attention attends its queries in blocks whose float32 scores fit in 1 GiB, so a long
+  sequence (Wan's video tokens, FLUX at high resolution) never holds the whole score matrix.
+- Gemma 4's experts sum as transformers' default `grouped_mm` does, in float32 in top-k order and rounded
+  once, and every mixture layer is held to a quarter of the floor.
 - The half-precision parity tests run in `NFKMLXArithmeticReference`.
 
 #### The FLUX autoencoder and the SD3 transformer compute in bfloat16 as diffusers does
@@ -676,7 +681,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   to the farthest rerun from float32.
 - Each transformer block is held to its order floor, and every other stage to a quarter of the accumulated
   floor. In PyTorch's arithmetic (`NFKMLXArithmeticReference`) every SD 1.5 transformer block sits within its
-  order floor, the farthest at 0.89 of it, and SD 2.1's end-to-end distance from float32 is 0.98 of its floor.
+  order floor, the farthest at 0.89 of it, and SD 2.1's end-to-end distance from float32 is 1.37 of its
+  floor, inside its widest rerun's 4.21.
 
 #### The ControlNets, LTX-2, Wan Animate, and the Wan autoencoders are held at bf16
 

@@ -296,8 +296,11 @@ measured on the reference's own layer, not assumed:
   `IK_PROBE_ROUTES=1`, keys `route.L.index` with `route.L.weights` from a Gemma 4 router or
   `route.L.values` from the layer's own `topk` call) and the port's router keeps those experts
   (`forcedChoice` on the Gemma, shared, and Granite routers), computing their weights itself.
-- Its eight or so expert matmuls let accumulation order alone reach 0.27 of the floor (Gemma 4
-  26B-A4B), so a mixture layer's isolated bar is 0.5 of the floor rather than 0.25.
+- The experts combine as the reference's dispatched experts implementation combines them.
+  transformers 5's default `grouped_mm` multiplies each expert's output by its float32 weight in float32,
+  sums the kept experts in float32 in top-k order, and rounds once; its eager loop rounds each product and
+  each add. Gemma 4 26B-A4B's first layer sat at 0.29 of the floor until its experts summed as `grouped_mm`
+  does (`NFKReferenceRounding.groupedCombined`). Every mixture layer is held to a quarter of the floor.
 
 An isolated seam's floor is the reference's bf16 run against its float32 run at that key, which carries
 the drift of every block before it, so a deep block passes it while 10% to 60% of its elements differ.
