@@ -486,7 +486,13 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   3.512e-05), the 32B 0.066 (2.557e-05 against 2.317e-05), the 30B-A3B routed as the reference routed
   0.019 (4.565e-04 against 4.784e-04), and the Embedding-8B 0.042 (its final states, the release shipping no
   head, 2.958e-05 against 3.071e-05); Sa2VA-Qwen3-VL-4B and -4B-SAM3 0.016, logits 2.830e-04 against
-  2.342e-04 and 3.208e-04 against 2.446e-04. The probe passes the processor's all-ones attention mask:
+  2.342e-04 and 3.208e-04 against 2.446e-04. Their bf16 generation and backend answer are held to the
+  float32 reference as the InternVL releases' are (`checkDeparture`, records
+  `sa2va_<release>_generate_{f32,bf16}`, `run_reference.py sa2va_qwen_generate` with `IK_SA2VA_DTYPE`, each
+  step's top five). The 2B, 4B, and Qwen2.5-VL-3B generate the float32 tokens exactly. Sa2VA-Qwen3-VL-4B-SAM3
+  takes the space at the float32 reference's step-2 three-way near-tie (24.8201 / 24.7803 / 24.7451 against
+  a spacing of 0.125), the answer the release's own code gives at bf16. MLXNN's GELU at the Qwen3-VL merger
+  had broken that tie toward the float32 answer. The probe passes the processor's all-ones attention mask:
   with no mask and no cache (the Embedding release's `use_cache: false`), transformers 4.57's
   `create_causal_mask` reads M-RoPE's position jumps at the image as packed sequences and splits the
   attention there, which the first Embedding record carried. A cut whose last layer still takes a deepstack map adds
