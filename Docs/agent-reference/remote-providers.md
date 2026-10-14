@@ -1175,7 +1175,10 @@ Macs broke every local agent link, and a second `NFKInferenceServer` would build
   whether TLS is on or off), otherwise the main one. `networkBaseURL` and `networkMCPURL` name the main
   listener by `gethostname()`, with `.local` added to a bare name; nil while stopped or `loopbackOnly`.
 - `startWithError:` starts both or neither: a plain listener that fails to bind stops the main one and
-  reports `NFKInferenceServerErrorListenFailed`. `stop` stops both.
+  reports `NFKInferenceServerErrorListenFailed`. `stop` stops both, and `NFKHTTPListener.stop` waits
+  (up to 2 s) for the listener's cancelled state, since `nw_listener_cancel` frees the port
+  asynchronously: in the full suite a start on the just-stopped port failed with EADDRINUSE
+  (2026-10-14), which a fixed-port restart (stop, change, start) would hit too.
 - Tests: `NFKServerPlainLoopbackTests` (6): one model serving both listeners (counts shared, the main
   listener still pinned), the local URLs without the option, the network URLs, a taken plain port
   starting neither and a stop releasing it, keys and a revocation applying on both, and an MCP session

@@ -626,9 +626,10 @@ NS_SWIFT_SENDABLE
 - (BOOL)startWithError:(NSError * _Nullable *)outError;
 
 /*! Stops listening, closes every connection, cancels the runs they were waiting on, and ends every MCP
-	session. The hosted models, their residency and counts, the tools, and every setting stay, so
-	startWithError: on the same object listens again with the settings as they are then: a port,
-	loopbackOnly, advertisesService, TLSIdentity, or plain loopback change is stop, change, start. */
+	session. It returns once the ports are free, so a start on the same port can follow at once. The
+	hosted models, their residency and counts, the tools, and every setting stay, so startWithError: on
+	the same object listens again with the settings as they are then: a port, loopbackOnly,
+	advertisesService, TLSIdentity, or plain loopback change is stop, change, start. */
 - (void)stop;
 
 @end

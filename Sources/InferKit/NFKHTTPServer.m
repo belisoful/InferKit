@@ -213,6 +213,8 @@ static NFKHTTPChunkedState NFKHTTPDecodeChunked(NSData *buffer, NSUInteger start
 @interface NFKHTTPListener ()
 @property (nonatomic, copy) NFKHTTPRequestHandler handler;
 @property (nonatomic, strong, nullable) nw_listener_t listener;
+/*! Signalled when the running listener reaches the cancelled state, which is when its port is free. */
+@property (nonatomic, strong, nullable) dispatch_semaphore_t listenerCancelled;
 @property (nonatomic, strong) dispatch_queue_t listenerQueue;
 @property (nonatomic, strong) NSMutableSet<NFKHTTPConnection *> *connections;
 @property (nonatomic, assign, readwrite) uint16_t boundPort;
@@ -780,10 +782,15 @@ static NSString *NFKHTTPEndpointAddress(nw_endpoint_t _Nullable endpoint)
 	nw_listener_set_queue(listener, self.listenerQueue);
 
 	dispatch_semaphore_t settled = dispatch_semaphore_create(0);
+	dispatch_semaphore_t cancelled = dispatch_semaphore_create(0);
 	__block BOOL ready = NO;
 	__block BOOL signalled = NO;
 	__block nw_error_t failure = nil;
 	nw_listener_set_state_changed_handler(listener, ^(nw_listener_state_t state, nw_error_t error) {
+		if (state == nw_listener_state_cancelled) {
+			dispatch_semaphore_signal(cancelled);
+			return;
+		}
 		if (signalled || (state != nw_listener_state_ready && state != nw_listener_state_failed)) {
 			return;
 		}
@@ -807,6 +814,7 @@ static NSString *NFKHTTPEndpointAddress(nw_endpoint_t _Nullable endpoint)
 		return [self failWithReason:@"the server could not listen" underlying:failure error:outError];
 	}
 	self.listener = listener;
+	self.listenerCancelled = cancelled;
 	self.boundPort = nw_listener_get_port(listener);
 	return YES;
 }
@@ -841,6 +849,10 @@ static NSString *NFKHTTPEndpointAddress(nw_endpoint_t _Nullable endpoint)
 	if (self.listener != nil) {
 		nw_listener_cancel(self.listener);
 		self.listener = nil;
+		// Cancellation is asynchronous; waiting for it frees the port before stop returns, so a start
+		// on the same port right after succeeds.
+		dispatch_semaphore_wait(self.listenerCancelled, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(2 * NSEC_PER_SEC)));
+		self.listenerCancelled = nil;
 	}
 	NSArray<NFKHTTPConnection *> *open = nil;
 	@synchronized (self.connections) {

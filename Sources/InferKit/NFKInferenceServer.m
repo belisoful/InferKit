@@ -1167,6 +1167,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 - (void)dealloc
 {
 	[_listener stop];
+	[_plainListener stop];
 	if (_residencyTimer != nil) {
 		dispatch_source_cancel(_residencyTimer);
 	}
