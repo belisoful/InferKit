@@ -310,8 +310,8 @@
 	NSString *identifier = [self initializeAs:@"agent" key:nil];
 	NFKEventStreamReader *reader = [self openStreamForSession:identifier];
 	[self waitUntil:^BOOL {
-		return self.server.MCPSessions.firstObject.isStreamOpen;
-	} description:@"the stream opens"];
+		return self.server.MCPSessions.firstObject.isStreamOpen && reader.response != nil;
+	} description:@"the stream opens and its response reaches the client"];
 	XCTAssertEqual(reader.response.statusCode, 200);
 	XCTAssertEqualObjects([reader.response valueForHTTPHeaderField:@"Content-Type"], @"text/event-stream");
 
