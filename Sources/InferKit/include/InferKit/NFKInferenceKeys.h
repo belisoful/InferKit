@@ -103,7 +103,8 @@ extern NSString * const NFKParameterTools;
 	and optionally {authorizationToken, allowedTools (NSArray of NSString), description}. The
 	provider reaches the URL, so it must be public and served over HTTPS, as an NFKInferenceServer
 	behind a tunnel is. NFKAnthropicBackend sends them through Claude's MCP connector and
-	NFKRemoteResponsesBackend as Responses mcp tools that need no approval; what the service ran
+	NFKRemoteResponsesBackend as Responses mcp tools that need no approval, and
+	NFKGeminiInteractionsBackend as mcp_server tools; what the service ran
 	comes back under NFKOutputServerToolResults. A backend without a connector ignores the key.
 	Introduced in InferKit 0.4.0. */
 extern NSString * const NFKParameterMCPServers;

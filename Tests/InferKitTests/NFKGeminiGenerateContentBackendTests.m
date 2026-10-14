@@ -24,6 +24,11 @@
 @property (nonatomic, strong) NSMutableArray<NSURLRequest *> *requests;
 @property (nonatomic, strong) NSMutableArray<NSData *> *stagedReplies;
 @property (nonatomic, copy) NSArray<NSString *> *stagedLines;
+@property (nonatomic, strong) NSMutableArray<NSArray<NSString *> *> *stagedStreams;
+@property (nonatomic, assign) BOOL holdsStreamsOpen;
+@property (nonatomic, strong) NSMutableArray *heldCompletions;
+@property (nonatomic, copy, nullable) void (^streamStarted)(NSUInteger index);
+@property (nonatomic, strong) NSMutableIndexSet *cancelledStreams;
 @end
 
 @implementation NFKStubGenerateContentBackend
@@ -50,11 +55,32 @@
 		self.requests = [NSMutableArray array];
 	}
 	[self.requests addObject:request];
-	for (NSString *line in self.stagedLines) {
+	NSUInteger index = self.requests.count - 1;
+	if (self.streamStarted != nil) {
+		self.streamStarted(index);
+	}
+	NSArray<NSString *> *lines = self.stagedLines;
+	if (self.stagedStreams.count > 0) {
+		lines = self.stagedStreams.firstObject;
+		[self.stagedStreams removeObjectAtIndex:0];
+	}
+	for (NSString *line in lines) {
 		lineHandler(line);
 	}
-	completionHandler([[NSHTTPURLResponse alloc] initWithURL:request.URL statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil], nil, nil);
-	return ^{};
+	NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:request.URL statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil];
+	if (self.holdsStreamsOpen) {
+		if (self.heldCompletions == nil) {
+			self.heldCompletions = [NSMutableArray array];
+		}
+		[self.heldCompletions addObject:^{ completionHandler(response, nil, nil); }];
+	} else {
+		completionHandler(response, nil, nil);
+	}
+	if (self.cancelledStreams == nil) {
+		self.cancelledStreams = [NSMutableIndexSet indexSet];
+	}
+	NSMutableIndexSet *cancelled = self.cancelledStreams;
+	return ^{ [cancelled addIndex:index]; };
 }
 - (void)stage:(NSString *)reply
 {
@@ -311,6 +337,117 @@
 												source:self.backend.endpointURL.absoluteString] copy];
 	NSArray *expected = @[ @{ @"text": @"Thinking.", @"thought": @YES }, @{ @"text": @"Hello", @"thoughtSignature": @"c2ln" } ];
 	XCTAssertEqualObjects(parts, expected);
+}
+
+// gemini-4-argon's long decode: a hop that ends in CONTINUATION is resent, unchanged, with its token.
+- (void)testAContinuedReplyIsResentWithItsTokenAndTheHopsJoin
+{
+	self.backend.modelName = @"gemini-4-argon";
+	[self.backend stage:@"{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Chapter one. \"}]},\"finishReason\":\"CONTINUATION\"}],"
+	 "\"continuationToken\":\"tok1\"}"];
+	[self.backend stage:@"{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Chapter two.\"}]},\"finishReason\":\"STOP\"}],"
+	 "\"usageMetadata\":{\"promptTokenCount\":5,\"candidatesTokenCount\":9}}"];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Write it." } parameters:@{ NFKParameterMaxTokens: @100000 }];
+	NSError *error = nil;
+	NFKInferenceResult *result = [self.backend runInferenceForRequest:request error:&error];
+	XCTAssertNotNil(result, @"%@", error);
+	XCTAssertEqual(self.backend.requests.count, 2u);
+	NSMutableDictionary *second = [[self.backend bodyAt:1] mutableCopy];
+	XCTAssertEqualObjects(second[@"continuationToken"], @"tok1");
+	[second removeObjectForKey:@"continuationToken"];
+	XCTAssertEqualObjects(second, [self.backend bodyAt:0]);
+	XCTAssertEqualObjects(result.text, @"Chapter one. Chapter two.");
+	XCTAssertEqualObjects([result outputForKey:NFKOutputUsage][NFKUsageInputTokens], @5);
+}
+
+- (void)testAReplyCutAtTheCallersLimitIsNotContinued
+{
+	[self.backend stage:@"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Cut\"}]},\"finishReason\":\"MAX_TOKENS\"}],\"continuationToken\":\"tok\"}"];
+	NFKInferenceResult *result = [self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }] error:NULL];
+	XCTAssertEqual(self.backend.requests.count, 1u);
+	XCTAssertEqualObjects(result.text, @"Cut");
+}
+
+- (void)testAContinuedStreamOpensTheNextHopAndKeepsGrowingTheText
+{
+	self.backend.stagedStreams = [NSMutableArray arrayWithArray:@[
+		@[ @"data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"Hel\"}]},\"finishReason\":\"CONTINUATION\"}],\"continuationToken\":\"t1\"}" ],
+		@[ @"data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"lo\"}]},\"finishReason\":\"STOP\"}]}" ] ]];
+	NFKInferenceJob *job = [self.backend submitInferenceJobForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }]];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusSucceeded, @"%@", job.error);
+	XCTAssertEqualObjects(job.result.text, @"Hello");
+	XCTAssertEqual(self.backend.requests.count, 2u);
+	XCTAssertEqualObjects([self.backend bodyAt:1][@"continuationToken"], @"t1");
+}
+
+- (void)testAContinuationWithoutATokenFails
+{
+	[self.backend stage:@"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Cut\"}]},\"finishReason\":\"CONTINUATION\"}]}"];
+	NSError *error = nil;
+	XCTAssertNil([self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }] error:&error]);
+	XCTAssertEqual(error.code, kNFKError_InferenceBackendFailure);
+	XCTAssertEqual(self.backend.requests.count, 1u);
+}
+
+- (void)testAnErrorObjectInAContinuedHopFailsTheCall
+{
+	[self.backend stage:@"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Chapter one.\"}]},\"finishReason\":\"CONTINUATION\"}],\"continuationToken\":\"t1\"}"];
+	[self.backend stage:@"{\"error\":{\"code\":500,\"message\":\"hop lost\",\"status\":\"INTERNAL\"}}"];
+	NSError *error = nil;
+	XCTAssertNil([self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }] error:&error]);
+	XCTAssertEqual(error.code, kNFKError_InferenceBackendFailure);
+	XCTAssertTrue([error.localizedDescription containsString:@"hop lost"], @"%@", error);
+}
+
+- (void)testARepeatedContinuationTokenFails
+{
+	// The stub answers every request after the last staged reply with that reply, the same token each time.
+	[self.backend stage:@"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Again\"}]},\"finishReason\":\"CONTINUATION\"}],\"continuationToken\":\"same\"}"];
+	NSError *error = nil;
+	XCTAssertNil([self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }] error:&error]);
+	XCTAssertEqual(error.code, kNFKError_InferenceBackendFailure);
+	XCTAssertEqual(self.backend.requests.count, 2u);
+}
+
+- (void)testAReplyStillContinuingAfterSixtyFourHopsFails
+{
+	for (NSUInteger hop = 0; hop <= 64; hop++) {
+		[self.backend stage:[NSString stringWithFormat:@"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}]},\"finishReason\":\"CONTINUATION\"}],"
+							 "\"continuationToken\":\"t%lu\"}", (unsigned long)hop]];
+	}
+	NSError *error = nil;
+	XCTAssertNil([self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }] error:&error]);
+	XCTAssertEqual(error.code, kNFKError_InferenceBackendFailure);
+	XCTAssertEqual(self.backend.requests.count, 65u);
+}
+
+- (void)testAStreamThatRepeatsItsContinuationTokenFailsTheJob
+{
+	NSString *line = @"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}]},\"finishReason\":\"CONTINUATION\"}],\"continuationToken\":\"t1\"}";
+	self.backend.stagedLines = @[ line ];
+	NFKInferenceJob *job = [self.backend submitInferenceJobForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }]];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusFailed);
+	XCTAssertEqual(job.error.code, kNFKError_InferenceBackendFailure);
+	XCTAssertEqual(self.backend.requests.count, 2u);
+}
+
+- (void)testACancelDuringTheHandoverStopsTheNextHop
+{
+	self.backend.holdsStreamsOpen = YES;
+	self.backend.stagedStreams = [NSMutableArray arrayWithArray:@[
+		@[ @"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hel\"}]},\"finishReason\":\"CONTINUATION\"}],\"continuationToken\":\"t1\"}" ],
+		@[] ]];
+	NFKInferenceJob *job = [self.backend submitInferenceJobForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }]];
+	__weak NFKInferenceJob *weakJob = job;
+	self.backend.streamStarted = ^(NSUInteger index) {
+		if (index == 1) {
+			[weakJob cancel];
+		}
+	};
+	void (^finishFirstHop)(void) = self.backend.heldCompletions.firstObject;
+	finishFirstHop();
+	XCTAssertEqual(job.status, NFKInferenceJobStatusCancelled);
+	XCTAssertTrue([self.backend.cancelledStreams containsIndex:1]);
 }
 
 - (void)testAnErrorInTheStreamFailsTheJob

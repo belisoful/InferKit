@@ -3566,6 +3566,18 @@ NSData *preview = astronomer.sampleAudioData;                           // a WAV
 gemini.modelName = @"gemini-3.8-flash-tts";
 gemini.voice = astronomer.identifier;                                   // voice_…
 
+// Gemini's Antigravity agent writes and runs code in a hosted sandbox; what it writes (here an STL
+// mesh for a 3D printer) is read back from its environment.
+NFKGeminiInteractionsBackend *maker = [NFKGeminiInteractionsBackend backendWithAPIKey:key modelName:@"gemini-4-argon"];
+maker.agentName = @"antigravity-preview-09-2026";                       // runs in the background
+NFKInferenceResult *built = [maker runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Model a 120 mm laptop stand and save it as out/stand.stl." }
+                                parameters:@{ @"environment": @"remote" }] error:&error];
+NSString *sandbox = [built outputForKey:NFKGeminiOutputEnvironmentIdentifier];
+NFKGeminiEnvironmentStore *environments = [NFKGeminiEnvironmentStore environmentStoreForProvider:NFKRemoteProvider.googleGemini
+                                                                                          apiKey:key];
+NSData *stl = [environments contentsOfFileAtPath:@"out/stand.stl" inEnvironment:sandbox recursive:NO error:&error];
+
 // Fill-in-the-middle, OCR, and a token count before sending.
 NFKRemoteCompletionBackend *infill = [NFKRemoteCompletionBackend backendForProvider:NFKRemoteProvider.mistral
                                                                              apiKey:key modelName:@"codestral-latest"];
@@ -5272,10 +5284,12 @@ claude mcp add --transport http inferkit http://localhost:8765/mcp --header "Aut
 ```
 
 On macOS an application registers the server itself. `NFKAgentCLI` runs a coding agent's own `mcp`
-commands: Claude Code, Codex, Gemini CLI, and Qwen Code. `linkServer:…` leaves a registration that
-already reaches the server alone and replaces one that names an earlier port. A token travels by
-environment variable name, which the agent reads when it connects, so no key lands in its
-configuration. A loopback server that leaves `requiresAPIKeyOnLoopback` off takes none.
+commands: Claude Code, Codex, Gemini CLI, Qwen Code, and Antigravity (`agy`, whose registration the
+Antigravity desktop app and IDE share). `linkServer:…` leaves a registration that already reaches the
+server alone and replaces one that names an earlier port. A token travels by environment variable
+name, which the agent reads when it connects, so no key lands in its configuration. A loopback server
+that leaves `requiresAPIKeyOnLoopback` off takes none, and Antigravity takes only such a server, since
+it does not read a token from the environment.
 
 <!-- objc-check: given NFKInferenceServer *server = nil; -->
 ```objc

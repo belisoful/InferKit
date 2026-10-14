@@ -93,6 +93,7 @@ typedef NS_ENUM(NSInteger, NFKAgentCLIKind) {
 	NFKAgentCLIKindCodex,
 	NFKAgentCLIKindGeminiCLI,
 	NFKAgentCLIKindQwenCode,
+	NFKAgentCLIKindAntigravity,
 };
 
 /*! One finished command: its exit status and what it wrote. */
@@ -220,9 +221,14 @@ typedef NS_ENUM(NSInteger, NFKAgentCLIKind) {
 	return [[self alloc] initWithKind:NFKAgentCLIKindQwenCode name:@"Qwen Code" executableName:@"qwen"];
 }
 
++ (NFKAgentCLI *)antigravity
+{
+	return [[self alloc] initWithKind:NFKAgentCLIKindAntigravity name:@"Antigravity" executableName:@"agy"];
+}
+
 + (NSArray<NFKAgentCLI *> *)allAgents
 {
-	return @[ self.claudeCode, self.codex, self.geminiCLI, self.qwenCode ];
+	return @[ self.claudeCode, self.codex, self.geminiCLI, self.qwenCode, self.antigravity ];
 }
 
 - (NSString *)description
@@ -240,6 +246,8 @@ typedef NS_ENUM(NSInteger, NFKAgentCLIKind) {
 		case NFKAgentCLIKindGeminiCLI:
 		case NFKAgentCLIKindQwenCode:
 			return scope == NFKAgentCLIScopeUser || scope == NFKAgentCLIScopeProject;
+		case NFKAgentCLIKindAntigravity:
+			return scope == NFKAgentCLIScopeUser;
 	}
 	return NO;
 }
@@ -415,6 +423,9 @@ typedef NS_ENUM(NSInteger, NFKAgentCLIKind) {
 		case NFKAgentCLIKindQwenCode:
 			arguments = [NSMutableArray arrayWithArray:@[ @"mcp", @"add", @"--scope", scopeName, @"--transport", @"http", name, URL.absoluteString ]];
 			break;
+		case NFKAgentCLIKindAntigravity:
+			// agy rejects a flag after the name.
+			return @[ @"mcp", @"add", @"--type", @"http", name, URL.absoluteString ];
 	}
 	if (header != nil) {
 		[arguments addObjectsFromArray:@[ @"--header", header ]];
@@ -432,6 +443,8 @@ typedef NS_ENUM(NSInteger, NFKAgentCLIKind) {
 		case NFKAgentCLIKindGeminiCLI:
 		case NFKAgentCLIKindQwenCode:
 			return @[ @"mcp", @"remove", @"--scope", [self.class scopeArgument:scope], name ];
+		case NFKAgentCLIKindAntigravity:
+			return @[ @"mcp", @"remove", name ];
 	}
 	return @[];
 }
@@ -445,6 +458,7 @@ typedef NS_ENUM(NSInteger, NFKAgentCLIKind) {
 			return @[ @"mcp", @"get", name, @"--json" ];
 		case NFKAgentCLIKindGeminiCLI:
 		case NFKAgentCLIKindQwenCode:
+		case NFKAgentCLIKindAntigravity:
 			return @[ @"mcp", @"list" ];
 	}
 	return @[];
@@ -489,6 +503,11 @@ typedef NS_ENUM(NSInteger, NFKAgentCLIKind) {
 {
 	if (![self checkName:name scope:scope error:error] || ![self checkURL:URL variable:variable error:error]) {
 		return NO;
+	}
+	// agy 1.3.5 sends a header's ${VAR} as written, so a token would have to be stored in its configuration file.
+	if (_kind == NFKAgentCLIKindAntigravity && variable != nil) {
+		return NFKAgentCLIFail(error, NFKAgentCLIErrorInvalidArgument,
+							   @"Antigravity does not read a token from an environment variable, so it takes only a server that needs no token", nil);
 	}
 	// Gemini CLI and Qwen Code overwrite on add and cannot show a header, so their check would only cost a connection to every server.
 	BOOL reportsBearerToken = _kind == NFKAgentCLIKindClaudeCode || _kind == NFKAgentCLIKindCodex;
@@ -581,6 +600,8 @@ typedef NS_ENUM(NSInteger, NFKAgentCLIKind) {
 		case NFKAgentCLIKindGeminiCLI:
 		case NFKAgentCLIKindQwenCode:
 			return [self listedLinkNamed:name run:run error:error];
+		case NFKAgentCLIKindAntigravity:
+			return [self antigravityLinkNamed:name run:run error:error];
 	}
 	return nil;
 }
@@ -655,6 +676,27 @@ typedef NS_ENUM(NSInteger, NFKAgentCLIKind) {
 	}
 	return [[NFKAgentMCPLink alloc] initWithName:name URL:[NSURL URLWithString:transport[@"url"]] bearerTokenEnvironmentVariable:variable
 							  reportsBearerToken:YES sendsOtherAuthorization:other connected:NO];
+}
+
+/*! agy's list is a table under a "NAME TYPE STATUS COMMAND/URL" heading, one "<name> <http|stdio>
+	<enabled|disabled> <address>" row a server, or "No MCP servers configured." It does not connect. */
+- (nullable NFKAgentMCPLink *)antigravityLinkNamed:(NSString *)name run:(NFKAgentCLIRun *)run error:(NSError **)error
+{
+	NSRegularExpression *row = [NSRegularExpression regularExpressionWithPattern:@"^(\\S+)\\s+(http|stdio)\\s+(enabled|disabled)\\s+(\\S+)\\s*$"
+																		 options:0 error:NULL];
+	for (NSString *line in [run.standardOutput componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet]) {
+		NSTextCheckingResult *match = [row firstMatchInString:line options:0 range:NSMakeRange(0, line.length)];
+		if (match == nil || ![[line substringWithRange:[match rangeAtIndex:1]] isEqualToString:name]) {
+			continue;
+		}
+		NSURL *URL = [NSURL URLWithString:[line substringWithRange:[match rangeAtIndex:4]]];
+		if (![[line substringWithRange:[match rangeAtIndex:2]] isEqualToString:@"http"] || URL == nil) {
+			return [self unreadable:run name:name error:error];
+		}
+		return [[NFKAgentMCPLink alloc] initWithName:name URL:URL bearerTokenEnvironmentVariable:nil
+								  reportsBearerToken:NO sendsOtherAuthorization:NO connected:NO];
+	}
+	return nil;
 }
 
 /*! Gemini CLI's and Qwen Code's list: "<icon> <name>[ (from <extension>)]: <address> (<transport>) - <status>". */

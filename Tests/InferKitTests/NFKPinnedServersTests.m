@@ -467,6 +467,13 @@ static NSString * const NFKPinTestHost = @"Studio.local";
 	}];
 }
 
+- (void)testTheEnvironmentStoreFactoryHonorsThePin
+{
+	[self assertClientSessionFor:NFKRemoteProvider.googleGemini honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {
+		return [NFKGeminiEnvironmentStore environmentStoreForProvider:provider apiKey:nil].session;
+	}];
+}
+
 - (void)testTheUsageReporterFactoryHonorsThePin
 {
 	[self assertClientSessionFor:NFKRemoteProvider.openAI honorsPin:^NSURLSession *(NFKRemoteProvider *provider) {

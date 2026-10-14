@@ -172,6 +172,118 @@
 	XCTAssertTrue(turned);
 }
 
+// gemini-3.8-live-extended-thinking: the spoken filler's turnComplete arrives while the interaction is
+// still IN_PROGRESS, and the turn ends when it is IDLE.
+- (void)testGeminiLiveWaitsForAThinkingInteractionToGoIdle
+{
+	NFKScriptedSession *session = [self sessionFor:NFKRemoteProvider.googleGemini style:NFKRealtimeAPIStyleGeminiLive model:@"gemini-3.8-live-extended-thinking"];
+	session.extraConfiguration = @{ @"generationConfig": @{ @"thinkingConfig": @{ @"thinkingLevel": @"LOW", @"includeThoughts": @YES } } };
+	NSMutableArray *texts = [NSMutableArray array];
+	__block NSUInteger turns = 0;
+	session.textHandler = ^(NSString *text, NFKRealtimeTextKind kind) { [texts addObject:@[ text, @(kind) ]]; };
+	session.turnHandler = ^{ turns += 1; };
+	[session connect];
+	NSDictionary *generation = session.scripted.sentEvents.firstObject[@"setup"][@"generationConfig"];
+	XCTAssertEqualObjects(generation[@"responseModalities"], @[ @"AUDIO" ]);
+	XCTAssertEqualObjects(generation[@"thinkingConfig"][@"thinkingLevel"], @"LOW");
+
+	[session.scripted push:@"{\"serverContent\":{\"modelTurn\":{\"parts\":[{\"text\":\"checking flights\",\"thought\":true}]},"
+							"\"turnComplete\":true,\"interactionStatus\":\"IN_PROGRESS\"}}"];
+	[session.scripted push:@"{\"toolCall\":{\"functionCalls\":[{\"id\":\"call_123\",\"name\":\"searchFlights\",\"args\":{}}]},\"interactionStatus\":\"IN_PROGRESS\"}"];
+	XCTAssertEqual(turns, 0u);
+	[session.scripted push:@"{\"serverContent\":{\"turnComplete\":true,\"interactionStatus\":\"IDLE\"}}"];
+	XCTAssertEqual(turns, 1u);
+	XCTAssertEqualObjects(texts, (@[ @[ @"checking flights", @(NFKRealtimeTextKindReasoning) ] ]));
+}
+
+- (void)testGeminiLiveReportsTheTurnWhenIdleArrivesAloneOrBesideAToolCall
+{
+	NFKScriptedSession *session = [self sessionFor:NFKRemoteProvider.googleGemini style:NFKRealtimeAPIStyleGeminiLive model:@"gemini-3.8-live-extended-thinking"];
+	__block NSUInteger turns = 0;
+	__block NSUInteger calls = 0;
+	session.turnHandler = ^{ turns += 1; };
+	session.toolCallHandler = ^(NSDictionary *call) { calls += 1; };
+	[session connect];
+	[session.scripted push:@"{\"serverContent\":{\"turnComplete\":true,\"interactionStatus\":\"IN_PROGRESS\"}}"];
+	[session.scripted push:@"{\"interactionStatus\":\"IDLE\"}"];
+	XCTAssertEqual(turns, 1u);
+	[session.scripted push:@"{\"interactionStatus\":\"IDLE\"}"];
+	XCTAssertEqual(turns, 1u);
+
+	[session.scripted push:@"{\"serverContent\":{\"turnComplete\":true,\"interactionStatus\":\"IN_PROGRESS\"}}"];
+	[session.scripted push:@"{\"toolCall\":{\"functionCalls\":[{\"id\":\"c1\",\"name\":\"f\",\"args\":{}}]},\"interactionStatus\":\"IDLE\"}"];
+	XCTAssertEqual(calls, 1u);
+	XCTAssertEqual(turns, 2u);
+}
+
+- (void)testAReconnectedGeminiLiveSessionDoesNotFinishTheLastConnectionsTurn
+{
+	NFKScriptedSession *session = [self sessionFor:NFKRemoteProvider.googleGemini style:NFKRealtimeAPIStyleGeminiLive model:@"gemini-3.8-live-extended-thinking"];
+	__block NSUInteger turns = 0;
+	session.turnHandler = ^{ turns += 1; };
+	[session connect];
+	[session.scripted push:@"{\"serverContent\":{\"turnComplete\":true,\"interactionStatus\":\"IN_PROGRESS\"}}"];
+	[session close];
+	[session connect];
+	[session.scripted push:@"{\"interactionStatus\":\"IDLE\"}"];
+	XCTAssertEqual(turns, 0u);
+}
+
+// gemini-3.5-transcribe-live answers in text: interim pieces, then finished ones.
+- (void)testGeminiLiveTranscriptionAsksForTextAndReportsInterimAndFinalPieces
+{
+	NFKScriptedSession *session = [self sessionFor:NFKRemoteProvider.googleGemini style:NFKRealtimeAPIStyleGeminiLive model:@"gemini-3.5-transcribe-live"];
+	session.language = @"en-US";
+	NSMutableArray *texts = [NSMutableArray array];
+	session.textHandler = ^(NSString *text, NFKRealtimeTextKind kind) { [texts addObject:@[ text, @(kind) ]]; };
+	[session connect];
+	NSDictionary *setup = session.scripted.sentEvents.firstObject[@"setup"];
+	XCTAssertEqualObjects(setup[@"generationConfig"][@"responseModalities"], @[ @"TEXT" ]);
+	XCTAssertEqualObjects(setup[@"inputAudioTranscription"][@"languageCodes"], @[ @"en-US" ]);
+	XCTAssertNil(setup[@"outputAudioTranscription"]);
+
+	[session.scripted push:@"{\"serverContent\":{\"interimInputTranscription\":{\"text\":\"hel\"}}}"];
+	[session.scripted push:@"{\"serverContent\":{\"inputTranscription\":{\"text\":\"hello there\"}}}"];
+	XCTAssertEqualObjects(texts, (@[ @[ @"hel", @(NFKRealtimeTextKindInputTranscript) ],
+									 @[ @"hello there", @(NFKRealtimeTextKindInputTranscriptFinal) ] ]));
+}
+
+// gemini-3.5-live-translate-preview speaks the target language and takes no instructions or tools.
+- (void)testGeminiLiveTranslationNamesItsTargetLanguage
+{
+	NFKScriptedSession *session = [self sessionFor:NFKRemoteProvider.googleGemini style:NFKRealtimeAPIStyleGeminiLive model:@"gemini-3.5-live-translate-preview"];
+	session.language = @"pl";
+	session.instructions = @"ignored";
+	session.tools = @[ @{ @"name": @"lookup", @"parameters": @{ @"type": @"object" } } ];
+	[session connect];
+	NSDictionary *setup = session.scripted.sentEvents.firstObject[@"setup"];
+	XCTAssertEqualObjects(setup[@"generationConfig"][@"translationConfig"], (@{ @"targetLanguageCode": @"pl" }));
+	XCTAssertEqualObjects(setup[@"generationConfig"][@"responseModalities"], @[ @"AUDIO" ]);
+	XCTAssertNil(setup[@"systemInstruction"]);
+	XCTAssertNil(setup[@"tools"]);
+}
+
+// An ephemeral token connects to the constrained method as access_token; media other than audio goes to
+// mediaHandler.
+- (void)testGeminiLiveTakesAnEphemeralTokenAndHandsOnVideoFrames
+{
+	NFKScriptedSession *session = [self sessionFor:NFKRemoteProvider.googleGemini style:NFKRealtimeAPIStyleGeminiLive model:@"gemini-3.8-live"];
+	session.apiKey = @"auth_tokens/abc";
+	NSMutableData *audio = [NSMutableData data];
+	NSMutableArray *media = [NSMutableArray array];
+	session.audioHandler = ^(NSData *pcm) { [audio appendData:pcm]; };
+	session.mediaHandler = ^(NSData *data, NSString *mimeType) { [media addObject:@[ data, mimeType ]]; };
+	[session connect];
+	NSURLComponents *url = [NSURLComponents componentsWithURL:session.scripted.request.URL resolvingAgainstBaseURL:NO];
+	XCTAssertTrue([url.path hasSuffix:@"v1beta.GenerativeService.BidiGenerateContentConstrained"]);
+	XCTAssertEqualObjects(url.queryItems, @[ [NSURLQueryItem queryItemWithName:@"access_token" value:@"auth_tokens/abc"] ]);
+
+	[session.scripted push:[NSString stringWithFormat:@"{\"serverContent\":{\"modelTurn\":{\"parts\":[{\"inlineData\":{\"mimeType\":\"video/mp4\",\"data\":\"%@\"}},"
+							"{\"inlineData\":{\"mimeType\":\"audio/pcm;rate=24000\",\"data\":\"%@\"}}]}}}", [self base64:@"frame"], [self base64:@"pcm"]]];
+	XCTAssertEqualObjects(audio, [@"pcm" dataUsingEncoding:NSUTF8StringEncoding]);
+	XCTAssertEqualObjects(media, (@[ @[ [@"frame" dataUsingEncoding:NSUTF8StringEncoding], @"video/mp4" ] ]));
+}
+
 // xAI's streaming STT takes the audio as binary frames and reports partial and final transcripts.
 - (void)testXAIStreamingTranscriptionSendsBinaryAudioAndReportsPartials
 {
@@ -255,6 +367,8 @@
 	XCTAssertEqualObjects(music.scripted.sentEvents[1][@"clientContent"][@"weightedPrompts"][0][@"text"], @"minimal techno");
 	XCTAssertEqualObjects(music.scripted.sentEvents[2], (@{ @"musicGenerationConfig": @{ @"bpm": @120 } }));
 	XCTAssertEqualObjects(music.scripted.sentEvents[3], (@{ @"playbackControl": @"PLAY" }));
+	[music resetMusicContext];
+	XCTAssertEqualObjects(music.scripted.sentEvents[4], (@{ @"playbackControl": @"RESET_CONTEXT" }));
 	[music.scripted push:[NSString stringWithFormat:@"{\"serverContent\":{\"audioChunks\":[{\"data\":\"%@\",\"mimeType\":\"audio/l16;rate=48000;channels=2\"}]}}", [self base64:@"mu"]]];
 	XCTAssertEqualObjects(audio, [@"mu" dataUsingEncoding:NSUTF8StringEncoding]);
 }

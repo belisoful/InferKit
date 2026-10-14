@@ -7,8 +7,9 @@ file, not to AGENTS.md / CLAUDE.md. Keep the Documentation Style rules. -->
 Every inference mode each preset serves, as input → output, set against the backend that reaches it.
 Surveyed 2026-09-22 from each provider's official documentation (five research passes; field-level
 detail per mode lives in the provider's reference, linked at the end of each section). Account
-management, batch, fine-tuning, and agent-hosting APIs are out of scope. Files, retrieval stores, and
-usage reports ship (phase 5). The request shapes
+management, batch, fine-tuning, and agent-management APIs are out of scope; a hosted agent run as a
+request with a result (Gemini's Deep Research and Antigravity) is in scope. Files, retrieval stores,
+and usage reports ship (phase 5). The request shapes
 the backends already speak are in `remote-providers.md`; this file is the coverage map and the build
 order for what is missing.
 
@@ -56,6 +57,12 @@ The Interactions API (`POST /v1beta/interactions`, GA 2026-06) is Google's recom
 |---|---|---|
 | text + image + audio + video + PDF → text, tools, structured output | Interactions / OpenAI-layer chat | covered (`NFKGeminiInteractionsBackend`) |
 | text + image + audio + video + PDF → text, tools, thinking, structured output, grounding | `/v1beta/models/{id}:generateContent` | covered (`NFKGeminiGenerateContentBackend`) |
+| long decode to 1M output tokens (`gemini-4-argon`) | Interactions background hops; generateContent `continuationToken` | covered (both backends, 2026-10-13) |
+| text → cited report (Deep Research agents) | Interactions `agent` + `agent_config {type: deep-research}` | covered (`agentName`, 2026-10-13) |
+| text + image → code and files in a hosted sandbox (Antigravity agent; e.g. a CAD script and its STL) | Interactions `agent` + `environment`; `/v1beta/environments` files | covered (`agentName`, `NFKGeminiEnvironmentStore`, 2026-10-13) |
+| agentic video understanding | Interactions `processing: agentic` on a video block | covered |
+| remote MCP servers the service calls (models, Deep Research, Antigravity) | Interactions `mcp_server` tool | covered (`NFKParameterMCPServers`, 2026-10-13) |
+| service tier, safety settings, webhooks, labels | Interactions top-level fields | covered (by parameter name) |
 | text + images → image (generate and edit, Nano Banana) | Interactions `response_format: image` | covered |
 | text → speech (30 voices, two speakers) | Interactions `response_format: audio` | covered (Interactions) |
 | voice library: list, get, design, replicate, delete | `/v1beta/voices` (2026-09-22) | covered (`NFKGeminiVoiceLibrary`) |
@@ -66,6 +73,11 @@ The Interactions API (`POST /v1beta/interactions`, GA 2026-06) is Google's recom
 | text + image + audio + video + PDF → embedding | `:embedContent` (`gemini-embedding-2`) | covered (native `embedContent`, the preset's default) |
 | token count | `:countTokens` | covered |
 | live speech ↔ speech, live music | Live `BidiGenerateContent`, `BidiGenerateMusic` WebSockets | covered (`NFKRealtimeSession`; live video input by `sendEvent:`) |
+| live speech → speech with background reasoning (`gemini-3.8-live-extended-thinking`) | Live, `interactionStatus` | covered (2026-10-13) |
+| live speech → translated speech, live speech → text | Live (`gemini-3.5-live-translate-preview`, `gemini-3.5-transcribe-live`) | covered (2026-10-13) |
+| ephemeral tokens | `BidiGenerateContentConstrained?access_token` | covered for connecting; minting (`POST /auth_tokens`) stays with the app's server |
+| live avatar video | Live `avatarConfig` | Vertex AI only; frames reach `mediaHandler` |
+| 3D or document output | — | not offered (2026-10-13: no model; `document` is a usage-breakdown modality) |
 | Imagen | — | shut down |
 
 ### xAI (`xai`)
@@ -236,6 +248,15 @@ registered, so what a mode does depends on that backend.
   Gemini route recorded as a gap; `NFKGeminiGenerateContentBackend` closed it the same day and also
   serves the `gemini` preset. Open until a live key: OpenCode's auth header on that route, and
   whether its chat completions answers a Gemini id.
+- **Gemini audit of 2026-10-13.** Checked against the changelog, the models page, the Interactions,
+  Live, and generateContent references, and google-genai v2.30.1 after Gemini 4 Argon went GA. No
+  Google model outputs STL or another 3D format; `gemini-4-argon` outputs text. Argon's launch demo
+  (a 3D-printable sofa leg) is "Argon using Antigravity in the Gemini macOS app": the agent writes
+  the geometry with code. Through the API that is the Antigravity agent with `agent_config.model:
+  gemini-4-argon`, whose files come back through `NFKGeminiEnvironmentStore`. Deep Research and
+  Antigravity are reached as models are (a request in, a result out), so they are in scope.
+  Environment management beyond listing, files, and deletion (sources, network allowlists,
+  credentials at `/v1beta/credentials`) goes through the `environment` parameter by wire shape.
 - **Files and hosted retrieval (decided 2026-09-22):** file management (upload, list, fetch, delete,
   and file references in requests) and retrieval stores with management (create, add and remove files,
   search, delete) are in scope.

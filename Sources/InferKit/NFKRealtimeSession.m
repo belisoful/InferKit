@@ -107,6 +107,8 @@
 @interface NFKRealtimeSession ()
 @property (nonatomic, strong, nullable) id<NFKRealtimeSocket> socket;
 @property (nonatomic, readwrite, getter=isConnected) BOOL connected;
+/*! A Gemini Live turn completed while its interaction was IN_PROGRESS; the turn reports at IDLE. */
+@property (nonatomic, assign) BOOL geminiTurnAwaitsIdle;
 @end
 
 @implementation NFKRealtimeSession
@@ -187,6 +189,7 @@
 
 - (void)connect
 {
+	self.geminiTurnAwaitsIdle = NO;
 	NSURLRequest *request = [self connectionRequest];
 	self.socket = [self socketForRequest:request];
 	__weak NFKRealtimeSession *weakSelf = self;
@@ -218,7 +221,11 @@
 // bearer header.
 - (NSURLRequest *)connectionRequest
 {
-	NSURLComponents *components = [NSURLComponents componentsWithURL:self.endpointURL resolvingAgainstBaseURL:NO];
+	NSURL *endpoint = self.endpointURL;
+	if (self.usesGeminiEphemeralToken && [endpoint.lastPathComponent hasSuffix:@".BidiGenerateContent"]) {
+		endpoint = [endpoint.URLByDeletingLastPathComponent URLByAppendingPathComponent:[endpoint.lastPathComponent stringByAppendingString:@"Constrained"]];
+	}
+	NSURLComponents *components = [NSURLComponents componentsWithURL:endpoint resolvingAgainstBaseURL:NO];
 	NSMutableArray<NSURLQueryItem *> *query = [NSMutableArray arrayWithArray:components.queryItems ?: @[]];
 	void (^add)(NSString *, id) = ^(NSString *name, id value) {
 		if (value != nil) {
@@ -254,19 +261,26 @@
 			break;
 		case NFKRealtimeAPIStyleGeminiLive:
 		case NFKRealtimeAPIStyleGeminiLiveMusic:
-			add(@"key", self.apiKey);
+			add(self.usesGeminiEphemeralToken ? @"access_token" : @"key", self.apiKey);
 			break;
 		case NFKRealtimeAPIStyleOpenAITranscription:
 		case NFKRealtimeAPIStyleVLLMTranscription:
 			break;
 	}
 	components.queryItems = query.count > 0 ? query : nil;
-	NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:components.URL ?: self.endpointURL];
+	NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:components.URL ?: endpoint];
 	BOOL keyInQuery = self.apiStyle == NFKRealtimeAPIStyleGeminiLive || self.apiStyle == NFKRealtimeAPIStyleGeminiLiveMusic;
 	if (!keyInQuery && self.apiKey.length > 0) {
 		[request setValue:[@"Bearer " stringByAppendingString:self.apiKey] forHTTPHeaderField:@"Authorization"];
 	}
 	return request;
+}
+
+// An ephemeral token minted by POST /v1beta/auth_tokens is named auth_tokens/…; Google's Live socket
+// reads it on the constrained method as access_token.
+- (BOOL)usesGeminiEphemeralToken
+{
+	return self.apiStyle == NFKRealtimeAPIStyleGeminiLive && [self.apiKey hasPrefix:@"auth_tokens/"];
 }
 
 // The first message a style sends: the session's configuration, or nil for a style whose handshake
@@ -312,24 +326,8 @@
 		case NFKRealtimeAPIStyleVLLMTranscription:
 			message = @{ @"type": @"session.update", @"model": self.modelName ?: @"" };
 			break;
-		case NFKRealtimeAPIStyleGeminiLive: {
-			NSMutableDictionary *setup = [NSMutableDictionary dictionaryWithObject:[@"models/" stringByAppendingString:self.modelName ?: @""] forKey:@"model"];
-			NSMutableDictionary *generation = [NSMutableDictionary dictionaryWithObject:@[ @"AUDIO" ] forKey:@"responseModalities"];
-			if (self.voice.length > 0) {
-				generation[@"speechConfig"] = @{ @"voiceConfig": @{ @"prebuiltVoiceConfig": @{ @"voiceName": self.voice } } };
-			}
-			setup[@"generationConfig"] = generation;
-			if (self.instructions.length > 0) {
-				setup[@"systemInstruction"] = @{ @"parts": @[ @{ @"text": self.instructions } ] };
-			}
-			setup[@"inputAudioTranscription"] = @{};
-			setup[@"outputAudioTranscription"] = @{};
-			if (self.tools.count > 0) {
-				setup[@"tools"] = @[ @{ @"functionDeclarations": [self functionToolsNamedInline:NO] } ];
-			}
-			[setup addEntriesFromDictionary:self.extraConfiguration ?: @{}];
-			return @{ @"setup": setup };
-		}
+		case NFKRealtimeAPIStyleGeminiLive:
+			return @{ @"setup": [self geminiLiveSetup] };
 		case NFKRealtimeAPIStyleGeminiLiveMusic: {
 			NSMutableDictionary *setup = [NSMutableDictionary dictionaryWithObject:[@"models/" stringByAppendingString:self.modelName ?: @"lyria-realtime-exp"] forKey:@"model"];
 			[setup addEntriesFromDictionary:self.extraConfiguration ?: @{}];
@@ -349,6 +347,43 @@
 		return withExtras;
 	}
 	return message;
+}
+
+// A transcription model (gemini-3.5-transcribe-live) answers in text with the input transcript alone; a
+// translation model (gemini-3.5-live-translate-preview) speaks the language translationConfig names and
+// takes neither instructions nor tools. An extra generationConfig merges into the session's own.
+- (NSDictionary *)geminiLiveSetup
+{
+	NSString *model = self.modelName ?: @"";
+	BOOL transcribes = [model containsString:@"transcribe"];
+	BOOL translates = [model containsString:@"translate"];
+	NSMutableDictionary *setup = [NSMutableDictionary dictionaryWithObject:[@"models/" stringByAppendingString:model] forKey:@"model"];
+	NSMutableDictionary *generation = [NSMutableDictionary dictionaryWithObject:@[ transcribes ? @"TEXT" : @"AUDIO" ] forKey:@"responseModalities"];
+	if (self.voice.length > 0 && !transcribes) {
+		generation[@"speechConfig"] = @{ @"voiceConfig": @{ @"prebuiltVoiceConfig": @{ @"voiceName": self.voice } } };
+	}
+	if (translates && self.language.length > 0) {
+		generation[@"translationConfig"] = @{ @"targetLanguageCode": self.language };
+	}
+	NSDictionary *extraGeneration = [self.extraConfiguration[@"generationConfig"] isKindOfClass:NSDictionary.class] ? self.extraConfiguration[@"generationConfig"] : nil;
+	[generation addEntriesFromDictionary:extraGeneration ?: @{}];
+	setup[@"generationConfig"] = generation;
+	if (self.instructions.length > 0 && !translates) {
+		setup[@"systemInstruction"] = @{ @"parts": @[ @{ @"text": self.instructions } ] };
+	}
+	setup[@"inputAudioTranscription"] = transcribes && self.language.length > 0 ? @{ @"languageCodes": @[ self.language ] } : @{};
+	if (!transcribes) {
+		setup[@"outputAudioTranscription"] = @{};
+	}
+	if (self.tools.count > 0 && !translates) {
+		setup[@"tools"] = @[ @{ @"functionDeclarations": [self functionToolsNamedInline:NO] } ];
+	}
+	for (NSString *key in self.extraConfiguration) {
+		if (![key isEqualToString:@"generationConfig"]) {
+			setup[key] = self.extraConfiguration[key];
+		}
+	}
+	return setup;
 }
 
 // OpenAI's realtime tools are {type: function, name, …}; Gemini's are bare declarations.
@@ -526,10 +561,16 @@
 	[self sendEvent:@{ @"playbackControl": @"STOP" }];
 }
 
+- (void)resetMusicContext
+{
+	[self sendEvent:@{ @"playbackControl": @"RESET_CONTEXT" }];
+}
+
 - (void)close
 {
 	[self.socket close];
 	self.connected = NO;
+	self.geminiTurnAwaitsIdle = NO;
 }
 
 #pragma mark Receiving
@@ -604,7 +645,10 @@
 }
 
 // Gemini's server messages are keyed by kind rather than typed: serverContent (model turn parts,
-// transcriptions, turnComplete), toolCall, and Lyria's audioChunks.
+// transcriptions, turnComplete), toolCall, and Lyria's audioChunks. A model that keeps reasoning in the
+// background ends a spoken filler with turnComplete while interactionStatus is IN_PROGRESS; the turn
+// ends when the status is IDLE, which may arrive in a message of its own. Google's samples put that
+// status in serverContent and beside toolCall.
 - (void)receiveGeminiEvent:(NSDictionary *)event
 {
 	NSDictionary *content = [event[@"serverContent"] isKindOfClass:NSDictionary.class] ? event[@"serverContent"] : nil;
@@ -613,9 +657,9 @@
 		for (NSDictionary *part in [turn[@"parts"] isKindOfClass:NSArray.class] ? turn[@"parts"] : @[]) {
 			NSDictionary *inlineData = [part isKindOfClass:NSDictionary.class] && [part[@"inlineData"] isKindOfClass:NSDictionary.class] ? part[@"inlineData"] : nil;
 			if ([inlineData[@"data"] isKindOfClass:NSString.class]) {
-				[self reportAudio:inlineData[@"data"]];
+				[self reportInlineData:inlineData];
 			} else if ([part isKindOfClass:NSDictionary.class]) {
-				[self reportText:part[@"text"] kind:NFKRealtimeTextKindResponse];
+				[self reportText:part[@"text"] kind:[part[@"thought"] boolValue] ? NFKRealtimeTextKindReasoning : NFKRealtimeTextKindResponse];
 			}
 		}
 		for (NSDictionary *chunk in [content[@"audioChunks"] isKindOfClass:NSArray.class] ? content[@"audioChunks"] : @[]) {
@@ -623,13 +667,13 @@
 				[self reportAudio:chunk[@"data"]];
 			}
 		}
+		NSDictionary *interim = [content[@"interimInputTranscription"] isKindOfClass:NSDictionary.class] ? content[@"interimInputTranscription"] : nil;
+		[self reportText:interim[@"text"] kind:NFKRealtimeTextKindInputTranscript];
 		NSDictionary *input = [content[@"inputTranscription"] isKindOfClass:NSDictionary.class] ? content[@"inputTranscription"] : nil;
-		[self reportText:input[@"text"] kind:NFKRealtimeTextKindInputTranscript];
+		BOOL inputIsFinal = [input[@"finished"] boolValue] || [self.modelName containsString:@"transcribe"];
+		[self reportText:input[@"text"] kind:inputIsFinal ? NFKRealtimeTextKindInputTranscriptFinal : NFKRealtimeTextKindInputTranscript];
 		NSDictionary *output = [content[@"outputTranscription"] isKindOfClass:NSDictionary.class] ? content[@"outputTranscription"] : nil;
 		[self reportText:output[@"text"] kind:NFKRealtimeTextKindOutputTranscript];
-		if ([content[@"turnComplete"] boolValue]) {
-			[self reportTurn];
-		}
 	}
 	NSDictionary *toolCall = [event[@"toolCall"] isKindOfClass:NSDictionary.class] ? event[@"toolCall"] : nil;
 	for (NSDictionary *call in [toolCall[@"functionCalls"] isKindOfClass:NSArray.class] ? toolCall[@"functionCalls"] : @[]) {
@@ -637,8 +681,35 @@
 			[self reportToolCall:call[@"id"] name:call[@"name"] arguments:call[@"args"]];
 		}
 	}
+	[self followGeminiTurnWithStatus:content[@"interactionStatus"] ?: event[@"interactionStatus"] turnComplete:[content[@"turnComplete"] boolValue]];
 	if (event[@"error"] != nil) {
 		[self reportError:event];
+	}
+}
+
+- (void)followGeminiTurnWithStatus:(nullable id)status turnComplete:(BOOL)turnComplete
+{
+	if (turnComplete && [status isEqual:@"IN_PROGRESS"]) {
+		self.geminiTurnAwaitsIdle = YES;
+		return;
+	}
+	if (turnComplete || (self.geminiTurnAwaitsIdle && [status isEqual:@"IDLE"])) {
+		self.geminiTurnAwaitsIdle = NO;
+		[self reportTurn];
+	}
+}
+
+// Audio parts are PCM; anything else (a Live Avatar's video) goes to mediaHandler with its MIME type.
+- (void)reportInlineData:(NSDictionary *)inlineData
+{
+	NSString *mimeType = [inlineData[@"mimeType"] isKindOfClass:NSString.class] ? inlineData[@"mimeType"] : @"";
+	if (mimeType.length == 0 || [mimeType hasPrefix:@"audio/"]) {
+		[self reportAudio:inlineData[@"data"]];
+		return;
+	}
+	NSData *data = [[NSData alloc] initWithBase64EncodedString:inlineData[@"data"] options:NSDataBase64DecodingIgnoreUnknownCharacters];
+	if (data != nil && self.mediaHandler != nil) {
+		self.mediaHandler(data, mimeType);
 	}
 }
 

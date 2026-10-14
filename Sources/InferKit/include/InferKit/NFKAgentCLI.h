@@ -80,6 +80,7 @@ typedef NS_ENUM(NSInteger, NFKAgentCLIScope) {
 				  connect.
 				- Gemini CLI and Qwen Code report the URL and whether the server answered. They do
 				  not show headers, so reportsBearerToken is NO.
+				- Antigravity reports the URL only. It does not connect, so connected is NO.
 				Introduced in InferKit 0.4.0.
 */
 @interface NFKAgentMCPLink : NSObject
@@ -119,6 +120,9 @@ typedef NS_ENUM(NSInteger, NFKAgentCLIScope) {
 				- codex: codex mcp add / remove / get --json. Scope: user.
 				- geminiCLI: gemini mcp add / remove / list. Scopes: user, project.
 				- qwenCode: qwen mcp add / remove / list. Scopes: user, project.
+				- antigravity: agy mcp add / remove / list. Scope: user, the
+				  ~/.gemini/config/mcp_config.json that Google's Antigravity app, IDE, and CLI share,
+				  so one registration reaches all three.
 
 				linkServer:name:scope:bearerTokenEnvironmentVariable:error: registers a running
 				NFKInferenceServer's localMCPURL, so the agent calls the server's tools. A
@@ -129,6 +133,8 @@ typedef NS_ENUM(NSInteger, NFKAgentCLIScope) {
 				lands in a command line or a configuration file. The tool reads the variable when it
 				connects, so the variable is set in the environment the agent runs in. A server that
 				listens on loopback and leaves requiresAPIKeyOnLoopback NO takes no token.
+				Antigravity sends a header's ${VAR} reference as written, so it takes only a server
+				that needs no token; naming a variable fails with NFKAgentCLIErrorInvalidArgument.
 
 				The executable is found under executableURL when it is set, otherwise on PATH and in
 				the directories installers use (~/.local/bin, ~/.claude/local, /opt/homebrew/bin,
@@ -149,11 +155,15 @@ API_UNAVAILABLE(ios, tvos, watchos)
 /*! OpenAI's Codex CLI (codex). */
 @property (class, nonatomic, readonly) NFKAgentCLI *codex;
 
-/*! Google's Gemini CLI (gemini). */
+/*! Google's Gemini CLI (gemini). See also antigravity, the preset for Google's Antigravity CLI (agy). */
 @property (class, nonatomic, readonly) NFKAgentCLI *geminiCLI;
 
 /*! Qwen Code (qwen). */
 @property (class, nonatomic, readonly) NFKAgentCLI *qwenCode;
+
+/*! Google's Antigravity CLI (agy). Its registrations reach the Antigravity desktop app and IDE too.
+	Introduced in InferKit 0.4.0. */
+@property (class, nonatomic, readonly) NFKAgentCLI *antigravity;
 
 /*! Every preset, in the order above. Each read returns new instances. */
 @property (class, nonatomic, readonly, copy) NSArray<NFKAgentCLI *> *allAgents;

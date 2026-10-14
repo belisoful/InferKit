@@ -104,8 +104,10 @@
 - (void)testThePresetsNameTheirToolsAndScopes
 {
 	NSArray<NFKAgentCLI *> *agents = NFKAgentCLI.allAgents;
-	XCTAssertEqualObjects([agents valueForKey:@"executableName"], (@[ @"claude", @"codex", @"gemini", @"qwen" ]));
-	XCTAssertEqualObjects([agents valueForKey:@"name"], (@[ @"Claude Code", @"Codex", @"Gemini CLI", @"Qwen Code" ]));
+	XCTAssertEqualObjects([agents valueForKey:@"executableName"], (@[ @"claude", @"codex", @"gemini", @"qwen", @"agy" ]));
+	XCTAssertEqualObjects([agents valueForKey:@"name"], (@[ @"Claude Code", @"Codex", @"Gemini CLI", @"Qwen Code", @"Antigravity" ]));
+	XCTAssertTrue([NFKAgentCLI.antigravity supportsScope:NFKAgentCLIScopeUser]);
+	XCTAssertFalse([NFKAgentCLI.antigravity supportsScope:NFKAgentCLIScopeProject]);
 	XCTAssertTrue([NFKAgentCLI.claudeCode supportsScope:NFKAgentCLIScopeLocal]);
 	XCTAssertTrue([NFKAgentCLI.claudeCode supportsScope:NFKAgentCLIScopeProject]);
 	XCTAssertTrue([NFKAgentCLI.codex supportsScope:NFKAgentCLIScopeUser]);
@@ -321,6 +323,57 @@
 	error = nil;
 	XCTAssertNil([agent MCPLinkNamed:@"local-files" scope:NFKAgentCLIScopeUser error:&error]);
 	XCTAssertEqual(error.code, NFKAgentCLIErrorUnreadableOutput, @"a stdio server under the name is no HTTP registration");
+}
+
+// Output recorded from agy 1.3.5 on 2026-10-13: add and remove print one line, remove of an absent name
+// exits 1, and list is a table that does not connect.
+- (void)testAntigravityAddsWithFlagsBeforeTheNameAndRefusesATokenVariable
+{
+	NFKAgentCLI *agent = [self stub:NFKAgentCLI.antigravity answers:@{ @"add": @[ @0, @"Added MCP server \"inferkit\" (http)\n" ],
+																	   @"remove": @[ @1, @"Error: MCP server \"inferkit\" not found\n" ] }];
+	NSError *error = nil;
+	XCTAssertTrue([agent linkMCPServerNamed:@"inferkit" URL:self.endpoint bearerTokenEnvironmentVariable:nil
+									  scope:NFKAgentCLIScopeUser error:&error], @"%@", error);
+	XCTAssertEqual(self.commands.count, 1u, @"agy overwrites on add, so nothing is checked first");
+	XCTAssertEqualObjects([self.commands[0] subarrayWithRange:NSMakeRange(1, 6)],
+						  (@[ @"mcp", @"add", @"--type", @"http", @"inferkit", @"http://localhost:8765/mcp" ]));
+
+	XCTAssertFalse([agent linkMCPServerNamed:@"inferkit" URL:self.endpoint bearerTokenEnvironmentVariable:@"INFERKIT_KEY"
+									   scope:NFKAgentCLIScopeUser error:&error]);
+	XCTAssertEqual(error.code, NFKAgentCLIErrorInvalidArgument);
+	XCTAssertEqual(self.commands.count, 1u, @"a refused token runs no command");
+	error = nil;
+	XCTAssertFalse([agent linkMCPServerNamed:@"inferkit" URL:self.endpoint bearerTokenEnvironmentVariable:nil
+									   scope:NFKAgentCLIScopeProject error:&error]);
+	XCTAssertEqual(error.code, NFKAgentCLIErrorScopeUnsupported);
+
+	error = nil;
+	XCTAssertTrue([agent unlinkMCPServerNamed:@"inferkit" scope:NFKAgentCLIScopeUser error:&error], @"an absent name is already unlinked: %@", error);
+	XCTAssertEqualObjects([self.commands[1] subarrayWithRange:NSMakeRange(1, 3)], (@[ @"mcp", @"remove", @"inferkit" ]));
+}
+
+- (void)testAntigravityReadsItsList
+{
+	NSString *list = @"NAME      TYPE   STATUS    COMMAND/URL\n"
+					  "inferkit  http   enabled   http://localhost:8765/mcp\n"
+					  "fs        stdio  enabled   npx\n"
+					  "other     http   disabled  https://example.com/mcp\n";
+	NFKAgentCLI *agent = [self stub:NFKAgentCLI.antigravity answers:@{ @"list": @[ @0, list ] }];
+	NSError *error = nil;
+	NFKAgentMCPLink *link = [agent MCPLinkNamed:@"inferkit" scope:NFKAgentCLIScopeUser error:&error];
+	XCTAssertEqualObjects(link.URL, self.endpoint, @"%@", error);
+	XCTAssertFalse(link.isConnected);
+	XCTAssertFalse(link.reportsBearerToken);
+	XCTAssertEqualObjects([agent MCPLinkNamed:@"other" scope:NFKAgentCLIScopeUser error:&error].URL.absoluteString, @"https://example.com/mcp");
+	XCTAssertNil([agent MCPLinkNamed:@"absent" scope:NFKAgentCLIScopeUser error:&error]);
+	error = nil;
+	XCTAssertNil([agent MCPLinkNamed:@"fs" scope:NFKAgentCLIScopeUser error:&error]);
+	XCTAssertEqual(error.code, NFKAgentCLIErrorUnreadableOutput, @"a stdio server under the name is no HTTP registration");
+
+	NFKAgentCLI *empty = [self stub:NFKAgentCLI.antigravity answers:@{ @"list": @[ @0, @"No MCP servers configured.\n" ] }];
+	error = nil;
+	XCTAssertNil([empty MCPLinkNamed:@"inferkit" scope:NFKAgentCLIScopeUser error:&error]);
+	XCTAssertNil(error);
 }
 
 #pragma mark A running server

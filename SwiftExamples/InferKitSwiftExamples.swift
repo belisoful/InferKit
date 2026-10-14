@@ -507,6 +507,15 @@ final class InferKitSwiftExamples: XCTestCase {
                                                      bearerTokenEnvironmentVariable: nil, scope: .user)) { error in
             XCTAssertEqual((error as? NFKAgentCLIError)?.code, .invalidArgument)
         }
+
+        // Antigravity (agy) shares its registration with the Antigravity app and IDE; it takes a server
+        // that needs no token, so naming a token variable throws before any command runs.
+        let antigravity = NFKAgentCLI.antigravity
+        antigravity.executableURL = stub
+        XCTAssertEqual(antigravity.executableName, "agy")
+        XCTAssertThrowsError(try antigravity.link(server, name: "inferkit", scope: .user, bearerTokenEnvironmentVariable: "INFERKIT_KEY")) { error in
+            XCTAssertEqual((error as? NFKAgentCLIError)?.code, .invalidArgument)
+        }
     }
 
     // The status client from Swift: the blocking fetch throws, and the awaited form is
@@ -676,7 +685,7 @@ final class InferKitSwiftExamples: XCTestCase {
         let responses = NFKRemoteResponsesBackend(for: .openAI, apiKey: "sk-…", modelName: "gpt-5.6-sol")
         XCTAssertEqual(responses?.endpointURL?.absoluteString, "https://api.openai.com/v1/responses")
 
-        let gemini = NFKGeminiInteractionsBackend(apiKey: "AIza…", modelName: "gemini-3.1-flash-image")
+        let gemini = NFKGeminiInteractionsBackend(apiKey: "AIza…", modelName: "gemini-nano-banana-2.1")
         let draw = NFKInferenceRequest(inputs: [NFKInputPrompt: "a lighthouse"],
                                        parameters: [NFKParameterAspectRatio: "16:9"],
                                        outputModality: .image)
@@ -815,6 +824,26 @@ final class InferKitSwiftExamples: XCTestCase {
             try voices.deleteVoice(withIdentifier: astronomer.identifier)
             _ = (prebuilt, replica)
         }
+    }
+
+    // Gemini's Antigravity agent from Swift: it writes files in a hosted sandbox, which the environment
+    // store reads back by the id the reply carries.
+    func testGeminiAgentEnvironment() throws {
+        let maker = NFKGeminiInteractionsBackend(apiKey: "AIza…", modelName: "gemini-4-argon")
+        maker.agentName = "antigravity-preview-09-2026"
+        XCTAssertTrue(maker.isReady)
+        let environments = NFKGeminiEnvironmentStore(for: .googleGemini, apiKey: "AIza…")
+        XCTAssertEqual(environments?.endpointURL?.absoluteString, "https://generativelanguage.googleapis.com/v1beta/environments")
+        XCTAssertNil(NFKGeminiEnvironmentStore(for: .openAI, apiKey: "sk-…"))
+
+        // What the calls look like (they need network, so this is compiled and not run).
+        func fetchMesh(_ result: NFKInferenceResult, from environments: NFKGeminiEnvironmentStore) throws -> Data? {
+            guard let sandbox = result.output(forKey: NFKGeminiOutputEnvironmentIdentifier) as? String else { return nil }
+            let files = try environments.files(inEnvironment: sandbox, atPath: "out", recursive: true)
+            return try environments.contentsOfFile(atPath: files.first { $0.path.hasSuffix(".stl") }?.path ?? "out/stand.stl",
+                                                   inEnvironment: sandbox, recursive: false)
+        }
+        _ = fetchMesh
     }
 
     // OpenAI's Decisions API from Swift: the provider factory returns an optional, and a refusal

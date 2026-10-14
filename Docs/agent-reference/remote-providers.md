@@ -255,9 +255,13 @@ shapes:
   returns `message.content` as chunks, `{type: thinking, thinking: [{type: text, text}]}` then
   `{type: text, text}`, blocking and streamed; `appendContentChunks:toText:reasoning:` reads both into
   the text and `NFKOutputReasoning`. Its effort values are `none|minimal|low|medium|high|xhigh`.
-- **Gemini (OpenAI layer):** current `gemini-3.5`–`3.8-flash`, `3.1-pro-preview`, `3.1-flash-lite`; the
-  2.0 models shut down 2026-06-01. 3.x cannot turn reasoning off. `temperature` / `top_p` / `top_k` were
-  deprecated 2026-07-21 with no stated rejection, so the backend still sends them.
+- **Gemini (OpenAI layer):** current `gemini-4-argon` (GA 2026-10-13), `gemini-3.8-flash`,
+  `gemini-3.6-flash`, `3.5-flash-lite`, `3.1-pro-preview`, `3.1-flash-lite`; `gemini-3.7-flash` and
+  `gemini-3.5-flash` were deprecated 2026-10-08 and their names route to 3.8 and 3.6. The 2.0 models
+  shut down 2026-06-01. 3.x cannot turn reasoning off. `temperature` / `top_p` / `top_k` were
+  deprecated 2026-07-21 with no stated rejection, so the backend still sends them; Argon ignores them.
+  The OpenAI page maps Argon's `reasoning_effort` minimal→low and documents no long decode on this
+  layer.
 - **DeepSeek:** `deepseek-flash` (V4.1-Flash) and `deepseek-v4-pro`; effort `none|low|high|max`
   (`medium` is not listed), and thinking mode ignores `temperature`. Only `json_object` is documented,
   so a `json_schema` response format may be refused (unverified).
@@ -390,6 +394,15 @@ Anthropic reads `citations[]` on text blocks (and `citations_delta` when streame
     signed, so a signature that arrives on an empty trailing text part lands on the text it closes.
   - Refusals: `promptFeedback.blockReason`, and a finish reason of SAFETY, RECITATION, BLOCKLIST,
     PROHIBITED_CONTENT, SPII, or an image-safety reason with no text, call, or image.
+  - Long decode (`gemini-4-argon`, 2026-10-13, `ai.google.dev/gemini-api/docs/generate-content/
+    long-decode`): a hop ends with `finishReason: CONTINUATION` and a top-level `continuationToken`;
+    the next hop resends the same `contents` and `generationConfig` with `continuationToken` at the top
+    level. Non-streaming REST hops cap at 32K tokens, streaming hops at 64K. `MAX_TOKENS` also carries a
+    token, which the backend does not follow: the caller's `maxOutputTokens` stands. Both paths join
+    the hops through the stream state's part merge. A `CONTINUATION` without a token, a token seen
+    on an earlier hop, or a 65th hop fails with `kNFKError_InferenceBackendFailure`, so a cut reply
+    never reads as a whole one and a service that never stops cannot hold the call. A streamed hop
+    checks the job for a cancel that arrived during the handover and cancels its own stream.
   - Not verified live: no Gemini or OpenCode key is set on this machine.
     `testALiveGenerateContentCallAnswers` is gated on `INFERKIT_GEMINI_API_KEY`.
 - `NFKGeminiInteractionsBackend` (`POST /v1beta/interactions`, `x-goog-api-key`, which Google's curl
@@ -411,6 +424,65 @@ Anthropic reads `citations[]` on text blocks (and `citations_delta` when streame
   terminal status (`requires_action` included). The stream is `?alt=sse` with `event_type` events;
   `step.delta {delta: {type: text, text}}` grows the text and the finished interaction is read back by
   the id from `interaction.created`.
+  - 2026-10-13 audit (the API reference and the agent, long-decode, and video guides; the guides send
+    `Api-Revision: 2026-05-20`, which the backend does not):
+    - Top-level fields by parameter name: `service_tier` (`flex | standard | priority | deferred`),
+      `safety_settings [{type, threshold, method}]` (the harm category goes in `type`),
+      `webhook_config {uris, user_metadata}` (background only), `labels`, `store`, `environment`,
+      `agent_config`.
+    - Agents: `agent` replaces `model`, `agent_config` replaces `generation_config` (a union on `type`:
+      `antigravity | deep-research | code-mender | dynamic`). Agents need `background: true` and
+      `store: true`. Deep Research config: `thinking_summaries`, `visualization`,
+      `collaborative_planning` (a plan comes back as a completed interaction; the next turn approves
+      it with `false`). Antigravity config: `model` (`gemini-3.8-flash` default, `gemini-4-argon`,
+      `gemini-3.6-flash`, `gemini-3.5-flash-lite`), `max_total_tokens` (reaching it ends `incomplete`;
+      `input: "continue"` with `previous_interaction_id` and `environment` resumes). Antigravity
+      rejects `temperature`, `top_p`, `top_k`, `stop_sequences`, `max_output_tokens` with a 400.
+    - The reference's agent enum still says `antigravity-preview-05-2026` (shut down 2026-10-05); the
+      guides and the deprecations page say `-09-2026`. `deep-research-pro-preview-12-2025` shuts down
+      2026-10-23.
+    - An agent's built-in tools (`write_to_file`, `replace_file_content`, `view_file`, `list_dir`,
+      `find_by_name`, `grep_search`, PascalCase arguments) come back as `function_call` steps with a
+      matching `function_result` (`call_id`). The backend reports an answered call as a server tool
+      and only an unanswered call as `NFKOutputToolCalls`; a caller's answer goes back as a
+      `function_result` step with `previous_interaction_id` and `environment`.
+    - `thought` steps carry `{signature, summary: [blocks]}` in the reference and `content` in the Omni
+      guide; both are read.
+    - Long decode (`gemini-4-argon`): `max_output_tokens` above 65536 needs `background: true` (400
+      otherwise) and `store: true`; each 64K hop adds a `model_output` step; `queued` means waiting for
+      off-peak capacity. The backend switches to background above 65536 on its own.
+    - Background polling: the blocking call and the job share one loop. `backgroundTimeout` (3600 s
+      by default, 0 for none) cancels the run on the service and fails. A failed poll, which the
+      transport has already retried for 429 and 5xx, is polled again; the third in a row fails with
+      an error naming the interaction, which `store: true` keeps on the service.
+    - MCP: `NFKParameterMCPServers` → `{type: mcp_server, name, url,
+      headers: {Authorization: Bearer …}, allowed_tools: [{tools}]}` (streamable HTTP only; SSE is not
+      supported). The name must match
+      `^[a-z0-9_-]+$` (an uppercase letter is a bare 400), so the backend lowercases it and turns other
+      characters into `-`. The reference types `allowed_tools` as `[{mode, tools}]`; the Antigravity
+      guide calls it a list of names. Calls come back as `mcp_server_tool_call` /
+      `mcp_server_tool_result` steps with `server_name`. This is how the hosted Antigravity agent
+      reaches an `NFKInferenceServer`'s MCP endpoint behind a public tunnel.
+    - Agentic video: `processing: "agentic"` on a video block; the model's `processing_call` /
+      `processing_result` steps need no answer and come back as server tools.
+    - `ResponseModality` `document` appears only in the usage breakdowns (`*_tokens_by_modality`). No
+      model produces document or 3D output; `response_format` types are text, image, audio, video.
+    - Cancel is `POST /interactions/{id}/cancel` in the reference (the Antigravity guide writes
+      `:cancel`); delete is `DELETE /interactions/{id}`.
+- `NFKGeminiEnvironmentStore` (`/v1beta/environments`, 2026-10-13, `ai.google.dev/gemini-api/docs/
+  agent-environment`): the Antigravity sandbox. `GET /environments` → `{environments: [{id, status,
+  sources, network}], next_page_token}` (the page parameter is taken to be `page_token`, as on the
+  voices and credentials collections; the environments page shows only `pageSize`). `GET
+  /environments/{id}/files[/{path}][?recursive=true]` → `{files: [{name, path, type: FILE | DIRECTORY,
+  size_bytes (a string), mime_type, created, modified}]}`; `?alt=media` returns a file's bytes or a
+  directory as an uncompressed POSIX tar. Writes are `PUT /upload/v1beta/environments/{id}/files/{path}`
+  with `overwrite=true` and `extract=true` (a tar into a directory); a write without the `/upload`
+  prefix is a 400 and an existing file without `overwrite` a 409. `DELETE /environments/{id}`. An
+  environment idles after 15 minutes and is deleted after 7 days without use. Files never come back
+  inside the interaction. The store puts `upload/` before the endpoint's version segment, so a proxy
+  base `…/g/v1beta/environments` uploads to `…/g/upload/v1beta/environments`. An id or path component
+  that is empty, `.`, `..`, or carries a slash is refused before sending, since the URL would resolve
+  it to another resource under the same key; every other character is percent-encoded per component.
 - `NFKRemoteCompletionBackend`: OpenAI style `{prompt, suffix}` → `choices[].text`; DeepSeek's path is
   `…/beta/completions` off the version root; Mistral `/fim/completions` answers in the chat shape and
   names the seed `random_seed`; llama.cpp posts `/infill {input_prefix, input_suffix}` or `/completion
@@ -451,12 +523,51 @@ binary frames (xAI STT). Commit / finish per style: `input_audio_buffer.commit` 
 vLLM), `input_audio.flush` / `input_audio.end` (Mistral), `finalize` / `audio.done` (xAI STT),
 `text.done` (xAI TTS), `input_text_buffer.commit` (Together TTS), `session.close` (translation),
 `realtimeInput.audioStreamEnd` (Gemini). Lyria: `clientContent.weightedPrompts`,
-`musicGenerationConfig`, `playbackControl: PLAY | PAUSE | STOP`. Receiving: any typed event ending
-`audio.delta` (not a transcript) or `conversation.item.audio_output.delta` is audio; text deltas are
-sorted into response text, output transcript, and input transcript (partial or final, including xAI's
-`transcript.partial.is_final`); `response.function_call_arguments.done` and Gemini `toolCall.functionCalls`
-become tool calls with parsed arguments; `response.done`, `audio.done`, `transcription.done`, and Gemini
-`turnComplete` end a turn. Gemini frames may arrive binary; both are parsed as JSON.
+`musicGenerationConfig`, `playbackControl: PLAY | PAUSE | STOP | RESET_CONTEXT`. Receiving: any typed
+event ending `audio.delta` (not a transcript) or `conversation.item.audio_output.delta` is audio; text
+deltas are sorted into response text, output transcript, and input transcript (partial or final,
+including xAI's `transcript.partial.is_final`); `response.function_call_arguments.done` and Gemini
+`toolCall.functionCalls` become tool calls with parsed arguments; `response.done`, `audio.done`,
+`transcription.done`, and Gemini `turnComplete` end a turn. Gemini frames may arrive binary; both are
+parsed as JSON.
+
+Gemini Live, 2026-10-13 audit (`ai.google.dev/api/live` updated 2026-10-09, the thinking,
+live-translate, live-transcribe, and ephemeral-token guides, google-genai v2.30.1):
+- `gemini-3.8-live`: audio out only, no `thinkingConfig`, proactive audio always on (`proactive_audio:
+  false` is an error), `NON_BLOCKING` functions by default, `scheduling` on a function response
+  (`INTERRUPT | WHEN_IDLE | SILENT`; the model page's `INTERRUPTED` is a typo against the SDK).
+- `gemini-3.8-live-extended-thinking`: `thinkingConfig {thinkingLevel: low | medium | high}`
+  (`minimal` rejected), non-blocking functions only. Background reasoning adds
+  `serverContent.interactionStatus: IN_PROGRESS | IDLE` beside `turnComplete`; a filler's
+  `turnComplete` arrives with `IN_PROGRESS` and the task ends at `IDLE`. The thinking guide's sample
+  also puts `interactionStatus` at the top level beside `toolCall`; the session reads both places and
+  ends a turn only when the status is not `IN_PROGRESS`: a `turnComplete` with `IN_PROGRESS` waits,
+  and the `IDLE` that follows, alone or beside a `toolCall`, reports it. Thoughts arrive as
+  `thought: true` text parts (`NFKRealtimeTextKindReasoning`) when the caller asks for them. The
+  guide shows no `includeThoughts` sample; the caller puts it in `extraConfiguration` as
+  `generationConfig.thinkingConfig.includeThoughts`, the field generateContent's `ThinkingConfig`
+  documents, and the session sends it as given.
+- An extra `generationConfig` merges into the session's own (responseModalities, speechConfig), so
+  `thinkingConfig` reaches the setup without dropping the rest.
+- `gemini-3.5-transcribe-live`: `responseModalities: [TEXT]`, `inputAudioTranscription {languageCodes,
+  customVocabulary, mode: VERBATIM | SMART}`; `serverContent.interimInputTranscription` is speculative
+  and `inputTranscription` final. Ten-minute sessions, no diarization. (Vertex names it
+  `…-live-preview`.)
+- `gemini-3.5-live-translate-preview`: `generationConfig.translationConfig {targetLanguageCode,
+  echoTargetLanguage}`; the source is detected; audio in only, no instructions or tools.
+- Live Avatar (`setup.avatarConfig {avatarName | customizedAvatar {imageData, imageMimeType}}`,
+  `responseModalities: [VIDEO]`) is documented for Vertex AI only, and no frame shape is published. The
+  session hands any non-audio `inlineData` to `mediaHandler` with its MIME type.
+- Ephemeral tokens: `POST /v1beta/auth_tokens` (server side, with the real key) returns a `name` of the
+  form `auth_tokens/…`. A session whose `apiKey` has that prefix connects to
+  `…v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=…`. The ephemeral-token
+  guide (updated 2026-09-15) says tokens work only with `v1beta`, for minting and for the socket, and
+  the SDK's v1alpha-only warning is older than that page. Minting is not wrapped: it belongs on the
+  app's server, beside the key.
+- New server fields read through `eventHandler` only: `voiceActivity`, `waitingForInput`,
+  `turnCompleteReason`, `setupComplete.sessionId`, `goAway`, `sessionResumptionUpdate`,
+  `toolCallCancellation`.
+- Lyria RealTime: still `lyria-realtime-exp` only; `RESET_CONTEXT` applies a bpm or scale change.
 
 **Files, retrieval stores, and usage reports (2026-09-22).** Three storage and reporting objects, none
 of them a backend. Each has a `sendRequest:response:error:` seam and a `…ForProvider:apiKey:` factory
@@ -870,15 +981,26 @@ machine's remote clients reach a model this process hosts. Files:
   | `codex` | `mcp add N --url URL --bearer-token-env-var V` (no header flag, global only) | overwritten | `mcp get N --json`: `transport.{type: streamable_http, url, bearer_token_env_var, http_headers}` | non-zero, "No MCP server named" |
   | `gemini` | `mcp add --scope S --transport http N URL --header H` (writes `url` + `type`) | overwritten | `mcp list` text only, no headers, connects to each server | not listed |
   | `qwen` | same flags as gemini (writes `httpUrl`) | overwritten | `mcp list`, same line format | not listed |
+  | `agy` | `mcp add --type http N URL` (flags before the name; writes `serverUrl`, `disabled: false`, `headers` into `~/.gemini/config/mcp_config.json`) | overwritten ("Add or update") | `mcp list` table `NAME TYPE STATUS COMMAND/URL`, rows `N http enabled\|disabled URL`; does not connect, shows no headers | `remove` exit 1, `Error: MCP server "N" not found`; empty list prints `No MCP servers configured.` |
   - Tokens: Claude Code stores `Authorization: Bearer ${V}` literally and expands it when it connects
     (local scope included, which the live test proves by a connect with the right key and a refused
     one with the wrong key). Gemini CLI and Qwen Code resolve `${V}` in every settings string at load.
     Codex takes the variable name. No path passes a literal key.
+  - Antigravity (`agy`, added 2026-10-13, measured against agy 1.3.5 under a scratch `HOME`):
+    Google's coding-agent CLI. Its `~/.gemini/config/mcp_config.json` is shared by
+    the Antigravity desktop app, the IDE, and the CLI (Google's codelab), so one user-scope
+    registration reaches all three; the app picks it up on Refresh or Restart under Installed MCP
+    Servers. A probe listener received `Authorization: Bearer ${INFERKIT_PROBE_TOKEN}` verbatim when
+    agy connected, so agy does not expand variables; the user decided (2026-10-13) that a keyed
+    registration is refused, since agy would send the literal key. agy connects to configured MCP
+    servers before its own Google sign-in; `mcp add`, `list`, and `remove` need no sign-in. agy has no
+    scope flag; the workspace `.agents/mcp_config.json` is not written by it.
   - Repeatable header options (Commander's `-H <header...>`, yargs arrays) take the words after
     them, so the header goes last on the command line.
   - Link: Claude Code checks with `get`, returns when current, else `remove --scope` then `add`.
-    Codex checks with `get --json` and adds (overwrite). Gemini and Qwen add without a check: their
-    list shows no headers and connects to every server.
+    Codex checks with `get --json` and adds (overwrite). Gemini, Qwen, and Antigravity add without
+    a check: Gemini's and Qwen's lists show no headers and connect to every server, and `agy mcp add`
+    adds or updates.
   - Claude's `get` finds a name in any scope; a registration whose `Scope:` names another scope
     reads as absent for the requested one. Remove "not found" counts as success.
   - A GUI app's PATH is `/usr/bin:/bin:/usr/sbin:/sbin`, so the search adds `~/.local/bin`,

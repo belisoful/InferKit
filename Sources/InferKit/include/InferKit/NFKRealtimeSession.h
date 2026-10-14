@@ -101,6 +101,8 @@ typedef NS_ENUM(NSInteger, NFKRealtimeAPIStyle) {
 	@constant   NFKRealtimeTextKindInputTranscript A piece of the transcript of the audio sent in, which
 				a later piece may revise.
 	@constant   NFKRealtimeTextKindInputTranscriptFinal A finished stretch of the input transcript.
+	@constant   NFKRealtimeTextKindReasoning A thought the model reports while it reasons (Gemini Live with
+				thinkingConfig {includeThoughts: true}). Introduced in InferKit 0.4.0.
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ENUM(NSInteger, NFKRealtimeTextKind) {
@@ -108,6 +110,7 @@ typedef NS_ENUM(NSInteger, NFKRealtimeTextKind) {
 	NFKRealtimeTextKindOutputTranscript,
 	NFKRealtimeTextKindInputTranscript,
 	NFKRealtimeTextKindInputTranscriptFinal,
+	NFKRealtimeTextKindReasoning,
 };
 
 /*!
@@ -124,14 +127,31 @@ typedef NS_ENUM(NSInteger, NFKRealtimeTextKind) {
 				- sendText: sends a user turn in a conversation, or text to speak in a speech session
 				- requestResponse asks a conversation for a reply now
 				- sendToolResult:forCallIdentifier: answers a function call
-				- setMusicPrompts:, setMusicConfiguration:, and playMusic / pauseMusic / stopMusic
-				  steer a live-music session
+				- setMusicPrompts:, setMusicConfiguration:, and playMusic / pauseMusic / stopMusic /
+				  resetMusicContext steer a live-music session
 
 				What comes back arrives on the handlers: audioHandler with 16-bit PCM at
 				outputSampleRate, textHandler with each piece of text and its kind, toolCallHandler
-				with {id, name, arguments}, turnHandler when a reply ends, errorHandler, and
+				with {id, name, arguments}, turnHandler when a reply ends, mediaHandler with any
+				other media the service streams (a Live Avatar's video), errorHandler, and
 				eventHandler with every event as the service sent it. The handlers run on the
 				socket's queue; hop to the main queue before touching UI.
+
+				Gemini Live reads the model from modelName:
+				- gemini-3.8-live, gemini-3.8-live-extended-thinking → a spoken conversation; the
+				  extended-thinking model keeps reasoning after a spoken filler, and turnHandler waits
+				  for its interactionStatus to return to IDLE. A thinking level and the model's
+				  thoughts are asked for in extraConfiguration as generationConfig {thinkingConfig:
+				  {thinkingLevel, includeThoughts: true}}, which merges into the session's own
+				  generationConfig; the thoughts arrive as NFKRealtimeTextKindReasoning.
+				- a …transcribe-live model → text only: the input transcript, interim pieces as
+				  NFKRealtimeTextKindInputTranscript and finished ones as
+				  NFKRealtimeTextKindInputTranscriptFinal; language becomes its languageCodes.
+				- a …live-translate model → speech in the language language names
+				  (translationConfig.targetLanguageCode); the source language is detected.
+				An apiKey of the form auth_tokens/… is an ephemeral token from Google's
+				POST /v1beta/auth_tokens; the session then connects to BidiGenerateContentConstrained
+				with the token as access_token, which keeps the long-lived key off the device.
 
 				OpenAI's WebRTC-only GPT-Live sessions are not reachable here: WebRTC needs a media
 				stack outside the core's dependencies. Introduced in InferKit 0.4.0.
@@ -185,6 +205,9 @@ typedef NS_ENUM(NSInteger, NFKRealtimeTextKind) {
 @property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE textHandler)(NSString *text, NFKRealtimeTextKind kind);
 @property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE toolCallHandler)(NSDictionary<NSString *, id> *call);
 @property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE turnHandler)(void);
+/*! Media other than the reply's audio, with its MIME type: a Gemini Live Avatar's video. Introduced in
+	InferKit 0.4.0. */
+@property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE mediaHandler)(NSData *data, NSString *mimeType);
 @property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE errorHandler)(NSError *error);
 @property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE eventHandler)(NSDictionary<NSString *, id> *event);
 @property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE closeHandler)(NSError * _Nullable error);
@@ -233,6 +256,9 @@ typedef NS_ENUM(NSInteger, NFKRealtimeTextKind) {
 - (void)playMusic;
 - (void)pauseMusic;
 - (void)stopMusic;
+/*! Clears a live-music session's context, which a bpm or scale change needs before it takes hold.
+	Introduced in InferKit 0.4.0. */
+- (void)resetMusicContext;
 
 /*! Sends an event as the service spells it, for a feature the calls above do not name. */
 - (void)sendEvent:(NSDictionary<NSString *, id> *)event;

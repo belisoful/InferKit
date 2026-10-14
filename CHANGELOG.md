@@ -72,11 +72,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   replies and with the session a server assigns, so `NFKToolLoop` offers a remote server's tools to
   any model. A remote tool's audio and video arrive as asset files, and its images as images.
 - `NFKAgentCLI` registers an MCP server with a coding agent's command-line tool on macOS by running
-  the tool's own `mcp` commands: Claude Code (`claude`), Codex (`codex`), Gemini CLI (`gemini`), and
-  Qwen Code (`qwen`). `linkServer:name:scope:bearerTokenEnvironmentVariable:error:` registers a
-  running server's `localMCPURL`, leaves a current registration alone, and replaces one that names
-  another URL. `MCPLinkNamed:scope:error:` reads a registration back as an `NFKAgentMCPLink` (its URL,
-  its token variable, and whether the agent's check reached it), and `unlinkMCPServerNamed:scope:error:`
+  the tool's own `mcp` commands: Claude Code (`claude`), Codex (`codex`), Gemini CLI (`gemini`),
+  Qwen Code (`qwen`), and Google's Antigravity (`agy`).
+  `linkServer:name:scope:bearerTokenEnvironmentVariable:error:` registers a running server's
+  `localMCPURL`, leaves a current registration alone, and replaces one that names another URL.
+  `MCPLinkNamed:scope:error:` reads a registration back as an `NFKAgentMCPLink` (its URL, its token
+  variable, and whether the agent's check reached it), and `unlinkMCPServerNamed:scope:error:`
   removes it. A token goes by environment variable name, so no key lands in a command line or an
   agent's configuration.
 - `NFKParameterMCPServers` hands public MCP servers to a provider that calls them itself: Claude's
@@ -117,6 +118,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `kNFKError_InferenceRefused`.
 - `backendForProvider:apiKey:modelName:` builds it for the `gemini` preset and for OpenCode Zen, whose
   Gemini models `NFKRemoteProvider` now routes to it.
+- `safetySettings`, `toolConfig`, `cachedContent`, `labels`, `serviceTier`, and `store` go at the top
+  of the request under their own names; every other parameter goes into `generationConfig`.
 
 #### Gemini's voice library
 
@@ -129,6 +132,39 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKGeminiInteractionsBackend` sends a two-speaker reply's `speakers` parameter as `speech_config`
   `{speakers: […]}`, the multi-speaker form Google documents, rather than a bare array. A `speakers`
   dictionary passes through as written.
+
+#### Gemini's agents, long decode, and Live models
+
+- `NFKGeminiInteractionsBackend.agentName` runs one of Google's agents in place of a model, in the
+  background with `agent_config`: Deep Research (a cited report, with thinking summaries when
+  `NFKParameterReasoningEffort` is set) and Antigravity (`antigravity-preview-09-2026`, a coding agent
+  in a hosted sandbox on `modelName`, for example `gemini-4-argon`). The sandbox's id comes back
+  under `NFKGeminiOutputEnvironmentIdentifier`.
+- `NFKGeminiEnvironmentStore` reaches the Gemini API's environments (`/v1beta/environments`): it lists
+  the sandboxes and their files, downloads a file or a directory as a tar archive, writes a file or
+  unpacks an archive into one, and deletes a sandbox. An STL mesh an Antigravity agent writes from a
+  CAD script is read back this way. `environmentStoreForProvider:apiKey:` builds it for the `gemini`
+  preset and honors the provider's pin.
+- `NFKGeminiInteractionsBackend` sends `NFKParameterMCPServers` as `mcp_server` tools, sends
+  `service_tier`, `safety_settings`, `webhook_config`, `labels`, `store`, `environment`, and
+  `agent_config` at the top of the interaction, sends a `processing` parameter on each video block,
+  and reads a thought's `summary`. `NFKParameterMaxTokens` above 65536 runs in the background as a long
+  decode, its text joined across every hop.
+- A background interaction (an agent, a long decode, or `runsInBackground`) waits at most
+  `backgroundTimeout` seconds (3600 by default), then is cancelled on the service and fails. A failed
+  poll is polled again; three in a row end the wait with an error that names the stored interaction.
+- `NFKGeminiGenerateContentBackend` continues a reply that ends with `finishReason: CONTINUATION` by
+  resending the request with its `continuationToken`, streamed or not, and joins the hops into one
+  reply. A reply that ends at `MAX_TOKENS` is not continued. A reply that asks to continue without a
+  token, repeats a token, or is still continuing after 64 hops fails with
+  `kNFKError_InferenceBackendFailure`.
+- `NFKRealtimeSession`'s Gemini Live follows `interactionStatus`, so `turnHandler` waits for an
+  extended-thinking model to return to idle; thoughts arrive as `NFKRealtimeTextKindReasoning`, and
+  interim input transcripts as partial ones. A transcribe model (`gemini-3.5-transcribe-live`) answers
+  in text only, and a translate model (`gemini-3.5-live-translate-preview`) takes
+  `translationConfig`. An ephemeral `auth_tokens/…` key connects to the constrained endpoint.
+  `mediaHandler` receives the non-audio media the service streams, and `resetMusicContext` sends
+  Lyria's `RESET_CONTEXT`.
 
 #### Claude Sonnet 5.5 structured output
 

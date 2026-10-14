@@ -88,6 +88,7 @@ static NSString * _Nullable NFKGenerateContentTextInBytes(NSString *text, id sta
 @property (nonatomic, strong) NSMutableDictionary *candidate;
 @property (nonatomic, strong) NSMutableDictionary *reply;
 @property (nonatomic, copy, nullable) NSString *failure;
+@property (nonatomic, strong) NSMutableSet<NSString *> *continuationTokens;
 @end
 
 @implementation NFKGenerateContentStreamState
@@ -98,10 +99,15 @@ static NSString * _Nullable NFKGenerateContentTextInBytes(NSString *text, id sta
 		_parts = [NSMutableArray array];
 		_candidate = [NSMutableDictionary dictionary];
 		_reply = [NSMutableDictionary dictionary];
+		_continuationTokens = [NSMutableSet set];
 	}
 	return self;
 }
 @end
+
+/*! The most hops one reply follows. A long decode's hops are tens of thousands of tokens each, so a reply
+	still asking for more after this many is a service that never finishes. */
+static const NSUInteger NFKGenerateContentHopLimit = 64;
 
 @implementation NFKGeminiGenerateContentBackend
 
@@ -170,13 +176,40 @@ static NSString * _Nullable NFKGenerateContentTextInBytes(NSString *text, id sta
 	return @"gemini-generatecontent";
 }
 
+// A reply that stops with finishReason CONTINUATION (a long decode, gemini-4-argon) is continued by
+// resending the same request with its continuationToken; the hops' parts join into one reply.
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 												  error:(NSError * _Nullable *)outError
 {
-	NSMutableURLRequest *urlRequest = [self urlRequestForRequest:request streaming:NO error:outError];
+	NSURLRequest *urlRequest = [self urlRequestForRequest:request streaming:NO error:outError];
 	if (urlRequest == nil) {
 		return nil;
 	}
+	NSDictionary *reply = [self replyForRequest:urlRequest error:outError];
+	if (reply == nil) {
+		return nil;
+	}
+	if (![self replyAsksToContinue:reply]) {
+		return [self resultFromReply:reply request:request error:outError];
+	}
+	NFKGenerateContentStreamState *state = [[NFKGenerateContentStreamState alloc] init];
+	[self applyChunk:reply toState:state];
+	while ([self replyAsksToContinue:reply]) {
+		urlRequest = [self request:urlRequest continuingReply:reply state:state error:outError];
+		reply = urlRequest != nil ? [self replyForRequest:urlRequest error:outError] : nil;
+		if (reply == nil) {
+			return nil;
+		}
+		[self applyChunk:reply toState:state];
+		if (state.failure != nil) {
+			return [self fail:outError code:kNFKError_InferenceBackendFailure reason:state.failure];
+		}
+	}
+	return [self resultFromReply:[self replyOfState:state] request:request error:outError];
+}
+
+- (nullable NSDictionary *)replyForRequest:(NSURLRequest *)urlRequest error:(NSError * _Nullable *)outError
+{
 	NSHTTPURLResponse *response = nil;
 	NSError *sendError = nil;
 	NSData *data = [self sendRequest:urlRequest response:&response error:&sendError];
@@ -188,10 +221,54 @@ static NSString * _Nullable NFKGenerateContentTextInBytes(NSString *text, id sta
 		return nil;
 	}
 	NSDictionary *reply = NFKGenerateContentValue([NSJSONSerialization JSONObjectWithData:data options:0 error:NULL], NSDictionary.class);
-	if (reply == nil) {
-		return [self fail:outError code:kNFKError_InferenceBackendFailure reason:@"the response is not a JSON object"];
+	return reply ?: [self fail:outError code:kNFKError_InferenceBackendFailure reason:@"the response is not a JSON object"];
+}
+
+/*! Whether the reply stops at a hop boundary (finishReason CONTINUATION). A reply cut at
+	maxOutputTokens also carries a token, which is not followed: the caller's limit stands. */
+- (BOOL)replyAsksToContinue:(NSDictionary *)reply
+{
+	NSDictionary *candidate = NFKGenerateContentValue([NFKGenerateContentValue(reply[@"candidates"], NSArray.class) firstObject], NSDictionary.class);
+	return [candidate[@"finishReason"] isEqual:@"CONTINUATION"];
+}
+
+/*!
+	The same request, contents and generationConfig unchanged, carrying the reply's continuation token;
+	the joined state drops the hop's token and finish reason, which the next hop replaces. Fails with kNFKError_InferenceBackendFailure, so a cut reply never reads as a whole one, when:
+	- the reply has no token
+	- the token is one an earlier hop already followed
+	- the reply has followed NFKGenerateContentHopLimit hops
+*/
+- (nullable NSURLRequest *)request:(NSURLRequest *)urlRequest
+				   continuingReply:(NSDictionary *)reply
+							 state:(NFKGenerateContentStreamState *)state
+							 error:(NSError * _Nullable *)outError
+{
+	NSString *token = NFKGenerateContentValue(reply[@"continuationToken"], NSString.class);
+	if (token.length == 0) {
+		return [self fail:outError code:kNFKError_InferenceBackendFailure reason:@"the reply stopped for continuation without a continuation token"];
 	}
-	return [self resultFromReply:reply request:request error:outError];
+	if ([state.continuationTokens containsObject:token]) {
+		return [self fail:outError code:kNFKError_InferenceBackendFailure reason:@"the service repeated a continuation token"];
+	}
+	if (state.continuationTokens.count >= NFKGenerateContentHopLimit) {
+		return [self fail:outError code:kNFKError_InferenceBackendFailure
+				   reason:[NSString stringWithFormat:@"the reply was still continuing after %lu hops", (unsigned long)NFKGenerateContentHopLimit]];
+	}
+	[state.continuationTokens addObject:token];
+	NSMutableDictionary *body = [NFKGenerateContentValue([NSJSONSerialization JSONObjectWithData:urlRequest.HTTPBody ?: [NSData data]
+																						 options:NSJSONReadingMutableContainers error:NULL],
+														 NSDictionary.class) mutableCopy];
+	body[@"continuationToken"] = token;
+	NSData *payload = body != nil ? [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL] : nil;
+	if (payload == nil) {
+		return [self fail:outError code:kNFKError_InferenceBackendFailure reason:@"the request could not be continued"];
+	}
+	[state.reply removeObjectForKey:@"continuationToken"];
+	[state.candidate removeObjectForKey:@"finishReason"];
+	NSMutableURLRequest *next = [urlRequest mutableCopy];
+	next.HTTPBody = payload;
+	return next;
 }
 
 - (NFKInferenceJob *)submitInferenceJobForRequest:(NFKInferenceRequest *)request
@@ -204,7 +281,14 @@ static NSString * _Nullable NFKGenerateContentTextInBytes(NSString *text, id sta
 		return job;
 	}
 	[job reportProgress:-1.0];
-	NFKGenerateContentStreamState *state = [[NFKGenerateContentStreamState alloc] init];
+	[self streamHop:urlRequest state:[[NFKGenerateContentStreamState alloc] init] job:job request:request];
+	return job;
+}
+
+// One stream; a reply cut at a hop boundary opens the next stream with its continuation token, the
+// parts and the partial text carrying on in the same state.
+- (void)streamHop:(NSURLRequest *)urlRequest state:(NFKGenerateContentStreamState *)state job:(NFKInferenceJob *)job request:(NFKInferenceRequest *)request
+{
 	__block BOOL finished = NO;
 	void (^cancel)(void) = [self streamRequest:urlRequest lineHandler:^(NSString *line) {
 		NSString *payload = [NFKRemoteTransport SSEDataForLine:line];
@@ -226,7 +310,15 @@ static NSString * _Nullable NFKGenerateContentTextInBytes(NSString *text, id sta
 		if (failure == nil && state.failure != nil) {
 			failure = [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:state.failure];
 		}
-		NFKInferenceResult *result = failure == nil ? [self resultFromReply:[self replyOfState:state] request:request error:&failure] : nil;
+		NSDictionary *reply = [self replyOfState:state];
+		if (failure == nil && [self replyAsksToContinue:reply]) {
+			NSURLRequest *next = [self request:urlRequest continuingReply:reply state:state error:&failure];
+			if (next != nil) {
+				[self streamHop:next state:state job:job request:request];
+				return;
+			}
+		}
+		NFKInferenceResult *result = failure == nil ? [self resultFromReply:reply request:request error:&failure] : nil;
 		if (result != nil) {
 			[job finishWithResult:result];
 		} else {
@@ -234,7 +326,10 @@ static NSString * _Nullable NFKGenerateContentTextInBytes(NSString *text, id sta
 		}
 	}];
 	job.cancellationHandler = cancel;
-	return job;
+	// A cancel that arrived while the previous hop handed over called that hop's finished handler.
+	if (job.status == NFKInferenceJobStatusCancelled) {
+		cancel();
+	}
 }
 
 #pragma mark Request
@@ -709,7 +804,7 @@ static NSString * _Nullable NFKGenerateContentTextInBytes(NSString *text, id sta
 		state.failure = NFKGenerateContentValue(error[@"message"], NSString.class) ?: @"the stream reported an error";
 		return NO;
 	}
-	for (NSString *key in @[ @"usageMetadata", @"promptFeedback", @"modelVersion", @"responseId" ]) {
+	for (NSString *key in @[ @"usageMetadata", @"promptFeedback", @"modelVersion", @"responseId", @"continuationToken" ]) {
 		if (chunk[key] != nil) {
 			state.reply[key] = chunk[key];
 		}

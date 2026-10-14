@@ -71,9 +71,11 @@ Pure Apple frameworks, always available:
 - ``NFKGeminiGenerateContentBackend`` — Gemini's generateContent API, the native chat surface Google
   serves beside Interactions and OpenCode Zen serves its Gemini models on.
 - ``NFKGeminiInteractionsBackend`` — Gemini's native Interactions API: text, images, speech, music,
-  transcription, and video from one endpoint.
+  transcription, and video from one endpoint, and Google's Deep Research and Antigravity agents.
 - ``NFKGeminiVoiceLibrary`` — Gemini's voice library: list, design, replicate, and delete the voices
   the Interactions backend speaks with.
+- ``NFKGeminiEnvironmentStore`` — the sandboxes Gemini's Antigravity agent works in: list their files,
+  read what the agent wrote, write files in, and delete them.
 - ``NFKRemoteCompletionBackend`` — raw continuation and fill-in-the-middle for code.
 - ``NFKRemoteOCRBackend`` — a document or image read into markdown, with a schema filled from it.
 - ``NFKRemoteClassifierBackend`` — a hosted classifier's scores as classifications.
@@ -230,6 +232,8 @@ the core discovers it by name at runtime — see <doc:DynamicDiscovery>.
 - ``NFKGeminiGenerateContentBackend``
 - ``NFKGeminiInteractionsBackend``
 - ``NFKGeminiVoiceLibrary``
+- ``NFKGeminiEnvironmentStore``
+- ``NFKGeminiEnvironmentFile``
 - ``NFKRemoteCompletionBackend``
 - ``NFKRemoteOCRBackend``
 - ``NFKRemoteClassifierBackend``

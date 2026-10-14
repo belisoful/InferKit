@@ -844,6 +844,15 @@
 	XCTAssertEqual(designed.sampleAudioData.length, 4);
 	gemini.voice = designed.identifier;
 
+	// Gemini's Antigravity agent writes files in a hosted sandbox (an STL mesh for a 3D printer); the
+	// environment store reads them back by the sandbox's id.
+	NFKGeminiInteractionsBackend *maker = [NFKGeminiInteractionsBackend backendWithAPIKey:@"AIza…" modelName:@"gemini-4-argon"];
+	maker.agentName = @"antigravity-preview-09-2026";
+	XCTAssertTrue(maker.isReady);
+	NFKGeminiEnvironmentStore *environments = [NFKGeminiEnvironmentStore environmentStoreForProvider:NFKRemoteProvider.googleGemini
+																							  apiKey:@"AIza…"];
+	XCTAssertEqualObjects(environments.endpointURL.absoluteString, @"https://generativelanguage.googleapis.com/v1beta/environments");
+
 	// Fill-in-the-middle: the code before the gap is the prompt, the code after it the suffix.
 	NFKRemoteCompletionBackend *infill = [NFKRemoteCompletionBackend backendForProvider:NFKRemoteProvider.mistral
 																				 apiKey:@"k" modelName:@"codestral-latest"];

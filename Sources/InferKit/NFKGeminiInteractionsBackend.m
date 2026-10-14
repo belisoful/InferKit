@@ -31,10 +31,32 @@ static NSSet<NSString *> *NFKInteractionsMappedParameters(void)
 										NFKParameterPreviousResponseIdentifier, NFKParameterAspectRatio,
 										NFKParameterResolution, NFKParameterOutputFormat, NFKParameterSpeakerDiarization,
 										NFKParameterWordTimestamps, NFKParameterVocabulary, NFKParameterSourceLanguage,
-										NFKParameterVideoFrameCount, NFKParameterMCPServers, @"voice", @"speakers" ]];
+										NFKParameterVideoFrameCount, NFKParameterMCPServers, @"voice", @"speakers",
+										@"processing" ]];
 	});
 	return mapped;
 }
+
+/*! Parameters sent at the top of the interaction under their own names; the rest go into generation_config. */
+static NSSet<NSString *> *NFKInteractionsTopLevelParameters(void)
+{
+	static NSSet<NSString *> *topLevel;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		topLevel = [NSSet setWithArray:@[ @"service_tier", @"safety_settings", @"webhook_config", @"labels", @"store",
+										  @"environment", @"agent_config" ]];
+	});
+	return topLevel;
+}
+
+/*! The largest max_output_tokens a foreground interaction takes; more runs as a background long decode. */
+static const NSInteger NFKInteractionsForegroundOutputLimit = 65536;
+
+/*! Failed polls in a row a background interaction survives. The transport already retries a busy or
+	failing service on each one. */
+static const NSUInteger NFKInteractionsPollFailureLimit = 3;
+
+NSString * const NFKGeminiOutputEnvironmentIdentifier = @"NFKGeminiOutputEnvironmentIdentifier";
 
 static BOOL NFKInteractionsIsTerminalStatus(id status)
 {
@@ -95,6 +117,7 @@ static double NFKInteractionsSeconds(id offset)
 		_endpointURL = [NSURL URLWithString:@"https://generativelanguage.googleapis.com/v1beta/interactions"];
 		_timeout = 600.0;
 		_pollInterval = 5.0;
+		_backgroundTimeout = 3600.0;
 	}
 	return self;
 }
@@ -111,7 +134,7 @@ static double NFKInteractionsSeconds(id offset)
 
 - (BOOL)isReady
 {
-	return self.endpointURL != nil && self.modelName.length > 0;
+	return self.endpointURL != nil && (self.modelName.length > 0 || self.agentName.length > 0);
 }
 
 - (NSString *)backendIdentifier
@@ -122,22 +145,33 @@ static double NFKInteractionsSeconds(id offset)
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 												  error:(NSError * _Nullable *)outError
 {
+	if ([self runsRequestInBackground:request]) {
+		return [self resultOfBackgroundRequest:request error:outError];
+	}
 	NSMutableURLRequest *urlRequest = [self urlRequestForRequest:request streaming:NO error:outError];
 	if (urlRequest == nil) {
 		return nil;
 	}
 	NSDictionary *interaction = [self JSONForRequest:urlRequest error:outError];
-	while (interaction != nil && !NFKInteractionsIsTerminalStatus(interaction[@"status"])) {
-		[NSThread sleepForTimeInterval:self.pollInterval];
-		interaction = [self JSONForRequest:[self requestForInteraction:interaction[@"id"] suffix:nil method:@"GET"] error:outError];
-	}
+	interaction = interaction != nil ? [self finishedInteraction:interaction job:nil error:outError] : nil;
 	return interaction != nil ? [self resultFromInteraction:interaction request:request error:outError] : nil;
+}
+
+// The blocking form of a background interaction waits on the job, so both share one poll loop.
+- (nullable NFKInferenceResult *)resultOfBackgroundRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
+	NFKInferenceJob *job = [[NFKInferenceJob alloc] init];
+	[self runBackgroundJob:job forRequest:request];
+	if (job.result == nil && outError != NULL) {
+		*outError = job.error ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the background interaction failed"];
+	}
+	return job.result;
 }
 
 - (NFKInferenceJob *)submitInferenceJobForRequest:(NFKInferenceRequest *)request
 {
 	NFKInferenceJob *job = [[NFKInferenceJob alloc] init];
-	if (self.runsInBackground) {
+	if ([self runsRequestInBackground:request]) {
 		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 			[self runBackgroundJob:job forRequest:request];
 		});
@@ -215,16 +249,17 @@ static double NFKInteractionsSeconds(id offset)
 	NSString *identifier = [interaction[@"id"] isKindOfClass:NSString.class] ? interaction[@"id"] : nil;
 	if (identifier != nil) {
 		job.cancellationHandler = ^{
-			[self sendRequest:[self requestForInteraction:identifier suffix:@"cancel" method:@"POST"] response:NULL error:NULL];
+			[self cancelInteraction:identifier];
 		};
-	}
-	while (interaction != nil && !NFKInteractionsIsTerminalStatus(interaction[@"status"])) {
+		// A cancel during the create request found no handler to call.
 		if (job.status == NFKInferenceJobStatusCancelled) {
+			[self cancelInteraction:identifier];
 			return;
 		}
-		[job reportProgress:-1.0];
-		[NSThread sleepForTimeInterval:self.pollInterval];
-		interaction = [self JSONForRequest:[self requestForInteraction:identifier suffix:nil method:@"GET"] error:&error];
+	}
+	interaction = interaction != nil ? [self finishedInteraction:interaction job:job error:&error] : nil;
+	if (job.status == NFKInferenceJobStatusCancelled) {
+		return;
 	}
 	NFKInferenceResult *result = interaction != nil ? [self resultFromInteraction:interaction request:request error:&error] : nil;
 	if (result != nil) {
@@ -234,21 +269,81 @@ static double NFKInteractionsSeconds(id offset)
 	}
 }
 
+/*!
+	Polls the interaction until its status is terminal; nil after a cancelled job, with an error otherwise.
+	- backgroundTimeout passing on the uptime clock → the server run is cancelled and the call fails;
+	  the last sleep and poll request are cut to the time left, so the overrun is at most the transport's
+	  retry waits for that one poll
+	- a failed poll → polled again, up to NFKInteractionsPollFailureLimit failures in a row; the failure
+	  names the interaction, which the service keeps stored, so a caller can read it by id later
+*/
+- (nullable NSDictionary *)finishedInteraction:(NSDictionary *)interaction
+										   job:(nullable NFKInferenceJob *)job
+										 error:(NSError * _Nullable *)outError
+{
+	NSString *identifier = [interaction[@"id"] isKindOfClass:NSString.class] ? interaction[@"id"] : nil;
+	NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + self.backgroundTimeout;
+	NSUInteger failures = 0;
+	while (!NFKInteractionsIsTerminalStatus(interaction[@"status"])) {
+		if (job.status == NFKInferenceJobStatusCancelled) {
+			return nil;
+		}
+		if (identifier == nil) {
+			return [self fail:outError code:kNFKError_InferenceBackendFailure reason:@"the unfinished interaction has no id to poll"];
+		}
+		NSTimeInterval remaining = self.backgroundTimeout > 0.0 ? deadline - NSProcessInfo.processInfo.systemUptime : DBL_MAX;
+		if (remaining <= 0.0) {
+			[self cancelInteraction:identifier];
+			return [self fail:outError code:kNFKError_InferenceBackendFailure
+					   reason:[NSString stringWithFormat:@"interaction %@ was still running after %.0f seconds and was cancelled", identifier, self.backgroundTimeout]];
+		}
+		[job reportProgress:-1.0];
+		[NSThread sleepForTimeInterval:MIN(self.pollInterval, remaining)];
+		NSMutableURLRequest *poll = [[self requestForInteraction:identifier suffix:nil method:@"GET"] mutableCopy];
+		poll.timeoutInterval = MAX(MIN(self.timeout, remaining), 1.0);
+		NSError *pollError = nil;
+		NSDictionary *polled = [self JSONForRequest:poll error:&pollError];
+		if (polled != nil) {
+			interaction = polled;
+			failures = 0;
+			continue;
+		}
+		failures += 1;
+		if (failures >= NFKInteractionsPollFailureLimit) {
+			NSString *reason = [NSString stringWithFormat:@"interaction %@ could not be polled: %@", identifier,
+								pollError.localizedDescription ?: @"the poll failed"];
+			BOOL keepsCode = [pollError.domain isEqualToString:NFKInferenceErrorDomain];
+			return [self fail:outError code:keepsCode ? (NFKInferenceError)pollError.code : kNFKError_InferenceBackendFailure reason:reason];
+		}
+	}
+	return interaction;
+}
+
+- (void)cancelInteraction:(NSString *)identifier
+{
+	[self sendRequest:[self requestForInteraction:identifier suffix:@"cancel" method:@"POST"] response:NULL error:NULL];
+}
+
 #pragma mark Request
 
 - (nullable NSMutableURLRequest *)urlRequestForRequest:(NFKInferenceRequest *)request
 											 streaming:(BOOL)streaming
 												 error:(NSError * _Nullable *)outError
 {
-	if (self.modelName.length == 0) {
-		[self fail:outError code:kNFKError_InferenceNotReady reason:@"the Interactions API needs a model name"];
+	if (self.modelName.length == 0 && self.agentName.length == 0) {
+		[self fail:outError code:kNFKError_InferenceNotReady reason:@"the Interactions API needs a model or an agent name"];
 		return nil;
 	}
 	NFKRemoteAttachments *attachments = [NFKRemoteAttachments attachmentsForRequest:request keepsVideo:YES error:outError];
 	if (attachments == nil) {
 		return nil;
 	}
-	NSMutableDictionary<NSString *, id> *body = [NSMutableDictionary dictionaryWithObject:self.modelName forKey:@"model"];
+	NSMutableDictionary<NSString *, id> *body = [NSMutableDictionary dictionary];
+	if (self.agentName.length > 0) {
+		body[@"agent"] = self.agentName;
+	} else {
+		body[@"model"] = self.modelName;
+	}
 	if (![self addInputForRequest:request attachments:attachments to:body]) {
 		[self fail:outError code:kNFKError_InferenceMissingInput reason:@"the request carries neither a prompt, messages, nor media"];
 		return nil;
@@ -257,8 +352,9 @@ static double NFKInteractionsSeconds(id offset)
 	if (streaming) {
 		body[@"stream"] = @YES;
 	}
-	if (self.runsInBackground) {
+	if ([self runsRequestInBackground:request]) {
 		body[@"background"] = @YES;
+		body[@"store"] = body[@"store"] ?: @YES;
 	}
 	NSError *encodeError = nil;
 	NSData *payload = [NSJSONSerialization dataWithJSONObject:body options:0 error:&encodeError];
@@ -279,6 +375,15 @@ static double NFKInteractionsSeconds(id offset)
 	[urlRequest setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
 	[self authorize:urlRequest];
 	return urlRequest;
+}
+
+// An agent, a long decode, and runsInBackground run as a background interaction, which Google requires
+// of the first two.
+- (BOOL)runsRequestInBackground:(NFKInferenceRequest *)request
+{
+	id maxTokens = request.parameters[NFKParameterMaxTokens];
+	BOOL longDecode = [maxTokens isKindOfClass:NSNumber.class] && [maxTokens integerValue] > NFKInteractionsForegroundOutputLimit;
+	return self.runsInBackground || self.agentName.length > 0 || longDecode;
 }
 
 // A prompt alone goes as a string. Otherwise each turn is a step (user_input or model_output) of
@@ -329,13 +434,15 @@ static double NFKInteractionsSeconds(id offset)
 		last = (NSInteger)steps.count - 1;
 	}
 	NSMutableArray *blocks = [steps[last][@"content"] mutableCopy];
-	[blocks addObjectsFromArray:[self mediaBlocksFor:attachments]];
+	[blocks addObjectsFromArray:[self mediaBlocksFor:attachments processing:request.parameters[@"processing"]]];
 	steps[last] = @{ @"type": @"user_input", @"content": blocks };
 	body[@"input"] = steps;
 	return YES;
 }
 
-- (NSArray<NSDictionary *> *)mediaBlocksFor:(NFKRemoteAttachments *)attachments
+// A "processing" parameter (agentic) rides on each video block: the model then fetches frames,
+// transcripts, or audio from the video as it needs them.
+- (NSArray<NSDictionary *> *)mediaBlocksFor:(NFKRemoteAttachments *)attachments processing:(nullable id)processing
 {
 	NSMutableArray<NSDictionary *> *blocks = [NSMutableArray array];
 	for (NSData *png in attachments.imagePNGs) {
@@ -348,8 +455,11 @@ static double NFKInteractionsSeconds(id offset)
 	}
 	if (attachments.videoData != nil) {
 		NSString *format = [attachments.videoFormat isEqualToString:@"mov"] ? @"quicktime" : attachments.videoFormat ?: @"mp4";
-		[blocks addObject:@{ @"type": @"video", @"mime_type": [@"video/" stringByAppendingString:format],
-							 @"data": [attachments.videoData base64EncodedStringWithOptions:0] }];
+		NSMutableDictionary *video = [NSMutableDictionary dictionaryWithDictionary:@{ @"type": @"video",
+																					   @"mime_type": [@"video/" stringByAppendingString:format],
+																					   @"data": [attachments.videoData base64EncodedStringWithOptions:0] }];
+		video[@"processing"] = [processing isKindOfClass:NSString.class] ? processing : nil;
+		[blocks addObject:video];
 	}
 	for (NSDictionary *document in attachments.documents) {
 		NFKRemoteFile *file = document[@"fileReference"];
@@ -357,7 +467,12 @@ static double NFKInteractionsSeconds(id offset)
 			NSString *mimeType = file.mimeType ?: @"application/pdf";
 			NSString *type = [mimeType hasPrefix:@"image/"] ? @"image" : [mimeType hasPrefix:@"audio/"] ? @"audio"
 						   : [mimeType hasPrefix:@"video/"] ? @"video" : @"document";
-			[blocks addObject:@{ @"type": type, @"uri": file.uri.absoluteString ?: file.identifier, @"mime_type": mimeType }];
+			NSMutableDictionary *block = [NSMutableDictionary dictionaryWithDictionary:@{ @"type": type, @"uri": file.uri.absoluteString ?: file.identifier,
+																						   @"mime_type": mimeType }];
+			if ([type isEqualToString:@"video"] && [processing isKindOfClass:NSString.class]) {
+				block[@"processing"] = processing;
+			}
+			[blocks addObject:block];
 			continue;
 		}
 		if ([document[@"mediaType"] isEqual:@"text/plain"]) {
@@ -436,12 +551,17 @@ static double NFKInteractionsSeconds(id offset)
 	generation[@"seed"] = parameters[NFKParameterSeed];
 	generation[@"stop_sequences"] = parameters[NFKParameterStopSequences];
 	NSSet<NSString *> *mapped = NFKInteractionsMappedParameters();
+	NSSet<NSString *> *topLevel = NFKInteractionsTopLevelParameters();
 	for (NSString *key in parameters) {
-		if (![mapped containsObject:key]) {
+		if ([topLevel containsObject:key]) {
+			body[key] = parameters[key];
+		} else if (![mapped containsObject:key]) {
 			generation[key] = parameters[key];
 		}
 	}
-	if (generation.count > 0) {
+	if (self.agentName.length > 0) {
+		body[@"agent_config"] = [self agentConfigurationFor:parameters];
+	} else if (generation.count > 0) {
 		body[@"generation_config"] = generation;
 	}
 	body[@"previous_interaction_id"] = parameters[NFKParameterPreviousResponseIdentifier];
@@ -464,6 +584,57 @@ static double NFKInteractionsSeconds(id offset)
 		}
 		body[@"tools"] = wire;
 	}
+	[self addMCPServersOf:parameters to:body];
+}
+
+// Each MCP server is an mcp_server tool the service calls over streamable HTTP. Google requires a
+// lowercase name of letters, digits, _ and -, so any other character becomes -. The reference types
+// allowed_tools as [{tools}]; the Antigravity guide describes a list of names.
+- (void)addMCPServersOf:(NSDictionary *)parameters to:(NSMutableDictionary *)body
+{
+	NSArray *servers = [parameters[NFKParameterMCPServers] isKindOfClass:NSArray.class] ? parameters[NFKParameterMCPServers] : @[];
+	NSMutableArray *tools = [body[@"tools"] mutableCopy] ?: [NSMutableArray array];
+	NSCharacterSet *disallowed = [NSCharacterSet characterSetWithCharactersInString:@"abcdefghijklmnopqrstuvwxyz0123456789_-"].invertedSet;
+	for (NSDictionary *server in servers) {
+		NSString *url = [server isKindOfClass:NSDictionary.class] ? [server[@"url"] description] : nil;
+		NSString *name = [server isKindOfClass:NSDictionary.class] && [server[@"name"] isKindOfClass:NSString.class] ? [server[@"name"] lowercaseString] : nil;
+		if (url.length == 0 || name.length == 0) {
+			continue;
+		}
+		name = [[name componentsSeparatedByCharactersInSet:disallowed] componentsJoinedByString:@"-"];
+		NSMutableDictionary *tool = [NSMutableDictionary dictionaryWithDictionary:@{ @"type": @"mcp_server", @"name": name, @"url": url }];
+		if ([server[@"authorizationToken"] isKindOfClass:NSString.class]) {
+			tool[@"headers"] = @{ @"Authorization": [@"Bearer " stringByAppendingString:server[@"authorizationToken"]] };
+		}
+		if ([server[@"allowedTools"] isKindOfClass:NSArray.class]) {
+			tool[@"allowed_tools"] = @[ @{ @"tools": server[@"allowedTools"] } ];
+		}
+		[tools addObject:tool];
+	}
+	if (tools.count > 0) {
+		body[@"tools"] = tools;
+	}
+}
+
+// An agent takes agent_config in place of generation_config, typed by the agent's family. Antigravity
+// runs on modelName; Deep Research reports its thinking when a reasoning effort is set. An agent_config
+// parameter's fields are merged over these.
+- (NSDictionary *)agentConfigurationFor:(NSDictionary *)parameters
+{
+	NSString *agent = self.agentName;
+	NSMutableDictionary *configuration = [NSMutableDictionary dictionary];
+	if ([agent hasPrefix:@"antigravity"]) {
+		configuration[@"type"] = @"antigravity";
+		configuration[@"model"] = self.modelName;
+	} else if ([agent hasPrefix:@"deep-research"]) {
+		configuration[@"type"] = @"deep-research";
+		if (parameters[NFKParameterReasoningEffort] != nil) {
+			configuration[@"thinking_summaries"] = @"auto";
+		}
+	}
+	NSDictionary *given = [parameters[@"agent_config"] isKindOfClass:NSDictionary.class] ? parameters[@"agent_config"] : nil;
+	[configuration addEntriesFromDictionary:given ?: @{}];
+	return configuration;
 }
 
 // Audio in with any of the transcription keys asks for a transcription: verbatim with speakers or
@@ -598,6 +769,7 @@ static double NFKInteractionsSeconds(id offset)
 	NSMutableArray<NSDictionary *> *toolCalls = [NSMutableArray array];
 	NSMutableArray<NSDictionary *> *serverTools = [NSMutableArray array];
 	NSMutableDictionary<NSString *, id> *outputs = [NSMutableDictionary dictionaryWithObject:interaction forKey:NFKRemoteBackendRawKey];
+	NSDictionary<NSString *, NSDictionary *> *answers = [self functionResultsIn:interaction];
 	for (NSDictionary *step in [interaction[@"steps"] isKindOfClass:NSArray.class] ? interaction[@"steps"] : @[]) {
 		if (![step isKindOfClass:NSDictionary.class]) {
 			continue;
@@ -605,11 +777,19 @@ static double NFKInteractionsSeconds(id offset)
 		NSString *type = [step[@"type"] isKindOfClass:NSString.class] ? step[@"type"] : @"";
 		NSArray *content = [step[@"content"] isKindOfClass:NSArray.class] ? step[@"content"] : @[];
 		if ([type isEqualToString:@"thought"]) {
-			for (NSDictionary *block in content) {
-				if ([block isKindOfClass:NSDictionary.class] && [block[@"text"] isKindOfClass:NSString.class]) {
-					[thoughts addObject:block[@"text"]];
+			NSArray *summary = [step[@"summary"] isKindOfClass:NSArray.class] ? step[@"summary"] : content;
+			for (id block in summary) {
+				id text = [block isKindOfClass:NSDictionary.class] ? block[@"text"] : block;
+				if ([text isKindOfClass:NSString.class]) {
+					[thoughts addObject:text];
 				}
 			}
+		} else if ([type isEqualToString:@"function_result"]) {
+			continue;
+		} else if ([type isEqualToString:@"function_call"] && [step[@"id"] isKindOfClass:NSString.class] && answers[step[@"id"]] != nil) {
+			NSDictionary *answer = answers[step[@"id"]];
+			[serverTools addObject:@{ @"raw": step, @"name": step[@"name"] ?: @"", @"input": step[@"arguments"] ?: @{},
+									  @"output": answer[@"result"] ?: @"" }];
 		} else if ([type isEqualToString:@"function_call"]) {
 			NSDictionary *arguments = [step[@"arguments"] isKindOfClass:NSDictionary.class] ? step[@"arguments"] : @{};
 			NSData *json = [NSJSONSerialization dataWithJSONObject:arguments options:0 error:NULL];
@@ -675,6 +855,9 @@ static double NFKInteractionsSeconds(id offset)
 	if ([interaction[@"id"] isKindOfClass:NSString.class]) {
 		outputs[NFKOutputResponseIdentifier] = interaction[@"id"];
 	}
+	if ([interaction[@"environment_id"] isKindOfClass:NSString.class]) {
+		outputs[NFKGeminiOutputEnvironmentIdentifier] = interaction[@"environment_id"];
+	}
 	NSDictionary *usage = [interaction[@"usage"] isKindOfClass:NSDictionary.class] ? interaction[@"usage"] : nil;
 	NSDictionary *counts = NFKRemoteUsage(usage[@"total_input_tokens"], usage[@"total_cached_tokens"],
 										  usage[@"total_output_tokens"], usage[@"total_thought_tokens"]);
@@ -682,6 +865,19 @@ static double NFKInteractionsSeconds(id offset)
 		outputs[NFKOutputUsage] = counts;
 	}
 	return [NFKInferenceResult resultWithOutputs:outputs];
+}
+
+// The function_result steps of an interaction by the call they answer. An agent runs its own file and
+// shell tools and records their results beside the calls; only an unanswered call is the caller's.
+- (NSDictionary<NSString *, NSDictionary *> *)functionResultsIn:(NSDictionary *)interaction
+{
+	NSMutableDictionary<NSString *, NSDictionary *> *answers = [NSMutableDictionary dictionary];
+	for (NSDictionary *step in [interaction[@"steps"] isKindOfClass:NSArray.class] ? interaction[@"steps"] : @[]) {
+		if ([step isKindOfClass:NSDictionary.class] && [step[@"type"] isEqual:@"function_result"] && [step[@"call_id"] isKindOfClass:NSString.class]) {
+			answers[step[@"call_id"]] = step;
+		}
+	}
+	return answers;
 }
 
 // One output block: text (with its annotations), an image, an audio clip, or a video.

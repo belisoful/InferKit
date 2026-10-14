@@ -38,7 +38,8 @@ NS_ASSUME_NONNULL_BEGIN
 				- NFKParameterTools → functionDeclarations with each tool's JSON Schema as
 				  parametersJsonSchema; an entry without a name, such as {googleSearch: {}}, is sent as
 				  a tool of its own
-				- safetySettings, toolConfig, cachedContent, and labels → the request's top level
+				- safetySettings, toolConfig, cachedContent, labels, serviceTier, and store → the
+				  request's top level
 				- every other parameter → generationConfig under its own name
 
 				The reply's text comes back under NFKOutputText, thought summaries under
@@ -53,6 +54,10 @@ NS_ASSUME_NONNULL_BEGIN
 				A blocked prompt, and a reply stopped for safety, recitation, or prohibited content
 				with no text, fail with kNFKError_InferenceRefused.
 
+				A long decode (gemini-4-argon with maxOutputTokens beyond one hop) stops each hop with
+				finishReason CONTINUATION and a continuationToken; the backend resends the request with
+				the token until the reply is whole and joins the hops into one result.
+
 				submitInferenceJobForRequest: streams (streamGenerateContent with alt=sse) and reports
 				the text as it arrives. runInferenceForRequest: blocks; run it off the render thread.
 				Introduced in InferKit 0.4.0.
@@ -66,7 +71,7 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The key, sent as x-goog-api-key. */
 @property (nonatomic, copy, nullable) NSString *apiKey;
 
-/*! The model, for example gemini-3.8-flash. Required. */
+/*! The model, for example gemini-4-argon or gemini-3.8-flash. Required. */
 @property (nonatomic, copy, nullable) NSString *modelName;
 
 /*! The request timeout in seconds. Defaults to 600. */
