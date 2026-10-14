@@ -837,6 +837,29 @@ and `/mcp` stay the server's.
 } error:&error];
 ```
 
+### Watching the server
+
+A host observes its server in process through `delegate` (`NFKInferenceServerDelegate`), on
+`delegateQueue` and in order: each run's start and end with its model, route, client, key name, wait,
+duration, and outcome; each model's load, failed load, and unload with its reason (a request, the host,
+idleness, pressure, or removal); each client connection; and each MCP session's start and end.
+`currentStatus` reads what the status route would answer, without a request.
+
+An MCP client that initializes gets a session (`Mcp-Session-Id`). The server pings it on its event
+stream every `MCPPingInterval` and ends the session when it misses `MCPMissedPingLimit` pings, or,
+without a stream, after `MCPSessionIdleTimeout` of silence; `MCPSessions` lists the clients connected
+now, with their names and versions.
+
+<!-- objc-check: given NFKInferenceServer *server = nil; id<NFKInferenceServerDelegate> monitor = nil; -->
+```objc
+server.delegate = monitor;                  // runs, loads, clients, and MCP sessions as they happen
+server.delegateQueue = dispatch_get_main_queue();
+for (NFKServerMCPSession *session in server.MCPSessions) {
+	NSLog(@"%@ %@ since %@", session.clientName, session.clientVersion, session.startDate);
+}
+NFKServerStatus *status = [server currentStatus];
+```
+
 ### A pool of chat servers
 
 Several machines serving one chat model to OpenAI clients, each chat keeping its prompt on the

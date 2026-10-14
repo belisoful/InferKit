@@ -78,6 +78,7 @@
 #import <InferKit/NFKRemoteInferKitBackend.h>
 #import <InferKit/NFKInferenceServer.h>
 #import <InferKit/NFKServerRoute.h>
+#import <InferKit/NFKServerObservation.h>
 #import <InferKit/NFKServerIdentity.h>
 #import <InferKit/NFKPinnedServers.h>
 #import <InferKit/NFKServerStatus.h>

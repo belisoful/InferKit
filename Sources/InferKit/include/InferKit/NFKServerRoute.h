@@ -11,6 +11,26 @@
 NS_ASSUME_NONNULL_BEGIN
 
 /*!
+	@enum       NFKServerKeyScope
+	@abstract   The routes an API key opens, and the routes a client on this machine reaches without one.
+	@constant   NFKServerKeyScopeInference Every route under /v1 except the status route: the
+				OpenAI-compatible routes, the model list, and the native run route.
+	@constant   NFKServerKeyScopeStatus The status route, GET /v1/inferkit/status.
+	@constant   NFKServerKeyScopeMCP The MCP endpoint, /mcp.
+	@constant   NFKServerKeyScopeAppRoutes The app's routes (addRouteForPathPrefix:handler:error:), and
+				every path outside /v1 and /mcp that no route claims.
+	@constant   NFKServerKeyScopeAll Every scope.
+	Introduced in InferKit 0.4.0.
+*/
+typedef NS_OPTIONS(NSUInteger, NFKServerKeyScope) {
+	NFKServerKeyScopeInference = 1 << 0,
+	NFKServerKeyScopeStatus = 1 << 1,
+	NFKServerKeyScopeMCP NS_SWIFT_NAME(mcp) = 1 << 2,
+	NFKServerKeyScopeAppRoutes = 1 << 3,
+	NFKServerKeyScopeAll = NFKServerKeyScopeInference | NFKServerKeyScopeStatus | NFKServerKeyScopeMCP | NFKServerKeyScopeAppRoutes,
+};
+
+/*!
 	@class      NFKServerRouteRequest
 	@abstract   One HTTP request an app route receives from NFKInferenceServer.
 	@discussion The server parsed it and checked its key before the route's handler sees it. The object

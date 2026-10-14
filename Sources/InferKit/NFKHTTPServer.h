@@ -20,6 +20,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly) BOOL fromLoopback;
 /*! The peer's IP address as text; an IPv4-mapped IPv6 address reads as its IPv4 address. */
 @property (nonatomic, copy, readonly) NSString *clientAddress;
+/*! Whether the request is the first its connection carried. */
+@property (nonatomic, readonly) BOOL firstOnConnection;
 /*! The name of the server key the request presented, set by the server's key check; nil when it
 	presented none the server holds. */
 @property (nonatomic, copy, nullable) NSString *keyName;

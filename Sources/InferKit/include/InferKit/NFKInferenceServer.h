@@ -12,6 +12,7 @@
 #import <InferKit/NFKInferenceTool.h>
 #import <InferKit/NFKServerStatus.h>
 #import <InferKit/NFKServerRoute.h>
+#import <InferKit/NFKServerObservation.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -51,26 +52,6 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 	NFKInferenceServerErrorModelNotFound = 4,
 	NFKInferenceServerErrorUnauthorized = 5,
 	NFKInferenceServerErrorBusy = 6,
-};
-
-/*!
-	@enum       NFKServerKeyScope
-	@abstract   The routes an API key opens, and the routes a client on this machine reaches without one.
-	@constant   NFKServerKeyScopeInference Every route under /v1 except the status route: the
-				OpenAI-compatible routes, the model list, and the native run route.
-	@constant   NFKServerKeyScopeStatus The status route, GET /v1/inferkit/status.
-	@constant   NFKServerKeyScopeMCP The MCP endpoint, /mcp.
-	@constant   NFKServerKeyScopeAppRoutes The app's routes (addRouteForPathPrefix:handler:error:), and
-				every path outside /v1 and /mcp that no route claims.
-	@constant   NFKServerKeyScopeAll Every scope.
-	Introduced in InferKit 0.4.0.
-*/
-typedef NS_OPTIONS(NSUInteger, NFKServerKeyScope) {
-	NFKServerKeyScopeInference = 1 << 0,
-	NFKServerKeyScopeStatus = 1 << 1,
-	NFKServerKeyScopeMCP = 1 << 2,
-	NFKServerKeyScopeAppRoutes = 1 << 3,
-	NFKServerKeyScopeAll = NFKServerKeyScopeInference | NFKServerKeyScopeStatus | NFKServerKeyScopeMCP | NFKServerKeyScopeAppRoutes,
 };
 
 /*! The name apiKey reads and writes among the server's keys. Introduced in InferKit 0.4.0. */
@@ -149,7 +130,12 @@ NS_SWIFT_SENDABLE
 
 				Beside them, POST /mcp serves the tools added with addTool: over the Model Context
 				Protocol (Streamable HTTP), so an MCP client reaches them: Claude Code, Claude
-				Desktop, an agent framework, or NFKMCPClient. Only the added tools are listed; a hosted
+				Desktop, an agent framework, or NFKMCPClient. initialize issues an Mcp-Session-Id; a
+				client that sends it back is in a session, which a DELETE ends, and a GET opens the
+				session's event stream, on which the server pings the client every MCPPingInterval. A
+				session ends when its client misses MCPMissedPingLimit pings, or, with no stream open,
+				sends nothing for MCPSessionIdleTimeout; its id is then answered 404. A client that
+				never sends the id back is served without a session. MCPSessions lists the sessions. Only the added tools are listed; a hosted
 				model is a tool when an NFKBackendTool for it is added. A tool's text, the images it
 				shows the model, and the audio it generates come back as MCP content. The route takes
 				a key with NFKServerKeyScopeMCP, and refuses a browser request whose Origin names
@@ -275,6 +261,13 @@ NS_SWIFT_SENDABLE
 				advertisement adds the chip and the physical memory. Setting reportsHostDetails to
 				NO leaves out the host object, the thermal header, and those advertisement entries.
 				The status route needs a key with NFKServerKeyScopeStatus under the access rules above.
+				currentStatus reads the same status in process.
+
+				Observation. The delegate (NFKInferenceServerDelegate) learns, on delegateQueue and in
+				order, when a run starts and ends (its model, route, client, key name, wait, duration,
+				and outcome), when a model loads, fails to load, or unloads and why (a request, the
+				host, idleness, pressure, or removal), when a client's connection passes its first key
+				check, and when an MCP session starts or ends.
 
 				The keys, requiresAPIKey, loopbackExemptScopes, reportsHostDetails,
 				storageDirectoryURL, the app routes, and the hosted models take effect on the next
@@ -320,8 +313,8 @@ NS_SWIFT_SENDABLE
 - (void)addAPIKey:(NSString *)key named:(NSString *)name scopes:(NFKServerKeyScope)scopes
 	NS_SWIFT_NAME(addAPIKey(_:named:scopes:));
 
-/*! Revokes the key under name: the next request that presents it is refused. A reply already being
-	written finishes. Introduced in InferKit 0.4.0. */
+/*! Revokes the key under name: the next request that presents it is refused, and the MCP sessions it
+	started end. A reply already being written finishes. Introduced in InferKit 0.4.0. */
 - (void)removeAPIKeyNamed:(NSString *)name;
 
 /*! The names of the server's keys, sorted. Introduced in InferKit 0.4.0. */
@@ -545,6 +538,40 @@ NS_SWIFT_SENDABLE
 /*! The app routes' prefixes, each with its trailing "/", sorted. Introduced in InferKit 0.4.0. */
 @property (nonatomic, readonly, copy) NSArray<NSString *> *routePathPrefixes;
 
+/*! The seconds an MCP session with no stream open may go without a request before it ends. Defaults
+	to 1800; 0 never ends a session for idleness. Introduced in InferKit 0.4.0. */
+@property (nonatomic, assign) NSTimeInterval MCPSessionIdleTimeout;
+
+/*! The seconds between the pings the server sends on each MCP session's open stream. Defaults to 30;
+	0 sends none, and a session with its stream open then never ends on its own. Introduced in
+	InferKit 0.4.0. */
+@property (nonatomic, assign) NSTimeInterval MCPPingInterval;
+
+/*! The unanswered pings after which an MCP session ends. Defaults to 3; at least 1. Introduced in
+	InferKit 0.4.0. */
+@property (nonatomic, assign) NSUInteger MCPMissedPingLimit;
+
+/*! The active MCP sessions, oldest first, as they stand now. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSArray<NFKServerMCPSession *> *MCPSessions;
+
+/*! Ends the MCP session with the identifier, closing its stream; the client's next request is answered
+	404 and it initializes again. NO when no active session has the identifier. Introduced in InferKit
+	0.4.0. */
+- (BOOL)endMCPSessionWithIdentifier:(NSString *)identifier;
+
+/*! Receives the server's runs, model loads and unloads, client connections, and MCP sessions in
+	process. Held weakly. Introduced in InferKit 0.4.0. */
+@property (atomic, weak, nullable) id<NFKInferenceServerDelegate> delegate;
+
+/*! The queue the delegate's methods run on. Defaults to a serial queue of the server's, so the events
+	arrive in order; nil restores it. A concurrent queue gives up that order. Introduced in InferKit
+	0.4.0. */
+@property (atomic, strong, null_resettable) dispatch_queue_t delegateQueue;
+
+/*! The status the status route would answer now, read in process: each model's load and residency, and
+	the host details when reportsHostDetails is set. Introduced in InferKit 0.4.0. */
+- (NFKServerStatus *)currentStatus;
+
 /*!
 	@method     startWithError:
 	@abstract   Binds the port and starts serving; returns NO with an error when it cannot.
@@ -555,7 +582,8 @@ NS_SWIFT_SENDABLE
 */
 - (BOOL)startWithError:(NSError * _Nullable *)outError;
 
-/*! Stops listening, closes every connection, and cancels the runs they were waiting on. The hosted
+/*! Stops listening, closes every connection, cancels the runs they were waiting on, and ends every MCP
+	session. The hosted
 	models, their residency and counts, the tools, and every setting stay, so startWithError: on the same
 	object listens again with the settings as they are then: a port, loopbackOnly, advertisesService, or
 	TLSIdentity change is stop, change, start. */

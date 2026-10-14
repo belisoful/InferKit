@@ -16,6 +16,7 @@
 #import "NFKInferenceWireCoding.h"
 #import "NFKServedHostStatus.h"
 #import "NFKServerRoutePrivate.h"
+#import "NFKServerObservationPrivate.h"
 #import <CommonCrypto/CommonDigest.h>
 
 const uint16_t NFKInferenceServerDefaultPort = 11480;
@@ -197,9 +198,28 @@ static BOOL NFKServedDigestsEqual(NSData *left, NSData *right)
 @property (nonatomic, assign) NSTimeInterval startedAt;
 /*! The job's last reported progress, 0 until it reports one. */
 @property (atomic, assign) double reportedProgress;
+/*! What the run's events report: an identifier shared by its start and end, and the request's route,
+	client, and key. */
+@property (nonatomic, copy) NSString *identifier;
+@property (nonatomic, copy) NSString *route;
+@property (nonatomic, copy) NSString *clientAddress;
+@property (nonatomic, copy, nullable) NSString *keyName;
+/*! Whether the run's work began, which its start event reported. */
+@property (atomic, assign) BOOL began;
 @end
 
 @implementation NFKServedRun
+
+- (instancetype)init
+{
+	self = [super init];
+	if (self != nil) {
+		_identifier = NSUUID.UUID.UUIDString;
+		_route = @"";
+		_clientAddress = @"";
+	}
+	return self;
+}
 
 - (void)cancel
 {
@@ -277,6 +297,13 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 @property (nonatomic, copy) NSTimeInterval (^uptime)(void);
 /*! Called after the backend is released by an unload, off the model's lock. */
 @property (nonatomic, copy, nullable) void (^unloadHandler)(void);
+/*! Reports a run's start or end, off the model's lock. Set before the model is hosted. */
+@property (nonatomic, copy, nullable) void (^runObserver)(NFKServedRun *run, NFKServerRunState state, NSError * _Nullable error);
+/*! Reports a load, a failed load, or an unload, off the model's lock. Set before the model is hosted. */
+@property (nonatomic, copy, nullable) void (^modelObserver)(NFKServerModelEventKind kind, NFKServerModelEventReason reason,
+															 NSTimeInterval loadSeconds, NSError * _Nullable error);
+/*! Why the build in progress started. */
+@property (nonatomic, assign) NFKServerModelEventReason buildReason;
 @property (nonatomic, strong, nullable) id<NFKInferenceBackend> backend;
 /*! Builds the backend; nil for a model hosted with a ready backend, which is never unloaded. */
 @property (nonatomic, copy, nullable) NFKServedBackendProvider provider;
@@ -351,6 +378,21 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	return description;
 }
 
+- (void)reportRun:(NFKServedRun *)run state:(NFKServerRunState)state error:(nullable NSError *)error
+{
+	if (self.runObserver != nil) {
+		self.runObserver(run, state, error);
+	}
+}
+
+- (void)reportModelEvent:(NFKServerModelEventKind)kind reason:(NFKServerModelEventReason)reason
+			 loadSeconds:(NSTimeInterval)loadSeconds error:(nullable NSError *)error
+{
+	if (self.modelObserver != nil) {
+		self.modelObserver(kind, reason, loadSeconds, error);
+	}
+}
+
 - (NSError *)notServedError
 {
 	return NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorModelNotFound,
@@ -367,12 +409,18 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		admission = [self admit:run];
 	}
 	switch (admission) {
-		case NFKServedAdmissionRemoved:
-			[run finishWithResult:nil error:[self notServedError]];
+		case NFKServedAdmissionRemoved: {
+			NSError *error = [self notServedError];
+			[self reportRun:run state:NFKServerRunStateFailed error:error];
+			[run finishWithResult:nil error:error];
 			break;
-		case NFKServedAdmissionFull:
-			[run finishWithResult:nil error:[self busyError]];
+		}
+		case NFKServedAdmissionFull: {
+			NSError *error = [self busyError];
+			[self reportRun:run state:NFKServerRunStateRefused error:error];
+			[run finishWithResult:nil error:error];
 			break;
+		}
 		case NFKServedAdmissionStart:
 			[self start:run];
 			break;
@@ -402,7 +450,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		return NFKServedAdmissionFull;
 	}
 	[self.pending addObject:run];
-	return [self beginBuildIfNeeded] ? NFKServedAdmissionQueueAndBuild : NFKServedAdmissionQueue;
+	return [self beginBuildIfNeededFor:NFKServerModelEventReasonRequest] ? NFKServedAdmissionQueueAndBuild : NFKServedAdmissionQueue;
 }
 
 /*! Takes a slot for a run. Runs on the lock. */
@@ -447,14 +495,15 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 
 #pragma mark Building
 
-/*! Marks a build as started when the model is not loaded and can be built. Runs on the lock. */
-- (BOOL)beginBuildIfNeeded
+/*! Marks a build as started for reason when the model is not loaded and can be built. Runs on the lock. */
+- (BOOL)beginBuildIfNeededFor:(NFKServerModelEventReason)reason
 {
 	if (self.residency != NFKServerModelResidencyNotLoaded || self.provider == nil) {
 		return NO;
 	}
 	self.residency = NFKServerModelResidencyLoading;
 	self.loadStartedAt = [self now];
+	self.buildReason = reason;
 	return YES;
 }
 
@@ -482,9 +531,15 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	NSArray<NFKServedRun *> *refused = @[];
 	NSMutableArray<NFKServedRun *> *starting = [NSMutableArray array];
 	NSArray<void (^)(NSError * _Nullable)> *handlers = nil;
+	BOOL reportsBuild = NO;
+	NFKServerModelEventReason reason = NFKServerModelEventReasonRequest;
+	NSTimeInterval loadSeconds = 0;
 	@synchronized (self) {
 		handlers = [self.loadHandlers copy];
 		[self.loadHandlers removeAllObjects];
+		reportsBuild = !self.removed;
+		reason = self.buildReason;
+		loadSeconds = [self now] - self.loadStartedAt;
 		if (self.removed) {
 			failure = failure ?: [self notServedError];
 		} else if (failure != nil) {
@@ -499,7 +554,12 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 			[starting addObjectsFromArray:[self takeStartableRuns]];
 		}
 	}
+	if (reportsBuild) {
+		[self reportModelEvent:failure != nil ? NFKServerModelEventKindLoadFailed : NFKServerModelEventKindLoaded
+						reason:reason loadSeconds:loadSeconds error:failure];
+	}
 	for (NFKServedRun *run in refused) {
+		[self reportRun:run state:NFKServerRunStateFailed error:failure];
 		[run finishWithResult:nil error:failure];
 	}
 	for (NFKServedRun *run in starting) {
@@ -541,7 +601,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 			if (completionHandler != nil) {
 				[self.loadHandlers addObject:completionHandler];
 			}
-			build = [self beginBuildIfNeeded];
+			build = [self beginBuildIfNeededFor:NFKServerModelEventReasonExplicit];
 		}
 	}
 	if (settled && completionHandler != nil) {
@@ -580,8 +640,8 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 }
 
 /*! Releases the backend when the model could release it now and test, run on the lock, agrees; YES when
-	it did. The backend is released off the lock. */
-- (BOOL)unloadPassingTest:(BOOL (^)(NFKServedModel *model))test
+	it did. The backend is released off the lock, and the unload is reported with reason. */
+- (BOOL)unloadPassingTest:(BOOL (^)(NFKServedModel *model))test reason:(NFKServerModelEventReason)reason
 {
 	BOOL unloaded = NO;
 	@autoreleasepool {
@@ -597,6 +657,9 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		}
 		unloaded = released != nil;
 	}
+	if (unloaded) {
+		[self reportModelEvent:NFKServerModelEventKindUnloaded reason:reason loadSeconds:0 error:nil];
+	}
 	if (unloaded && self.unloadHandler != nil) {
 		self.unloadHandler();
 	}
@@ -607,7 +670,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 {
 	[self unloadPassingTest:^BOOL(NFKServedModel *model) {
 		return model.unloadRequested;
-	}];
+	} reason:NFKServerModelEventReasonExplicit];
 }
 
 /*! Unloads now, or once the model's runs and build end. NO when the model cannot be built again. */
@@ -624,12 +687,13 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 }
 
 /*! Unloads when the model has gone unused for at least idle seconds and was built at least grace
-	seconds ago. */
+	seconds ago, reporting reason. */
 - (BOOL)unloadIfUnusedFor:(NSTimeInterval)idle grace:(NSTimeInterval)grace at:(NSTimeInterval)now
+				   reason:(NFKServerModelEventReason)reason
 {
 	return [self unloadPassingTest:^BOOL(NFKServedModel *model) {
 		return now - model.loadedAt >= grace && now - model.lastUsedAt >= idle;
-	}];
+	} reason:reason];
 }
 
 /*! Whether unloadIfUnusedFor:grace:at: would unload the model. */
@@ -681,6 +745,8 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		[run finishWithResult:nil error:error];
 		return;
 	}
+	run.began = YES;
+	[self reportRun:run state:NFKServerRunStateStarted error:nil];
 	if (run.work == nil && [backend respondsToSelector:@selector(submitInferenceJobForRequest:)]) {
 		NFKInferenceJob *job = [backend submitInferenceJobForRequest:run.request];
 		BOOL cancelled = NO;
@@ -735,6 +801,13 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		self.lastUsedAt = [self now];
 		starting = [self takeStartableRuns];
 	}
+	NFKServerRunState state = NFKServerRunStateCompleted;
+	if (run.cancelled || NFKServedIsCancellation(error)) {
+		state = NFKServerRunStateCancelled;
+	} else if (result == nil) {
+		state = NFKServerRunStateFailed;
+	}
+	[self reportRun:run state:state error:state == NFKServerRunStateCompleted ? nil : error];
 	for (NFKServedRun *next in starting) {
 		[self start:next];
 	}
@@ -966,15 +1039,21 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 {
 	NSArray<NFKServedRun *> *waiting = nil;
 	NSArray<void (^)(NSError * _Nullable)> *handlers = nil;
+	BOOL wasResident = NO;
 	@synchronized (self) {
 		self.removed = YES;
+		wasResident = self.residency == NFKServerModelResidencyResident;
 		waiting = [self.pending copy];
 		[self.pending removeAllObjects];
 		handlers = [self.loadHandlers copy];
 		[self.loadHandlers removeAllObjects];
 	}
+	if (wasResident) {
+		[self reportModelEvent:NFKServerModelEventKindUnloaded reason:NFKServerModelEventReasonRemoved loadSeconds:0 error:nil];
+	}
 	NSError *error = [self notServedError];
 	for (NFKServedRun *run in waiting) {
+		[self reportRun:run state:NFKServerRunStateFailed error:error];
 		[run finishWithResult:nil error:error];
 	}
 	for (void (^handler)(NSError * _Nullable) in handlers) {
@@ -1013,6 +1092,10 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 @property (nonatomic, strong) dispatch_queue_t residencyQueue;
 @property (nonatomic, strong, nullable) dispatch_source_t residencyTimer;
 @property (nonatomic, copy, nullable) double (^customMemoryPressureProvider)(void);
+@property (nonatomic, strong) NFKServedMCPSessionStore *mcpSessions;
+/*! The delegate's queue unless the host sets its own. */
+@property (nonatomic, strong) dispatch_queue_t eventQueue;
+@property (atomic, strong, nullable) dispatch_queue_t customDelegateQueue;
 @end
 
 @implementation NFKInferenceServer
@@ -1047,6 +1130,13 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		_residencyCheckInterval = 1;
 		_residencyQueue = dispatch_queue_create("NFKInferenceServer.residency",
 												dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0));
+		_eventQueue = dispatch_queue_create("NFKInferenceServer.events",
+											dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0));
+		_mcpSessions = [[NFKServedMCPSessionStore alloc] init];
+		__weak NFKInferenceServer *weakSelf = self;
+		_mcpSessions.eventHandler = ^(NFKServerMCPSession *session, BOOL ended) {
+			[weakSelf reportMCPSession:session ended:ended];
+		};
 		[self scheduleResidencyChecks];
 	}
 	return self;
@@ -1134,6 +1224,176 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	}
 }
 
+#pragma mark Observation
+
+- (dispatch_queue_t)delegateQueue
+{
+	return self.customDelegateQueue ?: self.eventQueue;
+}
+
+- (void)setDelegateQueue:(nullable dispatch_queue_t)delegateQueue
+{
+	self.customDelegateQueue = delegateQueue;
+}
+
+/*! Runs call with the delegate on the delegate's queue when the delegate implements selector. */
+- (void)notifyDelegateImplementing:(SEL)selector call:(void (^)(id<NFKInferenceServerDelegate> delegate))call
+{
+	id<NFKInferenceServerDelegate> delegate = self.delegate;
+	if (![delegate respondsToSelector:selector]) {
+		return;
+	}
+	dispatch_async(self.delegateQueue, ^{
+		call(delegate);
+	});
+}
+
+- (BOOL)delegateImplements:(SEL)selector
+{
+	return [self.delegate respondsToSelector:selector];
+}
+
+- (void)reportRun:(NFKServedRun *)run ofModelNamed:(NSString *)modelName state:(NFKServerRunState)state error:(nullable NSError *)error
+{
+	SEL selector = state == NFKServerRunStateStarted ? @selector(inferenceServer:didStartRun:) : @selector(inferenceServer:didFinishRun:);
+	if (![self delegateImplements:selector]) {
+		return;
+	}
+	NSTimeInterval now = [self now];
+	NFKServerRunEvent *event = [[NFKServerRunEvent alloc] initPrivately];
+	event.identifier = run.identifier;
+	event.modelName = modelName;
+	event.route = run.route;
+	event.clientAddress = run.clientAddress;
+	event.keyName = run.keyName;
+	event.state = state;
+	event.waitSeconds = MAX((run.began ? run.startedAt : now) - run.enqueuedAt, 0.0);
+	event.durationSeconds = state != NFKServerRunStateStarted && run.began ? MAX(now - run.startedAt, 0.0) : 0;
+	event.error = error;
+	event.date = [NSDate date];
+	__weak NFKInferenceServer *weakSelf = self;
+	[self notifyDelegateImplementing:selector call:^(id<NFKInferenceServerDelegate> delegate) {
+		NFKInferenceServer *server = weakSelf;
+		if (server == nil) {
+			return;
+		}
+		if (state == NFKServerRunStateStarted) {
+			[delegate inferenceServer:server didStartRun:event];
+		} else {
+			[delegate inferenceServer:server didFinishRun:event];
+		}
+	}];
+}
+
+- (void)reportModelNamed:(NSString *)modelName kind:(NFKServerModelEventKind)kind reason:(NFKServerModelEventReason)reason
+			 loadSeconds:(NSTimeInterval)loadSeconds error:(nullable NSError *)error
+{
+	if (![self delegateImplements:@selector(inferenceServer:didChangeModel:)]) {
+		return;
+	}
+	NFKServerModelEvent *event = [[NFKServerModelEvent alloc] initPrivately];
+	event.modelName = modelName;
+	event.kind = kind;
+	event.reason = reason;
+	event.loadSeconds = loadSeconds;
+	event.error = error;
+	event.date = [NSDate date];
+	__weak NFKInferenceServer *weakSelf = self;
+	[self notifyDelegateImplementing:@selector(inferenceServer:didChangeModel:) call:^(id<NFKInferenceServerDelegate> delegate) {
+		NFKInferenceServer *server = weakSelf;
+		if (server != nil) {
+			[delegate inferenceServer:server didChangeModel:event];
+		}
+	}];
+}
+
+- (void)reportClientOf:(NFKHTTPRequest *)request scope:(NFKServerKeyScope)scope
+{
+	if (![self delegateImplements:@selector(inferenceServer:didConnectClient:)]) {
+		return;
+	}
+	NFKServerClientEvent *event = [[NFKServerClientEvent alloc] initPrivately];
+	event.clientAddress = request.clientAddress ?: @"";
+	event.fromLoopback = request.fromLoopback;
+	event.keyName = request.keyName;
+	event.scope = scope;
+	event.path = request.path;
+	event.date = [NSDate date];
+	__weak NFKInferenceServer *weakSelf = self;
+	[self notifyDelegateImplementing:@selector(inferenceServer:didConnectClient:) call:^(id<NFKInferenceServerDelegate> delegate) {
+		NFKInferenceServer *server = weakSelf;
+		if (server != nil) {
+			[delegate inferenceServer:server didConnectClient:event];
+		}
+	}];
+}
+
+- (void)reportMCPSession:(NFKServerMCPSession *)session ended:(BOOL)ended
+{
+	SEL selector = ended ? @selector(inferenceServer:didEndMCPSession:) : @selector(inferenceServer:didStartMCPSession:);
+	__weak NFKInferenceServer *weakSelf = self;
+	[self notifyDelegateImplementing:selector call:^(id<NFKInferenceServerDelegate> delegate) {
+		NFKInferenceServer *server = weakSelf;
+		if (server == nil) {
+			return;
+		}
+		if (ended) {
+			[delegate inferenceServer:server didEndMCPSession:session];
+		} else {
+			[delegate inferenceServer:server didStartMCPSession:session];
+		}
+	}];
+}
+
+- (NFKServerStatus *)currentStatus
+{
+	return [NFKServerStatus statusWithJSONObject:[self statusJSONObject]];
+}
+
+#pragma mark MCP sessions
+
+- (NSTimeInterval)MCPSessionIdleTimeout
+{
+	return self.mcpSessions.idleTimeout;
+}
+
+- (void)setMCPSessionIdleTimeout:(NSTimeInterval)MCPSessionIdleTimeout
+{
+	self.mcpSessions.idleTimeout = MAX(MCPSessionIdleTimeout, 0.0);
+	[self.mcpSessions settingsChanged];
+}
+
+- (NSTimeInterval)MCPPingInterval
+{
+	return self.mcpSessions.pingInterval;
+}
+
+- (void)setMCPPingInterval:(NSTimeInterval)MCPPingInterval
+{
+	self.mcpSessions.pingInterval = MAX(MCPPingInterval, 0.0);
+	[self.mcpSessions settingsChanged];
+}
+
+- (NSUInteger)MCPMissedPingLimit
+{
+	return self.mcpSessions.missedPingLimit;
+}
+
+- (void)setMCPMissedPingLimit:(NSUInteger)MCPMissedPingLimit
+{
+	self.mcpSessions.missedPingLimit = MAX(MCPMissedPingLimit, (NSUInteger)1);
+}
+
+- (NSArray<NFKServerMCPSession *> *)MCPSessions
+{
+	return [self.mcpSessions sessions];
+}
+
+- (BOOL)endMCPSessionWithIdentifier:(NSString *)identifier
+{
+	return [self.mcpSessions endSessionWithIdentifier:identifier reason:NFKServerMCPSessionEndReasonEndedByHost];
+}
+
 #pragma mark Keys
 
 - (void)addAPIKey:(NSString *)key named:(NSString *)name scopes:(NFKServerKeyScope)scopes
@@ -1153,6 +1413,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	@synchronized (self.keys) {
 		[self.keys removeObjectForKey:name];
 	}
+	[self.mcpSessions endSessionsWithKeyName:name reason:NFKServerMCPSessionEndReasonRevoked];
 }
 
 - (NSArray<NSString *> *)apiKeyNames
@@ -1317,6 +1578,12 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	};
 	model.unloadHandler = ^{
 		[weakSelf releaseRuntimeCachesWhenIdle];
+	};
+	model.runObserver = ^(NFKServedRun *run, NFKServerRunState state, NSError *error) {
+		[weakSelf reportRun:run ofModelNamed:modelName state:state error:error];
+	};
+	model.modelObserver = ^(NFKServerModelEventKind kind, NFKServerModelEventReason reason, NSTimeInterval loadSeconds, NSError *error) {
+		[weakSelf reportModelNamed:modelName kind:kind reason:reason loadSeconds:loadSeconds error:error];
 	};
 	return model;
 }
@@ -1586,7 +1853,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 			}
 			NSTimeInterval idle = [self idleIntervalForModelNamed:model.name];
 			NSTimeInterval timeout = [self timeoutForIdleInterval:idle pressure:pressure];
-			if ([model unloadIfUnusedFor:idle grace:grace at:now]) {
+			if ([model unloadIfUnusedFor:idle grace:grace at:now reason:NFKServerModelEventReasonIdle]) {
 				[unloaded addObject:model.name];
 			} else if (timeout < idle && [model isUnusedFor:timeout grace:grace at:now]) {
 				[pressured addObject:model];
@@ -1598,7 +1865,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 			return [@([left lastUse]) compare:@([right lastUse])];
 		}];
 		for (NFKServedModel *model in spaced ? leastRecentFirst : @[]) {
-			if ([model unloadIfUnusedFor:timeouts[model.name].doubleValue grace:grace at:now]) {
+			if ([model unloadIfUnusedFor:timeouts[model.name].doubleValue grace:grace at:now reason:NFKServerModelEventReasonPressure]) {
 				[unloaded addObject:model.name];
 				self.lastPressureUnloadAt = now;
 				self.hasPressureUnloaded = YES;
@@ -1786,6 +2053,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 
 - (void)stop
 {
+	[self.mcpSessions endAllSessionsWithReason:NFKServerMCPSessionEndReasonServerStopped];
 	[self.listener stop];
 	self.listener = nil;
 	self.running = NO;
@@ -1832,12 +2100,15 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 			   response:response];
 		return;
 	}
+	if (request.firstOnConnection) {
+		[self reportClientOf:request scope:scope];
+	}
 	if (appRoutePrefix != nil) {
 		[self serveAppRoute:appRoutePrefix request:request response:response];
 		return;
 	}
 	if ([path isEqualToString:@"/mcp"]) {
-		[NFKServedMCP serveRequest:request response:response tools:self.tools instructions:self.MCPInstructions];
+		[NFKServedMCP serveRequest:request response:response tools:self.tools instructions:self.MCPInstructions sessions:self.mcpSessions];
 		return;
 	}
 	NSString *modelsPrefix = [NFKServedBasePath stringByAppendingString:@"/models/"];
@@ -1951,8 +2222,11 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 
 /*! Queues a run for a model, cancelling it when the client goes away. The reply's head carries the
 	model's load as it stands when the head is written. */
-- (void)enqueue:(NFKServedRun *)run on:(NFKServedModel *)model response:(NFKHTTPResponse *)response
+- (void)enqueue:(NFKServedRun *)run on:(NFKServedModel *)model request:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response
 {
+	run.route = request.path;
+	run.clientAddress = request.clientAddress ?: @"";
+	run.keyName = request.keyName;
 	__weak NFKServedRun *weakRun = run;
 	response.disconnectHandler = ^{
 		[weakRun cancel];
@@ -2026,6 +2300,12 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 
 - (void)serveStatusWithResponse:(NFKHTTPResponse *)response
 {
+	[response sendStatus:200 JSONObject:[self statusJSONObject] headers:nil];
+}
+
+/*! The status route's reply. */
+- (NSDictionary<NSString *, id> *)statusJSONObject
+{
 	NSMutableArray *models = [NSMutableArray array];
 	for (NSString *name in self.modelNames) {
 		NFKServedModel *model = nil;
@@ -2049,7 +2329,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		host[@"runtimes"] = [NFKInferenceServer runtimeStatuses];
 		status[@"host"] = host;
 	}
-	[response sendStatus:200 JSONObject:status headers:nil];
+	return status;
 }
 
 #pragma mark Chat
@@ -2091,7 +2371,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 			reply[@"usage"] = [NFKServedOpenAI usageForResult:result];
 			[response sendStatus:200 JSONObject:reply headers:nil];
 		};
-		[self enqueue:run on:model response:response];
+		[self enqueue:run on:model request:request response:response];
 		return;
 	}
 
@@ -2175,7 +2455,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 			[response endStream];
 		}
 	};
-	[self enqueue:run on:model response:response];
+	[self enqueue:run on:model request:request response:response];
 }
 
 /*! A failure before the first event is an ordinary error reply; after it, an error event ends the
@@ -2234,7 +2514,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		}
 		[response sendStatus:200 JSONObject:[NFKServedOpenAI embeddingReplyForVectors:vectors model:modelName base64:base64] headers:nil];
 	};
-	[self enqueue:run on:model response:response];
+	[self enqueue:run on:model request:request response:response];
 }
 
 #pragma mark Audio
@@ -2304,7 +2584,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 			[response endStream];
 		}
 	};
-	[self enqueue:run on:model response:response];
+	[self enqueue:run on:model request:request response:response];
 }
 
 - (void)serveSpeech:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response
@@ -2345,7 +2625,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		[response sendEventData:NFKServedJSONString(@{ @"type": @"speech.audio.done" })];
 		[response endStream];
 	};
-	[self enqueue:run on:model response:response];
+	[self enqueue:run on:model request:request response:response];
 }
 
 #pragma mark Images
@@ -2420,7 +2700,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		}
 		[response endStream];
 	};
-	[self enqueue:run on:model response:response];
+	[self enqueue:run on:model request:request response:response];
 }
 
 #pragma mark Native
@@ -2490,7 +2770,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 			[response endStream];
 		}
 	};
-	[self enqueue:run on:model response:response];
+	[self enqueue:run on:model request:request response:response];
 }
 
 @end

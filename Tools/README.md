@@ -73,8 +73,8 @@ the Full Check in `Docs/agent-reference/build-and-verification.md`.
 
 `run.sh` builds the core, compiles `main.swift` as Swift 6 with `-default-isolation MainActor`, and runs
 it. The probe passes closures written in main-actor code to blocks InferKit calls on its own queues
-(the server's provider and builder, its load handler and pressure provider, a job's handlers, a tool's
-handler). Exit 0 means each imports as Sendable; an isolation trap exits with SIGTRAP (133). The
+(the server's provider, builder, delegate, app-route handler, load handler, and pressure provider, a
+job's handlers, a tool's handler). Exit 0 means each imports as Sendable; an isolation trap exits with SIGTRAP (133). The
 reasons are in `Docs/agent-reference/remote-providers.md` ("Sendable blocks").
 
 ## Requirements

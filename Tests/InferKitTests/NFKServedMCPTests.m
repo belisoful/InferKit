@@ -179,13 +179,13 @@
 	XCTAssertEqualObjects(notJSON[@"error"][@"code"], @(-32700));
 }
 
-- (void)testTheServerOpensNoStreamOfItsOwnAndRefusesAnUnknownVersion
+- (void)testAStreamWithoutASessionIsRefusedAndSoIsAnUnknownVersion
 {
 	NSMutableURLRequest *get = [NSMutableURLRequest requestWithURL:self.server.localMCPURL];
 	NSHTTPURLResponse *response = nil;
 	[NFKRemoteTransport sendRequest:get session:NSURLSession.sharedSession response:&response error:NULL];
-	XCTAssertEqual(response.statusCode, 405);
-	XCTAssertEqualObjects([response valueForHTTPHeaderField:@"Allow"], @"POST");
+	XCTAssertEqual(response.statusCode, 405, @"a stream needs the session initialize issued");
+	XCTAssertEqualObjects([response valueForHTTPHeaderField:@"Allow"], @"GET, POST, DELETE");
 
 	NSInteger status = 0;
 	[self post:@{ @"jsonrpc": @"2.0", @"id": @1, @"method": @"ping" } headers:@{ @"MCP-Protocol-Version": @"2099-01-01" } status:&status response:NULL];

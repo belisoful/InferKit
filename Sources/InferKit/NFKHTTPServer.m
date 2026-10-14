@@ -45,6 +45,7 @@ static NSData *NFKHTTPHeadEnd(void)
 @property (nonatomic, copy, readwrite) NSData *body;
 @property (nonatomic, assign, readwrite) BOOL fromLoopback;
 @property (nonatomic, copy, readwrite) NSString *clientAddress;
+@property (nonatomic, assign, readwrite) BOOL firstOnConnection;
 @end
 
 @implementation NFKHTTPRequest
@@ -240,6 +241,7 @@ static NFKHTTPChunkedState NFKHTTPDecodeChunked(NSData *buffer, NSUInteger start
 @property (nonatomic, assign) BOOL sentContinue;
 @property (nonatomic, assign) BOOL fromLoopback;
 @property (nonatomic, copy) NSString *clientAddress;
+@property (nonatomic, assign) NSUInteger requestCount;
 @property (nonatomic, assign) NSUInteger maximumBodyBytes;
 @property (nonatomic, assign) NSTimeInterval idleTimeout;
 @property (nonatomic, assign) CFAbsoluteTime lastActivity;
@@ -470,6 +472,8 @@ static NSString *NFKHTTPEndpointAddress(nw_endpoint_t _Nullable endpoint)
 	request.body = body;
 	request.fromLoopback = self.fromLoopback;
 	request.clientAddress = self.clientAddress;
+	request.firstOnConnection = self.requestCount == 0;
+	self.requestCount += 1;
 
 	NSString *connectionHeader = headers[@"connection"].lowercaseString ?: @"";
 	BOOL keepAlive = [requestLine[2] isEqualToString:@"HTTP/1.1"]

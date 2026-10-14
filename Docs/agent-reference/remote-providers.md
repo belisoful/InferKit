@@ -837,8 +837,8 @@ machine's remote clients reach a model this process hosts. Files:
   `tls`, `auth`, `mcp`, and `version`.
 - `NFKServedMCP.h/.m` (private, 2026-10-11): MCP over Streamable HTTP at `/mcp`, outside `/v1`
   because MCP clients take the endpoint as one URL. Choices:
-  - Stateless. No `Mcp-Session-Id` is issued, which the spec allows. GET and DELETE answer 405,
-    since the server opens no stream of its own. Every reply is plain JSON, never an event stream.
+  - Sessions since 2026-10-13 (see "MCP sessions" below); before that the endpoint was stateless and
+    answered GET and DELETE with 405. A POST reply is plain JSON, never an event stream.
   - A batch answers in order. Notifications get 202. A parse error is 400 with -32700, an unknown tool
     is -32602 (the spec's protocol error), and an unknown method -32601.
   - A failing call is an `isError` result, never a protocol error, so the client's model reads it.
@@ -1088,6 +1088,76 @@ keeping them in memory, and unloads idle ones.
   the test declares in a category) and its pressure provider, and sets `residencyCheckInterval` to 0,
   so every timing is exact and no timer races the test. `NFKMLXModelInfoTests` checks that an unload
   empties MLX's cache.
+
+**Observation (2026-10-13).** An app's service shows runs, loads, clients, and connected agents without
+polling its own status route. `NFKServerObservation.h/.m` holds the delegate protocol and the event
+classes; the classes' setters are in `NFKServerObservationPrivate.h`, a class extension the server
+imports.
+
+- Delivery: every event is built on the thread where it happened and dispatched to `delegateQueue`
+  (a serial utility queue of the server's, or the host's), so a serial queue sees them in order. An
+  event is built only when the delegate implements its method. The delegate is `atomic, weak`.
+- Runs: `NFKServedModel.runObserver` reports a start from `start:` once the run passed its cancelled
+  check (`run.began`), and an end from `run:endedWithResult:error:`, and an end without a start for a
+  refused run (queue full), a run whose build failed, and a run of a removed model. A run cancelled
+  while queued ends through `start:`'s cancelled branch, so it reports Cancelled with duration 0. Each
+  run carries a UUID, the request path, the client address, and the key name (set in
+  `enqueue:on:request:response:`). The wait and duration use the server's clock, so a test clock
+  shapes them too.
+- Models: `modelObserver` reports Loaded or LoadFailed from `buildEndedWithBackend:error:` before the
+  waiting runs start (so a load precedes the runs it admits), with the build's reason recorded when it
+  began (`beginBuildIfNeededFor:`: Request from admission, Explicit from `loadModelNamed:`), and
+  Unloaded from `unloadPassingTest:reason:` (Explicit from a requested unload, Idle and Pressure from
+  `unloadIdleModels`' two passes) and from `retire` when a resident model is removed or replaced.
+  A build that ends after its model was removed reports nothing.
+- Clients: `NFKHTTPConnection` counts its requests, and `NFKHTTPRequest.firstOnConnection` marks the
+  first. The server reports a client when that request passes the key check, so a connection whose
+  first request is refused reports nothing. A keep-alive client is one event.
+- `currentStatus` wraps `statusJSONObject`, the dictionary the status route now serializes, in
+  `+[NFKServerStatus statusWithJSONObject:]`, so the in-process reading and the route cannot drift.
+- The delegate protocol is `NS_SWIFT_SENDABLE`; measured with the isolation probe, a main-actor
+  conformance runs on the delegate queue without a trap, and traps without the attribute.
+- Tests: `NFKServerObservationTests` (7): a run's two events and a failed run, a refused run with no
+  start, the seven model events of a load/unload/idle/failed-build/removal sequence in order, a
+  pressure unload, one client event for two keep-alive requests with the key's name and scope, the
+  delegate queue, and the snapshot against the route.
+
+**MCP sessions (2026-10-13).** Per the Streamable HTTP transport (2025-06-18 and later), asked for so
+an app can list the agents connected to its `/mcp` and see them leave.
+
+- `initialize` (alone or in a batch) creates a session (`NFKServedMCPSessionStore`, private, in
+  `NFKServedMCP.m`) whose id is a UUID, returned as `Mcp-Session-Id` on that reply, and records
+  `clientInfo.name`, `clientInfo.version`, the negotiated `protocolVersion`, the client address, and
+  the key name. An `Mcp-Session-Id` sent with `initialize` is ignored: initialize always starts a new
+  session.
+- A later request with an id: an unknown or ended id, or one started under another key name, is 404
+  (the spec's signal to initialize again). Decision: a request without an id is served statelessly,
+  since the spec lets a server not require sessions, and clients that drop the id keep working. A GET
+  without an id is 405 (`Allow: GET, POST, DELETE`), which the TypeScript SDK treats as "no stream
+  offered" rather than an error; a DELETE without one is 400.
+- GET with an id opens the event stream (200, `text/event-stream`, the id echoed); a second GET
+  replaces and closes the first. The store's timer, on its own serial utility queue and running only
+  while a session exists, ticks at a quarter of the shorter of `MCPPingInterval` and
+  `MCPSessionIdleTimeout` (within 10 ms and 1 s). Each tick sends `{"jsonrpc":"2.0","id":
+  "inferkit-ping-<n>","method":"ping"}` on every stream due one, and ends a session with
+  `MCPMissedPingLimit` pings outstanding. A POSTed JSON-RPC response whose id starts with
+  `inferkit-ping-` clears the count (it is acknowledged 202, like any response). Pings off (0) leave a
+  session with an open stream to end only by DELETE, the host, a revocation, or a stop.
+- A session with no stream ends after `MCPSessionIdleTimeout` without activity (a request starting or
+  ending, a ping answer, the stream closing); a request still in flight keeps it. Defaults: idle 1800 s,
+  ping 30 s, 3 missed pings.
+- A session also ends on DELETE (204), `endMCPSessionWithIdentifier:`, `removeAPIKeyNamed:` of the key
+  it started with, and `stop`. Ending one closes its stream with the chunked terminator; the stream's
+  `disconnectHandler` only fires for a client that left first, which marks the stream closed and starts
+  the idle clock.
+- The HTTP connection's idle timer only closes a connection with no reply pending, so an open stream
+  is never closed for idleness; pings are what detect a client that went away without closing.
+- In process: `MCPSessions` (snapshots, oldest first) and the delegate's start and end events; the
+  status route does not list sessions, since their key names stay in process (the scoped-keys decision).
+- Tests: `NFKServedMCPSessionTests` (7): the issued id and client info, unknown ids on every method,
+  DELETE, idle expiry, the host's end and a stop, answered pings keeping a session past its idle
+  timeout and missed ones ending it and closing the stream, and a session bound to its key and ended
+  by the key's revocation. `NFKServedMCPTests`' bare GET now expects `Allow: GET, POST, DELETE`.
 
 **Hosting updates (2026-10-13).** Asked for by an app's service, which restarts the same server for a
 port or exposure change and pins models its user marks.

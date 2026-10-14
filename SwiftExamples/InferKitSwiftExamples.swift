@@ -370,6 +370,46 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(server.residency(forModelName: "refused"), .notLoaded)
     }
 
+    // Observation, scoped keys, and app routes from Swift: the delegate's methods import as
+    // inferenceServer(_:didChangeModel:), addRoute(pathPrefix:handler:) throws, the MCP settings read
+    // mcpPingInterval and mcpSessions, and currentStatus() is the status route read in process.
+    final class ModelObserver: NSObject, NFKInferenceServerDelegate {
+        let loaded: XCTestExpectation
+        init(loaded: XCTestExpectation) {
+            self.loaded = loaded
+        }
+        func inferenceServer(_ server: NFKInferenceServer, didChangeModel event: NFKServerModelEvent) {
+            if event.kind == .loaded && event.reason == .explicit {
+                loaded.fulfill()
+            }
+        }
+    }
+
+    func testObservingTheServerFromSwift() throws {
+        let server = NFKInferenceServer()
+        server.port = 0
+        server.loopbackOnly = true
+        server.residencyCheckInterval = 0
+        let observer = ModelObserver(loaded: expectation(description: "the model loaded"))
+        server.delegate = observer
+        server.addAPIKey("dashboard-key", named: "dashboard", scopes: [.status])
+        server.loopbackExemptScopes = [.inference, .mcp, .appRoutes]
+        try server.addRoute(pathPrefix: "/myapp/") { request, response in
+            response.sendStatus(200, jsonObject: ["path": request.path], headers: nil)
+        }
+        server.mcpPingInterval = 15
+        try server.start()
+        defer { server.stop() }
+
+        server.addBackendProvider({ _ in NFKPassthroughBackend() }, forModelName: "echo")
+        server.loadModelNamed("echo", completionHandler: nil)
+        wait(for: [observer.loaded], timeout: 10)
+        XCTAssertEqual(server.currentStatus().modelNamed("echo")?.residency, .resident)
+        XCTAssertEqual(server.apiKeyNames, ["dashboard"])
+        XCTAssertEqual(server.routePathPrefixes, ["/myapp/"])
+        XCTAssertTrue(server.mcpSessions.isEmpty)
+    }
+
     // MARK: Models as tools (Docs/examples.md: Models as tools)
 
     // A Swift backend adopts the protocol by its imported names; this one calls the tool it is

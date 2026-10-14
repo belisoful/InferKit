@@ -130,6 +130,8 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 - ``NFKInferenceServer``
 - ``NFKServerRouteRequest``
 - ``NFKServerRouteResponse``
+- ``NFKInferenceServerDelegate``
+- ``NFKServerMCPSession``
 - ``NFKServerIdentity``
 - ``NFKPinnedServers``
 - ``NFKRemoteInferKitBackend``

@@ -4,8 +4,9 @@
 //
 //  Calls each InferKit block that runs off the caller's queue from closures written in main-actor
 //  code, compiled with -swift-version 6 -default-isolation MainActor (an app service's flags). A
-//  block that Swift infers main-actor isolated traps when InferKit calls it on its own queue, so a
-//  run that reaches "all calls returned" shows every probed block imports as Sendable.
+//  block or conformance that Swift infers main-actor isolated traps when InferKit calls it on its own
+//  queue, so a run that reaches "all calls returned" shows every probed block and protocol imports as
+//  Sendable.
 //
 
 import Foundation
@@ -20,6 +21,13 @@ nonisolated func makeBackend(_ name: String) throws -> any NFKInferenceBackend {
     let backend = NFKPassthroughBackend()
     backend.outputMap = [NFKOutputText: NFKInputPrompt]
     return backend
+}
+
+final class Observer: NSObject, NFKInferenceServerDelegate {
+    let changed = DispatchSemaphore(value: 0)
+    func inferenceServer(_ server: NFKInferenceServer, didChangeModel event: NFKServerModelEvent) {
+        changed.signal()
+    }
 }
 
 final class Builder: NSObject, NFKServedBackendBuilder {
@@ -40,6 +48,8 @@ func waitFor(_ label: String, _ start: (@escaping @Sendable () -> Void) -> Void)
 
 let server = NFKInferenceServer()
 server.residencyCheckInterval = 0
+let observer = Observer()
+server.delegate = observer
 server.addBackendProvider({ error in
     do {
         return try makeBackend("probe-provider")
@@ -61,6 +71,26 @@ for name in ["probe-provider", "probe-builder"] {
     }
 }
 nonisolated(unsafe) let sharedServer = server
+waitFor("NFKInferenceServerDelegate") { finish in
+    let changed = observer.changed
+    DispatchQueue.global().async {
+        changed.wait()
+        finish()
+    }
+}
+try server.addRoute(pathPrefix: "/probe/") { _, response in
+    response.sendStatus(204, headers: nil, body: nil)
+}
+server.port = 0
+server.loopbackOnly = true
+try server.start()
+let routeURL = URL(string: "http://localhost:\(server.listeningPort)/probe/x")!
+waitFor("NFKServerRouteHandler") { finish in
+    URLSession.shared.dataTask(with: routeURL) { _, response, _ in
+        precondition((response as? HTTPURLResponse)?.statusCode == 204, "the route did not answer")
+        finish()
+    }.resume()
+}
 waitFor("memoryPressureProvider") { finish in
     DispatchQueue.global().async {
         _ = sharedServer.memoryPressure
