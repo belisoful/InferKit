@@ -1112,6 +1112,37 @@ port or exposure change and pins models its user marks.
   the queue limit with runs queued past it, a stop and two starts of one server across a
   loopback/network/advertising change, and a pinned model under idle and full pressure.
 
+**Scoped keys (2026-10-13).** The single `apiKey` became a set of named keys, each opening a set of
+`NFKServerKeyScope`s, for an app service's per-client keys (a balancer, an agent, its own app API).
+
+- Scopes: Inference (every `/v1` route but status, unknown `/v1` paths included), Status
+  (`/v1/inferkit/status`, so a balancer or dashboard key reads load without running anything), MCP,
+  and AppRoutes (the app's prefixes and every other path no route claims, which then 404s).
+  `NFKServerKeyScopeAll` is the OR of the four, not `NSUIntegerMax`, so `requiresAPIKeyOnLoopback`
+  can compare against it.
+- `apiKey` is a computed property over the key named `NFKInferenceServerDefaultAPIKeyName`
+  (`default`): setting it adds that key with every scope, nil removes it, and reading returns that
+  key's value whatever its scopes. `requiresAPIKeyOnLoopback` is computed over `loopbackExemptScopes`:
+  YES empties it, NO fills it, and it reads YES when any scope needs a key on loopback. A loopback
+  client exempt from a scope passes whatever it presents, as before.
+- Matching: the presented token's SHA-256 digest is compared in constant time with every key's
+  digest, without stopping at a match, so neither the length of a guess nor which key matched shows in
+  the timing (the old comparison returned early on a length mismatch). The first matching name in
+  sorted order wins. The keys are read under their lock on each request, so a revocation applies to the
+  next request; a streamed reply already authorized finishes.
+- The routing order is now: trim the path, find its scope and the app prefix that claims it, check the
+  key for that scope, then dispatch. The matched key's name is stored on `NFKHTTPRequest.keyName` and
+  reaches app routes as `NFKServerRouteRequest.keyName`.
+- Decision: neither key values nor key names are reported over HTTP, in the status route or in a
+  refusal, since a client with only the Status scope would otherwise learn the server's key inventory.
+  `apiKeyNames` and `scopesForAPIKeyNamed:` list them in process. The Bonjour `auth` entry still
+  follows `requiresAPIKey`.
+- `startWithError:` refuses with `NFKInferenceServerErrorAPIKeyRequired` when another machine needs a
+  key or any scope needs one on loopback, and no key is set.
+- Tests: `NFKServerKeyTests` (5): each scope and a two-scope key against one route of each scope, a
+  revocation and a replaced key, per-scope loopback exemption and the legacy property, the start check,
+  and `apiKey` as the default key.
+
 **App routes (2026-10-13).** An app's service serves its own HTTP API beside the models, on the same
 port, TLS identity, Bonjour name, and keys. `addRouteForPathPrefix:handler:error:` registers a handler
 under a prefix; `NFKServerRoute.h/.m` holds the public request and response classes and the prefix

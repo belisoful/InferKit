@@ -37,7 +37,8 @@ extern NSString * const NFKInferenceServerErrorDomain;
 	@constant   NFKInferenceServerErrorInvalidConfiguration The configuration cannot be served:
 				maximumConcurrentRunsPerModel or maximumRequestBodyBytes is zero.
 	@constant   NFKInferenceServerErrorModelNotFound A request named a model the server does not host.
-	@constant   NFKInferenceServerErrorUnauthorized A request carried no key, or the wrong one.
+	@constant   NFKInferenceServerErrorUnauthorized A request carried no key, or none whose scopes include
+				the route's.
 	@constant   NFKInferenceServerErrorBusy A request found its model's queue full
 				(maximumQueuedRunsPerModel). The reply is 503 with a Retry-After of the estimated wait,
 				and NFKRemoteErrorRetryAfterKey carries the same moment.
@@ -51,6 +52,29 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 	NFKInferenceServerErrorUnauthorized = 5,
 	NFKInferenceServerErrorBusy = 6,
 };
+
+/*!
+	@enum       NFKServerKeyScope
+	@abstract   The routes an API key opens, and the routes a client on this machine reaches without one.
+	@constant   NFKServerKeyScopeInference Every route under /v1 except the status route: the
+				OpenAI-compatible routes, the model list, and the native run route.
+	@constant   NFKServerKeyScopeStatus The status route, GET /v1/inferkit/status.
+	@constant   NFKServerKeyScopeMCP The MCP endpoint, /mcp.
+	@constant   NFKServerKeyScopeAppRoutes The app's routes (addRouteForPathPrefix:handler:error:), and
+				every path outside /v1 and /mcp that no route claims.
+	@constant   NFKServerKeyScopeAll Every scope.
+	Introduced in InferKit 0.4.0.
+*/
+typedef NS_OPTIONS(NSUInteger, NFKServerKeyScope) {
+	NFKServerKeyScopeInference = 1 << 0,
+	NFKServerKeyScopeStatus = 1 << 1,
+	NFKServerKeyScopeMCP = 1 << 2,
+	NFKServerKeyScopeAppRoutes = 1 << 3,
+	NFKServerKeyScopeAll = NFKServerKeyScopeInference | NFKServerKeyScopeStatus | NFKServerKeyScopeMCP | NFKServerKeyScopeAppRoutes,
+};
+
+/*! The name apiKey reads and writes among the server's keys. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKInferenceServerDefaultAPIKeyName;
 
 /*!
 	@protocol   NFKServingRuntimeStatus
@@ -128,22 +152,29 @@ NS_SWIFT_SENDABLE
 				Desktop, an agent framework, or NFKMCPClient. Only the added tools are listed; a hosted
 				model is a tool when an NFKBackendTool for it is added. A tool's text, the images it
 				shows the model, and the audio it generates come back as MCP content. The route takes
-				the same key as the others, and refuses a browser request whose Origin names another
-				host.
+				a key with NFKServerKeyScopeMCP, and refuses a browser request whose Origin names
+				another host.
 
 				A request names its model in the body's model field. When the server hosts exactly
 				one model, a request that names none runs on it.
 
 				Access:
-				- A client on this machine (a loopback peer) needs no key unless
-				  requiresAPIKeyOnLoopback is set.
-				- A client on another machine presents apiKey as a Bearer token, which is what the
-				  remote backends' apiKey sends. requiresAPIKey is YES by default; setting it to NO
-				  opens the server to anyone who can reach it.
+				- A client presents a key as a Bearer token, which is what the remote backends' apiKey
+				  sends. The server holds several keys, each named and opening a set of scopes
+				  (NFKServerKeyScope): addAPIKey:named:scopes: adds one, removeAPIKeyNamed: revokes it
+				  for the next request. apiKey is the key named NFKInferenceServerDefaultAPIKeyName
+				  with every scope.
+				- A client on another machine needs a key whose scopes include the route's unless
+				  requiresAPIKey is NO, which opens the server to anyone who can reach it.
+				- A client on this machine (a loopback peer) needs no key for the scopes in
+				  loopbackExemptScopes, every scope by default. requiresAPIKeyOnLoopback set to YES
+				  empties the set.
 				- startWithError: fails with NFKInferenceServerErrorAPIKeyRequired when the
 				  configuration requires a key and none is set.
-				A reverse proxy on this machine connects from loopback, so behind one set
-				requiresAPIKeyOnLoopback or listen on loopback only.
+				Keys are compared by their SHA-256 digests in constant time. Neither a key's value nor
+				its name appears in a reply or the status route; apiKeyNames and
+				scopesForAPIKeyNamed: list them in process. A reverse proxy on this machine connects
+				from loopback, so behind one empty loopbackExemptScopes or listen on loopback only.
 
 				Setting TLSIdentity serves HTTPS with that identity. A client's URL session trusts
 				the certificate only if the system does, so a self-signed identity needs the client to
@@ -243,10 +274,11 @@ NS_SWIFT_SENDABLE
 				figures. Run replies carry X-InferKit-Thermal-State, and the Bonjour
 				advertisement adds the chip and the physical memory. Setting reportsHostDetails to
 				NO leaves out the host object, the thermal header, and those advertisement entries.
-				The status route needs a key under the same rules as every other route.
+				The status route needs a key with NFKServerKeyScopeStatus under the access rules above.
 
-				apiKey, requiresAPIKey, requiresAPIKeyOnLoopback, reportsHostDetails,
-				storageDirectoryURL, and the hosted models take effect on the next request, and
+				The keys, requiresAPIKey, loopbackExemptScopes, reportsHostDetails,
+				storageDirectoryURL, the app routes, and the hosted models take effect on the next
+				request, and
 				maximumConcurrentRunsPerModel and maximumQueuedRunsPerModel at once for every hosted
 				model. The other settings take effect on the next start; the advertisement's host
 				entries follow reportsHostDetails as it was at start. stop keeps the hosted models and
@@ -262,14 +294,41 @@ NS_SWIFT_SENDABLE
 /*! Listens on the loopback interface only, so no other machine can connect. Defaults to NO. */
 @property (nonatomic, assign) BOOL loopbackOnly;
 
-/*! The key a client presents as a Bearer token. */
+/*! The key named NFKInferenceServerDefaultAPIKeyName, which a client presents as a Bearer token.
+	Setting it adds or replaces that key with every scope; nil removes it. */
 @property (nonatomic, copy, nullable) NSString *apiKey;
 
-/*! Whether a client on another machine must present apiKey. Defaults to YES. */
+/*! Whether a client on another machine must present a key with the route's scope. Defaults to YES. */
 @property (nonatomic, assign) BOOL requiresAPIKey;
 
-/*! Whether a client on this machine must present apiKey too. Defaults to NO. */
+/*! Whether some scope requires a key from a client on this machine too, which is to say
+	loopbackExemptScopes is not NFKServerKeyScopeAll. Setting YES empties loopbackExemptScopes and NO
+	fills it. Defaults to NO. */
 @property (nonatomic, assign) BOOL requiresAPIKeyOnLoopback;
+
+/*! The scopes a client on this machine reaches without a key. Defaults to NFKServerKeyScopeAll.
+	Introduced in InferKit 0.4.0. */
+@property (nonatomic, assign) NFKServerKeyScope loopbackExemptScopes;
+
+/*!
+	@method     addAPIKey:named:scopes:
+	@abstract   Adds a key that opens scopes, replacing the key under the same name.
+	@discussion The next request sees it. A request that presents a key under two names takes the first
+				name in sorted order. Adding NFKInferenceServerDefaultAPIKeyName replaces apiKey.
+				Introduced in InferKit 0.4.0.
+*/
+- (void)addAPIKey:(NSString *)key named:(NSString *)name scopes:(NFKServerKeyScope)scopes
+	NS_SWIFT_NAME(addAPIKey(_:named:scopes:));
+
+/*! Revokes the key under name: the next request that presents it is refused. A reply already being
+	written finishes. Introduced in InferKit 0.4.0. */
+- (void)removeAPIKeyNamed:(NSString *)name;
+
+/*! The names of the server's keys, sorted. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSArray<NSString *> *apiKeyNames;
+
+/*! The scopes of the key under name, or 0 when there is none. Introduced in InferKit 0.4.0. */
+- (NFKServerKeyScope)scopesForAPIKeyNamed:(NSString *)name;
 
 /*! The identity to serve HTTPS with, or NULL for plain HTTP. The server retains it. */
 @property (nonatomic, assign, nullable) SecIdentityRef TLSIdentity;

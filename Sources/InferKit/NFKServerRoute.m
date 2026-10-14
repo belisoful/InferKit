@@ -15,6 +15,7 @@
 @property (nonatomic, copy, readwrite) NSData *body;
 @property (nonatomic, assign, readwrite) BOOL fromLoopback;
 @property (nonatomic, copy, readwrite) NSString *clientAddress;
+@property (nonatomic, copy, readwrite, nullable) NSString *keyName;
 - (instancetype)initPrivately;
 @end
 
@@ -31,6 +32,7 @@
 	routed.body = request.body;
 	routed.fromLoopback = request.fromLoopback;
 	routed.clientAddress = request.clientAddress;
+	routed.keyName = request.keyName;
 	return routed;
 }
 

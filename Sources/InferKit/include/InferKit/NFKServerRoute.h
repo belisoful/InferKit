@@ -44,6 +44,10 @@ NS_SWIFT_SENDABLE
 	reads as its IPv4 address. */
 @property (nonatomic, readonly, copy) NSString *clientAddress;
 
+/*! The name of the server key the request presented, or nil when it presented none the server holds,
+	as a client exempt from the key check need not. */
+@property (nonatomic, readonly, copy, nullable) NSString *keyName;
+
 /*! A header field's value, the name matched in any case, or nil. */
 - (nullable NSString *)valueForHeader:(NSString *)name;
 

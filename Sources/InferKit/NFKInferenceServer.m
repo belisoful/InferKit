@@ -16,10 +16,12 @@
 #import "NFKInferenceWireCoding.h"
 #import "NFKServedHostStatus.h"
 #import "NFKServerRoutePrivate.h"
+#import <CommonCrypto/CommonDigest.h>
 
 const uint16_t NFKInferenceServerDefaultPort = 11480;
 NSString * const NFKInferenceServerServiceType = @"_inferkit._tcp";
 NSString * const NFKInferenceServerErrorDomain = @"NFKInferenceServerErrorDomain";
+NSString * const NFKInferenceServerDefaultAPIKeyName = @"default";
 
 static NSString * const NFKServedBasePath = @"/v1";
 
@@ -137,6 +139,45 @@ static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString 
 	}
 	return [text substringFromIndex:prefix.length];
 }
+
+/*! The SHA-256 digest of text's UTF-8 bytes. */
+static NSData *NFKServedKeyDigest(NSString *text)
+{
+	NSData *bytes = [text dataUsingEncoding:NSUTF8StringEncoding] ?: [NSData data];
+	unsigned char digest[CC_SHA256_DIGEST_LENGTH];
+	CC_SHA256(bytes.bytes, (CC_LONG)bytes.length, digest);
+	return [NSData dataWithBytes:digest length:sizeof(digest)];
+}
+
+/*! Whether two digests of equal length are equal, compared in constant time so the reply's timing says
+	nothing about how much of a guess matched. */
+static BOOL NFKServedDigestsEqual(NSData *left, NSData *right)
+{
+	if (left.length != right.length) {
+		return NO;
+	}
+	const uint8_t *leftBytes = left.bytes;
+	const uint8_t *rightBytes = right.bytes;
+	uint8_t difference = 0;
+	for (NSUInteger index = 0; index < left.length; index++) {
+		difference |= leftBytes[index] ^ rightBytes[index];
+	}
+	return difference == 0;
+}
+
+#pragma mark - Keys
+
+/*! One named key: its scopes and the digest a presented key is compared with. */
+@interface NFKServedAPIKey : NSObject
+@property (nonatomic, copy) NSString *name;
+/*! Kept for apiKey, which reads the default key back. */
+@property (nonatomic, copy) NSString *secret;
+@property (nonatomic, copy) NSData *digest;
+@property (nonatomic, assign) NFKServerKeyScope scopes;
+@end
+
+@implementation NFKServedAPIKey
+@end
 
 #pragma mark - Runs
 
@@ -948,6 +989,8 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 @interface NFKInferenceServer ()
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NFKServedModel *> *models;
 @property (nonatomic, strong) NSMutableArray<NFKInferenceTool *> *servedTools;
+/*! The keys by name; guarded by itself. */
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NFKServedAPIKey *> *keys;
 /*! The app routes by normalized prefix; guarded by itself. */
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NFKServerRouteHandler> *appRoutes;
 @property (nonatomic, strong, nullable) NFKHTTPListener *listener;
@@ -981,6 +1024,8 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		_models = [NSMutableDictionary dictionary];
 		_servedTools = [NSMutableArray array];
 		_appRoutes = [NSMutableDictionary dictionary];
+		_keys = [NSMutableDictionary dictionary];
+		_loopbackExemptScopes = NFKServerKeyScopeAll;
 		_port = NFKInferenceServerDefaultPort;
 		_requiresAPIKey = YES;
 		_advertisesService = YES;
@@ -1087,6 +1132,102 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	@synchronized (self.servedTools) {
 		return [self.servedTools copy];
 	}
+}
+
+#pragma mark Keys
+
+- (void)addAPIKey:(NSString *)key named:(NSString *)name scopes:(NFKServerKeyScope)scopes
+{
+	NFKServedAPIKey *entry = [[NFKServedAPIKey alloc] init];
+	entry.name = name;
+	entry.secret = key;
+	entry.digest = NFKServedKeyDigest(key);
+	entry.scopes = scopes;
+	@synchronized (self.keys) {
+		self.keys[name] = entry;
+	}
+}
+
+- (void)removeAPIKeyNamed:(NSString *)name
+{
+	@synchronized (self.keys) {
+		[self.keys removeObjectForKey:name];
+	}
+}
+
+- (NSArray<NSString *> *)apiKeyNames
+{
+	@synchronized (self.keys) {
+		return [self.keys.allKeys sortedArrayUsingSelector:@selector(compare:)];
+	}
+}
+
+- (NFKServerKeyScope)scopesForAPIKeyNamed:(NSString *)name
+{
+	@synchronized (self.keys) {
+		return self.keys[name].scopes;
+	}
+}
+
+- (nullable NSString *)apiKey
+{
+	@synchronized (self.keys) {
+		return self.keys[NFKInferenceServerDefaultAPIKeyName].secret;
+	}
+}
+
+- (void)setApiKey:(nullable NSString *)apiKey
+{
+	if (apiKey.length > 0) {
+		[self addAPIKey:apiKey named:NFKInferenceServerDefaultAPIKeyName scopes:NFKServerKeyScopeAll];
+	} else {
+		[self removeAPIKeyNamed:NFKInferenceServerDefaultAPIKeyName];
+	}
+}
+
+- (BOOL)requiresAPIKeyOnLoopback
+{
+	return (self.loopbackExemptScopes & NFKServerKeyScopeAll) != NFKServerKeyScopeAll;
+}
+
+- (void)setRequiresAPIKeyOnLoopback:(BOOL)requiresAPIKeyOnLoopback
+{
+	self.loopbackExemptScopes = requiresAPIKeyOnLoopback ? 0 : NFKServerKeyScopeAll;
+}
+
+- (BOOL)hasAPIKeys
+{
+	@synchronized (self.keys) {
+		return self.keys.count > 0;
+	}
+}
+
+/*! The key a request presents as a Bearer token, or nil when it presents none the server holds. Every
+	key is compared, so the time taken does not depend on which one matched. */
+- (nullable NFKServedAPIKey *)keyPresentedBy:(NFKHTTPRequest *)request
+{
+	NSString *authorization = [request valueForHeader:@"authorization"] ?: @"";
+	if (![authorization.lowercaseString hasPrefix:@"bearer "]) {
+		return nil;
+	}
+	NSString *token = [[authorization substringFromIndex:7] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+	if (token.length == 0) {
+		return nil;
+	}
+	NSData *presented = NFKServedKeyDigest(token);
+	NSArray<NFKServedAPIKey *> *keys = nil;
+	@synchronized (self.keys) {
+		keys = [self.keys.allValues sortedArrayUsingComparator:^NSComparisonResult(NFKServedAPIKey *left, NFKServedAPIKey *right) {
+			return [left.name compare:right.name];
+		}];
+	}
+	NFKServedAPIKey *matched = nil;
+	for (NFKServedAPIKey *key in keys) {
+		if (NFKServedDigestsEqual(presented, key.digest) && matched == nil) {
+			matched = key;
+		}
+	}
+	return matched;
 }
 
 #pragma mark App routes
@@ -1582,10 +1723,10 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		return YES;
 	}
 	BOOL keyNeeded = (self.requiresAPIKey && !self.loopbackOnly) || self.requiresAPIKeyOnLoopback;
-	if (keyNeeded && self.apiKey.length == 0) {
+	if (keyNeeded && ![self hasAPIKeys]) {
 		if (outError != NULL) {
 			*outError = NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorAPIKeyRequired,
-									   @"clients on other machines must present a key and none is set: set apiKey, set loopbackOnly, or set requiresAPIKey to NO to serve without one");
+									   @"some clients must present a key and none is set: add a key (apiKey or addAPIKey:named:scopes:), set loopbackOnly, or set requiresAPIKey to NO and exempt every scope on loopback to serve without one");
 		}
 		return NO;
 	}
@@ -1653,44 +1794,47 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 
 #pragma mark Routing
 
-- (BOOL)authorizes:(NFKHTTPRequest *)request
+/*! Whether the request may reach a route of scope, recording the name of the key it presented. A client
+	exempt from the check passes whatever it presents. */
+- (BOOL)authorizes:(NFKHTTPRequest *)request scope:(NFKServerKeyScope)scope
 {
-	BOOL keyRequired = request.fromLoopback ? self.requiresAPIKeyOnLoopback : self.requiresAPIKey;
-	if (!keyRequired) {
-		return YES;
+	NFKServedAPIKey *key = [self keyPresentedBy:request];
+	request.keyName = key.name;
+	BOOL keyRequired = request.fromLoopback ? (self.loopbackExemptScopes & scope) == 0 : self.requiresAPIKey;
+	return !keyRequired || (key.scopes & scope) != 0;
+}
+
+/*! The scope a path's route belongs to, and the app route's prefix when an app route claims it. */
+- (NFKServerKeyScope)scopeOfPath:(NSString *)path appRoutePrefix:(NSString * _Nullable * _Nonnull)outPrefix
+{
+	*outPrefix = nil;
+	if ([path isEqualToString:@"/mcp"]) {
+		return NFKServerKeyScopeMCP;
 	}
-	NSString *expected = self.apiKey;
-	NSString *authorization = [request valueForHeader:@"authorization"] ?: @"";
-	if (expected.length == 0 || ![authorization.lowercaseString hasPrefix:@"bearer "]) {
-		return NO;
+	if ([path isEqualToString:NFKServedBasePath] || [path hasPrefix:[NFKServedBasePath stringByAppendingString:@"/"]]) {
+		return [path isEqualToString:[NFKServedBasePath stringByAppendingString:@"/inferkit/status"]] ? NFKServerKeyScopeStatus : NFKServerKeyScopeInference;
 	}
-	NSData *presented = [[[authorization substringFromIndex:7] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet]
-						 dataUsingEncoding:NSUTF8StringEncoding];
-	NSData *secret = [expected dataUsingEncoding:NSUTF8StringEncoding];
-	if (presented.length != secret.length) {
-		return NO;
-	}
-	// Compared in constant time, so the reply's timing says nothing about how much of a guess matched.
-	const uint8_t *left = presented.bytes;
-	const uint8_t *right = secret.bytes;
-	uint8_t difference = 0;
-	for (NSUInteger index = 0; index < secret.length; index++) {
-		difference |= left[index] ^ right[index];
-	}
-	return difference == 0;
+	*outPrefix = [self appRoutePrefixForPath:path];
+	return NFKServerKeyScopeAppRoutes;
 }
 
 - (void)routeRequest:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response
 {
-	if (![self authorizes:request]) {
-		[self sendError:NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorUnauthorized,
-									   @"a valid key is required; send it as Authorization: Bearer <key>")
-			   response:response];
-		return;
-	}
 	NSString *path = request.path;
 	while (path.length > 1 && [path hasSuffix:@"/"]) {
 		path = [path substringToIndex:path.length - 1];
+	}
+	NSString *appRoutePrefix = nil;
+	NFKServerKeyScope scope = [self scopeOfPath:path appRoutePrefix:&appRoutePrefix];
+	if (![self authorizes:request scope:scope]) {
+		[self sendError:NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorUnauthorized,
+									   @"a valid key for this route is required; send it as Authorization: Bearer <key>")
+			   response:response];
+		return;
+	}
+	if (appRoutePrefix != nil) {
+		[self serveAppRoute:appRoutePrefix request:request response:response];
+		return;
 	}
 	if ([path isEqualToString:@"/mcp"]) {
 		[NFKServedMCP serveRequest:request response:response tools:self.tools instructions:self.MCPInstructions];
@@ -1716,12 +1860,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	BOOL underBase = [path isEqualToString:NFKServedBasePath] || [path hasPrefix:[NFKServedBasePath stringByAppendingString:@"/"]];
 	NSString *route = underBase ? [path substringFromIndex:NFKServedBasePath.length] : nil;
 	if (route == nil || routes[route] == nil) {
-		NSString *prefix = route == nil ? [self appRoutePrefixForPath:request.path] : nil;
-		if (prefix != nil) {
-			[self serveAppRoute:prefix request:request response:response];
-		} else {
-			[self sendNoRouteFor:request response:response];
-		}
+		[self sendNoRouteFor:request response:response];
 		return;
 	}
 	if (![self requireMethod:routes[route] of:request response:response]) {

@@ -195,6 +195,7 @@ the core discovers it by name at runtime — see <doc:DynamicDiscovery>.
 - ``NFKDiscoveredPinning``
 - ``NFKRemoteInferKitBackend``
 - ``NFKInferenceServerError``
+- ``NFKServerKeyScope``
 - ``NFKBalancedBackend``
 - ``NFKBalancingPolicy``
 - ``NFKServerStatus``

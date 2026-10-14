@@ -722,6 +722,19 @@ A client on another machine presents `apiKey` as a Bearer token unless the host 
 `requiresAPIKey` to NO, and a server that would admit other machines refuses to start without a key.
 `loopbackOnly` keeps other machines out entirely, and `TLSIdentity` serves HTTPS.
 
+A server can hold several keys, each named and limited to the routes it opens: inference, the status
+route, MCP, and the app's own routes. Removing a key refuses it from the next request.
+`loopbackExemptScopes` chooses which of those a client on the same machine reaches without a key.
+`apiKey` is the key named `default`, with every scope.
+
+<!-- objc-check: given NFKInferenceServer *server = nil; NSString *balancerKey = nil, *agentKey = nil; -->
+```objc
+[server addAPIKey:balancerKey named:@"balancer" scopes:NFKServerKeyScopeInference | NFKServerKeyScopeStatus];
+[server addAPIKey:agentKey named:@"claude-code" scopes:NFKServerKeyScopeMCP];
+server.loopbackExemptScopes = NFKServerKeyScopeStatus;   // local agents present their key too
+[server removeAPIKeyNamed:@"claude-code"];               // revoked for the next request
+```
+
 The server keeps each backend's contract. A hosted backend runs one request at a time unless the host
 raises `maximumConcurrentRunsPerModel`, and later requests queue in order. A change to that limit or to
 `maximumQueuedRunsPerModel` applies to the models already hosted, and `stop` keeps the hosted models in
