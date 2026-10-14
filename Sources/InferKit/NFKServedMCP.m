@@ -215,6 +215,9 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 				oldest = record;
 			}
 		}
+		if (oldest == nil) {
+			break;
+		}
 		[self.pendingRecords removeObjectForKey:oldest.identifier];
 	}
 }
@@ -397,6 +400,9 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 		record.lastActivity = record.lastPingAt;
 	}
 	[response beginStreamWithStatus:200 headers:@{ @"Content-Type": @"text/event-stream", @"Mcp-Session-Id": record.identifier }];
+	// NSURLSession reports a streamed response only once body bytes arrive, so an SSE comment, which
+	// clients ignore, goes out at once.
+	[response sendStreamData:[@": open\n\n" dataUsingEncoding:NSUTF8StringEncoding]];
 	[replaced endStream];
 	// A client that left before the handler was installed never fires it.
 	if (response.disconnected) {

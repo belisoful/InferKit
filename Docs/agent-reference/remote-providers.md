@@ -1146,8 +1146,10 @@ an app can list the agents connected to its `/mcp` and see them leave.
   since the spec lets a server not require sessions, and clients that drop the id keep working. A GET
   without an id is 405 (`Allow: GET, POST, DELETE`), which the TypeScript SDK reads as "no stream
   offered"; a DELETE without one is 400.
-- GET with an id opens the event stream (200, `text/event-stream`, the id echoed); a second GET
-  replaces and closes the first. The store's timer, on its own serial utility queue, runs while an
+- GET with an id opens the event stream (200, `text/event-stream`, the id echoed) and writes the SSE
+  comment `: open` at once, since `NSURLSession` delivers a streamed response to its delegate only
+  when body bytes arrive (measured 2026-10-14: with pings off, the response never reached the client).
+  A second GET replaces and closes the first. The store's timer, on its own serial utility queue, runs while an
   active session has a ping or idle interval or a pending record waits, starts or stops whenever a
   session or a setting changes, and ticks at a quarter of the shorter of `MCPPingInterval` and
   `MCPSessionIdleTimeout` (within 10 ms and 1 s). Each tick sends `{"jsonrpc":"2.0","id":
