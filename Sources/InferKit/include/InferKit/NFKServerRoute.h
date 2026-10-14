@@ -98,7 +98,8 @@ NS_SWIFT_SENDABLE
 @property (nonatomic, readonly, getter=isDisconnected) BOOL disconnected;
 
 /*! Runs at most once, on a background queue, when the client goes away before the reply ends, so a
-	long reply can stop its work. */
+	long reply can stop its work. Set after the client has gone, it runs at once; set after the reply
+	ends, it never runs and is not kept. */
 @property (nonatomic, copy, nullable) void (^ NS_SWIFT_SENDABLE disconnectHandler)(void);
 
 /*! Sends a whole reply. The server writes Content-Length, Connection, and Server itself. */

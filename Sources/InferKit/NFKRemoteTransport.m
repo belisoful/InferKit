@@ -127,8 +127,7 @@ static NFKRemotePinnedTrust * _Nullable NFKRemotePinOfSession(NSURLSession *sess
 	return [delegate isKindOfClass:NFKRemotePinnedTrust.class] ? delegate : nil;
 }
 
-/*! Why a pinned session will not send a request, or nil when it will or the session is not pinned. */
-static NSError * _Nullable NFKRemotePinPreflightError(NSURLSession *session, NSURL * _Nullable url)
+NSError * _Nullable NFKRemotePinPreflightError(NSURLSession *session, NSURL * _Nullable url, NSString *secureScheme)
 {
 	NFKRemotePinnedTrust *pin = NFKRemotePinOfSession(session);
 	if (pin == nil) {
@@ -138,8 +137,9 @@ static NSError * _Nullable NFKRemotePinPreflightError(NSURLSession *session, NSU
 		NSString *reason = [NSString stringWithFormat:@"the pinned certificate fingerprint \"%@\" is not 64 hexadecimal digits", pin.pinnedValue];
 		return [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:reason];
 	}
-	if (![url.scheme.lowercaseString isEqualToString:@"https"]) {
-		NSString *reason = [NSString stringWithFormat:@"a pinned session sends only HTTPS, and %@ is not", url.absoluteString ?: @"the URL"];
+	if (![url.scheme.lowercaseString isEqualToString:secureScheme]) {
+		NSString *channel = [secureScheme isEqualToString:@"wss"] ? @"secure WebSockets (wss://)" : @"HTTPS (https://)";
+		NSString *reason = [NSString stringWithFormat:@"a pinned session sends only over %@, and %@ is not", channel, url.absoluteString ?: @"the URL"];
 		return [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:reason];
 	}
 	return nil;
@@ -322,7 +322,7 @@ static NSError *NFKRemoteUnreachableError(NSURL * _Nullable url, NSError * _Null
 					 response:(NSHTTPURLResponse * _Nullable * _Nullable)outResponse
 						error:(NSError * _Nullable *)outError
 {
-	NSError *pinError = NFKRemotePinPreflightError(session, request.URL);
+	NSError *pinError = NFKRemotePinPreflightError(session, request.URL, @"https");
 	if (pinError != nil) {
 		if (outResponse != NULL) {
 			*outResponse = nil;
@@ -389,7 +389,7 @@ static NSError *NFKRemoteUnreachableError(NSURL * _Nullable url, NSError * _Null
 					lineHandler:(void (^)(NSString *))lineHandler
 			  completionHandler:(NFKRemoteStreamCompletion)completionHandler
 {
-	NSError *pinError = NFKRemotePinPreflightError(session, request.URL);
+	NSError *pinError = NFKRemotePinPreflightError(session, request.URL, @"https");
 	if (pinError != nil) {
 		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 			completionHandler(nil, nil, pinError);

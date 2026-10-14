@@ -47,7 +47,9 @@ NSArray<NFKHTTPFormPart *> * _Nullable NFKHTTPFormParts(NFKHTTPRequest *request)
 	@discussion Every method may be called from any thread; the writes reach the connection in call
 				order. A reply is either whole (sendStatus:headers:body:) or streamed with chunked
 				transfer encoding (beginStream…, sendStreamData:, endStream). disconnectHandler runs
-				at most once, when the client goes away before the reply ends.
+				at most once, when the client goes away before the reply ends; one set after the
+				client has gone runs at once, and one set after the reply ends never runs and is
+				not kept.
 */
 @interface NFKHTTPResponse : NSObject
 @property (nonatomic, readonly) BOOL headersSent;

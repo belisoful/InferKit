@@ -135,9 +135,9 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	@method     providerWithBaseURL:
 	@abstract   This provider at another address.
 	@discussion The identifier, display name, protocol, model routes, and key requirement are kept;
-				every derived URL follows the new base, and a certificate pin is dropped. A runner on another port, or on another machine
-				on the network, is the same preset with this one field changed. Introduced in InferKit
-				0.3.0.
+				every derived URL follows the new base, and a certificate pin is dropped. A runner on
+				another port, or on another machine on the network, is the same preset with this one
+				field changed. Introduced in InferKit 0.3.0.
 */
 - (instancetype)providerWithBaseURL:(NSURL *)baseURL;
 
@@ -150,10 +150,11 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 				counter, reranker, and voice-library factories, the local runners, and
 				NFKRemoteModelCatalog's catalogForProvider:apiKey:) then uses NFKRemoteTransport's
 				sessionWithPinnedCertificateSHA256: for the fingerprint, which sends only to an https
-				base. A factory whose service has a fixed host of its own (a usage reporter, Gemini's
-				file and retrieval stores) sends there through the same pin. providerWithBaseURL: drops the pin, since a pin names one server's certificate.
-				For an NFKInferenceServer serving an NFKServerIdentity, the fingerprint is the
-				identity's SHA256Fingerprint. Introduced in InferKit 0.4.0.
+				base, and a socket only to a wss one. A factory whose service has a fixed host of its
+				own (a usage reporter, Gemini's file and retrieval stores) sends there through the same
+				pin. providerWithBaseURL: drops the pin, since a pin names one server's certificate. For
+				an NFKInferenceServer serving an NFKServerIdentity, the fingerprint is the identity's
+				SHA256Fingerprint. Introduced in InferKit 0.4.0.
 */
 - (instancetype)providerWithPinnedCertificateSHA256:(nullable NSString *)fingerprint;
 

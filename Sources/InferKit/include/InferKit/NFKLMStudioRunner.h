@@ -26,7 +26,8 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The request timeout in seconds. Defaults to 30. */
 @property (nonatomic, assign) NSTimeInterval timeout;
 
-/*! The session used for the calls. Defaults to the shared session. */
+/*! The session used for the calls. Defaults to the provider's pinned session when the provider pins a
+	certificate, and to the shared session otherwise. */
 @property (nonatomic, strong) NSURLSession *session;
 
 - (instancetype)init NS_UNAVAILABLE;

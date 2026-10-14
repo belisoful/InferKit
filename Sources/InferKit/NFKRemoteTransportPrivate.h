@@ -13,6 +13,11 @@ NS_ASSUME_NONNULL_BEGIN
 	with or without colons or spaces between the byte pairs, or nil when the value is not one. */
 NSString * _Nullable NFKRemoteNormalizedFingerprint(NSString *value);
 
+/*! Why a pinned session will not send to url, or nil when it will or the session is not pinned: the pin
+	is not 64 hexadecimal digits, or url's scheme is not secureScheme ("https", or "wss" for a socket).
+	Every task a pinned session runs is checked first, so a key never leaves over a plaintext scheme. */
+NSError * _Nullable NFKRemotePinPreflightError(NSURLSession *session, NSURL * _Nullable url, NSString *secureScheme);
+
 /*! NFKRemoteTransport's pinned session for the provider's pinnedCertificateSHA256, or nil for a
 	provider without a pin. Every class that builds a client from an NFKRemoteProvider sends through
 	this session when it is non-nil. */

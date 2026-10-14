@@ -926,7 +926,7 @@ Traps met while building it:
   delta, so every chat stream fell back to one piece at the end. An empty prefix is special-cased.
 - The server removed the temporary files it wrote for inline media before encoding the reply, so a
   result that names one of them (an echo, a restoration that writes beside its input) failed to
-  encode. The run now removes them after its completion handler has built the reply.
+  encode. The run removes them after its completion handler has built the reply.
 - `NFKRemoteWriteMediaFile` joins the extension into the path unchecked, so a client-named extension
   of `../x` leaves the temporary directory. Every server write goes through `NFKServedFileExtension`
   (one to eight letters and digits, else `bin`). The client-side callers pass their own extensions.
@@ -1114,7 +1114,7 @@ imports.
 - Clients: `NFKHTTPConnection` counts its requests, and `NFKHTTPRequest.firstOnConnection` marks the
   first. The server reports a client when that request passes the key check, so a connection whose
   first request is refused reports nothing. A keep-alive client is one event.
-- `currentStatus` wraps `statusJSONObject`, the dictionary the status route now serializes, in
+- `currentStatus` wraps `statusJSONObject`, the dictionary the status route serializes, in
   `+[NFKServerStatus statusWithJSONObject:]`, so the in-process reading and the route cannot drift.
 - The delegate protocol is `NS_SWIFT_SENDABLE`; measured with the isolation probe, a main-actor
   conformance runs on the delegate queue without a trap, and traps without the attribute.
@@ -1192,7 +1192,10 @@ port or exposure change and pins models its user marks.
   `started` is the latest start and is absent before the first (`NFKServerStatus.startDate` nil);
   `uptime_seconds` is 0 while the server is stopped. `unloadIdleModels` takes the backends out under
   `residencyLock` and releases them after leaving it, so an MLX teardown does not hold the status route
-  or the pin and idle accessors; the unload events and the handler follow the release.
+  or the pin and idle accessors. A model's load and unload events are enqueued on its own lock, where
+  its residency changes, so a request that rebuilds a model during another's teardown cannot reach the
+  delegate's serial queue ahead of the unload. The unload handler, which returns the runtimes' caches,
+  runs after the release.
 - Pinning is by name, like the per-model idle intervals, under `residencyLock`: a pinned model is
   skipped by `unloadIdleModels`, its idle timeout is INFINITY (so `idle_timeout_seconds` is absent), and
   `unloadModelNamed:` still unloads it. The residency object carries `pinned`, which
@@ -1252,13 +1255,18 @@ rules.
   on. `NFKServerRouteResponse` forwards to `NFKHTTPResponse`, whose writes may come from any thread and
   whose first reply wins; a handler that never replies holds the connection until the client leaves
   (`disconnectHandler` fires then). Both classes are `NS_SWIFT_SENDABLE`.
-- `NFKHTTPRequest.clientAddress` is new: `inet_ntop` of the peer endpoint, an IPv4-mapped IPv6
+- `NFKHTTPResponse.disconnectHandler` is read and written on the reply's lock. One set after the client
+  has gone runs at once, so a run queued (`enqueue:on:request:response:`) or a stream opened for a
+  client that already left is cancelled or closed; one set after the reply ends is not kept, so a
+  handler that captures its reply forms no cycle.
+- `NFKHTTPRequest.clientAddress`: `inet_ntop` of the peer endpoint, an IPv4-mapped IPv6
   address printed as IPv4. A loopback client over `localhost` reads `::1`.
 - The body limit is the listener's (`maximumRequestBodyBytes`): an oversized body is a 413 before
   routing, so the handler never sees it. The reason-phrase table gained 201, 202, 301, 302, 304, and
   409 for app replies; an unlisted status still writes "Status".
-- Tests: `NFKServerRouteTests` (8), over NSURLSession on a loopback port, one of them a finished
-  reply releasing a disconnect handler that captures it.
+- Tests: `NFKServerRouteTests` (9), over NSURLSession on a loopback port, two of them a finished
+  reply releasing a disconnect handler that captures it and a handler set after the client left
+  running at once.
 
 **Sendable blocks (2026-10-13).** An app's Swift 6 service (`-default-isolation MainActor`) trapped in
 `_swift_task_checkIsolatedSwift` → `dispatch_assert_queue_fail` when the server called a provider

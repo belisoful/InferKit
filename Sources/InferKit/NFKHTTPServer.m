@@ -225,6 +225,8 @@ static NFKHTTPChunkedState NFKHTTPDecodeChunked(NSData *buffer, NSUInteger start
 @property (nonatomic, assign, readwrite) BOOL headersSent;
 @property (nonatomic, assign, readwrite) BOOL finished;
 @property (nonatomic, assign, readwrite) BOOL disconnected;
+/*! The handler disconnectHandler reads and writes on the reply's lock. */
+@property (nonatomic, copy, nullable) void (^storedDisconnectHandler)(void);
 - (instancetype)initWithOwner:(NFKHTTPConnection *)owner keepAlive:(BOOL)keepAlive;
 - (void)connectionDidDrop;
 @end
@@ -614,7 +616,7 @@ static NSString *NFKHTTPEndpointAddress(nw_endpoint_t _Nullable endpoint)
 		}
 		self.finished = YES;
 		// A finished reply never fires the handler; releasing it frees a handler that captures this reply.
-		self.disconnectHandler = nil;
+		self.storedDisconnectHandler = nil;
 		return YES;
 	}
 }
@@ -689,11 +691,30 @@ static NSString *NFKHTTPEndpointAddress(nw_endpoint_t _Nullable endpoint)
 			return;
 		}
 		self.disconnected = YES;
-		handler = self.disconnectHandler;
-		self.disconnectHandler = nil;
+		handler = self.storedDisconnectHandler;
+		self.storedDisconnectHandler = nil;
 	}
 	if (handler != nil) {
 		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), handler);
+	}
+}
+
+- (nullable void (^)(void))disconnectHandler
+{
+	@synchronized (self) {
+		return self.storedDisconnectHandler;
+	}
+}
+
+- (void)setDisconnectHandler:(nullable void (^)(void))disconnectHandler
+{
+	BOOL alreadyGone = NO;
+	@synchronized (self) {
+		alreadyGone = self.disconnected;
+		self.storedDisconnectHandler = alreadyGone || self.finished ? nil : disconnectHandler;
+	}
+	if (alreadyGone && disconnectHandler != nil) {
+		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), disconnectHandler);
 	}
 }
 

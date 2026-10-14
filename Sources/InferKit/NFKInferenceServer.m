@@ -553,10 +553,10 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 			[self becomeResidentWithBackend:backend description:description];
 			[starting addObjectsFromArray:[self takeStartableRuns]];
 		}
-	}
-	if (reportsBuild) {
-		[self reportModelEvent:failure != nil ? NFKServerModelEventKindLoadFailed : NFKServerModelEventKindLoaded
-						reason:reason loadSeconds:loadSeconds error:failure];
+		if (reportsBuild) {
+			[self reportModelEvent:failure != nil ? NFKServerModelEventKindLoadFailed : NFKServerModelEventKindLoaded
+							reason:reason loadSeconds:loadSeconds error:failure];
+		}
 	}
 	for (NFKServedRun *run in refused) {
 		[self reportRun:run state:NFKServerRunStateFailed error:failure];
@@ -640,8 +640,11 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 }
 
 /*! Takes the backend out of the model when the model could release it now and test, run on the lock,
-	agrees, and returns it; nil when it did not. The caller releases it, then calls finishUnloadWithReason:. */
+	agrees, reports the unload with reason, and returns the backend; nil when it did not. The event is
+	reported on the lock, as a finished build's is, so the delegate receives a model's events in the
+	order its residency changed. The caller releases the backend, then calls finishUnload. */
 - (nullable id<NFKInferenceBackend>)takeBackendPassingTest:(BOOL (^)(NFKServedModel *model))test
+											  reason:(NFKServerModelEventReason)reason
 {
 	@synchronized (self) {
 		if (![self isUnloadableNow] || !test(self)) {
@@ -652,29 +655,31 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		self.residency = NFKServerModelResidencyNotLoaded;
 		self.unloads += 1;
 		self.unloadRequested = NO;
+		if (taken != nil) {
+			[self reportModelEvent:NFKServerModelEventKindUnloaded reason:reason loadSeconds:0 error:nil];
+		}
 		return taken;
 	}
 }
 
-/*! Reports an unload with reason and runs the unload handler; called once the backend is released. */
-- (void)finishUnloadWithReason:(NFKServerModelEventReason)reason
+/*! Runs the unload handler; called once the taken backend is released. */
+- (void)finishUnload
 {
-	[self reportModelEvent:NFKServerModelEventKindUnloaded reason:reason loadSeconds:0 error:nil];
 	if (self.unloadHandler != nil) {
 		self.unloadHandler();
 	}
 }
 
-/*! Releases the backend when takeBackendPassingTest: takes it, then reports the unload with reason; YES
-	when it did. The backend is released off the lock. */
+/*! Releases the backend when takeBackendPassingTest:reason: takes it; YES when it did. The backend is
+	released off the lock. */
 - (BOOL)unloadPassingTest:(BOOL (^)(NFKServedModel *model))test reason:(NFKServerModelEventReason)reason
 {
 	BOOL unloaded = NO;
 	@autoreleasepool {
-		unloaded = [self takeBackendPassingTest:test] != nil;
+		unloaded = [self takeBackendPassingTest:test reason:reason] != nil;
 	}
 	if (unloaded) {
-		[self finishUnloadWithReason:reason];
+		[self finishUnload];
 	}
 	return unloaded;
 }
@@ -700,15 +705,16 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 }
 
 /*! Takes the backend when the model has gone unused for at least idle seconds and was built at least
-	grace seconds ago, as takeBackendPassingTest: does. */
+	grace seconds ago, as takeBackendPassingTest:reason: does. */
 - (nullable id<NFKInferenceBackend>)takeBackendIfUnusedFor:(NSTimeInterval)idle grace:(NSTimeInterval)grace at:(NSTimeInterval)now
+													reason:(NFKServerModelEventReason)reason
 {
 	return [self takeBackendPassingTest:^BOOL(NFKServedModel *model) {
 		return now - model.loadedAt >= grace && now - model.lastUsedAt >= idle;
-	}];
+	} reason:reason];
 }
 
-/*! Whether takeBackendIfUnusedFor:grace:at: would take the backend. */
+/*! Whether takeBackendIfUnusedFor:grace:at:reason: would take the backend. */
 - (BOOL)isUnusedFor:(NSTimeInterval)idle grace:(NSTimeInterval)grace at:(NSTimeInterval)now
 {
 	@synchronized (self) {
@@ -1059,9 +1065,9 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		[self.pending removeAllObjects];
 		handlers = [self.loadHandlers copy];
 		[self.loadHandlers removeAllObjects];
-	}
-	if (wasResident) {
-		[self reportModelEvent:NFKServerModelEventKindUnloaded reason:NFKServerModelEventReasonRemoved loadSeconds:0 error:nil];
+		if (wasResident) {
+			[self reportModelEvent:NFKServerModelEventKindUnloaded reason:NFKServerModelEventReasonRemoved loadSeconds:0 error:nil];
+		}
 	}
 	NSError *error = [self notServedError];
 	for (NFKServedRun *run in waiting) {
@@ -1854,8 +1860,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 {
 	NSMutableArray<NSString *> *unloaded = [NSMutableArray array];
 	NSMutableArray<id<NFKInferenceBackend>> *released = [NSMutableArray array];
-	NSMutableArray<NFKServedModel *> *idleUnloads = [NSMutableArray array];
-	NSMutableArray<NFKServedModel *> *pressureUnloads = [NSMutableArray array];
+	NSMutableArray<NFKServedModel *> *unloadedModels = [NSMutableArray array];
 	double pressure = self.memoryPressure;
 	NSTimeInterval grace = MAX(self.unloadGracePeriod, 0.0);
 	@synchronized (self.residencyLock) {
@@ -1868,10 +1873,10 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 			}
 			NSTimeInterval idle = [self idleIntervalForModelNamed:model.name];
 			NSTimeInterval timeout = [self timeoutForIdleInterval:idle pressure:pressure];
-			id<NFKInferenceBackend> taken = [model takeBackendIfUnusedFor:idle grace:grace at:now];
+			id<NFKInferenceBackend> taken = [model takeBackendIfUnusedFor:idle grace:grace at:now reason:NFKServerModelEventReasonIdle];
 			if (taken != nil) {
 				[released addObject:taken];
-				[idleUnloads addObject:model];
+				[unloadedModels addObject:model];
 				[unloaded addObject:model.name];
 			} else if (timeout < idle && [model isUnusedFor:timeout grace:grace at:now]) {
 				[pressured addObject:model];
@@ -1883,10 +1888,11 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 			return [@([left lastUse]) compare:@([right lastUse])];
 		}];
 		for (NFKServedModel *model in spaced ? leastRecentFirst : @[]) {
-			id<NFKInferenceBackend> taken = [model takeBackendIfUnusedFor:timeouts[model.name].doubleValue grace:grace at:now];
+			id<NFKInferenceBackend> taken = [model takeBackendIfUnusedFor:timeouts[model.name].doubleValue grace:grace at:now
+																   reason:NFKServerModelEventReasonPressure];
 			if (taken != nil) {
 				[released addObject:taken];
-				[pressureUnloads addObject:model];
+				[unloadedModels addObject:model];
 				[unloaded addObject:model.name];
 				self.lastPressureUnloadAt = now;
 				self.hasPressureUnloaded = YES;
@@ -1898,11 +1904,8 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	@autoreleasepool {
 		[released removeAllObjects];
 	}
-	for (NFKServedModel *model in idleUnloads) {
-		[model finishUnloadWithReason:NFKServerModelEventReasonIdle];
-	}
-	for (NFKServedModel *model in pressureUnloads) {
-		[model finishUnloadWithReason:NFKServerModelEventReasonPressure];
+	for (NFKServedModel *model in unloadedModels) {
+		[model finishUnload];
 	}
 	return unloaded;
 }

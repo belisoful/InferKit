@@ -141,6 +141,33 @@
 	XCTAssertNil(captured, @"the reply is released once it finishes");
 }
 
+- (void)testADisconnectHandlerSetAfterTheClientLeftRunsAtOnce
+{
+	__block NFKServerRouteResponse *held = nil;
+	XCTestExpectation *arrived = [self expectationWithDescription:@"the request reaches the handler"];
+	[self.server addRouteForPathPrefix:@"/myapp/" handler:^(NFKServerRouteRequest *request, NFKServerRouteResponse *response) {
+		held = response;
+		[arrived fulfill];
+	} error:NULL];
+
+	NSURLSession *session = [NSURLSession sessionWithConfiguration:NSURLSessionConfiguration.ephemeralSessionConfiguration];
+	NSURLSessionDataTask *task = [session dataTaskWithURL:[self URLForPath:@"/myapp/hold"]];
+	[task resume];
+	[self waitForExpectations:@[ arrived ] timeout:5];
+	[session invalidateAndCancel];
+	NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:5];
+	while (!held.isDisconnected && deadline.timeIntervalSinceNow > 0) {
+		[NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+	}
+	XCTAssertTrue(held.isDisconnected);
+
+	XCTestExpectation *fired = [self expectationWithDescription:@"the handler runs"];
+	held.disconnectHandler = ^{
+		[fired fulfill];
+	};
+	[self waitForExpectations:@[ fired ] timeout:5];
+}
+
 - (void)testAHandlerStreamsServerSentEvents
 {
 	[self.server addRouteForPathPrefix:@"/myapp/" handler:^(NFKServerRouteRequest *request, NFKServerRouteResponse *response) {

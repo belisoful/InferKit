@@ -10,6 +10,7 @@
 #import "NFKInferenceKeys.h"
 #import "NFKVideoAsset.h"
 #import "NFKErrors.h"
+#import "NFKRemoteTransportPrivate.h"
 
 @implementation NFKAsyncGenerationBackend
 
@@ -235,6 +236,13 @@
 
 - (nullable NSDictionary *)sendJSONRequest:(NSURLRequest *)request error:(NSError * _Nullable *)outError
 {
+	NSError *pinError = NFKRemotePinPreflightError(self.session, request.URL, @"https");
+	if (pinError != nil) {
+		if (outError != NULL) {
+			*outError = pinError;
+		}
+		return nil;
+	}
 	__block NSData *resultData = nil;
 	__block NSHTTPURLResponse *resultResponse = nil;
 	__block NSError *resultError = nil;

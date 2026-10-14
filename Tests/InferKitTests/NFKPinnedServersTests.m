@@ -506,6 +506,34 @@ static NSString * const NFKPinTestHost = @"Studio.local";
 	XCTAssertNil([NFKRealtimeSession sessionForProvider:NFKRemoteProvider.openAI apiStyle:NFKRealtimeAPIStyleOpenAIConversation apiKey:nil modelName:@"m"].URLSession);
 }
 
+- (void)testAPinnedJobBackendRefusesAPlainHTTPURLUnsent
+{
+	NFKAsyncGenerationBackend *backend = [[NFKAsyncGenerationBackend alloc] init];
+	backend.session = [NFKRemoteTransport sessionWithPinnedCertificateSHA256:self.firstFingerprint];
+	NSError *error = nil;
+	NSURLRequest *request = [NSURLRequest requestWithURL:[NSURL URLWithString:@"http://127.0.0.1:9/v1/videos"]];
+	XCTAssertNil([backend sendJSONRequest:request error:&error]);
+	XCTAssertEqual(error.code, kNFKError_InferenceBackendFailure);
+	XCTAssertTrue([error.localizedDescription containsString:@"HTTPS"], @"%@", error);
+}
+
+- (void)testAMalformedPinRefusesASocketWithTheFingerprintError
+{
+	NSURLSession *pinned = [NFKRemoteTransport sessionWithPinnedCertificateSHA256:@"not-a-fingerprint"];
+	NSURLRequest *request = [NSURLRequest requestWithURL:[NSURL URLWithString:@"wss://127.0.0.1:9/v1/realtime"]];
+	NFKRealtimeWebSocket *socket = [[NFKRealtimeWebSocket alloc] initWithRequest:request session:pinned];
+	XCTestExpectation *closed = [self expectationWithDescription:@"closed"];
+	__block NSError *closeError = nil;
+	[socket openWithMessageHandler:^(NSString *text, NSData *data) {
+		XCTFail(@"a refused socket receives nothing");
+	} closeHandler:^(NSError *error) {
+		closeError = error;
+		[closed fulfill];
+	}];
+	[self waitForExpectations:@[ closed ] timeout:5.0];
+	XCTAssertTrue([closeError.localizedDescription containsString:@"64 hexadecimal digits"], @"%@", closeError);
+}
+
 - (void)testAPinnedSocketRefusesAPlainWebSocketURLUnopened
 {
 	NSURLSession *pinned = [NFKRemoteTransport sessionWithPinnedCertificateSHA256:self.firstFingerprint];

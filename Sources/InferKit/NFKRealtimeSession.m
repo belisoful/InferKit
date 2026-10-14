@@ -49,16 +49,9 @@
 	[self receive];
 }
 
-// The pinned session's trust delegate checks the certificate; only the scheme is left to check here.
 - (nullable NSError *)pinRefusal
 {
-	if ([NFKRemoteTransport pinnedCertificateSHA256ForSession:self.session] == nil
-		|| [self.request.URL.scheme.lowercaseString isEqualToString:@"wss"]) {
-		return nil;
-	}
-	NSString *reason = [NSString stringWithFormat:@"a pinned session opens only wss:// sockets, and %@ is %@://",
-						self.request.URL.host ?: @"the endpoint", self.request.URL.scheme ?: @""];
-	return [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:reason];
+	return NFKRemotePinPreflightError(self.session, self.request.URL, @"wss");
 }
 
 // One receive per message; the next is asked for once this one is handled.

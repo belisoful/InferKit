@@ -30,7 +30,8 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The request timeout in seconds for the reading calls. Defaults to 30. A pull has no timeout. */
 @property (nonatomic, assign) NSTimeInterval timeout;
 
-/*! The session used for the reading calls. Defaults to the shared session. */
+/*! The session used for the reading calls. Defaults to the provider's pinned session when the provider
+	pins a certificate, and to the shared session otherwise. */
 @property (nonatomic, strong) NSURLSession *session;
 
 - (instancetype)init NS_UNAVAILABLE;
