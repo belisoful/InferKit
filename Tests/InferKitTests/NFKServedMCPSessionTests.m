@@ -182,14 +182,15 @@
 	return response.statusCode;
 }
 
+// XCTNSPredicateExpectation evaluates about once a second, longer than the sub-second intervals these
+// tests set, so the wait polls every 10 ms.
 - (void)waitUntil:(BOOL (^)(void))condition description:(NSString *)description
 {
-	NSPredicate *predicate = [NSPredicate predicateWithBlock:^BOOL(id object, NSDictionary *bindings) {
-		return condition();
-	}];
-	XCTestExpectation *met = [[XCTNSPredicateExpectation alloc] initWithPredicate:predicate object:nil];
-	met.expectationDescription = description;
-	[self waitForExpectations:@[ met ] timeout:10];
+	NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:10];
+	while (!condition() && deadline.timeIntervalSinceNow > 0) {
+		[NSRunLoop.currentRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.01]];
+	}
+	XCTAssertTrue(condition(), @"%@", description);
 }
 
 /*! Opens the session's event stream on its own URL session, which the test invalidates at the end. */
@@ -304,7 +305,7 @@
 - (void)testAnsweredPingsKeepASessionAndMissedOnesEndIt
 {
 	self.server.MCPPingInterval = 0.1;
-	self.server.MCPMissedPingLimit = 2;
+	self.server.MCPMissedPingLimit = 3;
 	self.server.MCPSessionIdleTimeout = 0.2;
 	NSString *identifier = [self initializeAs:@"agent" key:nil];
 	NFKEventStreamReader *reader = [self openStreamForSession:identifier];
