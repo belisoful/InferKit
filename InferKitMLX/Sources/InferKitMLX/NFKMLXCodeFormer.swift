@@ -524,7 +524,41 @@ public final class NFKMLXCodeFormer: NSObject {
                          detector: try NFKMLXRetinaFace.detector(weightsURL: detectorWeightsURL))
     }
 
-    /// The same, with a chosen detector.
+    /// Downloads CodeFormer's checkpoint and RetinaFace's from Hugging Face, then builds the whole-photo
+    /// backend as ``photoBackend(fidelity:weightsURL:detectorWeightsURL:)`` does.
+    ///
+    /// @discussion `repo`, `weightsPath`, and `revision` name CodeFormer's checkpoint; `detectorRepo`,
+    /// `detectorWeightsPath`, and `detectorRevision` name RetinaFace's. A file already in the cache is
+    /// not fetched again. The call blocks on the network, so run it off the render thread. Introduced in
+    /// InferKit 0.4.0.
+    @objc(photoBackendWithFidelity:repo:weightsPath:revision:detectorRepo:detectorWeightsPath:detectorRevision:cacheDirectoryURL:error:)
+    public static func photoBackend(fidelity: Float, repo: String, weightsPath: String, revision: String?,
+                                    detectorRepo: String, detectorWeightsPath: String, detectorRevision: String?,
+                                    cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
+                                                cacheDirectoryURL: cacheDirectoryURL)
+        let detectorURL = try NFKMLXDownload.weightsURL(repo: detectorRepo, weightsPath: detectorWeightsPath,
+                                                        revision: detectorRevision,
+                                                        cacheDirectoryURL: cacheDirectoryURL)
+        return try photoBackend(fidelity: fidelity, weightsURL: url, detectorWeightsURL: detectorURL)
+    }
+
+    /// The asynchronous form of
+    /// ``photoBackend(fidelity:repo:weightsPath:revision:detectorRepo:detectorWeightsPath:detectorRevision:cacheDirectoryURL:)``.
+    /// The handler runs on a background queue. Introduced in InferKit 0.4.0.
+    @objc(photoBackendWithFidelity:repo:weightsPath:revision:detectorRepo:detectorWeightsPath:detectorRevision:cacheDirectoryURL:completionHandler:)
+    public static func photoBackend(fidelity: Float, repo: String, weightsPath: String, revision: String?,
+                                    detectorRepo: String, detectorWeightsPath: String, detectorRevision: String?,
+                                    cacheDirectoryURL: URL?,
+                                    completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try photoBackend(fidelity: fidelity, repo: repo, weightsPath: weightsPath, revision: revision,
+                             detectorRepo: detectorRepo, detectorWeightsPath: detectorWeightsPath,
+                             detectorRevision: detectorRevision, cacheDirectoryURL: cacheDirectoryURL)
+        }
+    }
+
+    /// ``photoBackend(fidelity:weightsURL:detectorWeightsURL:)`` with a chosen detector.
     ///
     /// @discussion RetinaFace is the default because it is the detector the reference pipeline runs,
     /// so the crop it produces is the reference's own; it costs a 1.7 MB checkpoint beside

@@ -181,7 +181,13 @@ public final class NFKMLXWanVideoGenerator: NSObject {
     /// the float32 encoder.
     @objc public internal(set) var encodesInFloat32 = true
 
+    /// The frame rate the release is trained at: 24 for Wan 2.2 TI2V-5B, 16 for Wan 2.1. The factories read
+    /// it from the release's `vae/config.json`, where TI2V-5B's autoencoder is the residual one. Introduced in
+    /// InferKit 0.4.0.
+    @objc public let framesPerSecond: Double
+
     init(resident: Bool, segmenter: NFKMLXSentencePieceSegmenter, compression: (spatial: Int, temporal: Int),
+         framesPerSecond: Double = 16,
          sequenceLength: Int = NFKMLXWanVideoGenerator.maximumSequenceLength,
          loadTextEncoder: @escaping () throws -> NFKMLXT5EncoderNet,
          loadPipeline: @escaping () throws -> NFKMLXWanPipeline) {
@@ -190,6 +196,7 @@ public final class NFKMLXWanVideoGenerator: NSObject {
         pipelineStage = NFKMLXStage(loadPipeline)
         self.segmenter = segmenter
         self.compression = compression
+        self.framesPerSecond = framesPerSecond
         self.sequenceLength = sequenceLength
         super.init()
     }
@@ -210,6 +217,12 @@ public final class NFKMLXWanVideoGenerator: NSObject {
     /// in time.
     static func compression(of vae: NFKMLXWanVAEConfiguration) -> (spatial: Int, temporal: Int) {
         ((1 << vae.temporalDownsample.count) * vae.patchSize, 1 << vae.temporalDownsample.filter { $0 }.count)
+    }
+
+    /// The frame rate a release is trained at, told by its autoencoder: Wan 2.2's residual autoencoder
+    /// belongs to TI2V-5B (24 frames per second), and Wan 2.1's to the 16 frames-per-second releases.
+    static func framesPerSecond(of vae: NFKMLXWanVAEConfiguration) -> Double {
+        vae.isResidual ? 24 : 16
     }
 
     // MARK: Factories
@@ -256,6 +269,7 @@ public final class NFKMLXWanVideoGenerator: NSObject {
         let generator = NFKMLXWanVideoGenerator(
             resident: plan.holdsStagesResident, segmenter: segmenter,
             compression: compression(of: vae.configuration),
+            framesPerSecond: framesPerSecond(of: vae.configuration),
             loadTextEncoder: {
                 let encoder = NFKMLXT5Encoder.makeNet(textConfiguration)
                 try NFKMLXT5Encoder.loadWeights(into: encoder, from: textDirectory,

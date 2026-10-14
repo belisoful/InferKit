@@ -35,19 +35,46 @@ public final class NFKMLXSpeechBackend: NSObject, NFKInferenceBackend {
     /// Maps input text to a mono waveform `[N]` in `-1...1`, generated at the given sample rate.
     public typealias Synthesize = @Sendable (_ text: String, _ sampleRate: Int) -> MLXArray
 
-    private let synthesize: Synthesize
+    /// Maps input text to a mono waveform as ``Synthesize`` does, reading the request's own parameters.
+    /// Introduced in InferKit 0.4.0.
+    public typealias RequestSynthesize = @Sendable (_ text: String, _ sampleRate: Int,
+                                                    _ request: NFKInferenceRequest) throws -> MLXArray
+
+    private let synthesize: RequestSynthesize
     private let identifier: String
     private let ready: Bool
     private let configuration: NFKMLXSpeechConfiguration
+    private let requestParameterKeys: Set<String>
 
+    public convenience init(identifier: String = "mlx-speech",
+                            isReady: Bool = true,
+                            configuration: NFKMLXSpeechConfiguration = NFKMLXSpeechConfiguration(),
+                            synthesize: @escaping Synthesize) {
+        self.init(identifier: identifier, isReady: isReady, configuration: configuration, parameterKeys: [],
+                  requestSynthesize: { text, sampleRate, _ in synthesize(text, sampleRate) })
+    }
+
+    /// A backend whose closure reads the request's parameters beside the text.
+    ///
+    /// - Parameters:
+    ///   - identifier: the backend's `backendIdentifier`.
+    ///   - isReady: whether the backend reports itself ready to run.
+    ///   - configuration: the output sample rate and file settings.
+    ///   - parameterKeys: the request parameters `requestSynthesize` reads, which the backend declares beside
+    ///     `NFKParameterSampleRate`.
+    ///   - requestSynthesize: maps the text, the sample rate, and the request to a mono waveform.
+    ///
+    /// Introduced in InferKit 0.4.0.
     public init(identifier: String = "mlx-speech",
                 isReady: Bool = true,
                 configuration: NFKMLXSpeechConfiguration = NFKMLXSpeechConfiguration(),
-                synthesize: @escaping Synthesize) {
+                parameterKeys: Set<String>,
+                requestSynthesize: @escaping RequestSynthesize) {
         self.identifier = identifier
         self.ready = isReady
         self.configuration = configuration
-        self.synthesize = synthesize
+        self.requestParameterKeys = parameterKeys
+        self.synthesize = requestSynthesize
         super.init()
     }
 
@@ -58,7 +85,7 @@ public final class NFKMLXSpeechBackend: NSObject, NFKInferenceBackend {
     @objc public var backendIdentifier: String { identifier }
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
-    @objc public var supportedParameterKeys: Set<String> { [NFKParameterSampleRate] }
+    @objc public var supportedParameterKeys: Set<String> { requestParameterKeys.union([NFKParameterSampleRate]) }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputPrompt, NFKInputMessages] }
@@ -96,7 +123,7 @@ public final class NFKMLXSpeechBackend: NSObject, NFKInferenceBackend {
 
     private static func run(_ request: NFKInferenceRequest,
                             configuration: NFKMLXSpeechConfiguration,
-                            synthesize: Synthesize) throws -> NFKInferenceResult {
+                            synthesize: RequestSynthesize) throws -> NFKInferenceResult {
         let text = self.text(from: request)
         guard !text.isEmpty else { throw NFKMLXError.unsupportedInput }
 
@@ -105,7 +132,7 @@ public final class NFKMLXSpeechBackend: NSObject, NFKInferenceBackend {
         let requested = (request.parameter(forKey: NFKParameterSampleRate) as? NSNumber)?.intValue
         let sampleRate = max(requested ?? configuration.sampleRate, 1)
 
-        let waveform = synthesize(text, sampleRate)
+        let waveform = try synthesize(text, sampleRate, request)
         eval(waveform)
         let samples = waveform.asType(Float.self).asArray(Float.self)
 

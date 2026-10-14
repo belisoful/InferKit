@@ -1639,6 +1639,62 @@
 	CGImageRelease(plate);
 }
 
+// Every shipped model runs from Objective-C as a backend: each model class answers its backend factories,
+// the generators and model objects wrap themselves as backends, and every name is registered.
+- (void)testEveryModelReachesObjectiveCAsABackend
+{
+	NSDictionary<NSString *, NSArray<NSString *> *> *factories = @{
+		NSStringFromClass([NFKMLXLTXVideoGenerator class]): @[ @"backendWithDirectoryURL:error:", @"backendWithDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],
+		NSStringFromClass([NFKMLXWanVideoGenerator class]): @[ @"backendWithDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],
+		NSStringFromClass([NFKMLXZImageGenerator class]): @[ @"backendWithDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],
+		NSStringFromClass([NFKMLXQwenImageGenerator class]): @[ @"backendWithDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],
+		NSStringFromClass([NFKMLXSD3Generator class]): @[ @"backendWithDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],
+		NSStringFromClass([NFKMLXFlux class]): @[ @"backendWithDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],
+		NSStringFromClass([NFKMLXFlux2 class]): @[ @"backendWithDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],
+		NSStringFromClass([NFKMLXSmolVLM class]): @[ @"backendWithDirectoryURL:error:", @"backendWithRepo:revision:cacheDirectoryURL:completionHandler:" ],
+		NSStringFromClass([NFKMLXQwen3VL class]): @[ @"backendWithDirectoryURL:error:", @"backendWithRepo:revision:cacheDirectoryURL:completionHandler:" ],
+		NSStringFromClass([NFKMLXPixtral class]): @[ @"backendWithDirectoryURL:error:", @"backendWithRepo:revision:cacheDirectoryURL:completionHandler:" ],
+		NSStringFromClass([NFKMLXModernBERTReranker class]): @[ @"backendWithDirectoryURL:error:", @"backendWithRepo:revision:cacheDirectoryURL:completionHandler:" ],
+		NSStringFromClass([NFKMLXQwen3VLReranker class]): @[ @"backendWithDirectoryURL:error:", @"backendWithRepo:revision:cacheDirectoryURL:completionHandler:" ],
+		NSStringFromClass([NFKMLXChronos class]): @[ @"backendWithWeightsURL:error:", @"backendWithRepo:weightsPath:revision:cacheDirectoryURL:completionHandler:", @"chronosWithRepo:weightsPath:revision:cacheDirectoryURL:completionHandler:" ],
+		NSStringFromClass([NFKMLXTimesFM class]): @[ @"backendWithDirectoryURL:error:", @"backendWithRepo:revision:cacheDirectoryURL:completionHandler:" ],
+		NSStringFromClass([NFKMLXDeepSeek class]): @[ @"deepSeekBackendWithRepo:revision:cacheDirectoryURL:error:", @"deepSeekBackendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:", @"deepSeekPagedBackendWithRepo:revision:cacheDirectoryURL:expertCacheBytes:completionHandler:" ],
+		NSStringFromClass([NFKMLXDepth3Estimator class]): @[ @"estimatorWithVariant:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:" ],
+		NSStringFromClass([NFKMLXCosmosTokenizer class]): @[ @"tokenizerWithVariant:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:", @"tokenizerWithVariant:repo:encoderWeightsPath:decoderWeightsPath:revision:cacheDirectoryURL:completionHandler:" ],
+		NSStringFromClass([NFKMLXSigLIP2 class]): @[ @"modelWithVariant:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:" ],
+		NSStringFromClass([NFKMLXRetinaFace class]): @[ @"detectorWithRepo:weightsPath:revision:cacheDirectoryURL:confidenceThreshold:suppressionThreshold:completionHandler:" ],
+		NSStringFromClass([NFKMLXCodeFormer class]): @[ @"photoBackendWithFidelity:repo:weightsPath:revision:detectorRepo:detectorWeightsPath:detectorRevision:cacheDirectoryURL:completionHandler:" ],
+		NSStringFromClass([NFKMLXRIFE class]): @[ @"clipBackendWithRepo:weightsPath:revision:cacheDirectoryURL:completionHandler:", @"registerClip" ],
+		NSStringFromClass([NFKMLXVideoSR class]): @[ @"clipBackendWithRepo:weightsPath:revision:cacheDirectoryURL:completionHandler:", @"registerClip" ],
+		NSStringFromClass([NFKMLXTextToImage class]): @[ @"backendWithModel:cacheDirectoryURL:completionHandler:", @"imageAdapterBackendWithModel:adapterRepo:adapterWeightsPath:adapterRevision:scale:cacheDirectoryURL:completionHandler:" ],
+		NSStringFromClass([NFKMLXSAM2 class]): @[ @"videoBackendWithVariant:release:weightsURL:error:", @"videoBackendWithVariant:release:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:", @"registerVideo" ],
+		NSStringFromClass([NFKMLXRVM class]): @[ @"clipBackendWithVariant:output:weightsURL:error:", @"clipBackendWithVariant:output:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:", @"registerClip" ],
+		NSStringFromClass([NFKMLXSANAGenerator class]): @[ @"backendWithDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],
+		NSStringFromClass([NFKMLXSAM3 class]): @[ @"backendWithDirectoryURL:error:", @"backendWithRepo:revision:cacheDirectoryURL:completionHandler:" ],
+		NSStringFromClass([NFKMLXFluxControlNetGenerator class]): @[ @"backendWithDirectoryURL:controlNetDirectoryURL:residency:error:", @"backendWithRepo:controlNetRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],
+		NSStringFromClass([NFKMLXSD3ControlNetGenerator class]): @[ @"backendWithDirectoryURL:controlNetDirectoryURL:residency:error:", @"backendWithRepo:controlNetRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],
+		NSStringFromClass([NFKMLXFastSpeech2 class]): @[ @"voiceBackendWithDirectoryURL:phonemizer:error:", @"voiceBackendWithDirectoryURL:g2pWeightsURL:error:", @"voiceBackendWithRepo:revision:cacheDirectoryURL:phonemizer:completionHandler:", @"ttsBackendWithPhonemizer:acousticURL:vocoderURL:symbols:error:" ],
+		NSStringFromClass([NFKMLXNeuralG2P class]): @[ @"g2pWithWeightsURL:phonemeSymbols:error:" ],
+		NSStringFromClass([NFKMLXCLIP class]): @[ @"probeBackendWithVariant:weightsURL:probeURL:labels:error:", @"probeBackendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:probeURL:labels:completionHandler:", @"registerProbe" ],
+		NSStringFromClass([NFKMLXGemmaLanguage class]): @[ @"gemmaMultimodalBackendWithDirectoryURL:residency:error:", @"gemmaMultimodalBackendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:", @"registerMultimodal" ],
+	};
+	for (NSString *className in factories) {
+		Class modelClass = NSClassFromString(className);
+		for (NSString *selector in factories[className]) {
+			XCTAssertTrue([modelClass respondsToSelector:NSSelectorFromString(selector)], @"%@ +%@", className, selector);
+		}
+	}
+	NSArray<Class> *wrappers = @[ [NFKMLXChronos class], [NFKMLXDepth3Estimator class], [NFKMLXFlux class], [NFKMLXFlux2 class], [NFKMLXFluxControlNetGenerator class], [NFKMLXLTXVideoGenerator class], [NFKMLXModernBERTReranker class], [NFKMLXPixtral class], [NFKMLXQwen3VL class], [NFKMLXQwen3VLReranker class], [NFKMLXQwenImageGenerator class], [NFKMLXSANAGenerator class], [NFKMLXSD3ControlNetGenerator class], [NFKMLXSD3Generator class], [NFKMLXSmolVLM class], [NFKMLXTimesFM class], [NFKMLXWanVideoGenerator class], [NFKMLXZImageGenerator class] ];
+	for (Class wrapper in wrappers) {
+		XCTAssertTrue([wrapper instancesRespondToSelector:@selector(inferenceBackend)], @"%@ -inferenceBackend", wrapper);
+	}
+	[NFKMLXReferenceModels registerAll];
+	NSArray<NSString *> *names = @[ @"ltx-video-0.9.0", @"wan", @"z-image", @"qwen-image-2.1", @"sd3", @"flux.1-schnell", @"flux.2-klein-4b", @"smolvlm2-500m", @"qwen3-vl-2b", @"pixtral-12b", @"gte-reranker-modernbert-base", @"qwen3-vl-reranker-2b", @"chronos-bolt-base", @"timesfm-2.5-200m", @"sam2-video", @"rife-clip", @"video-super-resolution-clip", @"robust-video-matting-clip", @"robust-video-matting-resnet50-clip", @"sana", @"sam3", @"flux.1-controlnet", @"sd3-controlnet", @"fastspeech2-voice", @"clip-probe", @"gemma4-multimodal" ];
+	for (NSString *name in names) {
+		XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:name], @"%@", name);
+	}
+}
+
 // A small opaque plate, for the examples that hand a model an image without running it.
 - (CGImageRef)examplePlate CF_RETURNS_RETAINED
 {

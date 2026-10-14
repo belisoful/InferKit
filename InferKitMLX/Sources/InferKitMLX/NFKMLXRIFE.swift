@@ -204,6 +204,8 @@ final class NFKMLXRIFENet: Module {
 public final class NFKMLXRIFE: NSObject {
 
     @objc public static let modelName = "rife"
+    /// The registry name and identifier of the clip backend. Introduced in InferKit 0.4.0.
+    @objc public static let clipModelName = "rife-clip"
     /// The two frame input keys the backend reads.
     @objc public static let frame0Key = "frame0"
     @objc public static let frame1Key = "frame1"
@@ -246,7 +248,7 @@ public final class NFKMLXRIFE: NSObject {
         let holder = NFKMLXRIFEHolder(net)
         var configuration = NFKMLXVideoConfiguration()
         configuration.frameRateMultiplier = 2
-        return NFKMLXVideoBackend(identifier: "\(modelName)-clip", configuration: configuration) { frames in
+        return NFKMLXVideoBackend(identifier: clipModelName, configuration: configuration) { frames in
             guard frames.count > 1 else { return frames }
             var output = [MLXArray]()
             output.reserveCapacity(frames.count * 2 - 1)
@@ -278,9 +280,37 @@ public final class NFKMLXRIFE: NSObject {
                                completionHandler: completionHandler)
     }
 
+    /// Downloads the checkpoint from Hugging Face, then builds the clip backend
+    /// (``clipBackend(weightsURL:)``). A file already in the cache is not fetched again. The call blocks
+    /// on the network, so run it off the render thread. Introduced in InferKit 0.4.0.
+    @objc(clipBackendWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
+    public static func clipBackend(repo: String, weightsPath: String, revision: String?,
+                                   cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
+                                                cacheDirectoryURL: cacheDirectoryURL)
+        return try clipBackend(weightsURL: url)
+    }
+
+    /// The asynchronous form of ``clipBackend(repo:weightsPath:revision:cacheDirectoryURL:)``. The handler
+    /// runs on the download's background queue. Introduced in InferKit 0.4.0.
+    @objc(clipBackendWithRepo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
+    public static func clipBackend(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?,
+                                   completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXDownload.backend(repo: repo, weightsPath: weightsPath, revision: revision,
+                               cacheDirectoryURL: cacheDirectoryURL,
+                               build: { try clipBackend(weightsURL: $0) },
+                               completionHandler: completionHandler)
+    }
+
     /// Registers RIFE (`rife`) with `NFKMLXModelRegistry`, delegating to `backend(weightsURL:)`.
     @objc public static func register() {
         NFKMLXModelRegistry.register(name: modelName) { weightsURL in try backend(weightsURL: weightsURL) }
+    }
+
+    /// Registers the clip backend (`rife-clip`) with `NFKMLXModelRegistry`, delegating to
+    /// ``clipBackend(weightsURL:)``. Introduced in InferKit 0.4.0.
+    @objc public static func registerClip() {
+        NFKMLXModelRegistry.register(name: clipModelName) { weightsURL in try clipBackend(weightsURL: weightsURL) }
     }
 
     /// Loads a safetensors checkpoint, transposing 4-D convolution weights to MLX's layout. `remap`

@@ -79,7 +79,8 @@ final class NFKMLXG2PNet: Module {
 }
 
 /// The in-toolkit neural phonemizer: text → grapheme ids → the G2P model → phoneme symbols.
-public final class NFKMLXNeuralG2P: NFKMLXPhonemizer, @unchecked Sendable {
+@objc(NFKMLXNeuralG2P)
+public final class NFKMLXNeuralG2P: NSObject, NFKMLXPhonemizer, @unchecked Sendable {
 
     private let net: NFKMLXG2PNet
     private let phonemeSymbols: [String]?
@@ -90,6 +91,7 @@ public final class NFKMLXNeuralG2P: NFKMLXPhonemizer, @unchecked Sendable {
     public init(configuration: NFKMLXG2PConfiguration = NFKMLXG2PConfiguration(), phonemeSymbols: [String]? = nil) {
         self.net = NFKMLXG2PNet(configuration)
         self.phonemeSymbols = phonemeSymbols
+        super.init()
     }
 
     /// Loads a safetensors checkpoint into the model.

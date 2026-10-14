@@ -66,8 +66,9 @@ public final class NFKMLXTimesFMForecast: NSObject {
     }
 }
 
-/// TimesFM 2.5 time-series forecasting (`google/timesfm-2.5-200m-pytorch`, Apache-2.0). An object like
-/// ``NFKMLXChronos``: a numeric series has no core request key.
+/// TimesFM 2.5 time-series forecasting (`google/timesfm-2.5-200m-pytorch`, Apache-2.0).
+/// ``inferenceBackend()`` runs it behind the InferKit contract, with the series and horizon under the
+/// `NFKMLXForecastKey` keys and the forecast options under `NFKMLXTimesFMParameterKey`.
 ///
 /// Introduced in InferKit 0.4.0.
 @objc(NFKMLXTimesFM)

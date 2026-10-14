@@ -7,9 +7,8 @@
 // relative-position bias, RMS `T5LayerNorm`). The decoder runs a SINGLE token (a `decoder_start` id)
 // that cross-attends to the encoder output, so its self-attention is over one position.
 //
-// Time-series has no place in InferKit's core input/output key vocabulary, so this ships as a Swift
-// object (`NFKMLXChronos.forecast(context:horizon:)`), the way `NFKMLXModernBERTReranker` is an object
-// rather than a backend.
+// The forecaster is an object (`NFKMLXChronos.forecast(context:horizon:)`); `inferenceBackend()` runs it
+// behind the InferKit contract with the series and horizon under the `NFKMLXForecastKey` keys.
 
 import Foundation
 import InferKit
@@ -336,8 +335,8 @@ private final class NFKChronosHolder: @unchecked Sendable {
     init(_ net: NFKMLXChronosNet) { self.net = net }
 }
 
-/// Chronos-Bolt time-series forecasting. Not an `NFKInferenceBackend` (a numeric series has no core
-/// input/output key); it is an object, like `NFKMLXModernBERTReranker`.
+/// Chronos-Bolt time-series forecasting. ``inferenceBackend()`` runs it behind the InferKit contract, with
+/// the series and horizon under the `NFKMLXForecastKey` keys.
 ///
 /// - Since: InferKit 0.4.0
 @objc(NFKMLXChronos)

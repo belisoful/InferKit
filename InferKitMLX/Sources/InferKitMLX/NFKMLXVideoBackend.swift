@@ -20,7 +20,8 @@ import MLX
 /// How a video backend reads and writes the clips it works on.
 public struct NFKMLXVideoConfiguration: Sendable {
 
-    /// The frame rate the result is written at, or nil to keep the source's.
+    /// The frame rate the result is written at, or nil to keep the source's. A request's
+    /// `NFKParameterFramesPerSecond` overrides it.
     ///
     /// Frame interpolation changes it: a transform that returns two frames for every one it took has
     /// doubled the rate, and writing at the source's rate would produce a slow-motion clip instead of
@@ -28,7 +29,8 @@ public struct NFKMLXVideoConfiguration: Sendable {
     public var outputFramesPerSecond: Double?
 
     /// A rate multiplier applied to the source's, used when the transform's output length is known to
-    /// scale with the input's. Ignored when ``outputFramesPerSecond`` is set.
+    /// scale with the input's. Ignored when ``outputFramesPerSecond`` or a request's
+    /// `NFKParameterFramesPerSecond` is set.
     public var frameRateMultiplier: Double = 1
 
     /// The most frames decoded from a source clip.
@@ -52,6 +54,9 @@ private final class NFKMLXVideoTransformBox: @unchecked Sendable {
 /// `[H, W, 3]` tensors in `0...1`, encodes what comes back, and returns a new `NFKVideoAsset` under
 /// `NFKOutputVideo`. The toolkit owns the decode, the bridge, and the encode; the caller owns the
 /// model, mirroring `NFKMLXModuleBackend`.
+///
+/// The result's frame rate is the request's `NFKParameterFramesPerSecond` (a positive `NSNumber`) where
+/// one is given, and otherwise the rate ``NFKMLXVideoConfiguration`` derives from the source's.
 ///
 /// Inference over a clip is long, so run it off the render thread — through `runInference(for:)`
 /// directly, or by wrapping the backend in `NFKInferenceSubmit(...)` for a job with cancellation.
@@ -86,7 +91,7 @@ public final class NFKMLXVideoBackend: NSObject, NFKInferenceBackend {
     public var backendIdentifier: String { identifier }
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
-    @objc public var supportedParameterKeys: Set<String> { [] }
+    @objc public var supportedParameterKeys: Set<String> { [NFKParameterFramesPerSecond] }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputVideo] }
@@ -96,6 +101,7 @@ public final class NFKMLXVideoBackend: NSObject, NFKInferenceBackend {
               let sourceURL = asset.fileURL else {
             throw NFKMLXError.unsupportedInput
         }
+        let requestedRate = try Self.requestedFramesPerSecond(request)
         let clip = try NFKMLXVideoFile.read(sourceURL, frameLimit: configuration.frameLimit)
         let colorSpace = CGColorSpaceCreateDeviceRGB()
         let frames = clip.frames.map { frame -> MLXArray in
@@ -111,7 +117,7 @@ public final class NFKMLXVideoBackend: NSObject, NFKInferenceBackend {
         options.colorSpace = colorSpace
         let written = try produced.map { try NFKMLXImageBridge.cgImage(from: $0, options: options) }
 
-        let rate = configuration.outputFramesPerSecond
+        let rate = requestedRate ?? configuration.outputFramesPerSecond
             ?? clip.framesPerSecond * configuration.frameRateMultiplier
         let outputURL = (configuration.outputDirectoryURL ?? FileManager.default.temporaryDirectory)
             .appendingPathComponent("\(identifier)-\(UUID().uuidString).mov")
@@ -123,5 +129,17 @@ public final class NFKMLXVideoBackend: NSObject, NFKInferenceBackend {
                                    framesPerSecond: rate,
                                    dimensions: CGSize(width: first.width, height: first.height))
         return NFKInferenceResult(outputs: [NFKOutputVideo: result])
+    }
+
+    /// The request's `NFKParameterFramesPerSecond`, or nil where it names none. A rate that is not
+    /// positive is refused.
+    static func requestedFramesPerSecond(_ request: NFKInferenceRequest) throws -> Double? {
+        guard let rate = (request.parameter(forKey: NFKParameterFramesPerSecond) as? NSNumber)?.doubleValue else {
+            return nil
+        }
+        guard rate > 0, rate.isFinite else {
+            throw NFKMLXError.unsupportedConfiguration("NFKParameterFramesPerSecond must be a positive rate")
+        }
+        return rate
     }
 }
