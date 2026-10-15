@@ -86,12 +86,14 @@ API_UNAVAILABLE(ios, tvos, watchos)
 @property (atomic, copy) NFKPluginSignaturePolicy *signaturePolicy;
 
 /*! How long the hello exchange may take, in seconds. Defaults to 10. For an "objc" or "c-abi" plugin
-	the clock starts once the plugin host has verified the bundle. */
+	the clock starts once the plugin host has verified the bundle. A hello that does not answer in time
+	fails the start with NFKPluginErrorTimedOut. */
 @property (atomic, assign) NSTimeInterval handshakeTimeout;
 
 /*! How long the plugin host may take to verify the bundle after it hands over its channel, in seconds.
 	Defaults to 120. Verification hashes every file the bundle's seal covers, so a plugin keeps large
-	weights outside its bundle. */
+	weights outside its bundle. A verification that does not finish in time fails the start with
+	NFKPluginErrorTimedOut. */
 @property (atomic, assign) NSTimeInterval verificationTimeout;
 
 /*! How long an idle process with no live backends runs before it exits, in seconds. Defaults to the
@@ -99,8 +101,18 @@ API_UNAVAILABLE(ios, tvos, watchos)
 	unload. A value that is not positive keeps an idle process running. */
 @property (atomic, assign) NSTimeInterval idleExitInterval;
 
-/*! How long a restart waits for runs in flight before it cancels them, in seconds. Defaults to 120. */
+/*! How long a restart waits for runs in flight before it cancels them, in seconds. Defaults to 120. A
+	cancelled run that has not ended 5 seconds later fails with NFKPluginErrorTimedOut. */
 @property (atomic, assign) NSTimeInterval restartDrainTimeout;
+
+/*! How long a backend waits for the plugin to build or prepare its model, in seconds. Defaults to 300,
+	since a plugin may load large weights in either step. A build or a preparation that does not answer in
+	time fails the request that needed it with NFKPluginErrorTimedOut, naming the model. A late build's
+	backend is released, and a late preparation's load is still recorded. A value that is not positive
+	waits without a limit. Runs and tool calls have no deadline, since a model may run for minutes:
+	cancelling a submitted job, stopping the process, or the process's exit ends one. Introduced in
+	InferKit 0.4.0. */
+@property (atomic, assign) NSTimeInterval buildTimeout;
 
 /*! How many crashes within crashLimitInterval leave the process Failed. Defaults to 3. */
 @property (atomic, assign) NSUInteger crashLimit;

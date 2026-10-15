@@ -113,8 +113,8 @@ classifier as macOS 12, so every use sits under `@available`; the zero-warning g
 unguarded call.
 
 1. `swift build` + `swift test` on the host — **0 warnings**, all tests green. Grep the log for
-   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 1359 tests
-   (2026-10-15): the Objective-C `- (void)test` methods under `Tests/` (1253) and in
+   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 1365 tests
+   (2026-10-15): the Objective-C `- (void)test` methods under `Tests/` (1259) and in
    `Examples/NFKExamples.m` (55, the `InferKitExamples` target), plus the `func test` methods in
    `SwiftExamples/` (51).
 2. `xcodebuild build` for a `generic/platform=iOS` destination (cross-platform compile), and for tvOS

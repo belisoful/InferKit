@@ -232,6 +232,11 @@ fields are ignored. An unknown type with an id is answered with an error of
 - A process that exits fails its runs in flight with `NFKPluginErrorProcessExited`, carrying the exit
   status or signal and the end of its standard error.
 - A C plugin's error is `{"message", "domain"?, "code"?}`.
+- Every host deadline fails with `NFKPluginErrorTimedOut`: verification (`verificationTimeout`), hello
+  and describe (`handshakeTimeout`), build and prepare (`buildTimeout`), and a run that a restart
+  cancelled and that has not ended 5 seconds later. The description names the step and the limit.
+  `NFKPluginErrorProtocolViolation` is for malformed traffic only. The channel's own hand-off wait
+  reports `NFKPluginErrorHandshakeFailed`.
 - Until a stage implements a stub, it answers `NFKPluginErrorNotImplemented` (1000), a private code
   outside the public `NFKPluginError` range. No stub remains once Phase 0 is complete.
 
@@ -268,6 +273,26 @@ against literal dictionaries, and the existing server tests keep their expectati
   path on the server.
 - `NFKPluginAttachmentWriter` makes one region per attachment and lists their descriptors in index
   order for the frame. `NFKPluginAttachmentReader` maps each region on first use.
+
+- `-[AVAudioPCMBuffer initWithPCMFormat:bufferListNoCopy:deallocator:]` copies the `AudioBufferList` it
+  is given, and its deallocator receives that internal copy (measured 2026-10-15: three distinct
+  addresses). The decoder keeps its list in an `NSMutableData` the deallocator block holds and frees nothing
+  by hand. Every PCM field is checked before AVFoundation sees a pointer: frame count, bytes per frame,
+  the buffer count for the layout, each buffer's length and alignment within the sliced attachment.
+
+## Descriptor ownership
+
+- Every descriptor a channel, an `NFKPluginDescriptor`, a region, the hand-off, or the attachment reader
+  holds goes through `NFKPluginAdoptDescriptor`, `NFKPluginDisownDescriptor`, and `NFKPluginCloseDescriptor`
+  (`NFKPluginWire.h`). Each has one owner, closes once, and its field becomes -1. In a DEBUG build the
+  process aborts, naming the owner, when a number is adopted while another owner holds it, when a close
+  finds the descriptor already closed, or when an unadopted descriptor is closed: a stray close of a
+  reused number otherwise kills a later socket with no error of its own.
+- `NFKSubprocess`'s inherited-descriptor hook duplicates each descriptor when it is set and owns the
+  copies, closing them when the property is set again or the subprocess is released, so a caller closing
+  its own numbers never leaves a later launch with a reused one.
+- A writer whose descriptors a send carries is declared `NS_VALID_UNTIL_END_OF_SCOPE`, since an optimized
+  build may otherwise release it, and close its regions, between reading `descriptors` and the send.
 
 ## Shared memory
 
@@ -315,6 +340,8 @@ initializers.
   - a refused signature → the policy's error, before any launch;
   - the launch → `NFKPluginErrorLaunchFailed`, the launcher's error under `NSUnderlyingErrorKey`;
   - no hand-off, a hello error, another plugin identifier or version → `NFKPluginErrorHandshakeFailed`;
+  - a verification, hello, or describe that misses its deadline → `NFKPluginErrorTimedOut`, naming the
+    step and the limit;
   - another major protocol version → `NFKPluginErrorProtocolUnsupported`;
   - a manifest model `describe` does not list → `NFKPluginErrorUnknownModel`.
 - A Failed process refuses every request with `failureError` and launches nothing. `startWithError:`
@@ -354,9 +381,21 @@ initializers.
 
 ### Requests and generations
 
-- Every request that needs the process goes through `performWithReservation:block:error:`: it waits its
-  turn behind a restart, starts the process when none runs, and runs the block with the live connection.
-  The block sends and returns; the reply arrives on the channel's handler queue.
+- A synchronous request goes through `performWithReservation:block:error:` on the caller's thread: it
+  waits its turn behind a restart, starts the process when none runs, and runs the block with the live
+  connection. The block sends and returns; the reply arrives on the channel's handler queue.
+- A submitted job goes through `performAsynchronouslyWithBlock:completion:`. During a restart it takes
+  its place in order at the call and holds no thread while it waits. Outside a restart its block runs on
+  the process's private serial submission queue. Neither path waits for a thread from the shared pool,
+  which a loaded test run can exhaust.
+- A build and a preparation each wait for their reply up to `buildTimeout` (300 s, since a plugin may load
+  large weights in either step). One that does not answer in time fails the request that needed it with
+  `NFKPluginErrorTimedOut`, naming the plugin and the model. The request stops counting as in flight, so
+  it holds neither an idle exit nor a restart's drain. A late build has its backend released; a late
+  preparation's load is still recorded.
+- Runs and tool calls have no deadline, since a model may run for minutes. Cancelling a submitted job
+  sends `cancel`, `stopWithCompletionHandler:` fails them with `NFKPluginErrorStopped`, and the process's
+  exit fails them with `NFKPluginErrorProcessExited`.
 - Each launched process is a connection with a generation, counted from 1 per supervisor. A backend
   records the generation of its build and builds again on the next connection before its next request,
   from its stored model identifier and options.
@@ -369,12 +408,18 @@ initializers.
 
 1. The call starts holding requests before it returns, so a request made after it waits.
 2. Restarting. The old connection takes no new requests. Its requests in flight get `restartDrainTimeout`
-   to finish; then each run receives `cancel` and the rest get 5 seconds.
+   to finish; then each run receives `cancel` and the rest get 5 seconds. A run that answers the cancel
+   fails with `NSUserCancelledError`; one still in flight after the 5 seconds fails with
+   `NFKPluginErrorTimedOut`.
 3. `shutdown` (its reply awaited up to 2 seconds), the channel closes, and the launcher stops.
 4. The new manifest replaces the old. `idleExitInterval` follows it unless the app changed it. The crash
    count clears. The new version launches.
-5. The held requests are admitted one at a time, in order. Each builds its backend and sends its run
-   before the next is admitted. A launch failure fails each with its reason.
+5. The held requests are admitted one at a time, in order. A held asynchronous request (a submitted
+   job) runs in its turn on the restart's queue. A held synchronous caller runs on its own thread, and
+   the restart waits for it to send before it admits the next. Each builds its backend, within
+   `buildTimeout`, and sends its run before the next is admitted, so a build that never answers fails its
+   request and frees the queue for the next request, a later restart, or a stop. A launch failure fails
+   each held request with its reason.
 
 Restarts are sequential. Requests held while a second restart waits go to the last one.
 
@@ -401,15 +446,16 @@ stays Failed. Stops and restarts run in order on one serial queue.
 - Keys come from the manifest's descriptor: inputs and outputs by port key, parameters by the keys of
   request-stage options. `modelInfo` is the family as `NFKModelInfoArchitecture`, the default variant's
   byte counts, the build's `modelInfo`, and the measured bytes once known.
-- `prepareWithError:` builds and sends `prepare`; its result sets `isLoaded`, `residentByteCount`, and
-  `peakByteCount`.
+- `prepareWithError:` builds and sends `prepare`, both within `buildTimeout`; its result sets
+  `isLoaded`, `residentByteCount`, and `peakByteCount`.
 - A run encodes its request with an `NFKPluginAttachmentWriter` at the connection's inline limit (the
   smaller of 64 KiB and a positive `limits.inlineBytes` in the hello reply). Its `outputDirectory` is
   `NSTemporaryDirectory()/InferKit/plugin-runs/<UUID>`, symbolic links resolved, mode 0700. The reply
   decodes through an `NFKPluginAttachmentReader` that copies file regions and accepts file references
   inside that directory only. Each result and partial decoded from the run holds the directory, which is
   removed when the last of them is released.
-- `submitInferenceJobForRequest:` takes its place behind a restart when called. The job relays each
+- `submitInferenceJobForRequest:` takes its place behind a restart when called, and otherwise runs on
+  the process's submission queue. The job relays each
   `progress` message with its partial result. Cancelling the job sends `cancel` with the run's
   identifier, or skips the run when it has not been sent.
 - An error reply keeps its domain, code, and string and number user info. A `{message, domain, code}`

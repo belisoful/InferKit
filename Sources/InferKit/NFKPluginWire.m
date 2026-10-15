@@ -8,6 +8,7 @@
 #import "NFKPluginSharedMemory.h"
 
 #if TARGET_OS_OSX
+#import <os/lock.h>
 #import <copyfile.h>
 #import <fcntl.h>
 #import <unistd.h>
@@ -35,6 +36,97 @@ NSString * const NFKPluginMessageEvent = @"event";
 NSString * const NFKPluginMessageLog = @"log";
 NSString * const NFKPluginMessageReply = @"reply";
 NSString * const NFKPluginEventVerified = @"verified";
+
+#pragma mark - Descriptor ownership
+
+#if DEBUG
+
+static os_unfair_lock NFKPluginDescriptorRegistryLock = OS_UNFAIR_LOCK_INIT;
+
+static NSMutableDictionary<NSNumber *, NSString *> *NFKPluginDescriptorRegistry(void)
+{
+	static NSMutableDictionary<NSNumber *, NSString *> *registry = nil;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		registry = [NSMutableDictionary dictionary];
+	});
+	return registry;
+}
+
+static void NFKPluginDescriptorViolation(NSString *message)
+{
+	fprintf(stderr, "InferKit descriptor ownership: %s\n", message.UTF8String);
+	abort();
+}
+
+void NFKPluginAdoptDescriptor(int descriptor, const char *owner)
+{
+	if (descriptor < 0) {
+		return;
+	}
+	if (fcntl(descriptor, F_GETFD) == -1) {
+		NFKPluginDescriptorViolation([NSString stringWithFormat:@"%s adopts descriptor %d, which is not open", owner, descriptor]);
+	}
+	os_unfair_lock_lock(&NFKPluginDescriptorRegistryLock);
+	NSString *holder = NFKPluginDescriptorRegistry()[@(descriptor)];
+	NFKPluginDescriptorRegistry()[@(descriptor)] = @(owner);
+	os_unfair_lock_unlock(&NFKPluginDescriptorRegistryLock);
+	if (holder != nil) {
+		NFKPluginDescriptorViolation([NSString stringWithFormat:@"%s adopts descriptor %d while %@ still owns it: code that did not own %@'s descriptor closed it",
+									  owner, descriptor, holder, holder]);
+	}
+}
+
+void NFKPluginDisownDescriptor(int descriptor)
+{
+	if (descriptor < 0) {
+		return;
+	}
+	os_unfair_lock_lock(&NFKPluginDescriptorRegistryLock);
+	[NFKPluginDescriptorRegistry() removeObjectForKey:@(descriptor)];
+	os_unfair_lock_unlock(&NFKPluginDescriptorRegistryLock);
+}
+
+void NFKPluginCloseDescriptor(int *descriptor)
+{
+	int number = *descriptor;
+	if (number < 0) {
+		return;
+	}
+	*descriptor = -1;
+	os_unfair_lock_lock(&NFKPluginDescriptorRegistryLock);
+	NSString *holder = NFKPluginDescriptorRegistry()[@(number)];
+	[NFKPluginDescriptorRegistry() removeObjectForKey:@(number)];
+	os_unfair_lock_unlock(&NFKPluginDescriptorRegistryLock);
+	if (holder == nil) {
+		NFKPluginDescriptorViolation([NSString stringWithFormat:@"descriptor %d is closed twice, or by an owner that never adopted it", number]);
+	}
+	if (fcntl(number, F_GETFD) == -1) {
+		NFKPluginDescriptorViolation([NSString stringWithFormat:@"%@ closes descriptor %d, which code that did not own it already closed",
+									  holder, number]);
+	}
+	close(number);
+}
+
+#else
+
+void NFKPluginAdoptDescriptor(int descriptor, const char *owner)
+{
+}
+
+void NFKPluginDisownDescriptor(int descriptor)
+{
+}
+
+void NFKPluginCloseDescriptor(int *descriptor)
+{
+	if (*descriptor >= 0) {
+		close(*descriptor);
+		*descriptor = -1;
+	}
+}
+
+#endif
 
 #endif
 
@@ -237,11 +329,12 @@ BOOL NFKPluginSetNotImplemented(NSError **error, SEL selector)
 	if (source < 0) {
 		return nil;
 	}
+	NFKPluginAdoptDescriptor(source, "NFKPluginAttachmentReader file copy");
 	NSURL *directory = self.temporaryDirectoryURL
 		?: [[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:@"InferKit" isDirectory:YES];
 	NSError *directoryError = nil;
 	if (![NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:nil error:&directoryError]) {
-		close(source);
+		NFKPluginCloseDescriptor(&source);
 		if (outError != NULL) {
 			*outError = directoryError;
 		}
@@ -250,12 +343,11 @@ BOOL NFKPluginSetNotImplemented(NSError **error, SEL selector)
 	NSString *fileName = [NSString stringWithFormat:@"plugin-%@.%@", NSUUID.UUID.UUIDString, NFKServedFileExtension(name.pathExtension)];
 	NSURL *target = [directory URLByAppendingPathComponent:fileName];
 	int destination = open(target.fileSystemRepresentation, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, S_IRUSR | S_IWUSR);
+	NFKPluginAdoptDescriptor(destination, "NFKPluginAttachmentReader file copy");
 	BOOL copied = destination >= 0 && fcopyfile(source, destination, NULL, COPYFILE_DATA) == 0;
 	int code = errno;
-	close(source);
-	if (destination >= 0) {
-		close(destination);
-	}
+	NFKPluginCloseDescriptor(&source);
+	NFKPluginCloseDescriptor(&destination);
 	if (!copied) {
 		[NSFileManager.defaultManager removeItemAtURL:target error:NULL];
 		if (outError != NULL) {

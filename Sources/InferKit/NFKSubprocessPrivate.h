@@ -21,9 +21,12 @@ NS_ASSUME_NONNULL_BEGIN
 @property (atomic, copy, nullable) NFKSubprocessStateHandler ownerStateHandler;
 
 /*! Descriptors the child inherits beyond its standard streams. Each key is the descriptor's number in
-	the child, 3 or higher; each value is a descriptor of this process the child receives a duplicate
-	of. The subprocess neither takes nor closes the values. Read at each launch; a key below 3 or a
-	value that is not open fails the launch. */
+	the child, 3 or higher; each value is a descriptor of this process. Setting the property duplicates
+	every value, and the subprocess owns the duplicates: it closes them, exactly once, when the property
+	is set again or the subprocess is released. The caller keeps its own descriptors and may close them
+	at once. Reading the property returns the subprocess's duplicates, which the caller does not close.
+	Each launch, relaunches included, gives the child copies of the duplicates. A key below 3, or a
+	value that was not open when set, fails the launch. */
 @property (atomic, copy, nullable) NSDictionary<NSNumber *, NSNumber *> *ownerInheritedDescriptors;
 
 /*! The quality-of-service class the child starts at, or QOS_CLASS_UNSPECIFIED (the default) for the

@@ -64,6 +64,12 @@ typedef void (^NFKPluginTestPeerHandler)(NFKPluginTestPeer *peer, NSDictionary<N
 /*! The process the audit token the supervisor read names. */
 @property (atomic, readonly) pid_t auditedProcessIdentifier;
 
+/*! Whether the peer's channel has closed. */
+@property (atomic, readonly, getter=isChannelClosed) BOOL channelClosed;
+
+/*! The peer's channel state and the types it received, for a failure message. */
+- (NSString *)diagnosticDescription;
+
 /*! Every message received, in order. */
 - (NSArray<NSDictionary<NSString *, id> *> *)receivedMessages;
 
@@ -109,6 +115,9 @@ typedef void (^NFKPluginTestPeerHandler)(NFKPluginTestPeer *peer, NSDictionary<N
 
 /*! Every peer launched, in order. */
 @property (atomic, readonly, copy) NSArray<NFKPluginTestPeer *> *peers;
+
+/*! Every peer's diagnosticDescription, for a failure message. */
+- (NSString *)diagnosticDescription;
 
 /*! The peer of the launch at index, counted from 0, once that launch has happened, up to timeout. A
 	submitted job launches on a background queue, so its peer appears after the call returns. */

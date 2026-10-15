@@ -131,6 +131,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `restartWithManifest:completionHandler:` holds new requests in order, lets the runs in flight finish
   on the old process (cancelling them after `restartDrainTimeout`), stops it, starts the new version, and
   hands it the held requests. A launch failure fails them with its reason.
+- Every deadline the supervisor keeps fails with the new `NFKPluginErrorTimedOut`, naming the step and
+  the limit: the bundle's verification (`verificationTimeout`), hello (`handshakeTimeout`), and a build
+  or preparation (`buildTimeout`, 300 s by default, since either may load large weights). A build or
+  preparation that times out fails only its own request and lets the next one go. Runs and tool calls
+  have no deadline; a job's cancel, a stop, or the process's exit ends them.
 - An idle process with no live backends exits after `idleExitInterval`, shortened under memory pressure
   by the formula `NFKInferenceServer` uses for idle unloads. `stopWithCompletionHandler:` fails the runs
   in flight with `NFKPluginErrorStopped` and stops the process with `NFKSubprocess`'s escalation.

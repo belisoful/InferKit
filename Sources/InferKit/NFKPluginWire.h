@@ -51,6 +51,25 @@ static const uint16_t NFKPluginFrameMaximumDescriptors = 64;
 /*! The largest value a message carries inline, in bytes, unless hello sets limits.inlineBytes. */
 static const NSUInteger NFKPluginDefaultInlineByteLimit = 64u * 1024u;
 
+/*!
+	@functiongroup Descriptor ownership
+	@discussion Every descriptor a plugin object holds has one owner. The owner adopts it when ownership
+				arrives, closes it through NFKPluginCloseDescriptor exactly once, or disowns it when
+				ownership leaves for another owner. In a DEBUG build a registry checks every step and stops
+				the process at the first violation, naming the owner: adopting a number another owner still
+				holds means that owner's descriptor was closed by code that did not own it, and closing a
+				descriptor that is no longer open means it was closed twice.
+*/
+
+/*! Records that owner holds descriptor. */
+void NFKPluginAdoptDescriptor(int descriptor, const char *owner);
+
+/*! Records that the descriptor's ownership left for code that closes it. */
+void NFKPluginDisownDescriptor(int descriptor);
+
+/*! Closes *descriptor once and sets it to -1. A negative descriptor is left alone. */
+void NFKPluginCloseDescriptor(int *descriptor);
+
 /*! Message types, the "type" field of every message. */
 extern NSString * const NFKPluginMessageChannel;
 extern NSString * const NFKPluginMessageHello;

@@ -150,6 +150,19 @@ NFKPluginManifest *NFKPluginTestManifest(NSString *version, NSTimeInterval idleE
 
 #pragma mark Recording
 
+- (BOOL)isChannelClosed
+{
+	NFKPluginChannel *channel = self.channel;
+	return channel == nil || channel.isClosed;
+}
+
+- (NSString *)diagnosticDescription
+{
+	return [NSString stringWithFormat:@"peer %lu: channel %@, %@, received [%@]", (unsigned long)self.launchNumber,
+			self.isChannelClosed ? @"closed" : @"open", self.stopped ? @"stopped" : @"not stopped",
+			[self.receivedTypes componentsJoinedByString:@", "]];
+}
+
 - (NSArray<NSDictionary<NSString *, id> *> *)receivedMessages
 {
 	@synchronized (self.messages) {
@@ -185,9 +198,10 @@ NFKPluginManifest *NFKPluginTestManifest(NSString *version, NSTimeInterval idleE
 	NSString *type = message[@"type"];
 	NFKPluginTestPeerHandler handler = self.handlers[type];
 	if (handler != nil) {
-		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		// A thread of its own, so a handler that blocks never waits for a worker thread other tests hold.
+		[NSThread detachNewThreadWithBlock:^{
 			handler(self, message, descriptors);
-		});
+		}];
 		return;
 	}
 	[self answerMessage:message descriptors:descriptors];
@@ -326,6 +340,15 @@ NFKPluginManifest *NFKPluginTestManifest(NSString *version, NSTimeInterval idleE
 	@synchronized (self.launched) {
 		return [self.launched copy];
 	}
+}
+
+- (NSString *)diagnosticDescription
+{
+	NSMutableArray<NSString *> *lines = [NSMutableArray array];
+	for (NFKPluginTestPeer *peer in self.peers) {
+		[lines addObject:peer.diagnosticDescription];
+	}
+	return lines.count > 0 ? [lines componentsJoinedByString:@"; "] : @"no peer launched";
 }
 
 - (nullable NFKPluginTestPeer *)peerAtIndex:(NSUInteger)index timeout:(NSTimeInterval)timeout

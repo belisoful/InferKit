@@ -107,6 +107,10 @@ typedef void (^NFKPluginReplyHandler)(NSDictionary<NSString *, id> * _Nullable r
 						  timeout:(NSTimeInterval)timeout
 							error:(NSError **)error;
 
+/*! Stops counting a request as in flight, so it holds neither an idle exit nor a restart's drain, and
+	still delivers its reply, when one comes, to its reply handler. */
+- (void)detachRequest:(NSInteger)identifier;
+
 /*! Sends a message that expects no reply. */
 - (BOOL)sendMessage:(NSDictionary<NSString *, id> *)message error:(NSError **)error;
 
@@ -141,18 +145,23 @@ typedef void (^NFKPluginReplyHandler)(NSDictionary<NSString *, id> * _Nullable r
 /*! The idle exit interval memory pressure leaves now. */
 - (NSTimeInterval)effectiveIdleExitInterval;
 
-/*! Reserves a place behind a restart in progress, so a request submitted now is sent before later ones.
-	Returns nil when no restart holds requests. */
-- (nullable id)reserveAdmission;
-
-/*! Runs block with the live connection, starting the process when none runs. With a reservation, waits
-	for its turn first. block sends what it needs and returns; the next held request waits for it. */
+/*! Runs block with the live connection on the calling thread, starting the process when none runs.
+	During a restart it waits its turn first. block sends what it needs and returns; the next held
+	request waits for it. */
 - (BOOL)performWithReservation:(nullable id)reservation
 						 block:(BOOL (^)(NFKPluginConnection *connection, NSError **error))block
 						 error:(NSError **)error;
 
-/*! Gives up a reservation without sending, so the requests held behind it go on. */
-- (void)abandonReservation:(nullable id)reservation;
+/*! Runs block as performWithReservation:block:error: does, without blocking the caller, and calls
+	completion once with whether it ran and the error that stopped it. During a restart the request takes
+	its place in order at the call, and the restart runs block in its turn on its own queue, so a held
+	request needs no thread while it waits. Otherwise block runs on the process's submission queue. */
+- (void)performAsynchronouslyWithBlock:(BOOL (^)(NFKPluginConnection *connection, NSError **error))block
+							completion:(void (^)(BOOL performed, NSError * _Nullable error))completion;
+
+/*! The supervisor's state, the restart's phase, the held requests, and the live connection's requests
+	in flight, for a test's failure message. */
+- (NSString *)diagnosticDescription;
 
 /*! The live connection when the process is Ready and no restart holds requests, else nil. Starts
 	nothing. */

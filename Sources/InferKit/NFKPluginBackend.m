@@ -366,8 +366,7 @@ static const NSTimeInterval NFKPluginStatusRefreshInterval = 1;
 		[self.buildLock unlock];
 		return handle;
 	}
-	NSDictionary *message = @{ @"type": NFKPluginMessageBuild, @"model": self.modelIdentifier, @"options": self.options };
-	id result = [connection sendRequestAndWait:message timeout:0 error:error];
+	id result = [self buildOnConnection:connection error:error];
 	id handle = [result isKindOfClass:NSDictionary.class] ? result[@"backend"] : nil;
 	if (result != nil && (handle == nil || handle == NSNull.null)) {
 		NFKPluginSetError(error, NFKPluginErrorProtocolViolation,
@@ -394,37 +393,122 @@ static const NSTimeInterval NFKPluginStatusRefreshInterval = 1;
 	return handle;
 }
 
+/*! Sends build and waits for its result up to the process's buildTimeout. A build that answers after the
+	timeout has its backend released, since no request uses it. */
+- (nullable id)buildOnConnection:(NFKPluginConnection *)connection error:(NSError **)error
+{
+	NSDictionary *message = @{ @"type": NFKPluginMessageBuild, @"model": self.modelIdentifier, @"options": self.options };
+	NSObject *lock = [[NSObject alloc] init];
+	__block BOOL abandoned = NO;
+	__block id result = nil;
+	__block NSError *failure = nil;
+	dispatch_semaphore_t answered = dispatch_semaphore_create(0);
+	__weak NFKPluginConnection *weakConnection = connection;
+	NSInteger identifier = [connection sendRequest:message descriptors:nil progressHandler:nil
+									  replyHandler:^(NSDictionary<NSString *, id> * _Nullable reply, NSArray<NFKPluginDescriptor *> *descriptors, NSError * _Nullable replyError) {
+		NSError *replyFailure = reply != nil ? NFKPluginErrorFromReply(reply) : replyError;
+		id replyResult = replyFailure == nil ? (reply[@"result"] ?: NSNull.null) : nil;
+		BOOL late = NO;
+		@synchronized (lock) {
+			late = abandoned;
+			result = replyResult;
+			failure = replyFailure;
+		}
+		id handle = [replyResult isKindOfClass:NSDictionary.class] ? replyResult[@"backend"] : nil;
+		if (late && handle != nil && handle != NSNull.null) {
+			[weakConnection sendRequest:@{ @"type": NFKPluginMessageRelease, @"backend": handle } descriptors:nil progressHandler:nil
+						   replyHandler:^(NSDictionary<NSString *, id> * _Nullable releaseReply, NSArray<NFKPluginDescriptor *> *releaseDescriptors, NSError * _Nullable releaseError) {
+			} error:NULL];
+		}
+		dispatch_semaphore_signal(answered);
+	} error:error];
+	if (identifier == 0) {
+		return nil;
+	}
+	NSTimeInterval timeout = self.process.buildTimeout;
+	dispatch_time_t deadline = timeout > 0 ? dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC)) : DISPATCH_TIME_FOREVER;
+	BOOL timedOut = dispatch_semaphore_wait(answered, deadline) != 0;
+	@synchronized (lock) {
+		// A reply that raced the deadline is kept.
+		if (timedOut && result == nil && failure == nil) {
+			abandoned = YES;
+			[connection detachRequest:identifier];
+			NFKPluginSetError(error, NFKPluginErrorTimedOut,
+							  [NSString stringWithFormat:@"plugin %@ did not build model %@ within %g seconds", self.pluginIdentifier,
+							   self.modelIdentifier, timeout]);
+			return nil;
+		}
+		if (result == nil && error != NULL) {
+			*error = failure;
+		}
+		return result;
+	}
+}
+
 - (BOOL)prepareWithError:(NSError **)error
 {
 	id<NFKInferenceBackend> pluginBackend = self.pluginBackend;
 	if (pluginBackend != nil) {
 		return NFKInferencePrepare(pluginBackend, error);
 	}
-	__block NSDictionary<NSString *, id> *reply = nil;
+	NSObject *lock = [[NSObject alloc] init];
+	__block BOOL answered = NO;
 	__block NSError *failure = nil;
+	__block NSInteger identifier = 0;
+	__block NFKPluginConnection *sentOn = nil;
 	dispatch_semaphore_t done = dispatch_semaphore_create(0);
+	__weak NFKPluginBackend *weakSelf = self;
+	NSError *sendError = nil;
 	BOOL sent = [self.process performWithReservation:nil block:^BOOL(NFKPluginConnection *connection, NSError **blockError) {
 		id handle = [self handleOnConnection:connection error:blockError];
 		if (handle == nil) {
 			return NO;
 		}
-		return [connection sendRequest:@{ @"type": NFKPluginMessagePrepare, @"backend": handle } descriptors:nil progressHandler:nil
-						  replyHandler:^(NSDictionary<NSString *, id> * _Nullable message, NSArray<NFKPluginDescriptor *> *descriptors, NSError * _Nullable replyError) {
-			reply = message;
-			failure = message != nil ? NFKPluginErrorFromReply(message) : replyError;
+		NSInteger sentIdentifier = [connection sendRequest:@{ @"type": NFKPluginMessagePrepare, @"backend": handle } descriptors:nil progressHandler:nil
+											  replyHandler:^(NSDictionary<NSString *, id> * _Nullable message, NSArray<NFKPluginDescriptor *> *descriptors, NSError * _Nullable replyError) {
+			NSError *replyFailure = message != nil ? NFKPluginErrorFromReply(message) : replyError;
+			// A late answer still reports the load.
+			if (replyFailure == nil) {
+				[weakSelf applyStatus:message[@"result"]];
+			}
+			@synchronized (lock) {
+				answered = YES;
+				failure = replyFailure;
+			}
 			dispatch_semaphore_signal(done);
-		} error:blockError] != 0;
-	} error:&failure];
-	if (sent) {
-		dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
-	}
-	if (!sent || failure != nil) {
+		} error:blockError];
+		if (sentIdentifier == 0) {
+			return NO;
+		}
+		@synchronized (lock) {
+			identifier = sentIdentifier;
+			sentOn = connection;
+		}
+		return YES;
+	} error:&sendError];
+	if (!sent) {
 		if (error != NULL) {
-			*error = failure;
+			*error = sendError;
 		}
 		return NO;
 	}
-	[self applyStatus:reply[@"result"]];
+	NSTimeInterval timeout = self.process.buildTimeout;
+	dispatch_time_t deadline = timeout > 0 ? dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC)) : DISPATCH_TIME_FOREVER;
+	BOOL timedOut = dispatch_semaphore_wait(done, deadline) != 0;
+	@synchronized (lock) {
+		if (timedOut && !answered) {
+			[sentOn detachRequest:identifier];
+			return NFKPluginSetError(error, NFKPluginErrorTimedOut,
+									 [NSString stringWithFormat:@"plugin %@ did not prepare model %@ within %g seconds", self.pluginIdentifier,
+									  self.modelIdentifier, timeout]);
+		}
+		if (failure != nil) {
+			if (error != NULL) {
+				*error = failure;
+			}
+			return NO;
+		}
+	}
 	return YES;
 }
 
@@ -439,13 +523,18 @@ static const NSTimeInterval NFKPluginStatusRefreshInterval = 1;
 	__block NFKInferenceResult *result = nil;
 	__block NSError *failure = nil;
 	dispatch_semaphore_t done = dispatch_semaphore_create(0);
-	[self startRunForRequest:request reservation:nil streaming:NO job:nil state:[[NFKPluginRunState alloc] init]
-				  completion:^(NFKInferenceResult * _Nullable runResult, NSError * _Nullable runError) {
+	NSError *sendError = nil;
+	BOOL (^send)(NFKPluginConnection *, NSError **) = [self runBlockForRequest:request streaming:NO job:nil state:[[NFKPluginRunState alloc] init]
+																	 completion:^(NFKInferenceResult * _Nullable runResult, NSError * _Nullable runError) {
 		result = runResult;
 		failure = runError;
 		dispatch_semaphore_signal(done);
-	}];
-	dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+	} error:&sendError];
+	if (send != nil && [self.process performWithReservation:nil block:send error:&sendError]) {
+		dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+	} else {
+		failure = sendError;
+	}
 	if (result == nil && error != NULL) {
 		*error = failure;
 	}
@@ -460,42 +549,48 @@ static const NSTimeInterval NFKPluginStatusRefreshInterval = 1;
 	}
 	NFKInferenceJob *job = [[NFKInferenceJob alloc] init];
 	NFKPluginRunState *state = [[NFKPluginRunState alloc] init];
-	id reservation = [self.process reserveAdmission];
 	job.cancellationHandler = ^{
 		[state cancel];
 	};
 	[job reportProgress:-1.0];
-	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-		[self startRunForRequest:request reservation:reservation streaming:YES job:job state:state
-					  completion:^(NFKInferenceResult * _Nullable result, NSError * _Nullable runError) {
-			if (result != nil) {
-				[job finishWithResult:result];
-			} else {
-				[job finishWithError:runError];
-			}
-		}];
-	});
+	void (^completion)(NFKInferenceResult *, NSError *) = ^(NFKInferenceResult * _Nullable result, NSError * _Nullable runError) {
+		if (result != nil) {
+			[job finishWithResult:result];
+		} else {
+			[job finishWithError:runError];
+		}
+	};
+	NSError *failure = nil;
+	BOOL (^send)(NFKPluginConnection *, NSError **) = [self runBlockForRequest:request streaming:YES job:job state:state
+																	 completion:completion error:&failure];
+	if (send == nil) {
+		completion(nil, failure);
+		return job;
+	}
+	[self.process performAsynchronouslyWithBlock:send completion:^(BOOL performed, NSError * _Nullable error) {
+		if (!performed) {
+			completion(nil, error);
+		}
+	}];
 	return job;
 }
 
-/*! Sends a run in its turn and calls completion once with its result or error. The request's large
-	values travel as attachments, and the plugin writes its result files into a run directory that
-	lives as long as the results decoded from it. */
-- (void)startRunForRequest:(NFKInferenceRequest *)request
-			   reservation:(nullable id)reservation
-				 streaming:(BOOL)streaming
-					   job:(nullable NFKInferenceJob *)job
-					 state:(NFKPluginRunState *)state
-				completion:(void (^)(NFKInferenceResult * _Nullable result, NSError * _Nullable error))completion
+/*! The block that sends a run in its turn, or nil with an error when the run's directory cannot be made.
+	completion is called once with the run's result or error, unless the block fails to send, which the
+	caller reports. The request's large values travel as attachments, and the plugin writes its result
+	files into a run directory that lives as long as the results decoded from it. */
+- (nullable BOOL (^)(NFKPluginConnection *, NSError **))runBlockForRequest:(NFKInferenceRequest *)request
+																  streaming:(BOOL)streaming
+																		job:(nullable NFKInferenceJob *)job
+																	  state:(NFKPluginRunState *)state
+																 completion:(void (^)(NFKInferenceResult * _Nullable result, NSError * _Nullable error))completion
+																	  error:(NSError **)error
 {
-	NSError *failure = nil;
-	NFKPluginRunDirectory *directory = [NFKPluginRunDirectory directoryWithError:&failure];
+	NFKPluginRunDirectory *directory = [NFKPluginRunDirectory directoryWithError:error];
 	if (directory == nil) {
-		[self.process abandonReservation:reservation];
-		completion(nil, failure);
-		return;
+		return nil;
 	}
-	BOOL sent = [self.process performWithReservation:reservation block:^BOOL(NFKPluginConnection *connection, NSError **blockError) {
+	return ^BOOL(NFKPluginConnection *connection, NSError **blockError) {
 		if (state.isCancelled) {
 			if (blockError != NULL) {
 				*blockError = NFKPluginCancellationError();
@@ -506,7 +601,7 @@ static const NSTimeInterval NFKPluginStatusRefreshInterval = 1;
 		if (handle == nil) {
 			return NO;
 		}
-		NFKPluginAttachmentWriter *writer = [[NFKPluginAttachmentWriter alloc] init];
+		NFKPluginAttachmentWriter *writer NS_VALID_UNTIL_END_OF_SCOPE = [[NFKPluginAttachmentWriter alloc] init];
 		NFKInferenceWireCoding *encoder = [[NFKInferenceWireCoding alloc] initWithTemporaryDirectory:directory.URL];
 		encoder.attachmentSink = writer;
 		encoder.inlineByteLimit = connection.inlineByteLimit;
@@ -536,10 +631,7 @@ static const NSTimeInterval NFKPluginStatusRefreshInterval = 1;
 		}
 		[state startedOnConnection:connection identifier:identifier];
 		return YES;
-	} error:&failure];
-	if (!sent) {
-		completion(nil, failure);
-	}
+	};
 }
 
 - (void)relayProgress:(NSDictionary<NSString *, id> *)update

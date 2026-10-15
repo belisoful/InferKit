@@ -171,6 +171,7 @@ static BOOL NFKPluginChannelWriteFrame(int socket, NSData *JSON, NSArray<NSNumbe
 	self = [super init];
 	if (self != nil) {
 		_descriptor = descriptor;
+		NFKPluginAdoptDescriptor(descriptor, "NFKPluginDescriptor");
 	}
 	return self;
 }
@@ -180,15 +181,14 @@ static BOOL NFKPluginChannelWriteFrame(int socket, NSData *JSON, NSArray<NSNumbe
 	@synchronized (self) {
 		int descriptor = self.descriptor;
 		self.descriptor = -1;
+		NFKPluginDisownDescriptor(descriptor);
 		return descriptor;
 	}
 }
 
 - (void)dealloc
 {
-	if (_descriptor >= 0) {
-		close(_descriptor);
-	}
+	NFKPluginCloseDescriptor(&_descriptor);
 }
 
 - (NSString *)description
@@ -364,25 +364,33 @@ static BOOL NFKPluginChannelWriteFrame(int socket, NSData *JSON, NSArray<NSNumbe
 
 + (nullable instancetype)channelByHandingOffDescriptor:(int)inheritedDescriptor error:(NSError **)outError
 {
+	int inherited = inheritedDescriptor;
+	NFKPluginAdoptDescriptor(inherited, "a channel hand-off");
 	int kept = -1;
 	int handed = -1;
 	if (![self createSocketPair:&kept second:&handed error:outError]) {
-		close(inheritedDescriptor);
+		NFKPluginCloseDescriptor(&inherited);
 		return nil;
 	}
+	NFKPluginAdoptDescriptor(kept, "a channel hand-off");
+	NFKPluginAdoptDescriptor(handed, "a channel hand-off");
 	NSData *JSON = [NSJSONSerialization dataWithJSONObject:@{ @"type": NFKPluginMessageChannel } options:0 error:NULL];
-	BOOL sent = NFKPluginChannelWriteFrame(inheritedDescriptor, JSON, @[ @(handed) ], NFKPluginChannelDefaultSendTimeout, nil, outError);
-	close(handed);
-	close(inheritedDescriptor);
+	BOOL sent = NFKPluginChannelWriteFrame(inherited, JSON, @[ @(handed) ], NFKPluginChannelDefaultSendTimeout, nil, outError);
+	// The frame in flight holds its own reference to the handed socket.
+	NFKPluginCloseDescriptor(&handed);
+	NFKPluginCloseDescriptor(&inherited);
 	if (!sent) {
-		close(kept);
+		NFKPluginCloseDescriptor(&kept);
 		return nil;
 	}
+	NFKPluginDisownDescriptor(kept);
 	return [[self alloc] initWithDescriptor:kept];
 }
 
-+ (nullable instancetype)channelByAcceptingHandOffOnDescriptor:(int)descriptor timeout:(NSTimeInterval)timeout error:(NSError **)outError
++ (nullable instancetype)channelByAcceptingHandOffOnDescriptor:(int)inheritedDescriptor timeout:(NSTimeInterval)timeout error:(NSError **)outError
 {
+	int descriptor = inheritedDescriptor;
+	NFKPluginAdoptDescriptor(descriptor, "a channel hand-off");
 	NFKPluginChannelConfigureSocket(descriptor, YES);
 	NFKPluginFrameReader *reader = [[NFKPluginFrameReader alloc] init];
 	NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
@@ -396,8 +404,8 @@ static BOOL NFKPluginChannelWriteFrame(int socket, NSData *JSON, NSArray<NSNumbe
 		}
 		NSTimeInterval remaining = deadline.timeIntervalSinceNow;
 		if (remaining <= 0) {
-			NFKPluginChannelPOSIXError(&failure, NFKPluginErrorHandshakeFailed, 0,
-									   [NSString stringWithFormat:@"the plugin handed over no channel within %g seconds", timeout]);
+			NFKPluginChannelPOSIXError(&failure, NFKPluginErrorTimedOut, 0,
+									   [NSString stringWithFormat:@"the channel hand-off did not arrive within its %g-second limit", timeout]);
 			break;
 		}
 		struct pollfd readable = { .fd = descriptor, .events = POLLIN, .revents = 0 };
@@ -410,7 +418,7 @@ static BOOL NFKPluginChannelWriteFrame(int socket, NSData *JSON, NSArray<NSNumbe
 			failure = readError;
 		}
 	}
-	close(descriptor);
+	NFKPluginCloseDescriptor(&descriptor);
 	BOOL handedOver = message != nil && [message[@"type"] isEqual:NFKPluginMessageChannel] && descriptors.count == 1
 		&& NFKPluginChannelIsStreamSocket(descriptors.firstObject.descriptor);
 	if (!handedOver) {
@@ -436,16 +444,17 @@ static BOOL NFKPluginChannelWriteFrame(int socket, NSData *JSON, NSArray<NSNumbe
 		dispatch_queue_attr_t attributes = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0);
 		_readQueue = dispatch_queue_create("com.inferkit.plugin-channel.read", attributes);
 		_handlerQueue = dispatch_queue_create("com.inferkit.plugin-channel.handler", attributes);
+		NFKPluginAdoptDescriptor(descriptor, "NFKPluginChannel");
 		NFKPluginChannelConfigureSocket(descriptor, YES);
 	}
 	return self;
 }
 
+// A resumed channel's read source holds the channel until its cancel handler has closed the socket,
+// so only a channel that never read can reach here owning it.
 - (void)dealloc
 {
-	if (_readSource == nil && _socket >= 0) {
-		close(_socket);
-	}
+	NFKPluginCloseDescriptor(&_socket);
 }
 
 #pragma mark Reading
@@ -550,10 +559,9 @@ static BOOL NFKPluginChannelWriteFrame(int socket, NSData *JSON, NSArray<NSNumbe
 - (void)closeSocket
 {
 	[self.sendLock lock];
-	if (self.socket >= 0) {
-		close(self.socket);
-		self.socket = -1;
-	}
+	int socket = self.socket;
+	NFKPluginCloseDescriptor(&socket);
+	self.socket = socket;
 	[self.sendLock unlock];
 }
 

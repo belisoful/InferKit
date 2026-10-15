@@ -77,6 +77,24 @@
 	XCTAssertTrue([self waitUntil:^BOOL { return process.state == NFKSubprocessStateExited; } timeout:5]);
 }
 
+- (void)testTheSubprocessOwnsItsCopiesOfInheritedDescriptors
+{
+	int channel[2];
+	XCTAssertEqual(pipe(channel), 0);
+	NFKSubprocess *process = [[NFKSubprocess alloc] initWithCommand:@"/bin/sh" arguments:@[ @"-c", @"echo ok >&3" ]];
+	process.ownerInheritedDescriptors = @{ @3: @(channel[1]) };
+	close(channel[1]);
+	XCTAssertNotEqualObjects(process.ownerInheritedDescriptors[@3], @(channel[1]), @"the subprocess holds a copy of its own");
+	NSError *error = nil;
+	for (NSUInteger launch = 0; launch < 2; launch++) {
+		XCTAssertTrue([process startWithError:&error], @"a launch after the caller closed its descriptor, %@", error);
+		XCTAssertTrue([self waitUntil:^BOOL { return process.state == NFKSubprocessStateExited; } timeout:5]);
+		XCTAssertEqual(process.terminationStatus, 0);
+	}
+	process.ownerInheritedDescriptors = nil;
+	XCTAssertEqualObjects([self readToEndOfDescriptor:channel[0]], @"ok\nok\n", @"each launch wrote through its copy, and clearing the property closed the last one");
+}
+
 - (void)testOnlyTheNamedDescriptorsReachTheChild
 {
 	int stray[2];

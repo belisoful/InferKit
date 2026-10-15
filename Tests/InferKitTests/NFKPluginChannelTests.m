@@ -347,6 +347,129 @@
 	[plugin close];
 }
 
+/*! Eight channel pairs make 200 round trips each, every request carrying two fresh regions and every
+	reply one, while other queues create and drop regions and launch subprocesses that inherit a
+	descriptor. A descriptor closed by anything but its owner closes or corrupts some channel here. */
+- (void)testManyChannelsKeepAnsweringWhileRegionsAndLaunchesChurn
+{
+	const NSUInteger pairCount = 8;
+	const NSInteger tripCount = 200;
+	const NSUInteger regionLength = 5000;
+	NSMutableArray<NFKPluginChannel *> *channels = [NSMutableArray array];
+	NSMutableArray<NSString *> *failures = [NSMutableArray array];
+	dispatch_group_t trips = dispatch_group_create();
+	for (NSUInteger pair = 0; pair < pairCount; pair++) {
+		NFKPluginChannel *host = nil;
+		NFKPluginChannel *plugin = nil;
+		[self makeChannel:&host other:&plugin];
+		__weak NFKPluginChannel *weakPlugin = plugin;
+		plugin.messageHandler = ^(NSDictionary *message, NSArray<NFKPluginDescriptor *> *descriptors) {
+			NSUInteger mapped = 0;
+			for (NFKPluginDescriptor *descriptor in descriptors) {
+				NFKPluginSharedMemory *region = [NFKPluginSharedMemory regionWithDescriptor:[descriptor takeDescriptor] length:regionLength
+																				copiesFiles:YES error:NULL];
+				mapped += region != nil && ((const uint8_t *)region.mutableBytes)[regionLength - 1] == 0x5A ? 1 : 0;
+			}
+			// The region must outlive the send: its release closes the descriptor the frame names.
+			NFKPluginSharedMemory *answer NS_VALID_UNTIL_END_OF_SCOPE = [NFKPluginSharedMemory regionWithLength:regionLength namePrefix:nil error:NULL];
+			memset(answer.mutableBytes, [message[@"id"] intValue] & 0xFF, regionLength);
+			NSDictionary *reply = @{ @"type": @"reply", @"id": message[@"id"], @"mapped": @(mapped) };
+			[weakPlugin sendMessage:reply descriptors:@[ @(answer.descriptor) ] error:NULL];
+		};
+		NSMutableDictionary<NSNumber *, NSNumber *> *answers = [NSMutableDictionary dictionary];
+		dispatch_semaphore_t answered = dispatch_semaphore_create(0);
+		host.messageHandler = ^(NSDictionary *message, NSArray<NFKPluginDescriptor *> *descriptors) {
+			NFKPluginSharedMemory *region = [NFKPluginSharedMemory regionWithDescriptor:[descriptors.firstObject takeDescriptor] length:regionLength
+																			copiesFiles:YES error:NULL];
+			BOOL intact = region != nil && ((const uint8_t *)region.mutableBytes)[regionLength - 1] == ([message[@"id"] intValue] & 0xFF)
+				&& [message[@"mapped"] integerValue] == 2;
+			@synchronized (answers) {
+				answers[message[@"id"]] = @(intact);
+			}
+			dispatch_semaphore_signal(answered);
+		};
+		host.closeHandler = ^(NSError *error) {
+			dispatch_semaphore_signal(answered);
+		};
+		[plugin resume];
+		[host resume];
+		[channels addObjectsFromArray:@[ host, plugin ]];
+		dispatch_group_async(trips, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+			for (NSInteger trip = 0; trip < tripCount; trip++) {
+				NFKPluginSharedMemory *first NS_VALID_UNTIL_END_OF_SCOPE = [NFKPluginSharedMemory regionWithLength:regionLength namePrefix:nil error:NULL];
+				NFKPluginSharedMemory *second NS_VALID_UNTIL_END_OF_SCOPE = [NFKPluginSharedMemory regionWithLength:regionLength namePrefix:nil error:NULL];
+				memset(first.mutableBytes, 0x5A, regionLength);
+				memset(second.mutableBytes, 0x5A, regionLength);
+				NSError *sendError = nil;
+				NSDictionary *request = @{ @"type": @"ping", @"id": @(trip) };
+				BOOL sent = [host sendMessage:request descriptors:@[ @(first.descriptor), @(second.descriptor) ] error:&sendError];
+				BOOL arrived = sent && dispatch_semaphore_wait(answered, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC)) == 0 && !host.isClosed;
+				BOOL intact = NO;
+				@synchronized (answers) {
+					intact = [answers[@(trip)] boolValue];
+				}
+				if (!arrived || !intact) {
+					@synchronized (failures) {
+						[failures addObject:[NSString stringWithFormat:@"pair %lu trip %ld: sent %d arrived %d intact %d closed %d %@",
+											 (unsigned long)pair, (long)trip, sent, arrived, intact, host.isClosed, sendError]];
+					}
+					return;
+				}
+			}
+		});
+	}
+
+	__block BOOL churning = YES;
+	dispatch_group_t churn = dispatch_group_create();
+	dispatch_group_async(churn, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+		while (churning) {
+			@autoreleasepool {
+				NSMutableArray *regions = [NSMutableArray array];
+				for (NSUInteger index = 0; index < 16; index++) {
+					NFKPluginSharedMemory *region = [NFKPluginSharedMemory regionWithLength:20000 namePrefix:nil error:NULL];
+					if (region != nil) {
+						[regions addObject:region];
+					}
+				}
+			}
+		}
+	});
+	__block NSUInteger launches = 0;
+	dispatch_group_async(churn, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+		while (churning) {
+			@autoreleasepool {
+				int channel[2];
+				if (pipe(channel) != 0) {
+					continue;
+				}
+				NFKSubprocess *process = [[NFKSubprocess alloc] initWithCommand:@"/bin/sh" arguments:@[ @"-c", @"echo ok >&3" ]];
+				process.ownerInheritedDescriptors = @{ @3: @(channel[1]) };
+				close(channel[1]);
+				[process startWithError:NULL];
+				process.ownerInheritedDescriptors = nil;
+				char buffer[16];
+				while (read(channel[0], buffer, sizeof buffer) > 0) {
+				}
+				close(channel[0]);
+				[self waitUntil:^BOOL { return process.state != NFKSubprocessStateRunning && process.state != NFKSubprocessStateStarting; } timeout:5];
+				launches += 1;
+			}
+		}
+	});
+
+	XCTAssertEqual(dispatch_group_wait(trips, dispatch_time(DISPATCH_TIME_NOW, 120 * NSEC_PER_SEC)), 0, @"every pair finishes");
+	churning = NO;
+	dispatch_group_wait(churn, dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC));
+	@synchronized (failures) {
+		XCTAssertEqualObjects(failures, @[], @"every channel answers every round trip");
+	}
+	XCTAssertGreaterThan(launches, 0u, @"subprocesses launched during the trips");
+	for (NFKPluginChannel *channel in channels) {
+		XCTAssertFalse(channel.isClosed, @"no channel closed before the test closed it");
+		[channel close];
+	}
+}
+
 - (void)testAHandOffThatNeverComesTimesOut
 {
 	int hostEnd = -1;
@@ -355,7 +478,9 @@
 	XCTAssertTrue([NFKPluginChannel createSocketPair:&hostEnd second:&pluginEnd error:&error], @"%@", error);
 	NFKPluginChannel *host = [NFKPluginChannel channelByAcceptingHandOffOnDescriptor:hostEnd timeout:0.3 error:&error];
 	XCTAssertNil(host);
-	XCTAssertEqual(error.code, NFKPluginErrorHandshakeFailed);
+	XCTAssertEqual(error.code, NFKPluginErrorTimedOut, @"%@", error);
+	XCTAssertTrue([error.localizedDescription containsString:@"hand-off"], @"%@", error);
+	XCTAssertTrue([error.localizedDescription containsString:@"0.3"], @"the error names the limit: %@", error);
 	close(pluginEnd);
 }
 

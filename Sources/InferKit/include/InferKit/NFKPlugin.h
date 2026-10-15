@@ -49,6 +49,10 @@ extern NSString * const NFKPluginErrorDomain;
 	@constant   NFKPluginErrorNotTrusted The operation needs a plugin the app trusts to run in its own
 				process, or a plugin kind that can run there.
 	@constant   NFKPluginErrorStopped The plugin was stopped before the operation finished.
+	@constant   NFKPluginErrorTimedOut The plugin did not answer within a deadline: the hello exchange
+				(handshakeTimeout), the host's verification of the bundle (verificationTimeout), a build or a
+				preparation (buildTimeout), or a run that a restart cancelled and that did not end. The
+				description names the step and the limit. Introduced in InferKit 0.4.0.
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ERROR_ENUM(NFKPluginErrorDomain, NFKPluginError) {
@@ -69,6 +73,7 @@ typedef NS_ERROR_ENUM(NFKPluginErrorDomain, NFKPluginError) {
 	NFKPluginErrorUnknownTool = 15,
 	NFKPluginErrorNotTrusted = 16,
 	NFKPluginErrorStopped = 17,
+	NFKPluginErrorTimedOut = 18,
 };
 
 /*!

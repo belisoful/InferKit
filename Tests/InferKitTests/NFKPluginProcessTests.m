@@ -17,6 +17,7 @@
 @interface NFKPluginProcessTests : XCTestCase
 @property (nonatomic, strong) NFKPluginTestHarness *harness;
 @property (nonatomic, strong) NSMutableArray<NSNumber *> *states;
+@property (nonatomic, weak) NFKPluginProcess *currentProcess;
 @end
 
 @implementation NFKPluginProcessTests
@@ -35,6 +36,7 @@
 	process.memoryPressureProvider = ^double {
 		return 0;
 	};
+	self.currentProcess = process;
 	NSMutableArray<NSNumber *> *states = self.states;
 	process.stateHandler = ^(NFKPluginProcess *changed, NFKPluginProcessState state) {
 		@synchronized (states) {
@@ -64,11 +66,29 @@
 	return [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: prompt }];
 }
 
+/*! The supervisor's and the peers' state, for a failure message. */
+- (NSString *)diagnostics
+{
+	NFKPluginProcess *process = self.currentProcess;
+	return [NSString stringWithFormat:@"supervisor: %@; peers: %@", process.diagnosticDescription ?: @"released",
+			self.harness.diagnosticDescription];
+}
+
+/*! Waits up to 30 seconds, long enough for a loaded machine, and names what stalled. */
+- (void)waitForExpectations:(NSArray<XCTestExpectation *> *)expectations reporting:(NSString *)what
+{
+	XCTWaiterResult result = [XCTWaiter waitForExpectations:expectations timeout:30];
+	if (result != XCTWaiterResultCompleted) {
+		XCTFail(@"%@ did not finish within 30 s (waiter result %ld). %@", what, (long)result, self.diagnostics);
+	}
+}
+
 - (void)waitForJob:(NFKInferenceJob *)job
 {
-	XCTAssertTrue(NFKPluginTestWaitUntil(10, ^BOOL {
+	BOOL finished = NFKPluginTestWaitUntil(30, ^BOOL {
 		return job.status >= NFKInferenceJobStatusSucceeded;
-	}));
+	});
+	XCTAssertTrue(finished, @"a job is still %ld after 30 s. %@", (long)job.status, self.diagnostics);
 }
 
 #pragma mark Starting
@@ -154,9 +174,9 @@
 	NSError *error = nil;
 	XCTAssertFalse([process startWithError:&error]);
 	XCTAssertLessThan(-started.timeIntervalSinceNow, 1.5, @"the verification limit applies, not the handshake's");
-	XCTAssertEqual(error.code, NFKPluginErrorHandshakeFailed);
-	NSError *underlying = error.userInfo[NSUnderlyingErrorKey];
-	XCTAssertTrue([underlying.localizedDescription containsString:@"verification"], @"%@", error);
+	XCTAssertEqualObjects(error.domain, NFKPluginErrorDomain);
+	XCTAssertEqual(error.code, NFKPluginErrorTimedOut);
+	XCTAssertTrue([error.localizedDescription containsString:@"verification"], @"%@", error);
 	XCTAssertEqual(process.state, NFKPluginProcessStateFailed);
 }
 
@@ -295,7 +315,7 @@
 	NFKPluginProcess *process = [self processWithIdleExit:300];
 	NFKPluginBackend *backend = [self backendOfProcess:process];
 	NFKInferenceJob *inFlight = [backend submitInferenceJobForRequest:[self requestWithPrompt:@"A"]];
-	XCTAssertNotNil([[self.harness peerAtIndex:0 timeout:5] waitForMessageOfType:NFKPluginMessageRun timeout:5]);
+	XCTAssertNotNil([[self.harness peerAtIndex:0 timeout:30] waitForMessageOfType:NFKPluginMessageRun timeout:30], @"%@", self.diagnostics);
 
 	XCTestExpectation *restarted = [self expectationWithDescription:@"restarted"];
 	__block NSError *restartError = [NSError errorWithDomain:@"unset" code:0 userInfo:nil];
@@ -314,7 +334,7 @@
 	XCTAssertEqual(heldFirst.status, NFKInferenceJobStatusRunning);
 
 	dispatch_semaphore_signal(releaseOldRun);
-	[self waitForExpectations:@[ restarted ] timeout:10];
+	[self waitForExpectations:@[ restarted ] reporting:@"the restart"];
 	XCTAssertNil(restartError);
 	[self waitForJob:inFlight];
 	[self waitForJob:heldFirst];
@@ -353,15 +373,15 @@
 	process.restartDrainTimeout = 0.3;
 	NFKPluginBackend *backend = [self backendOfProcess:process];
 	NFKInferenceJob *stuck = [backend submitInferenceJobForRequest:[self requestWithPrompt:@"stuck"]];
-	NSDictionary *run = [[self.harness peerAtIndex:0 timeout:5] waitForMessageOfType:NFKPluginMessageRun timeout:5];
-	XCTAssertNotNil(run);
+	NSDictionary *run = [[self.harness peerAtIndex:0 timeout:30] waitForMessageOfType:NFKPluginMessageRun timeout:30];
+	XCTAssertNotNil(run, @"%@", self.diagnostics);
 
 	XCTestExpectation *restarted = [self expectationWithDescription:@"restarted"];
 	[process restartWithManifest:NFKPluginTestManifest(@"2.0.0", 300) completionHandler:^(NSError *error) {
 		XCTAssertNil(error);
 		[restarted fulfill];
 	}];
-	[self waitForExpectations:@[ restarted ] timeout:10];
+	[self waitForExpectations:@[ restarted ] reporting:@"the restart"];
 	[self waitForJob:stuck];
 
 	NSDictionary *cancel = [self.harness.peers.firstObject receivedMessagesOfType:NFKPluginMessageCancel].firstObject;
@@ -388,9 +408,69 @@
 		[restarted fulfill];
 	}];
 	NFKInferenceJob *held = [backend submitInferenceJobForRequest:[self requestWithPrompt:@"held"]];
-	[self waitForExpectations:@[ restarted ] timeout:10];
+	[self waitForExpectations:@[ restarted ] reporting:@"the restart"];
 	[self waitForJob:held];
 	XCTAssertEqual(held.error.code, NFKPluginErrorLaunchFailed);
+	XCTAssertEqual(process.state, NFKPluginProcessStateFailed);
+}
+
+- (void)testABuildThatOutlastsItsTimeoutFailsTheRequestAndFreesTheRestart
+{
+	self.harness.configure = ^(NFKPluginTestPeer *peer) {
+		if (peer.launchNumber == 2) {
+			peer.handlers = @{ NFKPluginMessageBuild: ^(NFKPluginTestPeer *slow, NSDictionary *message, NSArray *descriptors) {
+				[NSThread sleepForTimeInterval:1.0];
+				[slow replyTo:message result:@{ @"backend": @7, @"ready": @YES, @"loaded": @NO }];
+			} };
+		}
+	};
+	NFKPluginProcess *process = [self processWithIdleExit:300];
+	XCTAssertEqual(process.buildTimeout, 300);
+	process.buildTimeout = 0.3;
+	NSError *error = nil;
+	XCTAssertTrue([process startWithError:&error], @"%@", error);
+	NFKPluginBackend *backend = [self backendOfProcess:process];
+
+	XCTestExpectation *restarted = [self expectationWithDescription:@"restarted"];
+	[process restartWithManifest:NFKPluginTestManifest(@"2.0.0", 300) completionHandler:^(NSError *restartError) {
+		XCTAssertNil(restartError);
+		[restarted fulfill];
+	}];
+	NFKInferenceJob *held = [backend submitInferenceJobForRequest:[self requestWithPrompt:@"held"]];
+	[self waitForExpectations:@[ restarted ] reporting:@"the restart behind a build that never answers in time"];
+	[self waitForJob:held];
+	XCTAssertEqualObjects(held.error.domain, NFKPluginErrorDomain);
+	XCTAssertEqual(held.error.code, NFKPluginErrorTimedOut);
+	XCTAssertTrue([held.error.localizedDescription containsString:@"echo"], @"%@", held.error);
+
+	NFKPluginTestPeer *slow = [self.harness peerAtIndex:1 timeout:30];
+	NSDictionary *released = [slow waitForMessageOfType:NFKPluginMessageRelease timeout:30];
+	XCTAssertEqualObjects(released[@"backend"], @7, @"the late build's backend is released. %@", self.diagnostics);
+
+	XCTestExpectation *stopped = [self expectationWithDescription:@"stopped"];
+	[process stopWithCompletionHandler:^{
+		[stopped fulfill];
+	}];
+	[self waitForExpectations:@[ stopped ] reporting:@"the stop after the timed-out build"];
+	XCTAssertEqual(process.state, NFKPluginProcessStateNotRunning);
+}
+
+- (void)testAHelloThatOutlastsTheHandshakeTimeoutFailsWithTimedOut
+{
+	self.harness.configure = ^(NFKPluginTestPeer *peer) {
+		peer.handlers = @{ NFKPluginMessageHello: ^(NFKPluginTestPeer *silent, NSDictionary *message, NSArray *descriptors) {
+			// The bundle verifies, and the hello never answers.
+			[silent sendMessage:@{ @"type": NFKPluginMessageEvent, @"event": NFKPluginEventVerified }];
+		} };
+	};
+	NFKPluginProcess *process = [self processWithIdleExit:300];
+	process.verificationTimeout = 10;
+	process.handshakeTimeout = 0.3;
+	NSError *error = nil;
+	XCTAssertFalse([process startWithError:&error]);
+	XCTAssertEqualObjects(error.domain, NFKPluginErrorDomain);
+	XCTAssertEqual(error.code, NFKPluginErrorTimedOut);
+	XCTAssertTrue([error.localizedDescription containsString:@"hello"], @"%@", error);
 	XCTAssertEqual(process.state, NFKPluginProcessStateFailed);
 }
 
@@ -452,19 +532,19 @@
 	NFKPluginBackend *backend = [self backendOfProcess:process];
 	__block NSError *runError = nil;
 	XCTestExpectation *ran = [self expectationWithDescription:@"run returned"];
-	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+	[NSThread detachNewThreadWithBlock:^{
 		NSError *error = nil;
 		XCTAssertNil([backend runInferenceForRequest:[self requestWithPrompt:@"long"] error:&error]);
 		runError = error;
 		[ran fulfill];
-	});
-	XCTAssertNotNil([[self.harness peerAtIndex:0 timeout:5] waitForMessageOfType:NFKPluginMessageRun timeout:5]);
+	}];
+	XCTAssertNotNil([[self.harness peerAtIndex:0 timeout:30] waitForMessageOfType:NFKPluginMessageRun timeout:30], @"%@", self.diagnostics);
 
 	XCTestExpectation *stopped = [self expectationWithDescription:@"stopped"];
 	[process stopWithCompletionHandler:^{
 		[stopped fulfill];
 	}];
-	[self waitForExpectations:@[ ran, stopped ] timeout:10];
+	[self waitForExpectations:@[ ran, stopped ] reporting:@"the stop"];
 	XCTAssertEqualObjects(runError.domain, NFKPluginErrorDomain);
 	XCTAssertEqual(runError.code, NFKPluginErrorStopped);
 	XCTAssertEqual(process.state, NFKPluginProcessStateNotRunning);

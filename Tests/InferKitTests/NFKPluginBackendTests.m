@@ -96,7 +96,7 @@
 
 - (void)waitForJob:(NFKInferenceJob *)job
 {
-	XCTAssertTrue(NFKPluginTestWaitUntil(10, ^BOOL {
+	XCTAssertTrue(NFKPluginTestWaitUntil(30, ^BOOL {
 		return job.status >= NFKInferenceJobStatusSucceeded;
 	}));
 }
@@ -155,6 +155,29 @@
 	XCTAssertEqual(backend.residentByteCount, 1000);
 	XCTAssertEqual(backend.peakByteCount, 2000);
 	XCTAssertEqualObjects(self.harness.peers.firstObject.receivedTypes.lastObject, NFKPluginMessagePrepare);
+}
+
+- (void)testAPreparationThatOutlastsTheBuildTimeoutFailsWithTimedOut
+{
+	self.harness.configure = ^(NFKPluginTestPeer *peer) {
+		peer.handlers = @{ NFKPluginMessagePrepare: ^(NFKPluginTestPeer *slow, NSDictionary *message, NSArray *descriptors) {
+			[NSThread sleepForTimeInterval:1.0];
+			[slow replyTo:message result:@{ @"loaded": @YES, @"residentBytes": @3000, @"peakBytes": @4000 }];
+		} };
+	};
+	self.process.buildTimeout = 0.3;
+	NFKPluginBackend *backend = self.backend;
+	NSError *error = nil;
+	XCTAssertFalse([backend prepareWithError:&error]);
+	XCTAssertEqualObjects(error.domain, NFKPluginErrorDomain);
+	XCTAssertEqual(error.code, NFKPluginErrorTimedOut);
+	XCTAssertTrue([error.localizedDescription containsString:@"echo"], @"%@", error);
+	XCTAssertTrue(NFKPluginTestWaitUntil(30, ^BOOL {
+		return backend.isLoaded;
+	}), @"the late preparation's load is recorded");
+	XCTAssertEqual(backend.residentByteCount, 3000);
+	XCTAssertEqualObjects([backend runInferenceForRequest:[self requestWithPrompt:@"after"] error:&error].text, @"1:after",
+						  @"the timed-out preparation does not hold the process: %@", error);
 }
 
 - (void)testASubmittedJobRelaysProgressAndPartialResults
@@ -304,7 +327,7 @@
 		XCTAssertNil(restartError);
 		[restarted fulfill];
 	}];
-	[self waitForExpectations:@[ restarted ] timeout:10];
+	[self waitForExpectations:@[ restarted ] timeout:30];
 	XCTAssertFalse(backend.isLoaded, @"the old process's model is gone");
 
 	XCTAssertEqualObjects([backend runInferenceForRequest:[self requestWithPrompt:@"after"] error:&error].text, @"2:after", @"%@", error);

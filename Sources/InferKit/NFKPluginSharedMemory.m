@@ -54,10 +54,11 @@ static NSUInteger NFKSharedMemoryRoundedLength(NSUInteger length)
 		[self setPOSIXError:outError code:errno reason:@"no shared-memory object or temporary file could be created"];
 		return nil;
 	}
+	NFKPluginAdoptDescriptor(descriptor, "NFKPluginSharedMemory");
 	NSUInteger mappedLength = NFKSharedMemoryRoundedLength(length);
 	if (mappedLength > 0 && ftruncate(descriptor, (off_t)mappedLength) != 0) {
 		int code = errno;
-		close(descriptor);
+		NFKPluginCloseDescriptor(&descriptor);
 		[self setPOSIXError:outError code:code reason:[NSString stringWithFormat:@"a region of %lu bytes could not be sized", (unsigned long)length]];
 		return nil;
 	}
@@ -72,12 +73,14 @@ static NSUInteger NFKSharedMemoryRoundedLength(NSUInteger length)
 	return [self regionWithDescriptor:descriptor length:NSNotFound copiesFiles:copiesFiles error:outError];
 }
 
-+ (nullable instancetype)regionWithDescriptor:(int)descriptor length:(NSUInteger)length copiesFiles:(BOOL)copiesFiles error:(NSError **)outError
++ (nullable instancetype)regionWithDescriptor:(int)receivedDescriptor length:(NSUInteger)length copiesFiles:(BOOL)copiesFiles error:(NSError **)outError
 {
+	int descriptor = receivedDescriptor;
+	NFKPluginAdoptDescriptor(descriptor, "NFKPluginSharedMemory");
 	struct stat status;
 	if (fstat(descriptor, &status) != 0) {
 		int code = errno;
-		close(descriptor);
+		NFKPluginCloseDescriptor(&descriptor);
 		[self setPOSIXError:outError code:code reason:@"an attachment's descriptor could not be read"];
 		return nil;
 	}
@@ -86,13 +89,13 @@ static NSUInteger NFKSharedMemoryRoundedLength(NSUInteger length)
 	BOOL sharedMemoryObject = (status.st_mode & S_IFMT) == 0;
 	BOOL regularFile = S_ISREG(status.st_mode);
 	if ((!sharedMemoryObject && !regularFile) || status.st_size < 0) {
-		close(descriptor);
+		NFKPluginCloseDescriptor(&descriptor);
 		NFKPluginSetError(outError, NFKPluginErrorProtocolViolation, @"an attachment's descriptor is neither shared memory nor a file");
 		return nil;
 	}
 	NSUInteger objectLength = (NSUInteger)status.st_size;
 	if (length != NSNotFound && length > objectLength) {
-		close(descriptor);
+		NFKPluginCloseDescriptor(&descriptor);
 		NFKPluginSetError(outError, NFKPluginErrorProtocolViolation,
 						  [NSString stringWithFormat:@"a region of %lu bytes was named %lu bytes long", (unsigned long)objectLength, (unsigned long)length]);
 		return nil;
@@ -122,9 +125,7 @@ static NSUInteger NFKSharedMemoryRoundedLength(NSUInteger length)
 	} else if (self.copied) {
 		free(self.mutableBytes);
 	}
-	if (self.descriptor >= 0) {
-		close(self.descriptor);
-	}
+	NFKPluginCloseDescriptor(&_descriptor);
 }
 
 - (NSData *)data
@@ -231,8 +232,7 @@ static NSUInteger NFKSharedMemoryRoundedLength(NSUInteger length)
 {
 	void *bytes = length > 0 ? malloc(length) : NULL;
 	if (length > 0 && bytes == NULL) {
-		close(self.descriptor);
-		self.descriptor = -1;
+		[self closeDescriptor];
 		return [self.class setPOSIXError:outError code:ENOMEM reason:@"no memory for a copied region"];
 	}
 	NSUInteger offset = 0;
@@ -244,18 +244,23 @@ static NSUInteger NFKSharedMemoryRoundedLength(NSUInteger length)
 		if (count <= 0) {
 			int code = count < 0 ? errno : EIO;
 			free(bytes);
-			close(self.descriptor);
-			self.descriptor = -1;
+			[self closeDescriptor];
 			return [self.class setPOSIXError:outError code:code reason:@"a file region ended before its length"];
 		}
 		offset += (NSUInteger)count;
 	}
-	close(self.descriptor);
-	self.descriptor = -1;
+	[self closeDescriptor];
 	self.mutableBytes = bytes;
 	self.mappedLength = length;
 	self.copied = YES;
 	return YES;
+}
+
+- (void)closeDescriptor
+{
+	int descriptor = self.descriptor;
+	NFKPluginCloseDescriptor(&descriptor);
+	self.descriptor = descriptor;
 }
 
 + (BOOL)setPOSIXError:(NSError **)outError code:(int)code reason:(NSString *)reason

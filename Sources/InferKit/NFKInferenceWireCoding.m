@@ -905,27 +905,39 @@ static unsigned long long NFKWireShapeByteCount(NSArray *shape, NSInteger elemen
 	return (__bridge_transfer id)buffer;
 }
 
-/*! A PCM buffer over an attachment's samples without a copy. */
+/*! A PCM buffer over an attachment's samples without a copy. Every field is checked against the format
+	and the attachment's length before AVAudioPCMBuffer sees a pointer. */
 - (nullable id)PCMBufferWrappingData:(NSData *)data entry:(NSDictionary *)entry key:(NSString *)key error:(NSError * _Nullable *)outError
 {
 	AudioStreamBasicDescription description = {0};
 	AVAudioFormat *format = [self PCMFormatFromEntry:entry description:&description];
-	AVAudioFrameCount frames = (AVAudioFrameCount)[self doubleIn:entry forKey:@"frameLength"];
+	unsigned long long frames = 0;
 	NSArray *layouts = [entry[@"buffers"] isKindOfClass:NSArray.class] ? entry[@"buffers"] : nil;
-	NSUInteger bytesPerFrame = description.mBytesPerFrame;
+	NSUInteger bytesPerFrame = format != nil ? format.streamDescription->mBytesPerFrame : 0;
+	NSUInteger bytesPerSample = MAX((NSUInteger)description.mBitsPerChannel / 8, (NSUInteger)1);
 	UInt32 expectedBuffers = format == nil ? 0 : (format.isInterleaved ? 1 : format.channelCount);
-	if (format == nil || frames == 0 || bytesPerFrame == 0 || layouts.count != expectedBuffers) {
+	BOOL usable = format != nil && NFKWireWholeNumber(entry[@"frameLength"], &frames) && frames > 0 && frames <= UINT32_MAX
+		&& bytesPerFrame > 0 && bytesPerFrame == description.mBytesPerFrame && expectedBuffers > 0 && layouts.count == expectedBuffers;
+	if (!usable) {
 		return [self failForKey:key reason:@"a malformed PCM attachment" error:outError];
 	}
-	AudioBufferList *list = calloc(1, offsetof(AudioBufferList, mBuffers) + sizeof(AudioBuffer) * layouts.count);
+	// Every buffer holds exactly the frames named, sample-aligned, inside the attachment.
+	unsigned long long bufferLength = frames * bytesPerFrame;
+	if (bufferLength > UINT32_MAX) {
+		return [self failForKey:key reason:@"a PCM attachment's buffers exceed an audio buffer's size" error:outError];
+	}
+	// The list lives in data the deallocator holds. AVAudioPCMBuffer copies the list and hands the
+	// deallocator its own copy, which is not this list and must not be freed here.
+	NSMutableData *listStorage = [NSMutableData dataWithLength:offsetof(AudioBufferList, mBuffers) + sizeof(AudioBuffer) * layouts.count];
+	AudioBufferList *list = listStorage.mutableBytes;
 	list->mNumberBuffers = (UInt32)layouts.count;
 	for (NSUInteger index = 0; index < layouts.count; index++) {
 		NSDictionary *layout = [layouts[index] isKindOfClass:NSDictionary.class] ? layouts[index] : @{};
-		unsigned long long offset = [layout[@"offset"] isKindOfClass:NSNumber.class] ? [layout[@"offset"] unsignedLongLongValue] : ULLONG_MAX;
-		unsigned long long length = [layout[@"length"] isKindOfClass:NSNumber.class] ? [layout[@"length"] unsignedLongLongValue] : 0;
-		// Every buffer holds exactly the frames named, inside the attachment.
-		if (length != (unsigned long long)frames * bytesPerFrame || offset > data.length || length > data.length - offset) {
-			free(list);
+		unsigned long long offset = 0;
+		unsigned long long length = 0;
+		BOOL placed = NFKWireWholeNumber(layout[@"offset"], &offset) && NFKWireWholeNumber(layout[@"length"], &length)
+			&& length == bufferLength && offset % bytesPerSample == 0 && offset <= data.length && length <= data.length - offset;
+		if (!placed) {
 			return [self failForKey:key reason:@"a PCM attachment's samples do not match its frame count" error:outError];
 		}
 		list->mBuffers[index].mNumberChannels = format.isInterleaved ? format.channelCount : 1;
@@ -933,14 +945,13 @@ static unsigned long long NFKWireShapeByteCount(NSArray *shape, NSInteger elemen
 		list->mBuffers[index].mData = (uint8_t *)data.bytes + offset;
 	}
 	AVAudioPCMBuffer *buffer = [[AVAudioPCMBuffer alloc] initWithPCMFormat:format bufferListNoCopy:list deallocator:^(const AudioBufferList *bufferList) {
-		free((void *)bufferList);
+		(void)listStorage;
 		(void)data;
 	}];
-	if (buffer == nil) {
-		free(list);
+	if (buffer == nil || buffer.frameCapacity < frames) {
 		return [self failForKey:key reason:@"a malformed PCM attachment" error:outError];
 	}
-	buffer.frameLength = frames;
+	buffer.frameLength = (AVAudioFrameCount)frames;
 	return buffer;
 }
 
@@ -1242,7 +1253,13 @@ static unsigned long long NFKWireShapeByteCount(NSArray *shape, NSInteger elemen
 		}
 		[samples addObject:bytes];
 	}
-	AVAudioPCMBuffer *buffer = format != nil ? [[AVAudioPCMBuffer alloc] initWithPCMFormat:format frameCapacity:MAX(frames, 1)] : nil;
+	// The buffer count is checked before any allocation, so a frame count with no samples behind it
+	// cannot size one.
+	UInt32 expectedBuffers = format == nil ? 0 : (format.isInterleaved ? 1 : format.channelCount);
+	if (format == nil || samples.count == 0 || samples.count != expectedBuffers) {
+		return [self failForKey:key reason:@"a malformed PCM buffer" error:outError];
+	}
+	AVAudioPCMBuffer *buffer = [[AVAudioPCMBuffer alloc] initWithPCMFormat:format frameCapacity:MAX(frames, 1)];
 	if (buffer == nil || samples.count != buffer.audioBufferList->mNumberBuffers) {
 		return [self failForKey:key reason:@"a malformed PCM buffer" error:outError];
 	}

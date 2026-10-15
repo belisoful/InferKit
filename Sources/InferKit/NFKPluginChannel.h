@@ -75,7 +75,8 @@ typedef void (^NFKPluginChannelCloseHandler)(NSError * _Nullable error);
 
 /*! The host side of the hand-off: waits up to timeout for the first frame on descriptor, which must be
 	{"type": "channel"} carrying one Unix stream socket, closes descriptor, and returns a channel on the
-	received socket. Fails with NFKPluginErrorHandshakeFailed otherwise. */
+	received socket. A hand-off that does not arrive within timeout fails with NFKPluginErrorTimedOut;
+	a malformed one, or a peer that closes first, fails with NFKPluginErrorHandshakeFailed. */
 + (nullable instancetype)channelByAcceptingHandOffOnDescriptor:(int)descriptor
 													   timeout:(NSTimeInterval)timeout
 														 error:(NSError * _Nullable *)outError;

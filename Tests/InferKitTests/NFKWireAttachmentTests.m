@@ -65,7 +65,7 @@
 	reader over the writer's descriptors. */
 - (nullable id)roundTrip:(id)value entry:(NSDictionary * _Nullable * _Nullable)outEntry writer:(NFKPluginAttachmentWriter * _Nullable * _Nullable)outWriter
 {
-	NFKPluginAttachmentWriter *writer = [[NFKPluginAttachmentWriter alloc] init];
+	NFKPluginAttachmentWriter *writer NS_VALID_UNTIL_END_OF_SCOPE = [[NFKPluginAttachmentWriter alloc] init];
 	NSError *error = nil;
 	id entry = [[self encoderWithWriter:writer] JSONValueForValue:value key:@"value" error:&error];
 	XCTAssertNotNil(entry, @"%@", error);
@@ -328,7 +328,7 @@
 {
 	NFKInferenceWireCoding *coder = [[NFKInferenceWireCoding alloc] initWithTemporaryDirectory:nil];
 	XCTAssertEqual(coder.inlineByteLimit, 65536u);
-	NFKPluginAttachmentWriter *writer = [[NFKPluginAttachmentWriter alloc] init];
+	NFKPluginAttachmentWriter *writer NS_VALID_UNTIL_END_OF_SCOPE = [[NFKPluginAttachmentWriter alloc] init];
 	coder = [self encoderWithWriter:writer];
 	coder.inlineByteLimit = 1024;
 	NSError *error = nil;
@@ -365,7 +365,7 @@
 	XCTAssertEqual(decodedAsset.durationSeconds, 2.5);
 	XCTAssertEqual(decodedAsset.channelCount, 2);
 
-	NFKPluginAttachmentWriter *writer = [[NFKPluginAttachmentWriter alloc] init];
+	NFKPluginAttachmentWriter *writer NS_VALID_UNTIL_END_OF_SCOPE = [[NFKPluginAttachmentWriter alloc] init];
 	writer.passesFilesAsDescriptors = YES;
 	NSError *error = nil;
 	NSDictionary *indexed = [[self encoderWithWriter:writer] JSONValueForValue:file key:@"value" error:&error];
@@ -462,7 +462,7 @@
 	NSData *image = [self randomDataOfLength:300 * 1024];
 	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ @"blob": image, @"prompt": @"hello" }
 															  parameters:@{ @"steps": @4 } outputModality:NFKModalityText];
-	NFKPluginAttachmentWriter *writer = [[NFKPluginAttachmentWriter alloc] init];
+	NFKPluginAttachmentWriter *writer NS_VALID_UNTIL_END_OF_SCOPE = [[NFKPluginAttachmentWriter alloc] init];
 	id encoded = [[self encoderWithWriter:writer] JSONObjectForRequest:request error:&error];
 	XCTAssertNotNil(encoded, @"%@", error);
 	NSDictionary *run = @{ @"type": @"run", @"id": @1, @"request": encoded ?: @{} };
@@ -512,7 +512,7 @@
 					 @"a length beyond the object is refused");
 		XCTAssertEqual(error.code, NFKPluginErrorProtocolViolation);
 
-		NFKPluginAttachmentWriter *writer = [[NFKPluginAttachmentWriter alloc] init];
+		NFKPluginAttachmentWriter *writer NS_VALID_UNTIL_END_OF_SCOPE = [[NFKPluginAttachmentWriter alloc] init];
 		NFKInferenceWireCoding *encoder = [self encoderWithWriter:writer];
 		encoder.inlineByteLimit = 0;
 		NSData *data = [self randomDataOfLength:length];
@@ -528,7 +528,7 @@
 
 - (void)testAMalformedAttachmentFailsCleanly
 {
-	NFKPluginAttachmentWriter *writer = [[NFKPluginAttachmentWriter alloc] init];
+	NFKPluginAttachmentWriter *writer NS_VALID_UNTIL_END_OF_SCOPE = [[NFKPluginAttachmentWriter alloc] init];
 	NSInteger index = -1;
 	NSError *error = nil;
 	XCTAssertTrue([writer attachmentRegionOfLength:4097 index:&index error:&error] != NULL, @"%@", error);
@@ -563,6 +563,51 @@
 	fits[@"height"] = @16;
 	fits[@"planes"] = @[ @{ @"offset": @0, @"bytesPerRow": @256, @"rows": @16 } ];
 	XCTAssertNotNil([decoder valueFromJSONValue:fits key:@"value" error:&error], @"a plane inside the length wraps, %@", error);
+}
+
+- (void)testAMalformedPCMAttachmentFailsCleanly
+{
+	AVAudioFormat *planar = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32 sampleRate:48000 channels:2 interleaved:NO];
+	AVAudioPCMBuffer *source = [[AVAudioPCMBuffer alloc] initWithPCMFormat:planar frameCapacity:20000];
+	source.frameLength = 20000;
+	NFKPluginAttachmentWriter *writer = nil;
+	NSDictionary *entry = nil;
+	AVAudioPCMBuffer *decoded = [self roundTrip:source entry:&entry writer:&writer];
+	if (![decoded isKindOfClass:AVAudioPCMBuffer.class] || [entry[@"buffers"] count] != 2) {
+		XCTFail(@"the well-formed buffer decodes, %@", entry);
+		return;
+	}
+	NFKInferenceWireCoding *decoder = [[NFKInferenceWireCoding alloc] initWithTemporaryDirectory:self.directory];
+	decoder.attachmentSource = [self readerForWriter:writer];
+	NSDictionary *buffer = [entry[@"buffers"] firstObject];
+	NSDictionary<NSString *, NSDictionary *> *changes = @{
+		@"a fractional frame count": @{ @"frameLength": @19999.5 },
+		@"no frame count": @{ @"frameLength": NSNull.null },
+		@"one buffer for two channels": @{ @"buffers": @[ buffer ] },
+		@"a buffer of the wrong length": @{ @"buffers": @[ buffer, @{ @"offset": buffer[@"offset"], @"length": @1 } ] },
+		@"a misaligned buffer": @{ @"buffers": @[ buffer, @{ @"offset": @1, @"length": buffer[@"length"] } ] },
+		@"a buffer past the attachment": @{ @"buffers": @[ buffer, @{ @"offset": entry[@"length"], @"length": buffer[@"length"] } ] },
+		@"a frame size the format does not have": @{ @"bytesPerFrame": @2 },
+		@"more frames than the buffers hold": @{ @"frameLength": @40000 },
+	};
+	[changes enumerateKeysAndObjectsUsingBlock:^(NSString *name, NSDictionary *change, BOOL *stop) {
+		NSMutableDictionary *malformed = [entry mutableCopy];
+		[change enumerateKeysAndObjectsUsingBlock:^(NSString *field, id value, BOOL *innerStop) {
+			malformed[field] = value == NSNull.null ? nil : value;
+		}];
+		NSError *failure = nil;
+		XCTAssertNil([decoder valueFromJSONValue:malformed key:@"value" error:&failure], @"%@ is refused", name);
+		XCTAssertEqual(failure.code, kNFKError_InferenceUnsupported, @"%@ fails with an error", name);
+	}];
+	@autoreleasepool {
+		for (NSUInteger round = 0; round < 50; round++) {
+			NSError *error = nil;
+			AVAudioPCMBuffer *again = [decoder valueFromJSONValue:entry key:@"value" error:&error];
+			XCTAssertEqual(again.frameLength, 20000u, @"%@", error);
+		}
+	}
+	NSMutableData *afterwards = [NSMutableData dataWithLength:1 << 20];
+	XCTAssertEqual(afterwards.length, 1u << 20, @"releasing wrapped buffers leaves the heap intact");
 }
 
 #pragma mark The HTTP form

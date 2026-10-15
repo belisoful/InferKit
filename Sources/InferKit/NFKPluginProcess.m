@@ -90,6 +90,12 @@ static NSError *NFKPluginMakeError(NSInteger code, NSString *reason)
 	return [NSError errorWithDomain:NFKPluginErrorDomain code:code userInfo:@{ NSLocalizedDescriptionKey: reason }];
 }
 
+/*! Whether error is a missed deadline, which passes through unwrapped. */
+static BOOL NFKPluginIsTimeout(NSError * _Nullable error)
+{
+	return error.code == NFKPluginErrorTimedOut && [error.domain isEqualToString:NFKPluginErrorDomain];
+}
+
 static NSString *NFKPluginHandleKey(id handle)
 {
 	return [NSString stringWithFormat:@"%@", handle];
@@ -139,6 +145,10 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 @property (nonatomic, assign) BOOL admitted;
 @property (nonatomic, assign) BOOL finished;
 @property (nonatomic, strong, nullable) NSError *error;
+/*! The work of an asynchronous request, which the restart runs in its turn, or nil for a caller that
+	waits on its own thread. */
+@property (nonatomic, copy, nullable) BOOL (^work)(NFKPluginConnection *connection, NSError **error);
+@property (nonatomic, copy, nullable) void (^completion)(BOOL performed, NSError * _Nullable error);
 @end
 
 @implementation NFKPluginAdmission
@@ -276,6 +286,8 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 @property (nonatomic, strong) NSMutableArray<NSNumber *> *crashTimes;
 @property (nonatomic, strong) dispatch_queue_t eventQueue;
 @property (nonatomic, strong) dispatch_queue_t controlQueue;
+@property (nonatomic, strong) dispatch_queue_t submissionQueue;
+@property (atomic, copy) NSString *restartPhase;
 @property (nonatomic, strong) dispatch_queue_t idleQueue;
 @property (nonatomic, strong, nullable) dispatch_source_t idleTimer;
 @property (nonatomic, strong, nullable) NFKServedHostStatus *hostStatus;
@@ -297,6 +309,7 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 @property (nonatomic, weak) NFKPluginProcess *process;
 @property (nonatomic, strong) NSObject *lock;
 @property (nonatomic, strong) NSMutableDictionary<NSNumber *, NFKPluginPendingRequest *> *pending;
+@property (nonatomic, strong) NSMutableDictionary<NSNumber *, NFKPluginPendingRequest *> *detached;
 @property (nonatomic, assign) NSInteger nextIdentifier;
 @property (nonatomic, strong) NSMapTable<NSString *, NFKPluginBackend *> *backends;
 @property (nonatomic, assign) NSInteger liveBackendCount;
@@ -324,6 +337,7 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 		_helloReply = @{};
 		_lock = [[NSObject alloc] init];
 		_pending = [NSMutableDictionary dictionary];
+		_detached = [NSMutableDictionary dictionary];
 		_backends = [NSMapTable strongToWeakObjectsMapTable];
 		_lastActivity = NFKPluginNow();
 		// The handlers hold the connection until the channel closes; channelDidCloseWithError: lets go.
@@ -406,7 +420,7 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 		@synchronized (self.lock) {
 			[self.pending removeObjectForKey:@(identifier)];
 		}
-		NFKPluginSetError(error, NFKPluginErrorProtocolViolation,
+		NFKPluginSetError(error, NFKPluginErrorTimedOut,
 						  [NSString stringWithFormat:@"the plugin did not answer %@ within %g seconds", message[@"type"], timeout]);
 		return nil;
 	}
@@ -421,12 +435,39 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 	return [self.channel sendMessage:message descriptors:nil error:error];
 }
 
+- (void)detachRequest:(NSInteger)identifier
+{
+	@synchronized (self.lock) {
+		NFKPluginPendingRequest *request = self.pending[@(identifier)];
+		[self.pending removeObjectForKey:@(identifier)];
+		if (request != nil) {
+			self.detached[@(identifier)] = request;
+		}
+	}
+}
+
 /*! Forgets a request whose reply the caller no longer waits for. */
 - (void)abandonRequest:(NSInteger)identifier
 {
 	@synchronized (self.lock) {
 		[self.pending removeObjectForKey:@(identifier)];
 	}
+}
+
+/*! The requests in flight as "id:type", in order. */
+- (NSArray<NSString *> *)pendingDescriptions
+{
+	NSArray<NFKPluginPendingRequest *> *requests = nil;
+	@synchronized (self.lock) {
+		requests = [self.pending.allValues sortedArrayUsingComparator:^NSComparisonResult(NFKPluginPendingRequest *left, NFKPluginPendingRequest *right) {
+			return left.identifier < right.identifier ? NSOrderedAscending : NSOrderedDescending;
+		}];
+	}
+	NSMutableArray<NSString *> *descriptions = [NSMutableArray arrayWithCapacity:requests.count];
+	for (NFKPluginPendingRequest *request in requests) {
+		[descriptions addObject:[NSString stringWithFormat:@"%ld:%@", (long)request.identifier, request.type]];
+	}
+	return descriptions;
 }
 
 - (NSUInteger)pendingCount
@@ -467,10 +508,12 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 {
 	NSArray<NFKPluginPendingRequest *> *requests = nil;
 	@synchronized (self.lock) {
-		requests = [self.pending.allValues sortedArrayUsingComparator:^NSComparisonResult(NFKPluginPendingRequest *left, NFKPluginPendingRequest *right) {
+		NSArray<NFKPluginPendingRequest *> *all = [self.pending.allValues arrayByAddingObjectsFromArray:self.detached.allValues];
+		requests = [all sortedArrayUsingComparator:^NSComparisonResult(NFKPluginPendingRequest *left, NFKPluginPendingRequest *right) {
 			return left.identifier < right.identifier ? NSOrderedAscending : NSOrderedDescending;
 		}];
 		[self.pending removeAllObjects];
+		[self.detached removeAllObjects];
 	}
 	for (NFKPluginPendingRequest *request in requests) {
 		request.replyHandler(nil, @[], error);
@@ -605,8 +648,9 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 	NFKPluginPendingRequest *request = nil;
 	@synchronized (self.lock) {
 		if ([identifier isKindOfClass:NSNumber.class]) {
-			request = self.pending[identifier];
+			request = self.pending[identifier] ?: self.detached[identifier];
 			[self.pending removeObjectForKey:identifier];
+			[self.detached removeObjectForKey:identifier];
 		}
 		self.lastActivity = NFKPluginNow();
 	}
@@ -676,6 +720,7 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 		_verificationTimeout = 120;
 		_idleExitInterval = manifest.idleExitInterval;
 		_restartDrainTimeout = 120;
+		_buildTimeout = 300;
 		_crashLimit = 3;
 		_crashLimitInterval = 60;
 		_memoryPressureOnset = 0.6;
@@ -689,6 +734,8 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 		dispatch_queue_attr_t attributes = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0);
 		_eventQueue = dispatch_queue_create("com.inferkit.plugin-process.events", attributes);
 		_controlQueue = dispatch_queue_create("com.inferkit.plugin-process.control", attributes);
+		_submissionQueue = dispatch_queue_create("com.inferkit.plugin-process.submissions", attributes);
+		_restartPhase = @"none";
 		_idleQueue = dispatch_queue_create("com.inferkit.plugin-process.idle",
 										   dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0));
 	}
@@ -757,16 +804,26 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 	return admission;
 }
 
-- (void)abandonReservation:(nullable id)reservation
+- (void)performAsynchronouslyWithBlock:(BOOL (^)(NFKPluginConnection *connection, NSError **error))block
+							completion:(void (^)(BOOL performed, NSError * _Nullable error))completion
 {
-	NFKPluginAdmission *admission = reservation;
-	if (admission == nil) {
+	[self.admissionCondition lock];
+	BOOL held = self.holding;
+	if (held) {
+		NFKPluginAdmission *admission = [[NFKPluginAdmission alloc] init];
+		admission.work = block;
+		admission.completion = completion;
+		[self.heldAdmissions addObject:admission];
+	}
+	[self.admissionCondition unlock];
+	if (held) {
 		return;
 	}
-	[self.admissionCondition lock];
-	admission.finished = YES;
-	[self.admissionCondition broadcast];
-	[self.admissionCondition unlock];
+	dispatch_async(self.submissionQueue, ^{
+		NSError *failure = nil;
+		BOOL performed = [self performWithReservation:nil block:block error:&failure];
+		completion(performed, performed ? nil : failure);
+	});
 }
 
 - (BOOL)performWithReservation:(nullable id)reservation
@@ -998,7 +1055,8 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 	id reply = [self sendHello:hello onConnection:connection error:&replyError];
 	if (reply == nil) {
 		if (error != NULL) {
-			*error = NFKPluginWrappedError(NFKPluginErrorHandshakeFailed, @"the plugin did not complete the hello exchange", replyError);
+			*error = NFKPluginIsTimeout(replyError) ? replyError
+				: NFKPluginWrappedError(NFKPluginErrorHandshakeFailed, @"the plugin did not complete the hello exchange", replyError);
 		}
 		return NO;
 	}
@@ -1070,7 +1128,7 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 	connection.verificationHandler = nil;
 	if (timedOut) {
 		[connection abandonRequest:identifier];
-		NFKPluginSetError(error, NFKPluginErrorProtocolViolation,
+		NFKPluginSetError(error, NFKPluginErrorTimedOut,
 						  [NSString stringWithFormat:@"the plugin did not finish %@ within %g seconds", stage, limit]);
 		return nil;
 	}
@@ -1088,7 +1146,8 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 	id reply = [connection sendRequestAndWait:@{ @"type": NFKPluginMessageDescribe } timeout:self.handshakeTimeout error:&replyError];
 	if (reply == nil) {
 		if (error != NULL) {
-			*error = NFKPluginWrappedError(NFKPluginErrorHandshakeFailed, @"the plugin did not describe its models", replyError);
+			*error = NFKPluginIsTimeout(replyError) ? replyError
+				: NFKPluginWrappedError(NFKPluginErrorHandshakeFailed, @"the plugin did not describe its models", replyError);
 		}
 		return NO;
 	}
@@ -1283,26 +1342,35 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 {
 	[self enterState:NFKPluginProcessStateRestarting];
 	NFKPluginConnection *old = self.connection;
+	NSError *stopError = NFKPluginMakeError(NFKPluginErrorStopped, @"the plugin restarted before the run finished");
 	if (old != nil) {
+		self.restartPhase = @"draining";
 		[old retire];
 		if (![old waitForRequestsToDrainWithin:self.restartDrainTimeout]) {
+			self.restartPhase = @"cancelling";
 			[old cancelRuns];
-			[old waitForRequestsToDrainWithin:NFKPluginCancelGrace];
+			if (![old waitForRequestsToDrainWithin:NFKPluginCancelGrace]) {
+				stopError = NFKPluginMakeError(NFKPluginErrorTimedOut,
+											   [NSString stringWithFormat:@"the run did not end within the restart's drain timeout of %g seconds and the %g seconds after its cancel",
+												self.restartDrainTimeout, NFKPluginCancelGrace]);
+			}
 		}
 	}
+	self.restartPhase = @"stopping";
 	[self.startLock lock];
 	if (old != nil && self.connection == old) {
 		self.connection = nil;
 		[self cancelIdleTimer];
 	}
 	if (old != nil) {
-		[self shutDownConnection:old error:NFKPluginMakeError(NFKPluginErrorStopped, @"the plugin restarted before the run finished")];
+		[self shutDownConnection:old error:stopError];
 	}
 	if (self.idleExitInterval == self.manifest.idleExitInterval) {
 		self.idleExitInterval = manifest.idleExitInterval;
 	}
 	self.manifest = manifest;
 	[self.crashTimes removeAllObjects];
+	self.restartPhase = @"launching";
 	NSError *failure = nil;
 	NFKPluginConnection *fresh = [self launchRestarting:YES error:&failure];
 	[self.startLock unlock];
@@ -1313,12 +1381,19 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 	when no other restart is waiting. */
 - (void)releaseHeldAdmissionsWithError:(nullable NSError *)failure
 {
+	self.restartPhase = @"admitting";
 	[self.admissionCondition lock];
 	self.pendingRestarts -= 1;
 	if (self.pendingRestarts == 0) {
 		while (self.heldAdmissions.count > 0) {
 			NFKPluginAdmission *admission = self.heldAdmissions.firstObject;
 			[self.heldAdmissions removeObjectAtIndex:0];
+			if (admission.work != nil) {
+				[self.admissionCondition unlock];
+				[self performAdmittedWork:admission failure:failure];
+				[self.admissionCondition lock];
+				continue;
+			}
 			admission.error = failure;
 			admission.admitted = YES;
 			[self.admissionCondition broadcast];
@@ -1329,6 +1404,33 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 		self.holding = NO;
 	}
 	[self.admissionCondition unlock];
+	self.restartPhase = @"none";
+}
+
+/*! Runs a held asynchronous request in its turn, on the restart's queue, and completes it. */
+- (void)performAdmittedWork:(NFKPluginAdmission *)admission failure:(nullable NSError *)failure
+{
+	NSError *error = failure;
+	BOOL performed = NO;
+	if (error == nil) {
+		performed = [self performWithConnectionClearingFailure:NO block:admission.work error:&error];
+	}
+	admission.completion(performed, performed ? nil : error);
+}
+
+- (NSString *)diagnosticDescription
+{
+	[self.admissionCondition lock];
+	BOOL holding = self.holding;
+	NSUInteger held = self.heldAdmissions.count;
+	NSUInteger restarts = self.pendingRestarts;
+	[self.admissionCondition unlock];
+	NFKPluginConnection *connection = self.connection;
+	NSString *connectionState = connection == nil ? @"no connection"
+		: [NSString stringWithFormat:@"connection generation %lu closed %d retiring %d in flight [%@]", (unsigned long)connection.generation,
+		   connection.closed, connection.retiring, [connection.pendingDescriptions componentsJoinedByString:@", "]];
+	return [NSString stringWithFormat:@"state %ld, generation %lu, restart phase %@, holding %d with %lu held and %lu restarts pending, %@",
+			(long)self.state, (unsigned long)self.generation, self.restartPhase, holding, (unsigned long)held, (unsigned long)restarts, connectionState];
 }
 
 #pragma mark Idle exit
