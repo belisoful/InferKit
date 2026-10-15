@@ -119,8 +119,10 @@ The core's notes are split by subject under `Docs/agent-reference/`: `core-runti
 hub cache's size limit and backup exclusion),
 `remote-providers.md` (every preset, the transport, catalogs, runners, streaming, tools, media, and
 the server that answers them),
-`coreml-compute-plan.md` (where Core ML places a model, measured), and
-`hardware-and-model-sizing.md` (`NFKHardwareProfile` and model sizing). Two rules from them apply
+`coreml-compute-plan.md` (where Core ML places a model, measured),
+`hardware-and-model-sizing.md` (`NFKHardwareProfile` and model sizing), and `plugins.md` (the plugin
+host, its channel and descriptor ownership, the loaders, the registry, and the C headers in the
+`InferKitC` target). Two rules from them apply
 everywhere: image, mask, and video keys stay on `outputForKey:` / `inputForKey:` (no typed accessors,
 their representation is the backend's choice), and `MLComputeUnitsCPUOnly` is zero, so a compute-units
 property is always initialized explicitly.
@@ -346,7 +348,7 @@ the "Model gallery" section of `Docs/examples.md`). Exhaustive per-model forward
   `documentation-docc.md`, `mlx-parity-checklist.md`.
 - Core: `core-runtime-notes.md`, `apple-framework-backends.md`, `remote-providers.md`,
   `remote-provider-capabilities.md`, `coreml-compute-plan.md`,
-  `hardware-and-model-sizing.md`.
+  `hardware-and-model-sizing.md`, `plugins.md`.
 - InferKitMLX: `mlx-companion.md`, `mlx-runtime-gotchas.md`, `mlx-weights-and-formats.md`,
   `mlx-training.md`, `mlx-customization-ledger.md`, and the model classes
   `mlx-models-diffusion.md`, `mlx-models-dit-generation.md`,
@@ -362,9 +364,9 @@ the "Model gallery" section of `Docs/examples.md`). Exhaustive per-model forward
   engine, in the core and in that companion.
 
 Consumer-facing documents stay in `Docs/` (`inference-guide.md`, `examples.md`, `installation.md`,
-`coreml-llm.md`, `companions.md`, `model-index.md`, `model-parity.md`, `mlx-runtime-hazards.md`,
-`porting-candidates.md`, `removal-candidates.md`) and are updated through the parity checklist, not
-duplicated into the reference files.
+`coreml-llm.md`, `companions.md`, `model-catalog.md`, `plugins.md`, `c-api.md`, `model-index.md`,
+`model-parity.md`, `mlx-runtime-hazards.md`, `porting-candidates.md`, `removal-candidates.md`) and are
+updated through the parity checklist, not duplicated into the reference files.
 
 ## Safeguards (Anti-Patterns)
 

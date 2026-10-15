@@ -367,9 +367,65 @@ static NSString *NFKPluginFixturesArchitecture(void)
 
 #pragma mark Running tools
 
+/*! The toolchain's codesign_allocate, found once with xcrun, or nil. codesign runs codesign_allocate to
+	make room for a signature, through the /usr/bin shim unless CODESIGN_ALLOCATE names it, and the shim
+	resolves the toolchain through xcrun on every call. */
++ (nullable NSString *)codesignAllocatePath
+{
+	static NSString *path = nil;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		NSString *found = [self outputOfProgram:@"/usr/bin/xcrun" arguments:@[ @"--find", @"codesign_allocate" ] environment:@{} error:NULL];
+		found = [[found componentsSeparatedByString:@"\n"].firstObject stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+		path = found.length > 0 && [NSFileManager.defaultManager isExecutableFileAtPath:found] ? found : nil;
+	});
+	return path;
+}
+
 + (nullable NSString *)runProgram:(NSString *)path arguments:(NSArray<NSString *> *)arguments error:(NSError **)error
 {
+	NSString *allocate = [self codesignAllocatePath];
+	return [self outputOfProgram:path arguments:arguments environment:allocate != nil ? @{ @"CODESIGN_ALLOCATE": allocate } : @{}
+						   error:error];
+}
+
+/*! The processes below pid, one "pid ppid state elapsed command" line each, or an empty string. */
++ (NSString *)descendantsOfProcess:(pid_t)pid
+{
+	NSString *table = [self outputOfProgram:@"/bin/ps" arguments:@[ @"-A", @"-o", @"pid=,ppid=,stat=,etime=,command=" ]
+								environment:@{} error:NULL] ?: @"";
+	NSMutableDictionary<NSNumber *, NSNumber *> *parents = [NSMutableDictionary dictionary];
+	NSMutableDictionary<NSNumber *, NSString *> *rows = [NSMutableDictionary dictionary];
+	for (NSString *row in [table componentsSeparatedByString:@"\n"]) {
+		NSArray<NSString *> *fields = [[row stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet]
+									   componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+		if (fields.count >= 2) {
+			parents[@(fields[0].intValue)] = @([fields[1] intValue]);
+			rows[@(fields[0].intValue)] = row;
+		}
+	}
+	NSMutableArray<NSString *> *found = [NSMutableArray array];
+	NSMutableArray<NSNumber *> *frontier = [NSMutableArray arrayWithObject:@(pid)];
+	while (frontier.count > 0) {
+		NSNumber *parent = frontier.lastObject;
+		[frontier removeLastObject];
+		[parents enumerateKeysAndObjectsUsingBlock:^(NSNumber *child, NSNumber *childParent, BOOL *stop) {
+			if ([childParent isEqualToNumber:parent] && child.intValue != parent.intValue) {
+				[found addObject:rows[child]];
+				[frontier addObject:child];
+			}
+		}];
+	}
+	return [found componentsJoinedByString:@"\n"];
+}
+
++ (nullable NSString *)outputOfProgram:(NSString *)path
+							 arguments:(NSArray<NSString *> *)arguments
+						   environment:(NSDictionary<NSString *, NSString *> *)environment
+								 error:(NSError **)error
+{
 	NFKSubprocess *process = [[NFKSubprocess alloc] initWithCommand:path arguments:arguments];
+	process.environment = environment;
 	NSMutableArray<NSString *> *lines = [NSMutableArray array];
 	dispatch_semaphore_t ended = dispatch_semaphore_create(0);
 	process.lineHandler = ^(NSData *line) {
@@ -386,8 +442,12 @@ static NSString *NFKPluginFixturesArchitecture(void)
 	if (![process startWithError:error]) {
 		return nil;
 	}
+	// No tool here reads its input; an open pipe would leave one that does waiting for ever.
+	[process closeStandardInput];
 	BOOL finished = dispatch_semaphore_wait(ended, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(NFKPluginFixturesToolTimeout * NSEC_PER_SEC))) == 0;
+	NSString *stalled = nil;
 	if (!finished) {
+		stalled = [self descendantsOfProcess:process.processIdentifier];
 		[process stop];
 	}
 	NSString *output;
@@ -398,7 +458,8 @@ static NSString *NFKPluginFixturesArchitecture(void)
 	BOOL succeeded = finished && process.terminationReason == NFKSubprocessTerminationReasonExit && process.terminationStatus == 0;
 	if (!succeeded) {
 		NSString *command = [[@[ path ] arrayByAddingObjectsFromArray:arguments] componentsJoinedByString:@" "];
-		NSString *outcome = finished ? [NSString stringWithFormat:@"ended with status %d", process.terminationStatus] : @"timed out";
+		NSString *outcome = finished ? [NSString stringWithFormat:@"ended with status %d", process.terminationStatus]
+			: [NSString stringWithFormat:@"timed out; its processes then: %@", stalled.length > 0 ? stalled : @"(none below it)"];
 		NFKPluginFixturesSetError(error, [NSString stringWithFormat:@"%@ %@:\n%@", command, outcome, output]);
 		return nil;
 	}

@@ -126,6 +126,13 @@ API_UNAVAILABLE(ios, tvos, watchos)
 /*! Why the process is Failed, or why the last start failed, or nil. */
 @property (atomic, readonly, copy, nullable) NSError *failureError;
 
+/*! The app group prefix of a sandboxed app, such as "TEAMID.group.example/", or nil for an unsandboxed
+	app. When set, hello offers the "file-descriptors" capability and the prefix: both sides make the
+	shared-memory regions that carry large values under the app group, where a sandbox allows them, and
+	files cross as open descriptors beside their paths. A region that cannot be made falls back to an
+	unlinked temporary file. Takes effect at the next start. Introduced in InferKit 0.4.0. */
+@property (atomic, copy, nullable) NSString *sharedMemoryPrefix;
+
 /*! How the last process ended. */
 @property (atomic, readonly) NFKSubprocessTerminationReason terminationReason;
 

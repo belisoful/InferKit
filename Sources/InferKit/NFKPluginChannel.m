@@ -499,7 +499,12 @@ static void NFKPluginChannelHoldUntilReceived(int transport, int handed)
 		_sendTimeout = NFKPluginChannelDefaultSendTimeout;
 		_reader = [[NFKPluginFrameReader alloc] init];
 		_sendLock = [[NSLock alloc] init];
-		dispatch_queue_attr_t attributes = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0);
+		// A pool per block: a weak table read autoreleases the object it returns, such as the backend an
+		// event names, and a queue's thread drains no pool of its own until it exits, so a released backend
+		// would stay alive, and keep its plugin's process from exiting, for as long as the thread lives.
+		dispatch_queue_attr_t attributes = dispatch_queue_attr_make_with_autorelease_frequency(
+			dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0),
+			DISPATCH_AUTORELEASE_FREQUENCY_WORK_ITEM);
 		_readQueue = dispatch_queue_create("com.inferkit.plugin-channel.read", attributes);
 		_handlerQueue = dispatch_queue_create("com.inferkit.plugin-channel.handler", attributes);
 		NFKPluginAdoptDescriptor(descriptor, "NFKPluginChannel");

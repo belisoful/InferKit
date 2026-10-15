@@ -103,7 +103,8 @@ the measured parity of each is in [model parity](Docs/model-parity.md).
 | **[Companion packages](Docs/companions.md)** | InferKitMLX, InferKitFoundationModels, and InferKitAppleSwift: what each ships, and the full model gallery. |
 | **[Model index](Docs/model-index.md)** | Every implemented model: its entry class, network class, the configuration preset or variant for the released weights, registered name, and base backend. |
 | **[Model catalog](Docs/model-catalog.md)** | The descriptors an app lists, downloads, and configures models from, and the JSON manifest schema a plugin ships them in. |
-| [C interface](Docs/c-api.md) | Calling InferKit from C, C++, and Rust: a catalog model built by its identifier, runs with JSON and buffers, progress, cancellation, and who frees what. |
+| **[Plugins](Docs/plugins.md)** | Writing a plugin as an Objective-C bundle, a C library, or a program; signing it; and listing, trusting, and hosting plugins in an app. |
+| **[C interface](Docs/c-api.md)** | Calling InferKit from C, C++, and Rust: a catalog model built by its identifier, runs with JSON and buffers, progress, cancellation, and who frees what. |
 | **[Model parity](Docs/model-parity.md)** | Every implemented model, the reference it is measured against, and the number from the recorded run; the shared subsystems and which models depend on each. |
 | **[Runtime hazards](Docs/mlx-runtime-hazards.md)** | Where MLX, Metal, and Core ML return a wrong answer quietly. Each entry carries an executable probe. |
 | **[Porting candidates](Docs/porting-candidates.md)** | A survey of open-weight models from large vendors not yet supported, scored as future port candidates. Preliminary research. |

@@ -147,6 +147,7 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 
 ### Plugins
 
+- <doc:Plugins>
 - ``NFKPlugin``
 - ``NFKPluginContext``
 - ``NFKPluginManifest``

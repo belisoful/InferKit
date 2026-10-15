@@ -29,7 +29,7 @@ See also the [inference guide](inference-guide.md) for the concepts behind these
 - [Audio → text](#audio--text-transcription) — remote transcription (Whisper)
 - [Text → audio](#text--audio-speech) — bring-your-own MLX speech
 - [Loading a PyTorch checkpoint directly](#loading-a-pytorch-checkpoint-directly) — no Python toolchain
-- [Model catalog](#model-catalog) — `NFKModelCatalog`: the models an app lists, downloads, and configures
+- [Model catalog](#model-catalog) — `NFKModelCatalog`: the models an app lists, downloads, and configures, and the plugins that add models (`NFKPluginRegistry`)
 - [Choosing a backend at runtime](#choosing-a-backend-at-runtime)
 - [Serving a model to other machines](#serving-a-model-to-other-machines) — `NFKInferenceServer`, found by address or Bonjour
 - [Subsystems](#subsystems) — jobs, tokenizers, tensor conversion, Hugging Face hub, downloads with progress and removal, library and API version, conversion tool
@@ -5485,6 +5485,38 @@ NSDictionary *loaded = NFKInferenceLoadOptionValues(backend);  // what the backe
 The options split by stage. The load options reach the builder, and the request options become
 defaults the returned `NFKDefaultedBackend` fills into each request that leaves them out. A model with
 presets is also reached as `model@preset`, such as `example.chat@fast`.
+
+### Plugins
+
+A plugin lists its models in the catalog from its manifest, without loading code. `NFKPluginRegistry`
+adds every `.inferkitplugin` bundle in a folder, and each model joins the catalog as
+`<plugin id>/<model id>`. The catalog builds it as any other model; its process starts when it first
+prepares or runs. The [plugin guide](plugins.md) covers writing, signing, trusting, and hosting plugins.
+
+<!-- objc-check: given NSURL *pluginsFolder = nil; -->
+```objc
+NFKPluginRegistry *plugins = NFKPluginRegistry.sharedRegistry;
+NSArray<NSError *> *errors = nil;
+NSArray<NFKPluginManifest *> *added = [plugins addPluginsInDirectoryURL:pluginsFolder errors:&errors];
+for (NFKPluginManifest *manifest in added) {
+    NSString *name = manifest.displayName;                     // manifest.version, manifest.entryKind
+}
+NSError *error = nil;
+id<NFKInferenceBackend> echo =
+    [NFKModelCatalog.sharedCatalog backendForModelIdentifier:@"com.example.echo/echo" options:nil error:&error];
+NFKModelDescriptor *listed = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"com.example.echo/echo"];
+NSString *version = listed.extensions[@"plugin"][@"version"];
+
+if (![plugins setOptionValues:@{ @"greeting": @"hi" } forPluginIdentifier:@"com.example.echo" error:&error]) {
+    // NFKModelCatalogErrorInvalidOptions: the problems are under NFKModelOptionProblemsKey
+}
+[plugins reloadPluginWithIdentifier:@"com.example.echo" completionHandler:^(NSError *reloadError) {
+    // nil once the new version runs, or at once when no process runs
+}];
+```
+
+The app persists option values and trust (`setTrusted:forPluginIdentifier:`) itself, and sets them again
+after it adds the plugin at launch.
 
 ## Structured output and tools
 

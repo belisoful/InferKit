@@ -27,8 +27,6 @@
 /*! The capability every service answers hello with: large values cross as shared-memory attachments. */
 static NSString * const NFKPluginCapabilityAttachments = @"attachments";
 
-/*! The capability a host lists in hello to receive result files as open descriptors beside their paths. */
-static NSString * const NFKPluginCapabilityFileDescriptors = @"file-descriptors";
 
 static const NSTimeInterval NFKPluginServiceDefaultDrainTimeout = 5;
 

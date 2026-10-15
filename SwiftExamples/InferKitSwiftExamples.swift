@@ -372,6 +372,61 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(NFKModelToolName(NFKModelPresetModelName("example.chat", "fast")), "example_chat__fast")
     }
 
+    #if os(macOS)
+    // Plugins from Swift (Docs/examples.md: Model catalog — Plugins): a folder with one executable plugin
+    // whose program never runs, listed in a registry of its own catalog.
+    func testExampleListingPluginsFromSwift() throws {
+        let files = FileManager.default
+        let folder = files.temporaryDirectory.appendingPathComponent("swift-plugins-\(UUID().uuidString)", isDirectory: true)
+        let contents = folder.appendingPathComponent("Echo.inferkitplugin/Contents", isDirectory: true)
+        let directoryMode: [FileAttributeKey: Any] = [.posixPermissions: 0o755]
+        try files.createDirectory(at: contents.appendingPathComponent("MacOS"), withIntermediateDirectories: true,
+                                  attributes: directoryMode)
+        try files.createDirectory(at: contents.appendingPathComponent("Resources"), withIntermediateDirectories: true,
+                                  attributes: directoryMode)
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+        let info: NSDictionary = ["CFBundleIdentifier": "com.example.swift-echo", "CFBundleShortVersionString": "1.0.0",
+                                  "CFBundleExecutable": "Echo", "CFBundlePackageType": "BNDL"]
+        try info.write(to: contents.appendingPathComponent("Info.plist"))
+        let manifest = """
+            { "schemaVersion": 1, "kind": "inferkit.plugin", "id": "com.example.swift-echo", "version": "1.0.0",
+              "compatibility": { "inferkitAPI": "1.0" }, "entry": { "kind": "executable", "executable": "Echo" },
+              "options": [{ "key": "greeting", "kind": "text", "default": "hello" }],
+              "models": [{ "id": "echo", "family": "example-echo",
+                           "inputs": [{ "key": "prompt", "required": true }], "outputs": [{ "key": "text" }] }] }
+            """
+        try manifest.write(to: contents.appendingPathComponent("Resources/inferkit-plugin.json"), atomically: true, encoding: .utf8)
+        let program = contents.appendingPathComponent("MacOS/Echo")
+        try "#!/bin/sh\nexit 0\n".write(to: program, atomically: true, encoding: .utf8)
+        try files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: program.path)
+
+        let registry = NFKPluginRegistry(catalog: NFKModelCatalog())
+        var errors: NSArray?
+        let added = registry.addPlugins(inDirectory: folder, errors: &errors)
+        XCTAssertEqual(added.map(\.identifier), ["com.example.swift-echo"])
+        XCTAssertEqual(errors?.count ?? 0, 0)
+        // The catalog's build entry throws in Swift, as the registry's own entry does.
+        let echo = try registry.catalog.backend(forModelIdentifier: "com.example.swift-echo/echo", options: nil)
+        XCTAssertEqual(echo.backendIdentifier, "plugin:com.example.swift-echo/echo")
+        let direct = try registry.backend(forModelIdentifier: "com.example.swift-echo/echo", options: nil)
+        XCTAssertEqual(direct.isolation, .process)
+        XCTAssertEqual(direct.process?.state, .notRunning)
+        XCTAssertFalse(registry.isTrustedPluginIdentifier("com.example.swift-echo"))
+        try registry.setOptionValues(["greeting": "hi"], forPluginIdentifier: "com.example.swift-echo")
+        XCTAssertEqual(registry.optionValues(forPluginIdentifier: "com.example.swift-echo") as? [String: String], ["greeting": "hi"])
+        XCTAssertThrowsError(try registry.setOptionValues(["volume": 3], forPluginIdentifier: "com.example.swift-echo"))
+        let reloaded = expectation(description: "reloaded")
+        registry.reloadPlugin(withIdentifier: "com.example.swift-echo") { error in
+            XCTAssertNil(error)
+            reloaded.fulfill()
+        }
+        wait(for: [reloaded], timeout: 10)
+        registry.sharedMemoryPrefix = nil
+        XCTAssertFalse(NFKPluginInProcessWarningFullAccess.isEmpty)
+        _ = NFKPluginRegistry.shared
+    }
+    #endif
+
     // Remote providers from Swift: the same presets, with the importer's own naming.
     func testRemoteProviderPresets() {
         let ollama = NFKRemoteProvider(identifier: "ollama")
