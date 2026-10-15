@@ -28,6 +28,57 @@
 
 static NSString * const NFKWireTag = @"$nfk";
 
+static const NSUInteger NFKWireDefaultInlineByteLimit = 64u * 1024u;
+
+/*! The alignment of each plane or buffer inside an attachment, so a wrapped plane suits vector code. */
+static const NSUInteger NFKWireAttachmentAlignment = 64;
+
+static NSUInteger NFKWireAlign(NSUInteger offset)
+{
+	return (offset + NFKWireAttachmentAlignment - 1) / NFKWireAttachmentAlignment * NFKWireAttachmentAlignment;
+}
+
+/*! Whether value is a whole number a JSON double carries exactly, 0 through 2^53, stored in outValue. */
+static BOOL NFKWireWholeNumber(id value, unsigned long long *outValue)
+{
+	if (![value isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID()) {
+		return NO;
+	}
+	double number = [value doubleValue];
+	if (!isfinite(number) || number < 0 || number > 9007199254740992.0 || floor(number) != number) {
+		return NO;
+	}
+	*outValue = (unsigned long long)number;
+	return YES;
+}
+
+/*! The first length bytes of data, sharing its storage; the slice keeps data alive. */
+static NSData *NFKWireLeadingBytes(NSData *data, NSUInteger length)
+{
+	if (length == data.length) {
+		return data;
+	}
+	if (length == 0) {
+		return [NSData data];
+	}
+	return [[NSData alloc] initWithBytesNoCopy:(void *)data.bytes length:length deallocator:^(void *bytes, NSUInteger sliceLength) {
+		(void)data;
+	}];
+}
+
+/*! Releases the data an attachment-wrapped pixel buffer holds. CoreVideo calls it only for a buffer it
+	made, so a failed creation releases the data itself. */
+static void NFKWireReleaseAttachedBytes(void *releaseRefCon, const void *baseAddress)
+{
+	CFRelease(releaseRefCon);
+}
+
+static void NFKWireReleaseAttachedPlanes(void *releaseRefCon, const void *dataPtr, size_t dataSize, size_t numberOfPlanes,
+										 const void * _Nullable planeAddresses[_Nullable])
+{
+	CFRelease(releaseRefCon);
+}
+
 /*! A number stored as a float or a double, as opposed to an integer or a boolean. */
 static BOOL NFKWireIsFloating(NSNumber *number)
 {
@@ -89,6 +140,7 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 	if (self != nil) {
 		_temporaryDirectory = [directory copy];
 		_writtenFiles = [NSMutableArray array];
+		_inlineByteLimit = NFKWireDefaultInlineByteLimit;
 	}
 	return self;
 }
@@ -188,7 +240,7 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 		return [self JSONValueForNumber:value];
 	}
 	if ([value isKindOfClass:NSArray.class] && NFKWireIsFloatingArray(value)) {
-		return [self JSONValueForFloatingArray:value];
+		return [self JSONValueForFloatingArray:value key:key error:outError];
 	}
 	if ([value isKindOfClass:NSArray.class]) {
 		NSMutableArray *encoded = [NSMutableArray arrayWithCapacity:[value count]];
@@ -207,6 +259,12 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 			return encoded;
 		}
 		return @{ NFKWireTag: @"dictionary", @"value": encoded };
+	}
+	if ([value isKindOfClass:NSData.class] && [self attachesLength:[value length]]) {
+		NSData *data = value;
+		return [self attachmentEntryAs:@"data" length:data.length fields:@{} key:key error:outError fill:^(uint8_t *region) {
+			memcpy(region, data.bytes, data.length);
+		}];
 	}
 	if ([value isKindOfClass:NSData.class]) {
 		return @{ NFKWireTag: @"data", @"base64": [value base64EncodedStringWithOptions:0] };
@@ -233,7 +291,7 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 		return [self JSONValueForToolInvocation:value key:key error:outError];
 	}
 	if ([value isKindOfClass:MLMultiArray.class]) {
-		return [self JSONValueForMultiArray:value];
+		return [self JSONValueForMultiArray:value key:key error:outError];
 	}
 	if ([value isKindOfClass:AVAudioPCMBuffer.class]) {
 		return [self JSONValueForPCMBuffer:value key:key error:outError];
@@ -253,6 +311,11 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 			return [self failForKey:key reason:@"the image could not be encoded as PNG" error:outError];
 		}
 		NSString *tag = typeID == CGImageGetTypeID() ? @"cgImage" : @"image";
+		if ([self attachesLength:png.length]) {
+			return [self attachmentEntryAs:tag length:png.length fields:@{} key:key error:outError fill:^(uint8_t *region) {
+				memcpy(region, png.bytes, png.length);
+			}];
+		}
 		return @{ NFKWireTag: tag, @"png": [png base64EncodedStringWithOptions:0] };
 	}
 	return [self failForKey:key reason:[NSString stringWithFormat:@"a value of class %@ has no wire form", [value class]] error:outError];
@@ -306,7 +369,7 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 
 /*! An array of floating values packed as little-endian IEEE words: float32 when every element is a
 	float, float64 otherwise. An embedding crosses exactly and at a third of its decimal size. */
-- (id)JSONValueForFloatingArray:(NSArray<NSNumber *> *)array
+- (nullable id)JSONValueForFloatingArray:(NSArray<NSNumber *> *)array key:(NSString *)key error:(NSError * _Nullable *)outError
 {
 	BOOL singles = YES;
 	for (NSNumber *element in array) {
@@ -320,7 +383,14 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 			((double *)packed.mutableBytes)[index] = element.doubleValue;
 		}
 	}];
-	return @{ NFKWireTag: singles ? @"float32Array" : @"float64Array", @"base64": [packed base64EncodedStringWithOptions:0] };
+	NSString *tag = singles ? @"float32Array" : @"float64Array";
+	if ([self attachesLength:packed.length]) {
+		return [self attachmentEntryAs:tag length:packed.length fields:@{ @"count": @(array.count) } key:key error:outError
+								  fill:^(uint8_t *region) {
+			memcpy(region, packed.bytes, packed.length);
+		}];
+	}
+	return @{ NFKWireTag: tag, @"base64": [packed base64EncodedStringWithOptions:0] };
 }
 
 - (nullable id)JSONValueForURL:(NSURL *)url key:(NSString *)key error:(NSError * _Nullable *)outError
@@ -342,6 +412,9 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 	if (url == nil) {
 		return entry;
 	}
+	if (self.attachmentSink != nil) {
+		return [self referenceEntryForFileURL:url key:key error:outError];
+	}
 	NSError *readError = nil;
 	NSData *bytes = [NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:&readError];
 	if (bytes == nil) {
@@ -350,6 +423,28 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 	}
 	entry[@"name"] = url.lastPathComponent;
 	entry[@"base64"] = [bytes base64EncodedStringWithOptions:0];
+	return entry;
+}
+
+/*! A file in the attachment mode: its path and name, and the index of an open descriptor when the sink
+	attaches one. */
+- (nullable NSMutableDictionary *)referenceEntryForFileURL:(NSURL *)url key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	NSMutableDictionary *entry = [NSMutableDictionary dictionary];
+	entry[@"name"] = url.lastPathComponent;
+	entry[@"path"] = url.URLByStandardizingPath.path;
+	if (![self.attachmentSink respondsToSelector:@selector(attachFileAtURL:index:error:)]) {
+		return entry;
+	}
+	NSInteger index = -1;
+	NSError *attachError = nil;
+	if (![self.attachmentSink attachFileAtURL:url index:&index error:&attachError]) {
+		return [self failForKey:key reason:[NSString stringWithFormat:@"the file %@ could not be attached: %@",
+											url.lastPathComponent, attachError.localizedDescription] error:outError];
+	}
+	if (index >= 0) {
+		entry[@"index"] = @(index);
+	}
 	return entry;
 }
 
@@ -399,6 +494,17 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 	}
 	BOOL planar = CVPixelBufferIsPlanar(buffer);
 	size_t planeCount = planar ? CVPixelBufferGetPlaneCount(buffer) : 1;
+	if (self.attachmentSink != nil) {
+		NSError *attachError = nil;
+		id attached = [self attachedEntryForLockedPixelBuffer:buffer planeCount:planeCount key:key error:&attachError];
+		if (attached != nil || attachError != nil) {
+			CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
+			if (attached == nil && outError != NULL) {
+				*outError = attachError;
+			}
+			return attached;
+		}
+	}
 	NSMutableArray *planes = [NSMutableArray arrayWithCapacity:planeCount];
 	for (size_t plane = 0; plane < planeCount; plane++) {
 		const void *base = planar ? CVPixelBufferGetBaseAddressOfPlane(buffer, plane) : CVPixelBufferGetBaseAddress(buffer);
@@ -415,10 +521,52 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 			  @"planes": planes };
 }
 
-- (id)JSONValueForMultiArray:(MLMultiArray *)array
+/*! A locked pixel buffer as one attachment holding every plane at an aligned offset, rows padded as the
+	buffer holds them, or nil with no error when its bytes fit inline. An IOSurface-backed buffer is
+	copied the same way. */
+- (nullable id)attachedEntryForLockedPixelBuffer:(CVPixelBufferRef)buffer planeCount:(size_t)planeCount
+											 key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	BOOL planar = CVPixelBufferIsPlanar(buffer);
+	NSMutableArray<NSDictionary *> *planes = [NSMutableArray arrayWithCapacity:planeCount];
+	NSUInteger length = 0;
+	NSUInteger payload = 0;
+	for (size_t plane = 0; plane < planeCount; plane++) {
+		size_t bytesPerRow = planar ? CVPixelBufferGetBytesPerRowOfPlane(buffer, plane) : CVPixelBufferGetBytesPerRow(buffer);
+		size_t rows = planar ? CVPixelBufferGetHeightOfPlane(buffer, plane) : CVPixelBufferGetHeight(buffer);
+		length = NFKWireAlign(length);
+		[planes addObject:@{ @"offset": @(length), @"bytesPerRow": @(bytesPerRow), @"rows": @(rows) }];
+		length += bytesPerRow * rows;
+		payload += bytesPerRow * rows;
+	}
+	if (![self attachesLength:payload]) {
+		return nil;
+	}
+	NSDictionary *fields = @{ @"format": @(CVPixelBufferGetPixelFormatType(buffer)),
+							  @"width": @(CVPixelBufferGetWidth(buffer)),
+							  @"height": @(CVPixelBufferGetHeight(buffer)),
+							  @"planes": planes };
+	return [self attachmentEntryAs:@"pixelBuffer" length:length fields:fields key:key error:outError fill:^(uint8_t *region) {
+		for (size_t plane = 0; plane < planeCount; plane++) {
+			const void *base = planar ? CVPixelBufferGetBaseAddressOfPlane(buffer, plane) : CVPixelBufferGetBaseAddress(buffer);
+			NSDictionary *layout = planes[plane];
+			memcpy(region + [layout[@"offset"] unsignedLongValue], base,
+				   [layout[@"bytesPerRow"] unsignedLongValue] * [layout[@"rows"] unsignedLongValue]);
+		}
+	}];
+}
+
+- (nullable id)JSONValueForMultiArray:(MLMultiArray *)array key:(NSString *)key error:(NSError * _Nullable *)outError
 {
 	NSInteger elementSize = (array.dataType & 0xFF) / 8;
-	NSMutableData *bytes = [NSMutableData dataWithLength:(NSUInteger)(array.count * elementSize)];
+	NSUInteger length = (NSUInteger)(array.count * elementSize);
+	if ([self attachesLength:length]) {
+		return [self attachmentEntryAs:@"multiArray" length:length fields:@{ @"dataType": @(array.dataType), @"shape": array.shape }
+								   key:key error:outError fill:^(uint8_t *region) {
+			NFKWireCopyMultiArrayElements(array.dataPointer, array.shape, array.strides, region, elementSize, YES);
+		}];
+	}
+	NSMutableData *bytes = [NSMutableData dataWithLength:length];
 	NFKWireCopyMultiArrayElements(array.dataPointer, array.shape, array.strides, bytes.mutableBytes, elementSize, YES);
 	return @{ NFKWireTag: @"multiArray", @"dataType": @(array.dataType), @"shape": array.shape,
 			  @"base64": [bytes base64EncodedStringWithOptions:0] };
@@ -428,6 +576,15 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 	rows hold at least the bytes its width needs, there are at least as many as its height needs, and
 	its bytes hold them all. The buffer made for the entry is then no larger than what was sent. */
 static BOOL NFKWirePlanesCoverDimensions(OSType format, size_t width, size_t height, NSArray *planes)
+{
+	return NFKWirePlaneGeometryCovers(format, width, height, planes, ^double(NSDictionary *plane) {
+		return [plane[@"base64"] isKindOfClass:NSString.class] ? floor([plane[@"base64"] length] / 4.0) * 3.0 : 0;
+	});
+}
+
+/*! The check NFKWirePlanesCoverDimensions makes, with carried giving the bytes each plane can reach. */
+static BOOL NFKWirePlaneGeometryCovers(OSType format, size_t width, size_t height, NSArray *planes,
+									   double (NS_NOESCAPE ^carriedBytes)(NSDictionary *plane))
 {
 	NSDictionary *description = CFBridgingRelease(CVPixelFormatDescriptionCreateWithPixelFormatType(kCFAllocatorDefault, format));
 	if (description == nil) {
@@ -446,7 +603,7 @@ static BOOL NFKWirePlanesCoverDimensions(OSType format, size_t width, size_t hei
 		double vertical = MAX([layout[(id)kCVPixelFormatVerticalSubsampling] doubleValue], 1.0);
 		double bytesPerRow = [plane[@"bytesPerRow"] isKindOfClass:NSNumber.class] ? [plane[@"bytesPerRow"] doubleValue] : 0;
 		double rows = [plane[@"rows"] isKindOfClass:NSNumber.class] ? [plane[@"rows"] doubleValue] : 0;
-		double carried = [plane[@"base64"] isKindOfClass:NSString.class] ? floor([plane[@"base64"] length] / 4.0) * 3.0 : 0;
+		double carried = carriedBytes(plane);
 		double neededPerRow = ceil(ceil(width / horizontal) / blockWidth) * bits / 8.0;
 		if (bits <= 0 || bytesPerRow < neededPerRow || rows < ceil(height / vertical) || bytesPerRow * rows > carried) {
 			return NO;
@@ -495,6 +652,16 @@ static void NFKWireCopyMultiArrayElements(void *strided, NSArray<NSNumber *> *sh
 	}
 	const AudioBufferList *list = buffer.audioBufferList;
 	NSUInteger length = (NSUInteger)buffer.frameLength * description->mBytesPerFrame;
+	if (self.attachmentSink != nil) {
+		NSError *attachError = nil;
+		id attached = [self attachedEntryForPCMBuffer:buffer frameBytes:length key:key error:&attachError];
+		if (attached != nil || attachError != nil) {
+			if (attached == nil && outError != NULL) {
+				*outError = attachError;
+			}
+			return attached;
+		}
+	}
 	NSMutableArray<NSString *> *buffers = [NSMutableArray arrayWithCapacity:list->mNumberBuffers];
 	for (UInt32 index = 0; index < list->mNumberBuffers; index++) {
 		NSUInteger available = MIN(length, (NSUInteger)list->mBuffers[index].mDataByteSize);
@@ -512,6 +679,298 @@ static void NFKWireCopyMultiArrayElements(void *strided, NSArray<NSNumber *> *sh
 			  @"bitsPerChannel": @(description->mBitsPerChannel),
 			  @"frameLength": @(buffer.frameLength),
 			  @"buffers": buffers };
+}
+
+/*! The stream description fields both PCM forms carry. */
+- (NSMutableDictionary *)fieldsForPCMBuffer:(AVAudioPCMBuffer *)buffer
+{
+	const AudioStreamBasicDescription *description = buffer.format.streamDescription;
+	return [@{ @"sampleRate": @(description->mSampleRate),
+			   @"formatID": @(description->mFormatID),
+			   @"formatFlags": @(description->mFormatFlags),
+			   @"bytesPerPacket": @(description->mBytesPerPacket),
+			   @"framesPerPacket": @(description->mFramesPerPacket),
+			   @"bytesPerFrame": @(description->mBytesPerFrame),
+			   @"channelsPerFrame": @(description->mChannelsPerFrame),
+			   @"bitsPerChannel": @(description->mBitsPerChannel),
+			   @"frameLength": @(buffer.frameLength) } mutableCopy];
+}
+
+/*! A PCM buffer as one attachment holding each audio buffer's frames at an aligned offset, or nil with no
+	error when its samples fit inline. */
+- (nullable id)attachedEntryForPCMBuffer:(AVAudioPCMBuffer *)buffer frameBytes:(NSUInteger)frameBytes
+									 key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	const AudioBufferList *list = buffer.audioBufferList;
+	NSMutableArray<NSDictionary *> *layouts = [NSMutableArray arrayWithCapacity:list->mNumberBuffers];
+	NSUInteger length = 0;
+	NSUInteger payload = 0;
+	for (UInt32 index = 0; index < list->mNumberBuffers; index++) {
+		NSUInteger available = MIN(frameBytes, (NSUInteger)list->mBuffers[index].mDataByteSize);
+		length = NFKWireAlign(length);
+		[layouts addObject:@{ @"offset": @(length), @"length": @(available) }];
+		length += available;
+		payload += available;
+	}
+	if (![self attachesLength:payload]) {
+		return nil;
+	}
+	NSMutableDictionary *fields = [self fieldsForPCMBuffer:buffer];
+	fields[@"buffers"] = layouts;
+	return [self attachmentEntryAs:@"pcm" length:length fields:fields key:key error:outError fill:^(uint8_t *region) {
+		for (UInt32 index = 0; index < list->mNumberBuffers; index++) {
+			memcpy(region + [layouts[index][@"offset"] unsignedLongValue], list->mBuffers[index].mData,
+				   [layouts[index][@"length"] unsignedLongValue]);
+		}
+	}];
+}
+
+#pragma mark Attachments
+
+- (BOOL)attachesLength:(NSUInteger)length
+{
+	return self.attachmentSink != nil && length > self.inlineByteLimit;
+}
+
+/*! An attachment entry: a region of length bytes that fill writes, tagged "buffer" with kind under "as"
+	and fields beside it. */
+- (nullable NSDictionary *)attachmentEntryAs:(NSString *)kind length:(NSUInteger)length fields:(NSDictionary *)fields
+										 key:(NSString *)key error:(NSError * _Nullable *)outError
+										fill:(void (NS_NOESCAPE ^)(uint8_t *region))fill
+{
+	NSInteger index = -1;
+	NSError *sinkError = nil;
+	uint8_t *region = [self.attachmentSink attachmentRegionOfLength:length index:&index error:&sinkError];
+	if (region == NULL || index < 0) {
+		return [self failForKey:key reason:sinkError.localizedDescription ?: @"no attachment region could be made" error:outError];
+	}
+	fill(region);
+	NSMutableDictionary *entry = [NSMutableDictionary dictionaryWithDictionary:fields];
+	entry[NFKWireTag] = @"buffer";
+	entry[@"index"] = @(index);
+	entry[@"as"] = kind;
+	entry[@"length"] = @(length);
+	return entry;
+}
+
+- (nullable id)attachedValueFromEntry:(NSDictionary *)entry key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	if (self.attachmentSource == nil) {
+		return [self failForKey:key reason:@"an attachment arrived outside the attachment mode" error:outError];
+	}
+	NSNumber *index = [entry[@"index"] isKindOfClass:NSNumber.class] ? entry[@"index"] : nil;
+	NSString *kind = [entry[@"as"] isKindOfClass:NSString.class] ? entry[@"as"] : nil;
+	if (index == nil || index.integerValue < 0 || kind == nil) {
+		return [self failForKey:key reason:@"a malformed attachment" error:outError];
+	}
+	unsigned long long length = 0;
+	if (!NFKWireWholeNumber(entry[@"length"], &length)) {
+		return [self failForKey:key reason:@"an attachment names no length" error:outError];
+	}
+	NSError *sourceError = nil;
+	NSData *region = [self.attachmentSource attachmentDataAtIndex:index.integerValue error:&sourceError];
+	if (region == nil) {
+		return [self failForKey:key reason:sourceError.localizedDescription ?: @"the attachment is missing" error:outError];
+	}
+	// The region is at least the attachment: a shared-memory object is whole pages. The entry's length is
+	// the attachment's, so every reader below sees exactly those bytes and nothing past them.
+	if (length > region.length) {
+		return [self failForKey:key reason:[NSString stringWithFormat:@"the attachment names %llu bytes and its region holds %lu",
+											length, (unsigned long)region.length] error:outError];
+	}
+	NSData *data = NFKWireLeadingBytes(region, (NSUInteger)length);
+	if ([kind isEqualToString:@"data"]) {
+		return data;
+	}
+	if ([kind isEqualToString:@"float32Array"] || [kind isEqualToString:@"float64Array"]) {
+		return [self floatingArrayFromBytes:data singles:[kind isEqualToString:@"float32Array"] key:key error:outError];
+	}
+	if ([kind isEqualToString:@"multiArray"]) {
+		return [self multiArrayWrappingData:data entry:entry key:key error:outError];
+	}
+	if ([kind isEqualToString:@"pixelBuffer"]) {
+		return [self pixelBufferWrappingData:data entry:entry key:key error:outError];
+	}
+	if ([kind isEqualToString:@"pcm"]) {
+		return [self PCMBufferWrappingData:data entry:entry key:key error:outError];
+	}
+	if ([kind isEqualToString:@"cgImage"]) {
+		return [self CGImageFromData:data key:key error:outError];
+	}
+	if ([kind isEqualToString:@"image"]) {
+		CVPixelBufferRef pixelBuffer = [NFKImageCoding pixelBufferWithImageData:data];
+		if (pixelBuffer == NULL) {
+			return [self failForKey:key reason:@"the image could not be decoded" error:outError];
+		}
+		return (__bridge_transfer id)pixelBuffer;
+	}
+	return [self failForKey:key reason:[NSString stringWithFormat:@"the attachment kind \"%@\" is unknown", kind] error:outError];
+}
+
+/*! The shape's element count times elementSize when every extent is positive and the product stays
+	within limit, or 0. */
+static unsigned long long NFKWireShapeByteCount(NSArray *shape, NSInteger elementSize, unsigned long long limit)
+{
+	unsigned long long expected = elementSize > 0 && shape.count > 0 ? (unsigned long long)elementSize : 0;
+	for (NSNumber *extent in shape) {
+		BOOL valid = [extent isKindOfClass:NSNumber.class] && extent.longLongValue > 0 && expected <= limit;
+		expected = valid ? expected * (unsigned long long)extent.longLongValue : 0;
+	}
+	return expected;
+}
+
+- (nullable id)multiArrayWrappingData:(NSData *)data entry:(NSDictionary *)entry key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	NSArray<NSNumber *> *shape = [entry[@"shape"] isKindOfClass:NSArray.class] ? entry[@"shape"] : nil;
+	MLMultiArrayDataType dataType = (MLMultiArrayDataType)[self doubleIn:entry forKey:@"dataType"];
+	NSInteger elementSize = (dataType & 0xFF) / 8;
+	unsigned long long expected = NFKWireShapeByteCount(shape, elementSize, data.length);
+	if (expected == 0 || expected != data.length) {
+		return [self failForKey:key reason:@"the multi-array's shape does not match its bytes" error:outError];
+	}
+	NSMutableArray<NSNumber *> *strides = [NSMutableArray arrayWithCapacity:shape.count];
+	NSInteger stride = 1;
+	for (NSInteger axis = (NSInteger)shape.count - 1; axis >= 0; axis--) {
+		[strides insertObject:@(stride) atIndex:0];
+		stride *= shape[(NSUInteger)axis].integerValue;
+	}
+	NSError *createError = nil;
+	MLMultiArray *array = [[MLMultiArray alloc] initWithDataPointer:(void *)data.bytes shape:shape dataType:dataType strides:strides
+														deallocator:^(void *bytes) {
+		(void)data;
+	} error:&createError];
+	return array ?: [self failForKey:key reason:createError.localizedDescription ?: @"a malformed multi-array" error:outError];
+}
+
+/*! A pixel buffer over an attachment's planes without a copy. Geometry the format rejects for wrapping
+	falls back to a buffer the planes are copied into. */
+- (nullable id)pixelBufferWrappingData:(NSData *)data entry:(NSDictionary *)entry key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	NSArray *planes = [entry[@"planes"] isKindOfClass:NSArray.class] ? entry[@"planes"] : nil;
+	unsigned long long width = 0;
+	unsigned long long height = 0;
+	unsigned long long formatNumber = 0;
+	BOOL whole = NFKWireWholeNumber(entry[@"width"], &width) && NFKWireWholeNumber(entry[@"height"], &height)
+		&& NFKWireWholeNumber(entry[@"format"], &formatNumber) && formatNumber <= UINT32_MAX;
+	for (id plane in planes) {
+		unsigned long long field = 0;
+		whole = whole && [plane isKindOfClass:NSDictionary.class] && NFKWireWholeNumber(plane[@"offset"], &field)
+			&& NFKWireWholeNumber(plane[@"bytesPerRow"], &field) && NFKWireWholeNumber(plane[@"rows"], &field);
+	}
+	OSType format = (OSType)formatNumber;
+	NSUInteger total = data.length;
+	// Every plane must lie inside the attachment's length before a pointer into it reaches CoreVideo,
+	// which neither checks a stride against the width nor knows the region's end.
+	BOOL covered = whole && planes.count > 0 && width > 0 && height > 0
+		&& NFKWirePlaneGeometryCovers(format, width, height, planes, ^double(NSDictionary *plane) {
+			double offset = [plane[@"offset"] isKindOfClass:NSNumber.class] ? [plane[@"offset"] doubleValue] : -1;
+			return offset >= 0 && offset <= (double)total ? (double)total - offset : 0;
+		});
+	if (!covered) {
+		return [self failForKey:key reason:@"a malformed pixel buffer attachment" error:outError];
+	}
+	NSDictionary *description = CFBridgingRelease(CVPixelFormatDescriptionCreateWithPixelFormatType(kCFAllocatorDefault, format));
+	NSArray<NSDictionary *> *layouts = description[(id)kCVPixelFormatPlanes];
+	const uint8_t *bytes = data.bytes;
+	CVPixelBufferRef buffer = NULL;
+	void *retained = (void *)CFBridgingRetain(data);
+	CVReturn status = kCVReturnError;
+	if (layouts == nil) {
+		NSDictionary *plane = planes.firstObject;
+		status = CVPixelBufferCreateWithBytes(kCFAllocatorDefault, width, height, format, (void *)(bytes + [plane[@"offset"] unsignedLongValue]),
+											  [plane[@"bytesPerRow"] unsignedLongValue], NFKWireReleaseAttachedBytes, retained, NULL, &buffer);
+	} else {
+		size_t count = planes.count;
+		void *bases[count];
+		size_t widths[count];
+		size_t heights[count];
+		size_t bytesPerRows[count];
+		for (size_t index = 0; index < count; index++) {
+			NSDictionary *plane = planes[index];
+			double horizontal = MAX([layouts[index][(id)kCVPixelFormatHorizontalSubsampling] doubleValue], 1.0);
+			double vertical = MAX([layouts[index][(id)kCVPixelFormatVerticalSubsampling] doubleValue], 1.0);
+			bases[index] = (void *)(bytes + [plane[@"offset"] unsignedLongValue]);
+			widths[index] = (size_t)ceil(width / horizontal);
+			heights[index] = (size_t)ceil(height / vertical);
+			bytesPerRows[index] = [plane[@"bytesPerRow"] unsignedLongValue];
+		}
+		status = CVPixelBufferCreateWithPlanarBytes(kCFAllocatorDefault, width, height, format, NULL, 0, count, bases, widths, heights,
+													bytesPerRows, NFKWireReleaseAttachedPlanes, retained, NULL, &buffer);
+	}
+	if (status != kCVReturnSuccess || buffer == NULL) {
+		CFRelease(retained);
+		return [self failForKey:key reason:[NSString stringWithFormat:@"no pixel buffer of format %u wraps the attachment", (unsigned)format]
+						  error:outError];
+	}
+	return (__bridge_transfer id)buffer;
+}
+
+/*! A PCM buffer over an attachment's samples without a copy. Every field is checked against the format
+	and the attachment's length before AVAudioPCMBuffer sees a pointer. */
+- (nullable id)PCMBufferWrappingData:(NSData *)data entry:(NSDictionary *)entry key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	AudioStreamBasicDescription description = {0};
+	AVAudioFormat *format = [self PCMFormatFromEntry:entry description:&description];
+	unsigned long long frames = 0;
+	NSArray *layouts = [entry[@"buffers"] isKindOfClass:NSArray.class] ? entry[@"buffers"] : nil;
+	NSUInteger bytesPerFrame = format != nil ? format.streamDescription->mBytesPerFrame : 0;
+	NSUInteger bytesPerSample = MAX((NSUInteger)description.mBitsPerChannel / 8, (NSUInteger)1);
+	UInt32 expectedBuffers = format == nil ? 0 : (format.isInterleaved ? 1 : format.channelCount);
+	BOOL usable = format != nil && NFKWireWholeNumber(entry[@"frameLength"], &frames) && frames > 0 && frames <= UINT32_MAX
+		&& bytesPerFrame > 0 && bytesPerFrame == description.mBytesPerFrame && expectedBuffers > 0 && layouts.count == expectedBuffers;
+	if (!usable) {
+		return [self failForKey:key reason:@"a malformed PCM attachment" error:outError];
+	}
+	// Every buffer holds exactly the frames named, sample-aligned, inside the attachment.
+	unsigned long long bufferLength = frames * bytesPerFrame;
+	if (bufferLength > UINT32_MAX) {
+		return [self failForKey:key reason:@"a PCM attachment's buffers exceed an audio buffer's size" error:outError];
+	}
+	// The list lives in data the deallocator holds. AVAudioPCMBuffer copies the list and hands the
+	// deallocator its own copy, which is not this list and must not be freed here.
+	NSMutableData *listStorage = [NSMutableData dataWithLength:offsetof(AudioBufferList, mBuffers) + sizeof(AudioBuffer) * layouts.count];
+	AudioBufferList *list = listStorage.mutableBytes;
+	list->mNumberBuffers = (UInt32)layouts.count;
+	for (NSUInteger index = 0; index < layouts.count; index++) {
+		NSDictionary *layout = [layouts[index] isKindOfClass:NSDictionary.class] ? layouts[index] : @{};
+		unsigned long long offset = 0;
+		unsigned long long length = 0;
+		BOOL placed = NFKWireWholeNumber(layout[@"offset"], &offset) && NFKWireWholeNumber(layout[@"length"], &length)
+			&& length == bufferLength && offset % bytesPerSample == 0 && offset <= data.length && length <= data.length - offset;
+		if (!placed) {
+			return [self failForKey:key reason:@"a PCM attachment's samples do not match its frame count" error:outError];
+		}
+		list->mBuffers[index].mNumberChannels = format.isInterleaved ? format.channelCount : 1;
+		list->mBuffers[index].mDataByteSize = (UInt32)length;
+		list->mBuffers[index].mData = (uint8_t *)data.bytes + offset;
+	}
+	AVAudioPCMBuffer *buffer = [[AVAudioPCMBuffer alloc] initWithPCMFormat:format bufferListNoCopy:list deallocator:^(const AudioBufferList *bufferList) {
+		(void)listStorage;
+		(void)data;
+	}];
+	if (buffer == nil || buffer.frameCapacity < frames) {
+		return [self failForKey:key reason:@"a malformed PCM attachment" error:outError];
+	}
+	buffer.frameLength = (AVAudioFrameCount)frames;
+	return buffer;
+}
+
+- (nullable NSURL *)referencedFileURLInEntry:(NSDictionary *)entry key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	id<NFKWireAttachmentSource> source = self.attachmentSource;
+	NSString *name = [entry[@"name"] isKindOfClass:NSString.class] ? entry[@"name"] : @"";
+	NSError *sourceError = nil;
+	NSURL *url = nil;
+	if ([entry[@"index"] isKindOfClass:NSNumber.class] && [source respondsToSelector:@selector(fileURLForAttachmentAtIndex:name:error:)]) {
+		url = [source fileURLForAttachmentAtIndex:[entry[@"index"] integerValue] name:name error:&sourceError];
+	} else if ([entry[@"path"] isKindOfClass:NSString.class] && [entry[@"path"] isAbsolutePath]) {
+		url = [source respondsToSelector:@selector(fileURLForPath:error:)] ? [source fileURLForPath:entry[@"path"] error:&sourceError]
+																			: [NSURL fileURLWithPath:entry[@"path"]];
+	} else {
+		sourceError = nil;
+		return [self failForKey:key reason:@"a file reference names no absolute path" error:outError];
+	}
+	return url ?: [self failForKey:key reason:sourceError.localizedDescription ?: @"the file reference is refused" error:outError];
 }
 
 #pragma mark Decoding
@@ -562,6 +1021,9 @@ static void NFKWireCopyMultiArrayElements(void *strided, NSArray<NSNumber *> *sh
 	}
 	if ([tag isEqualToString:@"toolInvocation"]) {
 		return [self toolInvocationFromEntry:entry key:key error:outError];
+	}
+	if ([tag isEqualToString:@"buffer"]) {
+		return [self attachedValueFromEntry:entry key:key error:outError];
 	}
 	NSData *bytes = [self bytesIn:entry forKey:@"base64"];
 	if ([tag isEqualToString:@"data"] && bytes != nil) {
@@ -675,6 +1137,11 @@ static void NFKWireCopyMultiArrayElements(void *strided, NSArray<NSNumber *> *sh
 		@synchronized (self) {
 			[self.writtenFiles addObject:fileURL];
 		}
+	} else if (self.attachmentSource != nil && (entry[@"path"] != nil || entry[@"index"] != nil)) {
+		fileURL = [self referencedFileURLInEntry:entry key:key error:outError];
+		if (fileURL == nil) {
+			return nil;
+		}
 	}
 	if ([tag isEqualToString:@"file"]) {
 		return fileURL ?: [self failForKey:key reason:@"a file entry carries no bytes" error:outError];
@@ -774,18 +1241,7 @@ static void NFKWireCopyMultiArrayElements(void *strided, NSArray<NSNumber *> *sh
 - (nullable id)PCMBufferFromEntry:(NSDictionary *)entry key:(NSString *)key error:(NSError * _Nullable *)outError
 {
 	AudioStreamBasicDescription description = {0};
-	description.mSampleRate = [self doubleIn:entry forKey:@"sampleRate"];
-	description.mFormatID = (AudioFormatID)[self doubleIn:entry forKey:@"formatID"];
-	description.mFormatFlags = (AudioFormatFlags)[self doubleIn:entry forKey:@"formatFlags"];
-	description.mBytesPerPacket = (UInt32)[self doubleIn:entry forKey:@"bytesPerPacket"];
-	description.mFramesPerPacket = (UInt32)[self doubleIn:entry forKey:@"framesPerPacket"];
-	description.mBytesPerFrame = (UInt32)[self doubleIn:entry forKey:@"bytesPerFrame"];
-	description.mChannelsPerFrame = (UInt32)[self doubleIn:entry forKey:@"channelsPerFrame"];
-	description.mBitsPerChannel = (UInt32)[self doubleIn:entry forKey:@"bitsPerChannel"];
-	// More than two channels needs a layout for AVAudioFormat to accept the description.
-	AVAudioChannelLayout *layout = description.mChannelsPerFrame > 2
-		? [AVAudioChannelLayout layoutWithLayoutTag:kAudioChannelLayoutTag_DiscreteInOrder | description.mChannelsPerFrame] : nil;
-	AVAudioFormat *format = [[AVAudioFormat alloc] initWithStreamDescription:&description channelLayout:layout];
+	AVAudioFormat *format = [self PCMFormatFromEntry:entry description:&description];
 	AVAudioFrameCount frames = (AVAudioFrameCount)[self doubleIn:entry forKey:@"frameLength"];
 	NSMutableArray<NSData *> *samples = [NSMutableArray array];
 	for (id encoded in [entry[@"buffers"] isKindOfClass:NSArray.class] ? entry[@"buffers"] : @[]) {
@@ -797,7 +1253,13 @@ static void NFKWireCopyMultiArrayElements(void *strided, NSArray<NSNumber *> *sh
 		}
 		[samples addObject:bytes];
 	}
-	AVAudioPCMBuffer *buffer = format != nil ? [[AVAudioPCMBuffer alloc] initWithPCMFormat:format frameCapacity:MAX(frames, 1)] : nil;
+	// The buffer count is checked before any allocation, so a frame count with no samples behind it
+	// cannot size one.
+	UInt32 expectedBuffers = format == nil ? 0 : (format.isInterleaved ? 1 : format.channelCount);
+	if (format == nil || samples.count == 0 || samples.count != expectedBuffers) {
+		return [self failForKey:key reason:@"a malformed PCM buffer" error:outError];
+	}
+	AVAudioPCMBuffer *buffer = [[AVAudioPCMBuffer alloc] initWithPCMFormat:format frameCapacity:MAX(frames, 1)];
 	if (buffer == nil || samples.count != buffer.audioBufferList->mNumberBuffers) {
 		return [self failForKey:key reason:@"a malformed PCM buffer" error:outError];
 	}
@@ -810,6 +1272,26 @@ static void NFKWireCopyMultiArrayElements(void *strided, NSArray<NSNumber *> *sh
 	}
 	buffer.frameLength = frames;
 	return buffer;
+}
+
+/*! The format a PCM entry's stream description names, or nil when AVAudioFormat refuses it. The
+	description is the entry's own, as read. */
+- (nullable AVAudioFormat *)PCMFormatFromEntry:(NSDictionary *)entry description:(AudioStreamBasicDescription *)outDescription
+{
+	AudioStreamBasicDescription description = {0};
+	description.mSampleRate = [self doubleIn:entry forKey:@"sampleRate"];
+	description.mFormatID = (AudioFormatID)[self doubleIn:entry forKey:@"formatID"];
+	description.mFormatFlags = (AudioFormatFlags)[self doubleIn:entry forKey:@"formatFlags"];
+	description.mBytesPerPacket = (UInt32)[self doubleIn:entry forKey:@"bytesPerPacket"];
+	description.mFramesPerPacket = (UInt32)[self doubleIn:entry forKey:@"framesPerPacket"];
+	description.mBytesPerFrame = (UInt32)[self doubleIn:entry forKey:@"bytesPerFrame"];
+	description.mChannelsPerFrame = (UInt32)[self doubleIn:entry forKey:@"channelsPerFrame"];
+	description.mBitsPerChannel = (UInt32)[self doubleIn:entry forKey:@"bitsPerChannel"];
+	// More than two channels needs a layout for AVAudioFormat to accept the description.
+	AVAudioChannelLayout *layout = description.mChannelsPerFrame > 2
+		? [AVAudioChannelLayout layoutWithLayoutTag:kAudioChannelLayoutTag_DiscreteInOrder | description.mChannelsPerFrame] : nil;
+	*outDescription = description;
+	return [[AVAudioFormat alloc] initWithStreamDescription:&description channelLayout:layout];
 }
 
 #pragma mark Errors

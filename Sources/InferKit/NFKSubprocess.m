@@ -12,6 +12,7 @@ NSString * const NFKSubprocessErrorDomain = @"NFKSubprocessErrorDomain";
 #if TARGET_OS_OSX
 
 #import <spawn.h>
+#import <pthread/spawn.h>
 #import <signal.h>
 #import <sys/wait.h>
 #import <fcntl.h>
@@ -86,6 +87,8 @@ static void *NFKSubprocessQueueKey = &NFKSubprocessQueueKey;
 @property (nonatomic, strong) NSLock *inputLock;
 @property (atomic, assign) int inputDescriptor;
 @property (atomic, assign) BOOL inputClosing;
+/*! Child number → this subprocess's own duplicate, or the negated errno of a duplication that failed. */
+@property (nonatomic, strong) NSDictionary<NSNumber *, NSNumber *> *ownedInheritedDescriptors;
 @end
 
 @implementation NFKSubprocess
@@ -122,6 +125,44 @@ static void *NFKSubprocessQueueKey = &NFKSubprocessQueueKey;
 - (NSString *)description
 {
 	return [NSString stringWithFormat:@"<%@ %@ pid %d state %ld>", self.class, self.command, self.processIdentifier, (long)self.state];
+}
+
+- (void)dealloc
+{
+	[self closeOwnedInheritedDescriptors];
+}
+
+#pragma mark Inherited descriptors
+
+- (nullable NSDictionary<NSNumber *, NSNumber *> *)ownerInheritedDescriptors
+{
+	@synchronized (self) {
+		return self.ownedInheritedDescriptors;
+	}
+}
+
+- (void)setOwnerInheritedDescriptors:(nullable NSDictionary<NSNumber *, NSNumber *> *)descriptors
+{
+	NSMutableDictionary<NSNumber *, NSNumber *> *owned = descriptors != nil ? [NSMutableDictionary dictionaryWithCapacity:descriptors.count] : nil;
+	[descriptors enumerateKeysAndObjectsUsingBlock:^(NSNumber *target, NSNumber *source, BOOL *stop) {
+		int duplicate = fcntl(source.intValue, F_DUPFD_CLOEXEC, 0);
+		owned[target] = duplicate >= 0 ? @(duplicate) : @(-errno);
+	}];
+	@synchronized (self) {
+		[self closeOwnedInheritedDescriptors];
+		self.ownedInheritedDescriptors = owned;
+	}
+}
+
+// Runs under the lock on self, or in dealloc.
+- (void)closeOwnedInheritedDescriptors
+{
+	for (NSNumber *duplicate in _ownedInheritedDescriptors.allValues) {
+		if (duplicate.intValue >= 0) {
+			close(duplicate.intValue);
+		}
+	}
+	_ownedInheritedDescriptors = nil;
 }
 
 #pragma mark Starting
@@ -187,8 +228,16 @@ static void *NFKSubprocessQueueKey = &NFKSubprocessQueueKey;
 		return [self failLaunchWithCode:code reason:@"the pipes could not be created" error:error];
 	}
 	pid_t processIdentifier = 0;
-	int status = [self spawnPath:path environment:environment input:input[0] output:output[1] errorOutput:errorOutput[1]
-			   processIdentifier:&processIdentifier];
+	NSArray<NSNumber *> *inherited = nil;
+	NSArray<NSNumber *> *targets = nil;
+	int status = [self prepareInheritedDescriptors:&inherited targets:&targets];
+	if (status == 0) {
+		status = [self spawnPath:path environment:environment input:input[0] output:output[1] errorOutput:errorOutput[1]
+					   inherited:inherited targets:targets processIdentifier:&processIdentifier];
+	}
+	for (NSNumber *descriptor in inherited) {
+		close(descriptor.intValue);
+	}
 	close(input[0]);
 	close(output[1]);
 	close(errorOutput[1]);
@@ -286,14 +335,68 @@ static void *NFKSubprocessQueueKey = &NFKSubprocessQueueKey;
 	return found ? candidate : nil;
 }
 
+/*! Duplicates each owned inherited descriptor above every target number, so no duplication in the
+	child overwrites a source another one still reads. Sets inherited to the duplicates and targets to
+	their child numbers, both in sorted target order from one reading of the property, and returns 0 or
+	the POSIX error. The caller closes the duplicates, once, after the spawn. */
+- (int)prepareInheritedDescriptors:(NSArray<NSNumber *> * _Nullable * _Nonnull)inherited
+						   targets:(NSArray<NSNumber *> * _Nullable * _Nonnull)outTargets
+{
+	*inherited = @[];
+	*outTargets = @[];
+	@synchronized (self) {
+		return [self lockedPrepareInheritedDescriptors:inherited targets:outTargets];
+	}
+}
+
+- (int)lockedPrepareInheritedDescriptors:(NSArray<NSNumber *> * _Nonnull * _Nonnull)inherited
+								 targets:(NSArray<NSNumber *> * _Nonnull * _Nonnull)outTargets
+{
+	NSDictionary<NSNumber *, NSNumber *> *requested = self.ownedInheritedDescriptors;
+	NSArray<NSNumber *> *targets = [requested.allKeys sortedArrayUsingSelector:@selector(compare:)];
+	if (targets.count == 0) {
+		return 0;
+	}
+	if (targets.firstObject.intValue <= STDERR_FILENO) {
+		return EINVAL;
+	}
+	for (NSNumber *target in targets) {
+		if (requested[target].intValue < 0) {
+			return -requested[target].intValue;
+		}
+	}
+	int floor = targets.lastObject.intValue + 1;
+	NSMutableArray<NSNumber *> *duplicates = [NSMutableArray arrayWithCapacity:targets.count];
+	for (NSNumber *target in targets) {
+		int duplicate = fcntl(requested[target].intValue, F_DUPFD_CLOEXEC, floor);
+		if (duplicate < 0) {
+			int code = errno;
+			for (NSNumber *made in duplicates) {
+				close(made.intValue);
+			}
+			return code;
+		}
+		[duplicates addObject:@(duplicate)];
+	}
+	*inherited = duplicates;
+	*outTargets = targets;
+	return 0;
+}
+
 - (int)spawnPath:(NSString *)path environment:(NSDictionary<NSString *, NSString *> *)environment
-		   input:(int)input output:(int)output errorOutput:(int)errorOutput processIdentifier:(pid_t *)processIdentifier
+		   input:(int)input output:(int)output errorOutput:(int)errorOutput inherited:(NSArray<NSNumber *> *)inherited
+		 targets:(NSArray<NSNumber *> *)targets processIdentifier:(pid_t *)processIdentifier
 {
 	posix_spawn_file_actions_t actions;
 	posix_spawn_file_actions_init(&actions);
 	posix_spawn_file_actions_adddup2(&actions, input, STDIN_FILENO);
 	posix_spawn_file_actions_adddup2(&actions, output, STDOUT_FILENO);
 	posix_spawn_file_actions_adddup2(&actions, errorOutput, STDERR_FILENO);
+	// The standard streams go first: a pipe can hold a number an inherited descriptor targets. Every
+	// source here lies above every target, so the order among them does not matter.
+	for (NSUInteger index = 0; index < inherited.count && index < targets.count; index++) {
+		posix_spawn_file_actions_adddup2(&actions, inherited[index].intValue, targets[index].intValue);
+	}
 	if (self.workingDirectoryURL != nil) {
 		// The macOS 26 SDK deprecates the _np form for posix_spawn_file_actions_addchdir, which
 		// earlier systems lack. The _np form runs on every supported system.
@@ -304,7 +407,7 @@ static void *NFKSubprocessQueueKey = &NFKSubprocessQueueKey;
 	}
 	posix_spawnattr_t attributes;
 	posix_spawnattr_init(&attributes);
-	// Only the three dup2 targets stay open in the child, and its process group is its own, so a
+	// Only the dup2 targets stay open in the child, and its process group is its own, so a
 	// stop signals the server's own children too.
 	posix_spawnattr_setflags(&attributes, POSIX_SPAWN_CLOEXEC_DEFAULT | POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_SETSIGMASK);
 	posix_spawnattr_setpgroup(&attributes, 0);
@@ -314,6 +417,10 @@ static void *NFKSubprocessQueueKey = &NFKSubprocessQueueKey;
 	sigset_t allSignals;
 	sigfillset(&allSignals);
 	posix_spawnattr_setsigdefault(&attributes, &allSignals);
+	qos_class_t qualityOfService = self.ownerQualityOfService;
+	if (qualityOfService != QOS_CLASS_UNSPECIFIED) {
+		posix_spawnattr_set_qos_class_np(&attributes, qualityOfService);
+	}
 
 	NSMutableArray<NSString *> *argumentStrings = [NSMutableArray arrayWithObject:self.command];
 	[argumentStrings addObjectsFromArray:self.arguments];

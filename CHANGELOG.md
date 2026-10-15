@@ -63,6 +63,103 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   conformance, constant, and function. The baseline is a framework, a git ref, or `current` (a
   self-check until the first tagged release).
 
+#### The package gains a C target and a plugin host
+
+- `InferKitC` is a pure-C target the core depends on. `NFKAPIVersion.h` now holds
+  `NFK_API_VERSION_MAJOR` and `NFK_API_VERSION_MINOR`, with the packed `NFK_API_VERSION`, and
+  `NFKInferKit.h` imports it, so an Objective-C client reads the same macros as before.
+  `NFKPluginABI.h` is the interface a C, C++, or Rust plugin implements, and `NFKInferKitC.h` the C
+  interface a program calls InferKit through. The Objective-C umbrella imports neither.
+- `inferkit-plugin-host` is the package's second product, a macOS executable that serves one plugin
+  bundle out of the app's process. Its entitlement files ship beside it for the app that signs it.
+- The plugin classes' headers are in the umbrella: `NFKPlugin`, `NFKPluginManifest`,
+  `NFKPluginSignaturePolicy`, `NFKPluginLoader`, `NFKPluginProcess`, `NFKPluginBackend`,
+  `NFKPluginService`, and `NFKPluginRegistry`. Their behavior lands in the following changes.
+
+#### Plugins are read, verified, loaded, and served
+
+- `NFKPluginManifest` reads `Contents/Resources/inferkit-plugin.json` from a `.inferkitplugin` bundle
+  without loading code, checks it against the bundle's `Info.plist` and executable, and writes it back as
+  sorted JSON. A newer schema is `NFKPluginErrorUnsupportedManifestVersion`, a disagreement with the
+  bundle `NFKPluginErrorManifestMismatch`, and any other problem `NFKPluginErrorMalformedManifest`
+  naming the field. `checkCompatibilityWithAPIVersion:error:` needs the same major version and at least
+  the manifest's minor version.
+- `NFKPluginSignaturePolicy` checks code on disk for every architecture with strict validation, and a
+  running process by its audit token. The default policy refuses ad hoc signatures and the development
+  policy accepts them. A pinned team is proved by the certificate chain. A success is cached by cdhash
+  and a fingerprint of the bundle's files, so a later edit is validated again.
+- `NFKPluginLoader` loads an Objective-C bundle through its principal class and a C library through
+  `nfk_plugin_entry`. It refuses a bundle that another account could change: the bundle, everything in
+  it, and the folder that holds it must belong to the user or root and be writable by neither group nor
+  others. It verifies the signature immediately before the code loads, and on every call for a plugin
+  already loaded. An executable plugin
+  is `NFKPluginErrorNotTrusted`, a bundle that defines an `NFK` class
+  `NFKPluginErrorDuplicateRuntime`, and a second version of a loaded plugin `NFKPluginErrorLoadFailed`.
+  Loading the same bundle again returns the same object.
+- A C plugin's function table becomes an `NFKPlugin` whose backends are `NFKInferenceBackend`s. Large
+  values cross as buffers, a result's buffers are used without a copy and freed through the plugin's
+  `free_payload` when released, and progress, partial results, cancellation, and tools work as they do
+  for an Objective-C plugin. A table of another plugin ABI major version is
+  `NFKPluginErrorIncompatible`.
+- `NFKPluginService` answers every protocol message for one plugin: hello, describe, build, prepare,
+  run with progress and partial results, cancel, unload, release, status, callTool, ping, and shutdown.
+  An unknown message with an id is `NFKPluginErrorProtocolUnsupported`. Result files outside the run's
+  directory are copied into it.
+- `inferkit-plugin-host` runs `NFKPluginHostMain`: it hands over its channel first, then checks the
+  bundle's ownership and verifies its signature in its own process, then loads the plugin with the
+  options the hello carries, and answers a refused load with its error. It takes every field of the
+  app's signature policy: `--team-id`, `--requirement`, `--allow-ad-hoc`, and `--allow-unsigned`, which is
+  for local development and needs `--allow-ad-hoc`.
+- `NFKPluginProcess.verificationTimeout` (120 s) covers the plugin host's verification, and
+  `handshakeTimeout` then covers hello, so a large bundle's verification does not fail the hello.
+  Verification hashes every file the bundle's seal covers on each launch, so a plugin keeps large weights
+  outside its bundle.
+- A run waiting for one of a backend's run slots holds no thread, in the plugin process and in a C
+  plugin loaded in process: 64 runs queued on one slot run in order on a handful of threads.
+- `NFKPluginABI.h` states that an array of buffers strides by its first element's `struct_size`.
+
+#### A plugin's process is supervised, and its models run as backends
+
+- `NFKPluginProcess` verifies a plugin's code signature before it launches anything, launches the
+  plugin host or the plugin's own program with its channel on descriptor 3, takes the socket the
+  plugin hands over, checks that the process on the other end runs the verified code, and completes the
+  hello exchange. A manifest model the plugin does not describe fails the start. `state` moves through
+  NotRunning, Starting, Ready, Restarting, and Failed, and `failureError` names the reason.
+- A process that exits fails its runs with `NFKPluginErrorProcessExited`, carrying the exit status or
+  signal and the end of its standard error, and the next request launches it again. `crashLimit` exits
+  within `crashLimitInterval` leave it Failed until `startWithError:`.
+- `restartWithManifest:completionHandler:` holds new requests in order, lets the runs in flight finish
+  on the old process (cancelling them after `restartDrainTimeout`), stops it, starts the new version, and
+  hands it the held requests. A launch failure fails them with its reason.
+- Every deadline the supervisor keeps fails with the new `NFKPluginErrorTimedOut`, naming the step and
+  the limit: the bundle's verification (`verificationTimeout`), hello (`handshakeTimeout`), and a build
+  or preparation (`buildTimeout`, 300 s by default, since either may load large weights). A build or
+  preparation that times out fails only its own request and lets the next one go. Runs and tool calls
+  have no deadline; a job's cancel, a stop, or the process's exit ends them.
+- An idle process with no live backends exits after `idleExitInterval`, shortened under memory pressure
+  by the formula `NFKInferenceServer` uses for idle unloads. `stopWithCompletionHandler:` fails the runs
+  in flight with `NFKPluginErrorStopped` and stops the process with `NFKSubprocess`'s escalation.
+  `logHandler` receives the plugin's log.
+- `NFKPluginBackend` reads its keys and model information from the manifest without a process, starts
+  the process on its first preparation or run, and builds its model again after a restart. A submitted
+  job relays progress and partial results, and cancelling it cancels the run in the plugin. Large values
+  travel in shared memory, result files land in a directory made for the run and removed with the
+  result, and a plugin's error keeps its domain and code. `unload`, `isLoaded`, `residentByteCount`, and
+  `peakByteCount` follow the plugin's replies and events, and releasing the backend releases the
+  plugin's.
+- `NFKPluginProcess.tools` calls the plugin's tools in its process.
+
+#### Sample plugins of every kind, and the C headers held to C99 and C++11
+
+- `Tests/PluginFixtures/` holds a plugin of each kind: an Objective-C bundle, a C library that links
+  nothing from InferKit, and a program that speaks the protocol by hand with Foundation alone. Each
+  serves an `invert` model, a `slow` model that reports progress and honors cancellation, and an `echo`
+  tool. The test suite builds, lays out, and signs them at test time, in any version it names.
+- `Docs/agent-reference/plugins.md` ("Building plugins") gives the bundle layout, the compiler command
+  for each kind, and the signing steps a plugin author follows.
+- The test suite compiles `NFKPluginABI.h` and `NFKInferKitC.h` as C99 and as C++11 under `-pedantic
+  -Werror`, and a program that uses every declaration of `NFKInferKitC.h` in both languages.
+
 #### Downloads are planned, observed, cancelled, and removed
 
 - `NFKHFHub` plans a download before it starts: `planDownloadOfRepo:revision:paths:error:` (paths may

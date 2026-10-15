@@ -38,6 +38,14 @@
 #import <InferKit/NFKMCPClient.h>
 #import <InferKit/NFKAgentCLI.h>
 #import <InferKit/NFKSubprocess.h>
+#import <InferKit/NFKPlugin.h>
+#import <InferKit/NFKPluginManifest.h>
+#import <InferKit/NFKPluginSignaturePolicy.h>
+#import <InferKit/NFKPluginLoader.h>
+#import <InferKit/NFKPluginProcess.h>
+#import <InferKit/NFKPluginBackend.h>
+#import <InferKit/NFKPluginService.h>
+#import <InferKit/NFKPluginRegistry.h>
 #import <InferKit/NFKDynamicBackend.h>
 #import <InferKit/NFKModelVocabulary.h>
 #import <InferKit/NFKModelDescriptor.h>

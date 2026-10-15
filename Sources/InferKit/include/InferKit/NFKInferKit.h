@@ -8,21 +8,16 @@
 
 #import <Foundation/Foundation.h>
 
-/*!
-	@define		NFK_API_VERSION_MAJOR
-	@abstract	The API major version of the headers a client compiles against.
-	@discussion	A client records the interface it was built against with this macro and compares it with
-				@c NFKInferKit.APIMajorVersion of the library it loads. Introduced in InferKit 0.4.0.
-*/
-#define NFK_API_VERSION_MAJOR 1
-
-/*!
-	@define		NFK_API_VERSION_MINOR
-	@abstract	The API minor version of the headers a client compiles against.
-	@discussion	A client built against minor N runs on a library whose minor version is N or higher.
-				Introduced in InferKit 0.4.0.
-*/
-#define NFK_API_VERSION_MINOR 0
+// NFK_API_VERSION_MAJOR and NFK_API_VERSION_MINOR live in the pure-C NFKAPIVersion.h. SwiftPM serves
+// it from the InferKitC target. CocoaPods and the frameworks place it beside this header. A tool that
+// reads the source tree with only Sources/InferKit/include on its path reaches it by its relative path.
+#if __has_include(<InferKitC/NFKAPIVersion.h>)
+#import <InferKitC/NFKAPIVersion.h>
+#elif __has_include(<InferKit/NFKAPIVersion.h>)
+#import <InferKit/NFKAPIVersion.h>
+#else
+#import "../../../InferKitC/include/InferKitC/NFKAPIVersion.h"
+#endif
 
 NS_ASSUME_NONNULL_BEGIN
 

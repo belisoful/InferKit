@@ -11,9 +11,12 @@ InferKit ships as source through two channels that reference the same files:
 - **Swift Package Manager** — `Package.swift`. The target's public API is `Sources/InferKit/include/`,
   so `#import <InferKit/NFKFoo.h>` resolves the same way against SwiftPM and the built framework.
   Quoted sibling imports (`#import "NFKFoo.h"`) resolve through the target's `headerSearchPath`
-  entries (`include/InferKit` and `.`).
-- **CocoaPods** — `InferKit.podspec`, a source pod. `source_files` compiles the same `.h`/`.m`;
-  `public_header_files` marks `include/InferKit/*.h` as the public surface. The MLX companion is not
+  entries (`include/InferKit` and `.`). The core depends on `InferKitC` (`Sources/InferKitC`), the
+  pure-C headers: the API version, the plugin ABI, and the C API. The package's second product is the
+  macOS executable `inferkit-plugin-host`. `plugins.md` covers both.
+- **CocoaPods** — `InferKit.podspec`, a source pod. `source_files` compiles the same `.h`/`.m`, and
+  `InferKitC`'s `.h`/`.c`; `public_header_files` marks `include/InferKit/*.h` and
+  `include/InferKitC/*.h` as the public surface. CocoaPods flattens both into `InferKit/`. The MLX companion is not
   a pod (MLX distributes through SwiftPM only), though it does package as an XCFramework — see
   "Packaging InferKitMLX as an XCFramework".
 
@@ -22,8 +25,8 @@ globs the same paths, so no per-file edit is needed there either. New public hea
 `Sources/InferKit/include/InferKit/` and the umbrella `InferKit.h`.
 
 `Tools/` ships in no distribution — it is developer and validation tooling, not the library. The
-SwiftPM targets name `Sources/InferKit` / `InferKitMLX/Sources` as their paths, the podspec globs only
-`Sources/InferKit/**/*.{h,m}`, and the XCFramework release assets are built binaries; none of them
+SwiftPM targets name `Sources/InferKit`, `Sources/InferKitC`, `Sources/inferkit-plugin-host`, and
+`InferKitMLX/Sources` as their paths, the podspec globs only `Sources/InferKit` and `Sources/InferKitC`, and the XCFramework release assets are built binaries; none of them
 compile or carry anything under `Tools/`. A consumer resolving the SwiftPM package clones the whole
 repository (so `Tools/` lands on disk), but nothing there is built into the products or the release.
 The 46 `Tools/*-to-safetensors` converters are therefore not required to consume the
@@ -47,9 +50,12 @@ compiled.
 
 `NFKInferKit.APIVersion` (`"major.minor"`) with `APIMajorVersion` and `APIMinorVersion` versions the
 binary interface, apart from the release version. The numbers live in one place,
-`NFK_API_VERSION_MAJOR` and `NFK_API_VERSION_MINOR` in `NFKInferKit.h`. The class properties return
-the macros, so a client compiled against the headers records the interface it expects, and the loaded
-library reports the interface it provides.
+`NFK_API_VERSION_MAJOR` and `NFK_API_VERSION_MINOR` in the pure-C `NFKAPIVersion.h`
+(`Sources/InferKitC/include/InferKitC/`), which `NFKInferKit.h` imports and the C API shares. The
+class properties return the macros, so a client compiled against the headers records the interface it
+expects, and the loaded library reports the interface it provides. The core's `build.sh` and
+`build-mlx.sh` copy `NFKAPIVersion.h` beside the core's headers in each framework, where
+`NFKInferKit.h` finds it as `<InferKit/NFKAPIVersion.h>`.
 
 What the promise covers: the Objective-C interface and the C ABI of the core and of the `@objc`
 interface the companions generate (`InferKitMLX-Swift.h`). That is every class by its runtime name,
