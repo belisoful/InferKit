@@ -369,6 +369,7 @@ public final class NFKMLXSa2VA: NSObject {
 
 /// The Sa2VA inference backend: an image plus a referring prompt in, the decoder's text under
 /// `NFKOutputText` and, when it emits `[SEG]`, the first object's mask under `NFKOutputMask`.
+@objc(NFKMLXSa2VABackend)
 public final class NFKMLXSa2VABackend: NSObject, NFKInferenceBackend {
     private let holder: Holder
     private let tokenizer: NFKTokenizer

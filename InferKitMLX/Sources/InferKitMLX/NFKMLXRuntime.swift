@@ -78,7 +78,9 @@ public final class NFKMLXGPU: NSObject {
     /// Mirrors MLX's own search order: `mlx.metallib` beside the binary MLX is linked into, then under
     /// that binary's `Resources`, then `default.metallib` inside a `mlx-swift_Cmlx.bundle` beside the
     /// main bundle, in any loaded bundle's resources, or in a framework with that identifier, then
-    /// `Resources/default.metallib` beside the binary, then the working directory. MLX needs the
+    /// `Resources/default.metallib` beside the binary, then the working directory. The dynamic
+    /// `InferKitMLX.framework` carries `Resources/mlx.metallib`, the second place, so it loads its own
+    /// library ahead of any `mlx-swift_Cmlx.bundle` the host app ships. MLX needs the
     /// library whether or not anything runs on the GPU, and a missing one surfaces only at the first
     /// evaluation (as an abort in a test process), so this is the check to run before the first array
     /// is touched. `Tools/mlx-metallib.sh` places one for a SwiftPM test run. Objective-C:

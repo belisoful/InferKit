@@ -2051,7 +2051,7 @@ NSString *NFKServedModelName(NFKServedModel *model)
 																  @"tls": self.identity != nil ? @"1" : @"0",
 																  @"auth": self.requiresAPIKey ? @"1" : @"0",
 																  @"mcp": @"/mcp",
-																  @"version": NFKInferKit.version } mutableCopy];
+																  @"version": NFKInferKit.releaseVersion } mutableCopy];
 		NSString *fingerprint = [self TLSCertificateSHA256Fingerprint];
 		if (fingerprint != nil) {
 			record[@"cert_sha256"] = fingerprint;
@@ -2476,7 +2476,7 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	}
 	NSMutableDictionary<NSString *, id> *status = [NSMutableDictionary dictionary];
 	status[@"object"] = @"inferkit.status";
-	NSMutableDictionary<NSString *, id> *server = [NSMutableDictionary dictionaryWithObject:NFKInferKit.version forKey:@"version"];
+	NSMutableDictionary<NSString *, id> *server = [NSMutableDictionary dictionaryWithObject:NFKInferKit.releaseVersion forKey:@"version"];
 	if (self.startTime > 0) {
 		server[@"started"] = @(self.startTime);
 	}

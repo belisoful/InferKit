@@ -62,6 +62,7 @@ private final class NFKMLXVideoTransformBox: @unchecked Sendable {
 /// directly, or by wrapping the backend in `NFKInferenceSubmit(...)` for a job with cancellation.
 /// The clip is processed as one unit (a temporal model reads the whole sequence), so the job reports
 /// completion rather than per-frame progress.
+@objc(NFKMLXVideoBackend)
 public final class NFKMLXVideoBackend: NSObject, NFKInferenceBackend {
 
     private let identifier: String

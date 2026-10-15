@@ -161,7 +161,7 @@ static const NSTimeInterval NFKMCPProtocolTimeout = 30;
 	}
 	NSDictionary *params = @{ @"protocolVersion": NFKMCPProtocolVersions().firstObject,
 							  @"capabilities": @{},
-							  @"clientInfo": @{ @"name": @"InferKit", @"version": NFKInferKit.version } };
+							  @"clientInfo": @{ @"name": @"InferKit", @"version": NFKInferKit.releaseVersion } };
 	NSDictionary *result = [self resultOfMethod:@"initialize" params:params error:error];
 	if (result == nil) {
 		return NO;

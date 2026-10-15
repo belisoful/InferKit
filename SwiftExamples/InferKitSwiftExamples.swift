@@ -69,6 +69,15 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(restored[0], 0.1, accuracy: 1e-5)
     }
 
+    // MARK: Library and API version (Docs/examples.md: Subsystems — Library and API version)
+
+    func testExampleLibraryAndAPIVersion() {
+        let supported = NFKInferKit.apiMajorVersion == Int(NFK_API_VERSION_MAJOR)
+            && NFKInferKit.apiMinorVersion >= Int(NFK_API_VERSION_MINOR)
+        print("InferKit \(NFKInferKit.releaseVersion), API \(NFKInferKit.apiVersion)")
+        XCTAssertTrue(supported)
+    }
+
     // MARK: MLMultiArray bridge (Docs/examples.md: Subsystems — Tensor conversion)
 
     func testExampleMLMultiArrayBridge() throws {

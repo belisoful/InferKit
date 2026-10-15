@@ -83,7 +83,7 @@
 															   @"clientInfo": @{ @"name": @"test", @"version": @"1" } }][@"result"];
 	XCTAssertEqualObjects(agreed[@"protocolVersion"], @"2025-06-18", @"a version the server speaks is the one it answers with");
 	XCTAssertEqualObjects(agreed[@"serverInfo"][@"name"], @"InferKit");
-	XCTAssertEqualObjects(agreed[@"serverInfo"][@"version"], NFKInferKit.version);
+	XCTAssertEqualObjects(agreed[@"serverInfo"][@"version"], NFKInferKit.releaseVersion);
 	XCTAssertEqualObjects(agreed[@"capabilities"][@"tools"][@"listChanged"], @NO);
 	XCTAssertEqualObjects(agreed[@"instructions"], @"Prefer get_weather for anything about weather.");
 

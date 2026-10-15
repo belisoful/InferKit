@@ -275,6 +275,7 @@ private final class NFKMLXPhotoTransformBox: @unchecked Sendable {
 /// Face restoration on a photograph is detection, alignment, and compositing around a model, and all
 /// three are CoreGraphics work. Bridging the whole frame to a tensor and back would only add a
 /// conversion at each end.
+@objc(NFKMLXPhotoFaceBackend)
 public final class NFKMLXPhotoFaceBackend: NSObject, NFKInferenceBackend {
 
     private let identifier: String

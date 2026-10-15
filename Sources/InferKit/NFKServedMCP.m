@@ -732,7 +732,7 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 	NSMutableDictionary *result = [NSMutableDictionary dictionaryWithDictionary:@{
 		@"protocolVersion": version,
 		@"capabilities": @{ @"tools": @{ @"listChanged": @NO } },
-		@"serverInfo": @{ @"name": @"InferKit", @"version": NFKInferKit.version } }];
+		@"serverInfo": @{ @"name": @"InferKit", @"version": NFKInferKit.releaseVersion } }];
 	if (instructions.length > 0) {
 		result[@"instructions"] = instructions;
 	}

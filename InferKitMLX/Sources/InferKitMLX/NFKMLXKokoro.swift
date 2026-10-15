@@ -520,6 +520,7 @@ public final class NFKMLXKokoroNet: Module {
 
 // MARK: - Weight loading
 
+@objc(NFKMLXKokoro)
 public final class NFKMLXKokoro: NSObject {
     /// Fuses a `weight_g`/`weight_v` pair into `weight` (`g · v / ‖v‖`, the norm over every axis but the
     /// first — PyTorch's `weight_norm` default dim 0).
