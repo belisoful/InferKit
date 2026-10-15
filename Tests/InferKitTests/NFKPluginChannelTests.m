@@ -471,6 +471,33 @@
 	}
 }
 
+- (void)testAHandOffReadLateStillCarriesALiveSocket
+{
+	for (NSUInteger attempt = 0; attempt < 20; attempt++) {
+		int hostEnd = -1;
+		int pluginEnd = -1;
+		NSError *error = nil;
+		XCTAssertTrue([NFKPluginChannel createSocketPair:&hostEnd second:&pluginEnd error:&error], @"%@", error);
+		NFKPluginChannel *plugin = [NFKPluginChannel channelByHandingOffDescriptor:pluginEnd error:&error];
+		XCTAssertNotNil(plugin, @"%@", error);
+		// A host that reads the hand-off only after the plugin side has returned, as a supervisor does
+		// with an in-process launcher.
+		[NSThread sleepForTimeInterval:0.005];
+		NFKPluginChannel *host = [NFKPluginChannel channelByAcceptingHandOffOnDescriptor:hostEnd timeout:5 error:&error];
+		XCTAssertNotNil(host, @"%@", error);
+		NFKChannelRecorder *recorder = [[NFKChannelRecorder alloc] init];
+		[recorder attachToChannel:plugin];
+		[plugin resume];
+		[host resume];
+		NSDictionary *ping = @{ @"type": @"ping", @"id": @(attempt) };
+		XCTAssertTrue([host sendMessage:ping error:&error], @"attempt %lu: %@", (unsigned long)attempt, error);
+		XCTAssertTrue([self waitUntil:^BOOL { return recorder.messageCount == 1; } timeout:5], @"attempt %lu", (unsigned long)attempt);
+		XCTAssertFalse(host.isClosed, @"attempt %lu: the handed socket arrived hung up", (unsigned long)attempt);
+		[host close];
+		[plugin close];
+	}
+}
+
 - (void)testAHandOffThatNeverComesTimesOut
 {
 	int hostEnd = -1;

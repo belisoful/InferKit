@@ -70,6 +70,22 @@ void NFKPluginDisownDescriptor(int descriptor);
 /*! Closes *descriptor once and sets it to -1. A negative descriptor is left alone. */
 void NFKPluginCloseDescriptor(int *descriptor);
 
+#if DEBUG
+/*! Whether INFERKIT_PLUGIN_TRACE=1 asks for the channel and descriptor trace. DEBUG builds only. */
+BOOL NFKPluginDebugTracing(void);
+
+/*! Writes one diagnostic line to standard error, with the process, the thread, and the time, while
+	NFKPluginDebugTracing() answers YES. DEBUG builds only. */
+void NFKPluginDebugTrace(NSString *format, ...) NS_FORMAT_FUNCTION(1, 2);
+
+/*! The caller's frames as symbol names, innermost first, after skipping skip frames. */
+NSString *NFKPluginDebugBacktrace(NSUInteger skip, NSUInteger count);
+
+/*! The descriptor number's current owner and its recent adopt, disown, and close events with their
+	callers. */
+NSString *NFKPluginDebugDescriptorHistory(int descriptor);
+#endif
+
 /*! Message types, the "type" field of every message. */
 extern NSString * const NFKPluginMessageChannel;
 extern NSString * const NFKPluginMessageHello;

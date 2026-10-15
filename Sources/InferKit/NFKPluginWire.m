@@ -8,6 +8,8 @@
 #import "NFKPluginSharedMemory.h"
 
 #if TARGET_OS_OSX
+#import <execinfo.h>
+#import <pthread.h>
 #import <os/lock.h>
 #import <copyfile.h>
 #import <fcntl.h>
@@ -53,9 +55,92 @@ static NSMutableDictionary<NSNumber *, NSString *> *NFKPluginDescriptorRegistry(
 	return registry;
 }
 
-static void NFKPluginDescriptorViolation(NSString *message)
+/*! The last events each descriptor number went through, with their callers, so a reused number can be
+	traced. Guarded by the registry lock. */
+static NSMutableDictionary<NSNumber *, NSMutableArray<NSString *> *> *NFKPluginDescriptorHistories(void)
 {
-	fprintf(stderr, "InferKit descriptor ownership: %s\n", message.UTF8String);
+	static NSMutableDictionary<NSNumber *, NSMutableArray<NSString *> *> *histories = nil;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		histories = [NSMutableDictionary dictionary];
+	});
+	return histories;
+}
+
+static const NSUInteger NFKPluginDescriptorHistoryDepth = 8;
+
+NSString *NFKPluginDebugBacktrace(NSUInteger skip, NSUInteger count)
+{
+	void *frames[32];
+	int captured = backtrace(frames, 32);
+	char **symbols = backtrace_symbols(frames, captured);
+	NSMutableArray<NSString *> *names = [NSMutableArray array];
+	for (int index = (int)skip + 1; index < captured && names.count < count; index++) {
+		NSString *line = symbols != NULL ? @(symbols[index]) : @"?";
+		// "N  Image  0xADDRESS  symbol + offset": keep the symbol.
+		NSRange address = [line rangeOfString:@" 0x"];
+		NSRange symbol = address.location != NSNotFound ? [line rangeOfString:@" " options:0 range:NSMakeRange(address.location + 1, line.length - address.location - 1)] : address;
+		NSString *name = symbol.location != NSNotFound ? [line substringFromIndex:symbol.location + 1] : line;
+		NSRange offset = [name rangeOfString:@" + " options:NSBackwardsSearch];
+		[names addObject:offset.location != NSNotFound ? [name substringToIndex:offset.location] : name];
+	}
+	free(symbols);
+	return [names componentsJoinedByString:@" < "];
+}
+
+BOOL NFKPluginDebugTracing(void)
+{
+	static BOOL tracing = NO;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		const char *setting = getenv("INFERKIT_PLUGIN_TRACE");
+		tracing = setting != NULL && strcmp(setting, "1") == 0;
+	});
+	return tracing;
+}
+
+void NFKPluginDebugTrace(NSString *format, ...)
+{
+	if (!NFKPluginDebugTracing()) {
+		return;
+	}
+	va_list arguments;
+	va_start(arguments, format);
+	NSString *message = [[NSString alloc] initWithFormat:format arguments:arguments];
+	va_end(arguments);
+	uint64_t thread = 0;
+	pthread_threadid_np(NULL, &thread);
+	fprintf(stderr, "[inferkit-plugin-trace pid %d thread %llu %.6f] %s\n", getpid(), thread,
+			NSDate.date.timeIntervalSince1970, message.UTF8String);
+}
+
+// Runs under the registry lock.
+static void NFKPluginRecordDescriptorEvent(int descriptor, NSString *event)
+{
+	NSMutableArray<NSString *> *history = NFKPluginDescriptorHistories()[@(descriptor)];
+	if (history == nil) {
+		history = [NSMutableArray array];
+		NFKPluginDescriptorHistories()[@(descriptor)] = history;
+	}
+	// Symbolicating every event slows descriptor-heavy work, so callers are recorded only while tracing.
+	[history addObject:NFKPluginDebugTracing() ? [NSString stringWithFormat:@"%@ from %@", event, NFKPluginDebugBacktrace(2, 4)] : event];
+	if (history.count > NFKPluginDescriptorHistoryDepth) {
+		[history removeObjectAtIndex:0];
+	}
+}
+
+NSString *NFKPluginDebugDescriptorHistory(int descriptor)
+{
+	os_unfair_lock_lock(&NFKPluginDescriptorRegistryLock);
+	NSString *owner = NFKPluginDescriptorRegistry()[@(descriptor)] ?: @"no owner";
+	NSArray<NSString *> *history = [NFKPluginDescriptorHistories()[@(descriptor)] copy] ?: @[];
+	os_unfair_lock_unlock(&NFKPluginDescriptorRegistryLock);
+	return [NSString stringWithFormat:@"descriptor %d (now %@): %@", descriptor, owner, [history componentsJoinedByString:@" | "]];
+}
+
+static void NFKPluginDescriptorViolation(NSString *message, int descriptor)
+{
+	fprintf(stderr, "InferKit descriptor ownership: %s\n  %s\n", message.UTF8String, NFKPluginDebugDescriptorHistory(descriptor).UTF8String);
 	abort();
 }
 
@@ -65,15 +150,16 @@ void NFKPluginAdoptDescriptor(int descriptor, const char *owner)
 		return;
 	}
 	if (fcntl(descriptor, F_GETFD) == -1) {
-		NFKPluginDescriptorViolation([NSString stringWithFormat:@"%s adopts descriptor %d, which is not open", owner, descriptor]);
+		NFKPluginDescriptorViolation([NSString stringWithFormat:@"%s adopts descriptor %d, which is not open", owner, descriptor], descriptor);
 	}
 	os_unfair_lock_lock(&NFKPluginDescriptorRegistryLock);
 	NSString *holder = NFKPluginDescriptorRegistry()[@(descriptor)];
 	NFKPluginDescriptorRegistry()[@(descriptor)] = @(owner);
+	NFKPluginRecordDescriptorEvent(descriptor, [NSString stringWithFormat:@"adopt by %s", owner]);
 	os_unfair_lock_unlock(&NFKPluginDescriptorRegistryLock);
 	if (holder != nil) {
 		NFKPluginDescriptorViolation([NSString stringWithFormat:@"%s adopts descriptor %d while %@ still owns it: code that did not own %@'s descriptor closed it",
-									  owner, descriptor, holder, holder]);
+									  owner, descriptor, holder, holder], descriptor);
 	}
 }
 
@@ -84,6 +170,7 @@ void NFKPluginDisownDescriptor(int descriptor)
 	}
 	os_unfair_lock_lock(&NFKPluginDescriptorRegistryLock);
 	[NFKPluginDescriptorRegistry() removeObjectForKey:@(descriptor)];
+	NFKPluginRecordDescriptorEvent(descriptor, @"disown");
 	os_unfair_lock_unlock(&NFKPluginDescriptorRegistryLock);
 }
 
@@ -97,13 +184,14 @@ void NFKPluginCloseDescriptor(int *descriptor)
 	os_unfair_lock_lock(&NFKPluginDescriptorRegistryLock);
 	NSString *holder = NFKPluginDescriptorRegistry()[@(number)];
 	[NFKPluginDescriptorRegistry() removeObjectForKey:@(number)];
+	NFKPluginRecordDescriptorEvent(number, [NSString stringWithFormat:@"close by %@", holder ?: @"no owner"]);
 	os_unfair_lock_unlock(&NFKPluginDescriptorRegistryLock);
 	if (holder == nil) {
-		NFKPluginDescriptorViolation([NSString stringWithFormat:@"descriptor %d is closed twice, or by an owner that never adopted it", number]);
+		NFKPluginDescriptorViolation([NSString stringWithFormat:@"descriptor %d is closed twice, or by an owner that never adopted it", number], number);
 	}
 	if (fcntl(number, F_GETFD) == -1) {
 		NFKPluginDescriptorViolation([NSString stringWithFormat:@"%@ closes descriptor %d, which code that did not own it already closed",
-									  holder, number]);
+									  holder, number], number);
 	}
 	close(number);
 }

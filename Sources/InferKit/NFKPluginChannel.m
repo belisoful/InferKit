@@ -158,6 +158,51 @@ static BOOL NFKPluginChannelWriteFrame(int socket, NSData *JSON, NSArray<NSNumbe
 	return YES;
 }
 
+/*! How long the plugin side holds a handed socket for a host that never reads the hand-off. */
+static const NSTimeInterval NFKPluginHandOffHoldLimit = 300;
+
+/*!
+	Keeps the plugin side's copy of a handed socket, and the transport it crossed, open until the host has
+	received it, then closes both. The host closes the transport once it has read the hand-off, so end of
+	file on the transport marks receipt.
+	A socket in flight whose sender has closed every descriptor of it can be collected by the kernel's
+	Unix-domain garbage collector before the receiver installs it, and arrives already hung up: measured
+	on macOS 26 at 18 of 300 hand-offs with no delay before the receive and 300 of 300 with 2 ms.
+	Holding the sender's copy until receipt, measured the same way, hung up none.
+	Takes ownership of transport and handed, and returns at once.
+*/
+static void NFKPluginChannelHoldUntilReceived(int transport, int handed)
+{
+	NFKPluginChannelConfigureSocket(transport, YES);
+	dispatch_queue_attr_t attributes = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0);
+	dispatch_queue_t queue = dispatch_queue_create("com.inferkit.plugin-channel.hand-off", attributes);
+	dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, (uintptr_t)transport, 0, queue);
+	__block int heldTransport = transport;
+	__block int heldHanded = handed;
+	dispatch_source_set_event_handler(source, ^{
+		char drained[256];
+		for (;;) {
+			ssize_t count = read(heldTransport, drained, sizeof drained);
+			if (count > 0 || (count < 0 && errno == EINTR)) {
+				continue;
+			}
+			if (count < 0 && errno == EAGAIN) {
+				return;
+			}
+			dispatch_source_cancel(source);
+			return;
+		}
+	});
+	dispatch_source_set_cancel_handler(source, ^{
+		NFKPluginCloseDescriptor(&heldHanded);
+		NFKPluginCloseDescriptor(&heldTransport);
+	});
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(NFKPluginHandOffHoldLimit * NSEC_PER_SEC)), queue, ^{
+		dispatch_source_cancel(source);
+	});
+	dispatch_resume(source);
+}
+
 #pragma mark - Descriptor
 
 @interface NFKPluginDescriptor ()
@@ -345,6 +390,11 @@ static BOOL NFKPluginChannelWriteFrame(int socket, NSData *JSON, NSArray<NSNumbe
 @property (nonatomic, strong) NFKPluginFrameReader *reader;
 @property (nonatomic, strong) NSLock *sendLock;
 @property (nonatomic, assign) BOOL ended;
+/*! Why the channel ended, for the DEBUG trace: end of file, a local close, or the error. */
+@property (atomic, copy, nullable) NSString *endReason;
+/*! The socket object the descriptor named when the channel adopted it, for the DEBUG trace. */
+@property (nonatomic, assign) dev_t socketDevice;
+@property (nonatomic, assign) ino_t socketInode;
 @end
 
 @implementation NFKPluginChannel
@@ -376,13 +426,17 @@ static BOOL NFKPluginChannelWriteFrame(int socket, NSData *JSON, NSArray<NSNumbe
 	NFKPluginAdoptDescriptor(handed, "a channel hand-off");
 	NSData *JSON = [NSJSONSerialization dataWithJSONObject:@{ @"type": NFKPluginMessageChannel } options:0 error:NULL];
 	BOOL sent = NFKPluginChannelWriteFrame(inherited, JSON, @[ @(handed) ], NFKPluginChannelDefaultSendTimeout, nil, outError);
-	// The frame in flight holds its own reference to the handed socket.
-	NFKPluginCloseDescriptor(&handed);
-	NFKPluginCloseDescriptor(&inherited);
+#if DEBUG
+	NFKPluginDebugTrace(@"plugin side hands socket %d over descriptor %d and keeps %d: %@", handed, inherited, kept,
+						sent ? @"sent" : (outError != NULL ? (*outError).localizedDescription : @"not sent"));
+#endif
 	if (!sent) {
+		NFKPluginCloseDescriptor(&handed);
+		NFKPluginCloseDescriptor(&inherited);
 		NFKPluginCloseDescriptor(&kept);
 		return nil;
 	}
+	NFKPluginChannelHoldUntilReceived(inherited, handed);
 	NFKPluginDisownDescriptor(kept);
 	return [[self alloc] initWithDescriptor:kept];
 }
@@ -418,6 +472,10 @@ static BOOL NFKPluginChannelWriteFrame(int socket, NSData *JSON, NSArray<NSNumbe
 			failure = readError;
 		}
 	}
+#if DEBUG
+	NFKPluginDebugTrace(@"host side reads the hand-off on descriptor %d: %@ with %lu descriptors, %@", descriptor,
+						message[@"type"] ?: @"no frame", (unsigned long)descriptors.count, failure.localizedDescription ?: @"no error");
+#endif
 	NFKPluginCloseDescriptor(&descriptor);
 	BOOL handedOver = message != nil && [message[@"type"] isEqual:NFKPluginMessageChannel] && descriptors.count == 1
 		&& NFKPluginChannelIsStreamSocket(descriptors.firstObject.descriptor);
@@ -446,9 +504,39 @@ static BOOL NFKPluginChannelWriteFrame(int socket, NSData *JSON, NSArray<NSNumbe
 		_handlerQueue = dispatch_queue_create("com.inferkit.plugin-channel.handler", attributes);
 		NFKPluginAdoptDescriptor(descriptor, "NFKPluginChannel");
 		NFKPluginChannelConfigureSocket(descriptor, YES);
+#if DEBUG
+		struct stat status;
+		if (fstat(descriptor, &status) == 0) {
+			_socketDevice = status.st_dev;
+			_socketInode = status.st_ino;
+		}
+		if (NFKPluginDebugTracing()) {
+			NFKPluginDebugTrace(@"channel %p adopts socket %d (inode %llu, peer pid %d) from %@", self, descriptor,
+								(unsigned long long)_socketInode, self.peerProcessIdentifier, NFKPluginDebugBacktrace(1, 6));
+		}
+#endif
 	}
 	return self;
 }
+
+#if DEBUG
+/*! What the channel's descriptor names now: the socket it adopted, another object, or nothing. */
+- (NSString *)debugDescriptorState:(int)descriptor
+{
+	struct stat status;
+	if (descriptor < 0) {
+		return @"closed by the channel";
+	}
+	if (fstat(descriptor, &status) != 0) {
+		return [NSString stringWithFormat:@"NOT OPEN (%s): closed by code that did not own it", strerror(errno)];
+	}
+	if (status.st_dev != self.socketDevice || status.st_ino != self.socketInode) {
+		return [NSString stringWithFormat:@"ANOTHER OBJECT (inode %llu): closed and reused by code that did not own it",
+				(unsigned long long)status.st_ino];
+	}
+	return @"the adopted socket";
+}
+#endif
 
 // A resumed channel's read source holds the channel until its cancel handler has closed the socket,
 // so only a channel that never read can reach here owning it.
@@ -493,11 +581,13 @@ static BOOL NFKPluginChannelWriteFrame(int socket, NSData *JSON, NSArray<NSNumbe
 		ssize_t count = [self.reader receiveFromSocket:self.socket error:&readError];
 		if (count == 0) {
 			[self deliverFrames];
+			self.endReason = self.endReason ?: @"end of file: the peer's socket closed";
 			[self endWithError:nil];
 			return;
 		}
 		if (count < 0) {
 			if (readError != nil) {
+				self.endReason = readError.localizedDescription;
 				[self endWithError:readError];
 			} else {
 				[self deliverFrames];
@@ -540,6 +630,13 @@ static BOOL NFKPluginChannelWriteFrame(int socket, NSData *JSON, NSArray<NSNumbe
 		return;
 	}
 	self.ended = YES;
+#if DEBUG
+	if (NFKPluginDebugTracing()) {
+		NFKPluginDebugTrace(@"channel %p socket %d ends: %@; error %@; the descriptor names %@; %@", self, self.socket,
+							self.endReason ?: (error != nil ? error.localizedDescription : @"unknown"), error,
+							[self debugDescriptorState:self.socket], NFKPluginDebugDescriptorHistory(self.socket));
+	}
+#endif
 	self.closed = YES;
 	[self.reader.descriptors removeAllObjects];
 	if (self.readSource != nil) {
@@ -571,6 +668,12 @@ static BOOL NFKPluginChannelWriteFrame(int socket, NSData *JSON, NSArray<NSNumbe
 		return;
 	}
 	self.closed = YES;
+	self.endReason = @"close() called locally";
+#if DEBUG
+	if (NFKPluginDebugTracing()) {
+		NFKPluginDebugTrace(@"channel %p socket %d close() from %@", self, self.socket, NFKPluginDebugBacktrace(1, 8));
+	}
+#endif
 	// shutdown wakes the read source and tells the peer at once. Under the send lock, so the descriptor
 	// cannot be closed and its number reused in between; a blocked send sees closed within one poll.
 	[self.sendLock lock];

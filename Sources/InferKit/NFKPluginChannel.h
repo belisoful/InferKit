@@ -70,7 +70,9 @@ typedef void (^NFKPluginChannelCloseHandler)(NSError * _Nullable error);
 + (BOOL)createSocketPair:(int *)firstDescriptor second:(int *)secondDescriptor error:(NSError * _Nullable *)outError;
 
 /*! The plugin side of the hand-off: creates a socket pair, sends one end to the host as the first frame
-	on inheritedDescriptor, closes inheritedDescriptor, and returns a channel on the other end. */
+	on inheritedDescriptor, and returns a channel on the other end. It keeps its copy of the sent end and
+	inheritedDescriptor open until the host has read the frame, which the host marks by closing its end
+	of inheritedDescriptor, and closes both then. */
 + (nullable instancetype)channelByHandingOffDescriptor:(int)inheritedDescriptor error:(NSError * _Nullable *)outError;
 
 /*! The host side of the hand-off: waits up to timeout for the first frame on descriptor, which must be

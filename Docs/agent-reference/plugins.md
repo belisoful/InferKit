@@ -124,6 +124,14 @@ An app that loads a trusted `objc` plugin into its own process keeps the core's 
    block for a biplanar format.
 8. **QoS of a spawned child.** `posix_spawnattr_set_qos_class_np` with `QOS_CLASS_BACKGROUND` starts the
    child at base priority 4 (`PROC_PIDTASKINFO`'s `pti_priority`); a child without a class starts at 31.
+9. **An in-flight socket needs its sender's copy.** A socket sent with `SCM_RIGHTS` whose sender then
+   closes every descriptor of it can be collected by the kernel's Unix-domain garbage collector before
+   the receiver installs it; the receiver then gets a socket that is already hung up (`POLLHUP`, reads
+   return 0) while its partner is still open. Measured 2026-10-15 in plain C over 300 trials each, with
+   the handed socket and the transport closed before the receive: 18 hung up with no delay before the
+   receive, 300 with 2 ms. Closing only the handed socket: 65 of 300 at 2 ms. Keeping the handed socket
+   open until the receiver has it: 0 of 300. The plugin side therefore holds it until the host closes
+   the transport.
 
 ## Transport
 
@@ -136,10 +144,15 @@ An app that loads a trusted `objc` plugin into its own process keeps the core's 
   another still reads, and the standard streams go first. `POSIX_SPAWN_CLOEXEC_DEFAULT` still closes
   every descriptor not named.
 - **Hand-off.** The plugin's first act: create a socket pair of its own, send one end to the host on
-  descriptor 3 as the frame `{"type": "channel"}` with one descriptor, close descriptor 3, and speak on
-  the other end. The host reads that one frame (up to its handshake timeout), closes descriptor 3, and
-  speaks on the received socket, whose `LOCAL_PEERTOKEN` names the plugin's process. The host checks
-  that audit token against the signature policy. An executable plugin performs the same hand-off.
+  descriptor 3 as the frame `{"type": "channel"}` with one descriptor, and speak on the other end. The
+  host reads that one frame (up to its handshake timeout), closes its end of the transport, and speaks
+  on the received socket, whose `LOCAL_PEERTOKEN` names the plugin's process. The host checks that audit
+  token against the signature policy.
+- The plugin keeps its copy of the sent end, and descriptor 3, open until descriptor 3 reads end of
+  file, which is the host closing its end after receiving the frame; it closes both then, or after 300
+  seconds for a host that never reads (measurement 9). `channelByHandingOffDescriptor:error:` does this
+  on a queue of its own and returns at once. An executable plugin performs the same hand-off and the
+  same hold; the executable fixture holds them on a thread.
 - Both ends set `SO_NOSIGPIPE`, close-on-exec, and 1 MiB socket buffers. The channel reads on a queue of
   its own and delivers on a serial handler queue, so a handler blocked in a send does not stop the reads
   that would unblock it.
@@ -235,8 +248,19 @@ fields are ignored. An unknown type with an id is answered with an error of
 - Every host deadline fails with `NFKPluginErrorTimedOut`: verification (`verificationTimeout`), hello
   and describe (`handshakeTimeout`), build and prepare (`buildTimeout`), and a run that a restart
   cancelled and that has not ended 5 seconds later. The description names the step and the limit.
-  `NFKPluginErrorProtocolViolation` is for malformed traffic only. The channel's own hand-off wait
-  reports `NFKPluginErrorHandshakeFailed`.
+  `NFKPluginErrorProtocolViolation` is for malformed traffic only. A hand-off that does not arrive within
+  the handshake timeout reports `NFKPluginErrorTimedOut`; a malformed one reports
+  `NFKPluginErrorHandshakeFailed`.
+
+## Debug diagnostics
+
+DEBUG builds check descriptor ownership (`NFKPluginAdoptDescriptor`, `NFKPluginDisownDescriptor`,
+`NFKPluginCloseDescriptor` in `NFKPluginWire`): a number adopted while another owner holds it, a close of
+a descriptor that is no longer open, or a close by no owner stops the process with the number's recent
+events. `INFERKIT_PLUGIN_TRACE=1` adds a line on standard error for every channel's adoption, `close()`
+call, and end, with its socket, the real reason, whether its descriptor still names the adopted socket,
+and each event's callers, plus both sides of each hand-off. Off by default, because symbolicating the
+callers slows descriptor-heavy tests.
 - Until a stage implements a stub, it answers `NFKPluginErrorNotImplemented` (1000), a private code
   outside the public `NFKPluginError` range. No stub remains once Phase 0 is complete.
 

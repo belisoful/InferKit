@@ -23,6 +23,7 @@
 #import <Foundation/Foundation.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -762,11 +763,20 @@ int main(int argc, const char *argv[])
 		SampleConfigureSocket(pair[0]);
 		SampleConfigureSocket(pair[1]);
 		BOOL handedOff = SampleSendFrame(inherited, @{ @"type": @"channel" }, @[ @(pair[1]) ]);
-		close(inherited);
-		close(pair[1]);
 		if (!handedOff) {
 			return 1;
 		}
+		// The sent end stays open until the host has received it, which the host marks by closing its
+		// end of the inherited socket: an in-flight socket whose sender closed it can arrive hung up.
+		int sent = pair[1];
+		[NSThread detachNewThreadWithBlock:^{
+			char drained[64];
+			struct pollfd readable = { .fd = inherited, .events = POLLIN, .revents = 0 };
+			while (poll(&readable, 1, 300 * 1000) > 0 && read(inherited, drained, sizeof drained) > 0) {
+			}
+			close(inherited);
+			close(sent);
+		}];
 		[[[SampleSession alloc] initWithSocket:pair[0]] run];
 	}
 	return 0;
