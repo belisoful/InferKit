@@ -205,6 +205,7 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 ### The C interface
 
 - <doc:CInterface>
+- <doc:CPluginInterface>
 
 ### Detected & predicted value types
 

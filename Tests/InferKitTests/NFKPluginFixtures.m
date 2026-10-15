@@ -17,6 +17,7 @@ NSString * const NFKPluginFixtureSlowModel = @"slow";
 NSString * const NFKPluginFixtureEchoTool = @"echo";
 NSString * const NFKPluginFixtureEchoPrefixOption = @"echoPrefix";
 NSString * const NFKPluginFixtureValuesKey = @"values";
+NSString * const NFKPluginFixtureRegionKey = @"region";
 NSString * const NFKPluginFixtureVersionKey = @"pluginVersion";
 NSString * const NFKPluginFixtureStepsKey = @"steps";
 NSString * const NFKPluginFixtureStepMillisecondsKey = @"stepMilliseconds";
@@ -332,6 +333,77 @@ static NSString *NFKPluginFixturesArchitecture(void)
 		? [NSURL fileURLWithPath:override]
 		: [[NSBundle bundleForClass:self].bundleURL.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"inferkit-plugin-host"];
 	return [NSFileManager.defaultManager isExecutableFileAtPath:candidate.path] ? candidate : nil;
+}
+
++ (nullable NSURL *)folderWithCopiesOfBundles:(NSArray<NSURL *> *)bundles error:(NSError **)error
+{
+	NSURL *folder = [[NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES] URLByAppendingPathComponent:
+					 [@"inferkit-plugin-folder-" stringByAppendingString:NSUUID.UUID.UUIDString] isDirectory:YES];
+	NSFileManager *files = NSFileManager.defaultManager;
+	if (![files createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:@{ NSFilePosixPermissions: @0755 } error:error]) {
+		return nil;
+	}
+	for (NSURL *bundle in bundles) {
+		if (![files copyItemAtURL:bundle toURL:[folder URLByAppendingPathComponent:bundle.lastPathComponent isDirectory:YES] error:error]) {
+			[files removeItemAtURL:folder error:NULL];
+			return nil;
+		}
+	}
+	return folder;
+}
+
++ (BOOL)editManifestOfBundleAtURL:(NSURL *)url edit:(void (^)(NSMutableDictionary *manifest))edit error:(NSError **)error
+{
+	NSURL *manifestURL = [url URLByAppendingPathComponent:NFKPluginFixturesManifestPath];
+	NSData *data = [NSData dataWithContentsOfURL:manifestURL options:0 error:error];
+	NSMutableDictionary *manifest = data != nil ? [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:error] : nil;
+	if (![manifest isKindOfClass:NSMutableDictionary.class]) {
+		return manifest != nil ? NFKPluginFixturesSetError(error, @"the manifest is not a JSON object") : NO;
+	}
+	edit(manifest);
+	NSData *edited = [NSJSONSerialization dataWithJSONObject:manifest options:NSJSONWritingSortedKeys error:error];
+	return edited != nil && [edited writeToURL:manifestURL options:NSDataWritingAtomic error:error];
+}
+
++ (CVPixelBufferRef)newPatternImageOfSide:(size_t)side
+{
+	CVPixelBufferRef buffer = NULL;
+	if (CVPixelBufferCreate(kCFAllocatorDefault, side, side, kCVPixelFormatType_32BGRA, NULL, &buffer) != kCVReturnSuccess) {
+		return NULL;
+	}
+	CVPixelBufferLockBaseAddress(buffer, 0);
+	uint8_t *bytes = CVPixelBufferGetBaseAddress(buffer);
+	size_t stride = CVPixelBufferGetBytesPerRow(buffer);
+	for (size_t row = 0; row < side; row++) {
+		for (size_t column = 0; column < side; column++) {
+			uint8_t *pixel = bytes + row * stride + column * 4;
+			pixel[0] = (uint8_t)column;
+			pixel[1] = 20;
+			pixel[2] = (uint8_t)row;
+			pixel[3] = 255;
+		}
+	}
+	CVPixelBufferUnlockBaseAddress(buffer, 0);
+	return buffer;
+}
+
++ (nullable NSData *)pixelsOfImage:(nullable id)image
+{
+	CVPixelBufferRef buffer = (__bridge CVPixelBufferRef)image;
+	if (buffer == NULL || CFGetTypeID(buffer) != CVPixelBufferGetTypeID()) {
+		return nil;
+	}
+	CVPixelBufferLockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
+	size_t width = CVPixelBufferGetWidth(buffer);
+	size_t height = CVPixelBufferGetHeight(buffer);
+	size_t stride = CVPixelBufferGetBytesPerRow(buffer);
+	const uint8_t *bytes = CVPixelBufferGetBaseAddress(buffer);
+	NSMutableData *pixels = [NSMutableData dataWithCapacity:width * height * 4];
+	for (size_t row = 0; row < height; row++) {
+		[pixels appendBytes:bytes + row * stride length:width * 4];
+	}
+	CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
+	return pixels;
 }
 
 + (nullable NSURL *)tamperedCopyOfBundleAtURL:(NSURL *)bundleURL error:(NSError **)error

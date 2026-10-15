@@ -157,7 +157,9 @@ API_UNAVAILABLE(ios, tvos, watchos)
 				-[NFKPluginContext options]: its process receives them at its next start, and a running
 				process restarts to receive them. A plugin already loaded into the app's process keeps the
 				values it was loaded with until the app quits. The registry keeps the values in memory
-				only, through a reload or a removal; the app persists them. Introduced in InferKit 0.4.0.
+				only, through a reload or a removal; the app persists them. When the plugin is added again
+				or reloaded, each value is checked against the new manifest: a key it no longer declares,
+				and a value that no longer resolves, are dropped. Introduced in InferKit 0.4.0.
 */
 - (BOOL)setOptionValues:(nullable NSDictionary<NSString *, id> *)values
 	forPluginIdentifier:(NSString *)identifier

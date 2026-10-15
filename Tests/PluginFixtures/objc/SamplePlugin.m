@@ -9,6 +9,8 @@
 //  The models and the tool behave as the C fixture's do:
 //  - "invert" inverts a 32BGRA pixel buffer under NFKInputImage (each color byte becomes 255 minus
 //    itself, alpha kept) and an array of floats under "values" (each element becomes 1 minus itself).
+//    An NFKDetection under "region" comes back under NFKOutputDetections, its box mirrored left to
+//    right (x becomes 1 - x - width) and its confidence replaced by 1 minus itself.
 //  - "slow" counts "steps" steps of "stepMilliseconds" each. Submitted as a job, it reports progress
 //    with a partial result {"step": n} after each step and stops when the job is cancelled.
 //    "exitAtStep" ends the process at that step.
@@ -26,6 +28,7 @@
 
 static NSString * const SamplePluginVersion = @SAMPLE_PLUGIN_VERSION;
 static NSString * const SamplePluginValuesKey = @"values";
+static NSString * const SamplePluginRegionKey = @"region";
 static NSString * const SamplePluginVersionKey = @"pluginVersion";
 static NSString * const SamplePluginStepsKey = @"steps";
 static const NSInteger SamplePluginWeightBytes = 4096;
@@ -129,7 +132,7 @@ static NSInteger SamplePluginIntegerParameter(NFKInferenceRequest *request, NSSt
 
 - (NSSet<NSString *> *)supportedInputKeys
 {
-	return [NSSet setWithObjects:NFKInputImage, SamplePluginValuesKey, nil];
+	return [NSSet setWithObjects:NFKInputImage, SamplePluginValuesKey, SamplePluginRegionKey, nil];
 }
 
 - (NSSet<NSString *> *)supportedParameterKeys
@@ -139,16 +142,17 @@ static NSInteger SamplePluginIntegerParameter(NFKInferenceRequest *request, NSSt
 
 - (NSSet<NSString *> *)supportedOutputKeys
 {
-	return [NSSet setWithObjects:NFKOutputImage, SamplePluginValuesKey, SamplePluginVersionKey, nil];
+	return [NSSet setWithObjects:NFKOutputImage, SamplePluginValuesKey, NFKOutputDetections, SamplePluginVersionKey, nil];
 }
 
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request error:(NSError **)error
 {
 	id image = request.inputs[NFKInputImage];
 	id values = request.inputs[SamplePluginValuesKey];
-	if (image == nil && values == nil) {
+	id region = request.inputs[SamplePluginRegionKey];
+	if (image == nil && values == nil && region == nil) {
 		if (error != NULL) {
-			*error = SamplePluginError(NFKInferenceErrorDomain, kNFKError_InferenceMissingInput, @"invert needs \"image\" or \"values\"");
+			*error = SamplePluginError(NFKInferenceErrorDomain, kNFKError_InferenceMissingInput, @"invert needs \"image\", \"values\", or \"region\"");
 		}
 		return nil;
 	}
@@ -167,6 +171,20 @@ static NSInteger SamplePluginIntegerParameter(NFKInferenceRequest *request, NSSt
 			return nil;
 		}
 		outputs[SamplePluginValuesKey] = inverted;
+	}
+	if (region != nil) {
+		if (![region isKindOfClass:NFKDetection.class]) {
+			if (error != NULL) {
+				*error = SamplePluginError(NFKInferenceErrorDomain, kNFKError_InferenceUnsupported, @"invert takes a detection under \"region\"");
+			}
+			return nil;
+		}
+		NFKDetection *detection = region;
+		CGRect box = detection.boundingBox;
+		CGRect mirrored = CGRectMake(1.0 - box.origin.x - box.size.width, box.origin.y, box.size.width, box.size.height);
+		outputs[NFKOutputDetections] = @[ [[NFKDetection alloc] initWithLabel:detection.label classIndex:detection.classIndex
+																   confidence:1.0 - detection.confidence boundingBox:mirrored
+																quadrilateral:nil] ];
 	}
 	return [NFKInferenceResult resultWithOutputs:outputs];
 }
@@ -355,9 +373,11 @@ static NSInteger SamplePluginIntegerParameter(NFKInferenceRequest *request, NSSt
 	NSDictionary *pluginVersion = @{ @"key": SamplePluginVersionKey, @"valueType": @"text", @"required": @YES };
 	NSDictionary *invert = @{
 		@"id": @"invert", @"displayName": @"Invert", @"family": @"sample-invert", @"engine": @"plugin",
-		@"summary": @"Inverts a 32BGRA image or a float array.", @"tasks": @[ @"image-to-image" ],
-		@"inputs": @[ @{ @"key": NFKInputImage, @"valueType": @"image" }, @{ @"key": SamplePluginValuesKey, @"valueType": @"embedding" } ],
-		@"outputs": @[ @{ @"key": NFKOutputImage, @"valueType": @"image" }, @{ @"key": SamplePluginValuesKey, @"valueType": @"embedding" }, pluginVersion ],
+		@"summary": @"Inverts a 32BGRA image, a float array, or a detection's box.", @"tasks": @[ @"image-to-image" ],
+		@"inputs": @[ @{ @"key": NFKInputImage, @"valueType": @"image" }, @{ @"key": SamplePluginValuesKey, @"valueType": @"embedding" },
+					  @{ @"key": SamplePluginRegionKey, @"valueType": @"json" } ],
+		@"outputs": @[ @{ @"key": NFKOutputImage, @"valueType": @"image" }, @{ @"key": SamplePluginValuesKey, @"valueType": @"embedding" },
+					   @{ @"key": NFKOutputDetections, @"valueType": @"detections" }, pluginVersion ],
 	};
 	NSDictionary *slow = @{
 		@"id": @"slow", @"displayName": @"Slow", @"family": @"sample-slow", @"engine": @"plugin",

@@ -6,6 +6,8 @@
  *  models and one tool:
  *  - "invert" inverts a 32BGRA image under "image" (each color byte becomes 255 minus itself, alpha
  *    kept) and a float32 or float64 array under "values" (each element becomes 1 minus itself).
+ *    A detection under "region", in the wire coding's tagged JSON, comes back under "detections", its
+ *    box mirrored left to right (x becomes 1 - x - width) and its confidence replaced by 1 minus itself.
  *  - "slow" counts "steps" steps of "stepMilliseconds" each, reports progress with a partial result
  *    {"step": n} after each, and stops when the run is cancelled. "exitAtStep" ends the process at that
  *    step, which only a plugin running in a process of its own survives.
@@ -802,13 +804,41 @@ static int sample_invert_values(const sample_json *entry, const nfk_plugin_paylo
 	return 1;
 }
 
+/* A detection under "region" comes back under "detections", its box mirrored left to right and its
+   confidence replaced by 1 minus itself; the label and class index are kept. */
+static int sample_invert_region(const sample_json *entry, sample_text *outputs, char **out_error_json)
+{
+	const char *tag = json_string_member(entry, "$nfk");
+	const sample_json *box = json_member(entry, "boundingBox");
+	if (tag == NULL || strcmp(tag, "detection") != 0 || box == NULL || box->kind != SAMPLE_JSON_OBJECT) {
+		*out_error_json = sample_error_json("invert takes a detection with a boundingBox under \"region\"", "NFKInferenceErrorDomain", 4);
+		return 0;
+	}
+	double x = json_number_member(box, "x", 0);
+	double y = json_number_member(box, "y", 0);
+	double width = json_number_member(box, "width", 0);
+	double height = json_number_member(box, "height", 0);
+	text_append_string(outputs, "\"detections\":[{\"$nfk\":\"detection\"");
+	const char *label = json_string_member(entry, "label");
+	if (label != NULL) {
+		text_append_string(outputs, ",\"label\":");
+		text_append_json_string(outputs, label);
+	}
+	text_append_format(outputs, ",\"classIndex\":%.0f,\"confidence\":%.17g", json_number_member(entry, "classIndex", -1),
+					   1.0 - json_number_member(entry, "confidence", 0));
+	text_append_format(outputs, ",\"boundingBox\":{\"x\":%.17g,\"y\":%.17g,\"width\":%.17g,\"height\":%.17g}}]",
+					   1.0 - x - width, y, width, height);
+	return 1;
+}
+
 static nfk_plugin_status sample_run_invert(const sample_json *inputs, const nfk_plugin_payload *request,
 										   sample_result *result, sample_text *outputs, char **out_error_json)
 {
 	const sample_json *image = json_member(inputs, "image");
 	const sample_json *values = json_member(inputs, "values");
-	if (image == NULL && values == NULL) {
-		return sample_fail(out_error_json, NFK_PLUGIN_STATUS_MISSING_INPUT, "invert needs \"image\" or \"values\"",
+	const sample_json *region = json_member(inputs, "region");
+	if (image == NULL && values == NULL && region == NULL) {
+		return sample_fail(out_error_json, NFK_PLUGIN_STATUS_MISSING_INPUT, "invert needs \"image\", \"values\", or \"region\"",
 						   "NFKInferenceErrorDomain", 2);
 	}
 	if (image != NULL && !sample_invert_image(image, request, result, outputs, out_error_json)) {
@@ -819,6 +849,12 @@ static nfk_plugin_status sample_run_invert(const sample_json *inputs, const nfk_
 	}
 	if (values != NULL && !sample_invert_values(values, request, result, outputs, out_error_json)) {
 		return *out_error_json != NULL ? NFK_PLUGIN_STATUS_UNSUPPORTED : NFK_PLUGIN_STATUS_NO_MEMORY;
+	}
+	if (region != NULL && (image != NULL || values != NULL)) {
+		text_append_string(outputs, ",");
+	}
+	if (region != NULL && !sample_invert_region(region, outputs, out_error_json)) {
+		return NFK_PLUGIN_STATUS_UNSUPPORTED;
 	}
 	return NFK_PLUGIN_STATUS_OK;
 }
@@ -856,9 +892,11 @@ static nfk_plugin_status sample_run_slow(const sample_instance *instance, nfk_pl
 static const char sample_description[] =
 	"{\"models\":["
 		"{\"id\":\"invert\",\"displayName\":\"Invert\",\"family\":\"sample-invert\","
-		"\"summary\":\"Inverts a 32BGRA image or a float array.\",\"engine\":\"plugin\",\"tasks\":[\"image-to-image\"],"
-		"\"inputs\":[{\"key\":\"image\",\"valueType\":\"image\"},{\"key\":\"values\",\"valueType\":\"embedding\"}],"
+		"\"summary\":\"Inverts a 32BGRA image, a float array, or a detection's box.\",\"engine\":\"plugin\",\"tasks\":[\"image-to-image\"],"
+		"\"inputs\":[{\"key\":\"image\",\"valueType\":\"image\"},{\"key\":\"values\",\"valueType\":\"embedding\"},"
+		"{\"key\":\"region\",\"valueType\":\"json\"}],"
 		"\"outputs\":[{\"key\":\"image\",\"valueType\":\"image\"},{\"key\":\"values\",\"valueType\":\"embedding\"},"
+		"{\"key\":\"detections\",\"valueType\":\"detections\"},"
 		"{\"key\":\"pluginVersion\",\"valueType\":\"text\",\"required\":true}]},"
 		"{\"id\":\"slow\",\"displayName\":\"Slow\",\"family\":\"sample-slow\","
 		"\"summary\":\"Counts steps, reporting progress after each, until it finishes or is cancelled.\",\"engine\":\"plugin\","
@@ -903,7 +941,7 @@ static nfk_plugin_status sample_describe_backend(void *context, nfk_plugin_backe
 	int invert = backend->model == SAMPLE_MODEL_INVERT;
 	unsigned resident = backend->weights != NULL ? SAMPLE_WEIGHT_BYTES : 0;
 	sample_text text = { 0 };
-	text_append_string(&text, invert ? "{\"inputs\":[\"image\",\"values\"],\"parameters\":[],\"outputs\":[\"image\",\"values\",\"pluginVersion\"],"
+	text_append_string(&text, invert ? "{\"inputs\":[\"image\",\"region\",\"values\"],\"parameters\":[],\"outputs\":[\"detections\",\"image\",\"values\",\"pluginVersion\"],"
 								  : "{\"inputs\":[],\"parameters\":[\"steps\",\"stepMilliseconds\",\"exitAtStep\"],\"outputs\":[\"steps\",\"pluginVersion\"],");
 	text_append_format(&text, "\"modelInfo\":{\"architecture\":\"%s\"},", invert ? "sample-invert" : "sample-slow");
 	text_append_format(&text, "\"loaded\":%s,\"residentBytes\":%u,\"peakBytes\":%u}", resident > 0 ? "true" : "false", resident, SAMPLE_WEIGHT_BYTES);

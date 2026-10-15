@@ -345,6 +345,10 @@ NSDictionary *values = [registry optionValuesForPluginIdentifier:@"com.example.u
 - A plugin already loaded into the app's process keeps the values it was loaded with until the app quits.
 - The registry keeps the values in memory, through a reload or a removal. The app persists them and sets
   them again at launch, after it adds the plugin.
+- A reload, or adding the plugin again, checks each value against the new manifest. A key the manifest no
+  longer declares is dropped, and so is a value that no longer resolves, such as one above a lowered
+  maximum. The rest reach the plugin's next start. The app reads `optionValuesForPluginIdentifier:` after
+  a reload to persist what remains.
 
 ## Versions and reloading
 
@@ -469,6 +473,27 @@ NFKPluginRegistry.sharedRegistry.sharedMemoryPrefix = @"ABCDE12345.ik/";   // th
   characters. With fewer than 10 left, every region takes the temporary-file fallback, so the app group
   that carries plugin traffic has a short identifier: "ABCDE12345.ik/" leaves 17.
 - An unsandboxed app leaves the prefix nil, the default, and hello offers no capability.
+
+## What the completeness test proves
+
+`NFKPluginCompletenessTests` builds one plugin of each kind (`objc`, `c-abi`, `executable`) from
+`Tests/PluginFixtures/` and walks each end to end through `NFKPluginRegistry`:
+
+- The catalog lists all three from their manifests with no plugin code loaded and no process running.
+- Each kind, in its own process, inverts a 64 × 64 image and 4096 floats, which cross inline, and a
+  256 × 256 image and 65536 floats, which cross as shared-memory attachments. An `NFKDetection` crosses
+  to the plugin and back as tagged JSON.
+- Each kind reports progress with partial results, cancels a run and keeps serving, answers a tool call,
+  unloads its model, and exits once idle with no backend left.
+- Each kind restarts to a second version while a run is in flight; the run finishes on the first version
+  and the next run reaches the second.
+- The trusted `objc` and `c-abi` plugins give in the app's process the outputs they give in their own; an
+  `executable` plugin is refused there.
+- Each kind refuses a bundle edited after signing and a signature from a team other than the pinned one.
+- The C API builds a plugin model with `nfk_backend_create("<plugin id>/<model id>", …)` and runs it
+  through the plugin's process.
+- A server that hosts each kind with `addBackendProvider:forModelName:` and unloads it with
+  `unloadIdleModels` ends the plugin's process.
 
 ## Errors
 

@@ -9,6 +9,7 @@
 
 #import <Foundation/Foundation.h>
 #import <InferKit/InferKit.h>
+#import <CoreVideo/CoreVideo.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -18,7 +19,9 @@ NS_ASSUME_NONNULL_BEGIN
 	tool's output. */
 extern NSString * const NFKPluginFixturesErrorDomain;
 
-/*! The model that inverts a 32BGRA image under "image" and a float array under "values". */
+/*! The model that inverts a 32BGRA image under "image" and a float array under "values", and mirrors a
+	detection under "region" into "detections": its box mirrored left to right (x becomes
+	1 - x - width) and its confidence replaced by 1 minus itself. */
 extern NSString * const NFKPluginFixtureInvertModel;
 
 /*! The model that counts steps, reports progress after each, and honors cancellation. */
@@ -32,6 +35,9 @@ extern NSString * const NFKPluginFixtureEchoPrefixOption;
 
 /*! The invert model's float array input and output key. */
 extern NSString * const NFKPluginFixtureValuesKey;
+
+/*! The invert model's detection input key. */
+extern NSString * const NFKPluginFixtureRegionKey;
 
 /*! The output key every fixture result carries, holding the plugin's version. */
 extern NSString * const NFKPluginFixtureVersionKey;
@@ -71,6 +77,21 @@ extern NSString * const NFKPluginFixtureAllocationCounterSymbol;
 /*! A copy of a signed bundle in a new temporary directory, its manifest's summary edited after signing,
 	so its signature no longer verifies. */
 + (nullable NSURL *)tamperedCopyOfBundleAtURL:(NSURL *)bundleURL error:(NSError **)error;
+
+/*! A new folder in the temporary directory, mode 0755, holding a copy of each bundle under its own name,
+	or nil with an error. The caller removes the folder. */
++ (nullable NSURL *)folderWithCopiesOfBundles:(NSArray<NSURL *> *)bundles error:(NSError **)error;
+
+/*! Rewrites the manifest of the bundle at url through edit. The bundle's signature then no longer
+	verifies, so it serves listing, or is signed again. */
++ (BOOL)editManifestOfBundleAtURL:(NSURL *)url edit:(void (^)(NSMutableDictionary *manifest))edit error:(NSError **)error;
+
+/*! A side × side 32BGRA pixel buffer whose pixel at (column, row) is blue column, green 20, red row, and
+	alpha 255, each byte the low 8 bits. */
++ (CVPixelBufferRef)newPatternImageOfSide:(size_t)side CF_RETURNS_RETAINED;
+
+/*! A 32BGRA pixel buffer's pixels, row padding left out, or nil for a value that is not a pixel buffer. */
++ (nullable NSData *)pixelsOfImage:(nullable id)image;
 
 /*! Contents/MacOS/<CFBundleExecutable> of a bundle, or nil when its Info.plist names none. */
 + (nullable NSURL *)executableURLOfBundleAtURL:(NSURL *)bundleURL;

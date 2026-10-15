@@ -300,6 +300,8 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 	if (manifest == nil) {
 		return nil;
 	}
+	NSDictionary<NSString *, id> *kept = [self optionValues:[self optionValuesForPluginIdentifier:manifest.identifier]
+											 keptByManifest:manifest];
 	NFKPluginRegistryEntry *existing = nil;
 	@synchronized (self.lock) {
 		existing = self.entries[manifest.identifier];
@@ -313,6 +315,9 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 			entry.catalogIdentifiers = @[];
 			self.entries[manifest.identifier] = entry;
 			[self listDescriptors:descriptors forEntry:entry];
+			if (self.optionValuesByPlugin[manifest.identifier] != nil) {
+				self.optionValuesByPlugin[manifest.identifier] = kept;
+			}
 			return manifest;
 		}
 	}
@@ -424,6 +429,7 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 			  restartCompletion:(nullable void (^)(NSError * _Nullable error))restartCompletion
 						  error:(NSError **)error
 {
+	NSDictionary<NSString *, id> *kept = [self optionValues:[self optionValuesForPluginIdentifier:identifier] keptByManifest:manifest];
 	NFKPluginProcess *process = nil;
 	@synchronized (self.lock) {
 		NFKPluginRegistryEntry *entry = self.entries[identifier];
@@ -442,10 +448,31 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 		}
 		entry.manifest = manifest;
 		[self listDescriptors:descriptors forEntry:entry];
+		if (self.optionValuesByPlugin[identifier] != nil) {
+			self.optionValuesByPlugin[identifier] = kept;
+		}
 		process = entry.process;
+	}
+	if (process != nil) {
+		process.pluginOptions = kept;
 	}
 	[self handManifest:manifest toProcess:process completion:restartCompletion];
 	return YES;
+}
+
+/*! The values a new manifest still takes: each key it declares whose value resolves against the new
+	declaration, converted. A key it no longer declares, and a value that no longer resolves, are left
+	out. */
+- (NSDictionary<NSString *, id> *)optionValues:(NSDictionary<NSString *, id> *)values keptByManifest:(NFKPluginManifest *)manifest
+{
+	NSMutableDictionary<NSString *, id> *kept = [NSMutableDictionary dictionary];
+	[values enumerateKeysAndObjectsUsingBlock:^(NSString *key, id value, BOOL *stop) {
+		NSDictionary<NSString *, id> *resolved = [self resolvedOptionValues:@{ key: value } ofManifest:manifest error:NULL];
+		if (resolved[key] != nil) {
+			kept[key] = resolved[key];
+		}
+	}];
+	return kept;
 }
 
 /*! Gives a process the manifest: a stopped process takes it for its next start and completion runs at

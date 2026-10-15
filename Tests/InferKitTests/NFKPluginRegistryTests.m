@@ -98,28 +98,20 @@ static BOOL NFKRegistryTestImageIsLoaded(NSURL *url)
 /*! A new folder, mode 0755, holding a copy of each bundle. */
 - (NSURL *)pluginsFolderWithCopiesOf:(NSArray<NSURL *> *)bundles
 {
-	NSURL *folder = [[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:
-					 [NSString stringWithFormat:@"registry-test-%@", NSUUID.UUID.UUIDString] isDirectory:YES];
-	[self.temporaryURLs addObject:folder];
 	NSError *error = nil;
-	XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES
-														  attributes:@{ NSFilePosixPermissions: @0755 } error:&error], @"%@", error);
-	for (NSURL *bundle in bundles) {
-		NSURL *copy = [folder URLByAppendingPathComponent:bundle.lastPathComponent isDirectory:YES];
-		XCTAssertTrue([NSFileManager.defaultManager copyItemAtURL:bundle toURL:copy error:&error], @"%@", error);
+	NSURL *folder = [NFKPluginFixtures folderWithCopiesOfBundles:bundles error:&error];
+	XCTAssertNotNil(folder, @"%@", error);
+	if (folder != nil) {
+		[self.temporaryURLs addObject:folder];
 	}
 	return folder;
 }
 
-/*! Rewrites the manifest of the bundle at url through edit. The signature no longer verifies, so the
-	bundle serves listing only, or is signed again. */
+/*! Rewrites the manifest of the bundle at url through edit. */
 - (void)editManifestOfBundle:(NSURL *)url edit:(void (^)(NSMutableDictionary *manifest))edit
 {
-	NSURL *manifestURL = [url URLByAppendingPathComponent:@"Contents/Resources/inferkit-plugin.json"];
-	NSMutableDictionary *manifest = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:manifestURL]
-																	options:NSJSONReadingMutableContainers error:NULL];
-	edit(manifest);
-	XCTAssertTrue([[NSJSONSerialization dataWithJSONObject:manifest options:0 error:NULL] writeToURL:manifestURL atomically:YES]);
+	NSError *error = nil;
+	XCTAssertTrue([NFKPluginFixtures editManifestOfBundleAtURL:url edit:edit error:&error], @"%@", error);
 }
 
 /*! A copy of a fixture under identifier, in a folder of its own, signed ad hoc again. */
@@ -180,42 +172,14 @@ static BOOL NFKRegistryTestImageIsLoaded(NSURL *url)
 
 - (CVPixelBufferRef)newImageOfSide:(size_t)side CF_RETURNS_RETAINED
 {
-	CVPixelBufferRef buffer = NULL;
-	XCTAssertEqual(CVPixelBufferCreate(kCFAllocatorDefault, side, side, kCVPixelFormatType_32BGRA, NULL, &buffer), kCVReturnSuccess);
-	CVPixelBufferLockBaseAddress(buffer, 0);
-	uint8_t *bytes = CVPixelBufferGetBaseAddress(buffer);
-	size_t stride = CVPixelBufferGetBytesPerRow(buffer);
-	for (size_t row = 0; row < side; row++) {
-		for (size_t column = 0; column < side; column++) {
-			uint8_t *pixel = bytes + row * stride + column * 4;
-			pixel[0] = (uint8_t)column;
-			pixel[1] = 20;
-			pixel[2] = (uint8_t)row;
-			pixel[3] = 255;
-		}
-	}
-	CVPixelBufferUnlockBaseAddress(buffer, 0);
-	return buffer;
+	CVPixelBufferRef image = [NFKPluginFixtures newPatternImageOfSide:side];
+	XCTAssertTrue(image != NULL);
+	return image;
 }
 
-/*! A 32BGRA pixel buffer's pixels, row padding left out, or nil for another value. */
 - (nullable NSData *)pixelsOf:(nullable id)value
 {
-	CVPixelBufferRef buffer = (__bridge CVPixelBufferRef)value;
-	if (buffer == NULL || CFGetTypeID(buffer) != CVPixelBufferGetTypeID()) {
-		return nil;
-	}
-	CVPixelBufferLockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
-	size_t width = CVPixelBufferGetWidth(buffer);
-	size_t height = CVPixelBufferGetHeight(buffer);
-	size_t stride = CVPixelBufferGetBytesPerRow(buffer);
-	const uint8_t *bytes = CVPixelBufferGetBaseAddress(buffer);
-	NSMutableData *pixels = [NSMutableData dataWithCapacity:width * height * 4];
-	for (size_t row = 0; row < height; row++) {
-		[pixels appendBytes:bytes + row * stride length:width * 4];
-	}
-	CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
-	return pixels;
+	return [NFKPluginFixtures pixelsOfImage:value];
 }
 
 /*! The invert model's outputs for a float array and a 64 × 64 image. */
@@ -298,7 +262,7 @@ static BOOL NFKRegistryTestImageIsLoaded(NSURL *url)
 	XCTAssertEqualObjects(descriptor.family, @"sample-invert");
 	NSDictionary *plugin = @{ @"id": manifest.identifier, @"version": @"1.0.0", @"kind": NFKPluginEntryKindObjC };
 	XCTAssertEqualObjects(descriptor.extensions[@"plugin"], plugin);
-	XCTAssertEqualObjects([descriptor.inputs valueForKey:@"key"], (@[ NFKInputImage, NFKPluginFixtureValuesKey ]));
+	XCTAssertEqualObjects([descriptor.inputs valueForKey:@"key"], (@[ NFKInputImage, NFKPluginFixtureValuesKey, NFKPluginFixtureRegionKey ]));
 	XCTAssertNotNil([registry.catalog manifestDataWithError:&error], @"the descriptors are JSON: %@", error);
 
 	XCTAssertEqualObjects([registry manifestForModelIdentifier:slow], manifest);
@@ -505,6 +469,49 @@ static BOOL NFKRegistryTestImageIsLoaded(NSURL *url)
 	NFKPluginBackend *backend = [registry backendForModelIdentifier:[identifier stringByAppendingString:@"/invert"] options:nil error:&error];
 	XCTAssertEqual(backend.isolation, NFKPluginIsolationInProcess, @"%@", error);
 	XCTAssertEqualObjects([self echoOf:registry], @"in: hi", @"the C plugin reads the values from its host table's options");
+}
+
+- (void)testAReloadDropsOptionValuesTheNewManifestNoLongerTakes
+{
+	NSURL *fixture = [self fixtureOfKind:NFKPluginEntryKindCABI version:@"1.0.0"];
+	NSURL *bundle = [[self pluginsFolderWithCopiesOf:@[ fixture ]] URLByAppendingPathComponent:fixture.lastPathComponent];
+	[self editManifestOfBundle:bundle edit:^(NSMutableDictionary *manifest) {
+		manifest[@"options"] = @[
+			@{ @"key": NFKPluginFixtureEchoPrefixOption, @"kind": @"text", @"default": @"" },
+			@{ @"key": @"tileSize", @"kind": @"integer", @"default": @64, @"minimum": @1, @"maximum": @512 },
+			@{ @"key": @"mode", @"kind": @"choice", @"default": @"fast", @"choices": @[ @{ @"value": @"fast" }, @{ @"value": @"exact" } ] },
+		];
+	}];
+	NFKPluginRegistry *registry = [self registry];
+	NSError *error = nil;
+	NFKPluginManifest *manifest = [registry addPluginAtURL:bundle error:&error];
+	XCTAssertNotNil(manifest, @"listing reads the manifest and checks no signature: %@", error);
+	NSString *identifier = manifest.identifier;
+	NSDictionary *values = @{ NFKPluginFixtureEchoPrefixOption: @"> ", @"tileSize": @"256", @"mode": @"exact" };
+	XCTAssertTrue([registry setOptionValues:values forPluginIdentifier:identifier error:&error], @"%@", error);
+	XCTAssertEqualObjects([registry optionValuesForPluginIdentifier:identifier][@"tileSize"], @256);
+	NFKPluginBackend *backend = [registry backendForModelIdentifier:[self catalogIdentifierOfKind:NFKPluginEntryKindCABI model:NFKPluginFixtureInvertModel]
+															options:nil error:&error];
+	XCTAssertNotNil(backend, @"%@", error);
+
+	[self editManifestOfBundle:bundle edit:^(NSMutableDictionary *edited) {
+		edited[@"options"] = @[
+			@{ @"key": NFKPluginFixtureEchoPrefixOption, @"kind": @"text", @"default": @"" },
+			@{ @"key": @"tileSize", @"kind": @"integer", @"default": @64, @"minimum": @1, @"maximum": @128 },
+		];
+	}];
+	XCTAssertTrue([registry reloadPluginWithIdentifier:identifier error:&error], @"%@", error);
+	NSDictionary *kept = @{ NFKPluginFixtureEchoPrefixOption: @"> " };
+	XCTAssertEqualObjects([registry optionValuesForPluginIdentifier:identifier], kept,
+						  @"mode is no longer declared, and 256 is above tileSize's new maximum");
+	XCTAssertEqualObjects(backend.process.pluginOptions, kept, @"the process's next hello carries what remains");
+
+	[registry removePluginWithIdentifier:identifier];
+	[self editManifestOfBundle:bundle edit:^(NSMutableDictionary *edited) {
+		[edited removeObjectForKey:@"options"];
+	}];
+	XCTAssertNotNil([registry addPluginAtURL:bundle error:&error], @"%@", error);
+	XCTAssertEqualObjects([registry optionValuesForPluginIdentifier:identifier], @{}, @"adding the plugin again checks the values too");
 }
 
 - (void)testASandboxedPrefixOffersFileDescriptorsInHello

@@ -107,6 +107,7 @@ xcrun clang -extract-api --product-name=InferKit -x objective-c-header \
     -I Sources/InferKit/include -I Sources/InferKit/include/InferKit -I Sources/InferKitC/include \
     Sources/InferKit/include/InferKit/*.h Sources/InferKitC/include/InferKitC/NFKAPIVersion.h \
     Sources/InferKitC/include/InferKitC/NFKInferKitC.h \
+    Sources/InferKitC/include/InferKitC/NFKPluginABI.h \
     -o "$GRAPH_DIR/InferKit.symbols.json"
 
 echo "==> Converting the DocC catalog"

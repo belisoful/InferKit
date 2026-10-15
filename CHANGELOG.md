@@ -201,6 +201,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `Docs/plugins.md` is the guide to writing, signing, listing, trusting, and hosting plugins, with the
   `codesign` line for the embedded host and the rules for sandboxed apps.
 
+#### Every plugin form, end to end
+
+- `NFKPluginCompletenessTests` walks the three plugin kinds, an Objective-C bundle, a C library, and a
+  program, through the registry: listing without loading code, inline and attached images and float
+  buffers, a detection crossing as JSON both ways, progress, cancellation, a tool, unloading, the idle
+  exit, a restart to a second version mid-run, trust in the app's process, signature and team refusals,
+  the C API, and a server's idle unload. `Docs/plugins.md` lists what it proves.
+- The sample plugins' `invert` model mirrors a detection under `region` into `detections`.
+- A reload, or adding a plugin again, checks the stored option values against the new manifest: a key it
+  no longer declares, and a value that no longer resolves, are dropped.
+- The DocC catalog documents `NFKPluginABI.h` in the article "The C plugin interface".
+
 #### A C interface for programs that call InferKit
 
 - `NFKInferKitC.h` is implemented. A C, C++, or Rust program builds a backend by its catalog identifier

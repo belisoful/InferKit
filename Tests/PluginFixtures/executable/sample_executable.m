@@ -14,6 +14,8 @@
 //  The models and the tool behave as the other fixtures' do:
 //  - "invert" inverts a 32BGRA pixel buffer under "image" (each color byte becomes 255 minus itself,
 //    alpha kept) and a float32 or float64 array under "values" (each element becomes 1 minus itself).
+//    A detection under "region" comes back under "detections", its box mirrored left to right
+//    (x becomes 1 - x - width) and its confidence replaced by 1 minus itself.
 //  - "slow" counts "steps" steps of "stepMilliseconds" each, reports progress with a partial result
 //    {"step": n} after each, and stops when the run is cancelled. "exitAtStep" ends the process there.
 //  - "echo" returns the "text" argument after the plugin's "echoPrefix" option.
@@ -410,9 +412,11 @@ static int SampleMakeRegion(NSData *bytes)
 	NSDictionary *pluginVersion = @{ @"key": @"pluginVersion", @"valueType": @"text", @"required": @YES };
 	NSDictionary *invert = @{
 		@"id": @"invert", @"displayName": @"Invert", @"family": @"sample-invert", @"engine": @"plugin",
-		@"summary": @"Inverts a 32BGRA image or a float array.", @"tasks": @[ @"image-to-image" ],
-		@"inputs": @[ @{ @"key": @"image", @"valueType": @"image" }, @{ @"key": @"values", @"valueType": @"embedding" } ],
-		@"outputs": @[ @{ @"key": @"image", @"valueType": @"image" }, @{ @"key": @"values", @"valueType": @"embedding" }, pluginVersion ],
+		@"summary": @"Inverts a 32BGRA image, a float array, or a detection's box.", @"tasks": @[ @"image-to-image" ],
+		@"inputs": @[ @{ @"key": @"image", @"valueType": @"image" }, @{ @"key": @"values", @"valueType": @"embedding" },
+					  @{ @"key": @"region", @"valueType": @"json" } ],
+		@"outputs": @[ @{ @"key": @"image", @"valueType": @"image" }, @{ @"key": @"values", @"valueType": @"embedding" },
+					   @{ @"key": @"detections", @"valueType": @"detections" }, pluginVersion ],
 	};
 	NSDictionary *slow = @{
 		@"id": @"slow", @"displayName": @"Slow", @"family": @"sample-slow", @"engine": @"plugin",
@@ -465,9 +469,9 @@ static int SampleMakeRegion(NSData *bytes)
 	NSMutableDictionary *result = [[self stateOfBackend:backend] mutableCopy];
 	result[@"backend"] = handle;
 	result[@"ready"] = @YES;
-	result[@"inputs"] = invert ? @[ @"image", @"values" ] : @[];
+	result[@"inputs"] = invert ? @[ @"image", @"region", @"values" ] : @[];
 	result[@"parameters"] = invert ? @[] : @[ @"steps", @"stepMilliseconds", @"exitAtStep" ];
-	result[@"outputs"] = invert ? @[ @"image", @"values", @"pluginVersion" ] : @[ @"steps", @"pluginVersion" ];
+	result[@"outputs"] = invert ? @[ @"detections", @"image", @"values", @"pluginVersion" ] : @[ @"steps", @"pluginVersion" ];
 	result[@"modelInfo"] = @{ @"architecture": invert ? @"sample-invert" : @"sample-slow" };
 	[self reply:identifier result:result];
 }
@@ -634,8 +638,9 @@ static int SampleMakeRegion(NSData *bytes)
 	NSDictionary *inputs = [request[@"inputs"] isKindOfClass:NSDictionary.class] ? request[@"inputs"] : @{};
 	NSDictionary *image = [inputs[@"image"] isKindOfClass:NSDictionary.class] ? inputs[@"image"] : nil;
 	NSDictionary *values = [inputs[@"values"] isKindOfClass:NSDictionary.class] ? inputs[@"values"] : nil;
-	if (image == nil && values == nil) {
-		[output failWithDomain:SampleInferenceErrorDomain code:SampleInferenceErrorMissingInput message:@"invert needs \"image\" or \"values\""];
+	NSDictionary *region = [inputs[@"region"] isKindOfClass:NSDictionary.class] ? inputs[@"region"] : nil;
+	if (image == nil && values == nil && region == nil) {
+		[output failWithDomain:SampleInferenceErrorDomain code:SampleInferenceErrorMissingInput message:@"invert needs \"image\", \"values\", or \"region\""];
 		return;
 	}
 	if (image != nil) {
@@ -644,6 +649,29 @@ static int SampleMakeRegion(NSData *bytes)
 	if (values != nil && output.error == nil) {
 		[self invertValues:values attachments:attachments output:output];
 	}
+	if (region != nil && output.error == nil) {
+		[self invertRegion:region output:output];
+	}
+}
+
+/*! A detection, in the wire coding's tagged form, comes back under "detections" with its box mirrored
+	left to right and its confidence replaced by 1 minus itself. */
+- (void)invertRegion:(NSDictionary *)entry output:(SampleRunOutput *)output
+{
+	NSDictionary *box = [entry[@"boundingBox"] isKindOfClass:NSDictionary.class] ? entry[@"boundingBox"] : nil;
+	if (![entry[@"$nfk"] isEqual:@"detection"] || box == nil) {
+		[output failWithDomain:SampleInferenceErrorDomain code:SampleInferenceErrorUnsupported message:@"invert takes a detection with a boundingBox under \"region\""];
+		return;
+	}
+	double x = [box[@"x"] doubleValue];
+	double width = [box[@"width"] doubleValue];
+	NSMutableDictionary *detection = [NSMutableDictionary dictionary];
+	detection[@"$nfk"] = @"detection";
+	detection[@"label"] = [entry[@"label"] isKindOfClass:NSString.class] ? entry[@"label"] : nil;
+	detection[@"classIndex"] = [entry[@"classIndex"] isKindOfClass:NSNumber.class] ? entry[@"classIndex"] : @(-1);
+	detection[@"confidence"] = @(1.0 - [entry[@"confidence"] doubleValue]);
+	detection[@"boundingBox"] = @{ @"x": @(1.0 - x - width), @"y": box[@"y"] ?: @0, @"width": @(width), @"height": box[@"height"] ?: @0 };
+	output.outputs[@"detections"] = @[ detection ];
 }
 
 - (void)invertImage:(NSDictionary *)entry attachments:(NSArray<NSData *> *)attachments output:(SampleRunOutput *)output

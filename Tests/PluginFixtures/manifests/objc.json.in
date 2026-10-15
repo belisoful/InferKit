@@ -38,7 +38,7 @@
       "id": "invert",
       "displayName": "Invert",
       "family": "sample-invert",
-      "summary": "Inverts a 32BGRA image or a float array.",
+      "summary": "Inverts a 32BGRA image, a float array, or a detection's box.",
       "engine": "plugin",
       "tasks": [
         "image-to-image"
@@ -51,6 +51,10 @@
         {
           "key": "values",
           "valueType": "embedding"
+        },
+        {
+          "key": "region",
+          "valueType": "json"
         }
       ],
       "outputs": [
@@ -61,6 +65,10 @@
         {
           "key": "values",
           "valueType": "embedding"
+        },
+        {
+          "key": "detections",
+          "valueType": "detections"
         },
         {
           "key": "pluginVersion",

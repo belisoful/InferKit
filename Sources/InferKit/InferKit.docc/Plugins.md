@@ -71,6 +71,7 @@ with ``NFKPluginError/NFKPluginErrorNotTrusted``.
 
 ### Writing a plugin
 
+- <doc:CPluginInterface>
 - ``NFKPlugin``
 - ``NFKPluginContext``
 - ``NFKPluginManifest``

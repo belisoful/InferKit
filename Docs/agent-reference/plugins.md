@@ -817,6 +817,11 @@ fixtures all declare `echo`, so a test that lists two of them drops one's tools 
   process changes nothing else, and a running one restarts.
 - An in-process load passes them to the loader's private entry. A plugin already loaded keeps its first
   context, so a later set does not reach it until the app restarts.
+- `optionValues:keptByManifest:` runs on every add of a listed identifier and every reload, before the
+  lock: each stored key resolves alone against the new manifest's options, and a key that fails (an
+  unknown key, or a value the new declaration refuses) is dropped. The kept values replace the stored
+  ones and become the process's `pluginOptions` before the manifest reaches it, so the restart's hello
+  carries them. A plugin with no stored values keeps none.
 
 ### Shared-memory prefix
 
@@ -938,6 +943,12 @@ tests.
   `-undefined dynamic_lookup`, loads them with `dlopen`, and calls their run functions. Their `nfk_`
   references bind to the test bundle, which exports all 23 functions (`nm -gU`, 2026-10-15).
 
+## DocC
+
+`Tools/docc/build.sh` passes `NFKPluginABI.h` to `clang -extract-api` with `NFKInferKitC.h`, and the article
+`CPluginInterface` (`Sources/InferKit/InferKit.docc/`) groups its symbols: the entry, the versions, the two
+tables, payloads, and status and logging. The opaque `nfk_plugin_backend` and `nfk_plugin_run` have no page.
+
 ## Building plugins
 
 A plugin is a `.inferkitplugin` bundle. These steps build one of each kind from the command line; the
@@ -1034,7 +1045,11 @@ Sign the bundle after the manifest and `Info.plist` are in place. The signature 
   - `invert` → a 32BGRA pixel buffer under `image` comes back with each color byte replaced by 255
     minus itself and alpha kept; a float32 or float64 array under `values` comes back with each element
     replaced by 1 minus itself. The C and executable plugins answer an attached input with an attached
-    output and an inline input inline. The Objective-C plugin returns objects, which its host encodes.
+    output and an inline input inline. The Objective-C plugin returns objects, which its host encodes. A
+    detection under `region` comes back as a one-element `detections` array, its box mirrored left to
+    right (x becomes 1 − x − width), its confidence replaced by 1 minus itself, its label and class index
+    kept: the Objective-C plugin receives an `NFKDetection`, and the C and executable plugins the tagged
+    JSON `{"$nfk": "detection", …}`, which they write back in the same form.
   - `slow` → counts `steps` steps (default 10) of `stepMilliseconds` each (default 20), reports
     progress and a partial result `{"step": n}` after each, and ends cancelled once the run is
     cancelled. `exitAtStep` ends the process with status 70 at that step, which only an out-of-process
@@ -1078,3 +1093,24 @@ Sign the bundle after the manifest and `Info.plist` are in place. The signature 
   coverage of both C headers.
 - Stage 2 registry: `NFKPluginRegistry`, the `plugin` engine builder, `NFKPluginRegistryTests`,
   `Docs/plugins.md`, the DocC article `Plugins`, and the plugin examples.
+- Item 13: `NFKPluginCompletenessTests`, the fixtures' `region` detection, the DocC article
+  `CPluginInterface` over `NFKPluginABI.h`, and option values re-checked on a reload.
+
+## Completeness test
+
+`NFKPluginCompletenessTests` is the one place that walks every plugin form end to end; the other plugin
+test classes each prove one layer, and `NFKPluginRegistryTests` the registry's rules on the C fixture.
+Each test loops over the three kinds with a registry of its own catalog per kind, since every fixture
+declares the `echo` tool and a tool name is unique within a registry.
+
+- The listing test copies all three into one folder and drops the tools from two copies' manifests, which
+  breaks their signatures; listing checks none.
+- The attachment test sizes its values on both sides of the 64 KiB inline limit: 64 × 64 × 4 and
+  4096 × 4 bytes cross inline, and 256 × 256 × 4 and 65536 × 4 bytes as attachments.
+- The lifecycle test sets the process's `idleExitInterval` to 0.5 s before the first launch and keeps
+  every backend and job inside an `@autoreleasepool`, so the idle exit follows the last release.
+- The C API test configures `NFKPluginRegistry.sharedRegistry` (the development policy, the host built
+  beside the tests), adds a copy of the C fixture with `nfk_plugins_add_directory`, and restores the
+  policy and removes the plugin in a teardown block.
+- The in-process test loads the cached 1.0.0 `objc` and `c-abi` fixtures only, as every in-process test
+  does.
