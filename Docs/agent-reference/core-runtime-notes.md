@@ -361,7 +361,7 @@ added 2026-10-15, InferKit 0.4.0). The transfer is `NFKHFHubTransfer` (private).
   around the seam call. A subclass's transport therefore still lands the file; the download counts its
   bytes at the end from the file's size.
 - A download finishes when its last activity ends (`beginActivity` / `endActivityWithError:`). The
-  hub's plan-driven downloads hold one activity; `NFKMLXReleaseDownload.async` and
+  hub's plan-driven downloads hold one activity; `NFKMLXReleaseDownload.asyncValue` and
   `NFKMLXDownload.backend` each hold one around the factory's work; the core's legacy
   `downloadRepo:…completionHandler:` holds one too. A synchronous caller brackets its own.
 - Progress accounting: a file the plan or the cache marks cached counts toward the file counts and

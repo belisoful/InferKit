@@ -1727,6 +1727,29 @@
 	}
 }
 
+// Docs/examples.md: Running MLX models from Objective-C — unloading a model and loading it again.
+- (void)testObjectiveCUnloadsAModelAndBuildsItAgain
+{
+	[NFKMLXReferenceModels registerToneSpeech];
+	if (NFKMLXGPU.metalLibraryURL == nil) {
+		return;
+	}
+
+	NSError *error = nil;
+	NFKMLXReloadableBackend *speech =
+		[[NFKMLXReloadableBackend alloc] initWithProvider:^id<NFKInferenceBackend>(NSError **buildError) {
+			return [NFKMLXModelRegistry backendNamed:@"tone-speech" weightsURL:nil error:buildError];
+		} error:&error];
+	XCTAssertNotNil(speech, @"%@", error);
+	[speech unload];
+	XCTAssertFalse(speech.isLoaded);
+
+	NFKInferenceResult *result = [speech runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }]
+														  error:&error];
+	XCTAssertNotNil([result outputForKey:NFKOutputAudio], @"%@", error);
+	XCTAssertTrue(speech.isLoaded, @"the run built the model again");
+}
+
 // A small opaque plate, for the examples that hand a model an image without running it.
 - (CGImageRef)examplePlate CF_RETURNS_RETAINED
 {

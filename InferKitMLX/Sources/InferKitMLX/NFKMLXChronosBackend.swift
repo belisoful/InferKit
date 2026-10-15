@@ -44,7 +44,7 @@ extension NFKMLXChronos {
     @objc(chronosWithRepo:weightsPath:revision:cacheDirectoryURL:completionHandler:)
     public static func chronos(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?,
                                completionHandler: @escaping (NFKMLXChronos?, Error?) -> Void) {
-        NFKMLXReleaseDownload.async(completionHandler) {
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
             try chronos(repo: repo, weightsPath: weightsPath, revision: revision,
                         cacheDirectoryURL: cacheDirectoryURL)
         }

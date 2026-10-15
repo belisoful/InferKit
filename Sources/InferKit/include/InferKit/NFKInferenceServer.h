@@ -90,6 +90,19 @@ extern NSString * const NFKInferenceServerDefaultAPIKeyName;
 	InferKit 0.4.0. */
 + (void)releaseCachedMemory;
 
+/*! The bytes the runtime has allocated now, or a negative value when it cannot read them. A server reads
+	it before and after it builds a hosted model's backend, and reports the difference as the model's
+	resident bytes when the backend does not measure its own. Introduced in InferKit 0.4.0. */
+@property (class, nonatomic, readonly) NSInteger allocatedByteCount;
+
+/*! The most bytes the runtime has had allocated since resetPeakAllocatedByteCount, or a negative value
+	when it cannot read them. Introduced in InferKit 0.4.0. */
+@property (class, nonatomic, readonly) NSInteger peakAllocatedByteCount;
+
+/*! Starts peakAllocatedByteCount again from the bytes allocated now. A server calls it before it builds
+	a hosted model's backend. Introduced in InferKit 0.4.0. */
++ (void)resetPeakAllocatedByteCount;
+
 @end
 
 /*! Builds a hosted model's backend: returns it, or nil with an error. A server calls it on a background
@@ -254,14 +267,23 @@ NS_SWIFT_SENDABLE
 				- A build that fails fails every request waiting for it with the provider's error and
 				  leaves the model not loaded, so the next request builds again.
 				- unloadModelNamed: releases the backend and keeps the model hosted. It waits until the
-				  model has no run in flight or queued, and never cuts a run.
+				  model has no run in flight or queued, and never cuts a run. A backend that implements
+				  unload is unloaded before the server releases it, so its memory is freed even where
+				  another object still holds the backend.
 				- A model hosted with addBackend:forModelName: is resident from the start and stays
 				  resident, since the server has no way to build its backend again.
 				- A model that is not resident reports ready, since a request builds it, and describes
 				  the backend it last held: its identifier, inputs, parameters, outputs, and modelInfo.
 				Each model's "residency" object carries state (not_loaded, loading, or resident),
 				unloadable, pinned, last_used (seconds since 1970), idle_timeout_seconds (absent when
-				the model is not unloaded for idleness), load_seconds, load_error, loads, and unloads.
+				the model is not unloaded for idleness), load_seconds, load_error, loads, unloads, and
+				resident_bytes and peak_bytes from the last load that measured them. A backend that measures its own load
+				(residentByteCount above 0) gives both figures. Otherwise the server measures the build:
+				it resets each registered runtime's peak (NFKServingRuntimeStatus), reads the bytes
+				allocated before and after, and reports the rise. The two figures are absent when neither
+				measured an allocation, and they stay after an unload. The runtime peak is one reading
+				for the whole process, so overlapping loads and runs fall into each other's figures, and
+				arrays a loader leaves for the first run to read are not counted.
 
 				Unloading. Two independent options release a provider-hosted model that sits unused:
 				- idleUnloadInterval (and setIdleUnloadInterval:forModelName:) unloads a model after a
@@ -515,7 +537,8 @@ NS_SWIFT_SENDABLE
 	@method     unloadModelNamed:
 	@abstract   Releases a provider-hosted model's backend and keeps the model hosted.
 	@discussion Returns at once. A model with a run in flight or queued, or a build in progress, is
-				unloaded when the last of them ends; its next request builds it again. Returns NO when
+				unloaded when the last of them ends; its next request builds it again. The server calls the
+				backend's unload, when it implements one, before it releases the backend. Returns NO when
 				no model is hosted under the name or it was hosted with a ready backend, which the server
 				cannot build again. Introduced in InferKit 0.4.0.
 */
@@ -547,7 +570,9 @@ NS_SWIFT_SENDABLE
 	unloaded. Introduced in InferKit 0.4.0. */
 - (NSArray<NSString *> *)unloadIdleModels;
 
-/*! Stops hosting the model. Its queued runs fail; its running ones finish. */
+/*! Stops hosting the model. Its queued runs fail; its running ones finish. The server calls the backend's
+	unload, when it implements one, so its memory is freed once the running runs end. Replacing a model
+	under the same name does the same for the backend it replaces. */
 - (void)removeBackendForModelName:(NSString *)modelName;
 
 /*! Adds a class, found by name at runtime, whose NFKServingRuntimeStatus report every server's

@@ -223,7 +223,7 @@ extension NFKMLXChatterbox {
     @objc(chatterboxBackendWithRepo:revision:cacheDirectoryURL:voiceURL:completionHandler:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?, voiceURL: URL?,
                                completionHandler: @escaping (NFKMLXSpeechBackend?, Error?) -> Void) {
-        NFKMLXReleaseDownload.async(completionHandler) {
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
             try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
                         voiceURL: voiceURL)
         }

@@ -133,6 +133,23 @@
 	XCTAssertEqualObjects(result.text, @"Explain diffraction in one sentence.");   // convenience for NFKOutputText
 }
 
+#pragma mark Freeing a model's memory (Docs/examples.md: The shared contract — Freeing a model's memory)
+
+- (void)testExampleFreeingAModelsMemory
+{
+	NFKPassthroughBackend *backend = [NFKPassthroughBackend backend];
+	NSError *error = nil;
+
+	NSInteger resident = NFKInferenceResidentByteCount(backend);   // 0 when the backend measures nothing
+	NSInteger peak = NFKInferencePeakByteCount(backend);
+	XCTAssertEqual(resident, 0);
+	XCTAssertEqual(peak, 0);
+
+	NFKInferenceUnload(backend);                    // the passthrough holds no model, so it keeps running
+	XCTAssertTrue(NFKInferenceIsLoaded(backend), @"a backend without isLoaded reads as loaded while ready");
+	XCTAssertTrue(NFKInferencePrepare(backend, &error), @"%@", error);
+}
+
 #pragma mark Jobs, submit, completion (Docs/examples.md: Subsystems — Jobs)
 
 - (void)testExampleSubmittingAJob

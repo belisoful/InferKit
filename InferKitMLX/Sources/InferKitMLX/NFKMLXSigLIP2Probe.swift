@@ -43,7 +43,7 @@ extension NFKMLXSigLIP2 {
     public static func model(variant: NFKMLXSigLIP2Variant, repo: String, weightsPath: String,
                              revision: String?, cacheDirectoryURL: URL?,
                              completionHandler: @escaping (NFKMLXSigLIP2?, Error?) -> Void) {
-        NFKMLXReleaseDownload.async(completionHandler) {
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
             try model(variant: variant, repo: repo, weightsPath: weightsPath,
                       revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }

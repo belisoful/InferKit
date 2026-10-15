@@ -351,7 +351,7 @@ extension NFKMLXGemma3n {
     @objc(gemma3nWithRepo:revision:cacheDirectoryURL:completionHandler:)
     public static func gemma3n(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                completionHandler: @escaping (NFKMLXGemma3n?, Error?) -> Void) {
-        NFKMLXReleaseDownload.async(completionHandler) {
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
             try gemma3n(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }

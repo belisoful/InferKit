@@ -213,7 +213,7 @@ public final class NFKMLXSD3ControlNetGenerator: NSObject {
     public static func generator(repo: String?, controlNetRepo: String?, revision: String?, cacheDirectoryURL: URL?,
                                  residency: NFKMLXResidency,
                                  completionHandler: @escaping (NFKMLXSD3ControlNetGenerator?, Error?) -> Void) {
-        NFKMLXReleaseDownload.async(completionHandler) {
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
             try generator(repo: repo, controlNetRepo: controlNetRepo, revision: revision,
                           cacheDirectoryURL: cacheDirectoryURL, residency: residency)
         }

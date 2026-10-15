@@ -184,7 +184,7 @@ public final class NFKMLXQwenImageGenerator: NSObject {
     public static func generator(repo: String?, revision: String?, cacheDirectoryURL: URL?,
                                  residency: NFKMLXResidency,
                                  completionHandler: @escaping (NFKMLXQwenImageGenerator?, Error?) -> Void) {
-        NFKMLXReleaseDownload.async(completionHandler) {
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
             try generator(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
                           residency: residency)
         }

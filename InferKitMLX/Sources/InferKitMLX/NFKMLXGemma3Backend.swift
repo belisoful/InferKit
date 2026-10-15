@@ -437,7 +437,7 @@ public final class NFKMLXGemma3: NSObject {
     @objc(gemma3WithRepo:revision:cacheDirectoryURL:completionHandler:)
     public static func gemma3(repo: String, revision: String?, cacheDirectoryURL: URL?,
                               completionHandler: @escaping (NFKMLXGemma3?, Error?) -> Void) {
-        NFKMLXReleaseDownload.async(completionHandler) {
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
             try gemma3(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }

@@ -156,7 +156,8 @@ enum NFKMLXDownload {
     /// error) to `completionHandler` on that queue. The download current on the calling thread observes
     /// the fetch and finishes when the backend is delivered. Shared by `NFKMLXHub` and the per-model
     /// `backendWithRepo:…completionHandler:` / `backendWithVariant:repo:…completionHandler:` factories so
-    /// the async plumbing lives in one place.
+    /// the async plumbing lives in one place. The backend can unload and load again from the downloaded
+    /// file (`NFKMLXReload.reloadable(_:)`).
     static func backend(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?,
                         build: @escaping (URL) throws -> any NFKInferenceBackend,
                         completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
@@ -179,7 +180,7 @@ enum NFKMLXDownload {
                 return
             }
             do {
-                finish(try build(url), nil)
+                finish(try NFKMLXReload.reloadable { try build(url) }, nil)
             } catch {
                 finish(nil, error)
             }

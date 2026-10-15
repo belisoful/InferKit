@@ -646,6 +646,74 @@ The completeness rules (`NFKMLXCatalogCompletenessTests`, no MLX runtime):
 - Every Hugging Face or URL source has `downloadBytes > 0`, except the sources the test lists by
   `model/variant` with the reason they are not sized.
 
+## Unload, reload, and load measurement
+
+The core protocol's optional `unload`, `isLoaded`, `residentByteCount`, and `peakByteCount`
+(2026-10-15) reach every MLX model through one shared mechanism in `NFKMLXLifecycle.swift`.
+
+- `NFKMLXLifecycle<State>` holds a backend's loaded state, the closure that loads it again, the runs in
+  flight, and the last measurement. `withState` counts a run (loading first when unloaded, under a
+  separate load lock so concurrent runs share one load) and `begin`/`end` do the same for a run that
+  outlives a call. `ifLoaded` reads the state without loading it and counts as a run meanwhile, so a
+  `modelInfo` walk never races a free. `prepare` loads and withdraws a pending unload.
+- Decision: an unload never waits. With no run in flight it frees before returning; otherwise it is
+  recorded and the last run's `end` frees. A blocking unload would deadlock a job completion handler
+  that unloads, since `NFKMLXReloadableBackend` finishes its job before it ends the run. The free calls the backend's
+  free handler (the language backend drops its prompt caches and vocabulary), drops the state inside an
+  `autoreleasepool`, then calls `NFKMLXActivity.releaseCachedMemoryWhenIdle`.
+- `NFKMLXActivity` counts runs and loads in flight across every lifecycle in the process. The cache
+  release (`NFKMLXGPU.releaseCachedMemory`: synchronize, then clear) runs only at a count of zero and
+  under the count's lock, so no managed run or load starts during the trim (`mlx-runtime-gotchas.md`).
+  MLX work outside a lifecycle (a caller's own forward) is not counted.
+- A lifecycle unloads only after `enableReload` gives it a closure. `NFKMLXReload.reloadable(_:)` is the
+  one place that happens: `NFKMLXModelRegistry.backend(named:weightsURL:)` with a URL,
+  `NFKMLXDownload.backend(…build:completionHandler:)` (every asynchronous `repo:` factory and
+  `NFKMLXHub`'s), and `NFKMLXReleaseDownload.async` (every asynchronous release factory that delivers a
+  backend), so registry and asynchronous-factory builds are reloadable. A factory that delivers a model
+  object or a concrete class goes through `NFKMLXReleaseDownload.asyncValue`, which carries the download
+  but cannot wrap the result. Decision (2026-10-15): the synchronous `@objc`
+  factories stay as they are, and a backend built by a direct call reloads only when wrapped in
+  `NFKMLXReloadableBackend`.
+  `reloadable` measures the first build, then:
+  - a backend adopting the internal `NFKMLXReloading` (module, matting, speech, generation, language)
+    keeps its class and takes the closure. Its reload builds a fresh backend of the same class and takes
+    that backend's state (`enableReload(building:as:measurement:state:)`), so the closure the factory
+    captured (a holder over the network) moves over and the fresh shell is dropped;
+  - any other backend is wrapped in `NFKMLXReloadableBackend`, whose state is the backend itself.
+- A registry build without a URL is not made reloadable: random weights would not come back the same.
+  `NFKMLXReloadableBackend.init(build:)` does not check this, and its documentation states the rule.
+- `NFKMLXReloadableBackend` keeps the first backend's identifier and declared keys, and `responds(to:)`
+  answers for the held class on the optional keys and `backendStatus`, so a wrapper does not claim a
+  member the model lacks. An Objective-C message it does not implement goes to the held backend through
+  `forwardingTarget(for:)`, which loads the model first. Registry and asynchronous results of classes
+  other than the five lifecycle classes arrive wrapped, so a Swift cast to the model's class fails
+  (decided acceptable, 2026-10-15; no shipped caller casts one). `wrappedBackend` returns the held backend
+  for that cast, and is nil while the model is unloaded. Its `submitInferenceJob` runs a held
+  backend's own job and counts the run until that job completes, or runs the synchronous method on its
+  detached task, so a cancelled synchronous run is still counted until it returns.
+- Measurement (`NFKMLXLoadMeasurement.measuring`): active memory before, `resetPeakMemory`, the load,
+  then active and peak after; resident = the rise, peak = the peak less the start (at least the rise).
+  Without the Metal library the load runs unmeasured, since a memory reading aborts. Arrays a loader
+  `residentByteCount` reads 0 while unloaded; `peakByteCount` and the `modelInfo` keys keep the last
+  measurement. Accuracy limits:
+  - The peak is one reading for the whole process, so overlapping loads and runs fall into each other's
+    figures.
+  - Arrays a loader leaves lazy for the first run are not counted, since forcing them would defeat the
+    streamed and paged loads.
+  - The cache release sees only the runs and loads of the lifecycle backends, not MLX work a caller
+    runs itself.
+- The language backend records `isReady`, `hasDraftModel`, and `pagesExperts` at creation, and
+  `expertStore` reads nil while unloaded. `modelInfo` keeps the description read while loaded
+  (`NFKMLXModelInfoCache.currentValue`).
+- `NFKMLXGPU` adopts the server's optional runtime members (`allocatedByteCount`, `peakAllocatedByteCount`,
+  `resetPeakAllocatedByteCount`), so a server measures a provider build that measures nothing itself.
+- Tests: `NFKMLXLifecycleTests` (9), on seeded 8 MiB weights behind test registry factories with a
+  placeholder URL: a closure backend and a URL-less registry build stay loaded, unload frees within 10%
+  (plus 1 MiB) of the measured bytes and a run reloads to identical output, prepare reloads, a
+  generation backend reloads, an unload during a gated run frees at its end, a plain backend is wrapped
+  and built twice with `wrappedBackend` reaching its class while loaded, the wrapper over a direct build,
+  and the server's figures and unload.
+
 ## Swift and Objective-C gotchas
 
 Swift↔ObjC gotchas seen here: an `MLXArray` is not `Sendable`, so a backend hands its networks to the

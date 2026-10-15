@@ -61,6 +61,25 @@ measures the machine's memory bandwidth, and answers whether a release fits the 
 what context window. ``NFKMLXGPU`` reports what the machine has and sets standing cache and memory
 limits.
 
+### Freeing a model's memory
+
+A backend that ``NFKMLXModelRegistry``, ``NFKMLXHub``, or an asynchronous download factory builds from
+a weights file or a release directory implements the core protocol's `unload`, `isLoaded`,
+`residentByteCount`, and `peakByteCount`. The module, matting, speech, generation, and language
+backends unload in place and keep their class. Any other model arrives wrapped in an
+``NFKMLXReloadableBackend``, whose `wrappedBackend` reaches the model's own class while it is loaded and
+is nil while it is unloaded. A backend built by a direct synchronous factory call reloads only when it is
+wrapped in an ``NFKMLXReloadableBackend``. An unload frees the model's arrays and returns MLX's cache when
+no other run or load is in flight; the next run loads the model again. `residentByteCount` is the rise in
+MLX's active memory over the load, and `peakByteCount` the peak above where the load started.
+
+The figures have three limits:
+
+- The peak is one reading for the whole process, so overlapping loads and runs fall into each other's
+  figures.
+- Arrays a loader leaves lazy for the first run are not counted.
+- The cache release sees only the runs and loads of these backends, not MLX work a caller runs itself.
+
 ## Topics
 
 ### Concepts
@@ -496,6 +515,7 @@ limits.
 - ``NFKMLXReferenceModels``
 - ``NFKMLXModelRegistry``
 - ``NFKMLXHub``
+- ``NFKMLXReloadableBackend``
 - ``NFKStableDiffusionProvider``
 - ``NFKMLXTranslationProvider``
 - ``NFKMLXWhisperProvider``

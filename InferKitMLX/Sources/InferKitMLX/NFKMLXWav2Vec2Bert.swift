@@ -588,7 +588,7 @@ public final class NFKMLXWav2Vec2Bert: NSObject {
     @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                completionHandler: @escaping (NFKMLXWav2Vec2BertBackend?, Error?) -> Void) {
-        NFKMLXReleaseDownload.async(completionHandler) {
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
             try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }

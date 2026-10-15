@@ -431,11 +431,19 @@ enum NFKMLXReleaseDownload {
         return root
     }
 
+    /// Runs `build`, a release download and the build over it, through ``asyncValue(_:_:)`` and delivers the
+    /// backend or the error to `completionHandler`. The backend can unload and load again through `build`
+    /// (`NFKMLXReload.reloadable(_:)`), which finds the release in the cache.
+    static func async(_ completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void,
+                      _ build: @escaping () throws -> any NFKInferenceBackend) {
+        asyncValue(completionHandler) { try NFKMLXReload.reloadable(build) }
+    }
+
     /// Runs `build` on a background queue and delivers its result to `completionHandler` there. The
     /// download current on the calling thread is carried to the queue and made current around
     /// `build`, with one activity spanning it, so the download observes the fetches and finishes when
     /// `build` returns.
-    static func async<T>(_ completionHandler: @escaping (T?, Error?) -> Void, _ build: @escaping () throws -> T) {
+    static func asyncValue<T>(_ completionHandler: @escaping (T?, Error?) -> Void, _ build: @escaping () throws -> T) {
         let download = NFKDownload.current
         download?.beginActivity()
         DispatchQueue.global(qos: .userInitiated).async {

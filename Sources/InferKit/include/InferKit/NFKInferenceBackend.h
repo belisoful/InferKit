@@ -144,6 +144,57 @@ NS_ASSUME_NONNULL_BEGIN
 */
 - (nullable NSNumber *)tokenCountForRequest:(NFKInferenceRequest *)request error:(NSError **)error;
 
+/*!
+	@method     unload
+	@abstract   Frees the model's weights and caches and keeps what the backend needs to load them again.
+	@discussion The next run, or prepareWithError:, loads the model again from the same source, so an app
+				frees a model's memory and keeps the backend with its configuration. The identifier,
+				the declared keys, and isReady keep their answers while the model is unloaded.
+
+				It is safe to call from any thread, and it never cuts a run:
+				- no run in flight → the backend frees the model before unload returns;
+				- runs in flight → unload returns at once, and the backend frees the model when the last
+				  of them ends. isLoaded stays YES until then, and a run that starts in the meantime runs
+				  on the loaded model.
+
+				Because unload never waits, a run's completion handler may call it. A backend that cannot
+				load its model again, such as one built from objects in memory, makes unload a no-op and
+				reports isLoaded YES. NFKInferenceUnload calls it uniformly. Introduced in InferKit 0.4.0.
+*/
+- (void)unload;
+
+/*!
+	@property   isLoaded
+	@abstract   YES while the backend holds its model in memory.
+	@discussion NO from the moment unload frees the model until a run or prepareWithError: loads it again.
+				It is safe to read from any thread. NFKInferenceIsLoaded reads it uniformly. Introduced in
+				InferKit 0.4.0.
+*/
+@property (nonatomic, readonly) BOOL isLoaded;
+
+/*!
+	@property   residentByteCount
+	@abstract   The bytes the loaded model holds in memory, measured when it loaded; 0 while it is not loaded.
+	@discussion The backend reads its runtime's allocated memory before the load and after it, with the
+				weights read, and reports the difference. The reading covers the whole process, so
+				memory that other work allocates or frees during the load falls into the figure, and
+				arrays a loader leaves for the first run to read are not in it. A backend that has not
+				measured a load reports 0. It is safe to read from any thread. Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, readonly) NSInteger residentByteCount;
+
+/*!
+	@property   peakByteCount
+	@abstract   The most the runtime's allocated memory rose above its level before the load, while the
+				model last loaded; 0 before a measured load.
+	@discussion It is the memory a load needs, which can exceed what the model then keeps: a loader that
+				converts weights holds both forms for a moment. The figure stays after unload, so a caller
+				knows what loading again costs. The runtime keeps one peak for the whole process, so a load
+				that overlaps other work counts that work's allocations too. It is safe to read from any
+				thread. Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, readonly) NSInteger peakByteCount;
+
 @end
 
 /*!
@@ -155,6 +206,35 @@ NS_ASSUME_NONNULL_BEGIN
 				selector itself. Introduced in InferKit 0.4.0.
 */
 BOOL NFKInferencePrepare(id<NFKInferenceBackend> backend, NSError * _Nullable * _Nullable error);
+
+/*!
+	@function   NFKInferenceUnload
+	@abstract   Unloads a backend's model when the backend implements unload, and does nothing otherwise.
+	@discussion Introduced in InferKit 0.4.0.
+*/
+void NFKInferenceUnload(id<NFKInferenceBackend> backend);
+
+/*!
+	@function   NFKInferenceIsLoaded
+	@abstract   Whether a backend holds its model: its isLoaded, or its isReady when it does not implement
+				isLoaded.
+	@discussion Introduced in InferKit 0.4.0.
+*/
+BOOL NFKInferenceIsLoaded(id<NFKInferenceBackend> backend);
+
+/*!
+	@function   NFKInferenceResidentByteCount
+	@abstract   A backend's residentByteCount, or 0 when it does not implement it.
+	@discussion Introduced in InferKit 0.4.0.
+*/
+NSInteger NFKInferenceResidentByteCount(id<NFKInferenceBackend> backend);
+
+/*!
+	@function   NFKInferencePeakByteCount
+	@abstract   A backend's peakByteCount, or 0 when it does not implement it.
+	@discussion Introduced in InferKit 0.4.0.
+*/
+NSInteger NFKInferencePeakByteCount(id<NFKInferenceBackend> backend);
 
 /*!
 	@function   NFKInferenceSubmit

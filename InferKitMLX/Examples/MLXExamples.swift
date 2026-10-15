@@ -163,6 +163,20 @@ final class MLXExamples: XCTestCase {
         XCTAssertEqual(backend.backendIdentifier, "green-screen-keyer")
     }
 
+    // Docs/examples.md: Running MLX models from Objective-C — unloading a model and loading it again.
+    func testExampleUnloadingAModelAndLoadingItAgain() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil, "no Metal library for MLX")
+        NFKMLXReferenceModels.registerToneSpeech()
+        let speech = try NFKMLXReloadableBackend {
+            try NFKMLXModelRegistry.backend(named: "tone-speech", weightsURL: nil)
+        }
+        speech.unload()
+        XCTAssertFalse(speech.isLoaded)
+        let result = try speech.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "hi"]))
+        XCTAssertNotNil(result.output(forKey: NFKOutputAudio), "the run built the model again")
+        XCTAssertTrue(speech.isLoaded)
+    }
+
     // Docs/examples.md: Running MLX models from Objective-C — download from Hugging Face + build.
     // The download hits the network; this verifies the fail-fast path (unregistered model, no download).
     func testExampleHubFailsFastForAnUnregisteredModel() {

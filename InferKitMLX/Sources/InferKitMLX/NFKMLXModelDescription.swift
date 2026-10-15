@@ -161,6 +161,11 @@ final class NFKMLXModelInfoCache: @unchecked Sendable {
     private let lock = NSLock()
     private var cached: [String: Any]?
 
+    /// The description computed so far, or nil before the first read.
+    var currentValue: [String: Any]? {
+        lock.withLock { cached }
+    }
+
     func value(_ make: () -> [String: Any]) -> [String: Any] {
         lock.withLock {
             if let cached {

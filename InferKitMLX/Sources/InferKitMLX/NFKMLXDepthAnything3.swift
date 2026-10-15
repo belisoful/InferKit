@@ -1189,7 +1189,7 @@ public final class NFKMLXDepth3Estimator: NSObject {
     public static func estimator(variant: NFKMLXDepth3Variant, repo: String, weightsPath: String,
                                  revision: String?, cacheDirectoryURL: URL?,
                                  completionHandler: @escaping (NFKMLXDepth3Estimator?, Error?) -> Void) {
-        NFKMLXReleaseDownload.async(completionHandler) {
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
             try estimator(variant: variant, repo: repo, weightsPath: weightsPath,
                           revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }

@@ -198,6 +198,86 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	}
 }
 
+@interface NFKInferenceServer ()
++ (NSArray<Class<NFKServingRuntimeStatus>> *)runtimeStatusClasses;
+@end
+
+/*! Measures a backend's build through the registered runtimes that report their allocations: each
+	runtime's peak is reset and its allocated bytes read when the build starts, and both are read again
+	when it ends. */
+@interface NFKServedLoadMeter : NSObject
+/*! The runtimes' allocated bytes when the build started, by runtime name; a runtime that could not read
+	them is absent. */
+@property (nonatomic, copy) NSDictionary<NSString *, NSNumber *> *allocatedAtStart;
+@end
+
+@implementation NFKServedLoadMeter
+
+/*! The registered runtimes that implement the three allocation members. */
++ (NSArray<Class<NFKServingRuntimeStatus>> *)measuringRuntimes
+{
+	NSMutableArray<Class<NFKServingRuntimeStatus>> *runtimes = [NSMutableArray array];
+	for (Class<NFKServingRuntimeStatus> runtime in [NFKInferenceServer runtimeStatusClasses]) {
+		Class runtimeClass = (Class)runtime;
+		if ([runtimeClass respondsToSelector:@selector(allocatedByteCount)]
+			&& [runtimeClass respondsToSelector:@selector(peakAllocatedByteCount)]
+			&& [runtimeClass respondsToSelector:@selector(resetPeakAllocatedByteCount)]) {
+			[runtimes addObject:runtime];
+		}
+	}
+	return runtimes;
+}
+
++ (instancetype)meterStartingNow
+{
+	NFKServedLoadMeter *meter = [[self alloc] init];
+	NSMutableDictionary<NSString *, NSNumber *> *allocated = [NSMutableDictionary dictionary];
+	for (Class<NFKServingRuntimeStatus> runtime in [self measuringRuntimes]) {
+		[runtime resetPeakAllocatedByteCount];
+		NSInteger bytes = [runtime allocatedByteCount];
+		if (bytes >= 0) {
+			allocated[[runtime runtimeStatusName]] = @(bytes);
+		}
+	}
+	meter.allocatedAtStart = allocated;
+	return meter;
+}
+
+/*! The backend's own figures when it measured its load, else the rise in the runtimes' allocations since
+	the meter started; both nil when neither measured an allocation. */
+- (void)readBackend:(id<NFKInferenceBackend>)backend
+	  residentBytes:(NSNumber * _Nullable * _Nonnull)residentBytes
+		  peakBytes:(NSNumber * _Nullable * _Nonnull)peakBytes
+{
+	*residentBytes = nil;
+	*peakBytes = nil;
+	NSInteger own = NFKInferenceResidentByteCount(backend);
+	if (own > 0) {
+		*residentBytes = @(own);
+		*peakBytes = @(MAX(NFKInferencePeakByteCount(backend), own));
+		return;
+	}
+	NSInteger rise = 0;
+	NSInteger peakRise = 0;
+	for (Class<NFKServingRuntimeStatus> runtime in [NFKServedLoadMeter measuringRuntimes]) {
+		NSNumber *start = self.allocatedAtStart[[runtime runtimeStatusName]];
+		NSInteger allocated = [runtime allocatedByteCount];
+		NSInteger peak = [runtime peakAllocatedByteCount];
+		if (start == nil || allocated < 0 || peak < 0) {
+			continue;
+		}
+		rise += MAX(allocated - start.integerValue, 0);
+		peakRise += MAX(peak - start.integerValue, 0);
+	}
+	if (rise <= 0) {
+		return;
+	}
+	*residentBytes = @(rise);
+	*peakBytes = @(MAX(peakRise, rise));
+}
+
+@end
+
 /*! A hosted model: its backend or the provider that builds it, the queue of runs waiting for it, and
 	what its runs have measured. Every property past uptime is read and written on the model's lock. */
 @interface NFKServedModel : NSObject
@@ -227,6 +307,9 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 @property (nonatomic, assign) NSTimeInterval lastUsedAt;
 @property (nonatomic, assign) NSTimeInterval lastLoadSeconds;
 @property (nonatomic, copy, nullable) NSString *loadError;
+/*! The bytes the backend held after the last load that measured them, and the load's peak. */
+@property (nonatomic, copy, nullable) NSNumber *residentBytes;
+@property (nonatomic, copy, nullable) NSNumber *peakBytes;
 @property (nonatomic, assign) NSUInteger loads;
 @property (nonatomic, assign) NSUInteger unloads;
 @property (nonatomic, assign) NSUInteger limit;
@@ -427,13 +510,22 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		provider = self.provider;
 	}
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		NFKServedLoadMeter *meter = [NFKServedLoadMeter meterStartingNow];
 		NSError *error = nil;
 		id<NFKInferenceBackend> backend = provider(&error);
-		[self buildEndedWithBackend:backend error:error];
+		NSNumber *residentBytes = nil;
+		NSNumber *peakBytes = nil;
+		if (backend != nil) {
+			[meter readBackend:backend residentBytes:&residentBytes peakBytes:&peakBytes];
+		}
+		[self buildEndedWithBackend:backend residentBytes:residentBytes peakBytes:peakBytes error:error];
 	});
 }
 
-- (void)buildEndedWithBackend:(nullable id<NFKInferenceBackend>)backend error:(nullable NSError *)error
+- (void)buildEndedWithBackend:(nullable id<NFKInferenceBackend>)backend
+				residentBytes:(nullable NSNumber *)residentBytes
+					peakBytes:(nullable NSNumber *)peakBytes
+						error:(nullable NSError *)error
 {
 	NSDictionary<NSString *, id> *description = backend != nil ? [NFKServedModel descriptionOfBackend:backend] : nil;
 	NSError *failure = nil;
@@ -464,6 +556,10 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 			self.failed += refused.count;
 		} else {
 			[self becomeResidentWithBackend:backend description:description];
+			if (residentBytes != nil) {
+				self.residentBytes = residentBytes;
+				self.peakBytes = peakBytes;
+			}
 			[starting addObjectsFromArray:[self takeStartableRuns]];
 		}
 		if (reportsBuild) {
@@ -583,13 +679,17 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	}
 }
 
-/*! Releases the backend when takeBackendPassingTest:reason: takes it; YES when it did. The backend is
-	released off the lock. */
+/*! Unloads and releases the backend when takeBackendPassingTest:reason: takes it; YES when it did. Both
+	happen off the lock. */
 - (BOOL)unloadPassingTest:(BOOL (^)(NFKServedModel *model))test reason:(NFKServerModelEventReason)reason
 {
 	BOOL unloaded = NO;
 	@autoreleasepool {
-		unloaded = [self takeBackendPassingTest:test reason:reason] != nil;
+		id<NFKInferenceBackend> taken = [self takeBackendPassingTest:test reason:reason];
+		unloaded = taken != nil;
+		if (unloaded) {
+			NFKInferenceUnload(taken);
+		}
 	}
 	if (unloaded) {
 		[self finishUnload];
@@ -933,6 +1033,8 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		residency[@"load_error"] = self.loadError;
 		residency[@"loads"] = @(self.loads);
 		residency[@"unloads"] = @(self.unloads);
+		residency[@"resident_bytes"] = self.residentBytes;
+		residency[@"peak_bytes"] = self.peakBytes;
 		return residency;
 	}
 }
@@ -969,13 +1071,17 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 									   NFKRemoteErrorRetryAfterKey: [NSDate dateWithTimeIntervalSinceNow:retry] }];
 }
 
-- (void)retire
+/*! Marks the model removed, fails its waiting runs, and returns the backend it held, which the caller
+	unloads off the lock; running runs keep the backend until they end. */
+- (nullable id<NFKInferenceBackend>)retire
 {
 	NSArray<NFKServedRun *> *waiting = nil;
 	NSArray<void (^)(NSError * _Nullable)> *handlers = nil;
 	BOOL wasResident = NO;
+	id<NFKInferenceBackend> held = nil;
 	@synchronized (self) {
 		self.removed = YES;
+		held = self.backend;
 		wasResident = self.residency == NFKServerModelResidencyResident;
 		waiting = [self.pending copy];
 		[self.pending removeAllObjects];
@@ -993,6 +1099,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	for (void (^handler)(NSError * _Nullable) in handlers) {
 		handler(error);
 	}
+	return held;
 }
 
 @end
@@ -1616,7 +1723,11 @@ NSString *NFKServedModelName(NFKServedModel *model)
 	}
 	// A limit set while the model was being made reaches it here.
 	[model applyLimit:self.maximumConcurrentRunsPerModel queueLimit:self.maximumQueuedRunsPerModel];
-	[replaced retire];
+	id<NFKInferenceBackend> retired = [replaced retire];
+	// A model re-hosted with the backend it replaces keeps it loaded.
+	if (retired != nil && retired != [model residentBackend]) {
+		NFKInferenceUnload(retired);
+	}
 }
 
 - (void)addBackend:(id<NFKInferenceBackend>)backend forModelName:(NSString *)modelName
@@ -1625,6 +1736,11 @@ NSString *NFKServedModelName(NFKServedModel *model)
 	NSTimeInterval now = [self now];
 	model.backend = backend;
 	model.lastDescription = [NFKServedModel descriptionOfBackend:backend];
+	NSInteger residentBytes = NFKInferenceResidentByteCount(backend);
+	if (residentBytes > 0) {
+		model.residentBytes = @(residentBytes);
+		model.peakBytes = @(MAX(NFKInferencePeakByteCount(backend), residentBytes));
+	}
 	model.residency = NFKServerModelResidencyResident;
 	model.loadedAt = now;
 	model.lastUsedAt = now;
@@ -1695,7 +1811,10 @@ NSString *NFKServedModelName(NFKServedModel *model)
 		removed = self.models[modelName];
 		[self.models removeObjectForKey:modelName];
 	}
-	[removed retire];
+	id<NFKInferenceBackend> retired = [removed retire];
+	if (retired != nil) {
+		NFKInferenceUnload(retired);
+	}
 }
 
 #pragma mark Unloading
@@ -1903,6 +2022,9 @@ NSString *NFKServedModelName(NFKServedModel *model)
 	}
 	// A backend's teardown can take seconds (an MLX model frees its weights), so it runs off the lock.
 	@autoreleasepool {
+		for (id<NFKInferenceBackend> backend in released) {
+			NFKInferenceUnload(backend);
+		}
 		[released removeAllObjects];
 	}
 	for (NFKServedModel *model in unloadedModels) {

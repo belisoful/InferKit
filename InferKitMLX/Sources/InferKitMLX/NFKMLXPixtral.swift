@@ -341,7 +341,7 @@ public final class NFKMLXPixtral: NSObject {
     @objc(modelWithRepo:revision:cacheDirectoryURL:completionHandler:)
     public static func model(repo: String, revision: String?, cacheDirectoryURL: URL?,
                              completionHandler: @escaping (NFKMLXPixtral?, Error?) -> Void) {
-        NFKMLXReleaseDownload.async(completionHandler) {
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
             try model(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }

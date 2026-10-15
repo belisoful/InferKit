@@ -163,6 +163,25 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   exit status or signal), and a failed launch (with its reason). An `NFKMCPClient`'s
   `serverProcess` is one.
 
+#### A backend frees its model and keeps its configuration
+
+- `NFKInferenceBackend` gains four optional members: `unload` frees the model's weights and caches,
+  and the next run or `prepareWithError:` loads them again; `isLoaded` reports whether the model is in
+  memory; `residentByteCount` is what the loaded model holds, measured at load; `peakByteCount` is the
+  most the load needed at once.
+- An unload never cuts a run. With runs in flight it returns at once, and the last run to end frees
+  the model. A backend that cannot load its model again keeps it and reads as loaded.
+- `NFKInferenceUnload`, `NFKInferenceIsLoaded`, `NFKInferenceResidentByteCount`, and
+  `NFKInferencePeakByteCount` reach the members on any backend. `NFKModelInfoResidentBytes` and
+  `NFKModelInfoPeakBytes` carry the figures in `modelInfo`.
+- A server reports `resident_bytes` and `peak_bytes` in each model's `residency` object, read as
+  `NFKServerModelStatus.residentBytes` and `peakBytes`. A backend that measures its own load gives
+  them; for any other, the server reads the allocated memory of each linked runtime around the build,
+  through the new optional `NFKServingRuntimeStatus` members `allocatedByteCount`,
+  `peakAllocatedByteCount`, and `resetPeakAllocatedByteCount`.
+- A server unloads a backend before it releases it, and when a model is removed or replaced, so a model
+  another object also holds frees its memory.
+
 #### Models as tools
 
 - `NFKInferenceTool` is a tool a language model calls: a name, a description, a JSON Schema for the
@@ -865,6 +884,20 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   the next build ask for them again.
 - `+[NFKMLXHub backendForModel:variant:cacheDirectoryURL:progressHandler:completionHandler:]` downloads
   a catalog model's variant and builds its registered backend, returning the download.
+
+#### Models unload and load again
+
+- Every model `NFKMLXModelRegistry`, `NFKMLXHub`, or an asynchronous download factory builds from a
+  weights file or a release directory can unload and load again. The module, matting, speech,
+  generation, and language backends keep their class and unload in place; any other model comes back
+  as an `NFKMLXReloadableBackend`, whose `wrappedBackend` reaches the model's class while it is loaded.
+  A backend from a direct synchronous factory call reloads when wrapped in one.
+- `residentByteCount` is the rise in MLX's active memory over a load, and `peakByteCount` the peak
+  above where the load started. Both appear in `modelInfo`.
+- An unload frees the model's arrays and returns MLX's buffer cache when no other run or load is in
+  flight.
+- `NFKMLXGPU` reports its allocation to an `NFKInferenceServer`, which measures an MLX model built
+  without its own figures.
 
 #### Every model describes itself in the catalog
 

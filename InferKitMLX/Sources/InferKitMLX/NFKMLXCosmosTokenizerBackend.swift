@@ -365,7 +365,7 @@ public final class NFKMLXCosmosTokenizer: NSObject {
     public static func tokenizer(variant: NFKMLXCosmosTokenizerVariant, repo: String, weightsPath: String,
                                  revision: String?, cacheDirectoryURL: URL?,
                                  completionHandler: @escaping (NFKMLXCosmosTokenizer?, Error?) -> Void) {
-        NFKMLXReleaseDownload.async(completionHandler) {
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
             try tokenizer(variant: variant, repo: repo, weightsPath: weightsPath,
                           revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
@@ -392,7 +392,7 @@ public final class NFKMLXCosmosTokenizer: NSObject {
     public static func tokenizer(variant: NFKMLXCosmosTokenizerVariant, repo: String, encoderWeightsPath: String,
                                  decoderWeightsPath: String, revision: String?, cacheDirectoryURL: URL?,
                                  completionHandler: @escaping (NFKMLXCosmosTokenizer?, Error?) -> Void) {
-        NFKMLXReleaseDownload.async(completionHandler) {
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
             try tokenizer(variant: variant, repo: repo, encoderWeightsPath: encoderWeightsPath,
                           decoderWeightsPath: decoderWeightsPath, revision: revision,
                           cacheDirectoryURL: cacheDirectoryURL)

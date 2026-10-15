@@ -367,6 +367,13 @@ extern NSString * const NFKModelInfoKeyValueBytesPerToken;
 extern NSString * const NFKModelInfoComputeUnits;
 /*! The version the model declares (NSString). Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelInfoVersion;
+/*! The bytes the model held in memory after it last loaded, as the backend measured them (NSNumber). It
+	describes the model, so it stays after an unload; the backend's residentByteCount reads 0 then.
+	Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelInfoResidentBytes;
+/*! The most the runtime's memory rose above its level before the load while the model last loaded
+	(NSNumber), the backend's peakByteCount. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelInfoPeakBytes;
 
 NS_ASSUME_NONNULL_END
 

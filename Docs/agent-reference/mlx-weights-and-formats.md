@@ -232,12 +232,13 @@ report to. Added 2026-10-15, InferKit 0.4.0.
 
 - No factory has a progress variant. Every fetch already reports to the core's thread-local
   `NFKDownload.current`, so the layer only carries the download where a factory changes thread:
-  `NFKMLXReleaseDownload.async` (generic since this change) captures the current download on the
-  calling thread, begins an activity, makes it current on the background queue around `build`, and
-  ends the activity with `build`'s error. The 39 asynchronous peers that ran their own
+  `NFKMLXReleaseDownload.asyncValue` (generic) captures the current download on the calling thread,
+  begins an activity, makes it current on the background queue around `build`, and ends the activity
+  with `build`'s error. `NFKMLXReleaseDownload.async` is its form for a factory that delivers a backend,
+  and wraps the backend so it can reload. The 39 asynchronous peers that ran their own
   `DispatchQueue.global(...).async { do { completionHandler(try …, nil) } catch { … } }` now call it;
   `NFKMLXDownload.backend` (the single-file factories and `NFKMLXHub`) brackets its own activity. A
-  new asynchronous peer goes through `NFKMLXReleaseDownload.async`, or it drops the download.
+  new asynchronous peer goes through one of the two, or it drops the download.
 - The download finishes when the factory delivers its result, building included, so a download
   covering one factory reads completed exactly when the backend arrives.
 - Sizes up front: under a current download, when a required file or every weights candidate is

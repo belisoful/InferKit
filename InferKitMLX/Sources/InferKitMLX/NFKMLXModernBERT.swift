@@ -390,7 +390,7 @@ public final class NFKMLXModernBERTReranker: NSObject {
     @objc(rerankerWithRepo:revision:cacheDirectoryURL:completionHandler:)
     public static func reranker(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                 completionHandler: @escaping (NFKMLXModernBERTReranker?, Error?) -> Void) {
-        NFKMLXReleaseDownload.async(completionHandler) {
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
             try reranker(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }

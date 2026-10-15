@@ -515,7 +515,7 @@ public final class NFKMLXSmolVLM: NSObject {
     @objc(smolVLMWithRepo:revision:cacheDirectoryURL:completionHandler:)
     public static func load(repo: String, revision: String?, cacheDirectoryURL: URL?,
                             completionHandler: @escaping (NFKMLXSmolVLM?, Error?) -> Void) {
-        NFKMLXReleaseDownload.async(completionHandler) {
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
             try load(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }

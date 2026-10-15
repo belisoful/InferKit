@@ -209,7 +209,7 @@ public final class NFKMLXFlux: NSObject {
     public static func flux(repo: String, revision: String?, cacheDirectoryURL: URL?,
                             residency: NFKMLXResidency,
                             completionHandler: @escaping (NFKMLXFlux?, Error?) -> Void) {
-        NFKMLXReleaseDownload.async(completionHandler) {
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
             try flux(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
                      residency: residency)
         }

@@ -61,6 +61,14 @@ public final class NFKMLXModelRegistry: NSObject {
 
     /// Builds the backend registered under `name`, passing `weightsURL` to its factory. Returns nil
     /// with an error when no model is registered under the name or the factory throws.
+    ///
+    /// @discussion A backend built from a weights URL (a file or a release directory) can unload its model
+    /// and load it again: the module, matting, speech, language, and generation backends keep the factory
+    /// call to load from, and any other backend comes back wrapped in an ``NFKMLXReloadableBackend``, whose
+    /// `wrappedBackend` reaches the model's class while it is loaded. Its
+    /// `residentByteCount` and `peakByteCount` measure this build. A backend built without a URL holds
+    /// random weights or none, which another build would not reproduce, so it keeps its model and its
+    /// `unload` does nothing.
     @objc(backendNamed:weightsURL:error:)
     public static func backend(named name: String, weightsURL: URL?) throws -> any NFKInferenceBackend {
         lock.lock()
@@ -71,6 +79,9 @@ public final class NFKMLXModelRegistry: NSObject {
                           code: NFKInferenceError.error_InferenceNotReady.rawValue,
                           userInfo: [NSLocalizedDescriptionKey: "no MLX model is registered under '\(name)'"])
         }
-        return try factory(weightsURL)
+        guard let weightsURL else {
+            return try factory(nil)
+        }
+        return try NFKMLXReload.reloadable { try factory(weightsURL) }
     }
 }

@@ -343,7 +343,7 @@ final class NFKMLXReleaseDownloadProgressTests: XCTestCase {
         let hub = self.hub!
         let repo = self.repo
         download.performAsCurrent {
-            NFKMLXReleaseDownload.async({ (_: URL?, error: Error?) in
+            NFKMLXReleaseDownload.asyncValue({ (_: URL?, error: Error?) in
                 fetchError = error
                 finished.fulfill()
             }) {
@@ -377,7 +377,7 @@ final class NFKMLXReleaseDownloadProgressTests: XCTestCase {
         let built = expectation(description: "build")
         nonisolated(unsafe) var sawDownload = false
         download.performAsCurrent {
-            NFKMLXReleaseDownload.async({ (_: Int?, _: Error?) in built.fulfill() }) {
+            NFKMLXReleaseDownload.asyncValue({ (_: Int?, _: Error?) in built.fulfill() }) {
                 sawDownload = NFKDownload.current === download
                 return 1
             }

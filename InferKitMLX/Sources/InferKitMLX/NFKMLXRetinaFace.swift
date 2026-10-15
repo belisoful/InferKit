@@ -551,7 +551,7 @@ extension NFKMLXRetinaFace {
     public static func detector(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?,
                                 confidenceThreshold: Float, suppressionThreshold: Float,
                                 completionHandler: @escaping (NFKMLXRetinaFaceDetector?, Error?) -> Void) {
-        NFKMLXReleaseDownload.async(completionHandler) {
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
             try detector(repo: repo, weightsPath: weightsPath, revision: revision,
                          cacheDirectoryURL: cacheDirectoryURL,
                          confidenceThreshold: confidenceThreshold,

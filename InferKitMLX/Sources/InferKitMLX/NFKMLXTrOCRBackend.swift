@@ -138,7 +138,7 @@ public final class NFKMLXTrOCR: NSObject {
     @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                completionHandler: @escaping (NFKMLXTrOCRBackend?, Error?) -> Void) {
-        NFKMLXReleaseDownload.async(completionHandler) {
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
             try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }
