@@ -357,18 +357,15 @@ public final class NFKMLXSa2VA: NSObject {
     @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                completionHandler: @escaping (NFKMLXSa2VABackend?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }
 }
 
 /// The Sa2VA inference backend: an image plus a referring prompt in, the decoder's text under
 /// `NFKOutputText` and, when it emits `[SEG]`, the first object's mask under `NFKOutputMask`.
+@objc(NFKMLXSa2VABackend)
 public final class NFKMLXSa2VABackend: NSObject, NFKInferenceBackend {
     private let holder: Holder
     private let tokenizer: NFKTokenizer

@@ -127,9 +127,8 @@ public final class NFKMLXTimesFM: NSObject {
     @objc(timesFMWithRepo:revision:cacheDirectoryURL:completionHandler:)
     public static func timesFM(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                completionHandler: @escaping (NFKMLXTimesFM?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do { completionHandler(try timesFM(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil) }
-            catch { completionHandler(nil, error) }
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
+            try timesFM(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }
 

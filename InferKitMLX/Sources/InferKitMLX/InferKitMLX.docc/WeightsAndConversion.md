@@ -62,6 +62,30 @@ A gated repository (the Gemma family, FLUX, EmbeddingGemma) needs an access toke
 their own hubs, so the token goes on `NFKHFHub.defaultAccessToken`, set once from the app's own secure
 storage before the first download; a command-line tool can leave it unset and export `HF_TOKEN`.
 
+### Progress, cancellation, and removal
+
+Every download factory reports progress and stops on cancellation through the core's `NFKDownload`.
+Make a download current around an asynchronous factory: the factory carries it to its background
+queue, a release lists its files' sizes before the bytes arrive, and the download finishes when the
+factory delivers its result. Cancelling it fails the factory with `NFKDownloadErrorCancelled` and
+leaves no partial file in the cache.
+
+```swift
+let download = NFKDownload(progressHandler: { progress in
+    // progress.fractionCompleted, progress.currentFile?.path, progress.bytesPerSecond
+})
+download.performAsCurrent {
+    NFKMLXLanguage.backend(repo: "Qwen/Qwen3-0.6B", revision: nil, cacheDirectoryURL: nil) { backend, error in }
+}
+download.cancel()                       // from a Cancel button
+```
+
+``NFKMLXHub/backend(for:variant:cacheDirectoryURL:progressHandler:completionHandler:)`` downloads a
+catalog model's variant and builds its registered backend in one call that returns the download.
+``NFKMLXHub/hub(cacheDirectoryURL:)`` returns the hub the factories use. A release a factory fetched is
+recorded complete in its snapshot, so that hub's `downloadStatus(repo:revision:paths:)` with nil paths
+reads it, and `removalPlan(repo:revision:paths:)` with nil paths removes it.
+
 ### Loading safetensors, with the conv transpose
 
 `loadWeights(into:from:)` reads a safetensors checkpoint (`loadArrays` → `update(parameters:)`),

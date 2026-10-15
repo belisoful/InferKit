@@ -31,43 +31,37 @@ extension NFKMLXReleaseDownload {
     /// Fetches every component of a release into one snapshot and returns the snapshot root.
     ///
     /// @discussion A shard index names its shards relative to its own folder, so a component's
-    /// shards are fetched beside its index. A cached file is not fetched again.
+    /// shards are fetched beside its index. A cached release makes no request, as
+    /// `directory(repo:revision:cacheDirectoryURL:required:optional:weights:)` describes. Under a current
+    /// `NFKDownload` the files report to it as `directory(repo:revision:cacheDirectoryURL:required:optional:weights:)`
+    /// describes, and the completed release is recorded in its snapshot.
     static func directory(repo: String, revision: String?, cacheDirectoryURL: URL?,
                           components: [NFKMLXReleaseComponent]) throws -> URL {
         let hub = hub(cacheDirectoryURL: cacheDirectoryURL)
-        var root: URL?
-        func fetch(_ path: String) throws -> URL {
-            let url = try hub.downloadRepo(repo, revision: revision, path: path, sha256: nil)
-            root = root ?? path.split(separator: "/").reduce(url) { folder, _ in folder.deletingLastPathComponent() }
-            return url
+        let missing = components.contains {
+            needsFetch(hub: hub, repo: repo, revision: revision, required: $0.required, weights: $0.weights)
         }
+        let repoListing = listing(hub: hub, repo: repo, revision: revision, needsFetch: missing)
+        expect(components.flatMap { expectedPaths(in: repoListing, required: $0.required, optional: $0.optional,
+                                                  weights: $0.weights) }, from: repoListing)
+        var root: URL?
+        var fetched = [String]()
+        func note(_ url: URL, _ path: String) {
+            fetched.append(path)
+            root = root ?? path.split(separator: "/").reduce(url) { folder, _ in folder.deletingLastPathComponent() }
+        }
+        var absent = [String]()
         for component in components {
             for file in component.required {
-                _ = try fetch(file)
+                note(try hub.downloadRepo(repo, revision: revision, path: file, sha256: nil), file)
             }
-            for file in component.optional {
-                _ = try? fetch(file)
-            }
-            guard !component.weights.isEmpty else { continue }
-            guard let (file, url) = component.weights.lazy
-                .compactMap({ file in (try? fetch(file)).map { (file, $0) } }).first else {
-                throw NFKMLXError.unsupportedConfiguration(
-                    "\(repo) serves none of \(component.weights.joined(separator: ", "))")
-            }
-            guard file.hasSuffix(".index.json") else { continue }
-            guard let data = try? Data(contentsOf: url),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let weightMap = json["weight_map"] as? [String: String] else {
-                throw NFKMLXError.unsupportedConfiguration("\(file) in \(repo) carries no weight_map")
-            }
-            let folder = (file as NSString).deletingLastPathComponent
-            for shard in Set(weightMap.values).sorted() {
-                _ = try fetch(folder.isEmpty ? shard : "\(folder)/\(shard)")
-            }
+            absent += try fetchOptional(component.optional, hub: hub, repo: repo, revision: revision, note: note)
+            try fetchWeights(component.weights, hub: hub, repo: repo, revision: revision, listing: repoListing, note: note)
         }
         guard let root else {
             throw NFKMLXError.unsupportedConfiguration("the download of \(repo) names no files")
         }
+        try? hub.recordCompleteDownload(ofRepo: repo, revision: revision, paths: fetched, absentPaths: absent)
         return root
     }
 }

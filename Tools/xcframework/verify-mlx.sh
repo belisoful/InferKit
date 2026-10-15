@@ -10,8 +10,11 @@
 #   Tools/xcframework/verify-mlx.sh [xcframework-build]
 #
 # Called by build-mlx.sh --verify. Each variant gets an Objective-C probe. The dynamic framework also
-# gets a Swift probe, compiled from its module interfaces alone, because a missing C module beneath
-# them (`Cmlx`, `_NumericsShims`) fails only a Swift consumer.
+# gets two Swift probes: one that imports InferKitMLXObjC and loads no Swift interface of InferKitMLX,
+# and one compiled from the module interfaces alone, because a missing C module beneath them (`Cmlx`,
+# `_NumericsShims`) fails only a Swift consumer. The dynamic framework must load the Metal library it
+# carries, `Resources/mlx.metallib`, even when the host ships an `mlx-swift_Cmlx.bundle` of its own, so
+# the InferKitMLXObjC probe runs beside a decoy bundle and checks which library MLX resolves.
 
 set -euo pipefail
 
@@ -94,12 +97,27 @@ echo "    static: a one-model consumer links to $(du -h "$WORK/static-run/probe"
 report "static (Objective-C)" "$(cd "$WORK/static-run" && ./probe 2>&1 | tail -1)"
 fi
 
-# ---- dynamic, Objective-C: the framework alone, Metal library inside it ----
+# ---- dynamic: what the framework must carry ----
+FRAMEWORK="$DYNAMIC_SLICE/InferKitMLX.framework"
+if [ -n "$DYNAMIC_SLICE" ]; then
+for required in Resources/mlx.metallib Resources/Info.plist Modules/module.modulemap \
+        Headers/InferKitMLX-Swift.h Headers/InferKit/module.modulemap Headers/InferKit/InferKit.h \
+        Headers/InferKitMLXObjC/module.modulemap Headers/InferKitMLXObjC/InferKitMLXObjC.h; do
+    [ -e "$FRAMEWORK/$required" ] || { echo "    dynamic: FAILED — no $required in the framework"; exit 1; }
+done
+# MLX's loader reaches Resources/default.metallib only after any mlx-swift_Cmlx.bundle the host ships.
+if [ -e "$FRAMEWORK/Resources/default.metallib" ]; then
+    echo "    dynamic: FAILED — the framework carries Resources/default.metallib, which a host's bundle shadows"; exit 1
+fi
+echo "    dynamic: Resources/mlx.metallib, and the InferKit and InferKitMLXObjC modules, are inside"
+fi
+
+# ---- dynamic, Objective-C: the framework alone, the Metal library and the core module inside it ----
 if [ -n "$DYNAMIC_SLICE" ]; then
 mkdir -p "$WORK/dynamic-run"
 xcrun clang -fobjc-arc -fmodules -target "$TARGET" -w \
-    -F "$DYNAMIC_SLICE" -framework InferKitMLX \
-    -I "$OUTPUT/CoreHeaders" -fmodule-map-file="$OUTPUT/CoreHeaders/module.modulemap" \
+    -F "$DYNAMIC_SLICE" -framework InferKitMLX -I "$FRAMEWORK/Headers" \
+    -fmodules-cache-path="$WORK/objc-module-cache" \
     "$WORK/probe.m" -framework Foundation -framework CoreGraphics \
     -L "$SWIFT_LIB" -L /usr/lib/swift -Xlinker -rpath -Xlinker /usr/lib/swift \
     -Xlinker -rpath -Xlinker "$DYNAMIC_SLICE" \
@@ -110,10 +128,84 @@ echo "    dynamic: a one-model consumer links to $(du -h "$WORK/dynamic-run/prob
 report "dynamic (Objective-C)" "$("$WORK/dynamic-run/probe" 2>&1 | tail -1)"
 fi
 
+# ---- dynamic, Swift through InferKitMLXObjC: the Objective-C interface only ----
+# No `import InferKitMLX` and no `-framework` flag: the module map's `link framework` links it. The
+# loaded-module trace proves no Swift interface of InferKitMLX or MLX was read, and the undefined
+# symbols prove the probe binds to no Swift symbol of InferKitMLX, so it reaches the framework through
+# Objective-C dispatch alone. This runs with or without --no-swift-interfaces.
+if [ -n "$DYNAMIC_SLICE" ]; then
+cat > "$WORK/objc-probe.swift" <<'OBJCPROBE'
+import CoreGraphics
+import Foundation
+import InferKitMLXObjC
+
+func fail(_ message: String) -> Never {
+    print("FAIL: \(message)")
+    exit(1)
+}
+
+guard let library = NFKMLXGPU.metalLibraryURL?.path,
+      library.contains("InferKitMLX.framework/"), library.hasSuffix("/Resources/mlx.metallib") else {
+    fail("MLX resolves \(NFKMLXGPU.metalLibraryURL?.path ?? "no Metal library"), not the framework's own")
+}
+NFKMLXReferenceModels.registerAll()
+guard NFKMLXModelRegistry.registeredModelNames.contains("green-screen-keyer") else {
+    fail("registerAll registered no green-screen-keyer")
+}
+guard !NFKModelCatalog.shared.descriptors.isEmpty else {
+    fail("the shared catalog is empty")
+}
+do {
+    // The Objective-C importer's name for +backendNamed:weightsURL:error:. The Swift module's own
+    // spelling, backend(named:weightsURL:), is not part of the Objective-C interface.
+    let backend = try NFKMLXModelRegistry.backendNamed("green-screen-keyer", weightsURL: nil)
+    let side = 32
+    var pixels = [UInt8](repeating: 0, count: side * side * 4)
+    for index in stride(from: 0, to: pixels.count, by: 4) {
+        pixels[index + 1] = 220
+        pixels[index + 3] = 255
+    }
+    guard let context = CGContext(data: &pixels, width: side, height: side, bitsPerComponent: 8,
+                                  bytesPerRow: side * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
+          let image = context.makeImage() else {
+        fail("no test image")
+    }
+    let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: image]))
+    guard result.output(forKey: NFKOutputImage) != nil else {
+        fail("no output image")
+    }
+} catch {
+    fail("\(error)")
+}
+print("OK")
+OBJCPROBE
+mkdir -p "$WORK/objc-swift-run/mlx-swift_Cmlx.bundle/Contents/Resources"
+# A decoy with no valid shaders, where MLX looks third. The framework's own copy must come first.
+printf 'not a Metal library' > "$WORK/objc-swift-run/mlx-swift_Cmlx.bundle/Contents/Resources/default.metallib"
+xcrun swiftc -target "$TARGET" -F "$DYNAMIC_SLICE" -I "$FRAMEWORK/Headers" \
+    -module-cache-path "$WORK/objc-swift-module-cache" \
+    -emit-loaded-module-trace -emit-loaded-module-trace-path "$WORK/objc-swift-trace.json" \
+    "$WORK/objc-probe.swift" -Xlinker -rpath -Xlinker "$DYNAMIC_SLICE" \
+    -o "$WORK/objc-swift-run/probe" > "$WORK/objc-swift.log" 2>&1 || true
+if [ ! -x "$WORK/objc-swift-run/probe" ]; then
+    grep ": error:" "$WORK/objc-swift.log" | sort -u | head -5 | sed 's/^/      /' || true
+    echo "    dynamic (Swift, InferKitMLXObjC): FAILED — did not compile"; exit 1
+fi
+if grep -qE 'InferKitMLX\.swiftmodule|/MLX\.swiftmodule|InferKitMLX\.swiftinterface' "$WORK/objc-swift-trace.json"; then
+    echo "    dynamic (Swift, InferKitMLXObjC): FAILED — the probe loaded a Swift interface of InferKitMLX or MLX"; exit 1
+fi
+if xcrun nm -u "$WORK/objc-swift-run/probe" | grep -q '\$s11InferKitMLX'; then
+    echo "    dynamic (Swift, InferKitMLXObjC): FAILED — the probe binds to Swift symbols of InferKitMLX"; exit 1
+fi
+report "dynamic (Swift, InferKitMLXObjC)" "$(cd "$WORK/objc-swift-run" && ./probe 2>&1 | tail -1)"
+fi
+
 # ---- dynamic, Swift: the interfaces and the C modules beneath them, from the framework alone ----
 # The flags are the ones a consumer passes: `-F` for the framework, `-I` for its Modules directory (the
-# dependency interfaces and the C modules), `-I` for the core's module. A private module cache makes
-# the compiler build every interface from the shipped text instead of reusing an earlier result.
+# dependency interfaces and the C modules), and `-I` for its Headers directory (the core's module). A
+# private module cache makes the compiler build every interface from the shipped text instead of
+# reusing an earlier result.
 if [ -n "$DYNAMIC_SLICE" ]; then
 if [ ! -d "$DYNAMIC_SLICE/InferKitMLX.framework/Modules/InferKitMLX.swiftmodule" ]; then
     # The C modules ship only beside the Swift interfaces, so their presence marks an interfaces build.
@@ -143,7 +235,7 @@ print("OK")
 SWIFTPROBE
 mkdir -p "$WORK/swift-run"
 xcrun swiftc -target "$TARGET" \
-    -F "$DYNAMIC_SLICE" -I "$DYNAMIC_SLICE/InferKitMLX.framework/Modules" -I "$OUTPUT/CoreHeaders" \
+    -F "$DYNAMIC_SLICE" -I "$FRAMEWORK/Modules" -I "$FRAMEWORK/Headers" \
     -module-cache-path "$WORK/module-cache" \
     "$WORK/probe.swift" -framework InferKitMLX -Xlinker -rpath -Xlinker "$DYNAMIC_SLICE" \
     -o "$WORK/swift-run/probe" > "$WORK/swift.log" 2>&1 || true

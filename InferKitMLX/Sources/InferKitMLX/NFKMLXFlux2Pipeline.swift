@@ -494,13 +494,9 @@ public final class NFKMLXFlux2: NSObject {
     public static func flux2(repo: String, revision: String?, cacheDirectoryURL: URL?,
                              residency: NFKMLXResidency,
                              completionHandler: @escaping (NFKMLXFlux2?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try flux2(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-                                            residency: residency), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
+            try flux2(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                      residency: residency)
         }
     }
 

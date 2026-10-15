@@ -588,9 +588,8 @@ public final class NFKMLXWav2Vec2Bert: NSObject {
     @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                completionHandler: @escaping (NFKMLXWav2Vec2BertBackend?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do { completionHandler(try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil) }
-            catch { completionHandler(nil, error) }
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }
 }

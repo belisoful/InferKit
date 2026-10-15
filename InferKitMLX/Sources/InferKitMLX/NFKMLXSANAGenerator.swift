@@ -229,13 +229,9 @@ public final class NFKMLXSANAGenerator: NSObject {
     public static func generator(repo: String?, revision: String?, cacheDirectoryURL: URL?,
                                  residency: NFKMLXResidency,
                                  completionHandler: @escaping (NFKMLXSANAGenerator?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try generator(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-                                                residency: residency), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
+            try generator(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                          residency: residency)
         }
     }
 

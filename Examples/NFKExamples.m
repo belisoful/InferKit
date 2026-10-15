@@ -149,6 +149,23 @@
 	XCTAssertEqualObjects(result.text, @"Explain diffraction in one sentence.");   // convenience for NFKOutputText
 }
 
+#pragma mark Freeing a model's memory (Docs/examples.md: The shared contract — Freeing a model's memory)
+
+- (void)testExampleFreeingAModelsMemory
+{
+	NFKPassthroughBackend *backend = [NFKPassthroughBackend backend];
+	NSError *error = nil;
+
+	NSInteger resident = NFKInferenceResidentByteCount(backend);   // 0 when the backend measures nothing
+	NSInteger peak = NFKInferencePeakByteCount(backend);
+	XCTAssertEqual(resident, 0);
+	XCTAssertEqual(peak, 0);
+
+	NFKInferenceUnload(backend);                    // the passthrough holds no model, so it keeps running
+	XCTAssertTrue(NFKInferenceIsLoaded(backend), @"a backend without isLoaded reads as loaded while ready");
+	XCTAssertTrue(NFKInferencePrepare(backend, &error), @"%@", error);
+}
+
 #pragma mark Jobs, submit, completion (Docs/examples.md: Subsystems — Jobs)
 
 - (void)testExampleSubmittingAJob
@@ -184,6 +201,16 @@
 	float restored[16];
 	NFKTensorToInterleaved(tensor, restored, spec);
 	XCTAssertEqualWithAccuracy(restored[0], 0.1f, 1e-5);
+}
+
+#pragma mark Library and API version (Docs/examples.md: Subsystems — Library and API version)
+
+- (void)testExampleLibraryAndAPIVersion
+{
+	BOOL supported = NFKInferKit.APIMajorVersion == NFK_API_VERSION_MAJOR
+				  && NFKInferKit.APIMinorVersion >= NFK_API_VERSION_MINOR;
+	NSLog(@"InferKit %@, API %@", NFKInferKit.releaseVersion, NFKInferKit.APIVersion);
+	XCTAssertTrue(supported);
 }
 
 #pragma mark MLMultiArray bridge (Docs/examples.md: Subsystems — Tensor conversion)
@@ -288,6 +315,58 @@
 
 	NFKHFHub.defaultCacheSizeLimit = savedLimit;
 	[NSFileManager.defaultManager removeItemAtURL:cache error:NULL];
+}
+
+// Docs/examples.md: Subsystems — Downloading with progress, then removing. A URL source whose file is
+// on this machine stands in for a Hugging Face repository, so the example runs without a network.
+- (void)testExampleDownloadingWithProgressThenRemoving
+{
+	NSString *name = [@"NFKExamplesDownloads-" stringByAppendingString:NSUUID.UUID.UUIDString];
+	NSURL *scratch = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:name]];
+	NSURL *cache = [scratch URLByAppendingPathComponent:@"cache"];
+	NSURL *release = [scratch URLByAppendingPathComponent:@"model.bin"];
+	[NSFileManager.defaultManager createDirectoryAtURL:cache withIntermediateDirectories:YES attributes:nil error:NULL];
+	XCTAssertTrue([[NSMutableData dataWithLength:256 * 1024] writeToURL:release atomically:YES]);
+	NFKModelSource *source = [[NFKModelSource alloc] initWithKind:NFKModelSourceKindURL repository:nil revision:nil
+															  URL:release layout:NFKModelSourceLayoutFile files:nil
+											   requiresConversion:NO extensions:nil];
+	NFKHFHub *hub = [NFKHFHub hubWithCacheDirectoryURL:cache];
+
+	// What would this download, and how large?
+	NSError *error = nil;
+	NFKDownloadPlan *plan = [hub planDownloadOfModelSource:source error:&error];
+	XCTAssertNotNil(plan, @"%@", error);
+	long long remaining = plan.remainingByteCount;                     // bytes still to fetch
+	XCTAssertEqual(remaining, 256LL * 1024);
+
+	// Download it with progress. The handlers run on a background queue.
+	XCTestExpectation *done = [self expectationWithDescription:@"download"];
+	NFKDownload *download = [hub downloadWithPlan:plan progressHandler:^(NFKDownloadProgress *progress) {
+		double fraction = progress.fractionCompleted;                  // a progress bar
+		NSString *file = progress.currentFile.path;                    // "model.bin"
+		double rate = progress.bytesPerSecond;
+	} completionHandler:^(NSURL *localURL, NSError *downloadError) {
+		[done fulfill];                                                // localURL: the cached file
+	}];
+	// [download cancel] stops it and leaves no partial file in the cache.
+	[self waitForExpectations:@[ done ] timeout:10];
+	XCTAssertEqual(download.state, NFKDownloadStateCompleted);
+
+	// "Downloaded · 256 KB" and a Delete button.
+	NFKDownloadStatus *status = [hub downloadStatusForModelSource:source];
+	XCTAssertEqual(status.presence, NFKDownloadPresenceComplete);
+	NSString *label = [NSByteCountFormatter stringFromByteCount:status.byteCount countStyle:NSByteCountFormatterCountStyleFile];
+	XCTAssertGreaterThan(label.length, 0u);
+
+	NFKRemovalPlan *removal = [hub removalPlanForModelSource:source error:&error];
+	for (NFKCachedFile *kept in removal.keptFiles) {
+		// kept.reason: another downloaded model uses the file
+	}
+	NFKRemovalPlan *removed = [hub removeFilesInPlan:removal error:&error];
+	XCTAssertEqual(removed.freedByteCount, removal.freedByteCount);
+	XCTAssertEqual([hub downloadStatusForModelSource:source].presence, NFKDownloadPresenceAbsent);
+
+	[NSFileManager.defaultManager removeItemAtURL:scratch error:NULL];
 }
 
 #pragma mark Backend contracts (Docs/examples.md: Text → text, Image → image)

@@ -39,13 +39,23 @@ is **irreducibly Python**: a Swift port cannot be validated against another Swif
 
 ### Build and packaging — `xcframework/`, `docc/`, `ane-placement/`, `espeak/`, `build-all.sh`, `mlx-metallib.sh`
 
-XCFramework packaging (`xcframework/build*.sh`, `verify-mlx.sh`), the DocC catalog builder
+XCFramework packaging (`xcframework/build*.sh`, `verify-mlx.sh`, and `release.sh`, which writes the
+release zips and `release.json`), the DocC catalog builder
 (`docc/build.sh`), the Core ML ANE-placement measurement (`ane-placement/`), the optional system
 espeak-ng installer (`espeak/install.sh`, GPLv3, not bundled), the build/test driver for the core, InferKitMLX,
 InferKitFoundationModels, and InferKitAppleSwift (`build-all.sh`), and `mlx-metallib.sh`, which compiles mlx-swift's Metal kernels with `xcrun metal`
 and places the library beside the InferKitMLX SwiftPM test binary, so `swift test` runs the
 MLX-dependent tests SwiftPM's own build cannot (it compiles no shaders). Also `inferkit-convert/`,
 the offline HF-causal-LM → Core ML model-directory exporter.
+
+### Binary interface — `abi/`
+
+`check-abi.sh` holds a built `InferKitMLX.framework` to a baseline release's binary interface:
+`abi-surface.py` reads both sets of public headers through clang, applies the API version rule to
+the differences, and a client compiled against the baseline headers loads the framework and finds
+every class, selector, conformance, constant, and function. The baseline is a framework, a git ref,
+or `current`. `Docs/agent-reference/distribution-and-packaging.md` ("ABI baseline check") has the
+details.
 
 ### Large Model Coordination — `lmc/`
 

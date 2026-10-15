@@ -192,6 +192,20 @@ typedef NS_ENUM(NSInteger, NFKServerModelResidency) {
 /*! Unloads since the server started. Introduced in InferKit 0.4.0. */
 @property (nonatomic, readonly) NSInteger unloads;
 
+/*! The bytes the model held in memory after its last load, as its backend or the server measured them,
+	or nil before a measured load. It stays after an unload. Three limits apply to the reading:
+	- A runtime keeps one peak for the whole process, so overlapping loads and runs fall into each
+	  other's figures.
+	- Arrays a loader leaves for the first run to read are not counted.
+	- An MLX unload returns MLX's cache only around the runs and loads of InferKitMLX's backends, and does
+	  not see MLX work an app runs itself.
+	Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSNumber *residentBytes;
+
+/*! The most the memory rose above its level before the load while the model last loaded, or nil before
+	a measured load. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSNumber *peakBytes;
+
 @end
 
 /*!

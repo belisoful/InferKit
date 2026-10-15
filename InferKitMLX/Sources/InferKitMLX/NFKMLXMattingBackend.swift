@@ -68,7 +68,7 @@ public final class NFKMLXMattingBackend: NSObject, NFKInferenceBackend {
     public typealias RequestForward = @Sendable (_ plate: MLXArray, _ hint: MLXArray?,
                                                  _ request: NFKInferenceRequest) -> MLXArray
 
-    private let forward: RequestForward
+    private let lifecycle: NFKMLXLifecycle<RequestForward>
     private let identifier: String
     private let ready: Bool
     private let configuration: NFKMattingConfiguration
@@ -84,7 +84,7 @@ public final class NFKMLXMattingBackend: NSObject, NFKInferenceBackend {
         self.configuration = configuration
         self.forwardInputKeys = []
         self.forwardParameterKeys = []
-        self.forward = { plate, hint, _ in forward(plate, hint) }
+        self.lifecycle = NFKMLXLifecycle({ plate, hint, _ in forward(plate, hint) })
         super.init()
     }
 
@@ -108,7 +108,7 @@ public final class NFKMLXMattingBackend: NSObject, NFKInferenceBackend {
         self.configuration = configuration
         self.forwardInputKeys = forwardInputKeys
         self.forwardParameterKeys = forwardParameterKeys
-        self.forward = requestForward
+        self.lifecycle = NFKMLXLifecycle(requestForward)
         super.init()
     }
 
@@ -134,6 +134,37 @@ public final class NFKMLXMattingBackend: NSObject, NFKInferenceBackend {
         configuration.emitsMatte ? [NFKOutputImage, NFKOutputMask] : [NFKOutputImage]
     }
 
+    /// `NFKModelInfoResidentBytes` and `NFKModelInfoPeakBytes` from the last measured load; empty before
+    /// one. Introduced in InferKit 0.4.0.
+    @objc public var modelInfo: [String: Any] { lifecycle.measurementInfo }
+
+    // MARK: Unloading
+
+    /// Frees the forward and the model it holds, then MLX's cache; the next run or ``prepare()`` loads the
+    /// model again. It does nothing for a backend built from a closure alone, which has no source to load
+    /// from: only one that `NFKMLXModelRegistry` or a download factory built from weights can unload. With
+    /// runs in flight, the model is freed when the last of them ends. Introduced in InferKit 0.4.0.
+    @objc public func unload() {
+        lifecycle.unload()
+    }
+
+    /// Whether the backend holds its model. Introduced in InferKit 0.4.0.
+    @objc public var isLoaded: Bool { lifecycle.isLoaded }
+
+    /// The rise in MLX's active memory over the model's last load, or 0 while it is unloaded or before a
+    /// measured load. Introduced in InferKit 0.4.0.
+    @objc public var residentByteCount: Int { lifecycle.residentByteCount }
+
+    /// The peak of MLX's active memory during the model's last measured load, above its level before it.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var peakByteCount: Int { lifecycle.peakByteCount }
+
+    /// Loads the model when it is unloaded. Introduced in InferKit 0.4.0.
+    @objc(prepareWithError:)
+    public func prepare() throws {
+        try lifecycle.prepare()
+    }
+
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         let job = submitInferenceJob(for: request)
@@ -152,11 +183,13 @@ public final class NFKMLXMattingBackend: NSObject, NFKInferenceBackend {
     @objc(submitInferenceJobForRequest:)
     public func submitInferenceJob(for request: NFKInferenceRequest) -> NFKInferenceJob {
         let job = NFKInferenceJob()
-        let forward = self.forward
+        let lifecycle = self.lifecycle
         let configuration = self.configuration
         Task.detached(priority: .userInitiated) {
             do {
-                let outputs = try NFKMLXMattingBackend.run(request, configuration: configuration, forward: forward)
+                let outputs = try lifecycle.withState {
+                    try NFKMLXMattingBackend.run(request, configuration: configuration, forward: $0)
+                }
                 job.finish(with: NFKInferenceResult(outputs: outputs))
             } catch {
                 job.finish(withError: error as NSError)
@@ -260,5 +293,16 @@ public final class NFKMLXMattingBackend: NSObject, NFKInferenceBackend {
             index += 4
         }
         return out
+    }
+}
+
+extension NFKMLXMattingBackend: NFKMLXReloading {
+
+    var canReload: Bool { lifecycle.canReload }
+
+    func enableReload(_ build: @escaping () throws -> any NFKInferenceBackend, measurement: NFKMLXLoadMeasurement?) {
+        lifecycle.enableReload(building: build, as: NFKMLXMattingBackend.self, measurement: measurement) {
+            try $0.lifecycle.loadedState()
+        }
     }
 }

@@ -138,12 +138,8 @@ public final class NFKMLXTrOCR: NSObject {
     @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                completionHandler: @escaping (NFKMLXTrOCRBackend?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }
 
@@ -156,6 +152,7 @@ public final class NFKMLXTrOCR: NSObject {
 // MARK: - Backend
 
 /// The TrOCR inference backend: one image in, its transcription (`NFKOutputText`) out.
+@objc(NFKMLXTrOCRBackend)
 public final class NFKMLXTrOCRBackend: NSObject, NFKInferenceBackend {
     private let holder: Holder
     private let tokenizer: NFKTokenizer

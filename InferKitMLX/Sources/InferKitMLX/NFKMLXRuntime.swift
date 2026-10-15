@@ -78,7 +78,9 @@ public final class NFKMLXGPU: NSObject {
     /// Mirrors MLX's own search order: `mlx.metallib` beside the binary MLX is linked into, then under
     /// that binary's `Resources`, then `default.metallib` inside a `mlx-swift_Cmlx.bundle` beside the
     /// main bundle, in any loaded bundle's resources, or in a framework with that identifier, then
-    /// `Resources/default.metallib` beside the binary, then the working directory. MLX needs the
+    /// `Resources/default.metallib` beside the binary, then the working directory. The dynamic
+    /// `InferKitMLX.framework` carries `Resources/mlx.metallib`, the second place, so it loads its own
+    /// library ahead of any `mlx-swift_Cmlx.bundle` the host app ships. MLX needs the
     /// library whether or not anything runs on the GPU, and a missing one surfaces only at the first
     /// evaluation (as an abort in a test process), so this is the check to run before the first array
     /// is touched. `Tools/mlx-metallib.sh` places one for a SwiftPM test run. Objective-C:
@@ -335,5 +337,26 @@ extension NFKMLXGPU: NFKServingRuntimeStatus {
         }
         synchronize()
         clearCache()
+    }
+
+    /// MLX's active memory, which `NFKInferenceServer` reads before and after it builds a hosted model, or
+    /// -1 in a process without MLX's Metal library. Introduced in InferKit 0.4.0.
+    @objc public static var allocatedByteCount: Int {
+        metalLibraryURL != nil ? activeMemory : -1
+    }
+
+    /// MLX's peak memory since ``resetPeakAllocatedByteCount()``, or -1 in a process without MLX's Metal
+    /// library. Introduced in InferKit 0.4.0.
+    @objc public static var peakAllocatedByteCount: Int {
+        metalLibraryURL != nil ? peakMemory : -1
+    }
+
+    /// Resets MLX's peak memory to its active memory, which `NFKInferenceServer` does before it builds a
+    /// hosted model. Does nothing without MLX's Metal library. Introduced in InferKit 0.4.0.
+    @objc public static func resetPeakAllocatedByteCount() {
+        guard metalLibraryURL != nil else {
+            return
+        }
+        resetPeakMemory()
     }
 }

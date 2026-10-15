@@ -32,7 +32,7 @@ See also the [inference guide](inference-guide.md) for the concepts behind these
 - [Model catalog](#model-catalog) — `NFKModelCatalog`: the models an app lists, downloads, and configures
 - [Choosing a backend at runtime](#choosing-a-backend-at-runtime)
 - [Serving a model to other machines](#serving-a-model-to-other-machines) — `NFKInferenceServer`, found by address or Bonjour
-- [Subsystems](#subsystems) — jobs, tokenizers, tensor conversion, Hugging Face hub, conversion tool
+- [Subsystems](#subsystems) — jobs, tokenizers, tensor conversion, Hugging Face hub, downloads with progress and removal, library and API version, conversion tool
 - [Testing without weights](#testing-without-weights)
 
 ## Setup
@@ -112,6 +112,23 @@ For the keys with a single natural type there are typed convenience accessors �
 nil when the value is absent or the wrong type. Image, mask, and video values stay on `outputForKey:`
 / `inputForKey:` because the backend or caller chooses their representation (a `CVPixelBuffer`, a
 texture, a `CGImage`).
+
+### Freeing a model's memory
+
+A backend that holds a model in memory can free it and keep its configuration. `unload` frees the
+weights and caches, and the next run or `prepareWithError:` loads them again. `residentByteCount` is
+what the loaded model holds, measured when it loaded, and `peakByteCount` is the most the load needed
+at once. The functions below reach any backend: one without the members keeps its model, reports 0
+bytes, and reads as loaded while it is ready.
+
+```objc
+NSInteger resident = NFKInferenceResidentByteCount(backend);   // 0 when the backend measures nothing
+NSInteger peak = NFKInferencePeakByteCount(backend);           // what loading again costs at its peak
+
+NFKInferenceUnload(backend);                    // frees the model now, or when its runs in flight end
+BOOL loaded = NFKInferenceIsLoaded(backend);    // NO until a run or a prepare loads it again
+NFKInferencePrepare(backend, &error);           // load ahead of the next run, off the main thread
+```
 
 ## Text → text
 
@@ -2819,6 +2836,72 @@ Pass a commit as `revision` to pin a release; nil follows `main`, and a cached `
 again. The weights of the larger releases run from several gigabytes (Qwen3-VL-2B) to tens of gigabytes
 (FLUX, MiniMax Music 3), and the download blocks until every shard is in the cache.
 
+Every one of these factories reports progress and stops on cancellation through the core's
+`NFKDownload`, with no progress variant of its own. Make a download current around the call: the
+asynchronous factory carries it to its background queue, the release lists its files' sizes before
+the bytes arrive, and the download finishes when the factory delivers its result. Cancelling it stops
+the transfer in flight, removes the partial file, and fails the factory with
+`NFKDownloadErrorCancelled`.
+
+```objc
+NFKDownload *download = [NFKDownload downloadWithProgressHandler:^(NFKDownloadProgress *progress) {
+    // progress.fractionCompleted, progress.currentFile.path, progress.bytesPerSecond
+}];
+[download performAsCurrent:^{
+    [NFKMLXParakeet backendWithRepo:@"nvidia/parakeet-tdt-0.6b-v2" revision:nil cacheDirectoryURL:nil
+                  completionHandler:^(id<NFKInferenceBackend> backend, NSError *error) { /* background queue */ }];
+}];
+[download cancel];                       // from a Cancel button
+```
+
+A catalog model downloads and builds in one call that returns its download. The variant's source
+names the files, and the registered model builds from them:
+
+<!-- objc-check: given NFKModelDescriptor *model = nil; -->
+```objc
+NFKDownload *catalogDownload =
+    [NFKMLXHub backendForModel:model variant:nil cacheDirectoryURL:nil
+               progressHandler:^(NFKDownloadProgress *progress) { /* a progress bar */ }
+             completionHandler:^(id<NFKInferenceBackend> backend, NSError *error) { /* background queue */ }];
+```
+
+A release a factory fetched is recorded complete in its snapshot. `+[NFKMLXHub hubWithCacheDirectoryURL:]`
+returns the hub the factories use, so an app reads whether a release is downloaded and removes it the
+way the [hub section](#downloading-with-progress-then-removing-nfkdownload) shows, with nil paths for the
+whole release:
+
+```objc
+NFKHFHub *factoryHub = [NFKMLXHub hubWithCacheDirectoryURL:nil];
+NFKDownloadStatus *status = [factoryHub downloadStatusForRepo:@"Qwen/Qwen3-0.6B" revision:nil paths:nil];
+NFKRemovalPlan *plan = [factoryHub removalPlanForRepo:@"Qwen/Qwen3-0.6B" revision:nil paths:nil error:&error];
+```
+
+### Unloading a model and loading it again
+
+A backend that `NFKMLXModelRegistry`, `NFKMLXHub`, or an asynchronous download factory builds from a
+weights file or a release directory can unload and load again. The bring-your-own backends (module,
+matting, speech, generation) and the language backend keep their class and unload in place. Any other
+model comes back as an `NFKMLXReloadableBackend` that holds it, and its `wrappedBackend` is the model's
+own backend while loaded, nil while unloaded. `residentByteCount` is the rise in MLX's active memory over
+the load, and `peakByteCount` the peak above where the load started. A backend from a direct synchronous
+factory call reloads only when it is wrapped:
+
+```objc
+@import InferKitMLX;
+NSError *error = nil;
+
+id<NFKInferenceBackend> upscaler = [NFKMLXModelRegistry backendNamed:@"real-esrgan-x4" weightsURL:checkpointURL error:&error];
+NSInteger held = upscaler.residentByteCount;    // what the weights hold in MLX's memory
+[upscaler unload];                               // frees them; upscaler.isLoaded is NO
+// The next run loads the checkpoint again.
+
+NFKMLXReloadableBackend *depth =
+	[[NFKMLXReloadableBackend alloc] initWithProvider:^id<NFKInferenceBackend>(NSError **buildError) {
+		return [NFKMLXDepthAnything backendWithVariant:NFKMLXDepthVariantBase weightsURL:localURL error:buildError];
+	} error:&error];
+[depth unload];
+```
+
 ### MLX runtime knobs from Objective-C
 
 MLX's global seed, GPU memory management, and device selection ship as Swift-only free functions,
@@ -5163,6 +5246,21 @@ for (NFKModelDescriptor *model in [NFKModelCatalog.sharedCatalog descriptorsForT
 A field the catalog does not know stays in `extensions` and is written back by
 `manifestDataWithError:`, so a manifest from a newer writer survives a pass through an older reader.
 
+A variant's `source` is what `NFKHFHub` plans, downloads, reports on, and removes, so an app fetches
+every catalog model the same way. A source that needs a converter fails with
+`NFKDownloadErrorRequiresConversion`; one of kind `system` or `none` holds no files and completes at
+once. The [hub section](#downloading-with-progress-then-removing-nfkdownload) shows the plan, the
+progress, and the removal.
+
+<!-- objc-check: given NFKModelDescriptor *model = nil; -->
+```objc
+NFKModelSource *source = model.defaultVariant.source;
+NFKDownload *download = [hub downloadModelSource:source
+                                 progressHandler:^(NFKDownloadProgress *progress) { /* a progress bar */ }
+                               completionHandler:^(NSURL *localURL, NSError *error) { /* background queue */ }];
+NFKDownloadPresence presence = [hub downloadStatusForModelSource:source].presence;   // complete, partial, absent
+```
+
 A package lists its descriptors from a class that adopts `NFKModelDescriptorProvider`. The shared
 catalog looks the class up by name, so it contributes only when it is linked:
 
@@ -6023,6 +6121,87 @@ hub.cacheSizeLimit = NFKHFHubUnlimitedCacheSize;              // this hub only
 [hub trimCacheToSizeLimitWithError:&error];                   // after lowering a limit
 [hub removeCachedRepo:@"Qwen/Qwen2.5-0.5B-Instruct" revision:nil error:&error];
 long long bytes = [hub cacheSize];
+```
+
+### Library and API version (`NFKInferKit`)
+
+`NFKInferKit.releaseVersion` is the release. `NFKInferKit.APIVersion` is the binary interface, `"major.minor"`:
+the major version changes only on an incompatible change to the Objective-C interface or the C ABI,
+and the minor version counts additions. The `NFK_API_VERSION_MAJOR` and `NFK_API_VERSION_MINOR` macros
+record the headers a client compiled against, so a client that loads the library at run time checks
+that the library supports it.
+
+```objc
+BOOL supported = NFKInferKit.APIMajorVersion == NFK_API_VERSION_MAJOR
+              && NFKInferKit.APIMinorVersion >= NFK_API_VERSION_MINOR;
+NSLog(@"InferKit %@, API %@", NFKInferKit.releaseVersion, NFKInferKit.APIVersion);   // "InferKit 0.4.0, API 1.0"
+```
+
+[Installation](installation.md#side-by-side-releases) describes the release folders an app installs
+and how it picks the newest one it supports.
+
+### Downloading with progress, then removing (`NFKDownload`)
+
+A download is planned first: the hub lists what it would fetch, each file's size and SHA-256, and what
+the cache already holds. A repository's listing comes from the Hugging Face API, a URL's size from a
+HEAD request, and a catalog model's from its variant's source. A path may be a glob. A gated
+repository without an accepted access token fails with `NFKDownloadErrorAuthenticationRequired`.
+
+```objc
+NSError *error = nil;
+NFKDownloadPlan *plan = [hub planDownloadOfRepo:@"Qwen/Qwen3-0.6B" revision:nil
+                                          paths:@[ @"config.json", @"*.safetensors" ] error:&error];
+long long remaining = plan.remainingByteCount;      // the bytes the cache lacks
+for (NFKDownloadPlanFile *file in plan.files) {
+    // file.path, file.byteCount, file.sha256, file.cached
+}
+```
+
+`downloadWithPlan:` runs the plan as an `NFKDownload`. Its progress handler gets a snapshot at most ten
+times a second and at every change of file or state: bytes received and expected overall and per file,
+the current file, the transfer rate, and the time remaining. `download.progress` is the same as an
+`NSProgress`. Cancelling stops the transfer in flight and leaves no partial file in the cache: a file
+streams into a temporary name and moves into place whole. A transfer that drops resumes with an HTTP
+Range request. The download refuses to start when the plan is larger than `cacheSizeLimit` or than
+the volume's free space.
+
+<!-- objc-check: given NFKDownloadPlan *plan = nil; NFKModelSource *source = nil; -->
+```objc
+NFKDownload *download = [hub downloadWithPlan:plan
+                              progressHandler:^(NFKDownloadProgress *progress) {
+    double fraction = progress.fractionCompleted;                  // a progress bar
+    NSString *file = progress.currentFile.path;
+    double rate = progress.bytesPerSecond;
+} completionHandler:^(NSURL *localURL, NSError *downloadError) {
+    // background queue; localURL is the snapshot folder or the single file
+}];
+[download cancel];                                                 // from a Cancel button
+
+// "Downloaded · 4.2 GB" and a Delete button. The status reads the cache only.
+NFKDownloadStatus *status = [hub downloadStatusForModelSource:source];
+NSString *label = [NSByteCountFormatter stringFromByteCount:status.byteCount
+                                                 countStyle:NSByteCountFormatterCountStyleFile];
+
+NFKRemovalPlan *removal = [hub removalPlanForModelSource:source error:&error];
+for (NFKCachedFile *kept in removal.keptFiles) {
+    // kept.reason: another downloaded model uses the file, or it lies outside the cache
+}
+NFKRemovalPlan *removed = [hub removeFilesInPlan:removal error:&error];
+long long freed = removed.freedByteCount;
+```
+
+A removal deletes only downloaded files, all of them or none, and keeps a file another catalog model
+whose download is complete still uses. It refuses with `NFKDownloadErrorInUse` while a download in
+the process writes into the same snapshot. The app's own settings for the model are not in the cache,
+so a removal never touches them.
+
+```swift
+let plan = try await hub.planDownload(source: source)
+let download = hub.download(plan: plan, progressHandler: { progress in
+    // progress.fractionCompleted, progress.currentFile?.path
+}, completionHandler: { localURL, error in })
+let status = hub.downloadStatus(source: source)            // .complete, .partial, .absent
+let removed = try await hub.removeFiles(in: try hub.removalPlan(source: source))
 ```
 
 ### Converting a model (`Tools/inferkit-convert`)

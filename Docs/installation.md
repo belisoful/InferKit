@@ -65,6 +65,10 @@ script, which emits both linkage styles from one build:
 Tools/xcframework/build-mlx.sh --verify
 ```
 
+The dynamic variant also writes `release/`: each macOS slice's framework zipped, the xcframework
+zips, and `release.json`, the manifest an app reads to install and update releases (see
+[Side-by-side releases](#side-by-side-releases)). `--no-release` skips it.
+
 Three flags trim what gets built and written:
 
 - `--variant static | dynamic | both` — stop producing the one you do not deploy. The compile is
@@ -72,14 +76,16 @@ Three flags trim what gets built and written:
 - `--slices macos,ios,iossim` — each slice is a full compile of MLX's 289 translation units, so this
   is the difference between roughly seven minutes and twenty, and it scales the output the same way.
 - `--no-swift-interfaces` — drops the Swift module interfaces, and the C modules they import, from
-  the **dynamic** framework, about 13 MB a slice. The framework is then importable from Objective-C
-  only. The static library never carried interfaces, so the flag does nothing for it.
+  the **dynamic** framework, about 13 MB a slice. Objective-C then imports `InferKitMLX` and Swift
+  imports `InferKitMLXObjC`. The static library never carried interfaces, so the flag does nothing
+  for it.
 
-`--verify` links a consumer against each artifact and runs a model on the GPU, and builds and runs a
-Swift consumer against the dynamic framework's interfaces. A binary that links can still fail to find
-its Metal library, so linking alone is not the check. A variant or macOS slice that was not built is
-reported as skipped. A dynamic framework that carries the C modules but no `InferKitMLX.swiftmodule`
-fails.
+`--verify` links a consumer against each artifact and runs a model on the GPU, and builds and runs
+two Swift consumers against the dynamic framework: one through `InferKitMLXObjC`, beside a decoy
+`mlx-swift_Cmlx.bundle` it must ignore, and one through the Swift interfaces. A binary that links can
+still fail to find its Metal library, so linking alone is not the check. A variant or macOS slice
+that was not built is reported as skipped. A dynamic framework that carries the C modules but no
+`InferKitMLX.swiftmodule` fails.
 
 ## Linking the binary artifacts
 
@@ -88,9 +94,10 @@ fails.
 | you are building | take | why |
 | --- | --- | --- |
 | an app, a framework, or a plug-in in Objective-C | `InferKitMLX.xcframework` (static) | nothing to embed or sign, and one modulemap vends both `InferKit` and `InferKitMLX` |
-| an app that wants one self-contained drop-in | `InferKitMLXDynamic.xcframework` | the Metal library rides inside it |
+| an app that wants one self-contained drop-in | `InferKitMLXDynamic.xcframework` | the Metal library and the core's module ride inside it |
+| a macOS app that installs and updates InferKit apart from itself | `InferKitMLX-<version>-macos-arm64.zip` | one framework per release folder; see [Side-by-side releases](#side-by-side-releases) |
 | several plug-ins in one host | `InferKitMLXDynamic.xcframework` | they share one copy instead of one each |
-| anything in Swift | `InferKitMLXDynamic.xcframework` | it carries the Swift module interfaces of InferKitMLX and MLX, and the C modules beneath them; the static library carries none |
+| anything in Swift | `InferKitMLXDynamic.xcframework` | it carries the `InferKitMLXObjC` module and the Swift module interfaces of InferKitMLX and MLX; the static library carries neither |
 | the core alone, no MLX | `InferKit.xcframework` | 4.7 MB, no MLX runtime at all |
 
 Both MLX artifacts are arm64 only, with macOS, iOS device, and iOS simulator slices. **Do not add
@@ -116,7 +123,9 @@ Measured both ways — with the library absent, a probe pinned to `Device(cpu, 0
 line of output; with it present, the same probe runs elementwise arithmetic, an `MLXNN` convolution
 stack, and a full backend inference on the CPU.
 
-- **Dynamic**: nothing to do. The library is inside `InferKitMLX.framework/Resources/`.
+- **Dynamic**: nothing to do. The library is `InferKitMLX.framework/Resources/mlx.metallib`, and MLX
+  finds it before any `mlx-swift_Cmlx.bundle` your app ships, so the framework always runs the shaders
+  it was built with.
 - **Static, app or plug-in**: drag `InferKitMLX.xcframework/<slice>/mlx-swift_Cmlx.bundle` into **Copy
   Bundle Resources**, taking the slice for the platform that target builds for.
 - **Static, command-line tool**: put that same bundle beside the executable. A command-line binary's
@@ -137,30 +146,68 @@ xcframework's own link metadata, and a hand-rolled link command must name them.
 ### An Xcode app or framework, dynamic
 
 1. Drag `InferKitMLXDynamic.xcframework` in, set to **Embed & Sign**.
-2. For Objective-C, add `CoreHeaders` to **Header Search Paths** and
-   `-fmodule-map-file=$(SRCROOT)/path/to/CoreHeaders/module.modulemap` to **Other C Flags** — clang
-   refuses a non-framework module inside a framework, so the core's module travels beside it.
-3. For Swift, add `$(BUILT_PRODUCTS_DIR)/InferKitMLX.framework/Modules` and
-   `$(SRCROOT)/path/to/CoreHeaders` to **Import Paths**. Xcode copies the slice's framework into the
-   build products, so one path serves every platform.
-4. `@import InferKit;` and `@import InferKitMLX;`, or in Swift `import InferKitMLX`, and `import MLX`
-   to use MLX's types directly.
+2. For Objective-C, add `$(BUILT_PRODUCTS_DIR)/InferKitMLX.framework/Headers` to **Header Search
+   Paths**. The core's module, `Headers/InferKit`, is found there.
+3. For Swift, add `$(BUILT_PRODUCTS_DIR)/InferKitMLX.framework/Headers` to **Import Paths**, and
+   `$(BUILT_PRODUCTS_DIR)/InferKitMLX.framework/Modules` too to import the Swift interfaces. Xcode
+   copies the slice's framework into the build products, so one path serves every platform.
+4. `@import InferKit;` and `@import InferKitMLX;` in Objective-C. In Swift, `import InferKitMLXObjC`,
+   or `import InferKitMLX` and `import MLX` to use the Swift interfaces (see below).
 
-The framework's `Modules` directory holds the Swift interfaces of InferKitMLX and of every module it
-imports (MLX, MLXNN, MLXFast, MLXRandom, MLXFFT, MLXOptimizers, swift-numerics), plus the two C modules
-those interfaces import, `Cmlx` and `_NumericsShims`. A Swift consumer reaches all of them through that
-one import path, and the core's module through `CoreHeaders`. From the command line:
+From the command line:
 
 ```bash
+# Objective-C
+clang -fobjc-arc -fmodules -F InferKitMLXDynamic.xcframework/macos-arm64 \
+      -I InferKitMLXDynamic.xcframework/macos-arm64/InferKitMLX.framework/Headers \
+      App.m -framework InferKitMLX -framework Foundation
+
+# Swift, the Objective-C interface: no -framework flag, the module links it
+swiftc -F InferKitMLXDynamic.xcframework/macos-arm64 \
+       -I InferKitMLXDynamic.xcframework/macos-arm64/InferKitMLX.framework/Headers \
+       App.swift
+
+# Swift, the Swift interfaces
 swiftc -F InferKitMLXDynamic.xcframework/macos-arm64 \
        -I InferKitMLXDynamic.xcframework/macos-arm64/InferKitMLX.framework/Modules \
-       -I CoreHeaders \
+       -I InferKitMLXDynamic.xcframework/macos-arm64/InferKitMLX.framework/Headers \
        App.swift -framework InferKitMLX
 ```
 
-Swift needs no `-fmodule-map-file`: it finds `CoreHeaders/module.modulemap` through the import path.
-The framework must stay a single unit. Removing its Swift interfaces leaves only the generated
-Objective-C header, whose classes Swift then imports with no members.
+The core's module comes from the framework's `Headers` directory. An Objective-C target does not
+pass `Modules`: clang also reads a search path's own `module.modulemap`, and `Modules/module.modulemap`
+is the framework's, which clang then refuses from the wrong directory. Do not add a second `InferKit`
+module, such as the `CoreHeaders` folder earlier builds shipped, on another search path: two maps for
+one module fail with "redefinition of module".
+
+### Swift: InferKitMLXObjC or InferKitMLX
+
+The framework offers Swift two modules. Import one of them, never both: each declares the same
+classes.
+
+- **`import InferKitMLXObjC`** — the Objective-C interface of InferKitMLX, with the core re-exported.
+  Calls go through Objective-C dispatch, which the [API version](#api-version) covers, so a client
+  built against one release runs on a later release with the same API major version. It needs only
+  `-I …/InferKitMLX.framework/Headers` and works with `--no-swift-interfaces`. Names follow the
+  Objective-C importer: `+backendNamed:weightsURL:error:` is
+  `NFKMLXModelRegistry.backendNamed(_:weightsURL:)`, and `+sharedCatalog` is `NFKModelCatalog.shared`.
+- **`import InferKitMLX`** — the Swift interface, with every Swift-only building block (`MLXArray`,
+  `Module`, the `*Configuration` structs). It exposes mlx-swift types, which change between mlx-swift
+  releases, so the API version does not cover it, and a client that uses it is rebuilt with each
+  release.
+
+```swift
+import InferKitMLXObjC
+
+NFKMLXReferenceModels.registerAll()
+let backend = try NFKMLXModelRegistry.backendNamed("green-screen-keyer", weightsURL: nil)
+let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: image]))
+let models = NFKModelCatalog.shared.visibleDescriptors
+```
+
+The framework's `Modules` directory holds the Swift interfaces of InferKitMLX and of every module it
+imports (MLX, MLXNN, MLXFast, MLXRandom, MLXFFT, MLXOptimizers, swift-numerics), plus the two C modules
+those interfaces import, `Cmlx` and `_NumericsShims`.
 
 ### Swift Package Manager, either variant
 
@@ -174,29 +221,24 @@ modulemap for you, so nothing else is needed:
                                    .linkedFramework("CoreGraphics")]),
 ```
 
-The dynamic variant needs the core's module passed in, exactly as in Xcode:
-
-```swift
-.binaryTarget(name: "InferKitMLX", path: "InferKitMLXDynamic.xcframework"),
-.executableTarget(name: "App", dependencies: ["InferKitMLX"],
-                  cSettings: [.unsafeFlags(["-I", "CoreHeaders",
-                                            "-fmodule-map-file=CoreHeaders/module.modulemap"])]),
-```
-
-A Swift target also needs the framework's `Modules` directory. SwiftPM does not resolve a relative
-path in `unsafeFlags` against the package root, so the manifest builds absolute paths from its own
-location. The slice path names one platform:
+The dynamic variant needs the framework's `Headers` directory for the core's module, and a Swift target
+that imports the Swift interfaces needs its `Modules` directory too. SwiftPM does not resolve a
+relative path in `unsafeFlags` against the package root, so the manifest builds absolute paths from
+its own location. The slice path names one platform:
 
 ```swift
 let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().path   // import Foundation
-let slice = "\(root)/InferKitMLXDynamic.xcframework/macos-arm64"
+let framework = "\(root)/InferKitMLXDynamic.xcframework/macos-arm64/InferKitMLX.framework"
 
 .binaryTarget(name: "InferKitMLX", path: "InferKitMLXDynamic.xcframework"),
 .executableTarget(name: "App", dependencies: ["InferKitMLX"],
-                  swiftSettings: [.unsafeFlags(["-I", "\(slice)/InferKitMLX.framework/Modules",
-                                                "-I", "\(root)/CoreHeaders"])],
+                  cSettings: [.unsafeFlags(["-I", "\(framework)/Headers"])],
+                  swiftSettings: [.unsafeFlags(["-I", "\(framework)/Headers",
+                                                "-I", "\(framework)/Modules"])],
                   linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path"])]),
 ```
+
+A target that imports only `InferKitMLXObjC` leaves out the `Modules` path.
 
 The `rpath` lets an executable target load the framework SwiftPM copies beside it.
 
@@ -230,14 +272,17 @@ The build output is not committed — `xcframework-build/` is gitignored, and th
 distributed as source through SwiftPM and CocoaPods, so a consumer resolving the package clones its
 history. A binary added per release would compound there permanently.
 
-Three compressed assets, produced with
-`ditto -c -k --sequesterRsrc --keepParent <artifact> <artifact>.zip`:
+The compressed assets, produced with
+`ditto -c -k --sequesterRsrc --keepParent <artifact> <artifact>.zip`; `build-mlx.sh` writes the MLX
+ones and `release.json` into `release/`:
 
 | asset | contents | size |
 | --- | --- | --- |
 | `InferKit.xcframework.zip` | the core alone, no MLX | 1.3 MB |
 | `InferKitMLX.xcframework.zip` | static, three slices, Metal library inside each | 38 MB |
 | `InferKitMLXDynamic.xcframework.zip` | dynamic, three slices | 25 MB |
+| `InferKitMLX-<version>-macos-arm64.zip` | the macOS `InferKitMLX.framework`, the unit an app installs | |
+| `release.json` | the manifest: versions, minimum systems, commit, mlx-swift pin, each zip's SHA-256 | |
 
 **One asset per variant, carrying every slice**, rather than splitting by platform. An iOS developer
 always needs two slices (device and simulator), so a platform split is two-way rather than three and
@@ -251,4 +296,130 @@ inference rather than a link error, and a separate download is one more thing to
 inside costs 1.7 MB compressed against the two forms an earlier layout shipped separately.
 
 Publish `swift package compute-checksum` output for each zip alongside it, so a `binaryTarget` can
-name a `url:` and `checksum:`.
+name a `url:` and `checksum:`. It is the `sha256` `release.json` records for the zip.
+
+## API version
+
+`NFKInferKit.releaseVersion` is the release, such as `0.4.0`. `NFKInferKit.APIVersion` is the
+binary interface, `"major.minor"`, with `APIMajorVersion` and `APIMinorVersion` as integers. Several
+releases can share an API version. In Swift they read `NFKInferKit.releaseVersion`,
+`NFKInferKit.apiVersion`, `apiMajorVersion`, and `apiMinorVersion`.
+
+The promise covers the Objective-C interface and the C ABI: every class, selector, protocol,
+constant, enumeration value, function, and structure the public headers declare, in the core and in
+InferKitMLX's Objective-C interface (`@import InferKitMLX;` or Swift's `import InferKitMLXObjC`). It
+does not cover the Swift interface of InferKitMLX (`import InferKitMLX`), whose public API exposes
+mlx-swift types that change between mlx-swift releases.
+
+- The **major** version changes only on an incompatible change: a declaration removed or renamed, a
+  type, selector, constant value, enumeration value, or structure layout changed, a superclass or
+  adopted protocol dropped, or a required method added to a protocol. The minor version resets to 0.
+- The **minor** version counts additions: a new class, method, property, constant, function,
+  enumeration case, protocol, or optional protocol method.
+- A release that changes neither keeps the API version.
+
+A client compiled against `NFK_API_VERSION_MAJOR` and `NFK_API_VERSION_MINOR` (macros in
+`NFKInferKit.h`) runs on a library with the same major version and a minor version at least as high.
+The API version starts at 1.0. Before the first tagged release it stays 1.0 while the interface
+changes, and the first tagged release fixes what 1.0 names.
+
+## Side-by-side releases
+
+A macOS app can install InferKitMLX releases apart from itself and update them without being
+rebuilt. Each release lives in its own folder under a root the app owns, such as
+`~/Library/Application Support/<app>/InferKit`:
+
+```
+<root>/0.4.0/InferKitMLX.framework
+<root>/0.4.0/release.json
+<root>/0.5.0/InferKitMLX.framework
+<root>/0.5.0/release.json
+```
+
+Installing a release: download `release.json`, verify its signature, download the framework zip it
+names, check the zip's SHA-256 against the manifest, and unzip it with `ditto -x -k` into a new folder
+named for the version, beside the manifest. Older folders stay until no process uses them.
+
+Choosing one at launch:
+
+1. Read every `<root>/*/release.json`.
+2. Keep the releases whose `apiVersion` has the app's API major version and a minor version at least
+   the app's, and whose `minimumSystemVersions.macOS` the machine meets.
+3. Take the highest API minor version, then the highest `version`.
+4. Load it, then check `NFKInferKit.APIVersion` against the manifest's.
+
+The app's own executable must not link `InferKitMLX.framework`, or the system loads it at launch from
+the run path instead. The app reaches InferKit one of two ways after loading a release:
+
+- by name, through `NSClassFromString(@"NFKMLXModelRegistry")` and `dlsym` for constants, compiled
+  against the headers of the release it was built with;
+- through its own plug-in bundle or library that links `@rpath/InferKitMLX.framework/InferKitMLX` and
+  uses InferKit directly, in Objective-C or through `import InferKitMLXObjC`. Load it after the
+  framework: the system binds that install name to the framework already loaded, whatever the run
+  path says.
+
+A loaded framework cannot be unloaded, so a newer release takes effect at the next launch. iOS
+apps cannot load code they download; they embed the framework at build time.
+
+A loader that picks and loads the newest supported release, compiled against InferKit's headers and
+linked to nothing from InferKit:
+
+```objc
+#import <Foundation/Foundation.h>
+#import <InferKit/NFKInferKit.h>    // NFK_API_VERSION_MAJOR and _MINOR: the API this app was built against
+
+static BOOL SystemMeets(NSString *minimum)
+{
+	NSArray<NSString *> *parts = [minimum componentsSeparatedByString:@"."];
+	NSOperatingSystemVersion version = { parts[0].integerValue,
+										 parts.count > 1 ? parts[1].integerValue : 0,
+										 parts.count > 2 ? parts[2].integerValue : 0 };
+	return [NSProcessInfo.processInfo isOperatingSystemAtLeastVersion:version];
+}
+
+/// The newest release under root this app supports, loaded; nil when there is none or it fails to load.
+NSBundle *LoadNewestInferKit(NSURL *root, NSError **error)
+{
+	NSDictionary *chosen = nil;
+	NSURL *chosenFolder = nil;
+	NSArray<NSURL *> *folders = [NSFileManager.defaultManager contentsOfDirectoryAtURL:root
+		includingPropertiesForKeys:nil options:NSDirectoryEnumerationSkipsHiddenFiles error:error];
+	for (NSURL *folder in folders) {
+		NSData *data = [NSData dataWithContentsOfURL:[folder URLByAppendingPathComponent:@"release.json"]];
+		NSDictionary *manifest = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+		NSArray<NSString *> *api = [manifest[@"apiVersion"] componentsSeparatedByString:@"."];
+		if (api.count != 2 || api[0].integerValue != NFK_API_VERSION_MAJOR
+			|| api[1].integerValue < NFK_API_VERSION_MINOR) {
+			continue;
+		}
+		NSString *minimum = manifest[@"minimumSystemVersions"][@"macOS"];
+		if (minimum == nil || !SystemMeets(minimum)) {
+			continue;
+		}
+		NSComparisonResult byAPI = [manifest[@"apiVersion"] compare:chosen[@"apiVersion"] options:NSNumericSearch];
+		NSComparisonResult byRelease = [manifest[@"version"] compare:chosen[@"version"] options:NSNumericSearch];
+		if (chosen == nil || byAPI == NSOrderedDescending
+			|| (byAPI == NSOrderedSame && byRelease == NSOrderedDescending)) {
+			chosen = manifest;
+			chosenFolder = folder;
+		}
+	}
+	if (chosen == nil) {
+		return nil;
+	}
+	NSBundle *framework = [NSBundle bundleWithURL:[chosenFolder URLByAppendingPathComponent:@"InferKitMLX.framework"]];
+	if (![framework loadAndReturnError:error]) {
+		return nil;
+	}
+	// The framework stays loaded either way. A mismatch means the folder does not hold what its
+	// manifest says, and the app must not use it.
+	Class library = NSClassFromString(@"NFKInferKit");
+	if (![[library APIVersion] isEqualToString:chosen[@"apiVersion"]]) {
+		return nil;
+	}
+	return framework;
+}
+```
+
+Verifying the manifest's signature is not shown: signing is not settled yet, and
+`Docs/agent-reference/distribution-and-packaging.md` ("Release manifest") holds the proposal.

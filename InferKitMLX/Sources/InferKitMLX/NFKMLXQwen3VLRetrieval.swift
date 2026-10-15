@@ -241,12 +241,8 @@ public final class NFKMLXQwen3VLEmbedder: NSObject, NFKTextEmbedding {
     @objc(embedderWithRepo:revision:cacheDirectoryURL:completionHandler:)
     public static func embedder(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                 completionHandler: @escaping (NFKMLXQwen3VLEmbedder?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try embedder(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
+            try embedder(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }
 
@@ -363,12 +359,8 @@ public final class NFKMLXQwen3VLReranker: NSObject {
     @objc(rerankerWithRepo:revision:cacheDirectoryURL:completionHandler:)
     public static func reranker(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                 completionHandler: @escaping (NFKMLXQwen3VLReranker?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try reranker(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
+            try reranker(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }
 

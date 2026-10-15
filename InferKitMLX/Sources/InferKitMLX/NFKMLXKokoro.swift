@@ -520,6 +520,7 @@ public final class NFKMLXKokoroNet: Module {
 
 // MARK: - Weight loading
 
+@objc(NFKMLXKokoro)
 public final class NFKMLXKokoro: NSObject {
     /// Fuses a `weight_g`/`weight_v` pair into `weight` (`g · v / ‖v‖`, the norm over every axis but the
     /// first — PyTorch's `weight_norm` default dim 0).
@@ -1083,13 +1084,9 @@ extension NFKMLXKokoro {
     @objc(kokoroBackendWithRepo:revision:cacheDirectoryURL:voiceName:completionHandler:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?, voiceName: String,
                                completionHandler: @escaping (NFKMLXSpeechBackend?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-                                              voiceName: voiceName), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                        voiceName: voiceName)
         }
     }
 }

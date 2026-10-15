@@ -1431,13 +1431,41 @@ keeping them in memory, and unloads idle ones.
   `synchronize()` then `clearCache()`, and does nothing without the Metal library. Without it an
   unloaded MLX model's buffers stay in MLX's cache and the footprint does not fall.
 - Status: each model's `residency` object (`state`, `unloadable`, `last_used` in seconds since 1970,
-  `idle_timeout_seconds` when finite, `load_seconds`, `load_error`, `loads`, `unloads`) in both the
-  status route and the `/models` entry; `NFKServerModelStatus` reads it. A server without it reads as
-  `NFKServerModelResidencyUnknown`.
+  `idle_timeout_seconds` when finite, `load_seconds`, `load_error`, `loads`, `unloads`, `resident_bytes`,
+  `peak_bytes`) in both the status route and the `/models` entry; `NFKServerModelStatus` reads it. A
+  server without it reads as `NFKServerModelResidencyUnknown`.
+- Load figures (2026-10-15). `build` starts an `NFKServedLoadMeter` before it calls the provider: each
+  registered runtime that implements the optional `allocatedByteCount`, `peakAllocatedByteCount`, and
+  `resetPeakAllocatedByteCount` has its peak reset and its allocation read. After the build, a backend
+  whose `residentByteCount` is above 0 gives both figures (the peak raised to at least the resident
+  bytes). Otherwise the figures are the summed rise in allocation and in peak over the runtimes that
+  read both times (a negative reading means unreadable and is skipped). A rise of 0 records nothing. The
+  figures are stored on the model's lock in `buildEndedWithBackend:residentBytes:peakBytes:error:`, only
+  when present, so they describe the last load that measured them and stay through an unload. A model
+  hosted with `addBackend:` takes its backend's own figures. `NFKMLXGPU` implements the three members
+  over `activeMemory`, `peakMemory`, and `resetPeakMemory`, reading -1 without the Metal library.
+  Accuracy limits, one per cause:
+  - The peak is one reading for the whole process, so overlapping loads and runs fall into each other's
+    figures.
+  - Arrays a loader leaves lazy for the first run are not counted.
+  - MLX's cache release after an unload sees only the runs and loads of the MLX lifecycle backends, not
+    MLX work a caller runs itself.
+- Backend unload (2026-10-15). `unloadPassingTest:reason:` and `unloadIdleModels` call
+  `NFKInferenceUnload` on each taken backend inside the `@autoreleasepool`, off the lock, before the
+  release. The event order is unchanged: the Unloaded event is still reported on the model's lock in
+  `takeBackendPassingTest:reason:`, before the backend's unload runs. A backend another object also
+  holds (an app's reference, an MLX wrapper) frees its weights at that call.
+  `retire` (a removed or replaced model) returns the backend it held, and `removeBackendForModelName:`
+  and `host:` unload it off the lock. Runs in flight keep the backend, and since an unload never waits,
+  the last of them frees the model. `host:` skips the unload when the new model holds the same backend.
 - Tests: `NFKServedResidencyTests` replaces the server's clock (`uptimeProvider`, a private property
   the test declares in a category) and its pressure provider, and sets `residencyCheckInterval` to 0,
   so every timing is exact and no timer races the test. `NFKMLXModelInfoTests` checks that an unload
-  empties MLX's cache.
+  empties MLX's cache. `NFKBackendLifecycleTests` (9) covers the protocol helpers, a backend's own
+  figures, a registered test runtime's readings around a build, a model nothing measured, the unload
+  call from an explicit, an idle, a removing, and a replacing unload, and the status reader; its runtime reads -1 outside its
+  tests, since a registration is permanent. `NFKMLXLifecycleTests` checks an MLX model's figures through
+  the server and that the server's unload reaches the backend.
 
 **Observation (2026-10-13).** An app's service shows runs, loads, clients, and connected agents without
 polling its own status route. `NFKServerObservation.h/.m` holds the delegate protocol and the event

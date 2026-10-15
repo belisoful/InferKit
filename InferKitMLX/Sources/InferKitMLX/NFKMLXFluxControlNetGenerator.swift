@@ -178,13 +178,9 @@ public final class NFKMLXFluxControlNetGenerator: NSObject {
     public static func generator(repo: String?, controlNetRepo: String?, revision: String?, cacheDirectoryURL: URL?,
                                  residency: NFKMLXResidency,
                                  completionHandler: @escaping (NFKMLXFluxControlNetGenerator?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try generator(repo: repo, controlNetRepo: controlNetRepo, revision: revision,
-                                                cacheDirectoryURL: cacheDirectoryURL, residency: residency), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
+            try generator(repo: repo, controlNetRepo: controlNetRepo, revision: revision,
+                          cacheDirectoryURL: cacheDirectoryURL, residency: residency)
         }
     }
 

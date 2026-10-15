@@ -34,6 +34,18 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(result.text, "Explain diffraction in one sentence.")
     }
 
+    // MARK: Freeing a model's memory (Docs/examples.md: The shared contract — Freeing a model's memory)
+
+    func testExampleFreeingAModelsMemory() {
+        let backend = NFKPassthroughBackend()
+        XCTAssertEqual(NFKInferenceResidentByteCount(backend), 0)   // 0 when the backend measures nothing
+        XCTAssertEqual(NFKInferencePeakByteCount(backend), 0)
+
+        NFKInferenceUnload(backend)                    // the passthrough holds no model, so it keeps running
+        XCTAssertTrue(NFKInferenceIsLoaded(backend))
+        XCTAssertTrue(NFKInferencePrepare(backend, nil))
+    }
+
     // MARK: Jobs, submit, completion (Docs/examples.md: Subsystems — Jobs)
 
     func testExampleSubmittingAJob() {
@@ -67,6 +79,15 @@ final class InferKitSwiftExamples: XCTestCase {
         var restored = [Float](repeating: 0, count: 16)
         NFKTensorToInterleaved(&tensor, &restored, spec)
         XCTAssertEqual(restored[0], 0.1, accuracy: 1e-5)
+    }
+
+    // MARK: Library and API version (Docs/examples.md: Subsystems — Library and API version)
+
+    func testExampleLibraryAndAPIVersion() {
+        let supported = NFKInferKit.apiMajorVersion == Int(NFK_API_VERSION_MAJOR)
+            && NFKInferKit.apiMinorVersion >= Int(NFK_API_VERSION_MINOR)
+        print("InferKit \(NFKInferKit.releaseVersion), API \(NFKInferKit.apiVersion)")
+        XCTAssertTrue(supported)
     }
 
     // MARK: MLMultiArray bridge (Docs/examples.md: Subsystems — Tensor conversion)
@@ -158,6 +179,49 @@ final class InferKitSwiftExamples: XCTestCase {
         try hub.trimCacheToSizeLimit()                              // after lowering a limit
         try hub.removeCachedRepo("Qwen/Qwen2.5-0.5B-Instruct", revision: nil)
         XCTAssertEqual(hub.cacheSize(), 0)
+    }
+
+    // A URL source whose file is on this machine stands in for a Hugging Face repository, so the
+    // example runs without a network.
+    func testExampleDownloadingWithProgressThenRemoving() async throws {
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("NFKSwiftExamplesDownloads-\(UUID().uuidString)")
+        let cache = scratch.appendingPathComponent("cache")
+        let release = scratch.appendingPathComponent("model.bin")
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        try Data(count: 256 * 1024).write(to: release)
+        let source = NFKModelSource(kind: NFKModelSourceKindURL, repository: nil, revision: nil, url: release,
+                                    layout: NFKModelSourceLayoutFile, files: nil, requiresConversion: false,
+                                    extensions: nil)
+        let hub = NFKHFHub(cacheDirectoryURL: cache)
+
+        // What would this download, and how large?
+        let plan = try await hub.planDownload(source: source)
+        XCTAssertEqual(plan.remainingByteCount, 256 * 1024)
+
+        // Download it with progress; `download.cancel()` stops it and leaves no partial file.
+        let localURL: URL? = try await withCheckedThrowingContinuation { continuation in
+            hub.download(plan: plan, progressHandler: { progress in
+                _ = progress.fractionCompleted                  // a progress bar
+                _ = progress.currentFile?.path                  // "model.bin"
+            }, completionHandler: { localURL, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: localURL)
+                }
+            })
+        }
+        XCTAssertEqual(localURL?.lastPathComponent, "model.bin")
+
+        // "Downloaded · 256 KB" and a Delete button.
+        let status = hub.downloadStatus(source: source)
+        XCTAssertEqual(status.presence.rawValue, NFKDownloadPresence.complete.rawValue)
+        _ = ByteCountFormatter.string(fromByteCount: status.byteCount, countStyle: .file)
+        let removal = try hub.removalPlan(source: source)
+        let removed = try await hub.removeFiles(in: removal)
+        XCTAssertEqual(removed.freedByteCount, removal.freedByteCount)
+        XCTAssertEqual(hub.downloadStatus(source: source).presence.rawValue, NFKDownloadPresence.absent.rawValue)
     }
 
     // MARK: Backend contracts (Docs/examples.md: Text → text, Image → image)

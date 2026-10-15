@@ -163,6 +163,20 @@ final class MLXExamples: XCTestCase {
         XCTAssertEqual(backend.backendIdentifier, "green-screen-keyer")
     }
 
+    // Docs/examples.md: Running MLX models from Objective-C — unloading a model and loading it again.
+    func testExampleUnloadingAModelAndLoadingItAgain() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil, "no Metal library for MLX")
+        NFKMLXReferenceModels.registerToneSpeech()
+        let speech = try NFKMLXReloadableBackend {
+            try NFKMLXModelRegistry.backend(named: "tone-speech", weightsURL: nil)
+        }
+        speech.unload()
+        XCTAssertFalse(speech.isLoaded)
+        let result = try speech.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "hi"]))
+        XCTAssertNotNil(result.output(forKey: NFKOutputAudio), "the run built the model again")
+        XCTAssertTrue(speech.isLoaded)
+    }
+
     // Docs/examples.md: Running MLX models from Objective-C — download from Hugging Face + build.
     // The download hits the network; this verifies the fail-fast path (unregistered model, no download).
     func testExampleHubFailsFastForAnUnregisteredModel() {
@@ -182,6 +196,33 @@ final class MLXExamples: XCTestCase {
             done.fulfill()
         }
         wait(for: [done], timeout: 5)
+    }
+
+    // Docs/examples.md: Downloading a whole release — progress through a current NFKDownload, and the
+    // catalog-level call. Network-free: a model with no registered name fails before any transfer.
+    func testExampleCatalogDownloadReportsThroughADownload() throws {
+        let source = NFKModelSource(kind: NFKModelSourceKindHuggingFace, repository: "org/model", revision: nil,
+                                    url: nil, layout: NFKModelSourceLayoutDirectory, files: nil,
+                                    requiresConversion: false, extensions: nil)
+        let model = try NFKModelDescriptor(dictionary: [
+            "id": "example.model", "family": "example", "engine": "mlx", "registryName": "not-registered",
+            "variants": [["id": "default", "isDefault": true, "source": source.dictionaryRepresentation()]],
+        ])
+        let done = expectation(description: "completion handler")
+        let download = NFKMLXHub.backend(for: model, variant: nil, cacheDirectoryURL: nil,
+                                         progressHandler: { progress in
+            _ = progress.fractionCompleted                       // a progress bar
+        }) { backend, error in
+            XCTAssertNil(backend)
+            XCTAssertNotNil(error)
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 5)
+        XCTAssertEqual(download.state.rawValue, NFKDownloadState.failed.rawValue)
+
+        let hub = NFKMLXHub.hub(cacheDirectoryURL: nil)          // the hub the factories use
+        XCTAssertEqual(hub.downloadStatus(repo: "org/never-downloaded", revision: nil, paths: nil).presence.rawValue,
+                       NFKDownloadPresence.absent.rawValue)
     }
 
     // End to end: register -> build by name -> run. Needs MLX, so it skips without a Metal library

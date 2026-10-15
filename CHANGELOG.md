@@ -40,6 +40,62 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### Breaking: `NFKInferKit.version` is `NFKInferKit.releaseVersion`
+
+- The class property `version` overrode `+[NSObject version]`, the integer class version archiving
+  reads, with a string, and Swift saw NSObject's `version()` function in its place. The release
+  version is now `NFKInferKit.releaseVersion` in both languages, and `version` is removed with no
+  alias, since an alias keeps the clash. `+[NFKInferKit version]` is NSObject's integer again.
+- The server's status route, its Bonjour record, and the MCP handshakes keep their `"version"` field,
+  which reads `releaseVersion`.
+
+#### The API version
+
+- `NFKInferKit.APIVersion` (`"major.minor"`), `APIMajorVersion`, and `APIMinorVersion` version the
+  binary interface apart from the release version, starting at 1.0. The major version changes only on
+  an incompatible change to the Objective-C interface or the C ABI, and the minor version counts
+  additions. The promise covers the core and InferKitMLX's Objective-C interface, not InferKitMLX's
+  Swift interface. `NFK_API_VERSION_MAJOR` and `NFK_API_VERSION_MINOR` record the headers a client
+  compiled against. `Docs/installation.md` lists which change moves which number.
+- `Tools/abi/check-abi.sh` holds a built framework to a baseline's binary interface: it reads both
+  sets of public headers through clang, applies the API version rule to the differences, and loads the
+  framework into a client compiled against the baseline headers to find every class, selector,
+  conformance, constant, and function. The baseline is a framework, a git ref, or `current` (a
+  self-check until the first tagged release).
+
+#### Downloads are planned, observed, cancelled, and removed
+
+- `NFKHFHub` plans a download before it starts: `planDownloadOfRepo:revision:paths:error:` (paths may
+  be globs), `planDownloadOfURL:sha256:error:`, and `planDownloadOfModelSource:error:` return an
+  `NFKDownloadPlan` with each file's size, its SHA-256 where the repository records one, whether the
+  cache holds it, and the bytes still to fetch. Each has a `…completionHandler:` form.
+- `downloadWithPlan:progressHandler:completionHandler:`, `downloadRepo:revision:paths:…`, and
+  `downloadModelSource:…` return an `NFKDownload`: bytes received and expected per file and overall,
+  the current file, the transfer rate, the time remaining, the state, an `NSProgress`, and `cancel`.
+  A cancelled download leaves no partial file in the cache, a dropped transfer resumes with an HTTP
+  Range request, and a plan larger than `cacheSizeLimit` or the volume's free space is refused before
+  any transfer.
+- A download made current on a thread (`performAsCurrent:`) collects every hub download that thread
+  makes, so code that knows nothing of it reports its progress and stops when it is cancelled.
+- A catalog variant's `NFKModelSource` downloads into the hub cache with one call. A source that needs
+  a converter fails with `NFKDownloadErrorRequiresConversion`; a `system` or `none` source completes
+  at once. A URL source caches under `<cache>/@url/<host>/<digest>/`.
+- `downloadStatusForModelSource:` (and the repository and URL forms) reads complete, partial, or absent
+  with the bytes on disk, from the cache alone.
+- A completion record lists a download's files and the optional files the server refused
+  (`recordCompleteDownloadOfRepo:revision:paths:absentPaths:error:`, `recordedAbsentPathsOfRepo:revision:`,
+  `forgetRecordedAbsentPathsOfRepo:revision:error:`), so a layer that fetches file by file loads a
+  cached release offline.
+- `removalPlanForModelSource:error:` lists the files a removal deletes and the ones it keeps, each with
+  its reason: a file another catalog model whose download is complete uses, or a link target something
+  else needs. `removeFilesInPlan:error:` and its asynchronous form delete them all or none, return the
+  bytes freed, keep a pin, and refuse with `NFKDownloadErrorInUse` while a download writes into the
+  snapshot.
+- A gated repository without an accepted token fails with `NFKDownloadErrorAuthenticationRequired`.
+  Download failures are in the new `NFKDownloadErrorDomain`; a checksum mismatch, which was
+  `kNFKError_InferenceBackendFailure`, is now `NFKDownloadErrorChecksumMismatch`.
+- The access token goes only to the hub's own host.
+
 #### A catalog of the models a process can run
 
 - `NFKModelCatalog` lists `NFKModelDescriptor`s: each model's engine and how it is built (a registry
@@ -144,6 +200,25 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   to `maximumRestarts` times in a row. `stateHandler` reports starting, running, exited (with the
   exit status or signal), and a failed launch (with its reason). An `NFKMCPClient`'s
   `serverProcess` is one.
+
+#### A backend frees its model and keeps its configuration
+
+- `NFKInferenceBackend` gains four optional members: `unload` frees the model's weights and caches,
+  and the next run or `prepareWithError:` loads them again; `isLoaded` reports whether the model is in
+  memory; `residentByteCount` is what the loaded model holds, measured at load; `peakByteCount` is the
+  most the load needed at once.
+- An unload never cuts a run. With runs in flight it returns at once, and the last run to end frees
+  the model. A backend that cannot load its model again keeps it and reads as loaded.
+- `NFKInferenceUnload`, `NFKInferenceIsLoaded`, `NFKInferenceResidentByteCount`, and
+  `NFKInferencePeakByteCount` reach the members on any backend. `NFKModelInfoResidentBytes` and
+  `NFKModelInfoPeakBytes` carry the figures in `modelInfo`.
+- A server reports `resident_bytes` and `peak_bytes` in each model's `residency` object, read as
+  `NFKServerModelStatus.residentBytes` and `peakBytes`. A backend that measures its own load gives
+  them; for any other, the server reads the allocated memory of each linked runtime around the build,
+  through the new optional `NFKServingRuntimeStatus` members `allocatedByteCount`,
+  `peakAllocatedByteCount`, and `resetPeakAllocatedByteCount`.
+- A server unloads a backend before it releases it, and when a model is removed or replaced, so a model
+  another object also holds frees its memory.
 
 #### Models as tools
 
@@ -808,6 +883,59 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   uses, chat template, tools, and an image's or a clip's tokens included, counted without running the
   decoder. An `NFKInferenceServer` hosting one answers Anthropic's
   `count_tokens` and OpenAI's `input_tokens`.
+
+#### Releases an app installs side by side
+
+- The dynamic `InferKitMLX.framework` carries its Metal library as `Resources/mlx.metallib`, which MLX
+  finds before any `mlx-swift_Cmlx.bundle` the host app ships, so the framework always runs the shaders
+  it was built with. It was `Resources/default.metallib`, which MLX reaches only after the host's
+  bundles.
+- The framework carries the core's module in `Headers/InferKit`, and a consumer passes
+  `-I InferKitMLX.framework/Headers`. The separate `CoreHeaders/` folder beside the xcframework is
+  gone, along with its `-fmodule-map-file` flag.
+- `import InferKitMLXObjC` gives a Swift client the Objective-C interface of InferKitMLX, with the core
+  re-exported and no Swift interface of InferKitMLX or MLX loaded. Calls go through Objective-C
+  dispatch, which the API version covers. It works with `--no-swift-interfaces`.
+- `build-mlx.sh` writes `release/`: each macOS slice's framework zipped, the xcframework zips, and
+  `release.json` with the release and API versions, minimum systems, the InferKit commit, the
+  mlx-swift pin and mlx core version, each zip's size and SHA-256, and an empty `signature` for the
+  signing step (`Tools/xcframework/release.sh`; `--no-release` skips it). The framework's
+  `Info.plist` records the release version and `NFKAPIVersion`.
+- `Docs/installation.md` describes the release folders an app installs (`<root>/<version>/`), how it
+  picks the newest release it supports, and a sample loader.
+- Every public class has an Objective-C name equal to its Swift name, so `NSClassFromString` finds it:
+  `NFKMLXFlorence2Backend`, `NFKMLXHTDemucsBackend`, `NFKMLXKokoro`, `NFKMLXPhotoFaceBackend`,
+  `NFKMLXSa2VABackend`, `NFKMLXTableTransformerBackend`, `NFKMLXTekkenTokenizer`, `NFKMLXTrOCRBackend`,
+  `NFKMLXVJEPA2Backend`, `NFKMLXVideoBackend`, and `NFKMLXWav2Vec2Tokenizer` had Swift's mangled
+  runtime names. `Tools/abi/check-abi.sh` fails on a mangled name.
+
+#### Downloads report progress and cancel
+
+- Every download factory reports to the core's current `NFKDownload` and stops when it is cancelled,
+  with no new selector: make a download current around an asynchronous factory and it observes the
+  whole release, its sizes known before the bytes arrive.
+- A release a factory fetched is recorded complete, so the core hub's status and removal cover it.
+  `+[NFKMLXHub hubWithCacheDirectoryURL:]` returns the hub the factories use.
+- A cached release loads with no network. A weights candidate whole in the cache is used without asking
+  the server about earlier candidates, and the optional files the server refused are recorded with the
+  release and not asked for again. `-[NFKHFHub forgetRecordedAbsentPathsOfRepo:revision:error:]` makes
+  the next build ask for them again.
+- `+[NFKMLXHub backendForModel:variant:cacheDirectoryURL:progressHandler:completionHandler:]` downloads
+  a catalog model's variant and builds its registered backend, returning the download.
+
+#### Models unload and load again
+
+- Every model `NFKMLXModelRegistry`, `NFKMLXHub`, or an asynchronous download factory builds from a
+  weights file or a release directory can unload and load again. The module, matting, speech,
+  generation, and language backends keep their class and unload in place; any other model comes back
+  as an `NFKMLXReloadableBackend`, whose `wrappedBackend` reaches the model's class while it is loaded.
+  A backend from a direct synchronous factory call reloads when wrapped in one.
+- `residentByteCount` is the rise in MLX's active memory over a load, and `peakByteCount` the peak
+  above where the load started. Both appear in `modelInfo`.
+- An unload frees the model's arrays and returns MLX's buffer cache when no other run or load is in
+  flight.
+- `NFKMLXGPU` reports its allocation to an `NFKInferenceServer`, which measures an MLX model built
+  without its own figures.
 
 #### Every model describes itself in the catalog
 

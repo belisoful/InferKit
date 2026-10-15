@@ -11,7 +11,7 @@ The full repository tree with per-directory notes.
 ├── Sources/InferKit/
 │   ├── include/InferKit/            # Public headers (the API surface)
 │   │   ├── InferKit.h               # Umbrella (imports every public header)
-│   │   ├── NFKInferKit.h            # Library info (NFKInferKit.version)
+│   │   ├── NFKInferKit.h            # Library info (NFKInferKit.releaseVersion, APIVersion)
 │   │   ├── NFKInferenceBackend.h    # Swappable-engine protocol + NFKInferenceSubmit
 │   │   ├── NFKInferenceRequest.h    # Immutable request (inputs + parameters + outputModality)
 │   │   ├── NFKInferenceResult.h     # Immutable result (outputs)
@@ -151,6 +151,11 @@ The full repository tree with per-directory notes.
 │                                    #   See "Packaging InferKitMLX as an XCFramework" in `distribution-and-packaging.md`.
 ├── Tools/xcframework/verify-mlx.sh  # Links a consumer against each artifact and RUNS a model, because
 │                                    #   a binary that links can still fail to find its metallib.
+├── Tools/xcframework/release.sh     # Zips each macOS framework slice and writes release.json (versions,
+│                                    #   commit, mlx-swift pin, SHA-256s). See "Release manifest".
+├── Tools/xcframework/inferkit-version.sh # Sourced: reads the release and API versions from the sources
+├── Tools/abi/                       # check-abi.sh + abi-surface.py: holds a built framework to a baseline's
+│                                    #   binary interface read from its headers. See "ABI baseline check".
 ├── Tools/validation-assets/         # Manifest + fetch.py: every real checkpoint the parity/triage suites load, and the reference sources the oracles import, into the validation root (/Volumes/InferKit Models/inferkit-validation)
 │                                    #   shapes.py: a release's config + every tensor's shape by HTTP range request (no weights), for the structural checks
 ├── Tools/reference-parity/          # Offline: runs a model's (or a training objective's) reference implementation, records input + result for numeric comparison

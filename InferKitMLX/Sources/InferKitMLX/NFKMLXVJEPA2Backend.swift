@@ -195,12 +195,8 @@ public final class NFKMLXVJEPA2: NSObject {
     @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                completionHandler: @escaping (NFKMLXVJEPA2Backend?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }
 }
@@ -210,6 +206,7 @@ public final class NFKMLXVJEPA2: NSObject {
 /// The V-JEPA 2 inference backend: a video (`NFKInputVideo`) or an image (`NFKInputImage`) in, a
 /// mean-pooled feature embedding (`NFKOutputEmbedding`, `[NSNumber]`) out, and from a classification
 /// release the ranked classes (`NFKOutputClassifications`, `NSArray<NFKClassification *>`) too.
+@objc(NFKMLXVJEPA2Backend)
 public final class NFKMLXVJEPA2Backend: NSObject, NFKInferenceBackend {
     private let holder: Holder
     private let frameCount: Int

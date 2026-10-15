@@ -185,13 +185,9 @@ public final class NFKMLXLTXVideoGenerator: NSObject {
     public static func generator(repo: String?, revision: String?, cacheDirectoryURL: URL?,
                                  residency: NFKMLXResidency,
                                  completionHandler: @escaping (NFKMLXLTXVideoGenerator?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try generator(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-                                                residency: residency), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
+            try generator(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                          residency: residency)
         }
     }
 

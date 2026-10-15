@@ -34,7 +34,7 @@ public final class NFKMLXGenerationBackend: NSObject, NFKInferenceBackend {
     private let parameterKeys: Set<String>
     private let outputKeys: Set<String>
     private let ready: () -> Bool
-    private let run: Run
+    private let lifecycle: NFKMLXLifecycle<Run>
     private let information: [String: Any]?
     private let runLock = NSLock()
 
@@ -59,7 +59,7 @@ public final class NFKMLXGenerationBackend: NSObject, NFKInferenceBackend {
         self.outputKeys = outputKeys
         self.information = modelInfo
         self.ready = isReady
-        self.run = run
+        self.lifecycle = NFKMLXLifecycle(run)
         super.init()
     }
 
@@ -76,9 +76,39 @@ public final class NFKMLXGenerationBackend: NSObject, NFKInferenceBackend {
     /// The result keys the backend writes. Introduced in InferKit 0.4.0.
     @objc public var supportedOutputKeys: Set<String> { outputKeys }
 
-    /// The model's description under the `NFKModelInfo*` keys; empty where none was given. Introduced in
-    /// InferKit 0.4.0.
-    @objc public var modelInfo: [String: Any] { information ?? [:] }
+    /// The model's description under the `NFKModelInfo*` keys, with `NFKModelInfoResidentBytes` and
+    /// `NFKModelInfoPeakBytes` from the last measured load. The description given at creation holds while
+    /// the model is unloaded. Introduced in InferKit 0.4.0.
+    @objc public var modelInfo: [String: Any] {
+        (information ?? [:]).merging(lifecycle.measurementInfo) { _, measured in measured }
+    }
+
+    // MARK: Unloading
+
+    /// Frees the run closure and the model it holds, then MLX's cache; the next run or ``prepare()`` loads the
+    /// model again. It does nothing for a backend built from a closure alone, which has no source to load
+    /// from: only one that `NFKMLXModelRegistry` or a download factory built from weights can unload. With
+    /// runs in flight, the model is freed when the last of them ends. Introduced in InferKit 0.4.0.
+    @objc public func unload() {
+        lifecycle.unload()
+    }
+
+    /// Whether the backend holds its model. Introduced in InferKit 0.4.0.
+    @objc public var isLoaded: Bool { lifecycle.isLoaded }
+
+    /// The rise in MLX's active memory over the model's last load, or 0 while it is unloaded or before a
+    /// measured load. Introduced in InferKit 0.4.0.
+    @objc public var residentByteCount: Int { lifecycle.residentByteCount }
+
+    /// The peak of MLX's active memory during the model's last measured load, above its level before it.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var peakByteCount: Int { lifecycle.peakByteCount }
+
+    /// Loads the model when it is unloaded. Introduced in InferKit 0.4.0.
+    @objc(prepareWithError:)
+    public func prepare() throws {
+        try lifecycle.prepare()
+    }
 
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
@@ -94,13 +124,13 @@ public final class NFKMLXGenerationBackend: NSObject, NFKInferenceBackend {
     @objc(submitInferenceJobForRequest:)
     public func submitInferenceJob(for request: NFKInferenceRequest) -> NFKInferenceJob {
         let job = NFKInferenceJob()
-        let run = self.run
+        let lifecycle = self.lifecycle
         let runLock = self.runLock
         Task.detached(priority: .userInitiated) {
             runLock.withLock {
                 if job.status == .cancelled { return }
                 do {
-                    if let result = try run(request, job) {
+                    if let result = try lifecycle.withState({ try $0(request, job) }) {
                         job.finish(with: result)
                     }
                 } catch {
@@ -109,6 +139,17 @@ public final class NFKMLXGenerationBackend: NSObject, NFKInferenceBackend {
             }
         }
         return job
+    }
+}
+
+extension NFKMLXGenerationBackend: NFKMLXReloading {
+
+    var canReload: Bool { lifecycle.canReload }
+
+    func enableReload(_ build: @escaping () throws -> any NFKInferenceBackend, measurement: NFKMLXLoadMeasurement?) {
+        lifecycle.enableReload(building: build, as: NFKMLXGenerationBackend.self, measurement: measurement) {
+            try $0.lifecycle.loadedState()
+        }
     }
 }
 

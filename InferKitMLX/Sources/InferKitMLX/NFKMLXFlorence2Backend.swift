@@ -235,12 +235,8 @@ public final class NFKMLXFlorence2: NSObject {
     @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                completionHandler: @escaping (NFKMLXFlorence2Backend?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }
 
@@ -254,6 +250,7 @@ public final class NFKMLXFlorence2: NSObject {
 ///
 /// @discussion Generation follows the release's settings (three beams, no repeated 3-gram). A request
 /// may set `NFKParameterMaxTokens` and ``NFKMLXTranslationParameterKey/beamCount`` (1 decodes greedily).
+@objc(NFKMLXFlorence2Backend)
 public final class NFKMLXFlorence2Backend: NSObject, NFKInferenceBackend {
     private let holder: Holder
     private let tokenizer: NFKTokenizer

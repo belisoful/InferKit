@@ -113,10 +113,10 @@ classifier as macOS 12, so every use sits under `@available`; the zero-warning g
 unguarded call.
 
 1. `swift build` + `swift test` on the host — **0 warnings**, all tests green. Grep the log for
-   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 1237 tests
-   (2026-10-15): the Objective-C `- (void)test` methods under `Tests/` (1134) and in
-   `Examples/NFKExamples.m` (54, the `InferKitExamples` target), plus the `func test` methods in
-   `SwiftExamples/` (49).
+   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 1292 tests
+   (2026-10-15): the Objective-C `- (void)test` methods under `Tests/` (1183) and in
+   `Examples/NFKExamples.m` (57, the `InferKitExamples` target), plus the `func test` methods in
+   `SwiftExamples/` (52).
 2. `xcodebuild build` for a `generic/platform=iOS` destination (cross-platform compile), and for tvOS
    through the SDK: `-workspace InferKit.xcworkspace -scheme InferKit -sdk appletvos -arch arm64`.
    A tvOS destination does not resolve here and that is not the same as tvOS being unbuildable.
@@ -189,17 +189,17 @@ unguarded call.
    -skipPackagePluginValidation` throughout):
 
    ```
-   xcodebuild test -scheme InferKitMLXTests        …    # 2531 — the model and API suite
-   xcodebuild test -scheme InferKitMLXExamples     …    #  137 — the Swift documented snippets
-   xcodebuild test -scheme InferKitMLXObjCExamples …    #   54 — the Objective-C ones
+   xcodebuild test -scheme InferKitMLXTests        …    # 2550 — the model and API suite
+   xcodebuild test -scheme InferKitMLXExamples     …    #  139 — the Swift documented snippets
+   xcodebuild test -scheme InferKitMLXObjCExamples …    #   56 — the Objective-C ones
    ```
 
    Without the library, `swift test` must still exit 0, with the MLX-dependent tests reported as
    skipped (2026-09-08: 1192 run, 891 skipped, 301 pure-Foundation tests actually executed —
    pickle, zip, GGUF parsing, chat templates, flow schedulers, configuration readers, remaps). The
    guard is `NFKMLXGPU.metalLibraryURL`, which mirrors the loader's own search (colocated
-   `mlx.metallib`, the `mlx-swift_Cmlx.bundle` beside the main bundle, in any loaded bundle, or as a
-   framework, then `Resources/default.metallib`) and is nil exactly when the first evaluation would
+   `mlx.metallib`, then `Resources/mlx.metallib`, the `mlx-swift_Cmlx.bundle` beside the main bundle,
+   in any loaded bundle, or as a framework, then `Resources/default.metallib`) and is nil exactly when the first evaluation would
    abort. It is deliberately not a check on the build directory: a `swift test` with the library
    placed runs everything, and an xcodebuild run never skips. The convention that keeps the leg
    green: every test method that reaches MLX — constructing a module (a `Linear` is enough), seeding

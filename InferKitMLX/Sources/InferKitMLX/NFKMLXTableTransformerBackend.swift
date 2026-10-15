@@ -260,12 +260,8 @@ public final class NFKMLXTableTransformer: NSObject {
     @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                completionHandler: @escaping (NFKMLXTableTransformerBackend?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }
 }
@@ -274,6 +270,7 @@ public final class NFKMLXTableTransformer: NSObject {
 
 /// The Table Transformer inference backend: one image in, the detected table structure
 /// (`NFKOutputDetections`) out.
+@objc(NFKMLXTableTransformerBackend)
 public final class NFKMLXTableTransformerBackend: NSObject, NFKInferenceBackend {
     private let holder: Holder
     /// How the release sizes its input.

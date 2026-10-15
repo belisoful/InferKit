@@ -222,3 +222,66 @@ Runtime quantization, the release reader, the native GGUF and PyTorch checkpoint
   zip at `url`, LaMa's Lightning `best.ckpt`); the rest download from `url` as before. Their
   equivalence tests read the `IK_RAW_*` keys `fetch.py` stamps and skip when absent, like every other
   parity test.
+
+## Release download layer: progress, cancellation, status, and removal
+
+`NFKMLXReleaseDownload` (`NFKMLXMarian.swift`) and its `components:` overload
+(`NFKMLXReleaseComponents.swift`) fetch a release file by file through `NFKHFHub`; the core's notes
+("Download plans, progress, status, and removal" in `core-runtime-notes.md`) cover the object they
+report to. Added 2026-10-15, InferKit 0.4.0.
+
+- No factory has a progress variant. Every fetch already reports to the core's thread-local
+  `NFKDownload.current`, so the layer only carries the download where a factory changes thread:
+  `NFKMLXReleaseDownload.asyncValue` (generic) captures the current download on the calling thread,
+  begins an activity, makes it current on the background queue around `build`, and ends the activity
+  with `build`'s error. `NFKMLXReleaseDownload.async` is its form for a factory that delivers a backend,
+  and wraps the backend so it can reload. The 39 asynchronous peers that ran their own
+  `DispatchQueue.global(...).async { do { completionHandler(try …, nil) } catch { … } }` now call one of the two;
+  `NFKMLXDownload.backend` (the single-file factories and `NFKMLXHub`) brackets its own activity. A
+  new asynchronous peer goes through one of the two, or it drops the download.
+- The download finishes when the factory delivers its result, building included, so a download
+  covering one factory reads completed exactly when the backend arrives.
+- Sizes up front: under a current download, when a required file or every weights candidate is
+  missing from the cache, `directory(…)` lists the repository once (`planDownload(ofRepo:revision:paths: nil)`)
+  and declares the files it will fetch (`expectedPaths`: the required, the optional the listing holds,
+  the first weights candidate it holds). The shards a `*.index.json` names are declared when the index
+  is read, before their bytes, so `expectedByteCount` grows once by the shard bytes. A listing that
+  fails is ignored and the fetches report sizes as they start.
+- A cached release loads with no network (2026-10-15, at the developer's request: offline use depends
+  on it). Two lookups used to reach the server on every cached build, and both are gone:
+  - Weights: `cachedWeights` picks the first candidate whole in the cache (a shard index counts only
+    with every shard it names), in candidate order, and `fetchWeights` uses it with no request. A
+    sharded release used to ask for `model.safetensors` first on every build. With nothing cached the
+    candidates are tried in order as before. Parakeet and VoiceRestore, which kept their own candidate
+    loops, go through `firstServed`.
+  - Optional files: `fetchOptional` collects the optional files the server refused with HTTP 404
+    (`NFKDownloadErrorNotFound`, `isAbsent`) and the completion record stores them
+    (`recordCompleteDownload(ofRepo:revision:paths:absentPaths:)`). A later build skips a recorded file
+    that is not cached. A network failure is not an absence and is never recorded, so a build that ran
+    offline asks again once the network returns. `forgetRecordedAbsentPaths(ofRepo:revision:)` is the
+    forced refresh; another revision is another snapshot with its own record.
+  - A release cached before the record existed, or one whose refusals were forgotten, asks once more
+    and records them.
+- Cancellation: a cancelled fetch of an optional file or a weights candidate looks like an absent file
+  to the `try?` loops, so `checkCancelled()` runs after each optional fetch and on each weights
+  failure, and throws `NFKDownloadError(.cancelled)`.
+- Completion record: after the last file, `directory(…)` records every path it fetched or found
+  (`recordCompleteDownload(ofRepo:revision:paths:)`), so `downloadStatus(repo:revision:paths: nil)`
+  reads complete and a removal with nil paths removes the release. A release removed that way keeps
+  any file a complete catalog variant at the same repository lists.
+- Objective-C: `+[NFKMLXHub hubWithCacheDirectoryURL:]` returns the hub the factories use (the
+  default cache when nil), and
+  `+[NFKMLXHub backendForModel:variant:cacheDirectoryURL:progressHandler:completionHandler:]` downloads a
+  catalog variant through the core's `downloadModelSource:` and builds the backend registered under the
+  variant's (else the model's) registry name from the downloaded location. It fails before any transfer
+  for a missing variant, a variant without a source, or an unregistered name; the returned download is
+  then already failed.
+- Tests: `NFKMLXReleaseDownloadProgressTests` serves a release from `NFKStubReleaseProtocol` (a
+  `URLProtocol` at `http://release.test`) and evaluates no MLX: progress that only grows and reaches the
+  release's bytes with one listing request, a cached release (sharded, with a refused optional file,
+  and in component folders) that makes no request, a forgotten refusal asked for again, a cached
+  release built through `NFKFailingTransportHub` (every request fails) with no attempt, a cancel
+  part-way through
+  a shard through the asynchronous helper, the helper carrying the download, and the catalog call
+  building a registered `NFKPassthroughBackend`. The `NFKOfflineHub` release tests never make a download
+  current, so they never list.

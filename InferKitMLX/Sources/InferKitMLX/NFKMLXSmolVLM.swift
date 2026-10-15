@@ -515,12 +515,8 @@ public final class NFKMLXSmolVLM: NSObject {
     @objc(smolVLMWithRepo:revision:cacheDirectoryURL:completionHandler:)
     public static func load(repo: String, revision: String?, cacheDirectoryURL: URL?,
                             completionHandler: @escaping (NFKMLXSmolVLM?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try load(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.asyncValue(completionHandler) {
+            try load(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }
 

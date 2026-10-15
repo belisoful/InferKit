@@ -202,11 +202,7 @@ extension NFKMLXVoiceRestoreFactory {
     @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
         let hub = NFKMLXReleaseDownload.hub(cacheDirectoryURL: cacheDirectoryURL)
-        let transformer = weightFiles.lazy
-            .compactMap { try? hub.downloadRepo(repo, revision: revision, path: $0, sha256: nil) }.first
-        guard let transformer else {
-            throw NFKMLXError.unsupportedConfiguration("\(repo) serves none of \(weightFiles.joined(separator: ", "))")
-        }
+        let transformer = try NFKMLXReleaseDownload.firstServed(weightFiles, hub: hub, repo: repo, revision: revision)
         let vocoder = try hub.downloadRepo(vocoderRepo, revision: nil, path: vocoderFile, sha256: nil)
         return try backend(weightsURL: transformer, vocoderURL: vocoder, steps: 32, cfgStrength: 0.5)
     }
