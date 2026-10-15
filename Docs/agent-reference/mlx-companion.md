@@ -202,6 +202,11 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   `+backendNamed:repo:weightsPath:revision:cacheDirectoryURL:error:` downloads a model's weights from
   Hugging Face and builds the registered backend around them (fail-fast if the name is unregistered).
   `NFKHFHub` stays MLX-free in the core; this companion helper is where HF-download and MLX meet.
+  `+backendForModel:variant:cacheDirectoryURL:progressHandler:completionHandler:` is the catalog-level
+  call: it downloads a descriptor variant's source with progress and builds its registered backend, and
+  `+hubWithCacheDirectoryURL:` returns the hub the factories use, for status and removal. Progress and
+  cancellation reach every factory through the core's current `NFKDownload`; see "Release download
+  layer" in `mlx-weights-and-formats.md`.
 - `NFKMLXRandom` / `NFKMLXGPU` / `NFKMLXDevice` (`@objc`) — thin `NSObject` wrappers that expose MLX's
   global runtime knobs to Objective-C, which mlx-swift ships as a free `seed(_:)` function, a
   `GPU`/`Memory` enum, and a `Device` struct (none of which bridges to ObjC). `NFKMLXRandom.seed:` seeds

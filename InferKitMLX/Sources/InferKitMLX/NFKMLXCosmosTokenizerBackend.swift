@@ -365,13 +365,9 @@ public final class NFKMLXCosmosTokenizer: NSObject {
     public static func tokenizer(variant: NFKMLXCosmosTokenizerVariant, repo: String, weightsPath: String,
                                  revision: String?, cacheDirectoryURL: URL?,
                                  completionHandler: @escaping (NFKMLXCosmosTokenizer?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try tokenizer(variant: variant, repo: repo, weightsPath: weightsPath,
-                                                revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try tokenizer(variant: variant, repo: repo, weightsPath: weightsPath,
+                          revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }
 
@@ -396,14 +392,10 @@ public final class NFKMLXCosmosTokenizer: NSObject {
     public static func tokenizer(variant: NFKMLXCosmosTokenizerVariant, repo: String, encoderWeightsPath: String,
                                  decoderWeightsPath: String, revision: String?, cacheDirectoryURL: URL?,
                                  completionHandler: @escaping (NFKMLXCosmosTokenizer?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try tokenizer(variant: variant, repo: repo, encoderWeightsPath: encoderWeightsPath,
-                                                decoderWeightsPath: decoderWeightsPath, revision: revision,
-                                                cacheDirectoryURL: cacheDirectoryURL), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try tokenizer(variant: variant, repo: repo, encoderWeightsPath: encoderWeightsPath,
+                          decoderWeightsPath: decoderWeightsPath, revision: revision,
+                          cacheDirectoryURL: cacheDirectoryURL)
         }
     }
 

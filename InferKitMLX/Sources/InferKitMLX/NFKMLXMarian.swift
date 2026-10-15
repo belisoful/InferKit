@@ -217,6 +217,13 @@ public final class NFKMLXMarian: NSObject {
 }
 
 /// Fetches the files of a Hugging Face release into the hub cache and returns their directory.
+///
+/// Every fetch reports to the core's current `NFKDownload` and stops when it is cancelled: the hub's
+/// own downloads do, and this layer adds what only it knows. Under a current download, a release
+/// with a file to fetch lists the repository once, so the files' sizes count toward the download's
+/// expected bytes before they arrive; a shard index adds its shards when it is read. A completed
+/// release is recorded in its snapshot, so `NFKHFHub.downloadStatus(repo:revision:paths: nil)`
+/// reads it as complete and a removal of the snapshot knows its files.
 enum NFKMLXReleaseDownload {
     private static let overrideLock = NSLock()
     nonisolated(unsafe) private static var overrideHub: NFKHFHub?
@@ -242,6 +249,45 @@ enum NFKMLXReleaseDownload {
         return overrideHub ?? NFKHFHub(cacheDirectoryURL: cacheDirectoryURL ?? NFKHFHub.defaultCacheDirectoryURL())
     }
 
+    /// Throws the cancellation error when the current download is cancelled. A cancelled fetch of an
+    /// optional file or a weights candidate reads as an absent file, so the loops check here.
+    static func checkCancelled() throws {
+        if NFKDownload.current?.isCancelled == true {
+            throw NFKDownloadError(.cancelled)
+        }
+    }
+
+    /// Whether a release's required files or every one of its weights entries is missing from the
+    /// cache.
+    static func needsFetch(hub: NFKHFHub, repo: String, revision: String?, required: [String],
+                           weights: [String]) -> Bool {
+        let cached = { (path: String) in hub.isCachedRepo(repo, revision: revision, path: path) }
+        return !required.allSatisfy(cached) || (!weights.isEmpty && !weights.contains(where: cached))
+    }
+
+    /// The repository's listing, fetched once for a current download when the release has a file to
+    /// fetch; nil without a current download, with nothing to fetch, or when the listing fails (the
+    /// fetches then report each file's size as it arrives).
+    static func listing(hub: NFKHFHub, repo: String, revision: String?, needsFetch: Bool) -> NFKDownloadPlan? {
+        guard NFKDownload.current != nil, needsFetch else { return nil }
+        return try? hub.planDownload(ofRepo: repo, revision: revision, paths: nil)
+    }
+
+    /// Declares the listed files among `paths` to the current download.
+    static func expect(_ paths: [String], from listing: NFKDownloadPlan?) {
+        guard let listing, let download = NFKDownload.current else { return }
+        download.add(listing.planRestricted(toPaths: paths))
+    }
+
+    /// The release's files that the listing holds: the required, the optional it serves, and the
+    /// first weights entry it serves.
+    static func expectedPaths(in listing: NFKDownloadPlan?, required: [String], optional: [String],
+                              weights: [String]) -> [String] {
+        guard let listing else { return [] }
+        let served = { (path: String) in listing.file(atPath: path) != nil }
+        return required + optional.filter(served) + (weights.first(where: served).map { [$0] } ?? [])
+    }
+
     /// Fetches a release's required files, whichever optional files it serves, and the first weights
     /// entry it serves (with the shards a `*.index.json` entry names), and returns the snapshot root:
     /// `<cache>/<repo>/<revision>`, whatever folders the files sit in.
@@ -251,8 +297,14 @@ enum NFKMLXReleaseDownload {
     static func directory(repo: String, revision: String?, cacheDirectoryURL: URL?,
                           required: [String], optional: [String], weights: [String]) throws -> URL {
         let hub = hub(cacheDirectoryURL: cacheDirectoryURL)
+        let repoListing = listing(hub: hub, repo: repo, revision: revision,
+                              needsFetch: needsFetch(hub: hub, repo: repo, revision: revision,
+                                                     required: required, weights: weights))
+        expect(expectedPaths(in: repoListing, required: required, optional: optional, weights: weights), from: repoListing)
         var root: URL?
+        var fetched = [String]()
         func note(_ url: URL, _ path: String) {
+            fetched.append(path)
             if root == nil {
                 root = path.split(separator: "/").reduce(url) { folder, _ in folder.deletingLastPathComponent() }
             }
@@ -264,6 +316,7 @@ enum NFKMLXReleaseDownload {
             if let url = try? hub.downloadRepo(repo, revision: revision, path: file, sha256: nil) {
                 note(url, file)
             }
+            try checkCancelled()
         }
         var failures = [String]()
         var weightsFound = weights.isEmpty
@@ -274,6 +327,7 @@ enum NFKMLXReleaseDownload {
                     ? try cachedURL(hub.localURL(forRepo: repo, revision: revision, path: file), file)
                     : try hub.downloadRepo(repo, revision: revision, path: file, sha256: nil)
             } catch {
+                try checkCancelled()
                 failures.append("\(file): \(error.localizedDescription)")
                 continue
             }
@@ -287,9 +341,10 @@ enum NFKMLXReleaseDownload {
                     continue
                 }
                 let folder = (file as NSString).deletingLastPathComponent
-                for shard in Set(weightMap.values).sorted() {
-                    _ = try hub.downloadRepo(repo, revision: revision,
-                                             path: folder.isEmpty ? shard : "\(folder)/\(shard)", sha256: nil)
+                let shards = Set(weightMap.values).sorted().map { folder.isEmpty ? $0 : "\(folder)/\($0)" }
+                expect(shards, from: repoListing)
+                for shard in shards {
+                    note(try hub.downloadRepo(repo, revision: revision, path: shard, sha256: nil), shard)
                 }
             }
             weightsFound = true
@@ -299,6 +354,7 @@ enum NFKMLXReleaseDownload {
             throw NFKMLXError.unsupportedConfiguration("\(repo) serves none of its weights: \(failures.joined(separator: "; "))")
         }
         guard let root else { throw NFKMLXError.unsupportedConfiguration("\(repo): the release names no files") }
+        try? hub.recordCompleteDownload(ofRepo: repo, revision: revision, paths: fetched)
         return root
     }
 
@@ -308,12 +364,23 @@ enum NFKMLXReleaseDownload {
         return url
     }
 
-    static func async(_ completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void,
-                      _ build: @escaping () throws -> any NFKInferenceBackend) {
+    /// Runs `build` on a background queue and delivers its result to `completionHandler` there. The
+    /// download current on the calling thread is carried to the queue and made current around
+    /// `build`, with one activity spanning it, so the download observes the fetches and finishes when
+    /// `build` returns.
+    static func async<T>(_ completionHandler: @escaping (T?, Error?) -> Void, _ build: @escaping () throws -> T) {
+        let download = NFKDownload.current
+        download?.beginActivity()
         DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try build(), nil)
-            } catch {
+            download?.becomeCurrent()
+            let result = Result { try build() }
+            download?.resignCurrent()
+            switch result {
+            case .success(let value):
+                download?.endActivity(error: nil)
+                completionHandler(value, nil)
+            case .failure(let error):
+                download?.endActivity(error: error)
                 completionHandler(nil, error)
             }
         }

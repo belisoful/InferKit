@@ -40,6 +40,35 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### Downloads are planned, observed, cancelled, and removed
+
+- `NFKHFHub` plans a download before it starts: `planDownloadOfRepo:revision:paths:error:` (paths may
+  be globs), `planDownloadOfURL:sha256:error:`, and `planDownloadOfModelSource:error:` return an
+  `NFKDownloadPlan` with each file's size, its SHA-256 where the repository records one, whether the
+  cache holds it, and the bytes still to fetch. Each has a `…completionHandler:` form.
+- `downloadWithPlan:progressHandler:completionHandler:`, `downloadRepo:revision:paths:…`, and
+  `downloadModelSource:…` return an `NFKDownload`: bytes received and expected per file and overall,
+  the current file, the transfer rate, the time remaining, the state, an `NSProgress`, and `cancel`.
+  A cancelled download leaves no partial file in the cache, a dropped transfer resumes with an HTTP
+  Range request, and a plan larger than `cacheSizeLimit` or the volume's free space is refused before
+  any transfer.
+- A download made current on a thread (`performAsCurrent:`) collects every hub download that thread
+  makes, so code that knows nothing of it reports its progress and stops when it is cancelled.
+- A catalog variant's `NFKModelSource` downloads into the hub cache with one call. A source that needs
+  a converter fails with `NFKDownloadErrorRequiresConversion`; a `system` or `none` source completes
+  at once. A URL source caches under `<cache>/@url/<host>/<digest>/`.
+- `downloadStatusForModelSource:` (and the repository and URL forms) reads complete, partial, or absent
+  with the bytes on disk, from the cache alone.
+- `removalPlanForModelSource:error:` lists the files a removal deletes and the ones it keeps, each with
+  its reason: a file another catalog model whose download is complete uses, or a link target something
+  else needs. `removeFilesInPlan:error:` and its asynchronous form delete them all or none, return the
+  bytes freed, keep a pin, and refuse with `NFKDownloadErrorInUse` while a download writes into the
+  snapshot.
+- A gated repository without an accepted token fails with `NFKDownloadErrorAuthenticationRequired`.
+  Download failures are in the new `NFKDownloadErrorDomain`; a checksum mismatch, which was
+  `kNFKError_InferenceBackendFailure`, is now `NFKDownloadErrorChecksumMismatch`.
+- The access token goes only to the hub's own host.
+
 #### A catalog of the models a process can run
 
 - `NFKModelCatalog` lists `NFKModelDescriptor`s: each model's engine and how it is built (a registry
@@ -680,6 +709,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### Downloads report progress and cancel
+
+- Every download factory reports to the core's current `NFKDownload` and stops when it is cancelled,
+  with no new selector: make a download current around an asynchronous factory and it observes the
+  whole release, its sizes known before the bytes arrive.
+- A release a factory fetched is recorded complete, so the core hub's status and removal cover it.
+  `+[NFKMLXHub hubWithCacheDirectoryURL:]` returns the hub the factories use.
+- `+[NFKMLXHub backendForModel:variant:cacheDirectoryURL:progressHandler:completionHandler:]` downloads
+  a catalog model's variant and builds its registered backend, returning the download.
 
 #### Every model describes itself in the catalog
 

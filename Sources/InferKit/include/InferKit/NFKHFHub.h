@@ -7,8 +7,13 @@
 #define NFKHFHub_h
 
 #import <Foundation/Foundation.h>
+#import <InferKit/NFKDownload.h>
+#import <InferKit/NFKDownloadPlan.h>
 
 NS_ASSUME_NONNULL_BEGIN
+
+@class NFKModelCatalog;
+@class NFKModelSource;
 
 /*! The default revision resolved when none is given: "main". */
 extern NSString * const NFKHFHubDefaultRevision;
@@ -35,7 +40,9 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 				repository returns HTTP 401.
 
 				downloadRepo:revision:path:sha256:error: blocks until the file is ready, so a
-				caller runs it off the main thread.
+				caller runs it off the main thread. The NFKDownloads category plans a download
+				before it starts, runs it as an observable and cancellable NFKDownload, reports
+				whether a download is in the cache, and removes one.
 
 				The cache is managed in snapshots, one per repository revision
 				(<cache>/<repo>/<revision>). A snapshot the hub downloads into is owned by the hub,
@@ -80,6 +87,14 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 				Introduced in InferKit 0.4.0.
 */
 @property (class, nonatomic, copy, nullable) NSString *defaultAccessToken;
+
+/*!
+	@property   modelCatalog
+	@abstract   The catalog a removal plan consults for other models that use the same files.
+				Defaults to NFKModelCatalog.sharedCatalog.
+	@discussion Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, strong, null_resettable) NFKModelCatalog *modelCatalog;
 
 + (instancetype)hubWithCacheDirectoryURL:(nullable NSURL *)cacheDirectoryURL;
 
@@ -261,10 +276,224 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 /*!
 	@method     fetchURL:toFileURL:error:
 	@abstract   Downloads remoteURL to destinationURL synchronously; YES on success.
-	@discussion The transport seam. The default downloads on the session and moves the result
-				into place. A test or alternative transport overrides this.
+	@discussion The transport seam. The default streams the response into destinationURL over a
+				session made from session's configuration, reports the bytes to the current
+				NFKDownload, stops when that download is cancelled, and resumes a dropped transfer
+				with an HTTP Range request. It removes destinationURL when it fails. A test or
+				alternative transport overrides this.
 */
 - (BOOL)fetchURL:(NSURL *)remoteURL toFileURL:(NSURL *)destinationURL error:(NSError * _Nullable *)outError;
+
+/*!
+	@method     fetchMetadataFromURL:HTTPMethod:response:error:
+	@abstract   Sends a metadata request (the repository listing, a HEAD request for a URL) and returns
+				the body; nil with an error when the request fails.
+	@discussion The transport seam of download plans. The default sends the request on session with
+				the access token when the URL is on endpointURL's host, and returns the body and the
+				response whatever the status. A test or alternative transport overrides this.
+				Introduced in InferKit 0.4.0.
+*/
+- (nullable NSData *)fetchMetadataFromURL:(NSURL *)URL
+							   HTTPMethod:(NSString *)method
+								 response:(NSHTTPURLResponse * _Nullable * _Nullable)outResponse
+									error:(NSError * _Nullable *)outError;
+
+@end
+
+/*!
+	@category   NFKHFHub (NFKDownloads)
+	@abstract   Download plans, observable downloads, cache status, and removal.
+	@discussion The sources a hub plans and downloads:
+				- A Hugging Face repository at a revision. Its listing comes from
+				  <endpoint>/api/models/<repo>/tree/<revision>?recursive=1, which gives each file's
+				  size and, for a Large File Storage file, its SHA-256. A path in a file list may be a
+				  glob (fnmatch, where * also matches /).
+				- A URL. Its size comes from a HEAD request. The file caches at
+				  <cache>/@url/<host>/<digest>/<file name>, where digest is the first 16 hexadecimal
+				  digits of the URL's SHA-256. @ cannot begin a Hugging Face name, so the folder
+				  never meets a repository's.
+				- A catalog NFKModelSource: kind huggingface or url as above; kind system or none
+				  holds no files. A source that requires conversion is refused with
+				  NFKDownloadErrorRequiresConversion.
+
+				The access token goes only to endpointURL's host. A gated or private repository
+				without an accepted token fails with NFKDownloadErrorAuthenticationRequired.
+
+				A removal deletes downloaded files only, all of them or none: it moves the files out
+				of the snapshot first and deletes them once every move succeeded. It removes a
+				snapshot or folder it leaves empty, keeps a pin (.inferkit-keep), and refuses with
+				NFKDownloadErrorInUse while an NFKDownload in this process downloads into the
+				snapshot. Introduced in InferKit 0.4.0.
+*/
+@interface NFKHFHub (NFKDownloads)
+
+#pragma mark Plans
+
+/*!
+	@method     planDownloadOfRepo:revision:paths:error:
+	@abstract   What a download of a repository's files would fetch; nil with an error when the
+				listing fails.
+	@discussion paths names the files, each a path or a glob; nil plans every file. A path that is
+				not a glob and that the repository does not hold fails with NFKDownloadErrorNotFound.
+				Blocks on the network. A nil revision is "main".
+*/
+- (nullable NFKDownloadPlan *)planDownloadOfRepo:(NSString *)repo
+										revision:(nullable NSString *)revision
+										   paths:(nullable NSArray<NSString *> *)paths
+										   error:(NSError * _Nullable *)outError;
+
+/*! The asynchronous form of planDownloadOfRepo:revision:paths:error:. The handler runs on a
+	background queue. */
+- (void)planDownloadOfRepo:(NSString *)repo
+				  revision:(nullable NSString *)revision
+					 paths:(nullable NSArray<NSString *> *)paths
+		 completionHandler:(void (^ NS_SWIFT_SENDABLE)(NFKDownloadPlan * _Nullable plan, NSError * _Nullable error))completionHandler;
+
+/*!
+	@method     planDownloadOfURL:sha256:error:
+	@abstract   What a download of one URL would fetch; nil with an error when the HEAD request
+				fails.
+	@discussion A server that refuses HEAD leaves the size unknown and the plan stands. Blocks on the
+				network.
+*/
+- (nullable NFKDownloadPlan *)planDownloadOfURL:(NSURL *)URL
+										 sha256:(nullable NSString *)expectedSHA256
+										  error:(NSError * _Nullable *)outError NS_SWIFT_NAME(planDownload(url:sha256:));
+
+/*! The asynchronous form of planDownloadOfURL:sha256:error:. The handler runs on a background
+	queue. */
+- (void)planDownloadOfURL:(NSURL *)URL
+				   sha256:(nullable NSString *)expectedSHA256
+		completionHandler:(void (^ NS_SWIFT_SENDABLE)(NFKDownloadPlan * _Nullable plan, NSError * _Nullable error))completionHandler NS_SWIFT_NAME(planDownload(url:sha256:completionHandler:));
+
+/*!
+	@method     planDownloadOfModelSource:error:
+	@abstract   What a download of a catalog model source would fetch; nil with an error when the
+				source cannot be downloaded or the request fails.
+	@discussion A Hugging Face source that lists files plans those files: a required one the
+				repository lacks fails with NFKDownloadErrorNotFound, an optional one is left out. A
+				source that lists none plans the whole repository. A listed size or SHA-256 fills
+				in what the listing lacks. Blocks on the network.
+*/
+- (nullable NFKDownloadPlan *)planDownloadOfModelSource:(NFKModelSource *)source
+												  error:(NSError * _Nullable *)outError NS_SWIFT_NAME(planDownload(source:));
+
+/*! The asynchronous form of planDownloadOfModelSource:error:. The handler runs on a background
+	queue. */
+- (void)planDownloadOfModelSource:(NFKModelSource *)source
+				completionHandler:(void (^ NS_SWIFT_SENDABLE)(NFKDownloadPlan * _Nullable plan, NSError * _Nullable error))completionHandler NS_SWIFT_NAME(planDownload(source:completionHandler:));
+
+#pragma mark Downloads
+
+/*!
+	@method     downloadWithPlan:progressHandler:completionHandler:
+	@abstract   Starts downloading a plan's files into the cache and returns the running download.
+	@discussion Files already whole in the cache are not fetched. Before the first transfer the
+				download fails with NFKDownloadErrorExceedsCacheSizeLimit when the plan's total is
+				larger than a non-negative cacheSizeLimit, and with
+				NFKDownloadErrorInsufficientStorage when the remaining bytes exceed the volume's free
+				space. Each file with a SHA-256 is verified. The completion handler runs on a
+				background queue after the last progress report, with the download's localURL or its
+				error.
+*/
+- (NFKDownload *)downloadWithPlan:(NFKDownloadPlan *)plan
+				  progressHandler:(nullable NFKDownloadProgressHandler)progressHandler
+				completionHandler:(nullable void (^ NS_SWIFT_SENDABLE)(NSURL * _Nullable localURL, NSError * _Nullable error))completionHandler NS_SWIFT_NAME(download(plan:progressHandler:completionHandler:));
+
+/*! Plans a download of a repository's files (planDownloadOfRepo:revision:paths:error:) and runs it
+	as downloadWithPlan:progressHandler:completionHandler: does. The download's state is planning
+	until the listing arrives. */
+- (NFKDownload *)downloadRepo:(NSString *)repo
+					 revision:(nullable NSString *)revision
+						paths:(nullable NSArray<NSString *> *)paths
+			  progressHandler:(nullable NFKDownloadProgressHandler)progressHandler
+			completionHandler:(nullable void (^ NS_SWIFT_SENDABLE)(NSURL * _Nullable localURL, NSError * _Nullable error))completionHandler;
+
+/*!
+	@method     downloadModelSource:progressHandler:completionHandler:
+	@abstract   Plans and downloads a catalog model source into the cache, the one call an app makes
+				for any catalog model.
+	@discussion Pass a variant's source (NFKModelVariant.source). A source with no files completes at
+				once with a nil localURL. A source that requires conversion fails with
+				NFKDownloadErrorRequiresConversion.
+*/
+- (NFKDownload *)downloadModelSource:(NFKModelSource *)source
+					 progressHandler:(nullable NFKDownloadProgressHandler)progressHandler
+				   completionHandler:(nullable void (^ NS_SWIFT_SENDABLE)(NSURL * _Nullable localURL, NSError * _Nullable error))completionHandler NS_SWIFT_NAME(download(source:progressHandler:completionHandler:));
+
+/*! The cache location of a URL download, <cache>/@url/<host>/<digest>/<file name>; nil without a
+	cache folder. fileName overrides the URL's last path component. */
+- (nullable NSURL *)localURLForURL:(NSURL *)URL fileName:(nullable NSString *)fileName;
+
+#pragma mark Status
+
+/*!
+	@method     downloadStatusForRepo:revision:paths:
+	@abstract   Whether a repository's files are in the cache, read with no network.
+	@discussion paths names the files, each a path or a glob matched against the cache. With paths
+				nil the status is complete when a whole-repository download or a recorded release
+				(recordCompleteDownloadOfRepo:revision:paths:error:) left every file it named in place,
+				partial when any other file is there, and absent otherwise.
+*/
+- (NFKDownloadStatus *)downloadStatusForRepo:(NSString *)repo
+									revision:(nullable NSString *)revision
+									   paths:(nullable NSArray<NSString *> *)paths NS_SWIFT_NAME(downloadStatus(repo:revision:paths:));
+
+/*! Whether a URL's file is in the cache: complete or absent. */
+- (NFKDownloadStatus *)downloadStatusForURL:(NSURL *)URL NS_SWIFT_NAME(downloadStatus(url:));
+
+/*! Whether a catalog model source's files are in the cache. Optional files count toward byteCount
+	and not toward completeness. A source of kind system or none is complete with no bytes. */
+- (NFKDownloadStatus *)downloadStatusForModelSource:(NFKModelSource *)source NS_SWIFT_NAME(downloadStatus(source:));
+
+/*!
+	@method     recordCompleteDownloadOfRepo:revision:paths:error:
+	@abstract   Records that the snapshot holds a complete download made of paths; YES on success.
+	@discussion For a layer that fetches a release file by file, such as the InferKitMLX release
+				downloads. downloadStatusForRepo:revision:paths: with nil paths reads the record.
+				Records accumulate: the snapshot is complete while every recorded path is present.
+*/
+- (BOOL)recordCompleteDownloadOfRepo:(NSString *)repo
+							revision:(nullable NSString *)revision
+							   paths:(NSArray<NSString *> *)paths
+							   error:(NSError * _Nullable *)outError;
+
+#pragma mark Removal
+
+/*!
+	@method     removalPlanForRepo:revision:paths:error:
+	@abstract   The cached files a removal of a repository's download deletes and keeps; nil with an
+				error without a cache folder.
+	@discussion paths names the files, each a path or a glob matched against the cache; nil names every
+				file in the snapshot. Reads the cache only.
+*/
+- (nullable NFKRemovalPlan *)removalPlanForRepo:(NSString *)repo
+									   revision:(nullable NSString *)revision
+										  paths:(nullable NSArray<NSString *> *)paths
+										  error:(NSError * _Nullable *)outError NS_SWIFT_NAME(removalPlan(repo:revision:paths:));
+
+/*! The cached file a removal of a URL's download deletes; nil with an error without a cache folder. */
+- (nullable NFKRemovalPlan *)removalPlanForURL:(NSURL *)URL error:(NSError * _Nullable *)outError NS_SWIFT_NAME(removalPlan(url:));
+
+/*! The cached files a removal of a catalog model source's download deletes and keeps. A source that
+	lists files names those; one that lists none names the whole snapshot. A source of kind system or
+	none yields an empty plan. */
+- (nullable NFKRemovalPlan *)removalPlanForModelSource:(NFKModelSource *)source
+												 error:(NSError * _Nullable *)outError NS_SWIFT_NAME(removalPlan(source:));
+
+/*!
+	@method     removeFilesInPlan:error:
+	@abstract   Deletes a removal plan's files and returns the removal as carried out; nil with an
+				error when nothing was removed.
+	@discussion Plans again first, so a file that became shared since the plan was made is kept. The
+				result's freedByteCount is the bytes freed. Refuses with NFKDownloadErrorInUse while an
+				NFKDownload in this process downloads into the snapshot.
+*/
+- (nullable NFKRemovalPlan *)removeFilesInPlan:(NFKRemovalPlan *)plan error:(NSError * _Nullable *)outError;
+
+/*! The asynchronous form of removeFilesInPlan:error:. The handler runs on a background queue. */
+- (void)removeFilesInPlan:(NFKRemovalPlan *)plan
+		completionHandler:(void (^ NS_SWIFT_SENDABLE)(NFKRemovalPlan * _Nullable removal, NSError * _Nullable error))completionHandler;
 
 @end
 

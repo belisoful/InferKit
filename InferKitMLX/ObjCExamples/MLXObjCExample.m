@@ -431,6 +431,38 @@
 	XCTAssertNotNil(error);
 }
 
+- (void)testACatalogDownloadReportsThroughADownload
+{
+	// The catalog call downloads a variant with progress then builds its registered model; a model
+	// with no registered name fails before any transfer, so this needs no network.
+	NFKModelSource *source = [NFKModelSource huggingFaceSourceWithRepository:@"org/model" revision:nil
+																	  layout:NFKModelSourceLayoutDirectory];
+	NSDictionary *dictionary = @{ @"id": @"example.model", @"family": @"example", @"engine": @"mlx",
+								  @"registryName": @"not-registered",
+								  @"variants": @[ @{ @"id": @"default", @"isDefault": @YES,
+													 @"source": source.dictionaryRepresentation } ] };
+	NFKModelDescriptor *model = [NFKModelDescriptor descriptorWithDictionary:dictionary error:NULL];
+	XCTestExpectation *done = [self expectationWithDescription:@"completion handler"];
+	NFKDownload *download = [NFKMLXHub backendForModel:model variant:nil cacheDirectoryURL:nil
+									   progressHandler:^(NFKDownloadProgress *progress) { /* a progress bar */ }
+									 completionHandler:^(id<NFKInferenceBackend> backend, NSError *error) {
+		XCTAssertNil(backend);
+		XCTAssertNotNil(error);
+		[done fulfill];
+	}];
+	[self waitForExpectations:@[ done ] timeout:5];
+	XCTAssertEqual(download.state, NFKDownloadStateFailed);
+
+	// Any download factory reports to a download made current around it.
+	NFKDownload *observing = [NFKDownload downloadWithProgressHandler:nil];
+	[observing performAsCurrent:^{
+		XCTAssertEqual(NFKDownload.currentDownload, observing);
+	}];
+	NFKHFHub *hub = [NFKMLXHub hubWithCacheDirectoryURL:nil];     // the hub the factories use
+	XCTAssertEqual([hub downloadStatusForRepo:@"org/never-downloaded" revision:nil paths:nil].presence,
+				   NFKDownloadPresenceAbsent);
+}
+
 - (void)testObjectiveCReachesTheMLXRuntimeKnobs
 {
 	// The knobs reach MLX's runtime, which needs a Metal library MLX can find.

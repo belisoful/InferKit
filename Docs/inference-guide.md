@@ -18,6 +18,7 @@ the toolkit is going. [Examples](examples.md) has a compiled snippet for every b
 - [Backends at a glance](#backends-at-a-glance)
 - [Running a language model locally (Core ML)](#running-a-language-model-locally-core-ml)
 - [Running a language model locally (MLX)](#running-a-language-model-locally-mlx)
+- [Downloading models](#downloading-models)
 - [Apple's Foundation Models](#apples-foundation-models)
   - [Availability](#availability)
   - [Choosing the model](#choosing-the-model)
@@ -319,6 +320,37 @@ model's linear layers to 4- or 8-bit for a release that would not otherwise fit.
 
 The [MLX language section of the examples](examples.md#local-on-device-through-mlx-nfkmlxlanguagebackend-swift)
 shows each option in use.
+
+## Downloading models
+
+Weights download at runtime into the `NFKHFHub` cache, `<cache>/<repo>/<revision>/<path>`. A file
+reaches its place only whole, so an interrupted download leaves no half-written weights behind. Three
+calls cover what an app shows for a model:
+
+- Plan → `planDownloadOfRepo:revision:paths:error:` (or `…OfURL:`, `…OfModelSource:`) lists what a
+  download would fetch, each file's size and SHA-256, and the bytes the cache lacks. A gated
+  repository without an accepted access token fails with `NFKDownloadErrorAuthenticationRequired`.
+- Download → `downloadWithPlan:progressHandler:completionHandler:` (or `downloadModelSource:…` for a
+  catalog variant) returns an `NFKDownload`: progress overall and per file, the transfer rate, an
+  `NSProgress`, and `cancel`.
+- Status and removal → `downloadStatusForModelSource:` reads complete, partial, or absent with the
+  bytes on disk, and `removalPlanForModelSource:error:` then `removeFilesInPlan:error:` delete the
+  downloaded files, keeping any another downloaded model uses.
+
+<!-- objc-check: given NFKModelDescriptor *model = nil; -->
+```objc
+NFKHFHub *hub = [NFKHFHub hubWithCacheDirectoryURL:NFKHFHub.defaultCacheDirectoryURL];
+NFKModelSource *source = model.defaultVariant.source;
+NFKDownload *download = [hub downloadModelSource:source
+                                 progressHandler:^(NFKDownloadProgress *progress) { /* a progress bar */ }
+                               completionHandler:^(NSURL *localURL, NSError *error) { /* background queue */ }];
+```
+
+The InferKitMLX download factories report through the same object: a download made current around a
+factory's `…completionHandler:` call observes the whole release and cancels it, and
+`+[NFKMLXHub backendForModel:variant:cacheDirectoryURL:progressHandler:completionHandler:]` downloads
+and builds a catalog model in one call. The [examples](examples.md#downloading-with-progress-then-removing-nfkdownload)
+show each step.
 
 ## Apple's Foundation Models
 

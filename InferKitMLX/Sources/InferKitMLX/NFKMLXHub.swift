@@ -74,6 +74,69 @@ public final class NFKMLXHub: NSObject {
                                build: { try NFKMLXModelRegistry.backend(named: modelName, weightsURL: $0) },
                                completionHandler: completionHandler)
     }
+
+    /// The hub the download factories use for `cacheDirectoryURL`: one over that folder, or over
+    /// `NFKHFHub.defaultCacheDirectoryURL()` when nil. Its plans, statuses, and removals cover what the
+    /// factories downloaded. A release a factory fetched is recorded complete in its snapshot, so
+    /// `downloadStatus(repo:revision:paths: nil)` reads it, and
+    /// `removalPlan(repo:revision:paths: nil)` removes it.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(hubWithCacheDirectoryURL:)
+    public static func hub(cacheDirectoryURL: URL?) -> NFKHFHub {
+        NFKMLXReleaseDownload.hub(cacheDirectoryURL: cacheDirectoryURL)
+    }
+
+    /// Downloads a catalog model's variant into the cache and builds the MLX backend registered under
+    /// the variant's registry name (the descriptor's when the variant names none), passing the
+    /// downloaded location: the file of a single-file source, or the snapshot folder of a release.
+    ///
+    /// @discussion The returned download reports progress and cancels. A nil `variantIdentifier`
+    /// takes the default variant. The call fails at once, before any transfer, when the variant does
+    /// not exist, names no registered model, or has no source. A source that requires conversion fails
+    /// with `NFKDownloadErrorRequiresConversion`. `completionHandler` runs on a background queue after
+    /// the download's last progress report.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(backendForModel:variant:cacheDirectoryURL:progressHandler:completionHandler:)
+    @discardableResult
+    public static func backend(for model: NFKModelDescriptor, variant variantIdentifier: String?,
+                               cacheDirectoryURL: URL?, progressHandler: NFKDownloadProgressHandler?,
+                               completionHandler: @escaping @Sendable ((any NFKInferenceBackend)?, Error?) -> Void) -> NFKDownload {
+        let variant = variantIdentifier.map { identifier in model.variants.first { $0.identifier == identifier } }
+            ?? model.variants.first(where: \.isDefault) ?? model.variants.first
+        let registryName = variant?.registryName ?? model.registryName
+        let refusal: String?
+        if variant == nil {
+            refusal = "\(model.identifier) has no variant \(variantIdentifier ?? "")"
+        } else if variant?.source == nil {
+            refusal = "\(model.identifier) (\(variant?.identifier ?? "")) has no source to download"
+        } else if registryName.map(NFKMLXModelRegistry.isModelRegistered) != true {
+            refusal = "no MLX model is registered under '\(registryName ?? model.identifier)'"
+        } else {
+            refusal = nil
+        }
+        guard let variant, let source = variant.source, let registryName, refusal == nil else {
+            let download = NFKDownload(progressHandler: progressHandler)
+            let error = NSError(domain: NFKInferenceErrorDomain, code: NFKInferenceError.error_InferenceNotReady.rawValue,
+                                userInfo: [NSLocalizedDescriptionKey: refusal ?? "the model cannot be downloaded"])
+            download.beginActivity()
+            download.endActivity(error: error)
+            DispatchQueue.global(qos: .userInitiated).async { completionHandler(nil, error) }
+            return download
+        }
+        return hub(cacheDirectoryURL: cacheDirectoryURL).download(source: source, progressHandler: progressHandler) { url, error in
+            if let error {
+                completionHandler(nil, error)
+                return
+            }
+            do {
+                completionHandler(try NFKMLXModelRegistry.backend(named: registryName, weightsURL: url), nil)
+            } catch {
+                completionHandler(nil, error)
+            }
+        }
+    }
 }
 
 /// Shared "download then build" plumbing over the core `NFKHFHub`, used by `NFKMLXHub` and by the
@@ -90,28 +153,35 @@ enum NFKMLXDownload {
 
     /// Asynchronous "download then build": fetches `weightsPath` on a background queue over the core's
     /// async `NFKHFHub` download, then calls `build` with the local URL and delivers the backend (or the
-    /// error) to `completionHandler` on that queue. Shared by `NFKMLXHub` and the per-model
+    /// error) to `completionHandler` on that queue. The download current on the calling thread observes
+    /// the fetch and finishes when the backend is delivered. Shared by `NFKMLXHub` and the per-model
     /// `backendWithRepo:…completionHandler:` / `backendWithVariant:repo:…completionHandler:` factories so
     /// the async plumbing lives in one place.
     static func backend(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?,
                         build: @escaping (URL) throws -> any NFKInferenceBackend,
                         completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
         let hub = NFKHFHub(cacheDirectoryURL: cacheDirectoryURL ?? NFKHFHub.defaultCacheDirectoryURL())
+        let download = NFKDownload.current
+        download?.beginActivity()
+        let finish = { (backend: (any NFKInferenceBackend)?, error: Error?) in
+            download?.endActivity(error: error)
+            completionHandler(backend, error)
+        }
         hub.downloadRepo(repo, revision: revision, path: weightsPath, sha256: nil) { url, error in
             if let error {
-                completionHandler(nil, error)
+                finish(nil, error)
                 return
             }
             guard let url else {
-                completionHandler(nil, NSError(domain: NFKInferenceErrorDomain,
+                finish(nil, NSError(domain: NFKInferenceErrorDomain,
                     code: NFKInferenceError.error_InferenceNotReady.rawValue,
                     userInfo: [NSLocalizedDescriptionKey: "the download returned no file URL"]))
                 return
             }
             do {
-                completionHandler(try build(url), nil)
+                finish(try build(url), nil)
             } catch {
-                completionHandler(nil, error)
+                finish(nil, error)
             }
         }
     }

@@ -160,6 +160,49 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(hub.cacheSize(), 0)
     }
 
+    // A URL source whose file is on this machine stands in for a Hugging Face repository, so the
+    // example runs without a network.
+    func testExampleDownloadingWithProgressThenRemoving() async throws {
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("NFKSwiftExamplesDownloads-\(UUID().uuidString)")
+        let cache = scratch.appendingPathComponent("cache")
+        let release = scratch.appendingPathComponent("model.bin")
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        try Data(count: 256 * 1024).write(to: release)
+        let source = NFKModelSource(kind: NFKModelSourceKindURL, repository: nil, revision: nil, url: release,
+                                    layout: NFKModelSourceLayoutFile, files: nil, requiresConversion: false,
+                                    extensions: nil)
+        let hub = NFKHFHub(cacheDirectoryURL: cache)
+
+        // What would this download, and how large?
+        let plan = try await hub.planDownload(source: source)
+        XCTAssertEqual(plan.remainingByteCount, 256 * 1024)
+
+        // Download it with progress; `download.cancel()` stops it and leaves no partial file.
+        let localURL: URL? = try await withCheckedThrowingContinuation { continuation in
+            hub.download(plan: plan, progressHandler: { progress in
+                _ = progress.fractionCompleted                  // a progress bar
+                _ = progress.currentFile?.path                  // "model.bin"
+            }, completionHandler: { localURL, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: localURL)
+                }
+            })
+        }
+        XCTAssertEqual(localURL?.lastPathComponent, "model.bin")
+
+        // "Downloaded · 256 KB" and a Delete button.
+        let status = hub.downloadStatus(source: source)
+        XCTAssertEqual(status.presence, .complete)
+        _ = ByteCountFormatter.string(fromByteCount: status.byteCount, countStyle: .file)
+        let removal = try hub.removalPlan(source: source)
+        let removed = try await hub.removeFiles(in: removal)
+        XCTAssertEqual(removed.freedByteCount, removal.freedByteCount)
+        XCTAssertEqual(hub.downloadStatus(source: source).presence, .absent)
+    }
+
     // MARK: Backend contracts (Docs/examples.md: Text → text, Image → image)
 
     func testExampleLocalLanguageBackendContract() throws {

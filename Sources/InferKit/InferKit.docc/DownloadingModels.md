@@ -1,6 +1,7 @@
 # Downloading models
 
-Weights are fetched at runtime and cached on device — never bundled at build time.
+Weights are fetched at runtime and cached on device, never bundled at build time. A download is
+planned, observed, cancelled, and removed through the same hub.
 
 ## Overview
 
@@ -64,8 +65,66 @@ Both settings start from process-wide class defaults, `defaultCacheSizeLimit` an
 NFKHFHub.defaultCacheSizeLimit = 20LL * 1024 * 1024 * 1024;
 ```
 
+### Plan, progress, and cancellation
+
+A download is planned before it starts. `-planDownloadOfRepo:revision:paths:error:` lists what a
+download would fetch from the Hugging Face API: each file's path, size, and SHA-256 where the
+repository records one, whether the cache holds it whole, and the bytes still to fetch. A path may be
+a glob. `-planDownloadOfURL:sha256:error:` sizes a plain URL with a HEAD request, and
+`-planDownloadOfModelSource:error:` plans a catalog variant's source. A gated repository without an
+accepted access token fails with `NFKDownloadErrorAuthenticationRequired`.
+
+`-downloadWithPlan:progressHandler:completionHandler:` runs a plan as an ``NFKDownload``, which reports
+bytes received and expected per file and overall, the current file, the transfer rate, and its state.
+Its `progress` is the same as an `NSProgress`. `cancel` stops the transfer in flight and removes the
+partial file: a file streams into a temporary `.download` name and moves into place only whole. A
+transfer that drops resumes with an HTTP Range request. A plan larger than `cacheSizeLimit` or than
+the volume's free space is refused before any transfer.
+
+```objc
+NFKDownloadPlan *plan = [hub planDownloadOfRepo:@"Qwen/Qwen3-0.6B" revision:nil
+                                          paths:@[ @"config.json", @"*.safetensors" ] error:&error];
+NFKDownload *download = [hub downloadWithPlan:plan
+                              progressHandler:^(NFKDownloadProgress *progress) { /* fractionCompleted */ }
+                            completionHandler:^(NSURL *localURL, NSError *downloadError) { }];
+[download cancel];
+```
+
+A download also collects work that knows nothing of it. While it is current on a thread
+(`-performAsCurrent:`), every hub download on that thread reports to it and stops when it is
+cancelled, and the companion packages' asynchronous factories carry it to their background queue.
+
+### Catalog models
+
+`-downloadModelSource:progressHandler:completionHandler:` plans and downloads a catalog variant's
+source, so an app fetches every catalog model the same way. A source that needs a converter fails
+with `NFKDownloadErrorRequiresConversion`.
+
+### Downloaded or not, and removal
+
+`-downloadStatusForModelSource:` reads the cache alone and answers complete, partial, or absent, with
+the bytes on disk. `-removalPlanForModelSource:error:` lists the files a removal deletes and the files
+it keeps, each with its reason: a file another catalog model whose download is complete uses, or the
+target of a symbolic link that something else still needs. `-removeFilesInPlan:error:` deletes them,
+all or none, and returns the bytes freed. It refuses with `NFKDownloadErrorInUse` while a download in
+the process writes into the same snapshot.
+
 ## Topics
 
 ### The type
 
 - ``NFKHFHub``
+
+### Downloads
+
+- ``NFKDownload``
+- ``NFKDownloadProgress``
+- ``NFKDownloadFileProgress``
+- ``NFKDownloadPlan``
+- ``NFKDownloadPlanFile``
+
+### Status and removal
+
+- ``NFKDownloadStatus``
+- ``NFKRemovalPlan``
+- ``NFKCachedFile``

@@ -1083,13 +1083,9 @@ extension NFKMLXKokoro {
     @objc(kokoroBackendWithRepo:revision:cacheDirectoryURL:voiceName:completionHandler:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?, voiceName: String,
                                completionHandler: @escaping (NFKMLXSpeechBackend?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-                                              voiceName: voiceName), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                        voiceName: voiceName)
         }
     }
 }

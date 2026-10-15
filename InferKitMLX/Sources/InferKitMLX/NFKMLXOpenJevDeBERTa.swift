@@ -439,12 +439,8 @@ public final class NFKMLXOpenJevDeBERTa: NSObject, NFKMLXDecisionModel {
     @objc(openJevWithRevision:cacheDirectoryURL:completionHandler:)
     public static func openJev(revision: String?, cacheDirectoryURL: URL?,
                                completionHandler: @escaping (NFKMLXOpenJevDeBERTa?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try openJev(revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try openJev(revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }
 
