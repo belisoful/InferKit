@@ -1,0 +1,129 @@
+{
+  "schemaVersion": 1,
+  "kind": "inferkit.plugin",
+  "id": "@IDENTIFIER@",
+  "version": "@VERSION@",
+  "displayName": "Sample Executable Plugin",
+  "summary": "A plugin program that speaks the protocol without InferKit.",
+  "compatibility": {
+    "inferkitAPI": "1.0",
+    "protocol": "1.0",
+    "minimumOS": {
+      "macOS": "11.0"
+    },
+    "architectures": [
+      "@ARCH@"
+    ]
+  },
+  "entry": {
+    "kind": "executable",
+    "executable": "@EXECUTABLE@",
+    "arguments": []
+  },
+  "process": {
+    "idleExitSeconds": 300,
+    "allowsInProcess": false,
+    "maximumConcurrentRuns": 1
+  },
+  "options": [
+    {
+      "key": "echoPrefix",
+      "kind": "text",
+      "default": "",
+      "title": "Echo prefix"
+    }
+  ],
+  "models": [
+    {
+      "id": "invert",
+      "displayName": "Invert",
+      "family": "sample-invert",
+      "summary": "Inverts a 32BGRA image or a float array.",
+      "engine": "plugin",
+      "tasks": [
+        "image-to-image"
+      ],
+      "inputs": [
+        {
+          "key": "image",
+          "valueType": "image"
+        },
+        {
+          "key": "values",
+          "valueType": "embedding"
+        }
+      ],
+      "outputs": [
+        {
+          "key": "image",
+          "valueType": "image"
+        },
+        {
+          "key": "values",
+          "valueType": "embedding"
+        },
+        {
+          "key": "pluginVersion",
+          "valueType": "text",
+          "required": true
+        }
+      ]
+    },
+    {
+      "id": "slow",
+      "displayName": "Slow",
+      "family": "sample-slow",
+      "summary": "Counts steps, reporting progress after each, until it finishes or is cancelled.",
+      "engine": "plugin",
+      "outputs": [
+        {
+          "key": "steps",
+          "valueType": "integer",
+          "required": true
+        },
+        {
+          "key": "pluginVersion",
+          "valueType": "text",
+          "required": true
+        }
+      ],
+      "parameters": [
+        {
+          "key": "steps",
+          "kind": "integer",
+          "default": 10,
+          "minimum": 1
+        },
+        {
+          "key": "stepMilliseconds",
+          "kind": "integer",
+          "default": 20,
+          "minimum": 0
+        },
+        {
+          "key": "exitAtStep",
+          "kind": "integer",
+          "minimum": 1,
+          "help": "Ends the plugin's process at this step. Only for a plugin in a process of its own."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "name": "echo",
+      "description": "Returns the text it is given, after the echoPrefix option.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    }
+  ]
+}

@@ -8,6 +8,7 @@
 
 #import <Foundation/Foundation.h>
 #import <InferKit/NFKInferenceTool.h>
+#import <InferKit/NFKPlugin.h>
 #import <InferKit/NFKPluginManifest.h>
 #import <InferKit/NFKPluginSignaturePolicy.h>
 #import <InferKit/NFKSubprocess.h>
@@ -40,6 +41,10 @@ typedef NS_ENUM(NSInteger, NFKPluginProcessState) {
 /*! Receives each state a plugin process enters, on the process's event queue. Introduced in InferKit
 	0.4.0. */
 typedef void (^ NS_SWIFT_SENDABLE NFKPluginProcessStateHandler)(NFKPluginProcess *process, NFKPluginProcessState state) API_UNAVAILABLE(ios, tvos, watchos);
+
+/*! Receives the messages a plugin's process logs and the supervisor's own notices, on the process's
+	event queue. Introduced in InferKit 0.4.0. */
+typedef void (^ NS_SWIFT_SENDABLE NFKPluginProcessLogHandler)(NFKPluginProcess *process, NFKPluginLogLevel level, NSString *message) API_UNAVAILABLE(ios, tvos, watchos);
 
 /*!
 	@class      NFKPluginProcess
@@ -80,11 +85,18 @@ API_UNAVAILABLE(ios, tvos, watchos)
 /*! The signatures the process's code must carry. Defaults to +[NFKPluginSignaturePolicy defaultPolicy]. */
 @property (atomic, copy) NFKPluginSignaturePolicy *signaturePolicy;
 
-/*! How long the hello exchange may take, in seconds. Defaults to 10. */
+/*! How long the hello exchange may take, in seconds. Defaults to 10. For an "objc" or "c-abi" plugin
+	the clock starts once the plugin host has verified the bundle. */
 @property (atomic, assign) NSTimeInterval handshakeTimeout;
 
+/*! How long the plugin host may take to verify the bundle after it hands over its channel, in seconds.
+	Defaults to 120. Verification hashes every file the bundle's seal covers, so a plugin keeps large
+	weights outside its bundle. */
+@property (atomic, assign) NSTimeInterval verificationTimeout;
+
 /*! How long an idle process with no live backends runs before it exits, in seconds. Defaults to the
-	manifest's idleExitInterval, and memory pressure shortens it. */
+	manifest's idleExitInterval. Memory pressure shortens it as it shortens NFKInferenceServer's idle
+	unload. A value that is not positive keeps an idle process running. */
 @property (atomic, assign) NSTimeInterval idleExitInterval;
 
 /*! How long a restart waits for runs in flight before it cancels them, in seconds. Defaults to 120. */
@@ -117,8 +129,12 @@ API_UNAVAILABLE(ios, tvos, watchos)
 /*! Receives every state change. */
 @property (atomic, copy, nullable) NFKPluginProcessStateHandler stateHandler;
 
+/*! Receives the plugin's log messages, and the differences the supervisor finds between the manifest
+	and what the running plugin describes. */
+@property (atomic, copy, nullable) NFKPluginProcessLogHandler logHandler;
+
 /*! Starts the process and returns once it is Ready, or returns NO with an error. A Ready process is left
-	alone. Blocks for up to handshakeTimeout after the launch. */
+	alone. Blocks for up to verificationTimeout and handshakeTimeout after the launch. */
 - (BOOL)startWithError:(NSError **)error;
 
 /*! Asks the process to shut down, then stops it with NFKSubprocess's escalation, and calls

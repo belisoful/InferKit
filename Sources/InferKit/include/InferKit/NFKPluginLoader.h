@@ -56,8 +56,9 @@ API_UNAVAILABLE(ios, tvos, watchos)
 				  with the host's function table.
 				- "executable" → refused with NFKPluginErrorNotTrusted, since such a plugin runs only as
 				  its own process.
-				The signature is checked before any code loads. Loading the same bundle again returns
-				the same object, and loading a second version of a loaded plugin identifier fails. The
+				The signature is checked on every call, before any code loads. Loading the same bundle
+				again returns the same object, and loading a second version of a loaded plugin
+				identifier fails. The
 				class is macOS only. Introduced in InferKit 0.4.0.
 */
 API_UNAVAILABLE(ios, tvos, watchos)

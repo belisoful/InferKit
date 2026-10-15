@@ -29,6 +29,9 @@ extern "C" {
 				  @c NFK_PLUGIN_STATUS_INCOMPATIBLE.
 				- A minor version only appends fields to a structure. A reader uses a field only when
 				  @c offsetof(field) + @c sizeof(field) is at most the structure's @c struct_size.
+				- An array of buffers is walked with its first element's @c struct_size as the stride,
+				  so a reader built against an earlier minor version steps over the fields it does not
+				  know. Every element of one array has the same @c struct_size.
 				- An optional function pointer that is NULL means the operation is unsupported.
 				- Whoever allocates frees. A request payload stays valid until @c run returns. The host
 				  frees a plugin's result through @c free_payload and a plugin's string through
@@ -162,7 +165,8 @@ typedef struct nfk_plugin_buffer {
 	@field		struct_size The structure's size as its writer compiled it.
 	@field		buffer_count The number of elements of @c buffers.
 	@field		json A UTF-8 JSON object in InferKit's tagged wire form.
-	@field		buffers The attachments, or NULL when @c buffer_count is 0.
+	@field		buffers The attachments, or NULL when @c buffer_count is 0. Element @c i starts
+				@c i times @c buffers[0].struct_size bytes after the first.
 	Introduced in InferKit 0.4.0.
 */
 typedef struct nfk_plugin_payload {

@@ -70,6 +70,35 @@ extern NSString * const NFKPluginMessageEvent;
 extern NSString * const NFKPluginMessageLog;
 extern NSString * const NFKPluginMessageReply;
 
+/*! The event the plugin host sends once it has verified the bundle, before it reads hello. */
+extern NSString * const NFKPluginEventVerified;
+
+/*!
+	@class      NFKPluginRunSlots
+	@abstract   A backend's run slots: at most limit runs at once, and the rest wait in order.
+	@discussion A waiting run is a block in a FIFO, so it holds no thread. admit: calls start at once on the
+				calling thread when a slot is free, and otherwise when an earlier run's finish frees one, on
+				the thread that calls finish. Every admitted start is matched by one finish.
+*/
+@interface NFKPluginRunSlots : NSObject
+
+- (instancetype)initWithLimit:(NSInteger)limit NS_DESIGNATED_INITIALIZER;
+- (instancetype)init NS_UNAVAILABLE;
+
+/*! Calls start once a slot is free. */
+- (void)admit:(dispatch_block_t)start;
+
+/*! Frees the caller's slot, handing it to the oldest waiting start. */
+- (void)finish;
+
+/*! The runs that hold a slot now. */
+@property (atomic, readonly) NSInteger activeCount;
+
+/*! The starts waiting for a slot now. */
+@property (atomic, readonly) NSInteger waitingCount;
+
+@end
+
 /*!
 	@class      NFKPluginAttachmentWriter
 	@abstract   The attachment sink for one outgoing message: each attachment is a shared-memory region,

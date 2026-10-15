@@ -178,7 +178,7 @@ fields are ignored. An unknown type with an id is answered with an error of
 | type | from | fields | result |
 | --- | --- | --- | --- |
 | `channel` | plugin | one descriptor, the plugin's socket | (none; the first frame only) |
-| `hello` | host | `protocol {major, minor}`, `inferkitAPI`, `pluginABI`, `capabilities`, `options`, `limits {inlineBytes}` | `protocol`, `plugin {id, version}`, `inferkitAPI`, `capabilities`, `pid` |
+| `hello` | host | `protocol {major, minor}`, `inferkitAPI`, `pluginABI`, `capabilities`, `options`, `limits {inlineBytes}` | `protocol`, `plugin {id, version}`, `inferkitAPI`, `capabilities`, `pid`, optional `limits {inlineBytes}` |
 | `describe` | host | | `models`, `tools`, `options` |
 | `build` | host | `model`, `options` | `backend` (handle), `ready`, `inputs`, `parameters`, `outputs`, `modelInfo`, `loaded` |
 | `prepare` | host | `backend` | `loaded`, `residentBytes`, `peakBytes` |
@@ -191,15 +191,25 @@ fields are ignored. An unknown type with an id is answered with an error of
 | `callTool` | host | `tool`, `arguments` | `toolResult` |
 | `ping` | host | | (empty) |
 | `shutdown` | host | | (empty); the plugin then exits |
-| `event` | plugin | `event` (`loaded`, `unloaded`), `backend`, `residentBytes` | (none) |
+| `event` | plugin | `event` (`loaded`, `unloaded`), `backend`, `residentBytes`, optional `peakBytes`; or `event` `verified` alone | (none) |
 | `log` | plugin | `level` (0–3), `message` | (none) |
 
 - `request`, `partial`, and the run's result are the wire coding's request and result objects in the
   attachment mode.
 - `outputDirectory` is a directory the host makes for the run. The plugin writes result files there,
   and the host deletes it once the result is consumed.
-- A backend handle carries a generation. After a restart a stale `NFKPluginBackend` builds again from its
-  stored model identifier and options before its next run.
+- A backend handle is an integer, unique within one process. The host pairs it with the process's
+  generation: after a restart a stale `NFKPluginBackend` builds again from its stored model identifier
+  and options before its next run.
+- The hello reply's `inferkitAPI` is the plugin side's API version as a string ("1.0"), and its
+  `capabilities` is `["attachments"]`, with `"file-descriptors"` added when the host offered it.
+- A `progress` message carries the run's latest partial result whenever there is one; `stream` does not
+  suppress it.
+- `cancel` gets no reply of its own. The run it names replies once, with `"cancelled": true`.
+- `toolResult` is the wire coding's tagged tool result:
+  `{"$nfk": "toolResult", "text", "isError", "images", "outputs"}`.
+- The attachment mode decides per value: an input large enough to be attached is answered with an
+  attached output, and an inline input inline.
 - On first launch `describe` lists every model the manifest lists; a missing one is
   `NFKPluginErrorUnknownModel`. Differences in ports or options are logged.
 
@@ -210,6 +220,10 @@ fields are ignored. An unknown type with an id is answered with an error of
   (`NFKPluginErrorProtocolUnsupported`); the two sides use the lower minor version.
 - The C plugin ABI is 1.0 (`NFK_PLUGIN_ABI_VERSION_MAJOR`, `_MINOR`). A minor version only appends
   structure fields, and a reader uses a field only when `offsetof + sizeof <= struct_size`.
+- An array of buffers strides by its first element's `struct_size`, so a reader of an earlier minor
+  version steps over fields it does not know. Every element of one array has the same `struct_size`.
+  `NFKPluginABILayout.c` asserts that `sizeof(nfk_plugin_buffer)` is a multiple of its alignment, so
+  the stride keeps every element aligned.
 
 ## Errors
 
@@ -267,15 +281,470 @@ against literal dictionaries, and the existing server tests keep their expectati
 - A received region maps shared and writable. A descriptor that maps only for reading is copied, so
   every region is writable. A descriptor that is neither shared memory nor a regular file is refused.
 
-## In process
+## Host side
 
-- An `objc` plugin links InferKit's interface and does not embed its own copy: `-undefined
-  dynamic_lookup`, or the framework the app ships. After loading, `objc_copyClassNamesForImage` refuses
-  a bundle that defines any `NFK` class (`NFKPluginErrorDuplicateRuntime`).
-- A `c-abi` plugin opens with `dlopen(RTLD_LOCAL)`. A private adapter turns its function table into
-  `NFKInferenceBackend`s and implements the host table.
-- In-process values pass directly: an `IOSurfaceRef`, a pointer, or a path.
-- An in-process plugin is never closed with `dlclose`.
+`NFKPluginProcess` supervises one plugin's process, `NFKPluginBackend` is one of its models, and the
+private `NFKPluginToolProxy` is one of its tools. `NFKPluginProcessPrivate.h` holds what they share: the
+connection to a launched process (`NFKPluginConnection`), the launcher seam, and the backend's private
+initializers.
+
+### States
+
+| from | event | to |
+| --- | --- | --- |
+| NotRunning | a start, or the first request | Starting |
+| Starting | hello and describe pass | Ready |
+| Starting | any check below fails | Failed |
+| Ready | the channel closes without the supervisor closing it | NotRunning |
+| Ready | the `crashLimit`-th such close within `crashLimitInterval` | Failed |
+| Ready | idle exit, or stop | NotRunning |
+| any | restart | Restarting, then Ready or Failed |
+
+- A start, in order: the code checks → the launch → the hand-off within `handshakeTimeout` → the peer
+  check → the plugin host's verification within `verificationTimeout` (`objc`, `c-abi`) → hello within
+  `handshakeTimeout` → describe. Each failure leaves Failed with `failureError`:
+  - a refused signature → the policy's error, before any launch;
+  - the launch → `NFKPluginErrorLaunchFailed`, the launcher's error under `NSUnderlyingErrorKey`;
+  - no hand-off, a hello error, another plugin identifier or version → `NFKPluginErrorHandshakeFailed`;
+  - another major protocol version → `NFKPluginErrorProtocolUnsupported`;
+  - a manifest model `describe` does not list → `NFKPluginErrorUnknownModel`.
+- A Failed process refuses every request with `failureError` and launches nothing. `startWithError:`
+  clears the failure and the crash count. A restart launches regardless.
+- `stateHandler` and `logHandler` run on the process's serial event queue, in the order of the changes.
+
+### Code checks
+
+- Before a launch: the bundle under `signaturePolicy`, and for `objc` and `c-abi` the host executable
+  under the host policy. The host policy is `signaturePolicy` without its team and requirement, which
+  name the plugin's signer; the host is the app's helper, signed by the app's team.
+- After the hand-off: the peer's `LOCAL_PEERPID` equals the launched process's identifier, and its audit
+  token passes the policy (`executable`) or the host policy (`objc`, `c-abi`).
+
+### Launching
+
+- The default launcher runs `NFKSubprocess` with `INFERKIT_PLUGIN_CHANNEL_FD=3`, the child end of the
+  socket pair as `ownerInheritedDescriptors[3]`, `QOS_CLASS_USER_INITIATED`, and restart policy Never.
+  The supervisor relaunches on the next request instead.
+- `objc`, `c-abi` → `<host> --bundle <path>`, plus every field of the policy: `--team-id <team>`,
+  `--requirement <requirement>`, `--allow-ad-hoc`, and `--allow-unsigned` when `requiresValidSignature`
+  is NO. The host enforces exactly the app's policy. It honors `--allow-unsigned` only beside
+  `--allow-ad-hoc` (the development policy, for local development) and otherwise exits 64 with the reason.
+- The plugin host sends its channel frame first, then checks the bundle's ownership and verifies its
+  signature, then sends `{"type": "event", "event": "verified"}`, then reads hello. The supervisor sends
+  hello at once and waits `verificationTimeout` (120 s) for that event, then `handshakeTimeout` for the
+  reply. A reply that comes first ends both waits. An `executable` plugin verifies nothing and has
+  `handshakeTimeout` alone.
+- Verification hashes every file the bundle's seal covers, on every launch. A plugin keeps large
+  weights outside its bundle, in a download cache.
+- `executable` → `Contents/MacOS/<entry.executable>`, which must stay inside the bundle, or the bundle's
+  own executable, with `entry.arguments`.
+- `launcherFactory` (private) makes the launcher per launch. A test returns an in-test peer that adopts
+  `NFKPluginLauncher`, performs the hand-off on the descriptor it receives, and answers the protocol:
+  `Tests/InferKitTests/NFKPluginTestPeer`. A launcher that implements
+  `validatePeerWithAuditToken:process:error:` replaces the peer check.
+
+### Requests and generations
+
+- Every request that needs the process goes through `performWithReservation:block:error:`: it waits its
+  turn behind a restart, starts the process when none runs, and runs the block with the live connection.
+  The block sends and returns; the reply arrives on the channel's handler queue.
+- Each launched process is a connection with a generation, counted from 1 per supervisor. A backend
+  records the generation of its build and builds again on the next connection before its next request,
+  from its stored model identifier and options.
+- A connection that closes fails its requests in flight: the supervisor's own close with the error it
+  names (`NFKPluginErrorStopped`), any other close with `NFKPluginErrorProcessExited`. That error's
+  description names the exit status or the signal, and `NSLocalizedFailureReasonErrorKey` holds the
+  last 2048 characters of standard error.
+
+### Restart
+
+1. The call starts holding requests before it returns, so a request made after it waits.
+2. Restarting. The old connection takes no new requests. Its requests in flight get `restartDrainTimeout`
+   to finish; then each run receives `cancel` and the rest get 5 seconds.
+3. `shutdown` (its reply awaited up to 2 seconds), the channel closes, and the launcher stops.
+4. The new manifest replaces the old. `idleExitInterval` follows it unless the app changed it. The crash
+   count clears. The new version launches.
+5. The held requests are admitted one at a time, in order. Each builds its backend and sends its run
+   before the next is admitted. A launch failure fails each with its reason.
+
+Restarts are sequential. Requests held while a second restart waits go to the last one.
+
+### Idle exit
+
+- A process is idle with no caller in a request's turn, no request in flight, and no live backend
+  handle. A handle lives from its build until the backend is released.
+- The effective interval is the server's formula over `idleExitInterval`: below the onset (0.6) the
+  interval itself; from the onset to full pressure, linear down to the shortest interval (10 s). An
+  infinite interval starts from 600 s under pressure. The reading is
+  `-[NFKServedHostStatus memoryPressureFraction]`; `memoryPressureProvider`, `memoryPressureOnset`, and
+  `shortestIdleExitInterval` are private settings a test sets.
+- A timer checks at a fifth of the shorter of the interval and the shortest interval, between 0.05 and
+  1 second. An idle exit sends `shutdown`, closes the channel, stops the launcher, and leaves NotRunning.
+
+### Stop
+
+`stopWithCompletionHandler:` fails the requests in flight with `NFKPluginErrorStopped` at once, then sends
+`shutdown`, closes the channel, and stops the launcher with NFKSubprocess's escalation. A Failed process
+stays Failed. Stops and restarts run in order on one serial queue.
+
+### Backend
+
+- Keys come from the manifest's descriptor: inputs and outputs by port key, parameters by the keys of
+  request-stage options. `modelInfo` is the family as `NFKModelInfoArchitecture`, the default variant's
+  byte counts, the build's `modelInfo`, and the measured bytes once known.
+- `prepareWithError:` builds and sends `prepare`; its result sets `isLoaded`, `residentByteCount`, and
+  `peakByteCount`.
+- A run encodes its request with an `NFKPluginAttachmentWriter` at the connection's inline limit (the
+  smaller of 64 KiB and a positive `limits.inlineBytes` in the hello reply). Its `outputDirectory` is
+  `NSTemporaryDirectory()/InferKit/plugin-runs/<UUID>`, symbolic links resolved, mode 0700. The reply
+  decodes through an `NFKPluginAttachmentReader` that copies file regions and accepts file references
+  inside that directory only. Each result and partial decoded from the run holds the directory, which is
+  removed when the last of them is released.
+- `submitInferenceJobForRequest:` takes its place behind a restart when called. The job relays each
+  `progress` message with its partial result. Cancelling the job sends `cancel` with the run's
+  identifier, or skips the run when it has not been sent.
+- An error reply keeps its domain, code, and string and number user info. A `{message, domain, code}`
+  object, as a C plugin reports, keeps its domain and code too. `"cancelled": true` is
+  `NSCocoaErrorDomain` `NSUserCancelledError`.
+- `unload` sends `unload` to a Ready process that holds this backend's build and starts nothing.
+  `isLoaded` follows the build, prepare, and status results and the `loaded` and `unloaded` events, and
+  is NO once the process that built the backend is gone. `peakByteCount` stays after an unload.
+- `backendStatus` answers the last status at once and asks a Ready process for a new one at most once
+  a second.
+- Releasing the backend sends `release` for its handle.
+- The in-process form (`initWithPluginIdentifier:descriptor:options:pluginBackend:`, private, for the
+  registry) forwards runs, jobs, preparation, and residency to the plugin's own backend and takes its keys
+  from the descriptor.
+
+### Tools
+
+`tools` makes an `NFKPluginToolProxy` per manifest declaration, so listing starts nothing. A call sends
+`callTool` through the same turn as a run. The reply's `toolResult` is the wire coding's tagged tool
+result, a `{text, isError}` object, or a string. An error reply keeps its domain and code.
+
+## Loaders
+
+### Manifest
+
+- `+manifestWithBundleURL:error:` reads `Contents/Resources/inferkit-plugin.json` and
+  `Contents/Info.plist` and loads no code. `CFBundleIdentifier` must equal `id` and
+  `CFBundleShortVersionString` must equal `version`; the executable (`entry.executable`, else
+  `CFBundleExecutable`) must be a file in `Contents/MacOS`. Each disagreement →
+  `NFKPluginErrorManifestMismatch`.
+- `schemaVersion` above 1 → `NFKPluginErrorUnsupportedManifestVersion`. An entry kind other than `objc`,
+  `c-abi`, `executable` → `NFKPluginErrorIncompatible`. Every other problem →
+  `NFKPluginErrorMalformedManifest`, naming the field by its path ("compatibility.inferkitAPI").
+- Required: `schemaVersion`, `kind` ("inferkit.plugin"), `id` (letters, digits, ".", "-", "_"),
+  `version`, `compatibility.inferkitAPI` ("major.minor"), `entry.kind`, and `compatibility.pluginABI`
+  for `c-abi`. Defaults: `displayName` → `id`; `protocol` → "1.0"; `idleExitSeconds` → 300;
+  `allowsInProcess` → NO; `maximumConcurrentRuns` → 1; a tool's `description` → "" and `parameters` →
+  an empty object schema.
+- A model's `engine` defaults to "plugin", and any other engine is refused. A model identifier holds no
+  "/", since the catalog joins `<pluginId>/<modelId>`. Models, tools, and options are unique by
+  identifier, name, and key.
+- `entry.executable` is relative and stays inside `Contents/MacOS`: no leading "/", no "." or "..".
+- `JSONDataWithError:` writes sorted, pretty-printed keys, every default written out, empty lists left
+  out. A manifest equals another when the two dictionaries and bundle URLs are equal.
+- `extensions` is the manifest's `"extensions"` object, written back as it came. Other unknown fields
+  are ignored.
+- The private `-checkHostCompatibilityWithError:` (`NFKPluginManifestPrivate.h`) is what a loader runs:
+  the API version (same major, minor at least the manifest's), the protocol major, the plugin ABI major
+  for `c-abi`, `minimumOS.macOS`, and the architecture when `architectures` is not empty. The same
+  header gives `executableURL`, `bundleExecutableName`, and `modelWithIdentifier:`.
+
+### Signature policy
+
+- Order: signed at all → valid → ad hoc allowed → team → requirement.
+  - unsigned or invalid → `NFKPluginErrorSignatureInvalid`, unless `requiresValidSignature` is NO and
+    the policy names no team and no requirement, which then accepts it;
+  - ad hoc (`kSecCodeSignatureAdhoc`) under a policy that refuses it → `NFKPluginErrorSignatureInvalid`;
+  - a `teamIdentifier` that differs from the signature's → `NFKPluginErrorTeamMismatch`;
+  - the requirement: `anchor apple generic and certificate leaf[subject.OU] = "<team>"` when a team is
+    pinned, since the team identifier in signing information is the signer's own claim, joined with
+    `(<requirementString>)`. Failing it → `NFKPluginErrorTeamMismatch`; a requirement that does not
+    compile → `NFKPluginErrorSignatureInvalid`.
+- Code on disk: `SecStaticCodeCheckValidityWithErrors` with `kSecCSCheckAllArchitectures |
+  kSecCSStrictValidate | kSecCSCheckNestedCode`. A resource edited after signing fails with -67054
+  (`errSecCSBadResource`), measured on an ad hoc bundle.
+- The cache holds successes only, keyed by cdhash, path, policy, and a fingerprint of every file under
+  the path: its size, inode, mode, and modification and status-change times. Reading the cdhash hashes
+  only the code directory, and the fingerprint costs a `stat` per file, so a cached validation of a
+  bundle with gigabytes of weights is cheap. A later edit changes the status-change time, which a
+  process cannot set back, so it misses the cache and validates again.
+- A running process: `SecCodeCopyGuestWithAttributes` with `kSecGuestAttributeAudit`, then
+  `SecCodeCheckValidityWithErrors`, through the same order. No cache.
+- Measured: the `xctest` runner under Xcode 27 is signed ad hoc (`flags=0x2`), so the test of the
+  running process uses the development policy.
+
+### Loader
+
+`+loadPluginAtURL:signaturePolicy:error:` runs, in order:
+
+1. The manifest from the bundle.
+2. `executable` → `NFKPluginErrorNotTrusted`.
+3. `-checkHostCompatibilityWithError:`.
+4. Ownership (`NFKPluginCheckBundleOwnership`): the directory that holds the bundle, the bundle, and
+   every item inside it, each by `lstat`, must be owned by this user or root and writable by neither
+   group nor others. A failure → `NFKPluginErrorLoadFailed` naming the path and the reason ("is writable
+   by its group"). Symbolic links are checked for their owner only.
+5. The registry, by plugin identifier: the same resolved bundle path and version → the same
+   `NFKLoadedPlugin`, after the signature passes the caller's policy, so a caller with a stricter policy
+   never receives a loaded plugin it would refuse; another version or another copy →
+   `NFKPluginErrorLoadFailed`. A load that failed after code entered the process answers the same error
+   again.
+6. The signature under the policy, immediately before the code loads and never earlier.
+7. The code:
+   - `objc` → `NSBundle` `loadAndReturnError:`. `entry.executable`, when set, must be the bundle's
+     executable. The image is found among dyld's images by resolved path, and
+     `objc_copyClassNamesForImage` refuses any class whose name begins with "NFK"
+     (`NFKPluginErrorDuplicateRuntime`, naming them). The principal class (`entry.principalClass`,
+     else `NSPrincipalClass`) must come from that image and adopt `NFKPlugin`; `initWithContext:` runs
+     inside `@try`.
+   - `c-abi` → `dlopen(RTLD_NOW | RTLD_LOCAL)`, the same duplicate check on the image, then
+     `dlsym(entry.symbol ?: "nfk_plugin_entry")` and the C adapter.
+
+- The window between check and load. The kernel does not check a library's signature at load in a
+  process with library validation off, which the host's entitlement turns off, so a file replaced after
+  step 6 and before step 7 would load. The ownership rule closes that window to every account but this
+  user and root: neither can be another app's sandboxed process, and either could change the app
+  itself.
+- The context (`NFKPluginHostContext`, `NFKPluginLoaderPrivate.h`): a temporary directory
+  `$TMPDIR/InferKit/Plugins/<id>.<UUID>` (0700), `hostAPIVersion` = `NFKInferKit.APIVersion`, the
+  options, `runsInHostProcess`, and a log handler, else the unified log (subsystem "com.inferkit",
+  category "plugin").
+- The public entry loads with empty options and `runsInHostProcess` YES. The private
+  `+loadPluginAtURL:signaturePolicy:options:runsInHostProcess:logHandler:error:` is the plugin host's.
+- `NFKLoadedPlugin` refuses a model the manifest does not list (`NFKPluginErrorUnknownModel`).
+- Nothing is ever closed with `dlclose`, and a refused bundle's code stays in the process.
+- In-process tests load the fixtures at 1.0.0 only; 2.0.0 is the second-version refusal. A test that
+  needs another identity loads a re-signed copy under an identifier of its own. `exitAtStep` runs only
+  out of process.
+
+### C adapter
+
+`NFKPluginCAdapter` (private) is a C plugin as an `NFKPlugin`, and `NFKPluginCBackend` one of its
+backends.
+
+- The entry receives `NFK_PLUGIN_ABI_VERSION` and the host table, which is an instance variable of the
+  adapter, so its address holds for the plugin's life. `options_json` and `temporary_directory` point
+  into data the adapter keeps.
+- The table is refused, in order: entry status `INCOMPATIBLE` → `NFKPluginErrorIncompatible`; another
+  status or no table → `NFKPluginErrorLoadFailed`; another major `abi_version`, read before the size since
+  another major has another layout → `NFKPluginErrorIncompatible`; `struct_size` below ABI 1.0's →
+  `NFKPluginErrorIncompatible`; a required function missing → `NFKPluginErrorLoadFailed`, after calling
+  `shutdown` when it exists. `describe` runs once, and its models default to the "plugin" engine.
+- Ownership, by allocation:
+  - a request → the adapter encodes it in the attachment mode with a sink of `NSMutableData` regions,
+    one `NFK_PLUGIN_BUFFER_BYTES` buffer each; files pass by path. The JSON, the buffers, and the array
+    stay alive until `run` returns.
+  - a result → wrapped without a copy. Each `NSData` over a buffer retains an owner object, which calls
+    `free_payload` when the last value over the payload is released. An error path calls
+    `free_payload` at once on any payload the plugin returned.
+  - a partial in `report_progress` → copied during the call; the plugin keeps ownership.
+  - every string (`describe`, errors, `describe_backend`, `call_tool`) → copied, then `free_string`.
+  - a backend → `destroy_backend` when the `NFKPluginCBackend` is released; runs in flight retain it.
+- Buffers stride by the first buffer's `struct_size`, so a host reads a later minor's longer buffers;
+  a buffer shorter than ABI 1.0's is refused. `SURFACE` buffers are locked read-only for the life of
+  the wrapping data; `FILE` buffers are read from the path or the descriptor.
+- `run` is limited to `maximumConcurrentRuns` per backend by `NFKPluginRunSlots` (`NFKPluginWire.h`):
+  a run waiting for a slot is a block in a FIFO and holds no thread, and the run that ends starts the
+  next. A synchronous `runInferenceForRequest:error:` blocks only its caller while it waits.
+  `is_cancelled` reads the run's flag. `cancel`
+  runs under the run's lock and only while the run is inside `run`, so the plugin never sees a run that
+  returned. `output_directory` makes the run's directory on first call: the host's per-run directory
+  under the service, else `<temporary directory>/runs/<UUID>`, which stays with the result's files.
+- Status mapping when the error JSON names no domain and code: `CANCELLED` → `NSUserCancelledError`,
+  `UNKNOWN_MODEL`, `UNKNOWN_TOOL`, `INCOMPATIBLE` → the plugin codes, `MISSING_INPUT` →
+  `kNFKError_InferenceMissingInput`, `UNSUPPORTED` and `INVALID_ARGUMENT` →
+  `kNFKError_InferenceUnsupported`, `NOT_READY` → `kNFKError_InferenceNotReady`, anything else →
+  `kNFKError_InferenceBackendFailure`.
+- A tool result JSON is the tagged form or `{text, isError, outputs, images}` without the tag; a JSON
+  string or other text is the result's text.
+- `willUnload` calls `shutdown` once. After it no backend calls the plugin, and the host table's
+  `log` drops messages.
+
+## Plugin side
+
+### Service
+
+`NFKPluginService` answers the protocol for one `id<NFKPlugin>`.
+
+- `runWithChannelDescriptor:error:` performs the hand-off on the descriptor it is given, serves on its
+  own socket, and blocks until `shutdown` or end of file (YES), or a protocol violation (NO with it).
+  At the end it cancels the runs in flight, waits up to `drainTimeout` (5 s, private) for them, and
+  releases every backend.
+- Before hello, only `hello`, `ping`, and `shutdown` are answered; anything else →
+  `NFKPluginErrorProtocolViolation`. A second hello → `NFKPluginErrorProtocolViolation`.
+- Handler queue (fast answers): `hello`, `status`, `release`, `ping`, `shutdown`, `cancel`, and the
+  checks of every request. Work queue (concurrent, user-initiated): `describe`, `build`, `prepare`,
+  `run`, `unload`, `callTool`.
+- `build` refuses a model the manifest does not list (`NFKPluginErrorUnknownModel`). Its reply carries
+  `inputs`, `parameters`, and `outputs` sorted, each only when the backend implements the key set, and
+  `modelInfo` and `backendStatus` keep only what JSON carries.
+- `run` decodes its request with an `NFKPluginAttachmentReader` that maps regions as they are and copies
+  descriptor-passed files into `outputDirectory`. A backend holds `maximumConcurrentRuns` slots in an
+  `NFKPluginRunSlots`: a run waiting for one holds no thread, and 64 runs queued on one slot keep the
+  process within 16 threads of where it started (`NFKPluginServiceTests`, `NFKPluginLoaderTests`). A
+  backend with a job relays progress and ends the run in the job's completion handler, so a running job
+  holds no thread either; a C backend receives the run's `outputDirectory`; a synchronous backend runs
+  on the work queue and cannot be interrupted, so its `cancel` is answered at once and its result
+  dropped.
+- A result file outside `outputDirectory` is copied into it (the file system clones it on APFS), so a
+  host that reads only that directory receives it. Audio and video assets keep their metadata.
+- A load event goes out whenever `isLoaded` differs from what the host was last told: after `build`,
+  `prepare`, a run, and `unload`.
+- A reply too large for a frame is answered with that error instead.
+- Plugin log messages travel as `log`; with no channel they go to standard error.
+- The private `-initWithManifest:loader:` (`NFKPluginServicePrivate.h`) loads the plugin when hello
+  arrives, with hello's `options`, and a load failure answers hello with its error, so
+  `NFKPluginErrorDuplicateRuntime` or a signature refusal reaches the host with its domain and code.
+  `plugin` is nil until then.
+- hello's optional `sharedMemoryPrefix` names a sandboxed host's app group for result regions.
+
+### `inferkit-plugin-host`
+
+`NFKPluginHostMain(argc, argv)`:
+
+| outcome | exit status |
+| --- | --- |
+| arguments other than `--bundle <path> [--team-id <team>] [--requirement <requirement>] [--allow-ad-hoc [--allow-unsigned]]` | 64 (`EX_USAGE`) |
+| `--allow-unsigned` without `--allow-ad-hoc` | 64 (`EX_USAGE`), with the reason |
+| no open descriptor `INFERKIT_PLUGIN_CHANNEL_FD` (default 3) | 71 (`EX_OSERR`) |
+| an unreadable manifest | 65 (`EX_DATAERR`) |
+| serving ended by a protocol violation | 76 (`EX_PROTOCOL`) |
+| `shutdown` or end of file | 0 |
+
+- Order: read the manifest → send the channel frame → check ownership and verify the signature (the
+  service's private `verifier` hook) → send the `verified` event → read hello → load. A refused check
+  answers hello with its error.
+- The load goes through the private loader entry with `runsInHostProcess` NO and the policy the flags
+  name. The loader checks ownership and the signature again immediately before the code loads; the
+  verifier's success is cached, so the second check hashes nothing. A manifest that changed since the
+  host read it → `NFKPluginErrorManifestMismatch`.
+- On exit it calls `willUnload` (a C plugin's `shutdown`) and removes the context's temporary
+  directory.
+- Measured end to end (2026-10-15) with a Python host driving the built program over a socket pair: the
+  `objc` and `c-abi` fixtures answer every message type; a 100 KiB attachment returns inverted through
+  shared memory; an ad hoc bundle without `--allow-ad-hoc` answers hello with
+  `NFKPluginErrorSignatureInvalid`, `--team-id` with `NFKPluginErrorTeamMismatch`, an edited manifest
+  with -67054, and a bundle defining `NFKInferenceRequest` with `NFKPluginErrorDuplicateRuntime`. After
+  the verification moved ahead of hello: a group-writable `Info.plist` answers hello with
+  `NFKPluginErrorLoadFailed` naming the file, and `--allow-unsigned` alone exits 64.
+
+## Building plugins
+
+A plugin is a `.inferkitplugin` bundle. These steps build one of each kind from the command line; the
+sample plugins in `Tests/PluginFixtures/` follow them, and `NFKPluginFixtures` runs them at test time.
+
+### The bundle
+
+```
+MyPlugin.inferkitplugin/
+  Contents/
+    Info.plist
+    MacOS/MyPlugin                   the bundle, library, or program
+    Resources/inferkit-plugin.json   the manifest
+```
+
+- `Info.plist` names the plugin: `CFBundleIdentifier` equals the manifest's `id`,
+  `CFBundleShortVersionString` equals its `version`, and `CFBundleExecutable` names the file in
+  `Contents/MacOS`. `CFBundlePackageType` is `BNDL`. An `objc` plugin also names its `NSPrincipalClass`.
+- The manifest's `entry.executable` names the same file. `entry.principalClass` (`objc`) and
+  `entry.symbol` (`c-abi`, default `nfk_plugin_entry`) are optional.
+- The models in the manifest are model-catalog descriptors with engine `"plugin"`
+  (`Docs/model-catalog.md`). The plugin's own `describe` answer lists the same model identifiers.
+
+### Compiling
+
+Each command runs from the InferKit source root. `-arch` names the machine's architecture, which the
+manifest's `compatibility.architectures` lists, and `-mmacosx-version-min` matches its
+`compatibility.minimumOS`.
+
+- `objc`: a bundle that binds to the InferKit already in the loading process.
+
+  ```
+  xcrun clang -bundle -fobjc-arc -undefined dynamic_lookup \
+      -I Sources/InferKit/include -I Sources/InferKitC/include \
+      -arch arm64 -mmacosx-version-min=11.0 -Wall -Wextra -Wno-unused-parameter -Werror \
+      -framework Foundation -framework CoreVideo \
+      -o MyPlugin.inferkitplugin/Contents/MacOS/MyPlugin MyPlugin.m
+  ```
+
+  `-undefined dynamic_lookup` leaves every InferKit symbol for the loader to bind, so the bundle
+  embeds no copy of the core. Xcode 27's linker builds it without a warning at macOS 11.0 and at the
+  SDK's default target, so `-Wl,-no_fixup_chains` is not needed. No class in the bundle carries the
+  `NFK` prefix.
+- `c-abi`: a library that includes `NFKPluginABI.h` and links nothing from InferKit.
+
+  ```
+  xcrun clang -dynamiclib -std=c99 -pedantic -fvisibility=hidden \
+      -Wall -Wextra -Wno-unused-parameter -Werror -I Sources/InferKitC/include \
+      -arch arm64 -mmacosx-version-min=11.0 -install_name @rpath/MyPlugin \
+      -o MyPlugin.inferkitplugin/Contents/MacOS/MyPlugin my_plugin.c
+  ```
+
+  `-fvisibility=hidden` exports only what `NFK_PLUGIN_EXPORT` marks, which is `nfk_plugin_entry`.
+- `executable`: any program that performs the hand-off and speaks the frames. The sample uses
+  Foundation alone.
+
+  ```
+  xcrun clang -fobjc-arc -arch arm64 -mmacosx-version-min=11.0 \
+      -Wall -Wextra -Wno-unused-parameter -Werror -framework Foundation \
+      -o MyPlugin.inferkitplugin/Contents/MacOS/MyPlugin my_plugin.m
+  ```
+
+### Signing
+
+Sign the bundle after the manifest and `Info.plist` are in place. The signature seals
+`Contents/Resources`, so an edit to the manifest after signing fails verification.
+
+- Development: `codesign --force --sign - MyPlugin.inferkitplugin`. A host accepts this ad hoc
+  signature only under `+[NFKPluginSignaturePolicy developmentPolicy]`.
+- Distribution: `codesign --force --timestamp --options runtime --sign "Developer ID Application:
+  <Team> (<TEAMID>)" MyPlugin.inferkitplugin`.
+- Check: `codesign --verify --strict MyPlugin.inferkitplugin`.
+
+### The fixtures
+
+`Tests/PluginFixtures/` holds one plugin of each kind and the templates they are built from:
+
+| path | holds |
+| --- | --- |
+| `objc/SamplePlugin.m`, `objc/Info.plist.in` | the `objc` plugin; principal class `SamplePlugin` |
+| `objc/DuplicateRuntimePlugin.m` | an `objc` plugin that defines its own `NFKInferenceRequest`, refused with `NFKPluginErrorDuplicateRuntime` |
+| `c/sample_plugin.c`, `c/Info.plist.in` | the `c-abi` plugin |
+| `executable/sample_executable.m`, `executable/Info.plist.in` | the `executable` plugin, Foundation only; it frames the protocol by hand |
+| `manifests/{objc,c-abi,executable}.json.in` | the manifests |
+| `headers/inferkit_c_usage.c` | a program using every declaration of `NFKInferKitC.h`, for `NFKCHeaderTests` |
+
+- The templates take `@IDENTIFIER@`, `@VERSION@`, `@EXECUTABLE@`, `@PRINCIPAL_CLASS@`, and `@ARCH@`.
+  The sources take `-DSAMPLE_PLUGIN_VERSION="<version>"`, so a test builds version 1.0.0 and 2.0.0 of
+  the same plugin.
+- Identifiers: `com.example.inferkit.sample-objc`, `com.example.inferkit.sample-c`,
+  `com.example.inferkit.sample-executable`, and `com.example.inferkit.sample-duplicate-runtime`.
+- Every kind serves the same models, tool, and option, and every result carries `pluginVersion`:
+  - `invert` → a 32BGRA pixel buffer under `image` comes back with each color byte replaced by 255
+    minus itself and alpha kept; a float32 or float64 array under `values` comes back with each element
+    replaced by 1 minus itself. The C and executable plugins answer an attached input with an attached
+    output and an inline input inline. The Objective-C plugin returns objects, which its host encodes.
+  - `slow` → counts `steps` steps (default 10) of `stepMilliseconds` each (default 20), reports
+    progress and a partial result `{"step": n}` after each, and ends cancelled once the run is
+    cancelled. `exitAtStep` ends the process with status 70 at that step, which only an out-of-process
+    plugin survives.
+  - `echo` → a tool result whose text is the `echoPrefix` option followed by the `text` argument.
+  - Each backend holds 4096 bytes of weights once loaded: `residentBytes` 4096 while loaded and 0 after
+    `unload`, `peakBytes` 4096.
+- The C plugin counts its allocations. `sample_plugin_live_allocations()`, exported beside the entry,
+  returns the count of allocations not yet freed.
+- `NFKPluginFixtures` (`Tests/InferKitTests/`) finds the source root from its own `__FILE__`, builds a
+  fixture with `xcrun clang` through `NFKSubprocess`, writes the `Info.plist` and the manifest, signs
+  ad hoc, and caches the bundle in `$TMPDIR/inferkit-plugin-fixtures-<hash>`. The hash covers the
+  sources, the templates, the headers the build reads, the flags, the version, and the architecture.
+  Each build happens in a staging directory renamed into place, so concurrent test processes share one
+  complete build. `build-commands.txt` beside the bundle records the commands.
+- `+hostExecutableURL` is `NFK_PLUGIN_HOST_PATH` when set, else `inferkit-plugin-host` beside the
+  test bundle, where `swift build --build-tests` and Xcode both place it.
+- `+tamperedCopyOfBundleAtURL:error:` copies a bundle and edits its manifest's summary after signing.
 
 ## Staging
 

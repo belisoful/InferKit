@@ -34,6 +34,7 @@ NSString * const NFKPluginMessageShutdown = @"shutdown";
 NSString * const NFKPluginMessageEvent = @"event";
 NSString * const NFKPluginMessageLog = @"log";
 NSString * const NFKPluginMessageReply = @"reply";
+NSString * const NFKPluginEventVerified = @"verified";
 
 #endif
 
@@ -52,6 +53,67 @@ BOOL NFKPluginSetNotImplemented(NSError **error, SEL selector)
 }
 
 #if TARGET_OS_OSX
+
+#pragma mark - Run slots
+
+@interface NFKPluginRunSlots ()
+@property (nonatomic, assign) NSInteger limit;
+@property (atomic, readwrite) NSInteger activeCount;
+@property (nonatomic, strong) NSMutableArray<dispatch_block_t> *waiting;
+@end
+
+@implementation NFKPluginRunSlots
+
+- (instancetype)initWithLimit:(NSInteger)limit
+{
+	self = [super init];
+	if (self != nil) {
+		_limit = MAX(limit, 1);
+		_waiting = [NSMutableArray array];
+	}
+	return self;
+}
+
+- (void)admit:(dispatch_block_t)start
+{
+	BOOL startsNow = NO;
+	@synchronized (self) {
+		if (self.activeCount < self.limit) {
+			self.activeCount += 1;
+			startsNow = YES;
+		} else {
+			[self.waiting addObject:[start copy]];
+		}
+	}
+	if (startsNow) {
+		start();
+	}
+}
+
+- (void)finish
+{
+	dispatch_block_t next = nil;
+	@synchronized (self) {
+		if (self.waiting.count > 0) {
+			next = self.waiting.firstObject;
+			[self.waiting removeObjectAtIndex:0];
+		} else if (self.activeCount > 0) {
+			self.activeCount -= 1;
+		}
+	}
+	if (next != nil) {
+		next();
+	}
+}
+
+- (NSInteger)waitingCount
+{
+	@synchronized (self) {
+		return (NSInteger)self.waiting.count;
+	}
+}
+
+@end
 
 #pragma mark - Attachment writer
 

@@ -24,6 +24,8 @@ _Static_assert(offsetof(nfk_plugin_buffer, path) == 32, "nfk_plugin_buffer.path"
 _Static_assert(offsetof(nfk_plugin_buffer, descriptor) == 40, "nfk_plugin_buffer.descriptor");
 _Static_assert(offsetof(nfk_plugin_buffer, reserved) == 44, "nfk_plugin_buffer.reserved");
 _Static_assert(sizeof(nfk_plugin_buffer) == 48, "nfk_plugin_buffer size");
+_Static_assert(sizeof(nfk_plugin_buffer) % _Alignof(nfk_plugin_buffer) == 0,
+			   "an array of nfk_plugin_buffer strides by struct_size, which keeps every element aligned");
 
 _Static_assert(offsetof(nfk_plugin_payload, struct_size) == 0, "nfk_plugin_payload.struct_size");
 _Static_assert(offsetof(nfk_plugin_payload, buffer_count) == 4, "nfk_plugin_payload.buffer_count");
