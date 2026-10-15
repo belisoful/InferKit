@@ -779,6 +779,11 @@ backends.
 - `nfk_plugins_add_directory` → `-[NFKPluginRegistry addPluginsInDirectoryURL:errors:]` on the shared
   registry; the count added, and the first error. On iOS and tvOS → -1 with
   `kNFKError_InferenceUnsupported`, the registry call compiled out under `TARGET_OS_OSX`.
+- The completion receives its handles through `NFKCDeliverCompletion` (`NFKInferKitCDelivery.m`), whose
+  parameters are `CF_CONSUMED`. The static analyzer treats a +1 reference passed through a C function
+  pointer as still owned and reports a leak; the consuming declaration records the transfer. The
+  function sits in a file of its own because the analyzer inlines a body in the same file and reports
+  the leak again (measured 2026-10-15 on single-file probes).
 - `nfk_release_version` duplicates `NFKInferKit.releaseVersion` once into static storage.
 - Images reach a C caller as a `pixelBuffer` buffer, or as PNG bytes for a `CGImage` and an 8-bit
   Metal texture. Raw pixels for those two is a possible later addition (decided 2026-10-15: not now).

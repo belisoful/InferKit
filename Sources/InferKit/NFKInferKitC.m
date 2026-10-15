@@ -15,6 +15,7 @@
 #endif
 
 #import "NFKInferKit.h"
+#import "NFKInferKitCDelivery.h"
 #import "NFKErrors.h"
 #import "NFKInferenceBackend.h"
 #import "NFKInferenceJob.h"
@@ -571,17 +572,28 @@ static NFKInferenceRequest * _Nullable NFKCRequestFromPayload(const nfk_payload 
 
 @end
 
-/*! An encoded result as a handle the caller owns, or an error handle. */
-static nfk_result * _Nullable NFKCResultHandle(NFKInferenceResult *result, NFKCRunFiles *files, nfk_error * _Nullable * _Nullable outError)
+/*! A result in the C form holding the run's files, or nil with an error. */
+static NFKCResult * _Nullable NFKCEncodedResult(NFKInferenceResult *result, NFKCRunFiles *files, NSError **outError)
 {
 	NSError *error = nil;
 	NFKCResult *encoded = [NFKCResult resultEncoding:result error:&error];
 	if (encoded == nil) {
-		NFKCSetError(outError, error ?: NFKCMakeError(NFKInferenceErrorDomain, kNFKError_InferenceBackendFailure,
-													  @"The result could not be encoded."));
-		return NULL;
+		*outError = error ?: NFKCMakeError(NFKInferenceErrorDomain, kNFKError_InferenceBackendFailure, @"The result could not be encoded.");
+		return nil;
 	}
 	encoded.files = files;
+	return encoded;
+}
+
+/*! An encoded result as a handle the caller owns, or NULL with an error handle. */
+static nfk_result * _Nullable NFKCResultHandle(NFKInferenceResult *result, NFKCRunFiles *files, nfk_error * _Nullable * _Nullable outError)
+{
+	NSError *error = nil;
+	NFKCResult *encoded = NFKCEncodedResult(result, files, &error);
+	if (encoded == nil) {
+		NFKCSetError(outError, error);
+		return NULL;
+	}
 	return (nfk_result *)NFKCRetainHandle(encoded);
 }
 
@@ -729,19 +741,20 @@ static const void * const NFKCJobQueueKey = &NFKCJobQueueKey;
 	if (![self beginCallbackCompleting:YES]) {
 		return;
 	}
-	nfk_result *encoded = NULL;
-	nfk_error *failure = NULL;
+	NFKCResult *encoded = nil;
+	NSError *failure = nil;
 	@try {
-		if (result != nil) {
-			encoded = NFKCResultHandle(result, files, &failure);
-		} else {
-			failure = NFKCErrorHandle(error ?: NFKCMakeError(NFKInferenceErrorDomain, kNFKError_InferenceBackendFailure,
-															 @"The run failed and reported no error."));
+		encoded = result != nil ? NFKCEncodedResult(result, files, &failure) : nil;
+		if (result == nil) {
+			failure = error ?: NFKCMakeError(NFKInferenceErrorDomain, kNFKError_InferenceBackendFailure, @"The run failed and reported no error.");
 		}
 	} @catch (NSException *exception) {
-		failure = NFKCErrorHandle(NFKCExceptionError(exception));
+		encoded = nil;
+		failure = NFKCExceptionError(exception);
 	}
-	self.completion(self.context, encoded, failure);
+	NFKCError *failureObject = failure != nil ? [[NFKCError alloc] initWithError:failure] : nil;
+	NFKCDeliverCompletion(self.completion, self.context, encoded != nil ? CFBridgingRetain(encoded) : NULL,
+						  failureObject != nil ? CFBridgingRetain(failureObject) : NULL);
 	self.job = nil;
 	self.lastPartial = nil;
 	self.lastEncodedPartial = nil;

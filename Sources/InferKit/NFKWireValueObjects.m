@@ -251,14 +251,24 @@ static id _Nullable NFKWireFail(NSString * _Nullable * _Nullable outReason, NSSt
 
 static NFKQuadrilateral * _Nullable NFKWireQuadrilateralFromJSON(NSDictionary *entry, NSString * _Nullable * _Nullable outReason)
 {
-	CGPoint corners[4];
-	NSArray<NSString *> *names = @[ @"topLeft", @"topRight", @"bottomLeft", @"bottomRight" ];
-	for (NSUInteger index = 0; index < names.count; index++) {
-		if (!NFKWireReadPoint(entry[names[index]], &corners[index])) {
-			return NFKWireFail(outReason, [NSString stringWithFormat:@"a quadrilateral needs the point %@", names[index]]);
-		}
+	CGPoint topLeft = CGPointZero;
+	CGPoint topRight = CGPointZero;
+	CGPoint bottomLeft = CGPointZero;
+	CGPoint bottomRight = CGPointZero;
+	NSString *missing = nil;
+	if (!NFKWireReadPoint(entry[@"topLeft"], &topLeft)) {
+		missing = @"topLeft";
+	} else if (!NFKWireReadPoint(entry[@"topRight"], &topRight)) {
+		missing = @"topRight";
+	} else if (!NFKWireReadPoint(entry[@"bottomLeft"], &bottomLeft)) {
+		missing = @"bottomLeft";
+	} else if (!NFKWireReadPoint(entry[@"bottomRight"], &bottomRight)) {
+		missing = @"bottomRight";
 	}
-	return [NFKQuadrilateral quadrilateralWithTopLeft:corners[0] topRight:corners[1] bottomLeft:corners[2] bottomRight:corners[3]];
+	if (missing != nil) {
+		return NFKWireFail(outReason, [NSString stringWithFormat:@"a quadrilateral needs the point %@", missing]);
+	}
+	return [NFKQuadrilateral quadrilateralWithTopLeft:topLeft topRight:topRight bottomLeft:bottomLeft bottomRight:bottomRight];
 }
 
 static NFKMIDINote * _Nullable NFKWireMIDINoteFromJSON(NSDictionary *entry, NSString * _Nullable * _Nullable outReason)

@@ -495,8 +495,9 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 }
 
 /*! An array of floating values packed as little-endian IEEE words: float32 when every element is a
-	float, float64 otherwise. An embedding crosses exactly and at a third of its decimal size. */
-- (nullable id)JSONValueForFloatingArray:(NSArray<NSNumber *> *)array key:(NSString *)key error:(NSError * _Nullable *)outError
+	float, float64 otherwise. An embedding crosses exactly and at a third of its decimal size. The array
+	is one NFKWireIsFloatingArray accepted, whatever element type its declaration names. */
+- (nullable id)JSONValueForFloatingArray:(NSArray *)array key:(NSString *)key error:(NSError * _Nullable *)outError
 {
 	BOOL singles = YES;
 	for (NSNumber *element in array) {
