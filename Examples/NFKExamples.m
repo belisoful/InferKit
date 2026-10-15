@@ -72,6 +72,45 @@
 }
 @end
 
+// Docs/examples.md: Model catalog. A package's descriptor provider, found by class name.
+@interface ExampleModelDescriptors : NSObject <NFKModelDescriptorProvider>
+@end
+
+@implementation ExampleModelDescriptors
++ (NSArray<NFKModelDescriptor *> *)modelDescriptors
+{
+	NFKModelDescriptor *upscaler =
+		[[NFKModelDescriptor alloc] initWithIdentifier:@"example.upscaler" displayName:@"Example Upscaler"
+												family:@"example" summary:@"Enlarges an image four times."
+												engine:NFKModelEnginePlugin registryName:nil
+									 providerClassName:@"ExampleUpscalerProvider"
+												 tasks:@[ NFKModelTaskUpscaling ]
+									   inputModalities:nil outputModalities:nil
+												inputs:@[ [NFKModelPort portWithKey:NFKInputImage required:YES] ]
+											   outputs:@[ [NFKModelPort outputPortWithKey:NFKOutputImage required:YES] ]
+											parameters:nil variants:nil license:nil requirements:nil
+										   residencies:@[ NFKModelResidencyResident ] standIn:NO
+									 introducedVersion:nil extensions:nil];
+	return @[ upscaler ];
+}
+@end
+
+// Docs/examples.md: Model catalog. A backend an app builds, which declares the keys it reads and writes.
+@interface ExampleCaptioner : NSObject <NFKInferenceBackend>
+@end
+
+@implementation ExampleCaptioner
+- (BOOL)isReady { return YES; }
+- (NSString *)backendIdentifier { return @"example-captioner"; }
+- (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request error:(NSError **)error
+{
+	return [NFKInferenceResult resultWithOutputs:@{ NFKOutputText: @"A plate." }];
+}
+- (NSSet<NSString *> *)supportedInputKeys { return [NSSet setWithObjects:NFKInputImage, NFKInputPrompt, nil]; }
+- (NSSet<NSString *> *)supportedParameterKeys { return [NSSet setWithObject:NFKParameterMaxTokens]; }
+- (NSSet<NSString *> *)supportedOutputKeys { return [NSSet setWithObject:NFKOutputText]; }
+@end
+
 @interface NFKExamples : XCTestCase
 @end
 
@@ -1318,6 +1357,60 @@
 		 runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"a lighthouse at dawn" }]
 						  error:&error];
 	XCTAssertGreaterThan(result.embedding.count, (NSUInteger)0, @"%@", error);
+}
+
+#pragma mark Model catalog (Docs/examples.md: Model catalog)
+
+- (void)testExampleAddingAManifestAndListingModels
+{
+	NSString *json = @"{ \"schemaVersion\": 1, \"kind\": \"inferkit.model-catalog\", \"models\": [ {"
+		"\"id\": \"example.upscaler\", \"displayName\": \"Example Upscaler\", \"family\": \"example\","
+		"\"engine\": \"plugin\", \"providerClass\": \"ExampleUpscalerProvider\", \"tasks\": [\"upscaling\"],"
+		"\"inputs\": [{ \"key\": \"image\", \"required\": true }], \"outputs\": [{ \"key\": \"image\", \"required\": true }],"
+		"\"parameters\": [{ \"key\": \"strength\", \"kind\": \"number\", \"default\": 0.5, \"minimum\": 0, \"maximum\": 1 }],"
+		"\"variants\": [{ \"id\": \"x4\", \"displayName\": \"×4\", \"isDefault\": true, \"downloadBytes\": 67040989 }] } ] }";
+	NSData *manifest = [json dataUsingEncoding:NSUTF8StringEncoding];
+	NSError *error = nil;
+	XCTAssertTrue([NFKModelCatalog.sharedCatalog addDescriptorsFromManifestData:manifest error:&error], @"%@", error);
+
+	NSMutableArray<NSString *> *listed = [NSMutableArray array];
+	for (NFKModelDescriptor *model in [NFKModelCatalog.sharedCatalog descriptorsForTask:NFKModelTaskUpscaling]) {
+		if (model.isStandIn) {
+			continue;                                              // a reference or test stand-in
+		}
+		NFKModelVariant *variant = model.defaultVariant;
+		NSNumber *downloadBytes = variant.downloadByteCount;
+		for (NFKModelOption *option in model.parameters) {
+			// option.kind picks the control; option.minimum, maximum, and defaultValue configure it
+		}
+		[listed addObject:model.identifier];
+	}
+	XCTAssertTrue([listed containsObject:@"example.upscaler"]);
+
+	NFKModelDescriptor *upscaler = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"example.upscaler"];
+	XCTAssertEqualObjects(upscaler.defaultVariant.downloadByteCount, @67040989);
+	XCTAssertEqualObjects(upscaler.parameters.firstObject.kind, NFKModelOptionKindNumber);
+	XCTAssertEqualObjects(upscaler.inputModalities, (@[ NFKModelValueTypeImage ]));
+}
+
+- (void)testExampleAPackageListsItsDescriptors
+{
+	[NFKModelCatalog registerProviderClassName:@"ExampleModelDescriptors"];
+	NFKModelDescriptor *upscaler = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"example.upscaler"];
+	XCTAssertEqualObjects(upscaler.providerClassName, @"ExampleUpscalerProvider");
+}
+
+- (void)testExampleDescribingAnAppsOwnBackend
+{
+	id<NFKInferenceBackend> captioner = [[ExampleCaptioner alloc] init];
+	NFKModelDescriptor *described = [NFKModelDescriptor descriptorWithIdentifier:@"app.captioner"
+															  derivedFromBackend:captioner];
+	[NFKModelCatalog.sharedCatalog addDescriptor:described];
+	NSString *promptType = NFKModelValueTypeForKey(NFKInputPrompt);
+	XCTAssertEqualObjects(promptType, NFKModelValueTypeText);
+	XCTAssertEqualObjects(described.inputModalities, (@[ NFKModelValueTypeImage, NFKModelValueTypeText ]));
+	XCTAssertEqualObjects(described.parameters.firstObject.kind, NFKModelOptionKindInteger);
+	XCTAssertEqualObjects(described.outputs.firstObject.valueType, NFKModelValueTypeText);
 }
 
 // A QR code carrying the payload, for the examples that read one.

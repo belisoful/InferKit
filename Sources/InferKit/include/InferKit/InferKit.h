@@ -38,6 +38,9 @@
 #import <InferKit/NFKMCPClient.h>
 #import <InferKit/NFKAgentCLI.h>
 #import <InferKit/NFKDynamicBackend.h>
+#import <InferKit/NFKModelVocabulary.h>
+#import <InferKit/NFKModelDescriptor.h>
+#import <InferKit/NFKModelCatalog.h>
 #import <InferKit/NFKPassthroughBackend.h>
 #import <InferKit/NFKCoreMLBackend.h>
 #import <InferKit/NFKCoreMLLanguageBackend.h>

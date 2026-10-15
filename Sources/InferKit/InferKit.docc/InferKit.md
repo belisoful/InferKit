@@ -161,6 +161,13 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 
 - ``NFKHFHub``
 
+### Model catalog
+
+- <doc:ModelCatalog>
+- ``NFKModelCatalog``
+- ``NFKModelDescriptor``
+- ``NFKModelDescriptorProvider``
+
 ### Detected & predicted value types
 
 - ``NFKDetection``

@@ -5,7 +5,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
 # Core runtime notes
 
 Value-type accessors, tokenizers, grammar-constrained sampling, what a backend declares, tools and the
-tool loop, and dynamic backend discovery in the core.
+tool loop, dynamic backend discovery, and the model catalog in the core.
 
 ## Value-type convenience accessors
 
@@ -88,6 +88,8 @@ stays MLX-only. Two ObjC test traps struck while writing its tests: an `@[ ]` li
 a caller sometimes has to know in advance what an engine honors: the Foundation Models provider
 bridge derives Apple's `LanguageModelCapabilities` from them, and a router picks the engine that
 honors the key a request needs. A backend that declares nothing is used the way it always was.
+A third, `supportedOutputKeys` (2026-10-14), lists the `NFKOutput*` keys a backend writes; the model
+catalog derives a descriptor's outputs from it ("Model catalog" below).
 
 - A backend declares only what it acts on. The remote backend declares the keys it translates
   (`NFKParameterTools`, `NFKParameterJSONSchema`, `NFKParameterAudioOutput`,
@@ -208,6 +210,63 @@ brought by the consumer and discovered at runtime.
   Providers build lazily (construction is cheap; weights/pipeline initialize on first use, off the
   render thread). This is how the **existing** SD / Whisper / Foundation Models implementations activate
   in the core only when the companion is linked, with no build dependency.
+
+## Model catalog
+
+`NFKModelCatalog` (`NFKModelCatalog.h`), `NFKModelDescriptor` and its value types
+(`NFKModelDescriptor.h`), and the vocabularies (`NFKModelVocabulary.h`) were added 2026-10-14 for
+InferKit 0.4.0. The consumer reference is `Docs/model-catalog.md`. The decisions behind them:
+
+- **One schema for the core, the companions, and plugins.** A descriptor's dictionary is the entry a
+  plugin manifest carries, so the shared catalog, a companion's provider, and a plugin's JSON file
+  describe a model in one shape and an app reads all three the same way. The manifest envelope is
+  `{"schemaVersion": 1, "kind": "inferkit.model-catalog", "models": [...]}`. A newer
+  `schemaVersion` is refused (`NFKModelCatalogErrorUnsupportedSchemaVersion`); a missing or different
+  `kind` is malformed.
+- **Unknown fields are preserved.** Every object keeps the fields it does not read in `extensions`
+  and writes them back beside its own, so a manifest from a newer writer passes through an older
+  reader unchanged. A later field (an option's `availability`, a choice's memory figures) rides in
+  `extensions` until it becomes a property. A known field passed in `extensions` to an initializer is
+  dropped, so the property always wins.
+- **Plain string vocabularies.** Value types, tasks, engines, residencies, option kinds and stages,
+  file roles, and source kinds and layouts are `extern NSString * const` sets. A plugin extends a set
+  by using a new string, and a reader passes an unknown one through. A task that an `NFKCapability*`
+  already names keeps the capability's string (`NFKModelTaskPoseEstimation` is `pose`, and text
+  recognition is `text-recognition`), so a task resolves through `NFKDynamicBackend` as it is.
+- **Provider discovery by class name.** The shared catalog loads once from `NFKAppleModelDescriptors`,
+  `NFKMLXModelDescriptors`, `NFKFoundationModelsDescriptors`, `NFKAppleSwiftModelDescriptors`, then
+  each registered name, through `NSClassFromString`, as `NFKDynamicBackend` finds backend providers.
+  A Swift provider needs an `@objc(Name)` so the runtime name is unmangled. A later provider's
+  descriptor replaces an earlier one with the same identifier. Registering after the shared catalog
+  loaded adds the provider at once, and registering a name again reloads it. The shared instance is
+  published under the registry lock before the providers load, so a provider that registers another
+  while it loads does not deadlock on the `dispatch_once`.
+- **One key string, two types.** `NFKParameterCitations` (boolean) and `NFKOutputCitations` (JSON)
+  share `"citations"`, the only core request key and result key that share a string with different
+  types. So the table has two lookups: `NFKModelValueTypeForKey` resolves the request side first and
+  `NFKModelValueTypeForOutputKey` the result side first. A descriptor types an `outputs` port without
+  a `valueType` through the second. Every other shared string (`image`, `audio`, `messages`, …) has
+  one type on both sides.
+- **Minimum memory is the residency budget.** `minimumMemoryBytes` is the smallest recommended Metal
+  working set whose budget holds the largest resident stage: (largest stage bytes + the planner's
+  reserve) / the budgeted fraction of the working set. `NFKMLXResidencyBudget` holds the fraction
+  (0.85) and the reserve (4 GiB) and is the source the MLX provider computes from. A variant's
+  `peakBytes` is the most it holds at once while loading or running at its default options, which
+  can exceed `residentBytes`.
+- **Writing is deterministic.** `manifestDataWithError:` writes pretty-printed, sorted-key JSON with
+  the models sorted by identifier, so a re-export of an imported manifest is byte-identical
+  (`testAManifestRoundTripsByteForByte`). A writer leaves an absent optional value out and never
+  writes `null`; booleans, `requirements`, and the descriptor's arrays are always written, and an
+  option's `choices` only when it has some.
+- **Leniency where a field has an obvious default.** A missing `displayName` is the identifier, a
+  missing option `kind` follows the key's value type, a missing license `name` is its `id`, a missing
+  file `role` is `other`, a missing source `layout` is `none`, and missing `requirements` are none.
+  `id`, `family`, and `engine` are required on a model; `key` on a port and an option; `kind` on a
+  source; `path` on a file; `id` on a variant; `value` on a choice.
+- `descriptorWithIdentifier:derivedFromBackend:` reads the optional `supportedInputKeys`,
+  `supportedParameterKeys`, and `supportedOutputKeys` (the last added to `NFKInferenceBackend` with
+  the catalog), sorts each, and types each key from the table. The family is the backend's
+  `NFKModelInfoArchitecture` when its `modelInfo` reports one, else its `backendIdentifier`.
 
 ## Hugging Face hub cache policy
 

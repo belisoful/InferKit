@@ -27,8 +27,8 @@ file listed here, never back into `AGENTS.md` / `CLAUDE.md`. The Documentation S
   backends: the coordinate flip, the pixel formats and scale factors the frame processors take, and
   what each engine leaves out.
 - [core-runtime-notes.md](core-runtime-notes.md) — value-type accessors, the tokenizer class cluster,
-  grammar-constrained sampling, dynamic backend discovery, the Hugging Face hub cache policy, and the
-  serving identity with certificate pinning (keychain prompt measurements included).
+  grammar-constrained sampling, dynamic backend discovery, the model catalog, the Hugging Face hub
+  cache policy, and the serving identity with certificate pinning (keychain prompt measurements included).
 - [remote-providers.md](remote-providers.md) — the provider presets, the shared transport, model
   catalogs, local runners, streaming, tools, structured output, media in and out, typed decisions, the
   probes that verified each endpoint, and `NFKInferenceServer`.

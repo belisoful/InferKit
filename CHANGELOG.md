@@ -35,6 +35,28 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### A catalog of the models a process can run
+
+- `NFKModelCatalog` lists `NFKModelDescriptor`s: each model's engine and how it is built (a registry
+  name or a provider class), its tasks, its inputs and outputs typed for a user interface, its
+  settings with their kinds, ranges, choices, and defaults, its releases with download, resident, and
+  peak byte counts, the license of its weights, and the operating system, processor, and memory it
+  needs.
+- The shared catalog loads from provider classes adopting `NFKModelDescriptorProvider`, looked up by
+  name: `NFKAppleModelDescriptors`, `NFKMLXModelDescriptors`, `NFKFoundationModelsDescriptors`,
+  `NFKAppleSwiftModelDescriptors`, and any `registerProviderClassName:` adds. A package that is not
+  linked contributes nothing.
+- A catalog reads and writes a JSON manifest (`schemaVersion` 1, `kind` `"inferkit.model-catalog"`),
+  the shape a plugin ships its descriptors in. A newer schema version is refused. Every object keeps
+  the fields it does not know in `extensions` and writes them back, and the vocabularies
+  (`NFKModelVocabulary.h`) are plain strings a plugin extends. `Docs/model-catalog.md` documents
+  every field.
+- `NFKModelValueTypeForKey` and `NFKModelValueTypeForOutputKey` give the value type of every core
+  request and result key.
+- `+[NFKModelDescriptor descriptorWithIdentifier:derivedFromBackend:]` describes a backend an app
+  builds from the keys it declares. `NFKInferenceBackend` gains the optional `supportedOutputKeys`,
+  the result keys a backend writes, beside `supportedInputKeys` and `supportedParameterKeys`.
+
 #### Models as tools
 
 - `NFKInferenceTool` is a tool a language model calls: a name, a description, a JSON Schema for the

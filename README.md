@@ -102,6 +102,7 @@ the measured parity of each is in [model parity](Docs/model-parity.md).
 | [Core ML language models](Docs/coreml-llm.md) | Converting a Hugging Face checkpoint and running it on device. |
 | **[Companion packages](Docs/companions.md)** | InferKitMLX, InferKitFoundationModels, and InferKitAppleSwift: what each ships, and the full model gallery. |
 | **[Model index](Docs/model-index.md)** | Every implemented model: its entry class, network class, the configuration preset or variant for the released weights, registered name, and base backend. |
+| **[Model catalog](Docs/model-catalog.md)** | The descriptors an app lists, downloads, and configures models from, and the JSON manifest schema a plugin ships them in. |
 | **[Model parity](Docs/model-parity.md)** | Every implemented model, the reference it is measured against, and the number from the recorded run; the shared subsystems and which models depend on each. |
 | **[Runtime hazards](Docs/mlx-runtime-hazards.md)** | Where MLX, Metal, and Core ML return a wrong answer quietly. Each entry carries an executable probe. |
 | **[Porting candidates](Docs/porting-candidates.md)** | A survey of open-weight models from large vendors not yet supported, scored as future port candidates. Preliminary research. |

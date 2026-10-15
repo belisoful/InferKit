@@ -17,6 +17,9 @@ The full repository tree with per-directory notes.
 │   │   ├── NFKInferenceResult.h     # Immutable result (outputs)
 │   │   ├── NFKInferenceJob.h        # Thread-safe async job handle
 │   │   ├── NFKDynamicBackend.h      # Runtime backend discovery (activate an engine only if it's linked)
+│   │   ├── NFKModelCatalog.h        # The model catalog, its descriptor providers, and the JSON manifest
+│   │   ├── NFKModelDescriptor.h     # Model descriptor value types (ports, options, variants, sources, license)
+│   │   ├── NFKModelVocabulary.h     # Descriptor vocabularies + the key → value-type table
 │   │   ├── NFKPassthroughBackend.h  # The mock; keeps builds/tests green with no weights
 │   │   ├── NFKCoreMLBackend.h       # In-process Core ML (image + tensor I/O)
 │   │   ├── NFKCoreMLLanguageBackend.h  # On-device causal language model through Core ML (macOS 15 / iOS 18)
@@ -50,7 +53,7 @@ The full repository tree with per-directory notes.
 ├── SwiftExamples/                   # The same examples in Swift — pins the imported API shape
 ├── Docs/                            # Consumer documents the README links to: inference-guide, examples,
 │                                    #   installation, coreml-llm, companions, model-index, model-parity,
-│                                    #   mlx-runtime-hazards, porting-candidates
+│                                    #   model-catalog, mlx-runtime-hazards, porting-candidates
 ├── Docs/agent-reference/            # Auxiliary maintainer notes behind AGENTS.md / CLAUDE.md, one file
 │                                    #   per subject; README.md there is the index
 ├── InferKit.xcworkspace             # Opens the core + the three companions in one Xcode window. Each

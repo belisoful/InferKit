@@ -29,6 +29,7 @@ See also the [inference guide](inference-guide.md) for the concepts behind these
 - [Audio → text](#audio--text-transcription) — remote transcription (Whisper)
 - [Text → audio](#text--audio-speech) — bring-your-own MLX speech
 - [Loading a PyTorch checkpoint directly](#loading-a-pytorch-checkpoint-directly) — no Python toolchain
+- [Model catalog](#model-catalog) — `NFKModelCatalog`: the models an app lists, downloads, and configures
 - [Choosing a backend at runtime](#choosing-a-backend-at-runtime)
 - [Serving a model to other machines](#serving-a-model-to-other-machines) — `NFKInferenceServer`, found by address or Bonjour
 - [Subsystems](#subsystems) — jobs, tokenizers, tensor conversion, Hugging Face hub, conversion tool
@@ -5104,6 +5105,99 @@ let llm = try NFKDynamicBackend.backend(forCapability: NFKCapabilityTextGenerati
 A consumer brings any engine by adding a class conforming to `NFKDynamicBackendProvider`
 (`+makeInferenceBackend`) and either naming it the built-in default (e.g. `NFKControlNetProvider` for
 `NFKCapabilityControlNet`) or registering it: `NFKDynamicBackend.register(providerClassName:forCapability:)`.
+
+## Model catalog
+
+`NFKModelCatalog` lists the models the engines linked into the process run. Each entry is an
+`NFKModelDescriptor`: the tasks the model does, the inputs and outputs it uses, the settings it reads,
+its releases with their download and memory figures, its license, and what a machine needs to run it.
+The JSON form, field by field, is in the [model catalog reference](model-catalog.md).
+
+A plugin ships its descriptors as a manifest, and an app adds the manifest to the shared catalog:
+
+```json
+{
+  "schemaVersion": 1,
+  "kind": "inferkit.model-catalog",
+  "models": [
+    {
+      "id": "example.upscaler",
+      "displayName": "Example Upscaler",
+      "family": "example",
+      "engine": "plugin",
+      "providerClass": "ExampleUpscalerProvider",
+      "tasks": ["upscaling"],
+      "inputs": [{ "key": "image", "required": true }],
+      "outputs": [{ "key": "image", "required": true }],
+      "parameters": [{ "key": "strength", "kind": "number", "default": 0.5, "minimum": 0, "maximum": 1 }],
+      "variants": [{ "id": "x4", "displayName": "×4", "isDefault": true, "downloadBytes": 67040989 }]
+    }
+  ]
+}
+```
+
+<!-- objc-check: given NSURL *manifestURL = nil; -->
+```objc
+NSData *manifest = [NSData dataWithContentsOfURL:manifestURL];
+NSError *error = nil;
+if (![NFKModelCatalog.sharedCatalog addDescriptorsFromManifestData:manifest error:&error]) {
+    // NFKModelCatalogErrorUnsupportedSchemaVersion: the manifest comes from a newer InferKit
+}
+
+for (NFKModelDescriptor *model in [NFKModelCatalog.sharedCatalog descriptorsForTask:NFKModelTaskUpscaling]) {
+    if (model.isStandIn) {
+        continue;                                              // a reference or test stand-in
+    }
+    NFKModelVariant *variant = model.defaultVariant;
+    NSNumber *downloadBytes = variant.downloadByteCount;
+    for (NFKModelOption *option in model.parameters) {
+        // option.kind picks the control; option.minimum, maximum, and defaultValue configure it
+    }
+}
+```
+
+A field the catalog does not know stays in `extensions` and is written back by
+`manifestDataWithError:`, so a manifest from a newer writer survives a pass through an older reader.
+
+A package lists its descriptors from a class that adopts `NFKModelDescriptorProvider`. The shared
+catalog looks the class up by name, so it contributes only when it is linked:
+
+```objc
+@interface ExampleModelDescriptors : NSObject <NFKModelDescriptorProvider>
+@end
+
+@implementation ExampleModelDescriptors
++ (NSArray<NFKModelDescriptor *> *)modelDescriptors
+{
+    NFKModelDescriptor *upscaler =
+        [[NFKModelDescriptor alloc] initWithIdentifier:@"example.upscaler" displayName:@"Example Upscaler"
+                                                family:@"example" summary:@"Enlarges an image four times."
+                                                engine:NFKModelEnginePlugin registryName:nil
+                                     providerClassName:@"ExampleUpscalerProvider"
+                                                 tasks:@[ NFKModelTaskUpscaling ]
+                                       inputModalities:nil outputModalities:nil
+                                                inputs:@[ [NFKModelPort portWithKey:NFKInputImage required:YES] ]
+                                               outputs:@[ [NFKModelPort outputPortWithKey:NFKOutputImage required:YES] ]
+                                            parameters:nil variants:nil license:nil requirements:nil
+                                           residencies:@[ NFKModelResidencyResident ] standIn:NO
+                                     introducedVersion:nil extensions:nil];
+    return @[ upscaler ];
+}
+@end
+
+[NFKModelCatalog registerProviderClassName:@"ExampleModelDescriptors"];
+```
+
+A backend an app builds itself is described from the keys it declares (`supportedInputKeys`,
+`supportedParameterKeys`, `supportedOutputKeys`), each typed from the core's table:
+
+<!-- objc-check: given id<NFKInferenceBackend> captioner = nil; -->
+```objc
+NFKModelDescriptor *described = [NFKModelDescriptor descriptorWithIdentifier:@"app.captioner"
+                                                          derivedFromBackend:captioner];
+[NFKModelCatalog.sharedCatalog addDescriptor:described];
+NSString *promptType = NFKModelValueTypeForKey(NFKInputPrompt);            // NFKModelValueTypeText
+```
 
 ## Structured output and tools
 

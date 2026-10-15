@@ -96,6 +96,17 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, copy) NSSet<NSString *> *supportedInputKeys;
 
 /*!
+	@property   supportedOutputKeys
+	@abstract   The NFKOutput* keys the backend writes, for a caller that adapts to the engine.
+	@discussion The counterpart of supportedInputKeys for results: NFKOutputText on a backend that
+				answers in text, NFKOutputImage and NFKOutputMask on one that returns a matte beside
+				the image. A key the backend writes only for some requests is in the set.
+				+[NFKModelDescriptor descriptorWithIdentifier:derivedFromBackend:] reads it for a
+				descriptor's outputs. Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, readonly, copy) NSSet<NSString *> *supportedOutputKeys;
+
+/*!
 	@property   modelInfo
 	@abstract   What the backend knows about its loaded model, keyed by NFKModelInfo*.
 	@discussion The values are strings and numbers: parameter count, weight and storage bytes,

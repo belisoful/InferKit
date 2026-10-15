@@ -223,6 +223,39 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertThrowsError(try NFKDynamicBackend.backend(forCapability: NFKCapabilityControlNet))
     }
 
+    // MARK: Model catalog (Docs/examples.md: Model catalog)
+
+    func testExampleModelCatalogFromSwift() throws {
+        let catalog = NFKModelCatalog()
+        let upscaler = NFKModelDescriptor(identifier: "example.upscaler", displayName: "Example Upscaler",
+                                          family: "example", summary: nil, engine: NFKModelEnginePlugin,
+                                          registryName: nil, providerClassName: "ExampleUpscalerProvider",
+                                          tasks: [NFKModelTaskUpscaling], inputModalities: nil, outputModalities: nil,
+                                          inputs: [NFKModelPort(key: NFKInputImage, required: true)],
+                                          outputs: [NFKModelPort.outputPort(withKey: NFKOutputImage, required: true)],
+                                          parameters: [NFKModelOption(key: NFKParameterSeed)],
+                                          variants: [NFKModelVariant(identifier: "x4", displayName: "×4")],
+                                          license: nil, requirements: nil, residencies: [NFKModelResidencyResident],
+                                          standIn: false, introducedVersion: nil, extensions: nil)
+        catalog.addDescriptor(upscaler)
+
+        // The manifest round trip: the `NSError **` out-parameters import as `throws`.
+        let manifest = try catalog.manifestData()
+        let reread = NFKModelCatalog()
+        try reread.addDescriptors(fromManifestData: manifest)
+        XCTAssertEqual(reread.descriptor(withIdentifier: "example.upscaler"), upscaler)
+        XCTAssertEqual(reread.descriptors(forTask: NFKModelTaskUpscaling).map(\.identifier), ["example.upscaler"])
+        XCTAssertEqual(upscaler.defaultVariant?.identifier, "x4")
+        XCTAssertEqual(upscaler.parameters.first?.kind, NFKModelOptionKindInteger)
+        XCTAssertEqual(NFKModelValueTypeForKey(NFKInputPrompt), NFKModelValueTypeText)
+
+        let described = NFKModelDescriptor(identifier: "app.echo", derivedFrom: NFKPassthroughBackend())
+        XCTAssertEqual(described.engine, NFKModelEnginePlugin)
+        XCTAssertEqual(NFKModelCatalog.schemaVersion, 1)
+        XCTAssertTrue(NFKModelCatalog.providerClassNames.contains("NFKMLXModelDescriptors"))
+        _ = NFKModelCatalog.shared
+    }
+
     // Remote providers from Swift: the same presets, with the importer's own naming.
     func testRemoteProviderPresets() {
         let ollama = NFKRemoteProvider(identifier: "ollama")
