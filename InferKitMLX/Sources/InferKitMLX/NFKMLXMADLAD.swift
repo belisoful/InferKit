@@ -511,7 +511,8 @@ public final class NFKMLXMADLAD: NSObject {
     @objc public static let modelName = "madlad400-3b-mt"
     static let requiredFiles = ["config.json", "spiece.model"]
     static let optionalFiles = ["generation_config.json"]
-    static let weightFiles = ["model.safetensors"]
+    /// The weights a release serves: one file (the 3B) or a shard index and its shards (the 7B).
+    static let weightFiles = ["model.safetensors", "model.safetensors.index.json"]
 
     /// Loads a release directory as a translator, held as `residency` says.
     public static func translator(directoryURL directory: URL, half: Bool = false,

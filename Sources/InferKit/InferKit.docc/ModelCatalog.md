@@ -48,6 +48,14 @@ manifest from a newer writer passes through an older reader unchanged. Tasks, va
 and the other vocabularies are plain strings (`NFKModelVocabulary.h`), so a plugin extends a set by
 using a new string. `Docs/model-catalog.md` documents every field.
 
+### Files from elsewhere, and per-variant licenses
+
+A variant's files come from its source. A file that comes from another Hugging Face repository or a
+URL names it in ``NFKModelFile/repository``, ``NFKModelFile/revision``, and ``NFKModelFile/URL``: a
+vocoder a speech model reads, or the base release a ControlNet steers. A variant whose weights carry
+another license than its model names it in ``NFKModelVariant/license``, and
+``NFKModelDescriptor/licenseForVariant:`` reads the license that applies.
+
 ### Memory figures
 
 A variant carries the bytes its download transfers, the bytes its weights hold once loaded, and the

@@ -28,13 +28,17 @@ enum NFKMLXCatalogAudio {
     /// give. ``NFKMLXReferenceModels/registerAll()`` calls it.
     static func registerAdditionalModels() {
         for release in whisperReleases where release.name != NFKMLXWhisper.modelName {
-            let variant = release.variant
-            NFKMLXModelRegistry.register(name: release.name) { weightsURL in
-                try NFKMLXWhisper.backend(variant: variant, weightsURL: weightsURL)
+            let (variant, name) = (release.variant, release.name)
+            NFKMLXModelRegistry.register(name: name) { weightsURL in
+                try NFKMLXWhisper.backend(variant: variant, weightsURL: weightsURL, tokenizer: nil, timestamps: false,
+                                          precision: .checkpoint, identifier: name)
             }
         }
         for release in wav2Vec2Releases {
-            NFKMLXGenerationBackend.registerDirectoryModel(release.name) { try NFKMLXWav2Vec2.backend(directoryURL: $0) }
+            let name = release.name
+            NFKMLXGenerationBackend.registerDirectoryModel(name) {
+                try NFKMLXWav2Vec2.backend(directoryURL: $0, identifier: name)
+            }
         }
         NFKMLXGenerationBackend.registerDirectoryModel(NFKMLXWav2Vec2Bert.modelName) {
             try NFKMLXWav2Vec2Bert.backend(directoryURL: $0)
@@ -211,8 +215,7 @@ extension NFKMLXCatalogAudio {
               release: "1b-v2",
               source: .hub("nvidia/canary-1b-v2",
                            files: files(required: NFKMLXCanary.requiredFiles, optional: NFKMLXCanary.optionalFiles,
-                                        weights: NFKMLXCanary.weightFiles),
-                           requiresConversion: true))
+                                        weights: NFKMLXCanary.weightFiles)))
     }
 
     static var voxtral: NFKMLXCatalogEntry {
@@ -552,10 +555,12 @@ extension NFKMLXCatalogAudio {
               inputs: [audioInput("A WAV recording of degraded speech. The backend resamples it to 24 kHz.")],
               outputs: [enhancedAudio],
               license: .mit(url: "https://huggingface.co/jadechoghari/VoiceRestore/blob/main/LICENSE",
-                            note: "The directory also holds bigvgan_generator.pt from nvidia/bigvgan_v2_24khz_100band_256x, MIT."),
+                            note: "The vocoder, bigvgan_generator.pt from nvidia/bigvgan_v2_24khz_100band_256x, is MIT too."),
               release: "voicerestore",
               source: .hub("jadechoghari/VoiceRestore",
-                           files: [NFKModelFile(path: NFKMLXVoiceRestoreFactory.weightFiles[1], role: NFKModelFileRoleWeights)]))
+                           files: [NFKModelFile(path: NFKMLXVoiceRestoreFactory.weightFiles[1], role: NFKModelFileRoleWeights),
+                                   .file(NFKMLXVoiceRestoreFactory.vocoderFile, role: NFKModelFileRoleWeights,
+                                         repository: NFKMLXVoiceRestoreFactory.vocoderRepo)]))
     }
 
     static var resembleEnhance: NFKMLXCatalogEntry {

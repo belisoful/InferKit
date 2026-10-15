@@ -39,6 +39,15 @@ let package = Package(
                 .product(name: "MLXRandom", package: "mlx-swift"),
             ]
         ),
+        // A maintainer tool: writes the model catalog's manifest and lists the sources
+        // Tools/catalog/measure.py measures. No product names it, so a consumer does not build it.
+        .executableTarget(
+            name: "inferkit-catalog",
+            dependencies: [
+                .product(name: "InferKit", package: "InferKit"),
+                "InferKitMLX",
+            ]
+        ),
         .testTarget(
             name: "InferKitMLXTests",
             dependencies: ["InferKitMLX"]

@@ -234,11 +234,17 @@ NS_ASSUME_NONNULL_BEGIN
 	@class      NFKModelFile
 	@abstract   One file of a model's source.
 	@discussion path is relative to the source: a path inside a repository or a directory, or the file
-				name of a single-file source. Introduced in InferKit 0.4.0.
+				name of a single-file source. A file that comes from somewhere other than its source names
+				where:
+				- repository: a Hugging Face repository, read at revision, or at its default branch when
+				  revision is nil. path is then relative to that repository.
+				- revision alone: the source's repository at that revision.
+				- URL: a download URL. path is then the file's name.
+				Introduced in InferKit 0.4.0.
 */
 @interface NFKModelFile : NSObject <NSCopying>
 
-/*! The file's path relative to the source. */
+/*! The file's path relative to the source, or to the repository the file names. */
 @property (nonatomic, readonly, copy) NSString *path;
 /*! The file's size in bytes, when known. */
 @property (nonatomic, readonly, copy, nullable) NSNumber *byteCount;
@@ -248,16 +254,36 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, copy) NSString *role;
 /*! YES when the model loads without the file. */
 @property (nonatomic, readonly, getter=isOptional) BOOL optional;
+/*! The Hugging Face repository, such as "org/name", the file comes from when it is not its source's.
+	Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSString *repository;
+/*! The commit or tag the file is read at when it differs from its source's. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSString *revision;
+/*! The download URL of a file that does not come from its source. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSURL *URL;
+/*! YES when the file names its own repository, revision, or URL. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly) BOOL overridesSource;
 /*! The fields of the file's dictionary this version does not read, written back as they came. */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *extensions;
 
-/*! A file with every field. A nil role is NFKModelFileRoleOther. */
+/*! A file with every field. A nil role is NFKModelFileRoleOther. Introduced in InferKit 0.4.0. */
 - (instancetype)initWithPath:(NSString *)path
 				   byteCount:(nullable NSNumber *)byteCount
 					  sha256:(nullable NSString *)sha256
 						role:(nullable NSString *)role
 					optional:(BOOL)optional
+				  repository:(nullable NSString *)repository
+					revision:(nullable NSString *)revision
+						 URL:(nullable NSURL *)URL
 				  extensions:(nullable NSDictionary<NSString *, id> *)extensions NS_DESIGNATED_INITIALIZER;
+
+/*! A file read from its variant's source. A nil role is NFKModelFileRoleOther. */
+- (instancetype)initWithPath:(NSString *)path
+				   byteCount:(nullable NSNumber *)byteCount
+					  sha256:(nullable NSString *)sha256
+						role:(nullable NSString *)role
+					optional:(BOOL)optional
+				  extensions:(nullable NSDictionary<NSString *, id> *)extensions;
 
 /*! A required file with a role and no size or digest. */
 + (instancetype)fileWithPath:(NSString *)path role:(NSString *)role;
@@ -266,8 +292,8 @@ NS_ASSUME_NONNULL_BEGIN
 	field has the wrong type. */
 + (nullable instancetype)fileWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error;
 
-/*! The file as its manifest dictionary: path, bytes, sha256, role, and optional, with the extensions
-	beside them. */
+/*! The file as its manifest dictionary: path, bytes, sha256, role, optional, repository, revision, and
+	url, with the extensions beside them. */
 - (NSDictionary<NSString *, id> *)dictionaryRepresentation;
 
 - (instancetype)init NS_UNAVAILABLE;
@@ -337,7 +363,10 @@ NS_ASSUME_NONNULL_BEGIN
 	@discussion registryName is the name the variant registers under in its engine's registry, which
 				a caller passes to that registry to build the backend. The byte counts are the download
 				size, the bytes the weights hold in memory, the most memory the variant holds at once,
-				and the least memory the variant runs in, as NFKModelRequirements defines it. Introduced in InferKit 0.4.0.
+				and the least memory the variant runs in, as NFKModelRequirements defines it. A variant
+				whose weights carry another license than its descriptor's names it in license, and
+				-[NFKModelDescriptor licenseForVariant:] reads the license that applies. Introduced in
+				InferKit 0.4.0.
 */
 @interface NFKModelVariant : NSObject <NSCopying>
 
@@ -365,10 +394,13 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The least memory, in bytes, the variant runs in, as NFKModelRequirements.minimumMemoryByteCount
 	defines it. */
 @property (nonatomic, readonly, copy, nullable) NSNumber *minimumMemoryByteCount;
+/*! The license of the variant's weights where it differs from its descriptor's. nil when the
+	descriptor's license covers the variant. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NFKModelLicense *license;
 /*! The fields of the variant's dictionary this version does not read, written back as they came. */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *extensions;
 
-/*! A variant with every field. A nil displayName is the identifier. */
+/*! A variant with every field. A nil displayName is the identifier. Introduced in InferKit 0.4.0. */
 - (instancetype)initWithIdentifier:(NSString *)identifier
 					   displayName:(nullable NSString *)displayName
 						 isDefault:(BOOL)isDefault
@@ -380,7 +412,22 @@ NS_ASSUME_NONNULL_BEGIN
 					parameterCount:(nullable NSNumber *)parameterCount
 						 precision:(nullable NSString *)precision
 			minimumMemoryByteCount:(nullable NSNumber *)minimumMemoryByteCount
+						   license:(nullable NFKModelLicense *)license
 						extensions:(nullable NSDictionary<NSString *, id> *)extensions NS_DESIGNATED_INITIALIZER;
+
+/*! A variant under its descriptor's license. A nil displayName is the identifier. */
+- (instancetype)initWithIdentifier:(NSString *)identifier
+					   displayName:(nullable NSString *)displayName
+						 isDefault:(BOOL)isDefault
+					  registryName:(nullable NSString *)registryName
+							source:(nullable NFKModelSource *)source
+				 downloadByteCount:(nullable NSNumber *)downloadByteCount
+				 residentByteCount:(nullable NSNumber *)residentByteCount
+					 peakByteCount:(nullable NSNumber *)peakByteCount
+					parameterCount:(nullable NSNumber *)parameterCount
+						 precision:(nullable NSString *)precision
+			minimumMemoryByteCount:(nullable NSNumber *)minimumMemoryByteCount
+						extensions:(nullable NSDictionary<NSString *, id> *)extensions;
 
 /*! A variant with an identifier and a name and nothing else. */
 + (instancetype)variantWithIdentifier:(NSString *)identifier displayName:(nullable NSString *)displayName;
@@ -390,8 +437,8 @@ NS_ASSUME_NONNULL_BEGIN
 + (nullable instancetype)variantWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error;
 
 /*! The variant as its manifest dictionary: id, displayName, isDefault, and each field that is present
-	(the byte counts as downloadBytes, residentBytes, peakBytes, and minimumMemoryBytes), with the
-	extensions beside them. */
+	(the byte counts as downloadBytes, residentBytes, peakBytes, and minimumMemoryBytes, and the license
+	as license), with the extensions beside them. */
 - (NSDictionary<NSString *, id> *)dictionaryRepresentation;
 
 - (instancetype)init NS_UNAVAILABLE;
@@ -497,7 +544,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, copy) NSArray<NFKModelVariant *> *variants;
 /*! The variant whose isDefault is YES, else the first variant, else nil. */
 @property (nonatomic, readonly, nullable) NFKModelVariant *defaultVariant;
-/*! The license of the model's weights. */
+/*! The license of the model's weights. A variant's own license overrides it for that variant. */
 @property (nonatomic, readonly, copy, nullable) NFKModelLicense *license;
 /*! What a machine needs to run the model. */
 @property (nonatomic, readonly, copy) NFKModelRequirements *requirements;
@@ -556,6 +603,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 /*! The variant with the identifier, or nil. */
 - (nullable NFKModelVariant *)variantWithIdentifier:(NSString *)identifier;
+
+/*! The license of a variant's weights: the variant's own license, else the descriptor's. Introduced in
+	InferKit 0.4.0. */
+- (nullable NFKModelLicense *)licenseForVariant:(NFKModelVariant *)variant;
 
 - (instancetype)init NS_UNAVAILABLE;
 + (instancetype)new NS_UNAVAILABLE;

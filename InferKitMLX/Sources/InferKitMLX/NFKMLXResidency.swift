@@ -141,10 +141,19 @@ enum NFKMLXResidencyBudget {
     /// its guidance pair at the full position budget (about 3 GB at bfloat16).
     static let reserve = 4 << 30
 
-    /// 0.85 of the working set Metal recommends for this machine, or 0 where it reports none.
+    /// The share of Metal's recommended working set a placement plans against.
+    static let workingSetFraction = 0.85
+
+    /// The planned share of the working set Metal recommends for this machine, or 0 where it reports none.
     static func current() -> Int {
         let recommended = NFKHardwareProfile.current.recommendedWorkingSetSize
-        return recommended > 0 ? Int(Double(recommended) * 0.85) : 0
+        return recommended > 0 ? Int(Double(recommended) * workingSetFraction) : 0
+    }
+
+    /// The least recommended working set whose budget holds `bytes` of weights beside the reserve: the
+    /// bytes plus the reserve, divided by the planned share. The catalog's `minimumMemoryBytes`.
+    static func leastWorkingSet(holding bytes: Int64) -> Int64 {
+        Int64((Double(bytes + Int64(reserve)) / workingSetFraction).rounded(.up))
     }
 
     /// Whether `bytes` of weights are known to fit `budget` beside the reserve: the test for holding

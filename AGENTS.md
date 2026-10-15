@@ -154,6 +154,13 @@ Standing rules for the package:
   read a model's row before picking it up, and update the row when a recipe ships. A recipe runs its
   freezing, optimizer, and schedule through `NFKMLXFineTune.run` rather than calling the trainer
   directly.
+- A shipped model has a catalog descriptor: one entry per registry name in its modality's
+  `NFKMLXCatalog*.swift`, with its ports, options, license, and source files. A file from another
+  repository names that repository, and a variant under another license names it. After adding or
+  changing a source, rerun `python3 -I Tools/catalog/measure.py` and regenerate
+  `Docs/model-catalog.json` (`swift run inferkit-catalog export --output ../Docs/model-catalog.json` from
+  `InferKitMLX/`). `NFKMLXCatalogCompletenessTests` fails when the registry and the catalog disagree, a
+  source has no download size, or the snapshot is stale.
 - Every `Task.detached` passes `priority: .userInitiated`; every test that reaches MLX calls its class's
   `requireMLXRuntime()` first; a test that loads many models clears the cache in `tearDown`.
 

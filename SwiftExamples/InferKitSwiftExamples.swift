@@ -249,6 +249,19 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(upscaler.parameters.first?.kind, NFKModelOptionKindInteger)
         XCTAssertEqual(NFKModelValueTypeForKey(NFKInputPrompt), NFKModelValueTypeText)
 
+        // A variant's own license overrides its model's; a file can come from another repository.
+        let vocoder = NFKModelFile(path: "vocoder.safetensors", byteCount: nil, sha256: nil,
+                                   role: NFKModelFileRoleWeights, optional: false, repository: "org/vocoder",
+                                   revision: nil, url: nil, extensions: nil)
+        let pair = NFKModelVariant(identifier: "en-de", displayName: nil, isDefault: true, registryName: nil,
+                                   source: nil, downloadByteCount: nil, residentByteCount: nil, peakByteCount: nil,
+                                   parameterCount: nil, precision: nil, minimumMemoryByteCount: nil,
+                                   license: NFKModelLicense(identifier: "CC-BY-4.0", name: "CC BY 4.0", url: nil),
+                                   extensions: nil)
+        XCTAssertTrue(vocoder.overridesSource)
+        XCTAssertEqual(upscaler.license(for: pair)?.identifier, "CC-BY-4.0")
+        XCTAssertEqual(NFKModelTaskDecision, "decision")
+
         let described = NFKModelDescriptor(identifier: "app.echo", derivedFrom: NFKPassthroughBackend())
         XCTAssertEqual(described.engine, NFKModelEnginePlugin)
         XCTAssertEqual(NFKModelCatalog.schemaVersion, 1)

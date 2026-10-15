@@ -139,6 +139,9 @@ extern NSString * const NFKModelTaskImageEmbedding;
 extern NSString * const NFKModelTaskEmbedding;
 /*! Ordering documents by relevance to a query. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelTaskReranking;
+/*! Answering typed questions about a state (NFKDecisionQuestion): a choice, a score, or whether a
+	statement holds. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelTaskDecision;
 /*! Predicting the next values of a time series. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelTaskForecasting;
 /*! Splitting a recording into its sources: voices, instruments, stems. Introduced in InferKit 0.4.0. */

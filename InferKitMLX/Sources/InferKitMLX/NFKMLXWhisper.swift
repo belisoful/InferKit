@@ -795,14 +795,38 @@ public final class NFKMLXWhisper: NSObject {
                     precision: .checkpoint)
     }
 
+    /// The registry name of a size, which a backend built at that size reports as its identifier.
+    /// large-v1 and large-v2 share the `large` geometry, so a `large` backend reports `whisper-large`
+    /// unless the registry builds it under its release's own name.
+    static func name(for variant: NFKMLXWhisperVariant) -> String {
+        switch variant {
+        case .tiny: return modelName
+        case .base: return "whisper-base"
+        case .small: return "whisper-small"
+        case .medium: return "whisper-medium"
+        case .large: return "whisper-large"
+        case .largeV3: return "whisper-large-v3"
+        case .largeV3Turbo: return "whisper-large-v3-turbo"
+        }
+    }
+
     /// Builds a size at a chosen precision. `NFKMLXWeightPrecisionCheckpoint` keeps the file's type, so
     /// OpenAI's float16 `.pt` releases compute at float16, half the memory of float32;
-    /// `NFKMLXWeightPrecisionFloat32` widens a half-precision file and computes in float32.
+    /// `NFKMLXWeightPrecisionFloat32` widens a half-precision file and computes in float32. The backend's
+    /// identifier is the size's registry name, such as `whisper-base`.
     ///
     /// Introduced in InferKit 0.4.0.
     @objc(backendWithVariant:weightsURL:tokenizer:timestamps:precision:error:)
     public static func backend(variant: NFKMLXWhisperVariant, weightsURL: URL?, tokenizer: NFKTokenizer?,
                                timestamps: Bool, precision: NFKMLXWeightPrecision) throws -> any NFKInferenceBackend {
+        try backend(variant: variant, weightsURL: weightsURL, tokenizer: tokenizer, timestamps: timestamps,
+                    precision: precision, identifier: name(for: variant))
+    }
+
+    /// Builds a size whose backend reports `identifier`: the name the registry builds it under.
+    static func backend(variant: NFKMLXWhisperVariant, weightsURL: URL?, tokenizer: NFKTokenizer?,
+                        timestamps: Bool, precision: NFKMLXWeightPrecision,
+                        identifier: String) throws -> any NFKInferenceBackend {
         var configuration = self.configuration(for: variant)
         if let tokenizer {
             configuration.suppressTokens = NFKMLXWhisperSuppression.nonSpeechTokens(using: tokenizer)
@@ -812,7 +836,7 @@ public final class NFKMLXWhisper: NSObject {
             try loadWeights(into: net, from: weightsURL, precision: precision)
         }
         let holder = NFKMLXWhisperHolder(net)
-        let backend = NFKMLXWhisperBackend(net: holder.net, tokenizer: tokenizer, identifier: modelName)
+        let backend = NFKMLXWhisperBackend(net: holder.net, tokenizer: tokenizer, identifier: identifier)
         backend.emitsTimestamps = timestamps
         return backend
     }

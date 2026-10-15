@@ -124,6 +124,41 @@
 	XCTAssertTrue(file.isOptional);
 }
 
+- (void)testAFileFromAnotherRepositoryRoundTripsThroughItsDictionary
+{
+	NSDictionary *dictionary = @{ @"path": @"bigvgan_generator.pt", @"bytes": @4096, @"role": NFKModelFileRoleWeights,
+								  @"optional": @NO, @"repository": @"nvidia/bigvgan_v2_24khz_100band_256x",
+								  @"revision": @"0123abcd" };
+	NFKModelFile *file = [NFKModelFile fileWithDictionary:dictionary error:NULL];
+	XCTAssertEqualObjects(file.dictionaryRepresentation, dictionary);
+	XCTAssertEqualObjects(file.repository, @"nvidia/bigvgan_v2_24khz_100band_256x");
+	XCTAssertEqualObjects(file.revision, @"0123abcd");
+	XCTAssertNil(file.URL);
+	XCTAssertTrue(file.overridesSource);
+	XCTAssertFalse([NFKModelFile fileWithPath:@"model.safetensors" role:NFKModelFileRoleWeights].overridesSource);
+}
+
+- (void)testAFileFromAURLRoundTripsThroughItsDictionary
+{
+	NSDictionary *dictionary = @{ @"path": @"weights.pth", @"role": NFKModelFileRoleWeights, @"optional": @YES,
+								  @"url": @"https://example.com/releases/weights.pth" };
+	NFKModelFile *file = [NFKModelFile fileWithDictionary:dictionary error:NULL];
+	XCTAssertEqualObjects(file.dictionaryRepresentation, dictionary);
+	XCTAssertEqualObjects(file.URL.absoluteString, @"https://example.com/releases/weights.pth");
+	XCTAssertTrue(file.overridesSource);
+	XCTAssertEqualObjects(file, [[NFKModelFile alloc] initWithPath:@"weights.pth" byteCount:nil sha256:nil
+															  role:NFKModelFileRoleWeights optional:YES repository:nil
+														  revision:nil URL:file.URL extensions:nil]);
+}
+
+- (void)testAMalformedFileOverrideIsRefused
+{
+	NSError *error = nil;
+	XCTAssertNil([NFKModelFile fileWithDictionary:(@{ @"path": @"a.bin", @"repository": @3 }) error:&error]);
+	XCTAssertEqual(error.code, NFKModelCatalogErrorMalformedDescriptor);
+	XCTAssertTrue([error.localizedDescription containsString:@"file.repository"], @"%@", error);
+}
+
 - (void)testASourceRoundTripsThroughItsDictionary
 {
 	NSDictionary *dictionary = [self fullDescriptorDictionary][@"variants"][0][@"source"];
@@ -142,6 +177,37 @@
 	XCTAssertEqualObjects(variant.peakByteCount, @600);
 	XCTAssertEqualObjects(variant.parameterCount, @7);
 	XCTAssertEqualObjects(variant.minimumMemoryByteCount, @789);
+}
+
+- (void)testAVariantLicenseRoundTripsAndOverridesTheDescriptors
+{
+	NSDictionary *license = @{ @"id": @"CC-BY-4.0", @"name": @"Creative Commons Attribution 4.0",
+							   @"gated": @NO, @"restrictsCommercialUse": @NO, @"note": @"Attribution required." };
+	NSDictionary *dictionary = @{ @"id": @"en-de", @"displayName": @"en-de", @"isDefault": @YES, @"license": license };
+	NSError *error = nil;
+	NFKModelVariant *variant = [NFKModelVariant variantWithDictionary:dictionary error:&error];
+	XCTAssertNotNil(variant, @"%@", error);
+	XCTAssertEqualObjects(variant.dictionaryRepresentation, dictionary);
+	XCTAssertEqualObjects(variant.license.identifier, @"CC-BY-4.0");
+
+	NFKModelVariant *plain = [NFKModelVariant variantWithIdentifier:@"ja-en" displayName:nil];
+	XCTAssertNil(plain.license);
+	XCTAssertNil(plain.dictionaryRepresentation[@"license"]);
+	NFKModelLicense *apache = [NFKModelLicense licenseWithIdentifier:@"Apache-2.0" name:@"Apache License 2.0" URL:nil];
+	NFKModelDescriptor *descriptor = [[NFKModelDescriptor alloc]
+		initWithIdentifier:@"opus-mt" displayName:nil family:@"marian" summary:nil engine:NFKModelEngineMLX
+			  registryName:nil providerClassName:nil tasks:@[ NFKModelTaskTranslation ] inputModalities:nil
+		  outputModalities:nil inputs:nil outputs:nil parameters:nil variants:@[ variant, plain ] license:apache
+			  requirements:nil residencies:nil standIn:NO introducedVersion:nil extensions:nil];
+	XCTAssertEqualObjects([descriptor licenseForVariant:variant].identifier, @"CC-BY-4.0");
+	XCTAssertEqualObjects([descriptor licenseForVariant:plain], apache);
+}
+
+- (void)testAVariantWithAMalformedLicenseIsRefused
+{
+	NSError *error = nil;
+	XCTAssertNil([NFKModelVariant variantWithDictionary:(@{ @"id": @"v", @"license": @{ @"gated": @YES } }) error:&error]);
+	XCTAssertTrue([error.localizedDescription containsString:@"variant.license.name"], @"%@", error);
 }
 
 - (void)testRequirementsRoundTripThroughTheirDictionary
@@ -403,6 +469,15 @@
 	XCTAssertEqualObjects(NFKModelTaskUpscaling, NFKCapabilityUpscaling);
 	XCTAssertEqualObjects(NFKModelTaskOpticalFlow, NFKCapabilityOpticalFlow);
 	XCTAssertEqualObjects(NFKModelTaskControlNet, NFKCapabilityControlNet);
+}
+
+- (void)testTheDecisionTaskIsTheDecisionString
+{
+	XCTAssertEqualObjects(NFKModelTaskDecision, @"decision");
+	NSDictionary *dictionary = @{ @"id": @"m", @"family": @"f", @"engine": NFKModelEngineMLX,
+								  @"tasks": @[ NFKModelTaskDecision, NFKModelTaskClassification ] };
+	NFKModelDescriptor *descriptor = [NFKModelDescriptor descriptorWithDictionary:dictionary error:NULL];
+	XCTAssertEqualObjects(descriptor.tasks.firstObject, NFKModelTaskDecision);
 }
 
 #pragma mark Malformed input

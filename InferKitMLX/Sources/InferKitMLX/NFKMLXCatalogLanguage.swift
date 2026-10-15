@@ -23,7 +23,7 @@ enum NFKMLXCatalogLanguage {
     /// The language models' entries, in the order ``NFKMLXModelDescriptors`` lists them.
     static var entries: [NFKMLXCatalogEntry] {
         languageReleases.map(languageEntry) + [ggufEntry]
-            + [hybridEntry, qwen4ExpEntry, graniteEntry, nemotronEntry, mambaEntry]
+            + [hybridEntry, qwen4ExpEntry] + graniteEntries + [nemotronEntry, mambaEntry]
             + gemma3Releases.map(gemma3Entry) + gemma3nReleases.map(gemma3nEntry) + gemma4Releases.map(gemma4Entry)
             + [gemma4MultimodalEntry]
             + deepSeekReleases.map(deepSeekEntry)
@@ -739,19 +739,26 @@ extension NFKMLXCatalogLanguage {
             residencies: residencies(routesExperts: true))
     }
 
-    fileprivate static var graniteEntry: NFKMLXCatalogEntry {
-        let name = NFKMLXGraniteHybrid.graniteModelName
+    /// Granite 4.0-H 1B, a dense decoder, and Granite 4.0-H Tiny, whose routed experts page where the
+    /// release does not fit.
+    fileprivate static var graniteEntries: [NFKMLXCatalogEntry] {
         let files = releaseFiles(required: NFKMLXGraniteHybrid.requiredFiles, optional: NFKMLXGraniteHybrid.optionalFiles,
                                  weights: NFKMLXGraniteHybrid.weightFiles)
-        return decoderEntry(
-            name: name, displayName: "Granite 4.0-H", family: "granite-4.0-h",
-            summary: "IBM Granite 4.0-H, hybrid Mamba-2 and attention decoders that write text and call tools.",
-            variants: [familyVariant(name, "ibm-granite/granite-4.0-h-1b", displayName: "Granite 4.0-H 1B",
-                                     isDefault: true, files: files),
-                       familyVariant(name, "ibm-granite/granite-4.0-h-tiny", displayName: "Granite 4.0-H Tiny",
-                                     files: files)],
-            license: .apache2(), readsReasoning: false, outputs: toolCallingOutputs + [usageOutput],
-            parameters: toolDecoderOptions)
+        let releases: [(name: String, repository: String, displayName: String, summary: String, routesExperts: Bool)] = [
+            (NFKMLXGraniteHybrid.graniteModelName, "ibm-granite/granite-4.0-h-1b", "Granite 4.0-H 1B",
+             "IBM Granite 4.0-H 1B, a hybrid Mamba-2 and attention decoder that writes text and calls tools.", false),
+            (NFKMLXGraniteHybrid.graniteTinyModelName, "ibm-granite/granite-4.0-h-tiny", "Granite 4.0-H Tiny",
+             "IBM Granite 4.0-H Tiny, a hybrid Mamba-2 and attention decoder with routed experts that writes text and calls tools.",
+             true),
+        ]
+        return releases.map { release in
+            decoderEntry(
+                name: release.name, displayName: release.displayName, family: "granite-4.0-h", summary: release.summary,
+                variants: [familyVariant(release.name, release.repository, displayName: release.displayName,
+                                         isDefault: true, files: files)],
+                license: .apache2(), readsReasoning: false, outputs: toolCallingOutputs + [usageOutput],
+                parameters: toolDecoderOptions, residencies: residencies(routesExperts: release.routesExperts))
+        }
     }
 
     fileprivate static var nemotronEntry: NFKMLXCatalogEntry {
@@ -978,6 +985,9 @@ extension NFKMLXCatalogLanguage {
     /// The OPUS-MT language pairs the parity and language probes cover.
     private static let opusMTPairs = ["en-de", "ja-en", "zh-en", "en-zh", "ar-en", "vi-en", "th-en", "hi-en", "ko-en"]
 
+    /// The pairs whose model cards state CC BY 4.0. The other listed pairs state Apache 2.0.
+    private static let opusMTCreativeCommonsPairs: Set<String> = ["en-de", "zh-en"]
+
     fileprivate static var opusMTEntry: NFKMLXCatalogEntry {
         let name = NFKMLXMarian.modelName
         let files = releaseFiles(required: NFKMLXMarian.requiredFiles, optional: NFKMLXMarian.optionalFiles,
@@ -988,12 +998,16 @@ extension NFKMLXCatalogLanguage {
             registryName: name, tasks: [NFKModelTaskTranslation],
             inputs: translationInputs, outputs: translationOutputs, parameters: translationOptions(beams: 4),
             variants: opusMTPairs.map { pair in
-                familyVariant(name, "Helsinki-NLP/opus-mt-\(pair)", displayName: "OPUS-MT \(pair)",
-                              isDefault: pair == "en-de", files: files)
+                let repository = "Helsinki-NLP/opus-mt-\(pair)"
+                return .variant(variantIdentifier(repository), displayName: "OPUS-MT \(pair)", isDefault: pair == "en-de",
+                                registryName: name, source: .hub(repository, files: files),
+                                license: opusMTCreativeCommonsPairs.contains(pair)
+                                    ? .license("CC-BY-4.0", name: "Creative Commons Attribution 4.0 International",
+                                               url: modelCardURL(repository), note: "Attribution required.")
+                                    : nil)
             },
-            license: .license(nil, name: "Apache License 2.0 or CC BY 4.0, by language pair",
-                              url: "https://huggingface.co/Helsinki-NLP",
-                              note: "opus-mt-en-de and opus-mt-zh-en are CC BY 4.0, which requires attribution. The other listed pairs are Apache 2.0."))
+            license: .license("Apache-2.0", name: "Apache License 2.0", url: "https://huggingface.co/Helsinki-NLP",
+                              note: "The en-de and zh-en pairs are CC BY 4.0, which each of those variants states."))
     }
 
     fileprivate static func m2m100Entry(_ variant: NFKMLXM2M100Variant) -> NFKMLXCatalogEntry {
@@ -1028,15 +1042,14 @@ extension NFKMLXCatalogLanguage {
     }
 
     fileprivate static func madladEntry(_ release: NFKMLXLanguageRelease) -> NFKMLXCatalogEntry {
-        // The 7B stores sharded safetensors behind an index, which NFKMLXMADLAD.weightFiles does not name.
-        let weights = release.name == NFKMLXMADLAD.modelName ? NFKMLXMADLAD.weightFiles : ["model.safetensors.index.json"]
-        return NFKMLXCatalogEntry(
+        NFKMLXCatalogEntry(
             identifier: release.name, displayName: release.displayName, family: "madlad",
             summary: "\(release.displayName), Google's T5 translator between more than 400 languages, loaded at bfloat16.",
             registryName: release.name, tasks: [NFKModelTaskTranslation],
             inputs: translationInputs, outputs: translationOutputs, parameters: translationOptions(beams: 1),
             variants: [variant(release, files: releaseFiles(required: NFKMLXMADLAD.requiredFiles,
-                                                            optional: NFKMLXMADLAD.optionalFiles, weights: weights))],
+                                                            optional: NFKMLXMADLAD.optionalFiles,
+                                                            weights: NFKMLXMADLAD.weightFiles))],
             license: license(release.repository), residencies: streamedResidencies)
     }
 }
@@ -1123,7 +1136,7 @@ extension NFKMLXCatalogLanguage {
         return NFKMLXCatalogEntry(
             identifier: name, displayName: displayName, family: "laya",
             summary: "\(displayName), \(encoder) with a decision head that answers typed questions about a state in one pass.",
-            registryName: name, tasks: [NFKModelTaskClassification],
+            registryName: name, tasks: [NFKModelTaskDecision, NFKModelTaskClassification],
             inputs: decisionInputs, outputs: decisionOutputs, parameters: [],
             variants: [.variant(variant.folder.isEmpty ? "laya" : variant.folder, displayName: displayName,
                                 isDefault: true, registryName: name,
@@ -1137,16 +1150,20 @@ extension NFKMLXCatalogLanguage {
         let name = variant.registryName
         let displayName = variant.repository.split(separator: "/").last.map(String.init) ?? name
         let base = variant.baseRepository.split(separator: "/").last.map(String.init) ?? variant.baseRepository
+        let checkpoint = releaseFiles(required: NFKMLXOpenJev.checkpointFiles.map { "package/checkpoint/\($0)" },
+                                      weights: [])
+        let baseFiles = NFKMLXOpenJev.baseFiles.map { path in
+            NFKModelFile.file(path, role: role(of: path), repository: variant.baseRepository, revision: variant.baseRevision)
+        }
         return NFKMLXCatalogEntry(
             identifier: name, displayName: displayName, family: "open-jev",
             summary: "\(displayName), a LoRA adapter and scoring head over \(base) that answers typed questions about a state.",
-            registryName: name, tasks: [NFKModelTaskClassification],
+            registryName: name, tasks: [NFKModelTaskDecision, NFKModelTaskClassification],
             inputs: decisionInputs, outputs: decisionOutputs, parameters: [],
             variants: [.variant(variantIdentifier(variant.repository), displayName: displayName, isDefault: true,
                                 registryName: name,
                                 source: .hub(variant.repository, revision: variant.measuredRevision,
-                                             files: releaseFiles(required: NFKMLXOpenJev.checkpointFiles.map { "package/checkpoint/\($0)" },
-                                                                 weights: [])))],
+                                             files: checkpoint + baseFiles))],
             license: .apache2(note: "The adapter reads \(variant.baseRepository) at \(variant.baseRevision), which the download fetches beside it."))
     }
 
@@ -1155,7 +1172,7 @@ extension NFKMLXCatalogLanguage {
         return NFKMLXCatalogEntry(
             identifier: name, displayName: "open-jev-deberta-v3-large", family: "deberta-v3",
             summary: "A DeBERTa-v3-large encoder with a scoring head that answers typed questions about a state.",
-            registryName: name, tasks: [NFKModelTaskClassification],
+            registryName: name, tasks: [NFKModelTaskDecision, NFKModelTaskClassification],
             inputs: decisionInputs, outputs: decisionOutputs, parameters: [],
             variants: [.variant(variantIdentifier(NFKMLXOpenJevDeBERTa.repository), displayName: "open-jev-deberta-v3-large",
                                 isDefault: true, registryName: name,

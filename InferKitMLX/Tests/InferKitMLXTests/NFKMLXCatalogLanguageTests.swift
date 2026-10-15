@@ -109,6 +109,53 @@ final class NFKMLXCatalogLanguageTests: XCTestCase {
         }
     }
 
+    func testTheMADLADReleasesFetchTheShardIndex() throws {
+        XCTAssertEqual(NFKMLXMADLAD.weightFiles, ["model.safetensors", "model.safetensors.index.json"])
+        for name in [NFKMLXMADLAD.modelName, "madlad400-7b-mt"] {
+            let files = try XCTUnwrap(try descriptor(name).defaultVariant?.source?.files)
+            XCTAssertTrue(files.contains { $0.path == "model.safetensors.index.json" && $0.isOptional }, name)
+        }
+    }
+
+    func testGraniteTinyIsRegisteredAndPagesItsExperts() throws {
+        NFKMLXReferenceModels.registerAll()
+        XCTAssertTrue(NFKMLXModelRegistry.isModelRegistered(NFKMLXGraniteHybrid.graniteTinyModelName))
+        let tiny = try descriptor(NFKMLXGraniteHybrid.graniteTinyModelName)
+        XCTAssertEqual(tiny.residencies, [NFKModelResidencyResident, NFKModelResidencyPaged])
+        XCTAssertEqual(tiny.defaultVariant?.source?.repository, "ibm-granite/granite-4.0-h-tiny")
+        let dense = try descriptor(NFKMLXGraniteHybrid.graniteModelName)
+        XCTAssertEqual(dense.residencies, [NFKModelResidencyResident])
+        XCTAssertEqual(dense.defaultVariant?.source?.repository, "ibm-granite/granite-4.0-h-1b")
+    }
+
+    func testTheDecisionModelsAnswerTheDecisionTask() throws {
+        for name in ["laya", "laya-typed-decisions", "laya-multilingual", "open-jev-2b", "open-jev-9b",
+                     "open-jev-27b-v1.1", "open-jev-deberta-v3-large"] {
+            XCTAssertEqual(try descriptor(name).tasks, [NFKModelTaskDecision, NFKModelTaskClassification], name)
+        }
+    }
+
+    func testOpenJevNamesItsBaseRepositoryAtTheRevisionItWasTrainedOver() throws {
+        for variant in NFKMLXOpenJevVariant.allCases {
+            let files = try XCTUnwrap(descriptors.first { $0.identifier.hasPrefix("open-jev-")
+                && $0.defaultVariant?.source?.repository == variant.repository }?.defaultVariant?.source?.files)
+            let base = files.filter { $0.repository == variant.baseRepository }
+            XCTAssertEqual(base.map(\.path), NFKMLXOpenJev.baseFiles, variant.repository)
+            XCTAssertTrue(base.allSatisfy { $0.revision == variant.baseRevision }, variant.repository)
+        }
+    }
+
+    func testEachOPUSMTPairCarriesTheLicenseItsModelCardStates() throws {
+        let opus = try descriptor(NFKMLXMarian.modelName)
+        XCTAssertEqual(opus.license?.identifier, "Apache-2.0")
+        for variant in opus.variants {
+            let creativeCommons = ["opus-mt-en-de", "opus-mt-zh-en"].contains(variant.identifier)
+            XCTAssertEqual(opus.license(for: variant)?.identifier, creativeCommons ? "CC-BY-4.0" : "Apache-2.0",
+                           variant.identifier)
+            XCTAssertEqual(variant.license != nil, creativeCommons, variant.identifier)
+        }
+    }
+
     func testEveryEntryThatTakesToolsListsTheToolCallingOutputs() {
         for descriptor in descriptors where descriptor.parameters.contains(where: { $0.key == NFKParameterTools }) {
             XCTAssertTrue(NFKMLXToolCalling.outputKeys.isSubset(of: Set(descriptor.outputs.map(\.key))),

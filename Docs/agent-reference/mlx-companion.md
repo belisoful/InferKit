@@ -90,6 +90,7 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
     every descriptor round-trips through its dictionary, that identifiers are unique, that every
     registry name is registered after `registerAll()`, and that each stand-in backend declares exactly
     its descriptor's ports and options.
+  - The measurements, the snapshot, and the completeness rules are in "Model catalog" below.
 - **Reasoning and usage (2026-09-19).** The core's three reasoning keys reach the MLX text backends.
   `NFKMLXReasoning.swift` holds the pieces; `NFKMLXReasoningTests` covers them without the runtime,
   since all of it is text work.
@@ -348,7 +349,10 @@ New request and result keys from the closure:
 **Limits of closed bridges.**
 
 - SAM 3.1: `facebook/sam3.1` ships `sam3.1_multiplex.pt` only, whose names the loader does not read; a 3.1
-  checkpoint in the transformers layout loads through the directory factory. Preprocessing omits the reference's
+  checkpoint in the transformers layout loads through the directory factory. The catalog lists the `.pt`
+  with `requiresConversion` and a source `note`: the file is the `facebook/sam3` codebase's layout with the
+  Object Multiplex tracker, and its key names are behind the gate (the model card states the codebase
+  layout and no transformers integration), so a reader change is not a small remap. Preprocessing omits the reference's
   antialiasing when shrinking.
 - SANA: no resolution binning and no `clean_caption`. The pipeline loads its Gemma 2 encoder through its own
   loader, because `NFKMLXGemma2Net.load(directoryURL:)` keeps only `model.`-prefixed keys and SANA's are unprefixed.
@@ -376,10 +380,16 @@ layers' bytes).
 
 - Staging changes WHEN whole stages are loaded. A model built from stages that run strictly in turn
   loads each for its turn and releases it after. FLUX.1 (CLIP-L and T5-XXL, then transformer and
-  autoencoder), FLUX.2 (text encoder, then transformer), Qwen-Image 2.1 (Qwen3-VL 8B, then
-  transformer and autoencoder), LTX-Video (T5-XXL, then transformer and autoencoder), Wan (umT5-XXL,
-  then transformer and autoencoder) and MiniMax Music 3 (language model and depth decoder, then
-  condition encoder and DiT, then vocoder) stage. The stage bytes come from shard headers at the load
+  autoencoder), the FLUX.1 ControlNet (the same encoders, then transformer, ControlNet, and
+  autoencoder), FLUX.2 (text encoder, then transformer), Stable Diffusion 3 (two CLIP encoders and
+  T5-XXL, then transformer and autoencoder), the SD3 ControlNet (the same encoders, then transformer,
+  ControlNet, and autoencoder), SANA (Gemma 2, then transformer and DC-AE), Z-Image (Qwen3, then
+  transformer and autoencoder), Qwen-Image 2.1 (Qwen3-VL 8B, then transformer and autoencoder),
+  LTX-Video (T5-XXL, then transformer and autoencoder), Wan (umT5-XXL, then transformer and
+  autoencoder) and MiniMax Music 3 (language model and depth decoder, then condition encoder and DiT,
+  then vocoder) stage. Each builds an `NFKMLXStagedModel` of `NFKMLXStage`s (`NFKMLXSD3Generator.swift`,
+  `NFKMLXSD3ControlNetGenerator.swift`, `NFKMLXSANAGenerator.swift`, `NFKMLXZImageGenerator.swift`,
+  `NFKMLXFluxControlNetGenerator.swift`). The stage bytes come from shard headers at the load
   precision (`NFKMLXStageWeights`), not file sizes.
 - Paging changes WHERE part of one stage lives. A mixture's routed experts stay in the release and are
   materialized as the router reaches them (`NFKMLXExpertStore.swift`, `NFKMLXExpertPaging.swift`).
@@ -552,6 +562,84 @@ Precision choice:
 - `verifyEachStageLoads(_:plan:budget:names:)` refuses a staged placement with a stage known not to load
   on its own, at the precision the plan chose. It is separate from `plan` because Music 3 plans from one
   total footprint, where "the total does not fit" means stage, not refuse. FLUX.2 calls it.
+
+## Model catalog
+
+Where the entries live:
+
+- One file per modality: `NFKMLXCatalogImage.swift`, `NFKMLXCatalogVideo.swift`,
+  `NFKMLXCatalogLanguage.swift`, `NFKMLXCatalogAudio.swift`, and the stand-ins in
+  `NFKMLXCatalogReference.swift`. `NFKMLXModelDescriptors.entries` concatenates them.
+- Each registry name is one entry, or one variant of an entry whose variants share a factory (OPUS-MT's
+  pairs, Qwen3.5's sizes). A released size with its own factory gets its own name and entry: Granite
+  4.0-H registers `granite-4.0-h` (1B, dense) and `granite-4.0-h-tiny` (routed experts, paged where
+  the release does not fit under `.automatic`).
+- A file a variant reads from another repository names it (`NFKModelFile.repository` / `revision` /
+  `url`, the Swift helper `NFKModelFile.file(_:role:optional:repository:revision:)`): VoiceRestore's
+  BigVGAN vocoder, Open-Jev's base model at the commit its adapter was trained over, and the base
+  releases the two ControlNets steer. The ControlNets' registry directory holds the base under `base/`
+  and the ControlNet under `controlnet/`; the catalog lists each file at its path in its own repository.
+- A variant whose weights carry another license names it (`NFKModelVariant.license`): OPUS-MT's en-de
+  and zh-en pairs are CC BY 4.0 under an Apache 2.0 entry, as each model card states.
+- A decision model's tasks are `decision`, then `classification`: Laya, Open-Jev, and the Open-Jev
+  DeBERTa model.
+- A source carries a `note` a user should read (SAM 3.1's unconverted `.pt`), and
+  `publiclyServed: false` where the publisher withdrew the repository (`stabilityai/stable-diffusion-2-1-base`,
+  401 without a token since 2026-10). The entry and its registry name stay, because a local copy builds;
+  `NFKModelSource.noting(_:publiclyServed:)` writes both, `inferkit-catalog sources` passes them on, and
+  `measure.py` records such a source as unmeasurable.
+- A backend reports its registry name as its identifier: each Whisper size (`whisper-base`; a `large`
+  backend built outside the registry reports `whisper-large`), each wav2vec 2.0 and HuBERT release (the
+  repository's name, or the configuration's `model_type` from a bare directory), and Granite's two names.
+
+The measurement:
+
+- `Tools/catalog/measure.py` writes `NFKMLXCatalogMeasurements.swift` (generated: two arrays, the files
+  and the variants). `NFKMLXCatalogMeasurement.swift` holds the row types, the lookup, and
+  `NFKMLXCatalogEntry.measured()`, which `NFKMLXModelDescriptors.modelDescriptors()` applies to every
+  entry. The figures and the extension fields are documented in `Docs/model-catalog.md`.
+- The download the script sizes is the one `NFKMLXReleaseDownload` makes: required files, served
+  optional files, the first served weight candidate per directory, and the shards of a shard index. A
+  gated repository lists its files without a token, so its sizes and digests are measured; its shard
+  index and tensor headers are refused, so the shards come from the file names beside the index and the
+  safetensors bytes count as opaque (no parameter count). A repository that refuses the listing is
+  `gated`; a release page or a Google Drive folder is `unmeasurable`; a required file the repository
+  does not serve is `missing`.
+- `residentBytes` follows `NFKMLXLoadPlan.plan(for:)`: the precision each family's registered loader
+  holds its weights at, read from the loaders on 2026-10-15. The default is stored. Float32: BiRefNet,
+  Cosmos tokenizer, DeBERTa (Open-Jev), Florence-2, Gemma 3 (not TranslateGemma, which loads at
+  `.checkpoint`), Gemma 3n, Gemma 4, Laya, M2M-100, Marian, NLLB, ModernBERT, Pixtral, the
+  `NFKMLXLanguage` families (Qwen3, Qwen3-MoE, Qwen2-MoE, Mixtral, Mistral, the GGUF), Qwen3-VL,
+  SmolVLM, and TrOCR. Bfloat16: DeepSeek V4, MADLAD-400 (registered `half: true`), and Sa2VA. Phi-4
+  multimodal loads its decoder stored and its towers at float32 from the same shards, so it is an
+  estimate (`residentEstimate`). The staged generators' plans give each component directory its own
+  precision; a component that widens only where the budget holds it (FLUX.2's text encoder, SD3's
+  T5-XXL, Wan's umT5) counts at its narrower precision.
+- `minimumMemoryBytes` is `NFKMLXResidencyBudget.leastWorkingSet(holding:)` of the largest stage of a
+  staged plan, else of the resident bytes. It reads the planner's own `reserve` and
+  `workingSetFraction`. A paged or streamed model counts its resident bytes.
+- Rerun the script after adding a source or changing a file list. It runs in a few minutes on a fresh
+  network and sends `HF_TOKEN` when set, which measures the gated repositories' tensor headers.
+
+The snapshot:
+
+- `Docs/model-catalog.json` is `swift run inferkit-catalog export` (from `InferKitMLX/`): the core's
+  Apple engines and the MLX models. `NFKMLXCatalogCompletenessTests.testTheCommittedSnapshotIsTheCatalogsManifest`
+  builds the same manifest in process from the two provider classes and fails with the regenerate
+  command when the file differs.
+- `inferkit-catalog` is an `executableTarget` with no product, so a consumer never builds it. It calls
+  `NFKMLXReferenceModels.registerAll()`, builds descriptors, and evaluates no array, so `swift run`
+  needs no Metal library and no `Tools/mlx-metallib.sh`.
+
+The completeness rules (`NFKMLXCatalogCompletenessTests`, no MLX runtime):
+
+- After `registerAll()`, the registry's names and the descriptors' and variants' registry names are the
+  same set (a test's own registrations use the `test-` prefix and are left out).
+- Identifiers are unique, and no MLX identifier is an Apple engine's.
+- The stand-ins are exactly the six reference models, `sam`, and `swinir-x4`.
+- Every other model has an output, a task, a license, and a default variant with a source.
+- Every Hugging Face or URL source has `downloadBytes > 0`, except the sources the test lists by
+  `model/variant` with the reason they are not sized.
 
 ## Swift and Objective-C gotchas
 

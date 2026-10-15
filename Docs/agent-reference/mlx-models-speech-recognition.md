@@ -248,9 +248,11 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `src>tgt` pair under `NFKInputPrompt` (default `en`), and transcribes the validation clip to "The
   quick brown fox jumps over the lazy dog." **Customization is trainable at LoRA, with no recipe
   written yet.** NeMo publishes `transf_loss` with a prompt loss mask, and a 1B encoder-decoder trains
-  on `(audio, transcript)` pairs the way the shipped Whisper recipe does. The release is the unpacked `.nemo` (`model_weights.ckpt`
-  through the native torch reader, `tokenizer.json` beside it); `nvidia/canary-1b-v2` (~6 GB `.nemo`),
-  the `nemo` oracle env. `IK_VAL_CANARY`, `IK_PARITY_CANARY`.
+  on `(audio, transcript)` pairs the way the shipped Whisper recipe does. The release directory holds
+  `tokenizer.json` and either the `canary-1b-v2.nemo` archive the repository serves, read in place through
+  `NFKMLXNemoArchive` (Parakeet's reader), or the unpacked `model_weights.ckpt`
+  (`NFKMLXCanary.releaseCheckpoint(inDirectory:)`), so the registry name loads the download as served;
+  `nvidia/canary-1b-v2` (~6 GB `.nemo`), the `nemo` oracle env. `IK_VAL_CANARY`, `IK_PARITY_CANARY`.
 - `NFKMLXWav2Vec2` / `NFKMLXWav2Vec2Net` / `NFKMLXWav2Vec2Backend` (`@objc`) — **Wav2Vec2 and HuBERT**
   (transformers `Wav2Vec2Model` / `HubertModel` and their `…ForCTC` heads, Meta, Apache-2.0), the
   self-supervised speech encoders that read the raw 16 kHz waveform, in one configuration-driven network.

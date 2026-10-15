@@ -62,6 +62,7 @@ NSString * const NFKModelTaskClassification			= @"classification";
 NSString * const NFKModelTaskImageEmbedding			= @"image-embedding";
 NSString * const NFKModelTaskEmbedding				= @"embedding";
 NSString * const NFKModelTaskReranking				= @"reranking";
+NSString * const NFKModelTaskDecision				= @"decision";
 NSString * const NFKModelTaskForecasting			= @"forecasting";
 NSString * const NFKModelTaskSourceSeparation		= @"source-separation";
 NSString * const NFKModelTaskSpeechEnhancement		= @"speech-enhancement";
