@@ -1046,15 +1046,19 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 - (BOOL)greetConnection:(NFKPluginConnection *)connection error:(NSError **)error
 {
 	NFKPluginManifest *manifest = self.manifest;
-	NSDictionary *hello = @{
+	NSString *prefix = self.sharedMemoryPrefix;
+	NSMutableDictionary *hello = [@{
 		@"type": NFKPluginMessageHello,
 		@"protocol": @{ @"major": @(NFKPluginProtocolMajorVersion), @"minor": @(NFKPluginProtocolMinorVersion) },
 		@"inferkitAPI": NFKInferKit.APIVersion,
 		@"pluginABI": [NSString stringWithFormat:@"%d.%d", NFK_PLUGIN_ABI_VERSION_MAJOR, NFK_PLUGIN_ABI_VERSION_MINOR],
-		@"capabilities": @[],
+		@"capabilities": prefix != nil ? @[ NFKPluginCapabilityFileDescriptors ] : @[],
 		@"options": self.pluginOptions ?: @{},
 		@"limits": @{ @"inlineBytes": @(NFKPluginDefaultInlineByteLimit) },
-	};
+	} mutableCopy];
+	if (prefix != nil) {
+		hello[@"sharedMemoryPrefix"] = prefix;
+	}
 	NSError *replyError = nil;
 	id reply = [self sendHello:hello onConnection:connection error:&replyError];
 	if (reply == nil) {
@@ -1379,6 +1383,31 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 	NFKPluginConnection *fresh = [self launchRestarting:YES error:&failure];
 	[self.startLock unlock];
 	return fresh != nil ? nil : failure;
+}
+
+- (BOOL)replaceManifestWhileStopped:(NFKPluginManifest *)manifest
+{
+	[self.admissionCondition lock];
+	BOOL holding = self.holding;
+	[self.admissionCondition unlock];
+	// A start holds the start lock for the whole launch, so a lock that is taken means one is under way.
+	if (holding || ![self.startLock tryLock]) {
+		return NO;
+	}
+	NFKPluginConnection *connection = self.connection;
+	BOOL stopped = connection == nil || connection.closed;
+	if (stopped) {
+		if (self.idleExitInterval == self.manifest.idleExitInterval) {
+			self.idleExitInterval = manifest.idleExitInterval;
+		}
+		self.manifest = manifest;
+		[self.crashTimes removeAllObjects];
+		if (self.state == NFKPluginProcessStateFailed) {
+			[self enterState:NFKPluginProcessStateNotRunning];
+		}
+	}
+	[self.startLock unlock];
+	return stopped;
 }
 
 /*! Admits the held requests one at a time, in order, each after the one before it has sent. Admits only

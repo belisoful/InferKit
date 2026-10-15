@@ -596,6 +596,10 @@ static const NSTimeInterval NFKPluginStatusRefreshInterval = 1;
 			return NO;
 		}
 		NFKPluginAttachmentWriter *writer NS_VALID_UNTIL_END_OF_SCOPE = [[NFKPluginAttachmentWriter alloc] init];
+		NSString *prefix = self.process.sharedMemoryPrefix;
+		NSArray *accepted = [connection.helloReply[@"capabilities"] isKindOfClass:NSArray.class] ? connection.helloReply[@"capabilities"] : @[];
+		writer.namePrefix = prefix;
+		writer.passesFilesAsDescriptors = prefix != nil && [accepted containsObject:NFKPluginCapabilityFileDescriptors];
 		NFKInferenceWireCoding *encoder = [[NFKInferenceWireCoding alloc] initWithTemporaryDirectory:directory.URL];
 		encoder.attachmentSink = writer;
 		encoder.inlineByteLimit = connection.inlineByteLimit;
