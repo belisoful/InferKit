@@ -270,7 +270,7 @@ final class NFKWanAnimateBlock: Module {
     /// at the modulation's type, the rest in float32, rounded once to `x`'s type.
     func modulated(_ x: MLXArray, scale: MLXArray, shift: MLXArray) -> MLXArray {
         guard NFKReferenceRounding.isReduced(x) else { return norm1(x) * (1.0 + scale) + shift }
-        let normed = MLXFast.layerNorm(x.asType(.float32), weight: nil, bias: nil, eps: norm1.eps)
+        let normed = NFKReferenceRounding.layerNorm(x.asType(.float32), weight: nil, bias: nil, eps: norm1.eps)
         return (normed * (1 + scale).asType(.float32) + shift.asType(.float32)).asType(x.dtype)
     }
 
@@ -335,7 +335,7 @@ final class NFKWanAnimateHead: Module {
         // The reference forms the modulation and the modulated norm in float32 and rounds once.
         let combined = modulation[0].asType(.float32) + temb.reshaped([1, dim]).asType(.float32)
         let shift = combined[0].reshaped([1, dim]), scale = combined[1].reshaped([1, dim])
-        let normed = MLXFast.layerNorm(x.asType(.float32), weight: nil, bias: nil, eps: norm.eps)
+        let normed = NFKReferenceRounding.layerNorm(x.asType(.float32), weight: nil, bias: nil, eps: norm.eps)
         return head((normed * (1 + scale) + shift).asType(x.dtype))
     }
 }
@@ -483,10 +483,10 @@ public final class NFKMLXWanAnimateNet: Module {
             if empty > 0 {
                 peak = maximum(peak, MLXArray(Float(0)))
             }
-            let weights = exp(scores - peak)
+            let weights = NFKReferenceRounding.exponential(scores - peak)
             var total = weights.sum(axis: -1, keepDims: true)
             if empty > 0 {
-                total = total + Float(empty) * exp(-peak)
+                total = total + Float(empty) * NFKReferenceRounding.exponential(-peak)
             }
             perFrame.append((matmul(weights, values) / total).transposed(1, 0, 2))
         }

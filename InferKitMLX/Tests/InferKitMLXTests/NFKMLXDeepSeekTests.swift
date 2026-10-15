@@ -961,6 +961,14 @@ final class NFKMLXDeepSeekTests: XCTestCase {
         }
     }
 
+    // V4's bf16 streams in the reference arithmetic (`NFKMLXHalfPrecision.arithmetic`): the sink attention takes
+    // torch's softmax over the scores with the sink appended, and the hyper-connections torch's softmax.
+    func testV4InBFloat16MatchesItsReleasesOwnCodeInTheReferenceArithmetic() throws {
+        NFKMLXHalfPrecision.arithmetic = .reference
+        defer { NFKMLXHalfPrecision.arithmetic = .fast }
+        try testV4InBFloat16MatchesItsReleasesOwnCode()
+    }
+
     // V4 in bf16, against its release's own code built in bf16: what it holds float32 is the
     // reference's constructor's choice, and every layer's stream is the reference's element for
     // element.
@@ -2092,6 +2100,13 @@ final class NFKMLXDeepSeekTests: XCTestCase {
                           "the loaded weights are the ones proposing")
         print("VALIDATION runtime deepseek-v4.1-draft-load: \(arrays.count) draft parameters "
               + "reload exactly and propose from their own weights")
+    }
+
+    // The draft stack's bf16 streams in the reference arithmetic, where its sink attention takes torch's softmax.
+    func testTheDraftStackInBFloat16MatchesTheReleasesOwnCodeInTheReferenceArithmetic() throws {
+        NFKMLXHalfPrecision.arithmetic = .reference
+        defer { NFKMLXHalfPrecision.arithmetic = .fast }
+        try testTheDraftStackInBFloat16MatchesTheReleasesOwnCode()
     }
 
     // The draft loop, which is what the rest of the stack exists for. One call proposes a block of

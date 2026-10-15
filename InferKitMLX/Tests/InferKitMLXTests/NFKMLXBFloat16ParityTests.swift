@@ -2754,20 +2754,23 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
 
     // torch's exact GELU at bf16 and float16 over every finite value (`run_reference.py gelu_rounding`) of
     // magnitude at least twice the least normal float32, so `x · 0.5` is normal: the GPU flushes a subnormal
-    // product to zero, and torch's CPU keeps it. One float16 input rounds apart, where torch fuses a
-    // multiply-add. MLX's own error function, faithfully rounded, rounds hundreds apart, which the record tells
-    // from torch's.
+    // product to zero, and torch's CPU keeps it. The kernel fuses torch's multiply-adds and takes Sleef's
+    // exponential, and matches every input in either arithmetic. MLX's own error function, faithfully rounded,
+    // rounds hundreds apart, which the record tells from torch's.
     func testHalfGELUComputesTorchsErrorFunction() throws {
         try requireMLXRuntime()
         let record = try self.record("gelu_rounding.safetensors")
-        for (name, dtype, apart) in [("bf16", DType.bfloat16, 0), ("f16", .float16, 1)] {
+        for (name, dtype) in [("bf16", DType.bfloat16), ("f16", .float16)] {
             let input = try XCTUnwrap(record["\(name).in"]).asType(dtype)
             let expected = try XCTUnwrap(record["\(name).out"])
             let normal = abs(input.asType(.float32)) .>= 2 * Float.leastNormalMagnitude
             func differing(_ result: MLXArray) -> Int {
                 logicalAnd(normal, result.asType(.float32) .!= expected).sum().item(Int.self)
             }
-            XCTAssertEqual(differing(NFKReferenceRounding.gelu(input)), apart, "\(name): torch's GELU")
+            XCTAssertEqual(differing(NFKReferenceRounding.gelu(input)), 0, "\(name): torch's GELU, reference arithmetic")
+            NFKMLXHalfPrecision.arithmetic = .fast
+            XCTAssertEqual(differing(NFKReferenceRounding.gelu(input)), 0, "\(name): torch's GELU, fast arithmetic")
+            NFKMLXHalfPrecision.arithmetic = .reference
             XCTAssertGreaterThan(differing(MLXNN.gelu(input.asType(.float32)).asType(dtype)), 100,
                                  "\(name): the record tells MLX's error function from torch's")
         }
@@ -2787,38 +2790,48 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         XCTAssertEqual(edges.asArray(Float.self), [0, 0, .infinity, .infinity])
     }
 
-    // torch's `layer_norm` over float16 and bf16 rows of 320, 1,001, and 7 (whole vectors, a remainder, and a
-    // row narrower than a vector), each input, weight, and bias an exact formula, against the SHA-256 of
-    // torch's output. MLX's fused kernel rounds 4 and 2 of the float16 outputs apart.
+    // torch's `layer_norm` over float16, bf16, and float32 rows of 320, 1,001, and 7 (whole vectors, a
+    // remainder, and a row narrower than a vector), and over rows without the affine at Wan's widths, each
+    // input, weight, and bias an exact formula, against the SHA-256 of torch's output. A float32 row is read
+    // in 4-wide vectors and normalized as `(x − mean) · rstd`. MLX's fused kernel rounds 4 and 2 of the float16
+    // outputs apart, and float32 ones throughout.
     func testReferenceArithmeticComputesTorchsLayerNorm() throws {
         try requireMLXRuntime()
-        let cases: [(DType, Int, Int, String)] = [
-            (.float16, 64, 320, "7a0dc7af5e43d2734439bc51bb2eabdd581cc1423829aceab2efe7ab36679f91"),
-            (.float16, 16, 1001, "46d1fa7072d6e4d0922c957f307667fb2de9a90430cf769882e8ada67eace2a3"),
-            (.float16, 16, 7, "8d7f7ee68c5d41a4f98d3140423f1d978ee1da6c556d1861cb0c315b5221f701"),
-            (.bfloat16, 64, 320, "33fcce31ee9a6fffcd72a81c77996f73611fda9afc985f88ee9cd279ba6a8a7f"),
-            (.bfloat16, 16, 1001, "597ba1814b5ba569c62b1fb09e64d83b7d7e2cc9d56fbdd0c705cc226960f7d4"),
-            (.bfloat16, 16, 7, "4b8ed3d970271f4e9ca026bc2d8c1c9ce9fe771f179481043173e63eda552d1a"),
+        let cases: [(DType, Int, Int, Bool, String)] = [
+            (.float16, 64, 320, true, "7a0dc7af5e43d2734439bc51bb2eabdd581cc1423829aceab2efe7ab36679f91"),
+            (.float16, 16, 1001, true, "46d1fa7072d6e4d0922c957f307667fb2de9a90430cf769882e8ada67eace2a3"),
+            (.float16, 16, 7, true, "8d7f7ee68c5d41a4f98d3140423f1d978ee1da6c556d1861cb0c315b5221f701"),
+            (.bfloat16, 64, 320, true, "33fcce31ee9a6fffcd72a81c77996f73611fda9afc985f88ee9cd279ba6a8a7f"),
+            (.bfloat16, 16, 1001, true, "597ba1814b5ba569c62b1fb09e64d83b7d7e2cc9d56fbdd0c705cc226960f7d4"),
+            (.bfloat16, 16, 7, true, "4b8ed3d970271f4e9ca026bc2d8c1c9ce9fe771f179481043173e63eda552d1a"),
+            (.float16, 16, 1001, false, "15301bf73a734808b5e973ea6949de0de25e42b7d56f1f3dd90dbbc5db31b481"),
+            (.bfloat16, 16, 320, false, "3c15acdcbe5a53950cf106c5ff2317cec41b32c4b5bc54238691516873cb8156"),
+            (.float32, 64, 320, true, "dda1f7af3620fc73fbd6cdd255451e433eed72fac73a105aee846ebf56b1a92b"),
+            (.float32, 16, 1001, true, "e0302a6e097bfc534a032a7d7c748be8811ea055ea5e145ee5077d8b6fdea4b4"),
+            (.float32, 16, 7, true, "05e10810a0c4bfd403c99284817fb59c110daf416f4d2e0b82a4bb06eaae00bb"),
+            (.float32, 16, 1536, false, "1f723bc7214fef0eb95263fe375095a758749038a32cc462e729e382e1fbf0f1"),
+            (.float32, 4, 5120, false, "87dc8d7998ffe530cc67f1515acbf87488396790a777b5196b0e870032790637"),
+            (.float32, 16, 7, false, "74cf7103585739cae4f4dda26d68bd7e2deafa42e8d61072970764926efea6ee"),
         ]
         func digest(_ y: MLXArray) -> String {
             let words = y.view(dtype: .uint16).asArray(UInt16.self)
             return SHA256.hash(data: words.withUnsafeBufferPointer { Data(buffer: $0) })
                 .map { String(format: "%02x", $0) }.joined()
         }
-        for (dtype, rows, width, expected) in cases {
-            let (modulus, scale) = dtype == .float16 ? (2001, Float(256)) : (511, Float(64))
+        for (dtype, rows, width, affine, expected) in cases {
+            let (modulus, scale) = dtype == .bfloat16 ? (511, Float(64)) : (2001, Float(256))
             let x = MLXArray((0 ..< rows * width).map { index -> Float in
                 let (row, column) = index.quotientAndRemainder(dividingBy: width)
                 return Float((row * 131 + column * 37) % modulus - modulus / 2) / scale
             }, [rows, width]).asType(dtype)
-            let weight = MLXArray((0 ..< width).map { 1 + Float(($0 * 29) % 33 - 16) / 64 }).asType(dtype)
-            let bias = MLXArray((0 ..< width).map { Float(($0 * 17) % 41 - 20) / 128 }).asType(dtype)
-            let label = "\(dtype) \(rows)×\(width)"
+            let weight = affine ? MLXArray((0 ..< width).map { 1 + Float(($0 * 29) % 33 - 16) / 64 }).asType(dtype) : nil
+            let bias = affine ? MLXArray((0 ..< width).map { Float(($0 * 17) % 41 - 20) / 128 }).asType(dtype) : nil
+            let label = "\(dtype) \(rows)×\(width)\(affine ? "" : " without the affine")"
             XCTAssertEqual(digest(NFKReferenceRounding.torchLayerNorm(x, weight: weight, bias: bias, eps: 1e-5)),
                            expected, label)
-            if dtype == .float16, width > 8 {
-                let fused = MLXFast.layerNorm(x.asType(.float32), weight: weight.asType(.float32),
-                                              bias: bias.asType(.float32), eps: 1e-5).asType(dtype)
+            if dtype == .float32 || (dtype == .float16 && affine), width > 8 {
+                let fused = MLXFast.layerNorm(x.asType(.float32), weight: weight?.asType(.float32),
+                                              bias: bias?.asType(.float32), eps: 1e-5).asType(dtype)
                 XCTAssertNotEqual(digest(fused), expected, "\(label): the case tells MLX's kernel from torch's")
             }
         }
@@ -2876,8 +2889,8 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     }
 
     // torch's `silu` over every finite float16 and bf16 input whose magnitude is at least twice the least
-    // normal float32 (the GPU flushes a subnormal product to zero), against the SHA-256 of torch's output.
-    // MLX's `x · sigmoid(x)` rounds some of them apart in each type.
+    // normal float32 (the GPU flushes a subnormal product to zero), against the SHA-256 of torch's output, in
+    // either arithmetic. MLX's `x · sigmoid(x)` rounds some of them apart in each type.
     func testReferenceArithmeticComputesTorchsSiLU() throws {
         try requireMLXRuntime()
         let cases: [(DType, String)] = [
@@ -2897,6 +2910,9 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
                     .map { String(format: "%02x", $0) }.joined()
             }
             XCTAssertEqual(digest(NFKReferenceRounding.silu(input)), expected, "\(dtype)")
+            NFKMLXHalfPrecision.arithmetic = .fast
+            XCTAssertEqual(digest(NFKReferenceRounding.silu(input)), expected, "\(dtype), fast arithmetic")
+            NFKMLXHalfPrecision.arithmetic = .reference
             let wide = input.asType(.float32)
             XCTAssertNotEqual(digest((wide * MLX.sigmoid(wide)).asType(dtype)), expected,
                               "\(dtype): the domain tells MLX's SiLU from torch's")
@@ -2924,12 +2940,14 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         let scores = MLXRandom.normal([64, 1025]) * 4
         func run() -> [MLXArray] {
             [NFKReferenceRounding.flashAttention(queries: queries, keys: keys, values: values, scale: 0.125, mask: nil),
-             norm(hidden), NFKReferenceRounding.softmaxProbabilities(scores)]
+             norm(hidden), NFKReferenceRounding.softmaxProbabilities(scores), NFKReferenceRounding.exponential(scores),
+             NFKReferenceRounding.layerNorm(hidden.asType(.float32), weight: nil, bias: nil, eps: 1e-6)]
         }
         let reference = run()
         NFKMLXHalfPrecision.arithmetic = .fast
         let fast = run()
-        for (label, index) in [("flash attention", 0), ("layer norm", 1), ("softmax", 2)] {
+        for (label, index) in [("flash attention", 0), ("layer norm", 1), ("softmax", 2), ("exponential", 3),
+                               ("float32 layer norm", 4)] {
             XCTAssertGreaterThan((fast[index] .!= reference[index]).sum().item(Int.self), 0, label)
         }
     }

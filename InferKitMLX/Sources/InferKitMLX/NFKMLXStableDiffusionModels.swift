@@ -245,11 +245,10 @@ final class NFKSDGroupNorm: Module {
 enum NFKSDTimesteps {
     static func embedding(_ timesteps: MLXArray, channels: Int, maxPeriod: Float = 10_000) -> MLXArray {
         let half = channels / 2
-        var frequencies = [Float](repeating: 0, count: half)
-        for i in 0 ..< half {
-            frequencies[i] = expf(-logf(maxPeriod) * Float(i) / Float(half))
-        }
-        let scale = frequencies.withUnsafeBufferPointer { MLXArray($0, [1, half]) }
+        let exponents = (0 ..< half).map { -logf(maxPeriod) * Float($0) / Float(half) }
+        let scale = NFKMLXHalfPrecision.arithmetic == .reference
+            ? NFKReferenceRounding.exponential(MLXArray(exponents, [1, half]))
+            : MLXArray(exponents.map { expf($0) }, [1, half])
         let angles = timesteps.reshaped([-1, 1]).asType(.float32) * scale
         // `flip_sin_to_cos` is true for every released Stable Diffusion UNet.
         return concatenated([cos(angles), sin(angles)], axis: 1)

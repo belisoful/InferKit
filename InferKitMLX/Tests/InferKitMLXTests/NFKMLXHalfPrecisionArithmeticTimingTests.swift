@@ -10,7 +10,7 @@
 //
 //  The class also times half-precision networks that reach `NFKReferenceRounding.layerNorm` through
 //  `NFKLayerNorm` and never reach the flash kernel. In those the layer norm is the only operation the two
-//  modes compute differently.
+//  modes compute differently. The float32 layer norm Wan's blocks take is also timed alone.
 //
 //  Each test prints one `TIMING arithmetic` line per measured forward, one `ROUNDS arithmetic` line with
 //  each round's time in run order, and one `MEMORY arithmetic` line. These are
@@ -473,6 +473,22 @@ final class NFKMLXHalfPrecisionArithmeticTimingTests: XCTestCase {
         let image = normal([1, side, side, 3], .bfloat16)
         try time("gemma3-vision", "released, \(weights), \(side)x\(side) image (\(configuration.positionCount) patches)") {
             [net(image)]
+        }
+    }
+
+    // MARK: Operations
+
+    // The float32 layer norm without the affine that Wan's blocks take, alone, over Wan 2.1 1.3B's 7,800
+    // tokens at 480x832x17 at its width (1,536) and at the 14B's (5,120).
+    func testFloat32LayerNormTimeInEachArithmetic() throws {
+        try requireMLXRuntime()
+        try requireOptIn()
+        MLXRandom.seed(0)
+        for width in [1536, 5120] {
+            let x = normal([1, 7800, width], .float32)
+            try time("float32-layer-norm-\(width)", "7800 tokens of \(width), no affine") {
+                [NFKReferenceRounding.layerNorm(x, weight: nil, bias: nil, eps: 1e-6)]
+            }
         }
     }
 }

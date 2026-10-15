@@ -210,13 +210,13 @@ byte-identical.
   scale (`guided`).
 - torch's exact `gelu` on a half input forms in float32 with the error function of its vectorized CPU kernels,
   the Abramowitz–Stegun 7.1.26 polynomial, and rounds once. MLX's error function is faithfully rounded, and
-  widened it rounds 277 of all finite float16 inputs apart from torch. `NFKReferenceRounding.gelu` writes
-  torch's polynomial in MLX operations: one float16 input rounds apart where torch fuses a multiply-add, and
-  none at bf16 (`run_reference.py gelu_rounding`). The record is held where `x · 0.5` is a normal float32,
-  `|x|` at least twice the least normal: the GPU flushes a subnormal float32 result to zero, and torch's CPU
-  keeps it. That leaves out zero and, at bf16, the 254 subnormal inputs and the 256 normal ones below
-  `2^-125`, where the GPU's first product `x · 0.5` is already subnormal (at ±2.34e-38 torch rounds the result
-  up to the least normal and the GPU returns 0).
+  widened it rounds 277 of all finite float16 inputs apart from torch. `NFKReferenceRounding.gelu` computes
+  torch's polynomial in one kernel (`torchGELU`), with torch's fused multiply-adds and Sleef's exponential, and
+  no input rounds apart at either type (`run_reference.py gelu_rounding`). The record is held where `x · 0.5`
+  is a normal float32, `|x|` at least twice the least normal: the GPU flushes a subnormal float32 result to
+  zero, and torch's CPU keeps it. That leaves out zero and, at bf16, the 254 subnormal inputs and the 256
+  normal ones below `2^-125`, where the GPU's first product `x · 0.5` is already subnormal (at ±2.34e-38 torch
+  rounds the result up to the least normal and the GPU returns 0).
 - A float32 array mixed into a bf16 expression promotes the rest of the layer to float32. Gemma 3n's
   AltUp floor `MLXArray(Float(1e-5))` and the M-RoPE tables did this; both now take the stream's type.
   So did Voxtral's computed Whisper sinusoids, FLUX's rotary tables, and every diffusion transformer's

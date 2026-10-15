@@ -345,7 +345,7 @@ final class NFKHybridLinearAttention: Module {
         // Per-head decay and write strength. `A_log` is stored as a log so the rate stays positive;
         // the reference keeps `g` as a LOG rate, formed in float32, and exponentiates it inside the
         // recurrence. The recurrence runs in float32 and its output rounds once to the input's type.
-        let decay = exp(-exp(decayLog.asType(.float32))
+        let decay = exp(-NFKReferenceRounding.exponential(decayLog.asType(.float32))
                         * softplus(decayProjection(x).asType(.float32) + stepBias.asType(.float32)))
         let write = NFKReferenceRounding.sigmoid(writeProjection(x)).asType(.float32)
 

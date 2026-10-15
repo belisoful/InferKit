@@ -19,7 +19,9 @@ MLX's fused one. And the tanh GELU and SiLU round once. Wan's diffusers block al
 modulation, its norms and its gated residual sums in float32, rounding each step once, and its query
 and key norms are torch's `nn.RMSNorm`, which rounds once. A fourth reading, Qwen-Image at 41 times
 the floor, came from the oracle: `model.to(bfloat16)` had rounded the timestep frequencies, a
-non-persistent buffer that `from_pretrained` leaves float32.
+non-persistent buffer that `from_pretrained` leaves float32. In the reference arithmetic the sinusoid's
+exponential is torch's (`NFKReferenceRounding.exponential`), and Qwen-Image forms its exponent as diffusers
+does, `(−log P · i) / half`, in either arithmetic.
 
 The pipelines run their latents and conditioning in the transformer's type, as diffusers does
 (`NFKReferenceRounding.parameterType(of:)`). FLUX, FLUX.2 and Qwen-Image draw their latents in that

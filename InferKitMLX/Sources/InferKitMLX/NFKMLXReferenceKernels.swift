@@ -55,7 +55,7 @@ extension NFKReferenceRounding {
         return ((first + lanes[.ellipsis, 1 ..< 2]) + lanes[.ellipsis, 2 ..< 3]) + lanes[.ellipsis, 3 ..< 4]
     }
 
-    /// torch's `layer_norm` over the last axis of a half-precision `x`, rounded to `x`'s type, as
+    /// torch's `layer_norm` over the last axis of a half-precision or float32 `x`, rounded to `x`'s type, as
     /// ``NFKMLXHalfPrecision/arithmetic`` selects: torch's arithmetic (``torchLayerNorm(_:weight:bias:eps:)``)
     /// or MLX's fused kernel in float32, rounded once.
     static func layerNorm(_ x: MLXArray, weight: MLXArray?, bias: MLXArray?, eps: Float) -> MLXArray {
@@ -77,6 +77,21 @@ extension NFKReferenceRounding {
         return torchExpFunction([wide])[0]
     }
 
+    /// `exp(x)` in `x`'s type, as ``NFKMLXHalfPrecision/arithmetic`` selects: torch's vectorized exponential
+    /// (``torchExp(_:)``, rounded once to `x`'s type) or MLX's `exp`.
+    static func exponential(_ x: MLXArray) -> MLXArray {
+        NFKMLXHalfPrecision.arithmetic == .reference ? torchExp(x).asType(x.dtype) : MLX.exp(x)
+    }
+
+    /// torch's exact `gelu` of a bfloat16 or float16 `x`, `x · 0.5 · (1 + erf(x · √½))` formed in float32 and
+    /// rounded once, with the error function of torch's vectorized kernels: the Abramowitz–Stegun 7.1.26
+    /// polynomial with its multiply-adds fused and Sleef's exponential. On the CPU stream it takes MLX
+    /// operations, which round each multiply-add.
+    static func torchGELU(_ x: MLXArray) -> MLXArray {
+        guard NFKMLXDevice.currentType == .gpu, x.size > 0 else { return geluOperations([x])[0] }
+        return torchGELUFunction([x])[0]
+    }
+
     /// torch's `silu` of a bfloat16 or float16 `x`, `x / (1 + exp(−x))` formed in float32 with Sleef's
     /// exponential and rounded once, in one kernel that keeps no float32 copy of `x`. On the CPU stream it
     /// takes MLX operations.
@@ -94,18 +109,19 @@ extension NFKReferenceRounding {
         return torchSoftmaxFunction([x])[0]
     }
 
-    /// torch's CPU `layer_norm` of a bfloat16 or float16 `x` over its last axis, rounded to `x`'s type. A
-    /// missing `weight` is 1 and a missing `bias` 0.
+    /// torch's CPU `layer_norm` of a bfloat16, float16, or float32 `x` over its last axis, rounded to `x`'s
+    /// type. A missing `weight` is 1 and a missing `bias` 0.
     ///
-    /// @discussion torch reads a row in vectors of 8 half-precision values, each widened to two float32
-    /// vectors of 4 lanes. It sums the moments by Welford's update over chunks of 16 vectors, combines the
-    /// chunks in a binary cascade, takes the elements past the last whole vector one at a time, and joins
-    /// the 4 lanes. `rstd = 1 / sqrt(max(variance, 0) + eps)`, and `y = (x · rstd + (−rstd · mean)) · weight
-    /// + bias`. The vector steps round each operation, and the scalar steps (the lanes' join, each remaining
-    /// element's second moment, and a row narrower than 8) fuse their multiply-adds. The kernel computes a
-    /// row's chunks in parallel and replays torch's cascade over them, for rows of up to 32 chunks (4,096
-    /// values); a wider row's lanes compute their chunks in order. On the CPU stream it takes MLX's fused
-    /// kernel in float32, rounded once.
+    /// @discussion torch reads a half-precision row in vectors of 8 values, each widened to two float32
+    /// vectors of 4 lanes, and a float32 row in vectors of 4. It sums the moments by Welford's update over
+    /// chunks of 16 vectors, combines the chunks in a binary cascade, takes the elements past the last whole
+    /// vector one at a time, and joins the 4 lanes. `rstd = 1 / sqrt(max(variance, 0) + eps)`. A
+    /// half-precision row's output is `(x · rstd + (−rstd · mean)) · weight + bias`, and a float32 row's
+    /// `((x − mean) · rstd) · weight + bias`. The vector steps round each operation, and the scalar steps (the
+    /// lanes' join, each remaining element's second moment, and a half-precision row narrower than 8) fuse
+    /// their multiply-adds. The kernel computes a row's chunks in parallel and replays torch's cascade over
+    /// them, for rows of up to 32 chunks (4,096 half-precision values, 2,048 float32 ones); a wider row's lanes
+    /// compute their chunks in order. On the CPU stream it takes MLX's fused kernel in float32, rounded once.
     static func torchLayerNorm(_ x: MLXArray, weight: MLXArray?, bias: MLXArray?, eps: Float) -> MLXArray {
         guard NFKMLXDevice.currentType == .gpu, x.size > 0 else {
             return MLXFast.layerNorm(x.asType(.float32), weight: weight?.asType(.float32),
@@ -137,6 +153,17 @@ extension NFKReferenceRounding {
         return which(x .< underflow, MLXArray(Float(0)), u)
     }
 
+    /// torch's exact `gelu` of `[x]` from MLX operations: the gradient of the GELU kernel.
+    private static func geluOperations(_ inputs: [MLXArray]) -> [MLXArray] {
+        let wide = inputs[0].asType(.float32)
+        let y = wide * Float(0.5.squareRoot())
+        let t = 1 / (Float(0.3275911) * abs(y) + 1)
+        let polynomial = (((Float(1.061405429) * t - Float(1.453152027)) * t + Float(1.421413741)) * t
+                          - Float(0.284496736)) * t + Float(0.254829592)
+        let magnitude = (t * -torchExpOperations(-(y * y))) * polynomial + 1
+        return [(wide * 0.5 * (1 + which(y .< 0, -magnitude, magnitude))).asType(inputs[0].dtype)]
+    }
+
     /// torch's `silu` of `[x]` from MLX operations: the gradient of the SiLU kernel.
     private static func siluOperations(_ inputs: [MLXArray]) -> [MLXArray] {
         let wide = inputs[0].asType(.float32)
@@ -159,6 +186,14 @@ extension NFKReferenceRounding {
                            outputShapes: [inputs[0].shape], outputDTypes: [.float32])
         }
         VJP { primals, cotangents in [cotangents[0] * exp(primals[0])] }
+    }
+
+    private static let torchGELUFunction = CustomFunction {
+        Forward { inputs in
+            torchGELUKernel([inputs[0]], template: [("T", inputs[0].dtype)], grid: (inputs[0].size, 1, 1),
+                            threadGroup: (256, 1, 1), outputShapes: [inputs[0].shape], outputDTypes: [inputs[0].dtype])
+        }
+        VJP { primals, cotangents in vjp(geluOperations, primals: primals, cotangents: cotangents).1 }
     }
 
     private static let torchSiLUFunction = CustomFunction {
@@ -190,8 +225,8 @@ extension NFKReferenceRounding {
             let width = x.dim(-1), rows = x.size / width
             let normalized = torchLayerNormKernel(
                 [x.reshaped([rows, width]), inputs[1], inputs[2], inputs[3], MLXArray([Int32(rows), Int32(width)])],
-                template: [("T", x.dtype)], grid: (rows * 32, 1, 1), threadGroup: (32, 1, 1),
-                outputShapes: [[rows, width]], outputDTypes: [x.dtype])[0]
+                template: [("T", x.dtype), ("H", x.dtype == .float32 ? 1 : 2)], grid: (rows * 32, 1, 1),
+                threadGroup: (32, 1, 1), outputShapes: [[rows, width]], outputDTypes: [x.dtype])[0]
             return [normalized.reshaped(x.shape)]
         }
         VJP { primals, cotangents in vjp(layerNormOperations, primals: primals, cotangents: cotangents).1 }
@@ -228,6 +263,32 @@ extension NFKReferenceRounding {
         source: """
             uint index = thread_position_in_grid.x;
             y[index] = nfk_torch_expf(x[index]);
+        """,
+        header: torchExpHeader)
+
+    // torch's `Vectorized<float>::erf` on NEON: `fmadd` is a fused multiply-add, and every other step rounds.
+    private static let torchGELUKernel = MLXFast.metalKernel(
+        name: "nfk_torch_gelu",
+        inputNames: ["x"],
+        outputNames: ["out"],
+        source: """
+            uint index = thread_position_in_grid.x;
+            const float value = float(x[index]);
+            const float y = value * 0.70710678118654752440f;
+            const float magnitude_y = metal::abs(y);
+            const float t = metal::precise::divide(1.0f, fma(0.3275911f, magnitude_y, 1.0f));
+            float r = fma(1.061405429f, t, -1.453152027f);
+            r = fma(r, t, 1.421413741f);
+            r = fma(r, t, -0.284496736f);
+            r = fma(r, t, 0.254829592f);
+            const float square = y * y;
+            const float decay = -nfk_torch_expf(-square);
+            const float scaled = t * decay;
+            const float magnitude = fma(scaled, r, 1.0f);
+            const float erf_value = as_type<float>(as_type<uint>(magnitude) ^ (as_type<uint>(y) & 0x80000000u));
+            const float half_value = value * 0.5f;
+            const float sum = 1.0f + erf_value;
+            out[index] = T(half_value * sum);
         """,
         header: torchExpHeader)
 
@@ -303,25 +364,25 @@ extension NFKReferenceRounding {
             const int N = shape[1];
             if (int(row) >= rows) { return; }
             device const T* X = x + row * N;
-            const int n = N / 8;
+            const int n = N / (4 * H);
             const int m = (n + 15) / 16;
             const bool stored = m <= 32;
             threadgroup float chunk_m1[32][2][4];
             threadgroup float chunk_m2[32][2][4];
             threadgroup float lane_m1[4];
             threadgroup float lane_m2[4];
-            threadgroup float stats[2];
+            threadgroup float stats[3];
             float c[16];
             for (int j = 0; j < 16; ++j) { c[j] = metal::precise::divide(1.0f, float(j + 1)); }
             const int lane = int(t) % 4;
             if (stored) {
                 for (int i = int(t) / 4; i < m; i += 8) {
                     const int m0 = min(16, n - i * 16);
-                    for (int half_index = 0; half_index < 2; ++half_index) {
+                    for (int half_index = 0; half_index < H; ++half_index) {
                         float m1v = 0.0f;
                         float m2v = 0.0f;
                         for (int j = 0; j < m0; ++j) {
-                            const float value = float(X[(i * 16 + j) * 8 + half_index * 4 + lane]);
+                            const float value = float(X[(i * 16 + j) * 4 * H + half_index * 4 + lane]);
                             const float delta = value - m1v;
                             const float step = delta * c[j];
                             m1v = m1v + step;
@@ -343,7 +404,7 @@ extension NFKReferenceRounding {
                 for (int d = 0; d < 32; ++d) { m0s[d] = 0; m1s[d] = 0.0f; m2s[d] = 0.0f; }
                 for (int i = 0; i < m; ++i) {
                     const int m0 = min(16, n - i * 16);
-                    for (int half_index = 0; half_index < 2; ++half_index) {
+                    for (int half_index = 0; half_index < H; ++half_index) {
                         float m1v = 0.0f;
                         float m2v = 0.0f;
                         if (stored) {
@@ -351,7 +412,7 @@ extension NFKReferenceRounding {
                             m2v = chunk_m2[i][half_index][lane];
                         } else {
                             for (int j = 0; j < m0; ++j) {
-                                const float value = float(X[(i * 16 + j) * 8 + half_index * 4 + lane]);
+                                const float value = float(X[(i * 16 + j) * 4 * H + half_index * 4 + lane]);
                                 const float delta = value - m1v;
                                 const float step = delta * c[j];
                                 m1v = m1v + step;
@@ -412,7 +473,7 @@ extension NFKReferenceRounding {
                 int count = 0;
                 float mean = 0.0f;
                 float m2 = 0.0f;
-                for (int k = n * 8; k < N; ++k) {
+                for (int k = n * 4 * H; k < N; ++k) {
                     const float value = float(X[k]);
                     const float delta = value - mean;
                     count += 1;
@@ -420,7 +481,7 @@ extension NFKReferenceRounding {
                     const float residual = value - mean;
                     m2 = fma(delta, residual, m2);
                 }
-                const int lane_count = n * 2;
+                const int lane_count = n * H;
                 for (int l = 0; l < 4; ++l) {
                     const int total = count + lane_count;
                     const float weight = total == 0 ? 0.0f : metal::precise::divide(float(lane_count), float(total));
@@ -436,14 +497,21 @@ extension NFKReferenceRounding {
                 const float rstd = metal::precise::divide(1.0f, metal::precise::sqrt(max(variance, 0.0f) + epsilon[0]));
                 stats[0] = rstd;
                 stats[1] = -rstd * mean;
+                stats[2] = mean;
             }
             threadgroup_barrier(mem_flags::mem_threadgroup);
             const float rstd = stats[0];
             const float shift = stats[1];
+            const float mean = stats[2];
             device T* Y = y + row * N;
             for (int k = int(t); k < N; k += 32) {
                 float value;
-                if (N < 8) {
+                if (H == 1) {
+                    const float centered = float(X[k]) - mean;
+                    const float scaled = centered * rstd;
+                    const float weighted = scaled * float(gamma[k]);
+                    value = weighted + float(beta[k]);
+                } else if (N < 8) {
                     value = fma(fma(float(X[k]), rstd, shift), float(gamma[k]), float(beta[k]));
                 } else {
                     const float scaled = float(X[k]) * rstd;

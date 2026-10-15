@@ -27,6 +27,21 @@ import MLX
 import MLXFast
 import MLXNN
 
+/// The attention weights over float32 `scores` with a per-head `sink` logit that takes its share of the softmax and
+/// carries no value. In the reference arithmetic (``NFKMLXHalfPrecision/arithmetic``) it is torch's softmax over
+/// the scores with the sink appended as the last column, which is then dropped; otherwise the softmax is written
+/// out.
+func deepSeekSinkWeights(_ scores: MLXArray, sink: MLXArray) -> MLXArray {
+    if NFKMLXHalfPrecision.arithmetic == .reference {
+        let column = broadcast(sink, to: Array(scores.shape.dropLast()) + [1])
+        return NFKReferenceRounding.softmaxProbabilities(concatenated([scores, column], axis: -1))[
+            .ellipsis, 0 ..< scores.dim(-1)]
+    }
+    let peak = maximum(scores.max(axis: -1, keepDims: true), sink)
+    let weights = exp(scores - peak)
+    return weights / (weights.sum(axis: -1, keepDims: true) + exp(sink - peak))
+}
+
 /// The geometry of a DeepSeek V4 decoder.
 public struct NFKMLXDeepSeekConfiguration: Sendable {
     public var hiddenSize: Int
@@ -847,10 +862,7 @@ final class NFKDeepSeekAttention: Module {
         var scores = matmul(query32, keys32.transposed(0, 1, 3, 2)) / sqrt(Float(c.headDimensions))
         if let bias { scores = scores + bias }
         let sinkColumn = sink.reshaped([1, c.headCount, 1, 1])
-        let peak = maximum(scores.max(axis: -1, keepDims: true), sinkColumn)
-        let weights = exp(scores - peak)
-        let total = weights.sum(axis: -1, keepDims: true) + exp(sinkColumn - peak)
-        var attended = matmul(weights / total, keys32).asType(queries.dtype)
+        var attended = matmul(deepSeekSinkWeights(scores, sink: sinkColumn), keys32).asType(queries.dtype)
 
         // The values share the latent with the keys, so their rotary component has to be UNDONE on
         // the way out: the reference applies the conjugate rotation to the output's trailing channels.
@@ -914,10 +926,7 @@ final class NFKDeepSeekAttention: Module {
         let (query32, keys32) = (queries.asType(.float32), keys.asType(.float32))
         let scores = matmul(query32, keys32.transposed(0, 1, 3, 2)) / sqrt(Float(c.headDimensions))
         let sinkColumn = sink.reshaped([1, c.headCount, 1, 1])
-        let peak = maximum(scores.max(axis: -1, keepDims: true), sinkColumn)
-        let weights = exp(scores - peak)
-        let total = weights.sum(axis: -1, keepDims: true) + exp(sinkColumn - peak)
-        var attended = matmul(weights / total, keys32).asType(queries.dtype)
+        var attended = matmul(deepSeekSinkWeights(scores, sink: sinkColumn), keys32).asType(queries.dtype)
         attended = turnedTail(attended, offset: offset, inverse: true)
 
         let grouped = attended.transposed(0, 2, 1, 3)
@@ -2322,7 +2331,7 @@ final class NFKDeepSeekHyperConnection: Module {
 
         var combine = mixes[0..., 0..., (2 * copies)...] * scale[2] + base[(2 * copies)...]
         combine = combine.reshaped(shape[0], shape[1], copies, copies)
-        combine = softmax(combine, axis: -1) + epsilon
+        combine = NFKReferenceRounding.softmaxProbabilities(combine) + epsilon
         combine = combine / (combine.sum(axis: -2, keepDims: true) + epsilon)
         // Sinkhorn: alternate row and column normalization so the matrix approaches doubly stochastic.
         for _ in 1 ..< max(iterations, 1) {

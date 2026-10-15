@@ -651,14 +651,26 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 #### Half-precision forwards compute MLX's arithmetic, or PyTorch's
 
-- `NFKMLXHalfPrecision.arithmetic` (`@objc`, `NFKMLXArithmetic`) selects the arithmetic of a bfloat16 or
-  float16 forward's flash-attention exponentials, its softmax and router sums, its layer norms, and SiLU.
-- `NFKMLXArithmeticFast`, the default, computes MLX's `exp`, `softmax`, `sum`, `MLXFast.layerNorm`, and
-  `x · sigmoid(x)`.
-- `NFKMLXArithmeticReference` computes PyTorch's CPU arithmetic: Sleef's `expf`, the softmax, the layer norm,
-  and SiLU in Metal kernels that sum in PyTorch's order, and a router's kept-weight sum in PyTorch's order.
-  Each output equals PyTorch's. A whole half-precision forward in this mode takes 1.01 to 1.13 times the time
-  of the fast mode in a diffusion denoiser, and up to 2.5 times in an encoder.
+- `NFKMLXHalfPrecision.arithmetic` (`@objc`, `NFKMLXArithmetic`) selects the arithmetic of a forward's
+  flash-attention exponentials, its softmax and router sums, a half-precision forward's layer norms, and the
+  float32 exponentials a reference forms with `torch.exp`.
+- `NFKMLXArithmeticFast`, the default, computes MLX's `exp`, `softmax`, `sum`, and `MLXFast.layerNorm`.
+- `NFKMLXArithmeticReference` computes PyTorch's CPU arithmetic: Sleef's `expf`, the softmax, and the layer
+  norm in Metal kernels that sum in PyTorch's order, and a router's kept-weight sum in PyTorch's order. Each
+  output equals PyTorch's. A whole half-precision forward in this mode takes 0.97 to 1.18 times the time of
+  the fast mode in a diffusion denoiser, and up to 2.27 times in an encoder.
+- The reference arithmetic computes a layer norm over a float32 input inside a half-precision forward (Wan's
+  `FP32LayerNorm`, Wan Animate's, and SAM 3's under autocast) as PyTorch does: read in 4-wide vectors and
+  normalized as `(x − mean) · rstd`. The kernel takes 4.4 to 4.9 times `MLXFast`'s time.
+- It also computes PyTorch's exponential for the diffusion models' timestep frequencies (SD 1.5, 2.1, and
+  SDXL, SD3, FLUX, FLUX.2, SANA, Wan, Wan Animate, LTX-Video, LTX-2, Z-Image, Qwen-Image), the state-space
+  decay rates of the Mamba-2 and gated-delta layers, and Wan Animate's attention, and PyTorch's softmax for
+  DeepSeek V4's sink attention and hyper-connections and Gemma 3n's and Gemma 4's audio attention.
+- GELU and SiLU at a half precision take PyTorch's kernels on the GPU in either mode, and MLX operations on
+  the CPU stream. Each kernel matches every float16 and bfloat16 input the GPU keeps normal and runs faster
+  than the MLX operations it replaces: GELU in 1.1 ms against 30.4 ms over 2 × 4,096 × 5,120 values, SiLU in
+  0.9 ms against 2.3 ms over 2 × 128 × 128 × 640.
+- Qwen-Image's timestep exponent forms as diffusers forms it, `(−log P · i) / half`.
 - A half-precision flash attention attends its queries in blocks whose float32 scores fit in 1 GiB, so a long
   sequence (Wan's video tokens, FLUX at high resolution) never holds the whole score matrix.
 - Gemma 4's experts sum as transformers' default `grouped_mm` does, in float32 in top-k order and rounded
@@ -697,14 +709,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 #### The exact GELU computes torch's error function at a half precision
 
-- `NFKReferenceRounding.gelu` forms the exact GELU of a half-precision input in float32 with the error
-  function torch's CPU kernels compute, and rounds once. MLX's own, faithfully rounded error function
-  rounded 277 of all finite float16 inputs apart from torch.
+- `NFKReferenceRounding.gelu` forms the exact GELU of a half-precision input in float32 in one Metal kernel
+  (`torchGELU`), with the error function torch's vectorized CPU kernels compute: the Abramowitz–Stegun 7.1.26
+  polynomial with its multiply-adds fused, and Sleef's exponential. It rounds once. MLX's own, faithfully
+  rounded error function rounded 277 of all finite float16 inputs apart from torch.
 - Every exact GELU at a half precision takes it: the Stable Diffusion UNets' feed-forward, CLIP's OpenCLIP
   towers, SAM 2, Qwen2.5-VL and Qwen3-VL, Phi-4's audio and vision projections, Granite Speech, Sa2VA,
   Wan Animate, Whisper, Voxtral, and DeepSeek's vision aligner. A float32 input is unchanged.
-- Over every finite input whose magnitude is at least twice the least normal float32, torch's polynomial
-  leaves no bf16 input and 1 float16 input apart from torch's GELU, where MLXNN's GELU leaves 133 and 277.
+- Over every finite input whose magnitude is at least twice the least normal float32, the kernel leaves no
+  bf16 or float16 input apart from torch's GELU, where MLXNN's GELU leaves 133 and 277.
 - Sa2VA-Qwen3-VL-4B-SAM3 at bfloat16 answers `Sure, [SEG].`, as the release's own code does at bfloat16. Its
   float32 reference scores ` the`, ` it`, and ` ` within 0.075 of each other at the third step, under one
   bfloat16 spacing (0.125), and MLXNN's GELU had broken that tie toward the float32 answer. The Qwen-VL

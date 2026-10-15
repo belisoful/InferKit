@@ -24,28 +24,29 @@ public final class NFKMLXRandom: NSObject {
     }
 }
 
-/// The arithmetic of the operations in a bfloat16 or float16 forward whose result depends on how they are
-/// computed: a flash attention's exponentials, the softmax of an eager, math, or upcast attention and of a
-/// mixture-of-experts router, a half-precision layer norm, and SiLU. A float32 forward computes the same in
-/// either mode. Each mode's measured precision and its overall time per model are in `Docs/examples.md`
-/// ("Half-precision arithmetic").
+/// The arithmetic of the operations whose result depends on how they are computed: a flash attention's
+/// exponentials; the softmax of an eager, math, upcast, or sink attention and of a mixture-of-experts router; a
+/// router's kept-weight sum; a half-precision forward's layer norms, over a half-precision or a float32 input;
+/// and the float32 exponentials a reference forms with `torch.exp`, a diffusion model's timestep frequencies and
+/// a state-space layer's decay rates. GELU and SiLU at a half precision compute PyTorch's arithmetic on the GPU
+/// in either mode, and take MLX operations, which round each multiply-add, on the CPU stream. Each mode's
+/// measured precision and its overall time per model are in `Docs/examples.md` ("Half-precision arithmetic").
 @objc(NFKMLXArithmetic)
 public enum NFKMLXArithmetic: Int {
 
-    /// MLX's own kernels: `exp`, `softmax`, `MLXFast.layerNorm` in float32 rounded once, and SiLU as
-    /// `x · sigmoid(x)`. It is the default.
+    /// MLX's own kernels: `exp`, `softmax`, `sum`, and `MLXFast.layerNorm` in float32 rounded once. It is the
+    /// default.
     /// - Speed: MLX's.
-    /// - Precision: 24% of float32 exponentials, and about 1 in 4,000 float16 layer-norm outputs, differ
-    ///   from PyTorch's, so a forward sits farther from the PyTorch reference's.
+    /// - Precision: 24% of float32 exponentials, about 1 in 4,000 float16 layer-norm outputs, and most float32
+    ///   layer-norm outputs differ from PyTorch's, so a forward sits farther from the PyTorch reference's.
     @objc(NFKMLXArithmeticFast) case fast = 0
 
-    /// PyTorch's CPU arithmetic in Metal kernels: Sleef's `expf`, the softmax's sum in torch's lane order,
-    /// and the layer norm's Welford moments in torch's order; SiLU as torch's `x / (1 + exp(−x))`. The
-    /// half-precision parity tests run in it.
-    /// - Precision: each exponential, softmax, and layer-norm output equals PyTorch's, and each SiLU output
-    ///   does wherever the GPU keeps the input's magnitude normal.
-    /// - Speed: the exponential and the layer norm run near MLX's speed, and the softmax takes up to twice
-    ///   MLX's time.
+    /// PyTorch's CPU arithmetic in Metal kernels: Sleef's `expf`, the softmax's sum in torch's lane order, and the
+    /// layer norm's Welford moments in torch's order, read in 8-wide vectors from a half-precision input and in
+    /// 4-wide vectors from a float32 one. The half-precision parity tests run in it.
+    /// - Precision: each exponential, softmax, and layer-norm output equals PyTorch's.
+    /// - Speed: the exponential and a half-precision layer norm run near MLX's speed, the softmax takes up to
+    ///   twice MLX's time, and a float32 layer norm 4.4 to 4.9 times.
     @objc(NFKMLXArithmeticReference) case reference = 1
 }
 
@@ -56,7 +57,7 @@ public final class NFKMLXHalfPrecision: NSObject {
     private static let lock = NSLock()
     private static var storedArithmetic = NFKMLXArithmetic.fast
 
-    /// The arithmetic a half-precision forward computes, ``NFKMLXArithmetic/fast`` unless set. A forward
+    /// The arithmetic a forward computes (``NFKMLXArithmetic``), ``NFKMLXArithmetic/fast`` unless set. A forward
     /// reads it as it builds its graph, so a change applies to the forwards that start after it.
     /// Objective-C: `NFKMLXHalfPrecision.arithmetic = NFKMLXArithmeticReference;`.
     ///

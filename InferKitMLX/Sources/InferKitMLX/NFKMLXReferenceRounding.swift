@@ -76,26 +76,13 @@ enum NFKReferenceRounding {
         return (weight.map { normalized * $0.asType(.float32) } ?? normalized).asType(x.dtype)
     }
 
-    /// torch's exact `gelu`, `x · 0.5 · (1 + erf(x · √½))`. A half-precision input forms it in float32 with the
-    /// error function torch's CPU kernels compute, the Abramowitz–Stegun 7.1.26 polynomial, and rounds once.
-    /// MLX's own error function is faithfully rounded, so its GELU rounds apart from torch's at float16.
-    /// A float32 input takes MLXNN's `gelu`.
+    /// torch's exact `gelu`, `x · 0.5 · (1 + erf(x · √½))`. A half-precision input takes ``torchGELU(_:)``, formed
+    /// in float32 with the error function torch's CPU kernels compute and rounded once. MLX's own error function
+    /// is faithfully rounded, so its GELU rounds apart from torch's at float16. A float32 input takes MLXNN's
+    /// `gelu`.
     static func gelu(_ x: MLXArray) -> MLXArray {
         guard isReduced(x) else { return MLXNN.gelu(x) }
-        let wide = x.asType(.float32)
-        return (wide * 0.5 * (1 + torchErf(wide * Float(0.5.squareRoot())))).asType(x.dtype)
-    }
-
-    /// The float32 error function of torch's vectorized CPU kernels:
-    /// `1 − t · e^(−y²) · (p₁ + t(p₂ + t(p₃ + t(p₄ + t·p₅))))` with `t = 1 / (1 + p·|y|)`, signed as `y`.
-    /// torch fuses its multiply-adds and MLX rounds each step, which leaves one float16 input of all
-    /// finite ones rounding apart.
-    private static func torchErf(_ y: MLXArray) -> MLXArray {
-        let t = 1 / (Float(0.3275911) * abs(y) + 1)
-        let polynomial = (((Float(1.061405429) * t - Float(1.453152027)) * t + Float(1.421413741)) * t
-                          - Float(0.284496736)) * t + Float(0.254829592)
-        let magnitude = (t * -exp(-(y * y))) * polynomial + 1
-        return which(y .< 0, -magnitude, magnitude)
+        return torchGELU(x)
     }
 
     /// torch's `gelu(approximate="tanh")`, which widens a half-precision input and rounds its result once.
@@ -119,16 +106,11 @@ enum NFKReferenceRounding {
         return (rounded(wide * 0.5) * gate).asType(type)
     }
 
-    /// torch's `silu`, which widens a half-precision input and rounds once: torch's `x / (1 + exp(−x))`
-    /// with Sleef's exponential in the reference arithmetic (``NFKMLXHalfPrecision/arithmetic``,
-    /// ``torchSiLU(_:)``), and `x · sigmoid(x)` otherwise. MLX's composed `silu` rounds the sigmoid and then the product.
+    /// torch's `silu`, which widens a half-precision input and rounds `x / (1 + exp(−x))` once, with Sleef's
+    /// exponential (``torchSiLU(_:)``). MLX's composed `silu` rounds the sigmoid and then the product.
     static func silu(_ x: MLXArray) -> MLXArray {
         guard isReduced(x) else { return MLXNN.silu(x) }
-        let wide = x.asType(.float32)
-        if NFKMLXHalfPrecision.arithmetic == .reference {
-            return torchSiLU(x)
-        }
-        return (wide * sigmoid(wide)).asType(x.dtype)
+        return torchSiLU(x)
     }
 
     /// A reduction mean as torch takes it over a half-precision tensor: accumulated in float32, rounded
