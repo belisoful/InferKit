@@ -183,11 +183,26 @@ enum NFKMLXCatalogImage {
     /// fetches it.
     static func hubRelease(_ repository: String, revision: String? = nil,
                            components: [NFKMLXReleaseComponent]) -> NFKModelSource {
-        let files = components.flatMap { component -> [NFKModelFile] in
+        .hub(repository, revision: revision, layout: NFKModelSourceLayoutDirectory, files: componentFiles(components))
+    }
+
+    /// The files of a release's components: each required file, each optional one, and each weights
+    /// entry, optional where the component lists several.
+    static func componentFiles(_ components: [NFKMLXReleaseComponent]) -> [NFKModelFile] {
+        components.flatMap { component -> [NFKModelFile] in
             component.required.map { file($0) } + component.optional.map { file($0, optional: true) }
                 + component.weights.map { file($0, optional: component.weights.count > 1) }
         }
-        return .hub(repository, revision: revision, layout: NFKModelSourceLayoutDirectory, files: files)
+    }
+
+    /// A ControlNet's release: its own repository's files, and the files of the base release it steers,
+    /// each naming the base's repository.
+    static func controlNetRelease(_ repository: String, components: [NFKMLXReleaseComponent], base: String,
+                                  baseComponents: [NFKMLXReleaseComponent]) -> NFKModelSource {
+        let baseFiles = componentFiles(baseComponents).map { file in
+            NFKModelFile.file(file.path, role: file.role, optional: file.isOptional, repository: base)
+        }
+        return .hub(repository, layout: NFKModelSourceLayoutDirectory, files: componentFiles(components) + baseFiles)
     }
 
     /// A model built from files the app supplies, with no download of its own.
@@ -1079,9 +1094,26 @@ enum NFKMLXCatalogImage {
                                        defaultValue: 0.5, minimum: 0, maximum: 1)],
                   license: .license(nil, name: "SAM License", url: "https://huggingface.co/\(release.repository)",
                                     gated: true, note: "Gated: accept the terms on Hugging Face."),
-                  source: hubRelease(release.repository, components: NFKMLXSAM3.releaseComponents))
+                  source: release.name == sam31Name ? sam31Source : hubRelease(release.repository,
+                                                                                components: NFKMLXSAM3.releaseComponents))
         }
     }
+
+    /// The SAM 3.1 checkpoint `facebook/sam3.1` serves: `sam3.1_multiplex.pt`, saved by the `facebook/sam3`
+    /// codebase with its Object Multiplex tracker. SAM 3's loader reads the transformers layout of
+    /// `facebook/sam3`'s `model.safetensors`, whose names and video tracker differ, so the file is converted
+    /// before it loads.
+    static var sam31Source: NFKModelSource {
+        let component = NFKMLXSAM3.releaseComponents[0]
+        return NFKModelSource.hub("facebook/sam3.1", layout: NFKModelSourceLayoutDirectory,
+                                  files: component.required.map { file($0) } + component.optional.map { file($0, optional: true) }
+                                      + [file(sam31Checkpoint)],
+                                  requiresConversion: true)
+            .noting("The repository serves \(sam31Checkpoint) in the facebook/sam3 codebase's layout, with the Object Multiplex tracker. The registry builds SAM 3.1 from a directory whose model.safetensors is in the transformers layout facebook/sam3 serves; no converter ships yet.")
+    }
+
+    /// The checkpoint `facebook/sam3.1` serves.
+    static let sam31Checkpoint = "sam3.1_multiplex.pt"
 
     static var retinaFace: NFKMLXCatalogEntry {
         model(NFKMLXRetinaFace.modelName, "RetinaFace MobileNet-0.25", family: "retinaface",
@@ -1373,9 +1405,14 @@ enum NFKMLXCatalogImage {
                          outputs: [.output(NFKOutputEmbedding, required: true, title: "Embedding",
                                            help: "The normalized image embedding in SigLIP 2's joint image-text space.")],
                          license: .license("Apache-2.0", name: "Apache License 2.0", url: "https://huggingface.co/google/\(name)"),
-                         source: hubFile("google/\(name)", "model.safetensors", requiresConversion: true))
+                         source: hubFile("google/\(name)", shardedSigLIP2Releases.contains(variant)
+                                            ? "model.safetensors.index.json" : "model.safetensors",
+                                         requiresConversion: true))
         }
     }
+
+    /// The SigLIP 2 releases whose repositories shard their weights behind an index.
+    static let shardedSigLIP2Releases: Set<NFKMLXSigLIP2Variant> = [.giantOptPatch16At256, .giantOptPatch16At384]
 
     /// The registry name of a SigLIP 2 probe directory.
     static let sigLIP2ProbeName = "siglip2-probe"
@@ -1572,8 +1609,12 @@ enum NFKMLXCatalogImage {
                 alternatives.map { file($0, optional: alternatives.count > 1) }
             }
             let vocabulary = release.vocabularyFiles.map { file($0.path, optional: !$0.required) }
-            let source = NFKModelSource.hub(release.repository, layout: NFKModelSourceLayoutDirectory,
+            var source = NFKModelSource.hub(release.repository, layout: NFKModelSourceLayoutDirectory,
                                             files: vocabulary + weights)
+            if sdModel == .stableDiffusion21Base {
+                source = source.noting("The publisher no longer serves \(release.repository) publicly. A local copy of the release builds under this registry name.",
+                                       publiclyServed: false)
+            }
             return model(stableDiffusionName(sdModel), details.displayName, family: "stable-diffusion",
                          summary: details.summary, tasks: [NFKModelTaskTextToImage, NFKModelTaskImageToImage],
                          inputs: [promptInput, negativePromptInput,
@@ -1747,8 +1788,10 @@ enum NFKMLXCatalogImage {
                                     help: "What the control image holds. A union ControlNet requires it.",
                                     choices: controlModes)],
                      license: fluxDevNonCommercial,
-                     source: hubRelease(NFKMLXFluxControlNetGenerator.controlNetReleaseRepo,
-                                        components: NFKMLXFluxControlNetGenerator.controlNetComponents),
+                     source: controlNetRelease(NFKMLXFluxControlNetGenerator.controlNetReleaseRepo,
+                                               components: NFKMLXFluxControlNetGenerator.controlNetComponents,
+                                               base: NFKMLXFluxControlNetGenerator.releaseRepo,
+                                               baseComponents: NFKMLXFlux.releaseComponents),
                      residencies: stagedResidencies)
     }
 
@@ -1763,8 +1806,10 @@ enum NFKMLXCatalogImage {
                      guidanceOption(7, help: "The classifier-free guidance weight. Above 1 the image guides against the negative prompt."),
                      conditioningScaleOption],
               license: gatedStabilityCommunity,
-              source: hubRelease(NFKMLXSD3ControlNetGenerator.controlNetReleaseRepo,
-                                 components: NFKMLXSD3ControlNetGenerator.controlNetComponents),
+              source: controlNetRelease(NFKMLXSD3ControlNetGenerator.controlNetReleaseRepo,
+                                        components: NFKMLXSD3ControlNetGenerator.controlNetComponents,
+                                        base: NFKMLXSD3ControlNetGenerator.releaseRepo,
+                                        baseComponents: NFKMLXSD3Generator.releaseComponents),
               residencies: stagedResidencies)
     }
 

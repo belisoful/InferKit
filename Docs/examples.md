@@ -5150,6 +5150,10 @@ for (NFKModelDescriptor *model in [NFKModelCatalog.sharedCatalog descriptorsForT
     }
     NFKModelVariant *variant = model.defaultVariant;
     NSNumber *downloadBytes = variant.downloadByteCount;
+    NFKModelLicense *license = [model licenseForVariant:variant];   // the variant's own, else the model's
+    for (NFKModelFile *file in variant.source.files) {
+        NSString *repository = file.repository ?: variant.source.repository;  // a file can name another repository
+    }
     for (NFKModelOption *option in model.parameters) {
         // option.kind picks the control; option.minimum, maximum, and defaultValue configure it
     }

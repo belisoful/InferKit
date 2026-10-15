@@ -16,6 +16,15 @@ to prevent. Update all of these, in the modality's existing section, mirroring t
 - `Docs/companions.md` — the full model gallery (README links here as "the full model gallery").
 - `Docs/model-index.md` — the index row (entry class, network, configuration, registered name, the
   Swift + Objective-C copy-and-paste, base backend).
+- The model catalog: add the catalog entry in the modality file (`NFKMLXCatalogImage.swift`,
+  `…Video`, `…Language`, or `…Audio`), one entry per registry name, with its ports, options, license,
+  and source files; a file from another repository names it, and a variant under another license
+  names it. Register any name without a `register()` in that file's `registerAdditionalModels()`. Then
+  regenerate the measurements and the snapshot: `python3 -I Tools/catalog/measure.py` from the
+  repository root, then `swift run inferkit-catalog export --output ../Docs/model-catalog.json` from
+  `InferKitMLX/`. A new loader precision or stage split goes in `NFKMLXLoadPlan` (`NFKMLXCatalogMeasurement.swift`),
+  and a source the measurement cannot size goes in `NFKMLXCatalogCompletenessTests.unsizedSources`
+  with its reason. See "Model catalog" in `mlx-companion.md`.
 - `Docs/model-parity.md` — the parity row with the real recorded numbers (capture them by temporarily
   printing the measured cosines in the parity test, then revert the prints).
 - `Docs/examples.md` — the modality's gallery snippet.

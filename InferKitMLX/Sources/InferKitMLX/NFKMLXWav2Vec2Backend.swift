@@ -91,14 +91,22 @@ public final class NFKMLXWav2Vec2: NSObject {
     static let weightFiles = ["model.safetensors", "pytorch_model.bin"]
 
     /// Builds a backend from a release directory: `config.json`, the weights (`model.safetensors` or
-    /// `pytorch_model.bin`), `preprocessor_config.json`, and for a CTC release `vocab.json`. Run
-    /// inference off the render thread.
+    /// `pytorch_model.bin`), `preprocessor_config.json`, and for a CTC release `vocab.json`. The backend's
+    /// identifier is the configuration's `model_type`, `wav2vec2` or `hubert`. Run inference off the
+    /// render thread.
     @objc(backendWithDirectoryURL:error:)
     public static func backend(directoryURL: URL) throws -> NFKMLXWav2Vec2Backend {
+        try backend(directoryURL: directoryURL, identifier: nil)
+    }
+
+    /// Builds a backend from a release directory that reports `identifier`, the name the registry or the
+    /// download builds it under; nil reports the configuration's `model_type`.
+    static func backend(directoryURL: URL, identifier: String?) throws -> NFKMLXWav2Vec2Backend {
         let net = try NFKMLXWav2Vec2Net(configurationURL: directoryURL.appendingPathComponent("config.json"))
         try net.loadWeights(fromDirectory: directoryURL)
         let tokenizer = net.transcribes ? try NFKMLXWav2Vec2Tokenizer(directoryURL: directoryURL) : nil
-        return NFKMLXWav2Vec2Backend(net: net, tokenizer: tokenizer)
+        return NFKMLXWav2Vec2Backend(net: net, tokenizer: tokenizer,
+                                     identifier: identifier ?? net.configuration.modelType)
     }
 
     /// The asynchronous form of the directory factory. Blocking work runs at user-initiated quality of
@@ -121,14 +129,16 @@ public final class NFKMLXWav2Vec2: NSObject {
     /// are `facebook/wav2vec2-base-960h`, `-large-960h`, `-large-960h-lv60-self`, and
     /// `facebook/hubert-large-ls960-ft` and `-xlarge-ls960-ft`; the pretraining releases are
     /// `facebook/wav2vec2-base`, `-large-lv60`, `-large-xlsr-53`, `-xls-r-300m`, `-xls-r-1b`, `-xls-r-2b`,
-    /// and `facebook/hubert-base-ls960`, `-large-ll60k`, and `-xlarge-ll60k`. None is gated.
+    /// and `facebook/hubert-base-ls960`, `-large-ll60k`, and `-xlarge-ll60k`. None is gated. The backend's
+    /// identifier is the repository's name, such as `wav2vec2-base-960h`, which is its registry name.
     ///
     /// Introduced in InferKit 0.4.0.
     @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXWav2Vec2Backend {
         try backend(directoryURL: try NFKMLXReleaseDownload.directory(
             repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-            required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+            required: requiredFiles, optional: optionalFiles, weights: weightFiles),
+                    identifier: repo.split(separator: "/").last.map(String.init))
     }
 
     /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``. The download and the
@@ -167,9 +177,11 @@ public final class NFKMLXWav2Vec2Backend: NSObject, NFKInferenceBackend {
     }
 
     private let holder: Holder
+    private let identifier: String
 
-    init(net: NFKMLXWav2Vec2Net, tokenizer: NFKMLXWav2Vec2Tokenizer?) {
+    init(net: NFKMLXWav2Vec2Net, tokenizer: NFKMLXWav2Vec2Tokenizer?, identifier: String = NFKMLXWav2Vec2.modelName) {
         holder = Holder(net: net, tokenizer: tokenizer)
+        self.identifier = identifier
         super.init()
     }
 
@@ -177,7 +189,7 @@ public final class NFKMLXWav2Vec2Backend: NSObject, NFKInferenceBackend {
     @objc public var transcribes: Bool { holder.tokenizer != nil }
 
     @objc public var isReady: Bool { true }
-    @objc public var backendIdentifier: String { NFKMLXWav2Vec2.modelName }
+    @objc public var backendIdentifier: String { identifier }
     @objc public var supportedParameterKeys: Set<String> { [] }
     @objc public var supportedInputKeys: Set<String> { [NFKInputAudio] }
 

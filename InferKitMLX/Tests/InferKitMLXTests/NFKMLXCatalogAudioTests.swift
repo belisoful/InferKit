@@ -145,6 +145,57 @@ final class NFKMLXCatalogAudioTests: XCTestCase {
         }
     }
 
+    func testEachWhisperSizeReportsItsRegistryName() {
+        for release in NFKMLXCatalogAudio.whisperReleases where release.variant != .large {
+            XCTAssertEqual(NFKMLXWhisper.name(for: release.variant), release.name)
+        }
+        XCTAssertEqual(NFKMLXWhisper.name(for: .large), "whisper-large")
+    }
+
+    func testARegisteredWhisperSizeReportsItsRegistryName() throws {
+        try requireMLXRuntime()
+        NFKMLXReferenceModels.registerAll()
+        for name in [NFKMLXWhisper.modelName, "whisper-base"] {
+            XCTAssertEqual(try NFKMLXModelRegistry.backend(named: name, weightsURL: nil).backendIdentifier, name)
+        }
+        XCTAssertEqual(try NFKMLXWhisper.backend(variant: .small, weightsURL: nil).backendIdentifier, "whisper-small")
+    }
+
+    func testARegisteredWav2Vec2ReleaseReportsItsRegistryName() throws {
+        try requireMLXRuntime()
+        NFKMLXReferenceModels.registerAll()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var headless = NFKMLXWav2Vec2TrainingTests.tiny
+        headless.vocabularySize = nil
+        try NFKMLXWav2Vec2.save(NFKMLXWav2Vec2Net(headless), tokenizer: nil, toDirectoryURL: directory)
+        for name in ["wav2vec2-base", "hubert-base-ls960"] {
+            XCTAssertEqual(try NFKMLXModelRegistry.backend(named: name, weightsURL: directory).backendIdentifier, name)
+        }
+        XCTAssertEqual(try NFKMLXWav2Vec2.backend(directoryURL: directory).backendIdentifier, "wav2vec2")
+    }
+
+    func testCanaryReadsTheArchiveTheRepositoryServes() throws {
+        let source = try XCTUnwrap(try entry(NFKMLXCanary.modelName).descriptor().defaultVariant?.source)
+        XCTAssertFalse(source.requiresConversion)
+        XCTAssertEqual(source.files.map(\.path), NFKMLXCanary.requiredFiles + NFKMLXCanary.weightFiles)
+
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        XCTAssertThrowsError(try NFKMLXCanary.releaseCheckpoint(inDirectory: directory)) { error in
+            XCTAssertTrue("\(error)".contains("canary-1b-v2.nemo"), "\(error)")
+        }
+    }
+
+    func testVoiceRestoreNamesTheVocoderFromItsOwnRepository() throws {
+        let source = try XCTUnwrap(try entry(NFKMLXVoiceRestoreFactory.modelName).descriptor().defaultVariant?.source)
+        let vocoder = try XCTUnwrap(source.files.first { $0.path == NFKMLXVoiceRestoreFactory.vocoderFile })
+        XCTAssertEqual(vocoder.repository, NFKMLXVoiceRestoreFactory.vocoderRepo)
+        XCTAssertTrue(vocoder.overridesSource)
+        XCTAssertEqual(vocoder.role, NFKModelFileRoleWeights)
+    }
+
     func testTheMusicBackendDeclaresItsEntrysPortsWithoutWeights() throws {
         let backend = try NFKMLXMusic3.backend(directoryURL: FileManager.default.temporaryDirectory)
         assertPorts(try entry(NFKMLXMusic3.modelName), inputs: backend.supportedInputKeys ?? [],

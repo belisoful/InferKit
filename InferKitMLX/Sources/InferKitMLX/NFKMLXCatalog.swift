@@ -32,12 +32,13 @@ public final class NFKMLXModelDescriptors: NSObject, NFKModelDescriptorProvider 
             + NFKMLXCatalogAudio.entries
     }
 
-    /// The descriptor of every model the package ships. An entry the descriptor reader refuses is left
-    /// out. Introduced in InferKit 0.4.0.
+    /// The descriptor of every model the package ships, with the sizes, digests, and memory figures
+    /// `Tools/catalog/measure.py` measured. An entry the descriptor reader refuses is left out.
+    /// Introduced in InferKit 0.4.0.
     public static func modelDescriptors() -> [NFKModelDescriptor] {
         entries.compactMap { entry in
             do {
-                return try entry.descriptor()
+                return try entry.measured().descriptor()
             } catch {
                 assertionFailure("the catalog entry \(entry.identifier) is malformed: \(error)")
                 return nil
@@ -167,6 +168,17 @@ extension NFKModelLicense {
     }
 }
 
+extension NFKModelFile {
+
+    /// A file a variant reads from another Hugging Face repository than its source's, at `revision`, or at
+    /// the repository's default branch when nil.
+    static func file(_ path: String, role: String, optional: Bool = false, repository: String,
+                     revision: String? = nil) -> NFKModelFile {
+        NFKModelFile(path: path, byteCount: nil, sha256: nil, role: role, optional: optional, repository: repository,
+                     revision: revision, url: nil, extensions: nil)
+    }
+}
+
 extension NFKModelSource {
 
     /// A Hugging Face repository read at `revision`, loaded as `layout`.
@@ -174,6 +186,19 @@ extension NFKModelSource {
                     files: [NFKModelFile] = [], requiresConversion: Bool = false) -> NFKModelSource {
         NFKModelSource(kind: NFKModelSourceKindHuggingFace, repository: repository, revision: revision, url: nil,
                        layout: layout, files: files, requiresConversion: requiresConversion, extensions: nil)
+    }
+
+    /// The source with a note a user should read about it. `publiclyServed` false marks a repository its
+    /// publisher no longer serves to the public: a local copy of the release still builds the model, and
+    /// the measurement does not size it.
+    func noting(_ note: String, publiclyServed: Bool = true) -> NFKModelSource {
+        var extensions = self.extensions
+        extensions["note"] = note
+        if !publiclyServed {
+            extensions["publiclyServed"] = false
+        }
+        return NFKModelSource(kind: kind, repository: repository, revision: revision, url: url, layout: layout,
+                              files: files, requiresConversion: requiresConversion, extensions: extensions)
     }
 
     /// A model that downloads nothing and loads no files of its own.
@@ -185,12 +210,13 @@ extension NFKModelSource {
 
 extension NFKModelVariant {
 
-    /// A release of a model. The byte and parameter counts are left out when nil.
+    /// A release of a model. The byte and parameter counts are left out when nil. `license` is the
+    /// variant's own, where it differs from its descriptor's.
     static func variant(_ identifier: String, displayName: String? = nil, isDefault: Bool = false,
                         registryName: String? = nil, source: NFKModelSource? = nil,
                         downloadByteCount: Int64? = nil, residentByteCount: Int64? = nil,
                         peakByteCount: Int64? = nil, parameterCount: Int64? = nil, precision: String? = nil,
-                        minimumMemoryByteCount: Int64? = nil) -> NFKModelVariant {
+                        minimumMemoryByteCount: Int64? = nil, license: NFKModelLicense? = nil) -> NFKModelVariant {
         NFKModelVariant(identifier: identifier, displayName: displayName, isDefault: isDefault,
                         registryName: registryName, source: source,
                         downloadByteCount: downloadByteCount.map(NSNumber.init(value:)),
@@ -198,6 +224,6 @@ extension NFKModelVariant {
                         peakByteCount: peakByteCount.map(NSNumber.init(value:)),
                         parameterCount: parameterCount.map(NSNumber.init(value:)), precision: precision,
                         minimumMemoryByteCount: minimumMemoryByteCount.map(NSNumber.init(value:)),
-                        extensions: nil)
+                        license: license, extensions: nil)
     }
 }

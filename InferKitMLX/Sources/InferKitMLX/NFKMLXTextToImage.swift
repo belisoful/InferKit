@@ -161,6 +161,12 @@ public final class NFKMLXTextToImage: NSObject {
     /// The request inputs the conditioning reads, which the backend adds to its own.
     static let encodedInputKeys: Set<String> = [NFKInputPrompt, NFKInputNegativePrompt]
 
+    /// The request inputs the conditioning reads: the prompts, and the reference-image embedding where an
+    /// IP-Adapter is attached.
+    static func encodedInputKeys(readsImageEmbedding: Bool) -> Set<String> {
+        readsImageEmbedding ? encodedInputKeys.union([NFKMLXInputImageEmbedding]) : encodedInputKeys
+    }
+
     /// The request parameters the conditioning reads, which the backend adds to its own.
     static let encodedParameterKeys: Set<String> = [NFKParameterWidth, NFKParameterHeight]
 
@@ -324,7 +330,7 @@ final class NFKMLXSDTextToImageModel {
             configuration: backendConfiguration,
             scheduler: NFKDDIMScheduler(predictionType: configuration.predictionType,
                                         spacing: configuration.timestepSpacing),
-            encodedInputKeys: NFKMLXTextToImage.encodedInputKeys,
+            encodedInputKeys: NFKMLXTextToImage.encodedInputKeys(readsImageEmbedding: imageAdapter != nil),
             encodedParameterKeys: NFKMLXTextToImage.encodedParameterKeys,
             encode: { request, image, _ in try holder.model.encode(request: request, image: image) },
             denoise: { latent, timestep, context, guidance in

@@ -690,7 +690,7 @@ static NSArray<NSString *> *NFKModelLicenseFields(void)
 
 static NSArray<NSString *> *NFKModelFileFields(void)
 {
-	return @[ @"path", @"bytes", @"sha256", @"role", @"optional" ];
+	return @[ @"path", @"bytes", @"sha256", @"role", @"optional", @"repository", @"revision", @"url" ];
 }
 
 @implementation NFKModelFile
@@ -700,6 +700,9 @@ static NSArray<NSString *> *NFKModelFileFields(void)
 					  sha256:(nullable NSString *)sha256
 						role:(nullable NSString *)role
 					optional:(BOOL)optional
+				  repository:(nullable NSString *)repository
+					revision:(nullable NSString *)revision
+						 URL:(nullable NSURL *)URL
 				  extensions:(nullable NSDictionary<NSString *, id> *)extensions
 {
 	self = [super init];
@@ -709,14 +712,33 @@ static NSArray<NSString *> *NFKModelFileFields(void)
 		_sha256 = [sha256 copy];
 		_role = [role copy] ?: NFKModelFileRoleOther;
 		_optional = optional;
+		_repository = [repository copy];
+		_revision = [revision copy];
+		_URL = [URL copy];
 		_extensions = NFKModelExtensionsWithout(extensions, NFKModelFileFields());
 	}
 	return self;
 }
 
+- (instancetype)initWithPath:(NSString *)path
+				   byteCount:(nullable NSNumber *)byteCount
+					  sha256:(nullable NSString *)sha256
+						role:(nullable NSString *)role
+					optional:(BOOL)optional
+				  extensions:(nullable NSDictionary<NSString *, id> *)extensions
+{
+	return [self initWithPath:path byteCount:byteCount sha256:sha256 role:role optional:optional repository:nil
+					 revision:nil URL:nil extensions:extensions];
+}
+
 + (instancetype)fileWithPath:(NSString *)path role:(NSString *)role
 {
 	return [[self alloc] initWithPath:path byteCount:nil sha256:nil role:role optional:NO extensions:nil];
+}
+
+- (BOOL)overridesSource
+{
+	return self.repository != nil || self.revision != nil || self.URL != nil;
 }
 
 + (nullable instancetype)fileWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error
@@ -727,18 +749,23 @@ static NSArray<NSString *> *NFKModelFileFields(void)
 + (nullable instancetype)fileFromObject:(id)object path:(NSString *)path error:(NSError **)error
 {
 	NFKModelFieldReader *reader = [NFKModelFieldReader readerWithObject:object path:path error:error];
-	NSString *filePath = nil, *sha256 = nil, *role = nil;
+	NSString *filePath = nil, *sha256 = nil, *role = nil, *repository = nil, *revision = nil;
 	NSNumber *byteCount = nil;
+	NSURL *URL = nil;
 	BOOL optional = NO;
 	if (reader == nil
 		|| ![reader readString:@"path" required:YES into:&filePath error:error]
 		|| ![reader readNumber:@"bytes" into:&byteCount error:error]
 		|| ![reader readString:@"sha256" required:NO into:&sha256 error:error]
 		|| ![reader readString:@"role" required:NO into:&role error:error]
-		|| ![reader readBoolean:@"optional" into:&optional error:error]) {
+		|| ![reader readBoolean:@"optional" into:&optional error:error]
+		|| ![reader readString:@"repository" required:NO into:&repository error:error]
+		|| ![reader readString:@"revision" required:NO into:&revision error:error]
+		|| ![reader readURL:@"url" into:&URL error:error]) {
 		return nil;
 	}
 	return [[self alloc] initWithPath:filePath byteCount:byteCount sha256:sha256 role:role optional:optional
+						   repository:repository revision:revision URL:URL
 						   extensions:[reader extensionsWithoutFields:NFKModelFileFields()]];
 }
 
@@ -750,6 +777,9 @@ static NSArray<NSString *> *NFKModelFileFields(void)
 	dictionary[@"sha256"] = self.sha256;
 	dictionary[@"role"] = self.role;
 	dictionary[@"optional"] = @(self.isOptional);
+	dictionary[@"repository"] = self.repository;
+	dictionary[@"revision"] = self.revision;
+	dictionary[@"url"] = self.URL.absoluteString;
 	return [dictionary copy];
 }
 
@@ -875,7 +905,7 @@ static NSArray<NSString *> *NFKModelSourceFields(void)
 static NSArray<NSString *> *NFKModelVariantFields(void)
 {
 	return @[ @"id", @"displayName", @"isDefault", @"registryName", @"source", @"downloadBytes", @"residentBytes",
-			  @"peakBytes", @"parameterCount", @"precision", @"minimumMemoryBytes" ];
+			  @"peakBytes", @"parameterCount", @"precision", @"minimumMemoryBytes", @"license" ];
 }
 
 @implementation NFKModelVariant
@@ -891,6 +921,7 @@ static NSArray<NSString *> *NFKModelVariantFields(void)
 					parameterCount:(nullable NSNumber *)parameterCount
 						 precision:(nullable NSString *)precision
 			minimumMemoryByteCount:(nullable NSNumber *)minimumMemoryByteCount
+						   license:(nullable NFKModelLicense *)license
 						extensions:(nullable NSDictionary<NSString *, id> *)extensions
 {
 	self = [super init];
@@ -906,9 +937,29 @@ static NSArray<NSString *> *NFKModelVariantFields(void)
 		_parameterCount = [parameterCount copy];
 		_precision = [precision copy];
 		_minimumMemoryByteCount = [minimumMemoryByteCount copy];
+		_license = [license copy];
 		_extensions = NFKModelExtensionsWithout(extensions, NFKModelVariantFields());
 	}
 	return self;
+}
+
+- (instancetype)initWithIdentifier:(NSString *)identifier
+					   displayName:(nullable NSString *)displayName
+						 isDefault:(BOOL)isDefault
+					  registryName:(nullable NSString *)registryName
+							source:(nullable NFKModelSource *)source
+				 downloadByteCount:(nullable NSNumber *)downloadByteCount
+				 residentByteCount:(nullable NSNumber *)residentByteCount
+					 peakByteCount:(nullable NSNumber *)peakByteCount
+					parameterCount:(nullable NSNumber *)parameterCount
+						 precision:(nullable NSString *)precision
+			minimumMemoryByteCount:(nullable NSNumber *)minimumMemoryByteCount
+						extensions:(nullable NSDictionary<NSString *, id> *)extensions
+{
+	return [self initWithIdentifier:identifier displayName:displayName isDefault:isDefault registryName:registryName
+							 source:source downloadByteCount:downloadByteCount residentByteCount:residentByteCount
+					  peakByteCount:peakByteCount parameterCount:parameterCount precision:precision
+			 minimumMemoryByteCount:minimumMemoryByteCount license:nil extensions:extensions];
 }
 
 + (instancetype)variantWithIdentifier:(NSString *)identifier displayName:(nullable NSString *)displayName
@@ -929,10 +980,13 @@ static NSArray<NSString *> *NFKModelVariantFields(void)
 	NSString *identifier = nil, *displayName = nil, *registryName = nil, *precision = nil;
 	NSNumber *downloadByteCount = nil, *residentByteCount = nil, *peakByteCount = nil, *parameterCount = nil;
 	NSNumber *minimumMemoryByteCount = nil;
-	id source = nil;
+	id source = nil, license = nil;
 	BOOL isDefault = NO;
 	NFKModelElementReader sourceReader = ^id (id element, NSString *elementPath, NSError **elementError) {
 		return [NFKModelSource sourceFromObject:element path:elementPath error:elementError];
+	};
+	NFKModelElementReader licenseReader = ^id (id element, NSString *elementPath, NSError **elementError) {
+		return [NFKModelLicense licenseFromObject:element path:elementPath error:elementError];
 	};
 	if (reader == nil
 		|| ![reader readString:@"id" required:YES into:&identifier error:error]
@@ -945,14 +999,15 @@ static NSArray<NSString *> *NFKModelVariantFields(void)
 		|| ![reader readNumber:@"peakBytes" into:&peakByteCount error:error]
 		|| ![reader readNumber:@"parameterCount" into:&parameterCount error:error]
 		|| ![reader readString:@"precision" required:NO into:&precision error:error]
-		|| ![reader readNumber:@"minimumMemoryBytes" into:&minimumMemoryByteCount error:error]) {
+		|| ![reader readNumber:@"minimumMemoryBytes" into:&minimumMemoryByteCount error:error]
+		|| ![reader readObject:@"license" withReader:licenseReader into:&license error:error]) {
 		return nil;
 	}
 	return [[self alloc] initWithIdentifier:identifier displayName:displayName isDefault:isDefault
 							   registryName:registryName source:source downloadByteCount:downloadByteCount
 						  residentByteCount:residentByteCount peakByteCount:peakByteCount
 							 parameterCount:parameterCount precision:precision
-					 minimumMemoryByteCount:minimumMemoryByteCount
+					 minimumMemoryByteCount:minimumMemoryByteCount license:license
 								 extensions:[reader extensionsWithoutFields:NFKModelVariantFields()]];
 }
 
@@ -970,6 +1025,7 @@ static NSArray<NSString *> *NFKModelVariantFields(void)
 	dictionary[@"parameterCount"] = self.parameterCount;
 	dictionary[@"precision"] = self.precision;
 	dictionary[@"minimumMemoryBytes"] = self.minimumMemoryByteCount;
+	dictionary[@"license"] = self.license.dictionaryRepresentation;
 	return [dictionary copy];
 }
 
@@ -1244,6 +1300,11 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 		}
 	}
 	return nil;
+}
+
+- (nullable NFKModelLicense *)licenseForVariant:(NFKModelVariant *)variant
+{
+	return variant.license ?: self.license;
 }
 
 - (NSDictionary<NSString *, id> *)dictionaryRepresentation

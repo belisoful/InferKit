@@ -22,6 +22,8 @@ vocabulary strings. The [examples](examples.md#model-catalog) show the API in us
 - [Requirements](#requirements)
 - [Vocabulary](#vocabulary)
 - [Errors](#errors)
+- [The MLX catalog's measurements](#the-mlx-catalogs-measurements)
+- [The snapshot and the tools](#the-snapshot-and-the-tools)
 
 ## The catalog
 
@@ -192,6 +194,7 @@ a fine-tune.
 | `parameterCount` | integer | no | The parameter count. |
 | `precision` | string | no | The type the weights are stored in, such as `"float32"`, `"float16"`, `"bfloat16"`, or `"int4"`. |
 | `minimumMemoryBytes` | integer | no | The least memory the variant runs in, as [requirements](#requirements) defines it. |
+| `license` | [license](#license) | no | The license of this variant's weights where it differs from the model's `license`. The model's license applies when absent. `-[NFKModelDescriptor licenseForVariant:]` reads the one that applies. |
 
 ## Source
 
@@ -218,6 +221,12 @@ a fine-tune.
 | `sha256` | string | no | The SHA-256 of the contents, as lowercase hexadecimal digits. |
 | `role` | string | no | What the file holds: a [file role](#file-roles). `"other"` when absent. |
 | `optional` | boolean | no | True when the model loads without the file. |
+| `repository` | string | no | The Hugging Face repository the file comes from when it is not its source's, such as a vocoder or the base release a ControlNet steers. `path` is then relative to that repository. |
+| `revision` | string | no | The commit or tag the file is read at. With `repository`, the revision of that repository, whose default branch applies when absent. Alone, the source's repository at that revision. |
+| `url` | string | no | The download URL of a file that does not come from its source. `path` is then the file name. |
+
+A file that names `repository`, `revision`, or `url` reads `overridesSource` as `YES`. Every other file
+comes from its variant's source.
 
 ## Requirements
 
@@ -306,6 +315,7 @@ resolves through `+[NFKDynamicBackend backendForCapability:error:]` as it is.
 | `image-embedding` | `NFKModelTaskImageEmbedding` | A vector for comparing images. |
 | `embedding` | `NFKModelTaskEmbedding` | A vector for comparing text, or text with images. |
 | `reranking` | `NFKModelTaskReranking` | Ordering documents by relevance to a query. |
+| `decision` | `NFKModelTaskDecision` | Answering typed questions about a state: a choice, a score, or whether a statement holds (`NFKDecisionQuestion`). |
 | `forecasting` | `NFKModelTaskForecasting` | Predicting the next values of a time series. |
 | `source-separation` | `NFKModelTaskSourceSeparation` | Splitting a recording into its sources. |
 | `speech-enhancement` | `NFKModelTaskSpeechEnhancement` | Removing noise and reverberation from speech. |
@@ -390,3 +400,60 @@ Every failure is in `NFKModelCatalogErrorDomain`.
 | `NFKModelCatalogErrorUnsupportedSchemaVersion` | The manifest's `schemaVersion` is newer than this release reads. |
 | `NFKModelCatalogErrorMalformedManifest` | The data is not a JSON object, or `schemaVersion`, `kind`, or `models` is missing or of the wrong type, or `kind` is not `"inferkit.model-catalog"`. |
 | `NFKModelCatalogErrorMalformedDescriptor` | An object is missing a required field, has a field of the wrong type, or holds a value JSON cannot carry. The description names the field by its path, such as `models[2].variants[0].source.kind is missing`. |
+
+## The MLX catalog's measurements
+
+The MLX companion's descriptors carry measured figures. `Tools/catalog/measure.py` reads every variant
+source the catalog lists and writes them to `InferKitMLX/Sources/InferKitMLX/NFKMLXCatalogMeasurements.swift`,
+a generated table the descriptors read when they are built.
+
+| Field | Where it comes from |
+|---|---|
+| file `bytes` | The file's size in the repository's file tree, or a URL's `Content-Length`. |
+| file `sha256` | The SHA-256 Git LFS records for the file. A file Git stores directly has none. |
+| `downloadBytes` | The files the package's download fetches: each required file, each optional file the repository serves, the first weight candidate a directory serves, and the shards a `*.index.json` names. |
+| `parameterCount` | The elements of the safetensors tensors the download holds, read from each file's header. A variant with a weight file in another format (a pickle, a GGUF, an archive), or a header the repository refuses, has none. A packed format counts its stored elements. |
+| `residentBytes` | An estimate: the tensor bytes at the precision the model's loader holds them in. |
+| `minimumMemoryBytes` | The residency budget of the largest stage for a staged model whose code states the stage split, else of the resident bytes: the bytes plus the 4 GiB reserve, divided by 0.85. |
+| `precision` | The floating type that holds the most stored tensor bytes, where the entry states none. |
+| `peakBytes` | Not measured. |
+
+A measured variant can carry these extension fields:
+
+| Field | On | Meaning |
+|---|---|---|
+| `measuredRevision` | source | The commit the source's revision resolved to when it was measured. The file digests are that commit's. |
+| `note` | source | A sentence a user should read about the source, such as a release that needs a converter none ships yet. |
+| `publiclyServed` | source | `false` for a repository its publisher no longer serves to the public. A local copy of the release still builds the model; the measurement records it as `"unmeasurable"`. |
+| `measurement` | variant | `"gated"` (the repository refused the listing), `"unmeasurable"` (a release page or a host that serves no size), or `"missing"` (a required file is not served). Absent for a measured variant. |
+| `measurementNote` | variant | Why a measurement is incomplete, such as the tensor headers a gated repository refused. |
+| `residentEstimate` | variant | `"stored-dtype"` where `residentBytes` counts the stored bytes because the loader's precision or the stored type is not known. |
+
+A model's `requirements.minimumMemoryBytes` is the least of its variants' figures.
+
+## The snapshot and the tools
+
+`Docs/model-catalog.json` is the manifest of the core's Apple engines and the MLX companion's models, the
+catalog an app that links the core and InferKitMLX loads. A test in the MLX package builds the same
+manifest in process and compares it with the file byte for byte.
+
+```bash
+# Rewrite the snapshot after a catalog change (from InferKitMLX/)
+swift run inferkit-catalog export --output ../Docs/model-catalog.json
+
+# List the variant sources the measurement reads, as JSON
+swift run inferkit-catalog sources
+
+# Measure every source again and regenerate the table (from the repository root)
+python3 -I Tools/catalog/measure.py
+```
+
+- `inferkit-catalog` is an executable target of the MLX package that no product names, so a consumer of
+  the package does not build it. It builds descriptors and evaluates no MLX array, so it runs without
+  MLX's Metal library.
+- `measure.py` uses the Python standard library. It reads `/api/models/{repo}/tree/{revision}?recursive=1`
+  and `/api/models/{repo}/revision/{revision}` for each Hugging Face source, two HTTP range requests per
+  safetensors file for its header, and a HEAD request for each URL file. It fetches small JSON shard
+  indexes whole and no weight file. It sends `HF_TOKEN` when the environment sets it.
+- The manifest writer sorts keys and models, and the measurements carry no date or machine path, so the
+  same catalog writes the same bytes on every machine.

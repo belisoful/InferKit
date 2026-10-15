@@ -69,6 +69,16 @@ blocks take from their prose. A block that differs uses an `<!-- objc-check: …
 its fence (`given`, `continues`, or `skip`); the script's own help lists them. The check is step 7 of
 the Full Check in `Docs/agent-reference/build-and-verification.md`.
 
+### Model catalog measurement — `catalog/`
+
+`measure.py` sizes every variant source the MLX catalog lists without downloading a weight file: the
+Hugging Face file tree (sizes, Git LFS digests, the commit a revision resolves to), each safetensors
+header by HTTP range request through `validation-assets/shapes.py` (tensor bytes by dtype, element
+counts), and a HEAD request per URL file. It writes the generated
+`InferKitMLX/Sources/InferKitMLX/NFKMLXCatalogMeasurements.swift`. Run it from the repository root with
+`python3 -I Tools/catalog/measure.py`; the notes are in "Model catalog" in
+`Docs/agent-reference/mlx-companion.md`.
+
 ### Swift isolation probe — `swift-isolation-probe/`
 
 `run.sh` builds the core, compiles `main.swift` as Swift 6 with `-default-isolation MainActor`, and runs

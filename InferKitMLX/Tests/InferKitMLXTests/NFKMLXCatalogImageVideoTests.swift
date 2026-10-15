@@ -124,6 +124,35 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
         }
     }
 
+    func testEachControlNetNamesTheBaseReleaseItSteers() throws {
+        let controlNets: [(name: String, repository: String, base: String, components: [NFKMLXReleaseComponent])] = [
+            (NFKMLXFluxControlNetGenerator.modelName, NFKMLXFluxControlNetGenerator.controlNetReleaseRepo,
+             NFKMLXFluxControlNetGenerator.releaseRepo, NFKMLXFlux.releaseComponents),
+            (NFKMLXSD3ControlNetGenerator.modelName, NFKMLXSD3ControlNetGenerator.controlNetReleaseRepo,
+             NFKMLXSD3ControlNetGenerator.releaseRepo, NFKMLXSD3Generator.releaseComponents),
+        ]
+        for controlNet in controlNets {
+            let source = try XCTUnwrap(try XCTUnwrap(entry(controlNet.name)).descriptor().defaultVariant?.source)
+            XCTAssertEqual(source.repository, controlNet.repository, controlNet.name)
+            let base = source.files.filter { $0.repository == controlNet.base }
+            XCTAssertEqual(base.map(\.path), NFKMLXCatalogImage.componentFiles(controlNet.components).map(\.path),
+                           controlNet.name)
+            XCTAssertTrue(source.files.filter { $0.repository == nil }.allSatisfy { !$0.path.contains("/") }, controlNet.name)
+        }
+    }
+
+    func testSourcesTheLoaderCannotReadAsServedSayWhy() throws {
+        let sam31 = try XCTUnwrap(try XCTUnwrap(entry(NFKMLXCatalogImage.sam31Name)).descriptor().defaultVariant?.source)
+        XCTAssertTrue(sam31.requiresConversion)
+        XCTAssertTrue(sam31.files.contains { $0.path == NFKMLXCatalogImage.sam31Checkpoint && $0.role == NFKModelFileRoleWeights })
+        XCTAssertNotNil(sam31.extensions["note"] as? String)
+
+        let withdrawn = try XCTUnwrap(try XCTUnwrap(entry("stable-diffusion-2-1-base")).descriptor().defaultVariant?.source)
+        XCTAssertEqual(withdrawn.repository, "stabilityai/stable-diffusion-2-1-base")
+        XCTAssertEqual(withdrawn.extensions["publiclyServed"] as? Bool, false)
+        XCTAssertNotNil(withdrawn.extensions["note"] as? String)
+    }
+
     func testEveryReleasedSizeHasItsOwnName() {
         let names = Set(entries.map(\.identifier))
         let expected = ["sam-vit-b", "sam-vit-l", "sam-vit-h", "swinir-classical-x4", "nafnet-reds",

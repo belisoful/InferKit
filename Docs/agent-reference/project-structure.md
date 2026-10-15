@@ -53,7 +53,8 @@ The full repository tree with per-directory notes.
 ├── SwiftExamples/                   # The same examples in Swift — pins the imported API shape
 ├── Docs/                            # Consumer documents the README links to: inference-guide, examples,
 │                                    #   installation, coreml-llm, companions, model-index, model-parity,
-│                                    #   model-catalog, mlx-runtime-hazards, porting-candidates
+│                                    #   model-catalog, mlx-runtime-hazards, porting-candidates;
+│                                    #   model-catalog.json is the catalog snapshot `inferkit-catalog export` writes
 ├── Docs/agent-reference/            # Auxiliary maintainer notes behind AGENTS.md / CLAUDE.md, one file
 │                                    #   per subject; README.md there is the index
 ├── InferKit.xcworkspace             # Opens the core + the three companions in one Xcode window. Each
@@ -76,7 +77,8 @@ The full repository tree with per-directory notes.
 │                                    #   SwiftPM's only URL forms are `package(url:version:)` and
 │                                    #   `package(url:range:)` — no subpath — so a package must sit at
 │                                    #   the repository root to be consumable by URL at all.
-├── InferKitMLX/                     # Optional MLX companion package (own Package.swift + tests)
+├── InferKitMLX/                     # Optional MLX companion package (own Package.swift + tests);
+│                                    #   Sources/inferkit-catalog is the catalog export tool, an executable no product names
 ├── InferKitFoundationModels/        # Optional Foundation Models companion (own Package.swift + tests)
 ├── InferKitAppleSwift/              # Optional companion for Apple's Swift-only inference APIs (own Package.swift + tests)
 ├── Tools/inferkit-convert/          # Offline Python converter: HF causal-LM -> Core ML model dir
@@ -129,6 +131,7 @@ The full repository tree with per-directory notes.
 ├── Tools/snac-to-safetensors/       # Offline: SNAC codec checkpoint -> safetensors (optional; the native reader loads it)
 ├── Tools/taesd-to-safetensors/      # Offline: TAESD encoder + decoder checkpoints -> one safetensors
 ├── Tools/lmc/                       # lmc.py: the Large Model Coordination lock, and its test suite
+├── Tools/catalog/                   # measure.py: sizes the MLX catalog's sources and writes NFKMLXCatalogMeasurements.swift
 ├── Tools/docc/build.sh              # Builds the core's DocC archive from a clang symbol graph, and a companion's
 ├── Tools/doc-snippets/              # check-objc.py type-checks every Objective-C block in the consumer documents
 ├── Tools/mlx-metallib.sh            # Compiles mlx-swift's Metal kernels and places mlx.metallib beside the SwiftPM test binary

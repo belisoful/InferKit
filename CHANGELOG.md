@@ -66,6 +66,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKBalancedBackend` read them back.
 - `NFKAppleModelDescriptors` describes the Apple-framework engines (engine `apple`): one descriptor per
   engine and task, built by `+backendNamed:`, with the operating system each needs.
+- A file can come from another repository than its variant's source: `NFKModelFile` gains `repository`,
+  `revision`, `URL`, and `overridesSource` (JSON `"repository"`, `"revision"`, `"url"`).
+- A variant can carry its own license (`NFKModelVariant.license`, JSON `"license"`), and
+  `-[NFKModelDescriptor licenseForVariant:]` reads the one that applies.
+- `NFKModelTaskDecision` (`"decision"`) names the task of a model that answers typed questions about a
+  state.
 
 #### MCP servers launched as programs
 
@@ -769,6 +775,32 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 - `NFKMLXModelDescriptors` adds the MLX models to `NFKModelCatalog.sharedCatalog` when the package is
   linked, the six reference stand-ins marked as such.
+- Every released size of a family registers under its own name, and every registry name has a
+  descriptor.
+- Each variant carries measured figures: its files' sizes and Git LFS digests, its download bytes, its
+  parameter count, its resident bytes at the precision its loader holds the weights in, and the least
+  working set the residency planner runs it in. `Tools/catalog/measure.py` measures the sources without
+  downloading their weights and regenerates the table the descriptors read.
+- `Docs/model-catalog.json` is the manifest of the core's Apple engines and the MLX models. The package's
+  `inferkit-catalog` tool writes it (`swift run inferkit-catalog export`) and lists the sources the
+  measurement reads (`swift run inferkit-catalog sources`). No product names the tool.
+- VoiceRestore names its vocoder's repository, Open-Jev its base model's at the commit the adapter was
+  trained over, and the two ControlNets the base releases they steer. OPUS-MT's en-de and zh-en pairs
+  state CC BY 4.0, the others Apache 2.0. Laya and Open-Jev answer the `decision` task.
+- SAM 3.1 lists the `sam3.1_multiplex.pt` its repository serves, marked as needing a converter, with a
+  note on why. Stable Diffusion 2.1 base keeps its entry and registry name for a local copy, and its source
+  notes that the publisher no longer serves the repository publicly (`"publiclyServed": false`).
+- `granite-4.0-h-tiny` registers Granite 4.0-H Tiny, whose routed experts page where the release does not
+  fit, and `+[NFKMLXGraniteHybrid graniteBackendWithDirectoryURL:residency:error:]` loads a release as a
+  residency says.
+- Each Whisper size reports its registry name as its identifier (`whisper-base`), and each wav2vec 2.0 or
+  HuBERT release reports its repository's name.
+- The MADLAD-400 download fetches a sharded release's index and shards, so the 7B downloads.
+- A Stable Diffusion backend with an IP-Adapter attached lists `NFKMLXInputImageEmbedding` in its
+  `supportedInputKeys`.
+- Canary-1B-v2's directory factory and registry name read the `canary-1b-v2.nemo` archive the repository
+  serves, so its download needs no conversion. A directory with the unpacked `model_weights.ckpt` still
+  loads.
 - Every MLX backend declares `supportedOutputKeys`. `NFKMLXGenerationBackend` takes its output keys as a
   required argument, so each model it wraps states what it returns.
 

@@ -193,10 +193,26 @@ public extension NFKMLXGraniteHybrid {
                                     modules: [net], releaseDirectoryURL: directoryURL)
     }
 
+    /// Builds a text-generation backend from a released Granite 4.0-H directory with a mixture size's
+    /// routed experts held as `residency` plans them (`loadWeights(into:fromDirectory:precision:residency:)`).
+    /// A dense size loads resident under every residency. A paged load is inference-only. Introduced in
+    /// InferKit 0.4.0.
+    static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision = .checkpoint,
+                        residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, precision: precision, residency: residency, identifier: graniteModelName)
+    }
+
     /// The Objective-C entry: builds a Granite 4.0-H text-generation backend from a release directory.
     @objc(graniteBackendWithDirectoryURL:error:)
     static func graniteBackend(directoryURL: URL) throws -> any NFKInferenceBackend {
         try backend(directoryURL: directoryURL)
+    }
+
+    /// The Objective-C entry that holds a mixture size's routed experts as `residency` says. Introduced in
+    /// InferKit 0.4.0.
+    @objc(graniteBackendWithDirectoryURL:residency:error:)
+    static func graniteBackend(directoryURL: URL, residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, residency: residency)
     }
 
     internal static let requiredFiles = ["config.json", "tokenizer.json", "tokenizer_config.json"]
@@ -229,16 +245,40 @@ public extension NFKMLXGraniteHybrid {
         }
     }
 
-    /// Registers `granite-4.0-h` with `NFKMLXModelRegistry`; the registry's URL is the release directory.
+    /// Registers `granite-4.0-h` and `granite-4.0-h-tiny` with `NFKMLXModelRegistry`; the registry's URL
+    /// is the release directory. Both hold a mixture's routed experts as ``NFKMLXResidency/automatic``
+    /// plans them: resident where the release fits the working set, paged where it does not.
     @objc static func register() {
-        NFKMLXModelRegistry.register(name: graniteModelName) { url in
-            guard let url else {
-                throw NFKMLXError.unsupportedConfiguration("granite-4.0-h builds from a release directory, not without weights")
+        for name in [graniteModelName, graniteTinyModelName] {
+            NFKMLXModelRegistry.register(name: name) { url in
+                guard let url else {
+                    throw NFKMLXError.unsupportedConfiguration("\(name) builds from a release directory, not without weights")
+                }
+                return try backend(directoryURL: url, precision: .checkpoint, residency: .automatic, identifier: name)
             }
-            return try graniteBackend(directoryURL: url)
         }
     }
 
     /// The registry name a Granite 4.0-H backend reports.
     @objc static let graniteModelName = "granite-4.0-h"
+
+    /// The registry name of Granite 4.0-H Tiny (`ibm-granite/granite-4.0-h-tiny`), a mixture of experts.
+    /// Introduced in InferKit 0.4.0.
+    @objc static let graniteTinyModelName = "granite-4.0-h-tiny"
+}
+
+extension NFKMLXGraniteHybrid {
+
+    /// Builds the backend from a release directory, held as `residency` says, reporting `identifier`: the
+    /// name the registry builds it under.
+    static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                        identifier: String) throws -> any NFKInferenceBackend {
+        guard let tokenizer = NFKMLXLanguage.releaseTokenizer(inDirectory: directoryURL) else {
+            throw NFKMLXError.unsupportedConfiguration("the Granite release has no readable tokenizer")
+        }
+        let net = makeNet(try configuration(fromDirectory: directoryURL))
+        try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency)
+        return NFKMLXGraniteBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: identifier,
+                                    modules: [net], releaseDirectoryURL: directoryURL)
+    }
 }

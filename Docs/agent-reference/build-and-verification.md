@@ -31,6 +31,14 @@ cd InferKitAppleSwift && swift build && swift test
 pod lib lint InferKit.podspec --quick
 ```
 
+The MLX package's one executable, `inferkit-catalog`, runs with `swift run inferkit-catalog export` or
+`… sources` from `InferKitMLX/`. It builds descriptors and evaluates no MLX array, so it needs neither
+`Tools/mlx-metallib.sh` nor the large-model lock, and its first `swift run` compiles the package as a
+`swift build` does. No product names it, so a consumer of the package never builds it. The snapshot it
+writes, `Docs/model-catalog.json`, is checked by `NFKMLXCatalogCompletenessTests`; regenerate the file
+after a catalog change, and rerun `python3 -I Tools/catalog/measure.py` after a source or file list
+changes (see "Model catalog" in `mlx-companion.md`).
+
 The tvOS SDK is named without a version, so the command resolves to the SDK the installed Xcode ships
 (`appletvos` is `appletvos27.0` under Xcode 27). A versioned name fails once a different Xcode is
 installed.
@@ -105,8 +113,8 @@ classifier as macOS 12, so every use sits under `@available`; the zero-warning g
 unguarded call.
 
 1. `swift build` + `swift test` on the host — **0 warnings**, all tests green. Grep the log for
-   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 1161 tests
-   (2026-10-15): the Objective-C `- (void)test` methods under `Tests/` (1061) and in
+   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 1167 tests
+   (2026-10-15): the Objective-C `- (void)test` methods under `Tests/` (1067) and in
    `Examples/NFKExamples.m` (52, the `InferKitExamples` target), plus the `func test` methods in
    `SwiftExamples/` (48).
 2. `xcodebuild build` for a `generic/platform=iOS` destination (cross-platform compile), and for tvOS
@@ -181,7 +189,7 @@ unguarded call.
    -skipPackagePluginValidation` throughout):
 
    ```
-   xcodebuild test -scheme InferKitMLXTests        …    # 2505 — the model and API suite
+   xcodebuild test -scheme InferKitMLXTests        …    # 2531 — the model and API suite
    xcodebuild test -scheme InferKitMLXExamples     …    #  137 — the Swift documented snippets
    xcodebuild test -scheme InferKitMLXObjCExamples …    #   54 — the Objective-C ones
    ```

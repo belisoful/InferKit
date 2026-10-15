@@ -100,14 +100,31 @@ public final class NFKMLXCanaryBackend: NSObject, NFKInferenceBackend {
 }
 
 extension NFKMLXCanary {
-    /// Builds the recognizer from a release directory holding `model_weights.ckpt` (the unpacked `.nemo`)
-    /// and `tokenizer.json`. Blocking on the load; run off the render thread.
+    /// Builds the recognizer from a release directory holding `tokenizer.json` and the weights: either
+    /// the `canary-1b-v2.nemo` archive the repository serves, read in place, or the unpacked
+    /// `model_weights.ckpt`. Blocking on the load; run off the render thread.
     @objc(backendWithDirectoryURL:error:)
     public static func backend(directoryURL: URL) throws -> any NFKInferenceBackend {
         let tokenizer = try NFKMLXCanaryTokenizer(tokenizerURL: directoryURL.appendingPathComponent("tokenizer.json"))
         let net = NFKMLXCanaryNet(.v2)
-        try loadWeights(into: net, from: directoryURL.appendingPathComponent("model_weights.ckpt"))
+        try loadWeights(into: net, checkpoint: try releaseCheckpoint(inDirectory: directoryURL))
         return NFKMLXCanaryBackend(net: net, tokenizer: tokenizer, identifier: modelName)
+    }
+
+    /// The release checkpoint a directory holds: the unpacked `model_weights.ckpt` where the directory has
+    /// one, else `model_weights.ckpt` inside the directory's `.nemo` archive. The archive also carries
+    /// `timestamps_asr_model_weights.ckpt`, which this model does not read.
+    static func releaseCheckpoint(inDirectory directoryURL: URL) throws -> NFKMLXWeights.Checkpoint {
+        let unpacked = directoryURL.appendingPathComponent("model_weights.ckpt")
+        if FileManager.default.fileExists(atPath: unpacked.path) {
+            return try NFKMLXWeights.materializedCheckpoint(url: unpacked)
+        }
+        let archiveURL = directoryURL.appendingPathComponent(weightFiles[0])
+        guard FileManager.default.fileExists(atPath: archiveURL.path) else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "\(directoryURL.lastPathComponent) holds neither model_weights.ckpt nor \(weightFiles[0])")
+        }
+        return try NFKMLXNemoArchive(url: archiveURL).checkpoint(named: "model_weights.ckpt")
     }
 
     // The repo's `model.safetensors` carries transformers names this loader does not read, so the
@@ -124,14 +141,9 @@ extension NFKMLXCanary {
     /// public release is `nvidia/canary-1b-v2`.
     @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let directory = try NFKMLXReleaseDownload.directory(
+        try backend(directoryURL: try NFKMLXReleaseDownload.directory(
             repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-            required: requiredFiles, optional: optionalFiles, weights: weightFiles)
-        let tokenizer = try NFKMLXCanaryTokenizer(tokenizerURL: directory.appendingPathComponent("tokenizer.json"))
-        let archive = try NFKMLXNemoArchive(url: directory.appendingPathComponent(weightFiles[0]))
-        let net = NFKMLXCanaryNet(.v2)
-        try loadWeights(into: net, checkpoint: try archive.checkpoint(named: "model_weights.ckpt"))
-        return NFKMLXCanaryBackend(net: net, tokenizer: tokenizer, identifier: modelName)
+            required: requiredFiles, optional: optionalFiles, weights: weightFiles))
     }
 
     /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``.
@@ -141,7 +153,8 @@ extension NFKMLXCanary {
         NFKMLXReleaseDownload.async(completionHandler) { try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL) }
     }
 
-    /// Registers `canary-1b-v2` with `NFKMLXModelRegistry`; the registry's URL is the release directory.
+    /// Registers `canary-1b-v2` with `NFKMLXModelRegistry`; the registry's URL is the release directory as
+    /// the repository serves it, or one with the archive unpacked.
     @objc public static func register() {
         NFKMLXModelRegistry.register(name: modelName) { url in
             guard let url else {
