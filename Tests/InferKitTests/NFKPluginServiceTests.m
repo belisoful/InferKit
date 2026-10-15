@@ -775,6 +775,7 @@ static NSInteger NFKServiceTestThreadCount(void)
 		process.ownerInheritedDescriptors = @{ @3: @(pluginEnd) };
 		process.environment = @{ @"INFERKIT_PLUGIN_CHANNEL_FD": @"3" };
 		XCTAssertTrue([process startWithError:&error], @"%@", error);
+		process.ownerInheritedDescriptors = nil;
 		close(pluginEnd);
 		NFKPluginChannel *channel = [NFKPluginChannel channelByAcceptingHandOffOnDescriptor:hostEnd timeout:10 error:&error];
 		XCTAssertNotNil(channel, @"%@ %@", error, process.recentStandardError);
@@ -818,6 +819,7 @@ static NSInteger NFKServiceTestThreadCount(void)
 	process.ownerInheritedDescriptors = @{ @3: @(pluginEnd) };
 	*outProcess = process;
 	XCTAssertTrue([process startWithError:&error], @"%@", error);
+	process.ownerInheritedDescriptors = nil;
 	close(pluginEnd);
 	NFKPluginChannel *channel = [NFKPluginChannel channelByAcceptingHandOffOnDescriptor:hostEnd timeout:10 error:&error];
 	if (channel == nil) {

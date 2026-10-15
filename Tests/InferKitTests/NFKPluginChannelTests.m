@@ -274,6 +274,7 @@
 	NFKSubprocess *process = [[NFKSubprocess alloc] initWithCommand:@"/bin/sh" arguments:@[ @"-c", @"sleep 0.2" ]];
 	process.ownerInheritedDescriptors = @{ @(NFKPluginChannelDescriptorNumber): @(child) };
 	XCTAssertTrue([process startWithError:&error], @"%@", error);
+	process.ownerInheritedDescriptors = nil;
 	close(child);
 
 	NFKPluginChannel *channel = [[NFKPluginChannel alloc] initWithDescriptor:ours];

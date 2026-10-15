@@ -25,8 +25,10 @@ NS_ASSUME_NONNULL_BEGIN
 	every value, and the subprocess owns the duplicates: it closes them, exactly once, when the property
 	is set again or the subprocess is released. The caller keeps its own descriptors and may close them
 	at once. Reading the property returns the subprocess's duplicates, which the caller does not close.
-	Each launch, relaunches included, gives the child copies of the duplicates. A key below 3, or a
-	value that was not open when set, fails the launch. */
+	Each launch, relaunches included, gives the child copies of the duplicates. While the subprocess
+	holds a duplicate, the file stays open in this process, so a reader of a pipe or socket sees end of
+	file only after the property is cleared or the subprocess is released. A key below 3, or a value
+	that was not open when set, fails the launch. */
 @property (atomic, copy, nullable) NSDictionary<NSNumber *, NSNumber *> *ownerInheritedDescriptors;
 
 /*! The quality-of-service class the child starts at, or QOS_CLASS_UNSPECIFIED (the default) for the

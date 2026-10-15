@@ -429,6 +429,7 @@ static NSString *NFKFixtureTakeString(const nfk_plugin *plugin, char * _Nullable
 	process.environment = @{ NFKPluginChannelEnvironmentVariable: [NSString stringWithFormat:@"%d", NFKPluginChannelDescriptorNumber] };
 	process.ownerInheritedDescriptors = @{ @(NFKPluginChannelDescriptorNumber): @(theirs) };
 	XCTAssertTrue([process startWithError:&error], @"%@", error);
+	process.ownerInheritedDescriptors = nil;
 	close(theirs);
 	*outProcess = process;
 	NFKPluginChannel *channel = [NFKPluginChannel channelByAcceptingHandOffOnDescriptor:ours timeout:10 error:&error];

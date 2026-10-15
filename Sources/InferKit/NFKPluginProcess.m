@@ -176,7 +176,11 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 	subprocess.ownerQualityOfService = QOS_CLASS_USER_INITIATED;
 	subprocess.restartPolicy = NFKSubprocessRestartPolicyNever;
 	self.subprocess = subprocess;
-	return [subprocess startWithError:error];
+	BOOL started = [subprocess startWithError:error];
+	// The child has its own copy now. Holding ours would keep the plugin's end open in this process, so
+	// a plugin that exits before the hand-off would read as alive until the verification deadline.
+	subprocess.ownerInheritedDescriptors = nil;
+	return started;
 }
 
 /*! The program and its arguments: the plugin host with the bundle for "objc" and "c-abi", or the

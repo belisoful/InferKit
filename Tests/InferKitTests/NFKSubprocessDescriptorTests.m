@@ -13,6 +13,7 @@
 
 #import "../../Sources/InferKit/NFKSubprocessPrivate.h"
 #import <libproc.h>
+#import <poll.h>
 #import <sys/proc_info.h>
 #import <unistd.h>
 
@@ -33,15 +34,26 @@
 	return YES;
 }
 
-/*! Everything readable from descriptor until every writer has closed it. */
-- (NSString *)readToEndOfDescriptor:(int)descriptor
+/*! Everything readable from descriptor until every writer has closed it, or nil when a writer is
+	still open after 10 seconds. */
+- (nullable NSString *)readToEndOfDescriptor:(int)descriptor
 {
 	NSMutableData *data = [NSMutableData data];
+	NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:10];
 	uint8_t buffer[256];
 	ssize_t count = 0;
-	while ((count = read(descriptor, buffer, sizeof buffer)) > 0) {
-		[data appendBytes:buffer length:(NSUInteger)count];
-	}
+	do {
+		struct pollfd readable = { .fd = descriptor, .events = POLLIN };
+		int remaining = (int)MAX(0, deadline.timeIntervalSinceNow * 1000);
+		if (poll(&readable, 1, remaining) <= 0) {
+			close(descriptor);
+			return nil;
+		}
+		count = read(descriptor, buffer, sizeof buffer);
+		if (count > 0) {
+			[data appendBytes:buffer length:(NSUInteger)count];
+		}
+	} while (count > 0);
 	close(descriptor);
 	return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
 }
@@ -54,6 +66,7 @@
 	process.ownerInheritedDescriptors = @{ @3: @(channel[1]) };
 	NSError *error = nil;
 	XCTAssertTrue([process startWithError:&error], @"%@", error);
+	process.ownerInheritedDescriptors = nil;
 	close(channel[1]);
 	XCTAssertEqualObjects([self readToEndOfDescriptor:channel[0]], @"ok\n");
 	XCTAssertTrue([self waitUntil:^BOOL { return process.state == NFKSubprocessStateExited; } timeout:5]);
@@ -70,6 +83,7 @@
 	process.ownerInheritedDescriptors = @{ @3: @(first[1]), @4: @(second[1]) };
 	NSError *error = nil;
 	XCTAssertTrue([process startWithError:&error], @"%@", error);
+	process.ownerInheritedDescriptors = nil;
 	close(first[1]);
 	close(second[1]);
 	XCTAssertEqualObjects([self readToEndOfDescriptor:first[0]], @"three\n");
