@@ -574,6 +574,49 @@
 	[server stop];
 }
 
+- (void)testExampleAddingAStdioMCPServer
+{
+	// A server that runs as a program, configured the way `claude mcp add --transport stdio` takes it.
+	// Nothing launches until the first call.
+	NSURL *folder = [NSURL fileURLWithPath:NSTemporaryDirectory() isDirectory:YES];
+	NFKMCPClient *files = [[NFKMCPClient alloc] initWithCommand:@"/opt/homebrew/bin/npx"
+													  arguments:@[ @"-y", @"@modelcontextprotocol/server-filesystem", folder.path ]
+													environment:@{ @"NODE_ENV": @"production" }
+											workingDirectoryURL:folder];
+	files.serverProcess.restartPolicy = NFKSubprocessRestartPolicyOnCrash;
+	files.serverProcess.stateHandler = ^(NFKSubprocess *process, NFKSubprocessState state) {
+		if (state == NFKSubprocessStateExited) {
+			NSLog(@"exited %d: %@", process.terminationStatus, process.recentStandardError);
+		}
+	};
+	XCTAssertEqual(files.transport, NFKMCPTransportStdio);
+	XCTAssertEqual(files.serverProcess.state, NFKSubprocessStateIdle);
+
+	// A stand-in server written in sh, so the example runs on any machine without a network.
+	NSString *standIn =
+		@"while IFS= read -r line; do\n"
+		 "  id=$(printf '%s' \"$line\" | /usr/bin/sed -n 's/.*\"id\":\\([0-9]*\\).*/\\1/p')\n"
+		 "  case \"$line\" in\n"
+		 "  *'\"notifications/'*) ;;\n"
+		 "  *'\"initialize\"'*) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"protocolVersion\":\"2025-06-18\","
+		 "\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"stand-in\",\"version\":\"1\"}}}\\n' \"$id\" ;;\n"
+		 "  *'\"tools/list\"'*) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"tools\":[{\"name\":\"read_note\","
+		 "\"description\":\"Reads the note.\",\"inputSchema\":{\"type\":\"object\"}}]}}\\n' \"$id\" ;;\n"
+		 "  *'\"tools/call\"'*) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"content\":[{\"type\":\"text\","
+		 "\"text\":\"%s\"}]}}\\n' \"$id\" \"$NOTE\" ;;\n"
+		 "  esac\n"
+		 "done\n";
+	NFKMCPClient *notes = [[NFKMCPClient alloc] initWithCommand:@"/bin/sh" arguments:@[ @"-c", standIn ]
+													environment:@{ @"NOTE": @"Buy milk." } workingDirectoryURL:nil];
+	NSError *error = nil;
+	NSArray<NFKInferenceTool *> *noteTools = [notes toolsWithError:&error];
+	XCTAssertEqualObjects(noteTools.firstObject.name, @"read_note", @"%@", error);
+	XCTAssertEqualObjects([noteTools.firstObject invokeWithArguments:@{}].text, @"Buy milk.");
+	[notes disconnect];
+	XCTAssertEqual(notes.serverProcess.state, NFKSubprocessStateExited);
+	XCTAssertEqual(notes.serverProcess.terminationStatus, 0, @"the server exits on its input closing");
+}
+
 - (void)testExampleLinkingTheServerToAnAgentCLI
 {
 	NFKInferenceServer *server = [[NFKInferenceServer alloc] init];

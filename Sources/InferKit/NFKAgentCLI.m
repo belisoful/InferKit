@@ -4,6 +4,7 @@
 //
 
 #import "NFKAgentCLI.h"
+#import "NFKAgentCLIPrivate.h"
 #import "NFKInferenceServer.h"
 
 #import <signal.h>
@@ -87,6 +88,24 @@ static BOOL NFKAgentCLIMatches(NSString *pattern, NSString *string)
 @end
 
 #if TARGET_OS_OSX
+
+// A Finder-launched application's PATH is /usr/bin:/bin:/usr/sbin:/sbin, which holds none of these.
+NSArray<NSString *> *NFKAgentCLIToolDirectories(void)
+{
+	NSString *home = NSHomeDirectory();
+	NSMutableArray<NSString *> *directories = [NSMutableArray array];
+	for (NSString *relative in @[ @".local/bin", @".claude/local", @".npm-global/bin", @".bun/bin", @".volta/bin", @".cargo/bin" ]) {
+		[directories addObject:[home stringByAppendingPathComponent:relative]];
+	}
+	[directories addObjectsFromArray:@[ @"/opt/homebrew/bin", @"/usr/local/bin" ]];
+	NSString *nvm = [home stringByAppendingPathComponent:@".nvm/versions/node"];
+	NSArray<NSString *> *versions = [[NSFileManager.defaultManager contentsOfDirectoryAtPath:nvm error:NULL]
+									 sortedArrayUsingSelector:@selector(localizedStandardCompare:)];
+	for (NSString *version in versions.reverseObjectEnumerator) {
+		[directories addObject:[[nvm stringByAppendingPathComponent:version] stringByAppendingPathComponent:@"bin"]];
+	}
+	return directories;
+}
 
 typedef NS_ENUM(NSInteger, NFKAgentCLIKind) {
 	NFKAgentCLIKindClaudeCode,
@@ -254,10 +273,8 @@ typedef NS_ENUM(NSInteger, NFKAgentCLIKind) {
 
 #pragma mark Finding the executable
 
-// A Finder-launched application's PATH is /usr/bin:/bin:/usr/sbin:/sbin, which holds none of these.
 - (NSArray<NSString *> *)searchDirectories
 {
-	NSString *home = NSHomeDirectory();
 	NSMutableArray<NSString *> *directories = [NSMutableArray array];
 	NSString *path = NSProcessInfo.processInfo.environment[@"PATH"];
 	for (NSString *entry in [path componentsSeparatedByString:@":"]) {
@@ -265,16 +282,7 @@ typedef NS_ENUM(NSInteger, NFKAgentCLIKind) {
 			[directories addObject:entry];
 		}
 	}
-	for (NSString *relative in @[ @".local/bin", @".claude/local", @".npm-global/bin", @".bun/bin", @".volta/bin", @".cargo/bin" ]) {
-		[directories addObject:[home stringByAppendingPathComponent:relative]];
-	}
-	[directories addObjectsFromArray:@[ @"/opt/homebrew/bin", @"/usr/local/bin" ]];
-	NSString *nvm = [home stringByAppendingPathComponent:@".nvm/versions/node"];
-	NSArray<NSString *> *versions = [[NSFileManager.defaultManager contentsOfDirectoryAtPath:nvm error:NULL]
-									 sortedArrayUsingSelector:@selector(localizedStandardCompare:)];
-	for (NSString *version in versions.reverseObjectEnumerator) {
-		[directories addObject:[[nvm stringByAppendingPathComponent:version] stringByAppendingPathComponent:@"bin"]];
-	}
+	[directories addObjectsFromArray:NFKAgentCLIToolDirectories()];
 	return [NSOrderedSet orderedSetWithArray:directories].array;
 }
 

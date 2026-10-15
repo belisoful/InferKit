@@ -513,6 +513,39 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(client.serverInfo?["name"] as? String, "InferKit")
     }
 
+    // A stdio MCP server from Swift: the command initializer, serverProcess (optional, nil over HTTP),
+    // a @Sendable state handler, and disconnect(). The server is a stand-in written in sh.
+    func testAddingAStdioMCPServer() throws {
+        let standIn = #"""
+        while IFS= read -r line; do
+          id=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"id":\([0-9]*\).*/\1/p')
+          case "$line" in
+          *'"notifications/'*) ;;
+          *'"initialize"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"stand-in","version":"1"}}}\n' "$id" ;;
+          *'"tools/list"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"read_note","inputSchema":{"type":"object"}}]}}\n' "$id" ;;
+          *'"tools/call"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"%s"}]}}\n' "$id" "$NOTE" ;;
+          esac
+        done
+        """#
+        let client = NFKMCPClient(command: "/bin/sh", arguments: ["-c", standIn],
+                                  environment: ["NOTE": "Buy milk."], workingDirectoryURL: nil)
+        XCTAssertEqual(client.transport, .stdio)
+        let process = try XCTUnwrap(client.serverProcess)
+        process.restartPolicy = .onCrash
+        process.stateHandler = { process, state in
+            if state == .exited {
+                print("exited \(process.terminationStatus): \(process.recentStandardError)")
+            }
+        }
+        let tools = try client.tools()
+        XCTAssertEqual(tools.map(\.name), ["read_note"])
+        XCTAssertEqual(try client.resultOfTool(named: "read_note", arguments: [:]).text, "Buy milk.")
+        try client.ping()
+        client.disconnect()
+        XCTAssertEqual(process.state, .exited)
+        XCTAssertEqual(process.terminationReason, .exit)
+    }
+
     // An agent's CLI from Swift: link(_:name:scope:bearerTokenEnvironmentVariable:) throws, and
     // mcpLink(named:scope:) returns nil for an absent registration and throws only on a failed command.
     func testLinkingTheServerToAnAgentCLI() throws {

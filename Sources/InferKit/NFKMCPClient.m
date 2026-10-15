@@ -13,6 +13,7 @@
 #import "NFKRemoteTransport.h"
 #import "NFKRemoteMediaSupport.h"
 #import "NFKServedMCP.h"
+#import "NFKSubprocessPrivate.h"
 
 /*! A tool a server lists, which runs by calling the server. */
 @interface NFKMCPClientTool : NFKInferenceTool
@@ -28,6 +29,26 @@
 
 @end
 
+/*! A request sent to a stdio server, waiting for the reply the reader hands it. */
+@interface NFKMCPPendingRequest : NSObject
+@property (nonatomic, strong) dispatch_semaphore_t answered;
+@property (nonatomic, copy, nullable) NSDictionary *reply;
+@property (nonatomic, strong, nullable) NSError *failure;
+@end
+
+@implementation NFKMCPPendingRequest
+
+- (instancetype)init
+{
+	self = [super init];
+	if (self != nil) {
+		_answered = dispatch_semaphore_create(0);
+	}
+	return self;
+}
+
+@end
+
 @interface NFKMCPClient ()
 @property (nonatomic, copy, readwrite, nullable) NSDictionary<NSString *, id> *serverInfo;
 @property (nonatomic, copy, readwrite, nullable) NSString *instructions;
@@ -35,22 +56,84 @@
 @property (nonatomic, copy, nullable) NSString *sessionIdentifier;
 @property (nonatomic, assign) NSInteger nextIdentifier;
 @property (nonatomic, strong) NSLock *lock;
+@property (nonatomic, strong) NSLock *pendingLock;
+@property (nonatomic, strong) NSMutableDictionary<id, NFKMCPPendingRequest *> *pendingRequests;
+@property (nonatomic, strong) dispatch_queue_t answerQueue;
+@property (atomic, assign) BOOL stdioSessionEnded;
+@property (nonatomic, assign) BOOL launchesOnNextCall;
 @end
 
 @implementation NFKMCPClient
+
+#if !TARGET_OS_OSX
+@dynamic serverProcess;
+#endif
 
 - (instancetype)initWithEndpointURL:(NSURL *)endpointURL apiKey:(nullable NSString *)apiKey
 {
 	self = [super init];
 	if (self != nil) {
+		_transport = NFKMCPTransportStreamableHTTP;
 		_endpointURL = [endpointURL copy];
 		_apiKey = [apiKey copy];
-		_additionalHeaders = @{};
-		_timeout = 600;
-		_nextIdentifier = 1;
-		_lock = [[NSLock alloc] init];
+		[self setUpRequestState];
 	}
 	return self;
+}
+
+#if TARGET_OS_OSX
+
+- (instancetype)initWithCommand:(NSString *)command
+					  arguments:(NSArray<NSString *> *)arguments
+					environment:(nullable NSDictionary<NSString *, NSString *> *)environment
+			workingDirectoryURL:(nullable NSURL *)workingDirectoryURL
+{
+	self = [super init];
+	if (self != nil) {
+		_transport = NFKMCPTransportStdio;
+		_serverProcess = [[NFKSubprocess alloc] initWithCommand:command arguments:arguments];
+		_serverProcess.environment = environment ?: @{};
+		_serverProcess.workingDirectoryURL = workingDirectoryURL;
+		_serverProcess.inheritedEnvironmentVariables = NFKMCPClient.defaultInheritedEnvironmentVariables;
+		[self setUpRequestState];
+		[self observeServerProcess];
+	}
+	return self;
+}
+
+- (void)setInheritsFullEnvironment:(BOOL)inheritsFullEnvironment
+{
+	_inheritsFullEnvironment = inheritsFullEnvironment;
+	self.serverProcess.inheritedEnvironmentVariables = inheritsFullEnvironment ? nil : NFKMCPClient.defaultInheritedEnvironmentVariables;
+}
+
+#else
+@dynamic inheritsFullEnvironment;
+#endif
+
++ (NSArray<NSString *> *)defaultInheritedEnvironmentVariables
+{
+	return @[ @"HOME", @"LOGNAME", @"PATH", @"SHELL", @"TERM", @"USER", @"TMPDIR", @"LANG", @"LC_ALL" ];
+}
+
+- (void)setUpRequestState
+{
+	self.additionalHeaders = @{};
+	self.timeout = 600;
+	self.nextIdentifier = 1;
+	self.launchesOnNextCall = YES;
+	self.lock = [[NSLock alloc] init];
+	self.pendingLock = [[NSLock alloc] init];
+	self.pendingRequests = [NSMutableDictionary dictionary];
+	dispatch_queue_attr_t attributes = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0);
+	self.answerQueue = dispatch_queue_create("com.inferkit.mcp-client.answers", attributes);
+}
+
+- (void)dealloc
+{
+#if TARGET_OS_OSX
+	[_serverProcess stopWithCompletionHandler:nil];
+#endif
 }
 
 #pragma mark Calls
@@ -58,6 +141,7 @@
 - (BOOL)connectWithError:(NSError **)error
 {
 	[self.lock lock];
+	self.launchesOnNextCall = YES;
 	BOOL connected = [self connectLockedWithError:error];
 	[self.lock unlock];
 	return connected;
@@ -65,6 +149,9 @@
 
 - (BOOL)connectLockedWithError:(NSError **)error
 {
+	if (![self prepareTransportWithError:error]) {
+		return NO;
+	}
 	if (self.protocolVersion != nil) {
 		return YES;
 	}
@@ -83,6 +170,37 @@
 	self.serverInfo = [result[@"serverInfo"] isKindOfClass:NSDictionary.class] ? result[@"serverInfo"] : nil;
 	self.instructions = [result[@"instructions"] isKindOfClass:NSString.class] ? result[@"instructions"] : nil;
 	return [self sendMessage:@{ @"jsonrpc": @"2.0", @"method": @"notifications/initialized" } expectingReplyTo:nil error:error] != nil;
+}
+
+- (BOOL)pingWithError:(NSError **)error
+{
+	[self.lock lock];
+	BOOL answered = [self connectLockedWithError:error] && [self resultOfMethod:@"ping" params:@{} error:error] != nil;
+	[self.lock unlock];
+	return answered;
+}
+
+- (void)disconnect
+{
+	[self.lock lock];
+#if TARGET_OS_OSX
+	[self.serverProcess stop];
+#endif
+	self.launchesOnNextCall = YES;
+	if (self.transport == NFKMCPTransportStreamableHTTP && self.sessionIdentifier != nil) {
+		NSMutableURLRequest *request = [self HTTPRequestWithMethod:@"DELETE"];
+		[NFKRemoteTransport sendRequest:request session:NSURLSession.sharedSession response:NULL error:NULL];
+	}
+	[self forgetSession];
+	[self.lock unlock];
+}
+
+- (void)forgetSession
+{
+	self.protocolVersion = nil;
+	self.serverInfo = nil;
+	self.instructions = nil;
+	self.sessionIdentifier = nil;
 }
 
 - (nullable NSArray<NFKInferenceTool *> *)toolsWithError:(NSError **)error
@@ -232,12 +350,52 @@
 	dictionary once the server accepts the notification. */
 - (nullable NSDictionary *)sendMessage:(NSDictionary *)message expectingReplyTo:(nullable NSNumber *)identifier error:(NSError **)error
 {
+#if TARGET_OS_OSX
+	if (self.transport == NFKMCPTransportStdio) {
+		return [self sendStdioMessage:message expectingReplyTo:identifier error:error];
+	}
+#endif
+	return [self sendHTTPMessage:message expectingReplyTo:identifier error:error];
+}
+
+- (BOOL)prepareTransportWithError:(NSError **)error
+{
+#if TARGET_OS_OSX
+	if (self.transport != NFKMCPTransportStdio) {
+		return YES;
+	}
+	NFKSubprocess *process = self.serverProcess;
+	NFKSubprocessState state = process.state;
+	if (state != NFKSubprocessStateRunning && state != NFKSubprocessStateStarting) {
+		if (!self.launchesOnNextCall) {
+			NSError *ended = [self errorForEndedProcess:process state:state];
+			if (error != NULL) {
+				*error = ended;
+			}
+			return NO;
+		}
+		self.launchesOnNextCall = NO;
+		NSError *launchError = nil;
+		if (![process startWithError:&launchError]) {
+			return [self unreachable:error reason:[NSString stringWithFormat:@"the MCP server could not be launched: %@", launchError.localizedDescription]
+						  underlying:launchError];
+		}
+	}
+	if (self.stdioSessionEnded) {
+		self.stdioSessionEnded = NO;
+		[self forgetSession];
+	}
+#endif
+	return YES;
+}
+
+#pragma mark Streamable HTTP
+
+- (NSMutableURLRequest *)HTTPRequestWithMethod:(NSString *)method
+{
 	NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:self.endpointURL];
-	request.HTTPMethod = @"POST";
+	request.HTTPMethod = method;
 	request.timeoutInterval = self.timeout;
-	request.HTTPBody = [NSJSONSerialization dataWithJSONObject:message options:0 error:NULL];
-	[request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-	[request setValue:@"application/json, text/event-stream" forHTTPHeaderField:@"Accept"];
 	[self.additionalHeaders enumerateKeysAndObjectsUsingBlock:^(NSString *field, NSString *value, BOOL *stop) {
 		[request setValue:value forHTTPHeaderField:field];
 	}];
@@ -250,6 +408,15 @@
 	if (self.sessionIdentifier != nil) {
 		[request setValue:self.sessionIdentifier forHTTPHeaderField:@"Mcp-Session-Id"];
 	}
+	return request;
+}
+
+- (nullable NSDictionary *)sendHTTPMessage:(NSDictionary *)message expectingReplyTo:(nullable NSNumber *)identifier error:(NSError **)error
+{
+	NSMutableURLRequest *request = [self HTTPRequestWithMethod:@"POST"];
+	request.HTTPBody = [NSJSONSerialization dataWithJSONObject:message options:0 error:NULL];
+	[request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+	[request setValue:@"application/json, text/event-stream" forHTTPHeaderField:@"Accept"];
 	NSHTTPURLResponse *response = nil;
 	NSData *data = [NFKRemoteTransport sendRequest:request session:NSURLSession.sharedSession response:&response error:error];
 	if (data == nil) {
@@ -310,6 +477,206 @@
 	}
 	flush();
 	return messages;
+}
+
+#pragma mark stdio
+
+#if TARGET_OS_OSX
+
+- (void)observeServerProcess
+{
+	__weak NFKMCPClient *weakSelf = self;
+	self.serverProcess.ownerLineHandler = ^(NSData *line) {
+		[weakSelf receiveLine:line];
+	};
+	self.serverProcess.ownerStateHandler = ^(NFKSubprocess *subprocess, NFKSubprocessState state) {
+		[weakSelf serverProcess:subprocess didEnterState:state];
+	};
+}
+
+// Runs on the process's event queue, so it takes only the pending lock.
+- (void)serverProcess:(NFKSubprocess *)process didEnterState:(NFKSubprocessState)state
+{
+	if (state == NFKSubprocessStateStarting) {
+		self.stdioSessionEnded = YES;
+		return;
+	}
+	if (state != NFKSubprocessStateExited && state != NFKSubprocessStateFailedToLaunch) {
+		return;
+	}
+	self.stdioSessionEnded = YES;
+	NSError *failure = [self errorForEndedProcess:process state:state];
+	[self.pendingLock lock];
+	NSArray<NFKMCPPendingRequest *> *waiting = self.pendingRequests.allValues;
+	[self.pendingRequests removeAllObjects];
+	for (NFKMCPPendingRequest *pending in waiting) {
+		pending.failure = failure;
+	}
+	[self.pendingLock unlock];
+	for (NFKMCPPendingRequest *pending in waiting) {
+		dispatch_semaphore_signal(pending.answered);
+	}
+}
+
+- (NSError *)errorForEndedProcess:(NFKSubprocess *)process state:(NFKSubprocessState)state
+{
+	NSString *reason = @"the MCP server exited";
+	if (state == NFKSubprocessStateFailedToLaunch) {
+		reason = [NSString stringWithFormat:@"the MCP server could not be launched: %@", process.launchError.localizedDescription];
+	} else if (process.terminationReason == NFKSubprocessTerminationReasonSignal) {
+		reason = [NSString stringWithFormat:@"the MCP server ended on signal %d", process.terminationStatus];
+	} else if (process.terminationReason == NFKSubprocessTerminationReasonExit) {
+		reason = [NSString stringWithFormat:@"the MCP server exited with status %d", process.terminationStatus];
+	}
+	NSString *lastLogLine = [self lastLineOf:process.recentStandardError];
+	if (lastLogLine.length > 0) {
+		reason = [reason stringByAppendingFormat:@"; its log ends: %@", lastLogLine];
+	}
+	NSError *failure = nil;
+	[self unreachable:&failure reason:reason underlying:process.launchError];
+	return failure;
+}
+
+- (nullable NSString *)lastLineOf:(NSString *)text
+{
+	NSArray<NSString *> *lines = [text componentsSeparatedByCharactersInSet:NSCharacterSet.newlineCharacterSet];
+	for (NSString *line in lines.reverseObjectEnumerator) {
+		NSString *trimmed = [line stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+		if (trimmed.length > 0) {
+			return trimmed;
+		}
+	}
+	return nil;
+}
+
+// Runs on the process's event queue. A line that is not JSON is skipped: the transport reserves
+// standard output for messages, and a server's stray print is not one.
+- (void)receiveLine:(NSData *)line
+{
+	if (line.length == 0) {
+		return;
+	}
+	id object = [NSJSONSerialization JSONObjectWithData:line options:0 error:NULL];
+	NSArray *messages = [object isKindOfClass:NSArray.class] ? object : (object != nil ? @[ object ] : @[]);
+	for (NSDictionary *message in messages) {
+		if (![message isKindOfClass:NSDictionary.class]) {
+			continue;
+		}
+		id identifier = message[@"id"];
+		BOOL identified = identifier != nil && identifier != NSNull.null;
+		if ([message[@"method"] isKindOfClass:NSString.class]) {
+			if (identified) {
+				[self answerServerRequest:message];
+			}
+			continue;
+		}
+		if (identified) {
+			[self completeRequest:identifier withReply:message];
+		}
+	}
+}
+
+- (void)completeRequest:(id)identifier withReply:(NSDictionary *)reply
+{
+	// The reply is stored under the lock, so a caller whose wait times out at the same moment reads it.
+	[self.pendingLock lock];
+	NFKMCPPendingRequest *pending = self.pendingRequests[identifier];
+	[self.pendingRequests removeObjectForKey:identifier];
+	pending.reply = reply;
+	[self.pendingLock unlock];
+	if (pending != nil) {
+		dispatch_semaphore_signal(pending.answered);
+	}
+}
+
+/*! Answers ping, and refuses every other request: the client declares no capabilities, so it
+	serves no sampling, roots, or elicitation. The answer is written off the reading queue, so a
+	server blocked writing to the client cannot block the client's answer. */
+- (void)answerServerRequest:(NSDictionary *)request
+{
+	NSString *method = request[@"method"];
+	NSDictionary *answer = [method isEqualToString:@"ping"]
+		? @{ @"jsonrpc": @"2.0", @"id": request[@"id"], @"result": @{} }
+		: @{ @"jsonrpc": @"2.0", @"id": request[@"id"],
+			 @"error": @{ @"code": @(-32601), @"message": [NSString stringWithFormat:@"InferKit's MCP client does not handle %@", method] } };
+	NSData *line = [NSJSONSerialization dataWithJSONObject:answer options:NSJSONWritingWithoutEscapingSlashes error:NULL];
+	NFKSubprocess *process = self.serverProcess;
+	if (line == nil) {
+		return;
+	}
+	dispatch_async(self.answerQueue, ^{
+		[process writeLine:line error:NULL];
+	});
+}
+
+- (nullable NSDictionary *)sendStdioMessage:(NSDictionary *)message expectingReplyTo:(nullable NSNumber *)identifier error:(NSError **)error
+{
+	NSError *encodingError = nil;
+	NSData *line = [NSJSONSerialization dataWithJSONObject:message options:NSJSONWritingWithoutEscapingSlashes error:&encodingError];
+	if (line == nil) {
+		[self fail:error reason:[NSString stringWithFormat:@"the message is not JSON: %@", encodingError.localizedDescription]];
+		return nil;
+	}
+	NFKMCPPendingRequest *pending = nil;
+	if (identifier != nil) {
+		pending = [[NFKMCPPendingRequest alloc] init];
+		[self.pendingLock lock];
+		self.pendingRequests[identifier] = pending;
+		[self.pendingLock unlock];
+	}
+	NSError *writeError = nil;
+	if (![self.serverProcess writeLine:line error:&writeError]) {
+		[self removePendingRequest:identifier];
+		[self unreachable:error reason:[NSString stringWithFormat:@"%@: %@", message[@"method"], writeError.localizedDescription] underlying:writeError];
+		return nil;
+	}
+	if (identifier == nil) {
+		return @{};
+	}
+	NSTimeInterval timeout = self.timeout;
+	dispatch_time_t deadline = timeout > 0 ? dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC)) : DISPATCH_TIME_FOREVER;
+	if (dispatch_semaphore_wait(pending.answered, deadline) != 0 && [self removePendingRequest:identifier]) {
+		NSDictionary *cancellation = @{ @"jsonrpc": @"2.0", @"method": @"notifications/cancelled",
+										@"params": @{ @"requestId": identifier, @"reason": @"The request timed out." } };
+		[self sendStdioMessage:cancellation expectingReplyTo:nil error:NULL];
+		[self unreachable:error reason:[NSString stringWithFormat:@"%@: the MCP server did not answer within %g seconds", message[@"method"], timeout]
+			   underlying:nil];
+		return nil;
+	}
+	if (pending.failure != nil) {
+		if (error != NULL) {
+			*error = pending.failure;
+		}
+		return nil;
+	}
+	return pending.reply;
+}
+
+/*! Removes the request and returns whether it was still waiting. */
+- (BOOL)removePendingRequest:(nullable NSNumber *)identifier
+{
+	if (identifier == nil) {
+		return NO;
+	}
+	[self.pendingLock lock];
+	BOOL waiting = self.pendingRequests[identifier] != nil;
+	[self.pendingRequests removeObjectForKey:identifier];
+	[self.pendingLock unlock];
+	return waiting;
+}
+
+#endif
+
+- (BOOL)unreachable:(NSError **)error reason:(NSString *)reason underlying:(nullable NSError *)underlying
+{
+	if (error != NULL) {
+		NSMutableDictionary *userInfo = [NSMutableDictionary dictionaryWithObject:reason forKey:NSLocalizedDescriptionKey];
+		if (underlying != nil) {
+			userInfo[NSUnderlyingErrorKey] = underlying;
+		}
+		*error = [NSError errorWithDomain:NFKInferenceErrorDomain code:kNFKError_RemoteUnreachable userInfo:userInfo];
+	}
+	return NO;
 }
 
 - (BOOL)fail:(NSError **)error reason:(NSString *)reason
