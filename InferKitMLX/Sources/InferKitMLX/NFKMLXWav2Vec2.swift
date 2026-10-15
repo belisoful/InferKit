@@ -472,6 +472,7 @@ public enum NFKMLXWav2Vec2Processor {
 /// pad token as the CTC blank, and `|` as the word delimiter.
 ///
 /// Introduced in InferKit 0.4.0.
+@objc(NFKMLXWav2Vec2Tokenizer)
 public final class NFKMLXWav2Vec2Tokenizer: NSObject, @unchecked Sendable {
     let tokens: [String]
     let ids: [String: Int]

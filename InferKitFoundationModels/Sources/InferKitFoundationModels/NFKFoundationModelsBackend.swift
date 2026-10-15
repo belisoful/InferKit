@@ -13,7 +13,8 @@ enum NFKFoundationModelsError: Error {
 }
 
 /// `userInfo` keys on the errors the backend throws. Introduced in InferKit 0.4.0.
-@objc public class NFKFoundationModelsErrorKey: NSObject {
+@objc(NFKFoundationModelsErrorKey)
+public class NFKFoundationModelsErrorKey: NSObject {
     /// The tokens the request needs (`NSNumber`), on the error for a request that does not fit the
     /// model's context.
     @objc public static let tokenCount = "NFKFoundationModelsTokenCount"

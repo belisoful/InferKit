@@ -170,6 +170,16 @@
 	XCTAssertEqualWithAccuracy(restored[0], 0.1f, 1e-5);
 }
 
+#pragma mark Library and API version (Docs/examples.md: Subsystems — Library and API version)
+
+- (void)testExampleLibraryAndAPIVersion
+{
+	BOOL supported = NFKInferKit.APIMajorVersion == NFK_API_VERSION_MAJOR
+				  && NFKInferKit.APIMinorVersion >= NFK_API_VERSION_MINOR;
+	NSLog(@"InferKit %@, API %@", NFKInferKit.releaseVersion, NFKInferKit.APIVersion);
+	XCTAssertTrue(supported);
+}
+
 #pragma mark MLMultiArray bridge (Docs/examples.md: Subsystems — Tensor conversion)
 
 - (void)testExampleMLMultiArrayBridge

@@ -254,6 +254,7 @@ public final class NFKMLXFlorence2: NSObject {
 ///
 /// @discussion Generation follows the release's settings (three beams, no repeated 3-gram). A request
 /// may set `NFKParameterMaxTokens` and ``NFKMLXTranslationParameterKey/beamCount`` (1 decodes greedily).
+@objc(NFKMLXFlorence2Backend)
 public final class NFKMLXFlorence2Backend: NSObject, NFKInferenceBackend {
     private let holder: Holder
     private let tokenizer: NFKTokenizer

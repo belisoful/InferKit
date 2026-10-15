@@ -156,6 +156,7 @@ public final class NFKMLXTrOCR: NSObject {
 // MARK: - Backend
 
 /// The TrOCR inference backend: one image in, its transcription (`NFKOutputText`) out.
+@objc(NFKMLXTrOCRBackend)
 public final class NFKMLXTrOCRBackend: NSObject, NFKInferenceBackend {
     private let holder: Holder
     private let tokenizer: NFKTokenizer

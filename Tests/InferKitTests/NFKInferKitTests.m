@@ -11,9 +11,9 @@
 
 @implementation NFKInferKitTests
 
-- (void)testTheVersionIsANonEmptySemanticVersionString
+- (void)testTheReleaseVersionIsANonEmptySemanticVersionString
 {
-	NSString *version = NFKInferKit.version;
+	NSString *version = NFKInferKit.releaseVersion;
 	XCTAssertGreaterThan(version.length, 0u, @"the version string is present");
 
 	NSArray<NSString *> *components = [version componentsSeparatedByString:@"."];
@@ -26,10 +26,35 @@
 	}
 }
 
-- (void)testTheVersionIsStable
+- (void)testTheReleaseVersionIsStable
 {
-	XCTAssertEqualObjects(NFKInferKit.version, NFKInferKit.version,
+	XCTAssertEqualObjects(NFKInferKit.releaseVersion, NFKInferKit.releaseVersion,
 						  @"the version is a constant, not recomputed differently");
+}
+
+- (void)testTheAPIVersionIsMajorDotMinor
+{
+	NSString *expected = [NSString stringWithFormat:@"%ld.%ld", (long)NFKInferKit.APIMajorVersion,
+						  (long)NFKInferKit.APIMinorVersion];
+	XCTAssertEqualObjects(NFKInferKit.APIVersion, expected);
+}
+
+- (void)testTheAPIVersionMatchesTheHeaders
+{
+	XCTAssertEqual(NFKInferKit.APIMajorVersion, NFK_API_VERSION_MAJOR);
+	XCTAssertEqual(NFKInferKit.APIMinorVersion, NFK_API_VERSION_MINOR);
+}
+
+- (void)testTheReleaseVersionLeavesNSObjectClassVersioningAlone
+{
+	XCTAssertEqual([NSObject version], [NFKInferKit version],
+				   @"+version stays NSObject's integer class version");
+}
+
+- (void)testTheAPIVersionStartsAtOneZero
+{
+	XCTAssertGreaterThanOrEqual(NFKInferKit.APIMajorVersion, 1);
+	XCTAssertGreaterThanOrEqual(NFKInferKit.APIMinorVersion, 0);
 }
 
 @end

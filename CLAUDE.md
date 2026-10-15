@@ -90,7 +90,7 @@ Source through SwiftPM (`Package.swift`, public API in `Sources/InferKit/include
 (`InferKit.podspec`, globbing the same files). New public headers go in
 `Sources/InferKit/include/InferKit/` and the umbrella `InferKit.h`; the globs pick up new files. The
 version lives in three places that move together on release: `s.version` in the podspec,
-`NFKInferKit.version`, and the `vX.Y.Z` tag. `Tools/` ships in no distribution. Details, the
+`NFKInferKit.releaseVersion`, and the `vX.Y.Z` tag. `Tools/` ships in no distribution. Details, the
 XCFramework builds, and the consumer linking recipes: `Docs/agent-reference/distribution-and-packaging.md`
 and `Docs/installation.md`.
 

@@ -40,6 +40,29 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### Breaking: `NFKInferKit.version` is `NFKInferKit.releaseVersion`
+
+- The class property `version` overrode `+[NSObject version]`, the integer class version archiving
+  reads, with a string, and Swift saw NSObject's `version()` function in its place. The release
+  version is now `NFKInferKit.releaseVersion` in both languages, and `version` is removed with no
+  alias, since an alias keeps the clash. `+[NFKInferKit version]` is NSObject's integer again.
+- The server's status route, its Bonjour record, and the MCP handshakes keep their `"version"` field,
+  which reads `releaseVersion`.
+
+#### The API version
+
+- `NFKInferKit.APIVersion` (`"major.minor"`), `APIMajorVersion`, and `APIMinorVersion` version the
+  binary interface apart from the release version, starting at 1.0. The major version changes only on
+  an incompatible change to the Objective-C interface or the C ABI, and the minor version counts
+  additions. The promise covers the core and InferKitMLX's Objective-C interface, not InferKitMLX's
+  Swift interface. `NFK_API_VERSION_MAJOR` and `NFK_API_VERSION_MINOR` record the headers a client
+  compiled against. `Docs/installation.md` lists which change moves which number.
+- `Tools/abi/check-abi.sh` holds a built framework to a baseline's binary interface: it reads both
+  sets of public headers through clang, applies the API version rule to the differences, and loads the
+  framework into a client compiled against the baseline headers to find every class, selector,
+  conformance, constant, and function. The baseline is a framework, a git ref, or `current` (a
+  self-check until the first tagged release).
+
 #### A catalog of the models a process can run
 
 - `NFKModelCatalog` lists `NFKModelDescriptor`s: each model's engine and how it is built (a registry
@@ -680,6 +703,32 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### Releases an app installs side by side
+
+- The dynamic `InferKitMLX.framework` carries its Metal library as `Resources/mlx.metallib`, which MLX
+  finds before any `mlx-swift_Cmlx.bundle` the host app ships, so the framework always runs the shaders
+  it was built with. It was `Resources/default.metallib`, which MLX reaches only after the host's
+  bundles.
+- The framework carries the core's module in `Headers/InferKit`, and a consumer passes
+  `-I InferKitMLX.framework/Headers`. The separate `CoreHeaders/` folder beside the xcframework is
+  gone, along with its `-fmodule-map-file` flag.
+- `import InferKitMLXObjC` gives a Swift client the Objective-C interface of InferKitMLX, with the core
+  re-exported and no Swift interface of InferKitMLX or MLX loaded. Calls go through Objective-C
+  dispatch, which the API version covers. It works with `--no-swift-interfaces`.
+- `build-mlx.sh` writes `release/`: each macOS slice's framework zipped, the xcframework zips, and
+  `release.json` with the release and API versions, minimum systems, the InferKit commit, the
+  mlx-swift pin and mlx core version, each zip's size and SHA-256, and an empty `signature` for the
+  signing step (`Tools/xcframework/release.sh`; `--no-release` skips it). The framework's
+  `Info.plist` records the release version and `NFKAPIVersion`.
+- `Docs/installation.md` describes the release folders an app installs (`<root>/<version>/`), how it
+  picks the newest release it supports, and a sample loader.
+- Every public class has an Objective-C name equal to its Swift name, so `NSClassFromString` finds it:
+  `NFKMLXFlorence2Backend`, `NFKMLXHTDemucsBackend`, `NFKMLXKokoro`, `NFKMLXPhotoFaceBackend`,
+  `NFKMLXSa2VABackend`, `NFKMLXTableTransformerBackend`, `NFKMLXTekkenTokenizer`, `NFKMLXTrOCRBackend`,
+  `NFKMLXVJEPA2Backend`, `NFKMLXVideoBackend`, and `NFKMLXWav2Vec2Tokenizer` had Swift's mangled
+  runtime names. `Tools/abi/check-abi.sh` fails on a mangled name.
+
 
 #### Every model describes itself in the catalog
 

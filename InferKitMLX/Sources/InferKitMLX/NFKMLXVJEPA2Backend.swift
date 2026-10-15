@@ -210,6 +210,7 @@ public final class NFKMLXVJEPA2: NSObject {
 /// The V-JEPA 2 inference backend: a video (`NFKInputVideo`) or an image (`NFKInputImage`) in, a
 /// mean-pooled feature embedding (`NFKOutputEmbedding`, `[NSNumber]`) out, and from a classification
 /// release the ranked classes (`NFKOutputClassifications`, `NSArray<NFKClassification *>`) too.
+@objc(NFKMLXVJEPA2Backend)
 public final class NFKMLXVJEPA2Backend: NSObject, NFKInferenceBackend {
     private let holder: Holder
     private let frameCount: Int

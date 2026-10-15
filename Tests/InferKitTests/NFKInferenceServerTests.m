@@ -1022,7 +1022,7 @@
 
 	NSDictionary *status = [self statusOf:server];
 	XCTAssertEqualObjects(status[@"object"], @"inferkit.status");
-	XCTAssertEqualObjects(status[@"server"][@"version"], NFKInferKit.version);
+	XCTAssertEqualObjects(status[@"server"][@"version"], NFKInferKit.releaseVersion);
 	NSDictionary *model = [status[@"models"] firstObject];
 	XCTAssertEqualObjects(model[@"id"], @"measured");
 	XCTAssertEqualObjects(model[@"backend"], @"served-test");
@@ -1229,7 +1229,7 @@
 
 	NFKServerStatus *status = [client fetchServerStatusWithError:&error];
 	XCTAssertNotNil(status, @"%@", error);
-	XCTAssertEqualObjects(status.version, NFKInferKit.version);
+	XCTAssertEqualObjects(status.version, NFKInferKit.releaseVersion);
 	NFKServerModelStatus *model = [status modelNamed:@"described"];
 	XCTAssertEqual(model.completed, 1);
 	XCTAssertEqual(model.limit, 1);
@@ -1306,7 +1306,7 @@
 	XCTAssertEqualObjects(found.advertisedProperties[@"chip"], NFKHardwareProfile.currentProfile.chipName);
 	XCTAssertEqualObjects(found.advertisedProperties[@"memory"],
 						  ([NSString stringWithFormat:@"%ld", (long)NFKHardwareProfile.currentProfile.physicalMemory]));
-	XCTAssertEqualObjects(found.advertisedProperties[@"version"], NFKInferKit.version);
+	XCTAssertEqualObjects(found.advertisedProperties[@"version"], NFKInferKit.releaseVersion);
 	XCTAssertEqualObjects(NFKRemoteProvider.inferKit.advertisedProperties, @{}, @"a preset advertised nothing");
 
 	// A client on another machine uses the advertised host name; from here it resolves to this machine.

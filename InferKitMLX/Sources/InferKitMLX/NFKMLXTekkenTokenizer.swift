@@ -16,6 +16,7 @@ import Foundation
 import InferKit
 
 /// A tekken (tiktoken) byte-pair tokenizer read from `tekken.json`.
+@objc(NFKMLXTekkenTokenizer)
 public final class NFKMLXTekkenTokenizer: NFKTokenizer {
     private let rankForBytes: [Data: Int]
     private let bytesForRank: [Int: Data]

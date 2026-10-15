@@ -16,19 +16,21 @@
 # product was also tried and abandoned; it made no difference, because the conflict is the tool.
 #
 #   InferKitMLX.xcframework         static  — libInferKitMLX.a + headers + a modulemap
-#   InferKitMLXDynamic.xcframework  dynamic — InferKitMLX.framework, Metal library inside
+#   InferKitMLXDynamic.xcframework  dynamic — InferKitMLX.framework, Metal library and modules inside
+#   release/                        each macOS framework zipped, the xcframework zips, and release.json
 #
 # WHY THIS IS POSSIBLE AT ALL. MLX needs `default.metallib`, which SwiftPM delivers as a
 # `mlx-swift_Cmlx.bundle` resource; a bare library carries no resources, which is why this companion
 # went unpackaged. MLX's loader has four fallbacks (mlx/backend/metal/device.cpp), and `current_binary_dir()`
 # is `dladdr` on MLX's own code, so it names whichever mach-O image MLX was linked into:
 #
-#   1. <binary dir>/mlx.metallib                      — the static route: beside the consumer's binary
-#   2. <binary dir>/Resources/mlx.metallib
+#   1. <binary dir>/mlx.metallib                      — beside the consumer's binary
+#   2. <binary dir>/Resources/mlx.metallib            — the dynamic route: inside the framework
 #   3. mlx-swift_Cmlx.bundle in the main or any loaded bundle  — the static route inside an app bundle
-#   4. <binary dir>/Resources/default.metallib        — the dynamic route: inside the framework
+#   4. <binary dir>/Resources/default.metallib
 #
-# The dynamic framework satisfies (4) on its own. A static consumer satisfies (3) by shipping the
+# The dynamic framework satisfies (2) on its own, ahead of any mlx-swift_Cmlx.bundle the host app
+# ships, so it always loads the shaders it was built with. A static consumer satisfies (3) by shipping the
 # `mlx-swift_Cmlx.bundle` this script places inside each static slice, beside the library it belongs
 # to. Delivering it inside the xcframework is only delivery: an xcframework is a build-time container
 # that never ships, and Xcode copies nothing out of a static one, so the consumer still places the
@@ -48,6 +50,7 @@
 #   Tools/xcframework/build-mlx.sh --variant static       # static | dynamic | both (default both)
 #   Tools/xcframework/build-mlx.sh --slices macos,ios     # macos | ios | iossim (default all three)
 #   Tools/xcframework/build-mlx.sh --no-swift-interfaces  # dynamic only, ~13 MB a slice
+#   Tools/xcframework/build-mlx.sh --no-release           # skip release/ (the zips and release.json)
 #
 # Each slice is a full compile of those 289 translation units, so `--slices` is the difference between
 # roughly seven minutes and twenty. `--variant` and `--no-swift-interfaces` cost nothing to build and
@@ -58,11 +61,17 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=inferkit-version.sh
+source "$ROOT/Tools/xcframework/inferkit-version.sh"
+VERSION="$(inferkit_version "$ROOT")"
+API_VERSION="$(inferkit_api_version "$ROOT")"
+[ -n "$VERSION" ] && [ -n "$API_VERSION" ] || { echo "cannot read the version or API version from $ROOT"; exit 1; }
 PACKAGE="$ROOT/InferKitMLX"
 OUTPUT="$ROOT/xcframework-build"
 VERIFY=no
 VARIANT=both
 INTERFACES=yes
+RELEASE=yes
 SLICES="macos ios iossim"
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -71,6 +80,7 @@ while [ $# -gt 0 ]; do
         --variant) VARIANT="$2"; shift 2;;
         --slices) SLICES="$(echo "$2" | tr ',' ' ')"; shift 2;;
         --no-swift-interfaces) INTERFACES=no; shift;;
+        --no-release) RELEASE=no; shift;;
         *) echo "unknown argument: $1"; exit 2;;
     esac
 done
@@ -94,8 +104,9 @@ building() {                            # building <slice tag>
 
 WORK="$OUTPUT/mlx-intermediates"
 rm -rf "$WORK" "$OUTPUT/InferKitMLX.xcframework" "$OUTPUT/InferKitMLXDynamic.xcframework" \
+    "$OUTPUT/release" \
     "$OUTPUT/CoreHeaders" "$OUTPUT/InferKit.modulemap" \
-    "$OUTPUT/MetalResources"       # an earlier layout kept the Metal library beside the xcframework
+    "$OUTPUT/MetalResources"       # earlier layouts kept these beside the xcframework
 mkdir -p "$WORK"
 
 # The public headers a consumer compiles against: the core's, plus the generated Objective-C interface
@@ -104,14 +115,10 @@ mkdir -p "$WORK"
 write_headers() {                       # write_headers <destination> <generated header> [framework]
     local destination="$1" generated="$2" kind="${3:-library}"
     rm -rf "$destination"
-    mkdir -p "$destination/InferKit"
-    cp "$ROOT/Sources/InferKit/include/InferKit/"*.h "$destination/InferKit/"
+    mkdir -p "$destination"
     cp "$generated" "$destination/InferKitMLX-Swift.h"
     if [ "$kind" = framework ]; then
-        # Inside a framework clang requires every module to be a framework module, so the core cannot
-        # be declared here; `$OUTPUT/InferKit.modulemap` carries it for a consumer to pass through
-        # `-fmodule-map-file`. An Objective-C consumer is better served by the static library, which
-        # declares both in one map.
+        # The framework carries the core's headers in Headers/InferKit (write_framework_modules).
         mkdir -p "$(dirname "$destination")/Modules"
         cat > "$(dirname "$destination")/Modules/module.modulemap" <<'FRAMEWORKMAP'
 framework module InferKitMLX {
@@ -121,6 +128,8 @@ framework module InferKitMLX {
 FRAMEWORKMAP
         return
     fi
+    mkdir -p "$destination/InferKit"
+    cp "$ROOT/Sources/InferKit/include/InferKit/"*.h "$destination/InferKit/"
     cat > "$destination/module.modulemap" <<'MODULEMAP'
 // The core travels inside this library rather than beside it, so there is exactly one copy of every
 // NFK class: an object a consumer makes and one a backend makes are the same class.
@@ -135,6 +144,53 @@ module InferKitMLX {
     export *
 }
 MODULEMAP
+}
+
+# The two plain modules the dynamic framework carries in its Headers directory, which a consumer passes
+# with `-I`. Clang looks up a module named X in `<search dir>/X/module.modulemap`, so each sits in a
+# directory of its own name. Clang accepts only framework modules in a framework's own module map, and
+# a map found through a search path is not bound by that rule. They live in Headers and not in Modules
+# because clang also reads `<search dir>/module.modulemap`: through `-I Modules` it reads the
+# framework's own map a second time and refuses the framework module from the wrong directory.
+#
+#   InferKit/         the core. Its headers sit beside the map, so `#import <InferKit/NFKFoo.h>`
+#                     resolves through the same `-I`. This is the only core module a consumer of the
+#                     framework needs; a second one on another search path redefines the module.
+#   InferKitMLXObjC/  the Objective-C interface of InferKitMLX, for Swift clients that bind through
+#                     Objective-C dispatch. It is the generated header with its
+#                     `external_source_symbol` attribute switched off: that attribute tells Swift the
+#                     declarations belong to the Swift module InferKitMLX, and Swift then imports every
+#                     class with no members. The module never imports InferKitMLX, so a client that
+#                     imports it loads no Swift interface of InferKitMLX or MLX.
+write_framework_modules() {             # write_framework_modules <Headers directory> <generated header>
+    local headers="$1" generated="$2"
+    local objc="$headers/InferKitMLXObjC/InferKitMLXObjC.h"
+    mkdir -p "$headers/InferKit" "$headers/InferKitMLXObjC"
+    cp "$ROOT/Sources/InferKit/include/InferKit/"*.h "$headers/InferKit/"
+    cat > "$headers/InferKit/module.modulemap" <<'COREMAP'
+module InferKit {
+    umbrella header "InferKit.h"
+    export *
+    module * { export * }
+}
+COREMAP
+    {
+        echo "// The Objective-C interface of InferKitMLX $VERSION (API $API_VERSION), generated from InferKitMLX-Swift.h."
+        sed 's/__has_attribute(external_source_symbol)/0/' "$generated"
+    } > "$objc"
+    # A generator that guards the attribute differently would leave it on, and Swift would import empty
+    # classes again; the Swift probe in verify-mlx.sh catches that too, but only for a macOS build.
+    if grep -q '__has_attribute(external_source_symbol)' "$objc" || ! grep -q 'external_source_symbol(language' "$objc"; then
+        echo "the generated header no longer guards external_source_symbol the way InferKitMLXObjC expects"
+        exit 1
+    fi
+    cat > "$headers/InferKitMLXObjC/module.modulemap" <<'OBJCMAP'
+module InferKitMLXObjC {
+    header "InferKitMLXObjC.h"
+    link framework "InferKitMLX"
+    export *
+}
+OBJCMAP
 }
 
 # The C modules the Swift interfaces import: `Cmlx` (from MLX, MLXFast, MLXRandom) and `_NumericsShims`
@@ -180,8 +236,9 @@ write_framework_plist() {               # write_framework_plist <framework inner
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
 	<key>CFBundleName</key><string>InferKitMLX</string>
 	<key>CFBundlePackageType</key><string>FMWK</string>
-	<key>CFBundleShortVersionString</key><string>0.10.0</string>
-	<key>CFBundleVersion</key><string>1</string>
+	<key>CFBundleShortVersionString</key><string>$VERSION</string>
+	<key>CFBundleVersion</key><string>$VERSION</string>
+	<key>NFKAPIVersion</key><string>$API_VERSION</string>
 	<key>CFBundleSupportedPlatforms</key><array><string>$platform</string></array>
 	<key>MinimumOSVersion</key><string>$minimum</string>
 </dict>
@@ -271,13 +328,14 @@ slice() {               # slice <destination> <tag> <swift lib dir> <clang targe
     xcrun strip -x -S "$inner/InferKitMLX" 2>/dev/null || true
 
     write_framework_plist "$inner" "$tag"
-    # Strategy 4 of MLX's loader: the Metal library rides inside the framework.
-    cp "$metallib" "$inner/Resources/default.metallib"
+    # Strategy 2 of MLX's loader, ahead of any mlx-swift_Cmlx.bundle beside the host app.
+    cp "$metallib" "$inner/Resources/mlx.metallib"
     # The headers an Objective-C consumer needs, and the interfaces a Swift one does.
     write_headers "$inner/Headers" "$generated" framework
+    write_framework_modules "$inner/Headers" "$generated"
     # The Swift interfaces cost about 13 MB a slice and an Objective-C consumer reads none of them,
-    # so `--no-swift-interfaces` drops them. The framework is then importable from Objective-C only,
-    # which the Objective-C verification cannot notice — hence the note in the summary.
+    # so `--no-swift-interfaces` drops them. Swift then reaches the framework through InferKitMLXObjC
+    # only, hence the note in the summary.
     if [ "$INTERFACES" = yes ]; then
         cp -R "$WORK/dd-$tag/Build/Products/Release"*/*.swiftmodule "$inner/Modules/"
         [ -d "$inner/Modules/InferKitMLX.swiftmodule" ] || { echo "no InferKitMLX.swiftmodule in the $tag build"; exit 1; }
@@ -295,23 +353,6 @@ slice() {               # slice <destination> <tag> <swift lib dir> <clang targe
 if building macos;  then slice "macOS"          macos   macosx          arm64-apple-macos14.0         Release; fi
 if building ios;    then slice "iOS"            ios     iphoneos        arm64-apple-ios17.0           Release-iphoneos; fi
 if building iossim; then slice "iOS Simulator"  iossim  iphonesimulator arm64-apple-ios17.0-simulator Release-iphonesimulator; fi
-
-if wants dynamic; then
-    # The core's module, for a consumer of the DYNAMIC framework: clang will not take a non-framework
-    # module from inside a framework, so it travels beside it. The headers sit next to the modulemap
-    # because the umbrella path resolves relative to it. Static consumers need none of this — their
-    # library's own modulemap declares both modules.
-    rm -rf "$OUTPUT/CoreHeaders"
-    mkdir -p "$OUTPUT/CoreHeaders/InferKit"
-    cp "$ROOT/Sources/InferKit/include/InferKit/"*.h "$OUTPUT/CoreHeaders/InferKit/"
-    cat > "$OUTPUT/CoreHeaders/module.modulemap" <<'COREMAP'
-module InferKit {
-    umbrella header "InferKit/InferKit.h"
-    export *
-    module * { export * }
-}
-COREMAP
-fi
 
 if wants static; then
     echo "==> assembling the static xcframework"
@@ -349,6 +390,13 @@ if [ "$VERIFY" = yes ]; then
     "$ROOT/Tools/xcframework/verify-mlx.sh" "$OUTPUT" || exit 1
 fi
 
+if wants dynamic && [ "$RELEASE" = yes ]; then
+    echo "==> writing the release folder"
+    # The vendored mlx core version is read from this build's checkout, which the cleanup below removes.
+    checkouts="$(find "$WORK" -maxdepth 3 -type d -path '*/SourcePackages/checkouts' | head -1 || true)"
+    "$ROOT/Tools/xcframework/release.sh" --output "$OUTPUT" --checkouts "$checkouts" || exit 1
+fi
+
 rm -rf "$WORK"
 echo
 if wants static; then
@@ -356,10 +404,13 @@ if wants static; then
     echo "    each slice carries the mlx-swift_Cmlx.bundle that slice's consumer ships"
 fi
 if wants dynamic; then
-    echo "==> $OUTPUT/InferKitMLXDynamic.xcframework   (dynamic, $SLICES)"
-    echo "==> $OUTPUT/CoreHeaders                      (the core module, for consumers of the dynamic one)"
+    echo "==> $OUTPUT/InferKitMLXDynamic.xcframework   (dynamic, $SLICES; InferKit $VERSION, API $API_VERSION)"
+    echo "    Headers/ carries the InferKit and InferKitMLXObjC modules"
     if [ "$INTERFACES" = no ]; then
-        echo "    carries NO Swift module interfaces: importable from Objective-C only"
+        echo "    carries NO Swift module interfaces: Swift imports InferKitMLXObjC only"
+    fi
+    if [ "$RELEASE" = yes ]; then
+        echo "==> $OUTPUT/release                          (the zips and release.json)"
     fi
 fi
 for artifact in "$OUTPUT/InferKitMLX.xcframework" "$OUTPUT/InferKitMLXDynamic.xcframework"; do

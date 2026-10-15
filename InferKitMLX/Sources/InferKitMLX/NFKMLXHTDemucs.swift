@@ -901,6 +901,7 @@ public extension NFKMLXHTDemucs {
 // MARK: Backend
 
 /// Reads audio under `NFKInputAudio` and returns one `NFKAudioAsset` per stem, under its name.
+@objc(NFKMLXHTDemucsBackend)
 public final class NFKMLXHTDemucsBackend: NSObject, NFKInferenceBackend {
 
     private let configuration: NFKMLXHTDemucsConfiguration

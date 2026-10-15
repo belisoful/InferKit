@@ -274,6 +274,7 @@ public final class NFKMLXTableTransformer: NSObject {
 
 /// The Table Transformer inference backend: one image in, the detected table structure
 /// (`NFKOutputDetections`) out.
+@objc(NFKMLXTableTransformerBackend)
 public final class NFKMLXTableTransformerBackend: NSObject, NFKInferenceBackend {
     private let holder: Holder
     /// How the release sizes its input.

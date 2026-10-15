@@ -32,7 +32,7 @@ See also the [inference guide](inference-guide.md) for the concepts behind these
 - [Model catalog](#model-catalog) — `NFKModelCatalog`: the models an app lists, downloads, and configures
 - [Choosing a backend at runtime](#choosing-a-backend-at-runtime)
 - [Serving a model to other machines](#serving-a-model-to-other-machines) — `NFKInferenceServer`, found by address or Bonjour
-- [Subsystems](#subsystems) — jobs, tokenizers, tensor conversion, Hugging Face hub, conversion tool
+- [Subsystems](#subsystems) — jobs, tokenizers, tensor conversion, Hugging Face hub, library and API version, conversion tool
 - [Testing without weights](#testing-without-weights)
 
 ## Setup
@@ -5896,6 +5896,23 @@ hub.cacheSizeLimit = NFKHFHubUnlimitedCacheSize;              // this hub only
 [hub removeCachedRepo:@"Qwen/Qwen2.5-0.5B-Instruct" revision:nil error:&error];
 long long bytes = [hub cacheSize];
 ```
+
+### Library and API version (`NFKInferKit`)
+
+`NFKInferKit.releaseVersion` is the release. `NFKInferKit.APIVersion` is the binary interface, `"major.minor"`:
+the major version changes only on an incompatible change to the Objective-C interface or the C ABI,
+and the minor version counts additions. The `NFK_API_VERSION_MAJOR` and `NFK_API_VERSION_MINOR` macros
+record the headers a client compiled against, so a client that loads the library at run time checks
+that the library supports it.
+
+```objc
+BOOL supported = NFKInferKit.APIMajorVersion == NFK_API_VERSION_MAJOR
+              && NFKInferKit.APIMinorVersion >= NFK_API_VERSION_MINOR;
+NSLog(@"InferKit %@, API %@", NFKInferKit.releaseVersion, NFKInferKit.APIVersion);   // "InferKit 0.4.0, API 1.0"
+```
+
+[Installation](installation.md#side-by-side-releases) describes the release folders an app installs
+and how it picks the newest one it supports.
 
 ### Converting a model (`Tools/inferkit-convert`)
 
