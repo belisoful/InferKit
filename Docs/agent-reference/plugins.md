@@ -270,6 +270,14 @@ events. `INFERKIT_PLUGIN_TRACE=1` adds a line on standard error for every channe
 call, and end, with its socket, the real reason, whether its descriptor still names the adopted socket,
 and each event's callers, plus both sides of each hand-off. Off by default, because symbolicating the
 callers slows descriptor-heavy tests.
+- The plugin host traces its shutdown under `INFERKIT_PLUGIN_TRACE=1`: the service answered shutdown and
+  closes its channel, the channel ended, the runs drained, the service returned, and main returns with its
+  status. `NFKPluginServiceTests/testThePluginHostServesABundleItVerifies` failed 1 run in 7 on
+  2026-10-15 with a host still running 10 s after it answered shutdown. Reading the path (reply, close,
+  the read queue's end, the close handler's semaphore, a drain bounded by `drainTimeout`, `willUnload`,
+  return from main) found no wait without a bound, and `NFKSubprocess` reports an exit within
+  `NFKSubprocessDrainGrace` (0.5 s) of the reap, so the host had not exited. On that failure the test now
+  samples every thread of the host for a second and reports it with `ps` and the end of standard error.
 - Until a stage implements a stub, it answers `NFKPluginErrorNotImplemented` (1000), a private code
   outside the public `NFKPluginError` range. No stub remains once Phase 0 is complete.
 

@@ -830,12 +830,33 @@ static NSInteger NFKServiceTestThreadCount(void)
 			[self assertReply:hello failsWithDomain:NFKPluginErrorDomain code:NFKPluginErrorSignatureInvalid];
 		}
 		XCTAssertNotNil(([self request:@{ @"type": @"shutdown" }][@"result"]));
-		XCTAssertTrue([self waitUntil:^BOOL { return process.state == NFKSubprocessStateExited; } timeout:10]);
+		pid_t pid = process.processIdentifier;
+		if (![self waitUntil:^BOOL { return process.state == NFKSubprocessStateExited; } timeout:10]) {
+			XCTFail(@"the host outlived its shutdown by 10 s (ad hoc allowed: %@): %@", allowsAdHoc, [self diagnosisOfHost:process pid:pid]);
+		}
 		XCTAssertEqual(process.terminationReason, NFKSubprocessTerminationReasonExit);
 		XCTAssertEqual(process.terminationStatus, 0, @"%@", process.recentStandardError);
 		[channel close];
 	}
 	self.channel = nil;
+}
+
+/*! What a plugin host that has not exited is doing: its state, the end of its standard error, and every
+	thread's stack, sampled for a second. */
+- (NSString *)diagnosisOfHost:(NFKSubprocess *)process pid:(pid_t)pid
+{
+	NSString *identifier = [NSString stringWithFormat:@"%d", pid];
+	NSString *status = [NFKPluginFixtures runProgram:@"/bin/ps" arguments:@[ @"-o", @"pid=,ppid=,stat=,etime=,command=", @"-p", identifier ]
+											   error:NULL] ?: @"(not listed)";
+	NSURL *report = [[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:
+					 [NSString stringWithFormat:@"inferkit-plugin-host-%@.sample.txt", NSUUID.UUID.UUIDString]];
+	NSError *sampleError = nil;
+	NSString *stacks = [NFKPluginFixtures runProgram:@"/usr/bin/sample" arguments:@[ identifier, @"1", @"-mayDie", @"-file", report.path ]
+											   error:&sampleError] != nil
+		? [NSString stringWithContentsOfURL:report encoding:NSUTF8StringEncoding error:NULL] : sampleError.localizedDescription;
+	[NSFileManager.defaultManager removeItemAtURL:report error:NULL];
+	return [NSString stringWithFormat:@"subprocess state %ld; ps: %@\nstandard error:\n%@\nstacks:\n%@", (long)process.state, status,
+			process.recentStandardError, stacks ?: @"(no report)"];
 }
 
 /*! Runs the plugin host with arguments on a fresh channel and returns the hello reply, or nil when the

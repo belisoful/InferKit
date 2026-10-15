@@ -202,7 +202,13 @@ static id _Nullable NFKPluginServiceJSONSafe(id _Nullable value)
 	[self verifyBeforeServing];
 	[channel resume];
 	dispatch_semaphore_wait(ended, DISPATCH_TIME_FOREVER);
+#if DEBUG
+	NFKPluginDebugTrace(@"service %p: its channel ended (%@); draining the runs", self, closeError);
+#endif
 	[self finishServing];
+#if DEBUG
+	NFKPluginDebugTrace(@"service %p: runs drained and backends released", self);
+#endif
 	channel.messageHandler = nil;
 	channel.closeHandler = nil;
 	self.channel = nil;
@@ -846,6 +852,9 @@ static id _Nullable NFKPluginServiceJSONSafe(id _Nullable value)
 		[self cancelRun:run];
 	}
 	[self reply:message[@"id"] result:@{} descriptors:nil];
+#if DEBUG
+	NFKPluginDebugTrace(@"service %p answered shutdown and closes its channel %@", self, self.channel);
+#endif
 	[self.channel close];
 }
 
@@ -1019,10 +1028,16 @@ int NFKPluginHostMain(int argc, char **argv)
 			return nil;
 		};
 		BOOL orderly = [service runWithChannelDescriptor:descriptor error:&error];
+#if DEBUG
+		NFKPluginDebugTrace(@"plugin host: the service returned %@; unloading the plugin", orderly ? @"orderly" : error);
+#endif
 		if ([loaded.plugin respondsToSelector:@selector(willUnload)]) {
 			[loaded.plugin willUnload];
 		}
 		[loaded.context removeTemporaryDirectory];
+#if DEBUG
+		NFKPluginDebugTrace(@"plugin host: returning from main with status %d", orderly ? 0 : EX_PROTOCOL);
+#endif
 		if (!orderly) {
 			fprintf(stderr, "inferkit-plugin-host: %s\n", error.localizedDescription.UTF8String);
 			return EX_PROTOCOL;
