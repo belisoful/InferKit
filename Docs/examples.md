@@ -1525,8 +1525,9 @@ is why the wait has a bound rather than hanging the calling thread.
 ## Text → image and image → image
 
 `NFKMLXBackend` runs a bundled Stable Diffusion release (Swift; Apple Silicon, macOS and iOS). No
-image input runs text-to-image; a `CGImage` under `NFKInputImage` runs image-to-image. Three releases
-are bundled: `.stableDiffusion15`, `.stableDiffusion21Base`, and `.sdxlTurbo`. The release's files
+image input runs text-to-image; a `CGImage` under `NFKInputImage` runs image-to-image. Five releases
+are bundled: `.stableDiffusion15`, `.stableDiffusion21Base`, `.sdxlTurbo`, `.sdxlBase`, and
+`.lcmDreamshaperV7` (a four-step latent consistency distillation of SD 1.5). The release's files
 download from Hugging Face on first use; Stable Diffusion 2.1 base is a gated repository, so it needs
 an access token: set `NFKHFHub.defaultAccessToken` before the first download (the backend makes its own
 hub), or `HF_TOKEN` in the environment.
@@ -1589,6 +1590,41 @@ let image = try backend.runInference(for: request).output(forKey: NFKOutputImage
 `scale` weights the image attention against the text attention, and 0 leaves the text-to-image result
 unchanged. From Objective-C, `imageAdapterBackendWithModel:directoryURL:adapterURL:scale:error:` takes the
 release by name.
+
+### Few-step adapters: LCM-LoRA and SDXL-Lightning (`NFKMLXSDLoRA`)
+
+A released LoRA merges into the UNet's weights, so the adapted model runs at the base model's cost. The
+reader takes the kohya layout over diffusers module names (`lora_unet_…`, `lora_down` / `lora_up` /
+`alpha`) that the LCM-LoRA and SDXL-Lightning releases publish, and the PEFT layout diffusers writes
+(`unet.…lora_A` / `lora_B`), on linear and convolution targets alike; a file written against the
+original model's block names is refused, and so is one that also adapts the text towers. The
+configuration names the sampler the adapter was distilled for: `.lcm` steps `NFKLCMScheduler` (four
+steps, guidance 1), `.ddimTrailing` counts DDIM down from the end of the training range with no
+guidance (SDXL-Lightning, SDXL-Turbo). A request's `NFKParameterSteps` and `NFKParameterGuidanceScale`
+override the adapter's defaults. The compiled mirror of this snippet is `testTextToImageAdapter` in
+`InferKitMLX/Examples/MLXModelGalleryExamples.swift`.
+
+```swift
+// LCM-LoRA on Stable Diffusion 1.5: latent-consistency/lcm-lora-sdv1-5
+let lcm = try NFKMLXTextToImage.backend(configuration: .stableDiffusion15.withSampler(.lcm),
+                                        directoryURL: sd15Directory,
+                                        adapterURL: lcmLoRAURL)        // pytorch_lora_weights.safetensors
+
+// SDXL-Lightning on SDXL base 1.0: ByteDance/SDXL-Lightning's sdxl_lightning_4step_lora.safetensors
+let lightning = try NFKMLXTextToImage.backend(configuration: .sdxlLightning,
+                                              directoryURL: sdxlBaseDirectory,
+                                              adapterURL: lightningLoRAURL)
+let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "a watercolor lighthouse at dawn"],
+                                  parameters: [NFKParameterSeed: 42])  // 4 steps, no guidance
+let image = try lightning.runInference(for: request).output(forKey: NFKOutputImage)
+```
+
+From Objective-C, `backendWithModel:directoryURL:adapterURL:adapterScale:sampler:error:` takes the
+release by name and the sampler as `NFKMLXSDSamplerLCM` or `NFKMLXSDSamplerDDIMTrailing`, and
+`backendWithModel:adapterRepo:adapterWeightsPath:adapterRevision:adapterScale:sampler:cacheDirectoryURL:error:`
+downloads both. A whole LCM distillation needs no adapter: `NFKMLXBackend(model: .lcmDreamshaperV7)`
+conditions on its guidance scale through the time embedding and runs four steps without
+classifier-free guidance.
 
 ### FLUX.2 [klein] text-to-image, editing and inpainting
 
@@ -3971,6 +4007,8 @@ let sd3Control  = NFKMLXSD3ControlNetPipeline(transformer: sd3DiT, controlnet: s
 let fluxControl = NFKMLXFluxControlNetPipeline(transformer: fluxDiT, controlnet: fluxControlNet, vae: fluxVAE)  // .unionPro (with controlnetMode:) / .single steer FLUX.1 [dev]
 let ipAdapter   = try NFKMLXTextToImage.imageAdapterBackend(configuration: .stableDiffusion15, directoryURL: sd15Dir,
                                                             adapterURL: adapterURL)  // a CLIP image embedding under NFKMLXInputImageEmbedding steers SD 1.5
+let lcmLoRA     = try NFKMLXTextToImage.backend(configuration: .stableDiffusion15.withSampler(.lcm), directoryURL: sd15Dir,
+                                                adapterURL: lcmLoRAURL)   // a released LoRA merged into the UNet (NFKMLXSDLoRA); .sdxlLightning on SDXL base for ByteDance's four-step adapter
 
 // Audio
 // Translation (text → text; every translator loads a release directory)

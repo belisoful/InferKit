@@ -857,6 +857,26 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertNotNil(try backend.runInference(for: request).output(forKey: NFKOutputImage))
     }
 
+    // Docs/examples.md "Few-step adapters": a released LoRA merged into the UNet, under the sampler it was
+    // distilled for. The release and the adapter come from the validation store; without them the
+    // example skips.
+    func testTextToImageAdapter() throws {
+        try requireMLXRuntime()
+        guard let sd15Directory = validationPath("IK_VAL_SD15_DIR"),
+              let lcmLoRA = validationPath("IK_VAL_LCM_LORA_SD15") else {
+            throw XCTSkip("set IK_VAL_SD15_DIR and IK_VAL_LCM_LORA_SD15")
+        }
+        // LCM-LoRA on Stable Diffusion 1.5: latent-consistency/lcm-lora-sdv1-5
+        let lcm = try NFKMLXTextToImage.backend(configuration: .stableDiffusion15.withSampler(.lcm),
+                                                directoryURL: URL(fileURLWithPath: sd15Directory),
+                                                adapterURL: URL(fileURLWithPath: lcmLoRA))
+        // SDXL-Lightning takes the same call with `.sdxlLightning` on the SDXL base release directory.
+        let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "a watercolor lighthouse at dawn"],
+                                          parameters: [NFKParameterSeed: 42, NFKParameterSteps: 1,
+                                                       NFKParameterWidth: 64, NFKParameterHeight: 64])
+        XCTAssertNotNil(try lcm.runInference(for: request).output(forKey: NFKOutputImage))
+    }
+
     func testFlux2TextToImage() throws {
         try requireMLXRuntime()
         // The released path is `NFKMLXFlux2.flux2(directoryURL:)` over a diffusers FLUX.2 [klein]

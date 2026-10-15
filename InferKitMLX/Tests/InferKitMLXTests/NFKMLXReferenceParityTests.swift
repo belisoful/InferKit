@@ -12706,8 +12706,13 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertTrue(arrayEqual(decoded, expected).item(Bool.self), "decodes as the float32 autoencoder does")
     }
 
+    /// `adapter` names a released LoRA the reference fused into its UNet (`IK_SD_LORA`), merged here at
+    /// the scale the record carries. A record made under the LCM sampler carries the sampler's per-step
+    /// draws, which the port re-noises with, so the comparison is of the networks and the sampler's
+    /// arithmetic.
     private func verifyTextToImage(_ name: String, _ configuration: NFKMLXSDTextToImageConfiguration,
-                                   record: String, directory key: String) throws {
+                                   record: String, directory key: String,
+                                   adapter adapterKey: String? = nil) throws {
         try requireMLXRuntime()
         guard let path = config[record] else { throw XCTSkip("set \(record)") }
         let arrays = try loadArrays(url: URL(fileURLWithPath: path))
@@ -12720,6 +12725,18 @@ final class NFKMLXReferenceParityTests: XCTestCase {
             configuration: configuration,
             files: NFKMLXSDReleaseFiles(directoryURL: try weights(key)))
         model.startLatent = latent
+        if let adapterKey {
+            let scale = settings.count > 5 && settings[5] > 0 ? settings[5] : 1
+            let report = try model.mergeAdapter(url: weights(adapterKey), scale: scale)
+            print("VALIDATION PARITY \(name)-text-to-image: adapter merged into \(report.mergedLayers) layers at scale \(scale)")
+        }
+        if let noises = arrays["noises"] {                       // [steps - 1, side, side, 4]
+            XCTAssertEqual(configuration.sampler, .lcm, "only the LCM sampler draws noise per step")
+            let draws = NFKMLXArrayBox(noises)
+            model.latentConsistencyNoise = { step in
+                step.index < draws.array.dim(0) ? draws.array[step.index] : nil
+            }
+        }
 
         // The reference distinguishes an absent negative prompt from an empty one, and the record says
         // which it ran with.
@@ -12747,8 +12764,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                 print("VALIDATION PARITY \(name)-text-to-image: \(key) cosine \(similarity)")
             }
             if let expected = arrays["first_prediction"] {
-                let schedule = NFKDDIMScheduler(predictionType: configuration.predictionType,
-                                                spacing: configuration.timestepSpacing).steps(steps)
+                let schedule = model.makeScheduler().steps(steps)
                 let mine = model.denoise(latent, schedule[0], context, guidance)
                 eval(mine)
                 let similarity = cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
@@ -12759,8 +12775,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
 
         if let trace = arrays["latents"] {
             // Per-step latents isolate a whole-picture mismatch to the step that first diverged.
-            let scheduler = NFKDDIMScheduler(predictionType: configuration.predictionType,
-                                             spacing: configuration.timestepSpacing)
+            let scheduler = model.makeScheduler()
             let schedule = scheduler.steps(steps)
             var current = latent
             let context = try model.encode(request: request, image: nil)
@@ -12798,6 +12813,29 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     func testSD21TextToImageMatchesTheReference() throws {
         try verifyTextToImage("sd21", .stableDiffusion21V, record: "IK_PARITY_SD21_T2I",
                               directory: "IK_VAL_SD21_DIR")
+    }
+
+    // The LCM-LoRA merged into the SD 1.5 UNet, sampled by the latent consistency scheduler over four
+    // steps at guidance 1, from the reference's own initial latent and per-step draws.
+    func testLCMLoRATextToImageMatchesTheReference() throws {
+        try verifyTextToImage("sd15-lcm-lora", .stableDiffusion15.withSampler(.lcm),
+                              record: "IK_PARITY_SD15_LCM_LORA_T2I", directory: "IK_VAL_SD15_DIR",
+                              adapter: "IK_VAL_LCM_LORA_SD15")
+    }
+
+    // SDXL-Lightning's four-step adapter merged into the SDXL base UNet, DDIM counted down from the end
+    // of the training range with no guidance, both sides.
+    func testSDXLLightningTextToImageMatchesTheReference() throws {
+        try verifyTextToImage("sdxl-lightning", .sdxlLightning,
+                              record: "IK_PARITY_SDXL_LIGHTNING_T2I", directory: "IK_VAL_SDXL_BASE_DIR",
+                              adapter: "IK_VAL_SDXL_LIGHTNING_4STEP_LORA")
+    }
+
+    // A whole latent consistency model: the SD 1.5 geometry with the guidance projection, conditioned on
+    // its guidance scale through the time embedding and run without classifier-free guidance.
+    func testLCMDreamshaperTextToImageMatchesTheReference() throws {
+        try verifyTextToImage("lcm-dreamshaper", .latentConsistency15,
+                              record: "IK_PARITY_LCM_DREAMSHAPER_T2I", directory: "IK_VAL_LCM_DREAMSHAPER_DIR")
     }
 
     // SDXL cross-attends to two towers at once. The first is Stable Diffusion 1.x's, read a layer
@@ -12850,4 +12888,10 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         }
         return URL(fileURLWithPath: path)
     }
+}
+
+/// Carries an array into a `@Sendable` closure; the parity tests read it from one thread.
+final class NFKMLXArrayBox: @unchecked Sendable {
+    let array: MLXArray
+    init(_ array: MLXArray) { self.array = array }
 }

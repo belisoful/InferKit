@@ -46,6 +46,11 @@ public struct NFKMLXSDUNetConfiguration: Sendable {
     /// The reference's `addition_embed_type: "text_time"`. SDXL folds a pooled text embedding and a
     /// size-and-crop descriptor into the timestep through it; the other releases carry none.
     public var additionEmbedding: NFKSDAdditionEmbedding?
+    /// The reference's `time_cond_proj_dim`: the width of the guidance embedding a latent consistency
+    /// model adds to the timestep before the time embedding's first layer. A model that carries it
+    /// conditions on the guidance scale and runs no classifier-free guidance. Nil for every release but
+    /// the LCM distillations. Introduced in InferKit 0.4.0.
+    public var timeConditionProjectionDimensions: Int?
     public var normalizationGroups: Int = 32
 
     public init() {}
@@ -253,19 +258,45 @@ enum NFKSDTimesteps {
         // `flip_sin_to_cos` is true for every released Stable Diffusion UNet.
         return concatenated([cos(angles), sin(angles)], axis: 1)
     }
+
+    /// The pipeline's `get_guidance_scale_embedding`: the guidance scale less one, times 1000, embedded
+    /// sines first over frequencies spaced to `maxPeriod` with the end point included (`half - 1`),
+    /// which is the opposite order and a different spacing from the timestep embedding.
+    static func guidanceEmbedding(_ guidanceScale: Float, channels: Int, maxPeriod: Float = 10_000) -> MLXArray {
+        let half = channels / 2
+        // The reference forms one step, `-log(maxPeriod) / (half - 1)`, and multiplies it by the index.
+        let step = -logf(maxPeriod) / Float(half - 1)
+        let exponents = (0 ..< half).map { Float($0) * step }
+        let scale = NFKMLXHalfPrecision.arithmetic == .reference
+            ? NFKReferenceRounding.exponential(MLXArray(exponents, [1, half]))
+            : MLXArray(exponents.map { expf($0) }, [1, half])
+        let angles = MLXArray([(guidanceScale - 1) * 1000]).reshaped([1, 1]) * scale
+        let embedding = concatenated([sin(angles), cos(angles)], axis: 1)
+        guard channels % 2 == 1 else { return embedding }
+        return concatenated([embedding, MLXArray.zeros([1, 1])], axis: 1)
+    }
 }
 
-/// `TimestepEmbedding`: two linear layers with a SiLU between them.
+/// `TimestepEmbedding`: two linear layers with a SiLU between them, and for a latent consistency model
+/// a projection of the guidance embedding added to the input first.
 final class NFKSDTimestepEmbedding: Module {
     @ModuleInfo(key: "linear_1") var linear1: Linear
     @ModuleInfo(key: "linear_2") var linear2: Linear
+    @ModuleInfo(key: "cond_proj") var conditionProjection: Linear?
 
-    init(inputChannels: Int, timeChannels: Int) {
+    init(inputChannels: Int, timeChannels: Int, conditionChannels: Int? = nil) {
         self._linear1.wrappedValue = Linear(inputChannels, timeChannels)
         self._linear2.wrappedValue = Linear(timeChannels, timeChannels)
+        self._conditionProjection.wrappedValue = conditionChannels.map { Linear($0, inputChannels, bias: false) }
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(NFKReferenceRounding.silu(linear1(x))) }
+    func callAsFunction(_ x: MLXArray, condition: MLXArray? = nil) -> MLXArray {
+        var input = x
+        if let conditionProjection, let condition {
+            input = input + conditionProjection(condition.asType(x.dtype))
+        }
+        return linear2(NFKReferenceRounding.silu(linear1(input)))
+    }
 }
 
 /// `ResnetBlock2D`: two normalized convolutions with the timestep embedding added between them, over a
@@ -655,8 +686,9 @@ public final class NFKMLXSDUNet: Module {
         let levels = c.blockChannels.count
         let timeChannels = c.blockChannels[0] * 4
 
-        self._timeEmbedding.wrappedValue = NFKSDTimestepEmbedding(inputChannels: c.blockChannels[0],
-                                                                  timeChannels: timeChannels)
+        self._timeEmbedding.wrappedValue = NFKSDTimestepEmbedding(
+            inputChannels: c.blockChannels[0], timeChannels: timeChannels,
+            conditionChannels: c.timeConditionProjectionDimensions)
         self._classEmbedding.wrappedValue = c.classEmbeddingCount.map {
             Embedding(embeddingCount: $0, dimensions: timeChannels)
         }
@@ -727,13 +759,6 @@ public final class NFKMLXSDUNet: Module {
         }
     }
 
-    /// - Parameters:
-    ///   - x: the latent, `[batch, height, width, inputChannels]`.
-    ///   - timestep: the diffusion step.
-    ///   - context: the text (or other) conditioning, `[batch, tokens, crossAttentionDimensions]`.
-    ///   - classLabel: the noise level, for a model that carries a class embedding.
-    ///   - added: the pooled embedding and size descriptor, for a model that carries a `text_time`
-    ///     addition embedding.
     /// The cross-attention layers, in the diffusers `attn_processors` order — down blocks, then up
     /// blocks, then the mid block, because `UNet2DConditionModel` registers the mid block last. This is
     /// the order an IP-Adapter's per-layer key/value weights are stored in.
@@ -750,14 +775,33 @@ public final class NFKMLXSDUNet: Module {
         return attentions
     }
 
+    /// The guidance embedding a latent consistency model conditions on, `[1, channels]`: the pipeline's
+    /// `get_guidance_scale_embedding` of `guidanceScale - 1`, sines first. `channels` is the model's
+    /// ``NFKMLXSDUNetConfiguration/timeConditionProjectionDimensions``. Introduced in InferKit 0.4.0.
+    public static func guidanceEmbedding(scale guidanceScale: Float, channels: Int) -> MLXArray {
+        NFKSDTimesteps.guidanceEmbedding(guidanceScale, channels: channels)
+    }
+
+    /// - Parameters:
+    ///   - x: the latent, `[batch, height, width, inputChannels]`.
+    ///   - timestep: the diffusion step.
+    ///   - context: the text (or other) conditioning, `[batch, tokens, crossAttentionDimensions]`.
+    ///   - classLabel: the noise level, for a model that carries a class embedding.
+    ///   - added: the pooled embedding and size descriptor, for a model that carries a `text_time`
+    ///     addition embedding.
+    ///   - imageConditioning: an IP-Adapter's image tokens and blend, for a UNet with the adapter attached.
+    ///   - guidanceEmbedding: the guidance-scale embedding `[batch, timeConditionProjectionDimensions]`
+    ///     (``guidanceEmbedding(scale:channels:)``), for a latent consistency model that conditions on
+    ///     its guidance scale. A model without the projection ignores it.
     public func callAsFunction(_ x: MLXArray, timestep: MLXArray, context: MLXArray?,
                                classLabel: MLXArray? = nil,
                                added: NFKSDAddedConditioning? = nil,
-                               imageConditioning: NFKSDImageConditioning? = nil) -> MLXArray {
+                               imageConditioning: NFKSDImageConditioning? = nil,
+                               guidanceEmbedding: MLXArray? = nil) -> MLXArray {
         // The float32 sinusoids take the sample's type before the embedding, as diffusers casts them; a
         // float32 table would promote the time path, and through every resnet the whole network.
         var time = timeEmbedding(NFKSDTimesteps.embedding(timestep, channels: configuration.blockChannels[0])
-            .asType(x.dtype))
+            .asType(x.dtype), condition: guidanceEmbedding)
         if let classEmbedding, let classLabel {
             time = time + classEmbedding(classLabel).asType(x.dtype)
         }
@@ -1100,12 +1144,13 @@ public final class NFKMLXStableDiffusionModels: NSObject {
     }
 
     /// Whether the release's `config.json` beside an autoencoder checkpoint sets `force_upcast`, which a
-    /// diffusers SDXL pipeline reads to decode a float16 autoencoder in float32.
+    /// diffusers SDXL pipeline reads to decode a float16 autoencoder in float32. The reference's default
+    /// is true, so a release without the file or the key upcasts.
     static func forcesUpcast(vaeWeightsURL url: URL) -> Bool {
         let configURL = url.deletingLastPathComponent().appendingPathComponent("config.json")
         guard let data = try? Data(contentsOf: configURL),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
-        return json["force_upcast"] as? Bool ?? false
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return true }
+        return json["force_upcast"] as? Bool ?? true
     }
 
     /// Loads a diffusers autoencoder checkpoint into `net`.

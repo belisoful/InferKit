@@ -15,6 +15,22 @@ import InferKit
 import MLX
 import MLXNN
 
+/// The sampler a Stable Diffusion run steps through.
+///
+/// - `ddim`: DDIM at the release's own timestep spacing, for a base release.
+/// - `ddimTrailing`: DDIM counted down from the end of the training range, for the few-step
+///   distillations trained that way (SDXL-Turbo, SDXL-Lightning).
+/// - `lcm`: the latent consistency sampler, for an LCM-distilled UNet or an LCM-LoRA merged into a base
+///   UNet.
+///
+/// Introduced in InferKit 0.4.0.
+@objc(NFKMLXSDSampler)
+public enum NFKMLXSDSampler: Int, Sendable {
+    @objc(NFKMLXSDSamplerDDIM) case ddim
+    @objc(NFKMLXSDSamplerDDIMTrailing) case ddimTrailing
+    @objc(NFKMLXSDSamplerLCM) case lcm
+}
+
 /// The geometry and schedule of a text-to-image release.
 public struct NFKMLXSDTextToImageConfiguration: Sendable {
     public var unet: NFKMLXSDUNetConfiguration = NFKMLXSDUNetConfiguration()
@@ -35,8 +51,54 @@ public struct NFKMLXSDTextToImageConfiguration: Sendable {
     /// differ, and SDXL is trained against the first. A request that supplies an empty string is
     /// asking for that sentence, and gets it, which is the distinction the reference draws too.
     public var zerosForEmptyNegativePrompt: Bool = false
+    /// The sampler the loop steps through. DDIM at `timestepSpacing` for every base release; the latent
+    /// consistency sampler for an LCM-distilled UNet or a base UNet with an LCM-LoRA merged in.
+    /// Introduced in InferKit 0.4.0.
+    public var sampler: NFKMLXSDSampler = .ddim
+    /// The LCM distillation's step count, which spaces the latent consistency schedule (the reference's
+    /// `original_inference_steps`). Introduced in InferKit 0.4.0.
+    public var latentConsistencyOriginalSteps: Int = 50
 
     public var latentChannels: Int { vae.latentChannels }
+
+    /// This configuration run with a distilled few-step adapter merged into its UNet: `.lcm` steps the
+    /// latent consistency sampler, `.ddimTrailing` counts DDIM down from the end of the training range
+    /// (SDXL-Lightning, SDXL-Turbo), and `.ddim` keeps the release's own schedule. When the sampler
+    /// changes, `steps` and `guidanceScale` default to what the adapters are trained for: 4 steps,
+    /// guidance 1 under LCM, none under the trailing sampler; a configuration already on the sampler
+    /// keeps its own values (`.latentConsistency15` keeps guidance 8). A request's `NFKParameterSteps`
+    /// and `NFKParameterGuidanceScale` override them per run. Introduced in InferKit 0.4.0.
+    public func withSampler(_ sampler: NFKMLXSDSampler, steps: Int? = nil, guidanceScale: Float? = nil) -> Self {
+        var c = self
+        if sampler != self.sampler {
+            c.sampler = sampler
+            switch sampler {
+            case .ddim:
+                break
+            case .ddimTrailing:
+                c.timestepSpacing = .trailing
+                c.steps = 4
+                c.guidanceScale = 0
+            case .lcm:
+                c.steps = 4
+                c.guidanceScale = 1
+            }
+        }
+        if let steps { c.steps = steps }
+        if let guidanceScale { c.guidanceScale = guidanceScale }
+        return c
+    }
+
+    /// The scheduler `sampler` names.
+    func makeScheduler() -> any NFKDiffusionScheduler {
+        switch sampler {
+        case .ddim, .ddimTrailing:
+            return NFKDDIMScheduler(predictionType: predictionType, spacing: timestepSpacing)
+        case .lcm:
+            return NFKLCMScheduler(predictionType: predictionType,
+                                   originalInferenceSteps: latentConsistencyOriginalSteps)
+        }
+    }
     public var scaleFactor: Float { vae.scaleFactor }
     /// How many pixels one latent cell covers: the autoencoder halves at every level but the first.
     public var latentStride: Int { 1 << (vae.blockChannels.count - 1) }
@@ -65,18 +127,44 @@ public struct NFKMLXSDTextToImageConfiguration: Sendable {
         return c
     }()
 
-    /// SDXL-Turbo: a distilled few-step release. Its schedule counts down from the end of the training
-    /// range, and it is trained to run without classifier-free guidance.
-    public static let sdxlTurbo: NFKMLXSDTextToImageConfiguration = {
+    /// SDXL base 1.0: the two-tower geometry at the release's own schedule, 1024 pixels, guidance 5.
+    /// Introduced in InferKit 0.4.0.
+    public static let sdxl: NFKMLXSDTextToImageConfiguration = {
         var c = NFKMLXSDTextToImageConfiguration()
         c.unet = .sdxl
         c.vae.scaleFactor = 0.13025
         c.textEncoder = .sdxlPrimary
         c.secondaryTextEncoder = .sdxlSecondary
+        c.sampleSize = 128
+        c.steps = 50
+        c.guidanceScale = 5
+        c.zerosForEmptyNegativePrompt = true
+        return c
+    }()
+
+    /// SDXL-Turbo: a distilled few-step release. Its schedule counts down from the end of the training
+    /// range, and it is trained to run without classifier-free guidance.
+    public static let sdxlTurbo: NFKMLXSDTextToImageConfiguration = {
+        var c = NFKMLXSDTextToImageConfiguration.sdxl
+        c.sampleSize = 64
         c.steps = 1
         c.guidanceScale = 0
         c.timestepSpacing = .trailing
-        c.zerosForEmptyNegativePrompt = true
+        return c
+    }()
+
+    /// SDXL-Lightning: the SDXL base UNet with ByteDance's four-step adapter merged in, counting DDIM
+    /// down from the end of the training range with no guidance. The two- and eight-step adapters run
+    /// through the same configuration at their own step counts. Introduced in InferKit 0.4.0.
+    public static let sdxlLightning: NFKMLXSDTextToImageConfiguration = sdxl.withSampler(.ddimTrailing)
+
+    /// A latent consistency model distilled from Stable Diffusion 1.5 (LCM Dreamshaper v7): the SD 1.5
+    /// geometry plus a 256-wide guidance projection into the time embedding, sampled by the latent
+    /// consistency scheduler over four steps. It conditions on its guidance scale (8 by default) in
+    /// place of classifier-free guidance. Introduced in InferKit 0.4.0.
+    public static let latentConsistency15: NFKMLXSDTextToImageConfiguration = {
+        var c = NFKMLXSDTextToImageConfiguration.stableDiffusion15.withSampler(.lcm, guidanceScale: 8)
+        c.unet.timeConditionProjectionDimensions = 256
         return c
     }()
 
@@ -206,6 +294,42 @@ public final class NFKMLXTextToImage: NSObject {
         NFKMLXSDTextToImageModel(configuration: configuration).makeBackend()
     }
 
+    /// Builds a text-to-image backend from a release directory with a released LoRA merged into its
+    /// UNet: an LCM-LoRA, an SDXL-Lightning step adapter, or a fine-tune published in the same layouts.
+    ///
+    /// The configuration carries the sampler the adapter needs (``NFKMLXSDTextToImageConfiguration/withSampler(_:steps:guidanceScale:)``).
+    /// `adapterScale` multiplies the adapter's own alpha; 1 applies it as trained. The merge is into the
+    /// loaded weights, so the backend runs at the base model's cost. An adapter that also adapts the
+    /// text towers is refused (``NFKMLXSDLoRA``), because this merge reaches the UNet only.
+    /// Introduced in InferKit 0.4.0.
+    public static func backend(configuration: NFKMLXSDTextToImageConfiguration, directoryURL: URL,
+                               adapterURL: URL, adapterScale: Float = 1,
+                               precision: NFKMLXWeightPrecision = .float32) throws -> any NFKInferenceBackend {
+        let model = try NFKMLXSDTextToImageModel(
+            configuration: configuration, files: NFKMLXSDReleaseFiles(directoryURL: directoryURL),
+            precision: precision)
+        try model.mergeAdapter(url: adapterURL, scale: adapterScale)
+        return model.makeBackend()
+    }
+
+    /// Builds a text-to-image backend by release name with a released LoRA merged in and the sampler
+    /// the adapter needs — the Objective-C path, where the configuration struct cannot go.
+    ///
+    /// @discussion `NFKMLXSDSamplerLCM` with `latent-consistency/lcm-lora-sdv1-5` on
+    /// `NFKMLXStableDiffusionModelStableDiffusion15`, or `NFKMLXSDSamplerDDIMTrailing` with
+    /// `ByteDance/SDXL-Lightning`'s `sdxl_lightning_4step_lora.safetensors` on
+    /// `NFKMLXStableDiffusionModelSdxlBase`, are the measured pairings. The sampler sets the step count
+    /// and guidance the adapters are trained for (4 steps; guidance 1 under LCM, none under trailing
+    /// DDIM); `NFKParameterSteps` and `NFKParameterGuidanceScale` override them per request. The release
+    /// loads as published. Introduced in InferKit 0.4.0.
+    @objc(backendWithModel:directoryURL:adapterURL:adapterScale:sampler:error:)
+    public static func backend(model: NFKMLXStableDiffusionModel, directoryURL: URL, adapterURL: URL,
+                               adapterScale: Float, sampler: NFKMLXSDSampler) throws -> any NFKInferenceBackend {
+        try backend(configuration: NFKMLXStableDiffusionRelease(model).configuration.withSampler(sampler),
+                    directoryURL: directoryURL, adapterURL: adapterURL, adapterScale: adapterScale,
+                    precision: .checkpoint)
+    }
+
     /// Builds a text-to-image backend that steers generation with an IP-Adapter reference image. The
     /// adapter at `adapterURL` is loaded onto the release's UNet; a run reads the reference as a
     /// precomputed CLIP image embedding under `NFKMLXInputImageEmbedding` (an array of numbers, computed
@@ -265,6 +389,36 @@ final class NFKMLXSDTextToImageModel {
         imageAdapterScale = scale
     }
 
+    /// Merges a released LoRA into the pipeline's UNet.
+    @discardableResult
+    func mergeAdapter(url: URL, scale: Float) throws -> NFKMLXSDLoRA.Report {
+        try NFKMLXSDLoRA.merge(adapterURL: url, into: pipeline.unet, scale: scale)
+    }
+
+    /// The draws the latent consistency sampler re-noises with, in place of its seeded stream, for
+    /// reproducing a run made by another implementation. See ``NFKLCMScheduler/noise``.
+    var latentConsistencyNoise: (@Sendable (NFKDiffusionTimestep) -> MLXArray?)?
+
+    /// The configuration's scheduler, carrying ``latentConsistencyNoise`` where the sampler takes it.
+    func makeScheduler() -> any NFKDiffusionScheduler {
+        guard var lcm = configuration.makeScheduler() as? NFKLCMScheduler else {
+            return configuration.makeScheduler()
+        }
+        lcm.noise = latentConsistencyNoise
+        return lcm
+    }
+
+    /// Whether the UNet conditions on its guidance scale through a projection, as an LCM-distilled model
+    /// does. Such a model runs one pass and no classifier-free guidance, as the reference pipeline does.
+    var conditionsOnGuidance: Bool { configuration.unet.timeConditionProjectionDimensions != nil }
+
+    /// The guidance embedding the UNet reads, `[batch, timeConditionProjectionDimensions]`, or nil for a
+    /// model without the projection.
+    func guidanceEmbedding(_ guidanceScale: Float, batch: Int) -> MLXArray? {
+        guard let channels = configuration.unet.timeConditionProjectionDimensions else { return nil }
+        return repeated(NFKSDTimesteps.guidanceEmbedding(guidanceScale, channels: channels), count: batch, axis: 0)
+    }
+
     /// An untrained model, for structure and round-trip tests. Without a tokenizer, a prompt encodes
     /// as the empty sequence.
     init(configuration: NFKMLXSDTextToImageConfiguration) {
@@ -322,8 +476,7 @@ final class NFKMLXSDTextToImageModel {
         return NFKMLXDiffusionBackend(
             identifier: identifier,
             configuration: backendConfiguration,
-            scheduler: NFKDDIMScheduler(predictionType: configuration.predictionType,
-                                        spacing: configuration.timestepSpacing),
+            scheduler: makeScheduler(),
             encodedInputKeys: NFKMLXTextToImage.encodedInputKeys,
             encodedParameterKeys: NFKMLXTextToImage.encodedParameterKeys,
             encode: { request, image, _ in try holder.model.encode(request: request, image: image) },
@@ -410,7 +563,7 @@ final class NFKMLXSDTextToImageModel {
     }
 
     /// One denoising step. Above a guidance of 1 the conditional and unconditional predictions run as
-    /// one batch of two, which is what makes classifier-free guidance one forward pass rather than two.
+    /// one batch of two, which makes classifier-free guidance one forward pass.
     func denoise(_ latent: MLXArray, _ timestep: NFKDiffusionTimestep,
                  _ context: NFKDiffusionContext, _ guidanceScale: Float) -> MLXArray {
         guard let conditional = context.conditioning["context"] else { return latent }
@@ -421,13 +574,16 @@ final class NFKMLXSDTextToImageModel {
             .asType(NFKReferenceRounding.parameterType(of: pipeline.unet))
         let step = MLXArray([Int32(timestep.train)])
 
-        guard guidanceScale > 1, let unconditional = context.conditioning["uncontext"] else {
+        guard guidanceScale > 1, !conditionsOnGuidance,
+              let unconditional = context.conditioning["uncontext"] else {
             let image = context.conditioning["ipTokens"].map {
                 NFKSDImageConditioning(tokens: $0, scale: imageAdapterScale)
             }
             return pipeline.unet(batched, timestep: step, context: conditional,
                                  added: added(context, key: "pooled", batch: 1),
-                                 imageConditioning: image).reshaped(latent.shape).asType(latent.dtype)
+                                 imageConditioning: image,
+                                 guidanceEmbedding: guidanceEmbedding(guidanceScale, batch: 1))
+                .reshaped(latent.shape).asType(latent.dtype)
         }
         // The reference orders the batch unconditional first, and reads the pair back the same way. The
         // adapter's image tokens ride the same order: zero-image for the unconditional row, the

@@ -8,11 +8,17 @@ import InferKit
 import MLX
 
 /// A bundled Stable Diffusion release.
+///
+/// `sdxlBase` (SDXL base 1.0, the model the SDXL-Lightning adapters merge into) and
+/// `lcmDreamshaperV7` (a latent consistency model distilled from Stable Diffusion 1.5, four steps, no
+/// classifier-free guidance) were introduced in InferKit 0.4.0.
 @objc(NFKMLXStableDiffusionModel)
 public enum NFKMLXStableDiffusionModel: Int {
     case sdxlTurbo
     case stableDiffusion21Base
     case stableDiffusion15
+    case sdxlBase
+    case lcmDreamshaperV7
 }
 
 // InferKit's request and job are immutable or internally locked, so they are safe to hand to the
@@ -172,9 +178,17 @@ struct NFKMLXStableDiffusionRelease {
         case .sdxlTurbo:
             repository = "stabilityai/sdxl-turbo"
             configuration = .sdxlTurbo
-            weightFiles = Self.singleTowerFiles + [
-                ["text_encoder_2/model.safetensors", "text_encoder_2/model.fp16.safetensors"],
-            ]
+            weightFiles = Self.twoTowerFiles
+        case .sdxlBase:
+            // The release publishes both precisions; its float32 UNet alone is 10 GB, so the half
+            // precision files are taken first, as the pipelines that ship this base do.
+            repository = "stabilityai/stable-diffusion-xl-base-1.0"
+            configuration = .sdxl
+            weightFiles = Self.twoTowerFiles.map { $0.reversed() }
+        case .lcmDreamshaperV7:
+            repository = "SimianLuo/LCM_Dreamshaper_v7"
+            configuration = .latentConsistency15
+            weightFiles = Self.singleTowerFiles
         }
     }
 
@@ -184,12 +198,19 @@ struct NFKMLXStableDiffusionRelease {
         ["text_encoder/model.safetensors", "text_encoder/model.fp16.safetensors"],
     ]
 
+    private static let twoTowerFiles = singleTowerFiles + [
+        ["text_encoder_2/model.safetensors", "text_encoder_2/model.fp16.safetensors"],
+    ]
+
     /// The vocabulary files, each with whether the release has to carry it. They are small, and a
     /// missing one is the difference between a prompt and a different prompt, so they are fetched with
     /// the weights rather than lazily. The two that name the markers are optional because not every
     /// release publishes both, and the tokenizer falls back to the end marker for padding.
     private var vocabularyFiles: [(path: String, required: Bool)] {
-        var names = [("tokenizer/vocab.json", true), ("tokenizer/merges.txt", true),
+        // The two network configurations ride along: `upcast_attention` and `force_upcast` are read from
+        // them, and a half-precision release runs wrong without either.
+        var names = [("unet/config.json", true), ("vae/config.json", true),
+                     ("tokenizer/vocab.json", true), ("tokenizer/merges.txt", true),
                      ("tokenizer/tokenizer_config.json", false),
                      ("tokenizer/special_tokens_map.json", false)]
         if configuration.secondaryTextEncoder != nil {

@@ -218,6 +218,21 @@
 	NFKMLXBackend *diffusion = [[NFKMLXBackend alloc] initWithModel:NFKMLXStableDiffusionModelStableDiffusion15];
 	XCTAssertEqualObjects(diffusion.backendIdentifier, @"mlx-stable-diffusion");
 	XCTAssertFalse(diffusion.isReady, @"nothing is loaded until the first run");
+
+	// A released LoRA (LCM-LoRA, SDXL-Lightning) merges into the release's UNet, and the sampler names
+	// what the adapter was distilled for. The same absent directory pins the entry point and its error.
+	NSURL *adapter = [NSURL fileURLWithPath:@"/nonexistent/lcm-lora-sdv1-5/pytorch_lora_weights.safetensors"];
+	error = nil;
+	id<NFKInferenceBackend> distilled = [NFKMLXTextToImage backendWithModel:NFKMLXStableDiffusionModelStableDiffusion15
+															  directoryURL:absent
+																adapterURL:adapter
+															  adapterScale:1
+																   sampler:NFKMLXSDSamplerLCM
+																	 error:&error];
+	XCTAssertNil(distilled);
+	XCTAssertNotNil(error);
+	NFKMLXBackend *dreamshaper = [[NFKMLXBackend alloc] initWithModel:NFKMLXStableDiffusionModelLcmDreamshaperV7];
+	XCTAssertFalse(dreamshaper.isReady, @"a whole LCM distillation is a bundled release, with no adapter");
 }
 
 - (void)testObjectiveCBuildsStableDiffusionInpaintByName
@@ -1666,7 +1681,7 @@
 		NSStringFromClass([NFKMLXCodeFormer class]): @[ @"photoBackendWithFidelity:repo:weightsPath:revision:detectorRepo:detectorWeightsPath:detectorRevision:cacheDirectoryURL:completionHandler:" ],
 		NSStringFromClass([NFKMLXRIFE class]): @[ @"clipBackendWithRepo:weightsPath:revision:cacheDirectoryURL:completionHandler:", @"registerClip" ],
 		NSStringFromClass([NFKMLXVideoSR class]): @[ @"clipBackendWithRepo:weightsPath:revision:cacheDirectoryURL:completionHandler:", @"registerClip" ],
-		NSStringFromClass([NFKMLXTextToImage class]): @[ @"backendWithModel:cacheDirectoryURL:completionHandler:", @"imageAdapterBackendWithModel:adapterRepo:adapterWeightsPath:adapterRevision:scale:cacheDirectoryURL:completionHandler:" ],
+		NSStringFromClass([NFKMLXTextToImage class]): @[ @"backendWithModel:cacheDirectoryURL:completionHandler:", @"imageAdapterBackendWithModel:adapterRepo:adapterWeightsPath:adapterRevision:scale:cacheDirectoryURL:completionHandler:", @"backendWithModel:adapterRepo:adapterWeightsPath:adapterRevision:adapterScale:sampler:cacheDirectoryURL:completionHandler:" ],
 		NSStringFromClass([NFKMLXSAM2 class]): @[ @"videoBackendWithVariant:release:weightsURL:error:", @"videoBackendWithVariant:release:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:", @"registerVideo" ],
 		NSStringFromClass([NFKMLXRVM class]): @[ @"clipBackendWithVariant:output:weightsURL:error:", @"clipBackendWithVariant:output:repo:weightsPath:revision:cacheDirectoryURL:completionHandler:", @"registerClip" ],
 		NSStringFromClass([NFKMLXSANAGenerator class]): @[ @"backendWithDirectoryURL:residency:error:", @"backendWithRepo:revision:cacheDirectoryURL:residency:completionHandler:" ],

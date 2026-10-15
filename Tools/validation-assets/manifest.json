@@ -538,6 +538,26 @@
       "note": "IP-Adapter for Stable Diffusion 1.5 (h94/IP-Adapter, ~44 MB, Apache-2.0). Holds image_proj.{proj,norm}.* (the CLIP-image-embedding projection) and ip_adapter.<N>.to_{k,v}_ip.weight (the per-cross-attention key/value). NFKMLXIPAdapter.load reads it directly and attaches the key/value to NFKMLXSDUNet's cross-attentions; the layer order is down->up->mid, because UNet2DConditionModel registers the mid block last, which is the order the adapter's numeric indices follow. Validated wired into the real SD 1.5 UNet against diffusers (run_reference.py ip_adapter_unet under the diffusers env, IK_VAL_IPADAPTER + IK_SD15_DIR -> IK_PARITY_IP_ADAPTER_UNET), cosine ~1e-12. The isolated mechanism is separately covered by the weightless ip_adapter mode (no arguments, under the ltx env -> IK_PARITY_IP_ADAPTER). Both are inference records, so neither is in `training_records`."
     },
     {
+      "key": "LCM_LORA_SD15",
+      "file": "lcm-lora-sdv1-5/pytorch_lora_weights.safetensors",
+      "bytes": 134621556,
+      "url": "https://huggingface.co/latent-consistency/lcm-lora-sdv1-5/resolve/main/pytorch_lora_weights.safetensors",
+      "config": [
+        "IK_VAL_LCM_LORA_SD15"
+      ],
+      "note": "LCM-LoRA for Stable Diffusion 1.5 (latent-consistency/lcm-lora-sdv1-5, openrail++): 278 kohya-layout targets (lora_unet_*.lora_down / lora_up / alpha, rank 64, float16) over every attention, feed-forward, projection, resnet convolution, and time projection of the UNet. NFKMLXSDLoRA merges it into NFKMLXSDUNet; the run then samples with NFKLCMScheduler over 4 steps at guidance 1. Measured end to end against diffusers with the adapter fused (run_reference.py sd_text_to_image under the diffusers env with IK_SD_LORA, IK_SD_SAMPLER=lcm, IK_SD_STEPS=4, IK_SD_GUIDANCE=1, on the SD15 release -> IK_PARITY_SD15_LCM_LORA_T2I)."
+    },
+    {
+      "key": "SDXL_LIGHTNING_4STEP_LORA",
+      "file": "sdxl-lightning/sdxl_lightning_4step_lora.safetensors",
+      "bytes": 393854592,
+      "url": "https://huggingface.co/ByteDance/SDXL-Lightning/resolve/main/sdxl_lightning_4step_lora.safetensors",
+      "config": [
+        "IK_VAL_SDXL_LIGHTNING_4STEP_LORA"
+      ],
+      "note": "SDXL-Lightning four-step adapter (ByteDance/SDXL-Lightning, openrail++): 788 kohya-layout targets over the SDXL UNet, float16. Merged into the SDXL_BASE release by NFKMLXSDLoRA and sampled with DDIM at trailing spacing over 4 steps with no guidance (NFKMLXSDTextToImageConfiguration.sdxlLightning). Measured end to end against diffusers with the adapter fused and DDIM trailing on both sides (sd_text_to_image with IK_SD_LORA, IK_SD_SPACING=trailing, IK_SD_STEPS=4, IK_SD_GUIDANCE=0 -> IK_PARITY_SDXL_LIGHTNING_T2I). The two- and eight-step adapters share the layout."
+    },
+    {
       "key": "WHISPER_BASE",
       "file": "whisper-base.safetensors",
       "raw": "whisper_base.pt",
@@ -1830,6 +1850,58 @@
         "IK_TRIAGE_SDXLTEXT2": "text_encoder_2/model.fp16.safetensors"
       },
       "note": "Published only in half precision; every parity run loads it at float32."
+    },
+    {
+      "key": "SDXL_BASE",
+      "directory": "sdxl-base",
+      "repo": "stabilityai/stable-diffusion-xl-base-1.0",
+      "files": [
+        "model_index.json",
+        "scheduler/scheduler_config.json",
+        "text_encoder/config.json",
+        "text_encoder/model.fp16.safetensors",
+        "text_encoder_2/config.json",
+        "text_encoder_2/model.fp16.safetensors",
+        "unet/config.json",
+        "unet/diffusion_pytorch_model.fp16.safetensors",
+        "vae/config.json",
+        "vae/diffusion_pytorch_model.fp16.safetensors",
+        "tokenizer/vocab.json",
+        "tokenizer/merges.txt",
+        "tokenizer/tokenizer_config.json",
+        "tokenizer/special_tokens_map.json",
+        "tokenizer_2/vocab.json",
+        "tokenizer_2/merges.txt",
+        "tokenizer_2/tokenizer_config.json",
+        "tokenizer_2/special_tokens_map.json"
+      ],
+      "config": {
+        "IK_VAL_SDXL_BASE_DIR": ""
+      },
+      "note": "SDXL base 1.0 (openrail++), the half-precision variant files; the base model the SDXL-Lightning and Hyper-SDXL adapters were trained on, and the release NFKMLXStableDiffusionModel.sdxlBase downloads. The sdxl-turbo directory (SDXL) does not stand in for it: the Lightning adapters merge into these weights. The reference text-to-image pipeline for the Lightning parity record."
+    },
+    {
+      "key": "LCM_DREAMSHAPER",
+      "directory": "lcm-dreamshaper-v7",
+      "repo": "SimianLuo/LCM_Dreamshaper_v7",
+      "files": [
+        "model_index.json",
+        "scheduler/scheduler_config.json",
+        "text_encoder/config.json",
+        "text_encoder/model.safetensors",
+        "unet/config.json",
+        "unet/diffusion_pytorch_model.safetensors",
+        "vae/config.json",
+        "vae/diffusion_pytorch_model.safetensors",
+        "tokenizer/vocab.json",
+        "tokenizer/merges.txt",
+        "tokenizer/tokenizer_config.json",
+        "tokenizer/special_tokens_map.json"
+      ],
+      "config": {
+        "IK_VAL_LCM_DREAMSHAPER_DIR": ""
+      },
+      "note": "LCM Dreamshaper v7 (SimianLuo/LCM_Dreamshaper_v7, MIT): a latent consistency model distilled from Stable Diffusion 1.5, float32 only. Its UNet carries time_cond_proj_dim 256 (NFKMLXSDUNetConfiguration.timeConditionProjectionDimensions), so it conditions on the guidance scale through the time embedding and runs no classifier-free guidance; its scheduler is LCMScheduler over 50 original steps. The safety checker and feature extractor named in model_index.json are not fetched; the oracle passes both as None. NFKMLXStableDiffusionModel.lcmDreamshaperV7 / NFKMLXSDTextToImageConfiguration.latentConsistency15. Measured end to end (sd_text_to_image with IK_SD_SAMPLER=lcm, IK_SD_STEPS=4, IK_SD_GUIDANCE=8 -> IK_PARITY_LCM_DREAMSHAPER_T2I)."
     },
     {
       "key": "QWEN3_0_6B",
@@ -4728,7 +4800,7 @@
     "comment": "diffusers cannot be installed beside the other oracles — it needs a newer transformers than the 4.33.3 the Whisper / CLIP / SegFormer records were measured against — so the `sd_*` modes of Tools/reference-parity/run_reference.py run under their own interpreter.",
     "diffusers": {
       "path": "sdvenv",
-      "create": "python3 -m venv sdvenv && ./sdvenv/bin/pip install \"diffusers==0.31.0\" \"transformers==4.46.3\" \"torch==2.8.0\" safetensors accelerate protobuf sentencepiece",
+      "create": "python3 -m venv sdvenv && ./sdvenv/bin/pip install \"diffusers==0.31.0\" \"transformers==4.46.3\" \"torch==2.8.0\" \"peft==0.13.2\" safetensors accelerate protobuf sentencepiece",
       "modes": [
         "sd_unet",
         "sd_vae",

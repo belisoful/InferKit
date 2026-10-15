@@ -62,6 +62,11 @@ A model is a candidate when all of these hold:
 Candidates that meet all three are listed as strong. Candidates that fail one of them are listed as weak,
 with the reason.
 
+Releases that share one pipeline body (one network class, one loop, configurations apart) are ranked by
+one tie-breaker: the newer release keeps its level and the older release drops. Rules 2 and 3 outrank the
+tie-breaker, so an older release that a shipped model reuses as a component, or that alone tests a
+subsystem on released weights, keeps its level over a newer one that does not.
+
 ## Strong candidates
 
 | Model | Superseded by (shipped) | Proposed level | Note |
@@ -89,7 +94,7 @@ with the reason.
 | LTX-Video 0.9.0 | LTX-2 | LTX-2 has no entry class yet; LTX-Video is also one of the six staging adopters |
 | SD ×4 upscaler (`NFKMLXSDUpscaler`) | Real-ESRGAN, HAT (different method) | no same-method successor; shares the SD UNet and autoencoder |
 | BasicVSR (`NFKMLXVideoSR`) | none shipped | old, but the only video super-resolution model |
-| Stable Diffusion 2.1 | SDXL-Turbo, SD3 / 3.5 | SD 1.5, 2.1, and SDXL-Turbo are one pipeline body; 2.1 can drop to level 2 without losing the code |
+| Stable Diffusion 2.1 | SDXL-Turbo, SD3 / 3.5 | SD 1.5, 2.1, SDXL base, SDXL-Turbo, and LCM Dreamshaper are one pipeline body. The tie-breaker keeps SDXL-Turbo and SDXL base as the newer SDXL releases, each with a released-weight end-to-end test (Turbo alone, base under the Lightning adapter). SD 1.5 is older than 2.1 but rule 3 holds it: SD inpainting, the IP-Adapter, the LCM-LoRA pairing, and the LoRA recipe run on its UNet, and the distillations are untrainable. Nothing shipped reuses 2.1, and its repository is gated, so 2.1 drops to level 2 without losing the code |
 | Fast style transfer (`NFKMLXStyleTransfer`) | AdaIN (arbitrary style) | different use: one fixed style per checkpoint |
 | Qwen2 / Qwen2-MoE / Mixtral | Qwen3, Qwen3-MoE, gpt-oss | expert-paging layouts; the tiny-geometry paging tests cover each layout, so level 3 keeps the paging code tested |
 | Wan 2.1 T2V | Wan 2.2 | Wan 2.1's VAE and transformer code is shared by Wan 2.2 and Qwen-Image |

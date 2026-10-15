@@ -181,8 +181,8 @@ unguarded call.
    -skipPackagePluginValidation` throughout):
 
    ```
-   xcodebuild test -scheme InferKitMLXTests        …    # 2468 — the model and API suite
-   xcodebuild test -scheme InferKitMLXExamples     …    #  137 — the Swift documented snippets
+   xcodebuild test -scheme InferKitMLXTests        …    # 2483 — the model and API suite
+   xcodebuild test -scheme InferKitMLXExamples     …    #  138 — the Swift documented snippets
    xcodebuild test -scheme InferKitMLXObjCExamples …    #   54 — the Objective-C ones
    ```
 

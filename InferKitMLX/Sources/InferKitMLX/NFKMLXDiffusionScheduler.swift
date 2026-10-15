@@ -54,6 +54,16 @@ public protocol NFKDiffusionScheduler: Sendable {
     /// Noises a clean latent to `timestep`. Used to start image-to-image and inpainting, and to keep
     /// the known region consistent across an inpaint loop.
     func addNoise(clean: MLXArray, noise: MLXArray, timestep: NFKDiffusionTimestep) -> MLXArray
+
+    /// This sampler drawing its own randomness from `seed`, for a sampler that draws any (the latent
+    /// consistency sampler re-noises every non-final step). The backend calls it with the request's
+    /// seed before a run. A deterministic sampler returns itself, which is the default.
+    /// Introduced in InferKit 0.4.0.
+    func seeded(_ seed: UInt64) -> any NFKDiffusionScheduler
+}
+
+public extension NFKDiffusionScheduler {
+    func seeded(_ seed: UInt64) -> any NFKDiffusionScheduler { self }
 }
 
 /// How an inference schedule walks the training range.
@@ -124,6 +134,9 @@ public struct NFKDDIMScheduler: NFKDiffusionScheduler {
         max(alphaBars[min(max(train, 0), trainingSteps - 1)], 1e-12)
     }
 
+    /// The cumulative signal ratio at a training step, for a sampler that shares this beta schedule.
+    func alphaBar(at train: Int) -> Float { bar(train) }
+
     public func steps(_ count: Int) -> [NFKDiffusionTimestep] {
         let n = max(count, 1)
         // The reference walks a fixed stride through the training schedule rather than dividing the
@@ -187,42 +200,84 @@ public struct NFKDDIMScheduler: NFKDiffusionScheduler {
 /// noise (the multistep-LCM behavior). The last step (`alphaBarPrev == 1`) returns the clean estimate.
 ///
 /// The fresh noise comes from the same deterministic SplitMix64 + Box–Muller stream the diffusion
-/// backend uses (keyed by the step), so a run is repeatable without the MLX random state. A real
-/// integration loads an LCM-distilled UNet and keeps this scheduler.
+/// backend uses, keyed by the run's seed and the step, so a run is repeatable without the MLX random
+/// state and a request's `NFKParameterSeed` changes every draw; ``noise`` substitutes a caller's own,
+/// which is how a run reproduces another implementation's draw. An LCM-distilled UNet or an LCM-LoRA
+/// merged into a base UNet runs with this scheduler.
+///
+/// The schedule is the reference's: the training range is divided into `originalInferenceSteps`
+/// evenly spaced steps (`19, 39, …, 999` at the default 50), and an inference schedule of `n` steps
+/// takes every `50 / n`-th of them from the top, so 4 steps visit `999, 759, 499, 259`. The signal
+/// ratio after each step is the next step's. The final step returns the clean estimate without
+/// re-noising, as the reference does whatever its `set_alpha_to_one` says, so the schedule marks it
+/// with a signal ratio of 1.
 public struct NFKLCMScheduler: NFKDiffusionScheduler {
 
     public let trainingSteps: Int
     public let predictionType: NFKDiffusionPredictionType
+    /// How many evenly spaced training steps the model was distilled over (the reference's
+    /// `original_inference_steps`, 50 for every released LCM). Introduced in InferKit 0.4.0.
+    public let originalInferenceSteps: Int
     private let sigmaData: Float
     private let timestepScaling: Float
-    private let seed: UInt64
+    private var seed: UInt64
     private let ddim: NFKDDIMScheduler
+
+    /// The noise a non-final step re-noises with, in place of the seeded stream: given the step, it
+    /// returns `[height, width, channels]` or `[1, height, width, channels]` unit-variance noise, or nil
+    /// to use the stream. A parity test hands over the reference's own draws through it.
+    /// Introduced in InferKit 0.4.0.
+    public var noise: (@Sendable (NFKDiffusionTimestep) -> MLXArray?)?
 
     /// - Parameters:
     ///   - trainingSteps: The training schedule length (SD uses 1000).
     ///   - betaStart: The scaled-linear beta schedule's start endpoint (SD default).
     ///   - betaEnd: The scaled-linear beta schedule's end endpoint (SD default).
     ///   - predictionType: What the distilled model predicts each step.
+    ///   - originalInferenceSteps: The distillation's step count, which spaces the schedule.
     ///   - sigmaData: The LCM boundary-condition data scale (diffusers default).
     ///   - timestepScaling: The LCM boundary-condition timestep scale (diffusers default).
-    ///   - seed: Seeds the per-step noise stream, so the sampler is repeatable.
+    ///   - seed: Seeds the per-step noise stream, so the sampler is repeatable. The backend replaces it
+    ///     with the request's seed through ``seeded(_:)``.
     public init(trainingSteps: Int = 1000,
                 betaStart: Float = 0.00085,
                 betaEnd: Float = 0.012,
                 predictionType: NFKDiffusionPredictionType = .epsilon,
+                originalInferenceSteps: Int = 50,
                 sigmaData: Float = 0.5,
                 timestepScaling: Float = 10,
                 seed: UInt64 = 0) {
         self.trainingSteps = max(trainingSteps, 1)
         self.predictionType = predictionType
+        self.originalInferenceSteps = min(max(originalInferenceSteps, 1), self.trainingSteps)
         self.sigmaData = sigmaData
         self.timestepScaling = timestepScaling
         self.seed = seed
-        // Reuse DDIM for the noise schedule and the step spacing.
-        ddim = NFKDDIMScheduler(trainingSteps: trainingSteps, betaStart: betaStart, betaEnd: betaEnd, predictionType: predictionType)
+        // DDIM carries the beta schedule; the step spacing is this sampler's own.
+        ddim = NFKDDIMScheduler(trainingSteps: trainingSteps, betaStart: betaStart, betaEnd: betaEnd,
+                                predictionType: predictionType)
     }
 
-    public func steps(_ count: Int) -> [NFKDiffusionTimestep] { ddim.steps(count) }
+    public func seeded(_ seed: UInt64) -> any NFKDiffusionScheduler {
+        var copy = self
+        copy.seed = seed
+        return copy
+    }
+
+    public func steps(_ count: Int) -> [NFKDiffusionTimestep] {
+        // The reference takes `count` of its `originalInferenceSteps` distillation steps, highest noise
+        // first, at indices floor(i · original / count).
+        let n = min(max(count, 1), originalInferenceSteps)
+        let stride = trainingSteps / originalInferenceSteps
+        let origin = (1 ... originalInferenceSteps).map { $0 * stride - 1 }.reversed().map { $0 }
+        let trains = (0 ..< n).map { i in
+            origin[Int((Float(i) * Float(originalInferenceSteps) / Float(n)).rounded(.down))]
+        }
+        return (0 ..< n).map { i in
+            NFKDiffusionTimestep(index: i, train: trains[i], alphaBar: ddim.alphaBar(at: trains[i]),
+                                 alphaBarPrev: i + 1 < n ? ddim.alphaBar(at: trains[i + 1]) : 1)
+        }
+    }
 
     public func initialLatent(noise: MLXArray, first: NFKDiffusionTimestep) -> MLXArray { noise }
 
@@ -253,11 +308,14 @@ public struct NFKLCMScheduler: NFKDiffusionScheduler {
         if timestep.alphaBarPrev >= 1 {
             return denoised                                     // final step: return the clean latent
         }
-        // Re-noise to the next level with fresh, step-keyed deterministic noise.
-        let (n, h, w, c) = (latent.shape[0], latent.shape[1], latent.shape[2], latent.shape[3])
-        let freshNoise = NFKMLXDiffusionBackend.gaussianNoise(height: h, width: w, channels: c,
-                                                              seed: seed &+ UInt64(timestep.train) &+ 1)
-            .reshaped([n, h, w, c])
+        // Re-noise to the next level with the caller's draw, or with fresh step-keyed deterministic noise.
+        // The backend hands the sampler an unbatched `[height, width, channels]` latent; a caller may
+        // batch one, so the draw takes whatever shape arrived.
+        let spatial = Array(latent.shape.suffix(3))
+        let freshNoise = (noise?(timestep)
+            ?? NFKMLXDiffusionBackend.gaussianNoise(height: spatial[0], width: spatial[1], channels: spatial[2],
+                                                    seed: seed &+ UInt64(timestep.train) &+ 1))
+            .reshaped(latent.shape).asType(denoised.dtype)
         return denoised * sqrtf(timestep.alphaBarPrev) + freshNoise * sqrtf(1 - timestep.alphaBarPrev)
     }
 }

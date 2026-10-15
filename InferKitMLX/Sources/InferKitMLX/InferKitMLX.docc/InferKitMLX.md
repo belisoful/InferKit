@@ -431,6 +431,8 @@ limits.
 
 - ``NFKMLXBackend``
 - ``NFKMLXTextToImage``
+- ``NFKMLXSDSampler``
+- ``NFKMLXSDLoRA``
 - ``NFKMLXSDPipeline``
 - ``NFKMLXStableDiffusionModels``
 - ``NFKMLXSDTextEncoder``

@@ -30,7 +30,8 @@ extension NFKMLXTextToImage {
     ///
     /// @discussion The download is the UNet, the autoencoder, each text tower, and each tokenizer's
     /// vocabulary, from `stable-diffusion-v1-5/stable-diffusion-v1-5`, `stabilityai/stable-diffusion-2-1-base`
-    /// (gated: set `NFKHFHub.defaultAccessToken` after accepting its license), or `stabilityai/sdxl-turbo`.
+    /// (gated: set `NFKHFHub.defaultAccessToken` after accepting its license), `stabilityai/sdxl-turbo`,
+    /// `stabilityai/stable-diffusion-xl-base-1.0` (its half-precision files), or `SimianLuo/LCM_Dreamshaper_v7`.
     /// A file already in the cache is not fetched again. The call blocks on the network, so run it off
     /// the main and render threads. Introduced in InferKit 0.4.0.
     @objc(backendWithModel:cacheDirectoryURL:error:)
@@ -46,6 +47,42 @@ extension NFKMLXTextToImage {
                                completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
         NFKMLXReleaseDownload.async(completionHandler) {
             try backend(model: model, cacheDirectoryURL: cacheDirectoryURL)
+        }
+    }
+
+    /// Downloads the named release and a released LoRA, then builds the backend as
+    /// ``backend(model:directoryURL:adapterURL:adapterScale:sampler:)`` does.
+    ///
+    /// @discussion `adapterRepo`, `adapterWeightsPath`, and `adapterRevision` name the adapter:
+    /// `pytorch_lora_weights.safetensors` in `latent-consistency/lcm-lora-sdv1-5` with `NFKMLXSDSamplerLCM`
+    /// on `NFKMLXStableDiffusionModelStableDiffusion15`, or `sdxl_lightning_4step_lora.safetensors` in
+    /// `ByteDance/SDXL-Lightning` with `NFKMLXSDSamplerDDIMTrailing` on `NFKMLXStableDiffusionModelSdxlBase`.
+    /// A file already in the cache is not fetched again. The call blocks on the network, so run it off the
+    /// main and render threads. Introduced in InferKit 0.4.0.
+    @objc(backendWithModel:adapterRepo:adapterWeightsPath:adapterRevision:adapterScale:sampler:cacheDirectoryURL:error:)
+    public static func backend(model: NFKMLXStableDiffusionModel, adapterRepo: String, adapterWeightsPath: String,
+                               adapterRevision: String?, adapterScale: Float, sampler: NFKMLXSDSampler,
+                               cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
+        let directory = try NFKMLXStableDiffusionRelease(model).download(cacheDirectoryURL: cacheDirectoryURL)
+        let adapterURL = try NFKMLXDownload.weightsURL(repo: adapterRepo, weightsPath: adapterWeightsPath,
+                                                       revision: adapterRevision,
+                                                       cacheDirectoryURL: cacheDirectoryURL)
+        return try backend(model: model, directoryURL: directory, adapterURL: adapterURL,
+                           adapterScale: adapterScale, sampler: sampler)
+    }
+
+    /// The asynchronous form of
+    /// ``backend(model:adapterRepo:adapterWeightsPath:adapterRevision:adapterScale:sampler:cacheDirectoryURL:)``.
+    /// The handler runs on a background queue. Introduced in InferKit 0.4.0.
+    @objc(backendWithModel:adapterRepo:adapterWeightsPath:adapterRevision:adapterScale:sampler:cacheDirectoryURL:completionHandler:)
+    public static func backend(model: NFKMLXStableDiffusionModel, adapterRepo: String, adapterWeightsPath: String,
+                               adapterRevision: String?, adapterScale: Float, sampler: NFKMLXSDSampler,
+                               cacheDirectoryURL: URL?,
+                               completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try backend(model: model, adapterRepo: adapterRepo, adapterWeightsPath: adapterWeightsPath,
+                        adapterRevision: adapterRevision, adapterScale: adapterScale, sampler: sampler,
+                        cacheDirectoryURL: cacheDirectoryURL)
         }
     }
 

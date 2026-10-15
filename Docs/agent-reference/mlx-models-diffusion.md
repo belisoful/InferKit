@@ -160,6 +160,62 @@ The diffusion backend seam and schedulers, the SD networks and pipelines, IP-Ada
   every released tower: SD 1.5 0.9999999999986,
   SD 2.1 0.9999999999841, SDXL primary 0.9999999999986, SDXL secondary 0.9999999999257 (pooled
   0.9999999999820).
+- `NFKMLXSDLoRA` — released Stable Diffusion adapters merged into `NFKMLXSDUNet`: the LCM-LoRA and
+  SDXL-Lightning distillations, and fine-tunes published in the same layouts. Two key layouts: kohya over
+  diffusers module names (`lora_unet_<path with underscores>`, `.lora_down.weight` / `.lora_up.weight` /
+  a scalar `.alpha`) and PEFT (`unet.<path>`, `.lora_A.weight` / `.lora_B.weight`, no alpha tensor, so the
+  strength is 1; an alpha in the file's metadata is not read). A kohya file over the original model's
+  block names (`lora_unet_input_blocks_…`) is not translated and is refused. The underscore spelling is
+  ambiguous against module names that also carry underscores (`to_out_0`, `ff_net_0_proj`,
+  `time_emb_proj`), so the reader never splits a key: it spells every linear and convolution of the UNet
+  the kohya way (`diffusersPath`, the inverse of `remapUNetKey`, then dots to underscores) and looks the
+  file's targets up. A convolution target stores `lora_down` as `[rank, in, kH, kW]` and `lora_up` as
+  `[out, rank, 1, 1]`; the delta is `up · down` over the rank axis, reshaped to `[out, in, kH, kW]` and
+  transposed to the module's `[out, kH, kW, in]`. A 1×1 kernel on a linear target (`proj_in` under
+  `use_linear_projection`) reshapes to the matrix. The strength is `scale · alpha / rank`; the product
+  forms in float32 and takes the weight's type, which is diffusers' `fuse_lora`. A file that also carries
+  text-tower keys (`lora_te…`, `text_encoder…`) is refused unless the caller passes
+  `ignoringTextEncoderKeys: true`, and the report then counts the keys left alone; a UNet key that names
+  no layer is refused before any weight changes. The LCM-LoRA for SD 1.5 adapts 278 targets (attention,
+  feed-forward, projections, resnet convolutions, time projections), the SDXL adapters 788.
+  `NFKMLXSDSampler` / `withSampler` give an adapter the sampler it was distilled for: `.lcm` runs
+  `NFKLCMScheduler` at 4 steps, guidance 1; `.ddimTrailing` counts DDIM down from the end of the training
+  range at 4 steps, no guidance (SDXL-Lightning, SDXL-Turbo). A configuration already on the requested
+  sampler keeps its own steps and guidance, so `.latentConsistency15` keeps guidance 8 through the
+  Objective-C factory. The backend seeds the sampler from the request (`NFKDiffusionScheduler.seeded`),
+  so `NFKParameterSeed` changes the LCM re-noising draws along with the initial latent. Hyper-SD's SD
+  adapters publish the same kohya layout; they are queued in `porting-candidates.md` and unmeasured.
+  Parity, with the adapter fused in diffusers through `load_lora_weights` + `fuse_lora` (the diffusers
+  venv carries `peft` for it), from the reference's own initial latent: LCM-LoRA on SD 1.5
+  (`IK_PARITY_SD15_LCM_LORA_T2I`) image cosine 0.99999858, mean abs 0.00089; context 0.9999999999984,
+  first prediction 0.9999999999997, per-step latents ≥ 0.99999999596. SDXL-Lightning four-step on SDXL
+  base (`IK_PARITY_SDXL_LIGHTNING_T2I`, DDIM trailing both sides through `IK_SD_SPACING`) image cosine
+  0.99999917, mean abs 0.00056; context 0.9999999999969, first prediction 0.9999999999995, per-step
+  latents ≥ 0.9999999998. Two reference facts carry the LCM path: `LCMScheduler` spaces its schedule over
+  `original_inference_steps` (50) as `floor(i · 50 / n)` into `19, 39, …, 999` reversed (4 steps: 999,
+  759, 499, 259), each step's previous ratio is the next step's, and the last step returns `denoised`
+  without re-noising whatever `set_alpha_to_one` says; and the sampler re-noises every other step with a
+  fresh draw, so the record carries the draws (`noises`, a `randn_tensor` hook in the oracle) and the
+  port takes them through `NFKLCMScheduler.noise`.
+- `NFKMLXSDTextToImageConfiguration.latentConsistency15` — LCM Dreamshaper v7, a whole latent
+  consistency model (release `.lcmDreamshaperV7`): SD 1.5 geometry plus `time_cond_proj_dim` 256
+  (`NFKMLXSDUNetConfiguration.timeConditionProjectionDimensions`, `time_embedding.cond_proj`, a
+  `Linear(256, 320, bias: false)` added to the time embedding's input;
+  `NFKMLXSDUNet.guidanceEmbedding(scale:channels:)` forms the input). The pipeline's
+  `get_guidance_scale_embedding` embeds `(guidance − 1) · 1000` sines first over frequencies `i · step`
+  with `step = −log(10000) / (half − 1)`, formed in that order (the timestep embedding divides by `half`
+  and puts cosines first), and a UNet that carries the projection runs no classifier-free guidance
+  whatever the scale (`do_classifier_free_guidance` requires `time_cond_proj_dim is None`), so `denoise`
+  runs one pass with the embedding. The release ships float32 only (`SimianLuo/LCM_Dreamshaper_v7`, MIT).
+  Parity (`IK_PARITY_LCM_DREAMSHAPER_T2I`, 4 steps, guidance 8) image cosine 0.99999278, mean abs
+  0.00098; context 0.9999999999986, first prediction 0.9999999999998, per-step latents ≥ 0.99999999978.
+  The image figure sits below the other SD end-to-end figures while the latents are at 1e-10; the seam is
+  open. Customization: offline. The model is a consistency distillation of SD 1.5, and its objective
+  needs the teacher UNet and the ODE solver of the distillation; the SD 1.5 LoRA recipe does not
+  describe it. SDXL base 1.0 (`.sdxl`, release `.sdxlBase`) joins as the base the Lightning adapters
+  merge into; the Turbo directory does not stand in for it. Its download takes the half-precision files
+  and the two network `config.json`s, which `upcast_attention` and `force_upcast` are read from; a VAE
+  config without `force_upcast` upcasts, the reference's default.
 - `NFKMLXSDPromptTokenizer` — the release's `tokenizer/` directory driving the core's `NFKTokenizer`
   CLIP variant, plus the padding to the tower's context length. Token-for-token agreement with
   `transformers`' CLIPTokenizer over five prompts, including punctuation, an empty prompt, a multi-byte

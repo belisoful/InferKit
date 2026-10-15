@@ -649,6 +649,43 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Released Stable Diffusion LoRAs merge into the UNet; LCM-LoRA, SDXL-Lightning, and LCM Dreamshaper
+
+- `NFKMLXSDLoRA` reads a released Stable Diffusion adapter in the kohya layout over diffusers module names
+  (`lora_unet_…`, `lora_down` / `lora_up` / `alpha`) or the PEFT layout diffusers writes (`unet.…lora_A` /
+  `lora_B`), on linear and convolution targets, and merges it into `NFKMLXSDUNet` at a caller's scale. The
+  product forms in float32 and takes the base weight's type, as diffusers' `fuse_lora` does. A key that
+  names no layer of the UNet is refused before any weight changes, and a file that also adapts the text
+  towers is refused unless the caller asks for its UNet half alone.
+- `NFKMLXSDSampler` (`@objc`: DDIM, DDIM trailing, LCM) and
+  `NFKMLXSDTextToImageConfiguration.withSampler(_:steps:guidanceScale:)` give an adapter the sampler it
+  was distilled for, with the step count and guidance it is trained at; a request's `NFKParameterSteps`
+  and `NFKParameterGuidanceScale` still override them.
+- `NFKMLXTextToImage.backend(configuration:directoryURL:adapterURL:adapterScale:precision:)` and the
+  Objective-C `backendWithModel:directoryURL:adapterURL:adapterScale:sampler:error:` build the adapted
+  model;
+  `backendWithModel:adapterRepo:adapterWeightsPath:adapterRevision:adapterScale:sampler:cacheDirectoryURL:error:`
+  and its completion-handler peer download the release and the adapter first.
+- `NFKLCMScheduler` steps the reference's schedule: the training range divided into
+  `originalInferenceSteps` (50) distillation steps, an inference schedule taking every `50 / n`-th from the
+  top (4 steps visit 999, 759, 499, 259), each step's signal ratio after it the next step's, and the final
+  step returning the clean estimate. A `noise` hook substitutes a caller's draws for the seeded stream, and
+  `NFKDiffusionScheduler.seeded(_:)` hands a request's `NFKParameterSeed` to a sampler that draws.
+- `NFKMLXSDUNetConfiguration.timeConditionProjectionDimensions` adds the reference's `time_cond_proj_dim`:
+  a latent consistency model's guidance embedding, projected by `time_embedding.cond_proj` into the time
+  embedding's input. `NFKMLXSDUNet.guidanceEmbedding(scale:channels:)` forms it, the UNet forward takes it
+  as `guidanceEmbedding:`, and `NFKMLXTextToImage` runs one pass with it and no classifier-free guidance,
+  as the reference pipeline does.
+- Configurations `.sdxl` (SDXL base 1.0 at its own schedule), `.sdxlLightning` (the base under trailing
+  DDIM, four steps, no guidance), and `.latentConsistency15` (LCM Dreamshaper v7: SD 1.5 geometry with the
+  256-wide guidance projection under the LCM sampler, guidance 8). `NFKMLXStableDiffusionModel` gains
+  `.sdxlBase` (the half-precision files) and `.lcmDreamshaperV7`. A bundled release's download carries the
+  UNet and autoencoder `config.json`, which `upcast_attention` and `force_upcast` are read from.
+- Measured end to end against diffusers with the adapter fused, from the reference's own initial latent
+  and, under LCM, its own per-step draws: LCM-LoRA on SD 1.5 image cosine 0.99999858 (mean abs 0.00089),
+  SDXL-Lightning four-step on SDXL base 0.99999917 (mean abs 0.00056), LCM Dreamshaper v7 0.99999278
+  (mean abs 0.00098).
+
 #### Half-precision forwards compute MLX's arithmetic, or PyTorch's
 
 - `NFKMLXHalfPrecision.arithmetic` (`@objc`, `NFKMLXArithmetic`) selects the arithmetic of a forward's

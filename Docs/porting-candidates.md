@@ -202,9 +202,15 @@ claims; the tables below carry the verified facts.
 | **Gemma 4 31B** — SHIPPED (`NFKMLXGemmaLanguage`) | Google | Apache-2.0 | Structural across all 832 tensors, plus a numeric probe of the first 6 released layers and bf16 records on cuts. The whole 31B exceeds a 32 GB machine |
 | **RF-DETR segmentation** — SHIPPED (`NFKMLXRFDetrSegmentationNet`) | Roboflow | Apache-2.0 | Every released `rf-detr-seg-*` size, nano through xxlarge |
 | **Wan 2.7** | Alibaba | — | Not released as open weights. The newest open Wan is 2.2 (checked 2026-09-26) |
+| **LCM and SDXL-Lightning** — SHIPPED (`NFKMLXSDLoRA`, `NFKMLXSDTextToImageConfiguration.withSampler`) | Latent Consistency / ByteDance | MIT (LCM Dreamshaper full UNet), openrail++ (LCM-LoRA, Lightning) | Adapters over the shipped SD 1.5 and SDXL bodies, merged into `NFKMLXSDUNet` from the kohya and PEFT key layouts. Measured end to end against diffusers with the adapter fused: LCM-LoRA on SD 1.5 image cosine 0.99999858, SDXL-Lightning four-step on SDXL base 0.99999917, and the whole LCM Dreamshaper v7 distillation 0.99999278 (`.latentConsistency15`, the guidance projection) |
+| **SD 3.5 Large Turbo** — QUEUED second | Stability AI | Stability Community, gated | Shares the Large geometry, autoencoder, and text encoders byte for byte. A parity run through the `.sd35Large` configuration and a release row; the same pass can give Large its released-weight figure |
+| **Hyper-SD** — QUEUED last | ByteDance | Unlisted on the card; the license file carries FLUX.1 [dev] non-commercial terms for the FLUX adapters | Adapters over SD 1.5, SDXL, and FLUX.1 through the same LoRA reader. The SD half is listed only after its license is confirmed; the FLUX half is lowest priority on license grounds |
 
 Notes:
 
+- The three rows were ordered on 2026-10-15: the LoRA reader first because it serves every distillation
+  and community adapter at once, SD 3.5 Large Turbo second as a measurement over shipped code, Hyper-SD
+  last under the restrictive-license rule.
 - The survey expected RF-DETR detection sizes above large and a keypoint head. Neither is published on
   Hugging Face; the xlarge and xxlarge releases are segmentation checkpoints, and those ship.
 - Wan 2.7 was announced as API-only. Its audio output would be a new stage, so it moves to Tier B if
