@@ -21,6 +21,7 @@
 #import <CoreVideo/CoreVideo.h>
 #import <Metal/Metal.h>
 #import <fcntl.h>
+#import <mach/vm_page_size.h>
 #import <unistd.h>
 
 @interface NFKWireAttachmentTests : XCTestCase
@@ -111,8 +112,13 @@
 }
 
 /*! Compares the bytes each row's pixels occupy in every plane, ignoring row padding. */
-- (void)assertPixelsOf:(CVPixelBufferRef)decoded equal:(CVPixelBufferRef)source
+- (void)assertPixelsOf:(nullable CVPixelBufferRef)decoded equal:(CVPixelBufferRef)source
 {
+	// A failed decode reads no planes: their base addresses would be NULL.
+	if (decoded == NULL || CFGetTypeID(decoded) != CVPixelBufferGetTypeID()) {
+		XCTFail(@"no pixel buffer was decoded");
+		return;
+	}
 	XCTAssertEqual(CVPixelBufferGetWidth(decoded), CVPixelBufferGetWidth(source));
 	XCTAssertEqual(CVPixelBufferGetHeight(decoded), CVPixelBufferGetHeight(source));
 	XCTAssertEqual(CVPixelBufferGetPixelFormatType(decoded), CVPixelBufferGetPixelFormatType(source));
@@ -196,6 +202,9 @@
 	NSDictionary *entry = nil;
 	NFKPluginAttachmentWriter *writer = nil;
 	MLMultiArray *decoded = [self roundTrip:array entry:&entry writer:&writer];
+	if (![decoded isKindOfClass:MLMultiArray.class]) {
+		return;
+	}
 	XCTAssertEqualObjects(entry[@"as"], @"multiArray");
 	XCTAssertEqualObjects(entry[@"shape"], (@[ @64, @512 ]));
 	XCTAssertEqualObjects(entry[@"dataType"], @(MLMultiArrayDataTypeFloat32));
@@ -224,8 +233,10 @@
 	XCTAssertEqualObjects(plane[@"offset"], @0);
 	XCTAssertEqualObjects(plane[@"bytesPerRow"], @(stride), @"the padding crosses as the buffer holds it");
 	XCTAssertEqualObjects(plane[@"rows"], @96);
-	XCTAssertEqual(CFGetTypeID((__bridge CFTypeRef)decoded), CVPixelBufferGetTypeID());
-	XCTAssertEqual(CVPixelBufferGetBytesPerRow((__bridge CVPixelBufferRef)decoded), stride, @"the wrapped buffer keeps the stride");
+	XCTAssertTrue(decoded != nil && CFGetTypeID((__bridge CFTypeRef)decoded) == CVPixelBufferGetTypeID());
+	if (decoded != nil) {
+		XCTAssertEqual(CVPixelBufferGetBytesPerRow((__bridge CVPixelBufferRef)decoded), stride, @"the wrapped buffer keeps the stride");
+	}
 	[self assertPixelsOf:(__bridge CVPixelBufferRef)decoded equal:source];
 	CVPixelBufferRelease(source);
 }
@@ -240,7 +251,7 @@
 	XCTAssertEqual([planes[1][@"offset"] unsignedLongValue] % 64, 0u, @"each plane starts aligned");
 	XCTAssertGreaterThanOrEqual([planes[1][@"offset"] unsignedLongValue],
 								[planes[0][@"bytesPerRow"] unsignedLongValue] * [planes[0][@"rows"] unsignedLongValue]);
-	XCTAssertTrue(CVPixelBufferIsPlanar((__bridge CVPixelBufferRef)decoded));
+	XCTAssertTrue(decoded != nil && CVPixelBufferIsPlanar((__bridge CVPixelBufferRef)decoded));
 	[self assertPixelsOf:(__bridge CVPixelBufferRef)decoded equal:source];
 	CVPixelBufferRelease(source);
 }
@@ -256,6 +267,9 @@
 	}
 	NSDictionary *entry = nil;
 	AVAudioPCMBuffer *decoded = [self roundTrip:source entry:&entry writer:NULL];
+	if (![decoded isKindOfClass:AVAudioPCMBuffer.class]) {
+		return;
+	}
 	XCTAssertEqualObjects(entry[@"as"], @"pcm");
 	XCTAssertEqual([entry[@"buffers"] count], 2u);
 	XCTAssertTrue([decoded isKindOfClass:AVAudioPCMBuffer.class]);
@@ -270,6 +284,9 @@
 		shorts.int16ChannelData[0][sample] = (int16_t)(sample * 7);
 	}
 	decoded = [self roundTrip:shorts entry:&entry writer:NULL];
+	if (![decoded isKindOfClass:AVAudioPCMBuffer.class]) {
+		return;
+	}
 	XCTAssertEqual([entry[@"buffers"] count], 1u, @"an interleaved buffer is one buffer");
 	XCTAssertTrue(decoded.format.isInterleaved);
 	XCTAssertEqual(decoded.frameLength, 30000u);
@@ -283,8 +300,10 @@
 	id decoded = [self roundTrip:(__bridge id)image entry:&entry writer:NULL];
 	XCTAssertEqualObjects(entry[@"$nfk"], @"buffer");
 	XCTAssertEqualObjects(entry[@"as"], @"cgImage");
-	XCTAssertEqual(CFGetTypeID((__bridge CFTypeRef)decoded), CGImageGetTypeID());
-	XCTAssertEqual(CGImageGetWidth((__bridge CGImageRef)decoded), 256u);
+	XCTAssertTrue(decoded != nil && CFGetTypeID((__bridge CFTypeRef)decoded) == CGImageGetTypeID());
+	if (decoded != nil) {
+		XCTAssertEqual(CGImageGetWidth((__bridge CGImageRef)decoded), 256u);
+	}
 	CGImageRelease(image);
 
 	id<MTLDevice> device = MTLCreateSystemDefaultDevice();
@@ -297,8 +316,10 @@
 	[texture replaceRegion:MTLRegionMake2D(0, 0, 256, 256) mipmapLevel:0 withBytes:pixels.bytes bytesPerRow:256 * 4];
 	decoded = [self roundTrip:texture entry:&entry writer:NULL];
 	XCTAssertEqualObjects(entry[@"as"], @"image");
-	XCTAssertEqual(CFGetTypeID((__bridge CFTypeRef)decoded), CVPixelBufferGetTypeID(), @"a texture arrives as a pixel buffer");
-	XCTAssertEqual(CVPixelBufferGetWidth((__bridge CVPixelBufferRef)decoded), 256u);
+	XCTAssertTrue(decoded != nil && CFGetTypeID((__bridge CFTypeRef)decoded) == CVPixelBufferGetTypeID(), @"a texture arrives as a pixel buffer");
+	if (decoded != nil) {
+		XCTAssertEqual(CVPixelBufferGetWidth((__bridge CVPixelBufferRef)decoded), 256u);
+	}
 }
 
 #pragma mark Threshold, files, surfaces
@@ -376,6 +397,10 @@
 	NSDictionary *entry = nil;
 	NFKPluginAttachmentWriter *writer = nil;
 	id decoded = [self roundTrip:(__bridge id)source entry:&entry writer:&writer];
+	if (decoded == nil) {
+		CVPixelBufferRelease(source);
+		return;
+	}
 	XCTAssertEqualObjects(entry[@"$nfk"], @"buffer");
 	XCTAssertEqualObjects(entry[@"as"], @"pixelBuffer", @"no surface crosses until the mach-surfaces capability");
 	NSError *error = nil;
@@ -392,9 +417,12 @@
 	NFKPluginSharedMemory *made = [NFKPluginSharedMemory regionWithLength:8192 namePrefix:nil error:&error];
 	XCTAssertTrue(made.isSharedMemoryObject, @"%@", error);
 	memset(made.mutableBytes, 7, made.length);
-	NFKPluginSharedMemory *mapped = [NFKPluginSharedMemory regionWithDescriptor:dup(made.descriptor) copiesFiles:YES error:&error];
+	NFKPluginSharedMemory *mapped = [NFKPluginSharedMemory regionWithDescriptor:dup(made.descriptor) length:8192 copiesFiles:YES error:&error];
 	XCTAssertFalse(mapped.isCopied, @"shared memory maps as it is");
-	XCTAssertEqual(((const uint8_t *)mapped.mutableBytes)[8191], 7);
+	XCTAssertEqual(mapped.length, 8192u);
+	if (mapped != nil) {
+		XCTAssertEqual(((const uint8_t *)mapped.mutableBytes)[8191], 7);
+	}
 
 	NSURL *fileURL = [self.directory URLByAppendingPathComponent:@"region.bin"];
 	XCTAssertTrue([[self randomDataOfLength:1000] writeToURL:fileURL atomically:YES]);
@@ -453,6 +481,88 @@
 	XCTAssertEqual(decoded.outputModality, NFKModalityText);
 	[host close];
 	[plugin close];
+}
+
+#pragma mark Lengths that are not whole pages
+
+- (void)testRegionsOfLengthsOffPageBoundariesRoundTrip
+{
+	for (NSNumber *size in @[ @1, @4097, @16383, @16385 ]) {
+		NSUInteger length = size.unsignedIntegerValue;
+		NSError *error = nil;
+		NFKPluginSharedMemory *made = [NFKPluginSharedMemory regionWithLength:length namePrefix:nil error:&error];
+		XCTAssertNotNil(made, @"%@", error);
+		if (made == nil) {
+			continue;
+		}
+		XCTAssertEqual(made.length, length, @"the creator keeps the length it asked for");
+		XCTAssertGreaterThanOrEqual(made.mappedLength, length);
+		XCTAssertEqual(made.mappedLength % vm_page_size, 0u, @"the object is whole pages");
+		for (NSUInteger index = 0; index < length; index++) {
+			((uint8_t *)made.mutableBytes)[index] = (uint8_t)(index % 251 + 1);
+		}
+		XCTAssertEqual(made.data.length, length);
+
+		NFKPluginSharedMemory *whole = [NFKPluginSharedMemory regionWithDescriptor:dup(made.descriptor) copiesFiles:YES error:&error];
+		XCTAssertGreaterThanOrEqual(whole.length, length, @"without a stated length a receiver sees the whole object, %@", error);
+		NFKPluginSharedMemory *stated = [NFKPluginSharedMemory regionWithDescriptor:dup(made.descriptor) length:length copiesFiles:YES error:&error];
+		XCTAssertEqual(stated.length, length, @"%@", error);
+		XCTAssertEqualObjects(stated.data, made.data, @"%lu bytes", (unsigned long)length);
+		XCTAssertNil([NFKPluginSharedMemory regionWithDescriptor:dup(made.descriptor) length:whole.length + 1 copiesFiles:YES error:&error],
+					 @"a length beyond the object is refused");
+		XCTAssertEqual(error.code, NFKPluginErrorProtocolViolation);
+
+		NFKPluginAttachmentWriter *writer = [[NFKPluginAttachmentWriter alloc] init];
+		NFKInferenceWireCoding *encoder = [self encoderWithWriter:writer];
+		encoder.inlineByteLimit = 0;
+		NSData *data = [self randomDataOfLength:length];
+		NSDictionary *entry = [encoder JSONValueForValue:data key:@"value" error:&error];
+		XCTAssertEqualObjects(entry[@"length"], @(length));
+		NFKInferenceWireCoding *decoder = [[NFKInferenceWireCoding alloc] initWithTemporaryDirectory:self.directory];
+		decoder.attachmentSource = [self readerForWriter:writer];
+		NSData *decoded = [decoder valueFromJSONValue:entry key:@"value" error:&error];
+		XCTAssertEqual(decoded.length, length, @"the decoder reads the entry's length of a whole-page region, %@", error);
+		XCTAssertEqualObjects(decoded, data);
+	}
+}
+
+- (void)testAMalformedAttachmentFailsCleanly
+{
+	NFKPluginAttachmentWriter *writer = [[NFKPluginAttachmentWriter alloc] init];
+	NSInteger index = -1;
+	NSError *error = nil;
+	XCTAssertTrue([writer attachmentRegionOfLength:4097 index:&index error:&error] != NULL, @"%@", error);
+	NFKInferenceWireCoding *decoder = [[NFKInferenceWireCoding alloc] initWithTemporaryDirectory:self.directory];
+	decoder.attachmentSource = [self readerForWriter:writer];
+	NSDictionary *plane = @{ @"offset": @0, @"bytesPerRow": @256, @"rows": @64 };
+	NSDictionary *pixels = @{ @"$nfk": @"buffer", @"index": @0, @"as": @"pixelBuffer", @"length": @4097,
+							  @"format": @(kCVPixelFormatType_32BGRA), @"width": @64, @"height": @64 };
+	NSMutableDictionary *pastTheEnd = [pixels mutableCopy];
+	pastTheEnd[@"planes"] = @[ plane ];
+	NSMutableDictionary *fractional = [pixels mutableCopy];
+	fractional[@"height"] = @1;
+	fractional[@"planes"] = @[ @{ @"offset": @0, @"bytesPerRow": @256.5, @"rows": @1 } ];
+	NSMutableDictionary *offsetPastTheEnd = [pixels mutableCopy];
+	offsetPastTheEnd[@"height"] = @1;
+	offsetPastTheEnd[@"planes"] = @[ @{ @"offset": @4096, @"bytesPerRow": @256, @"rows": @1 } ];
+	NSDictionary *cases = @{
+		@"a plane past the attachment's end": pastTheEnd,
+		@"a fractional stride": fractional,
+		@"a plane that starts too late": offsetPastTheEnd,
+		@"a length past the region": @{ @"$nfk": @"buffer", @"index": @0, @"as": @"data", @"length": @1000000 },
+		@"no length": @{ @"$nfk": @"buffer", @"index": @0, @"as": @"data" },
+		@"a multi-array longer than its attachment": @{ @"$nfk": @"buffer", @"index": @0, @"as": @"multiArray", @"length": @4096,
+														@"dataType": @(MLMultiArrayDataTypeFloat32), @"shape": @[ @2048 ] },
+	};
+	[cases enumerateKeysAndObjectsUsingBlock:^(NSString *name, NSDictionary *entry, BOOL *stop) {
+		NSError *failure = nil;
+		XCTAssertNil([decoder valueFromJSONValue:entry key:@"value" error:&failure], @"%@ is refused", name);
+		XCTAssertEqual(failure.code, kNFKError_InferenceUnsupported, @"%@ fails with an error", name);
+	}];
+	NSMutableDictionary *fits = [pixels mutableCopy];
+	fits[@"height"] = @16;
+	fits[@"planes"] = @[ @{ @"offset": @0, @"bytesPerRow": @256, @"rows": @16 } ];
+	XCTAssertNotNil([decoder valueFromJSONValue:fits key:@"value" error:&error], @"a plane inside the length wraps, %@", error);
 }
 
 #pragma mark The HTTP form

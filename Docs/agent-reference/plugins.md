@@ -280,6 +280,15 @@ against literal dictionaries, and the existing server tests keep their expectati
   mapping.
 - A received region maps shared and writable. A descriptor that maps only for reading is copied, so
   every region is writable. A descriptor that is neither shared memory nor a regular file is refused.
+- macOS rounds a shared-memory object up to whole pages whatever `ftruncate` asks for: 16 KiB on Apple
+  silicon (measured 2026-10-15: requests of 1, 4096, 4097, 16383, and 16384 bytes report `st_size`
+  16384; 16385 reports 32768). A region therefore has two lengths: `length`, the bytes it carries, and
+  `mappedLength`, the whole pages mapped. The rounding happens once, in `NFKSharedMemoryRoundedLength()`,
+  when a region is created.
+- An attachment entry's `"length"` is required and is the only length a reader uses. The decoder refuses
+  an entry longer than its region (a shorter one is the page rounding) and slices exactly that many
+  bytes, without copying, before any reader sees them. Pixel-buffer geometry is checked as whole numbers
+  and every plane must fit inside that slice before CoreVideo receives a pointer.
 
 ## Host side
 
@@ -518,7 +527,9 @@ result, a `{text, isError}` object, or a string. An error reply keeps its domain
 - Nothing is ever closed with `dlclose`, and a refused bundle's code stays in the process.
 - In-process tests load the fixtures at 1.0.0 only; 2.0.0 is the second-version refusal. A test that
   needs another identity loads a re-signed copy under an identifier of its own. `exitAtStep` runs only
-  out of process.
+  out of process. The duplicate-runtime fixture loads only in a child process, the plugin host
+  (`NFKPluginServiceTests`): loading it in the test process leaves two `NFKInferenceRequest` classes,
+  and the runtime keeps an arbitrary one for every later test.
 
 ### C adapter
 

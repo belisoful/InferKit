@@ -843,7 +843,8 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 		[self.startLock unlock];
 		return nil;
 	}
-	if (clearingFailure) {
+	// Only a start out of Failed forgets the crashes; a start after a crash below the limit keeps counting.
+	if (clearingFailure && self.state == NFKPluginProcessStateFailed) {
 		[self.crashTimes removeAllObjects];
 	}
 	connection = [self launchRestarting:NO error:error];

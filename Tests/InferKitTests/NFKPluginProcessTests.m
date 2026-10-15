@@ -295,7 +295,7 @@
 	NFKPluginProcess *process = [self processWithIdleExit:300];
 	NFKPluginBackend *backend = [self backendOfProcess:process];
 	NFKInferenceJob *inFlight = [backend submitInferenceJobForRequest:[self requestWithPrompt:@"A"]];
-	XCTAssertNotNil([self.harness.peers.firstObject waitForMessageOfType:NFKPluginMessageRun timeout:5]);
+	XCTAssertNotNil([[self.harness peerAtIndex:0 timeout:5] waitForMessageOfType:NFKPluginMessageRun timeout:5]);
 
 	XCTestExpectation *restarted = [self expectationWithDescription:@"restarted"];
 	__block NSError *restartError = [NSError errorWithDomain:@"unset" code:0 userInfo:nil];
@@ -353,7 +353,7 @@
 	process.restartDrainTimeout = 0.3;
 	NFKPluginBackend *backend = [self backendOfProcess:process];
 	NFKInferenceJob *stuck = [backend submitInferenceJobForRequest:[self requestWithPrompt:@"stuck"]];
-	NSDictionary *run = [self.harness.peers.firstObject waitForMessageOfType:NFKPluginMessageRun timeout:5];
+	NSDictionary *run = [[self.harness peerAtIndex:0 timeout:5] waitForMessageOfType:NFKPluginMessageRun timeout:5];
 	XCTAssertNotNil(run);
 
 	XCTestExpectation *restarted = [self expectationWithDescription:@"restarted"];
@@ -458,7 +458,7 @@
 		runError = error;
 		[ran fulfill];
 	});
-	XCTAssertNotNil([self.harness.peers.firstObject waitForMessageOfType:NFKPluginMessageRun timeout:5]);
+	XCTAssertNotNil([[self.harness peerAtIndex:0 timeout:5] waitForMessageOfType:NFKPluginMessageRun timeout:5]);
 
 	XCTestExpectation *stopped = [self expectationWithDescription:@"stopped"];
 	[process stopWithCompletionHandler:^{

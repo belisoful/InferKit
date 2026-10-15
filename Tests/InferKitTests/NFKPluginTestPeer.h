@@ -110,6 +110,10 @@ typedef void (^NFKPluginTestPeerHandler)(NFKPluginTestPeer *peer, NSDictionary<N
 /*! Every peer launched, in order. */
 @property (atomic, readonly, copy) NSArray<NFKPluginTestPeer *> *peers;
 
+/*! The peer of the launch at index, counted from 0, once that launch has happened, up to timeout. A
+	submitted job launches on a background queue, so its peer appears after the call returns. */
+- (nullable NFKPluginTestPeer *)peerAtIndex:(NSUInteger)index timeout:(NSTimeInterval)timeout;
+
 /*! The factory to set as the supervisor's launcherFactory. */
 - (NFKPluginLauncherFactory)factory;
 

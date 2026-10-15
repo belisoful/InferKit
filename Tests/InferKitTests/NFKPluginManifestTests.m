@@ -369,7 +369,7 @@
 - (void)testHostCompatibilityChecksTheABIProtocolSystemAndArchitecture
 {
 	NSMutableDictionary *object = [self fullObject];
-	[object[@"compatibility"] setDictionary:@{ @"inferkitAPI": @"1.0", @"pluginABI": @"1.0", @"protocol": @"1.0" }];
+	object[@"compatibility"] = @{ @"inferkitAPI": @"1.0", @"pluginABI": @"1.0", @"protocol": @"1.0" };
 	NSError *error = nil;
 	XCTAssertTrue([[self manifestWithObject:object error:NULL] checkHostCompatibilityWithError:&error], @"%@", error);
 	NSDictionary *cases = @{

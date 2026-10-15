@@ -251,6 +251,7 @@ static NSInteger NFKServiceTestThreadCount(void)
 @property (nonatomic, strong) NSMutableArray<NSDictionary *> *messages;
 @property (nonatomic, strong) NSMutableArray<NSArray<NFKPluginDescriptor *> *> *messageDescriptors;
 @property (nonatomic, assign) BOOL channelClosed;
+@property (nonatomic, strong, nullable) NSError *closeError;
 @property (nonatomic, assign) NSInteger lastIdentifier;
 @property (nonatomic, strong) dispatch_semaphore_t served;
 @property (nonatomic, assign) BOOL servedOrderly;
@@ -337,6 +338,7 @@ static NSInteger NFKServiceTestThreadCount(void)
 	channel.closeHandler = ^(NSError *error) {
 		@synchronized (self) {
 			self.channelClosed = YES;
+			self.closeError = error;
 		}
 	};
 	self.channel = channel;
@@ -363,7 +365,10 @@ static NSInteger NFKServiceTestThreadCount(void)
 		withIdentifier[@"id"] = @(self.lastIdentifier);
 	}
 	NSError *error = nil;
-	XCTAssertTrue([self.channel sendMessage:withIdentifier descriptors:descriptors error:&error], @"%@", error);
+	BOOL sent = [self.channel sendMessage:withIdentifier descriptors:descriptors error:&error];
+	@synchronized (self) {
+		XCTAssertTrue(sent, @"%@; the channel closed with %@", error, self.closeError);
+	}
 	return withIdentifier[@"id"];
 }
 
@@ -385,7 +390,9 @@ static NSInteger NFKServiceTestThreadCount(void)
 		}
 		return reply != nil;
 	} timeout:10];
-	XCTAssertNotNil(reply, @"a reply to %@", identifier);
+	@synchronized (self) {
+		XCTAssertNotNil(reply, @"a reply to %@; closed: %d with %@; received: %@", identifier, self.channelClosed, self.closeError, self.messages);
+	}
 	return reply;
 }
 
@@ -425,10 +432,11 @@ static NSInteger NFKServiceTestThreadCount(void)
 
 - (nullable NFKInferenceResult *)resultOfReply:(NSDictionary *)reply descriptors:(NSArray<NFKPluginDescriptor *> *)descriptors
 {
+	XCTAssertNotNil(reply[@"result"], @"the run failed: %@", reply[@"error"]);
 	NFKInferenceWireCoding *coder = [[NFKInferenceWireCoding alloc] initWithTemporaryDirectory:nil];
 	coder.attachmentSource = [[NFKPluginAttachmentReader alloc] initWithDescriptors:descriptors];
 	NSError *error = nil;
-	NFKInferenceResult *result = [coder resultFromJSONObject:reply[@"result"] error:&error];
+	NFKInferenceResult *result = reply[@"result"] != nil ? [coder resultFromJSONObject:reply[@"result"] error:&error] : nil;
 	XCTAssertNotNil(result, @"%@", error);
 	return result;
 }
@@ -568,7 +576,7 @@ static NSInteger NFKServiceTestThreadCount(void)
 
 	NSArray<NFKPluginDescriptor *> *descriptors = nil;
 	NSDictionary *reply = [self replyTo:identifier descriptors:&descriptors];
-	XCTAssertEqualObjects(reply[@"result"][@"outputs"][@"data"][@"$nfk"], @"buffer", @"an attached input is answered attached");
+	XCTAssertEqualObjects(reply[@"result"][@"outputs"][@"data"][@"$nfk"], @"buffer", @"an attached input is answered attached: %@", reply);
 	XCTAssertEqual(descriptors.count, 1u);
 	XCTAssertEqualObjects([self resultOfReply:reply descriptors:descriptors].outputs[@"data"], bytes);
 
@@ -821,6 +829,25 @@ static NSInteger NFKServiceTestThreadCount(void)
 	}
 	[self attachToChannel:channel];
 	return [self request:[self hello]];
+}
+
+- (void)testThePluginHostRefusesABundleThatCarriesItsOwnInferKit
+{
+	if ([NFKPluginFixtures hostExecutableURL] == nil) {
+		XCTSkip(@"the inferkit-plugin-host product is not built beside the tests");
+	}
+	NSError *error = nil;
+	NSURL *bundle = [NFKPluginFixtures duplicateRuntimeBundleURLWithError:&error];
+	XCTAssertNotNil(bundle, @"%@", error);
+	NFKSubprocess *process = nil;
+	NSDictionary *hello = [self helloFromHostWithArguments:@[ @"--bundle", bundle.path, @"--allow-ad-hoc" ] process:&process];
+	[self assertReply:hello failsWithDomain:NFKPluginErrorDomain code:NFKPluginErrorDuplicateRuntime];
+	XCTAssertTrue([hello[@"error"][@"message"] containsString:@"NFKInferenceRequest"], @"%@", hello);
+	XCTAssertNotNil(([self request:@{ @"type": @"shutdown" }][@"result"]));
+	XCTAssertTrue([self waitUntil:^BOOL { return process.state == NFKSubprocessStateExited; } timeout:10]);
+	XCTAssertEqual(process.terminationStatus, 0, @"%@", process.recentStandardError);
+	[self.channel close];
+	self.channel = nil;
 }
 
 - (void)testThePluginHostEnforcesARequirementAndRefusesUnsignedAlone

@@ -38,6 +38,34 @@ static NSUInteger NFKWireAlign(NSUInteger offset)
 	return (offset + NFKWireAttachmentAlignment - 1) / NFKWireAttachmentAlignment * NFKWireAttachmentAlignment;
 }
 
+/*! Whether value is a whole number a JSON double carries exactly, 0 through 2^53, stored in outValue. */
+static BOOL NFKWireWholeNumber(id value, unsigned long long *outValue)
+{
+	if (![value isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID()) {
+		return NO;
+	}
+	double number = [value doubleValue];
+	if (!isfinite(number) || number < 0 || number > 9007199254740992.0 || floor(number) != number) {
+		return NO;
+	}
+	*outValue = (unsigned long long)number;
+	return YES;
+}
+
+/*! The first length bytes of data, sharing its storage; the slice keeps data alive. */
+static NSData *NFKWireLeadingBytes(NSData *data, NSUInteger length)
+{
+	if (length == data.length) {
+		return data;
+	}
+	if (length == 0) {
+		return [NSData data];
+	}
+	return [[NSData alloc] initWithBytesNoCopy:(void *)data.bytes length:length deallocator:^(void *bytes, NSUInteger sliceLength) {
+		(void)data;
+	}];
+}
+
 /*! Releases the data an attachment-wrapped pixel buffer holds. CoreVideo calls it only for a buffer it
 	made, so a failed creation releases the data itself. */
 static void NFKWireReleaseAttachedBytes(void *releaseRefCon, const void *baseAddress)
@@ -735,15 +763,22 @@ static void NFKWireCopyMultiArrayElements(void *strided, NSArray<NSNumber *> *sh
 	if (index == nil || index.integerValue < 0 || kind == nil) {
 		return [self failForKey:key reason:@"a malformed attachment" error:outError];
 	}
+	unsigned long long length = 0;
+	if (!NFKWireWholeNumber(entry[@"length"], &length)) {
+		return [self failForKey:key reason:@"an attachment names no length" error:outError];
+	}
 	NSError *sourceError = nil;
-	NSData *data = [self.attachmentSource attachmentDataAtIndex:index.integerValue error:&sourceError];
-	if (data == nil) {
+	NSData *region = [self.attachmentSource attachmentDataAtIndex:index.integerValue error:&sourceError];
+	if (region == nil) {
 		return [self failForKey:key reason:sourceError.localizedDescription ?: @"the attachment is missing" error:outError];
 	}
-	NSNumber *length = [entry[@"length"] isKindOfClass:NSNumber.class] ? entry[@"length"] : nil;
-	if (length != nil && length.unsignedLongLongValue != data.length) {
-		return [self failForKey:key reason:@"the attachment's length does not match its entry" error:outError];
+	// The region is at least the attachment: a shared-memory object is whole pages. The entry's length is
+	// the attachment's, so every reader below sees exactly those bytes and nothing past them.
+	if (length > region.length) {
+		return [self failForKey:key reason:[NSString stringWithFormat:@"the attachment names %llu bytes and its region holds %lu",
+											length, (unsigned long)region.length] error:outError];
 	}
+	NSData *data = NFKWireLeadingBytes(region, (NSUInteger)length);
 	if ([kind isEqualToString:@"data"]) {
 		return data;
 	}
@@ -812,11 +847,21 @@ static unsigned long long NFKWireShapeByteCount(NSArray *shape, NSInteger elemen
 - (nullable id)pixelBufferWrappingData:(NSData *)data entry:(NSDictionary *)entry key:(NSString *)key error:(NSError * _Nullable *)outError
 {
 	NSArray *planes = [entry[@"planes"] isKindOfClass:NSArray.class] ? entry[@"planes"] : nil;
-	size_t width = (size_t)[self doubleIn:entry forKey:@"width"];
-	size_t height = (size_t)[self doubleIn:entry forKey:@"height"];
-	OSType format = (OSType)[self doubleIn:entry forKey:@"format"];
+	unsigned long long width = 0;
+	unsigned long long height = 0;
+	unsigned long long formatNumber = 0;
+	BOOL whole = NFKWireWholeNumber(entry[@"width"], &width) && NFKWireWholeNumber(entry[@"height"], &height)
+		&& NFKWireWholeNumber(entry[@"format"], &formatNumber) && formatNumber <= UINT32_MAX;
+	for (id plane in planes) {
+		unsigned long long field = 0;
+		whole = whole && [plane isKindOfClass:NSDictionary.class] && NFKWireWholeNumber(plane[@"offset"], &field)
+			&& NFKWireWholeNumber(plane[@"bytesPerRow"], &field) && NFKWireWholeNumber(plane[@"rows"], &field);
+	}
+	OSType format = (OSType)formatNumber;
 	NSUInteger total = data.length;
-	BOOL covered = planes.count > 0 && width > 0 && height > 0
+	// Every plane must lie inside the attachment's length before a pointer into it reaches CoreVideo,
+	// which neither checks a stride against the width nor knows the region's end.
+	BOOL covered = whole && planes.count > 0 && width > 0 && height > 0
 		&& NFKWirePlaneGeometryCovers(format, width, height, planes, ^double(NSDictionary *plane) {
 			double offset = [plane[@"offset"] isKindOfClass:NSNumber.class] ? [plane[@"offset"] doubleValue] : -1;
 			return offset >= 0 && offset <= (double)total ? (double)total - offset : 0;

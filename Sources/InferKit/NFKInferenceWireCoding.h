@@ -43,7 +43,9 @@ NSString *NFKServedFileExtension(NSString * _Nullable extension);
 */
 @protocol NFKWireAttachmentSource <NSObject>
 
-/*! The bytes of the attachment at index, valid while the returned data lives, or nil with an error. */
+/*! The region that holds the attachment at index, valid while the returned data lives, or nil with an
+	error. The region may run past the attachment, as a shared-memory object runs to a page boundary; the
+	decoder reads the entry's "length" bytes from its start. */
 - (nullable NSData *)attachmentDataAtIndex:(NSInteger)index error:(NSError * _Nullable *)outError;
 
 @optional

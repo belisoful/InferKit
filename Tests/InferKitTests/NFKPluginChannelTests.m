@@ -15,6 +15,7 @@
 #import "../../Sources/InferKit/NFKPluginSharedMemory.h"
 #import "../../Sources/InferKit/NFKPluginWire.h"
 #import "../../Sources/InferKit/NFKSubprocessPrivate.h"
+#import <mach/vm_page_size.h>
 #import <sys/socket.h>
 #import <unistd.h>
 
@@ -201,9 +202,16 @@
 	NSArray<NFKPluginDescriptor *> *received = recorder.descriptors.firstObject;
 	XCTAssertEqual(received.count, 64u);
 	for (NSUInteger index = 0; index < received.count; index++) {
-		NFKPluginSharedMemory *region = [NFKPluginSharedMemory regionWithDescriptor:[received[index] takeDescriptor] copiesFiles:YES error:&error];
+		// The frame carries no lengths, so the test states each region's, as an attachment entry would.
+		NFKPluginSharedMemory *region = [NFKPluginSharedMemory regionWithDescriptor:[received[index] takeDescriptor] length:4096 + index
+																		copiesFiles:YES error:&error];
 		XCTAssertNotNil(region, @"%@", error);
-		XCTAssertEqual(region.length, 4096 + index, @"descriptor %lu names its own region", (unsigned long)index);
+		if (region == nil) {
+			continue;
+		}
+		XCTAssertEqual(region.length, 4096 + index);
+		XCTAssertEqual(region.mappedLength % vm_page_size, 0u, @"the object is whole pages");
+		XCTAssertEqual(((const uint8_t *)region.mutableBytes)[0], (uint8_t)(index + 1), @"descriptor %lu names its own region", (unsigned long)index);
 		XCTAssertEqual(((const uint8_t *)region.mutableBytes)[region.length - 1], (uint8_t)(index + 1));
 	}
 

@@ -29,15 +29,25 @@ NS_ASSUME_NONNULL_BEGIN
 */
 @interface NFKPluginSharedMemory : NSObject
 
-/*! A new region of length bytes, filled with zeros, or nil with an error. prefix is a sandboxed
-	process's app group prefix, such as "TEAMID.group.example/", or nil. */
+/*! A new region whose length is length bytes, filled with zeros, or nil with an error. Its object and
+	its mapping are length rounded up to whole pages (mappedLength). prefix is a sandboxed process's app
+	group prefix, such as "TEAMID.group.example/", or nil. */
 + (nullable instancetype)regionWithLength:(NSUInteger)length
 							   namePrefix:(nullable NSString *)prefix
 									error:(NSError * _Nullable *)outError;
 
 /*! The region a received descriptor names, which the region takes ownership of, closing it on failure
-	too. copiesFiles copies a regular file into private memory and closes the descriptor. */
+	too. Its length is the whole object, an upper bound on what the sender wrote: the system rounds a
+	shared-memory object to whole pages. */
 + (nullable instancetype)regionWithDescriptor:(int)descriptor
+								  copiesFiles:(BOOL)copiesFiles
+										error:(NSError * _Nullable *)outError;
+
+/*! The region a received descriptor names, with length the sender stated, or NSNotFound for the whole
+	object. A length beyond the object fails with NFKPluginErrorProtocolViolation. copiesFiles copies a
+	regular file's length bytes into private memory and closes the descriptor. */
++ (nullable instancetype)regionWithDescriptor:(int)descriptor
+									   length:(NSUInteger)length
 								  copiesFiles:(BOOL)copiesFiles
 										error:(NSError * _Nullable *)outError;
 
@@ -46,11 +56,14 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The descriptor that names the region, or -1 for a copied file. The region still owns it. */
 @property (nonatomic, readonly) int descriptor;
 
-/*! The region's first byte, or NULL for an empty region. */
+/*! The region's first byte, or NULL for an empty region. mappedLength bytes are addressable. */
 @property (nonatomic, readonly, nullable) void *mutableBytes NS_RETURNS_INNER_POINTER;
 
-/*! The region's length in bytes. */
+/*! The region's logical length in bytes: what its creator asked for, or what its receiver was told. */
 @property (nonatomic, readonly) NSUInteger length;
+
+/*! The bytes mapped or copied, at least length: whole pages for a shared-memory object. */
+@property (nonatomic, readonly) NSUInteger mappedLength;
 
 /*! YES when the descriptor names a POSIX shared-memory object, NO when it names a file. */
 @property (nonatomic, readonly, getter=isSharedMemoryObject) BOOL sharedMemoryObject;
@@ -58,8 +71,11 @@ NS_ASSUME_NONNULL_BEGIN
 /*! YES when the bytes are a private copy: a copied file, or a descriptor that maps only for reading. */
 @property (nonatomic, readonly, getter=isCopied) BOOL copied;
 
-/*! The region's bytes without a copy. The data keeps the region mapped while it lives. */
+/*! The region's length bytes without a copy. The data keeps the region mapped while it lives. */
 - (NSData *)data;
+
+/*! The region's first length bytes without a copy, or nil when length exceeds mappedLength. */
+- (nullable NSData *)dataOfLength:(NSUInteger)length;
 
 @end
 

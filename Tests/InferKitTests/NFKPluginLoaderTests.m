@@ -4,8 +4,9 @@
 //
 //  Loading plugin code into this process: the Objective-C bundle and the C library load and run, a
 //  plugin ABI of another major version is refused, the C fixture frees what it allocates on every
-//  path, a bundle carrying its own InferKit is refused, a second version and an executable are refused,
-//  and the same bundle loads once. A loaded plugin stays for the life of the process, so these tests
+//  path, a second version and an executable are refused, and the same bundle loads once. The bundle
+//  that carries its own InferKit loads in a child process (NFKPluginServiceTests), since loading it here
+//  would leave two NFKInferenceRequest classes in the test process. A loaded plugin stays for the life of the process, so these tests
 //  load the fixtures at 1.0.0 only and keep 2.0.0 for the second-version refusal; a test that needs
 //  another identity loads a re-signed copy under an identifier of its own.
 //
@@ -221,20 +222,6 @@ static NSString * const NFKLoaderTestsSecondMajorSource =
 	NSError *error = nil;
 	XCTAssertNil([plugin backendForModelIdentifier:@"absent" options:@{} error:&error]);
 	[self assertError:error domain:NFKPluginErrorDomain code:NFKPluginErrorUnknownModel];
-}
-
-- (void)testABundleThatCarriesItsOwnInferKitIsRefused
-{
-	NSError *error = nil;
-	NSURL *bundle = [NFKPluginFixtures duplicateRuntimeBundleURLWithError:&error];
-	XCTAssertNotNil(bundle, @"%@", error);
-	XCTAssertNil([NFKPluginLoader loadPluginAtURL:bundle signaturePolicy:NFKPluginSignaturePolicy.developmentPolicy error:&error]);
-	[self assertError:error domain:NFKPluginErrorDomain code:NFKPluginErrorDuplicateRuntime];
-	XCTAssertTrue([error.localizedDescription containsString:@"NFKInferenceRequest"], @"%@", error);
-
-	error = nil;
-	XCTAssertNil([NFKPluginLoader loadPluginAtURL:bundle signaturePolicy:NFKPluginSignaturePolicy.developmentPolicy error:&error]);
-	[self assertError:error domain:NFKPluginErrorDomain code:NFKPluginErrorDuplicateRuntime];
 }
 
 #pragma mark Refusals before code loads

@@ -328,6 +328,15 @@ NFKPluginManifest *NFKPluginTestManifest(NSString *version, NSTimeInterval idleE
 	}
 }
 
+- (nullable NFKPluginTestPeer *)peerAtIndex:(NSUInteger)index timeout:(NSTimeInterval)timeout
+{
+	NFKPluginTestWaitUntil(timeout, ^BOOL {
+		return self.peers.count > index;
+	});
+	NSArray<NFKPluginTestPeer *> *peers = self.peers;
+	return peers.count > index ? peers[index] : nil;
+}
+
 - (NFKPluginLauncherFactory)factory
 {
 	return ^id<NFKPluginLauncher>(NFKPluginProcess *process) {
