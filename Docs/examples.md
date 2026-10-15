@@ -2874,6 +2874,7 @@ whole release:
 NFKHFHub *factoryHub = [NFKMLXHub hubWithCacheDirectoryURL:nil];
 NFKDownloadStatus *status = [factoryHub downloadStatusForRepo:@"Qwen/Qwen3-0.6B" revision:nil paths:nil];
 NFKRemovalPlan *plan = [factoryHub removalPlanForRepo:@"Qwen/Qwen3-0.6B" revision:nil paths:nil error:&error];
+```
 
 ### Unloading a model and loading it again
 
