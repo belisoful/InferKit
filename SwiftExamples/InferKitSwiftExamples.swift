@@ -536,7 +536,7 @@ final class InferKitSwiftExamples: XCTestCase {
         let catalog = NFKModelCatalog()
         try catalog.addDescriptors(fromManifestData: Data("""
             { "schemaVersion": 1, "kind": "inferkit.model-catalog", "models": [ {
-              "id": "example.voice", "engine": "swift-example-engine",
+              "id": "example.voice", "family": "example", "engine": "swift-example-engine",
               "options": [ { "key": "style", "kind": "text", "stage": "load", "default": "plain" },
                            { "key": "speed", "kind": "number", "default": 1.0 } ],
               "presets": [ { "id": "brisk", "suggested": true, "requestDefaults": { "speed": 1.5 } } ] } ] }
