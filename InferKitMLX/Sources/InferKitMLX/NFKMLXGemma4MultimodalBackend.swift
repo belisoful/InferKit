@@ -111,7 +111,8 @@ extension NFKMLXGemmaLanguage {
     /// re-runs the growing sequence with the same soft tokens spliced in.
     static func multimodalBackend(_ model: NFKGemma4MultimodalModel) -> any NFKInferenceBackend {
         NFKMLXGenerationBackend(identifier: gemmaMultimodalModelName, inputKeys: multimodalInputKeys,
-                                parameterKeys: multimodalParameterKeys) { request, job in
+                                parameterKeys: multimodalParameterKeys,
+                                outputKeys: [NFKOutputText, NFKOutputUsage]) { request, job in
             try NFKMLXUsage.refuseReasoningEffort(in: request, model: gemmaMultimodalModelName)
             let temperature = NFKMLXGenerationBackend.number(request, NFKParameterTemperature)?.floatValue ?? 0
             let maximumTokens = NFKMLXGenerationBackend.number(request, NFKParameterMaxTokens)?.intValue ?? 256

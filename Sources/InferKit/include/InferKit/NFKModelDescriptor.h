@@ -466,7 +466,8 @@ NS_ASSUME_NONNULL_BEGIN
 */
 @interface NFKModelDescriptor : NSObject <NSCopying>
 
-/*! The descriptor's identifier, unique within a catalog. */
+/*! The descriptor's identifier, unique within a catalog. A model an engine builds by name uses that name,
+	its registryName, which is also the name a server hosts it under. */
 @property (nonatomic, readonly, copy) NSString *identifier;
 /*! The model's name, for a user interface. */
 @property (nonatomic, readonly, copy) NSString *displayName;

@@ -170,6 +170,10 @@ public final class NFKMLXTrOCRBackend: NSObject, NFKInferenceBackend {
     }
 
     public var supportedInputKeys: Set<String> { [NFKInputImage] }
+
+    /// The result keys the backend writes. Introduced in InferKit 0.4.0.
+    public var supportedOutputKeys: Set<String> { [NFKOutputText] }
+
     public var isReady: Bool { true }
     public var backendIdentifier: String { NFKMLXTrOCR.modelName }
 

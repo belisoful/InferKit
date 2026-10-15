@@ -58,7 +58,8 @@ extension NFKMLXSAM3 {
     static func inferenceBackend(model: NFKMLXSAM3ImageModel, tokenizer: NFKMLXSDPromptTokenizer,
                                  identifier: String = modelName) -> any NFKInferenceBackend {
         NFKMLXGenerationBackend(identifier: identifier, inputKeys: backendInputKeys,
-                                parameterKeys: backendParameterKeys) { request, job in
+                                parameterKeys: backendParameterKeys,
+                                outputKeys: [NFKOutputDetections, NFKOutputMask]) { request, job in
             let concept = try NFKMLXGenerationBackend.requiredText(request, NFKInputPrompt)
             guard let value = request.input(forKey: NFKInputImage) else { throw NFKMLXError.unsupportedInput }
             let plate = try NFKMLXImageBridge.tensor(from: value, channels: 3, colorSpace: CGColorSpaceCreateDeviceRGB())

@@ -94,3 +94,7 @@ if NFKDynamicBackend.isCapabilityAvailable(NFKCapabilityTextGeneration) {
 ### Dynamic discovery
 
 - ``NFKFoundationModelsProvider``
+
+### Model catalog
+
+- ``NFKFoundationModelsDescriptors``

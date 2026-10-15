@@ -69,6 +69,11 @@
 	return [NSSet setWithObject:NFKInputAudio];
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithArray:@[ NFKOutputText, NFKOutputSegments ]];
+}
+
 + (BOOL)isAuthorized
 {
 #if NFK_HAS_SPEECH_RECOGNITION

@@ -142,6 +142,15 @@ static double NFKInteractionsSeconds(id offset)
 	return @"gemini-interactions";
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithArray:@[ NFKOutputText, NFKOutputStructured, NFKOutputReasoning, NFKOutputImage,
+								  NFKOutputImages, NFKOutputAudio, NFKOutputVideo, NFKOutputWords,
+								  NFKOutputSegments, NFKOutputCitations, NFKOutputToolCalls,
+								  NFKOutputServerToolResults, NFKOutputAssistantMessage,
+								  NFKOutputResponseIdentifier, NFKOutputUsage, NFKRemoteBackendRawKey ]];
+}
+
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 												  error:(NSError * _Nullable *)outError
 {

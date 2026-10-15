@@ -74,6 +74,12 @@ static MTLPixelFormat NFKMTLPixelFormatForIOSurface(IOSurfaceRef surface)
 	return @"coreml";
 }
 
+// The output features of the loaded model; nothing before it loads.
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithArray:_model.modelDescription.outputDescriptionsByName.allKeys ?: @[]];
+}
+
 - (BOOL)prepareWithError:(NSError * _Nullable *)outError
 {
 	if (_model != nil) {

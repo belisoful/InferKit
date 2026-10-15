@@ -426,6 +426,13 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputPrompt, NFKInputMessages] }
 
+    /// The result keys the backend writes: the reply, the tool calls and the assistant turn, the reasoning
+    /// when the model shows any, the usage, and the parsed object of a schema-constrained request. Introduced
+    /// in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> {
+        NFKMLXToolCalling.outputKeys.union([NFKOutputReasoning, NFKOutputUsage, NFKOutputStructured])
+    }
+
     /// Whether the backend holds a draft model, so requests can decode speculatively.
     @objc public var hasDraftModel: Bool { holder.draft != nil }
 

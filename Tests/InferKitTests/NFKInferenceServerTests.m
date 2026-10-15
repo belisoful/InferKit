@@ -179,6 +179,19 @@
 
 @end
 
+/*! A backend that declares the outputs it writes. */
+@interface NFKServedOutputsBackend : NFKServedTestBackend
+@end
+
+@implementation NFKServedOutputsBackend
+
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithObjects:NFKOutputUsage, NFKOutputText, nil];
+}
+
+@end
+
 /*! A runtime that reports a fixed state. */
 @interface NFKServedTestRuntime : NSObject <NFKServingRuntimeStatus>
 @end
@@ -750,6 +763,26 @@
 	XCTAssertEqualObjects(client.supportedParameterKeys, backend.supportedParameterKeys);
 }
 
+- (void)testPrepareReadsTheHostedBackendsOutputs
+{
+	NFKServedOutputsBackend *backend = [[NFKServedOutputsBackend alloc] init];
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"declared": backend,
+															  @"undeclared": [[NFKServedTestBackend alloc] init] }];
+	NFKRemoteInferKitBackend *declared = [NFKRemoteInferKitBackend backendWithBaseURL:server.localBaseURL];
+	declared.modelName = @"declared";
+	XCTAssertFalse([declared respondsToSelector:@selector(supportedOutputKeys)], @"nothing is declared before prepare");
+	NSError *error = nil;
+	XCTAssertTrue(NFKInferencePrepare(declared, &error), @"%@", error);
+	XCTAssertTrue([declared respondsToSelector:@selector(supportedOutputKeys)]);
+	XCTAssertEqualObjects(declared.supportedOutputKeys, backend.supportedOutputKeys);
+
+	NFKRemoteInferKitBackend *undeclared = [NFKRemoteInferKitBackend backendWithBaseURL:server.localBaseURL];
+	undeclared.modelName = @"undeclared";
+	XCTAssertTrue(NFKInferencePrepare(undeclared, &error), @"%@", error);
+	XCTAssertFalse([undeclared respondsToSelector:@selector(supportedOutputKeys)],
+				   @"a hosted backend that declares no outputs leaves them undeclared");
+}
+
 #pragma mark Models and access
 
 - (void)testTheCatalogListsTheHostedModels
@@ -1140,6 +1173,28 @@
 	NSData *data = [self send:[NSURLRequest requestWithURL:[server.localBaseURL URLByAppendingPathComponent:@"models/described"]] response:&response];
 	NSDictionary *entry = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
 	XCTAssertEqualObjects(entry[@"inferkit"][@"model"], expected);
+}
+
+- (void)testAModelEntryListsTheOutputsItsBackendDeclaresAndTheStatusLeavesThemOut
+{
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"declared": [[NFKServedOutputsBackend alloc] init],
+															  @"undeclared": [[NFKServedTestBackend alloc] init] }];
+	NSHTTPURLResponse *response = nil;
+	NSData *data = [self send:[NSURLRequest requestWithURL:[server.localBaseURL URLByAppendingPathComponent:@"models/declared"]] response:&response];
+	XCTAssertEqual(response.statusCode, 200);
+	NSDictionary *entry = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+	XCTAssertEqualObjects(entry[@"inferkit"][@"outputs"], (@[ NFKOutputText, NFKOutputUsage ]), @"sorted by key");
+	XCTAssertNotNil(entry[@"inferkit"][@"inputs"]);
+
+	data = [self send:[NSURLRequest requestWithURL:[server.localBaseURL URLByAppendingPathComponent:@"models/undeclared"]] response:&response];
+	XCTAssertEqual(response.statusCode, 200);
+	entry = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+	XCTAssertNil(entry[@"inferkit"][@"outputs"], @"a backend that declares no outputs lists none");
+
+	for (NSDictionary *model in [self statusOf:server][@"models"]) {
+		XCTAssertNil(model[@"outputs"], @"%@", model[@"id"]);
+		XCTAssertNil(model[@"inputs"], @"%@", model[@"id"]);
+	}
 }
 
 - (void)testALinkedRuntimeReportsUnderTheHostAndLeavesWithIt

@@ -41,6 +41,11 @@
 	return [NSSet setWithObject:NFKInputImage];
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithObject:NFKOutputClassifications];
+}
+
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 												  error:(NSError **)outError
 {

@@ -96,6 +96,9 @@ public final class NFKMLXVideoBackend: NSObject, NFKInferenceBackend {
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputVideo] }
 
+    /// The result keys the backend writes. Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputVideo] }
+
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         guard let asset = request.input(forKey: NFKInputVideo) as? NFKVideoAsset,
               let sourceURL = asset.fileURL else {

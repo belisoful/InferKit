@@ -18,6 +18,10 @@ provider adopts ``NFKModelDescriptorProvider`` and is looked up by name with `NS
 The core names four providers, one per engine, and
 ``NFKModelCatalog/registerProviderClassName:`` adds more.
 
+``NFKAppleModelDescriptors`` is the core's own provider: one descriptor per Apple-framework engine,
+each a system model with nothing to download. Its ``NFKAppleModelDescriptors/backendNamed:`` builds
+the backend a descriptor's registry name names.
+
 A plugin ships its descriptors as a JSON manifest, and an app adds it:
 
 ```objc
@@ -58,6 +62,7 @@ fraction of the recommended Metal working set.
 - ``NFKModelCatalog``
 - ``NFKModelDescriptorProvider``
 - ``NFKModelCatalogError``
+- ``NFKAppleModelDescriptors``
 
 ### Descriptors
 

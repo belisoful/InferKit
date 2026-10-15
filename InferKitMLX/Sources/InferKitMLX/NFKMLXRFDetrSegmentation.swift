@@ -267,6 +267,10 @@ public final class NFKMLXRFDetrSegmentationBackend: NSObject, NFKInferenceBacken
     /// The request inputs the backend reads.
     @objc public var supportedInputKeys: Set<String> { [NFKInputImage] }
 
+    /// The result keys the backend writes: the detections, and the union of their masks when there are any.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputDetections, NFKOutputMask] }
+
     /// The request parameters the backend reads.
     @objc public var supportedParameterKeys: Set<String> { [] }
 

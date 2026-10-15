@@ -75,6 +75,8 @@ public final class NFKSpeechAnalyzerBackend: NSObject, NFKInferenceBackend {
 
     @objc public var supportedInputKeys: Set<String> { [NFKInputAudio] }
 
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputSegments] }
+
     /// Reserves the locale and installs its assets, which is a download the first time. The call
     /// blocks until the install finishes, because a backend is prepared off the caller's thread.
     @objc(prepareWithError:)

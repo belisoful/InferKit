@@ -573,6 +573,9 @@ enum NFKMLXToolCalling {
         }
     }
 
+    /// The result keys ``outputs(answer:reasoning:request:format:source:)`` can write.
+    static let outputKeys: Set<String> = [NFKOutputText, NFKOutputToolCalls, NFKOutputAssistantMessage]
+
     /// The outputs a reply becomes: its content under `NFKOutputText`, its calls under
     /// `NFKOutputToolCalls` when the request offered tools, and the turn to append next under
     /// `NFKOutputAssistantMessage`, which keeps the reasoning for this backend to render back.

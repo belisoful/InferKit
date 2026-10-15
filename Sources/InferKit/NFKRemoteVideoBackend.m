@@ -135,6 +135,11 @@ static NSInteger NFKRemoteVideoGreatestCommonDivisor(NSInteger a, NSInteger b)
 	return @"remote-video";
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithArray:@[ NFKOutputVideo, NFKOutputVideos ]];
+}
+
 #pragma mark Validation
 
 - (NFKInferenceJob *)submitInferenceJobForRequest:(NFKInferenceRequest *)request

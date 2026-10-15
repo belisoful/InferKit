@@ -16,8 +16,9 @@ public final class NFKMLXReferenceModels: NSObject {
 
     /// Registers every model InferKitMLX ships in one call: the reference stand-ins (`green-screen-keyer`,
     /// `tone-speech`, and the `diffusion-*` oracle pipelines) and the real models (`real-esrgan-x4`,
-    /// `depth-anything-v2-small`, `lama-inpaint`, `sd-inpaint`). Call once at launch, then build any of
-    /// them by name through `NFKMLXModelRegistry`.
+    /// `depth-anything-v2-small`, `lama-inpaint`, `sd-inpaint`), with the names the model catalog's entries
+    /// register for models that have only a factory. Call once at launch, then build any of them by name
+    /// through `NFKMLXModelRegistry`.
     @objc public static func registerAll() {
         registerGreenScreenKeyer()
         registerToneSpeech()
@@ -142,6 +143,10 @@ public final class NFKMLXReferenceModels: NSObject {
         NFKMLXFastSpeech2.register()
         NFKMLXCLIP.registerProbe()
         NFKMLXGemmaLanguage.registerMultimodal()
+        NFKMLXCatalogImage.registerAdditionalModels()
+        NFKMLXCatalogVideo.registerAdditionalModels()
+        NFKMLXCatalogLanguage.registerAdditionalModels()
+        NFKMLXCatalogAudio.registerAdditionalModels()
     }
 
     /// Registers a simple text-to-speech synthesizer under `"tone-speech"`. The synth turns each

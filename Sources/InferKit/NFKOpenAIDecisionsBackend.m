@@ -97,6 +97,11 @@ static NSSet<NSString *> *NFKOpenAIDecisionsReservedFields(void)
 								  NFKInputImage, NFKInputImages ]];
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithArray:@[ NFKOutputAnswers, NFKOutputStructured, NFKOutputUsage ]];
+}
+
 - (nullable NSDictionary<NSString *, NFKDecisionAnswer *> *)answersForState:(id)state
 																   questions:(NSDictionary<NSString *, NFKDecisionQuestion *> *)questions
 																	   error:(NSError * _Nullable *)outError

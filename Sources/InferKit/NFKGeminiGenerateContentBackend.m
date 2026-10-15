@@ -176,6 +176,14 @@ static const NSUInteger NFKGenerateContentHopLimit = 64;
 	return @"gemini-generatecontent";
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithArray:@[ NFKOutputText, NFKOutputStructured, NFKOutputReasoning, NFKOutputImage,
+								  NFKOutputImages, NFKOutputToolCalls, NFKOutputServerToolResults,
+								  NFKOutputCitations, NFKOutputUsage, NFKOutputAssistantMessage,
+								  NFKRemoteBackendRawKey ]];
+}
+
 // A reply that stops with finishReason CONTINUATION (a long decode, gemini-4-argon) is continued by
 // resending the same request with its continuationToken; the hops' parts join into one reply.
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request

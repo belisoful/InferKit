@@ -70,6 +70,11 @@
 	return @"remote-classifier";
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithArray:@[ NFKOutputClassifications, NFKRemoteBackendRawKey ]];
+}
+
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 												  error:(NSError * _Nullable *)outError
 {

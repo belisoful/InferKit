@@ -43,6 +43,29 @@ their processor is absent, which discovery treats as a pass rather than a failur
 provider hands back the subject mask where the OS has it and the saliency mask below that, so the
 capability resolves at the core's floor.
 
+## Declared outputs and catalog descriptors
+
+Every Apple engine declares `supportedOutputKeys` (2026-10-15), in the core and in InferKitAppleSwift.
+Each engine writes every key it declares on every result, so a descriptor marks its outputs required.
+Two sets follow configuration: the face backend's (`NFKOutputPose` only with `detectsLandmarks`) and
+the tracking backend's (by `kind`).
+
+- The core's descriptors come from `NFKAppleModelDescriptors`, which the shared catalog loads first.
+  The identifier is the `backendIdentifier`, except where one class runs tasks with different keys:
+  VideoToolbox (`videotoolbox-super-resolution`, `videotoolbox-frame-interpolation`,
+  `videotoolbox-optical-flow`) and tracking (`vision-tracking`, `vision-tracking-trajectory`).
+  `+backendNamed:` builds the backend for a registry name, which equals the identifier.
+- Floors per descriptor, from the `@available` checks: the core's floor (macOS 11, iOS 14, tvOS 14)
+  for Vision, the voices, and the sentence embedding; macOS 11 and iOS 14 with no tvOS for the
+  speech recognizer; macOS 12, iOS 15, tvOS 15 for SoundAnalysis; and the VideoToolbox processors'
+  own floors (super resolution macOS 26 / iOS 26, interpolation macOS 26 / iOS 26 / tvOS 26, optical
+  flow macOS 15.4 / iOS 26). A backend whose default kind postdates the floor (the subject mask,
+  aesthetics) takes the floor of its oldest kind, since the backend runs there with another kind.
+- Tasks reuse the vocabulary: measurement is `classification`, contours are `segmentation`,
+  registration is `optical-flow`, and tracking and rectangles are `object-detection`.
+- `NFKAppleSwiftModelDescriptors` describes the companion's four engines the same way, engine
+  `apple-swift`, at macOS 26 / iOS 26, with `+backendNamed:` as its registry.
+
 ## Geometry: the flip that nothing in the type system catches
 
 `NFKDetection.boundingBox` and `NFKKeypoint.position` are normalized 0...1 with the origin at the

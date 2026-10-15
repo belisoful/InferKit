@@ -270,6 +270,11 @@ public final class NFKMLXFlorence2Backend: NSObject, NFKInferenceBackend {
 
     public var supportedInputKeys: Set<String> { [NFKInputImage, NFKInputPrompt] }
     public var supportedParameterKeys: Set<String> { [NFKParameterMaxTokens, NFKMLXTranslationParameterKey.beamCount] }
+
+    /// The result keys the backend writes: the text, and the boxes of a task that answers with regions.
+    /// Introduced in InferKit 0.4.0.
+    public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputDetections] }
+
     public var isReady: Bool { true }
     public var backendIdentifier: String { NFKMLXFlorence2.modelName }
 

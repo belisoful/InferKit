@@ -113,6 +113,12 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputPrompt, NFKInputMessages] }
 
+    /// The result keys the backend writes: the reply, the tool calls and the assistant turn, the reasoning
+    /// when the model shows any, and the usage. Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> {
+        NFKMLXToolCalling.outputKeys.union([NFKOutputReasoning, NFKOutputUsage])
+    }
+
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         var temperature: Float = 0
         var maximumTokens = 256

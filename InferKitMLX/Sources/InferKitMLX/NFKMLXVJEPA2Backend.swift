@@ -239,6 +239,10 @@ public final class NFKMLXVJEPA2Backend: NSObject, NFKInferenceBackend {
     @objc public var supportedParameterKeys: Set<String> { [] }
     @objc public var supportedInputKeys: Set<String> { [NFKInputVideo, NFKInputImage] }
 
+    /// The result keys the backend writes: the embedding, and the classes when the release carries a
+    /// classifier head. Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputEmbedding, NFKOutputClassifications] }
+
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         let job = submitInferenceJob(for: request)

@@ -278,6 +278,9 @@ public final class NFKMLXPhi4MMBackend: NSObject, NFKInferenceBackend {
         [NFKInputPrompt, NFKInputMessages, NFKInputImage, NFKInputImages, NFKInputAudio, NFKInputAudios]
     }
 
+    /// The result keys the backend writes. Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputUsage] }
+
     private let modelInfoCache = NFKMLXModelInfoCache()
 
     /// The decoder and both towers' parameter count, weight bytes, precision, and quantization, and

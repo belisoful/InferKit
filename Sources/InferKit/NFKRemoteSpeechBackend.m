@@ -155,6 +155,11 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 	return @"remote-speech";
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithObject:NFKOutputAudio];
+}
+
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 												  error:(NSError * _Nullable *)outError
 {

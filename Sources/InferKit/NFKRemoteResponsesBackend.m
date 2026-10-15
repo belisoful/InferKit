@@ -98,6 +98,14 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 	return @"remote-responses";
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithArray:@[ NFKOutputText, NFKOutputStructured, NFKOutputReasoning, NFKOutputToolCalls,
+								  NFKOutputAssistantMessage, NFKOutputCitations, NFKOutputServerToolResults,
+								  NFKOutputImage, NFKOutputImages, NFKOutputResponseIdentifier, NFKOutputUsage,
+								  NFKRemoteBackendRawKey ]];
+}
+
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 												  error:(NSError * _Nullable *)outError
 {

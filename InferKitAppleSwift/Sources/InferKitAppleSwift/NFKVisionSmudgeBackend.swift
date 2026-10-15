@@ -32,6 +32,8 @@ public final class NFKVisionSmudgeBackend: NSObject, NFKInferenceBackend {
 
     @objc public var supportedInputKeys: Set<String> { [NFKInputImage] }
 
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputClassifications] }
+
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         guard let image = NFKAppleImage.cgImage(in: request, key: NFKInputImage) else {

@@ -817,6 +817,9 @@ public final class NFKMLXBasicPitchBackend: NSObject, NFKInferenceBackend {
 
     @objc public var supportedInputKeys: Set<String> { [NFKInputAudio] }
 
+    /// The result keys the backend writes. Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputMIDI] }
+
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         guard let (samples, sampleRate) = Self.audio(from: request) else {

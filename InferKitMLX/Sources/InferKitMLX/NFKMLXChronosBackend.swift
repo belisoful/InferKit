@@ -25,7 +25,8 @@ extension NFKMLXChronos {
     @objc(inferenceBackend)
     public func inferenceBackend() -> any NFKInferenceBackend {
         NFKMLXGenerationBackend(identifier: Self.modelName, inputKeys: [NFKMLXForecastKey.series],
-                                parameterKeys: [NFKMLXForecastKey.horizon]) { [self] request, job in
+                                parameterKeys: [NFKMLXForecastKey.horizon],
+                                outputKeys: [NFKOutputStructured]) { [self] request, job in
             let series = try NFKMLXGenerationBackend.forecastSeries(request).map(\.floatValue)
             let horizon = NFKMLXGenerationBackend.forecastHorizon(request, fallback: Int.max)
             job.reportProgress(0)

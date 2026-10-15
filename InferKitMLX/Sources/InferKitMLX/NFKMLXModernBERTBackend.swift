@@ -21,7 +21,8 @@ extension NFKMLXModernBERTReranker {
     @objc(inferenceBackend)
     public func inferenceBackend() -> any NFKInferenceBackend {
         NFKMLXGenerationBackend(identifier: Self.modelName, inputKeys: [NFKInputPrompt, NFKInputDocuments],
-                                parameterKeys: []) { [self] request, job in
+                                parameterKeys: [],
+                                outputKeys: [NFKOutputStructured]) { [self] request, job in
             let query = try NFKMLXGenerationBackend.requiredText(request, NFKInputPrompt)
             let documents = try NFKMLXGenerationBackend.textCandidates(request)
             return NFKMLXGenerationBackend.rerank(documents, job: job) { score(query: query, document: $0) }

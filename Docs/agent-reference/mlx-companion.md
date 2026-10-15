@@ -66,6 +66,30 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   - `NFKMLXTensorBackend` derives its inputs from the configured ports.
   - A new model that reads a request key beyond its class's own adds it at the construction site, or
     the declaration lies. `NFKMLXDeclaredKeysTests` covers the fixed sets, the unions, and the ports.
+- **Model catalog (2026-10-15).** `NFKMLXModelDescriptors` (`NFKMLXCatalog.swift`) is the
+  `NFKModelDescriptorProvider` that `NFKModelCatalog.sharedCatalog` looks up by name, so linking the
+  package lists its models.
+  - An entry is an internal `NFKMLXCatalogEntry` whose defaults are the package's: engine `mlx`, macOS 14
+    and iOS 17 on Apple silicon, resident weights, introduced in 0.4.0. Its `descriptor()` reads the
+    entry through `descriptorWithDictionary:error:`, the reader a plugin's manifest goes through. The
+    internal helpers `NFKModelPort.input` / `.output`, `NFKModelOption.option`, `NFKModelLicense.license`
+    / `.apache2` / `.mit` / `.inferKit`, `NFKModelSource.hub` / `.noDownload`, and
+    `NFKModelVariant.variant` keep an entry short.
+  - Entries live per modality. `NFKMLXCatalogReference.swift` holds the six stand-ins: `standIn`, source
+    kind `none`, InferKit's MIT license. `NFKMLXCatalogImage`, `…Video`, `…Language`, and `…Audio` each
+    hold `entries` and `registerAdditionalModels()`, which `NFKMLXReferenceModels.registerAll` calls. A
+    model with a factory and no registry name registers there, under its entry's `registryName`, with
+    no edit to `NFKMLXReferenceModels.swift`.
+  - Every backend class declares `supportedOutputKeys`: each result key it can write, conditional ones
+    included. The language backends share `NFKMLXToolCalling.outputKeys` (text, tool calls, assistant
+    turn). A set the configuration fixes follows it: the matting backend adds `NFKOutputMask` when it
+    emits the matte, the tensor backend lists its output ports, and the separators list their stems.
+    `NFKMLXGenerationBackend.init` takes a required `outputKeys:`, so each closure backend names what
+    its closure writes.
+  - `NFKMLXCatalogTests` checks that the shared catalog finds the provider and hides the stand-ins, that
+    every descriptor round-trips through its dictionary, that identifiers are unique, that every
+    registry name is registered after `registerAll()`, and that each stand-in backend declares exactly
+    its descriptor's ports and options.
 - **Reasoning and usage (2026-09-19).** The core's three reasoning keys reach the MLX text backends.
   `NFKMLXReasoning.swift` holds the pieces; `NFKMLXReasoningTests` covers them without the runtime,
   since all of it is text work.

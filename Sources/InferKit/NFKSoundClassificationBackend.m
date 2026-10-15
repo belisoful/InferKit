@@ -94,6 +94,11 @@
 	return [NSSet setWithObject:NFKInputAudio];
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithArray:@[ NFKOutputSegments, NFKOutputClassifications ]];
+}
+
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 												  error:(NSError **)outError
 {

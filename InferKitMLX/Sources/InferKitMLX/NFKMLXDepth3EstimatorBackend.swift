@@ -37,7 +37,8 @@ extension NFKMLXDepth3Estimator {
     @objc(inferenceBackend)
     public func inferenceBackend() -> any NFKInferenceBackend {
         NFKMLXGenerationBackend(identifier: Self.estimatorModelName, inputKeys: [NFKInputImage],
-                                parameterKeys: []) { [self] request, job in
+                                parameterKeys: [],
+                                outputKeys: [NFKOutputImage, NFKOutputStructured]) { [self] request, job in
             guard let image = try NFKMLXGenerationBackend.image(request, NFKInputImage) else {
                 throw NFKMLXError.unsupportedInput
             }

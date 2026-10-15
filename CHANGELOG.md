@@ -11,6 +11,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitAppleSwift (companion)
 
+#### The Swift-only engines in the catalog
+
+- `NFKAppleSwiftModelDescriptors` describes SpeechAnalyzer, Translation, document reading, and lens-smudge
+  detection for `NFKModelCatalog`, and each backend declares its outputs.
+
 #### Apple's Swift-only APIs, reachable from Objective-C
 
 - A third companion package hosts the Apple inference APIs the core cannot: `SpeechAnalyzer` is an
@@ -56,6 +61,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `+[NFKModelDescriptor descriptorWithIdentifier:derivedFromBackend:]` describes a backend an app
   builds from the keys it declares. `NFKInferenceBackend` gains the optional `supportedOutputKeys`,
   the result keys a backend writes, beside `supportedInputKeys` and `supportedParameterKeys`.
+- Every core backend declares `supportedOutputKeys`, the remote ones included. `NFKInferenceServer` lists
+  a hosted model's outputs as `outputs` in its description, and `NFKRemoteInferKitBackend` and
+  `NFKBalancedBackend` read them back.
+- `NFKAppleModelDescriptors` describes the Apple-framework engines (engine `apple`): one descriptor per
+  engine and task, built by `+backendNamed:`, with the operating system each needs.
 
 #### Models as tools
 
@@ -670,6 +680,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### Every model describes itself in the catalog
+
+- `NFKMLXModelDescriptors` adds the MLX models to `NFKModelCatalog.sharedCatalog` when the package is
+  linked, the six reference stand-ins marked as such.
+- Every MLX backend declares `supportedOutputKeys`. `NFKMLXGenerationBackend` takes its output keys as a
+  required argument, so each model it wraps states what it returns.
 
 #### Half-precision forwards compute MLX's arithmetic, or PyTorch's
 
@@ -2777,6 +2794,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   sigmas for all three presets.
 
 ### InferKitFoundationModels (companion)
+
+#### The system language model in the catalog
+
+- `NFKFoundationModelsDescriptors` describes the system language model for `NFKModelCatalog`, and
+  `NFKFoundationModelsBackend` declares its outputs.
 
 #### Apple's tools and the core's, both ways
 

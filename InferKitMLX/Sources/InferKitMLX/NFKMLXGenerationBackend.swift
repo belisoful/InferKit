@@ -32,6 +32,7 @@ public final class NFKMLXGenerationBackend: NSObject, NFKInferenceBackend {
     private let identifier: String
     private let inputKeys: Set<String>
     private let parameterKeys: Set<String>
+    private let outputKeys: Set<String>
     private let ready: () -> Bool
     private let run: Run
     private let information: [String: Any]?
@@ -43,17 +44,19 @@ public final class NFKMLXGenerationBackend: NSObject, NFKInferenceBackend {
     ///   - identifier: the backend's `backendIdentifier`.
     ///   - inputKeys: the request inputs `run` reads.
     ///   - parameterKeys: the request parameters `run` reads.
+    ///   - outputKeys: the result keys `run` writes, every key it can write for some request.
     ///   - modelInfo: the `NFKModelInfo*` description of the model, when known.
     ///   - isReady: whether the model can run now.
     ///   - run: the per-request work.
     ///
     /// Introduced in InferKit 0.4.0.
     public init(identifier: String, inputKeys: Set<String>, parameterKeys: Set<String>,
-                modelInfo: [String: Any]? = nil, isReady: @escaping () -> Bool = { true },
+                outputKeys: Set<String>, modelInfo: [String: Any]? = nil, isReady: @escaping () -> Bool = { true },
                 run: @escaping Run) {
         self.identifier = identifier
         self.inputKeys = inputKeys
         self.parameterKeys = parameterKeys
+        self.outputKeys = outputKeys
         self.information = modelInfo
         self.ready = isReady
         self.run = run
@@ -69,6 +72,9 @@ public final class NFKMLXGenerationBackend: NSObject, NFKInferenceBackend {
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> { parameterKeys }
+
+    /// The result keys the backend writes. Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { outputKeys }
 
     /// The model's description under the `NFKModelInfo*` keys; empty where none was given. Introduced in
     /// InferKit 0.4.0.
@@ -201,7 +207,8 @@ extension NFKMLXGenerationBackend {
                               answer: @escaping (_ image: CGImage, _ question: String, _ maxTokens: Int) -> String)
         -> NFKMLXGenerationBackend {
         NFKMLXGenerationBackend(identifier: identifier, inputKeys: [NFKInputImage, NFKInputPrompt],
-                                parameterKeys: [NFKParameterMaxTokens]) { request, job in
+                                parameterKeys: [NFKParameterMaxTokens],
+                                outputKeys: [NFKOutputText]) { request, job in
             let image = try requiredImage(request, NFKInputImage)
             let question = try requiredText(request, NFKInputPrompt)
             let maxTokens = max(number(request, NFKParameterMaxTokens)?.intValue ?? defaultAnswerTokens, 0)

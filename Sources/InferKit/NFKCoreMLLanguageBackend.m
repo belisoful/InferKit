@@ -138,6 +138,11 @@ API_AVAILABLE(macos(15.0), ios(18.0), tvos(18.0))
 	return [NSSet setWithArray:@[ NFKInputPrompt, NFKInputMessages ]];
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithArray:@[ NFKOutputText, NFKOutputStructured ]];
+}
+
 - (BOOL)prepareWithError:(NSError * _Nullable *)outError
 {
 	if ([self isReady]) {

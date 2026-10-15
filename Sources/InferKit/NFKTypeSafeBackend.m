@@ -77,6 +77,11 @@ static NSSet<NSString *> *NFKTypeSafeReservedFields(void)
 	return [NSSet setWithArray:@[ NFKInputState, NFKInputQuestions, NFKInputPrompt, NFKInputMessages ]];
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithArray:@[ NFKOutputAnswers, NFKOutputStructured, NFKOutputUsage ]];
+}
+
 - (nullable NSDictionary<NSString *, NFKDecisionAnswer *> *)answersForState:(id)state
 																   questions:(NSDictionary<NSString *, NFKDecisionQuestion *> *)questions
 																	   error:(NSError * _Nullable *)outError

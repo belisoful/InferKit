@@ -871,6 +871,10 @@ public final class NFKMLXAllInOneBackend: NSObject, NFKInferenceBackend {
     @objc public var supportedParameterKeys: Set<String> { [] }
     @objc public var supportedInputKeys: Set<String> { [NFKInputAudio] }
 
+    /// The result keys the backend writes: the sections, the beats, and the tempo when the analysis finds
+    /// one. Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputSegments, NFKOutputBeats, NFKOutputTempo] }
+
     /// Whether the backend can take a mixture, which needs the separator, rather than four stems.
     @objc public var separatesMixtures: Bool { holder.separator != nil }
 

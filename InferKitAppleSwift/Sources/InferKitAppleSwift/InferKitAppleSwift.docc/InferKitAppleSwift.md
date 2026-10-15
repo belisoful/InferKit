@@ -58,3 +58,7 @@ reported as `kNFKError_InferenceNotReady`.
 
 - ``NFKSpeechAnalyzerProvider``
 - ``NFKTranslationProvider``
+
+### Model catalog
+
+- ``NFKAppleSwiftModelDescriptors``

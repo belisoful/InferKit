@@ -124,6 +124,11 @@ static NSInteger NFKImageGreatestCommonDivisor(NSInteger a, NSInteger b)
 	return @"remote-image";
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithArray:@[ NFKOutputImage, NFKOutputImages, NFKRemoteBackendRawKey ]];
+}
+
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 												  error:(NSError * _Nullable *)outError
 {

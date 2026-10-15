@@ -38,6 +38,11 @@
 	return [NSSet setWithObject:NFKInputImage];
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithObject:NFKOutputMask];
+}
+
 // The two newer kinds postdate the core's floor, so readiness is a question the OS answers.
 - (BOOL)isKindAvailable
 {

@@ -147,6 +147,9 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputPrompt, NFKInputMessages, NFKInputImage] }
 
+    /// The result keys the backend writes. Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputUsage] }
+
     /// Whether the release carries a vision tower, so a request may attach `NFKInputImage`.
     @objc public var acceptsImages: Bool { holder.model.acceptsImages }
 

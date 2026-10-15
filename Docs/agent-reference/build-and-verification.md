@@ -105,8 +105,8 @@ classifier as macOS 12, so every use sits under `@available`; the zero-warning g
 unguarded call.
 
 1. `swift build` + `swift test` on the host — **0 warnings**, all tests green. Grep the log for
-   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 1088 tests
-   (2026-10-14): the Objective-C `- (void)test` methods under `Tests/` (990) and in
+   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 1103 tests
+   (2026-10-15): the Objective-C `- (void)test` methods under `Tests/` (1005) and in
    `Examples/NFKExamples.m` (51, the `InferKitExamples` target), plus the `func test` methods in
    `SwiftExamples/` (47).
 2. `xcodebuild build` for a `generic/platform=iOS` destination (cross-platform compile), and for tvOS
@@ -181,7 +181,7 @@ unguarded call.
    -skipPackagePluginValidation` throughout):
 
    ```
-   xcodebuild test -scheme InferKitMLXTests        …    # 2465 — the model and API suite
+   xcodebuild test -scheme InferKitMLXTests        …    # 2471 — the model and API suite
    xcodebuild test -scheme InferKitMLXExamples     …    #  137 — the Swift documented snippets
    xcodebuild test -scheme InferKitMLXObjCExamples …    #   54 — the Objective-C ones
    ```
@@ -212,17 +212,17 @@ unguarded call.
    reported success. The examples targets are what keeps a documented snippet from rotting, which is
    exactly what a silent skip defeats. The per-target schemes exist to make that impossible; keep one
    testable in each. Only MLX is forced onto xcodebuild — `swift test` runs every test target a
-   package declares, so the core (step 1's count), `InferKitFoundationModels` (95), and `InferKitAppleSwift`
-   (26) are covered by steps 1, 5, and 6 whatever Xcode does with their schemes.
+   package declares, so the core (step 1's count), `InferKitFoundationModels` (99), and `InferKitAppleSwift`
+   (30) are covered by steps 1, 5, and 6 whatever Xcode does with their schemes.
 5. `InferKitFoundationModels/` `swift build` + `swift test` when a change touches that companion. That
-   covers all 95 tests across its three test targets. Through Xcode it collapses the same way MLX does
-   — the generated `InferKitFoundationModels` scheme runs 75 and skips the 20 in the two examples
+   covers all 99 tests across its three test targets. Through Xcode it collapses the same way MLX does
+   — the generated `InferKitFoundationModels` scheme runs 79 and skips the 20 in the two examples
    targets — so it carries the same per-target shared schemes
-   (`InferKitFoundationModelsTests` / `…Examples` / `…ObjCExamples`, 75 / 11 / 9). Nothing here needs
+   (`InferKitFoundationModelsTests` / `…Examples` / `…ObjCExamples`, 79 / 11 / 9). Nothing here needs
    them, since this package evaluates under `swift test`; they exist so an Xcode run cannot quietly
    cover less than the command line does.
 6. `InferKitAppleSwift/` `swift build` + `swift test` when a change touches that companion. That covers
-   all 26 tests across its three test targets (16 / 6 / 4), one of which skips without an installed
+   all 30 tests across its three test targets (20 / 6 / 4), one of which skips without an installed
    translation model. The package carries no per-target shared schemes, so `swift test` is the run that
    covers all three targets.
 

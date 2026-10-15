@@ -60,6 +60,11 @@
 	return [NSSet setWithObject:NFKInputImages];
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithObject:NFKOutputImage];
+}
+
 - (BOOL)isReady
 {
 	switch (self.task) {

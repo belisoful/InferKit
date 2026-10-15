@@ -160,6 +160,13 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 								  NFKInputVideo, NFKInputAudio, NFKInputDocument, NFKInputDocuments ]];
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithArray:@[ NFKRemoteBackendTextKey, NFKOutputStructured, NFKOutputReasoning,
+								  NFKOutputToolCalls, NFKOutputAssistantMessage, NFKOutputUsage,
+								  NFKOutputCitations, NFKOutputServerToolResults, NFKRemoteBackendRawKey ]];
+}
+
 - (BOOL)isReady
 {
 	return self.endpointURL != nil && self.modelName.length > 0;

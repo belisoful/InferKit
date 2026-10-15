@@ -25,7 +25,8 @@ extension NFKMLXQwen3VLReranker {
     public func inferenceBackend() -> any NFKInferenceBackend {
         NFKMLXGenerationBackend(identifier: Self.modelName,
                                 inputKeys: [NFKInputPrompt, NFKInputImage, NFKInputDocuments],
-                                parameterKeys: [NFKMLXRerankKey.instruction]) { [self] request, job in
+                                parameterKeys: [NFKMLXRerankKey.instruction],
+                                outputKeys: [NFKOutputStructured]) { [self] request, job in
             let query = NFKMLXGenerationBackend.text(request, NFKInputPrompt)
             let queryImage = try NFKMLXGenerationBackend.image(request, NFKInputImage)
             if query == nil && queryImage == nil {

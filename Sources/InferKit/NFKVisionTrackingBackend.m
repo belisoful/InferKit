@@ -59,6 +59,14 @@
 	return [NSSet setWithObject:NFKInputImage];
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	if (self.kind == NFKVisionTrackingKindTrajectory) {
+		return [NSSet setWithObject:NFKOutputStructured];
+	}
+	return [NSSet setWithObject:NFKOutputDetections];
+}
+
 - (BOOL)isTracking
 {
 	return self.tracked != nil;

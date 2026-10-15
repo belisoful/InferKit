@@ -34,6 +34,8 @@ public final class NFKVisionDocumentBackend: NSObject, NFKInferenceBackend {
 
     @objc public var supportedInputKeys: Set<String> { [NFKInputImage] }
 
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputStructured] }
+
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         guard let image = NFKAppleImage.cgImage(in: request, key: NFKInputImage) else {

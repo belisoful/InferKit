@@ -313,7 +313,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 /*! An unload waiting for the model's runs and build to end. */
 @property (nonatomic, assign) BOOL unloadRequested;
 @property (nonatomic, strong) NSMutableArray<void (^)(NSError * _Nullable)> *loadHandlers;
-/*! The backend, inputs, parameters, and model entries of the backend the model last held. */
+/*! The backend, inputs, parameters, outputs, and model entries of the backend the model last held. */
 @property (nonatomic, copy) NSDictionary<NSString *, id> *lastDescription;
 @property (nonatomic, assign) NSTimeInterval loadStartedAt;
 @property (nonatomic, assign) NSTimeInterval loadedAt;
@@ -365,7 +365,8 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	return self.uptime();
 }
 
-/*! What a backend says about itself in a model entry: its identifier, inputs, parameters, and model. */
+/*! What a backend says about itself in a model entry: its identifier, inputs, parameters, outputs, and
+	model. */
 + (NSDictionary<NSString *, id> *)descriptionOfBackend:(id<NFKInferenceBackend>)backend
 {
 	NSMutableDictionary<NSString *, id> *description = [NSMutableDictionary dictionary];
@@ -375,6 +376,9 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	}
 	if ([backend respondsToSelector:@selector(supportedParameterKeys)]) {
 		description[@"parameters"] = [backend.supportedParameterKeys.allObjects sortedArrayUsingSelector:@selector(compare:)];
+	}
+	if ([backend respondsToSelector:@selector(supportedOutputKeys)]) {
+		description[@"outputs"] = [backend.supportedOutputKeys.allObjects sortedArrayUsingSelector:@selector(compare:)];
 	}
 	description[@"model"] = [backend respondsToSelector:@selector(modelInfo)] ? NFKServedJSONValues(backend.modelInfo) : @{};
 	return description;
@@ -2406,9 +2410,9 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 
 #pragma mark Models
 
-/*! A model's description: its backend's identifier, readiness, inputs, parameters, model, and status,
-	with its load and residency. A model that is not resident describes the backend it last held and
-	reports ready, since a request builds it. */
+/*! A model's description: its backend's identifier, readiness, inputs, parameters, outputs, model, and
+	status, with its load and residency. A model that is not resident describes the backend it last held
+	and reports ready, since a request builds it. */
 - (NSMutableDictionary<NSString *, id> *)descriptionOfModel:(NFKServedModel *)model
 {
 	NSTimeInterval timeout = [self idleTimeoutForModel:model];
@@ -2475,7 +2479,7 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 		}
 		if (model != nil) {
 			NSMutableDictionary<NSString *, id> *entry = [self descriptionOfModel:model];
-			[entry removeObjectsForKeys:@[ @"inputs", @"parameters" ]];
+			[entry removeObjectsForKeys:@[ @"inputs", @"parameters", @"outputs" ]];
 			entry[@"id"] = model.name;
 			[models addObject:entry];
 		}

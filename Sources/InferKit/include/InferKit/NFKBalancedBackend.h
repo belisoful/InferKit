@@ -179,7 +179,9 @@ typedef NS_ENUM(NSInteger, NFKBalancingPolicy) {
 	servers. Introduced in InferKit 0.4.0. */
 - (nullable NSString *)pinnedCertificateSHA256ForServerWithBaseURL:(NSURL *)baseURL;
 
-/*! Reads every server's status; YES when at least one can take the model now. */
+/*! Reads every server's status; YES when at least one can take the model now. A successful prepare
+	takes supportedInputKeys, supportedParameterKeys, and supportedOutputKeys from the chosen server's
+	description of the model; before it the balancer does not respond to those selectors. */
 - (BOOL)prepareWithError:(NSError * _Nullable *)outError;
 
 /*! The streamed form: the job reports the chosen server's progress and partial results, fails over as

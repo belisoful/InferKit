@@ -85,6 +85,9 @@ public final class NFKMLXBackend: NSObject, NFKInferenceBackend {
         NFKMLXTextToImage.encodedInputKeys.union([NFKInputImage, NFKInputMask])
     }
 
+    /// The result keys the backend writes. Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputImage] }
+
     @objc(prepareWithError:)
     public func prepare() throws {
         _ = try loaded()

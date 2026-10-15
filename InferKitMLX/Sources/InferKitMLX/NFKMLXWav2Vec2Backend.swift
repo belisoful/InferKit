@@ -181,6 +181,10 @@ public final class NFKMLXWav2Vec2Backend: NSObject, NFKInferenceBackend {
     @objc public var supportedParameterKeys: Set<String> { [] }
     @objc public var supportedInputKeys: Set<String> { [NFKInputAudio] }
 
+    /// The result keys the backend writes: the transcript of a release with a CTC head, and the pooled
+    /// embedding. Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputEmbedding] }
+
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         let job = submitInferenceJob(for: request)

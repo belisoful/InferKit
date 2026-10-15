@@ -11,6 +11,7 @@
 @interface NFKRemoteInferKitBackend ()
 @property (nonatomic, copy, nullable) NSSet<NSString *> *preparedInputKeys;
 @property (nonatomic, copy, nullable) NSSet<NSString *> *preparedParameterKeys;
+@property (nonatomic, copy, nullable) NSSet<NSString *> *preparedOutputKeys;
 @property (atomic, readwrite, strong, nullable) NFKServerLoad *lastReportedLoad;
 @end
 
@@ -80,6 +81,9 @@
 	if (selector == @selector(supportedParameterKeys)) {
 		return self.preparedParameterKeys != nil;
 	}
+	if (selector == @selector(supportedOutputKeys)) {
+		return self.preparedOutputKeys != nil;
+	}
 	return [super respondsToSelector:selector];
 }
 
@@ -91,6 +95,11 @@
 - (NSSet<NSString *> *)supportedParameterKeys
 {
 	return self.preparedParameterKeys ?: [NSSet set];
+}
+
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return self.preparedOutputKeys ?: [NSSet set];
 }
 
 - (BOOL)prepareWithError:(NSError * _Nullable *)outError
@@ -125,6 +134,9 @@
 	}
 	if ([description[@"parameters"] isKindOfClass:NSArray.class]) {
 		self.preparedParameterKeys = [NSSet setWithArray:description[@"parameters"]];
+	}
+	if ([description[@"outputs"] isKindOfClass:NSArray.class]) {
+		self.preparedOutputKeys = [NSSet setWithArray:description[@"outputs"]];
 	}
 	if (![description[@"ready"] boolValue]) {
 		return [self failWithCode:kNFKError_InferenceNotReady reason:@"the served model reports it is not ready" error:outError];

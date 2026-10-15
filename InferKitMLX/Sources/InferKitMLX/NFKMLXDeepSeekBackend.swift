@@ -299,6 +299,10 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
             : [NFKInputPrompt, NFKInputMessages, NFKInputImage]
     }
 
+    /// The result keys the backend writes: the reply, the tool calls and the assistant turn, and the usage.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { NFKMLXToolCalling.outputKeys.union([NFKOutputUsage]) }
+
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
         var options = defaults

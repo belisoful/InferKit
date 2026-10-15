@@ -70,6 +70,9 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputPrompt, NFKInputMessages] }
 
+    /// The result keys the backend writes. Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputUsage] }
+
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         var temperature: Float = 0
         var maximumTokens = 256

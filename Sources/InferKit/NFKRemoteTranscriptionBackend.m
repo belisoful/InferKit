@@ -123,6 +123,11 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 	return @"remote-transcription";
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithArray:@[ NFKOutputText, NFKOutputStructured, NFKOutputWords, NFKOutputSegments ]];
+}
+
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 												  error:(NSError * _Nullable *)outError
 {

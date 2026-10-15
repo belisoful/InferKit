@@ -194,6 +194,10 @@ public final class NFKMLXDiffusionBackend: NSObject, NFKInferenceBackend {
         encodedInputKeys.union([NFKInputImage, NFKInputMask])
     }
 
+    /// The result keys the backend writes: the decoded image under the configuration's output key. Introduced
+    /// in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { [configuration.outputKey] }
+
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         let job = submitInferenceJob(for: request)

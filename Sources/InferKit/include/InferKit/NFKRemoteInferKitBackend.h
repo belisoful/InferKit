@@ -28,9 +28,11 @@ NS_ASSUME_NONNULL_BEGIN
 				error the hosted backend raised, domain and code intact.
 
 				modelName picks among the server's models; nil runs the server's only model.
-				supportedInputKeys and supportedParameterKeys are the hosted backend's, known once
-				prepareWithError: has read the server's description of the model. Until then the
-				backend does not respond to either selector, which a caller reads as "not declared".
+				supportedInputKeys, supportedParameterKeys, and supportedOutputKeys are the hosted
+				backend's, known once prepareWithError: has read the server's description of the
+				model. Until then the backend does not respond to any of the three selectors, which a
+				caller reads as "not declared". A hosted backend that declares no set leaves its
+				selector unanswered after prepareWithError: as well.
 				Introduced in InferKit 0.4.0.
 */
 @interface NFKRemoteInferKitBackend : NSObject <NFKInferenceBackend>

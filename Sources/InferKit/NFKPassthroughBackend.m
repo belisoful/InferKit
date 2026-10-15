@@ -30,6 +30,12 @@
 	return @"passthrough";
 }
 
+// Without a map the result echoes the request's inputs, whose keys only the caller knows.
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return self.outputMap != nil ? [NSSet setWithArray:self.outputMap.allKeys] : [NSSet set];
+}
+
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 													error:(NSError **)outError
 {

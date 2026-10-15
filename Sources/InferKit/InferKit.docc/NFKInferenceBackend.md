@@ -23,8 +23,8 @@ if (backend.isReady) {
   first use.
 - `supportedParameterKeys` and `supportedInputKeys` state the keys a backend acts on, for a caller
   that has to know in advance: a router picking the engine a request needs, or a bridge presenting
-  the backend to another framework. Both are optional, and a backend that declares nothing is used
-  the way it always was.
+  the backend to another framework. `supportedOutputKeys` states the result keys it writes. All three
+  are optional, and a backend that declares nothing is used the way it always was.
 - A failure is an `NSError` in `NFKInferenceErrorDomain` whose code says what to do:
   `kNFKError_InferenceRefused` means the engine declined the content and retrying will not help,
   `kNFKError_InferenceRateLimited` means back off, and `kNFKError_RemoteUnreachable` means nothing

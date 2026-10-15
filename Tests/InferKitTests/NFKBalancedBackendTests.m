@@ -46,6 +46,11 @@
 	return [NSSet setWithObject:NFKInputPrompt];
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithObject:NFKOutputText];
+}
+
 - (NSDictionary<NSString *, id> *)modelInfo
 {
 	return @{ NFKModelInfoParameterCount: @42 };
@@ -576,6 +581,7 @@ static const NSTimeInterval NFKBalancedTestPatience = 60.0;
 	NSError *error = nil;
 	XCTAssertTrue([balancer prepareWithError:&error], @"%@", error);
 	XCTAssertEqualObjects(balancer.supportedInputKeys, [NSSet setWithObject:NFKInputPrompt]);
+	XCTAssertEqualObjects(balancer.supportedOutputKeys, [NSSet setWithObject:NFKOutputText]);
 	XCTAssertEqualObjects(balancer.modelInfo[NFKModelInfoParameterCount], @42);
 	for (NSInteger index = 0; index < 3; index++) {
 		XCTAssertEqualObjects([balancer runInferenceForRequest:[self request] error:&error].text, @"host", @"%@", error);

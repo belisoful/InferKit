@@ -42,6 +42,14 @@
 	return [NSSet setWithObject:NFKInputImage];
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	if (self.detectsLandmarks) {
+		return [NSSet setWithArray:@[ NFKOutputDetections, NFKOutputPose ]];
+	}
+	return [NSSet setWithObject:NFKOutputDetections];
+}
+
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 												  error:(NSError **)outError
 {

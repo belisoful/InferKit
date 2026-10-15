@@ -940,6 +940,10 @@ public final class NFKMLXHTDemucsBackend: NSObject, NFKInferenceBackend {
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputAudio] }
 
+    /// The result keys the backend writes: one per stem, named as the backend names it. Introduced in
+    /// InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { Set(stemNames.prefix(configuration.sources)) }
+
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         guard let (samples, sampleRate) = Self.audio(from: request) else {

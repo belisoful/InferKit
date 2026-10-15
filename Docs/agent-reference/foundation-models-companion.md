@@ -210,3 +210,18 @@ Models floor; the model itself needs Apple Intelligence enabled). It depends onl
   back. The Swift examples avoid the trap a second way, by asserting on a static helper such as
   `NFKFoundationModelsBackend.reasoningEffort(for:)` that needs no model and then skipping. Prefer
   the static helper where one exists, and gate on `isReady` where the example has to run inference.
+
+## Declared outputs and the catalog descriptor (2026-10-15)
+
+- `supportedOutputKeys` is `NFKOutputText`, `NFKOutputStructured`, `NFKOutputToolCalls`, and
+  `NFKOutputToolInvocations`, plus `NFKOutputReasoning` and `NFKOutputUsage` under the same
+  `#if compiler(>=6.4)` / `#available(macOS 27, iOS 27, *)` pair that adds the image inputs. No
+  output is required on every result: a turn that ends on an unhandled tool call drops an empty
+  `NFKOutputText`.
+- `NFKFoundationModelsDescriptors` (`@objc`, the name the shared catalog looks up) supplies one
+  descriptor, `foundation-models`: engine `foundation-models`, provider class
+  `NFKFoundationModelsProvider`, one `system` variant with source `system`, license "Apple system
+  framework", and requirements macOS 26 / iOS 26 with `requiresAppleSilicon` set, because Apple
+  Intelligence runs only on Apple silicon. Its ports and options are read off a fresh
+  `NFKFoundationModelsBackend`, so they follow the running OS; `vision-question-answering` joins
+  `text-generation` in its tasks where the backend takes `NFKInputImage`.

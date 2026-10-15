@@ -128,6 +128,12 @@ public final class NFKMLXMattingBackend: NSObject, NFKInferenceBackend {
         forwardInputKeys.union([NFKInputImage, NFKInputMask])
     }
 
+    /// The result keys the backend writes: the composite, and the matte on its own when the configuration
+    /// emits it. Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> {
+        configuration.emitsMatte ? [NFKOutputImage, NFKOutputMask] : [NFKOutputImage]
+    }
+
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         let job = submitInferenceJob(for: request)

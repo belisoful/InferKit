@@ -65,7 +65,8 @@ extension NFKMLXTimesFM {
     @objc(inferenceBackend)
     public func inferenceBackend() -> any NFKInferenceBackend {
         NFKMLXGenerationBackend(identifier: Self.modelName, inputKeys: [NFKMLXForecastKey.series],
-                                parameterKeys: NFKMLXTimesFMParameterKey.all.union([NFKMLXForecastKey.horizon])) {
+                                parameterKeys: NFKMLXTimesFMParameterKey.all.union([NFKMLXForecastKey.horizon]),
+                                outputKeys: [NFKOutputStructured]) {
             [self] request, job in
             let series = try NFKMLXGenerationBackend.forecastSeries(request)
             let horizon = NFKMLXGenerationBackend.forecastHorizon(request, fallback: net.configuration.outputPatchLength)

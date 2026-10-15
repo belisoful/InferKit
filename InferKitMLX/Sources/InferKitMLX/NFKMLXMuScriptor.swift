@@ -523,6 +523,10 @@ public final class NFKMLXMuScriptorBackend: NSObject, NFKInferenceBackend {
     @objc public var isReady: Bool { true }
     @objc public var backendIdentifier: String { identifier }
     @objc public var supportedInputKeys: Set<String> { [NFKInputAudio] }
+
+    /// The result keys the backend writes. Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputMIDI] }
+
     @objc public var supportedParameterKeys: Set<String> {
         [NFKMLXMuScriptorParameterKey.instrumentGroup, NFKMLXMuScriptorParameterKey.datasetClass]
     }

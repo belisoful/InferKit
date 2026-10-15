@@ -167,6 +167,7 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 - ``NFKModelCatalog``
 - ``NFKModelDescriptor``
 - ``NFKModelDescriptorProvider``
+- ``NFKAppleModelDescriptors``
 
 ### Detected & predicted value types
 

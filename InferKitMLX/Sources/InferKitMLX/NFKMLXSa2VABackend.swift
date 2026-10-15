@@ -400,6 +400,11 @@ public final class NFKMLXSa2VABackend: NSObject, NFKInferenceBackend {
     }
 
     public var supportedInputKeys: Set<String> { [NFKInputImage, NFKInputPrompt] }
+
+    /// The result keys the backend writes: the answer, and the mask when the answer segments a region.
+    /// Introduced in InferKit 0.4.0.
+    public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputMask] }
+
     public var isReady: Bool { true }
     public var backendIdentifier: String { NFKMLXSa2VA.modelName }
 

@@ -104,6 +104,10 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputPrompt, NFKInputMessages] }
 
+    /// The result keys the backend writes: the reply, the tool calls and the assistant turn of a tool
+    /// request, and the usage. Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { NFKMLXToolCalling.outputKeys.union([NFKOutputUsage]) }
+
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         var temperature: Float = 0
         var maximumTokens = 256

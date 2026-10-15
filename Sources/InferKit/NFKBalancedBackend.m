@@ -129,6 +129,7 @@ static BOOL NFKBalancedFailsOver(NSError * _Nullable error)
 @property (nonatomic, strong, nullable) dispatch_source_t discoveryTimer;
 @property (nonatomic, copy, nullable) NSSet<NSString *> *preparedInputKeys;
 @property (nonatomic, copy, nullable) NSSet<NSString *> *preparedParameterKeys;
+@property (nonatomic, copy, nullable) NSSet<NSString *> *preparedOutputKeys;
 @end
 
 @implementation NFKBalancedBackend
@@ -684,6 +685,9 @@ typedef struct {
 	if (selector == @selector(supportedParameterKeys)) {
 		return self.preparedParameterKeys != nil;
 	}
+	if (selector == @selector(supportedOutputKeys)) {
+		return self.preparedOutputKeys != nil;
+	}
 	return [super respondsToSelector:selector];
 }
 
@@ -695,6 +699,11 @@ typedef struct {
 - (NSSet<NSString *> *)supportedParameterKeys
 {
 	return self.preparedParameterKeys ?: [NSSet set];
+}
+
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return self.preparedOutputKeys ?: [NSSet set];
 }
 
 - (NSDictionary<NSString *, id> *)backendStatus
@@ -758,6 +767,7 @@ typedef struct {
 	if (prepared) {
 		self.preparedInputKeys = client.supportedInputKeys;
 		self.preparedParameterKeys = client.supportedParameterKeys;
+		self.preparedOutputKeys = [client respondsToSelector:@selector(supportedOutputKeys)] ? client.supportedOutputKeys : nil;
 	} else if (outError != NULL) {
 		*outError = error;
 	}

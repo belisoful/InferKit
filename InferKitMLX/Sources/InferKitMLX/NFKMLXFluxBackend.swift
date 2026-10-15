@@ -31,7 +31,8 @@ extension NFKMLXFlux {
     @objc(inferenceBackend)
     public func inferenceBackend() -> any NFKInferenceBackend {
         NFKMLXGenerationBackend(identifier: Self.modelName, inputKeys: Self.backendInputKeys,
-                                parameterKeys: Self.backendParameterKeys) { [self] request, job in
+                                parameterKeys: Self.backendParameterKeys,
+                                outputKeys: [NFKOutputImage]) { [self] request, job in
             let prompt = try NFKMLXGenerationBackend.requiredText(request, NFKInputPrompt)
             func parameter(_ key: String) -> NSNumber? { NFKMLXGenerationBackend.number(request, key) }
             let (savedSteps, savedGuidance) = (steps, guidance)

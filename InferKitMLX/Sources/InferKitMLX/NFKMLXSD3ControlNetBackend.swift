@@ -34,7 +34,8 @@ extension NFKMLXSD3ControlNetGenerator {
     @objc(inferenceBackend)
     public func inferenceBackend() -> any NFKInferenceBackend {
         NFKMLXGenerationBackend(identifier: Self.modelName, inputKeys: Self.backendInputKeys,
-                                parameterKeys: Self.backendParameterKeys) { [self] request, job in
+                                parameterKeys: Self.backendParameterKeys,
+                                outputKeys: [NFKOutputImage]) { [self] request, job in
             let prompt = try NFKMLXGenerationBackend.requiredText(request, NFKInputPrompt)
             let negative = NFKMLXGenerationBackend.text(request, NFKInputNegativePrompt)
             guard let control = request.input(forKey: NFKInputControl) else { throw NFKMLXError.unsupportedInput }

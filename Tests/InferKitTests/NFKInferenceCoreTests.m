@@ -10,6 +10,8 @@
 #import <InferKit/NFKPassthroughBackend.h>
 #import <InferKit/NFKRemoteBackend.h>
 #import <InferKit/NFKCoreMLLanguageBackend.h>
+#import <InferKit/NFKAsyncGenerationBackend.h>
+#import <InferKit/NFKToolLoop.h>
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
 
@@ -146,6 +148,41 @@
 	id<NFKInferenceBackend> backend = [NFKPassthroughBackend backend];
 	XCTAssertFalse([backend respondsToSelector:@selector(supportedParameterKeys)]);
 	XCTAssertFalse([backend respondsToSelector:@selector(supportedInputKeys)]);
+}
+
+- (void)testTheRemoteBackendDeclaresTheOutputsItWrites
+{
+	id<NFKInferenceBackend> backend = [NFKRemoteBackend backendWithEndpointURL:nil];
+	for (NSString *key in @[ NFKOutputText, NFKOutputReasoning, NFKOutputToolCalls, NFKOutputStructured,
+							 NFKOutputAudio, NFKOutputUsage, NFKOutputAssistantMessage, NFKRemoteBackendRawKey ]) {
+		XCTAssertTrue([backend.supportedOutputKeys containsObject:key], @"%@", key);
+	}
+	XCTAssertFalse([backend.supportedOutputKeys containsObject:NFKOutputEmbedding]);
+}
+
+- (void)testAPassthroughBackendDeclaresTheOutputsItsMapNames
+{
+	NFKPassthroughBackend *backend = [NFKPassthroughBackend backend];
+	XCTAssertEqualObjects(backend.supportedOutputKeys, [NSSet set], @"an echo writes the caller's own keys");
+	backend.outputMap = @{ NFKOutputImage: NFKInputImage, NFKOutputMask: @"alpha" };
+	NSSet *expected = [NSSet setWithObjects:NFKOutputImage, NFKOutputMask, nil];
+	XCTAssertEqualObjects(backend.supportedOutputKeys, expected);
+}
+
+- (void)testAToolLoopDeclaresItsBackendsOutputsAndItsOwn
+{
+	NFKToolLoop *loop = [[NFKToolLoop alloc] initWithBackend:[NFKRemoteBackend backendWithEndpointURL:nil] tools:@[]];
+	for (NSString *key in @[ NFKOutputText, NFKOutputToolCalls, NFKOutputMessages, NFKOutputToolInvocations,
+							 NFKOutputToolTurnLimitReached ]) {
+		XCTAssertTrue([loop.supportedOutputKeys containsObject:key], @"%@", key);
+	}
+}
+
+- (void)testAGenerationJobBackendDeclaresAnImageOrAClip
+{
+	NFKAsyncGenerationBackend *backend = [[NFKAsyncGenerationBackend alloc] init];
+	NSSet *expected = [NSSet setWithObjects:NFKOutputImage, NFKOutputVideo, nil];
+	XCTAssertEqualObjects(backend.supportedOutputKeys, expected);
 }
 
 #pragma mark Preparing through the protocol

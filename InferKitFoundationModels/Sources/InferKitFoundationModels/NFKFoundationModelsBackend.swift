@@ -189,6 +189,21 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
         return keys
     }
 
+    /// The result keys the backend writes: the reply under `NFKOutputText`, the parsed object of a
+    /// schema request under `NFKOutputStructured`, the calls a caller runs under `NFKOutputToolCalls`,
+    /// and the tools the session ran under `NFKOutputToolInvocations`. `NFKOutputReasoning` and
+    /// `NFKOutputUsage` are among them on macOS 27 / iOS 27, where the framework reports them.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> {
+        var keys: Set<String> = [NFKOutputText, NFKOutputStructured, NFKOutputToolCalls, NFKOutputToolInvocations]
+        #if compiler(>=6.4)
+        if #available(macOS 27, iOS 27, *) {
+            keys.formUnion([NFKOutputReasoning, NFKOutputUsage])
+        }
+        #endif
+        return keys
+    }
+
     /// Checks the chosen model's availability and loads its resources once, so the first request
     /// does not pay the warm-up. For Private Cloud Compute it also reads `contextSize`.
     @objc(prepareWithError:)

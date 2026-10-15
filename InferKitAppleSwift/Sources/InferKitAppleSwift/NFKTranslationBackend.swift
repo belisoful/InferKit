@@ -70,6 +70,8 @@ public final class NFKTranslationBackend: NSObject, NFKInferenceBackend {
 
     @objc public var supportedInputKeys: Set<String> { [NFKInputPrompt] }
 
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText] }
+
     @objc public var supportedParameterKeys: Set<String> {
         [NFKParameterSourceLanguage, NFKParameterTargetLanguage]
     }

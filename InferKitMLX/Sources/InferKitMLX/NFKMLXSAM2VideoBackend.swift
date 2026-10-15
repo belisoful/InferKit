@@ -45,7 +45,8 @@ extension NFKMLXSAM2 {
     static func videoBackend(net: NFKMLXSAM2TrackerNet) -> any NFKInferenceBackend {
         let holder = NFKMLXSAM2VideoHolder(net)
         return NFKMLXGenerationBackend(identifier: videoModelName, inputKeys: videoInputKeys,
-                                       parameterKeys: videoParameterKeys) { request, job in
+                                       parameterKeys: videoParameterKeys,
+                                       outputKeys: [NFKOutputVideo, NFKOutputStructured]) { request, job in
             guard let asset = request.input(forKey: NFKInputVideo) as? NFKVideoAsset,
                   let sourceURL = asset.fileURL else {
                 throw NFKMLXError.unsupportedInput

@@ -41,6 +41,18 @@ vocabulary strings. The [examples](examples.md#model-catalog) show the API in us
 
 `NFKRemoteModelCatalog` is a different class: it lists what a remote provider serves at the moment.
 
+Each package describes what it ships:
+
+- `NFKAppleModelDescriptors` (the core): the Apple-framework engines, with engine `apple`, each built by
+  `+backendNamed:` from its identifier. Their ports are read from the backend that name builds.
+- `NFKMLXModelDescriptors` (InferKitMLX): the MLX models, built by `NFKMLXModelRegistry` under their
+  `registryName`.
+- `NFKFoundationModelsDescriptors` and `NFKAppleSwiftModelDescriptors`: the system language model and the
+  Swift-only Apple engines.
+
+A backend's outputs are its `supportedOutputKeys`, the result keys it can write. `NFKInferenceServer`
+lists them as `outputs` in a model's description, and `NFKRemoteInferKitBackend` reads them back.
+
 ## Manifest
 
 ```json
@@ -77,7 +89,7 @@ vocabulary strings. The [examples](examples.md#model-catalog) show the API in us
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `id` | string | yes | The identifier, unique within a catalog, such as `"mlx.qwen3"`. |
+| `id` | string | yes | The identifier, unique within a catalog, such as `"qwen3"`. A model an engine builds by name uses that name (its `registryName`), which is also the name a server hosts it under. |
 | `displayName` | string | no | The name a user interface shows. The identifier when absent. |
 | `family` | string | yes | The architecture shared by related models, such as `"qwen3"` or `"whisper"`. |
 | `summary` | string | no | A sentence on what the model does. |

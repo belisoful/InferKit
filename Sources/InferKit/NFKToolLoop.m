@@ -119,6 +119,13 @@
 	return [keys setByAddingObject:NFKParameterTools];
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	NSSet *keys = [self.backend respondsToSelector:@selector(supportedOutputKeys)] ? self.backend.supportedOutputKeys : [NSSet set];
+	return [keys setByAddingObjectsFromArray:@[ NFKOutputMessages, NFKOutputToolInvocations, NFKOutputUsage,
+												NFKOutputToolTurnLimitReached ]];
+}
+
 - (NSDictionary<NSString *, id> *)modelInfo
 {
 	return [self.backend respondsToSelector:@selector(modelInfo)] ? self.backend.modelInfo : @{};

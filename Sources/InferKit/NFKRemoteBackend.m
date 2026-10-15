@@ -188,6 +188,14 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 								  NFKInputVideo, NFKInputAudio, NFKInputDocument, NFKInputDocuments ]];
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithArray:@[ NFKRemoteBackendTextKey, NFKOutputReasoning, NFKOutputUsage,
+								  NFKOutputToolCalls, NFKOutputStructured, NFKOutputAudio,
+								  NFKOutputAssistantMessage, NFKOutputImage, NFKOutputImages,
+								  NFKOutputCitations, NFKOutputServerToolResults, NFKRemoteBackendRawKey ]];
+}
+
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 													error:(NSError * _Nullable *)outError
 {

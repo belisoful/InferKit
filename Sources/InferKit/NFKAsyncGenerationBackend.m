@@ -43,6 +43,11 @@
 	return @"async-generation";
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithArray:@[ NFKOutputImage, NFKOutputVideo ]];
+}
+
 - (NFKInferenceJob *)submitInferenceJobForRequest:(NFKInferenceRequest *)request
 {
 	NFKInferenceJob *job = [[NFKInferenceJob alloc] init];

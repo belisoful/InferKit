@@ -352,6 +352,9 @@ public final class NFKMLXSigLIP2Backend: NSObject, NFKInferenceBackend {
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputImage] }
 
+    /// The result keys the backend writes. Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputEmbedding] }
+
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         guard let value = request.input(forKey: NFKInputImage), CFGetTypeID(value as CFTypeRef) == CGImage.typeID else {

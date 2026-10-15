@@ -59,6 +59,11 @@
 	return [NSSet setWithObject:NFKInputPrompt];
 }
 
+- (NSSet<NSString *> *)supportedOutputKeys
+{
+	return [NSSet setWithObject:NFKOutputEmbedding];
+}
+
 - (NSInteger)dimension
 {
 	return (NSInteger)[self embeddingForLanguage:self.language].dimension;

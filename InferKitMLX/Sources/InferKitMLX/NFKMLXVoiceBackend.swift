@@ -40,7 +40,8 @@ extension NFKMLXFastSpeech2 {
     /// returns a mono WAV at ``NFKMLXVoice/sampleRate`` as an `NFKAudioAsset` under `NFKOutputAudio`. A
     /// phonemizer that fails fails the request.
     static func voiceBackend(_ voice: NFKMLXVoice, phonemizer: any NFKMLXPhonemizing) -> any NFKInferenceBackend {
-        NFKMLXGenerationBackend(identifier: voiceModelName, inputKeys: voiceInputKeys, parameterKeys: []) { request, job in
+        NFKMLXGenerationBackend(identifier: voiceModelName, inputKeys: voiceInputKeys, parameterKeys: [],
+                                outputKeys: [NFKOutputAudio]) { request, job in
             let text = NFKMLXSpeechBackend.text(from: request)
             guard !text.isEmpty else { throw NFKMLXError.unsupportedInput }
             job.reportProgress(0)
@@ -165,7 +166,8 @@ extension NFKMLXFastSpeech2 {
         let tts = NFKMLXTTS(phonemizer: bridge, symbols: symbols)
         try tts.loadWeights(acousticURL: acousticURL, vocoderURL: vocoderURL)
         let sampleRate = 22_050
-        return NFKMLXGenerationBackend(identifier: "tts", inputKeys: voiceInputKeys, parameterKeys: []) { request, job in
+        return NFKMLXGenerationBackend(identifier: "tts", inputKeys: voiceInputKeys, parameterKeys: [],
+                                       outputKeys: [NFKOutputAudio]) { request, job in
             let text = NFKMLXSpeechBackend.text(from: request)
             guard !text.isEmpty else { throw NFKMLXError.unsupportedInput }
             job.reportProgress(0)

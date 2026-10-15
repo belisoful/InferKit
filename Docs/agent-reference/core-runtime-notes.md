@@ -267,6 +267,29 @@ InferKit 0.4.0. The consumer reference is `Docs/model-catalog.md`. The decisions
   `supportedParameterKeys`, and `supportedOutputKeys` (the last added to `NFKInferenceBackend` with
   the catalog), sorts each, and types each key from the table. The family is the backend's
   `NFKModelInfoArchitecture` when its `modelInfo` reports one, else its `backendIdentifier`.
+- **Every core backend declares its outputs (2026-10-15).** Each set is read off the backend's own
+  result paths, conditional keys included: `NFKRemoteBackendRawKey` is in the set of every remote
+  backend that writes it, and the streamed partial results write a subset of the final keys. A set
+  follows the backend's configuration where its result does: `NFKVisionFaceBackend` drops
+  `NFKOutputPose` when `detectsLandmarks` is NO, `NFKVisionTrackingBackend` writes
+  `NFKOutputStructured` for trajectories and `NFKOutputDetections` otherwise, `NFKCoreMLBackend`
+  lists the loaded model's output features (none before load), and `NFKPassthroughBackend` lists its
+  map's keys (none when it echoes). `NFKToolLoop` adds its four keys to its backend's set.
+- **The server carries the outputs.** `NFKInferenceServer`'s model entry (`/v1/models/<name>`,
+  under `inferkit`) carries `outputs` beside `inputs` and `parameters`, sorted, and only when the
+  backend declares a set. The status route strips all three. `NFKRemoteInferKitBackend` reads
+  `outputs` in `prepareWithError:` and answers `supportedOutputKeys` only when the entry had it;
+  `NFKBalancedBackend` copies the chosen server's set the same way.
+- **The Apple provider.** `NFKAppleModelDescriptors` (public header) is the core's provider: one
+  descriptor per Apple-framework engine, engine `apple`, source `system` with layout `none`, license
+  "Apple system framework", and the identifier as the registry name. `+backendNamed:` is the
+  registry: it builds the backend a registry name names, and each descriptor's ports and options
+  are read off that backend, so they cannot drift from it. VideoToolbox gets one descriptor per
+  task (`videotoolbox-super-resolution`, `-frame-interpolation`, `-optical-flow`) because the
+  tasks differ in inputs, floor, and capability; tracking gets `vision-tracking` and
+  `vision-tracking-trajectory` because the kinds differ in outputs. `vision-coreml` has none: it
+  runs a model the app supplies. The VideoToolbox descriptors set `requiresAppleSilicon`, as the
+  frame processors need it; the rest do not.
 
 ## Hugging Face hub cache policy
 

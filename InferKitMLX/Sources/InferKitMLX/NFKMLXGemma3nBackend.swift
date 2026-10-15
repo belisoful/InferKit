@@ -147,6 +147,9 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
         [NFKInputPrompt, NFKInputMessages, NFKInputImage, NFKInputAudio]
     }
 
+    /// The result keys the backend writes. Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputUsage] }
+
     @objc public var isReady: Bool { true }
 
     private let modelInfoCache = NFKMLXModelInfoCache()

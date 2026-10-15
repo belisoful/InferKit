@@ -500,6 +500,12 @@ public final class NFKMLXCosmosTokenizerBackend: NSObject, NFKInferenceBackend {
         tokenizer.variant.isVideo ? [NFKInputVideo, NFKInputImage] : [NFKInputImage]
     }
 
+    /// The result keys the backend writes: the reconstructed image, and on a video tokenizer the
+    /// reconstructed clip. Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> {
+        tokenizer.variant.isVideo ? [NFKOutputVideo, NFKOutputImage] : [NFKOutputImage]
+    }
+
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         let colorSpace = CGColorSpaceCreateDeviceRGB()

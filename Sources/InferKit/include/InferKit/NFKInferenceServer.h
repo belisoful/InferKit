@@ -238,7 +238,7 @@ NS_SWIFT_SENDABLE
 				- A model hosted with addBackend:forModelName: is resident from the start and stays
 				  resident, since the server has no way to build its backend again.
 				- A model that is not resident reports ready, since a request builds it, and describes
-				  the backend it last held: its identifier, inputs, parameters, and modelInfo.
+				  the backend it last held: its identifier, inputs, parameters, outputs, and modelInfo.
 				Each model's "residency" object carries state (not_loaded, loading, or resident),
 				unloadable, pinned, last_used (seconds since 1970), idle_timeout_seconds (absent when
 				the model is not unloaded for idleness), load_seconds, load_error, loads, and unloads.
