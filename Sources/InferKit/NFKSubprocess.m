@@ -27,6 +27,8 @@ static const NSTimeInterval NFKSubprocessDrainGrace = 0.5;
 /*! How often a blocked write wakes to see whether standard input is closing, in milliseconds. */
 static const int NFKSubprocessWritePollMilliseconds = 100;
 
+static const NSTimeInterval NFKSubprocessDefaultWriteTimeout = 30;
+
 static void *NFKSubprocessQueueKey = &NFKSubprocessQueueKey;
 
 /*! One launch: the process, its pipes, and the output not yet framed into a line. Touched only on
@@ -98,7 +100,7 @@ static void *NFKSubprocessQueueKey = &NFKSubprocessQueueKey;
 		_inheritsEnvironment = YES;
 		_standardErrorCapacity = 65536;
 		_maximumLineLength = 256u * 1024u * 1024u;
-		_writeTimeout = 30;
+		_writeTimeout = NFKSubprocessDefaultWriteTimeout;
 		_stopInputTimeout = 2;
 		_stopTerminateTimeout = 3;
 		_restartPolicy = NFKSubprocessRestartPolicyNever;
@@ -717,8 +719,8 @@ static void *NFKSubprocessQueueKey = &NFKSubprocessQueueKey;
 	}
 	const uint8_t *bytes = data.bytes;
 	NSUInteger offset = 0;
-	NSTimeInterval timeout = self.writeTimeout;
-	NSDate *deadline = timeout > 0 ? [NSDate dateWithTimeIntervalSinceNow:timeout] : nil;
+	NSTimeInterval timeout = self.writeTimeout > 0 ? self.writeTimeout : NFKSubprocessDefaultWriteTimeout;
+	NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
 	while (offset < data.length) {
 		if (self.inputClosing) {
 			return [self fail:error code:NFKSubprocessErrorNotRunning posixCode:0 reason:@"the process's standard input closed during the write"];
@@ -732,7 +734,7 @@ static void *NFKSubprocessQueueKey = &NFKSubprocessQueueKey;
 			continue;
 		}
 		if (count < 0 && errno == EAGAIN) {
-			if (deadline != nil && deadline.timeIntervalSinceNow <= 0) {
+			if (deadline.timeIntervalSinceNow <= 0) {
 				return [self fail:error code:NFKSubprocessErrorWriteTimedOut posixCode:0
 						   reason:[NSString stringWithFormat:@"the process read nothing for %g seconds", timeout]];
 			}
@@ -778,19 +780,19 @@ static void *NFKSubprocessQueueKey = &NFKSubprocessQueueKey;
 	});
 }
 
-- (void)stop
+- (BOOL)stop
 {
 	if (self.isOnEventQueue) {
 		[self beginStopWithCompletionHandler:nil];
-		return;
+		return NO;
 	}
 	dispatch_semaphore_t stopped = dispatch_semaphore_create(0);
 	[self stopWithCompletionHandler:^{
 		dispatch_semaphore_signal(stopped);
 	}];
 	// SIGKILL cannot be ignored, so the wait ends; the bound covers a process the kernel holds.
-	NSTimeInterval bound = self.stopInputTimeout + self.stopTerminateTimeout + NFKSubprocessDrainGrace + 5;
-	dispatch_semaphore_wait(stopped, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(bound * NSEC_PER_SEC)));
+	NSTimeInterval bound = MAX(self.stopInputTimeout, 0.0) + MAX(self.stopTerminateTimeout, 0.0) + NFKSubprocessDrainGrace + 5;
+	return dispatch_semaphore_wait(stopped, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(bound * NSEC_PER_SEC))) == 0;
 }
 
 - (void)beginStopWithCompletionHandler:(nullable void (^)(void))completionHandler

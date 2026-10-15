@@ -163,8 +163,8 @@ API_UNAVAILABLE(ios, tvos, watchos)
 	268435456 (256 MiB). */
 @property (nonatomic, assign) NSUInteger maximumLineLength;
 
-/*! How long writeData:error: waits for the child to read, in seconds. 0 waits until the child reads
-	or exits. Defaults to 30. */
+/*! How long writeData:error: waits for the child to read, in seconds. Defaults to 30. A value that
+	is not positive uses 30. */
 @property (nonatomic, assign) NSTimeInterval writeTimeout;
 
 /*! How long stop waits after closing standard input before it sends SIGTERM, in seconds. Defaults to 2. */
@@ -241,9 +241,10 @@ API_UNAVAILABLE(ios, tvos, watchos)
 */
 - (void)stopWithCompletionHandler:(nullable void (^ NS_SWIFT_SENDABLE)(void))completionHandler;
 
-/*! Stops the process and waits until it has exited. Called from a state or line handler, it starts
-	the stop and returns without waiting. */
-- (void)stop;
+/*! Stops the process and waits until it has exited, up to stopInputTimeout plus stopTerminateTimeout
+	plus 5.5 seconds. Returns whether no process runs when it returns. Called from a state or line
+	handler, it starts the stop and returns NO without waiting. */
+- (BOOL)stop;
 
 @end
 

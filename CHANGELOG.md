@@ -75,7 +75,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   the server, and the client lists and calls its tools through the same API it uses over Streamable
   HTTP. The client answers the server's `ping` and refuses its other requests with JSON-RPC error
   `-32601`.
-- A request past `timeout` sends `notifications/cancelled` and returns `kNFKError_RemoteUnreachable`.
+- Every request has a deadline: `timeout` (600 s) for a tool call, and `protocolTimeout` (30 s) for
+  `initialize`, `ping`, and `tools/list`. A request past its deadline returns
+  `kNFKError_RemoteUnreachable`, and over stdio the client also sends `notifications/cancelled`.
   A server that exits fails every pending call with `kNFKError_RemoteUnreachable`, naming its exit
   status or signal and its last log line. It stays down, and later calls fail the same way, until
   `connectWithError:` launches it or `NFKSubprocessRestartPolicyOnCrash` relaunches it; the client

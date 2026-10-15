@@ -29,6 +29,9 @@
 
 @end
 
+static const NSTimeInterval NFKMCPToolCallTimeout = 600;
+static const NSTimeInterval NFKMCPProtocolTimeout = 30;
+
 /*! A request sent to a stdio server, waiting for the reply the reader hands it. */
 @interface NFKMCPPendingRequest : NSObject
 @property (nonatomic, strong) dispatch_semaphore_t answered;
@@ -119,7 +122,8 @@
 - (void)setUpRequestState
 {
 	self.additionalHeaders = @{};
-	self.timeout = 600;
+	self.timeout = NFKMCPToolCallTimeout;
+	self.protocolTimeout = NFKMCPProtocolTimeout;
 	self.nextIdentifier = 1;
 	self.launchesOnNextCall = YES;
 	self.lock = [[NSLock alloc] init];
@@ -188,7 +192,7 @@
 #endif
 	self.launchesOnNextCall = YES;
 	if (self.transport == NFKMCPTransportStreamableHTTP && self.sessionIdentifier != nil) {
-		NSMutableURLRequest *request = [self HTTPRequestWithMethod:@"DELETE"];
+		NSMutableURLRequest *request = [self HTTPRequestWithMethod:@"DELETE" timeout:[self timeoutForMethod:nil]];
 		[NFKRemoteTransport sendRequest:request session:NSURLSession.sharedSession response:NULL error:NULL];
 	}
 	[self forgetSession];
@@ -350,12 +354,23 @@
 	dictionary once the server accepts the notification. */
 - (nullable NSDictionary *)sendMessage:(NSDictionary *)message expectingReplyTo:(nullable NSNumber *)identifier error:(NSError **)error
 {
+	NSTimeInterval timeout = [self timeoutForMethod:message[@"method"]];
 #if TARGET_OS_OSX
 	if (self.transport == NFKMCPTransportStdio) {
-		return [self sendStdioMessage:message expectingReplyTo:identifier error:error];
+		return [self sendStdioMessage:message expectingReplyTo:identifier timeout:timeout error:error];
 	}
 #endif
-	return [self sendHTTPMessage:message expectingReplyTo:identifier error:error];
+	return [self sendHTTPMessage:message expectingReplyTo:identifier timeout:timeout error:error];
+}
+
+/*! A tool call waits timeout; every other request waits protocolTimeout. A value that is not
+	positive takes the default, so every wait has a deadline. */
+- (NSTimeInterval)timeoutForMethod:(nullable NSString *)method
+{
+	if ([method isEqualToString:@"tools/call"]) {
+		return self.timeout > 0 ? self.timeout : NFKMCPToolCallTimeout;
+	}
+	return self.protocolTimeout > 0 ? self.protocolTimeout : NFKMCPProtocolTimeout;
 }
 
 - (BOOL)prepareTransportWithError:(NSError **)error
@@ -391,11 +406,11 @@
 
 #pragma mark Streamable HTTP
 
-- (NSMutableURLRequest *)HTTPRequestWithMethod:(NSString *)method
+- (NSMutableURLRequest *)HTTPRequestWithMethod:(NSString *)method timeout:(NSTimeInterval)timeout
 {
 	NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:self.endpointURL];
 	request.HTTPMethod = method;
-	request.timeoutInterval = self.timeout;
+	request.timeoutInterval = timeout;
 	[self.additionalHeaders enumerateKeysAndObjectsUsingBlock:^(NSString *field, NSString *value, BOOL *stop) {
 		[request setValue:value forHTTPHeaderField:field];
 	}];
@@ -411,9 +426,10 @@
 	return request;
 }
 
-- (nullable NSDictionary *)sendHTTPMessage:(NSDictionary *)message expectingReplyTo:(nullable NSNumber *)identifier error:(NSError **)error
+- (nullable NSDictionary *)sendHTTPMessage:(NSDictionary *)message expectingReplyTo:(nullable NSNumber *)identifier
+								   timeout:(NSTimeInterval)timeout error:(NSError **)error
 {
-	NSMutableURLRequest *request = [self HTTPRequestWithMethod:@"POST"];
+	NSMutableURLRequest *request = [self HTTPRequestWithMethod:@"POST" timeout:timeout];
 	request.HTTPBody = [NSJSONSerialization dataWithJSONObject:message options:0 error:NULL];
 	[request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
 	[request setValue:@"application/json, text/event-stream" forHTTPHeaderField:@"Accept"];
@@ -609,7 +625,8 @@
 	});
 }
 
-- (nullable NSDictionary *)sendStdioMessage:(NSDictionary *)message expectingReplyTo:(nullable NSNumber *)identifier error:(NSError **)error
+- (nullable NSDictionary *)sendStdioMessage:(NSDictionary *)message expectingReplyTo:(nullable NSNumber *)identifier
+									timeout:(NSTimeInterval)timeout error:(NSError **)error
 {
 	NSError *encodingError = nil;
 	NSData *line = [NSJSONSerialization dataWithJSONObject:message options:NSJSONWritingWithoutEscapingSlashes error:&encodingError];
@@ -633,12 +650,11 @@
 	if (identifier == nil) {
 		return @{};
 	}
-	NSTimeInterval timeout = self.timeout;
-	dispatch_time_t deadline = timeout > 0 ? dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC)) : DISPATCH_TIME_FOREVER;
+	dispatch_time_t deadline = dispatch_time(DISPATCH_TIME_NOW, (int64_t)(timeout * NSEC_PER_SEC));
 	if (dispatch_semaphore_wait(pending.answered, deadline) != 0 && [self removePendingRequest:identifier]) {
 		NSDictionary *cancellation = @{ @"jsonrpc": @"2.0", @"method": @"notifications/cancelled",
 										@"params": @{ @"requestId": identifier, @"reason": @"The request timed out." } };
-		[self sendStdioMessage:cancellation expectingReplyTo:nil error:NULL];
+		[self sendStdioMessage:cancellation expectingReplyTo:nil timeout:timeout error:NULL];
 		[self unreachable:error reason:[NSString stringWithFormat:@"%@: the MCP server did not answer within %g seconds", message[@"method"], timeout]
 			   underlying:nil];
 		return nil;

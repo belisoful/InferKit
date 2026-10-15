@@ -74,8 +74,10 @@ typedef NS_ENUM(NSInteger, NFKMCPTransport) {
 				the whole environment instead. NFKSubprocess on its own inherits the whole
 				environment, for a child the application itself ships.
 
-				Calls block and are serialized, so run them off the main thread. A request that
-				outlasts timeout returns kNFKError_RemoteUnreachable. Introduced in InferKit 0.4.0.
+				Calls block and are serialized, so run them off the main thread. Every request waits
+				for its reply up to a deadline: timeout for a tool call, protocolTimeout for the rest.
+				A request past its deadline returns kNFKError_RemoteUnreachable, and over stdio the
+				client also sends notifications/cancelled. Introduced in InferKit 0.4.0.
 */
 @interface NFKMCPClient : NSObject
 
@@ -105,9 +107,13 @@ typedef NS_ENUM(NSInteger, NFKMCPTransport) {
 /*! Header fields sent with every HTTP request, for a server that reads its credentials elsewhere. */
 @property (nonatomic, copy) NSDictionary<NSString *, NSString *> *additionalHeaders;
 
-/*! How long one request waits for its reply, in seconds. Defaults to 600, since a tool that
-	generates media takes minutes. */
+/*! How long a tool call waits for its reply, in seconds. Defaults to 600, since a tool that
+	generates media takes minutes. A value that is not positive uses 600. */
 @property (nonatomic, assign) NSTimeInterval timeout;
+
+/*! How long every other request waits for its reply, in seconds: initialize, ping, and tools/list.
+	Defaults to 30. A value that is not positive uses 30. Introduced in InferKit 0.4.0. */
+@property (nonatomic, assign) NSTimeInterval protocolTimeout;
 
 /*! The server's name and version from its initialize reply, or nil before connecting. */
 @property (nonatomic, readonly, copy, nullable) NSDictionary<NSString *, id> *serverInfo;

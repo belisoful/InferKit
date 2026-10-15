@@ -592,12 +592,14 @@
 	XCTAssertEqual(files.transport, NFKMCPTransportStdio);
 	XCTAssertEqual(files.serverProcess.state, NFKSubprocessStateIdle);
 
-	// A stand-in server written in sh, so the example runs on any machine without a network.
+	// A stand-in server written in sh, so the example runs on any machine without a network. The short
+	// timeouts bound the example if it stops answering.
 	NSString *standIn =
 		@"while IFS= read -r line; do\n"
 		 "  id=$(printf '%s' \"$line\" | /usr/bin/sed -n 's/.*\"id\":\\([0-9]*\\).*/\\1/p')\n"
 		 "  case \"$line\" in\n"
 		 "  *'\"notifications/'*) ;;\n"
+		 "  *'\"ping\"'*) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{}}\\n' \"$id\" ;;\n"
 		 "  *'\"initialize\"'*) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"protocolVersion\":\"2025-06-18\","
 		 "\"capabilities\":{\"tools\":{}},\"serverInfo\":{\"name\":\"stand-in\",\"version\":\"1\"}}}\\n' \"$id\" ;;\n"
 		 "  *'\"tools/list\"'*) printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{\"tools\":[{\"name\":\"read_note\","
@@ -608,10 +610,13 @@
 		 "done\n";
 	NFKMCPClient *notes = [[NFKMCPClient alloc] initWithCommand:@"/bin/sh" arguments:@[ @"-c", standIn ]
 													environment:@{ @"NOTE": @"Buy milk." } workingDirectoryURL:nil];
+	notes.protocolTimeout = 10;
+	notes.timeout = 10;
 	NSError *error = nil;
 	NSArray<NFKInferenceTool *> *noteTools = [notes toolsWithError:&error];
 	XCTAssertEqualObjects(noteTools.firstObject.name, @"read_note", @"%@", error);
 	XCTAssertEqualObjects([noteTools.firstObject invokeWithArguments:@{}].text, @"Buy milk.");
+	XCTAssertTrue([notes pingWithError:&error], @"%@", error);
 	[notes disconnect];
 	XCTAssertEqual(notes.serverProcess.state, NFKSubprocessStateExited);
 	XCTAssertEqual(notes.serverProcess.terminationStatus, 0, @"the server exits on its input closing");

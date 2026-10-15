@@ -985,8 +985,14 @@ machine's remote clients reach a model this process hosts. Files:
     handle <method>", since the client declares no capabilities. Answers go out on a separate serial
     queue: written from the reader, a server blocked on a full stdout pipe and a client blocked on a
     full stdin pipe would deadlock.
-  - A timeout removes the pending entry, sends `notifications/cancelled` with `requestId`, and returns
-    `kNFKError_RemoteUnreachable`. The late reply finds no entry and is dropped.
+  - Deadlines (2026-10-15): `tools/call` waits `timeout` (600 s), and every other request waits
+    `protocolTimeout` (30 s), on both transports. A value that is not positive takes its default, so
+    no wait is unbounded. A timeout removes the pending entry, sends `notifications/cancelled` with
+    `requestId`, and returns `kNFKError_RemoteUnreachable`. The late reply finds no entry and is
+    dropped. Measured cause: the Swift example's stand-in server had no `ping` branch, so the
+    example's `ping()` waited the single 600 s timeout every request then used, and a test run
+    sampled it 9.5 minutes in, still in `semaphore_timedwait_trap`. A ping or a handshake now
+    gives up after 30 s.
   - An exit or a failed launch fails every pending request with `kNFKError_RemoteUnreachable`, naming
     the exit status or signal and the server's last nonblank standard-error line, and marks the
     session ended.
@@ -1032,8 +1038,10 @@ machine's remote clients reach a model this process hosts. Files:
     after the source starts, for a child that exited before it registered. `Exited` is entered after
     both pipes reach EOF, or 0.5 s after the exit when a grandchild holds them, so every line precedes
     the state.
-  - Writes block under a lock and poll `POLLOUT` in 100 ms slices. `closeStandardInput` sets a flag
-    before it takes the lock, so a writer the child is not reading never holds it up for long.
+  - Writes block under a lock and poll `POLLOUT` in 100 ms slices, up to `writeTimeout` (30 s; a value
+    that is not positive takes 30). `closeStandardInput` sets a flag before it takes the lock, so a
+    writer the child is not reading never holds it up for long. The blocking `stop` waits at most both
+    stop timeouts plus 5.5 s and returns whether the process exited.
   - Stop: close standard input → `stopInputTimeout` (2 s) → SIGTERM to the group and the process →
     `stopTerminateTimeout` (3 s) → SIGKILL. Signals go out only before the run is reaped, so a reused
     process identifier is never signaled.
@@ -1044,13 +1052,15 @@ machine's remote clients reach a model this process hosts. Files:
     before `Exited` is reported.
   - Lifetime: the dispatch sources retain the subprocess, so a running one outlives its owner until its
     process exits.
-  - Tests: `NFKSubprocessTests` (3), `NFKMCPStdioTests` (11), and `NFKMCPClientDisconnectTests` (1).
+  - Tests: `NFKSubprocessTests` (3), `NFKMCPStdioTests` (13), and `NFKMCPClientDisconnectTests` (1).
     The fake server is a POSIX shell script the test writes to a temporary directory and runs as
     `/bin/sh <script> <mode>`. `/bin/sh`, `/usr/bin/sed`, `/bin/sleep`, and `/bin/pwd` ship with
     macOS, while `python3` is a Command Line Tools stub and a helper executable has no SwiftPM
     test-target home. The script matches requests by substring and answers with `printf`. Modes
     `ignore-input-close` and `ignore-sigterm` (`trap '' TERM`, which the `sleep` it runs inherits)
-    drive the stop escalation.
+    drive the stop escalation, and `silent-ping` leaves `ping` unanswered for the protocol timeout.
+    A stand-in server in an example answers every method the example sends, `ping` included, and
+    the example sets short timeouts.
 - `NFKAgentCLI.h/.m` (public, macOS only, 2026-10-11): registers an MCP server with an agent CLI
   by running its `mcp` subcommands through `NSTask`. It edits no configuration file itself; the
   user left config-file agents (Cursor, VS Code's remove, Claude Desktop) out for now. Each CLI

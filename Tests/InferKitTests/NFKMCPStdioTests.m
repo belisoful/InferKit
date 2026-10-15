@@ -7,7 +7,7 @@
 //  /usr/bin/sed, /bin/sleep, and /bin/pwd ship with every macOS, so the tests need no interpreter,
 //  helper executable, or network. The script matches each request line by substring and answers with
 //  printf, one JSON-RPC message per line. Its mode makes it ignore the end of its input, or SIGTERM
-//  too, for the stop escalation.
+//  too, for the stop escalation, or leave ping unanswered, for the protocol timeout.
 //
 
 #import <XCTest/XCTest.h>
@@ -27,7 +27,7 @@ static NSString * const NFKFakeMCPServerScript =
 	         "\"serverInfo\":{\"name\":\"fake-stdio\",\"version\":\"1.0\"},\"instructions\":\"A fake server for tests.\"}}\\n' \"$id\" ;;\n"
 	 "  *'\"method\":\"notifications/'*) ;;\n"
 	 "  *'\"method\":\"ping\"'*)\n"
-	 "    printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{}}\\n' \"$id\" ;;\n"
+	 "    if [ \"$mode\" != silent-ping ]; then printf '{\"jsonrpc\":\"2.0\",\"id\":%s,\"result\":{}}\\n' \"$id\"; fi ;;\n"
 	 "  *'\"method\":\"tools/list\"'*)\n"
 	 "    case \"$line\" in\n"
 	 "    *'\"cursor\":\"page-2\"'*)\n"
@@ -109,6 +109,7 @@ static NSString * const NFKFakeMCPServerScript =
 	NFKMCPClient *client = [[NFKMCPClient alloc] initWithCommand:@"/bin/sh" arguments:@[ self.scriptPath, mode ]
 													 environment:environment workingDirectoryURL:workingDirectory];
 	client.timeout = 10;
+	client.protocolTimeout = 10;
 	client.serverProcess.stopInputTimeout = 0.3;
 	client.serverProcess.stopTerminateTimeout = 0.3;
 	[self addTeardownBlock:^{
@@ -288,6 +289,43 @@ static NSString * const NFKFakeMCPServerScript =
 
 	client.timeout = 10;
 	XCTAssertTrue([client pingWithError:&error], @"the late reply to the abandoned call is skipped, %@", error);
+}
+
+- (void)testAServerThatNeverAnswersFailsWithinTheTimeout
+{
+	NFKMCPClient *client = [[NFKMCPClient alloc] initWithCommand:@"/bin/sh" arguments:@[ @"-c", @"while IFS= read -r line; do :; done" ]
+													 environment:nil workingDirectoryURL:nil];
+	client.protocolTimeout = 0.5;
+	client.serverProcess.stopInputTimeout = 0.3;
+	[self addTeardownBlock:^{
+		[client disconnect];
+	}];
+	NSDate *start = [NSDate date];
+	NSError *error = nil;
+	XCTAssertFalse([client connectWithError:&error]);
+	NSTimeInterval elapsed = -start.timeIntervalSinceNow;
+	XCTAssertEqualObjects(error.domain, NFKInferenceErrorDomain);
+	XCTAssertEqual(error.code, kNFKError_RemoteUnreachable);
+	XCTAssertEqualObjects(error.localizedDescription, @"initialize: the MCP server did not answer within 0.5 seconds");
+	XCTAssertGreaterThanOrEqual(elapsed, 0.5);
+	XCTAssertLessThan(elapsed, 3.0, @"the wait ends at its deadline");
+	XCTAssertEqual(client.serverProcess.state, NFKSubprocessStateRunning, @"a silent server is not an exited one");
+}
+
+- (void)testAnUnansweredPingWaitsTheProtocolTimeoutAndNotTheToolTimeout
+{
+	NFKMCPClient *client = [self clientInMode:@"silent-ping" environment:nil workingDirectory:nil];
+	client.timeout = 600;
+	NSError *error = nil;
+	XCTAssertTrue([client connectWithError:&error], @"%@", error);
+	client.protocolTimeout = 0.5;
+	NSDate *start = [NSDate date];
+	XCTAssertFalse([client pingWithError:&error]);
+	XCTAssertLessThan(-start.timeIntervalSinceNow, 3.0);
+	XCTAssertEqual(error.code, kNFKError_RemoteUnreachable);
+	XCTAssertEqualObjects(error.localizedDescription, @"ping: the MCP server did not answer within 0.5 seconds");
+	XCTAssertEqualObjects([client resultOfToolNamed:@"log" arguments:@{} error:&error].text, @"logged",
+						  @"the server still answers after the abandoned ping, %@", error);
 }
 
 - (void)testAServerThatCannotLaunchReportsWhy

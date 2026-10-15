@@ -514,13 +514,15 @@ final class InferKitSwiftExamples: XCTestCase {
     }
 
     // A stdio MCP server from Swift: the command initializer, serverProcess (optional, nil over HTTP),
-    // a @Sendable state handler, and disconnect(). The server is a stand-in written in sh.
+    // a @Sendable state handler, ping(), and disconnect(). The server is a stand-in written in sh,
+    // and the short timeouts bound the example if it stops answering.
     func testAddingAStdioMCPServer() throws {
         let standIn = #"""
         while IFS= read -r line; do
           id=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*"id":\([0-9]*\).*/\1/p')
           case "$line" in
           *'"notifications/'*) ;;
+          *'"ping"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{}}\n' "$id" ;;
           *'"initialize"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"protocolVersion":"2025-06-18","capabilities":{"tools":{}},"serverInfo":{"name":"stand-in","version":"1"}}}\n' "$id" ;;
           *'"tools/list"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"tools":[{"name":"read_note","inputSchema":{"type":"object"}}]}}\n' "$id" ;;
           *'"tools/call"'*) printf '{"jsonrpc":"2.0","id":%s,"result":{"content":[{"type":"text","text":"%s"}]}}\n' "$id" "$NOTE" ;;
@@ -530,6 +532,8 @@ final class InferKitSwiftExamples: XCTestCase {
         let client = NFKMCPClient(command: "/bin/sh", arguments: ["-c", standIn],
                                   environment: ["NOTE": "Buy milk."], workingDirectoryURL: nil)
         XCTAssertEqual(client.transport, .stdio)
+        client.protocolTimeout = 10
+        client.timeout = 10
         let process = try XCTUnwrap(client.serverProcess)
         process.restartPolicy = .onCrash
         process.stateHandler = { process, state in
