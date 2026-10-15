@@ -15,6 +15,7 @@ the toolkit is going. [Examples](examples.md) has a compiled snippet for every b
 ## Contents
 
 - [The one contract](#the-one-contract)
+- [Managing a model's memory](#managing-a-models-memory)
 - [Backends at a glance](#backends-at-a-glance)
 - [Running a language model locally (Core ML)](#running-a-language-model-locally-core-ml)
 - [Running a language model locally (MLX)](#running-a-language-model-locally-mlx)
@@ -99,6 +100,46 @@ job.completionHandler = ^(NFKInferenceJob *j) {
     NSString *text = [j.result outputForKey:NFKOutputText];
 };
 ```
+
+## Managing a model's memory
+
+A backend that holds a model can free it and keep everything it needs to load it again. The protocol's
+optional members state the contract, and a function for each reaches any backend:
+
+- `unload` (`NFKInferenceUnload`) frees the model's weights and caches. The next run, or
+  `prepareWithError:` (`NFKInferencePrepare`), loads them again from the same source. The identifier,
+  the declared keys, and `isReady` keep their answers meanwhile.
+- `isLoaded` (`NFKInferenceIsLoaded`) is NO from the unload until the next load. A backend without the
+  member reads as loaded while it is ready.
+- `residentByteCount` (`NFKInferenceResidentByteCount`) is what the loaded model holds: the rise in the
+  runtime's allocated memory over the load, measured with the weights read. It is 0 while the model is
+  unloaded and from a backend that measures nothing.
+- `peakByteCount` (`NFKInferencePeakByteCount`) is the most the load needed at once, which can exceed
+  what the model keeps. It stays after an unload, so an app knows what loading again costs.
+
+An unload never cuts a run. With no run in flight, the model is freed before `unload` returns. With runs
+in flight, `unload` returns at once and the model is freed when the last of them ends; a run's
+completion handler may call it. A backend that cannot load its model again, such as one built from
+objects in memory, keeps the model and reads as loaded. The readings cover the whole process, so work
+that overlaps a load falls into its figures. `modelInfo` carries the last load's figures under
+`NFKModelInfoResidentBytes` and `NFKModelInfoPeakBytes`, and a server reports them for each hosted
+model.
+
+<!-- objc-check: given NSInteger budget = 0; -->
+```objc
+NSInteger resident = NFKInferenceResidentByteCount(backend);
+if (resident > budget) {
+    NFKInferenceUnload(backend);              // the backend stays configured; a later run loads again
+}
+NFKInferencePrepare(backend, &error);         // or load ahead of the next run, off the main thread
+```
+
+In InferKitMLX, every model that `NFKMLXModelRegistry`, `NFKMLXHub`, or an asynchronous download
+factory builds from a weights file or a release directory implements the members. The module, matting,
+speech, generation, and language backends keep their class; any other model arrives wrapped in
+`NFKMLXReloadableBackend`, whose `wrappedBackend` reaches the model's class while it is loaded and is nil
+while it is unloaded. A model built by a direct synchronous factory call reloads only when it is wrapped
+in `NFKMLXReloadableBackend`.
 
 ## Backends at a glance
 
@@ -797,9 +838,12 @@ Two options unload a model that sits unused, each independent of the other:
 A model just built is kept for `unloadGracePeriod`, a model with a run in flight or queued is never
 unloaded, a model pinned with `setPinned:forModelName:` is never unloaded by either option, and under
 pressure the least recently used model goes first. Each model's entry in the
-status route reports its `residency`: whether it is loaded, when it was last used, and its idle
-timeout at the current pressure. After an unload, the server asks MLX to return its buffer cache to
-the system.
+status route reports its `residency`: whether it is loaded, when it was last used, its idle timeout at
+the current pressure, and `resident_bytes` and `peak_bytes` from its last load
+(`NFKServerModelStatus.residentBytes` and `peakBytes`). A backend that measures its own load gives
+those figures; for any other, the server reads each linked runtime's allocated memory around the build.
+An unload calls the backend's `unload` before the server releases it, and then the server asks MLX to
+return its buffer cache to the system.
 
 ```objc
 NFKInferenceServer *server = [[NFKInferenceServer alloc] init];

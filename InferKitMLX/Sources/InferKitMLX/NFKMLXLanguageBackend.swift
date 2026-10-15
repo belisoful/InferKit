@@ -336,7 +336,10 @@ public extension NFKMLXLanguageNet {
 @objc(NFKMLXLanguageBackend)
 public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
 
-    private let holder: NFKLMHolder
+    private let lifecycle: NFKMLXLifecycle<NFKLMHolder>
+    private let hasTokenizer: Bool
+    private let holdsDraft: Bool
+    private let pagesExpertsAtLoad: Bool
     private let identifier: String
     private let defaults: NFKMLXGenerationOptions
     /// The cache kept between requests when a request asks for reuse. Generation is serialized
@@ -358,46 +361,60 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     init(net: NFKMLXLanguageNet, tokenizer: NFKTokenizer?, identifier: String,
          options: NFKMLXGenerationOptions = NFKMLXGenerationOptions(),
          draft: NFKMLXLanguageNet? = nil, releaseURL: URL? = nil) {
-        self.holder = NFKLMHolder(net, tokenizer, draft: draft)
+        self.lifecycle = NFKMLXLifecycle(NFKLMHolder(net, tokenizer, draft: draft))
+        self.hasTokenizer = tokenizer != nil
+        self.holdsDraft = draft != nil
+        self.pagesExpertsAtLoad = net.expertStore != nil
         self.identifier = identifier
         self.defaults = options
         self.releaseURL = releaseURL
         super.init()
+        lifecycle.setFreeHandler { [weak self] in
+            self?.dropCaches()
+        }
     }
 
     /// Whether the backend can answer: it reads text prompts only, so it needs a tokenizer.
-    public var isReady: Bool { holder.tokenizer != nil }
+    public var isReady: Bool { hasTokenizer }
 
     /// The loaded network's parameter count, weight bytes, precision, and quantization, with the
     /// release's `model_type` and `max_position_embeddings` where its `config.json` states them, the
     /// bytes its release directory or GGUF file occupies on disk, and the key-value bytes each token
     /// adds while the cache is unquantized (`NFKModelInfo*` keys). A paged model's routed experts
     /// count toward its parameters; its weight bytes are what memory holds, which leaves out experts
-    /// read from the release. Introduced in InferKit 0.4.0.
+    /// read from the release. `NFKModelInfoResidentBytes` and `NFKModelInfoPeakBytes` come from the last
+    /// measured load. A model that is unloaded reports the description read while it was loaded.
+    /// Introduced in InferKit 0.4.0.
     @objc public var modelInfo: [String: Any] {
-        modelInfoCache.value {
-            let configuration = holder.net.configuration
-            var info = NFKMLXModelDescription.info(of: [holder.net])
-            if let releaseURL {
-                info[NFKModelInfoStorageBytes] = NFKMLXModelDescription.storageBytes(at: releaseURL)
-            }
-            info[NFKModelInfoArchitecture] = configuration.modelType
-            info[NFKModelInfoContextLength] = configuration.maximumPositions
-            if defaults.cacheQuantization == nil {
-                let precision: NFKMLXWeightPrecision = info[NFKModelInfoPrecision] as? String == "float32" ? .float32 : .checkpoint
-                info[NFKModelInfoKeyValueBytesPerToken] = NFKMLXModelSizing.keyValueBytesPerToken(of: configuration, precision: precision)
-            }
-            return info
+        var info = lifecycle.ifLoaded { holder in
+            modelInfoCache.value { describe(holder) }
+        } ?? modelInfoCache.currentValue ?? [:]
+        info.merge(lifecycle.measurementInfo) { _, measured in measured }
+        return info
+    }
+
+    private func describe(_ holder: NFKLMHolder) -> [String: Any] {
+        let configuration = holder.net.configuration
+        var info = NFKMLXModelDescription.info(of: [holder.net])
+        if let releaseURL {
+            info[NFKModelInfoStorageBytes] = NFKMLXModelDescription.storageBytes(at: releaseURL)
         }
+        info[NFKModelInfoArchitecture] = configuration.modelType
+        info[NFKModelInfoContextLength] = configuration.maximumPositions
+        if defaults.cacheQuantization == nil {
+            let precision: NFKMLXWeightPrecision = info[NFKModelInfoPrecision] as? String == "float32" ? .float32 : .checkpoint
+            info[NFKModelInfoKeyValueBytesPerToken] = NFKMLXModelSizing.keyValueBytesPerToken(of: configuration, precision: precision)
+        }
+        return info
     }
 
     /// Whether the model's routed experts are paged: left in the release and read as the router
     /// reaches them, through ``expertStore``. Introduced in InferKit 0.4.0.
-    @objc public var pagesExperts: Bool { holder.net.expertStore != nil }
+    @objc public var pagesExperts: Bool { pagesExpertsAtLoad }
 
-    /// The store a paged model reads its routed experts from, or nil where they are resident. Its
-    /// cache budget can be changed between requests. Introduced in InferKit 0.4.0.
-    @objc public var expertStore: NFKMLXExpertStore? { holder.net.expertStore }
+    /// The store a paged model reads its routed experts from, or nil where they are resident or the
+    /// model is unloaded. Its cache budget can be changed between requests. Introduced in InferKit 0.4.0.
+    @objc public var expertStore: NFKMLXExpertStore? { lifecycle.ifLoaded { $0.net.expertStore } ?? nil }
     public var backendIdentifier: String { identifier }
 
     /// The request parameters the backend reads: the core sampling keys, the schema and the two
@@ -434,7 +451,43 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     }
 
     /// Whether the backend holds a draft model, so requests can decode speculatively.
-    @objc public var hasDraftModel: Bool { holder.draft != nil }
+    @objc public var hasDraftModel: Bool { holdsDraft }
+
+    // MARK: Unloading
+
+    /// Frees the network, the draft, and every prompt cache, then MLX's cache; the next run or
+    /// ``prepare()`` loads the release again. It does nothing for a backend built from a network in
+    /// memory: only one that `NFKMLXModelRegistry` or a download factory built from a release can unload.
+    /// With a run in flight, the model is freed when the run ends. Introduced in InferKit 0.4.0.
+    @objc public func unload() {
+        lifecycle.unload()
+    }
+
+    /// Whether the backend holds its network. Introduced in InferKit 0.4.0.
+    @objc public var isLoaded: Bool { lifecycle.isLoaded }
+
+    /// The rise in MLX's active memory over the model's last load, or 0 while it is unloaded or before a
+    /// measured load. Introduced in InferKit 0.4.0.
+    @objc public var residentByteCount: Int { lifecycle.residentByteCount }
+
+    /// The peak of MLX's active memory during the model's last measured load, above its level before it.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var peakByteCount: Int { lifecycle.peakByteCount }
+
+    /// Loads the release when the model is unloaded. Introduced in InferKit 0.4.0.
+    @objc(prepareWithError:)
+    public func prepare() throws {
+        try lifecycle.prepare()
+    }
+
+    /// Drops the prompt caches and the vocabulary, which hold arrays over the freed network.
+    private func dropCaches() {
+        generationLock.lock(); defer { generationLock.unlock() }
+        promptCache = nil
+        conversationCaches.removeAll()
+        vocabulary = nil
+        refreshCacheStatus()
+    }
 
     /// How many positions the retained prompt cache holds, or 0 when none is kept.
     @objc public var promptCacheLength: Int {
@@ -511,6 +564,10 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     }
 
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
+        try lifecycle.withState { try run(request, holder: $0) }
+    }
+
+    private func run(_ request: NFKInferenceRequest, holder: NFKLMHolder) throws -> NFKInferenceResult {
         guard let tokenizer = holder.tokenizer else {
             throw NFKMLXError.unsupportedConfiguration(
                 "text generation needs a tokenizer; build the backend with one")
@@ -548,7 +605,8 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             throw NFKMLXError.unsupportedInput
         }
         let tokens = tokenizer.encode(text).map(\.intValue)
-        let (produced, cached) = generate(tokens, options: options, conversation: Self.conversation(of: request))
+        let (produced, cached) = generate(tokens, options: options, conversation: Self.conversation(of: request),
+                                          holder: holder)
         let decode: ([Int]) -> String = { tokenizer.decode($0.map { NSNumber(value: $0) }) }
         let reply = decode(produced)
 
@@ -639,8 +697,8 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
 
     /// The constraint a request asks for, if any: a custom one wins, then a schema, then JSON, then
     /// the choices.
-    private func constraint(for options: NFKMLXGenerationOptions,
-                            tokenizer: NFKTokenizer) -> (any NFKMLXTokenConstraint)? {
+    private func constraint(for options: NFKMLXGenerationOptions, tokenizer: NFKTokenizer,
+                            holder: NFKLMHolder) -> (any NFKMLXTokenConstraint)? {
         if let custom = options.constraint { return custom }
         guard options.jsonSchema != nil || options.jsonOutput || options.choices != nil else { return nil }
         let vocabulary: NFKMLXVocabulary
@@ -666,12 +724,12 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// Answers the tokens produced and how many of the prompt's the cache already held, which is
     /// the cached share a run reports.
     private func generate(_ tokens: [Int], options requested: NFKMLXGenerationOptions,
-                          conversation: String?) -> (produced: [Int], cached: Int) {
+                          conversation: String?, holder: NFKLMHolder) -> (produced: [Int], cached: Int) {
         generationLock.lock(); defer { generationLock.unlock() }
         let net = holder.net
         var options = requested
         if let tokenizer = holder.tokenizer {
-            options.constraint = constraint(for: requested, tokenizer: tokenizer)
+            options.constraint = constraint(for: requested, tokenizer: tokenizer, holder: holder)
             // A release names its end-of-sequence token; stopping there is what every caller expects
             // of a language model, so it is the default stop when the request names none.
             if options.stopTokens.isEmpty, tokenizer.eosTokenId >= 0 {
@@ -1622,6 +1680,17 @@ public final class NFKMLXLanguage: NSObject {
         NFKMLXReleaseDownload.async(completionHandler) {
             try backend(repo: repo, revision: revision, draftRepo: draftRepo, draftRevision: draftRevision,
                         cacheDirectoryURL: cacheDirectoryURL)
+        }
+    }
+}
+
+extension NFKMLXLanguageBackend: NFKMLXReloading {
+
+    var canReload: Bool { lifecycle.canReload }
+
+    func enableReload(_ build: @escaping () throws -> any NFKInferenceBackend, measurement: NFKMLXLoadMeasurement?) {
+        lifecycle.enableReload(building: build, as: NFKMLXLanguageBackend.self, measurement: measurement) {
+            try $0.lifecycle.loadedState()
         }
     }
 }

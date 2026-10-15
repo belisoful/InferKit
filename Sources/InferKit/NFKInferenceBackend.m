@@ -14,6 +14,37 @@ BOOL NFKInferencePrepare(id<NFKInferenceBackend> backend, NSError * _Nullable * 
 	return [backend prepareWithError:error];
 }
 
+void NFKInferenceUnload(id<NFKInferenceBackend> backend)
+{
+	if ([backend respondsToSelector:@selector(unload)]) {
+		[backend unload];
+	}
+}
+
+BOOL NFKInferenceIsLoaded(id<NFKInferenceBackend> backend)
+{
+	if ([backend respondsToSelector:@selector(isLoaded)]) {
+		return backend.isLoaded;
+	}
+	return backend.isReady;
+}
+
+NSInteger NFKInferenceResidentByteCount(id<NFKInferenceBackend> backend)
+{
+	if (![backend respondsToSelector:@selector(residentByteCount)]) {
+		return 0;
+	}
+	return backend.residentByteCount;
+}
+
+NSInteger NFKInferencePeakByteCount(id<NFKInferenceBackend> backend)
+{
+	if (![backend respondsToSelector:@selector(peakByteCount)]) {
+		return 0;
+	}
+	return backend.peakByteCount;
+}
+
 NFKInferenceJob *NFKInferenceSubmit(id<NFKInferenceBackend> backend,
 									NFKInferenceRequest *request,
 									dispatch_queue_t _Nullable queue)

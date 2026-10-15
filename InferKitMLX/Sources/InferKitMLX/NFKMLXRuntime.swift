@@ -336,4 +336,25 @@ extension NFKMLXGPU: NFKServingRuntimeStatus {
         synchronize()
         clearCache()
     }
+
+    /// MLX's active memory, which `NFKInferenceServer` reads before and after it builds a hosted model, or
+    /// -1 in a process without MLX's Metal library. Introduced in InferKit 0.4.0.
+    @objc public static var allocatedByteCount: Int {
+        metalLibraryURL != nil ? activeMemory : -1
+    }
+
+    /// MLX's peak memory since ``resetPeakAllocatedByteCount()``, or -1 in a process without MLX's Metal
+    /// library. Introduced in InferKit 0.4.0.
+    @objc public static var peakAllocatedByteCount: Int {
+        metalLibraryURL != nil ? peakMemory : -1
+    }
+
+    /// Resets MLX's peak memory to its active memory, which `NFKInferenceServer` does before it builds a
+    /// hosted model. Does nothing without MLX's Metal library. Introduced in InferKit 0.4.0.
+    @objc public static func resetPeakAllocatedByteCount() {
+        guard metalLibraryURL != nil else {
+            return
+        }
+        resetPeakMemory()
+    }
 }

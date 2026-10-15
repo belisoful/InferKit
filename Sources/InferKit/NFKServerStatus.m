@@ -111,6 +111,8 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 @property (nonatomic, readwrite, copy, nullable) NSString *loadError;
 @property (nonatomic, readwrite) NSInteger loads;
 @property (nonatomic, readwrite) NSInteger unloads;
+@property (nonatomic, readwrite, copy, nullable) NSNumber *residentBytes;
+@property (nonatomic, readwrite, copy, nullable) NSNumber *peakBytes;
 @end
 
 @implementation NFKServerModelStatus
@@ -171,6 +173,8 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 	self.loadError = [residency[@"load_error"] isKindOfClass:NSString.class] ? residency[@"load_error"] : nil;
 	self.loads = NFKStatusInteger(residency[@"loads"]);
 	self.unloads = NFKStatusInteger(residency[@"unloads"]);
+	self.residentBytes = NFKStatusNumber(residency[@"resident_bytes"]);
+	self.peakBytes = NFKStatusNumber(residency[@"peak_bytes"]);
 }
 
 @end

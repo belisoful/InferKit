@@ -117,3 +117,5 @@ NSString * const NFKModelInfoContextLength			= @"context_length";
 NSString * const NFKModelInfoKeyValueBytesPerToken	= @"key_value_bytes_per_token";
 NSString * const NFKModelInfoComputeUnits			= @"compute_units";
 NSString * const NFKModelInfoVersion				= @"version";
+NSString * const NFKModelInfoResidentBytes			= @"resident_bytes";
+NSString * const NFKModelInfoPeakBytes				= @"peak_bytes";

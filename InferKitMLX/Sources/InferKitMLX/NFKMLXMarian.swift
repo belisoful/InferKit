@@ -308,11 +308,14 @@ enum NFKMLXReleaseDownload {
         return url
     }
 
+    /// Runs `build`, a release download and the build over it, on a user-initiated queue and delivers the
+    /// backend or the error to `completionHandler`. The backend can unload and load again through `build`
+    /// (`NFKMLXReload.reloadable(_:)`), which finds the release in the cache.
     static func async(_ completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void,
                       _ build: @escaping () throws -> any NFKInferenceBackend) {
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                completionHandler(try build(), nil)
+                completionHandler(try NFKMLXReload.reloadable(build), nil)
             } catch {
                 completionHandler(nil, error)
             }

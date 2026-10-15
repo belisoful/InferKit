@@ -113,6 +113,23 @@ nil when the value is absent or the wrong type. Image, mask, and video values st
 / `inputForKey:` because the backend or caller chooses their representation (a `CVPixelBuffer`, a
 texture, a `CGImage`).
 
+### Freeing a model's memory
+
+A backend that holds a model in memory can free it and keep its configuration. `unload` frees the
+weights and caches, and the next run or `prepareWithError:` loads them again. `residentByteCount` is
+what the loaded model holds, measured when it loaded, and `peakByteCount` is the most the load needed
+at once. The functions below reach any backend: one without the members keeps its model, reports 0
+bytes, and reads as loaded while it is ready.
+
+```objc
+NSInteger resident = NFKInferenceResidentByteCount(backend);   // 0 when the backend measures nothing
+NSInteger peak = NFKInferencePeakByteCount(backend);           // what loading again costs at its peak
+
+NFKInferenceUnload(backend);                    // frees the model now, or when its runs in flight end
+BOOL loaded = NFKInferenceIsLoaded(backend);    // NO until a run or a prepare loads it again
+NFKInferencePrepare(backend, &error);           // load ahead of the next run, off the main thread
+```
+
 ## Text → text
 
 The same request runs against a converted local model, a remote endpoint, or Apple's on-device
@@ -2818,6 +2835,32 @@ let embedder = try NFKMLXQwen3Embedding.backend(repo: "Qwen/Qwen3-Embedding-0.6B
 Pass a commit as `revision` to pin a release; nil follows `main`, and a cached `main` is not checked
 again. The weights of the larger releases run from several gigabytes (Qwen3-VL-2B) to tens of gigabytes
 (FLUX, MiniMax Music 3), and the download blocks until every shard is in the cache.
+
+### Unloading a model and loading it again
+
+A backend that `NFKMLXModelRegistry`, `NFKMLXHub`, or an asynchronous download factory builds from a
+weights file or a release directory can unload and load again. The bring-your-own backends (module,
+matting, speech, generation) and the language backend keep their class and unload in place. Any other
+model comes back as an `NFKMLXReloadableBackend` that holds it, and its `wrappedBackend` is the model's
+own backend while loaded, nil while unloaded. `residentByteCount` is the rise in MLX's active memory over
+the load, and `peakByteCount` the peak above where the load started. A backend from a direct synchronous
+factory call reloads only when it is wrapped:
+
+```objc
+@import InferKitMLX;
+NSError *error = nil;
+
+id<NFKInferenceBackend> upscaler = [NFKMLXModelRegistry backendNamed:@"real-esrgan-x4" weightsURL:checkpointURL error:&error];
+NSInteger held = upscaler.residentByteCount;    // what the weights hold in MLX's memory
+[upscaler unload];                               // frees them; upscaler.isLoaded is NO
+// The next run loads the checkpoint again.
+
+NFKMLXReloadableBackend *depth =
+	[[NFKMLXReloadableBackend alloc] initWithProvider:^id<NFKInferenceBackend>(NSError **buildError) {
+		return [NFKMLXDepthAnything backendWithVariant:NFKMLXDepthVariantBase weightsURL:localURL error:buildError];
+	} error:&error];
+[depth unload];
+```
 
 ### MLX runtime knobs from Objective-C
 

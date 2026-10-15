@@ -34,6 +34,18 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(result.text, "Explain diffraction in one sentence.")
     }
 
+    // MARK: Freeing a model's memory (Docs/examples.md: The shared contract — Freeing a model's memory)
+
+    func testExampleFreeingAModelsMemory() {
+        let backend = NFKPassthroughBackend()
+        XCTAssertEqual(NFKInferenceResidentByteCount(backend), 0)   // 0 when the backend measures nothing
+        XCTAssertEqual(NFKInferencePeakByteCount(backend), 0)
+
+        NFKInferenceUnload(backend)                    // the passthrough holds no model, so it keeps running
+        XCTAssertTrue(NFKInferenceIsLoaded(backend))
+        XCTAssertTrue(NFKInferencePrepare(backend, nil))
+    }
+
     // MARK: Jobs, submit, completion (Docs/examples.md: Subsystems — Jobs)
 
     func testExampleSubmittingAJob() {
