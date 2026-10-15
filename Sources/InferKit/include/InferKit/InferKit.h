@@ -113,6 +113,8 @@
 #import <InferKit/NFKMLMultiArray.h>
 #import <InferKit/NFKTokenizer.h>
 #import <InferKit/NFKTokenConstraint.h>
+#import <InferKit/NFKDownload.h>
+#import <InferKit/NFKDownloadPlan.h>
 #import <InferKit/NFKHFHub.h>
 
 #endif /* InferKit_h */

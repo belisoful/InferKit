@@ -43,13 +43,9 @@ extension NFKMLXSigLIP2 {
     public static func model(variant: NFKMLXSigLIP2Variant, repo: String, weightsPath: String,
                              revision: String?, cacheDirectoryURL: URL?,
                              completionHandler: @escaping (NFKMLXSigLIP2?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try model(variant: variant, repo: repo, weightsPath: weightsPath,
-                                            revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try model(variant: variant, repo: repo, weightsPath: weightsPath,
+                      revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }
 

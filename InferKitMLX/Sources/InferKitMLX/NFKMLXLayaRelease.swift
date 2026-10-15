@@ -78,13 +78,9 @@ extension NFKMLXLaya {
     @objc(downloadVariant:revision:cacheDirectoryURL:completionHandler:)
     public static func download(variant: NFKMLXLayaVariant, revision: String?, cacheDirectoryURL: URL?,
                                 completionHandler: @escaping (URL?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try download(variant: variant, revision: revision,
-                                               cacheDirectoryURL: cacheDirectoryURL), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try download(variant: variant, revision: revision,
+                         cacheDirectoryURL: cacheDirectoryURL)
         }
     }
 
@@ -100,13 +96,9 @@ extension NFKMLXLaya {
     @objc(layaWithVariant:revision:cacheDirectoryURL:completionHandler:)
     public static func laya(variant: NFKMLXLayaVariant, revision: String?, cacheDirectoryURL: URL?,
                             completionHandler: @escaping (NFKMLXLaya?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try laya(variant: variant, revision: revision,
-                                           cacheDirectoryURL: cacheDirectoryURL), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try laya(variant: variant, revision: revision,
+                     cacheDirectoryURL: cacheDirectoryURL)
         }
     }
 

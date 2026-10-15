@@ -166,6 +166,14 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 ### Downloading models
 
 - ``NFKHFHub``
+- ``NFKDownload``
+- ``NFKDownloadProgress``
+- ``NFKDownloadFileProgress``
+- ``NFKDownloadPlan``
+- ``NFKDownloadPlanFile``
+- ``NFKDownloadStatus``
+- ``NFKRemovalPlan``
+- ``NFKCachedFile``
 
 ### Model catalog
 
@@ -218,3 +226,4 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 ### Errors
 
 - ``NFKInferenceError``
+- ``NFKDownloadError``

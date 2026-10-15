@@ -311,9 +311,9 @@ InferKit 0.4.0. The consumer reference is `Docs/model-catalog.md`. The decisions
   cannot be walked for it.
 - Eviction runs after every successful fetch, never on a cache hit. It removes whole snapshots, least
   recently used first, and skips the snapshot just requested and any holding a `*.download` file. The
-  transfer itself lands in the system temporary folder and is moved into the snapshot only at the
-  end, so an in-flight download elsewhere is visible only briefly. A trim failure never fails the
-  download.
+  transfer streams into `<file>.download` beside its destination and is moved into place only whole,
+  so every in-flight download protects its snapshot for its whole length. A trim failure never fails
+  the download.
 - Size is `NSURLTotalFileAllocatedSizeKey` over every regular file, so a 5-byte file counts as one
   allocation block. Tests size their limits from `cacheSize` after one download, never from byte
   counts.
@@ -343,6 +343,104 @@ InferKit 0.4.0. The consumer reference is `Docs/model-catalog.md`. The decisions
   UUID folder, and the round-trip test waits for the cleared state to hold for 0.5 s.
 - `Tools/validation-assets/fetch.py` sets the same exclusion on its asset root and on the
   huggingface_hub cache the reference oracles fill (`--keep-in-backup` skips it).
+
+## Download plans, progress, status, and removal
+
+`NFKDownload`, `NFKDownloadPlan`, and the `NFKHFHub (NFKDownloads)` category (`NFKHFHubDownloads.m`,
+added 2026-10-15, InferKit 0.4.0). The transfer is `NFKHFHubTransfer` (private).
+
+- One transfer path. `fetchURL:toFileURL:error:` stays the seam (the core tests' `FxHFHubStub` and
+  InferKitMLX's `NFKOfflineHub` override it). Its default streams an `NSURLSessionDataTask` straight
+  into the destination over a session made from `session.configuration` with the transfer as its
+  delegate, so a test's `protocolClasses` carry over. Plan requests go through the second seam,
+  `fetchMetadataFromURL:HTTPMethod:response:error:`. A response of another scheme (a `file://` URL)
+  reads as status 200 with its length, which is how the compiled examples run offline.
+- The current download is thread-local (`NSThread.threadDictionary`, a stack), the `NSProgress`
+  `becomeCurrent` pattern. `fetchFileFromURL:…` reads it, reports the file, registers the snapshot,
+  and passes an `NFKHFHubTransferReport` to the default transfer through the thread dictionary
+  around the seam call. A subclass's transport therefore still lands the file; the download counts its
+  bytes at the end from the file's size.
+- A download finishes when its last activity ends (`beginActivity` / `endActivityWithError:`). The
+  hub's plan-driven downloads hold one activity; `NFKMLXReleaseDownload.async` and
+  `NFKMLXDownload.backend` each hold one around the factory's work; the core's legacy
+  `downloadRepo:…completionHandler:` holds one too. A synchronous caller brackets its own.
+- Progress accounting: a file the plan or the cache marks cached counts toward the file counts and
+  adds no bytes. Received bytes per file are a running maximum, so a transfer that restarts from byte 0
+  (the server ignored `Range`, or `If-Range` found a changed file) never lowers the total. Reports are
+  throttled to ten a second and forced at every file start, file end, and state change, and are built
+  under the lock and dispatched in order to one serial queue. The completion handler is queued after the
+  final report, and `waitUntilFinishedWithTimeout:` returns only after both have run: reading
+  `progressHandler`'s last snapshot right after the state turned final once found it a report short.
+  Called on the report queue, the wait does not block and answers `isFinished`. A fetch that no plan
+  declared and that fails with no bytes (an optional file the release lacks, a weights candidate it
+  does not serve) leaves no record.
+- Resumption: up to three resumes after `NSURLErrorNetworkConnectionLost`, `TimedOut`,
+  `CannotConnectToHost`, or `ResourceUnavailable`. A resume sends `Range: bytes=N-` and `If-Range`
+  with the first response's strong ETag; without a strong ETag the transfer restarts from zero. A 206
+  whose `Content-Range` starts elsewhere, or a 416, restarts. A content-encoded response's
+  `Content-Length` is the encoded length, so only an identity body's length checks the file size.
+- Cancellation sets the flag first and then runs the registered handlers, and a transfer checks the
+  flag under the same lock it publishes its task under, so a cancel that lands before the task exists
+  still stops it.
+- The access token goes only to `endpointURL`'s host (`requestForURL:`). The legacy transfer sent it
+  to whatever URL it fetched; a plain URL source must not leak a Hugging Face token to another host.
+- Errors: `NFKDownloadErrorDomain` (`NS_ERROR_ENUM`, so Swift catches `NFKDownloadError.cancelled`).
+  HTTP 401 → `AuthenticationRequired`, worded by whether a token was sent; 403 →
+  `AuthenticationRequired` (a gated repository whose terms the account has not accepted); 404 →
+  `NotFound`. The Hugging Face API answers 401 for a repository that does not exist when no token is
+  sent, so that message names all three causes. A checksum mismatch moved from
+  `kNFKError_InferenceBackendFailure` to `NFKDownloadErrorChecksumMismatch` (pre-1.0). A missing cache
+  folder stays `kNFKError_InferenceNotReady`.
+- Plans: `<endpoint>/api/models/<repo>/tree/<revision>?recursive=1`, the revision percent-encoded as
+  one segment (`refs/pr/1` → `refs%2Fpr%2F1`), following `Link: <…>; rel="next"` pages. A Large File
+  Storage entry's `lfs.oid` is the content SHA-256 and `lfs.size` the size; a plain entry's `oid` is a
+  Git blob ID and is not reported as a SHA-256. Globs are `fnmatch` without `FNM_PATHNAME`, as
+  huggingface_hub's `allow_patterns` are. A plan marks a file cached when it exists at the listed size;
+  it never hashes, because hashing gigabytes at plan time stalls a user interface.
+- Admission: a plan whose total exceeds a non-negative `cacheSizeLimit` is refused before any
+  transfer (the limit could never hold it), and so is one whose remaining bytes exceed the volume's
+  `NSURLVolumeAvailableCapacityForImportantUsageKey` (`NSURLVolumeAvailableCapacityKey` on tvOS, which
+  lacks the former).
+- URL sources cache at `<cache>/@url/<host>/<digest>/<file name>`, digest the first 16 hexadecimal
+  digits of the URL's SHA-256, a file URL's host `local`. `@` cannot begin a Hugging Face name. The
+  folder is an ordinary snapshot to eviction, status, and removal.
+- Completion record: `.inferkit-complete` in a snapshot, a JSON object with `paths` (the complete
+  download's files) and `absent` (optional files the server refused with HTTP 404), each unioned on
+  write under one process-wide lock; a path recorded present leaves `absent`. A bare JSON array, the
+  first format, reads as `paths`. A whole-repository plan and every InferKitMLX release download write
+  it (`recordCompleteDownloadOfRepo:revision:paths:absentPaths:error:`). `paths` is how a source that
+  lists no files reads complete; without it such a snapshot reads partial whenever it holds a file.
+  `absent` is how a cached release loads offline: the release layer skips a recorded refusal.
+  `forgetRecordedAbsentPathsOfRepo:revision:error:` clears it and writes nothing when there is no
+  record.
+- Status counts a present file's allocated bytes at its link target. Optional files add bytes and do
+  not decide completeness. A source of kind `system` or `none` is complete with no bytes.
+- Removal plans read the cache alone. A file is kept when another catalog variant (`hub.modelCatalog`,
+  default the shared catalog) at the same repository and normalized revision lists it and that
+  variant's download is complete. A variant whose listed paths equal the target's (or that, like the
+  target, lists none) is the same download and claims nothing. An unlisted variant claims the paths its
+  snapshot's completion record names. Only complete variants claim: a partial one does not load, and
+  counting it would make a file unremovable whenever the removal target's own files made the sibling
+  look partial.
+- The hub's layout is `<repo>/<revision>/<path>`, not huggingface_hub's `blobs/` + `snapshots/`, so
+  sharing between snapshots exists only as links someone placed (the InferKitMLX release-store tests
+  link a cache to the validation store; a user may link a Python cache). A symbolic link is removed and
+  frees nothing; its target inside the cache goes with it unless another link in the cache resolves to
+  it (kept, "linked from N other cached file(s)"), and a target outside the cache is always kept. A hard
+  link with other names is removed and frees nothing.
+- All or none: the planned files and, when no model file is left, the `.inferkit-owned` and
+  `.inferkit-complete` markers move into `<cache>/.inferkit-removing-<UUID>`; a failed move puts every
+  moved file back. Only then is the folder deleted; one a crash left behind is deleted by the next
+  removal. Folders left empty are removed up to the cache root. `.inferkit-keep` stays: a pin is the
+  app's setting, not a downloaded file.
+- `removeFilesInPlan:` plans again under the snapshot-registry lock and removes the intersection of the
+  two plans, so a file that became shared meanwhile is kept. While the lock is held no download can
+  register a snapshot, and a snapshot an unfinished `NFKDownload` registered refuses the removal with
+  `NFKDownloadErrorInUse`. A download that only cache-hits registers nothing.
+- Tests: `NFKDownloadTests` and `NFKDownloadRemovalTests` against `NFKStubHubProtocol` (an
+  `NSURLProtocol` at `http://hub.test` with Range, a stall after the first chunk, and a drop part-way),
+  never the network. A cancellation test polls `currentProgress`: the throttled handler may never
+  report the single chunk that arrives before a stall.
 
 ## Serving identity and certificate pinning
 

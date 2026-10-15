@@ -513,12 +513,8 @@ public final class NFKMLXQwen3VL: NSObject {
     @objc(modelWithRepo:revision:cacheDirectoryURL:completionHandler:)
     public static func model(repo: String, revision: String?, cacheDirectoryURL: URL?,
                              completionHandler: @escaping (NFKMLXQwen3VL?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try model(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try model(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }
 

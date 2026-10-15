@@ -4,6 +4,10 @@
 //
 
 #import "NFKHFHub.h"
+#import "NFKHFHubInternal.h"
+#import "NFKHFHubTransfer.h"
+#import "NFKDownloadInternal.h"
+#import "NFKModelCatalog.h"
 #import "NFKErrors.h"
 #import "NFK_ARC.h"
 #import <CommonCrypto/CommonCrypto.h>
@@ -16,6 +20,15 @@ const long long NFKHFHubUnlimitedCacheSize = -1;
 static NSString * const NFKHFHubOwnedMarkerName = @".inferkit-owned";
 // Marks a pinned snapshot, which eviction skips.
 static NSString * const NFKHFHubKeepMarkerName = @".inferkit-keep";
+NSString * const NFKHFHubPinMarkerName = @".inferkit-keep";
+NSString * const NFKHFHubCompleteMarkerName = @".inferkit-complete";
+// The file a transfer reports to, set around fetchURL:toFileURL:error: on the calling thread.
+static NSString * const NFKHFHubTransferReportKey = @"NFKHFHubTransferReport";
+
+NSArray<NSString *> *NFKHFHubBookkeepingNames(void)
+{
+	return @[ NFKHFHubOwnedMarkerName, NFKHFHubKeepMarkerName, NFKHFHubCompleteMarkerName ];
+}
 
 static long long NFKHFHubDefaultCacheSizeLimitValue = -1;
 static BOOL NFKHFHubDefaultExcludesCacheFromBackupValue = YES;
@@ -38,6 +51,7 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 @synthesize accessToken = _accessToken;
 @synthesize cacheSizeLimit = _cacheSizeLimit;
 @synthesize excludesCacheFromBackup = _excludesCacheFromBackup;
+@synthesize modelCatalog = _modelCatalog;
 
 + (instancetype)hubWithCacheDirectoryURL:(nullable NSURL *)cacheDirectoryURL
 {
@@ -79,6 +93,20 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 		_session = NARC_RETAIN([NSURLSession sharedSession]);
 	}
 	return _session;
+}
+
+- (NFKModelCatalog *)modelCatalog
+{
+	@synchronized (self) {
+		return _modelCatalog ?: NFKModelCatalog.sharedCatalog;
+	}
+}
+
+- (void)setModelCatalog:(nullable NFKModelCatalog *)modelCatalog
+{
+	@synchronized (self) {
+		_modelCatalog = modelCatalog;
+	}
 }
 
 - (nullable NSString *)accessToken
@@ -224,14 +252,51 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 		[self setError:outError code:kNFKError_InferenceBackendFailure reason:@"invalid repo or path"];
 		return nil;
 	}
+	return [self fetchFileFromURL:remoteURL
+						 localURL:localURL
+					  snapshotURL:snapshotURL
+							 path:path
+						   sha256:expectedSHA256
+				expectedByteCount:NFKDownloadUnknownByteCount
+							error:outError];
+}
+
+- (BOOL)cachedFileAtURL:(NSURL *)localURL matchesSHA256:(nullable NSString *)expectedSHA256 byteCount:(long long)expectedByteCount
+{
+	if (expectedByteCount >= 0) {
+		NSDictionary<NSFileAttributeKey, id> *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:localURL.path error:NULL];
+		if (attributes == nil || [attributes[NSFileSize] longLongValue] != expectedByteCount) {
+			return NO;
+		}
+	}
+	return expectedSHA256 == nil || [self fileAtURL:localURL matchesSHA256:expectedSHA256];
+}
+
+- (nullable NSURL *)fetchFileFromURL:(NSURL *)remoteURL
+							localURL:(NSURL *)localURL
+						 snapshotURL:(NSURL *)snapshotURL
+								path:(NSString *)path
+							  sha256:(nullable NSString *)expectedSHA256
+				   expectedByteCount:(long long)expectedByteCount
+							   error:(NSError * _Nullable *)outError
+{
+	NFKDownload *download = NFKDownload.currentDownload;
+	if (download.isFinished) {
+		download = nil;
+	}
+	if (download.isCancelled) {
+		[self propagateError:[NFKDownload cancellationError] to:outError];
+		return nil;
+	}
 
 	NSFileManager *fileManager = NSFileManager.defaultManager;
 	BOOL scoped = [self.cacheDirectoryURL startAccessingSecurityScopedResource];
 	@try {
 		if ([fileManager fileExistsAtPath:localURL.path]) {
-			if (expectedSHA256 == nil || [self fileAtURL:localURL matchesSHA256:expectedSHA256]) {
+			if ([self cachedFileAtURL:localURL matchesSHA256:expectedSHA256 byteCount:expectedByteCount]) {
 				[self excludeCacheFromBackupIfNeeded];
 				[self markSnapshotUsedAtURL:snapshotURL];
+				[download fileDidFinishAtLocalURL:localURL path:path byteCount:0 cached:YES];
 				return localURL;
 			}
 			[fileManager removeItemAtURL:localURL error:NULL];
@@ -245,27 +310,38 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 			[self propagateError:dirError to:outError];
 			return nil;
 		}
+		[download registerSnapshotURL:snapshotURL];
 		[self excludeCacheFromBackupIfNeeded];
 		[self markSnapshotUsedAtURL:snapshotURL];
 
 		NSURL *partialURL = [localURL URLByAppendingPathExtension:@"download"];
 		[fileManager removeItemAtURL:partialURL error:NULL];
-		if (![self fetchURL:remoteURL toFileURL:partialURL error:outError]) {
+		[download fileWillStartAtLocalURL:localURL path:path expectedByteCount:expectedByteCount];
+		if (![self fetchURL:remoteURL toFileURL:partialURL localURL:localURL path:path
+				expectedByteCount:expectedByteCount download:download error:outError]) {
+			[fileManager removeItemAtURL:partialURL error:NULL];
+			[download fileDidFailAtLocalURL:localURL];
 			return nil;
 		}
 
 		if (expectedSHA256 != nil && ![self fileAtURL:partialURL matchesSHA256:expectedSHA256]) {
 			[fileManager removeItemAtURL:partialURL error:NULL];
-			[self setError:outError code:kNFKError_InferenceBackendFailure reason:@"the download failed its checksum"];
+			[download fileDidFailAtLocalURL:localURL];
+			NSString *reason = [NSString stringWithFormat:@"%@ failed its checksum", path];
+			[self propagateError:[NFKDownload errorWithCode:NFKDownloadErrorChecksumMismatch reason:reason] to:outError];
 			return nil;
 		}
 
 		[fileManager removeItemAtURL:localURL error:NULL];
 		NSError *moveError = nil;
 		if (![fileManager moveItemAtURL:partialURL toURL:localURL error:&moveError]) {
+			[fileManager removeItemAtURL:partialURL error:NULL];
+			[download fileDidFailAtLocalURL:localURL];
 			[self propagateError:moveError to:outError];
 			return nil;
 		}
+		long long size = [[fileManager attributesOfItemAtPath:localURL.path error:NULL][NSFileSize] longLongValue];
+		[download fileDidFinishAtLocalURL:localURL path:path byteCount:size cached:NO];
 		// The file is in place; a failed eviction leaves the cache over its limit and the download
 		// still succeeds.
 		[self trimCacheKeepingSnapshotURL:snapshotURL error:NULL];
@@ -277,65 +353,140 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 	}
 }
 
+/*! Runs the transport seam with the file's report set on the calling thread for the default
+	transfer to read. */
+- (BOOL)fetchURL:(NSURL *)remoteURL
+	   toFileURL:(NSURL *)partialURL
+		localURL:(NSURL *)localURL
+			path:(NSString *)path
+expectedByteCount:(long long)expectedByteCount
+		download:(nullable NFKDownload *)download
+		   error:(NSError * _Nullable *)outError
+{
+	NSMutableDictionary *threadDictionary = NSThread.currentThread.threadDictionary;
+	id previous = threadDictionary[NFKHFHubTransferReportKey];
+	if (download != nil) {
+		NFKHFHubTransferReport *report = [[NFKHFHubTransferReport alloc] init];
+		report.download = download;
+		report.localURL = localURL;
+		report.path = path;
+		report.expectedByteCount = expectedByteCount;
+		threadDictionary[NFKHFHubTransferReportKey] = report;
+	} else {
+		[threadDictionary removeObjectForKey:NFKHFHubTransferReportKey];
+	}
+	@try {
+		return [self fetchURL:remoteURL toFileURL:partialURL error:outError];
+	} @finally {
+		if (previous != nil) {
+			threadDictionary[NFKHFHubTransferReportKey] = previous;
+		} else {
+			[threadDictionary removeObjectForKey:NFKHFHubTransferReportKey];
+		}
+	}
+}
+
 - (void)downloadRepo:(NSString *)repo
 			revision:(nullable NSString *)revision
 				path:(NSString *)path
 			  sha256:(nullable NSString *)expectedSHA256
    completionHandler:(void (^)(NSURL * _Nullable, NSError * _Nullable))completionHandler
 {
+	NFKDownload *download = NFKDownload.currentDownload;
+	[download beginActivity];
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 		NSError *error = nil;
+		[download becomeCurrent];
 		NSURL *localURL = [self downloadRepo:repo revision:revision path:path sha256:expectedSHA256 error:&error];
+		[download resignCurrent];
+		[download endActivityWithError:error];
 		completionHandler(localURL, error);
 	});
 }
 
-- (BOOL)fetchURL:(NSURL *)remoteURL toFileURL:(NSURL *)destinationURL error:(NSError * _Nullable *)outError
+- (NSMutableURLRequest *)requestForURL:(NSURL *)URL
 {
-	__block NSError *resultError = nil;
-	__block BOOL moved = NO;
-	dispatch_semaphore_t semaphore = dispatch_semaphore_create(0);
-
-	NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:remoteURL];
+	NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:URL];
 	NSString *token = self.accessToken;
-	if (token.length > 0) {
+	NSString *endpointHost = self.endpointURL.host;
+	if (token.length > 0 && endpointHost != nil && [URL.host caseInsensitiveCompare:endpointHost] == NSOrderedSame) {
 		[request setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
 	}
+	return request;
+}
 
-	NSURLSessionDownloadTask *task = [self.session downloadTaskWithRequest:request
-													completionHandler:^(NSURL *location, NSURLResponse *response, NSError *error) {
-		// The downloaded temp file is removed when this handler returns, so move it here.
-		if (location != nil && error == nil) {
-			NSHTTPURLResponse *http = [response isKindOfClass:NSHTTPURLResponse.class] ? (NSHTTPURLResponse *)response : nil;
-			if (http != nil && (http.statusCode < 200 || http.statusCode >= 300)) {
-				NSString *reason = [NSString stringWithFormat:@"the download returned HTTP %ld", (long)http.statusCode];
-				NSError *httpError = [NSError errorWithDomain:NFKInferenceErrorDomain
-														 code:kNFKError_InferenceBackendFailure
-													 userInfo:@{ NSLocalizedDescriptionKey: reason }];
-				resultError = NARC_RETAIN(httpError);
-			} else {
-				NSError *moveError = nil;
-				[NSFileManager.defaultManager removeItemAtURL:destinationURL error:NULL];
-				moved = [NSFileManager.defaultManager moveItemAtURL:location toURL:destinationURL error:&moveError];
-				resultError = NARC_RETAIN(moveError);
-			}
-		} else {
-			resultError = NARC_RETAIN(error);
-		}
-		dispatch_semaphore_signal(semaphore);
+- (BOOL)fetchURL:(NSURL *)remoteURL toFileURL:(NSURL *)destinationURL error:(NSError * _Nullable *)outError
+{
+	NFKHFHubTransferReport *report = NSThread.currentThread.threadDictionary[NFKHFHubTransferReportKey];
+	return [NFKHFHubTransfer transferRequest:[self requestForURL:remoteURL]
+							   configuration:self.session.configuration
+								   toFileURL:destinationURL
+									  report:report
+									   error:outError];
+}
+
+- (nullable NSData *)fetchMetadataFromURL:(NSURL *)URL
+							   HTTPMethod:(NSString *)method
+								 response:(NSHTTPURLResponse * _Nullable * _Nullable)outResponse
+									error:(NSError * _Nullable *)outError
+{
+	NSMutableURLRequest *request = [self requestForURL:URL];
+	request.HTTPMethod = method;
+	[request setValue:@"application/json" forHTTPHeaderField:@"Accept"];
+	__block NSData *body = nil;
+	__block NSURLResponse *answer = nil;
+	__block NSError *failure = nil;
+	dispatch_semaphore_t done = dispatch_semaphore_create(0);
+	NSURLSessionDataTask *task = [self.session dataTaskWithRequest:request
+												 completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+		body = data;
+		answer = response;
+		failure = error;
+		dispatch_semaphore_signal(done);
+	}];
+	NFKDownload *download = NFKDownload.currentDownload;
+	id token = [download addCancellationHandler:^{
+		[task cancel];
 	}];
 	[task resume];
-	dispatch_semaphore_wait(semaphore, DISPATCH_TIME_FOREVER);
-
-	if (!moved) {
-		[self propagateError:resultError to:outError];
+	dispatch_semaphore_wait(done, DISPATCH_TIME_FOREVER);
+	if (token != nil) {
+		[download removeCancellationHandler:token];
 	}
-	return moved;
+	if (download.isCancelled) {
+		[self propagateError:[NFKDownload cancellationError] to:outError];
+		return nil;
+	}
+	if (failure != nil) {
+		[self propagateError:failure to:outError];
+		return nil;
+	}
+	if (outResponse != NULL) {
+		*outResponse = [self HTTPResponseForResponse:answer];
+	}
+	return body ?: [NSData data];
+}
+
+/*! The response as HTTP. A response of another scheme, such as a file URL's, reads as status 200 with
+	its length. */
+- (nullable NSHTTPURLResponse *)HTTPResponseForResponse:(nullable NSURLResponse *)response
+{
+	if (response == nil || [response isKindOfClass:NSHTTPURLResponse.class]) {
+		return (NSHTTPURLResponse *)response;
+	}
+	NSMutableDictionary<NSString *, NSString *> *headers = [NSMutableDictionary dictionary];
+	if (response.expectedContentLength >= 0) {
+		headers[@"Content-Length"] = [NSString stringWithFormat:@"%lld", response.expectedContentLength];
+	}
+	return [[NSHTTPURLResponse alloc] initWithURL:response.URL ?: [NSURL URLWithString:@"about:blank"]
+									   statusCode:200
+									  HTTPVersion:@"HTTP/1.1"
+									 headerFields:headers];
 }
 
 #pragma mark Cache management
 
-- (void)performWithCacheAccess:(void (^)(NSURL *cacheDirectoryURL))body
+- (void)performWithCacheAccess:(void (NS_NOESCAPE ^)(NSURL *cacheDirectoryURL))body
 {
 	NSURL *cacheDirectoryURL = self.cacheDirectoryURL;
 	if (cacheDirectoryURL == nil) {

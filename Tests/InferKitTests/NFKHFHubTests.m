@@ -155,7 +155,8 @@
 	NSError *error = nil;
 	NSURL *result = [self.hub downloadRepo:@"a/b" revision:nil path:@"f.bin" sha256:@"deadbeef" error:&error];
 	XCTAssertNil(result);
-	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceBackendFailure);
+	XCTAssertEqualObjects(error.domain, NFKDownloadErrorDomain);
+	XCTAssertEqual(error.code, (NSInteger)NFKDownloadErrorChecksumMismatch);
 	XCTAssertFalse([self.hub isCachedRepo:@"a/b" revision:nil path:@"f.bin"]);
 }
 

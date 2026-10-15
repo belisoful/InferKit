@@ -213,13 +213,9 @@ public final class NFKMLXSD3ControlNetGenerator: NSObject {
     public static func generator(repo: String?, controlNetRepo: String?, revision: String?, cacheDirectoryURL: URL?,
                                  residency: NFKMLXResidency,
                                  completionHandler: @escaping (NFKMLXSD3ControlNetGenerator?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try generator(repo: repo, controlNetRepo: controlNetRepo, revision: revision,
-                                                cacheDirectoryURL: cacheDirectoryURL, residency: residency), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try generator(repo: repo, controlNetRepo: controlNetRepo, revision: revision,
+                          cacheDirectoryURL: cacheDirectoryURL, residency: residency)
         }
     }
 

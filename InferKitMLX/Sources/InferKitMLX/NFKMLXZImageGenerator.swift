@@ -253,13 +253,9 @@ public final class NFKMLXZImageGenerator: NSObject {
     public static func generator(repo: String?, revision: String?, cacheDirectoryURL: URL?,
                                  residency: NFKMLXResidency,
                                  completionHandler: @escaping (NFKMLXZImageGenerator?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try generator(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-                                                residency: residency), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try generator(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                          residency: residency)
         }
     }
 

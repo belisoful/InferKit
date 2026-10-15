@@ -357,12 +357,8 @@ public final class NFKMLXSa2VA: NSObject {
     @objc(backendWithRepo:revision:cacheDirectoryURL:completionHandler:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                completionHandler: @escaping (NFKMLXSa2VABackend?, Error?) -> Void) {
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                completionHandler(try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL), nil)
-            } catch {
-                completionHandler(nil, error)
-            }
+        NFKMLXReleaseDownload.async(completionHandler) {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
         }
     }
 }

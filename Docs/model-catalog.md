@@ -210,6 +210,15 @@ a fine-tune.
 | `files` | array of [file](#file) | no | The files the source holds. |
 | `requiresConversion` | boolean | no | True when the original release needs a converter before InferKit loads it. |
 
+`NFKHFHub` downloads a source into its cache (`downloadModelSource:progressHandler:completionHandler:`),
+reports whether it is downloaded (`downloadStatusForModelSource:`), and removes it
+(`removalPlanForModelSource:error:`, `removeFilesInPlan:error:`). A `huggingface` source that lists
+files fetches those, an `optional` one only when the repository holds it; one that lists none fetches
+the whole repository. A `url` source caches its file under the name its first file gives. A `system`
+or `none` source holds no files. A source with `requiresConversion` is refused with
+`NFKDownloadErrorRequiresConversion`. The [examples](examples.md#downloading-with-progress-then-removing-nfkdownload)
+show the calls.
+
 ## File
 
 `NFKModelFile`, an entry of a source's `files`.

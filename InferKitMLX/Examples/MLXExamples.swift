@@ -184,6 +184,33 @@ final class MLXExamples: XCTestCase {
         wait(for: [done], timeout: 5)
     }
 
+    // Docs/examples.md: Downloading a whole release — progress through a current NFKDownload, and the
+    // catalog-level call. Network-free: a model with no registered name fails before any transfer.
+    func testExampleCatalogDownloadReportsThroughADownload() throws {
+        let source = NFKModelSource(kind: NFKModelSourceKindHuggingFace, repository: "org/model", revision: nil,
+                                    url: nil, layout: NFKModelSourceLayoutDirectory, files: nil,
+                                    requiresConversion: false, extensions: nil)
+        let model = try NFKModelDescriptor(dictionary: [
+            "id": "example.model", "family": "example", "engine": "mlx", "registryName": "not-registered",
+            "variants": [["id": "default", "isDefault": true, "source": source.dictionaryRepresentation()]],
+        ])
+        let done = expectation(description: "completion handler")
+        let download = NFKMLXHub.backend(for: model, variant: nil, cacheDirectoryURL: nil,
+                                         progressHandler: { progress in
+            _ = progress.fractionCompleted                       // a progress bar
+        }) { backend, error in
+            XCTAssertNil(backend)
+            XCTAssertNotNil(error)
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 5)
+        XCTAssertEqual(download.state.rawValue, NFKDownloadState.failed.rawValue)
+
+        let hub = NFKMLXHub.hub(cacheDirectoryURL: nil)          // the hub the factories use
+        XCTAssertEqual(hub.downloadStatus(repo: "org/never-downloaded", revision: nil, paths: nil).presence.rawValue,
+                       NFKDownloadPresence.absent.rawValue)
+    }
+
     // End to end: register -> build by name -> run. Needs MLX, so it skips without a Metal library
     // (see Tools/mlx-metallib.sh). Green keys out (alpha low); red is kept (alpha high).
     func testExampleReferenceKeyerRunsThroughTheRegistry() throws {
