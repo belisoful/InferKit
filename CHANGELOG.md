@@ -160,6 +160,47 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - The test suite compiles `NFKPluginABI.h` and `NFKInferKitC.h` as C99 and as C++11 under `-pedantic
   -Werror`, and a program that uses every declaration of `NFKInferKitC.h` in both languages.
 
+#### Installed plugins join the model catalog
+
+- `NFKPluginRegistry` lists plugins in a model catalog from their manifests and loads no code:
+  `addPluginAtURL:error:` and `addPluginsInDirectoryURL:errors:` add a bundle or a folder of them,
+  `removePluginWithIdentifier:` removes one, and `manifests`, `manifestForModelIdentifier:`, and `tools`
+  read them. `sharedRegistry` lists them in `NFKModelCatalog.sharedCatalog`.
+- Each model joins the catalog as `<plugin id>/<model id>`, with engine `plugin`, the model's own
+  identifier as its `registryName`, and `extensions.plugin` naming the plugin's identifier, version, and
+  kind. A plugin that would replace a model the catalog lists, or a second bundle under one plugin
+  identifier, is `NFKPluginErrorIdentifierInUse`. A bundle another account could change is refused when
+  it is listed.
+- The registry registers the `plugin` engine's builder, so `-[NFKModelCatalog
+  backendForModelIdentifier:options:error:]` builds a plugin's model after the options, machine, and
+  memory checks every model gets. `-[NFKPluginRegistry backendForModelIdentifier:options:error:]`
+  returns the `NFKPluginBackend` itself. Neither starts the plugin's process.
+- `reloadPluginWithIdentifier:error:` reads a new version from disk, updates the catalog, and restarts a
+  running process with it while runs in flight finish; it returns before the restart ends.
+  `reloadPluginWithIdentifier:completionHandler:` reports the restart's end or its error. A plugin the
+  registry does not list is the new `NFKPluginErrorUnknownPlugin`.
+- A tool name is unique across the listed plugins: a plugin that declares a tool another listed plugin
+  declares is `NFKPluginErrorIdentifierInUse`, naming the tool and the plugin that holds it.
+- `setOptionValues:forPluginIdentifier:error:` sets a plugin's own options, resolved against its
+  manifest as model options are (`NFKModelCatalogErrorInvalidOptions` with `NFKModelOptionProblemsKey`),
+  and `optionValuesForPluginIdentifier:` reads them. The plugin reads them from its context's `options`;
+  a running process restarts to receive them.
+- `sharedMemoryPrefix` on the registry and on `NFKPluginProcess` names a sandboxed app's app group. Hello
+  then offers the `file-descriptors` capability and the prefix, so large values cross in app-group shared
+  memory and files as open descriptors, with the temporary-file fallback kept.
+- `setTrusted:forPluginIdentifier:` runs a plugin in the app's process from its next load, and the
+  `NFKPluginInProcessWarning…` texts say what that costs. A trusted plugin whose manifest does not allow
+  it, and every `executable` plugin, is `NFKPluginErrorNotTrusted`.
+- `hostExecutableURL` finds `inferkit-plugin-host` in the main bundle's `Contents/Helpers`, among its
+  auxiliary executables, beside its executable, or beside the image that contains InferKit.
+- A backend `NFKInferenceServer` unloads is freed by the unload. The idle unload, a lazy build, and a run
+  each drain their own autorelease pool, so a plugin backend's process exits after its idle interval
+  instead of living as long as the thread that last touched the backend. The plugin channel's and
+  supervisor's queues drain a pool per block for the same reason.
+- `NFKPluginSignaturePolicy` has value equality: two policies are equal when their four demands are.
+- `Docs/plugins.md` is the guide to writing, signing, listing, trusting, and hosting plugins, with the
+  `codesign` line for the embedded host and the rules for sandboxed apps.
+
 #### Downloads are planned, observed, cancelled, and removed
 
 - `NFKHFHub` plans a download before it starts: `planDownloadOfRepo:revision:paths:error:` (paths may

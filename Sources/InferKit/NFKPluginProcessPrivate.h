@@ -170,6 +170,11 @@ typedef void (^NFKPluginReplyHandler)(NSDictionary<NSString *, id> * _Nullable r
 /*! Reports a log message through logHandler. */
 - (void)logMessage:(NSString *)message level:(NFKPluginLogLevel)level;
 
+/*! Takes manifest as the version the next start launches, when no process runs, no restart is pending,
+	and no start is under way. A Failed process returns to NotRunning, since the new version deserves a
+	start. Returns NO, changing nothing, otherwise; the caller then restarts. */
+- (BOOL)replaceManifestWhileStopped:(NFKPluginManifest *)manifest;
+
 @end
 
 @interface NFKPluginBackend ()

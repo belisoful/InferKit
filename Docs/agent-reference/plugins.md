@@ -85,8 +85,8 @@ codesign --force --timestamp --options runtime \
 - `inferkit-plugin-host-sandboxed.entitlements` → `com.apple.security.app-sandbox` and
   `com.apple.security.inherit`, for a sandboxed app. A helper that inherits the sandbox carries those two
   entitlements only, so the hardened runtime's library validation then admits only code the app's own
-  team signed. Open question: a sandboxed app that serves other teams' `objc` or `c-abi` plugins needs
-  them signed by its team, or the `executable` kind.
+  team signed. A sandboxed app that serves other teams' `objc` or `c-abi` plugins needs them signed by
+  its team, or the `executable` kind (`Docs/plugins.md`, "Sandboxed and unsandboxed apps").
 - Sign the helper before the app, and the app last, so the app's seal covers the signed helper.
 
 An app that loads a trusted `objc` plugin into its own process keeps the core's symbols exported:
@@ -712,6 +712,152 @@ backends.
   the verification moved ahead of hello: a group-writable `Info.plist` answers hello with
   `NFKPluginErrorLoadFailed` naming the file, and `--allow-unsigned` alone exits 64.
 
+## Registry
+
+`NFKPluginRegistry` lists plugins in one `NFKModelCatalog` and makes their backends. Its state (entries
+by plugin identifier, catalog identifier → plugin identifier, the trusted set) lives under one lock;
+process starts, restarts, and in-process loads run outside it.
+
+### Listing
+
+`addPluginAtURL:error:` runs, in order:
+
+1. `+[NFKPluginManifest manifestWithBundleURL:error:]`.
+2. `NFKPluginCheckBundleOwnership`: the folder that holds the bundle, the bundle, and every item in it.
+   For `addPluginsInDirectoryURL:errors:` that folder is the plugins folder, so the rule is checked up
+   to it and no further. A failure → `NFKPluginErrorLoadFailed`, as the loader reports it.
+3. `-checkHostCompatibilityWithError:` → `NFKPluginErrorIncompatible`.
+4. The catalog descriptors. A catalog identifier the catalog already holds and this plugin did not add →
+   `NFKPluginErrorIdentifierInUse`, and none of the plugin's models are listed. The same plugin
+   identifier from another resolved bundle path → `NFKPluginErrorIdentifierInUse`; from the same path →
+   a reload.
+
+No signature is checked and no code loads. `addPluginsInDirectoryURL:errors:` takes the
+`.inferkitplugin` entries directly inside the folder in name order, hidden files skipped.
+
+Each descriptor is the manifest model's `dictionaryRepresentation` with `id` → `<pluginId>/<modelId>`,
+`registryName` → the model identifier, `engine` → `plugin`, a top-level `plugin` key (which the reader
+keeps as `extensions.plugin`) → `{id, version, kind}`, and `providerClass` removed, so the catalog never
+looks up a class a plugin's manifest names.
+
+### The engine builder
+
+- The first registry made registers one `NFKPluginEngineBuilder` (private) for engine `plugin`. The
+  builder registry is global, so the builder finds the registry by the build request's catalog among the
+  live registries (a weak hash table) and asks the one that lists the identifier.
+- It passes `request.loadOptions` to the plugin's build: every load option, defaults filled, the variant
+  under `variant` when the model has several, and never `NFKModelLoadOptionIgnoreMemoryBudget`. Request
+  options reach the plugin as the `NFKDefaultedBackend`'s defaults.
+- A `plugin` descriptor no registry lists, such as one from `descriptorWithIdentifier:derivedFromBackend:`,
+  builds from its `providerClass` through `NFKDynamicBackend` as the catalog's last resort does, else
+  fails with `NFKModelCatalogErrorNoBuilder` and the catalog's own message.
+
+### Backends, trust, and tools
+
+- An untrusted plugin's backend comes from its `NFKPluginProcess`, made on first need with the registry's
+  `signaturePolicy` and `hostExecutableURL`. Making it starts nothing. Setting `signaturePolicy` sets it
+  on every existing process; `hostExecutableURL` applies to processes made afterward.
+- A trusted plugin loads through the loader's private entry (`options` empty, `runsInHostProcess` YES)
+  under `signaturePolicy`, and its backend is wrapped in the in-process `NFKPluginBackend`. A manifest
+  without `allowsInProcess`, which includes every `executable` manifest → `NFKPluginErrorNotTrusted`
+  before the loader runs.
+- Trust is an in-memory set read at each backend request, which is "the next load". Withdrawing it sends
+  the next backend to a process; the loaded code stays.
+- `tools`: a trusted in-process plugin's tools are handler tools from the manifest declarations that load
+  the plugin on their first call and run its tool of the same name; every other plugin's are its process's
+  `NFKPluginToolProxy`s.
+
+### Autorelease pools
+
+A plugin backend's handle lives until the `NFKPluginBackend` is freed, and its process idles only once no
+handle lives, so an autoreleased backend keeps a process running. Three paths autoreleased one into a pool
+that drains only when its thread exits, and `NFKPluginRegistryTests` (the server idle test) failed 3/3 on
+the first:
+
+- `-[NFKInferenceServer unloadIdleModels]` took the backend from inside `@synchronized`, which returns it
+  autoreleased into the caller's pool: the test's main thread, or the residency queue's thread. The take
+  now returns outside the lock, and one `@autoreleasepool` spans the take and the release.
+- A provider build and a run on a global queue: each block now drains its own pool.
+  `-[NFKPluginProcess backendForModelIdentifier:options:error:]` returns its new backend from inside a
+  `for` loop, so the return autoreleases it.
+- The channel's handler queue: `routeEvent:` reads the backend from the connection's weak map table, and
+  a weak read autoreleases. The channel's and the supervisor's queues use
+  `DISPATCH_AUTORELEASE_FREQUENCY_WORK_ITEM`.
+
+The test now also waits for the backend itself to be freed after the unload, which separates a held
+backend from an idle timer that does not fire.
+
+### Tool names
+
+`checkToolNamesOfManifest:error:` runs on every add and reload, under the lock: a tool name another
+listed plugin declares → `NFKPluginErrorIdentifierInUse`, naming the tool and the holder. A plugin's
+own entry is skipped, so a reload never conflicts with itself, and a removal frees the names. The
+fixtures all declare `echo`, so a test that lists two of them drops one's tools from a copy's manifest.
+
+### Plugin option values
+
+- `setOptionValues:forPluginIdentifier:error:` resolves the values through a carrier descriptor whose
+  options are the manifest's top-level options, with `resolvedOptions:stage:nil error:`. The error is the
+  catalog's (`NFKModelCatalogErrorDomain`, `NFKModelCatalogErrorInvalidOptions`, `NFKModelOptionProblemsKey`),
+  so a user interface shows plugin and model option problems alike. The stored dictionary holds the
+  given keys only, converted; the plugin fills its own defaults.
+- The values live in a dictionary by plugin identifier beside the trusted set, kept through a removal.
+  Setting needs a listed plugin, since the manifest declares the options.
+- A process takes them as `pluginOptions` (hello's `options`) when the registry makes it, and on each set.
+  A set then hands the process its own manifest through `handManifest:toProcess:completion:`: a stopped
+  process changes nothing else, and a running one restarts.
+- An in-process load passes them to the loader's private entry. A plugin already loaded keeps its first
+  context, so a later set does not reach it until the app restarts.
+
+### Shared-memory prefix
+
+- `NFKPluginProcess.sharedMemoryPrefix` (public) set → hello's `capabilities` is `["file-descriptors"]`
+  and hello carries `sharedMemoryPrefix`; nil → `capabilities` is empty and the key is absent, as before.
+  `NFKPluginCapabilityFileDescriptors` moved from the service into `NFKPluginWire`.
+- The backend's request writer takes the prefix as `namePrefix`, and passes files as descriptors when
+  the hello reply's `capabilities` lists `file-descriptors`. The service already honored both.
+- A POSIX shared-memory name holds at most 31 characters and a region falls back below 10 random
+  characters, so an app group identifier of 21 characters or more sends every region through the
+  temporary-file fallback. `Docs/plugins.md` tells apps to keep it short.
+- The registry's prefix is set on each process it makes and on every existing one when it changes.
+
+### Reload and removal
+
+- `reloadPluginWithIdentifier:error:` reads the bundle at the listed URL again through the same checks.
+  Another plugin identifier there → `NFKPluginErrorManifestMismatch`. A plugin loaded in process at
+  another version → `NFKPluginErrorLoadFailed`, since loaded code never unloads. A failure changes
+  nothing.
+- The new manifest goes to the process through `-replaceManifestWhileStopped:` (private,
+  `NFKPluginProcessPrivate.h`) when no process runs, no restart is pending, and the start lock is free
+  (`tryLock`, since a start holds it for the whole launch). A Failed process returns to NotRunning. Any
+  other state restarts with `restartWithManifest:completionHandler:`, which returns at once; the
+  synchronous reload does not wait for the restart. `reloadPluginWithIdentifier:completionHandler:`
+  passes the restart's completion through, or calls it at once for a stopped process, always on a global
+  user-initiated queue; a reload that fails before the hand-off calls it with that error.
+- `removePluginWithIdentifier:` removes the descriptors and drops the registry's process. Backends and
+  tool proxies hold the process strongly, and its `dealloc` closes the channel and stops the launcher, so
+  the process ends once the last of them is released.
+
+### Host search
+
+`hostExecutableURL` unset searches on each read: `Contents/Helpers/inferkit-plugin-host` in the main
+bundle, `-[NSBundle URLForAuxiliaryExecutable:]`, beside the main executable, then beside the image
+that contains InferKit (`dladdr`). Under `swift test` none of these is the host: the image is the test
+bundle's executable inside `.xctest/Contents/MacOS`, and the host is beside the `.xctest`. Tests set the
+URL from `NFKPluginFixtures.hostExecutableURL`.
+
+### Tests
+
+`NFKPluginRegistryTests` runs over the fixtures with the development policy. The in-process test loads
+the cached 1.0.0 fixtures, as the loader tests do. The reload test copies the 1.0.0 C fixture into a
+folder of its own and replaces it with 2.0.0 there while a `slow` run is in flight. The server test
+hosts the C fixture through `addBackendProvider:forModelName:` with `idleUnloadInterval` 0.2 s and the
+process's `idleExitInterval` 0.5 s, unloads it with `unloadIdleModels`, and waits for the process to
+exit. The options test in process loads a re-signed copy of the C fixture under an identifier of its own,
+since the cached fixture may already be loaded with other options. The hello test drives
+`NFKPluginProcess` with the in-test peer. Tests that launch skip when the host is not built beside the
+tests.
+
 ## Building plugins
 
 A plugin is a `.inferkitplugin` bundle. These steps build one of each kind from the command line; the
@@ -826,6 +972,16 @@ Sign the bundle after the manifest and `Info.plist` are in place. The signature 
 - `+hostExecutableURL` is `NFK_PLUGIN_HOST_PATH` when set, else `inferkit-plugin-host` beside the
   test bundle, where `swift build --build-tests` and Xcode both place it.
 - `+tamperedCopyOfBundleAtURL:error:` copies a bundle and edits its manifest's summary after signing.
+- Builds within one test process run one at a time (`@synchronized` on the class), and a second caller
+  finds the finished cache. Builds in two processes use separate staging directories, named by UUID, and
+  the first `rename` wins. No two builds share a path.
+- `+runProgram:arguments:error:` closes the tool's standard input, sets `CODESIGN_ALLOCATE` to the
+  toolchain's `codesign_allocate` (found once with `xcrun --find`), and on its 300-second timeout lists
+  the processes below the tool in the error. On 2026-10-15 a full core run timed out in `codesign --force
+  --sign -` of the duplicate-runtime fixture after it printed "replacing existing signature", the point
+  where codesign runs `codesign_allocate`; through `/usr/bin/codesign_allocate` that is an xcrun shim
+  resolving the toolchain on each call. The same test passed alone. The cause was not observed, and the
+  listing records it if it recurs.
 
 ## Staging
 
@@ -839,3 +995,5 @@ Sign the bundle after the manifest and `Info.plist` are in place. The signature 
 - Stage 2, after the catalog's build entry merges: `NFKInferKitC.m`, `NFKPluginRegistry` with the
   `plugin` engine builder, the completeness test, the consumer docs, the examples, and the ABI tool's
   coverage of both C headers.
+- Stage 2 registry: `NFKPluginRegistry`, the `plugin` engine builder, `NFKPluginRegistryTests`,
+  `Docs/plugins.md`, the DocC article `Plugins`, and the plugin examples.

@@ -533,16 +533,20 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	@synchronized (self) {
 		provider = self.provider;
 	}
+	// A global queue drains no autorelease pool per block, so a backend the provider autoreleases would
+	// outlive its unload until the worker thread exits; a backend that holds a process keeps it running.
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-		NFKServedLoadMeter *meter = [NFKServedLoadMeter meterStartingNow];
-		NSError *error = nil;
-		id<NFKInferenceBackend> backend = provider(&error);
-		NSNumber *residentBytes = nil;
-		NSNumber *peakBytes = nil;
-		if (backend != nil) {
-			[meter readBackend:backend residentBytes:&residentBytes peakBytes:&peakBytes];
+		@autoreleasepool {
+			NFKServedLoadMeter *meter = [NFKServedLoadMeter meterStartingNow];
+			NSError *error = nil;
+			id<NFKInferenceBackend> backend = provider(&error);
+			NSNumber *residentBytes = nil;
+			NSNumber *peakBytes = nil;
+			if (backend != nil) {
+				[meter readBackend:backend residentBytes:&residentBytes peakBytes:&peakBytes];
+			}
+			[self buildEndedWithBackend:backend residentBytes:residentBytes peakBytes:peakBytes error:error];
 		}
-		[self buildEndedWithBackend:backend residentBytes:residentBytes peakBytes:peakBytes error:error];
 	});
 }
 
@@ -679,11 +683,14 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 - (nullable id<NFKInferenceBackend>)takeBackendPassingTest:(BOOL (^)(NFKServedModel *model))test
 											  reason:(NFKServerModelEventReason)reason
 {
+	// Returned outside the lock, so the return hands the backend over without autoreleasing it into a
+	// pool that may outlive the unload.
+	id<NFKInferenceBackend> taken = nil;
 	@synchronized (self) {
 		if (![self isUnloadableNow] || !test(self)) {
 			return nil;
 		}
-		id<NFKInferenceBackend> taken = self.backend;
+		taken = self.backend;
 		self.backend = nil;
 		self.residency = NFKServerModelResidencyNotLoaded;
 		self.unloads += 1;
@@ -691,8 +698,8 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		if (taken != nil) {
 			[self reportModelEvent:NFKServerModelEventKindUnloaded reason:reason loadSeconds:0 error:nil];
 		}
-		return taken;
 	}
+	return taken;
 }
 
 /*! Runs the unload handler; called once the taken backend is released. */
@@ -775,9 +782,12 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 
 - (nullable id<NFKInferenceBackend>)residentBackend
 {
+	// Returned outside the lock, so the return hands the backend over without autoreleasing it.
+	id<NFKInferenceBackend> backend = nil;
 	@synchronized (self) {
-		return self.backend;
+		backend = self.backend;
 	}
+	return backend;
 }
 
 - (NSDictionary<NSString *, id> *)lastBackendDescription
@@ -831,17 +841,19 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	// A synchronous backend holds its slot until its call returns, cancelled or not: it cannot be
 	// interrupted, and the next run must not overlap it.
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-		NSError *error = nil;
-		NFKInferenceResult *result = nil;
-		if (!run.cancelled) {
-			result = run.work != nil ? run.work(backend, &error) : [backend runInferenceForRequest:run.request error:&error];
+		@autoreleasepool {
+			NSError *error = nil;
+			NFKInferenceResult *result = nil;
+			if (!run.cancelled) {
+				result = run.work != nil ? run.work(backend, &error) : [backend runInferenceForRequest:run.request error:&error];
+			}
+			if (run.cancelled) {
+				result = nil;
+				error = NFKServedCancellation();
+			}
+			[self run:run endedWithResult:result error:error];
+			[run finishWithResult:result error:error];
 		}
-		if (run.cancelled) {
-			result = nil;
-			error = NFKServedCancellation();
-		}
-		[self run:run endedWithResult:result error:error];
-		[run finishWithResult:result error:error];
 	});
 }
 
@@ -2441,49 +2453,51 @@ static NSDictionary<NSString *, id> *NFKServedOptionsAtStage(NFKModelDescriptor 
 - (NSArray<NSString *> *)unloadIdleModels
 {
 	NSMutableArray<NSString *> *unloaded = [NSMutableArray array];
-	NSMutableArray<id<NFKInferenceBackend>> *released = [NSMutableArray array];
 	NSMutableArray<NFKServedModel *> *unloadedModels = [NSMutableArray array];
-	double pressure = self.memoryPressure;
-	NSTimeInterval grace = MAX(self.unloadGracePeriod, 0.0);
-	@synchronized (self.residencyLock) {
-		NSTimeInterval now = [self now];
-		NSMutableArray<NFKServedModel *> *pressured = [NSMutableArray array];
-		NSMutableDictionary<NSString *, NSNumber *> *timeouts = [NSMutableDictionary dictionary];
-		for (NFKServedModel *model in [self hostedModels]) {
-			if (![model isUnloadable] || [self isPinnedModelNamed:model.name]) {
-				continue;
-			}
-			NSTimeInterval idle = [self idleIntervalForModelNamed:model.name];
-			NSTimeInterval timeout = [self timeoutForIdleInterval:idle pressure:pressure];
-			id<NFKInferenceBackend> taken = [model takeBackendIfUnusedFor:idle grace:grace at:now reason:NFKServerModelEventReasonIdle];
-			if (taken != nil) {
-				[released addObject:taken];
-				[unloadedModels addObject:model];
-				[unloaded addObject:model.name];
-			} else if (timeout < idle && [model isUnusedFor:timeout grace:grace at:now]) {
-				[pressured addObject:model];
-				timeouts[model.name] = @(timeout);
-			}
-		}
-		BOOL spaced = !self.hasPressureUnloaded || now - self.lastPressureUnloadAt >= self.pressureUnloadHysteresis;
-		NSArray<NFKServedModel *> *leastRecentFirst = [pressured sortedArrayUsingComparator:^NSComparisonResult(NFKServedModel *left, NFKServedModel *right) {
-			return [@([left lastUse]) compare:@([right lastUse])];
-		}];
-		for (NFKServedModel *model in spaced ? leastRecentFirst : @[]) {
-			id<NFKInferenceBackend> taken = [model takeBackendIfUnusedFor:timeouts[model.name].doubleValue grace:grace at:now
-																   reason:NFKServerModelEventReasonPressure];
-			if (taken != nil) {
-				[released addObject:taken];
-				[unloadedModels addObject:model];
-				[unloaded addObject:model.name];
-				self.lastPressureUnloadAt = now;
-				self.hasPressureUnloaded = YES;
-				break;
-			}
-		}
-	}
-	// A backend's teardown can take seconds (an MLX model frees its weights), so it runs off the lock.
+	// One pool from the take to the release: whatever the take or the unload autoreleases is freed here,
+	// so no backend outlives its unload in the caller's pool.
 	@autoreleasepool {
+		NSMutableArray<id<NFKInferenceBackend>> *released = [NSMutableArray array];
+		double pressure = self.memoryPressure;
+		NSTimeInterval grace = MAX(self.unloadGracePeriod, 0.0);
+		@synchronized (self.residencyLock) {
+			NSTimeInterval now = [self now];
+			NSMutableArray<NFKServedModel *> *pressured = [NSMutableArray array];
+			NSMutableDictionary<NSString *, NSNumber *> *timeouts = [NSMutableDictionary dictionary];
+			for (NFKServedModel *model in [self hostedModels]) {
+				if (![model isUnloadable] || [self isPinnedModelNamed:model.name]) {
+					continue;
+				}
+				NSTimeInterval idle = [self idleIntervalForModelNamed:model.name];
+				NSTimeInterval timeout = [self timeoutForIdleInterval:idle pressure:pressure];
+				id<NFKInferenceBackend> taken = [model takeBackendIfUnusedFor:idle grace:grace at:now reason:NFKServerModelEventReasonIdle];
+				if (taken != nil) {
+					[released addObject:taken];
+					[unloadedModels addObject:model];
+					[unloaded addObject:model.name];
+				} else if (timeout < idle && [model isUnusedFor:timeout grace:grace at:now]) {
+					[pressured addObject:model];
+					timeouts[model.name] = @(timeout);
+				}
+			}
+			BOOL spaced = !self.hasPressureUnloaded || now - self.lastPressureUnloadAt >= self.pressureUnloadHysteresis;
+			NSArray<NFKServedModel *> *leastRecentFirst = [pressured sortedArrayUsingComparator:^NSComparisonResult(NFKServedModel *left, NFKServedModel *right) {
+				return [@([left lastUse]) compare:@([right lastUse])];
+			}];
+			for (NFKServedModel *model in spaced ? leastRecentFirst : @[]) {
+				id<NFKInferenceBackend> taken = [model takeBackendIfUnusedFor:timeouts[model.name].doubleValue grace:grace at:now
+																	   reason:NFKServerModelEventReasonPressure];
+				if (taken != nil) {
+					[released addObject:taken];
+					[unloadedModels addObject:model];
+					[unloaded addObject:model.name];
+					self.lastPressureUnloadAt = now;
+					self.hasPressureUnloaded = YES;
+					break;
+				}
+			}
+		}
+		// A backend's teardown can take seconds (an MLX model frees its weights), so it runs off the lock.
 		for (id<NFKInferenceBackend> backend in released) {
 			NFKInferenceUnload(backend);
 		}

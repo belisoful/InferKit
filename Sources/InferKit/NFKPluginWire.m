@@ -38,6 +38,7 @@ NSString * const NFKPluginMessageEvent = @"event";
 NSString * const NFKPluginMessageLog = @"log";
 NSString * const NFKPluginMessageReply = @"reply";
 NSString * const NFKPluginEventVerified = @"verified";
+NSString * const NFKPluginCapabilityFileDescriptors = @"file-descriptors";
 
 #pragma mark - Descriptor ownership
 

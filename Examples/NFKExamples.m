@@ -1680,6 +1680,78 @@
 	XCTAssertEqualObjects(loaded[NFKModelLoadOptionContextLength], @8192);
 }
 
+#if TARGET_OS_OSX
+// Docs/examples.md: Model catalog — Plugins. The folder holds one executable plugin whose program never
+// runs: listing reads its manifest, and the backend starts nothing until it prepares or runs.
+- (NSURL *)examplePluginsFolder
+{
+	NSURL *folder = [[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:
+					 [NSString stringWithFormat:@"example-plugins-%@", NSUUID.UUID.UUIDString] isDirectory:YES];
+	NSURL *contents = [folder URLByAppendingPathComponent:@"Echo.inferkitplugin/Contents" isDirectory:YES];
+	NSFileManager *files = NSFileManager.defaultManager;
+	XCTAssertTrue([files createDirectoryAtURL:[contents URLByAppendingPathComponent:@"MacOS"] withIntermediateDirectories:YES
+								   attributes:@{ NSFilePosixPermissions: @0755 } error:NULL]);
+	XCTAssertTrue([files createDirectoryAtURL:[contents URLByAppendingPathComponent:@"Resources"] withIntermediateDirectories:YES
+								   attributes:@{ NSFilePosixPermissions: @0755 } error:NULL]);
+	NSDictionary *info = @{ @"CFBundleIdentifier": @"com.example.echo", @"CFBundleShortVersionString": @"1.0.0",
+							@"CFBundleExecutable": @"Echo", @"CFBundlePackageType": @"BNDL" };
+	XCTAssertTrue([info writeToURL:[contents URLByAppendingPathComponent:@"Info.plist"] error:NULL]);
+	NSString *manifest = @"{ \"schemaVersion\": 1, \"kind\": \"inferkit.plugin\", \"id\": \"com.example.echo\","
+		"\"version\": \"1.0.0\", \"displayName\": \"Example Echo\", \"compatibility\": { \"inferkitAPI\": \"1.0\" },"
+		"\"entry\": { \"kind\": \"executable\", \"executable\": \"Echo\" },"
+		"\"options\": [{ \"key\": \"greeting\", \"kind\": \"text\", \"default\": \"hello\" }],"
+		"\"models\": [{ \"id\": \"echo\", \"family\": \"example-echo\", \"inputs\": [{ \"key\": \"prompt\", \"required\": true }],"
+		"\"outputs\": [{ \"key\": \"text\", \"required\": true }] }] }";
+	XCTAssertTrue([manifest writeToURL:[contents URLByAppendingPathComponent:@"Resources/inferkit-plugin.json"] atomically:YES
+							  encoding:NSUTF8StringEncoding error:NULL]);
+	NSURL *program = [contents URLByAppendingPathComponent:@"MacOS/Echo"];
+	XCTAssertTrue([@"#!/bin/sh\nexit 0\n" writeToURL:program atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
+	XCTAssertTrue([files setAttributes:@{ NSFilePosixPermissions: @0755 } ofItemAtPath:program.path error:NULL]);
+	[self addTeardownBlock:^{
+		[NFKPluginRegistry.sharedRegistry removePluginWithIdentifier:@"com.example.echo"];
+		[NSFileManager.defaultManager removeItemAtURL:folder error:NULL];
+	}];
+	return folder;
+}
+
+- (void)testExampleListingPluginsAndBuildingAPluginModel
+{
+	NSURL *pluginsFolder = [self examplePluginsFolder];
+
+	NFKPluginRegistry *plugins = NFKPluginRegistry.sharedRegistry;
+	NSArray<NSError *> *errors = nil;
+	NSArray<NFKPluginManifest *> *added = [plugins addPluginsInDirectoryURL:pluginsFolder errors:&errors];
+	for (NFKPluginManifest *manifest in added) {
+		NSString *name = manifest.displayName;                     // manifest.version, manifest.entryKind
+	}
+	NSError *error = nil;
+	id<NFKInferenceBackend> echo =
+		[NFKModelCatalog.sharedCatalog backendForModelIdentifier:@"com.example.echo/echo" options:nil error:&error];
+	NFKModelDescriptor *listed = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"com.example.echo/echo"];
+	NSString *version = listed.extensions[@"plugin"][@"version"];
+
+	if (![plugins setOptionValues:@{ @"greeting": @"hi" } forPluginIdentifier:@"com.example.echo" error:&error]) {
+		// NFKModelCatalogErrorInvalidOptions: the problems are under NFKModelOptionProblemsKey
+	}
+	XCTestExpectation *reloaded = [self expectationWithDescription:@"reloaded"];
+	[plugins reloadPluginWithIdentifier:@"com.example.echo" completionHandler:^(NSError *reloadError) {
+		// nil once the new version runs, or at once when no process runs
+		XCTAssertNil(reloadError);
+		[reloaded fulfill];
+	}];
+	[self waitForExpectations:@[ reloaded ] timeout:10];
+
+	XCTAssertEqualObjects([plugins optionValuesForPluginIdentifier:@"com.example.echo"], @{ @"greeting": @"hi" });
+	XCTAssertEqual(errors.count, 0u, @"%@", errors);
+	XCTAssertEqualObjects([added valueForKey:@"identifier"], @[ @"com.example.echo" ]);
+	XCTAssertEqualObjects(version, @"1.0.0");
+	XCTAssertEqualObjects(listed.registryName, @"echo");
+	XCTAssertEqualObjects(echo.backendIdentifier, @"plugin:com.example.echo/echo", @"%@", error);
+	XCTAssertTrue([echo.supportedInputKeys containsObject:NFKInputPrompt]);
+	XCTAssertEqual(((NFKPluginBackend *)echo).process.state, NFKPluginProcessStateNotRunning);
+}
+#endif
+
 // A QR code carrying the payload, for the examples that read one.
 - (CGImageRef)exampleQRCodeImageWithPayload:(NSString *)payload CF_RETURNS_RETAINED
 {

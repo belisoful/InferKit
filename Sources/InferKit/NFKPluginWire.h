@@ -108,6 +108,10 @@ extern NSString * const NFKPluginMessageReply;
 /*! The event the plugin host sends once it has verified the bundle, before it reads hello. */
 extern NSString * const NFKPluginEventVerified;
 
+/*! The capability a host lists in hello to exchange files as open descriptors beside their paths. A
+	sandboxed host offers it with its app group's sharedMemoryPrefix. */
+extern NSString * const NFKPluginCapabilityFileDescriptors;
+
 /*!
 	@class      NFKPluginRunSlots
 	@abstract   A backend's run slots: at most limit runs at once, and the rest wait in order.

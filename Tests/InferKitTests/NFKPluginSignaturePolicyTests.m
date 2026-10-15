@@ -103,6 +103,29 @@
 
 #pragma mark Code on disk
 
+- (void)testPoliciesWithTheSameDemandsAreEqual
+{
+	XCTAssertEqualObjects(NFKPluginSignaturePolicy.defaultPolicy, NFKPluginSignaturePolicy.defaultPolicy);
+	XCTAssertEqual(NFKPluginSignaturePolicy.defaultPolicy.hash, NFKPluginSignaturePolicy.defaultPolicy.hash);
+	XCTAssertNotEqualObjects(NFKPluginSignaturePolicy.defaultPolicy, NFKPluginSignaturePolicy.developmentPolicy);
+
+	NFKPluginSignaturePolicy *pinned = NFKPluginSignaturePolicy.developmentPolicy;
+	pinned.teamIdentifier = @"ABCDE12345";
+	pinned.requirementString = @"identifier \"com.example\"";
+	NFKPluginSignaturePolicy *copy = [pinned copy];
+	XCTAssertEqualObjects(copy, pinned);
+	XCTAssertEqual(copy.hash, pinned.hash);
+	copy.teamIdentifier = @"ZZZZZ99999";
+	XCTAssertNotEqualObjects(copy, pinned, @"another team");
+	copy.teamIdentifier = pinned.teamIdentifier;
+	copy.requirementString = nil;
+	XCTAssertNotEqualObjects(copy, pinned, @"no requirement");
+	copy.requirementString = pinned.requirementString;
+	copy.requiresValidSignature = NO;
+	XCTAssertNotEqualObjects(copy, pinned, @"signatures waived");
+	XCTAssertNotEqualObjects(pinned, (id)@"policy");
+}
+
 - (void)testTheDevelopmentPolicyAcceptsAnAdHocSignature
 {
 	NSError *error = nil;

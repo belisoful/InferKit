@@ -712,6 +712,11 @@ resolves through `+[NFKDynamicBackend backendForCapability:error:]` as it is.
 | `apple-swift` | `NFKModelEngineAppleSwift` | The InferKitAppleSwift companion. |
 | `plugin` | `NFKModelEnginePlugin` | A backend a plugin or an app brings. |
 
+`NFKPluginRegistry` registers the `plugin` engine's builder. A model a plugin's manifest lists joins the
+catalog as `<plugin id>/<model id>` and builds through that builder; another `plugin` descriptor builds
+from its `providerClass`. The [plugin guide](plugins.md#listing-plugins-and-building-their-models)
+describes the fields a plugin's descriptor carries.
+
 ### Residencies
 
 | String | Constant | How the weights are held |

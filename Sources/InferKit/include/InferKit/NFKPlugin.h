@@ -53,6 +53,12 @@ extern NSString * const NFKPluginErrorDomain;
 				(handshakeTimeout), the host's verification of the bundle (verificationTimeout), a build or a
 				preparation (buildTimeout), or a run that a restart cancelled and that did not end. The
 				description names the step and the limit. Introduced in InferKit 0.4.0.
+	@constant   NFKPluginErrorIdentifierInUse The catalog already lists a model under one of the plugin's
+				catalog identifiers, the registry lists a plugin with the same identifier from another
+				bundle, or another listed plugin declares a tool of the same name. Introduced in InferKit
+				0.4.0.
+	@constant   NFKPluginErrorUnknownPlugin The registry lists no plugin with the identifier. Introduced
+				in InferKit 0.4.0.
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ERROR_ENUM(NFKPluginErrorDomain, NFKPluginError) {
@@ -74,6 +80,8 @@ typedef NS_ERROR_ENUM(NFKPluginErrorDomain, NFKPluginError) {
 	NFKPluginErrorNotTrusted = 16,
 	NFKPluginErrorStopped = 17,
 	NFKPluginErrorTimedOut = 18,
+	NFKPluginErrorIdentifierInUse = 19,
+	NFKPluginErrorUnknownPlugin = 20,
 };
 
 /*!
