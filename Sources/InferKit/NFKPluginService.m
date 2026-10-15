@@ -876,6 +876,7 @@ static id _Nullable NFKPluginServiceJSONSafe(id _Nullable value)
 	NFKInferenceWireCoding *coder = [[NFKInferenceWireCoding alloc] initWithTemporaryDirectory:nil];
 	coder.attachmentSink = writer;
 	coder.inlineByteLimit = self.inlineByteLimit;
+	coder.encodesValueObjectsAsJSON = YES;
 	return coder;
 }
 

@@ -45,6 +45,8 @@ extern "C" {
 
 				A payload's JSON is InferKit's tagged wire form. A value larger than the inline limit
 				arrives as {"$nfk": "buffer", "index": i, "as": …} and its bytes are @c buffers[i].
+				InferKit's value classes cross as JSON objects tagged by class, such as
+				{"$nfk": "detection", "boundingBox": {…}}, in both directions.
 				Docs/agent-reference/plugins.md specifies the form. Introduced in InferKit 0.4.0.
 */
 

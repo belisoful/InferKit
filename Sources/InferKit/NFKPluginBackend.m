@@ -599,6 +599,7 @@ static const NSTimeInterval NFKPluginStatusRefreshInterval = 1;
 		NFKInferenceWireCoding *encoder = [[NFKInferenceWireCoding alloc] initWithTemporaryDirectory:directory.URL];
 		encoder.attachmentSink = writer;
 		encoder.inlineByteLimit = connection.inlineByteLimit;
+		encoder.encodesValueObjectsAsJSON = YES;
 		id encoded = [encoder JSONObjectForRequest:request error:blockError];
 		if (encoded == nil) {
 			return NO;

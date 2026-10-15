@@ -69,6 +69,10 @@ The dynamic variant also writes `release/`: each macOS slice's framework zipped,
 zips, and `release.json`, the manifest an app reads to install and update releases (see
 [Side-by-side releases](#side-by-side-releases)). `--no-release` skips it.
 
+Every artifact carries the pure-C headers beside the core's: `NFKInferKitC.h` for a C, C++, or Rust
+program that calls InferKit, and `NFKPluginABI.h` for a plugin library. The [C interface](c-api.md)
+gives the compiler and linker lines.
+
 Three flags trim what gets built and written:
 
 - `--variant static | dynamic | both` — stop producing the one you do not deploy. The compile is

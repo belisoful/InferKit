@@ -74,7 +74,9 @@ NSString *NFKServedFileExtension(NSString * _Nullable extension);
 				  file and records its URL in temporaryFileURLs.
 				- pixelBuffer (CVPixelBuffer) → the pixel format, the dimensions, and each plane's rows
 				  packed, so a float depth map crosses exactly. cgImage → PNG. A Metal texture → PNG,
-				  decoded as a 32BGRA pixel buffer, since the far side has no device to make one on.
+				  decoded as a 32BGRA pixel buffer, since the far side has no device to make one on. A
+				  texture PNG cannot hold, such as a half or float image → a pixelBuffer of its format,
+				  over its IOSurface or read from the CPU.
 				- multiArray (MLMultiArray) → the data type, the shape, and the elements in row-major
 				  order. pcmBuffer (AVAudioPCMBuffer) → the stream description and each buffer's bytes.
 				- decisionQuestion → NFKDecisionQuestion's dictionary representation.
@@ -86,6 +88,13 @@ NSString *NFKServedFileExtension(NSString * _Nullable extension);
 				- double → a floating value that NSJSONSerialization would not return identical, as its
 				  17 significant digits. number → a non-finite double, which JSON cannot spell.
 				- dictionary → a dictionary that itself carries an "$nfk" key, so it is never read as a tag.
+				- numberKeyedDictionary → a dictionary whose every key is a number, such as a Core ML
+				  classifier's probabilities by class index, with each key as its decimal text.
+				- An MLFeatureValue → the value it holds (a number, a string, a pixel buffer, a
+				  multi-array, a dictionary, or an array), which is what the decoder returns.
+				- detection, keypoint, classification, audioSegment, midiSequence, midiNote, musicBeat,
+				  quadrilateral, decisionAnswer → InferKit's value classes as JSON objects, written in
+				  place of archive while encodesValueObjectsAsJSON is set (NFKWireValueObjects.h).
 				A value of any other class fails the encode, naming its key and class.
 
 				The attachment mode carries a large value's bytes beside the JSON. It is on for encoding
@@ -114,6 +123,13 @@ NSString *NFKServedFileExtension(NSString * _Nullable extension);
 
 /*! The largest value the attachment mode inlines, in bytes. Defaults to 65536. */
 @property (nonatomic, assign) NSUInteger inlineByteLimit;
+
+/*! Writes InferKit's value classes (NFKDetection, NFKKeypoint, NFKClassification, NFKAudioSegment,
+	NFKMIDISequence, NFKMIDINote, NFKMusicBeat, NFKQuadrilateral, NFKDecisionAnswer) as JSON objects
+	tagged by class, the form NFKWireValueObjects.h lists, in place of keyed archives. The C interface
+	and the plugin channel set it. Off by default, so the HTTP route keeps its archives. The decoder
+	reads both forms whatever the setting. */
+@property (nonatomic, assign) BOOL encodesValueObjectsAsJSON;
 
 /*! The files this coder wrote while decoding, for the caller that owns their lifetime. */
 @property (nonatomic, readonly, copy) NSArray<NSURL *> *temporaryFileURLs;

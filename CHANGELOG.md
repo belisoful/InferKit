@@ -160,6 +160,45 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - The test suite compiles `NFKPluginABI.h` and `NFKInferKitC.h` as C99 and as C++11 under `-pedantic
   -Werror`, and a program that uses every declaration of `NFKInferKitC.h` in both languages.
 
+#### A C interface for programs that call InferKit
+
+- `NFKInferKitC.h` is implemented. A C, C++, or Rust program builds a backend by its catalog identifier
+  with a JSON object of options (`nfk_backend_create`), runs it with tagged JSON and buffers
+  (`nfk_backend_run`), or submits the run with progress and completion callbacks (`nfk_backend_submit`,
+  `nfk_job_cancel`, `nfk_job_free`). `nfk_catalog_copy_json` returns the shared catalog's manifest and
+  `nfk_plugins_add_directory` adds a directory of plugins on macOS.
+- A refused build reports the catalog's own domain and code: `UnknownModel`, `InvalidOptions`,
+  `Unavailable`, `DoesNotFit`, `NoBuilder`.
+- A request's bytes and IOSurfaces are wrapped without a copy, and a file buffer is read from its path or
+  descriptor. A result carries every value with bytes as a buffer, so a C reader decodes no base64.
+- Everything InferKit returns has its own `*_free`, and each accepts NULL. A job's callbacks run one at
+  a time on a queue of its own at user-initiated quality of service. Its completion fires exactly once,
+  and a cancelled run's completion waits until the backend no longer holds the request's buffers. After
+  `nfk_job_free` returns no callback runs. No Objective-C exception reaches the caller.
+- `nfk_backend_copy_description` adds `residentBytes` and `peakBytes`, and `nfk_plugins_add_directory`
+  reports the first bundle it skipped while it counts the others.
+- `nfk_backend_prepare` loads a model ahead of its first run. `nfk_error_copy_details_json` returns an
+  error's user info as JSON: a refused build's option problems (key, code, message, value), a `DoesNotFit`
+  refusal's estimate and the options that fit, a plugin failure's underlying error, and every string and
+  number, with values JSON cannot carry left out.
+- A result or a partial carries InferKit's value classes as JSON objects tagged by class, never as keyed
+  archives: `detection`, `keypoint`, `classification`, `audioSegment`, `midiSequence`, `midiNote`,
+  `musicBeat`, `quadrilateral`, and `decisionAnswer`, with points as `{x, y}` and rectangles as
+  `{x, y, width, height}`. A request may carry them in the same form. `NFKInferenceWireCoding` writes
+  the form while `encodesValueObjectsAsJSON` is set and reads it always. The plugin channel writes it
+  in both directions, so a C or executable plugin never receives a keyed archive and an Objective-C
+  plugin reads either form. The HTTP route keeps its archives.
+- The wire coding gains forms for two outputs it refused before: a dictionary keyed by numbers, as a
+  Core ML classifier's probabilities by class index are (`numberKeyedDictionary`), and a Core ML
+  `MLFeatureValue`, written as the value it holds. A Metal texture PNG cannot hold, such as the half or
+  float image a Core ML model returns, crosses as a pixel buffer of its own format.
+- The xcframeworks built by `Tools/xcframework/build.sh` and `build-mlx.sh` carry `NFKInferKitC.h` and
+  `NFKPluginABI.h` beside the core's headers, and the module maps leave both out of the umbrella.
+- `Tools/abi/check-abi.sh` covers the C interface under the API version, its callback typedefs included,
+  and the plugin ABI as a section of its own under `NFK_PLUGIN_ABI_VERSION`.
+- `Docs/c-api.md` gives the linking recipes for C, C++, and Rust, the ownership and threading rules, the
+  request and result forms, and examples. The DocC catalog documents every C function.
+
 #### Downloads are planned, observed, cancelled, and removed
 
 - `NFKHFHub` plans a download before it starts: `planDownloadOfRepo:revision:paths:error:` (paths may

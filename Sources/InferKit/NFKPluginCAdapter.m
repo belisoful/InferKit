@@ -644,6 +644,7 @@ static const char *NFKPluginCHostOutputDirectory(void *context, nfk_plugin_run *
 	NFKPluginCRequestPayload *payload NS_VALID_UNTIL_END_OF_SCOPE = [[NFKPluginCRequestPayload alloc] init];
 	NFKInferenceWireCoding *coder = [[NFKInferenceWireCoding alloc] initWithTemporaryDirectory:adapter.context.temporaryDirectoryURL];
 	coder.attachmentSink = payload;
+	coder.encodesValueObjectsAsJSON = YES;
 	id JSON = [coder JSONObjectForRequest:request error:error];
 	if (JSON == nil || ![payload finishWithJSONObject:JSON error:error]) {
 		return nil;

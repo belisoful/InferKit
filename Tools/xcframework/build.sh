@@ -57,10 +57,11 @@ slice "iOS"            ios
 slice "iOS Simulator"  iossim
 
 echo "==> assembling the xcframework"
-# NFKInferKit.h finds the API version macros beside it once NFKAPIVersion.h joins the public headers.
+# The pure-C headers join the core's: NFKInferKit.h finds the API version macros beside it, and a C, C++,
+# or Rust program includes NFKInferKitC.h or NFKPluginABI.h alone.
 HEADERS="$WORK/headers"
 mkdir -p "$HEADERS"
-cp "$ROOT/Sources/InferKit/include/InferKit/"*.h "$ROOT/Sources/InferKitC/include/InferKitC/NFKAPIVersion.h" "$HEADERS/"
+cp "$ROOT/Sources/InferKit/include/InferKit/"*.h "$ROOT/Sources/InferKitC/include/InferKitC/"*.h "$HEADERS/"
 xcodebuild -create-xcframework \
     -library "$WORK/macos-lib/libInferKit.a"  -headers "$HEADERS" \
     -library "$WORK/ios-lib/libInferKit.a"    -headers "$HEADERS" \

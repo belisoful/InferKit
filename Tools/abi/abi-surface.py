@@ -13,9 +13,16 @@ protocol (required and optional selectors), category, exported constant and func
 and structure the headers declare, with each declaration's types, and the API version the headers
 state. Nothing is maintained by hand: a declaration in the headers is a declaration in the surface.
 
+The pure-C headers sit beside the core's in `DIR/InferKit` when the build shipped them. The C API,
+`NFKInferKitC.h`, is part of the surface under the API version, its function-pointer and value
+typedefs included. The plugin ABI, `NFKPluginABI.h`, is a section of its own, `pluginABI`, under its
+own version (`NFK_PLUGIN_ABI_VERSION_MAJOR`, `_MINOR`): a plugin implements it, so InferKit exports
+none of its functions and the client looks none of them up.
+
 `diff` compares two surfaces. A removal or a changed type, selector, value, or layout is incompatible
-and needs a new API major version; an addition needs a new minor version. It exits 1 when the API
-version does not follow that rule, unless `--allow-unbumped` (for a baseline that is no tagged
+and needs a new API major version; an addition needs a new minor version. The plugin ABI section
+follows the same rule against the plugin ABI version. It exits 1 when either version does not follow
+that rule, unless `--allow-unbumped` (for a baseline that is no tagged
 release, whose API version may not have moved yet). It also exits 1 when a candidate class or
 protocol has a Swift-mangled runtime name, the mark of a missing `@objc(Name)`, whatever the flag.
 
@@ -38,6 +45,11 @@ import sys
 import tempfile
 
 TARGET = "arm64-apple-macos14.0"
+
+# The pure-C headers, imported when the headers include them. Declarations in the plugin ABI header form
+# the pluginABI section.
+C_HEADERS = ("NFKInferKitC.h", "NFKPluginABI.h")
+PLUGIN_ABI_HEADER = "NFKPluginABI.h"
 
 
 # ---- surface ----------------------------------------------------------------------------------------
@@ -129,8 +141,18 @@ def read_surface(tree, header_root):
                 texts[path] = ""
         return texts[path]
 
-    classes, protocols, constants, functions, enums, structures = {}, {}, {}, {}, {}, {}
+    classes, protocols, constants, functions, enums, structures, typedefs = {}, {}, {}, {}, {}, {}, {}
+    plugin = {"functions": {}, "enums": {}, "structures": {}, "typedefs": {}}
     pending_categories = []
+
+    def in_c_header(position):
+        return bool(position) and os.path.basename(position[0] or "") in C_HEADERS
+
+    def table_for(position, table, name):
+        """The plugin ABI's table of that name for a declaration in its header, else table."""
+        if position and os.path.basename(position[0] or "") == PLUGIN_ABI_HEADER:
+            return plugin[name]
+        return table
 
     def class_entry(name):
         return classes.setdefault(name, {"runtimeName": name, "superclass": None, "protocols": [],
@@ -189,7 +211,12 @@ def read_surface(tree, header_root):
             constants[node["name"]] = normalized_type(node.get("type"))
             locations.subtree({"inner": node.get("inner", [])})
         elif kind == "FunctionDecl" and node.get("storageClass") != "static" and not node.get("inline"):
-            functions[node["name"]] = normalized_type(node.get("type"))
+            table_for(position, functions, "functions")[node["name"]] = normalized_type(node.get("type"))
+            locations.subtree({"inner": node.get("inner", [])})
+        elif kind == "TypedefDecl" and in_c_header(position):
+            # A C function-pointer typedef reaches a function's signature by name only, so its own type
+            # is recorded, desugared, to catch a change to a callback.
+            table_for(position, typedefs, "typedefs")[node["name"]] = normalized_type(node.get("type"))
             locations.subtree({"inner": node.get("inner", [])})
         elif kind == "EnumDecl" and node.get("name"):
             values, next_value = {}, 0
@@ -201,8 +228,9 @@ def read_surface(tree, header_root):
                 next_value = explicit if explicit is not None else next_value
                 values[child["name"]] = next_value
                 next_value += 1
-            if values or node["name"] not in enums:
-                enums[node["name"]] = {"type": normalized_type(node.get("fixedUnderlyingType")) or "int",
+            table = table_for(position, enums, "enums")
+            if values or node["name"] not in table:
+                table[node["name"]] = {"type": normalized_type(node.get("fixedUnderlyingType")) or "int",
                                        "values": values}
         elif kind == "RecordDecl" and node.get("name") and node.get("completeDefinition"):
             fields = []
@@ -210,7 +238,7 @@ def read_surface(tree, header_root):
                 locations.subtree(child)
                 if child.get("kind") == "FieldDecl":
                     fields.append([child.get("name", ""), normalized_type(child.get("type"))])
-            structures[node["name"]] = fields
+            table_for(position, structures, "structures")[node["name"]] = fields
         else:
             locations.subtree({"inner": node.get("inner", [])})
 
@@ -232,7 +260,7 @@ def read_surface(tree, header_root):
         superclass = entry["superclass"]
         if superclass in classes:
             entry["superclass"] = classes[superclass]["runtimeName"]
-    return classes, protocols, constants, functions, enums, structures
+    return classes, protocols, constants, functions, enums, structures, typedefs, plugin
 
 
 def find_constant_value(node):
@@ -258,6 +286,16 @@ def api_version(header_root):
         return None
     major = re.search(r"^#define NFK_API_VERSION_MAJOR (\d+)", text, re.M)
     minor = re.search(r"^#define NFK_API_VERSION_MINOR (\d+)", text, re.M)
+    return "%s.%s" % (major.group(1), minor.group(1)) if major and minor else None
+
+
+def plugin_abi_version(header_root):
+    try:
+        text = open(os.path.join(header_root, "InferKit", PLUGIN_ABI_HEADER)).read()
+    except OSError:
+        return None
+    major = re.search(r"^#define NFK_PLUGIN_ABI_VERSION_MAJOR (\d+)", text, re.M)
+    minor = re.search(r"^#define NFK_PLUGIN_ABI_VERSION_MINOR (\d+)", text, re.M)
     return "%s.%s" % (major.group(1), minor.group(1)) if major and minor else None
 
 
@@ -292,6 +330,8 @@ def command_surface(arguments):
     try:
         prepare_headers(header_root, arguments.objc_header, work)
         unit = ["#import <Foundation/Foundation.h>", "#import <InferKit/InferKit.h>"]
+        unit += ["#import <InferKit/%s>" % name for name in C_HEADERS
+                 if os.path.exists(os.path.join(work, "InferKit", name))]
         if arguments.objc_header:
             unit.append('#import "InferKitMLX-Swift.h"')
         with open(os.path.join(work, "surface.m"), "w") as handle:
@@ -304,7 +344,7 @@ def command_surface(arguments):
             sys.stderr.write(result.stderr.decode(errors="replace")[-4000:])
             sys.exit("the headers do not compile")
         tree = json.loads(result.stdout)
-        classes, protocols, constants, functions, enums, structures = read_surface(tree, work)
+        classes, protocols, constants, functions, enums, structures, typedefs, plugin = read_surface(tree, work)
         if arguments.objc_header:
             # Clang's JSON names no protocol's runtime name, so it is read from the generated header.
             for runtime_name, name in re.findall(r'SWIFT_PROTOCOL\("([^"]+)"\)\s*@protocol (\w+)', generated_text(work)):
@@ -320,15 +360,21 @@ def command_surface(arguments):
         "functions": dict(sorted(functions.items())),
         "enums": dict(sorted(enums.items())),
         "structures": dict(sorted(structures.items())),
+        "typedefs": dict(sorted(typedefs.items())),
+        "pluginABI": {"version": plugin_abi_version(header_root),
+                      **{name: dict(sorted(table.items())) for name, table in plugin.items()}},
     }
     with open(arguments.output, "w") as handle:
         json.dump(surface, handle, indent=1, sort_keys=False)
         handle.write("\n")
     selectors = sum(len(entry["methods"]) for entry in classes.values())
     print("    %d classes, %d selectors, %d protocols, %d constants, %d functions, %d enumerations, "
-          "%d structures (API %s)" % (len(classes), selectors, len(protocols), len(constants),
-                                      len(functions), len(enums), len(structures),
-                                      surface["apiVersion"] or "not stated"))
+          "%d structures, %d typedefs (API %s)" % (len(classes), selectors, len(protocols), len(constants),
+                                                   len(functions), len(enums), len(structures), len(typedefs),
+                                                   surface["apiVersion"] or "not stated"))
+    print("    plugin ABI: %d functions, %d enumerations, %d structures, %d typedefs (version %s)"
+          % (len(plugin["functions"]), len(plugin["enums"]), len(plugin["structures"]),
+             len(plugin["typedefs"]), surface["pluginABI"]["version"] or "not stated"))
 
 
 # ---- diff -------------------------------------------------------------------------------------------
@@ -401,12 +447,32 @@ def compare(baseline, candidate):
         additions.append("protocol %s was added" % name)
 
     keyed("constant", baseline["constants"], candidate["constants"], lambda a, b: "%s -> %s" % (a, b))
-    keyed("function", baseline["functions"], candidate["functions"], lambda a, b: "%s -> %s" % (a, b))
-    keyed("structure", baseline["structures"], candidate["structures"], lambda a, b: "layout changed")
+    c_incompatible, c_additions = compare_c(baseline, candidate)
+    return incompatible + c_incompatible, additions + c_additions
 
-    for name in sorted(baseline["enums"]):
-        old = baseline["enums"][name]
-        new = candidate["enums"].get(name)
+
+def compare_c(baseline, candidate):
+    """The C declarations of two surfaces or two plugin ABI sections: functions, structures, typedefs,
+    and enumerations. A table a surface lacks, as one from before the C headers shipped, is empty."""
+    incompatible, additions = [], []
+
+    def keyed(kind, old, new, describe):
+        for name in sorted(old):
+            if name not in new:
+                incompatible.append("%s %s was removed" % (kind, name))
+            elif old[name] != new[name]:
+                incompatible.append("%s %s changed: %s" % (kind, name, describe(old[name], new[name])))
+        for name in sorted(set(new) - set(old)):
+            additions.append("%s %s was added" % (kind, name))
+
+    keyed("function", baseline.get("functions", {}), candidate.get("functions", {}), lambda a, b: "%s -> %s" % (a, b))
+    keyed("structure", baseline.get("structures", {}), candidate.get("structures", {}), lambda a, b: "layout changed")
+    keyed("typedef", baseline.get("typedefs", {}), candidate.get("typedefs", {}), lambda a, b: "%s -> %s" % (a, b))
+
+    old_enums, new_enums = baseline.get("enums", {}), candidate.get("enums", {})
+    for name in sorted(old_enums):
+        old = old_enums[name]
+        new = new_enums.get(name)
         if new is None:
             incompatible.append("enumeration %s was removed" % name)
             continue
@@ -419,7 +485,7 @@ def compare(baseline, candidate):
                 incompatible.append("enumeration case %s changed from %d to %d" % (case, value, new["values"][case]))
         for case in sorted(set(new["values"]) - set(old["values"])):
             additions.append("enumeration case %s was added" % case)
-    for name in sorted(set(candidate["enums"]) - set(baseline["enums"])):
+    for name in sorted(set(new_enums) - set(old_enums)):
         additions.append("enumeration %s was added" % name)
     return incompatible, additions
 
@@ -464,22 +530,40 @@ def command_diff(arguments):
     for line in mangled:
         print("    FAILED: " + line)
 
-    old, new = parse_version(baseline.get("apiVersion")), parse_version(candidate.get("apiVersion"))
+    failed = not check_version_rule("API", baseline.get("apiVersion"), candidate.get("apiVersion"),
+                                    incompatible, additions, arguments.allow_unbumped)
+
+    old_plugin, new_plugin = baseline.get("pluginABI") or {}, candidate.get("pluginABI") or {}
+    plugin_incompatible, plugin_additions = compare_c(old_plugin, new_plugin)
+    for line in plugin_incompatible:
+        print("    incompatible: plugin ABI " + line)
+    for line in plugin_additions if arguments.verbose else plugin_additions[:20]:
+        print("    addition: plugin ABI " + line)
+    print("    plugin ABI: %d incompatible changes, %d additions" % (len(plugin_incompatible), len(plugin_additions)))
+    failed = not check_version_rule("plugin ABI", old_plugin.get("version"), new_plugin.get("version"),
+                                    plugin_incompatible, plugin_additions, arguments.allow_unbumped) or failed
+    return 1 if failed or mangled else 0
+
+
+def check_version_rule(name, old_text, new_text, incompatible, additions, allow_unbumped):
+    """Whether a version follows the rule for the changes: incompatible → a new major version, additions
+    → a new minor version. Prints the outcome; a miss under allow_unbumped is a note."""
+    old, new = parse_version(old_text), parse_version(new_text)
     problem = None
     if old is None or new is None:
-        print("    the API version rule is not checked: a surface states no API version")
+        print("    the %s version rule is not checked: a surface states no %s version" % (name, name))
     elif incompatible and new[0] <= old[0]:
-        problem = "incompatible changes need API %d.0; the candidate states %d.%d" % (old[0] + 1, new[0], new[1])
+        problem = "incompatible changes need %s %d.0; the candidate states %d.%d" % (name, old[0] + 1, new[0], new[1])
     elif additions and not incompatible and new <= old:
-        problem = "additions need API %d.%d; the candidate states %d.%d" % (old[0], old[1] + 1, new[0], new[1])
+        problem = "additions need %s %d.%d; the candidate states %d.%d" % (name, old[0], old[1] + 1, new[0], new[1])
     elif new < old:
-        problem = "the API version went backward, from %d.%d to %d.%d" % (old + new)
-    if problem and arguments.allow_unbumped:
+        problem = "the %s version went backward, from %d.%d to %d.%d" % ((name,) + old + new)
+    if problem and allow_unbumped:
         print("    note: " + problem + " (allowed: the baseline is no tagged release)")
     elif problem:
         print("    FAILED: " + problem)
-        return 1
-    return 1 if mangled else 0
+        return False
+    return True
 
 
 # ---- client -----------------------------------------------------------------------------------------

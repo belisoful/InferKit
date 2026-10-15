@@ -40,7 +40,8 @@ static NSInteger NFKServiceTestThreadCount(void)
 #pragma mark - Test plugin
 
 /*! Echoes its prompt in upper case, returns an input "data" as it came, and with the parameter "file"
-	writes its prompt to a file of its own and returns that file. */
+	writes its prompt to a file of its own and returns that file. An input "region" comes back as it came,
+	with the class it arrived as under "regionClass". */
 @interface NFKServiceTestEchoBackend : NSObject <NFKInferenceBackend>
 @property (atomic, assign) BOOL loaded;
 @end
@@ -101,6 +102,10 @@ static NSInteger NFKServiceTestThreadCount(void)
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request error:(NSError **)error
 {
 	NSString *prompt = request.inputs[NFKInputPrompt];
+	id region = request.inputs[@"region"];
+	if (region != nil) {
+		return [NFKInferenceResult resultWithOutputs:@{ @"region": region, @"regionClass": NSStringFromClass([region class]) }];
+	}
 	if (prompt == nil && request.inputs[@"data"] == nil) {
 		if (error != NULL) {
 			*error = [NSError errorWithDomain:NFKInferenceErrorDomain code:kNFKError_InferenceMissingInput
@@ -587,6 +592,33 @@ static NSInteger NFKServiceTestThreadCount(void)
 	reply = [self replyTo:identifier descriptors:&descriptors];
 	XCTAssertEqualObjects(reply[@"result"][@"outputs"][@"data"][@"$nfk"], @"data", @"an inline input is answered inline");
 	XCTAssertEqual(descriptors.count, 0u);
+}
+
+- (void)testAValueClassCrossesAsJSONBothWays
+{
+	NSNumber *handle = [self startAndBuild:@"echo"];
+	NFKDetection *detection = [[NFKDetection alloc] initWithLabel:@"cat" classIndex:3 confidence:0.875
+													  boundingBox:CGRectMake(0.25, 0.25, 0.5, 0.5) quadrilateral:nil];
+	NFKInferenceWireCoding *host = [[NFKInferenceWireCoding alloc] initWithTemporaryDirectory:nil];
+	host.attachmentSink = [[NFKPluginAttachmentWriter alloc] init];
+	host.encodesValueObjectsAsJSON = YES;
+	id request = [host JSONObjectForRequest:[NFKInferenceRequest requestWithInputs:@{ @"region": detection }] error:NULL];
+	XCTAssertEqualObjects(request[@"inputs"][@"region"][@"$nfk"], @"detection");
+
+	NSDictionary *reply = [self request:@{ @"type": @"run", @"backend": handle, @"request": request }];
+	NSDictionary *outputs = reply[@"result"][@"outputs"];
+	XCTAssertEqualObjects(outputs[@"regionClass"], @"NFKDetection", @"the plugin received a detection");
+	NSDictionary *expected = @{ @"$nfk": @"detection", @"label": @"cat", @"classIndex": @3, @"confidence": @0.875,
+								@"boundingBox": @{ @"x": @0.25, @"y": @0.25, @"width": @0.5, @"height": @0.5 } };
+	XCTAssertEqualObjects(outputs[@"region"], expected, @"the service answers with the JSON form, never an archive");
+	XCTAssertEqualObjects([self resultOfReply:reply descriptors:@[]].outputs[@"region"], detection);
+
+	NFKInferenceWireCoding *archiving = [[NFKInferenceWireCoding alloc] initWithTemporaryDirectory:nil];
+	id archived = [archiving JSONObjectForRequest:[NFKInferenceRequest requestWithInputs:@{ @"region": detection }] error:NULL];
+	XCTAssertEqualObjects(archived[@"inputs"][@"region"][@"$nfk"], @"archive");
+	reply = [self request:@{ @"type": @"run", @"backend": handle, @"request": archived }];
+	XCTAssertEqualObjects(reply[@"result"][@"outputs"][@"regionClass"], @"NFKDetection", @"an archive still decodes");
+	XCTAssertEqualObjects(reply[@"result"][@"outputs"][@"region"][@"$nfk"], @"detection");
 }
 
 - (void)testResultFilesLandInTheRunsOutputDirectory

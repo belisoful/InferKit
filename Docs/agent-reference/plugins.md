@@ -65,7 +65,10 @@ reader).
      only `Sources/InferKit/include` on its path, such as `Tools/doc-snippets/check-objc.py`.
 - `Tools/xcframework/inferkit-version.sh` and `Tools/abi/abi-surface.py` read the macros from
   `NFKAPIVersion.h`, and from `NFKInferKit.h` in a tree that predates it. The core DocC build passes
-  `NFKAPIVersion.h` to `clang -extract-api` with the core's headers.
+  `NFKAPIVersion.h` and `NFKInferKitC.h` to `clang -extract-api` with the core's headers.
+- `build.sh` and `build-mlx.sh` copy all three C headers beside the core's in every slice. The
+  `InferKit` module maps `exclude header` `NFKInferKitC.h` and `NFKPluginABI.h`, which the umbrella does
+  not import, so a module build reports no incomplete umbrella and a C program includes them as text.
 - The podspec compiles `Sources/InferKitC/**/*.{h,c}` with the core and lists its headers as public.
   CocoaPods flattens them into `InferKit/`, which route 2 reaches.
 
@@ -209,6 +212,12 @@ fields are ignored. An unknown type with an id is answered with an error of
 
 - `request`, `partial`, and the run's result are the wire coding's request and result objects in the
   attachment mode.
+- InferKit's value classes (detections, keypoints, classifications, segments, MIDI, beats,
+  quadrilaterals, decision answers) cross as JSON objects tagged by class, never as keyed archives, in
+  both directions: the host's requests (`NFKPluginBackend`), the service's results, partials, and tool
+  results (`NFKPluginService`), and the C adapter's requests to a C plugin. `NFKWireValueObjects.h` lists
+  the fields; `Docs/c-api.md` gives them for a plugin author. A reader accepts an archive as well, so an
+  Objective-C plugin decodes either form. The protocol stays 1.0, since nothing has shipped.
 - `outputDirectory` is a directory the host makes for the run. The plugin writes result files there,
   and the host deletes it once the result is consumed.
 - A backend handle is an integer, unique within one process. The host pairs it with the process's
@@ -616,7 +625,7 @@ backends.
   `shutdown` when it exists. `describe` runs once, and its models default to the "plugin" engine.
 - Ownership, by allocation:
   - a request → the adapter encodes it in the attachment mode with a sink of `NSMutableData` regions,
-    one `NFK_PLUGIN_BUFFER_BYTES` buffer each; files pass by path. The JSON, the buffers, and the array
+    one `NFK_PLUGIN_BUFFER_BYTES` buffer each, and value classes as JSON; files pass by path. The JSON, the buffers, and the array
     stay alive until `run` returns.
   - a result → wrapped without a copy. Each `NSData` over a buffer retains an owner object, which calls
     `free_payload` when the last value over the payload is released. An error path calls
@@ -712,6 +721,72 @@ backends.
   the verification moved ahead of hello: a group-writable `Info.plist` answers hello with
   `NFKPluginErrorLoadFailed` naming the file, and `--allow-unsigned` alone exits 64.
 
+## The C API
+
+`NFKInferKitC.m` (in the core) implements `NFKInferKitC.h`. Consumer guide: `Docs/c-api.md`.
+
+- Every handle is a bridged retained Objective-C object of a private class: `NFKCBackend`, `NFKCJob`,
+  `NFKCResult`, `NFKCError`. Each reader and `*_free` checks the class first, so NULL or a handle of
+  another type answers NULL or 0 and frees nothing.
+- Every entry point runs inside `@autoreleasepool` and `@try`, since a C caller's thread may have no
+  pool. An exception becomes `NFKInferenceErrorDomain` `kNFKError_InferenceBackendFailure`, "InferKit
+  raised <name>: <reason>".
+- `nfk_backend_create` → `-[NFKModelCatalog backendForModelIdentifier:options:error:]` on the shared
+  catalog, its error passed through. NULL or empty options → nil; JSON that is not an object →
+  `NFKModelCatalogErrorInvalidOptions`; a NULL identifier → `NFKModelCatalogErrorUnknownModel`.
+- A request decodes through `NFKInferenceWireCoding` with an attachment source over the caller's
+  `nfk_payload` (`NFKCPayloadSource`). The payload, its JSON, and its buffer array are read during the
+  call; bytes and surfaces are wrapped with `initWithBytesNoCopy:deallocator:`. Each wrapper enters a
+  dispatch group and leaves it in its deallocator, after a surface's read-only unlock.
+- Runs: `nfk_backend_run` calls `runInferenceForRequest:error:` on the caller's thread.
+  `nfk_backend_submit` goes through `NFKInferenceSubmit` on the user-initiated global queue.
+- Callbacks run on the job's serial queue (`QOS_CLASS_USER_INITIATED`). A job with a result completes
+  at once. A job without one, cancelled or failed, completes from `dispatch_group_notify` on the
+  request's group, so a cancelled run's completion waits until the backend has released every wrapper
+  over the caller's memory. A result waits for nothing, since a backend that echoes its input keeps a
+  wrapper alive inside the result.
+- `NFKCJob` keeps `freed`, `delivering`, and `completed` under an `NSCondition`. A callback starts only
+  while neither freed nor completed. `nfk_job_free` sets `freed`, waits while a callback runs unless it
+  is called on the job's own queue (`dispatch_get_specific`), cancels a run that has not completed, and
+  releases the handle. The handlers on the `NFKInferenceJob` hold the `NFKCJob` weakly, so a freed job
+  deallocates while its run continues.
+- A result and a partial encode with `encodesValueObjectsAsJSON` YES, so the value classes are tagged
+  JSON objects (`NFKWireValueObjects.h` lists the fields) and never keyed archives. The plugin channel
+  sets it too; the HTTP route leaves it off and keeps its bytes. The decoder reads the JSON form in every
+  mode.
+  Surveyed 2026-10-15 over the core and the three companions: every output value is JSON, bytes, a
+  pixel buffer, an image, a texture, a multi-array, a file or asset, a value class, or a tool invocation,
+  except Core ML's `MLFeatureValue` (`NFKVisionCoreMLBackend`) and a classifier's number-keyed dictionary
+  (`NFKCoreMLBackend`), and the half and float textures `NFKCoreMLBackend` wraps over an image output's
+  IOSurface, which PNG cannot hold. The wire coding now writes the first as the value it holds, the
+  second as `numberKeyedDictionary`, and the third as a `pixelBuffer` of its format; before, each failed
+  the encode on every route. Landmarks, contours, and
+  transforms are `NFKKeypoint` arrays or numbers under `structured`, so nothing in an output is an
+  `NSValue`.
+- `nfk_backend_prepare` → `NFKInferencePrepare`. `nfk_error_copy_details_json` converts the error's user
+  info: an `NSError` → `{domain, code, message, details}`, an `NFKModelOptionProblem` → `{key, code,
+  message, value}`, an object with `dictionaryRepresentation` (the memory estimate) → it, JSON values as
+  themselves, anything else left out; `NSLocalizedDescriptionKey` is left out because the message holds it.
+- A result encodes with `inlineByteLimit` 0, so every value with bytes is an attachment, into an
+  `NSMutableData` region per attachment. The `nfk_buffer` table, the NUL-terminated JSON, the
+  Objective-C result (whose associated objects may own files), and the run's file directory live as long
+  as the `NFKCResult`. JSON is written with sorted keys and unescaped slashes.
+- A partial result is encoded once per distinct object the job reports and passed as a borrowed
+  `NFKCResult` valid during the callback.
+- Files decoded from a request (inline base64, or a descriptor-only file buffer) land in
+  `$TMPDIR/InferKit/c-api/<UUID>`, removed when the last of the request, the job, and the result
+  releases it. A file reference by path is taken as it is.
+- `nfk_plugins_add_directory` → `-[NFKPluginRegistry addPluginsInDirectoryURL:errors:]` on the shared
+  registry; the count added, and the first error. On iOS and tvOS → -1 with
+  `kNFKError_InferenceUnsupported`, the registry call compiled out under `TARGET_OS_OSX`.
+- `nfk_release_version` duplicates `NFKInferKit.releaseVersion` once into static storage.
+- Images reach a C caller as a `pixelBuffer` buffer, or as PNG bytes for a `CGImage` and an 8-bit
+  Metal texture. Raw pixels for those two is a possible later addition (decided 2026-10-15: not now).
+- `NFKInferKitCTests` builds `Tests/PluginFixtures/headers/inferkit_c_consumer.c` (C99) and
+  `inferkit_cpp_consumer.cpp` (C++11) under `-pedantic -Werror` as bundles with
+  `-undefined dynamic_lookup`, loads them with `dlopen`, and calls their run functions. Their `nfk_`
+  references bind to the test bundle, which exports all 23 functions (`nm -gU`, 2026-10-15).
+
 ## Building plugins
 
 A plugin is a `.inferkitplugin` bundle. These steps build one of each kind from the command line; the
@@ -797,6 +872,7 @@ Sign the bundle after the manifest and `Info.plist` are in place. The signature 
 | `executable/sample_executable.m`, `executable/Info.plist.in` | the `executable` plugin, Foundation only; it frames the protocol by hand |
 | `manifests/{objc,c-abi,executable}.json.in` | the manifests |
 | `headers/inferkit_c_usage.c` | a program using every declaration of `NFKInferKitC.h`, for `NFKCHeaderTests` |
+| `headers/inferkit_c_consumer.c`, `headers/inferkit_cpp_consumer.cpp` | a C99 and a C++11 program that build the echo model of `NFKInferKitCTests`, run it, and submit a run, for that class |
 
 - The templates take `@IDENTIFIER@`, `@VERSION@`, `@EXECUTABLE@`, `@PRINCIPAL_CLASS@`, and `@ARCH@`.
   The sources take `-DSAMPLE_PLUGIN_VERSION="<version>"`, so a test builds version 1.0.0 and 2.0.0 of

@@ -57,6 +57,19 @@ expects, and the loaded library reports the interface it provides. The core's `b
 `build-mlx.sh` copy `NFKAPIVersion.h` beside the core's headers in each framework, where
 `NFKInferKit.h` finds it as `<InferKit/NFKAPIVersion.h>`.
 
+The C headers ship beside it. `build.sh` and `build-mlx.sh` copy every header of
+`Sources/InferKitC/include/InferKitC/` (`NFKAPIVersion.h`, `NFKInferKitC.h`, `NFKPluginABI.h`) into each
+slice's core headers. The umbrella imports neither `NFKInferKitC.h` nor `NFKPluginABI.h`, so each
+`module InferKit` map names them with `exclude header`: a module build under `-Wincomplete-umbrella
+-Werror` passes, and a C program includes them as text. Measured 2026-10-15 on the dynamic macOS slice:
+`nm -gU` lists all 23 `nfk_` functions in `InferKitMLX`, a C99 program links with `-F <slice>
+-I <slice>/InferKitMLX.framework/Headers -framework InferKitMLX` and `#include <InferKit/NFKInferKitC.h>`,
+and an Objective-C file that does `@import InferKit;` and includes `NFKInferKitC.h` compiles under
+`-fmodules -Wincomplete-umbrella -Werror`. A C99 program also links against the core's object
+(`.build/.../InferKit.o`) with `-lobjc` and the frameworks `Package.swift` names; the linker adds
+`AVFAudio`, `CoreMedia`, and `CoreFoundation` from the objects' own link options. `Docs/c-api.md` gives
+the consumer lines.
+
 What the promise covers: the Objective-C interface and the C ABI of the core and of the `@objc`
 interface the companions generate (`InferKitMLX-Swift.h`). That is every class by its runtime name,
 superclass, adopted protocol, selector, property accessor, protocol method, exported constant and
@@ -422,7 +435,16 @@ them as text while Foundation arrives as a module and stays out of the dump: 46 
   offset.
 - each exported constant and C function with its type, each enumeration case's value, and each
   structure's fields.
+- the typedefs of the C headers, desugared, so a change to a callback's signature counts. A function's
+  type names a callback typedef by name only.
 - the API version the headers state.
+- `pluginABI`: the functions, enumerations, structures, and typedefs `NFKPluginABI.h` declares, with
+  `NFK_PLUGIN_ABI_VERSION_MAJOR` and `_MINOR`. `diff` holds the section to the same rule against the
+  plugin ABI version. The client looks up none of its functions, since a plugin exports
+  `nfk_plugin_entry` and InferKit does not.
+
+`surface` imports `NFKInferKitC.h` and `NFKPluginABI.h` when the framework's headers carry them, so a
+baseline from before they shipped reads as one without them, and their declarations count as additions.
 
 Types are compared without nullability, ownership qualifiers, or generic arguments, none of which
 change the binary interface.
@@ -438,7 +460,13 @@ and built with that tree's own `build-mlx.sh`, about seven minutes.
 The first real baseline is the first tagged release. Until then `--baseline current` checks that the
 framework implements every declaration its headers make, and that no public class or protocol has a
 mangled runtime name. On 2026-10-15 that self-check passed with
-406 classes, 3697 selectors, 177 conformances, 241 constants, and 10 functions, none missing. Controls
+406 classes, 3697 selectors, 177 conformances, 241 constants, and 10 functions, none missing. With the
+C headers covered, the self-check on 2026-10-15 read 440 classes, 4277 selectors, 301 constants, 42
+functions (the 23 of the C API among them), 101 enumerations, 3 structures, and 9 typedefs under API 1.0,
+and a plugin ABI section of 1 function, 3 enumerations, 4 structures, and 10 typedefs under 1.0, and found
+nothing missing. Controls on the C headers, run through `surface` and `diff` alone: a callback typedef
+changed from `double` to `float` and a plugin status value changed each fail under an unchanged version,
+and an added C function asks for API 1.1. Controls
 confirmed each check fails when it should: a removed selector, a missing class, a changed superclass, a
 dropped conformance, a missing constant and function, a required protocol method added, and an
 enumeration value changed, each under an unchanged API version. `--baseline HEAD` against the same

@@ -129,12 +129,15 @@ FRAMEWORKMAP
         return
     fi
     mkdir -p "$destination/InferKit"
-    cp "$ROOT/Sources/InferKit/include/InferKit/"*.h "$ROOT/Sources/InferKitC/include/InferKitC/NFKAPIVersion.h" "$destination/InferKit/"
+    cp "$ROOT/Sources/InferKit/include/InferKit/"*.h "$ROOT/Sources/InferKitC/include/InferKitC/"*.h "$destination/InferKit/"
     cat > "$destination/module.modulemap" <<'MODULEMAP'
 // The core travels inside this library rather than beside it, so there is exactly one copy of every
 // NFK class: an object a consumer makes and one a backend makes are the same class.
+// The plugin ABI and the C API are pure C, included on their own and never through the umbrella.
 module InferKit {
     umbrella header "InferKit/InferKit.h"
+    exclude header "InferKit/NFKInferKitC.h"
+    exclude header "InferKit/NFKPluginABI.h"
     export *
     module * { export * }
 }
@@ -166,10 +169,12 @@ write_framework_modules() {             # write_framework_modules <Headers direc
     local headers="$1" generated="$2"
     local objc="$headers/InferKitMLXObjC/InferKitMLXObjC.h"
     mkdir -p "$headers/InferKit" "$headers/InferKitMLXObjC"
-    cp "$ROOT/Sources/InferKit/include/InferKit/"*.h "$ROOT/Sources/InferKitC/include/InferKitC/NFKAPIVersion.h" "$headers/InferKit/"
+    cp "$ROOT/Sources/InferKit/include/InferKit/"*.h "$ROOT/Sources/InferKitC/include/InferKitC/"*.h "$headers/InferKit/"
     cat > "$headers/InferKit/module.modulemap" <<'COREMAP'
 module InferKit {
     umbrella header "InferKit.h"
+    exclude header "NFKInferKitC.h"
+    exclude header "NFKPluginABI.h"
     export *
     module * { export * }
 }

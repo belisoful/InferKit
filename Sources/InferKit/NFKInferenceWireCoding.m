@@ -5,6 +5,7 @@
 
 #import "NFKInferenceWireCoding.h"
 #import "NFKRemoteMediaSupport.h"
+#import "NFKWireValueObjects.h"
 #import <InferKit/NFKAudioAsset.h>
 #import <InferKit/NFKVideoAsset.h>
 #import <InferKit/NFKImageCoding.h>
@@ -98,6 +99,87 @@ static BOOL NFKWireIsFloatingArray(NSArray *array)
 		}
 	}
 	return YES;
+}
+
+/*! The Core Video format whose pixels have a Metal format's layout, or 0. */
+static OSType NFKWirePixelFormatForTextureFormat(MTLPixelFormat format)
+{
+	switch (format) {
+		case MTLPixelFormatR8Unorm:			return kCVPixelFormatType_OneComponent8;
+		case MTLPixelFormatR16Float:		return kCVPixelFormatType_OneComponent16Half;
+		case MTLPixelFormatR32Float:		return kCVPixelFormatType_OneComponent32Float;
+		case MTLPixelFormatRG16Float:		return kCVPixelFormatType_TwoComponent16Half;
+		case MTLPixelFormatRG32Float:		return kCVPixelFormatType_TwoComponent32Float;
+		case MTLPixelFormatRGBA16Float:		return kCVPixelFormatType_64RGBAHalf;
+		case MTLPixelFormatRGBA32Float:		return kCVPixelFormatType_128RGBAFloat;
+		case MTLPixelFormatBGRA8Unorm:		return kCVPixelFormatType_32BGRA;
+		case MTLPixelFormatRGBA8Unorm:		return kCVPixelFormatType_32RGBA;
+		default:							return 0;
+	}
+}
+
+/*! A pixel buffer with a texture's pixels: over its IOSurface when it has one, else a copy read from a
+	texture the CPU can read. NULL for a private texture or a format with no Core Video match. */
+static CVPixelBufferRef _Nullable NFKWirePixelBufferFromTexture(id<MTLTexture> texture) CF_RETURNS_RETAINED
+{
+	CVPixelBufferRef buffer = NULL;
+	if (texture.iosurface != NULL) {
+		return CVPixelBufferCreateWithIOSurface(kCFAllocatorDefault, texture.iosurface, NULL, &buffer) == kCVReturnSuccess ? buffer : NULL;
+	}
+	OSType format = NFKWirePixelFormatForTextureFormat(texture.pixelFormat);
+	if (format == 0 || texture.storageMode == MTLStorageModePrivate || texture.textureType != MTLTextureType2D) {
+		return NULL;
+	}
+	if (CVPixelBufferCreate(kCFAllocatorDefault, texture.width, texture.height, format, NULL, &buffer) != kCVReturnSuccess) {
+		return NULL;
+	}
+	CVPixelBufferLockBaseAddress(buffer, 0);
+	[texture getBytes:CVPixelBufferGetBaseAddress(buffer) bytesPerRow:CVPixelBufferGetBytesPerRow(buffer)
+		   fromRegion:MTLRegionMake2D(0, 0, texture.width, texture.height) mipmapLevel:0];
+	CVPixelBufferUnlockBaseAddress(buffer, 0);
+	return buffer;
+}
+
+/*! Whether every key of a nonempty dictionary is a number, as a Core ML classifier's probabilities by
+	class index are. */
+static BOOL NFKWireIsNumberKeyed(NSDictionary *dictionary)
+{
+	if (dictionary.count == 0) {
+		return NO;
+	}
+	for (id key in dictionary) {
+		if (![key isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)key) == CFBooleanGetTypeID()) {
+			return NO;
+		}
+	}
+	return YES;
+}
+
+/*! The value a Core ML feature value holds, as the type the wire coding writes, or nil for a feature
+	type it has no form for, such as a model's state. */
+static id _Nullable NFKWireFeatureValueContents(MLFeatureValue *feature)
+{
+	switch (feature.type) {
+		case MLFeatureTypeInt64:
+			return @(feature.int64Value);
+		case MLFeatureTypeDouble:
+			return @(feature.doubleValue);
+		case MLFeatureTypeString:
+			return feature.stringValue;
+		case MLFeatureTypeImage:
+			return (__bridge id)feature.imageBufferValue;
+		case MLFeatureTypeMultiArray:
+			return feature.multiArrayValue;
+		case MLFeatureTypeDictionary:
+			return feature.dictionaryValue;
+		case MLFeatureTypeSequence:
+			if (feature.sequenceValue.type == MLFeatureTypeString) {
+				return feature.sequenceValue.stringValues;
+			}
+			return feature.sequenceValue.int64Values;
+		default:
+			return nil;
+	}
 }
 
 NSString *NFKServedFileExtension(NSString * _Nullable extension)
@@ -253,6 +335,9 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 		}
 		return encoded;
 	}
+	if ([value isKindOfClass:NSDictionary.class] && NFKWireIsNumberKeyed(value)) {
+		return [self JSONValueForNumberKeyedDictionary:value key:key error:outError];
+	}
 	if ([value isKindOfClass:NSDictionary.class]) {
 		NSDictionary *encoded = [self JSONDictionaryForDictionary:value error:outError];
 		if (encoded == nil || encoded[NFKWireTag] == nil) {
@@ -296,6 +381,15 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 	if ([value isKindOfClass:AVAudioPCMBuffer.class]) {
 		return [self JSONValueForPCMBuffer:value key:key error:outError];
 	}
+	if ([value isKindOfClass:MLFeatureValue.class]) {
+		id contents = NFKWireFeatureValueContents(value);
+		return contents != nil ? [self JSONValueForValue:contents key:key error:outError]
+							   : [self failForKey:key reason:@"a Core ML feature value of this type has no wire form" error:outError];
+	}
+	NSDictionary *valueObject = self.encodesValueObjectsAsJSON ? NFKWireJSONForValueObject(value) : nil;
+	if (valueObject != nil) {
+		return valueObject;
+	}
 	for (Class archived in NFKWireArchivedClasses()) {
 		if ([value isMemberOfClass:archived]) {
 			return [self JSONValueForArchivedValue:value key:key error:outError];
@@ -307,6 +401,9 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 	}
 	if (typeID == CGImageGetTypeID() || [value conformsToProtocol:@protocol(MTLTexture)]) {
 		NSData *png = [NFKImageCoding PNGDataForImage:value];
+		if (png == nil && typeID != CGImageGetTypeID()) {
+			return [self JSONValueForTextureWithoutPNG:value key:key error:outError];
+		}
 		if (png == nil) {
 			return [self failForKey:key reason:@"the image could not be encoded as PNG" error:outError];
 		}
@@ -319,6 +416,36 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 		return @{ NFKWireTag: tag, @"png": [png base64EncodedStringWithOptions:0] };
 	}
 	return [self failForKey:key reason:[NSString stringWithFormat:@"a value of class %@ has no wire form", [value class]] error:outError];
+}
+
+/*! A texture PNG cannot hold, such as a half or float image a Core ML model returns, as a pixel buffer of
+	the same format: the texture's IOSurface when it has one, else its bytes read from the CPU. */
+- (nullable id)JSONValueForTextureWithoutPNG:(id<MTLTexture>)texture key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	CVPixelBufferRef buffer = NFKWirePixelBufferFromTexture(texture);
+	if (buffer == NULL) {
+		NSString *reason = [NSString stringWithFormat:@"a texture of Metal pixel format %lu has no wire form", (unsigned long)texture.pixelFormat];
+		return [self failForKey:key reason:reason error:outError];
+	}
+	id encoded = [self JSONValueForPixelBuffer:buffer key:key error:outError];
+	CVPixelBufferRelease(buffer);
+	return encoded;
+}
+
+/*! A dictionary keyed by numbers, such as a Core ML classifier's probabilities by class index, with each
+	key written as its decimal text: integers as themselves, other numbers to 17 significant digits. */
+- (nullable id)JSONValueForNumberKeyedDictionary:(NSDictionary *)dictionary key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	NSMutableDictionary *encoded = [NSMutableDictionary dictionaryWithCapacity:dictionary.count];
+	for (NSNumber *number in dictionary) {
+		id value = [self JSONValueForValue:dictionary[number] key:key error:outError];
+		if (value == nil) {
+			return nil;
+		}
+		NSString *text = NFKWireIsFloating(number) ? [NSString stringWithFormat:@"%.17g", number.doubleValue] : number.stringValue;
+		encoded[text] = value;
+	}
+	return @{ NFKWireTag: @"numberKeyedDictionary", @"value": encoded };
 }
 
 // A tool's result crosses with its outputs encoded like any other values, so the audio a tool made
@@ -999,6 +1126,9 @@ static unsigned long long NFKWireShapeByteCount(NSArray *shape, NSInteger elemen
 	if ([tag isEqualToString:@"dictionary"] && [entry[@"value"] isKindOfClass:NSDictionary.class]) {
 		return [self dictionaryFromJSONDictionary:entry[@"value"] error:outError];
 	}
+	if ([tag isEqualToString:@"numberKeyedDictionary"] && [entry[@"value"] isKindOfClass:NSDictionary.class]) {
+		return [self numberKeyedDictionaryFromJSON:entry[@"value"] key:key error:outError];
+	}
 	if ([tag isEqualToString:@"number"]) {
 		NSDictionary<NSString *, NSNumber *> *numbers = @{ @"nan": @(NAN), @"inf": @(INFINITY), @"-inf": @(-INFINITY) };
 		return numbers[entry[@"value"]] ?: [self failForKey:key reason:@"an unknown non-finite number" error:outError];
@@ -1021,6 +1151,11 @@ static unsigned long long NFKWireShapeByteCount(NSArray *shape, NSInteger elemen
 	}
 	if ([tag isEqualToString:@"toolInvocation"]) {
 		return [self toolInvocationFromEntry:entry key:key error:outError];
+	}
+	if (NFKWireIsValueObjectTag(tag)) {
+		NSString *reason = nil;
+		id valueObject = NFKWireValueObjectFromJSON(tag, entry, &reason);
+		return valueObject ?: [self failForKey:key reason:reason ?: @"a malformed value" error:outError];
 	}
 	if ([tag isEqualToString:@"buffer"]) {
 		return [self attachedValueFromEntry:entry key:key error:outError];
@@ -1061,6 +1196,29 @@ static unsigned long long NFKWireShapeByteCount(NSArray *shape, NSInteger elemen
 		return [self PCMBufferFromEntry:entry key:key error:outError];
 	}
 	return [self failForKey:key reason:[NSString stringWithFormat:@"the wire tag \"%@\" is unknown or malformed", tag] error:outError];
+}
+
+- (nullable NSDictionary *)numberKeyedDictionaryFromJSON:(NSDictionary *)entries key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	NSMutableDictionary *decoded = [NSMutableDictionary dictionaryWithCapacity:entries.count];
+	for (NSString *text in entries) {
+		char *end = NULL;
+		long long whole = strtoll(text.UTF8String, &end, 10);
+		NSNumber *number = end != NULL && *end == '\0' && text.length > 0 ? @(whole) : nil;
+		if (number == nil) {
+			double real = strtod(text.UTF8String, &end);
+			number = end != NULL && *end == '\0' && text.length > 0 ? @(real) : nil;
+		}
+		if (number == nil) {
+			return [self failForKey:key reason:[NSString stringWithFormat:@"the key \"%@\" is not a number", text] error:outError];
+		}
+		id value = [self valueFromJSONValue:entries[text] key:key error:outError];
+		if (value == nil) {
+			return nil;
+		}
+		decoded[number] = value;
+	}
+	return decoded;
 }
 
 - (nullable NFKToolResult *)toolResultFromEntry:(NSDictionary *)entry key:(NSString *)key error:(NSError * _Nullable *)outError

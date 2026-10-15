@@ -18,6 +18,11 @@ only for the input files, excluding the SDK — passing the umbrella alone yield
 result to `docc convert` with the catalog. Diagrams are self-contained light-card SVGs (legible on both
 light and dark pages); each is audited by rendering.
 
+The inputs include two of the pure-C headers in `Sources/InferKitC/include/InferKitC/`: `NFKAPIVersion.h`,
+which `NFKInferKit.h` imports, and `NFKInferKitC.h`, the C interface. The C functions, structures, and
+typedefs then have pages of their own, and the `CInterface` article lists them as its topics
+(``nfk_backend_create``). The plugin ABI, `NFKPluginABI.h`, is not an input.
+
 The three Swift companions carry their own catalogs, documented through the swift-docc-plugin (which does
 extract a symbol graph for a Swift target) rather than the clang recipe:
 

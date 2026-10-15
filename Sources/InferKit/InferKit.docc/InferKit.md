@@ -201,6 +201,10 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 - ``NFKModelDescriptorProvider``
 - ``NFKAppleModelDescriptors``
 
+### The C interface
+
+- <doc:CInterface>
+
 ### Detected & predicted value types
 
 - ``NFKDetection``

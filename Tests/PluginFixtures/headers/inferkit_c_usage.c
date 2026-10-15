@@ -65,6 +65,7 @@ int usage_main(void)
 	int32_t added = nfk_plugins_add_directory("/tmp", &error);
 	nfk_backend *backend = nfk_backend_create("com.example.plugin/model", "{}", &error);
 	char *description = nfk_backend_copy_description(backend);
+	int32_t prepared = nfk_backend_prepare(backend, &error);
 	nfk_result *result = nfk_backend_run(backend, &request, &error);
 	const char *json = nfk_result_json(result);
 	uint32_t count = nfk_result_buffer_count(result);
@@ -78,9 +79,11 @@ int usage_main(void)
 	const char *domain = nfk_error_domain(error);
 	int64_t code = nfk_error_code(error);
 	const char *message = nfk_error_message(error);
+	char *details = nfk_error_copy_details_json(error);
 	nfk_error_free(error);
+	nfk_string_free(details);
 	nfk_string_free(description);
 	nfk_string_free(catalog);
-	return (int)(version + (uint32_t)added + count + (uint32_t)code + (uint32_t)kinds[1] + (uint32_t)kinds[2])
+	return (int)(version + (uint32_t)added + (uint32_t)prepared + count + (uint32_t)code + (uint32_t)kinds[1] + (uint32_t)kinds[2])
 		+ (release != NULL) + (json != NULL) + (first != NULL) + (domain != NULL) + (message != NULL);
 }
