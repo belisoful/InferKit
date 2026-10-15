@@ -2447,7 +2447,11 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 
 - (NFKModelDescriptor *)descriptorByDerivingMemoryFigures
 {
-	NFKModelCatalog *catalog = NFKModelCatalog.sharedCatalog;
+	return [self descriptorByDerivingMemoryFiguresInCatalog:NFKModelCatalog.sharedCatalog];
+}
+
+- (NFKModelDescriptor *)descriptorByDerivingMemoryFiguresInCatalog:(NFKModelCatalog *)catalog
+{
 	NSDictionary<NSString *, id> *defaults = [self resolvedOptions:nil stage:NFKModelOptionStageLoad catalog:catalog
 														   profile:nil error:NULL] ?: @{};
 	NSSet<NSString *> *memoryKeys = [NSSet setWithArray:self.memoryModel.optionKeys ?: @[]];
@@ -2493,7 +2497,12 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 				   catalog:(NFKModelCatalog *)catalog
 {
 	NSMutableArray<NFKModelOptionChoice *> *choices = [NSMutableArray arrayWithCapacity:option.choices.count];
+	BOOL isResidency = [option.key isEqualToString:self.memoryModel.residencyOptionKey ?: @""];
 	for (NFKModelOptionChoice *choice in option.choices) {
+		if (isResidency && [choice.value isEqual:NFKModelResidencyAutomatic]) {
+			[choices addObject:choice];
+			continue;
+		}
 		NSMutableDictionary<NSString *, id> *options = [defaults mutableCopy];
 		options[option.key] = choice.value;
 		NFKModelMemoryFigure *memory = choice.memory ?: [self estimateForResolvedOptions:options memoryBudget:nil

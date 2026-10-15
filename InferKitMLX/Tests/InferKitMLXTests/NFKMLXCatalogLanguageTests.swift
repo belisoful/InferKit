@@ -35,7 +35,12 @@ final class NFKMLXCatalogLanguageTests: XCTestCase {
                             file: StaticString = #filePath, line: UInt = #line) throws {
         let descriptor = try descriptor(name)
         XCTAssertEqual(Set(descriptor.inputs.map(\.key)), inputs, "\(name) inputs", file: file, line: line)
-        XCTAssertEqual(Set(descriptor.options.map(\.key)), parameters, "\(name) options", file: file, line: line)
+        // The entries here carry no load profile, and a decoder also takes the catalog's context and cache
+        // load options as request defaults, so those keys are left out of the backend's side.
+        let loadDefaults: Set<String> = [NFKModelLoadOptionContextLength, NFKModelLoadOptionCacheBits,
+                                         NFKModelLoadOptionCacheGroupSize]
+        XCTAssertEqual(Set(descriptor.requestOptions.map(\.key)), parameters.subtracting(loadDefaults),
+                       "\(name) request options", file: file, line: line)
         XCTAssertEqual(Set(descriptor.outputs.map(\.key)), outputs, "\(name) outputs", file: file, line: line)
     }
 

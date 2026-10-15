@@ -51,6 +51,33 @@ import MLX
     case streamed
 }
 
+extension NFKMLXResidency {
+
+    /// The residency an `NFKModelResidency*` load-option value names, or nil for any other value.
+    /// Introduced in InferKit 0.4.0.
+    public init?(optionValue: String) {
+        switch optionValue {
+        case NFKModelResidencyAutomatic: self = .automatic
+        case NFKModelResidencyResident: self = .resident
+        case NFKModelResidencyStaged: self = .staged
+        case NFKModelResidencyPaged: self = .paged
+        case NFKModelResidencyStreamed: self = .streamed
+        default: return nil
+        }
+    }
+
+    /// The `NFKModelResidency*` load-option value that names the residency. Introduced in InferKit 0.4.0.
+    public var optionValue: String {
+        switch self {
+        case .automatic: return NFKModelResidencyAutomatic
+        case .resident: return NFKModelResidencyResident
+        case .staged: return NFKModelResidencyStaged
+        case .paged: return NFKModelResidencyPaged
+        case .streamed: return NFKModelResidencyStreamed
+        }
+    }
+}
+
 /// What one stage weighs: every byte it holds resident, how many of those are routed experts a paged
 /// load leaves in the release, what it would hold at a wider precision it prefers, and the repeated
 /// layers a streamed load may leave in the release.
@@ -72,6 +99,13 @@ struct NFKMLXStageFootprint: Equatable {
         self.layerBytes = layerBytes
     }
 
+    /// The footprint as the core planner reads it.
+    var core: NFKModelStageFootprint {
+        NFKModelStageFootprint(byteCount: bytes, pageableByteCount: pageableBytes,
+                               widenedByteCount: widenedBytes.map(NSNumber.init(value:)),
+                               layerByteCounts: layerBytes.map(NSNumber.init(value:)))
+    }
+
     /// What the stage holds with its routed experts paged.
     var unpagedBytes: Int { bytes - pageableBytes }
 
@@ -86,74 +120,88 @@ struct NFKMLXStageFootprint: Equatable {
 }
 
 /// How a model holds its weights: whether its stages stay loaded between runs, and whether its routed
-/// experts are paged.
+/// experts are paged. It reads the core planner's `NFKModelResidencyPlan`.
 struct NFKMLXResidencyPlan: Equatable {
+    /// The core planner's plan.
+    let core: NFKModelResidencyPlan
+
     /// Whether the stages stay loaded between runs.
-    let holdsStagesResident: Bool
+    var holdsStagesResident: Bool { core.holdsStagesResident }
     /// Whether the routed experts stay in the release, materialized as they are routed to.
-    let pagesExperts: Bool
+    var pagesExperts: Bool { core.pagesExperts }
     /// The bytes a paged load's cache may hold in materialized experts; zero where nothing is paged.
-    let expertCacheBytes: Int
+    var expertCacheBytes: Int { core.expertCacheByteCount }
     /// The positions of the stages that load at their wider precision.
-    var widenedStages: Set<Int> = []
+    var widenedStages: Set<Int> { Set(core.widenedStageIndexes.map { $0 }) }
     /// The stages that stream their repeated layers, each with the bytes it may hold in layers beyond
     /// the two a pass has in flight.
-    var streamedStages = [Int: Int]()
+    var streamedStages: [Int: Int] {
+        Dictionary(uniqueKeysWithValues: core.streamedStageByteCounts.map { ($0.key.intValue, $0.value.intValue) })
+    }
 
-    static let resident = NFKMLXResidencyPlan(holdsStagesResident: true, pagesExperts: false,
-                                              expertCacheBytes: 0)
-    static let staged = NFKMLXResidencyPlan(holdsStagesResident: false, pagesExperts: false,
-                                            expertCacheBytes: 0)
+    static let resident = emptyPlan(.resident)
+    static let staged = emptyPlan(.staged)
+
+    /// The plan of no stages, which every residency places without a refusal.
+    private static func emptyPlan(_ residency: NFKMLXResidency) -> NFKMLXResidencyPlan {
+        guard let core = try? NFKModelResidencyPlan(forStages: [], residency: residency.optionValue, budget: 0) else {
+            preconditionFailure("the planner refused a model of no stages")
+        }
+        return NFKMLXResidencyPlan(core: core)
+    }
+
+    init(core: NFKModelResidencyPlan) {
+        self.core = core
+    }
+
+    static func == (lhs: NFKMLXResidencyPlan, rhs: NFKMLXResidencyPlan) -> Bool {
+        lhs.core.isEqual(rhs.core)
+    }
 
     /// Whether the stage at `index` loads at its wider precision.
-    func widens(_ index: Int) -> Bool { widenedStages.contains(index) }
+    func widens(_ index: Int) -> Bool { core.widensStage(at: UInt(index)) }
 
     /// Whether the stage at `index` streams its repeated layers.
-    func streams(_ index: Int) -> Bool { streamedStages[index] != nil }
+    func streams(_ index: Int) -> Bool { core.streamsStage(at: UInt(index)) }
 
     /// The layers of the stage at `index` a load holds: every one where the stage does not stream, and
     /// otherwise the first ones, in order, while their bytes fit what the plan gave the stage.
     func heldLayers(_ index: Int, of stage: NFKMLXStageFootprint) -> Range<Int> {
-        guard let room = streamedStages[index] else { return 0 ..< stage.layerBytes.count }
-        var total = 0
-        var count = 0
-        for bytes in stage.layerBytes {
-            guard total + bytes <= room else { break }
-            total += bytes
-            count += 1
-        }
-        return 0 ..< count
+        let range = core.heldLayerRangeOfStage(at: UInt(index), footprint: stage.core)
+        return range.location ..< range.location + range.length
     }
 }
 
 /// The working set a staged model plans against, and the rule it plans by.
 ///
-/// @discussion The budget is 0.85 of the working set Metal recommends, not live free memory: a resident
-/// model's own weights would count against free memory on the next check and evict themselves. Every
-/// placement keeps a reserve for activations. A budget of 0 is a machine that reports none, and the two
-/// questions asked of it get different answers. Whether to HOLD stages resident, or take the larger of
-/// two precisions, is answered no, because staging always runs and holding everything may not; that is
-/// Music 3's rule, "an unreadable budget stages rather than gambling". Whether a single stage may LOAD at
-/// all is answered yes, as `NFKMLXReleaseWeights.verifyFits` answers it, because refusing would leave
-/// such a machine unable to run anything.
+/// @discussion The planner is the core's `NFKModelResidencyPlan` and its budget `NFKModelMemoryBudget`;
+/// these are the Swift spellings the package's loaders use, and each refusal arrives as
+/// `NFKMLXError.unsupportedConfiguration` carrying the core planner's sentence. The budget is 0.85 of the
+/// working set Metal recommends, not live free memory: a resident model's own weights would count
+/// against free memory on the next check and evict themselves. Every placement keeps a reserve for
+/// activations. A budget of 0 is a machine that reports none, and the two questions asked of it get
+/// different answers. Whether to HOLD stages resident, or take the larger of two precisions, is answered
+/// no, because staging always runs and holding everything may not; that is Music 3's rule, "an
+/// unreadable budget stages rather than gambling". Whether a single stage may LOAD at all is answered
+/// yes, as `NFKMLXReleaseWeights.verifyFits` answers it, because refusing would leave such a machine
+/// unable to run anything.
 enum NFKMLXResidencyBudget {
     /// The reserve a placement keeps beside its weights: activations, and Music 3's key-value cache for
     /// its guidance pair at the full position budget (about 3 GB at bfloat16).
-    static let reserve = 4 << 30
+    static let reserve = NFKModelMemoryBudget.reserveByteCount
 
     /// The share of Metal's recommended working set a placement plans against.
-    static let workingSetFraction = 0.85
+    static let workingSetFraction = NFKModelMemoryBudget.workingSetFraction
 
     /// The planned share of the working set Metal recommends for this machine, or 0 where it reports none.
     static func current() -> Int {
-        let recommended = NFKHardwareProfile.current.recommendedWorkingSetSize
-        return recommended > 0 ? Int(Double(recommended) * workingSetFraction) : 0
+        NFKModelMemoryBudget.current().byteCount
     }
 
     /// The least recommended working set whose budget holds `bytes` of weights beside the reserve: the
     /// bytes plus the reserve, divided by the planned share. The catalog's `minimumMemoryBytes`.
     static func leastWorkingSet(holding bytes: Int64) -> Int64 {
-        Int64((Double(bytes + Int64(reserve)) / workingSetFraction).rounded(.up))
+        Int64(NFKModelMemoryBudget.leastWorkingSetHoldingByteCount(Int(bytes)))
     }
 
     /// Whether `bytes` of weights are known to fit `budget` beside the reserve: the test for holding
@@ -179,112 +227,20 @@ enum NFKMLXResidencyBudget {
     /// What a paged load's expert cache holds where the machine reports no budget.
     static let defaultExpertCacheBytes = 4 << 30
 
-    /// How a model of `stages` is held under `residency`.
+    /// How a model of `stages` is held under `residency`: `NFKModelResidencyPlan`'s
+    /// `planForStages:residency:budget:error:`, whose discussion states each residency's rule, the paged
+    /// cache's share, the streamed layers, and which stages widen.
     ///
-    /// @discussion Each residency decides as it says:
-    /// - `.resident` → every stage held, no paging; throws where the stages are known not to fit.
-    /// - `.staged` → stages take turns, no paging.
-    /// - `.paged` → stages take turns and routed experts are paged; throws where a stage is known not
-    ///   to fit even with its experts paged.
-    /// - `.streamed` → stages take turns, and a stage known not to fit whole streams its repeated
-    ///   layers; throws where such a stage is known not to fit even streamed. On a machine that reports
-    ///   no budget every stage with layers streams and holds none of them.
-    /// - `.automatic` → the first of those that is known to fit. Every stage held where the total
-    ///   fits; paged where the largest stage is known not to fit whole and has experts to page;
-    ///   streamed where a stage with repeated layers is known not to fit whole; staged otherwise. A
-    ///   machine that reports no budget is staged and never paged or streamed, because both are chosen
-    ///   only against a known shortfall.
-    ///
-    /// A paged load's cache takes half of what the largest stage leaves of the budget once its
-    /// unpaged weights and the reserve are counted, and never more than that stage's experts. The
-    /// other half is left to the operating system's page cache, which holds the release's recently
-    /// read experts. The split is a policy choice that no measurement here has tuned.
-    ///
-    /// A streamed stage holds its first layers while they fit what the budget leaves once the reserve,
-    /// everything outside the layers, and the two layers a pass has in flight are counted.
-    ///
-    /// A stage with a wider precision takes it where that is known to fit, and residency is decided
-    /// first, at each stage's own precision:
-    /// - held resident → stages widen in order while the total, widened, still fits.
-    /// - staged or paged → a stage widens where it fits alone, widened.
-    /// - a machine that reports no budget → no stage widens.
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` with the planner's sentence where the residency is
+    ///   known not to fit.
     static func plan(_ stages: [NFKMLXStageFootprint], residency: NFKMLXResidency,
                      budget: Int) throws -> NFKMLXResidencyPlan {
-        let total = stages.reduce(0) { $0 + $1.bytes }
-        let largest = stages.max { $0.bytes < $1.bytes } ?? NFKMLXStageFootprint(bytes: 0)
-        let largestUnpaged = stages.map(\.unpagedBytes).max() ?? 0
-        let pageable = stages.contains { $0.pageableBytes > 0 }
-        func paged() throws -> NFKMLXResidencyPlan {
-            guard admits(largestUnpaged, budget: budget) else {
-                throw NFKMLXError.unsupportedConfiguration(
-                    "the largest stage needs \(gib(largestUnpaged)) with its routed experts paged, plus "
-                    + "a \(gib(reserve)) reserve, against a \(gib(budget)) working set")
-            }
-            let largestPageable = stages.map(\.pageableBytes).max() ?? 0
-            let headroom = budget > 0 ? (budget - reserve - largestUnpaged) / 2 : defaultExpertCacheBytes
-            return NFKMLXResidencyPlan(holdsStagesResident: false, pagesExperts: true,
-                                       expertCacheBytes: max(0, min(largestPageable, headroom)))
+        do {
+            return NFKMLXResidencyPlan(core: try NFKModelResidencyPlan(
+                forStages: stages.map(\.core), residency: residency.optionValue, budget: budget))
+        } catch {
+            throw refusal(error)
         }
-        let streamable = stages.indices.filter { !stages[$0].layerBytes.isEmpty }
-        let oversized = streamable.filter { budget <= 0 || !admits(stages[$0].bytes, budget: budget) }
-        func streamed() throws -> NFKMLXResidencyPlan {
-            var plan = NFKMLXResidencyPlan.staged
-            for index in oversized {
-                let minimum = stages[index].streamedMinimumBytes
-                guard admits(minimum, budget: budget) else {
-                    throw NFKMLXError.unsupportedConfiguration(
-                        "stage \(index) needs \(gib(minimum)) streamed, two layers in flight, plus a "
-                        + "\(gib(reserve)) reserve, against a \(gib(budget)) working set")
-                }
-                plan.streamedStages[index] = budget > 0 ? budget - reserve - minimum : 0
-            }
-            return plan
-        }
-        let placement: NFKMLXResidencyPlan
-        switch residency {
-        case .resident:
-            guard admits(total, budget: budget) else {
-                throw NFKMLXError.unsupportedConfiguration(
-                    "the stages need \(gib(total)) together plus a \(gib(reserve)) reserve, against a "
-                    + "\(gib(budget)) working set; hold them staged"
-                    + (pageable ? " or paged" : "") + (streamable.isEmpty ? "" : " or streamed"))
-            }
-            placement = .resident
-        case .staged:
-            placement = .staged
-        case .paged:
-            placement = pageable ? try paged() : .staged
-        case .streamed:
-            placement = try streamed()
-        case .automatic:
-            if holds(total, budget: budget) {
-                placement = .resident
-            } else if pageable, budget > 0, !holds(largest.bytes, budget: budget) {
-                placement = try paged()
-            } else if budget > 0, !oversized.isEmpty {
-                placement = try streamed()
-            } else {
-                placement = .staged
-            }
-        }
-        var widened = placement
-        widened.widenedStages = widenedStages(stages, resident: placement.holdsStagesResident, budget: budget)
-        return widened
-    }
-
-    /// The stages that take their wider precision under a placement.
-    private static func widenedStages(_ stages: [NFKMLXStageFootprint], resident: Bool, budget: Int) -> Set<Int> {
-        var total = stages.reduce(0) { $0 + $1.bytes }
-        var widened = Set<Int>()
-        for (index, stage) in stages.enumerated() {
-            guard let wide = stage.widenedBytes else { continue }
-            let fits = resident ? holds(total - stage.bytes + wide, budget: budget) : holds(wide, budget: budget)
-            if fits {
-                widened.insert(index)
-                total += wide - stage.bytes
-            }
-        }
-        return widened
     }
 
     /// Throws where a staged placement has a stage known not to load on its own, at the precision
@@ -293,21 +249,22 @@ enum NFKMLXResidencyBudget {
     /// checked streamed.
     static func verifyEachStageLoads(_ stages: [NFKMLXStageFootprint], plan: NFKMLXResidencyPlan,
                                      budget: Int, names: [String]) throws {
-        guard !plan.holdsStagesResident else { return }
-        for (index, stage) in stages.enumerated() where !plan.streams(index) {
-            let bytes = plan.widens(index) ? stage.widenedBytes ?? stage.bytes
-                : (plan.pagesExperts ? stage.unpagedBytes : stage.bytes)
-            guard admits(bytes, budget: budget) else {
-                let name = index < names.count ? names[index] : "stage \(index)"
-                throw NFKMLXError.unsupportedConfiguration(
-                    "\(name) alone needs \(gib(bytes)) plus a \(gib(reserve)) reserve, against a "
-                    + "\(gib(budget)) working set")
-            }
+        do {
+            try NFKModelResidencyPlan.verifyEachStageLoads(stages.map(\.core), plan: plan.core, budget: budget,
+                                                           names: names)
+        } catch {
+            throw refusal(error)
         }
     }
 
+    /// A byte count as the planner's sentences write it: "27.2 GiB".
     static func gib(_ bytes: Int) -> String {
-        String(format: "%.1f GiB", Double(bytes) / 1_073_741_824)
+        NFKModelMemoryBudget.formattedByteCount(bytes)
+    }
+
+    /// The core planner's refusal as the error the package's loaders throw.
+    private static func refusal(_ error: Error) -> NFKMLXError {
+        .unsupportedConfiguration((error as NSError).localizedDescription)
     }
 }
 

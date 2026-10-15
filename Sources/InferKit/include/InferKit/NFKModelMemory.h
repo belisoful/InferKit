@@ -12,6 +12,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @class NFKHardwareProfile;
+@class NFKModelCatalog;
 
 /*!
 	@header     NFKModelMemory
@@ -727,12 +728,25 @@ typedef NS_ENUM(NSInteger, NFKModelChoiceStatus) {
 				facts.
 	@discussion Each choice's figure is the estimate with that choice and every other option at its
 				default, without a budget; memoryByVariant repeats it for each variant of a descriptor
-				with several. A linear integer option without memoryBytesPerUnit takes the cache bytes
-				one position adds at the defaults. A variant with facts takes residentBytes, peakBytes,
-				and minimumMemoryBytes from the estimate at the defaults. A figure the manifest states
-				wins over the derived one.
+				with several. The residency choice NFKModelResidencyAutomatic takes no figure, since its
+				memory depends on the machine. A linear integer option without memoryBytesPerUnit takes
+				the cache bytes one position adds at the defaults. A variant with facts takes
+				residentBytes, peakBytes, and minimumMemoryBytes from the estimate at the defaults. A
+				figure the manifest states wins over the derived one. Draft models and model references
+				are looked up in NFKModelCatalog.sharedCatalog.
 */
 - (NFKModelDescriptor *)descriptorByDerivingMemoryFigures;
+
+/*!
+	@method     descriptorByDerivingMemoryFiguresInCatalog:
+	@abstract   The descriptor with a memory figure on each memory-affecting choice, with draft models and
+				model references looked up in catalog.
+	@discussion The figures follow descriptorByDerivingMemoryFigures. A descriptor provider derives its
+				descriptors' figures in its own catalog, because the shared catalog calls the provider
+				while it loads. Introduced in InferKit 0.4.0.
+*/
+- (NFKModelDescriptor *)descriptorByDerivingMemoryFiguresInCatalog:(NFKModelCatalog *)catalog
+	NS_SWIFT_NAME(derivingMemoryFigures(in:));
 
 @end
 

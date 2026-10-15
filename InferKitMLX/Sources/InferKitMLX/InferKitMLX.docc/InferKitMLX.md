@@ -61,6 +61,16 @@ measures the machine's memory bandwidth, and answers whether a release fits the 
 what context window. ``NFKMLXGPU`` reports what the machine has and sets standing cache and memory
 limits.
 
+### Building a model with load options
+
+`NFKModelCatalog`'s `backendForModelIdentifier:options:error:` builds any MLX model from its identifier and
+the load options a user chose, through ``NFKMLXModelDescriptors/backend(for:)``. The registry takes the
+same `NFKModelLoadOption*` keys in ``NFKMLXModelRegistry/backend(named:weightsURL:options:)``, and a Swift
+factory reads them through ``NFKMLXLoadOptions``: the residency, the precision, a runtime weight
+quantization of the language decoders to 8 or 4 bits, the context length and cache settings, and a draft
+model. A quantized decoder holds less memory and approximates the published weights. A backend built
+from a location unloads and builds again with the same options, and its `loadOptionValues` reports them.
+
 ### Freeing a model's memory
 
 A backend that ``NFKMLXModelRegistry``, ``NFKMLXHub``, or an asynchronous download factory builds from
@@ -514,6 +524,8 @@ The figures have three limits:
 
 - ``NFKMLXReferenceModels``
 - ``NFKMLXModelRegistry``
+- ``NFKMLXLoadOptions``
+- ``NFKMLXModelDescriptors``
 - ``NFKMLXHub``
 - ``NFKMLXReloadableBackend``
 - ``NFKStableDiffusionProvider``

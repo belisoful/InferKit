@@ -383,7 +383,8 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// The loaded network's parameter count, weight bytes, precision, and quantization, with the
     /// release's `model_type` and `max_position_embeddings` where its `config.json` states them, the
     /// bytes its release directory or GGUF file occupies on disk, and the key-value bytes each token
-    /// adds while the cache is unquantized (`NFKModelInfo*` keys). A paged model's routed experts
+    /// adds while the cache is unquantized, and the residency, `paged` or `resident` (`NFKModelInfo*`
+    /// keys). A paged model's routed experts
     /// count toward its parameters; its weight bytes are what memory holds, which leaves out experts
     /// read from the release. `NFKModelInfoResidentBytes` and `NFKModelInfoPeakBytes` come from the last
     /// measured load. A model that is unloaded reports the description read while it was loaded.
@@ -392,7 +393,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         var info = lifecycle.ifLoaded { holder in
             modelInfoCache.value { describe(holder) }
         } ?? modelInfoCache.currentValue ?? [:]
-        info.merge(lifecycle.measurementInfo) { _, measured in measured }
+        info.merge(lifecycle.loadInfo) { _, measured in measured }
         return info
     }
 
@@ -404,6 +405,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         }
         info[NFKModelInfoArchitecture] = configuration.modelType
         info[NFKModelInfoContextLength] = configuration.maximumPositions
+        info[NFKModelInfoResidency] = pagesExpertsAtLoad ? NFKModelResidencyPaged : NFKModelResidencyResident
         if defaults.cacheQuantization == nil {
             let precision: NFKMLXWeightPrecision = info[NFKModelInfoPrecision] as? String == "float32" ? .float32 : .checkpoint
             info[NFKModelInfoKeyValueBytesPerToken] = NFKMLXModelSizing.keyValueBytesPerToken(of: configuration, precision: precision)
@@ -421,11 +423,14 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     public var backendIdentifier: String { identifier }
 
     /// The request parameters the backend reads: the core sampling keys, the schema and the two
-    /// keys that shape the output, and every ``NFKMLXGenerationParameterKey``. Introduced in
+    /// keys that shape the output, the context length and cache settings a catalog build sets as load
+    /// defaults (`NFKModelLoadOptionContextLength`, `NFKModelLoadOptionCacheBits`,
+    /// `NFKModelLoadOptionCacheGroupSize`), and every ``NFKMLXGenerationParameterKey``. Introduced in
     /// InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
         [NFKParameterTemperature, NFKParameterTopP, NFKParameterMaxTokens, NFKParameterSeed,
          NFKParameterJSONSchema, NFKParameterOutputFormat, NFKParameterChoices,
+         NFKModelLoadOptionContextLength, NFKModelLoadOptionCacheBits, NFKModelLoadOptionCacheGroupSize,
          NFKMLXGenerationParameterKey.contextWindow,
          NFKMLXGenerationParameterKey.cacheQuantizationBits,
          NFKMLXGenerationParameterKey.cacheQuantizationGroupSize,
@@ -476,6 +481,10 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// The peak of MLX's active memory during the model's last measured load, above its level before it.
     /// Introduced in InferKit 0.4.0.
     @objc public var peakByteCount: Int { lifecycle.peakByteCount }
+
+    /// The load options the backend was built with, keyed by `NFKModelLoadOption*` keys, as requested with
+    /// defaults filled; empty for a backend built without options. Introduced in InferKit 0.4.0.
+    @objc public var loadOptionValues: [String: Any] { lifecycle.loadOptionValues }
 
     /// Loads the release when the model is unloaded. Introduced in InferKit 0.4.0.
     @objc(prepareWithError:)
@@ -790,6 +799,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// Overrides `options` with the MLX generation parameters a request carries, so an Objective-C
     /// caller reaches every option the Swift `NFKMLXGenerationOptions` struct exposes.
     static func applyMLXParameters(from request: NFKInferenceRequest, to options: inout NFKMLXGenerationOptions) {
+        applyLoadDefaults(from: request, to: &options)
         if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.contextWindow) as? NSNumber {
             options.contextWindow = value.intValue
         }
@@ -839,6 +849,20 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             options.toolCallFormat = format
             options.toolCallFormatIsStated = true
         }
+    }
+
+    /// Overrides `options` with the context length and cache settings a request carries under the
+    /// catalog's load-option keys, which a catalog build fills from its load options. The
+    /// ``NFKMLXGenerationParameterKey`` keys, read after these, win where a request carries both.
+    static func applyLoadDefaults(from request: NFKInferenceRequest, to options: inout NFKMLXGenerationOptions) {
+        var values = [String: Any]()
+        for key in [NFKModelLoadOptionContextLength, NFKModelLoadOptionCacheBits, NFKModelLoadOptionCacheGroupSize] {
+            values[key] = request.parameter(forKey: key)
+        }
+        guard !values.isEmpty else {
+            return
+        }
+        options = NFKMLXLoadOptions(values).generationOptions(base: options)
     }
 
     /// The prompt text, from either input key. A raw `NFKInputPrompt` is used verbatim; a message
@@ -1419,14 +1443,44 @@ public final class NFKMLXLanguage: NSObject {
         throws -> any NFKInferenceBackend {
         let (net, tokenizer) = try loadedReleaseWithTokenizer(at: directoryURL)
         let (draft, _) = try loadedRelease(at: draftDirectoryURL)
+        try verifyDraft(draft, sharesVocabularyWith: net)
+        return NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: modelName,
+                                     options: options, draft: draft, releaseURL: directoryURL)
+    }
+
+    /// Builds from a release directory as `loadOptions` say: the weights at its precision (else float32, or
+    /// as stored for a release whose experts are packed), its routed experts held as its residency plans
+    /// them, its eligible layers quantized to its quantization bits, its draft beside it (quantized to the
+    /// draft bits, else at the model's precision), and its context length and cache settings as the
+    /// backend's generation defaults. ``NFKMLXOptionRegistrations`` registers the dense and mixture releases
+    /// with it. Introduced in InferKit 0.4.0.
+    static func backend(directoryURL: URL, loadOptions: NFKMLXLoadOptions) throws -> any NFKInferenceBackend {
+        let (net, tokenizer) = try loadedReleaseWithTokenizer(at: directoryURL, precision: loadOptions.precision,
+                                                              residency: loadOptions.residency)
+        try loadOptions.applyWeightQuantization(to: net)
+        var draft: NFKMLXLanguageNet?
+        if let draftURL = loadOptions.draftURL {
+            // A draft quantized at load reads the release as stored; widening it first only raises the peak.
+            let draftPrecision = loadOptions.draftBits == nil ? loadOptions.precision : .checkpoint
+            let (drafter, _) = try loadedRelease(at: draftURL, precision: draftPrecision)
+            try verifyDraft(drafter, sharesVocabularyWith: net)
+            try NFKMLXLoadOptions([NFKModelLoadOptionQuantizationBits: loadOptions.draftBits ?? 0])
+                .applyWeightQuantization(to: drafter)
+            draft = drafter
+        }
+        return NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: modelName,
+                                     options: loadOptions.generationOptions(), draft: draft, releaseURL: directoryURL)
+    }
+
+    /// Refuses a draft whose vocabulary differs from the model's: a draft proposes the model's own token
+    /// ids, so the two share a tokenizer.
+    static func verifyDraft(_ draft: NFKMLXLanguageNet, sharesVocabularyWith net: NFKMLXLanguageNet) throws {
         guard draft.configuration.vocabularySize == net.configuration.vocabularySize else {
             throw NFKMLXError.unsupportedConfiguration(
                 "the draft's vocabulary has \(draft.configuration.vocabularySize) entries where the "
                 + "model's has \(net.configuration.vocabularySize); a draft must share the model's "
                 + "tokenizer")
         }
-        return NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: modelName,
-                                     options: options, draft: draft, releaseURL: directoryURL)
     }
 
     /// The release's own Jinja `chat_template`, or nil where it ships none.
@@ -1444,9 +1498,11 @@ public final class NFKMLXLanguage: NSObject {
     /// The network and tokenizer a release directory describes.
     /// The network and tokenizer of a release a backend will read text through: a directory whose
     /// tokenizer cannot be read is refused.
-    static func loadedReleaseWithTokenizer(at directoryURL: URL, residency: NFKMLXResidency = .automatic)
+    static func loadedReleaseWithTokenizer(at directoryURL: URL, precision: NFKMLXWeightPrecision? = nil,
+                                           residency: NFKMLXResidency = .automatic)
         throws -> (NFKMLXLanguageNet, NFKTokenizer) {
-        let (net, tokenizer) = try loadedRelease(at: directoryURL, requiringTokenizer: true, residency: residency)
+        let (net, tokenizer) = try loadedRelease(at: directoryURL, requiringTokenizer: true, precision: precision,
+                                                 residency: residency)
         guard let tokenizer else { throw NFKMLXError.unsupportedConfiguration("unreachable: the tokenizer was required") }
         return (net, tokenizer)
     }
@@ -1709,6 +1765,10 @@ public final class NFKMLXLanguage: NSObject {
 extension NFKMLXLanguageBackend: NFKMLXReloading {
 
     var canReload: Bool { lifecycle.canReload }
+
+    func setLoadOptions(_ options: NFKMLXLoadOptions) {
+        lifecycle.setLoadOptions(options)
+    }
 
     func enableReload(_ build: @escaping () throws -> any NFKInferenceBackend, measurement: NFKMLXLoadMeasurement?) {
         lifecycle.enableReload(building: build, as: NFKMLXLanguageBackend.self, measurement: measurement) {

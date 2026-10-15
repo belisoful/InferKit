@@ -250,9 +250,9 @@ InferKit 0.4.0. The consumer reference is `Docs/model-catalog.md`. The decisions
 - **Minimum memory is the residency budget.** `minimumMemoryBytes` is the smallest recommended Metal
   working set whose budget admits the model at its default options: (peak bytes + the reserve) / the
   budgeted fraction of the working set. `NFKModelMemoryBudget` (core) holds the fraction (0.85) and the
-  reserve (4 GiB); the MLX provider still computes its figures through `NFKMLXResidencyBudget`, which
-  keeps its own copy of the two numbers until it calls through to the core (see "Load options, memory,
-  and the build entry" below). A variant's `peakBytes` is the most it holds at once while loading or
+  reserve (4 GiB); the MLX provider computes its figures through `NFKMLXResidencyBudget`, which reads
+  the two numbers from the core and calls through to its planner (see "Load options, memory, and the
+  build entry" below). A variant's `peakBytes` is the most it holds at once while loading or
   running at its default options, which can exceed `residentBytes`.
 - **Writing is deterministic.** `manifestDataWithError:` writes pretty-printed, sorted-key JSON with
   the models sorted by identifier, so a re-export of an imported manifest is byte-identical
@@ -307,16 +307,23 @@ options and the build"). The decisions behind them:
   `optionWithKey:`, not in `options` or the manifest, so a round trip is unchanged.
 - **`automatic` is a residency choice, the default, with no memory figure of its own.** The planner
   resolves it per machine; the estimate reports `requestedResidency` and the resolved `residency`. A
-  constraint does not count `automatic` when it decides that exactly one residency fits.
+  constraint does not count `automatic` when it decides that exactly one residency fits, and
+  `descriptorByDerivingMemoryFigures` leaves its choice without a figure.
+- **A provider derives in its own catalog.** `+[NFKModelCatalog sharedCatalog]` calls each provider's
+  `+modelDescriptors` inside its `dispatch_once`, so a provider that called
+  `descriptorByDerivingMemoryFigures` there would reach the shared catalog again and trap.
+  `descriptorByDerivingMemoryFiguresInCatalog:` takes the catalog that resolves model references and
+  drafts; InferKitMLX passes one holding its own raw descriptors.
 - **The planner is ported, not redesigned.** `NFKModelResidencyPlan +placementForStages:…refusal:`
   (private) is the Swift `plan(_:residency:budget:)` line for line: the same budget rules
   (`holds` = budget > 0 and bytes + reserve ≤ budget; `admits` = budget ≤ 0 or bytes + reserve ≤
   budget), the same expert-cache headroom, the same streamed rooms, the same widening, and the same
   refusal sentences, whose GiB figures are `%.1f` of bytes / 2^30. The public `planForStages:` returns
   the refusal as `NFKModelCatalogErrorDoesNotFit`; the estimate keeps the refused plan's figure and
-  reports fits NO. `NFKMLXResidencyBudget` still runs its own body until the MLX companion calls
-  through, after a differential test of the two over a grid of footprints (`NFKModelMemoryTests` holds
-  the sentences the two must share).
+  reports fits NO. `NFKMLXResidencyBudget` calls through to it. `NFKMLXPlannerDifferentialTests` keeps
+  the Swift planner's last body as its reference and compares it with the core planner and the
+  call-through over a grid of footprints, residencies, and budgets (`NFKModelMemoryTests` holds the
+  sentences the two share).
 - **The estimate puts the key-value cache, the draft, and the linear options on the cache stage**
   before planning, so a staged model's figure is its largest stage including them. With no budget,
   `automatic` plans staged, so a budget-free figure (`descriptorByDerivingMemoryFigures`) is the

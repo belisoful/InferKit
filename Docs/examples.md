@@ -2902,6 +2902,51 @@ NFKMLXReloadableBackend *depth =
 [depth unload];
 ```
 
+### Building a catalog model with load options
+
+The model catalog builds any MLX model from its identifier and the load options a user chose, such as
+the residency, the precision, a draft model, the context length, and a runtime weight quantization of
+the language decoders to 8 or 4 bits. A quantized decoder holds less memory, and its output approximates
+the published weights. The catalog checks the options against the model's declared choices and the
+machine before it builds. The backend that comes back unloads and loads again with the same options.
+`NFKInferenceLoadOptionValues` reports them as requested, and `modelInfo` names the residency the load
+resolved to under `NFKModelInfoResidency`:
+
+```objc
+@import InferKitMLX;
+NSError *error = nil;
+
+NSDictionary<NSString *, id> *options = @{
+    NFKModelLoadOptionQuantizationBits: @4,           // 4-bit weights in groups of 64
+    NFKModelLoadOptionContextLength: @8192,           // the cache's default window; a request may change it
+    NFKModelLoadOptionDraftModel: @"qwen3-0.6b",      // speculative decoding, from the 0.6B's downloaded files
+};
+id<NFKInferenceBackend> chat = [NFKModelCatalog.sharedCatalog backendForModelIdentifier:@"qwen3-4b"
+                                                                                 options:options
+                                                                                location:releaseDirectory
+                                                                                   error:&error];
+NSDictionary *built = NFKInferenceLoadOptionValues(chat);  // the options as requested, defaults filled
+NSString *held = chat.modelInfo[NFKModelInfoResidency];     // "resident" here; "paged" for a paged mixture
+
+// The registry takes the same keys for a model registered by name, without a descriptor to check them.
+id<NFKInferenceBackend> mixture =
+    [NFKMLXModelRegistry backendNamed:@"qwen3-30b-a3b" weightsURL:releaseDirectory
+                              options:@{ NFKModelLoadOptionResidency: NFKModelResidencyPaged }
+                                error:&error];
+```
+
+A Swift model author registers a factory that reads the options through `NFKMLXLoadOptions`, and lists
+the keys it reads:
+
+```swift
+NFKMLXModelRegistry.register(name: "my-whisper", consumes: [NFKModelLoadOptionPrecision]) { weightsURL, options in
+    let precision = options.precision ?? .checkpoint    // "float32" → .float32; absent keeps the default
+    return try NFKMLXWhisper.backend(variant: .tiny, weightsURL: weightsURL, precision: precision)
+}
+let whisper = try NFKMLXModelRegistry.backend(named: "my-whisper", weightsURL: checkpointURL,
+                                              options: [NFKModelLoadOptionPrecision: NFKModelPrecisionFloat32])
+```
+
 ### MLX runtime knobs from Objective-C
 
 MLX's global seed, GPU memory management, and device selection ship as Swift-only free functions,

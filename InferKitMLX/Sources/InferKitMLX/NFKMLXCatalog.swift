@@ -32,18 +32,44 @@ public final class NFKMLXModelDescriptors: NSObject, NFKModelDescriptorProvider 
             + NFKMLXCatalogAudio.entries
     }
 
-    /// The descriptor of every model the package ships, with the sizes, digests, and memory figures
-    /// `Tools/catalog/measure.py` measured. An entry the descriptor reader refuses is left out.
+    /// The descriptor of every model the package ships, with the sizes, digests, and memory facts
+    /// `Tools/catalog/measure.py` measured, the load options each family's factory reads, and a memory
+    /// figure on each memory-affecting choice. An entry the descriptor reader refuses is left out.
+    ///
+    /// @discussion The figures are derived in a catalog of the package's own descriptors, where a
+    /// decoder's draft models are found, because the shared catalog calls this method while it loads.
+    /// A model whose entry states no least memory takes the least of its variants' derived figures.
     /// Introduced in InferKit 0.4.0.
     public static func modelDescriptors() -> [NFKModelDescriptor] {
-        entries.compactMap { entry in
+        let measured = entries.map { $0.measured() }
+        let drafts = NFKMLXCatalogEntry.draftChoices(measured)
+        let descriptors = measured.compactMap { entry -> NFKModelDescriptor? in
             do {
-                return try entry.measured().descriptor()
+                return try entry.declaringDrafts(drafts[entry.identifier] ?? []).descriptor()
             } catch {
                 assertionFailure("the catalog entry \(entry.identifier) is malformed: \(error)")
                 return nil
             }
         }
+        let catalog = NFKModelCatalog()
+        catalog.addDescriptors(descriptors)
+        return descriptors.map { descriptor in
+            withLeastVariantMemory(descriptor.derivingMemoryFigures(in: catalog))
+        }
+    }
+
+    /// The descriptor with the least of its variants' `minimumMemoryBytes` as its requirement, where it
+    /// states none.
+    private static func withLeastVariantMemory(_ descriptor: NFKModelDescriptor) -> NFKModelDescriptor {
+        guard descriptor.requirements.minimumMemoryByteCount == nil,
+              let least = descriptor.variants.compactMap({ $0.minimumMemoryByteCount?.int64Value }).min() else {
+            return descriptor
+        }
+        var dictionary = descriptor.dictionaryRepresentation()
+        var requirements = dictionary["requirements"] as? [String: Any] ?? [:]
+        requirements["minimumMemoryBytes"] = NSNumber(value: least)
+        dictionary["requirements"] = requirements
+        return (try? NFKModelDescriptor(dictionary: dictionary)) ?? descriptor
     }
 }
 
@@ -52,7 +78,8 @@ public final class NFKMLXModelDescriptors: NSObject, NFKModelDescriptorProvider 
 ///
 /// @discussion The defaults are the package's own: engine `NFKModelEngineMLX`, macOS 14 and iOS 17 on
 /// Apple silicon, resident weights, and InferKit 0.4.0 as the introducing version. An entry names only
-/// the fields that differ from them.
+/// the fields that differ from them. Its load options, memory model, and presets come from its family's
+/// ``NFKMLXLoadProfile``, or from `load` where the entry names one.
 struct NFKMLXCatalogEntry {
     var identifier: String
     var displayName: String? = nil
@@ -72,6 +99,15 @@ struct NFKMLXCatalogEntry {
     var residencies: [String] = [NFKModelResidencyResident]
     var standIn = false
     var introducedVersion: String? = "0.4.0"
+    /// The load profile in place of the family's, from ``NFKMLXLoadProfile/familyProfiles``.
+    /// ``NFKMLXLoadProfile/plain`` declares no load options.
+    var load: NFKMLXLoadProfile? = nil
+    /// The load options the profile declares, written after the request options. ``measured()`` sets them.
+    var loadOptions: [NFKModelOption] = []
+    /// The options the memory estimate reads. ``measured()`` sets it.
+    var memoryModel: NFKModelMemoryModel? = nil
+    /// The presets a server offers for the model. ``measured()`` sets them.
+    var presets: [NFKModelPreset] = []
 
     /// The entry as a manifest model dictionary, the shape `descriptorWithDictionary:error:` reads.
     var dictionaryRepresentation: [String: Any] {
@@ -86,7 +122,7 @@ struct NFKMLXCatalogEntry {
             "tasks": tasks,
             "inputs": inputs.map { $0.dictionaryRepresentation() },
             "outputs": outputs.map { $0.dictionaryRepresentation() },
-            "options": parameters.map { $0.dictionaryRepresentation() },
+            "options": (parameters + loadOptions).map { $0.dictionaryRepresentation() },
             "variants": variants.map { $0.dictionaryRepresentation() },
             "requirements": requirements.dictionaryRepresentation(),
             "residencies": residencies,
@@ -97,6 +133,10 @@ struct NFKMLXCatalogEntry {
         dictionary["registryName"] = registryName
         dictionary["license"] = license?.dictionaryRepresentation()
         dictionary["introducedVersion"] = introducedVersion
+        dictionary["memoryModel"] = memoryModel?.dictionaryRepresentation()
+        if !presets.isEmpty {
+            dictionary["presets"] = presets.map { $0.dictionaryRepresentation() }
+        }
         return dictionary
     }
 

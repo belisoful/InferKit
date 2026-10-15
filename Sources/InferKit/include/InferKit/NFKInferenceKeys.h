@@ -374,6 +374,10 @@ extern NSString * const NFKModelInfoResidentBytes;
 /*! The most the runtime's memory rose above its level before the load while the model last loaded
 	(NSNumber), the backend's peakByteCount. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelInfoPeakBytes;
+/*! How the loaded model holds its weights, an NFKModelResidency* string such as "paged" or "staged"
+	(NSString). It is the residency the load resolved to, so an automatic load reports what it chose.
+	The backend's loadOptionValues keep the residency it was asked for. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelInfoResidency;
 
 NS_ASSUME_NONNULL_END
 

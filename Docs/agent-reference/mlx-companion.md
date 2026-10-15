@@ -430,6 +430,13 @@ The budget:
 
 - `NFKMLXResidencyBudget` plans against 0.85 of Metal's recommended working set with a 4 GiB reserve,
   never live free memory, which a resident model's own weights would count against.
+- The planner is the core's (`NFKModelResidencyPlan`, `NFKModelMemoryBudget`, 2026-10-15).
+  `NFKMLXResidencyBudget` keeps its Swift API and calls through: `NFKMLXStageFootprint.core` converts a
+  footprint, `NFKMLXResidencyPlan` reads the core plan it holds, and a refusal arrives as
+  `NFKMLXError.unsupportedConfiguration` with the core's sentence. `NFKMLXPlannerDifferentialTests`
+  keeps the Swift planner's last body as its reference and compares it with the core planner and the
+  call-through over 18 footprint sets × 5 residencies × 34 budgets: equal plans, held layers, and stage
+  checks, and identical refusal sentences.
 - A machine that reports no budget gets two answers. It is not held resident, and no larger precision
   is chosen for it (`holds`), because staging always runs and holding everything may not: Music 3's
   "an unreadable budget stages rather than gambling". A single stage is not refused there (`admits`),
@@ -620,11 +627,58 @@ The measurement:
   estimate (`residentEstimate`). The staged generators' plans give each component directory its own
   precision; a component that widens only where the budget holds it (FLUX.2's text encoder, SD3's
   T5-XXL, Wan's umT5) counts at its narrower precision.
-- `minimumMemoryBytes` is `NFKMLXResidencyBudget.leastWorkingSet(holding:)` of the largest stage of a
-  staged plan, else of the resident bytes. It reads the planner's own `reserve` and
-  `workingSetFraction`. A paged or streamed model counts its resident bytes.
+- A variant with memory facts takes `residentBytes`, `peakBytes`, and `minimumMemoryBytes` from the
+  core's estimate at the default options (`descriptorByDerivingMemoryFiguresInCatalog:`): the plan's
+  precisions, a decoder's key-value cache at 4096 positions, and `automatic` residency, which without a
+  budget holds the largest stage. A variant without facts keeps `NFKMLXVariantFigures`: the bytes at the
+  plan's precisions and `NFKMLXResidencyBudget.leastWorkingSet(holding:)` of the largest stage. A
+  model's requirement is the least of its variants' figures, set after the derivation.
 - Rerun the script after adding a source or changing a file list. It runs in a few minutes on a fresh
   network and sends `HF_TOKEN` when set, which measures the gated repositories' tensor headers.
+
+Memory facts, load options, and presets (`NFKMLXCatalogOptions.swift`, 2026-10-15):
+
+- `measure.py` also writes, per top-level directory, the repeated layers of the largest layer container
+  (`NFKMLXMeasuredLayers`), the `.experts.` bytes, the quantizable elements (rank-2 `.weight`, input
+  width divisible by 64, no embedding or norm), and the `config.json` geometry (`NFKMLXMeasuredGeometry`,
+  root and `text_config`). The fields default to empty, so a row the script wrote before them still
+  compiles. A gated repository refuses `config.json` without a token: Gemma 3, Gemma 3n, TranslateGemma,
+  and the gated generators have no geometry; a run with `HF_TOKEN` fills it.
+- `NFKMLXLoadProfile` describes what a family's registered factory reads; `familyProfiles` maps a family
+  to profiles filtered by the entry's primary task (Qwen3's embedding model and EmbeddingGemma take none),
+  and `NFKMLXCatalogEntry.load` overrides it (`gemma4-multimodal` takes `.plain`). The residency option
+  comes from the entry's `residencies` when it lists more than one. The option registrations (`NFKMLXOptionRegistrations.swift`) consume
+  the same keys; a profile's `declaration(for:…).consumes` lists them.
+- `NFKMLXVariantFacts` builds a variant's facts. The recipe (`NFKMLXFactsRecipe`) leaves out a figure the
+  loader cannot act on, because the core planner's `automatic` would otherwise plan a residency the
+  factory does not offer: experts only for an entry that pages, layers only for one that streams,
+  quantizable elements only where the profile quantizes, the key-value cache only with a context option
+  (a model without one would be estimated at its maximum context).
+- A stage whose directories load at different precisions states `"loaded"` bytes and the memory model's
+  `stagePrecisions` names it; a uniform stage names its precision. The precision option, where declared,
+  replaces `stagePrecisions`.
+- `NFKMLXKeyValueRule` gives the 16-bit cache per position: `.dense` is
+  `NFKMLXModelSizing.keyValueBytesPerToken(of:precision: .checkpoint)` (the tests compare it on the
+  released configurations), `.slidingWindow` bounds Gemma 3's sliding layers to the window (pattern by
+  `NFKMLXGemma3Configuration.layerTypes(count:pattern:)` when `layer_types` is absent), `.sharedLayers`
+  skips the trailing `num_kv_shared_layers` and widens full layers to `global_head_dim` /
+  `num_global_key_value_heads` (Gemma 3n, Gemma 4), `.attentionLayers` counts `full_attention` /
+  `attention` kinds (Granite 4.0-H; Qwen3.5's attention). gpt-oss is `.dense` because its sliding layers
+  keep every key. Only the `NFKMLXLanguage` decoders declare cache options (2026-10-15): Gemma 3, Gemma
+  3n, Gemma 4, Qwen3.5, Granite 4.0-H, and Qwen3-VL read no cache parameter, so their profiles declare
+  none and their facts state no cache. The other rules are tested and wait for a backend that reads the
+  options; a cache without an option would be estimated at the maximum context.
+- Draft choices are computed after every entry is measured (`draftChoices`), from the default variants'
+  `vocabularySize` and `parameterCount`, among entries whose profile takes drafts (the `NFKMLXLanguage`
+  families); `declaringDrafts` adds the options. The figures derive in a catalog of the package's raw
+  descriptors: the shared catalog calls `modelDescriptors()` from inside its `dispatch_once`, so touching
+  it there would recurse.
+- Presets: `fast` (4-bit weights and 8-bit cache) where both options exist, `fast` (half the steps, as a
+  request default) for a generator profile with at least 8 default steps, `precise` (float32) where
+  float32 is a choice and not the default. All are `suggested`.
+- `NFKMLXCatalogMemoryTests` holds them: facts on every measured variant with figures equal to the
+  derived estimate, a figure on every memory choice but `automatic`, every profile's defaults resolving,
+  the rules against the built configurations, draft choices, and every preset validating.
 
 The snapshot:
 
@@ -713,6 +767,94 @@ The core protocol's optional `unload`, `isLoaded`, `residentByteCount`, and `pea
   generation backend reloads, an unload during a gated run frees at its end, a plain backend is wrapped
   and built twice with `wrappedBackend` reaching its class while loaded, the wrapper over a direct build,
   and the server's figures and unload.
+
+## Load options and the build entry
+
+`NFKModelCatalog`'s build entry (`backendForModelIdentifier:options:error:`, core, 2026-10-15) reaches an
+MLX model through the registry. The pieces:
+
+- `NFKMLXModelRegistry` holds an `OptionsFactory` per name, `(URL?, NFKMLXLoadOptions)`, with the set of
+  `NFKModelLoadOption*` keys it consumes. `register(name:factory:)` stores `{ url, _ in factory(url) }`
+  consuming none, so every existing registration is unchanged. `register(name:consumes:factory:)` takes
+  an options factory. `consumedOptionKeysForModelNamed:` reads the set, and
+  `backendNamed:weightsURL:options:error:` is the Objective-C entry with a dictionary of resolved values;
+  its draft is a file URL, an absolute path, or a descriptor identifier the shared catalog's locator finds.
+- `NFKMLXLoadOptions` (`NFKMLXLoadOptions.swift`) reads the resolved dictionary: `residency`
+  (`NFKMLXResidency(optionValue:)`, `.automatic` when absent), `precision` (`float32` → `.float32`;
+  `checkpoint`, `bfloat16`, `float16` → `.checkpoint`; nil when absent, so a factory keeps its default),
+  `halfPrecision`, `quantizationBits` (0 → nil) at `quantizationGroupSize` (64), `contextLength`,
+  `cacheBits` (0 → nil) at `cacheGroupSize` (64), `draftModel`, `draftURL`, `draftBits` (0 → nil;
+  `draftBits(orDefault:)` keeps a factory's default when the key is absent). `generationOptions(base:)`
+  maps the context length to `contextWindow` and the cache bits to `cacheQuantization`.
+  `applyWeightQuantization(to:)` is the runtime weight quantization: `NFKMLXQuantization.quantize` at
+  the bits and group size, embeddings untouched (a tied head), then `eval` and `NFKMLXGPU.clearCache()`.
+  Paged experts are not `NFKLMSwitchLinear`, so a paged mixture packs only its resident layers.
+- `NFKMLXModelDescriptors.backend(for:)` (`NFKMLXCatalogBuilding.swift`, `+backendForBuildRequest:error:`)
+  is the provider's builder; `registerBackendBuilder()` registers `NFKMLXEngineBuilder` for
+  `NFKModelEngineMLX`, so a descriptor a manifest or another provider adds builds the same way. The name
+  is the variant's registry name, else the descriptor's, else its identifier; an unregistered name runs
+  `registerAll()` once, then fails `NoBuilder`. The draft is located through the request's catalog. The
+  build goes through `NFKMLXModelRegistry.backend(named:weightsURL:loadOptions:configure:)`, whose
+  `configure` sets the property options, so a reload sets them again.
+- Property options: one the factory consumes is skipped (the factory read it as an argument; Stable
+  Diffusion's precision). A string value naming an `NFKModelPrecision*` or `NFKModelResidency*` case is
+  converted to the enumeration's raw value where the property currently holds an `NSNumber`, so
+  `NFKMLXBackend.precision` takes `"float32"`. Key-value coding a string into an `@objc` enum property
+  raises otherwise.
+- `loadOptionValues` (decision 2026-10-15): the requested options with defaults filled, `automatic`
+  included, so an app's comparison with the options it would build with matches.
+  `NFKMLXLifecycle.setLoadOptions` keeps the options, and the five lifecycle classes and
+  `NFKMLXReloadableBackend` report `NFKMLXLoadOptions.values`. The residency the load resolved to goes to
+  `modelInfo` under the core's `NFKModelInfoResidency`: a factory reports it (`reportResidency`, the
+  staged generators from `holdsStagesResident`), then the registry reads the built backend
+  (`pagesExperts` → paged or resident, `streamedLayerCount > 0` → streamed, `holdsStagesResident` →
+  resident or staged), and `NFKMLXLifecycle.loadInfo` adds it beside the measured figures. The language
+  backend, `NFKMLXGemmaBackend` (`pagesExperts`), and `NFKMLXGemma3Backend` (`streamedLayerCount`) also
+  write it into their own description, so a direct build reports it.
+- The language backend reads `NFKModelLoadOptionContextLength`, `…CacheBits`, and `…CacheGroupSize` as
+  request parameters (`applyLoadDefaults`, before the `NFKMLXGenerationParameterKey` keys, which win), so
+  the defaults `NFKDefaultedBackend` fills are honored and a request overrides them.
+
+The registrations (`NFKMLXOptionRegistrations.swift`, called last by `registerAll()`, after the catalog
+files' `registerAdditionalModels`, so they replace those names' factories without editing the catalog
+files). Names come from `NFKMLXModelDescriptors.entries` by family (and task where a family mixes
+kinds). Consumed keys:
+
+| Families | Consumes | Factory |
+|---|---|---|
+| qwen3, qwen3-moe, qwen2-moe, mixtral, gpt-oss, mistral (text generation) | residency, precision, quantizationBits, quantizationGroupSize, contextLength, cacheBits, cacheGroupSize, draftModel, draftBits | `NFKMLXLanguage.backend(directoryURL:loadOptions:)` |
+| smollm2 (GGUF) | contextLength, cacheBits, cacheGroupSize | `backend(ggufURL:options:)` |
+| gemma3 (text generation) | residency, precision, draftModel, draftBits (draft default 4 bits) | `NFKMLXGemma3.backend` / `model(…draftDirectoryURL:…draftBits:)` |
+| gemma3 (translation: TranslateGemma) | residency, precision, draftModel, draftBits | `NFKMLXTranslateGemma` |
+| gemma3n | precision | `NFKMLXGemma3n.backend(directoryURL:precision:)` |
+| gemma4 (not the multimodal entry) | residency, precision | `NFKMLXGemmaLanguage.backend(directoryURL:precision:residency:)` |
+| qwen3.5 | precision | `NFKMLXHybridLanguage.backend(directoryURL:precision:)` |
+| qwen4-exp, granite-4.0-h | residency, precision | their `backend(directoryURL:precision:residency:…)` |
+| qwen3-vl (question answering) | residency, precision, quantizationBits, quantizationGroupSize | `NFKMLXQwen3VL.model(directoryURL:loadOptions:)` |
+| madlad | residency, precision (`halfPrecision`, default half) | `NFKMLXMADLAD.backend(directoryURL:half:residency:)` |
+| deepseek-v4 | residency, paging, expertCacheBytes, speculates, quantizesActivations, computesInFloat32 | key-value coding onto `NFKMLXDeepSeekLoadOptions` |
+| stable-diffusion (the three text-to-image releases) | precision | `NFKMLXTextToImage.backend(configuration:directoryURL:precision:)` |
+| flux, flux2, stable-diffusion-3, sana, z-image, qwen-image, wan, ltx-video, minimax-music | residency | each generator's `generator(directoryURL:residency:)`; `flux.1-dev` takes the `.flux` schedule |
+| whisper | precision | `NFKMLXWhisper.backend(variant:…precision:identifier:)` by `whisperVariants` |
+
+Each factory keeps its family's previous default for an absent key (float32 for the language families,
+Gemma 3, Gemma 3n, Gemma 4, and Qwen3-VL; stored for Qwen3.5, Qwen4-Exp, Granite, TranslateGemma,
+Whisper, and Stable Diffusion; half for MADLAD; automatic residency).
+
+Not consumed: the context and cache keys on Gemma 3, Gemma 3n, Gemma 4, Qwen3.5 (no key-value cache),
+Granite, and Qwen3-VL, whose backends read no cache parameters, so their descriptors do not declare them
+(decision 2026-10-15); and the weight quantization outside the language families and Qwen3-VL.
+`NFKMLXModelBuilderTests.testEveryDeclaredArgumentLoadOptionIsConsumed` fails for a descriptor that
+declares an argument load option its factory does not read.
+
+Tests: `NFKMLXLoadOptionsTests` (13: readings, defaults, generation defaults, the language backend's
+request defaults, the draft's location, the reported residency, and the 4-bit and 8-bit quantization of
+the tiny random-weight decoder behind `requireMLXRuntime`), `NFKMLXModelBuilderTests` (14: the options
+factory, the requested values beside the resolved residency, the Objective-C draft path, a reload that rebuilds with the same options, the catalog's build
+entry through the MLX builder with a placeholder location, `NFKMLXBackend.precision` set from
+`"float32"` without a download, a consumed property option, `NoBuilder`, the registrations, Whisper's
+sizes, DeepSeek's key-value coding, and the declared-versus-consumed check), and
+`NFKMLXPlannerDifferentialTests` (3).
 
 ## Swift and Objective-C gotchas
 

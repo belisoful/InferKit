@@ -119,3 +119,4 @@ NSString * const NFKModelInfoComputeUnits			= @"compute_units";
 NSString * const NFKModelInfoVersion				= @"version";
 NSString * const NFKModelInfoResidentBytes			= @"resident_bytes";
 NSString * const NFKModelInfoPeakBytes				= @"peak_bytes";
+NSString * const NFKModelInfoResidency				= @"residency";

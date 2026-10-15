@@ -124,7 +124,8 @@ completion handler may call it. A backend that cannot load its model again, such
 objects in memory, keeps the model and reads as loaded. The readings cover the whole process, so work
 that overlaps a load falls into its figures. `modelInfo` carries the last load's figures under
 `NFKModelInfoResidentBytes` and `NFKModelInfoPeakBytes`, and a server reports them for each hosted
-model.
+model. A backend that knows how the load held its weights adds `NFKModelInfoResidency`, such as
+`paged` for a mixture whose routed experts stayed in the release.
 
 <!-- objc-check: given NSInteger budget = 0; -->
 ```objc

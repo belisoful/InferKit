@@ -488,9 +488,13 @@ which reads as true when absent.
 `NFKModelMemoryFigure`, a choice's `memory`: `residentBytes` and `peakBytes` (the resident bytes when
 absent). `-[NFKModelDescriptor descriptorByDerivingMemoryFigures]` fills each memory-affecting choice's
 figure from the facts, without a budget and with every other option at its default, and
-`memoryByVariant` for a descriptor with several variants. It gives the context-length option the cache
+`memoryByVariant` for a descriptor with several variants. The residency choice `automatic` takes no
+figure, because its memory depends on the machine. It gives the context-length option the cache
 bytes of one position as `memoryBytesPerUnit`, and a variant with facts its `residentBytes`, `peakBytes`,
-and `minimumMemoryBytes` at the defaults. A figure the manifest states wins over the derived one.
+and `minimumMemoryBytes` at the defaults. A figure the manifest states wins over the derived one. Draft
+models are looked up in the shared catalog; `descriptorByDerivingMemoryFiguresInCatalog:` looks them up
+in another, which a descriptor provider uses inside `+modelDescriptors`, since the shared catalog calls
+that method while it loads.
 
 ### Draft models
 
@@ -612,7 +616,9 @@ context length and cache settings, which a request may still override. `NFKDefau
 into each request that leaves them out and forwards the rest to the backend it wraps, `unload`,
 `isLoaded`, and the byte counts included. A backend reports the load options it was built with as
 `loadOptionValues`, read by `NFKInferenceLoadOptionValues`; the defaulted backend reports the build's
-when the backend reports none.
+when the backend reports none. The values are the requested options with defaults filled, `automatic`
+included, so they compare equal to the options an app would build with. A backend that knows how its
+load held the weights reports it in `modelInfo` under `NFKModelInfoResidency`.
 
 `NFKAppleModelDescriptors` builds its engines through `+backendNamed:`.
 
@@ -825,10 +831,10 @@ a generated table the descriptors read when they are built.
 | file `sha256` | The SHA-256 Git LFS records for the file. A file Git stores directly has none. |
 | `downloadBytes` | The files the package's download fetches: each required file, each optional file the repository serves, the first weight candidate a directory serves, and the shards a `*.index.json` names. |
 | `parameterCount` | The elements of the safetensors tensors the download holds, read from each file's header. A variant with a weight file in another format (a pickle, a GGUF, an archive), or a header the repository refuses, has none. A packed format counts its stored elements. |
-| `residentBytes` | An estimate: the tensor bytes at the precision the model's loader holds them in. |
-| `minimumMemoryBytes` | The residency budget of the largest stage for a staged model whose code states the stage split, else of the resident bytes: the bytes plus the 4 GiB reserve, divided by 0.85. |
+| `memoryFacts` | Each stage's tensor bytes at the checkpoint's types, at float32, and at bfloat16, with the figures the model's loader acts on. [Memory facts and load options](#memory-facts-and-load-options) lists them. |
+| `residentBytes`, `peakBytes` | The [estimate](#the-estimate) at the default options: the weights at the precision the loader holds them in, and a decoder's key-value cache at its default context length. A variant without memory facts takes the tensor bytes at the loader's precision. The load overhead is not measured, so the peak is the resident figure. |
+| `minimumMemoryBytes` | The least working set whose residency budget admits the peak: the peak plus the 4 GiB reserve, divided by 0.85. A staged model counts its largest stage. |
 | `precision` | The floating type that holds the most stored tensor bytes, where the entry states none. |
-| `peakBytes` | Not measured. |
 
 A measured variant can carry these extension fields:
 
@@ -842,6 +848,62 @@ A measured variant can carry these extension fields:
 | `residentEstimate` | variant | `"stored-dtype"` where `residentBytes` counts the stored bytes because the loader's precision or the stored type is not known. |
 
 A model's `requirements.minimumMemoryBytes` is the least of its variants' figures.
+
+### Memory facts and load options
+
+`measure.py` also reads the structure of each safetensors header and the release's `config.json`:
+
+| Measured | Where it comes from |
+|---|---|
+| Repeated layers | The tensor names under `layers.N.`, `h.N.`, `blocks.N.`, or `transformer_blocks.N.`: the count and the largest layer's bytes, of the container that holds the most bytes in each top-level directory. |
+| Routed experts | The bytes of the tensors whose names hold `.experts.`. |
+| Quantizable elements | The elements of each rank-2 `.weight` whose input width divides 64, outside the embeddings and the norms. |
+| Geometry | `num_hidden_layers`, `num_attention_heads`, `num_key_value_heads`, `head_dim`, `hidden_size`, `max_position_embeddings`, `sliding_window`, `sliding_window_pattern`, `num_kv_shared_layers`, `global_head_dim`, `num_global_key_value_heads`, `vocab_size`, and the layer kinds (`layer_types`, `layers_block_type`, or `hybrid_override_pattern`), from the root of `config.json` and from `text_config`. A gated repository refuses the file without an accepted token, and its geometry stays unmeasured. |
+
+Each family's factory reads a fixed set of load options, and the MLX catalog declares them with their
+memory model:
+
+| Families | Load options |
+|---|---|
+| Qwen3, Mistral Small 3, Qwen3-30B-A3B, Qwen1.5-MoE, Mixtral | `precision` (`checkpoint`, `float32`), `quantizationBits`, `contextLength`, `cacheBits`, `cacheGroupSize`, and `draftModel` with `draftBits` where a draft exists. A mixture adds `residency` (`automatic`, `resident`, `paged`). |
+| gpt-oss | The same without `precision`: its MXFP4 experts load as stored. |
+| Gemma 3, TranslateGemma | `residency` (`automatic`, `resident`, `streamed`) and `precision`. |
+| MADLAD-400 | `residency` (`automatic`, `resident`, `streamed`) and `precision` (`bfloat16`, `float32`). |
+| Gemma 3n | `precision`. |
+| Gemma 4, Granite 4.0-H, Qwen3-VL, Qwen3.8-Flash-Next, DeepSeek V4 | `residency` (`automatic`, `resident`, `paged`) on a mixture. A dense release declares none. |
+| FLUX.1, FLUX.2, Stable Diffusion 3, SANA, Z-Image, Qwen-Image, Wan, LTX-Video, MiniMax Music 3 | `residency` (`automatic`, `resident`, `staged`). |
+| Stable Diffusion 1.5, 2.1, SDXL-Turbo | `precision`, set on the backend's `precision` property. |
+| Whisper | `precision`. |
+
+`residency` defaults to `automatic`, `precision` to the precision the factory loads at without it,
+`quantizationBits`, `cacheBits`, and `draftBits` to 0 (none, 8, or 4), `cacheGroupSize` to 64 (32, 64, or
+128), and `contextLength` to 4096, at most the release's `max_position_embeddings`. An 8-bit or 4-bit
+weight quantization is an approximation of the published weights, and its help text says so.
+
+A variant's memory facts carry only what its loader acts on:
+
+- Each stage's bytes: the stages the load plan names, or one stage. A stage whose directories load at
+  different precisions states its loaded bytes under `"loaded"`, and the memory model's
+  `stagePrecisions` names it. A stage the budget may widen states `widenedPrecision`.
+- `quantizableElements` where the factory quantizes, `pageableBytesByPrecision` where the model pages its
+  routed experts, and `layerCount` and `largestLayerBytesByPrecision` where it streams its layers.
+- `keyValueBytesPerToken` where a context-length option sets the cache: the Qwen3, Mistral, and mixture
+  decoders and gpt-oss, every layer at the key-value head count. gpt-oss keeps every key of its sliding
+  layers and masks the window. A family whose backend reads no cache parameter declares no cache option
+  and states no cache, because the estimate would otherwise count it at the maximum context.
+- `vocabularySize` from the geometry, which the draft rule compares.
+
+A decoder's `draftModel` lists as choices the catalog's decoders of its family with its vocabulary
+size and fewer parameters, smallest first. The package's descriptors derive every choice's figure in a
+catalog of their own (`descriptorByDerivingMemoryFiguresInCatalog:`), where the drafts are found.
+
+The suggested [presets](#presets):
+
+| Preset | On | Sets |
+|---|---|---|
+| `fast` | A decoder with a weight and a cache quantization | Load options: `quantizationBits` 4 and `cacheBits` 8. |
+| `fast` | A generator of 8 or more default steps | Request defaults: half the default `steps`. |
+| `precise` | A model whose `precision` offers `float32` and defaults to another | Load options: `precision` `float32`. |
 
 ## The snapshot and the tools
 
@@ -865,7 +927,8 @@ python3 -I Tools/catalog/measure.py
   MLX's Metal library.
 - `measure.py` uses the Python standard library. It reads `/api/models/{repo}/tree/{revision}?recursive=1`
   and `/api/models/{repo}/revision/{revision}` for each Hugging Face source, two HTTP range requests per
-  safetensors file for its header, and a HEAD request for each URL file. It fetches small JSON shard
-  indexes whole and no weight file. It sends `HF_TOKEN` when the environment sets it.
+  safetensors file for its header, and a HEAD request for each URL file. It fetches small JSON files
+  whole (the shard indexes and `config.json`) and no weight file. It sends `HF_TOKEN` when the
+  environment sets it.
 - The manifest writer sorts keys and models, and the measurements carry no date or machine path, so the
   same catalog writes the same bytes on every machine.

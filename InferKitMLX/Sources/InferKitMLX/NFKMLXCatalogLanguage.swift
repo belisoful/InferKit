@@ -860,7 +860,7 @@ extension NFKMLXCatalogLanguage {
             variants: [familyVariant(name, "google/gemma-4-E2B-it", displayName: "Gemma 4 E2B IT", isDefault: true,
                                      files: files),
                        familyVariant(name, "google/gemma-4-E4B-it", displayName: "Gemma 4 E4B IT", files: files)],
-            license: gemma4License)
+            license: gemma4License, load: .plain)
     }
 
     fileprivate static var translateGemmaEntry: NFKMLXCatalogEntry {

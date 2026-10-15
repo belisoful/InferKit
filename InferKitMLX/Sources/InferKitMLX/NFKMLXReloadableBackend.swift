@@ -49,7 +49,8 @@ public final class NFKMLXReloadableBackend: NSObject, NFKInferenceBackend {
     private let infoLock = NSLock()
     private var lastModelInfo: [String: Any] = [:]
 
-    init(backend: any NFKInferenceBackend, measurement: NFKMLXLoadMeasurement?, build: @escaping Build) {
+    init(backend: any NFKInferenceBackend, measurement: NFKMLXLoadMeasurement?, build: @escaping Build,
+         loadOptions: NFKMLXLoadOptions? = nil) {
         lifecycle = NFKMLXLifecycle(backend)
         identifier = backend.backendIdentifier
         backendClass = object_getClass(backend) ?? NSObject.self
@@ -58,6 +59,14 @@ public final class NFKMLXReloadableBackend: NSObject, NFKInferenceBackend {
         outputKeys = backend.supportedOutputKeys ?? []
         super.init()
         lifecycle.enableReload(build, measurement: measurement)
+        if let loadOptions {
+            lifecycle.setLoadOptions(loadOptions)
+        }
+    }
+
+    /// Gives the wrapper the load options its backend was built with.
+    func setLoadOptions(_ options: NFKMLXLoadOptions) {
+        lifecycle.setLoadOptions(options)
     }
 
     /// Builds the backend through `build` and keeps `build` to build it again after an unload.
@@ -110,14 +119,14 @@ public final class NFKMLXReloadableBackend: NSObject, NFKInferenceBackend {
     @objc public var supportedOutputKeys: Set<String> { outputKeys }
 
     /// The held backend's `modelInfo`, the last one read while the model is unloaded, with
-    /// `NFKModelInfoResidentBytes` and `NFKModelInfoPeakBytes` from the last measured build. Introduced in
-    /// InferKit 0.4.0.
+    /// `NFKModelInfoResidentBytes` and `NFKModelInfoPeakBytes` from the last measured build, and
+    /// `NFKModelInfoResidency` from a build with load options. Introduced in InferKit 0.4.0.
     @objc public var modelInfo: [String: Any] {
         if let current = lifecycle.ifLoaded({ $0.modelInfo ?? [:] }) {
             infoLock.withLock { lastModelInfo = current }
         }
         var info = infoLock.withLock { lastModelInfo }
-        info.merge(lifecycle.measurementInfo) { _, measured in measured }
+        info.merge(lifecycle.loadInfo) { _, measured in measured }
         return info
     }
 
@@ -126,6 +135,10 @@ public final class NFKMLXReloadableBackend: NSObject, NFKInferenceBackend {
     @objc public var backendStatus: [String: Any] {
         lifecycle.ifLoaded { $0.backendStatus ?? [:] } ?? [:]
     }
+
+    /// The load options the backend was built with, keyed by `NFKModelLoadOption*` keys, as requested with
+    /// defaults filled; empty for a backend built without options. Introduced in InferKit 0.4.0.
+    @objc public var loadOptionValues: [String: Any] { lifecycle.loadOptionValues }
 
     /// Releases the held backend, which frees its weights and caches; the next run builds it again. With
     /// runs in flight, the backend is released when the last of them ends. Introduced in InferKit 0.4.0.
