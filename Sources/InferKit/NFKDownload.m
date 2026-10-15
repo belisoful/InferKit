@@ -11,6 +11,8 @@ NSString * const NFKDownloadHTTPStatusCodeKey = @"NFKDownloadHTTPStatusCode";
 const long long NFKDownloadUnknownByteCount = -1;
 
 static NSString * const NFKDownloadCurrentStackKey = @"NFKDownloadCurrentStack";
+// Marks a download's report queue, so a wait called from a progress handler does not wait on itself.
+static char NFKDownloadReportQueueKey;
 static const NSTimeInterval NFKDownloadReportInterval = 0.1;
 static const NSTimeInterval NFKDownloadRateWindow = 3.0;
 
@@ -153,6 +155,9 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 @property (nonatomic, strong) NSObject *lock;
 @property (nonatomic, strong) dispatch_queue_t reportQueue;
 @property (nonatomic, strong) NSCondition *finishedCondition;
+/*! YES once the final report and the completion handler have run. Read and written under
+	finishedCondition. */
+@property (nonatomic, assign) BOOL finalReportDelivered;
 @property (nonatomic, strong) NSMutableArray<NFKDownloadFileProgress *> *fileRecords;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NFKDownloadFileProgress *> *fileRecordsByLocalPath;
 @property (nonatomic, strong) NSMutableSet<NSString *> *declaredLocalPaths;
@@ -189,6 +194,7 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 		_lock = [[NSObject alloc] init];
 		_reportQueue = dispatch_queue_create("com.inferkit.download.progress",
 											 dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0));
+		dispatch_queue_set_specific(_reportQueue, &NFKDownloadReportQueueKey, &NFKDownloadReportQueueKey, NULL);
 		_finishedCondition = [[NSCondition alloc] init];
 		_fileRecords = [NSMutableArray array];
 		_fileRecordsByLocalPath = [NSMutableDictionary dictionary];
@@ -518,15 +524,17 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 	}
 	[NFKDownloadRegistryLock() unlock];
 
-	[self.finishedCondition lock];
-	[self.finishedCondition broadcast];
-	[self.finishedCondition unlock];
-
-	if (completion != nil) {
-		dispatch_async(self.reportQueue, ^{
+	// Queued behind the final report, so a finished wait has seen every report and the completion.
+	NSCondition *finishedCondition = self.finishedCondition;
+	dispatch_async(self.reportQueue, ^{
+		if (completion != nil) {
 			completion(resultURL, finalError);
-		});
-	}
+		}
+		[finishedCondition lock];
+		self.finalReportDelivered = YES;
+		[finishedCondition broadcast];
+		[finishedCondition unlock];
+	});
 }
 
 - (void)cancel
@@ -554,18 +562,22 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 
 - (BOOL)waitUntilFinishedWithTimeout:(NSTimeInterval)timeout
 {
+	if (dispatch_get_specific(&NFKDownloadReportQueueKey) != NULL) {
+		// On a report queue the final report cannot be delivered while this waits.
+		return self.isFinished;
+	}
 	NSDate *deadline = timeout < 0 ? NSDate.distantFuture : [NSDate dateWithTimeIntervalSinceNow:timeout];
 	[self.finishedCondition lock];
-	BOOL finished = self.isFinished;
-	while (!finished) {
+	BOOL delivered = self.finalReportDelivered;
+	while (!delivered) {
 		if (![self.finishedCondition waitUntilDate:deadline]) {
-			finished = self.isFinished;
+			delivered = self.finalReportDelivered;
 			break;
 		}
-		finished = self.isFinished;
+		delivered = self.finalReportDelivered;
 	}
 	[self.finishedCondition unlock];
-	return finished;
+	return delivered;
 }
 
 #pragma mark File reports

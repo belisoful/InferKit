@@ -114,6 +114,34 @@ private final class ReportLog: @unchecked Sendable {
     }
 }
 
+/// A hub whose transport fails every request, file and listing alike, as a machine with no network does.
+final class NFKFailingTransportHub: NFKHFHub {
+    private let lock = NSLock()
+    private var attempted = [String]()
+
+    var attempts: [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return attempted
+    }
+
+    private func refuse(_ url: URL) -> NSError {
+        lock.lock()
+        attempted.append(url.path)
+        lock.unlock()
+        return NSError(domain: NSURLErrorDomain, code: NSURLErrorNotConnectedToInternet)
+    }
+
+    override func fetch(_ remoteURL: URL, toFileURL destinationURL: URL) throws {
+        throw refuse(remoteURL)
+    }
+
+    override func fetchMetadata(from url: URL, httpMethod method: String,
+                                response: AutoreleasingUnsafeMutablePointer<HTTPURLResponse?>?) throws -> Data {
+        throw refuse(url)
+    }
+}
+
 final class NFKMLXReleaseDownloadProgressTests: XCTestCase {
 
     private let repo = "org/release"
@@ -176,7 +204,7 @@ final class NFKMLXReleaseDownloadProgressTests: XCTestCase {
         download.endActivity(error: fetchError)
         XCTAssertTrue(download.waitUntilFinished(withTimeout: 10))
         XCTAssertNil(fetchError)
-        XCTAssertEqual(download.state, .completed)
+        XCTAssertEqual(download.state.rawValue, NFKDownloadState.completed.rawValue)
         XCTAssertEqual(root?.path, cache.appendingPathComponent("org/release/main").path)
 
         let progress = download.currentProgress
@@ -194,15 +222,20 @@ final class NFKMLXReleaseDownloadProgressTests: XCTestCase {
             XCTAssertGreaterThanOrEqual(report.receivedByteCount, previous)
             previous = report.receivedByteCount
         }
-        XCTAssertEqual(reports.last?.state, .completed)
+        XCTAssertEqual(reports.last?.state.rawValue, NFKDownloadState.completed.rawValue)
         XCTAssertEqual(reports.last?.fractionCompleted, 1)
-        XCTAssertEqual(hub.downloadStatus(repo: repo, revision: nil, paths: nil).presence, .complete,
+        XCTAssertEqual(hub.downloadStatus(repo: repo, revision: nil, paths: nil).presence.rawValue,
+                       NFKDownloadPresence.complete.rawValue,
                        "the release recorded its completion")
     }
 
+    /// The release is sharded (its preferred `model.safetensors` is not served) and one optional file
+    /// is absent, the two cases a cached build used to ask the server about.
     func testACachedReleaseIsNeitherListedNorFetched() throws {
         NFKStubReleaseProtocol.serve(repo: repo, files: files)
         _ = try fetchRelease()
+        XCTAssertEqual(hub.recordedAbsentPaths(ofRepo: repo, revision: nil), ["absent.json"],
+                       "the refused optional file is recorded; the unserved weights candidate is not optional")
         NFKStubReleaseProtocol.reset()
 
         let download = NFKDownload(progressHandler: nil)
@@ -213,9 +246,93 @@ final class NFKMLXReleaseDownloadProgressTests: XCTestCase {
         }
         download.endActivity(error: fetchError)
         XCTAssertNil(fetchError)
-        XCTAssertTrue(NFKStubReleaseProtocol.requests.isEmpty)
-        XCTAssertEqual(download.currentProgress.completedFileCount, download.currentProgress.fileCount)
+        XCTAssertEqual(NFKStubReleaseProtocol.requests.compactMap { $0.url?.path }, [], "a cached release asks nothing")
+        XCTAssertEqual(download.currentProgress.fileCount, 5)
+        XCTAssertEqual(download.currentProgress.completedFileCount, 5)
         XCTAssertEqual(download.currentProgress.receivedByteCount, 0)
+    }
+
+    func testACachedComponentReleaseIsNeitherListedNorFetched() throws {
+        let componentRepo = "org/pipeline"
+        let index = try JSONSerialization.data(withJSONObject: ["weight_map": ["a": "model-00001-of-00001.safetensors"]])
+        NFKStubReleaseProtocol.serve(repo: componentRepo, files: [
+            "transformer/config.json": Data("{}".utf8),
+            "transformer/model.safetensors.index.json": index,
+            "transformer/model-00001-of-00001.safetensors": Data(repeating: 4, count: 9000),
+            "vae/config.json": Data("{}".utf8),
+            "vae/model.safetensors": Data(repeating: 5, count: 7000),
+        ])
+        let components = [
+            NFKMLXReleaseComponent(required: ["transformer/config.json"], optional: ["transformer/absent.json"],
+                                   weights: ["transformer/model.safetensors", "transformer/model.safetensors.index.json"]),
+            NFKMLXReleaseComponent(required: ["vae/config.json"], weights: ["vae/model.safetensors"]),
+        ]
+        let build = {
+            try NFKMLXReleaseDownload.using(self.hub) {
+                try NFKMLXReleaseDownload.directory(repo: componentRepo, revision: nil, cacheDirectoryURL: nil,
+                                                    components: components)
+            }
+        }
+        _ = try build()
+        NFKStubReleaseProtocol.reset()
+
+        let root = try build()
+        XCTAssertEqual(root.path, cache.appendingPathComponent("org/pipeline/main").path)
+        XCTAssertEqual(NFKStubReleaseProtocol.requests.compactMap { $0.url?.path }, [])
+    }
+
+    func testForgettingTheRefusedFilesAsksForThemAgain() throws {
+        NFKStubReleaseProtocol.serve(repo: repo, files: files)
+        _ = try fetchRelease()
+        try hub.forgetRecordedAbsentPaths(ofRepo: repo, revision: nil)
+        XCTAssertEqual(hub.recordedAbsentPaths(ofRepo: repo, revision: nil), [])
+        NFKStubReleaseProtocol.reset()
+        NFKStubReleaseProtocol.serve(repo: repo, files: files.merging(["absent.json": Data("{}".utf8)]) { $1 })
+
+        _ = try fetchRelease()
+        XCTAssertEqual(NFKStubReleaseProtocol.requests.compactMap { $0.url?.path }, ["/\(repo)/resolve/main/absent.json"],
+                       "only the forgotten file is asked for")
+        XCTAssertTrue(hub.isCachedRepo(repo, revision: nil, path: "absent.json"))
+        XCTAssertEqual(hub.recordedAbsentPaths(ofRepo: repo, revision: nil), [])
+    }
+
+    func testACachedReleaseBuildsWithEveryRequestFailing() throws {
+        NFKStubReleaseProtocol.serve(repo: repo, files: files)
+        _ = try fetchRelease()
+
+        let offline = NFKFailingTransportHub(cacheDirectoryURL: cache)
+        offline.endpointURL = NFKStubReleaseProtocol.endpoint
+        let download = NFKDownload(progressHandler: nil)
+        download.beginActivity()
+        var root: URL?
+        var fetchError: Error?
+        download.performAsCurrent {
+            do {
+                root = try NFKMLXReleaseDownload.using(offline) {
+                    try NFKMLXReleaseDownload.directory(repo: repo, revision: nil, cacheDirectoryURL: nil,
+                                                        required: ["config.json"],
+                                                        optional: ["tokenizer.json", "absent.json"],
+                                                        weights: ["model.safetensors", "model.safetensors.index.json"])
+                }
+            } catch {
+                fetchError = error
+            }
+        }
+        download.endActivity(error: fetchError)
+        XCTAssertNil(fetchError)
+        XCTAssertEqual(root?.path, cache.appendingPathComponent("org/release/main").path)
+        XCTAssertEqual(offline.attempts, [], "neither the listing nor any file was asked for")
+        XCTAssertTrue(download.waitUntilFinished(withTimeout: 5))
+        XCTAssertEqual(download.state.rawValue, NFKDownloadState.completed.rawValue)
+
+        // A file the transport cannot reach is not recorded as one the repository lacks.
+        _ = try NFKMLXReleaseDownload.using(offline) {
+            try NFKMLXReleaseDownload.directory(repo: repo, revision: nil, cacheDirectoryURL: nil,
+                                                required: ["config.json"], optional: ["unreachable.json"],
+                                                weights: ["model.safetensors.index.json"])
+        }
+        XCTAssertEqual(offline.attempts, ["/\(repo)/resolve/main/unreachable.json"])
+        XCTAssertFalse(hub.recordedAbsentPaths(ofRepo: repo, revision: nil).contains("unreachable.json"))
     }
 
     func testCancellingPartWayThroughAShardStopsTheReleaseAndLeavesNoPartialFile() throws {
@@ -247,11 +364,12 @@ final class NFKMLXReleaseDownloadProgressTests: XCTestCase {
 
         XCTAssertEqual((fetchError as NSError?)?.domain, NFKDownloadErrorDomain)
         XCTAssertEqual((fetchError as NSError?)?.code, NFKDownloadError.cancelled.rawValue)
-        XCTAssertEqual(download.state, .cancelled, "the factory's activity ended the download")
+        XCTAssertEqual(download.state.rawValue, NFKDownloadState.cancelled.rawValue, "the factory's activity ended the download")
         let shard = hub.localURL(forRepo: repo, revision: nil, path: "model-00001-of-00002.safetensors")!
         XCTAssertFalse(FileManager.default.fileExists(atPath: shard.path))
         XCTAssertFalse(FileManager.default.fileExists(atPath: shard.appendingPathExtension("download").path))
-        XCTAssertNotEqual(hub.downloadStatus(repo: repo, revision: nil, paths: nil).presence, .complete)
+        XCTAssertNotEqual(hub.downloadStatus(repo: repo, revision: nil, paths: nil).presence.rawValue,
+                          NFKDownloadPresence.complete.rawValue)
     }
 
     func testAnAsynchronousFactoryCarriesTheCurrentDownloadToItsQueue() {
@@ -264,11 +382,11 @@ final class NFKMLXReleaseDownloadProgressTests: XCTestCase {
                 return 1
             }
         }
-        XCTAssertEqual(download.state, .downloading, "the factory's activity began on the calling thread")
+        XCTAssertEqual(download.state.rawValue, NFKDownloadState.downloading.rawValue, "the factory's activity began on the calling thread")
         wait(for: [built], timeout: 5)
         XCTAssertTrue(sawDownload)
         XCTAssertTrue(download.waitUntilFinished(withTimeout: 5))
-        XCTAssertEqual(download.state, .completed)
+        XCTAssertEqual(download.state.rawValue, NFKDownloadState.completed.rawValue)
     }
 
     // MARK: Catalog-level call
@@ -308,10 +426,10 @@ final class NFKMLXReleaseDownloadProgressTests: XCTestCase {
         }
         wait(for: [done], timeout: 10)
         XCTAssertNotNil(backend)
-        XCTAssertEqual(download.state, .completed)
+        XCTAssertEqual(download.state.rawValue, NFKDownloadState.completed.rawValue)
         XCTAssertEqual(builtFrom?.path, cache.appendingPathComponent("org/release/main").path)
         XCTAssertEqual(log.reports.last?.receivedByteCount, Int64(2 + 3000))
-        XCTAssertEqual(hub.downloadStatus(source: source).presence, .complete)
+        XCTAssertEqual(hub.downloadStatus(source: source).presence.rawValue, NFKDownloadPresence.complete.rawValue)
     }
 
     func testTheCatalogCallFailsAtOnceForAnUnregisteredModel() throws {
@@ -328,7 +446,7 @@ final class NFKMLXReleaseDownloadProgressTests: XCTestCase {
             }
         }
         wait(for: [done], timeout: 5)
-        XCTAssertEqual(download.state, .failed)
+        XCTAssertEqual(download.state.rawValue, NFKDownloadState.failed.rawValue)
         XCTAssertTrue(NFKStubReleaseProtocol.requests.isEmpty, "nothing is fetched")
     }
 

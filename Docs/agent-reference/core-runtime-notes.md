@@ -369,8 +369,11 @@ added 2026-10-15, InferKit 0.4.0). The transfer is `NFKHFHubTransfer` (private).
   (the server ignored `Range`, or `If-Range` found a changed file) never lowers the total. Reports are
   throttled to ten a second and forced at every file start, file end, and state change, and are built
   under the lock and dispatched in order to one serial queue. The completion handler is queued after the
-  final report. A fetch that no plan declared and that fails with no bytes (an optional file the
-  release lacks, a weights candidate it does not serve) leaves no record.
+  final report, and `waitUntilFinishedWithTimeout:` returns only after both have run: reading
+  `progressHandler`'s last snapshot right after the state turned final once found it a report short.
+  Called on the report queue, the wait does not block and answers `isFinished`. A fetch that no plan
+  declared and that fails with no bytes (an optional file the release lacks, a weights candidate it
+  does not serve) leaves no record.
 - Resumption: up to three resumes after `NSURLErrorNetworkConnectionLost`, `TimedOut`,
   `CannotConnectToHost`, or `ResourceUnavailable`. A resume sends `Range: bytes=N-` and `If-Range`
   with the first response's strong ETag; without a strong ETag the transfer restarts from zero. A 206
@@ -401,10 +404,15 @@ added 2026-10-15, InferKit 0.4.0). The transfer is `NFKHFHubTransfer` (private).
 - URL sources cache at `<cache>/@url/<host>/<digest>/<file name>`, digest the first 16 hexadecimal
   digits of the URL's SHA-256, a file URL's host `local`. `@` cannot begin a Hugging Face name. The
   folder is an ordinary snapshot to eviction, status, and removal.
-- Completion record: `.inferkit-complete` in a snapshot, a JSON array of paths, unioned on each write.
-  A whole-repository plan and every InferKitMLX release download write it
-  (`recordCompleteDownloadOfRepo:revision:paths:error:`). It is how a source that lists no files reads
-  complete; without it such a snapshot reads partial whenever it holds a file.
+- Completion record: `.inferkit-complete` in a snapshot, a JSON object with `paths` (the complete
+  download's files) and `absent` (optional files the server refused with HTTP 404), each unioned on
+  write under one process-wide lock; a path recorded present leaves `absent`. A bare JSON array, the
+  first format, reads as `paths`. A whole-repository plan and every InferKitMLX release download write
+  it (`recordCompleteDownloadOfRepo:revision:paths:absentPaths:error:`). `paths` is how a source that
+  lists no files reads complete; without it such a snapshot reads partial whenever it holds a file.
+  `absent` is how a cached release loads offline: the release layer skips a recorded refusal.
+  `forgetRecordedAbsentPathsOfRepo:revision:error:` clears it and writes nothing when there is no
+  record.
 - Status counts a present file's allocated bytes at its link target. Optional files add bytes and do
   not decide completeness. A source of kind `system` or `none` is complete with no bytes.
 - Removal plans read the cache alone. A file is kept when another catalog variant (`hub.modelCatalog`,

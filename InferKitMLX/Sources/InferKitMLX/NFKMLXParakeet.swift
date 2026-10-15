@@ -684,15 +684,8 @@ extension NFKMLXParakeet {
     @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
         let hub = NFKMLXReleaseDownload.hub(cacheDirectoryURL: cacheDirectoryURL)
-        for name in weightFiles {
-            let archive = hub.isCachedRepo(repo, revision: revision, path: name)
-                ? hub.localURL(forRepo: repo, revision: revision, path: name)
-                : try? hub.downloadRepo(repo, revision: revision, path: name, sha256: nil)
-            if let archive {
-                return try backend(archiveURL: archive)
-            }
-        }
-        throw NFKMLXError.unsupportedConfiguration("\(repo) serves none of \(weightFiles.joined(separator: ", "))")
+        return try backend(archiveURL: try NFKMLXReleaseDownload.firstServed(weightFiles, hub: hub, repo: repo,
+                                                                             revision: revision))
     }
 
     /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``.

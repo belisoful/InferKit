@@ -169,9 +169,9 @@ static NSMutableSet<NSString *> *NFKStubHubDroppedPaths;
 	if (drops) {
 		NSUInteger count = MIN((NSUInteger)script.dropsAfterByteCount, body.length);
 		[self.client URLProtocol:self didLoadData:[body subdataWithRange:NSMakeRange(0, count)]];
-		[self.client URLProtocol:self didFailWithError:[NSError errorWithDomain:NSURLErrorDomain
-																		   code:NSURLErrorNetworkConnectionLost
-																	   userInfo:nil]];
+		// A session discards loaded bytes it has not yet handed to its delegate when the load fails in
+		// the same pass, so the connection drops on a later pass of this thread's run loop.
+		[self performSelector:@selector(dropConnection) withObject:nil afterDelay:0.25];
 		return;
 	}
 	NSUInteger chunk = script.chunkSize > 0 ? script.chunkSize : MAX(body.length, (NSUInteger)1);
@@ -185,8 +185,16 @@ static NSMutableSet<NSString *> *NFKStubHubDroppedPaths;
 	[self.client URLProtocolDidFinishLoading:self];
 }
 
+- (void)dropConnection
+{
+	[self.client URLProtocol:self didFailWithError:[NSError errorWithDomain:NSURLErrorDomain
+																	   code:NSURLErrorNetworkConnectionLost
+																   userInfo:nil]];
+}
+
 - (void)stopLoading
 {
+	[NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(dropConnection) object:nil];
 }
 
 @end

@@ -20,7 +20,8 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) NSUInteger chunkSize;
 /*! Delivers the first chunk and then nothing until the request is cancelled. */
 @property (nonatomic, assign) BOOL stallsAfterFirstChunk;
-/*! The first request delivers this many bytes and then fails with a lost connection; -1 for none. */
+/*! The first request delivers this many bytes and, a quarter second later, fails with a lost
+	connection; -1 for none. */
 @property (nonatomic, assign) NSInteger dropsAfterByteCount;
 + (instancetype)responseWithStatus:(NSInteger)status body:(nullable NSData *)body;
 @end

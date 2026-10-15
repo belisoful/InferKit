@@ -209,8 +209,9 @@ typedef void (^ NS_SWIFT_SENDABLE NFKDownloadProgressHandler)(NFKDownloadProgres
 	transfer starts. Files already whole stay in the cache. Does nothing once finished. */
 - (void)cancel;
 
-/*! Blocks until the download finishes or the timeout passes; YES when it finished. A negative
-	timeout waits without limit. */
+/*! Blocks until the download finishes and its final progress report and completion handler have run,
+	or until the timeout passes; YES when they have. A negative timeout waits without limit. Called from
+	a progress or completion handler, it does not wait and answers isFinished. */
 - (BOOL)waitUntilFinishedWithTimeout:(NSTimeInterval)timeout;
 
 #pragma mark Collecting work

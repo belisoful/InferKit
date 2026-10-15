@@ -245,8 +245,22 @@ report to. Added 2026-10-15, InferKit 0.4.0.
   and declares the files it will fetch (`expectedPaths`: the required, the optional the listing holds,
   the first weights candidate it holds). The shards a `*.index.json` names are declared when the index
   is read, before their bytes, so `expectedByteCount` grows once by the shard bytes. A listing that
-  fails is ignored and the fetches report sizes as they start. A fully cached release makes no request
-  at all, the listing included.
+  fails is ignored and the fetches report sizes as they start.
+- A cached release loads with no network (2026-10-15, at the developer's request: offline use depends
+  on it). Two lookups used to reach the server on every cached build, and both are gone:
+  - Weights: `cachedWeights` picks the first candidate whole in the cache (a shard index counts only
+    with every shard it names), in candidate order, and `fetchWeights` uses it with no request. A
+    sharded release used to ask for `model.safetensors` first on every build. With nothing cached the
+    candidates are tried in order as before. Parakeet and VoiceRestore, which kept their own candidate
+    loops, go through `firstServed`.
+  - Optional files: `fetchOptional` collects the optional files the server refused with HTTP 404
+    (`NFKDownloadErrorNotFound`, `isAbsent`) and the completion record stores them
+    (`recordCompleteDownload(ofRepo:revision:paths:absentPaths:)`). A later build skips a recorded file
+    that is not cached. A network failure is not an absence and is never recorded, so a build that ran
+    offline asks again once the network returns. `forgetRecordedAbsentPaths(ofRepo:revision:)` is the
+    forced refresh; another revision is another snapshot with its own record.
+  - A release cached before the record existed, or one whose refusals were forgotten, asks once more
+    and records them.
 - Cancellation: a cancelled fetch of an optional file or a weights candidate looks like an absent file
   to the `try?` loops, so `checkCancelled()` runs after each optional fetch and on each weights
   failure, and throws `NFKDownloadError(.cancelled)`.
@@ -263,7 +277,10 @@ report to. Added 2026-10-15, InferKit 0.4.0.
   then already failed.
 - Tests: `NFKMLXReleaseDownloadProgressTests` serves a release from `NFKStubReleaseProtocol` (a
   `URLProtocol` at `http://release.test`) and evaluates no MLX: progress that only grows and reaches the
-  release's bytes with one listing request, a cached release with no request, a cancel part-way through
+  release's bytes with one listing request, a cached release (sharded, with a refused optional file,
+  and in component folders) that makes no request, a forgotten refusal asked for again, a cached
+  release built through `NFKFailingTransportHub` (every request fails) with no attempt, a cancel
+  part-way through
   a shard through the asynchronous helper, the helper carrying the download, and the catalog call
   building a registered `NFKPassthroughBackend`. The `NFKOfflineHub` release tests never make a download
   current, so they never list.

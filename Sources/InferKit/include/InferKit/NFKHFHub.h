@@ -458,6 +458,36 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 							   paths:(NSArray<NSString *> *)paths
 							   error:(NSError * _Nullable *)outError;
 
+/*!
+	@method     recordCompleteDownloadOfRepo:revision:paths:absentPaths:error:
+	@abstract   Records a complete download as recordCompleteDownloadOfRepo:revision:paths:error: does,
+				and the optional files the server refused; YES on success.
+	@discussion A later build of the same snapshot reads absentPaths through
+				recordedAbsentPathsOfRepo:revision: and does not ask for them again, so a cached
+				release loads with no network. A path that a later record lists as present leaves the
+				absent list. Another revision is another snapshot with its own record.
+*/
+- (BOOL)recordCompleteDownloadOfRepo:(NSString *)repo
+							revision:(nullable NSString *)revision
+							   paths:(NSArray<NSString *> *)paths
+						 absentPaths:(NSArray<NSString *> *)absentPaths
+							   error:(NSError * _Nullable *)outError;
+
+/*! The optional files the snapshot's completion record lists as refused by the server; empty without
+	a record. */
+- (NSArray<NSString *> *)recordedAbsentPathsOfRepo:(NSString *)repo revision:(nullable NSString *)revision;
+
+/*!
+	@method     forgetRecordedAbsentPathsOfRepo:revision:error:
+	@abstract   Clears the snapshot's list of refused optional files, so the next build asks the server
+				for them again; YES on success.
+	@discussion The refresh of a release whose repository may have gained a file. Changes nothing
+				when the snapshot has no record.
+*/
+- (BOOL)forgetRecordedAbsentPathsOfRepo:(NSString *)repo
+							   revision:(nullable NSString *)revision
+								  error:(NSError * _Nullable *)outError;
+
 #pragma mark Removal
 
 /*!

@@ -59,6 +59,10 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   at once. A URL source caches under `<cache>/@url/<host>/<digest>/`.
 - `downloadStatusForModelSource:` (and the repository and URL forms) reads complete, partial, or absent
   with the bytes on disk, from the cache alone.
+- A completion record lists a download's files and the optional files the server refused
+  (`recordCompleteDownloadOfRepo:revision:paths:absentPaths:error:`, `recordedAbsentPathsOfRepo:revision:`,
+  `forgetRecordedAbsentPathsOfRepo:revision:error:`), so a layer that fetches file by file loads a
+  cached release offline.
 - `removalPlanForModelSource:error:` lists the files a removal deletes and the ones it keeps, each with
   its reason: a file another catalog model whose download is complete uses, or a link target something
   else needs. `removeFilesInPlan:error:` and its asynchronous form delete them all or none, return the
@@ -717,6 +721,10 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   whole release, its sizes known before the bytes arrive.
 - A release a factory fetched is recorded complete, so the core hub's status and removal cover it.
   `+[NFKMLXHub hubWithCacheDirectoryURL:]` returns the hub the factories use.
+- A cached release loads with no network. A weights candidate whole in the cache is used without asking
+  the server about earlier candidates, and the optional files the server refused are recorded with the
+  release and not asked for again. `-[NFKHFHub forgetRecordedAbsentPathsOfRepo:revision:error:]` makes
+  the next build ask for them again.
 - `+[NFKMLXHub backendForModel:variant:cacheDirectoryURL:progressHandler:completionHandler:]` downloads
   a catalog model's variant and builds its registered backend, returning the download.
 

@@ -671,23 +671,86 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	return [attributes[NSFileType] isEqualToString:NSFileTypeSymbolicLink];
 }
 
+/*! The completion record of a snapshot: the paths of its complete download under "paths" and the
+	optional paths the server refused under "absent". A record written as a bare array holds paths
+	only. */
+- (NSDictionary<NSString *, NSArray<NSString *> *> *)completionRecordInSnapshotURL:(NSURL *)snapshotURL
+{
+	NSData *data = [NSData dataWithContentsOfURL:[snapshotURL URLByAppendingPathComponent:NFKHFHubCompleteMarkerName]];
+	id record = data != nil ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+	NSArray *paths = nil;
+	NSArray *absent = nil;
+	if ([record isKindOfClass:NSArray.class]) {
+		paths = record;
+	} else if ([record isKindOfClass:NSDictionary.class]) {
+		paths = [record[@"paths"] isKindOfClass:NSArray.class] ? record[@"paths"] : nil;
+		absent = [record[@"absent"] isKindOfClass:NSArray.class] ? record[@"absent"] : nil;
+	}
+	NSPredicate *strings = [NSPredicate predicateWithBlock:^BOOL(id path, NSDictionary *bindings) {
+		return [path isKindOfClass:NSString.class];
+	}];
+	return @{ @"paths": [paths filteredArrayUsingPredicate:strings] ?: @[],
+			  @"absent": [absent filteredArrayUsingPredicate:strings] ?: @[] };
+}
+
 /*! The paths a complete-download record in the snapshot names. */
 - (NSArray<NSString *> *)recordedCompletePathsInSnapshotURL:(NSURL *)snapshotURL
 {
-	NSData *data = [NSData dataWithContentsOfURL:[snapshotURL URLByAppendingPathComponent:NFKHFHubCompleteMarkerName]];
-	id paths = data != nil ? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
-	if (![paths isKindOfClass:NSArray.class]) {
-		return @[];
-	}
-	return [(NSArray *)paths filteredArrayUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(id path, NSDictionary *bindings) {
-		return [path isKindOfClass:NSString.class];
-	}]];
+	return [self completionRecordInSnapshotURL:snapshotURL][@"paths"];
 }
 
 - (BOOL)recordCompleteDownloadOfRepo:(NSString *)repo
 							revision:(nullable NSString *)revision
 							   paths:(NSArray<NSString *> *)paths
 							   error:(NSError * _Nullable *)outError
+{
+	return [self recordCompleteDownloadOfRepo:repo revision:revision paths:paths absentPaths:@[] error:outError];
+}
+
+- (BOOL)recordCompleteDownloadOfRepo:(NSString *)repo
+							revision:(nullable NSString *)revision
+							   paths:(NSArray<NSString *> *)paths
+						 absentPaths:(NSArray<NSString *> *)absentPaths
+							   error:(NSError * _Nullable *)outError
+{
+	return [self updateCompletionRecordOfRepo:repo revision:revision error:outError
+								   withBlock:^(NSMutableOrderedSet<NSString *> *recorded, NSMutableOrderedSet<NSString *> *absent) {
+		[recorded addObjectsFromArray:paths];
+		[absent addObjectsFromArray:absentPaths];
+		[absent minusOrderedSet:recorded];
+	}];
+}
+
+- (NSArray<NSString *> *)recordedAbsentPathsOfRepo:(NSString *)repo revision:(nullable NSString *)revision
+{
+	NSURL *snapshotURL = [self snapshotURLForRepo:repo revision:revision];
+	if (snapshotURL == nil) {
+		return @[];
+	}
+	__block NSArray<NSString *> *absent = @[];
+	[self performWithCacheAccess:^(NSURL *cacheDirectoryURL) {
+		absent = [self completionRecordInSnapshotURL:snapshotURL][@"absent"];
+	}];
+	return absent;
+}
+
+- (BOOL)forgetRecordedAbsentPathsOfRepo:(NSString *)repo revision:(nullable NSString *)revision error:(NSError * _Nullable *)outError
+{
+	if ([self recordedAbsentPathsOfRepo:repo revision:revision].count == 0) {
+		return YES;
+	}
+	return [self updateCompletionRecordOfRepo:repo revision:revision error:outError
+								   withBlock:^(NSMutableOrderedSet<NSString *> *recorded, NSMutableOrderedSet<NSString *> *absent) {
+		[absent removeAllObjects];
+	}];
+}
+
+/*! Reads, changes, and writes back a snapshot's completion record under one process-wide lock. */
+- (BOOL)updateCompletionRecordOfRepo:(NSString *)repo
+							revision:(nullable NSString *)revision
+							   error:(NSError **)outError
+						   withBlock:(void (NS_NOESCAPE ^)(NSMutableOrderedSet<NSString *> *recorded,
+														   NSMutableOrderedSet<NSString *> *absent))change
 {
 	NSURL *snapshotURL = [self snapshotURLForRepo:repo revision:revision];
 	if (snapshotURL == nil) {
@@ -697,9 +760,13 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	__block BOOL written = NO;
 	[self performWithCacheAccess:^(NSURL *cacheDirectoryURL) {
 		@synchronized (NFKHFHub.class) {
-			NSMutableOrderedSet<NSString *> *recorded = [NSMutableOrderedSet orderedSetWithArray:[self recordedCompletePathsInSnapshotURL:snapshotURL]];
-			[recorded addObjectsFromArray:paths];
-			NSData *data = [NSJSONSerialization dataWithJSONObject:recorded.array options:0 error:&writeError];
+			NSDictionary<NSString *, NSArray<NSString *> *> *record = [self completionRecordInSnapshotURL:snapshotURL];
+			NSMutableOrderedSet<NSString *> *recorded = [NSMutableOrderedSet orderedSetWithArray:record[@"paths"]];
+			NSMutableOrderedSet<NSString *> *absent = [NSMutableOrderedSet orderedSetWithArray:record[@"absent"]];
+			change(recorded, absent);
+			NSData *data = [NSJSONSerialization dataWithJSONObject:@{ @"paths": recorded.array, @"absent": absent.array }
+														   options:NSJSONWritingSortedKeys
+															 error:&writeError];
 			if (data == nil) {
 				return;
 			}

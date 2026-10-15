@@ -204,10 +204,11 @@ final class MLXExamples: XCTestCase {
             done.fulfill()
         }
         wait(for: [done], timeout: 5)
-        XCTAssertEqual(download.state, .failed)
+        XCTAssertEqual(download.state.rawValue, NFKDownloadState.failed.rawValue)
 
         let hub = NFKMLXHub.hub(cacheDirectoryURL: nil)          // the hub the factories use
-        XCTAssertEqual(hub.downloadStatus(repo: "org/never-downloaded", revision: nil, paths: nil).presence, .absent)
+        XCTAssertEqual(hub.downloadStatus(repo: "org/never-downloaded", revision: nil, paths: nil).presence.rawValue,
+                       NFKDownloadPresence.absent.rawValue)
     }
 
     // End to end: register -> build by name -> run. Needs MLX, so it skips without a Metal library

@@ -195,12 +195,12 @@ final class InferKitSwiftExamples: XCTestCase {
 
         // "Downloaded · 256 KB" and a Delete button.
         let status = hub.downloadStatus(source: source)
-        XCTAssertEqual(status.presence, .complete)
+        XCTAssertEqual(status.presence.rawValue, NFKDownloadPresence.complete.rawValue)
         _ = ByteCountFormatter.string(fromByteCount: status.byteCount, countStyle: .file)
         let removal = try hub.removalPlan(source: source)
         let removed = try await hub.removeFiles(in: removal)
         XCTAssertEqual(removed.freedByteCount, removal.freedByteCount)
-        XCTAssertEqual(hub.downloadStatus(source: source).presence, .absent)
+        XCTAssertEqual(hub.downloadStatus(source: source).presence.rawValue, NFKDownloadPresence.absent.rawValue)
     }
 
     // MARK: Backend contracts (Docs/examples.md: Text → text, Image → image)
