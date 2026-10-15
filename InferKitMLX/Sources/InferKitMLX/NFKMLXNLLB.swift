@@ -16,7 +16,7 @@ import MLX
 ///
 /// Introduced in InferKit 0.4.0.
 @objc(NFKMLXNLLBVariant)
-public enum NFKMLXNLLBVariant: Int {
+public enum NFKMLXNLLBVariant: Int, CaseIterable {
     /// `facebook/nllb-200-distilled-600M`: 12 + 12 layers at 1024.
     case distilled600M
     /// `facebook/nllb-200-1.3B`: 24 + 24 layers at 1024.

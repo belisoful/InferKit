@@ -13,7 +13,7 @@ import InferKit
 final class NFKMLXCatalogTests: XCTestCase {
 
     private static let standInNames = ["diffusion-controlnet", "diffusion-depth", "diffusion-inpaint",
-                                       "diffusion-upscaler", "green-screen-keyer", "tone-speech"]
+                                       "diffusion-upscaler", "green-screen-keyer", "sam", "swinir-x4", "tone-speech"]
 
     private func requireMLXRuntime() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

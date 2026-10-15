@@ -159,7 +159,7 @@ struct NFKMLXStableDiffusionRelease {
     let configuration: NFKMLXSDTextToImageConfiguration
     /// Paths within the repository, tried in order at each slot so a release published only in half
     /// precision resolves too.
-    private let weightFiles: [[String]]
+    let weightFiles: [[String]]
 
     init(_ model: NFKMLXStableDiffusionModel) {
         switch model {
@@ -191,7 +191,7 @@ struct NFKMLXStableDiffusionRelease {
     /// missing one is the difference between a prompt and a different prompt, so they are fetched with
     /// the weights rather than lazily. The two that name the markers are optional because not every
     /// release publishes both, and the tokenizer falls back to the end marker for padding.
-    private var vocabularyFiles: [(path: String, required: Bool)] {
+    var vocabularyFiles: [(path: String, required: Bool)] {
         var names = [("tokenizer/vocab.json", true), ("tokenizer/merges.txt", true),
                      ("tokenizer/tokenizer_config.json", false),
                      ("tokenizer/special_tokens_map.json", false)]
