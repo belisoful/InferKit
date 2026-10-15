@@ -303,7 +303,39 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
     /// Introduced in InferKit 0.4.0.
     @objc public var supportedOutputKeys: Set<String> { NFKMLXToolCalling.outputKeys.union([NFKOutputUsage]) }
 
+    /// The input tokens a run of the request costs: its prompt rendered through the chat template the
+    /// run uses, tools included, with a picture's span expanded as a run expands it. Runs no decoder.
+    /// Introduced in InferKit 0.4.0.
+    @objc(tokenCountForRequest:error:)
+    public func tokenCount(for request: NFKInferenceRequest) throws -> NSNumber {
+        NSNumber(value: try preparedPrompt(for: request).tokens.count)
+    }
+
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
+        let (options, promptTokens, spans, toolCallFormat) = try preparedPrompt(for: request)
+        var embeddings: MLXArray?
+        var spanMask: MLXArray?
+        if let spans, let images {
+            let inputs = images.inputs(for: promptTokens, spans: spans) {
+                holder.net.embed($0)
+            }
+            embeddings = inputs.embeddings
+            spanMask = inputs.images
+        }
+        let (produced, cached) = generate(promptTokens, embeddings: embeddings, images: spanMask,
+                                          options: options, conversation: NFKMLXConversation.name(of: request))
+        var outputs = NFKMLXToolCalling.outputs(answer: holder.tokenizer.decode(produced.map(NSNumber.init(value:))),
+                                                reasoning: "", request: request, format: toolCallFormat, source: identifier)
+        outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: cached,
+                                                      outputTokens: produced.count, reasoningTokens: nil)
+        return NFKInferenceResult(outputs: outputs)
+    }
+
+    /// What a run of the request generates from: its options, its prompt as token ids with each
+    /// picture's span expanded, the pictures' spans, and the syntax its calls are read in.
+    private func preparedPrompt(for request: NFKInferenceRequest) throws
+        -> (options: NFKMLXGenerationOptions, tokens: [Int], spans: [NFKMLXDeepSeekImageStack.Span]?,
+            toolCallFormat: NFKMLXToolCallFormat?) {
         try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
         var options = defaults
         if let value = request.parameter(forKey: NFKParameterTemperature) as? NSNumber {
@@ -359,38 +391,25 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
             throw NFKMLXError.unsupportedInput
         }
         var promptTokens = holder.tokenizer.encode(text).map(\.intValue)
-        var embeddings: MLXArray?
-        var spanMask: MLXArray?
-        if let value = request.input(forKey: NFKInputImage) {
-            guard let images else {
-                throw NFKMLXError.unsupportedConfiguration(
-                    "\(identifier) was built from a release with no image tower")
-            }
-            let picture = try NFKMLXImageBridge.rgbBytes(from: value,
-                                                         colorSpace: CGColorSpaceCreateDeviceRGB())
-            // A caller writing plain text has no reason to know how the release spells its image
-            // placeholder, so one picture and no placeholder puts the picture first. More than one
-            // picture means the prompt says where they go, and the count has to agree.
-            if !promptTokens.contains(images.configuration.imageTokenID) {
-                promptTokens.insert(images.configuration.imageTokenID, at: 0)
-            }
-            let expanded = try images.expanded(
-                promptTokens,
-                pictures: [(picture.bytes, picture.width, picture.height)])
-            let inputs = images.inputs(for: expanded.tokens, spans: expanded.spans) {
-                holder.net.embed($0)
-            }
-            promptTokens = expanded.tokens
-            embeddings = inputs.embeddings
-            spanMask = inputs.images
+        guard let value = request.input(forKey: NFKInputImage) else {
+            return (options, promptTokens, nil, toolCallFormat)
         }
-        let (produced, cached) = generate(promptTokens, embeddings: embeddings, images: spanMask,
-                                          options: options, conversation: NFKMLXConversation.name(of: request))
-        var outputs = NFKMLXToolCalling.outputs(answer: holder.tokenizer.decode(produced.map(NSNumber.init(value:))),
-                                                reasoning: "", request: request, format: toolCallFormat, source: identifier)
-        outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: cached,
-                                                      outputTokens: produced.count, reasoningTokens: nil)
-        return NFKInferenceResult(outputs: outputs)
+        guard let images else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "\(identifier) was built from a release with no image tower")
+        }
+        let picture = try NFKMLXImageBridge.rgbBytes(from: value,
+                                                     colorSpace: CGColorSpaceCreateDeviceRGB())
+        // A caller writing plain text has no reason to know how the release spells its image
+        // placeholder, so one picture and no placeholder puts the picture first. More than one
+        // picture means the prompt says where they go, and the count has to agree.
+        if !promptTokens.contains(images.configuration.imageTokenID) {
+            promptTokens.insert(images.configuration.imageTokenID, at: 0)
+        }
+        let expanded = try images.expanded(
+            promptTokens,
+            pictures: [(picture.bytes, picture.width, picture.height)])
+        return (options, expanded.tokens, expanded.spans, toolCallFormat)
     }
 
     /// One generation at a time. A run threads its own cache through the shared decoder, so two

@@ -65,6 +65,8 @@ NSArray<NFKHTTPFormPart *> * _Nullable NFKHTTPFormParts(NFKHTTPRequest *request)
 - (void)sendStreamData:(NSData *)data;
 /*! A server-sent event: "data: <payload>" and the blank line that ends it. */
 - (void)sendEventData:(NSString *)payload;
+/*! A named server-sent event: "event: <name>", "data: <payload>", and the blank line that ends it. */
+- (void)sendEventNamed:(NSString *)name data:(NSString *)payload;
 - (void)endStream;
 @end
 

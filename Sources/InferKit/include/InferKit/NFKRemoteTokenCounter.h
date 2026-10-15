@@ -38,9 +38,11 @@ typedef NS_ENUM(NSInteger, NFKRemoteTokenCounterAPIStyle) {
 	@abstract   Counts the tokens a request costs, as the hosted model's own tokenizer counts them.
 	@discussion A request is sized before it is sent: to keep it under a context window, or to
 				price it. The count comes from the service, so it matches what the model is billed
-				for. The text is NFKInputPrompt, or NFKInputMessages; Anthropic's count takes the
-				messages with their roles (a system turn lifted to the top-level field, as the
-				Messages backend does), and the other styles count the joined text. A counting
+				for. The text is NFKInputPrompt, or NFKInputMessages. Anthropic's count takes the
+				body NFKAnthropicBackend sends for a run of the same request (the system turn lifted,
+				the tool conversation as tool_use and tool_result blocks, the attached media, the
+				tools, and the thinking), so it counts what a run costs; the other styles count the
+				joined text. A counting
 				object rather than a backend, as NFKRemoteReranker is a scoring one. Blocks; run it
 				off the render thread. Introduced in InferKit 0.4.0.
 */

@@ -11,8 +11,9 @@ preset was added (a 401 or 405 without credentials is what confirms the path).
 - **OpenAI-compatible** — one wire format, so `NFKRemoteBackend` serves them all: `openai`, `xai`
   (Grok), `gemini` (Google's OpenAI-compatible layer), `groq`, `mistral`, `deepseek`, `together`,
   `openrouter`, and the local servers `ollama`, `lmstudio`, `llamacpp`, `vllm`.
-- **`inferkit`** is an `NFKInferenceServer` (see "Serving" below). It speaks the OpenAI shape and a
-  native route, and `backendForProvider:` builds the native client, `NFKRemoteInferKitBackend`.
+- **`inferkit`** is an `NFKInferenceServer` (see "Serving" below). It speaks the OpenAI shape, the
+  Responses and Messages APIs, and a native route, and `backendForProvider:` builds the native client,
+  `NFKRemoteInferKitBackend`.
 - **`typesafe`** (TypeSafe AI's System One API, which serves Jev) has its own backend,
   `NFKTypeSafeBackend`, because it does not generate text: see "Typed decisions" below.
 - **`anthropic`** is the other exception and has its own backend, `NFKAnthropicBackend`. Four differences a
@@ -929,6 +930,13 @@ machine's remote clients reach a model this process hosts. Files:
   refused: the server fetches nothing for a client. Speech converts the hosted clip with `AVAudioFile`
   to wav, flac, aac (written as m4a), m4a, caf, or raw pcm; MP3 and Ogg Opus have no system encoder
   and are served only when the model produced them.
+- `NFKServedAnthropic.h/.m` and `NFKServedResponses.h/.m` (private, 2026-10-15): Anthropic's Messages
+  API and OpenAI's Responses API, each the inverse of the core client that speaks it
+  (`NFKAnthropicBackend`, `NFKRemoteResponsesBackend`), with the routes' serving code and a stream
+  writer class per family. See "Messages and Responses routes" below.
+- `NFKServedRun.h/.m` (private): the run a model's queue holds, and the unmeasured token-count run.
+  `NFKInferenceServerPrivate.h` (private) gives a route family what it reaches of the server: the body,
+  `modelNamed:error:`, the error reply in a wire's shape, and `enqueue:on:request:response:`.
 - `NFKInferenceWireCoding.h/.m` (private): the native route's tagged JSON (`"$nfk"`), shared by server
   and client. Pixel buffers cross as each plane's rows with padding, so any format crosses without a
   bytes-per-pixel table; the decoder first checks the planes against the format's own description
@@ -1147,6 +1155,101 @@ Traps met while building it:
   (`osx.cocoa.AutoreleaseWrite`); write to a strong local outside the pool and copy it out after.
 - `NFKRemoteTransport`'s blocking send retries 502, 503, and 504, so a served "not ready" (503) is
   retried like a gateway error. Tests that expect a failing status set `retryAttempts` to 0.
+
+**Messages and Responses routes (2026-10-15).** Asked for so Claude Code and Codex run on a hosted
+model. `POST /v1/messages`, `/v1/messages/count_tokens`, `/v1/responses`, and `/v1/responses/input_tokens`,
+all `NFKServerKeyScopeInference`. `NFKInferenceServer.m` holds only the routing; each family's serving
+code is in its own file and reaches the server through `NFKInferenceServerPrivate.h`.
+
+- One conversation shape: both families convert to the OpenAI chat shape `NFKInputMessages` takes, built
+  with `NFKToolMessages` (`assistantMessageWithText:toolCalls:…` for a turn's calls,
+  `messageForToolCallIdentifier:name:result:` for each answer, so a tool_result's `is_error` and images
+  ride under `NFKMessageMetadataKey`). A tool answer's name is found from the call earlier in the same
+  request; an answer to a call the request does not carry is 400, as both providers refuse it.
+- Messages: `system` (a string or text blocks joined by a blank line) becomes the first turn. A user
+  turn's `tool_result` blocks become tool turns ahead of its text. `thinking` and `redacted_thinking`
+  blocks are dropped: their signatures verify only at Anthropic. Server tools (a `type` and no
+  `input_schema`) are not offered. `tool_choice` `auto`/`any`/`none` pass on as the chat route's
+  `tool_choice` (`auto`/`required`/`none`), and `disable_parallel_tool_use` as `parallel_tool_calls: false`.
+- A forced tool (`tool_choice: {type: tool}`) is structured output: its `input_schema` becomes
+  `NFKParameterJSONSchema`, the other tools are dropped, and the reply is a `tool_use` of that tool whose
+  input is `NFKOutputStructured` (or the text parsed as a JSON object). This is also what makes
+  `NFKAnthropicBackend`'s schema path (a forced `structured_output` tool) work against the server; when
+  streamed, the text deltas go out as the tool's `input_json_delta`.
+- Thinking: `{type: enabled, budget_tokens: N}` → effort `"N"` (the contract passes other strings
+  through, and `NFKAnthropicBackend` reads a numeric string as a budget); `output_config.effort`
+  low/medium/high → light/moderate/deep, other levels unchanged; `{type: adaptive}` without an effort →
+  deep, the API's default; `disabled` → none. `NFKAnthropicBackend` on a name outside its known
+  families sends adaptive thinking with an effort, and on such a name it drops sampling parameters,
+  which is why the interoperability test checks temperature over raw HTTP only.
+- Usage: `input_tokens` is the input minus the cached tokens and `cache_read_input_tokens` the cached
+  ones, as Anthropic counts. `NFKAnthropicBackend` sums `input_tokens`, `cache_read_input_tokens`, and
+  `cache_creation_input_tokens` into `NFKUsageInputTokens`, which the contract defines as cached
+  included, and keeps `cache_read_input_tokens` as `NFKUsageCachedTokens`, so a cached count round-trips
+  through the route and the client. Every Message carries `usage`, zeros included, since Claude Code
+  reads it.
+- Stop reasons: `tool_use` with any call; `max_tokens` when the reported output tokens reach
+  `max_tokens`; `end_turn` otherwise. The contract has no finish reason, so `stop_sequence` is never
+  named. Responses: `incomplete` with `incomplete_details.reason: max_output_tokens` on the same test.
+- Responses: `instructions` and every system or developer turn before the first other turn join into
+  one system turn, because many chat templates take one system turn, first, and Codex sends its
+  instructions and developer turns apart. Item `type` absent means `message`. `reasoning` items are
+  dropped (their `encrypted_content` is OpenAI's). Consecutive `function_call` items after an assistant
+  message join that turn. A `custom` tool (Codex's `apply_patch`) becomes a function taking
+  `{input: string}`, and a call to it returns as `custom_tool_call` with that string; built-in tools
+  (`web_search`, `local_shell`, `file_search`, `image_generation`, `mcp`) are not offered. Keys the core
+  client sends under their own contract names (`stopSequences`, `topK`, `seed`) pass through, as on the
+  chat route.
+- Stored responses: none (decision 2026-10-15). Every reply says `store: false`; `previous_response_id`,
+  `conversation`, and `item_reference` are 400; `GET`/`DELETE /v1/responses/{id}` are 404. Reasons:
+  Codex sends the whole conversation each turn (`store: false`, reasoning replayed from
+  `encrypted_content`), so storage buys it nothing; stored responses would need a retention policy, a
+  memory bound, and per-key isolation; and a stateless route works the same behind `NFKBalancedBackend`
+  and across residency changes. `background: true` is answered at once as completed, which the core
+  client takes without polling.
+- Streams: `NFKHTTPResponse.sendEventNamed:data:` writes `event:` and `data:` lines; both families name
+  the event and repeat it as the data's `type`. Each stream opens at the first event, so a failure
+  before it is an ordinary error reply with its status; after it, Messages sends an `error` event and
+  Responses `response.failed`. Text and reasoning deltas come from cumulative partials through
+  `NFKServedSuffix`, as on the chat route. Responses events carry `sequence_number` from 0, and
+  `response.completed` lists the items the stream finished, with the same ids. A thinking block's
+  `signature` is the empty string.
+- Errors: Messages routes answer `{type: "error", error: {type, message}}`, the type by status (401
+  authentication, 403 and 421 permission, 404 not_found, 413 request_too_large, 429 rate_limit, 503
+  overloaded, other 5xx api_error, other 4xx invalid_request), with `inferkit_domain` and
+  `inferkit_code` beside the message so `NFKRemoteTransport.servedCodeInData:` reads the exact code.
+  The route refusal, 405, an unknown `/v1/messages/*` path, and a body that is not JSON take the same
+  shape. Responses keeps the chat route's OpenAI error body.
+- Keys: on the Messages routes only, `x-api-key` is a second place for the key (Bearer is tried first),
+  since Claude Code sends `ANTHROPIC_API_KEY` there; `anthropic-version` and `anthropic-beta` are
+  accepted and ignored.
+- Model list: `GET /v1/models` and `/v1/models/{id}` with an `anthropic-version` header answer in
+  Anthropic's shape (`{data: [{type: "model", id, display_name, created_at}], has_more, first_id,
+  last_id}`, `display_name` the hosted name, `created_at` the server's start in RFC 3339) and take the
+  key as `x-api-key`, with errors in Anthropic's shape. Without the header the list keeps OpenAI's shape.
+- Token counting: `NFKInferenceBackend` gained the optional `tokenCountForRequest:error:` (the selector
+  `NFKRemoteTokenCounter` already used). Both counting routes run it as an `NFKServedRun` whose `work`
+  calls it, so it takes the model's slot (never overlapping a run, building a model that is not
+  resident) and is `unmeasured`: it stays out of the averages, the token totals, and the
+  completed/failed counts. A backend without it answers 400 `kNFKError_InferenceUnsupported`.
+  Implemented by the MLX language backends (`mlx-models-language.md`, "Token counts"), each counting the
+  prompt its run builds (chat template, tools, an image's or a clip's tokens) through the same code
+  path, so a count equals the run's reported input tokens;
+  `NFKFoundationModelsBackend` on macOS 26.4 / iOS 26.4 with the on-device model (the context check's
+  count: prompt, transcript, tools, schema; Private Cloud Compute and older systems throw
+  `kNFKError_InferenceUnsupported`); and `NFKAnthropicBackend`, which posts its run body, reduced to
+  `model`, `messages`, `system`, `tools`, `tool_choice`, `thinking`, and `mcp_servers`, to
+  `…/messages/count_tokens`. `NFKRemoteTokenCounter`'s Anthropic style builds the same body through
+  `-[NFKAnthropicBackend countTokensBodyForRequest:error:]` (private, `NFKAnthropicBackendPrivate.h`),
+  with an `NFKAnthropicBackend` pointed at the counter's endpoint less `count_tokens`, so the two count
+  the same thing; the counter does not send the `anthropic-beta` MCP header, so a request carrying
+  `NFKParameterMCPServers` counts through the backend.
+- Model names: every route resolves `model` through `modelNamed:error:`, the one place presets will
+  extend. Claude Code also sends its background model (`ANTHROPIC_DEFAULT_HAIKU_MODEL`), which must be
+  hosted too.
+- Tests: `NFKServedAnthropicTests` (24) and `NFKServedResponsesTests` (15), each over a real loopback
+  listener with raw HTTP and with the core client pointed at the server (non-streaming, streaming,
+  tool round trips, images, schemas, error codes).
 
 **Status and load (2026-10-05).** `GET /v1/inferkit/status` and the `load` object in each
 `/models` entry come from `NFKServedModel`. It keeps an array of its running runs, each run's enqueue

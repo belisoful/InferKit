@@ -122,11 +122,7 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
             seed = value.uint64Value
         }
 
-        try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
-        // A tool request renders the release's own template, which writes Gemma 4's tool syntax.
-        if let (text, format) = try NFKMLXToolCalling.toolPrompt(for: request, template: chatTemplate, source: identifier,
-                                                                bosToken: "<bos>", eosToken: "<eos>") {
-            let promptTokens = holder.tokenizer.encode(text)
+        if let (promptTokens, format) = try toolPrompt(for: request) {
             let produced = generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed,
                                     stops: templateStopTokens)
             var outputs = NFKMLXToolCalling.outputs(answer: holder.tokenizer.decode(produced), reasoning: "",
@@ -143,6 +139,29 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
             NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
                                                 outputTokens: produced.count, reasoningTokens: nil),
         ])
+    }
+
+    /// The input tokens a run of the request costs: a tool request's prompt rendered through the
+    /// release's template, or the conversation or prompt tokenized as a run tokenizes it. Runs no
+    /// model. Introduced in InferKit 0.4.0.
+    @objc(tokenCountForRequest:error:)
+    public func tokenCount(for request: NFKInferenceRequest) throws -> NSNumber {
+        if let (promptTokens, _) = try toolPrompt(for: request) {
+            return NSNumber(value: promptTokens.count)
+        }
+        return NSNumber(value: try tokens(for: request).count)
+    }
+
+    /// A tool request's prompt as token ids and the syntax its calls are read in, or nil for a request
+    /// that offers no tools. A tool request renders the release's own template, which writes Gemma 4's
+    /// tool syntax. A reasoning effort is refused here, since the backend has no way to apply it.
+    private func toolPrompt(for request: NFKInferenceRequest) throws -> ([Int], NFKMLXToolCallFormat?)? {
+        try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
+        guard let (text, format) = try NFKMLXToolCalling.toolPrompt(for: request, template: chatTemplate, source: identifier,
+                                                                   bosToken: "<bos>", eosToken: "<eos>") else {
+            return nil
+        }
+        return (holder.tokenizer.encode(text), format)
     }
 
     /// Whether a request's messages render as a Gemma 4 conversation: a message list without a raw

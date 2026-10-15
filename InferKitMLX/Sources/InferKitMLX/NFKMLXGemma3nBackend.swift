@@ -183,6 +183,32 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
             options.seed = value.uint64Value
         }
 
+        let gemma = holder.model
+        let (ids, image, waveform) = try prompt(for: request)
+
+        generationLock.lock(); defer { generationLock.unlock() }
+        var produced = [Int]()
+        try gemma.generate(tokens: ids, image: image, audio: waveform, options: options) { token in
+            produced.append(token)
+            return onToken?(token, produced) ?? true
+        }
+        return NFKInferenceResult(outputs: [
+            NFKOutputText: gemma.decode(produced),
+            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: ids.count, cachedTokens: 0,
+                                                outputTokens: produced.count, reasoningTokens: nil),
+        ])
+    }
+
+    /// The input tokens a run of the request costs: its prompt or chat turns, with the soft tokens an
+    /// image or a clip takes, tokenized as a run tokenizes them. Runs no model. Introduced in
+    /// InferKit 0.4.0.
+    @objc(tokenCountForRequest:error:)
+    public func tokenCount(for request: NFKInferenceRequest) throws -> NSNumber {
+        NSNumber(value: try prompt(for: request).ids.count)
+    }
+
+    /// A run's prompt as token ids, with the image and the 16 kHz waveform it attaches.
+    private func prompt(for request: NFKInferenceRequest) throws -> (ids: [Int], image: Any?, waveform: MLXArray?) {
         try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
         let gemma = holder.model
         let image = request.input(forKey: NFKInputImage)
@@ -198,27 +224,13 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
             // preserves its duration.
             waveform = MLXArray(NFKMLXAudioRate.matched(clip.samples, from: clip.sampleRate, to: 16_000))
         }
-
-        let ids: [Int]
         if let prompt = request.prompt {
-            ids = gemma.promptTokens(prompt, withImage: image != nil, withAudio: waveform != nil)
-        } else if let messages = request.messages {
-            ids = gemma.chatTokens(messages: messages, withImage: image != nil, withAudio: waveform != nil)
-        } else {
-            throw NFKMLXError.unsupportedInput
+            return (gemma.promptTokens(prompt, withImage: image != nil, withAudio: waveform != nil), image, waveform)
         }
-
-        generationLock.lock(); defer { generationLock.unlock() }
-        var produced = [Int]()
-        try gemma.generate(tokens: ids, image: image, audio: waveform, options: options) { token in
-            produced.append(token)
-            return onToken?(token, produced) ?? true
+        if let messages = request.messages {
+            return (gemma.chatTokens(messages: messages, withImage: image != nil, withAudio: waveform != nil), image, waveform)
         }
-        return NFKInferenceResult(outputs: [
-            NFKOutputText: gemma.decode(produced),
-            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: ids.count, cachedTokens: 0,
-                                                outputTokens: produced.count, reasoningTokens: nil),
-        ])
+        throw NFKMLXError.unsupportedInput
     }
 
     /// The samples an `NFKAudioAsset` or raw WAV bytes carry.

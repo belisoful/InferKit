@@ -372,7 +372,7 @@
 {
 	self.anthropic.stagedLines = @[
 		(@"data: {\"type\":\"message_start\",\"message\":{\"role\":\"assistant\",\"content\":[],"
-		  "\"usage\":{\"input_tokens\":12,\"cache_read_input_tokens\":4}}}"),
+		  "\"usage\":{\"input_tokens\":12,\"cache_read_input_tokens\":4,\"cache_creation_input_tokens\":2}}}"),
 		@"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}",
 		@"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"two plus two\"}}",
 		@"data: {\"type\":\"content_block_stop\",\"index\":0}",
@@ -387,7 +387,7 @@
 	XCTAssertEqualObjects(job.result.text, @"four", @"the thinking block is not part of the answer");
 	XCTAssertEqualObjects([job.result outputForKey:NFKOutputReasoning], @"two plus two");
 	NSDictionary *usage = [job.result outputForKey:NFKOutputUsage];
-	XCTAssertEqualObjects(usage[NFKUsageInputTokens], @12);
+	XCTAssertEqualObjects(usage[NFKUsageInputTokens], @18, @"the whole input: read, cache read, and cache written");
 	XCTAssertEqualObjects(usage[NFKUsageCachedTokens], @4);
 	XCTAssertEqualObjects(usage[NFKUsageOutputTokens], @6);
 }

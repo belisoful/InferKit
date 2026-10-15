@@ -16,6 +16,7 @@
 #import <InferKit/NFKToolMessages.h>
 #import <InferKit/NFKRemoteFileStore.h>
 #import "NFK_ARC.h"
+#import "NFKAnthropicBackendPrivate.h"
 
 /*! The tool a schema is asked for through: the API has no response format, so the reply is
 	forced into a tool whose input schema is the caller's. */
@@ -293,6 +294,50 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 		return kNFKError_InferenceRefused;
 	}
 	return kNFKError_InferenceBackendFailure;
+}
+
+#pragma mark Token counting
+
+- (nullable NSDictionary<NSString *, id> *)countTokensBodyForRequest:(NFKInferenceRequest *)request
+															   error:(NSError * _Nullable *)outError
+{
+	NSMutableURLRequest *urlRequest = [self urlRequestForRequest:request streaming:NO error:outError];
+	if (urlRequest == nil) {
+		return nil;
+	}
+	NSDictionary *runBody = [NSJSONSerialization JSONObjectWithData:urlRequest.HTTPBody options:0 error:NULL];
+	NSMutableDictionary *body = [NSMutableDictionary dictionary];
+	for (NSString *key in @[ @"model", @"messages", @"system", @"tools", @"tool_choice", @"thinking", @"mcp_servers" ]) {
+		body[key] = runBody[key];
+	}
+	return body;
+}
+
+- (nullable NSNumber *)tokenCountForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
+	NSMutableURLRequest *urlRequest = [self urlRequestForRequest:request streaming:NO error:outError];
+	NSDictionary *body = urlRequest != nil ? [self countTokensBodyForRequest:request error:outError] : nil;
+	if (body == nil) {
+		return nil;
+	}
+	urlRequest.URL = [self.endpointURL URLByAppendingPathComponent:@"count_tokens"];
+	urlRequest.HTTPBody = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
+	NSHTTPURLResponse *response = nil;
+	NSError *sendError = nil;
+	NSData *data = [self sendRequest:urlRequest response:&response error:&sendError];
+	NSError *failure = data == nil ? sendError : [NFKRemoteTransport errorForResponse:response data:data];
+	if (failure != nil || data == nil) {
+		if (outError != NULL) {
+			*outError = failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the count call failed"];
+		}
+		return nil;
+	}
+	NSDictionary *reply = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+	NSNumber *count = [reply isKindOfClass:NSDictionary.class] && [reply[@"input_tokens"] isKindOfClass:NSNumber.class] ? reply[@"input_tokens"] : nil;
+	if (count == nil) {
+		[self failWithCode:kNFKError_InferenceBackendFailure description:@"the count reply carries no input_tokens" error:outError];
+	}
+	return count;
 }
 
 #pragma mark Request
@@ -739,16 +784,24 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 
 #pragma mark Response
 
-// The counts ride under usage, with the input side split between what was read and what the cache
-// served. The API reports no reasoning count: the thinking tokens are part of the output total.
+// The API splits the input three ways: input_tokens is only what was read past the last cache
+// breakpoint, beside cache_read_input_tokens and cache_creation_input_tokens. NFKUsageInputTokens is the
+// whole input, so it is their sum. The API reports no reasoning count: the thinking tokens are part of
+// the output total.
 - (nullable NSDictionary<NSString *, NSNumber *> *)usageInMessageBody:(nullable NSDictionary *)body
 {
 	NSDictionary *usage = [body[@"usage"] isKindOfClass:NSDictionary.class] ? body[@"usage"] : nil;
 	if (usage == nil) {
 		return nil;
 	}
-	return NFKRemoteUsage(usage[@"input_tokens"], usage[@"cache_read_input_tokens"],
-						  usage[@"output_tokens"], nil);
+	NSNumber *uncached = [usage[@"input_tokens"] isKindOfClass:NSNumber.class] ? usage[@"input_tokens"] : nil;
+	NSNumber *cacheRead = [usage[@"cache_read_input_tokens"] isKindOfClass:NSNumber.class] ? usage[@"cache_read_input_tokens"] : nil;
+	NSNumber *cacheWrite = [usage[@"cache_creation_input_tokens"] isKindOfClass:NSNumber.class] ? usage[@"cache_creation_input_tokens"] : nil;
+	NSNumber *input = nil;
+	if (uncached != nil || cacheRead != nil || cacheWrite != nil) {
+		input = @(uncached.integerValue + cacheRead.integerValue + cacheWrite.integerValue);
+	}
+	return NFKRemoteUsage(input, cacheRead, usage[@"output_tokens"], nil);
 }
 
 /*! Joins the text blocks into the text output and reads the tool uses. The API returns a list of

@@ -9,6 +9,7 @@
 #import <InferKit/NFKInferenceRequest.h>
 #import <InferKit/NFKErrors.h>
 #import "NFKRemoteTransportPrivate.h"
+#import "NFKAnthropicBackendPrivate.h"
 
 @implementation NFKRemoteTokenCounter
 
@@ -68,9 +69,8 @@
 {
 	NSDictionary *reply = nil;
 	if (self.apiStyle == NFKRemoteTokenCounterAPIStyleAnthropic) {
-		NSDictionary *body = [self anthropicBodyForRequest:request];
+		NSDictionary *body = [self anthropicBodyForRequest:request error:outError];
 		if (body == nil) {
-			[self fail:outError code:kNFKError_InferenceMissingInput reason:@"the request carries neither a prompt nor messages"];
 			return nil;
 		}
 		reply = [self replyForBody:body URL:self.endpointURL error:outError];
@@ -129,30 +129,16 @@
 
 #pragma mark Request
 
-// The Messages body as the count endpoint takes it: a leading system turn is the top-level field.
-- (nullable NSDictionary *)anthropicBodyForRequest:(NFKInferenceRequest *)request
+// The body NFKAnthropicBackend builds for a run of the same request, so the count covers what a run
+// sends. The backend reads the endpoint a run would post to, which names the service whose recorded
+// assistant turns it replays.
+- (nullable NSDictionary *)anthropicBodyForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
 {
-	NSMutableDictionary *body = [NSMutableDictionary dictionary];
-	body[@"model"] = self.modelName;
-	NSMutableArray *messages = [NSMutableArray array];
-	for (NSDictionary *message in request.messages) {
-		if (![message isKindOfClass:NSDictionary.class]) {
-			continue;
-		}
-		if ([message[@"role"] isEqual:@"system"]) {
-			body[@"system"] = message[@"content"];
-			continue;
-		}
-		[messages addObject:message];
-	}
-	if (messages.count == 0 && request.prompt.length > 0) {
-		[messages addObject:@{ @"role": @"user", @"content": request.prompt }];
-	}
-	if (messages.count == 0) {
-		return nil;
-	}
-	body[@"messages"] = messages;
-	return body;
+	NSURL *messagesURL = [self.endpointURL.lastPathComponent isEqualToString:@"count_tokens"]
+		? self.endpointURL.URLByDeletingLastPathComponent : self.endpointURL;
+	NFKAnthropicBackend *builder = [NFKAnthropicBackend backendWithEndpointURL:messagesURL];
+	builder.modelName = self.modelName;
+	return [builder countTokensBodyForRequest:request error:outError];
 }
 
 - (nullable NSString *)textForRequest:(NFKInferenceRequest *)request

@@ -12,6 +12,9 @@
 #import <InferKit/NFKServerIdentity.h>
 #import "NFKHTTPServer.h"
 #import "NFKServedOpenAI.h"
+#import "NFKServedAnthropic.h"
+#import "NFKServedResponses.h"
+#import "NFKInferenceServerPrivate.h"
 #import "NFKServedMCP.h"
 #import "NFKInferenceWireCoding.h"
 #import "NFKServedHostStatus.h"
@@ -28,20 +31,22 @@ NSString * const NFKInferenceServerDefaultAPIKeyName = @"default";
 
 static NSString * const NFKServedBasePath = @"/v1";
 
+/*! Whether a request answers in Anthropic's shapes: a Messages route, or the model list asked for
+	with an anthropic-version header, as Anthropic's clients send it. */
+static BOOL NFKServedRequestIsAnthropic(NFKHTTPRequest *request, NSString *path)
+{
+	NSString *messages = [NFKServedBasePath stringByAppendingString:@"/messages"];
+	if ([path isEqualToString:messages] || [path hasPrefix:[messages stringByAppendingString:@"/"]]) {
+		return YES;
+	}
+	NSString *models = [NFKServedBasePath stringByAppendingString:@"/models"];
+	BOOL listsModels = [path isEqualToString:models] || [path hasPrefix:[models stringByAppendingString:@"/"]];
+	return listsModels && [request valueForHeader:@"anthropic-version"] != nil;
+}
+
 static NSError *NFKServedError(NSString *domain, NSInteger code, NSString *reason)
 {
 	return [NSError errorWithDomain:domain code:code userInfo:@{ NSLocalizedDescriptionKey: reason }];
-}
-
-static NSError *NFKServedCancellation(void)
-{
-	return [NSError errorWithDomain:NSCocoaErrorDomain code:NSUserCancelledError
-						   userInfo:@{ NSLocalizedDescriptionKey: @"the client went away and the run was cancelled" }];
-}
-
-static BOOL NFKServedIsCancellation(NSError * _Nullable error)
-{
-	return error.code == NSUserCancelledError && [error.domain isEqualToString:NSCocoaErrorDomain];
 }
 
 /*! Monotonic seconds, for durations. */
@@ -133,16 +138,6 @@ static NSString *NFKServedJSONString(id object)
 	return data != nil ? [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding] : @"{}";
 }
 
-/*! The suffix of text past prefix, or nil when text does not extend prefix. */
-static NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString *prefix)
-{
-	// hasPrefix: answers NO for an empty prefix, so the first delta is the whole text.
-	if (text.length <= prefix.length || (prefix.length > 0 && ![text hasPrefix:prefix])) {
-		return nil;
-	}
-	return [text substringFromIndex:prefix.length];
-}
-
 /*! The SHA-256 digest of text's UTF-8 bytes. */
 static NSData *NFKServedKeyDigest(NSString *text)
 {
@@ -180,94 +175,6 @@ static BOOL NFKServedDigestsEqual(NSData *left, NSData *right)
 @end
 
 @implementation NFKServedAPIKey
-@end
-
-#pragma mark - Runs
-
-/*! One request waiting for, or holding, a slot on its model. Finishes exactly once. */
-@interface NFKServedRun : NSObject
-@property (nonatomic, strong, nullable) NFKInferenceRequest *request;
-@property (nonatomic, copy, nullable) NFKInferenceResult * _Nullable (^work)(id<NFKInferenceBackend> backend, NSError * _Nullable * _Nullable error);
-@property (nonatomic, copy, nullable) void (^partialHandler)(NFKInferenceResult * _Nullable partial, double progress);
-@property (nonatomic, copy, nullable) void (^completionHandler)(NFKInferenceResult * _Nullable result, NSError * _Nullable error);
-@property (nonatomic, strong, nullable) NFKInferenceJob *job;
-/*! Files written for the request's inline media, removed once the reply has been built, since a
-	result may name one of them. */
-@property (nonatomic, copy, nullable) NSArray<NSURL *> *temporaryFiles;
-@property (atomic, assign) BOOL cancelled;
-@property (atomic, assign) BOOL finished;
-@property (nonatomic, assign) NSTimeInterval enqueuedAt;
-@property (nonatomic, assign) NSTimeInterval startedAt;
-/*! The job's last reported progress, 0 until it reports one. */
-@property (atomic, assign) double reportedProgress;
-/*! What the run's events report: an identifier shared by its start and end, and the request's route,
-	client, and key. */
-@property (nonatomic, copy) NSString *identifier;
-@property (nonatomic, copy) NSString *route;
-@property (nonatomic, copy) NSString *clientAddress;
-@property (nonatomic, copy, nullable) NSString *keyName;
-/*! Whether the run's work began, which its start event reported. */
-@property (atomic, assign) BOOL began;
-@end
-
-@implementation NFKServedRun
-
-- (instancetype)init
-{
-	self = [super init];
-	if (self != nil) {
-		_identifier = NSUUID.UUID.UUIDString;
-		_route = @"";
-		_clientAddress = @"";
-	}
-	return self;
-}
-
-- (void)cancel
-{
-	NFKInferenceJob *job = nil;
-	@synchronized (self) {
-		self.cancelled = YES;
-		job = self.job;
-	}
-	[job cancel];
-}
-
-- (void)finishWithResult:(nullable NFKInferenceResult *)result error:(nullable NSError *)error
-{
-	void (^handler)(NFKInferenceResult * _Nullable, NSError * _Nullable) = nil;
-	@synchronized (self) {
-		if (self.finished) {
-			return;
-		}
-		self.finished = YES;
-		handler = self.completionHandler;
-		self.completionHandler = nil;
-		self.partialHandler = nil;
-	}
-	if (result == nil && error == nil) {
-		error = self.cancelled ? NFKServedCancellation()
-			: NFKServedError(NFKInferenceErrorDomain, kNFKError_InferenceBackendFailure, @"the backend returned no result and no error");
-	}
-	if (handler != nil) {
-		handler(result, error);
-	}
-	for (NSURL *file in self.temporaryFiles) {
-		[NSFileManager.defaultManager removeItemAtURL:file error:NULL];
-	}
-}
-
-- (void)reportPartial:(nullable NFKInferenceResult *)partial progress:(double)progress
-{
-	void (^handler)(NFKInferenceResult * _Nullable, double) = nil;
-	@synchronized (self) {
-		handler = self.finished ? nil : self.partialHandler;
-	}
-	if (handler != nil) {
-		handler(partial, progress);
-	}
-}
-
 @end
 
 /*! What a request does on arrival. */
@@ -844,6 +751,9 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	not shorten them. */
 - (void)recordRun:(NFKServedRun *)run result:(nullable NFKInferenceResult *)result error:(nullable NSError *)error
 {
+	if (run.unmeasured) {
+		return;
+	}
 	if (run.cancelled || NFKServedIsCancellation(error)) {
 		self.cancelled += 1;
 		return;
@@ -1086,6 +996,11 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 }
 
 @end
+
+NSString *NFKServedModelName(NFKServedModel *model)
+{
+	return model.name;
+}
 
 #pragma mark - Server
 
@@ -1539,18 +1454,38 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	}
 }
 
-/*! The key a request presents as a Bearer token, or nil when it presents none the server holds. Every
-	key is compared, so the time taken does not depend on which one matched. */
-- (nullable NFKServedAPIKey *)keyPresentedBy:(NFKHTTPRequest *)request
+/*! The tokens a request presents: its Bearer token, and its x-api-key header where the route takes
+	Anthropic's form. */
+- (NSArray<NSString *> *)tokensPresentedBy:(NFKHTTPRequest *)request acceptingAPIKeyHeader:(BOOL)acceptsAPIKeyHeader
 {
+	NSMutableArray<NSString *> *tokens = [NSMutableArray array];
 	NSString *authorization = [request valueForHeader:@"authorization"] ?: @"";
-	if (![authorization.lowercaseString hasPrefix:@"bearer "]) {
-		return nil;
+	if ([authorization.lowercaseString hasPrefix:@"bearer "]) {
+		[tokens addObject:[[authorization substringFromIndex:7] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet]];
 	}
-	NSString *token = [[authorization substringFromIndex:7] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
-	if (token.length == 0) {
-		return nil;
+	NSString *headerKey = acceptsAPIKeyHeader ? [request valueForHeader:@"x-api-key"] : nil;
+	if (headerKey != nil) {
+		[tokens addObject:[headerKey stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet]];
 	}
+	return [tokens filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"length > 0"]];
+}
+
+/*! The key a request presents: the first of its tokens the server holds, or nil. */
+- (nullable NFKServedAPIKey *)keyPresentedBy:(NFKHTTPRequest *)request acceptingAPIKeyHeader:(BOOL)acceptsAPIKeyHeader
+{
+	for (NSString *token in [self tokensPresentedBy:request acceptingAPIKeyHeader:acceptsAPIKeyHeader]) {
+		NFKServedAPIKey *key = [self keyMatching:token];
+		if (key != nil) {
+			return key;
+		}
+	}
+	return nil;
+}
+
+/*! The key token matches, or nil. Every key is compared, so the time taken does not depend on which
+	one matched. */
+- (nullable NFKServedAPIKey *)keyMatching:(NSString *)token
+{
 	NSData *presented = NFKServedKeyDigest(token);
 	NSArray<NFKServedAPIKey *> *keys = nil;
 	@synchronized (self.keys) {
@@ -1629,8 +1564,16 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 
 - (void)sendNoRouteFor:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response
 {
-	[response sendStatus:404 JSONObject:@{ @"error": @{ @"message": [NSString stringWithFormat:@"no route %@ %@", request.method, request.path],
-														 @"type": @"invalid_request_error" } } headers:nil];
+	[self sendNoRouteFor:request response:response wire:NFKServedWireOpenAI];
+}
+
+- (void)sendNoRouteFor:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response wire:(NFKServedWire)wire
+{
+	NSString *message = [NSString stringWithFormat:@"no route %@ %@", request.method, request.path];
+	NSDictionary *body = wire == NFKServedWireAnthropic
+		? @{ @"type": @"error", @"error": @{ @"type": @"not_found_error", @"message": message } }
+		: @{ @"error": @{ @"message": message, @"type": @"invalid_request_error" } };
+	[response sendStatus:404 JSONObject:body headers:nil];
 }
 
 #pragma mark Models
@@ -2051,7 +1994,8 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	}
 }
 
-/*! The model a request names, or the only one hosted when it names none. */
+/*! The model a request names, or the only one hosted when it names none. Every route resolves its
+	model field here. */
 - (nullable NFKServedModel *)modelNamed:(nullable id)name error:(NSError * _Nullable *)outError
 {
 	@synchronized (self.models) {
@@ -2210,10 +2154,11 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 /*! The refusal of a request for a route of scope, or nil when it may reach the route, recording the name
 	of the key it presented. A client exempt from the check passes whatever it presents. A loopback
 	request whose Host names another host, which is how a browser page reaches this machine by DNS
-	rebinding, is served only with a key that opens the route. */
-- (nullable NSError *)refusalOf:(NFKHTTPRequest *)request scope:(NFKServerKeyScope)scope
+	rebinding, is served only with a key that opens the route. An Anthropic route also takes the key
+	as x-api-key. */
+- (nullable NSError *)refusalOf:(NFKHTTPRequest *)request scope:(NFKServerKeyScope)scope wire:(NFKServedWire)wire
 {
-	NFKServedAPIKey *key = [self keyPresentedBy:request];
+	NFKServedAPIKey *key = [self keyPresentedBy:request acceptingAPIKeyHeader:wire == NFKServedWireAnthropic];
 	request.keyName = key.name;
 	if (request.fromLoopback && !NFKHostNamesLoopback([request valueForHeader:@"host"])) {
 		if ((key.scopes & scope) != 0) {
@@ -2228,7 +2173,9 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	}
 	if (key == nil) {
 		return NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorUnauthorized,
-							  @"a valid key for this route is required; send it as Authorization: Bearer <key>");
+							  wire == NFKServedWireAnthropic
+								  ? @"a valid key for this route is required; send it as x-api-key: <key> or Authorization: Bearer <key>"
+								  : @"a valid key for this route is required; send it as Authorization: Bearer <key>");
 	}
 	return NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorInsufficientScope,
 						  @"the key does not open this route");
@@ -2256,9 +2203,10 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	}
 	NSString *appRoutePrefix = nil;
 	NFKServerKeyScope scope = [self scopeOfPath:path appRoutePrefix:&appRoutePrefix];
-	NSError *refusal = [self refusalOf:request scope:scope];
+	NFKServedWire wire = appRoutePrefix == nil && NFKServedRequestIsAnthropic(request, path) ? NFKServedWireAnthropic : NFKServedWireOpenAI;
+	NSError *refusal = [self refusalOf:request scope:scope wire:wire];
 	if (refusal != nil) {
-		[self sendError:refusal response:response];
+		[self sendError:refusal response:response wire:wire];
 		return;
 	}
 	if (request.firstOnConnection) {
@@ -2274,8 +2222,8 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	}
 	NSString *modelsPrefix = [NFKServedBasePath stringByAppendingString:@"/models/"];
 	if ([path hasPrefix:modelsPrefix]) {
-		if ([self requireMethod:@"GET" of:request response:response]) {
-			[self serveModelNamed:[path substringFromIndex:modelsPrefix.length] response:response];
+		if ([self requireMethod:@"GET" of:request response:response wire:wire]) {
+			[self serveModelNamed:[path substringFromIndex:modelsPrefix.length] response:response wire:wire];
 		}
 		return;
 	}
@@ -2287,19 +2235,28 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 													  @"/audio/speech": @"POST",
 													  @"/images/generations": @"POST",
 													  @"/images/edits": @"POST",
+													  @"/messages": @"POST",
+													  @"/messages/count_tokens": @"POST",
+													  @"/responses": @"POST",
+													  @"/responses/input_tokens": @"POST",
 													  @"/inferkit/run": @"POST",
 													  @"/inferkit/status": @"GET" };
 	BOOL underBase = [path isEqualToString:NFKServedBasePath] || [path hasPrefix:[NFKServedBasePath stringByAppendingString:@"/"]];
 	NSString *route = underBase ? [path substringFromIndex:NFKServedBasePath.length] : nil;
-	if (route == nil || routes[route] == nil) {
-		[self sendNoRouteFor:request response:response];
+	if (route != nil && routes[route] == nil && [route hasPrefix:@"/responses/"]) {
+		[response sendStatus:404 JSONObject:@{ @"error": @{ @"message": @"this server keeps no responses; each request carries its whole conversation",
+															 @"type": @"invalid_request_error", @"code": @"not_found" } } headers:nil];
 		return;
 	}
-	if (![self requireMethod:routes[route] of:request response:response]) {
+	if (route == nil || routes[route] == nil) {
+		[self sendNoRouteFor:request response:response wire:wire];
+		return;
+	}
+	if (![self requireMethod:routes[route] of:request response:response wire:wire]) {
 		return;
 	}
 	if ([route isEqualToString:@"/models"]) {
-		[self serveModelListWithResponse:response];
+		[self serveModelListWithResponse:response wire:wire];
 	} else if ([route isEqualToString:@"/inferkit/status"]) {
 		[self serveStatusWithResponse:response];
 	} else if ([route isEqualToString:@"/chat/completions"]) {
@@ -2312,6 +2269,14 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 		[self serveSpeech:request response:response];
 	} else if ([route hasPrefix:@"/images/"]) {
 		[self serveImages:request editing:[route hasSuffix:@"edits"] response:response];
+	} else if ([route isEqualToString:@"/messages"]) {
+		[NFKServedAnthropic serveMessages:request response:response server:self];
+	} else if ([route isEqualToString:@"/messages/count_tokens"]) {
+		[NFKServedAnthropic serveTokenCount:request response:response server:self];
+	} else if ([route isEqualToString:@"/responses"]) {
+		[NFKServedResponses serveResponses:request response:response server:self];
+	} else if ([route isEqualToString:@"/responses/input_tokens"]) {
+		[NFKServedResponses serveInputTokens:request response:response server:self];
 	} else {
 		[self serveNativeRun:request response:response];
 	}
@@ -2319,11 +2284,16 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 
 - (BOOL)requireMethod:(NSString *)method of:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response
 {
+	return [self requireMethod:method of:request response:response wire:NFKServedWireOpenAI];
+}
+
+- (BOOL)requireMethod:(NSString *)method of:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response wire:(NFKServedWire)wire
+{
 	if ([request.method isEqualToString:method]) {
 		return YES;
 	}
-	[response sendStatus:405 JSONObject:@{ @"error": @{ @"message": [NSString stringWithFormat:@"%@ takes %@", request.path, method],
-														 @"type": @"invalid_request_error" } }
+	NSDictionary *detail = @{ @"message": [NSString stringWithFormat:@"%@ takes %@", request.path, method], @"type": @"invalid_request_error" };
+	[response sendStatus:405 JSONObject:wire == NFKServedWireAnthropic ? @{ @"type": @"error", @"error": detail } : @{ @"error": detail }
 				 headers:@{ @"Allow": method }];
 	return NO;
 }
@@ -2354,6 +2324,11 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 
 - (void)sendError:(nullable NSError *)failure response:(NFKHTTPResponse *)response
 {
+	[self sendError:failure response:response wire:NFKServedWireOpenAI];
+}
+
+- (void)sendError:(nullable NSError *)failure response:(NFKHTTPResponse *)response wire:(NFKServedWire)wire
+{
 	NSError *error = failure ?: NFKServedError(NFKInferenceErrorDomain, kNFKError_InferenceBackendFailure, @"the request failed");
 	NSMutableDictionary<NSString *, NSString *> *headers = [NSMutableDictionary dictionary];
 	NSDate *retryAfter = error.userInfo[NFKRemoteErrorRetryAfterKey];
@@ -2365,14 +2340,23 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 															  @(NFKInferenceServerErrorInsufficientScope): @"Bearer error=\"insufficient_scope\"" };
 		headers[@"WWW-Authenticate"] = challenges[@(error.code)];
 	}
-	[response sendStatus:[self statusForError:error] JSONObject:[NFKInferenceWireCoding JSONObjectForError:error] headers:headers];
+	NSInteger status = [self statusForError:error];
+	id body = wire == NFKServedWireAnthropic ? [NFKServedAnthropic errorObjectForError:error status:status]
+		: [NFKInferenceWireCoding JSONObjectForError:error];
+	[response sendStatus:status JSONObject:body headers:headers];
 }
 
 - (nullable NSDictionary *)JSONBodyOf:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response
 {
+	return [self JSONBodyOf:request response:response wire:NFKServedWireOpenAI];
+}
+
+- (nullable NSDictionary *)JSONBodyOf:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response wire:(NFKServedWire)wire
+{
 	id body = request.body.length > 0 ? [NSJSONSerialization JSONObjectWithData:request.body options:0 error:NULL] : nil;
 	if (![body isKindOfClass:NSDictionary.class]) {
-		[self sendError:NFKServedError(NFKInferenceErrorDomain, kNFKError_InferenceMissingInput, @"the body is not a JSON object") response:response];
+		[self sendError:NFKServedError(NFKInferenceErrorDomain, kNFKError_InferenceMissingInput, @"the body is not a JSON object")
+			   response:response wire:wire];
 		return nil;
 	}
 	return body;
@@ -2437,8 +2421,12 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 			  @"inferkit": [self descriptionOfModel:model] };
 }
 
-- (void)serveModelListWithResponse:(NFKHTTPResponse *)response
+- (void)serveModelListWithResponse:(NFKHTTPResponse *)response wire:(NFKServedWire)wire
 {
+	if (wire == NFKServedWireAnthropic) {
+		[response sendStatus:200 JSONObject:[NFKServedAnthropic modelListForNames:self.modelNames createdAt:self.startTime] headers:nil];
+		return;
+	}
 	NSMutableArray *entries = [NSMutableArray array];
 	for (NSString *name in self.modelNames) {
 		NFKServedModel *model = nil;
@@ -2452,15 +2440,17 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	[response sendStatus:200 JSONObject:@{ @"object": @"list", @"data": entries } headers:nil];
 }
 
-- (void)serveModelNamed:(NSString *)name response:(NFKHTTPResponse *)response
+- (void)serveModelNamed:(NSString *)name response:(NFKHTTPResponse *)response wire:(NFKServedWire)wire
 {
 	NSError *error = nil;
 	NFKServedModel *model = [self modelNamed:name error:&error];
 	if (model == nil) {
-		[self sendError:error response:response];
+		[self sendError:error response:response wire:wire];
 		return;
 	}
-	[response sendStatus:200 JSONObject:[self entryForModel:model] headers:nil];
+	NSDictionary *entry = wire == NFKServedWireAnthropic ? [NFKServedAnthropic modelEntryForName:model.name createdAt:self.startTime]
+		: [self entryForModel:model];
+	[response sendStatus:200 JSONObject:entry headers:nil];
 }
 
 - (void)serveStatusWithResponse:(NFKHTTPResponse *)response

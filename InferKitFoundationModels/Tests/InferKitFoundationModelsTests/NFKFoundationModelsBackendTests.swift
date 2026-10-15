@@ -391,6 +391,35 @@ final class NFKFoundationModelsBackendTests: XCTestCase {
         XCTAssertEqual(recorder.recorded.first?.arguments["to"] as? String, "ada")
     }
 
+    // MARK: Token counting (host-gated)
+
+    func testTheTokenCountIsWhatTheContextCheckCounts() async throws {
+        try requireModel()
+        let backend = NFKFoundationModelsBackend()
+        let plain = request([NFKInputMessages: [["role": "system", "content": "Be brief."],
+                                                ["role": "user", "content": "Count these words, please."]]])
+        guard #available(macOS 26.4, iOS 26.4, *) else {
+            XCTAssertThrowsError(try backend.tokenCount(for: plain)) { error in
+                XCTAssertEqual((error as NSError).code, NFKInferenceError.error_InferenceUnsupported.rawValue)
+            }
+            return
+        }
+        let count = try backend.tokenCount(for: plain).intValue
+        let plan = NFKFoundationModelsBackend.plan(for: plain)
+        let model = SystemLanguageModel.default
+        let prompt = try await model.tokenCount(for: Prompt(plan.prompt))
+        let transcript = try await model.tokenCount(for: NFKFoundationModelsBackend.transcriptEntries(for: plan))
+        XCTAssertGreaterThan(count, 0)
+        XCTAssertEqual(count, prompt + transcript)
+
+        let tool: [String: Any] = ["name": "lookup", "description": "Looks a term up.",
+                                   "parameters": ["type": "object", "properties": ["term": ["type": "string"]]]]
+        let withTool = request([NFKInputMessages: [["role": "system", "content": "Be brief."],
+                                                   ["role": "user", "content": "Count these words, please."]]],
+                               [NFKParameterTools: [tool]])
+        XCTAssertGreaterThan(try backend.tokenCount(for: withTool).intValue, count, "the tools count too")
+    }
+
     // MARK: Generation (host-gated)
 
     func testGeneratesTextFromAPrompt() throws {

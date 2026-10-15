@@ -707,6 +707,10 @@ answers HTTP on one port, under `/v1`:
   route reads what the core's matching client sends and hands the hosted backend the keys that client
   was given, so `NFKRemoteBackend` on another machine reaches a hosted MLX language model with its
   tools, schema, images, and sampling parameters intact.
+- OpenAI's Responses API, `POST /v1/responses`, and Anthropic's Messages API, `POST /v1/messages`, each
+  streamed in its own event format when asked. `NFKRemoteResponsesBackend` and `NFKAnthropicBackend`
+  reach them unchanged, and so do Codex and Claude Code (see
+  [Coding agents on a hosted model](#coding-agents-on-a-hosted-model)).
 - The MCP endpoint, `POST /mcp`, which serves the tools added with `addTool:` to MCP clients (see
   [Models as tools](#models-as-tools)).
 - The native route, `POST /v1/inferkit/run`, which carries a whole `NFKInferenceRequest` and
@@ -777,6 +781,66 @@ than another. Servers come from URLs, Bonjour, or both. Hosted in a server of it
 server a load balancer for the others. `reportsHostDetails` set to NO leaves out everything about
 the machine and keeps the models' load. GPU utilization counts every process and stays high while
 one run executes, so a balancer routes on the queue figures and the estimated wait.
+
+### Coding agents on a hosted model
+
+Claude Code speaks Anthropic's Messages API and Codex speaks OpenAI's Responses API, and the server
+answers both, so either agent runs on a model the server hosts. The agent's conversation reaches the
+backend under `NFKInputMessages` in the contract's chat shape, with its tools under
+`NFKParameterTools`, and the backend's `NFKOutputToolCalls` go back as the agent's own tool calls. The
+hosted backend therefore needs to call tools: an MLX language model whose chat template takes tools,
+or a remote backend.
+
+The model name the agent sends must be a hosted model's name, since the server resolves it the way it
+resolves every route's `model` field. A server that hosts one model answers a request that names none.
+
+Claude Code reads the server's root URL, without `/v1`, from `ANTHROPIC_BASE_URL`, and its key from
+`ANTHROPIC_API_KEY` (sent as `x-api-key`) or `ANTHROPIC_AUTH_TOKEN` (sent as a Bearer token). It uses
+a second, smaller model for background work, which needs a hosted name too:
+
+```sh
+export ANTHROPIC_BASE_URL=http://localhost:11480
+export ANTHROPIC_API_KEY=<a key with the inference scope>   # any value where loopback needs no key
+export ANTHROPIC_MODEL=qwen3
+export ANTHROPIC_DEFAULT_HAIKU_MODEL=qwen3
+claude
+```
+
+Codex reads a base URL that includes `/v1` from `OPENAI_BASE_URL`, and sends `OPENAI_API_KEY` as a
+Bearer token. Its model is the `--model` option or `model` in `~/.codex/config.toml`:
+
+```sh
+export OPENAI_BASE_URL=http://localhost:11480/v1
+export OPENAI_API_KEY=<a key with the inference scope>      # any value where loopback needs no key
+codex --model qwen3
+```
+
+Both route families take a key with the inference scope. A client on the same machine needs none
+unless `loopbackExemptScopes` leaves the inference scope out. What the routes do with each agent's
+requests:
+
+- Images arrive as `NFKInputImage` and `NFKInputImages`, and PDFs as `NFKInputDocument`. Media must be
+  inline; a URL or an uploaded file's identifier is refused, since the server fetches nothing and keeps
+  no files.
+- Thinking settings arrive as `NFKParameterReasoningEffort`: Anthropic's and OpenAI's `low`, `medium`,
+  and `high` efforts as the contract's three levels, and a thinking budget as its token count. The
+  backend's `NFKOutputReasoning` returns as a thinking block or a reasoning summary.
+- A reply stops for a tool call when the backend called a tool, and for the token limit when the output
+  tokens the backend reports reach `max_tokens` or `max_output_tokens`.
+- Codex's custom tools, such as `apply_patch`, reach the backend as functions that take one string
+  argument, `input`, and the backend's call returns to Codex as a custom tool call. Built-in tools such
+  as web search are not offered, since the server runs none.
+- The server stores no responses. Codex sends each turn's whole conversation, which is what the server
+  needs; `previous_response_id` is refused.
+- A backend that implements `tokenCountForRequest:error:` answers `POST /v1/messages/count_tokens` and
+  `POST /v1/responses/input_tokens`: the MLX language backends that read a conversation (a release
+  directory or a GGUF file, the Gemma, Granite, Nemotron, Mamba, DeepSeek, Qwen4-Exp, and Phi-4
+  families), counting the prompt their run builds, the system language model on macOS 26.4 and
+  iOS 26.4, and `NFKAnthropicBackend` through Anthropic's own count.
+- `GET /v1/models` with an `anthropic-version` header answers in Anthropic's list shape and takes the
+  key as `x-api-key`, so an Anthropic client lists the hosted models.
+- Errors come back in each API's own shape and status, so an agent retries an overloaded or
+  rate-limited server and reports a refused request.
 
 ### Models loaded on demand
 

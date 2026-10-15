@@ -87,8 +87,7 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
             seed = value.uint64Value
         }
 
-        try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
-        let promptTokens = try tokens(for: request)
+        let promptTokens = try prompt(for: request)
         let produced = generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed)
         return NFKInferenceResult(outputs: [
             NFKOutputText: holder.tokenizer.decode(produced),
@@ -110,6 +109,19 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
         let joined = messages.compactMap { $0["content"] as? String }.joined(separator: "\n\n")
         ids += holder.tokenizer.encode(joined)
         return ids
+    }
+
+    /// The input tokens a run of the request costs, tokenized as a run tokenizes it. Runs no model.
+    /// Introduced in InferKit 0.4.0.
+    @objc(tokenCountForRequest:error:)
+    public func tokenCount(for request: NFKInferenceRequest) throws -> NSNumber {
+        NSNumber(value: try prompt(for: request).count)
+    }
+
+    /// A run's prompt as token ids. A reasoning effort is refused, since the model has no way to apply it.
+    private func prompt(for request: NFKInferenceRequest) throws -> [Int] {
+        try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
+        return try tokens(for: request)
     }
 
     /// Prefill-only generation: the whole growing sequence runs through the decoder each step.

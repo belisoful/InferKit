@@ -677,6 +677,11 @@ static NSString *NFKHTTPEndpointAddress(nw_endpoint_t _Nullable endpoint)
 	[self sendStreamData:[[NSString stringWithFormat:@"data: %@\n\n", payload] dataUsingEncoding:NSUTF8StringEncoding]];
 }
 
+- (void)sendEventNamed:(NSString *)name data:(NSString *)payload
+{
+	[self sendStreamData:[[NSString stringWithFormat:@"event: %@\ndata: %@\n\n", name, payload] dataUsingEncoding:NSUTF8StringEncoding]];
+}
+
 - (void)endStream
 {
 	if (!self.headersSent || ![self claimFinish]) {

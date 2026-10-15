@@ -125,6 +125,20 @@ NS_SWIFT_SENDABLE
 				  /audio/transcriptions, /audio/translations, /audio/speech, /images/generations, and
 				  /images/edits. NFKRemoteBackend and the core's embedding, transcription, speech, and
 				  image backends reach them unchanged, and so does any OpenAI client library.
+				- OpenAI's Responses API: POST /responses (streamed as response.* events when the body
+				  sets stream), and POST /responses/input_tokens. NFKRemoteResponsesBackend and Codex
+				  reach it. Function tools and custom (free-form) tools are offered to the hosted
+				  backend; built-in tools are not, since the server runs none. The server keeps no
+				  responses: every reply has store false, previous_response_id is refused, and
+				  GET and DELETE /responses/{id} answer 404, so each request carries its whole
+				  conversation, as Codex sends it.
+				- Anthropic's Messages API: POST /messages (streamed as message_start,
+				  content_block_*, message_delta, and message_stop events when the body sets stream),
+				  and POST /messages/count_tokens. NFKAnthropicBackend and Claude Code reach it. These
+				  routes also take the key as x-api-key, accept any anthropic-version, and answer
+				  errors in Anthropic's shape ({type: "error", error: {type, message}}). GET /models and
+				  /models/{name} with an anthropic-version header answer in Anthropic's model-list
+				  shape and take x-api-key too.
 				- The native route, POST /inferkit/run, which carries a whole NFKInferenceRequest and
 				  NFKInferenceResult in InferKit's tagged JSON form, so every key reaches the hosted
 				  backend: pixel buffers, masks, multi-arrays, audio and video files, and the core's
@@ -150,12 +164,18 @@ NS_SWIFT_SENDABLE
 				route takes a key with NFKServerKeyScopeMCP, and refuses a browser request whose Origin
 				names another host.
 
-				A request names its model in the body's model field. When the server hosts exactly
-				one model, a request that names none runs on it.
+				A request names its model in the body's model field, on every route. When the server
+				hosts exactly one model, a request that names none runs on it. A coding agent pointed
+				at the server therefore names a hosted model: Claude Code through ANTHROPIC_MODEL (and
+				the models it uses for background work), Codex through its model setting.
+
+				A hosted backend that implements tokenCountForRequest:error: answers the two
+				token-counting routes; any other answers 400.
 
 				Access:
 				- A client presents a key as a Bearer token, which is what the remote backends' apiKey
-				  sends. The server holds several keys, each named and opening a set of scopes
+				  sends, or, on the Messages routes, as an x-api-key header, which is what
+				  NFKAnthropicBackend and Claude Code send. The server holds several keys, each named and opening a set of scopes
 				  (NFKServerKeyScope): addAPIKey:named:scopes: adds one, removeAPIKeyNamed: revokes it
 				  for the next request. apiKey is the key named NFKInferenceServerDefaultAPIKeyName
 				  with every scope.

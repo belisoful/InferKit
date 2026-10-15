@@ -40,8 +40,27 @@ static NSDictionary<NSString *, NSString *> *NFKServedImageParameterNames(void)
 			  @"resolution": NFKParameterResolution, @"output_format": NFKParameterOutputFormat };
 }
 
-/*! The bytes and media type of a data URL, or nil for anything else. */
-static NSData * _Nullable NFKServedDataURLBytes(id url, NSString * _Nullable * _Nullable outMediaType)
+NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString *prefix)
+{
+	// hasPrefix: answers NO for an empty prefix, so the first delta is the whole text.
+	if (text.length <= prefix.length || (prefix.length > 0 && ![text hasPrefix:prefix])) {
+		return nil;
+	}
+	return [text substringFromIndex:prefix.length];
+}
+
+void (^NFKServedEventWriter(NFKHTTPResponse *response))(NSString *, NSDictionary<NSString *, id> *)
+{
+	return ^(NSString *name, NSDictionary<NSString *, id> *data) {
+		if (!response.headersSent) {
+			[response beginStreamWithStatus:200 headers:@{ @"Content-Type": @"text/event-stream", @"Cache-Control": @"no-cache" }];
+		}
+		NSData *JSON = [NSJSONSerialization dataWithJSONObject:data options:0 error:NULL];
+		[response sendEventNamed:name data:JSON != nil ? [[NSString alloc] initWithData:JSON encoding:NSUTF8StringEncoding] : @"{}"];
+	};
+}
+
+NSData * _Nullable NFKServedDataURLBytes(id _Nullable url, NSString * _Nullable * _Nullable outMediaType)
 {
 	if (![url isKindOfClass:NSString.class] || ![url hasPrefix:@"data:"]) {
 		return nil;
