@@ -209,6 +209,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   exit, a restart to a second version mid-run, trust in the app's process, signature and team refusals,
   the C API, and a server's idle unload. `Docs/plugins.md` lists what it proves.
 - The sample plugins' `invert` model mirrors a detection under `region` into `detections`.
+- `NFKPluginBackend.peakByteCount` keeps the most the backend has held. A build result's `peakBytes` and
+  `residentBytes` count, a load raises the peak to at least the resident bytes, and a message that omits
+  the peak or reports less no longer lowers it.
 - A reload, or adding a plugin again, checks the stored option values against the new manifest: a key it
   no longer declares, and a value that no longer resolves, are dropped.
 - The DocC catalog documents `NFKPluginABI.h` in the article "The C plugin interface".

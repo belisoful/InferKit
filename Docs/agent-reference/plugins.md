@@ -496,7 +496,11 @@ stays Failed. Stops and restarts run in order on one serial queue.
   `NSCocoaErrorDomain` `NSUserCancelledError`.
 - `unload` sends `unload` to a Ready process that holds this backend's build and starts nothing.
   `isLoaded` follows the build, prepare, and status results and the `loaded` and `unloaded` events, and
-  is NO once the process that built the backend is gone. `peakByteCount` stays after an unload.
+  is NO once the process that built the backend is gone. `peakByteCount` is the most the backend has
+  held: each build or prepare result, status, and event raises it to its `peakBytes` and to the resident
+  bytes, and nothing lowers it, so a message that omits `peakBytes` or reports less keeps it. The
+  executable fixture once sent `loaded` without `peakBytes`, and the host read only `loaded` from a build
+  result, so that backend reported a peak of 0 (`NFKPluginCompletenessTests`, 4 of 4).
 - `backendStatus` answers the last status at once and asks a Ready process for a new one at most once
   a second.
 - Releasing the backend sends `release` for its handle.

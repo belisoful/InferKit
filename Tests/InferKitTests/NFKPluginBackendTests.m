@@ -286,6 +286,33 @@
 	XCTAssertEqual(self.process.state, NFKPluginProcessStateReady, @"an unload keeps the process");
 }
 
+- (void)testAMessageWithoutAPeakKeepsTheMeasuredPeak
+{
+	NFKPluginBackend *backend = self.backend;
+	NSError *error = nil;
+	XCTAssertNotNil([backend runInferenceForRequest:[self requestWithPrompt:@"load"] error:&error], @"%@", error);
+	NFKPluginTestPeer *peer = self.harness.peers.firstObject;
+	id handle = [peer receivedMessagesOfType:NFKPluginMessageRun].firstObject[@"backend"];
+
+	[peer sendMessage:@{ @"type": NFKPluginMessageEvent, @"event": @"loaded", @"backend": handle, @"residentBytes": @4096 }];
+	XCTAssertTrue(NFKPluginTestWaitUntil(5, ^BOOL {
+		return backend.isLoaded;
+	}));
+	XCTAssertEqual(backend.peakByteCount, 4096, @"a load without a peak raises the peak to what it holds");
+
+	[peer sendMessage:@{ @"type": NFKPluginMessageEvent, @"event": @"unloaded", @"backend": handle }];
+	XCTAssertTrue(NFKPluginTestWaitUntil(5, ^BOOL {
+		return !backend.isLoaded;
+	}));
+	XCTAssertEqual(backend.peakByteCount, 4096, @"an unload without a peak keeps it");
+
+	[peer sendMessage:@{ @"type": NFKPluginMessageEvent, @"event": @"loaded", @"backend": handle, @"residentBytes": @1024, @"peakBytes": @2048 }];
+	XCTAssertTrue(NFKPluginTestWaitUntil(5, ^BOOL {
+		return backend.isLoaded && backend.residentByteCount == 1024;
+	}));
+	XCTAssertEqual(backend.peakByteCount, 4096, @"a lower reported peak keeps the highest one measured");
+}
+
 - (void)testAnUnloadWithoutAProcessStartsNothing
 {
 	NFKPluginBackend *backend = self.backend;

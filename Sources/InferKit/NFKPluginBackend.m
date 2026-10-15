@@ -323,9 +323,7 @@ static const NSTimeInterval NFKPluginStatusRefreshInterval = 1;
 	if ([status[@"residentBytes"] isKindOfClass:NSNumber.class]) {
 		self.residentBytes = [status[@"residentBytes"] integerValue];
 	}
-	if ([status[@"peakBytes"] isKindOfClass:NSNumber.class]) {
-		self.peakBytes = [status[@"peakBytes"] integerValue];
-	}
+	[self recordPeakFrom:status];
 	if ([status[@"backendStatus"] isKindOfClass:NSDictionary.class]) {
 		self.lastStatus = status[@"backendStatus"];
 	}
@@ -339,13 +337,20 @@ static const NSTimeInterval NFKPluginStatusRefreshInterval = 1;
 		if ([event[@"residentBytes"] isKindOfClass:NSNumber.class]) {
 			self.residentBytes = [event[@"residentBytes"] integerValue];
 		}
-		if ([event[@"peakBytes"] isKindOfClass:NSNumber.class]) {
-			self.peakBytes = [event[@"peakBytes"] integerValue];
-		}
+		[self recordPeakFrom:event];
 	} else if ([name isEqualToString:@"unloaded"]) {
 		self.loaded = NO;
 		self.residentBytes = 0;
+		[self recordPeakFrom:event];
 	}
+}
+
+/*! Raises the peak to a message's peakBytes and to the resident bytes now known. The peak is the most the
+	backend has held, so a message that omits the field, or reports less after an unload, keeps it. */
+- (void)recordPeakFrom:(NSDictionary<NSString *, id> *)message
+{
+	NSInteger reported = [message[@"peakBytes"] isKindOfClass:NSNumber.class] ? [message[@"peakBytes"] integerValue] : 0;
+	self.peakBytes = MAX(self.peakBytes, MAX(reported, self.residentBytes));
 }
 
 #pragma mark Building
@@ -380,7 +385,8 @@ static const NSTimeInterval NFKPluginStatusRefreshInterval = 1;
 	self.builtConnection = connection;
 	self.builtGeneration = connection.generation;
 	self.loaded = [result[@"loaded"] isKindOfClass:NSNumber.class] && [result[@"loaded"] boolValue];
-	self.residentBytes = 0;
+	self.residentBytes = self.loaded && [result[@"residentBytes"] isKindOfClass:NSNumber.class] ? [result[@"residentBytes"] integerValue] : 0;
+	[self recordPeakFrom:result];
 	self.builtModelInfo = [result[@"modelInfo"] isKindOfClass:NSDictionary.class] ? result[@"modelInfo"] : @{};
 	[connection registerBackend:self handle:handle];
 	[self.buildLock unlock];

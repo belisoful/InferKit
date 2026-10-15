@@ -493,7 +493,8 @@ static int SampleMakeRegion(NSData *bytes)
 		}
 		backend.loaded = YES;
 	}
-	[self send:@{ @"type": @"event", @"event": @"loaded", @"backend": handle, @"residentBytes": @(SampleWeightBytes) } descriptors:@[]];
+	[self send:@{ @"type": @"event", @"event": @"loaded", @"backend": handle, @"residentBytes": @(SampleWeightBytes),
+				  @"peakBytes": @(SampleWeightBytes) } descriptors:@[]];
 }
 
 - (void)prepare:(NSDictionary *)message identifier:(id)identifier
@@ -519,7 +520,8 @@ static int SampleMakeRegion(NSData *bytes)
 	}
 	[self reply:identifier result:@{}];
 	if (wasLoaded) {
-		[self send:@{ @"type": @"event", @"event": @"unloaded", @"backend": message[@"backend"], @"residentBytes": @0 } descriptors:@[]];
+		[self send:@{ @"type": @"event", @"event": @"unloaded", @"backend": message[@"backend"], @"residentBytes": @0,
+					  @"peakBytes": @(SampleWeightBytes) } descriptors:@[]];
 	}
 }
 
