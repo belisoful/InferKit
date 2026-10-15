@@ -91,6 +91,17 @@ NS_ASSUME_NONNULL_BEGIN
 - (NFKInferenceJob *)submitInferenceJobForRequest:(NFKInferenceRequest *)request;
 
 /*!
+	@method     tokenCountForRequest:error:
+	@abstract   The input tokens a run of the request costs, from the Messages API's count_tokens.
+	@discussion The request body is the one a run sends (the system turn, the converted tool
+				conversation, the attached media, the tools, and the thinking), reduced to the fields
+				count_tokens takes, and posted to the endpoint's count_tokens path
+				(…/messages/count_tokens). Blocks; run it off the render thread. Introduced in
+				InferKit 0.4.0.
+*/
+- (nullable NSNumber *)tokenCountForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)error;
+
+/*!
 	@method     streamRequest:lineHandler:completionHandler:
 	@abstract   Performs a request whose reply is read line by line as it arrives.
 	@discussion The transport seam for the streamed form; the default delegates to

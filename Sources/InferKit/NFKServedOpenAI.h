@@ -10,6 +10,17 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+/*! The suffix of text past prefix, or nil when text does not extend prefix. A streamed route sends it
+	as the delta between two cumulative partial texts. */
+FOUNDATION_EXPORT NSString * _Nullable NFKServedSuffix(NSString * _Nullable text, NSString *prefix);
+
+/*! A writer for named server-sent events on response: the first event opens the event stream, and each
+	event's data goes out as JSON. */
+FOUNDATION_EXPORT void (^NFKServedEventWriter(NFKHTTPResponse *response))(NSString *name, NSDictionary<NSString *, id> *data);
+
+/*! The bytes and media type of a data URL, or nil for anything else. */
+FOUNDATION_EXPORT NSData * _Nullable NFKServedDataURLBytes(id _Nullable url, NSString * _Nullable * _Nullable outMediaType);
+
 /*!
 	@class      NFKServedOpenAI
 	@abstract   The OpenAI-compatible wire, read and written from the server's side.

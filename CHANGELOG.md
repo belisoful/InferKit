@@ -310,6 +310,46 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   reading succeeds.
 - The core links Network and Security, and IOKit on macOS.
 
+#### Claude Code and Codex on a hosted model
+
+- `NFKInferenceServer` serves Anthropic's Messages API: `POST /v1/messages`, streamed as
+  `message_start`, `content_block_start`, `content_block_delta`, `content_block_stop`, `message_delta`,
+  and `message_stop` events on request. The system prompt, text, base64 images and PDFs, `tool_use` and
+  `tool_result` blocks (their error flag and images included), tools, the tool choice, sampling, stop
+  sequences, `max_tokens`, and thinking settings reach the hosted backend under the same keys the chat
+  route uses. The reply carries thinking, text, and `tool_use` blocks, the stop reason (`tool_use`,
+  `max_tokens`, or `end_turn`), and the usage, with the cached tokens under `cache_read_input_tokens`.
+  A tool choice that forces one tool is answered as structured output through that tool. Errors take
+  Anthropic's shape and status. The routes take the key as `x-api-key` too, and accept any
+  `anthropic-version`, so Claude Code runs on a hosted model through `ANTHROPIC_BASE_URL`.
+- `NFKInferenceServer` serves OpenAI's Responses API: `POST /v1/responses`, streamed as `response.*`
+  events with sequence numbers on request. Instructions, message, function call, and function call
+  output items, images and files, function tools, `max_output_tokens`, sampling, reasoning effort, a
+  JSON schema, and `prompt_cache_key` reach the hosted backend under the chat route's keys. A custom
+  tool reaches the backend as a function taking one string, and its call returns as a
+  `custom_tool_call`, so Codex's `apply_patch` works through `OPENAI_BASE_URL`. The reply lists
+  reasoning, message, and call items with the usage, and is `incomplete` when the output reaches
+  `max_output_tokens`. The server keeps no responses: replies say `store: false`,
+  `previous_response_id` is refused, and `GET` and `DELETE /v1/responses/{id}` answer 404.
+- `NFKInferenceBackend` gains the optional `tokenCountForRequest:error:`, the number of input tokens a
+  request would cost. A hosted backend that implements it answers `POST /v1/messages/count_tokens` and
+  `POST /v1/responses/input_tokens`; a count runs in the model's run slot and stays out of its averages.
+- `NFKAnthropicBackend` and `NFKRemoteResponsesBackend` pointed at an `NFKInferenceServer` run its models,
+  streamed or not, with tool calls, images, schemas, and the hosted backend's error codes.
+- `GET /v1/models` and `/v1/models/{id}` answer in Anthropic's list shape (`type`, `id`,
+  `display_name`, `created_at`, with `has_more`, `first_id`, and `last_id`) when the request carries an
+  `anthropic-version` header, and then take the key as `x-api-key`.
+- `NFKAnthropicBackend` implements `tokenCountForRequest:error:`: it posts the body a run would send,
+  tools and media included, to the endpoint's `count_tokens`. `NFKRemoteTokenCounter`'s Anthropic style
+  sends the same body, so a conversation with tool calls, tool results, images, and tools counts what
+  a run of it costs.
+
+#### Claude's usage counts the whole input
+
+- `NFKAnthropicBackend` reports the whole input under `NFKUsageInputTokens`: `input_tokens` plus
+  `cache_read_input_tokens` plus `cache_creation_input_tokens`, with the cache reads under
+  `NFKUsageCachedTokens`, as the contract defines the two. It reported only the uncached part.
+
 #### Several clips in one request
 
 - `NFKInputAudios` carries further clips beside `NFKInputAudio` (an array of `NFKAudioAsset` or `NSData`),
@@ -680,6 +720,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### The language backends count tokens
+
+- `NFKMLXLanguageBackend` (a release directory or a GGUF file), `NFKMLXDecoderBackend` (the hybrid
+  decoder and Qwen4-Exp), `NFKMLXGemmaBackend`, `NFKMLXGemma3Backend`, `NFKMLXGemma3nBackend`,
+  `NFKMLXGraniteBackend`, `NFKMLXNemotronBackend`, `NFKMLXMambaBackend`, `NFKMLXDeepSeekBackend`, and
+  `NFKMLXPhi4MMBackend` implement `tokenCountForRequest:error:`: the input tokens a run of the request
+  uses, chat template, tools, and an image's or a clip's tokens included, counted without running the
+  decoder. An `NFKInferenceServer` hosting one answers Anthropic's
+  `count_tokens` and OpenAI's `input_tokens`.
 
 #### Every model describes itself in the catalog
 
@@ -2794,6 +2844,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   sigmas for all three presets.
 
 ### InferKitFoundationModels (companion)
+
+#### The system language model counts tokens
+
+- `NFKFoundationModelsBackend` implements `tokenCountForRequest:error:` on macOS 26.4 and iOS 26.4: the
+  prompt, the conversation, the tools, and the schema, as the context check counts them. Below those
+  versions, and on Private Cloud Compute, it reports `kNFKError_InferenceUnsupported`.
 
 #### The system language model in the catalog
 

@@ -174,21 +174,9 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
         if let value = request.parameter(forKey: NFKMLXGenerationParameterKey.draftTokens) as? NSNumber {
             options.draftTokens = value.intValue
         }
-        try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
         let model = holder.model
         let image = request.input(forKey: NFKInputImage)
-        if image != nil, !model.acceptsImages {
-            throw NFKMLXError.unsupportedConfiguration(
-                "\(identifier) is a text-only release; an image needs a multimodal Gemma 3 (4B and up)")
-        }
-        let ids: [Int]
-        if let prompt = request.prompt {
-            ids = model.promptTokens(prompt, withImage: image != nil)
-        } else if let messages = request.messages {
-            ids = model.chatTokens(messages: messages, withImage: image != nil)
-        } else {
-            throw NFKMLXError.unsupportedInput
-        }
+        let ids = try promptTokens(for: request)
 
         let conversation = NFKMLXConversation.name(of: request)
         generationLock.lock(); defer { generationLock.unlock() }
@@ -214,6 +202,32 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
             NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: ids.count, cachedTokens: promptCache?.sharedPrefixLength ?? 0,
                                                 outputTokens: produced.count, reasoningTokens: nil),
         ])
+    }
+
+    /// The input tokens a run of the request costs: its prompt or chat turns, with an image's tokens
+    /// when it attaches one, tokenized as a run tokenizes them. Runs no model. Introduced in
+    /// InferKit 0.4.0.
+    @objc(tokenCountForRequest:error:)
+    public func tokenCount(for request: NFKInferenceRequest) throws -> NSNumber {
+        NSNumber(value: try promptTokens(for: request).count)
+    }
+
+    /// A run's prompt as token ids.
+    private func promptTokens(for request: NFKInferenceRequest) throws -> [Int] {
+        try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
+        let model = holder.model
+        let image = request.input(forKey: NFKInputImage)
+        if image != nil, !model.acceptsImages {
+            throw NFKMLXError.unsupportedConfiguration(
+                "\(identifier) is a text-only release; an image needs a multimodal Gemma 3 (4B and up)")
+        }
+        if let prompt = request.prompt {
+            return model.promptTokens(prompt, withImage: image != nil)
+        }
+        if let messages = request.messages {
+            return model.chatTokens(messages: messages, withImage: image != nil)
+        }
+        throw NFKMLXError.unsupportedInput
     }
 
     @objc(submitInferenceJobForRequest:)

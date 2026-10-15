@@ -131,6 +131,19 @@ NS_ASSUME_NONNULL_BEGIN
 */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *backendStatus;
 
+/*!
+	@method     tokenCountForRequest:error:
+	@abstract   The number of input tokens a run of the request would cost, or nil with an error.
+	@discussion The count covers what runInferenceForRequest:error: reads as the prompt: the messages
+				with their roles under the model's chat template, the tools, and any media the model
+				tokenizes. A backend implements it when the model's tokenizer is at hand, and the
+				count runs no model. NFKInferenceServer serves it as Anthropic's
+				POST /v1/messages/count_tokens and OpenAI's POST /v1/responses/input_tokens, in the
+				model's run slot, so a count never overlaps a run of the same backend. Introduced in
+				InferKit 0.4.0.
+*/
+- (nullable NSNumber *)tokenCountForRequest:(NFKInferenceRequest *)request error:(NSError **)error;
+
 @end
 
 /*!

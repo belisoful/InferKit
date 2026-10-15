@@ -133,14 +133,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
             seed = value.uint64Value
         }
 
-        var variables: [String: Any] = [:]
-        if let chatTemplate, templateReadsReasoningEffort {
-            variables = try NFKMLXLanguageBackend.templateVariables(for: request, template: .jinja(template: chatTemplate))
-        } else {
-            try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
-        }
-        let format = toolCallFormat(for: request)
-        let promptTokens = try tokens(for: request, toolCallFormat: format, variables: variables)
+        let (promptTokens, format) = try prompt(for: request)
         let produced = generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed)
         let decode: ([Int]) -> String = { [holder] in holder.tokenizer.decode($0.map { NSNumber(value: $0) }) }
         let reasoningFormat = request.messages != nil ? chatTemplate.flatMap(NFKMLXReasoningFormat.detected(inChatTemplate:)) : nil
@@ -154,6 +147,25 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
         outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
                                                       outputTokens: produced.count, reasoningTokens: reasoningTokens)
         return NFKInferenceResult(outputs: outputs)
+    }
+
+    /// The input tokens a run of the request costs: its prompt rendered through the chat template,
+    /// tools included, and tokenized as a run tokenizes it. Runs no model. Introduced in InferKit 0.4.0.
+    @objc(tokenCountForRequest:error:)
+    public func tokenCount(for request: NFKInferenceRequest) throws -> NSNumber {
+        NSNumber(value: try prompt(for: request).tokens.count)
+    }
+
+    /// A run's prompt as token ids, and the syntax its calls are read in.
+    private func prompt(for request: NFKInferenceRequest) throws -> (tokens: [Int], format: NFKMLXToolCallFormat?) {
+        var variables: [String: Any] = [:]
+        if let chatTemplate, templateReadsReasoningEffort {
+            variables = try NFKMLXLanguageBackend.templateVariables(for: request, template: .jinja(template: chatTemplate))
+        } else {
+            try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
+        }
+        let format = toolCallFormat(for: request)
+        return (try tokens(for: request, toolCallFormat: format, variables: variables), format)
     }
 
     /// The syntax the model's calls are read in: the request's, or the one the chat template shows.

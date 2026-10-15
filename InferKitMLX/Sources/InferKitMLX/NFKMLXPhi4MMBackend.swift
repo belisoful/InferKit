@@ -152,16 +152,32 @@ public final class NFKMLXPhi4MMModel: @unchecked Sendable {
             eval(imageFeatures)
             features.append((NFKMLXPhi4MM.imageTokenId, imageFeatures))
         }
-        var audioTokens = [Int]()
-        if !audios.isEmpty {
-            let mels = try audios.map { try NFKMLXPhi4MMAudioFeatures.logMel($0.samples, sampleRate: $0.sampleRate) }
-            audioTokens = mels.map { NFKMLXPhi4MMAudioFeatures.tokenCount(frames: $0.dim(0)) }
+        let mels = try Self.logMels(audios)
+        if !mels.isEmpty {
             let audioFeatures = concatenated(audioNet.projected(clips: mels, mode: mode), axis: 0)
             eval(audioFeatures)
             features.append((NFKMLXPhi4MM.audioTokenId, audioFeatures))
         }
-        let ids = try promptIds(messages: messages, imageTokens: images.map(\.tokenCount), audioTokens: audioTokens)
-        return (ids, features)
+        return (try promptIds(messages: messages, images: images, mels: mels), features)
+    }
+
+    /// Each clip's log-mel features.
+    private static func logMels(_ audios: [NFKMLXPhi4MMAudioInput]) throws -> [MLXArray] {
+        try audios.map { try NFKMLXPhi4MMAudioFeatures.logMel($0.samples, sampleRate: $0.sampleRate) }
+    }
+
+    /// A conversation's prompt ids, each picture's and each clip's placeholder run at the length its
+    /// features take.
+    private func promptIds(messages: [[String: Any]], images: [NFKMLXPhi4MMImageInput], mels: [MLXArray]) throws -> [Int] {
+        try promptIds(messages: messages, imageTokens: images.map(\.tokenCount),
+                      audioTokens: mels.map { NFKMLXPhi4MMAudioFeatures.tokenCount(frames: $0.dim(0)) })
+    }
+
+    /// The input tokens a conversation costs, the ids ``prepare(messages:images:audios:)`` builds,
+    /// without running a tower.
+    func promptTokenCount(messages: [[String: Any]], images: [NFKMLXPhi4MMImageInput],
+                          audios: [NFKMLXPhi4MMAudioInput]) throws -> Int {
+        try promptIds(messages: messages, images: images, mels: Self.logMels(audios)).count
     }
 
     /// One user turn holding `text`, with at most one picture and one clip.
@@ -322,23 +338,40 @@ public final class NFKMLXPhi4MMBackend: NSObject, NFKInferenceBackend {
         return job
     }
 
-    private func run(_ request: NFKInferenceRequest, onToken: (([Int]) -> Bool)?) throws -> NFKInferenceResult {
+    /// The input tokens a run of the request costs: its conversation with each picture's and each
+    /// clip's placeholder run, as a run builds it. Runs no tower and no decoder. Introduced in
+    /// InferKit 0.4.0.
+    @objc(tokenCountForRequest:error:)
+    public func tokenCount(for request: NFKInferenceRequest) throws -> NSNumber {
+        let (messages, images, audios) = try inputs(for: request)
+        return NSNumber(value: try model.promptTokenCount(messages: messages, images: images, audios: audios))
+    }
+
+    /// What a run of the request reads: its conversation (a lone prompt as one user turn, a lone clip
+    /// as a transcription request), its pictures, and its clips.
+    private func inputs(for request: NFKInferenceRequest) throws
+        -> (messages: [[String: Any]], images: [NFKMLXPhi4MMImageInput], audios: [NFKMLXPhi4MMAudioInput]) {
         try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
-        let options = Self.options(from: request)
         let images = try Self.images(from: request)
         let audios = try Self.audios(from: request)
-        let messages: [[String: Any]]
         if let conversation = request.messages, !conversation.isEmpty {
-            messages = conversation
-        } else if let prompt = request.prompt, !prompt.isEmpty {
-            messages = [["role": "user", "content": prompt]]
-        } else if !audios.isEmpty, images.isEmpty {
-            messages = [["role": "user", "content": Self.transcriptionPrompt]]
-        } else if !images.isEmpty {
-            messages = [["role": "user", "content": ""]]
-        } else {
-            throw NFKMLXError.unsupportedInput
+            return (conversation, images, audios)
         }
+        if let prompt = request.prompt, !prompt.isEmpty {
+            return ([["role": "user", "content": prompt]], images, audios)
+        }
+        if !audios.isEmpty, images.isEmpty {
+            return ([["role": "user", "content": Self.transcriptionPrompt]], images, audios)
+        }
+        if !images.isEmpty {
+            return ([["role": "user", "content": ""]], images, audios)
+        }
+        throw NFKMLXError.unsupportedInput
+    }
+
+    private func run(_ request: NFKInferenceRequest, onToken: (([Int]) -> Bool)?) throws -> NFKInferenceResult {
+        let options = Self.options(from: request)
+        let (messages, images, audios) = try inputs(for: request)
 
         var produced = [Int]()
         let answer = try model.answer(messages: messages, images: images, audios: audios, options: options) { token in

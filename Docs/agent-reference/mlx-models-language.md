@@ -17,6 +17,28 @@ stays. The multimodal M-RoPE tables were float32 and promoted a bf16 layer to fl
 the queries' type. The Granite Speech, Qwen3-VL, Voxtral and Mistral decoders run through the same
 attention and feed-forward.
 
+- Token counts (2026-10-15): the language backends implement the core protocol's optional
+  `tokenCountForRequest:error:`, each in its own file, counting through the function its run builds
+  the prompt with, so the count is the run's reported input tokens, chat template, tools, and media
+  tokens included. It runs no decoder and takes no generation lock.
+  | Backend | Shared prompt function | Equality test on random weights |
+  |---|---|---|
+  | `NFKMLXLanguageBackend` (release directory, GGUF) | `preparedPrompt(for:tokenizer:)` | yes |
+  | `NFKMLXDecoderBackend` (the hybrid decoder, Qwen4-Exp) | `prompt(for:)` | yes |
+  | `NFKMLXGemmaBackend` | `toolPrompt(for:)`, then `tokens(for:)` | yes |
+  | `NFKMLXGemma3Backend` | `promptTokens(for:)` | yes |
+  | `NFKMLXGraniteBackend`, `NFKMLXNemotronBackend` | `toolPrompt(for:)`, then `tokens(for:)` | yes |
+  | `NFKMLXDeepSeekBackend` | `preparedPrompt(for:)`, the picture's span expanded by `images.expanded` (the vision tower's graph is built, not evaluated) | yes |
+  | `NFKMLXMambaBackend` | `prompt(for:)` | no: needs a Mistral tokenizer |
+  | `NFKMLXGemma3nBackend` | `prompt(for:)` (fixed soft-token runs for an image or a clip) | no: no small build |
+  | `NFKMLXPhi4MMBackend` | `inputs(for:)`, then the model's `promptTokenCount(messages:images:audios:)` (log-mel frames give a clip's run; no tower runs) | no: no small build |
+  Not implemented: backends built on the shared closure class `NFKMLXGenerationBackend` (Gemma 4
+  multimodal, Pixtral, Qwen3-VL, SmolVLM), since a count needs a second closure on that shared class;
+  and the backends that read no conversation (Granite Speech, Voxtral, Canary, Sa2VA, Florence-2, the
+  translation, decision, and speech backends).
+  Trap: Swift 6.4 crashes in IRGen on a call to the optional throwing requirement through an
+  existential (`(backend as any NFKInferenceBackend).tokenCount?(for:)`); the tests call it on the
+  concrete type.
 - `NFKMLXRoPEScaling` — the rotary frequency scaling a release declares (`rope_scaling`), shared by the
   dense decoder and DeepSeek. At reference parity against `transformers`' own `ROPE_INIT_FUNCTIONS`
   for `linear`, `yarn`, `llama3`, and `longrope` across ten configurations (worst relative frequency

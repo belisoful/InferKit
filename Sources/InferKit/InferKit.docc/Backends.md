@@ -87,7 +87,8 @@ Pure Apple frameworks, always available:
 - ``NFKRemoteUsageReporter`` — usage, spend, and balance, read with an administrative key.
 - ``NFKRemoteTranscriptionBackend`` — an OpenAI-compatible audio-to-text client.
 - ``NFKInferenceServer`` — serves the backends this process hosts to other machines: the
-  OpenAI-compatible routes the clients above speak, and a native route that carries a whole request.
+  OpenAI-compatible routes the clients above speak, OpenAI's Responses API and Anthropic's Messages API
+  (so Codex and Claude Code run on a hosted model), and a native route that carries a whole request.
   Clients find it by address or over Bonjour.
 - ``NFKServerIdentity`` — a self-signed TLS identity for the server, kept in a directory across
   launches without the keychain. Clients pin its certificate's SHA-256 fingerprint.

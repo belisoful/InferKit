@@ -262,6 +262,39 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
         throw NFKFoundationModelsError.noOutput
     }
 
+    /// The input tokens a run of `request` costs on the on-device model, counted the way a run checks
+    /// its context: the prompt, the conversation, the tools, and the schema. The count needs macOS 26.4
+    /// or iOS 26.4; below that, and on Private Cloud Compute, whose service counts for itself, it
+    /// throws `kNFKError_InferenceUnsupported`. Introduced in InferKit 0.4.0.
+    @objc(tokenCountForRequest:error:)
+    public func tokenCount(for request: NFKInferenceRequest) throws -> NSNumber {
+        let registered = self.tools
+        let configuration = lock.withLock { self.configuration }
+        let outcome = NFKOutcome<Int>()
+        let semaphore = DispatchSemaphore(value: 0)
+        Task.detached(priority: .userInitiated) {
+            do {
+                try configuration.checkAvailability()
+                let plan = Self.plan(for: request)
+                let prompt = Self.prompt(text: plan.prompt, images: try Self.images(in: request))
+                let adapted = try Self.toolAdapters(for: request, registered: registered, recorder: NFKToolCallRecorder())
+                let format = try Self.outputFormat(for: request)
+                guard let count = try await Self.tokenCount(plan: plan, prompt: prompt, tools: adapted, format: format,
+                                                            configuration: configuration) else {
+                    throw NSError(domain: NFKInferenceErrorDomain,
+                                  code: NFKInferenceError.error_InferenceUnsupported.rawValue,
+                                  userInfo: [NSLocalizedDescriptionKey: "the on-device model counts tokens from macOS 26.4 and iOS 26.4; Private Cloud Compute does not"])
+                }
+                outcome.succeed(count)
+            } catch {
+                outcome.fail(NFKFoundationModelsFailure.coreError(for: error))
+            }
+            semaphore.signal()
+        }
+        semaphore.wait()
+        return NSNumber(value: try outcome.value())
+    }
+
     @objc(submitInferenceJobForRequest:)
     public func submitInferenceJob(for request: NFKInferenceRequest) -> NFKInferenceJob {
         let job = NFKInferenceJob()
@@ -363,7 +396,24 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
     /// service.
     static func checkContext(plan: RequestPlan, prompt: Prompt? = nil, tools: [any Tool], format: OutputFormat,
                              configuration: NFKFoundationModelConfiguration = .init()) async throws {
-        guard configuration.model == .onDevice, #available(macOS 26.4, iOS 26.4, *) else { return }
+        guard let count = try await tokenCount(plan: plan, prompt: prompt, tools: tools, format: format,
+                                               configuration: configuration) else { return }
+        let contextSize = configuration.systemModel.contextSize
+        if count > contextSize {
+            throw NSError(domain: NFKInferenceErrorDomain,
+                          code: NFKInferenceError.error_InferenceUnsupported.rawValue,
+                          userInfo: [NSLocalizedDescriptionKey: "the request needs \(count) tokens; the model's context holds \(contextSize)",
+                                     NFKFoundationModelsErrorKey.tokenCount: count,
+                                     NFKFoundationModelsErrorKey.contextSize: contextSize])
+        }
+    }
+
+    /// The tokens a run's input costs on the on-device model: the prompt, the transcript, the tools,
+    /// and the schema. Nil where the model does not count: before macOS 26.4 / iOS 26.4, and on
+    /// Private Cloud Compute.
+    static func tokenCount(plan: RequestPlan, prompt: Prompt? = nil, tools: [any Tool], format: OutputFormat,
+                           configuration: NFKFoundationModelConfiguration = .init()) async throws -> Int? {
+        guard configuration.model == .onDevice, #available(macOS 26.4, iOS 26.4, *) else { return nil }
         let model = configuration.systemModel
         var count = try await model.tokenCount(for: prompt ?? Prompt(plan.prompt))
         count += try await model.tokenCount(for: transcriptEntries(for: plan))
@@ -375,14 +425,7 @@ public final class NFKFoundationModelsBackend: NSObject, NFKInferenceBackend {
         case .schema(let schema), .choice(let schema):
             count += try await model.tokenCount(for: schema)
         }
-        let contextSize = model.contextSize
-        if count > contextSize {
-            throw NSError(domain: NFKInferenceErrorDomain,
-                          code: NFKInferenceError.error_InferenceUnsupported.rawValue,
-                          userInfo: [NSLocalizedDescriptionKey: "the request needs \(count) tokens; the model's context holds \(contextSize)",
-                                     NFKFoundationModelsErrorKey.tokenCount: count,
-                                     NFKFoundationModelsErrorKey.contextSize: contextSize])
-        }
+        return count
     }
 
     // MARK: Images, reasoning, and usage

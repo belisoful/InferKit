@@ -95,6 +95,11 @@ Models floor; the model itself needs Apple Intelligence enabled). It depends onl
   `NFKFoundationModelsErrorKey.tokenCount` / `.contextSize` in `userInfo`; below 26.4 the session's own
   error stands. `contextSize` is `@objc` on the backend (back-deployed, 4096 below 26.4). The
   preflight runs for the on-device model only.
+- Token count (2026-10-15): `tokenCount(for:)` (`tokenCountForRequest:error:`, the core protocol's
+  optional count) returns the preflight's sum through the same `tokenCount(plan:prompt:tools:format:configuration:)`,
+  so `NFKInferenceServer`'s count routes answer for the system model. Below 26.4, and on Private Cloud
+  Compute, it throws `kNFKError_InferenceUnsupported`. The OS count is asynchronous; the method waits on
+  a semaphore for a `Task.detached(priority: .userInitiated)`, as `runInference(for:)` does.
 - Live measurements (M1 Max, macOS 26.6.2, 2026-09-16): a name / age / traits schema returns typed
   fields with the integer inside its bounds; `["yes", "no", "unsure"]` returns `yes`; a declared
   vault-code tool without a handler returns the call with `{"vault": "Orion"}`; the same call handed

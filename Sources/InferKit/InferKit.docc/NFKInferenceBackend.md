@@ -29,6 +29,9 @@ if (backend.isReady) {
   `kNFKError_InferenceRefused` means the engine declined the content and retrying will not help,
   `kNFKError_InferenceRateLimited` means back off, and `kNFKError_RemoteUnreachable` means nothing
   answered. An engine wrapping another framework keeps the original under `NSUnderlyingErrorKey`.
+- `tokenCountForRequest:error:` counts a request's input tokens with the model's tokenizer, without a
+  run. It is optional; ``NFKInferenceServer`` serves it to clients that size a request before they
+  send it.
 - `NFKInferencePrepare(backend, &error)` prepares a backend whether or not it implements
   `prepareWithError:`, the way `NFKInferenceSubmit` submits whether or not it implements
   `submitInferenceJobForRequest:`.

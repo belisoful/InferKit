@@ -95,11 +95,7 @@ public final class NFKMLXNemotronBackend: NSObject, NFKInferenceBackend {
             seed = value.uint64Value
         }
 
-        try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
-        // A tool request renders the release's own template, which is what the model's tool format
-        // was trained on; a plain chat keeps the joined prompt.
-        if let (text, format) = try NFKMLXToolCalling.toolPrompt(for: request, template: chatTemplate, source: identifier) {
-            let promptTokens = holder.tokenizer.encode(text).map(\.intValue)
+        if let (promptTokens, format) = try toolPrompt(for: request) {
             let produced = generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed,
                                     stops: templateStopTokens)
             var outputs = NFKMLXToolCalling.outputs(answer: holder.tokenizer.decode(produced.map { NSNumber(value: $0) }),
@@ -128,6 +124,29 @@ public final class NFKMLXNemotronBackend: NSObject, NFKInferenceBackend {
         guard let messages = request.messages else { throw NFKMLXError.unsupportedInput }
         let joined = messages.compactMap { $0["content"] as? String }.joined(separator: "\n\n")
         return holder.tokenizer.encode(joined).map(\.intValue)
+    }
+
+    /// The input tokens a run of the request costs: a tool request's prompt rendered through the
+    /// release's template, or the joined prompt, tokenized as a run tokenizes it. Runs no model.
+    /// Introduced in InferKit 0.4.0.
+    @objc(tokenCountForRequest:error:)
+    public func tokenCount(for request: NFKInferenceRequest) throws -> NSNumber {
+        if let (promptTokens, _) = try toolPrompt(for: request) {
+            return NSNumber(value: promptTokens.count)
+        }
+        return NSNumber(value: try tokens(for: request).count)
+    }
+
+    /// A tool request's prompt as token ids and the syntax its calls are read in, or nil for a request
+    /// that offers no tools. A tool request renders the release's own template, which is what the
+    /// model's tool format was trained on; a plain chat keeps the joined prompt. A reasoning effort is
+    /// refused here, since the backend has no way to apply it.
+    private func toolPrompt(for request: NFKInferenceRequest) throws -> ([Int], NFKMLXToolCallFormat?)? {
+        try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
+        guard let (text, format) = try NFKMLXToolCalling.toolPrompt(for: request, template: chatTemplate, source: identifier) else {
+            return nil
+        }
+        return (holder.tokenizer.encode(text).map(\.intValue), format)
     }
 
     /// Prefill-only generation: the whole growing sequence runs through the decoder each step.

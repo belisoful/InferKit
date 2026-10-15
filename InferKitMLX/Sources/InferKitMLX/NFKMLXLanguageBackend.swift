@@ -510,11 +510,53 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         cacheStatus = figures
     }
 
+    /// The input tokens a run of the request costs: its prompt rendered through the chat template the
+    /// run uses, tools included, and tokenized as the run tokenizes it. Runs no model. Introduced in
+    /// InferKit 0.4.0.
+    @objc(tokenCountForRequest:error:)
+    public func tokenCount(for request: NFKInferenceRequest) throws -> NSNumber {
+        guard let tokenizer = holder.tokenizer else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "text generation needs a tokenizer; build the backend with one")
+        }
+        return NSNumber(value: try preparedPrompt(for: request, tokenizer: tokenizer).tokens.count)
+    }
+
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         guard let tokenizer = holder.tokenizer else {
             throw NFKMLXError.unsupportedConfiguration(
                 "text generation needs a tokenizer; build the backend with one")
         }
+        let (options, tokens, toolCallFormat) = try preparedPrompt(for: request, tokenizer: tokenizer)
+        let (produced, cached) = generate(tokens, options: options, conversation: Self.conversation(of: request))
+        let decode: ([Int]) -> String = { tokenizer.decode($0.map { NSNumber(value: $0) }) }
+        let reply = decode(produced)
+
+        let (reasoning, answer, reasoningTokens) = NFKMLXUsage.split(reply, format: Self.reasoningFormat(for: options),
+                                                                     produced: produced, decode: decode)
+
+        var outputs = NFKMLXToolCalling.outputs(answer: answer, reasoning: reasoning, request: request,
+                                                format: toolCallFormat, source: identifier)
+        if !reasoning.isEmpty {
+            outputs[NFKOutputReasoning] = reasoning
+        }
+        outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: tokens.count,
+                                                      cachedTokens: cached,
+                                                      outputTokens: produced.count,
+                                                      reasoningTokens: reasoningTokens)
+        // JSON that was asked for comes back parsed too, as the remote backends return it; JSON-looking
+        // text that was not asked for is not guessed at.
+        if options.jsonSchema != nil || options.jsonOutput,
+           let parsed = try? JSONSerialization.jsonObject(with: Data(answer.utf8), options: [.fragmentsAllowed]) {
+            outputs[NFKOutputStructured] = parsed
+        }
+        return NFKInferenceResult(outputs: outputs)
+    }
+
+    /// What a run of the request generates from: its options, its prompt as token ids, and the syntax
+    /// its calls are read in.
+    private func preparedPrompt(for request: NFKInferenceRequest, tokenizer: NFKTokenizer) throws
+        -> (options: NFKMLXGenerationOptions, tokens: [Int], toolCallFormat: NFKMLXToolCallFormat?) {
         var options = defaults
         if let value = request.parameter(forKey: NFKParameterTemperature) as? NSNumber {
             options.temperature = value.floatValue
@@ -547,30 +589,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
                                      source: identifier, toolCallFormat: toolCallFormat) else {
             throw NFKMLXError.unsupportedInput
         }
-        let tokens = tokenizer.encode(text).map(\.intValue)
-        let (produced, cached) = generate(tokens, options: options, conversation: Self.conversation(of: request))
-        let decode: ([Int]) -> String = { tokenizer.decode($0.map { NSNumber(value: $0) }) }
-        let reply = decode(produced)
-
-        let (reasoning, answer, reasoningTokens) = NFKMLXUsage.split(reply, format: Self.reasoningFormat(for: options),
-                                                                     produced: produced, decode: decode)
-
-        var outputs = NFKMLXToolCalling.outputs(answer: answer, reasoning: reasoning, request: request,
-                                                format: toolCallFormat, source: identifier)
-        if !reasoning.isEmpty {
-            outputs[NFKOutputReasoning] = reasoning
-        }
-        outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: tokens.count,
-                                                      cachedTokens: cached,
-                                                      outputTokens: produced.count,
-                                                      reasoningTokens: reasoningTokens)
-        // JSON that was asked for comes back parsed too, as the remote backends return it; JSON-looking
-        // text that was not asked for is not guessed at.
-        if options.jsonSchema != nil || options.jsonOutput,
-           let parsed = try? JSONSerialization.jsonObject(with: Data(answer.utf8), options: [.fragmentsAllowed]) {
-            outputs[NFKOutputStructured] = parsed
-        }
-        return NFKInferenceResult(outputs: outputs)
+        return (options, tokenizer.encode(text).map(\.intValue), toolCallFormat)
     }
 
     /// The reasoning markers a run's output carries: the ones the request named, or the ones the
