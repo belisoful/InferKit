@@ -10,6 +10,13 @@
 #import <InferKit/NFKRemoteTransport.h>
 #import <InferKit/NFKImageCoding.h>
 #import <InferKit/NFKServerIdentity.h>
+#import <InferKit/NFKModelCatalog.h>
+#import <InferKit/NFKModelBuilding.h>
+#import <InferKit/NFKModelOptions.h>
+#import <InferKit/NFKModelPreset.h>
+#import <InferKit/NFKModelMemory.h>
+#import <InferKit/NFKHardwareProfile.h>
+#import <InferKit/NFKBackendTool.h>
 #import "NFKHTTPServer.h"
 #import "NFKServedOpenAI.h"
 #import "NFKServedAnthropic.h"
@@ -279,9 +286,23 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 @end
 
 /*! A hosted model: its backend or the provider that builds it, the queue of runs waiting for it, and
-	what its runs have measured. Every property past uptime is read and written on the model's lock. */
+	what its runs have measured. The properties through requestDefaults are set before the model is
+	hosted and not changed after; every property past uptime is read and written on the model's lock. */
 @interface NFKServedModel : NSObject
 @property (nonatomic, copy) NSString *name;
+/*! The catalog and descriptor of a model hosted through the build entry; nil for any other. */
+@property (nonatomic, strong, nullable) NFKModelCatalog *catalog;
+@property (nonatomic, strong, nullable) NFKModelDescriptor *descriptor;
+/*! The options each build is given, a catalog preset's merged in. */
+@property (nonatomic, copy) NSDictionary<NSString *, id> *givenOptions;
+/*! The given options resolved at the load stage, defaults filled, and their canonicalLoadOptionsKey:. */
+@property (nonatomic, copy) NSDictionary<NSString *, id> *hostedLoadOptions;
+@property (nonatomic, copy, nullable) NSString *loadKey;
+/*! The base model and preset of a model a load-option preset added. */
+@property (nonatomic, copy, nullable) NSString *baseModelName;
+@property (nonatomic, copy, nullable) NSString *presetIdentifier;
+/*! Filled into each request that leaves them out, under an alias's or a preset's. */
+@property (nonatomic, copy) NSDictionary<NSString *, id> *requestDefaults;
 /*! The server's monotonic clock. */
 @property (nonatomic, copy) NSTimeInterval (^uptime)(void);
 /*! Called after the backend is released by an unload, off the model's lock. */
@@ -343,6 +364,9 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		_pending = [NSMutableArray array];
 		_loadHandlers = [NSMutableArray array];
 		_lastDescription = @{ @"backend": @"", @"model": @{} };
+		_givenOptions = @{};
+		_hostedLoadOptions = @{};
+		_requestDefaults = @{};
 		_uptime = ^NSTimeInterval {
 			return NFKServedNow();
 		};
@@ -1102,18 +1126,106 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	return held;
 }
 
+/*! The load options to report for the model: its backend's loadOptionValues once it reports them, else
+	the options it builds with; nil for a model without either. */
+- (nullable NSDictionary<NSString *, id> *)reportedLoadOptions
+{
+	id<NFKInferenceBackend> backend = [self residentBackend];
+	NSDictionary<NSString *, id> *reported = backend != nil ? NFKServedJSONObject(NFKInferenceLoadOptionValues(backend), 8) : nil;
+	if (reported.count > 0) {
+		return reported;
+	}
+	return self.hostedLoadOptions.count > 0 ? self.hostedLoadOptions : nil;
+}
+
 @end
 
-NSString *NFKServedModelName(NFKServedModel *model)
+/*! A second name for a hosted model, with the request defaults it adds. */
+@interface NFKServedAlias : NSObject
+@property (nonatomic, copy) NSString *modelName;
+/*! The base model and preset the alias stands for, when addPreset:forBaseModelName:error: added it. The
+	model can be another preset's model of the same base, whose load options the preset's equal. */
+@property (nonatomic, copy, nullable) NSString *baseModelName;
+@property (nonatomic, copy, nullable) NSString *presetIdentifier;
+@property (nonatomic, copy) NSDictionary<NSString *, id> *requestDefaults;
+@end
+
+@implementation NFKServedAlias
+@end
+
+@implementation NFKServedTarget
+
++ (instancetype)targetForModel:(NFKServedModel *)model name:(NSString *)name
 {
-	return model.name;
+	NFKServedTarget *target = [[self alloc] init];
+	target.model = model;
+	target.name = name;
+	target.baseModelName = model.baseModelName ?: model.name;
+	target.presetIdentifier = model.presetIdentifier;
+	target.requestDefaults = model.requestDefaults;
+	return target;
 }
+
+/*! Lays defaults over the target's, each replacing the default under its key. */
+- (void)addRequestDefaults:(nullable NSDictionary<NSString *, id> *)defaults
+{
+	NSMutableDictionary<NSString *, id> *merged = [self.requestDefaults mutableCopy];
+	[merged addEntriesFromDictionary:defaults ?: @{}];
+	self.requestDefaults = merged;
+}
+
+@end
+
+/*! The backend of a tool addToolForModelName:outputModality:purpose:error: adds: each run resolves the
+	model name and waits in the model's queue. */
+@interface NFKServedModelToolBackend : NSObject <NFKInferenceBackend>
+@property (nonatomic, weak) NFKInferenceServer *server;
+@property (nonatomic, copy) NSString *modelName;
+@end
+
+@interface NFKInferenceServer ()
+- (nullable NFKInferenceResult *)runRequest:(NFKInferenceRequest *)request
+							   onModelNamed:(NSString *)modelName
+									  error:(NSError * _Nullable *)error;
+@end
+
+@implementation NFKServedModelToolBackend
+
+- (BOOL)isReady
+{
+	return self.server != nil;
+}
+
+- (NSString *)backendIdentifier
+{
+	return @"inferkit-served";
+}
+
+- (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request error:(NSError **)error
+{
+	NFKInferenceServer *server = self.server;
+	if (server == nil) {
+		if (error != NULL) {
+			*error = NFKServedError(NFKInferenceErrorDomain, kNFKError_InferenceNotReady, @"the server that served the tool is gone");
+		}
+		return nil;
+	}
+	return [server runRequest:request onModelNamed:self.modelName error:error];
+}
+
+@end
 
 #pragma mark - Server
 
 @interface NFKInferenceServer ()
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NFKServedModel *> *models;
+/*! The aliases by name; guarded by models. */
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NFKServedAlias *> *aliases;
 @property (nonatomic, strong) NSMutableArray<NFKInferenceTool *> *servedTools;
+/*! The model name of each tool addToolForModelName:outputModality:purpose:error: added, by tool name;
+	guarded by servedTools. */
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSString *> *modelToolNames;
+@property (atomic, strong, nullable) NFKModelCatalog *customModelCatalog;
 /*! The keys by name; guarded by itself. */
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NFKServedAPIKey *> *keys;
 /*! The app routes by normalized prefix; guarded by itself. */
@@ -1154,7 +1266,9 @@ NSString *NFKServedModelName(NFKServedModel *model)
 	self = [super init];
 	if (self != nil) {
 		_models = [NSMutableDictionary dictionary];
+		_aliases = [NSMutableDictionary dictionary];
 		_servedTools = [NSMutableArray array];
+		_modelToolNames = [NSMutableDictionary dictionary];
 		_appRoutes = [NSMutableDictionary dictionary];
 		_keys = [NSMutableDictionary dictionary];
 		_loopbackExemptScopes = NFKServerKeyScopeAll;
@@ -1295,24 +1409,103 @@ NSString *NFKServedModelName(NFKServedModel *model)
 - (void)addTool:(NFKInferenceTool *)tool
 {
 	@synchronized (self.servedTools) {
-		NSUInteger existing = [self.servedTools indexOfObjectPassingTest:^BOOL(NFKInferenceTool *served, NSUInteger index, BOOL *stop) {
-			return [served.name isEqualToString:tool.name];
-		}];
-		if (existing != NSNotFound) {
-			self.servedTools[existing] = tool;
-		} else {
-			[self.servedTools addObject:tool];
-		}
+		[self.modelToolNames removeObjectForKey:tool.name];
+		[self placeTool:tool];
+	}
+}
+
+/*! Adds the tool, or puts it in the place of the tool of the same name. Runs on servedTools' lock. */
+- (void)placeTool:(NFKInferenceTool *)tool
+{
+	NSUInteger existing = [self.servedTools indexOfObjectPassingTest:^BOOL(NFKInferenceTool *served, NSUInteger index, BOOL *stop) {
+		return [served.name isEqualToString:tool.name];
+	}];
+	if (existing != NSNotFound) {
+		self.servedTools[existing] = tool;
+	} else {
+		[self.servedTools addObject:tool];
 	}
 }
 
 - (void)removeToolNamed:(NSString *)name
 {
 	@synchronized (self.servedTools) {
+		[self.modelToolNames removeObjectForKey:name];
 		[self.servedTools filterUsingPredicate:[NSPredicate predicateWithBlock:^BOOL(NFKInferenceTool *served, NSDictionary *bindings) {
 			return ![served.name isEqualToString:name];
 		}]];
 	}
+}
+
+- (nullable NFKBackendTool *)addToolForModelName:(NSString *)modelName
+								  outputModality:(NFKModality)outputModality
+										 purpose:(nullable NSString *)purpose
+										   error:(NSError * _Nullable *)error
+{
+	if ([self modelNamed:modelName error:error] == nil) {
+		return nil;
+	}
+	NSString *toolName = NFKModelToolName(modelName);
+	NFKServedModelToolBackend *backend = [[NFKServedModelToolBackend alloc] init];
+	backend.server = self;
+	backend.modelName = modelName;
+	NFKBackendTool *tool = [NFKBackendTool toolWithBackend:backend name:toolName outputModality:outputModality
+												 modelName:modelName purpose:purpose];
+	@synchronized (self.servedTools) {
+		NSString *holder = self.modelToolNames[toolName];
+		BOOL taken = [self.servedTools indexOfObjectPassingTest:^BOOL(NFKInferenceTool *served, NSUInteger index, BOOL *stop) {
+			return [served.name isEqualToString:toolName];
+		}] != NSNotFound;
+		if (taken && ![holder isEqualToString:modelName]) {
+			NSString *reason = holder != nil
+				? [NSString stringWithFormat:@"the model \"%@\" is the tool \"%@\", which is already the tool of the model \"%@\"", modelName, toolName, holder]
+				: [NSString stringWithFormat:@"the model \"%@\" is the tool \"%@\", which is already a served tool's name", modelName, toolName];
+			if (error != NULL) {
+				*error = NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorNameConflict, reason);
+			}
+			return nil;
+		}
+		self.modelToolNames[toolName] = [modelName copy];
+		[self placeTool:tool];
+	}
+	return tool;
+}
+
+- (nullable NSString *)modelNameForToolName:(NSString *)toolName
+{
+	@synchronized (self.servedTools) {
+		return self.modelToolNames[toolName];
+	}
+}
+
+/*! Runs a model tool's request in the model's queue, as a request on the MCP route, and waits for it. */
+- (nullable NFKInferenceResult *)runRequest:(NFKInferenceRequest *)request
+							   onModelNamed:(NSString *)modelName
+									  error:(NSError * _Nullable *)error
+{
+	NFKServedTarget *target = [self modelNamed:modelName error:error];
+	if (target == nil) {
+		return nil;
+	}
+	NFKServedRun *run = [[NFKServedRun alloc] init];
+	run.request = request;
+	run.route = @"/mcp";
+	dispatch_semaphore_t finished = dispatch_semaphore_create(0);
+	__block NFKInferenceResult *result = nil;
+	__block NSError *failure = nil;
+	run.completionHandler = ^(NFKInferenceResult *runResult, NSError *runError) {
+		result = runResult;
+		failure = runError;
+		dispatch_semaphore_signal(finished);
+	};
+	[self fillDefaultsOf:run target:target];
+	[target.model enqueue:run];
+	// A queued run always finishes: it runs, fails with its build, or is failed when its model is removed.
+	dispatch_semaphore_wait(finished, DISPATCH_TIME_FOREVER);
+	if (result == nil && error != NULL) {
+		*error = failure;
+	}
+	return result;
 }
 
 - (NSArray<NFKInferenceTool *> *)tools
@@ -1720,6 +1913,7 @@ NSString *NFKServedModelName(NFKServedModel *model)
 	@synchronized (self.models) {
 		replaced = self.models[model.name];
 		self.models[model.name] = model;
+		[self.aliases removeObjectForKey:model.name];
 	}
 	// A limit set while the model was being made reaches it here.
 	[model applyLimit:self.maximumConcurrentRunsPerModel queueLimit:self.maximumQueuedRunsPerModel];
@@ -1761,6 +1955,274 @@ NSString *NFKServedModelName(NFKServedModel *model)
 	[self addBackendProvider:^id<NFKInferenceBackend>(NSError **error) {
 		return [builder backendForModelName:name error:error];
 	} forModelName:name];
+}
+
+#pragma mark Catalog models, presets, and aliases
+
+- (NFKModelCatalog *)modelCatalog
+{
+	return self.customModelCatalog ?: NFKModelCatalog.sharedCatalog;
+}
+
+- (void)setModelCatalog:(nullable NFKModelCatalog *)modelCatalog
+{
+	self.customModelCatalog = modelCatalog;
+}
+
+/*! The options among the given ones that the descriptor sets at stage. */
+static NSDictionary<NSString *, id> *NFKServedOptionsAtStage(NFKModelDescriptor *descriptor,
+															 NSDictionary<NSString *, id> *options, NSString *stage)
+{
+	NSMutableDictionary<NSString *, id> *kept = [NSMutableDictionary dictionary];
+	[options enumerateKeysAndObjectsUsingBlock:^(NSString *key, id value, BOOL *stop) {
+		if ([[descriptor optionWithKey:key].stage isEqualToString:stage]) {
+			kept[key] = value;
+		}
+	}];
+	return kept;
+}
+
+/*! The descriptor a catalog name reaches, and the catalog preset when the name is identifier@preset. */
++ (nullable NFKModelDescriptor *)descriptorNamed:(NSString *)name
+										 catalog:(NFKModelCatalog *)catalog
+										  preset:(NFKModelPreset * _Nullable * _Nonnull)preset
+{
+	*preset = nil;
+	NFKModelDescriptor *descriptor = [catalog descriptorWithIdentifier:name];
+	if (descriptor != nil) {
+		return descriptor;
+	}
+	NSString *modelPart = nil, *presetPart = nil;
+	BOOL split = NFKModelNameSplitAtPreset(name, ^BOOL(NSString *model, NSString *candidate) {
+		return [[catalog descriptorWithIdentifier:model] presetWithIdentifier:candidate] != nil;
+	}, &modelPart, &presetPart);
+	if (!split) {
+		return nil;
+	}
+	descriptor = [catalog descriptorWithIdentifier:modelPart];
+	*preset = [descriptor presetWithIdentifier:presetPart];
+	return descriptor;
+}
+
+/*! A model, not yet hosted, that the catalog builds from the options on demand; nil with
+	UnknownModel or InvalidOptions. */
+- (nullable NFKServedModel *)catalogModelNamed:(NSString *)modelName
+									identifier:(NSString *)identifier
+									   options:(nullable NSDictionary<NSString *, id> *)options
+									   catalog:(NFKModelCatalog *)catalog
+										 error:(NSError * _Nullable *)error
+{
+	NFKModelPreset *catalogPreset = nil;
+	NFKModelDescriptor *descriptor = [NFKInferenceServer descriptorNamed:identifier catalog:catalog preset:&catalogPreset];
+	if (descriptor == nil) {
+		if (error != NULL) {
+			*error = NFKServedError(NFKModelCatalogErrorDomain, NFKModelCatalogErrorUnknownModel,
+									[NSString stringWithFormat:@"The catalog has no model \"%@\".", identifier]);
+		}
+		return nil;
+	}
+	NSMutableDictionary<NSString *, id> *given = [NSMutableDictionary dictionary];
+	[given addEntriesFromDictionary:catalogPreset.loadOptions];
+	[given addEntriesFromDictionary:catalogPreset.requestDefaults];
+	[given addEntriesFromDictionary:options ?: @{}];
+	NSDictionary<NSString *, id> *resolved = [descriptor resolvedOptions:given stage:nil error:error];
+	if (resolved == nil) {
+		return nil;
+	}
+	NSDictionary<NSString *, id> *loadOptions = NFKServedOptionsAtStage(descriptor, resolved, NFKModelOptionStageLoad);
+	NSDictionary<NSString *, id> *buildOptions = [given copy];
+	NSString *buildIdentifier = descriptor.identifier;
+	NFKServedModel *model = [self servedModelNamed:modelName];
+	model.catalog = catalog;
+	model.descriptor = descriptor;
+	model.givenOptions = buildOptions;
+	model.hostedLoadOptions = loadOptions;
+	model.loadKey = [descriptor canonicalLoadOptionsKey:loadOptions];
+	model.provider = ^id<NFKInferenceBackend>(NSError **buildError) {
+		return [catalog backendForModelIdentifier:buildIdentifier options:buildOptions error:buildError];
+	};
+	model.residency = NFKServerModelResidencyNotLoaded;
+	return model;
+}
+
+- (BOOL)addModelWithIdentifier:(NSString *)identifier
+					   options:(nullable NSDictionary<NSString *, id> *)options
+					   catalog:(nullable NFKModelCatalog *)catalog
+				  forModelName:(NSString *)modelName
+						 error:(NSError * _Nullable *)error
+{
+	NFKServedModel *model = [self catalogModelNamed:modelName identifier:identifier options:options
+											catalog:catalog ?: self.modelCatalog error:error];
+	if (model == nil) {
+		return NO;
+	}
+	[self host:model];
+	return YES;
+}
+
+/*! Whether the request defaults resolve at the request stage of the model's descriptor; YES for a model
+	without one. */
++ (BOOL)requestDefaults:(NSDictionary<NSString *, id> *)defaults resolveFor:(NFKServedModel *)model error:(NSError * _Nullable *)error
+{
+	if (model.descriptor == nil || defaults.count == 0) {
+		return YES;
+	}
+	return [model.descriptor resolvedOptions:defaults stage:NFKModelOptionStageRequest error:error] != nil;
+}
+
+- (BOOL)addPreset:(NFKModelPreset *)preset forBaseModelName:(NSString *)baseModelName error:(NSError * _Nullable *)error
+{
+	NFKServedModel *base = [self hostedModelNamed:baseModelName];
+	if (base == nil) {
+		if (error != NULL) {
+			*error = NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorModelNotFound,
+									[NSString stringWithFormat:@"the model \"%@\" is not served here", baseModelName]);
+		}
+		return NO;
+	}
+	NSString *servedName = NFKModelPresetModelName(baseModelName, preset.identifier);
+	NFKServedModel *occupant = [self hostedModelNamed:servedName];
+	BOOL occupantIsPreset = [occupant.baseModelName isEqualToString:baseModelName]
+		&& [occupant.presetIdentifier isEqualToString:preset.identifier];
+	if (occupant != nil && !occupantIsPreset) {
+		if (error != NULL) {
+			*error = NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorNameConflict,
+									[NSString stringWithFormat:@"a model other than the preset's is already served as \"%@\"", servedName]);
+		}
+		return NO;
+	}
+	if (![NFKInferenceServer requestDefaults:preset.requestDefaults resolveFor:base error:error]) {
+		return NO;
+	}
+	if (!preset.changesLoadOptions) {
+		return [self addPresetAlias:preset named:servedName base:baseModelName forModel:base replacing:occupant];
+	}
+	if (base.descriptor == nil) {
+		if (error != NULL) {
+			*error = NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorInvalidConfiguration,
+									[NSString stringWithFormat:@"the preset \"%@\" sets load options, and the model \"%@\" is not hosted from a catalog",
+									 preset.identifier, baseModelName]);
+		}
+		return NO;
+	}
+	NSMutableDictionary<NSString *, id> *options = [base.givenOptions mutableCopy];
+	[options addEntriesFromDictionary:preset.loadOptions];
+	NFKServedModel *model = [self catalogModelNamed:servedName identifier:base.descriptor.identifier options:options
+											catalog:base.catalog error:error];
+	if (model == nil) {
+		return NO;
+	}
+	NFKServedModel *sharer = [self modelSharingLoadKey:model.loadKey withBase:base excludingName:servedName];
+	if (sharer != nil) {
+		return [self addPresetAlias:preset named:servedName base:baseModelName forModel:sharer replacing:occupant];
+	}
+	model.baseModelName = baseModelName;
+	model.presetIdentifier = preset.identifier;
+	model.requestDefaults = preset.requestDefaults;
+	[self host:model];
+	return YES;
+}
+
+/*! Serves the preset as an alias of model, after removing a model of the preset's that occupied its name. */
+- (BOOL)addPresetAlias:(NFKModelPreset *)preset
+				 named:(NSString *)servedName
+				  base:(NSString *)baseModelName
+			  forModel:(NFKServedModel *)model
+			 replacing:(nullable NFKServedModel *)occupant
+{
+	if (occupant != nil) {
+		[self removeBackendForModelName:servedName];
+	}
+	NFKServedAlias *alias = [[NFKServedAlias alloc] init];
+	alias.modelName = model.name;
+	alias.baseModelName = baseModelName;
+	alias.presetIdentifier = preset.identifier;
+	alias.requestDefaults = preset.requestDefaults;
+	@synchronized (self.models) {
+		self.aliases[servedName] = alias;
+	}
+	return YES;
+}
+
+/*! The base, or a model of one of its presets, whose load options have the key; the base first. */
+- (nullable NFKServedModel *)modelSharingLoadKey:(nullable NSString *)loadKey
+										withBase:(NFKServedModel *)base
+								   excludingName:(NSString *)excludedName
+{
+	if (loadKey == nil) {
+		return nil;
+	}
+	if ([base.loadKey isEqualToString:loadKey]) {
+		return base;
+	}
+	for (NFKServedModel *model in [self hostedModels]) {
+		BOOL presetOfBase = [model.baseModelName isEqualToString:base.name] && ![model.name isEqualToString:excludedName];
+		if (presetOfBase && [model.loadKey isEqualToString:loadKey]) {
+			return model;
+		}
+	}
+	return nil;
+}
+
+- (BOOL)addAlias:(NSString *)alias
+	forModelName:(NSString *)modelName
+ requestDefaults:(nullable NSDictionary<NSString *, id> *)requestDefaults
+		   error:(NSError * _Nullable *)error
+{
+	NFKServedModel *model = [self hostedModelNamed:modelName];
+	NSError *failure = nil;
+	if (model == nil) {
+		failure = NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorModelNotFound,
+								 [NSString stringWithFormat:@"the model \"%@\" is not served here", modelName]);
+	} else if ([self hostedModelNamed:alias] != nil) {
+		failure = NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorNameConflict,
+								 [NSString stringWithFormat:@"a model is already served under the name \"%@\"", alias]);
+	}
+	if (failure != nil) {
+		if (error != NULL) {
+			*error = failure;
+		}
+		return NO;
+	}
+	NFKServedAlias *entry = [[NFKServedAlias alloc] init];
+	entry.modelName = [modelName copy];
+	entry.requestDefaults = [requestDefaults copy] ?: @{};
+	@synchronized (self.models) {
+		self.aliases[alias] = entry;
+	}
+	return YES;
+}
+
+- (void)removeAlias:(NSString *)alias
+{
+	@synchronized (self.models) {
+		[self.aliases removeObjectForKey:alias];
+	}
+}
+
+- (NSArray<NSString *> *)aliasNames
+{
+	@synchronized (self.models) {
+		return [self.aliases.allKeys sortedArrayUsingSelector:@selector(compare:)];
+	}
+}
+
+- (nullable NSString *)modelNameForAlias:(NSString *)alias
+{
+	@synchronized (self.models) {
+		return self.aliases[alias].modelName;
+	}
+}
+
+/*! The aliases that name the model, sorted. */
+- (NSArray<NSString *> *)aliasNamesOfModel:(NFKServedModel *)model
+{
+	@synchronized (self.models) {
+		NSArray<NSString *> *names = [self.aliases keysOfEntriesPassingTest:^BOOL(NSString *name, NFKServedAlias *alias, BOOL *stop) {
+			return [alias.modelName isEqualToString:model.name];
+		}].allObjects;
+		return [names sortedArrayUsingSelector:@selector(compare:)];
+	}
 }
 
 - (nullable NFKServedModel *)hostedModelNamed:(NSString *)modelName
@@ -2116,27 +2578,71 @@ NSString *NFKServedModelName(NFKServedModel *model)
 	}
 }
 
-/*! The model a request names, or the only one hosted when it names none. Every route resolves its
-	model field here. */
-- (nullable NFKServedModel *)modelNamed:(nullable id)name error:(NSError * _Nullable *)outError
+/*! What a request's model field reaches, or the only hosted model when it names none. Every route
+	resolves its model field here: a hosted model or an alias first, else base@preset split at the last
+	separator where base is a hosted catalog model and preset a suggested preset of its descriptor that
+	sets only request defaults. Any other name stays whole and is not served. */
+- (nullable NFKServedTarget *)modelNamed:(nullable id)name error:(NSError * _Nullable *)outError
 {
+	NSString *failure = nil;
 	@synchronized (self.models) {
 		if ([name isKindOfClass:NSString.class] && [name length] > 0) {
-			NFKServedModel *model = self.models[name];
-			if (model == nil && outError != NULL) {
-				*outError = NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorModelNotFound,
-										   [NSString stringWithFormat:@"the model \"%@\" is not served here; GET /v1/models lists what is", name]);
+			NFKServedTarget *target = [self targetNamed:name failure:&failure];
+			if (target != nil) {
+				return target;
 			}
-			return model;
-		}
-		if (self.models.count == 1) {
-			return self.models.allValues.firstObject;
+		} else if (self.models.count == 1) {
+			NFKServedModel *only = self.models.allValues.firstObject;
+			return [NFKServedTarget targetForModel:only name:only.name];
+		} else {
+			failure = @"the request names no model and this server hosts more than one; GET /v1/models lists them";
 		}
 	}
 	if (outError != NULL) {
-		*outError = NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorModelNotFound,
-								   @"the request names no model and this server hosts more than one; GET /v1/models lists them");
+		*outError = NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorModelNotFound, failure);
 	}
+	return nil;
+}
+
+/*! The target a name reaches, or nil with the sentence that says why. Runs on the models' lock. */
+- (nullable NFKServedTarget *)targetNamed:(NSString *)name failure:(NSString * _Nullable * _Nonnull)failure
+{
+	NFKServedModel *model = self.models[name];
+	if (model != nil) {
+		return [NFKServedTarget targetForModel:model name:name];
+	}
+	NFKServedAlias *alias = self.aliases[name];
+	if (alias != nil) {
+		NFKServedModel *aliased = self.models[alias.modelName];
+		if (aliased == nil) {
+			*failure = [NSString stringWithFormat:@"the alias \"%@\" names the model \"%@\", which is not served here", name, alias.modelName];
+			return nil;
+		}
+		NFKServedTarget *target = [NFKServedTarget targetForModel:aliased name:name];
+		if (alias.presetIdentifier == nil) {
+			[target addRequestDefaults:alias.requestDefaults];
+			return target;
+		}
+		// A preset's alias can share another preset's model; that preset's defaults are not this one's.
+		target.baseModelName = alias.baseModelName;
+		target.presetIdentifier = alias.presetIdentifier;
+		target.requestDefaults = alias.requestDefaults;
+		return target;
+	}
+	NSString *baseName = nil, *presetName = nil;
+	BOOL split = NFKModelNameSplitAtPreset(name, ^BOOL(NSString *modelPart, NSString *presetPart) {
+		NFKModelPreset *suggested = [self.models[modelPart].descriptor presetWithIdentifier:presetPart];
+		return suggested.isSuggested && !suggested.changesLoadOptions;
+	}, &baseName, &presetName);
+	if (split) {
+		NFKServedModel *base = self.models[baseName];
+		NFKServedTarget *target = [NFKServedTarget targetForModel:base name:name];
+		target.baseModelName = baseName;
+		target.presetIdentifier = presetName;
+		[target addRequestDefaults:[base.descriptor presetWithIdentifier:presetName].requestDefaults];
+		return target;
+	}
+	*failure = [NSString stringWithFormat:@"the model \"%@\" is not served here; GET /v1/models lists what is", name];
 	return nil;
 }
 
@@ -2362,7 +2868,9 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 													  @"/responses": @"POST",
 													  @"/responses/input_tokens": @"POST",
 													  @"/inferkit/run": @"POST",
-													  @"/inferkit/status": @"GET" };
+													  @"/inferkit/status": @"GET",
+													  @"/inferkit/catalog": @"GET",
+													  @"/inferkit/estimate": @"POST" };
 	BOOL underBase = [path isEqualToString:NFKServedBasePath] || [path hasPrefix:[NFKServedBasePath stringByAppendingString:@"/"]];
 	NSString *route = underBase ? [path substringFromIndex:NFKServedBasePath.length] : nil;
 	if (route != nil && routes[route] == nil && [route hasPrefix:@"/responses/"]) {
@@ -2381,6 +2889,10 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 		[self serveModelListWithResponse:response wire:wire];
 	} else if ([route isEqualToString:@"/inferkit/status"]) {
 		[self serveStatusWithResponse:response];
+	} else if ([route isEqualToString:@"/inferkit/catalog"]) {
+		[self serveCatalogWithResponse:response];
+	} else if ([route isEqualToString:@"/inferkit/estimate"]) {
+		[self serveEstimate:request response:response];
 	} else if ([route isEqualToString:@"/chat/completions"]) {
 		[self serveChat:request response:response];
 	} else if ([route isEqualToString:@"/embeddings"]) {
@@ -2431,6 +2943,11 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 															@(NFKInferenceServerErrorMisdirected): @421,
 															@(NFKInferenceServerErrorBusy): @503 };
 		return statuses[@(error.code)].integerValue ?: 400;
+	}
+	if ([error.domain isEqualToString:NFKModelCatalogErrorDomain]) {
+		NSDictionary<NSNumber *, NSNumber *> *statuses = @{ @(NFKModelCatalogErrorInvalidOptions): @400,
+															@(NFKModelCatalogErrorUnknownModel): @404 };
+		return statuses[@(error.code)].integerValue ?: 500;
 	}
 	if (![error.domain isEqualToString:NFKInferenceErrorDomain]) {
 		return 500;
@@ -2491,10 +3008,36 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	}
 }
 
-/*! Queues a run for a model, cancelling it when the client goes away. The reply's head carries the
-	model's load as it stands when the head is written. */
-- (void)enqueue:(NFKServedRun *)run on:(NFKServedModel *)model request:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response
+/*! Fills the target's request defaults into the run's request, or, for a run that does its own work,
+	into each request the work makes of the backend. */
+- (void)fillDefaultsOf:(NFKServedRun *)run target:(NFKServedTarget *)target
 {
+	NSDictionary<NSString *, id> *defaults = target.requestDefaults;
+	if (defaults.count == 0) {
+		return;
+	}
+	if (run.work != nil) {
+		NFKInferenceResult * _Nullable (^work)(id<NFKInferenceBackend>, NSError **) = run.work;
+		run.work = ^NFKInferenceResult *(id<NFKInferenceBackend> backend, NSError **workError) {
+			return work([[NFKDefaultedBackend alloc] initWithBackend:backend requestDefaults:defaults loadOptionValues:nil], workError);
+		};
+	}
+	if (run.request != nil) {
+		NSMutableDictionary<NSString *, id> *parameters = [defaults mutableCopy];
+		[parameters addEntriesFromDictionary:run.request.parameters];
+		run.request = [[NFKInferenceRequest alloc] initWithInputs:run.request.inputs parameters:parameters
+												   outputModality:run.request.outputModality];
+	}
+}
+
+/*! Queues a run for a target, cancelling it when the client goes away. The reply's head carries the
+	model's load as it stands when the head is written, and the target's base model and preset. */
+- (void)enqueue:(NFKServedRun *)run on:(NFKServedTarget *)target request:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response
+{
+	NFKServedModel *model = target.model;
+	NSString *baseModelName = target.baseModelName;
+	NSString *presetIdentifier = target.presetIdentifier;
+	[self fillDefaultsOf:run target:target];
 	run.route = request.path;
 	run.clientAddress = request.clientAddress ?: @"";
 	run.keyName = request.keyName;
@@ -2509,6 +3052,8 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 		if (weakSelf.reportsHostDetails) {
 			headers[@"X-InferKit-Thermal-State"] = [NFKServedHostStatus thermalStateName];
 		}
+		headers[@"X-InferKit-Base-Model"] = baseModelName;
+		headers[@"X-InferKit-Preset"] = presetIdentifier;
 		return headers;
 	};
 	[model enqueue:run];
@@ -2517,8 +3062,8 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 #pragma mark Models
 
 /*! A model's description: its backend's identifier, readiness, inputs, parameters, outputs, model, and
-	status, with its load and residency. A model that is not resident describes the backend it last held
-	and reports ready, since a request builds it. */
+	status, with its load and residency, what it was built from, and the aliases that name it. A model
+	that is not resident describes the backend it last held and reports ready, since a request builds it. */
 - (NSMutableDictionary<NSString *, id> *)descriptionOfModel:(NFKServedModel *)model
 {
 	NSTimeInterval timeout = [self idleTimeoutForModel:model];
@@ -2534,29 +3079,54 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	}
 	description[@"load"] = [model loadJSONObject];
 	description[@"residency"] = [model residencyJSONObjectWithTimeout:timeout pinned:[self isPinnedModelNamed:model.name]];
+	description[@"catalogModel"] = model.descriptor.identifier;
+	description[@"loadOptions"] = [model reportedLoadOptions];
+	description[@"base"] = model.baseModelName;
+	description[@"preset"] = model.presetIdentifier;
+	if (model.requestDefaults.count > 0) {
+		description[@"requestDefaults"] = NFKServedJSONObject(model.requestDefaults, 8);
+	}
+	description[@"aliases"] = [self aliasNamesOfModel:model];
 	return description;
 }
 
-- (NSDictionary<NSString *, id> *)entryForModel:(NFKServedModel *)model
+/*! A target's description: its model's, with the base, preset, and request defaults its name adds. */
+- (NSMutableDictionary<NSString *, id> *)descriptionOfTarget:(NFKServedTarget *)target
 {
-	return @{ @"id": model.name, @"object": @"model", @"created": @(self.startTime), @"owned_by": @"inferkit",
-			  @"inferkit": [self descriptionOfModel:model] };
+	NSMutableDictionary<NSString *, id> *description = [self descriptionOfModel:target.model];
+	if ([target.name isEqualToString:target.model.name]) {
+		return description;
+	}
+	description[@"base"] = target.baseModelName;
+	description[@"preset"] = target.presetIdentifier;
+	description[@"requestDefaults"] = target.requestDefaults.count > 0 ? NFKServedJSONObject(target.requestDefaults, 8) : nil;
+	return description;
+}
+
+- (NSDictionary<NSString *, id> *)entryForTarget:(NFKServedTarget *)target
+{
+	return @{ @"id": target.name, @"object": @"model", @"created": @(self.startTime), @"owned_by": @"inferkit",
+			  @"inferkit": [self descriptionOfTarget:target] };
+}
+
+/*! The hosted models' names and the aliases', sorted: what the model lists name. */
+- (NSArray<NSString *> *)listedNames
+{
+	NSArray<NSString *> *names = [self.modelNames arrayByAddingObjectsFromArray:self.aliasNames];
+	return [names sortedArrayUsingSelector:@selector(compare:)];
 }
 
 - (void)serveModelListWithResponse:(NFKHTTPResponse *)response wire:(NFKServedWire)wire
 {
 	if (wire == NFKServedWireAnthropic) {
-		[response sendStatus:200 JSONObject:[NFKServedAnthropic modelListForNames:self.modelNames createdAt:self.startTime] headers:nil];
+		[response sendStatus:200 JSONObject:[NFKServedAnthropic modelListForNames:[self listedNames] createdAt:self.startTime] headers:nil];
 		return;
 	}
 	NSMutableArray *entries = [NSMutableArray array];
-	for (NSString *name in self.modelNames) {
-		NFKServedModel *model = nil;
-		@synchronized (self.models) {
-			model = self.models[name];
-		}
-		if (model != nil) {
-			[entries addObject:[self entryForModel:model]];
+	for (NSString *name in [self listedNames]) {
+		NFKServedTarget *target = [self modelNamed:name error:NULL];
+		if (target != nil) {
+			[entries addObject:[self entryForTarget:target]];
 		}
 	}
 	[response sendStatus:200 JSONObject:@{ @"object": @"list", @"data": entries } headers:nil];
@@ -2565,19 +3135,40 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 - (void)serveModelNamed:(NSString *)name response:(NFKHTTPResponse *)response wire:(NFKServedWire)wire
 {
 	NSError *error = nil;
-	NFKServedModel *model = [self modelNamed:name error:&error];
-	if (model == nil) {
+	NFKServedTarget *target = [self modelNamed:name error:&error];
+	if (target == nil) {
 		[self sendError:error response:response wire:wire];
 		return;
 	}
-	NSDictionary *entry = wire == NFKServedWireAnthropic ? [NFKServedAnthropic modelEntryForName:model.name createdAt:self.startTime]
-		: [self entryForModel:model];
+	NSDictionary *entry = wire == NFKServedWireAnthropic ? [NFKServedAnthropic modelEntryForName:target.name createdAt:self.startTime]
+		: [self entryForTarget:target];
 	[response sendStatus:200 JSONObject:entry headers:nil];
 }
 
 - (void)serveStatusWithResponse:(NFKHTTPResponse *)response
 {
 	[response sendStatus:200 JSONObject:[self statusJSONObject] headers:nil];
+}
+
+/*! Each alias for the status route: its name, model, preset, and request defaults. */
+- (NSArray<NSDictionary<NSString *, id> *> *)aliasesJSONObject
+{
+	NSMutableArray<NSDictionary<NSString *, id> *> *entries = [NSMutableArray array];
+	@synchronized (self.models) {
+		for (NSString *name in [self.aliases.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+			NFKServedAlias *alias = self.aliases[name];
+			NSMutableDictionary<NSString *, id> *entry = [NSMutableDictionary dictionary];
+			entry[@"name"] = name;
+			entry[@"model"] = alias.modelName;
+			entry[@"base"] = alias.baseModelName;
+			entry[@"preset"] = alias.presetIdentifier;
+			if (alias.requestDefaults.count > 0) {
+				entry[@"requestDefaults"] = NFKServedJSONObject(alias.requestDefaults, 8);
+			}
+			[entries addObject:entry];
+		}
+	}
+	return entries;
 }
 
 /*! The status route's reply. */
@@ -2605,12 +3196,108 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	server[@"uptime_seconds"] = @(self.running ? MAX(NSDate.date.timeIntervalSince1970 - (NSTimeInterval)self.startTime, 0.0) : 0.0);
 	status[@"server"] = server;
 	status[@"models"] = models;
+	status[@"aliases"] = [self aliasesJSONObject];
 	if (self.reportsHostDetails) {
 		NSMutableDictionary<NSString *, id> *host = [[self.hostStatus JSONObjectForStorageURL:self.storageDirectoryURL] mutableCopy];
 		host[@"runtimes"] = [NFKInferenceServer runtimeStatuses];
+		host[@"hardware"] = NFKServedJSONObject(NFKHardwareProfile.currentProfile.dictionaryRepresentation, 8);
 		status[@"host"] = host;
 	}
 	return status;
+}
+
+#pragma mark Catalog and estimates
+
+/*! The catalog the catalog route serves: modelCatalog's descriptors, then those of the models hosted
+	from another catalog. */
+- (NFKModelCatalog *)servedCatalog
+{
+	NFKModelCatalog *served = [[NFKModelCatalog alloc] init];
+	[served addDescriptors:self.modelCatalog.descriptors];
+	for (NFKServedModel *model in [self hostedModels]) {
+		if (model.descriptor != nil && [served descriptorWithIdentifier:model.descriptor.identifier] == nil) {
+			[served addDescriptor:model.descriptor];
+		}
+	}
+	return served;
+}
+
+- (void)serveCatalogWithResponse:(NFKHTTPResponse *)response
+{
+	NSError *error = nil;
+	NSData *manifest = [[self servedCatalog] manifestDataWithError:&error];
+	if (manifest == nil) {
+		[self sendError:error response:response];
+		return;
+	}
+	[response sendStatus:200 headers:@{ @"Content-Type": @"application/json" } body:manifest];
+}
+
+/*! The descriptor an estimate names and the load options it starts from: a model hosted from a catalog
+	with its options, else a catalog model with its preset's. nil with ModelNotFound. */
+- (nullable NFKModelDescriptor *)estimatedDescriptorNamed:(nullable id)name
+											  baseOptions:(NSDictionary<NSString *, id> * _Nullable * _Nonnull)baseOptions
+													error:(NSError * _Nullable *)error
+{
+	*baseOptions = @{};
+	NFKServedTarget *target = [self modelNamed:name error:NULL];
+	if (target.model.descriptor != nil) {
+		*baseOptions = NFKServedOptionsAtStage(target.model.descriptor, target.model.givenOptions, NFKModelOptionStageLoad);
+		return target.model.descriptor;
+	}
+	NFKModelPreset *preset = nil;
+	NFKModelDescriptor *descriptor = [name isKindOfClass:NSString.class]
+		? [NFKInferenceServer descriptorNamed:name catalog:[self servedCatalog] preset:&preset] : nil;
+	if (descriptor == nil) {
+		if (error != NULL) {
+			NSString *reason = [name isKindOfClass:NSString.class]
+				? [NSString stringWithFormat:@"the model \"%@\" is neither served here nor in the catalog; GET /v1/inferkit/catalog lists the catalog", name]
+				: @"the request names no model";
+			*error = NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorModelNotFound, reason);
+		}
+		return nil;
+	}
+	*baseOptions = preset.loadOptions ?: @{};
+	return descriptor;
+}
+
+- (void)serveEstimate:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response
+{
+	NSDictionary *body = [self JSONBodyOf:request response:response];
+	if (body == nil) {
+		return;
+	}
+	NSError *error = nil;
+	NSDictionary<NSString *, id> *baseOptions = nil;
+	NFKModelDescriptor *descriptor = [self estimatedDescriptorNamed:body[@"model"] baseOptions:&baseOptions error:&error];
+	id given = body[@"options"];
+	if (descriptor != nil && given != nil && ![given isKindOfClass:NSDictionary.class]) {
+		descriptor = nil;
+		error = NFKServedError(NFKInferenceErrorDomain, kNFKError_InferenceMissingInput, @"options is not a JSON object");
+	}
+	NSMutableDictionary<NSString *, id> *options = [baseOptions mutableCopy];
+	[options addEntriesFromDictionary:given ?: @{}];
+	// The budget and the constraints, whose reasons quote it, describe the machine, so they follow
+	// reportsHostDetails as the status route's host object does.
+	BOOL describesMachine = self.reportsHostDetails;
+	NFKModelMemoryBudget *budget = describesMachine ? [NFKModelMemoryBudget currentBudget] : nil;
+	NFKModelMemoryEstimate *estimate = descriptor != nil
+		? [descriptor estimatedMemoryForOptions:options memoryBudget:budget error:&error] : nil;
+	if (estimate == nil) {
+		[self sendError:error response:response];
+		return;
+	}
+	NSMutableDictionary<NSString *, id> *reply = [NSMutableDictionary dictionary];
+	reply[@"object"] = @"inferkit.estimate";
+	reply[@"model"] = body[@"model"];
+	reply[@"catalogModel"] = descriptor.identifier;
+	reply[@"options"] = NFKServedJSONObject(options, 8);
+	reply[@"estimate"] = estimate.dictionaryRepresentation;
+	if (budget != nil) {
+		reply[@"constraints"] = [descriptor constraintsForOptions:options memoryBudget:budget].dictionaryRepresentation;
+		reply[@"budget"] = budget.dictionaryRepresentation;
+	}
+	[response sendStatus:200 JSONObject:reply headers:nil];
 }
 
 #pragma mark Chat
@@ -2622,9 +3309,9 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 		return;
 	}
 	NSError *error = nil;
-	NFKServedModel *model = [self modelNamed:body[@"model"] error:&error];
+	NFKServedTarget *target = [self modelNamed:body[@"model"] error:&error];
 	NSMutableArray<NSURL *> *files = [NSMutableArray array];
-	NFKInferenceRequest *inference = model != nil ? [NFKServedOpenAI chatRequestFromBody:body temporaryFiles:files error:&error] : nil;
+	NFKInferenceRequest *inference = target != nil ? [NFKServedOpenAI chatRequestFromBody:body temporaryFiles:files error:&error] : nil;
 	if (inference == nil) {
 		[self removeFiles:files];
 		[self sendError:error response:response];
@@ -2632,7 +3319,7 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	}
 	NSString *identifier = [@"chatcmpl-" stringByAppendingString:NSUUID.UUID.UUIDString];
 	NSInteger created = (NSInteger)NSDate.date.timeIntervalSince1970;
-	NSString *modelName = model.name;
+	NSString *modelName = target.name;
 	NFKServedRun *run = [[NFKServedRun alloc] init];
 	run.request = inference;
 	run.temporaryFiles = files;
@@ -2652,7 +3339,7 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 			reply[@"usage"] = [NFKServedOpenAI usageForResult:result];
 			[response sendStatus:200 JSONObject:reply headers:nil];
 		};
-		[self enqueue:run on:model request:request response:response];
+		[self enqueue:run on:target request:request response:response];
 		return;
 	}
 
@@ -2736,7 +3423,7 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 			[response endStream];
 		}
 	};
-	[self enqueue:run on:model request:request response:response];
+	[self enqueue:run on:target request:request response:response];
 }
 
 /*! A failure before the first event is an ordinary error reply; after it, an error event ends the
@@ -2761,8 +3448,8 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 		return;
 	}
 	NSError *error = nil;
-	NFKServedModel *model = [self modelNamed:body[@"model"] error:&error];
-	NSArray<NSString *> *texts = model != nil ? [NFKServedOpenAI embeddingInputsFromBody:body error:&error] : nil;
+	NFKServedTarget *target = [self modelNamed:body[@"model"] error:&error];
+	NSArray<NSString *> *texts = target != nil ? [NFKServedOpenAI embeddingInputsFromBody:body error:&error] : nil;
 	if (texts == nil) {
 		[self sendError:error response:response];
 		return;
@@ -2786,7 +3473,7 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 		}
 		return [NFKInferenceResult resultWithOutputs:@{}];
 	};
-	NSString *modelName = model.name;
+	NSString *modelName = target.name;
 	BOOL base64 = [body[@"encoding_format"] isEqual:@"base64"];
 	run.completionHandler = ^(NFKInferenceResult *result, NSError *runError) {
 		if (result == nil) {
@@ -2795,7 +3482,7 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 		}
 		[response sendStatus:200 JSONObject:[NFKServedOpenAI embeddingReplyForVectors:vectors model:modelName base64:base64] headers:nil];
 	};
-	[self enqueue:run on:model request:request response:response];
+	[self enqueue:run on:target request:request response:response];
 }
 
 #pragma mark Audio
@@ -2809,9 +3496,9 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 		return;
 	}
 	NSError *error = nil;
-	NFKServedModel *model = [self modelNamed:[NFKServedOpenAI partNamed:@"model" in:parts].stringValue error:&error];
+	NFKServedTarget *target = [self modelNamed:[NFKServedOpenAI partNamed:@"model" in:parts].stringValue error:&error];
 	NSMutableArray<NSURL *> *files = [NSMutableArray array];
-	NFKInferenceRequest *inference = model != nil
+	NFKInferenceRequest *inference = target != nil
 		? [NFKServedOpenAI transcriptionRequestFromParts:parts translating:translating temporaryFiles:files error:&error] : nil;
 	if (inference == nil) {
 		[self removeFiles:files];
@@ -2865,7 +3552,7 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 			[response endStream];
 		}
 	};
-	[self enqueue:run on:model request:request response:response];
+	[self enqueue:run on:target request:request response:response];
 }
 
 - (void)serveSpeech:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response
@@ -2875,8 +3562,8 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 		return;
 	}
 	NSError *error = nil;
-	NFKServedModel *model = [self modelNamed:body[@"model"] error:&error];
-	NFKInferenceRequest *inference = model != nil ? [NFKServedOpenAI speechRequestFromBody:body error:&error] : nil;
+	NFKServedTarget *target = [self modelNamed:body[@"model"] error:&error];
+	NFKInferenceRequest *inference = target != nil ? [NFKServedOpenAI speechRequestFromBody:body error:&error] : nil;
 	if (inference == nil) {
 		[self sendError:error response:response];
 		return;
@@ -2906,7 +3593,7 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 		[response sendEventData:NFKServedJSONString(@{ @"type": @"speech.audio.done" })];
 		[response endStream];
 	};
-	[self enqueue:run on:model request:request response:response];
+	[self enqueue:run on:target request:request response:response];
 }
 
 #pragma mark Images
@@ -2923,15 +3610,15 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	}
 	id modelName = parts != nil ? [NFKServedOpenAI partNamed:@"model" in:parts].stringValue : body[@"model"];
 	NSError *error = nil;
-	NFKServedModel *model = [self modelNamed:modelName error:&error];
+	NFKServedTarget *target = [self modelNamed:modelName error:&error];
 	NFKInferenceRequest *inference = nil;
-	if (model != nil && parts != nil) {
+	if (target != nil && parts != nil) {
 		inference = [NFKServedOpenAI imageEditRequestFromParts:parts error:&error];
-	} else if (model != nil && editing) {
+	} else if (target != nil && editing) {
 		[self sendError:NFKServedError(NFKInferenceErrorDomain, kNFKError_InferenceUnsupported,
 									   @"an edit takes its images as multipart/form-data; this server fetches no image URLs") response:response];
 		return;
-	} else if (model != nil) {
+	} else if (target != nil) {
 		inference = [NFKServedOpenAI imageGenerationRequestFromBody:body error:&error];
 	}
 	if (inference == nil) {
@@ -2981,7 +3668,7 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 		}
 		[response endStream];
 	};
-	[self enqueue:run on:model request:request response:response];
+	[self enqueue:run on:target request:request response:response];
 }
 
 #pragma mark Native
@@ -2993,12 +3680,12 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 		return;
 	}
 	NSError *error = nil;
-	NFKServedModel *model = [self modelNamed:body[@"model"] error:&error];
+	NFKServedTarget *target = [self modelNamed:body[@"model"] error:&error];
 	NFKInferenceWireCoding *decoder = [[NFKInferenceWireCoding alloc] initWithTemporaryDirectory:nil];
 	NFKInferenceRequest *inference = nil;
-	if (model != nil && body[@"request"] == nil) {
+	if (target != nil && body[@"request"] == nil) {
 		error = NFKServedError(NFKInferenceErrorDomain, kNFKError_InferenceMissingInput, @"the body carries no request");
-	} else if (model != nil) {
+	} else if (target != nil) {
 		inference = [decoder requestFromJSONObject:body[@"request"] error:&error];
 	}
 	if (inference == nil) {
@@ -3010,6 +3697,11 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	NFKServedRun *run = [[NFKServedRun alloc] init];
 	run.request = inference;
 	run.temporaryFiles = decoder.temporaryFileURLs;
+	NFKServedModel *model = target.model;
+	NSMutableDictionary<NSString *, id> *served = [NSMutableDictionary dictionary];
+	served[@"model"] = target.name;
+	served[@"base"] = target.baseModelName;
+	served[@"preset"] = target.presetIdentifier;
 	NFKInferenceWireCoding *encoder = [[NFKInferenceWireCoding alloc] initWithTemporaryDirectory:nil];
 	NSObject *lock = [[NSObject alloc] init];
 	__block NFKInferenceResult *lastPartial = nil;
@@ -3035,7 +3727,10 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 			if (encoded == nil) {
 				[self sendError:replyError response:response];
 			} else {
-				[response sendStatus:200 JSONObject:@{ @"result": encoded } headers:nil];
+				NSMutableDictionary *reply = [served mutableCopy];
+				reply[@"result"] = encoded;
+				reply[@"loadOptions"] = [model reportedLoadOptions];
+				[response sendStatus:200 JSONObject:reply headers:nil];
 			}
 			return;
 		}
@@ -3043,15 +3738,20 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 			if (!response.headersSent) {
 				[response beginStreamWithStatus:200 headers:@{ @"Content-Type": @"text/event-stream" }];
 			}
-			NSDictionary *event = encoded != nil
-				? @{ @"type": @"result", @"result": encoded }
-				: @{ @"type": @"error", @"error": [NFKInferenceWireCoding JSONObjectForError:replyError][@"error"] };
+			NSMutableDictionary *event = [served mutableCopy];
+			if (encoded != nil) {
+				event[@"type"] = @"result";
+				event[@"result"] = encoded;
+				event[@"loadOptions"] = [model reportedLoadOptions];
+			} else {
+				event = [@{ @"type": @"error", @"error": [NFKInferenceWireCoding JSONObjectForError:replyError][@"error"] } mutableCopy];
+			}
 			[response sendEventData:NFKServedJSONString(event)];
 			[response sendEventData:@"[DONE]"];
 			[response endStream];
 		}
 	};
-	[self enqueue:run on:model request:request response:response];
+	[self enqueue:run on:target request:request response:response];
 }
 
 @end

@@ -522,6 +522,54 @@ final class InferKitSwiftExamples: XCTestCase {
     // Observation, scoped keys, and app routes from Swift: the delegate's methods import as
     // inferenceServer(_:didChangeModel:), addRoute(pathPrefix:handler:) throws, the MCP settings read
     // mcpPingInterval and mcpSessions, and currentStatus() is the status route read in process.
+    // A catalog model hosted under a preset, a suggested preset, and an alias. The add methods take
+    // NSError ** and import as throwing, and the native client's catalog read imports as fetchModelCatalog().
+    final class PassthroughBuilder: NSObject, NFKModelBackendBuilding {
+        func backend(for request: NFKModelBuildRequest) throws -> any NFKInferenceBackend {
+            let backend = NFKPassthroughBackend()
+            try request.applyPropertyOptions(toBackend: backend)
+            return backend
+        }
+    }
+
+    func testServingACatalogModelUnderPresetsFromSwift() throws {
+        let catalog = NFKModelCatalog()
+        try catalog.addDescriptors(fromManifestData: Data("""
+            { "schemaVersion": 1, "kind": "inferkit.model-catalog", "models": [ {
+              "id": "example.voice", "engine": "swift-example-engine",
+              "options": [ { "key": "style", "kind": "text", "stage": "load", "default": "plain" },
+                           { "key": "speed", "kind": "number", "default": 1.0 } ],
+              "presets": [ { "id": "brisk", "suggested": true, "requestDefaults": { "speed": 1.5 } } ] } ] }
+            """.utf8))
+        NFKModelCatalog.registerBackendBuilder(PassthroughBuilder(), forEngine: "swift-example-engine")
+        defer { NFKModelCatalog.registerBackendBuilder(nil, forEngine: "swift-example-engine") }
+
+        let server = NFKInferenceServer()
+        server.port = 0
+        server.loopbackOnly = true
+        server.modelCatalog = catalog
+        try server.addModel(identifier: "example.voice", options: nil, catalog: nil, forModelName: "voice")
+        let loud = NFKModelPreset(identifier: "loud", title: nil, help: nil, baseModelIdentifier: nil,
+                                  loadOptions: ["style": "loud"], requestDefaults: nil, suggested: false, extensions: nil)
+        try server.addPreset(loud, forBaseModelName: "voice")
+        try server.addAlias("speaker", forModelName: "voice", requestDefaults: ["speed": 0.8])
+        XCTAssertEqual(server.modelNames, ["voice", "voice@loud"])
+        XCTAssertEqual(server.aliasNames, ["speaker"])
+        let tool = try server.addTool(forModelName: "voice@loud", outputModality: .text, purpose: nil)
+        XCTAssertEqual(tool.name, "voice__loud")
+        XCTAssertEqual(server.modelName(forToolName: "voice__loud"), "voice@loud")
+        try server.start()
+        defer { server.stop() }
+
+        let client = NFKRemoteInferKitBackend(baseURL: try XCTUnwrap(server.localBaseURL))
+        client.modelName = "voice@brisk"
+        let result = try client.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "hi"]))
+        XCTAssertEqual(result.output(forKey: NFKInputPrompt) as? String, "hi")
+        XCTAssertEqual(client.lastReportedLoad?.presetIdentifier, "brisk")
+        let served = try client.fetchModelCatalog()
+        XCTAssertNotNil(served.descriptor(withIdentifier: "example.voice"))
+    }
+
     final class ModelObserver: NSObject, NFKInferenceServerDelegate {
         let loaded: XCTestExpectation
         init(loaded: XCTestExpectation) {

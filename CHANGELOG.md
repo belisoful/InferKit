@@ -167,6 +167,40 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKHardwareProfile` gains `isAppleSilicon`, `operatingSystemName`, `operatingSystemVersion`, and a
   snapshot (`dictionaryRepresentation`, `+profileWithDictionary:`).
 
+#### Serving catalog models under presets and aliases
+
+- `-[NFKInferenceServer addModelWithIdentifier:options:catalog:forModelName:error:]` hosts a catalog model
+  by identifier (or `identifier@preset`) and options. The options are checked when the model is added,
+  and the catalog's build entry builds it on the first request, checking the machine and the memory
+  budget then and on every rebuild. `modelCatalog` names the catalog (the shared one by default).
+- `addPreset:forBaseModelName:error:` serves a hosted model as `base@preset`. A preset that sets only
+  request defaults is an alias of the base. A preset that sets load options is compared with the base's
+  and its other presets' load options by `canonicalLoadOptionsKey:`: equal options share that model's
+  backend, and different ones become a model of their own with its own load and residency.
+  `addAlias:forModelName:requestDefaults:error:` serves a hosted model under a second name;
+  `removeAlias:`, `aliasNames`, and `modelNameForAlias:` manage them.
+- Every route resolves its `model` field in one place: a hosted model or an alias, then `base@preset`
+  split at the last `@` where `base` is a hosted catalog model and `preset` a suggested preset of its
+  descriptor that sets only request defaults, which needs no setup. Any other name stays whole, so
+  `claude-3@20240620` reaches a model hosted under exactly that name.
+- Replies name the model as the request sent it, and every run reply carries `X-InferKit-Base-Model` and
+  `X-InferKit-Preset` (`NFKServerLoad.baseModelName`, `presetIdentifier`). The native reply adds `model`,
+  `base`, `preset`, and `loadOptions`. Each model's status and `/v1/models` entry adds `catalogModel`,
+  `loadOptions`, `base`, `preset`, and `aliases`; the model list includes the aliases, and the status
+  route lists them with their models and defaults (`NFKServerModelStatus.catalogModelIdentifier`,
+  `loadOptions`, `baseModelName`, `presetIdentifier`, `aliasNames`; `NFKServerStatus.aliases`).
+- `addToolForModelName:outputModality:purpose:error:` serves a model as an MCP tool named
+  `NFKModelToolName` of its name, running in the model's queue. `modelNameForToolName:` reads the
+  table, and a second model whose tool name is already a served tool's is refused with the new
+  `NFKInferenceServerErrorNameConflict`.
+- `GET /v1/inferkit/catalog` answers the server's catalog as a manifest, and `POST /v1/inferkit/estimate`
+  answers a model's memory estimate and constraints against the server's budget; with
+  `reportsHostDetails` NO it answers the estimate alone, without the budget or the constraints. The
+  status route's host object carries the machine's `NFKHardwareProfile` snapshot (`NFKServerHostStatus.hardwareProfile`).
+  `NFKRemoteInferKitBackend` reads the three with `fetchModelCatalogWithError:`,
+  `fetchMemoryEstimateForModelNamed:options:constraints:error:`, and
+  `fetchServerHardwareProfileWithError:`.
+
 #### MCP servers launched as programs
 
 - `NFKMCPClient` speaks MCP's stdio transport on macOS.

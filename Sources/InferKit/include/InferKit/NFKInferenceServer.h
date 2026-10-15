@@ -10,11 +10,16 @@
 #import <Security/Security.h>
 #import <InferKit/NFKInferenceBackend.h>
 #import <InferKit/NFKInferenceTool.h>
+#import <InferKit/NFKModality.h>
 #import <InferKit/NFKServerStatus.h>
 #import <InferKit/NFKServerRoute.h>
 #import <InferKit/NFKServerObservation.h>
 
 NS_ASSUME_NONNULL_BEGIN
+
+@class NFKModelCatalog;
+@class NFKModelPreset;
+@class NFKBackendTool;
 
 /*! The port a server listens on unless a caller names another, and the port NFKRemoteProvider.inferKit
 	points at. Introduced in InferKit 0.4.0. */
@@ -49,6 +54,9 @@ extern NSString * const NFKInferenceServerErrorDomain;
 	@constant   NFKInferenceServerErrorMisdirected A request from this machine named another host in its
 				Host header, as a browser page does that reaches the server by DNS rebinding, and
 				presented no key that opens the route. The reply is 421.
+	@constant   NFKInferenceServerErrorNameConflict A name the call adds is taken: an alias or a preset
+				names a model hosted under that name, or a model's MCP tool name is the name of another
+				served tool.
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
@@ -60,6 +68,7 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 	NFKInferenceServerErrorBusy = 6,
 	NFKInferenceServerErrorInsufficientScope = 7,
 	NFKInferenceServerErrorMisdirected = 8,
+	NFKInferenceServerErrorNameConflict = 9,
 };
 
 /*! The name apiKey reads and writes among the server's keys. Introduced in InferKit 0.4.0. */
@@ -159,6 +168,16 @@ NS_SWIFT_SENDABLE
 				  and partial results.
 				- The status route, GET /inferkit/status, which reports each model's load and the
 				  machine's state for a load balancer or a dashboard (see Status).
+				- The catalog route, GET /inferkit/catalog, which answers the catalog the server builds
+				  from as a manifest (NFKModelCatalog's JSON form): modelCatalog's descriptors and the
+				  descriptors of the models hosted from another catalog.
+				- The estimate route, POST /inferkit/estimate, which takes {model, options} and answers
+				  the model's memory estimate under those load options against this machine's budget,
+				  with the constraints the budget leaves of each option (NFKModelMemory.h). model is a
+				  catalog identifier, identifier@preset, or a model the server hosts from the catalog,
+				  whose options the given ones override. With reportsHostDetails NO the reply carries the
+				  estimate alone, computed without a budget, and leaves out the budget and the
+				  constraints, whose reasons quote it.
 
 				An app adds its own routes under a path prefix of its choosing with
 				addRouteForPathPrefix:handler:error:; they share the listener and the key checks.
@@ -172,7 +191,9 @@ NS_SWIFT_SENDABLE
 				with no stream open, sends nothing for MCPSessionIdleTimeout; its id is then answered
 				404. A client that never sends the id back is served without a session, and the id it
 				was issued lapses unreported. MCPSessions lists the sessions. Only the added tools are
-				listed; a hosted model is a tool when an NFKBackendTool for it is added. A tool's text,
+				listed; a hosted model is a tool when an NFKBackendTool for it is added, or when
+				addToolForModelName:outputModality:purpose:error: adds one named NFKModelToolName of the
+				model's name. A tool's text,
 				the images it shows the model, and the audio it generates come back as MCP content. The
 				route takes a key with NFKServerKeyScopeMCP, and refuses a browser request whose Origin
 				names another host.
@@ -181,6 +202,21 @@ NS_SWIFT_SENDABLE
 				hosts exactly one model, a request that names none runs on it. A coding agent pointed
 				at the server therefore names a hosted model: Claude Code through ANTHROPIC_MODEL (and
 				the models it uses for background work), Codex through its model setting.
+
+				Names, presets, and aliases. A model field resolves in one place, in this order:
+				1. The name of a hosted model or of an alias (addAlias:forModelName:requestDefaults:error:,
+				   and the aliases addPreset:forBaseModelName:error: adds).
+				2. base@preset, split at the last NFKModelPresetSeparator, where base is a hosted model
+				   built from the catalog and preset is a suggested preset of its descriptor that sets
+				   only request defaults. The run goes to the base's backend.
+				3. Any other name is not served (NFKInferenceServerErrorModelNotFound), so a name such as
+				   claude-3@20240620 stays whole.
+				A preset that sets load options is served only once addPreset:forBaseModelName:error: adds
+				it. An alias's and a preset's request defaults fill the parameters a request leaves out.
+				An OpenAI-shaped reply's model field is the name the request sent, and every run reply
+				carries X-InferKit-Base-Model, the base model the name reaches (a preset's base, an
+				alias's model, or the model itself), and X-InferKit-Preset when a preset applies. The
+				native route's reply carries model, base, preset, and loadOptions beside the result.
 
 				A hosted backend that implements tokenCountForRequest:error: answers the two
 				token-counting routes; any other answers 400.
@@ -257,7 +293,11 @@ NS_SWIFT_SENDABLE
 				  its estimated_remaining_seconds.
 				Every run reply carries the same reading in X-InferKit-Limit, X-InferKit-Running,
 				X-InferKit-Queued, and X-InferKit-Estimated-Wait, taken when the reply's head is
-				written.
+				written. A model hosted from the catalog also carries catalogModel, its descriptor's
+				identifier, and loadOptions, the load options it builds with (the backend's
+				loadOptionValues once it reports them); a preset's model carries base and preset; and
+				every model carries aliases, the names that reach it. The status route lists each alias
+				under aliases with its model, preset, and request defaults.
 
 				Residency. A model hosted with addBackendProvider:forModelName: (or
 				addBackendBuilder:forModelName:) is listed before its
@@ -310,7 +350,9 @@ NS_SWIFT_SENDABLE
 				The status route's "host" object describes the machine: chip, model identifier, and
 				core counts; thermal_state (nominal, fair, serious, critical) and low_power_mode;
 				memory (physical, available, recommended working set, pressure as normal, warning,
-				or critical, and this process's footprint); runtimes, each linked runtime's own
+				or critical, and this process's footprint); hardware, the machine's NFKHardwareProfile
+				snapshot (dictionaryRepresentation), from which a client evaluates a model's
+				constraints for this machine; runtimes, each linked runtime's own
 				report (NFKServingRuntimeStatus), such as MLX's active and cached memory; cpu (usage since the previous status
 				reading, and the load averages); storage on the volume of storageDirectoryURL; and,
 				on macOS, gpu.utilization from the IORegistry's undocumented "Device Utilization %",
@@ -318,7 +360,8 @@ NS_SWIFT_SENDABLE
 				and stays near 1 while one run executes, so a load balancer routes on the queue
 				figures. Run replies carry X-InferKit-Thermal-State, and the Bonjour
 				advertisement adds the chip and the physical memory. Setting reportsHostDetails to
-				NO leaves out the host object, the thermal header, and those advertisement entries.
+				NO leaves out the host object, the thermal header, those advertisement entries, and
+				the estimate route's budget and constraints.
 				The status route needs a key with NFKServerKeyScopeStatus under the access rules above.
 				currentStatus reads the same status in process.
 
@@ -424,8 +467,9 @@ NS_SWIFT_SENDABLE
 	until the queue falls below it. */
 @property (nonatomic, assign) NSUInteger maximumQueuedRunsPerModel;
 
-/*! Whether the status route, run replies, and the Bonjour advertisement describe this machine.
-	Defaults to YES; NO leaves out every host detail and keeps the models' load. */
+/*! Whether the status route, run replies, the estimate route, and the Bonjour advertisement describe
+	this machine. Defaults to YES; NO leaves out every host detail, the estimate route's budget and
+	constraints included, and keeps the models' load. */
 @property (nonatomic, assign) BOOL reportsHostDetails;
 
 /*! A directory on the volume the status route's storage figures describe, typically where the models
@@ -523,6 +567,82 @@ NS_SWIFT_SENDABLE
 	NS_SWIFT_NAME(addBackendBuilder(_:forModelName:));
 
 /*!
+	@method     addModelWithIdentifier:options:catalog:forModelName:error:
+	@abstract   Hosts a catalog model under a model name, built through the catalog's build entry when a
+				request first needs it.
+	@discussion identifier is a catalog identifier, or identifier@preset for a preset its descriptor
+				lists. The options are checked now: a model the catalog lacks fails with
+				NFKModelCatalogErrorUnknownModel and an option that does not resolve with
+				NFKModelCatalogErrorInvalidOptions, and nothing is hosted. The machine's requirements and
+				the memory budget are checked when the backend is built, as
+				-[NFKModelCatalog backendForModelIdentifier:options:error:] checks them, so a combination
+				that does not fit fails the first request with NFKModelCatalogErrorDoesNotFit. The model
+				is hosted as addBackendProvider:forModelName: hosts one, replacing any model under the
+				name, and keeps its options for each build. A nil catalog is modelCatalog. Introduced in
+				InferKit 0.4.0.
+*/
+- (BOOL)addModelWithIdentifier:(NSString *)identifier
+					   options:(nullable NSDictionary<NSString *, id> *)options
+					   catalog:(nullable NFKModelCatalog *)catalog
+				  forModelName:(NSString *)modelName
+						 error:(NSError * _Nullable *)error
+	NS_SWIFT_NAME(addModel(identifier:options:catalog:forModelName:));
+
+/*!
+	@method     addPreset:forBaseModelName:error:
+	@abstract   Serves a hosted model under a preset, as base@preset.
+	@discussion The preset applies to the model hosted under baseModelName; its baseModelIdentifier is not
+				read.
+				- A preset that sets only request defaults becomes an alias of the base: a request naming
+				  base@preset runs on the base's backend with the preset's request defaults.
+				- A preset that sets load options needs a base hosted with
+				  addModelWithIdentifier:options:catalog:forModelName:error:. Its load options are merged
+				  over the base's, and the result's canonicalLoadOptionsKey: is compared with the base's
+				  and with those of the base's other preset models. Equal to one → an alias of that model,
+				  which shares its backend. Equal to none → a separate model hosted under base@preset,
+				  built on demand from the merged options, with its own load and residency.
+				Adding a preset again replaces it, an alias or a model under base@preset alike. Fails with
+				NFKInferenceServerErrorModelNotFound when no model is hosted under baseModelName,
+				NFKInferenceServerErrorInvalidConfiguration when the preset sets load options and the base
+				was not hosted from a catalog, NFKModelCatalogErrorInvalidOptions when the merged options
+				or the request defaults do not resolve, and NFKInferenceServerErrorNameConflict when a
+				model other than this preset's is hosted under base@preset. Introduced in InferKit 0.4.0.
+*/
+- (BOOL)addPreset:(NFKModelPreset *)preset forBaseModelName:(NSString *)baseModelName error:(NSError * _Nullable *)error
+	NS_SWIFT_NAME(addPreset(_:forBaseModelName:));
+
+/*!
+	@method     addAlias:forModelName:requestDefaults:error:
+	@abstract   Serves a hosted model under a second name.
+	@discussion A request naming alias runs on the model's backend, with requestDefaults filled where it
+				leaves a parameter out. Adding an alias again replaces it. Hosting a model under the
+				alias's name later removes the alias. The alias stays when its model is removed, and a
+				request naming it fails until a model is hosted under modelName again. Fails with
+				NFKInferenceServerErrorModelNotFound when no model is hosted under modelName, and with
+				NFKInferenceServerErrorNameConflict when a model is hosted under alias. Introduced in
+				InferKit 0.4.0.
+*/
+- (BOOL)addAlias:(NSString *)alias
+	forModelName:(NSString *)modelName
+ requestDefaults:(nullable NSDictionary<NSString *, id> *)requestDefaults
+		   error:(NSError * _Nullable *)error
+	NS_SWIFT_NAME(addAlias(_:forModelName:requestDefaults:));
+
+/*! Stops serving the alias, a preset's alias included. Introduced in InferKit 0.4.0. */
+- (void)removeAlias:(NSString *)alias;
+
+/*! The aliases, the presets' aliases included, sorted. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSArray<NSString *> *aliasNames;
+
+/*! The hosted model an alias names, or nil when there is no such alias. Introduced in InferKit 0.4.0. */
+- (nullable NSString *)modelNameForAlias:(NSString *)alias;
+
+/*! The catalog the catalog route serves and the estimate route and
+	addModelWithIdentifier:options:catalog:forModelName:error: read. Defaults to
+	NFKModelCatalog.sharedCatalog; nil restores it. Introduced in InferKit 0.4.0. */
+@property (nonatomic, strong, null_resettable) NFKModelCatalog *modelCatalog;
+
+/*!
 	@method     loadModelNamed:completionHandler:
 	@abstract   Builds a provider-hosted model's backend ahead of its first request.
 	@discussion The handler receives nil once the model is resident, or the build's error. A model that
@@ -591,6 +711,30 @@ NS_SWIFT_SENDABLE
 
 /*! Stops serving the tool of that name over MCP. Introduced in InferKit 0.4.0. */
 - (void)removeToolNamed:(NSString *)name;
+
+/*!
+	@method     addToolForModelName:outputModality:purpose:error:
+	@abstract   Serves a model as an MCP tool named NFKModelToolName(modelName).
+	@discussion modelName is any name a request can name: a hosted model, an alias, or base@preset. Each
+				call resolves the name as a request does and waits in the model's queue, so the tool shares
+				the model's backend, limits, and preset defaults. The tool has NFKBackendTool's default
+				description and schema for outputModality, and purpose completes "Use it when …". The
+				server keeps a table from each such tool's name to its model name (modelNameForToolName:).
+				Two model names can map to one tool name, as "a@b" and "a__b" do; adding a tool whose name
+				an added tool already has is refused with NFKInferenceServerErrorNameConflict, unless that
+				tool is the same model's, which it replaces. Fails with
+				NFKInferenceServerErrorModelNotFound when no request could name the model now. Returns the
+				tool. Introduced in InferKit 0.4.0.
+*/
+- (nullable NFKBackendTool *)addToolForModelName:(NSString *)modelName
+								  outputModality:(NFKModality)outputModality
+										 purpose:(nullable NSString *)purpose
+										   error:(NSError * _Nullable *)error
+	NS_SWIFT_NAME(addTool(forModelName:outputModality:purpose:));
+
+/*! The model name a tool added with addToolForModelName:outputModality:purpose:error: runs, or nil.
+	Introduced in InferKit 0.4.0. */
+- (nullable NSString *)modelNameForToolName:(NSString *)toolName;
 
 /*! The tools served over MCP, in the order they were added. Introduced in InferKit 0.4.0. */
 @property (nonatomic, readonly, copy) NSArray<NFKInferenceTool *> *tools;

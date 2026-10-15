@@ -5,6 +5,7 @@
 
 #import <InferKit/NFKServerStatus.h>
 #import <InferKit/NFKRemoteInferKitBackend.h>
+#import <InferKit/NFKHardwareProfile.h>
 
 static NSDictionary * _Nullable NFKStatusDictionary(id _Nullable value)
 {
@@ -26,6 +27,11 @@ static NSInteger NFKStatusInteger(id _Nullable value)
 	return NFKStatusNumber(value).integerValue;
 }
 
+static NSString * _Nullable NFKStatusOptionalString(id _Nullable value)
+{
+	return [value isKindOfClass:NSString.class] && [value length] > 0 ? value : nil;
+}
+
 static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 {
 	NSDictionary<NSString *, NSNumber *> *states = @{ @"nominal": @(NFKServerThermalStateNominal),
@@ -42,6 +48,8 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 @property (nonatomic, readwrite, copy, nullable) NSNumber *estimatedWaitSeconds;
 @property (nonatomic, readwrite) NFKServerThermalState thermalState;
 @property (nonatomic, readwrite, copy) NSDate *date;
+@property (nonatomic, readwrite, copy, nullable) NSString *baseModelName;
+@property (nonatomic, readwrite, copy, nullable) NSString *presetIdentifier;
 @end
 
 @implementation NFKServerLoad
@@ -66,6 +74,8 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 	load.estimatedWaitSeconds = wait.length > 0 ? @(wait.doubleValue) : nil;
 	load.thermalState = NFKStatusThermalState(fields[@"x-inferkit-thermal-state"]);
 	load.date = [NSDate date];
+	load.baseModelName = NFKStatusOptionalString(fields[@"x-inferkit-base-model"]);
+	load.presetIdentifier = NFKStatusOptionalString(fields[@"x-inferkit-preset"]);
 	return load;
 }
 
@@ -113,6 +123,11 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 @property (nonatomic, readwrite) NSInteger unloads;
 @property (nonatomic, readwrite, copy, nullable) NSNumber *residentBytes;
 @property (nonatomic, readwrite, copy, nullable) NSNumber *peakBytes;
+@property (nonatomic, readwrite, copy, nullable) NSString *catalogModelIdentifier;
+@property (nonatomic, readwrite, copy) NSDictionary<NSString *, id> *loadOptions;
+@property (nonatomic, readwrite, copy, nullable) NSString *baseModelName;
+@property (nonatomic, readwrite, copy, nullable) NSString *presetIdentifier;
+@property (nonatomic, readwrite, copy) NSArray<NSString *> *aliasNames;
 @end
 
 @implementation NFKServerModelStatus
@@ -155,6 +170,17 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 	}
 	status.runs = runs;
 	[status readResidency:NFKStatusDictionary(entry[@"residency"]) ?: @{}];
+	status.catalogModelIdentifier = NFKStatusOptionalString(entry[@"catalogModel"]);
+	status.loadOptions = NFKStatusDictionary(entry[@"loadOptions"]) ?: @{};
+	status.baseModelName = NFKStatusOptionalString(entry[@"base"]);
+	status.presetIdentifier = NFKStatusOptionalString(entry[@"preset"]);
+	NSMutableArray<NSString *> *aliases = [NSMutableArray array];
+	for (id name in [entry[@"aliases"] isKindOfClass:NSArray.class] ? entry[@"aliases"] : @[]) {
+		if (NFKStatusOptionalString(name) != nil) {
+			[aliases addObject:name];
+		}
+	}
+	status.aliasNames = aliases;
 	return status;
 }
 
@@ -197,6 +223,7 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 @property (nonatomic, readwrite, copy, nullable) NSNumber *storageAvailableBytes;
 @property (nonatomic, readwrite, copy, nullable) NSNumber *storageTotalBytes;
 @property (nonatomic, readwrite, copy) NSDictionary<NSString *, NSDictionary<NSString *, id> *> *runtimes;
+@property (nonatomic, readwrite, strong, nullable) NFKHardwareProfile *hardwareProfile;
 @end
 
 @implementation NFKServerHostStatus
@@ -239,6 +266,8 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 		}
 	}];
 	status.runtimes = runtimes;
+	NSDictionary *hardware = NFKStatusDictionary(host[@"hardware"]);
+	status.hardwareProfile = hardware != nil ? [NFKHardwareProfile profileWithDictionary:hardware] : nil;
 	return status;
 }
 
@@ -250,6 +279,7 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 @property (nonatomic, readwrite) NSTimeInterval uptime;
 @property (nonatomic, readwrite, copy) NSArray<NFKServerModelStatus *> *models;
 @property (nonatomic, readwrite, strong, nullable) NFKServerHostStatus *host;
+@property (nonatomic, readwrite, copy) NSDictionary<NSString *, NSString *> *aliases;
 @property (nonatomic, readwrite, copy) NSDictionary<NSString *, id> *JSONObject;
 @end
 
@@ -277,6 +307,16 @@ static NFKServerThermalState NFKStatusThermalState(id _Nullable name)
 	status.models = models;
 	NSDictionary *host = NFKStatusDictionary(reply[@"host"]);
 	status.host = host != nil ? [NFKServerHostStatus statusWithJSONObject:host] : nil;
+	NSMutableDictionary<NSString *, NSString *> *aliases = [NSMutableDictionary dictionary];
+	for (id value in [reply[@"aliases"] isKindOfClass:NSArray.class] ? reply[@"aliases"] : @[]) {
+		NSDictionary *alias = NFKStatusDictionary(value);
+		NSString *name = NFKStatusOptionalString(alias[@"name"]);
+		NSString *model = NFKStatusOptionalString(alias[@"model"]);
+		if (name != nil && model != nil) {
+			aliases[name] = model;
+		}
+	}
+	status.aliases = aliases;
 	status.JSONObject = reply;
 	return status;
 }

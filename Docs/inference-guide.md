@@ -791,6 +791,9 @@ answers HTTP on one port, under `/v1`:
   map arrives exactly; multi-arrays, the core's value types, and audio and video files cross too.
   `NFKRemoteInferKitBackend` is its client, and `backendForProvider:` builds it for the `inferKit`
   preset. Its streamed form reports the hosted job's progress and partial results.
+- The catalog route, `GET /v1/inferkit/catalog`, and the estimate route, `POST /v1/inferkit/estimate`,
+  which tell a client what the server can build and what a model would hold on the server's machine
+  (see [Catalog models, presets, and aliases](#catalog-models-presets-and-aliases)).
 
 A client reaches the server by address (`[NFKRemoteProvider.inferKit providerWithBaseURL:…]`) or by
 discovery: the server advertises `_inferkit._tcp` over Bonjour, and
@@ -864,8 +867,9 @@ backend under `NFKInputMessages` in the contract's chat shape, with its tools un
 hosted backend therefore needs to call tools: an MLX language model whose chat template takes tools,
 or a remote backend.
 
-The model name the agent sends must be a hosted model's name, since the server resolves it the way it
-resolves every route's `model` field. A server that hosts one model answers a request that names none.
+The model name the agent sends must be a name the server serves (a hosted model, an alias, or
+`model@preset`), since the server resolves it the way it resolves every route's `model` field. A server
+that hosts one model answers a request that names none.
 
 Claude Code reads the server's root URL, without `/v1`, from `ANTHROPIC_BASE_URL`, and its key from
 `ANTHROPIC_API_KEY` (sent as `x-api-key`) or `ANTHROPIC_AUTH_TOKEN` (sent as a Bearer token). It uses
@@ -963,6 +967,63 @@ final class Builder: NSObject, NFKServedBackendBuilder {
 }
 server.addBackendBuilder(Builder(), forModelName: "qwen3")
 ```
+
+### Catalog models, presets, and aliases
+
+A server hosts a [catalog](model-catalog.md) model by its identifier and options with
+`addModelWithIdentifier:options:catalog:forModelName:error:`. The options are checked when the model is
+added, and the model is built through the catalog's build entry when a request first needs it, so the
+memory check runs against the machine as it is then. Each build reuses the same options.
+
+A request names a model as `base@preset`. The server resolves every route's `model` field in one place:
+
+1. A hosted model's name or an alias wins.
+2. Otherwise the name splits at its last `@`. `base` must be a model hosted from the catalog, and
+   `preset` a suggested preset of its descriptor that sets only request defaults; such presets need no
+   setup.
+3. Any other name is not served. `claude-3@20240620` stays whole and reaches a model hosted under that
+   exact name.
+
+A preset that changes load options is served only once `addPreset:forBaseModelName:error:` adds it. The
+server compares the preset's resolved load options with the base's and with its other presets' models:
+equal options share that model's backend, and different options become a model of their own under
+`base@preset`, loaded and unloaded on its own. `addAlias:forModelName:requestDefaults:error:` serves a
+hosted model under a second name. An alias's or a preset's request defaults fill what a request leaves
+out.
+
+<!-- objc-check: given NFKInferenceServer *server = nil; NFKModelPreset *q4 = nil; -->
+```objc
+[server addModelWithIdentifier:@"qwen3-14b" options:@{ NFKModelLoadOptionContextLength: @16384 }
+                       catalog:nil forModelName:@"qwen3" error:&error];
+[server addPreset:q4 forBaseModelName:@"qwen3" error:&error];          // qwen3@q4: its own load
+[server addAlias:@"gpt-4o" forModelName:@"qwen3" requestDefaults:@{ NFKParameterTemperature: @0.2 } error:&error];
+```
+
+Every run reply names the model as the request sent it and carries `X-InferKit-Base-Model` and
+`X-InferKit-Preset`. Each model's entry in the status route and in `GET /v1/models` adds `catalogModel`,
+`loadOptions`, `base`, `preset`, and its `aliases`, and the model list includes the aliases.
+
+A client decides what to load on a server before it asks. `GET /v1/inferkit/catalog` answers the
+catalog's manifest, the status route's `host.hardware` is the server machine's `NFKHardwareProfile`
+snapshot, and `POST /v1/inferkit/estimate` with `{model, options}` answers the memory estimate against
+the server's budget and the constraints the budget leaves of each option. A server with
+`reportsHostDetails` set to NO answers the estimate alone, without the budget or the constraints, as
+its status route leaves out the machine. `NFKRemoteInferKitBackend` reads all three:
+
+<!-- objc-check: given NFKRemoteInferKitBackend *client = nil; -->
+```objc
+NFKModelCatalog *served = [client fetchModelCatalogWithError:&error];
+NFKHardwareProfile *machine = [client fetchServerHardwareProfileWithError:&error];
+NFKModelMemoryConstraints *constraints = nil;
+NFKModelMemoryEstimate *estimate = [client fetchMemoryEstimateForModelNamed:@"qwen3"
+                                                                    options:@{ NFKModelLoadOptionContextLength: @32768 }
+                                                                constraints:&constraints error:&error];
+BOOL fits = estimate.fits;                                       // against the server's budget
+```
+
+An MCP client reaches a hosted model as a tool once `addToolForModelName:outputModality:purpose:error:`
+adds one. The tool's name is `NFKModelToolName` of the model's name (`qwen3@q4` is `qwen3__q4`), and a
+second model whose tool name an existing tool already has is refused.
 
 ### The app's own routes
 

@@ -1244,9 +1244,9 @@ code is in its own file and reaches the server through `NFKInferenceServerPrivat
   with an `NFKAnthropicBackend` pointed at the counter's endpoint less `count_tokens`, so the two count
   the same thing; the counter does not send the `anthropic-beta` MCP header, so a request carrying
   `NFKParameterMCPServers` counts through the backend.
-- Model names: every route resolves `model` through `modelNamed:error:`, the one place presets will
-  extend. Claude Code also sends its background model (`ANTHROPIC_DEFAULT_HAIKU_MODEL`), which must be
-  hosted too.
+- Model names: every route resolves `model` through `modelNamed:error:`, the one place presets and
+  aliases resolve (see "Presets and aliases" below). Claude Code also sends its background model
+  (`ANTHROPIC_DEFAULT_HAIKU_MODEL`), which must be a name the server serves too.
 - Tests: `NFKServedAnthropicTests` (24) and `NFKServedResponsesTests` (15), each over a real loopback
   listener with raw HTTP and with the core client pointed at the server (non-streaming, streaming,
   tool round trips, images, schemas, error codes).
@@ -1644,6 +1644,104 @@ rules.
 - Tests: `NFKServerRouteTests` (9), over NSURLSession on a loopback port, two of them a finished
   reply releasing a disconnect handler that captures it and a handler set after the client left
   running at once.
+
+**Presets and aliases (2026-10-15).** Phase 0 item 3: the server hosts catalog models through the build
+entry and serves them under `model@preset` names and aliases. Decisions 9, 11, and 12 of the options
+work bind it: the build refuses a combination that does not fit, a suggested preset that sets only
+request defaults resolves without being added, and an MCP tool-name collision is refused.
+
+- Hosting: `addModelWithIdentifier:options:catalog:forModelName:error:` resolves the identifier
+  (`identifier@preset` through the descriptor's own presets, the catalog preset's load options and
+  request defaults merged under the given options) and the options at every stage now, so an unknown
+  model (`NFKModelCatalogErrorUnknownModel`) or a bad value (`InvalidOptions`) hosts nothing. The
+  machine and the budget are the build's: the provider block calls
+  `backendForModelIdentifier:options:error:` with the descriptor's identifier and the merged options on
+  every build, so a reload reapplies them and a model that does not fit records `DoesNotFit` as its
+  `load_error`. A nil catalog is `modelCatalog` (default `sharedCatalog`). The selector carries `error:`,
+  which the item's sketch left out, because the add validates.
+- `NFKServedModel` keeps `catalog`, `descriptor`, `givenOptions`, `hostedLoadOptions` (the load-stage
+  subset of the resolved options), `loadKey` (`canonicalLoadOptionsKey:` of that subset), and, for a
+  preset's model, `baseModelName`, `presetIdentifier`, and `requestDefaults`. They are set before
+  `host:` and never change, so they are read without the model's lock.
+- `addPreset:forBaseModelName:error:` keys by (base, `loadKey`):
+  - no load options → an alias `base@preset` of the base with the preset's request defaults;
+  - load options → the base's given options with the preset's merged over them make a candidate model,
+    and its key is compared with the base's, then with the base's other preset models'. Equal → an alias
+    of that model. None equal → the candidate is hosted as `base@preset` with its own load and
+    residency, and the preset's request defaults on the model.
+  The comparison covers the load stage only, so a preset whose request defaults name the context length
+  stays an alias. A preset alias resolves with its own base, preset, and defaults, so two presets with
+  equal load options keep their own request defaults. A
+  re-add replaces the alias or model under the name; a hosted model that is not this preset's is
+  `NFKInferenceServerErrorNameConflict` (9, new). The request defaults are checked at the request stage
+  first (`InvalidOptions`). A load-option preset on a model not hosted from a catalog is
+  `InvalidConfiguration`. `baseModelIdentifier` is not read: the base is the hosted name given.
+- Aliases: `addAlias:forModelName:requestDefaults:error:` needs a hosted model and refuses a hosted
+  model's name. `host:` removes an alias under the name it hosts, so the newer name wins. An alias whose
+  model is removed stays and answers 404 until a model is hosted under that name again. Aliases live
+  under the `models` lock. `aliasNames`, `modelNameForAlias:`, `removeAlias:`.
+- Resolution (`modelNamed:error:`, the one place, now returning a private `NFKServedTarget`: model,
+  name as asked, base, preset, request defaults):
+  1. `models[name]`, then `aliases[name]`.
+  2. `NFKModelNameSplitAtPreset` at the last `@`, accepted only where the left side is a hosted model
+     with a descriptor and the right side is a preset of it with `suggested` YES and
+     `changesLoadOptions` NO. Server presets never need the split: each is registered under its full
+     name.
+  3. Otherwise not found with the whole name in the message, so `claude-3@20240620` passes through.
+  The defaults stack: the model's own (a preset model's), then an explicit alias's or a suggested
+  preset's over them; a preset alias's replace them. `enqueue:on:request:response:` fills them into
+  `run.request` (the request's own parameters win) and, for a run with `work` (embeddings, token
+  counts), wraps the backend the work receives in an `NFKDefaultedBackend`.
+- Reporting:
+  - Every run reply carries `X-InferKit-Base-Model` (a preset's base, an alias's model, or the model)
+    and `X-InferKit-Preset` when one applies; `NFKServerLoad.baseModelName` and `presetIdentifier`
+    read them.
+  - OpenAI, Anthropic, and Responses replies name the model as asked.
+  - The native reply, and the streamed `result` event, add `model`, `base`, `preset`, and `loadOptions`
+    beside `result`.
+  - A model's description (status and `/v1/models`) adds `catalogModel`, `loadOptions` (the resident
+    backend's `loadOptionValues` when it reports them, else `hostedLoadOptions`), `base`, `preset`,
+    `requestDefaults`, and `aliases`. `GET /v1/models` lists the aliases beside the models (both wires);
+    `GET /v1/models/{name}` resolves any name, a suggested preset included, and adds the name's base,
+    preset, and defaults. The status route adds a top-level `aliases` array (name, model, base, preset,
+    requestDefaults). Suggested presets are not listed; the catalog route lists them.
+  - `NFKServerModelStatus` gains `catalogModelIdentifier`, `loadOptions`, `baseModelName`,
+    `presetIdentifier`, and `aliasNames`; `NFKServerStatus` gains `aliases`.
+- MCP: `addToolForModelName:outputModality:purpose:error:` adds an `NFKBackendTool` named
+  `NFKModelToolName(modelName)` whose backend (`NFKServedModelToolBackend`, private, holding the server
+  weakly) resolves the name on each call and waits on a semaphore for a run enqueued on the model with
+  route `/mcp`, so the tool shares the model's queue, limits, counts, and preset defaults. A queued run
+  always finishes (it runs, fails with its build, or fails when its model is removed), so the wait has
+  no deadline. `modelToolNames` (tool → model, under the `servedTools` lock) is the table: a second
+  model whose tool name is already a served tool's is refused with `NameConflict`, a re-add for the same
+  model replaces its tool, and `addTool:` or `removeToolNamed:` of that name drops the entry. A model
+  is not a tool until one is added; hosting alone lists nothing over MCP.
+- Routes: `GET /v1/inferkit/catalog` writes `manifestDataWithError:` of a catalog of `modelCatalog`'s
+  descriptors plus each hosted model's descriptor from another catalog. `POST /v1/inferkit/estimate`
+  takes `{model, options}`: a hosted catalog model starts from the load-stage subset of its given
+  options, else a catalog name (with `@preset`) from the preset's load options; the body's options
+  override. It answers `estimate` (judged against `NFKModelMemoryBudget.currentBudget`), `constraints`
+  (`constraintsForOptions:memoryBudget:`), `budget`, `options`, and `catalogModel`. Both take the
+  inference scope. `NFKModelCatalogErrorDomain` errors are served as 400 (`InvalidOptions`), 404
+  (`UnknownModel`), else 500. The estimate follows `reportsHostDetails` as the status route does: with
+  NO it is computed without a budget (resident and peak bytes, components, resolved options; `fits`
+  YES, no `reason`), and the reply leaves out `budget` and `constraints`, whose reasons quote the
+  budget. `fetchMemoryEstimateForModelNamed:options:constraints:error:` then returns nil constraints.
+- Hardware: the status route's `host.hardware` is `NFKHardwareProfile.currentProfile.dictionaryRepresentation`
+  (left out with the rest of `host`); `NFKServerHostStatus.hardwareProfile` reads it through
+  `profileWithDictionary:`, and `NFKRemoteInferKitBackend` reads it with
+  `fetchServerHardwareProfileWithError:` (`kNFKError_InferenceUnsupported` when the server leaves host
+  details out), the catalog with `fetchModelCatalogWithError:`, and an estimate with
+  `fetchMemoryEstimateForModelNamed:options:constraints:error:`.
+- Tests: `NFKServerPresetTests` (15), over HTTP on a loopback port with a test engine whose backend
+  answers with the parameters it received and the mode it was built with: a catalog model built on
+  first request, the add's checks and a catalog preset, a request-default preset sharing the base's
+  backend, a load-option preset as its own model, presets keyed by load options sharing one model with
+  their own defaults, a suggested preset resolving unadded (and a load-option or unsuggested one
+  refused until added), `claude-3@20240620` whole, the preset refusals, an alias, the reply fields and
+  headers on the chat and native routes and the model list, the MCP tool table and its collision, the
+  catalog route, the estimate route under both `reportsHostDetails` settings, and the hardware
+  snapshot.
 
 **Sendable blocks (2026-10-13).** An app's Swift 6 service (`-default-isolation MainActor`) trapped in
 `_swift_task_checkIsolatedSwift` → `dispatch_assert_queue_fail` when the server called a provider

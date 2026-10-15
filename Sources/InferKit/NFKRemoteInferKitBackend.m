@@ -6,6 +6,9 @@
 #import <InferKit/NFKRemoteInferKitBackend.h>
 #import <InferKit/NFKRemoteTransport.h>
 #import <InferKit/NFKErrors.h>
+#import <InferKit/NFKHardwareProfile.h>
+#import <InferKit/NFKModelCatalog.h>
+#import <InferKit/NFKModelMemory.h>
 #import "NFKInferenceWireCoding.h"
 
 @interface NFKRemoteInferKitBackend ()
@@ -144,17 +147,24 @@
 	return YES;
 }
 
-- (nullable NFKServerStatus *)fetchServerStatusWithError:(NSError * _Nullable *)outError
+/*! A request for a route under the server's base URL, authorized, or nil when no endpoint is set. */
+- (nullable NSMutableURLRequest *)serverRequestForPath:(NSString *)path error:(NSError * _Nullable *)outError
 {
 	NSURL *base = self.endpointURL.URLByDeletingLastPathComponent.URLByDeletingLastPathComponent;
 	if (base == nil) {
 		[self failWithCode:kNFKError_InferenceNotReady reason:@"no endpoint URL is set" error:outError];
 		return nil;
 	}
-	NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[base URLByAppendingPathComponent:@"inferkit/status"]];
+	NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[base URLByAppendingPathComponent:path]];
 	request.timeoutInterval = MIN(self.timeout, 30.0);
 	[NFKRemoteTransport authorizeRequest:request apiKey:self.apiKey style:NFKRemoteAPIStyleOpenAIChat];
-	id reply = [self JSONObjectForRequest:request error:outError];
+	return request;
+}
+
+- (nullable NFKServerStatus *)fetchServerStatusWithError:(NSError * _Nullable *)outError
+{
+	NSMutableURLRequest *request = [self serverRequestForPath:@"inferkit/status" error:outError];
+	id reply = request != nil ? [self JSONObjectForRequest:request error:outError] : nil;
 	if (reply == nil) {
 		return nil;
 	}
@@ -163,6 +173,65 @@
 		[self failWithCode:kNFKError_InferenceBackendFailure reason:@"the server's reply is not a status" error:outError];
 	}
 	return status;
+}
+
+- (nullable NFKHardwareProfile *)fetchServerHardwareProfileWithError:(NSError * _Nullable *)outError
+{
+	NFKServerStatus *status = [self fetchServerStatusWithError:outError];
+	if (status == nil) {
+		return nil;
+	}
+	if (status.host.hardwareProfile == nil) {
+		[self failWithCode:kNFKError_InferenceUnsupported reason:@"the server leaves its machine's details out of its status"
+					 error:outError];
+	}
+	return status.host.hardwareProfile;
+}
+
+- (nullable NFKModelCatalog *)fetchModelCatalogWithError:(NSError * _Nullable *)outError
+{
+	NSMutableURLRequest *request = [self serverRequestForPath:@"inferkit/catalog" error:outError];
+	NSData *manifest = request != nil ? [self replyDataForRequest:request error:outError] : nil;
+	if (manifest == nil) {
+		return nil;
+	}
+	NFKModelCatalog *catalog = [[NFKModelCatalog alloc] init];
+	return [catalog addDescriptorsFromManifestData:manifest error:outError] ? catalog : nil;
+}
+
+- (nullable NFKModelMemoryEstimate *)fetchMemoryEstimateForModelNamed:(nullable NSString *)modelName
+															  options:(nullable NSDictionary<NSString *, id> *)options
+														  constraints:(NFKModelMemoryConstraints * _Nullable * _Nullable)constraints
+																error:(NSError * _Nullable *)outError
+{
+	NSMutableDictionary *body = [NSMutableDictionary dictionaryWithObject:options ?: @{} forKey:@"options"];
+	body[@"model"] = modelName;
+	if (![NSJSONSerialization isValidJSONObject:body]) {
+		[self failWithCode:kNFKError_InferenceMissingInput reason:@"the options are not JSON values" error:outError];
+		return nil;
+	}
+	NSMutableURLRequest *request = [self serverRequestForPath:@"inferkit/estimate" error:outError];
+	NSData *data = request != nil ? [NSJSONSerialization dataWithJSONObject:body options:0 error:outError] : nil;
+	if (data == nil) {
+		return nil;
+	}
+	request.HTTPMethod = @"POST";
+	request.HTTPBody = data;
+	[request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+	NSDictionary *reply = [self JSONObjectForRequest:request error:outError];
+	NSDictionary *estimated = [reply[@"estimate"] isKindOfClass:NSDictionary.class] ? reply[@"estimate"] : nil;
+	NFKModelMemoryEstimate *estimate = estimated != nil ? [NFKModelMemoryEstimate estimateWithDictionary:estimated error:outError] : nil;
+	if (estimate == nil) {
+		if (reply != nil && estimated == nil) {
+			[self failWithCode:kNFKError_InferenceBackendFailure reason:@"the server's reply carries no estimate" error:outError];
+		}
+		return nil;
+	}
+	if (constraints != NULL) {
+		NSDictionary *limits = [reply[@"constraints"] isKindOfClass:NSDictionary.class] ? reply[@"constraints"] : nil;
+		*constraints = limits != nil ? [NFKModelMemoryConstraints constraintsWithDictionary:limits error:NULL] : nil;
+	}
+	return estimate;
 }
 
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
@@ -262,7 +331,8 @@
 	return urlRequest;
 }
 
-- (nullable id)JSONObjectForRequest:(NSURLRequest *)request error:(NSError * _Nullable *)outError
+/*! The body of a successful reply, or nil with the server's or the transport's error. */
+- (nullable NSData *)replyDataForRequest:(NSURLRequest *)request error:(NSError * _Nullable *)outError
 {
 	NSHTTPURLResponse *response = nil;
 	NSError *sendError = nil;
@@ -273,6 +343,15 @@
 		if (outError != NULL) {
 			*outError = failure;
 		}
+		return nil;
+	}
+	return data;
+}
+
+- (nullable id)JSONObjectForRequest:(NSURLRequest *)request error:(NSError * _Nullable *)outError
+{
+	NSData *data = [self replyDataForRequest:request error:outError];
+	if (data == nil) {
 		return nil;
 	}
 	id object = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];

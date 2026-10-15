@@ -95,6 +95,16 @@ app sets only when its user asks. The refusal names the nearest combination that
 `NFKModelMemoryFittingOptionsKey`. A model with ``NFKModelPreset`` entries is also reached as
 `model@preset`.
 
+### Serving catalog models
+
+``NFKInferenceServer/addModelWithIdentifier:options:catalog:forModelName:error:`` hosts a catalog model
+that the build entry builds when a request first needs it.
+``NFKInferenceServer/addPreset:forBaseModelName:error:`` serves it under a preset: a preset with equal
+load options, compared by ``NFKModelDescriptor/canonicalLoadOptionsKey:``, shares a backend, and any
+other is a model of its own. A suggested preset that sets only request defaults resolves as
+`model@preset` without being added. The server's catalog route serves the manifest, and its estimate
+route answers ``NFKModelMemoryEstimate`` and ``NFKModelMemoryConstraints`` for its own machine.
+
 ## Topics
 
 ### The catalog

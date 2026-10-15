@@ -89,14 +89,17 @@ Pure Apple frameworks, always available:
 - ``NFKInferenceServer`` — serves the backends this process hosts to other machines: the
   OpenAI-compatible routes the clients above speak, OpenAI's Responses API and Anthropic's Messages API
   (so Codex and Claude Code run on a hosted model), and a native route that carries a whole request.
-  Clients find it by address or over Bonjour.
+  Clients find it by address or over Bonjour. It hosts catalog models built on demand from their options,
+  serves them under presets (`model@preset`) and aliases, and answers the catalog and memory estimates
+  for its own machine.
 - ``NFKServerIdentity`` — a self-signed TLS identity for the server, kept in a directory across
   launches without the keychain. Clients pin its certificate's SHA-256 fingerprint.
 - ``NFKPinnedServers`` — the fingerprints automatic pinning remembers, one per Bonjour service
   name. Set as `NFKRemoteProvider.discoveryPinnedServers`, discovery pins each TLS server's advertised
   fingerprint on first use and reports a later different one.
 - ``NFKRemoteInferKitBackend`` — the native route's client: every key of a request crosses, and the
-  hosted backend's result and error come back as they were.
+  hosted backend's result and error come back as they were. It also reads the server's catalog, its
+  machine's hardware profile, and a model's memory estimate there.
 - ``NFKBalancedBackend`` — sends each request to one of several servers hosting the model, by expected
   wait, and moves a request that never started to the next server. Hosted in a server of its own, it
   makes that server a load balancer.

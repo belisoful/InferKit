@@ -526,6 +526,10 @@ load options needs a load of its own (`changesLoadOptions`).
   (`NFKModelToolNameSeparator`), every character other than a letter, a digit, `_`, and `-` becomes `_`,
   and the result is cut to 64 characters. `whisper@fast` is `whisper__fast`.
 
+`NFKInferenceServer` serves a hosted catalog model's suggested presets that set only request defaults as
+`model@preset` without setup, and the others once `addPreset:forBaseModelName:error:` adds them (see
+[Catalog models, presets, and aliases](inference-guide.md#catalog-models-presets-and-aliases)).
+
 ## Load options and the build
 
 ### Option values

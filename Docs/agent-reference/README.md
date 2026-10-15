@@ -31,7 +31,8 @@ file listed here, never back into `AGENTS.md` / `CLAUDE.md`. The Documentation S
   cache policy, and the serving identity with certificate pinning (keychain prompt measurements included).
 - [remote-providers.md](remote-providers.md) — the provider presets, the shared transport, model
   catalogs, local runners, streaming, tools, structured output, media in and out, typed decisions, the
-  probes that verified each endpoint, and `NFKInferenceServer`.
+  probes that verified each endpoint, and `NFKInferenceServer` with its catalog models, presets, and
+  aliases.
 - [remote-provider-capabilities.md](remote-provider-capabilities.md) — every inference mode each
   preset serves, set against the backend that reaches it, and the build order for the gaps.
 - [coreml-compute-plan.md](coreml-compute-plan.md) — `NFKComputePlan` and what was measured about

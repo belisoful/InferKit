@@ -49,14 +49,14 @@ static NSString *NFKServedAnthropicIdentifier(NSString *prefix)
 	}
 	NSError *error = nil;
 	NSString *forcedToolName = nil;
-	NFKServedModel *model = [server modelNamed:body[@"model"] error:&error];
-	NFKInferenceRequest *inference = model != nil ? [self requestFromBody:body forcedToolName:&forcedToolName error:&error] : nil;
+	NFKServedTarget *target = [server modelNamed:body[@"model"] error:&error];
+	NFKInferenceRequest *inference = target != nil ? [self requestFromBody:body forcedToolName:&forcedToolName error:&error] : nil;
 	if (inference == nil) {
 		[server sendError:error response:response wire:NFKServedWireAnthropic];
 		return;
 	}
 	NSString *identifier = [self newMessageIdentifier];
-	NSString *modelName = NFKServedModelName(model);
+	NSString *modelName = target.name;
 	NFKServedRun *run = [[NFKServedRun alloc] init];
 	run.request = inference;
 	if (![body[@"stream"] boolValue]) {
@@ -68,7 +68,7 @@ static NSString *NFKServedAnthropicIdentifier(NSString *prefix)
 			[response sendStatus:200 JSONObject:[self messageForResult:result request:inference identifier:identifier
 																  model:modelName forcedToolName:forcedToolName] headers:nil];
 		};
-		[server enqueue:run on:model request:request response:response];
+		[server enqueue:run on:target request:request response:response];
 		return;
 	}
 	NFKServedAnthropicStream *stream = [[NFKServedAnthropicStream alloc] initWithRequest:inference identifier:identifier model:modelName
@@ -97,7 +97,7 @@ static NSString *NFKServedAnthropicIdentifier(NSString *prefix)
 			[response endStream];
 		}
 	};
-	[server enqueue:run on:model request:request response:response];
+	[server enqueue:run on:target request:request response:response];
 }
 
 + (void)serveTokenCount:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response server:(NFKInferenceServer *)server
@@ -107,13 +107,13 @@ static NSString *NFKServedAnthropicIdentifier(NSString *prefix)
 		return;
 	}
 	NSError *error = nil;
-	NFKServedModel *model = [server modelNamed:body[@"model"] error:&error];
-	NFKInferenceRequest *inference = model != nil ? [self requestFromBody:body forcedToolName:NULL error:&error] : nil;
+	NFKServedTarget *target = [server modelNamed:body[@"model"] error:&error];
+	NFKInferenceRequest *inference = target != nil ? [self requestFromBody:body forcedToolName:NULL error:&error] : nil;
 	if (inference == nil) {
 		[server sendError:error response:response wire:NFKServedWireAnthropic];
 		return;
 	}
-	NFKServedRun *run = [NFKServedRun tokenCountRunForRequest:inference modelName:NFKServedModelName(model)];
+	NFKServedRun *run = [NFKServedRun tokenCountRunForRequest:inference modelName:target.name];
 	run.completionHandler = ^(NFKInferenceResult *result, NSError *runError) {
 		NSNumber *count = result != nil ? [result outputForKey:NFKOutputUsage][NFKUsageInputTokens] : nil;
 		if (count == nil) {
@@ -122,7 +122,7 @@ static NSString *NFKServedAnthropicIdentifier(NSString *prefix)
 		}
 		[response sendStatus:200 JSONObject:@{ @"input_tokens": count } headers:nil];
 	};
-	[server enqueue:run on:model request:request response:response];
+	[server enqueue:run on:target request:request response:response];
 }
 
 + (NSDictionary<NSString *, id> *)modelEntryForName:(NSString *)name createdAt:(NSInteger)createdAt

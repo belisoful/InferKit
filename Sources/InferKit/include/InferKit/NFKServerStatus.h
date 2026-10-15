@@ -10,6 +10,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class NFKHardwareProfile;
+
 /*!
 	@enum       NFKServerThermalState
 	@abstract   A served machine's thermal state, as NSProcessInfo reports it there.
@@ -76,6 +78,11 @@ typedef NS_ENUM(NSInteger, NFKServerModelResidency) {
 
 /*! When the reply arrived. */
 @property (nonatomic, readonly, copy) NSDate *date;
+/*! The base model the request's name reached, from X-InferKit-Base-Model: a preset's base, an alias's
+	model, or the model itself; nil when the reply carries none. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSString *baseModelName;
+/*! The preset that applied, from X-InferKit-Preset, or nil. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSString *presetIdentifier;
 
 /*! The load a reply's headers carry, or nil when they carry none. Header names match in any case. */
 + (nullable instancetype)loadWithHTTPHeaders:(NSDictionary *)headers;
@@ -192,6 +199,19 @@ typedef NS_ENUM(NSInteger, NFKServerModelResidency) {
 /*! Unloads since the server started. Introduced in InferKit 0.4.0. */
 @property (nonatomic, readonly) NSInteger unloads;
 
+/*! The identifier of the catalog descriptor the model is built from, or nil for a model not hosted
+	from a catalog. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSString *catalogModelIdentifier;
+/*! The load options the model builds with: its backend's loadOptionValues once it reports them, else
+	the options the server resolved when it hosted the model. Empty when there are none. Introduced in
+	InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *loadOptions;
+/*! The base model of a model a load-option preset added, or nil. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSString *baseModelName;
+/*! The preset of a model a load-option preset added, or nil. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSString *presetIdentifier;
+/*! The aliases that name the model, presets' aliases included, sorted. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSArray<NSString *> *aliasNames;
 /*! The bytes the model held in memory after its last load, as its backend or the server measured them,
 	or nil before a measured load. It stays after an unload. Three limits apply to the reading:
 	- A runtime keeps one peak for the whole process, so overlapping loads and runs fall into each
@@ -247,6 +267,11 @@ typedef NS_ENUM(NSInteger, NFKServerModelResidency) {
 
 /*! Each linked runtime's report (NFKServingRuntimeStatus), keyed by its name, such as "mlx". */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, NSDictionary<NSString *, id> *> *runtimes;
+/*! The served machine's hardware profile, read from the snapshot the server sends, or nil when it sends
+	none. An app evaluates a model's constraints for that machine with it, through
+	constraintsForHardwareProfile: or NFKModelMemoryBudget's budgetForHardwareProfile:. Introduced in
+	InferKit 0.4.0. */
+@property (nonatomic, readonly, strong, nullable) NFKHardwareProfile *hardwareProfile;
 
 @end
 
@@ -274,6 +299,9 @@ typedef NS_ENUM(NSInteger, NFKServerModelResidency) {
 
 /*! The machine's state, or nil when the server leaves host details out. */
 @property (nonatomic, readonly, strong, nullable) NFKServerHostStatus *host;
+/*! The server's aliases, presets' aliases included: each alias name and the hosted model it names.
+	Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSDictionary<NSString *, NSString *> *aliases;
 
 /*! The reply as the server sent it. */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *JSONObject;

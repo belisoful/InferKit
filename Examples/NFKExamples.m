@@ -806,6 +806,62 @@
 	[server stop];
 }
 
+- (void)testExampleCatalogModelsUnderPresetsAndAliases
+{
+	[self addExampleChatToTheSharedCatalog];
+	ExampleChatBuilder *builder = [[ExampleChatBuilder alloc] init];
+	[NFKModelCatalog registerBackendBuilder:builder forEngine:@"example-engine"];
+	[self addTeardownBlock:^{
+		[NFKModelCatalog registerBackendBuilder:nil forEngine:@"example-engine"];
+	}];
+	NFKModelDescriptor *chat = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"example.chat"];
+	if (![chat estimatedMemoryForOptions:nil memoryBudget:[NFKModelMemoryBudget currentBudget] error:NULL].fits) {
+		XCTSkip(@"this machine's memory budget does not hold the example model");
+	}
+
+	NFKInferenceServer *server = [[NFKInferenceServer alloc] init];
+	server.port = 0;
+	server.loopbackOnly = YES;
+	NSError *error = nil;
+	XCTAssertTrue([server addModelWithIdentifier:@"example.chat" options:nil catalog:nil forModelName:@"chat" error:&error],
+				  @"%@", error);
+	NFKModelPreset *q4 = [[NFKModelPreset alloc] initWithIdentifier:@"q4" title:@"4-bit" help:nil baseModelIdentifier:nil
+														loadOptions:@{ NFKModelLoadOptionQuantizationBits: @4 }
+													requestDefaults:nil suggested:NO extensions:nil];
+	NFKModelPreset *cool = [[NFKModelPreset alloc] initWithIdentifier:@"cool" title:nil help:nil baseModelIdentifier:nil
+														  loadOptions:nil requestDefaults:@{ NFKParameterTemperature: @0.2 }
+															suggested:NO extensions:nil];
+	XCTAssertTrue([server addPreset:q4 forBaseModelName:@"chat" error:&error], @"%@", error);
+	XCTAssertTrue([server addPreset:cool forBaseModelName:@"chat" error:&error], @"%@", error);
+	XCTAssertTrue([server addAlias:@"gpt-4o" forModelName:@"chat" requestDefaults:nil error:&error], @"%@", error);
+	XCTAssertEqualObjects(server.modelNames, (@[ @"chat", @"chat@q4" ]), @"q4 loads on its own");
+	XCTAssertEqualObjects(server.aliasNames, (@[ @"chat@cool", @"gpt-4o" ]), @"cool shares chat's backend");
+	NFKBackendTool *tool = [server addToolForModelName:@"chat@q4" outputModality:NFKModalityText purpose:nil error:&error];
+	XCTAssertEqualObjects(tool.name, @"chat__q4", @"%@", error);
+	XCTAssertTrue([server startWithError:&error], @"%@", error);
+
+	NFKRemoteInferKitBackend *client = [NFKRemoteInferKitBackend backendWithBaseURL:server.localBaseURL];
+	client.modelName = @"chat@q4";
+	NFKInferenceResult *result = [client runInferenceForRequest:
+		[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }] error:&error];
+	XCTAssertEqualObjects([result outputForKey:NFKInputPrompt], @"hi", @"%@", error);
+	XCTAssertEqualObjects(builder.lastRequest.argumentOptions[NFKModelLoadOptionQuantizationBits], @4);
+	XCTAssertEqualObjects(client.lastReportedLoad.baseModelName, @"chat");
+	XCTAssertEqualObjects(client.lastReportedLoad.presetIdentifier, @"q4");
+
+	NFKModelCatalog *served = [client fetchModelCatalogWithError:&error];
+	XCTAssertNotNil([served descriptorWithIdentifier:@"example.chat"], @"%@", error);
+	NFKHardwareProfile *machine = [client fetchServerHardwareProfileWithError:&error];
+	XCTAssertEqualObjects(machine.chipName, NFKHardwareProfile.currentProfile.chipName, @"%@", error);
+	NFKModelMemoryConstraints *limits = nil;
+	NFKModelMemoryEstimate *needs = [client fetchMemoryEstimateForModelNamed:@"chat@q4" options:nil
+																 constraints:&limits error:&error];
+	// The 4-bit weights and 8192 positions of cache at 16 bits, as the catalog example computes them.
+	XCTAssertEqual(needs.peakByteCount, 706250000 + 939524096, @"%@", error);
+	XCTAssertNotNil(limits);
+	[server stop];
+}
+
 - (void)testExampleRemoteEmbeddingsAndLocalRunners
 {
 	// Embeddings are the same shape everywhere, and the vector comes back under the core key the

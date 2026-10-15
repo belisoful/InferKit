@@ -3918,6 +3918,51 @@ let awaited = try await NFKServerStatus.fetchStatus(baseURL: studio.baseURL, api
 The host's GPU utilization counts every process and reads near 1 while a single run executes, so a
 client choosing a server compares the queue figures and the estimated wait.
 
+### Catalog models under presets and aliases
+
+A server hosts a catalog model by identifier and options; the catalog's build entry builds it when a
+request first needs it. A preset that changes load options becomes a model of its own, one that only
+fills request defaults shares the base's backend, and a suggested request-defaults preset of the
+model's descriptor is served as `model@preset` without being added. A client reads the server's
+catalog, its machine, and a model's memory estimate there.
+
+```objc
+NFKInferenceServer *server = [[NFKInferenceServer alloc] init];
+[server addModelWithIdentifier:@"example.chat" options:nil catalog:nil forModelName:@"chat" error:&error];
+NFKModelPreset *q4 = [[NFKModelPreset alloc] initWithIdentifier:@"q4" title:@"4-bit" help:nil
+                                            baseModelIdentifier:nil
+                                                    loadOptions:@{ NFKModelLoadOptionQuantizationBits: @4 }
+                                                requestDefaults:nil suggested:NO extensions:nil];
+NFKModelPreset *cool = [[NFKModelPreset alloc] initWithIdentifier:@"cool" title:nil help:nil
+                                              baseModelIdentifier:nil loadOptions:nil
+                                                  requestDefaults:@{ NFKParameterTemperature: @0.2 }
+                                                        suggested:NO extensions:nil];
+[server addPreset:q4 forBaseModelName:@"chat" error:&error];     // chat@q4 loads on its own
+[server addPreset:cool forBaseModelName:@"chat" error:&error];   // chat@cool shares chat's backend
+[server addAlias:@"gpt-4o" forModelName:@"chat" requestDefaults:nil error:&error];
+[server addToolForModelName:@"chat@q4" outputModality:NFKModalityText purpose:nil error:&error];  // MCP tool chat__q4
+[server startWithError:&error];
+
+NFKRemoteInferKitBackend *client = [NFKRemoteInferKitBackend backendWithBaseURL:server.localBaseURL];
+client.modelName = @"chat@q4";
+NFKInferenceResult *result = [client runInferenceForRequest:
+    [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }] error:&error];
+NSString *base = client.lastReportedLoad.baseModelName;           // "chat", from X-InferKit-Base-Model
+
+NFKModelCatalog *served = [client fetchModelCatalogWithError:&error];          // GET /v1/inferkit/catalog
+NFKHardwareProfile *machine = [client fetchServerHardwareProfileWithError:&error];  // the status route's snapshot
+NFKModelMemoryConstraints *limits = nil;
+NFKModelMemoryEstimate *needs = [client fetchMemoryEstimateForModelNamed:@"chat@q4" options:nil
+                                                             constraints:&limits error:&error];
+```
+
+```swift
+try server.addModel(identifier: "example.chat", options: nil, catalog: nil, forModelName: "chat")
+try server.addPreset(q4, forBaseModelName: "chat")
+try server.addAlias("gpt-4o", forModelName: "chat", requestDefaults: [NFKParameterTemperature: 0.2])
+let tool = try server.addTool(forModelName: "chat@q4", outputModality: .text, purpose: nil)  // "chat__q4"
+```
+
 ### Balancing across servers
 
 `NFKBalancedBackend` sends each request to whichever server hosting the model is expected to start

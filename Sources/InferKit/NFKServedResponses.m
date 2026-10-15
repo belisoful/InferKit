@@ -72,15 +72,15 @@ static NSDictionary *NFKServedCustomToolParameters(void)
 	}
 	NSError *error = nil;
 	NSSet<NSString *> *customToolNames = nil;
-	NFKServedModel *model = [server modelNamed:body[@"model"] error:&error];
-	NFKInferenceRequest *inference = model != nil ? [self requestFromBody:body customToolNames:&customToolNames error:&error] : nil;
+	NFKServedTarget *target = [server modelNamed:body[@"model"] error:&error];
+	NFKInferenceRequest *inference = target != nil ? [self requestFromBody:body customToolNames:&customToolNames error:&error] : nil;
 	if (inference == nil) {
 		[server sendError:error response:response wire:NFKServedWireOpenAI];
 		return;
 	}
 	NSString *identifier = [self newResponseIdentifier];
 	NSInteger created = (NSInteger)NSDate.date.timeIntervalSince1970;
-	NSString *modelName = NFKServedModelName(model);
+	NSString *modelName = target.name;
 	NSSet<NSString *> *customNames = customToolNames ?: [NSSet set];
 	NFKServedRun *run = [[NFKServedRun alloc] init];
 	run.request = inference;
@@ -93,7 +93,7 @@ static NSDictionary *NFKServedCustomToolParameters(void)
 			[response sendStatus:200 JSONObject:[self responseForResult:result body:body identifier:identifier createdAt:created
 																  model:modelName customToolNames:customNames] headers:nil];
 		};
-		[server enqueue:run on:model request:request response:response];
+		[server enqueue:run on:target request:request response:response];
 		return;
 	}
 	NFKServedResponsesStream *stream = [[NFKServedResponsesStream alloc] initWithBody:body identifier:identifier createdAt:created model:modelName
@@ -121,7 +121,7 @@ static NSDictionary *NFKServedCustomToolParameters(void)
 			[response endStream];
 		}
 	};
-	[server enqueue:run on:model request:request response:response];
+	[server enqueue:run on:target request:request response:response];
 }
 
 + (void)serveInputTokens:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response server:(NFKInferenceServer *)server
@@ -131,13 +131,13 @@ static NSDictionary *NFKServedCustomToolParameters(void)
 		return;
 	}
 	NSError *error = nil;
-	NFKServedModel *model = [server modelNamed:body[@"model"] error:&error];
-	NFKInferenceRequest *inference = model != nil ? [self requestFromBody:body customToolNames:NULL error:&error] : nil;
+	NFKServedTarget *target = [server modelNamed:body[@"model"] error:&error];
+	NFKInferenceRequest *inference = target != nil ? [self requestFromBody:body customToolNames:NULL error:&error] : nil;
 	if (inference == nil) {
 		[server sendError:error response:response wire:NFKServedWireOpenAI];
 		return;
 	}
-	NFKServedRun *run = [NFKServedRun tokenCountRunForRequest:inference modelName:NFKServedModelName(model)];
+	NFKServedRun *run = [NFKServedRun tokenCountRunForRequest:inference modelName:target.name];
 	run.completionHandler = ^(NFKInferenceResult *result, NSError *runError) {
 		NSNumber *count = result != nil ? [result outputForKey:NFKOutputUsage][NFKUsageInputTokens] : nil;
 		if (count == nil) {
@@ -146,7 +146,7 @@ static NSDictionary *NFKServedCustomToolParameters(void)
 		}
 		[response sendStatus:200 JSONObject:@{ @"object": @"response.input_tokens", @"input_tokens": count } headers:nil];
 	};
-	[server enqueue:run on:model request:request response:response];
+	[server enqueue:run on:target request:request response:response];
 }
 
 #pragma mark Request

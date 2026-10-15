@@ -12,6 +12,11 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class NFKHardwareProfile;
+@class NFKModelCatalog;
+@class NFKModelMemoryEstimate;
+@class NFKModelMemoryConstraints;
+
 /*!
 	@class      NFKRemoteInferKitBackend
 	@abstract   A backend that runs a model another InferKit process serves.
@@ -27,7 +32,8 @@ NS_ASSUME_NONNULL_BEGIN
 				arrive, and cancelling it cancels the run on the server. A failure arrives as the
 				error the hosted backend raised, domain and code intact.
 
-				modelName picks among the server's models; nil runs the server's only model.
+				modelName picks among the server's models; nil runs the server's only model. It can name
+				an alias or base@preset, which the server resolves.
 				supportedInputKeys, supportedParameterKeys, and supportedOutputKeys are the hosted
 				backend's, known once prepareWithError: has read the server's description of the
 				model. Until then the backend does not respond to any of the three selectors, which a
@@ -79,6 +85,31 @@ NS_ASSUME_NONNULL_BEGIN
 	server reports host details, the machine's state. Blocks for the round trip. Introduced in
 	InferKit 0.4.0. */
 - (nullable NFKServerStatus *)fetchServerStatusWithError:(NSError * _Nullable *)outError;
+
+/*! The served machine's hardware profile, read from the status route's snapshot, for evaluating a
+	model's constraints for that machine. Fails with kNFKError_InferenceUnsupported when the server
+	leaves host details out. Blocks for the round trip. Introduced in InferKit 0.4.0. */
+- (nullable NFKHardwareProfile *)fetchServerHardwareProfileWithError:(NSError * _Nullable *)outError;
+
+/*! The catalog the server builds from, read from GET /v1/inferkit/catalog. Blocks for the round trip.
+	Introduced in InferKit 0.4.0. */
+- (nullable NFKModelCatalog *)fetchModelCatalogWithError:(NSError * _Nullable *)outError;
+
+/*!
+	@method     fetchMemoryEstimateForModelNamed:options:constraints:error:
+	@abstract   A model's memory estimate on the server's machine, from POST /v1/inferkit/estimate.
+	@discussion modelName is a catalog identifier, identifier@preset, or a model the server hosts from the
+				catalog, whose options the given ones override; nil names the server's only model. The
+				estimate is judged against the server's budget, and constraints receives what that budget
+				leaves of each option. A server that leaves its machine's details out
+				(reportsHostDetails NO) sends the estimate without a budget, and constraints receives nil. A model the server neither hosts nor lists fails with
+				NFKInferenceServerErrorModelNotFound, and options that do not resolve with
+				NFKModelCatalogErrorInvalidOptions. Blocks for the round trip. Introduced in InferKit 0.4.0.
+*/
+- (nullable NFKModelMemoryEstimate *)fetchMemoryEstimateForModelNamed:(nullable NSString *)modelName
+															  options:(nullable NSDictionary<NSString *, id> *)options
+														  constraints:(NFKModelMemoryConstraints * _Nullable * _Nullable)constraints
+																error:(NSError * _Nullable *)outError;
 
 /*! The streamed form: the job reports the hosted run's progress and partial results, and cancelling
 	it closes the connection, which cancels the run on the server. */
