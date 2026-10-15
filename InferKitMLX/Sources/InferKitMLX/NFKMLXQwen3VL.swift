@@ -476,8 +476,17 @@ public final class NFKMLXQwen3VL: NSObject {
     /// downloaded release directory, ready to answer a question about an image.
     @objc(modelWithDirectoryURL:error:)
     public static func model(directoryURL: URL) throws -> NFKMLXQwen3VL {
+        try model(directoryURL: directoryURL, loadOptions: NFKMLXLoadOptions())
+    }
+
+    /// ``model(directoryURL:)`` with the decoder loaded as `loadOptions` say: at its precision (float32
+    /// when it names none), held as its residency plans the decoder's routed experts, and quantized to its
+    /// quantization bits. Introduced in InferKit 0.4.0.
+    static func model(directoryURL: URL, loadOptions: NFKMLXLoadOptions) throws -> NFKMLXQwen3VL {
         let vision = try visionNet(directoryURL: directoryURL)
-        let decoder = try decoder(directoryURL: directoryURL)
+        let decoder = try decoder(directoryURL: directoryURL, precision: loadOptions.precision ?? .float32,
+                                  residency: loadOptions.residency)
+        try loadOptions.applyWeightQuantization(to: decoder)
         guard let tokenizer = NFKMLXLanguage.releaseTokenizer(inDirectory: directoryURL) else {
             throw NFKMLXError.weightsMismatch("the release carries no tokenizer files")
         }

@@ -10,14 +10,17 @@ names). For a Hugging Face source the script reads the repository's file tree
 (`/api/models/{repo}/tree/{revision}?recursive=1`), which gives each file's size, the SHA-256 Git LFS
 records, and, through `/api/models/{repo}/revision/{revision}`, the commit the revision resolves to.
 It reads each safetensors file's header by two HTTP range requests (`shapes.header`) to sum the
-tensor bytes by dtype and count the elements. A URL source gets a HEAD request for its
-Content-Length. A Google Drive folder or a release page serves no size and is recorded as
+tensor bytes by dtype and count the elements, and from the tensor names and shapes it takes, per
+top-level directory, the repeated layers and the largest of them, the routed-expert bytes, and the
+elements a runtime weight quantization packs. It reads the repository's `config.json` for the
+geometry the key-value cache follows. A URL source gets a HEAD request for its Content-Length. A Google Drive folder or a release page serves no size and is recorded as
 unmeasurable. `HF_TOKEN` is sent when set; a repository that refuses the listing without it is
 recorded as gated.
 
 The download a variant makes is the one the package's download code makes: every required file,
 each optional file the repository serves, the first weight candidate a directory serves, and the
-shards a `*.index.json` names. Only small JSON indexes are fetched whole; no weight file is.
+shards a `*.index.json` names. Only small JSON files (shard indexes and `config.json`) are fetched
+whole; no weight file is.
 
 The result is InferKitMLX/Sources/InferKitMLX/NFKMLXCatalogMeasurements.swift, a generated table the
 catalog builder reads. A summary goes to standard error.
@@ -195,12 +198,13 @@ def shard_paths(repo, revision, index_path):
 
 
 def tensor_stats(url):
-    """dtype -> stored bytes, and the element count, of the safetensors file at `url`."""
+    """dtype -> stored bytes, the element count, and (name, dtype, shape, bytes) per tensor, of the
+    safetensors file at `url`."""
     with _lock:
         if url in _headers:
             return _headers[url]
     header = _with_backoff(lambda: shapes.header(url), url)
-    by_dtype, elements = {}, 0
+    by_dtype, elements, tensors = {}, 0, []
     for name, entry in header.items():
         if name == "__metadata__":
             continue
@@ -210,10 +214,113 @@ def tensor_stats(url):
         for dimension in entry["shape"]:
             count *= dimension
         elements += count
-    result = (by_dtype, elements)
+        tensors.append((name, entry["dtype"], tuple(entry["shape"]), end - start))
+    result = (by_dtype, elements, tensors)
     with _lock:
         _headers[url] = result
     return result
+
+
+# MARK: - Tensor structure
+
+# The first repeated-layer container in a tensor name: `model.layers.12.`, `transformer_blocks.3.`.
+LAYER_PATTERN = re.compile(r"^((?:.*?\.)?(?:layers|h|blocks|transformer_blocks))\.(\d+)\.")
+QUANTIZATION_GROUP = 64
+
+
+def is_quantizable(name, shape):
+    """A rank-2 `.weight` whose input width divides the quantization group, outside the embeddings and
+    the norms."""
+    lowered = name.lower()
+    return (len(shape) == 2 and name.endswith(".weight") and shape[-1] % QUANTIZATION_GROUP == 0
+            and "embed" not in lowered and "norm" not in lowered)
+
+
+class Structure:
+    """What one top-level directory's tensors hold beyond their bytes: the repeated layers of its
+    largest layer container, its routed experts, and its quantizable elements."""
+
+    def __init__(self):
+        self.containers = {}  # container -> index -> dtype -> bytes
+        self.expert_bytes = {}
+        self.quantizable = 0
+
+    def add(self, name, dtype, shape, nbytes):
+        match = LAYER_PATTERN.match(name)
+        if match:
+            layer = self.containers.setdefault(match.group(1), {}).setdefault(int(match.group(2)), {})
+            layer[dtype] = layer.get(dtype, 0) + nbytes
+        if ".experts." in name:
+            self.expert_bytes[dtype] = self.expert_bytes.get(dtype, 0) + nbytes
+        if is_quantizable(name, shape):
+            count = 1
+            for dimension in shape:
+                count *= dimension
+            self.quantizable += count
+
+    def layers(self):
+        """(count, the largest layer's bytes by dtype) of the container holding the most bytes, or None."""
+        if not self.containers:
+            return None
+        def total(layers):
+            return sum(sum(dtypes.values()) for dtypes in layers.values())
+        _, layers = max(self.containers.items(), key=lambda item: (total(item[1]), item[0]))
+        largest = max(layers.values(), key=lambda dtypes: (sum(dtypes.values()), sorted(dtypes.items())))
+        return len(layers), largest
+
+
+# MARK: - Configuration geometry
+
+# The fields the key-value cache follows, read from the root of config.json and, where a release nests
+# its decoder, from text_config, which wins.
+GEOMETRY_FIELDS = {
+    "num_hidden_layers": "layerCount",
+    "num_attention_heads": "attentionHeads",
+    "num_key_value_heads": "keyValueHeads",
+    "head_dim": "headDimension",
+    "hidden_size": "hiddenSize",
+    "max_position_embeddings": "maximumPositions",
+    "sliding_window": "slidingWindow",
+    "sliding_window_pattern": "slidingWindowPattern",
+    "num_kv_shared_layers": "sharedKeyValueLayers",
+    "global_head_dim": "globalHeadDimension",
+    "num_global_key_value_heads": "globalKeyValueHeads",
+    "vocab_size": "vocabularySize",
+}
+NESTED_CONFIGS = ("text_config", "llm_config", "language_config")
+# Nemotron-H's hybrid_override_pattern names each layer by one character.
+PATTERN_LAYER_TYPES = {"M": "mamba", "*": "attention", "-": "mlp", "E": "moe"}
+
+
+def geometry_of(config):
+    """The geometry fields a configuration states, or None when it states none."""
+    scopes = [config] + [config[key] for key in NESTED_CONFIGS if isinstance(config.get(key), dict)]
+    geometry = {}
+    for scope in scopes:
+        for field, name in GEOMETRY_FIELDS.items():
+            value = scope.get(field)
+            if isinstance(value, int) and not isinstance(value, bool):
+                geometry[name] = value
+        types = scope.get("layer_types") or scope.get("layers_block_type")
+        if isinstance(types, list) and all(isinstance(kind, str) for kind in types):
+            geometry["layerTypes"] = types
+        pattern = scope.get("hybrid_override_pattern")
+        if isinstance(pattern, str) and pattern:
+            geometry["layerTypes"] = [PATTERN_LAYER_TYPES.get(character, character) for character in pattern]
+    return geometry or None
+
+
+def geometry(repo, revision, files):
+    """The geometry of the repository's root config.json, or None where it has none, states none, or
+    refuses it without an accepted token."""
+    if "config.json" not in files:
+        return None
+    try:
+        body = _with_backoff(lambda: shapes._request(resolve_url(repo, revision, "config.json")), f"{repo} config")
+        config = json.loads(body)
+    except (Gated, Missing, RuntimeError, ValueError):
+        return None
+    return geometry_of(config) if isinstance(config, dict) else None
 
 
 # MARK: - One variant
@@ -238,6 +345,10 @@ class Measurement:
         self.parameter_count = None
         self.tensor_bytes = {}
         self.opaque_bytes = {}
+        self.layers = {}
+        self.expert_bytes = {}
+        self.quantizable_elements = {}
+        self.geometry = None
 
 
 def file_location(source, file):
@@ -348,12 +459,13 @@ def measure_hub_variant(source, rows):
         return measurement
     total, elements, headers_read = 0, 0, True
     unreadable = []
+    structures = {}
     for repo, revision, path, role, size in sized:
         total += size
         directory = directory_of(path)
         if path.endswith(".safetensors") and not repo.startswith("http"):
             try:
-                by_dtype, count = tensor_stats(resolve_url(repo, revision, path))
+                by_dtype, count, tensors = tensor_stats(resolve_url(repo, revision, path))
             except (Gated, Missing, RuntimeError) as error:
                 headers_read = False
                 reason = str(error).rsplit(": ", 1)[-1]
@@ -364,8 +476,21 @@ def measure_hub_variant(source, rows):
             for dtype, nbytes in by_dtype.items():
                 bucket[dtype] = bucket.get(dtype, 0) + nbytes
             elements += count
+            structure = structures.setdefault(directory, Structure())
+            for tensor in tensors:
+                structure.add(*tensor)
         elif role == "weights" and not path.endswith(INDEX_SUFFIX):
             measurement.opaque_bytes[directory] = measurement.opaque_bytes.get(directory, 0) + size
+    for directory, structure in structures.items():
+        layers = structure.layers()
+        if layers is not None:
+            measurement.layers[directory] = layers
+        if structure.expert_bytes:
+            measurement.expert_bytes[directory] = structure.expert_bytes
+        if structure.quantizable:
+            measurement.quantizable_elements[directory] = structure.quantizable
+    repository, revision = source["repository"], source.get("revision")
+    measurement.geometry = geometry(repository, revision, tree(repository, revision))
     measurement.download_bytes = total
     if headers_read and not measurement.opaque_bytes and measurement.tensor_bytes:
         measurement.parameter_count = elements
@@ -422,6 +547,33 @@ def swift_optional_int(value):
     return "nil" if value is None else str(value)
 
 
+def swift_geometry(geometry):
+    fields = []
+    for name in GEOMETRY_FIELDS.values():
+        if name in geometry:
+            fields.append(f"{name}: {geometry[name]}")
+    if "layerTypes" in geometry:
+        fields.append("layerTypes: [" + ", ".join(swift_string(kind) for kind in geometry["layerTypes"]) + "]")
+    return "NFKMLXMeasuredGeometry(" + ", ".join(fields) + ")"
+
+
+def swift_structure(m):
+    """The structure arguments a measurement writes, each left out where it is empty."""
+    parts = []
+    if m.layers:
+        rows = ", ".join(f"{swift_string(directory)}: NFKMLXMeasuredLayers(count: {count}, "
+                         f"largestBytes: {swift_int_dictionary(largest)})"
+                         for directory, (count, largest) in sorted(m.layers.items()))
+        parts.append(f"layers: [{rows}]")
+    if m.expert_bytes:
+        parts.append(f"expertBytes: {swift_nested_dictionary(m.expert_bytes)}")
+    if m.quantizable_elements:
+        parts.append(f"quantizableElements: {swift_int_dictionary(m.quantizable_elements)}")
+    if m.geometry:
+        parts.append(f"geometry: {swift_geometry(m.geometry)}")
+    return "".join(", " + part for part in parts)
+
+
 def write_swift(rows, measurements, path):
     lines = [
         "//",
@@ -446,7 +598,8 @@ def write_swift(rows, measurements, path):
                      f"downloadBytes: {swift_optional_int(m.download_bytes)}, "
                      f"parameterCount: {swift_optional_int(m.parameter_count)}, "
                      f"tensorBytes: {swift_nested_dictionary(m.tensor_bytes)}, "
-                     f"opaqueBytes: {swift_int_dictionary(m.opaque_bytes)}),")
+                     f"opaqueBytes: {swift_int_dictionary(m.opaque_bytes)}"
+                     f"{swift_structure(m)}),")
     lines += ["    ]", "}", ""]
     path.write_text("\n".join(lines))
 
@@ -487,6 +640,9 @@ def main(argv):
     print(f"{len(measurements)} variants: " + ", ".join(f"{len(v)} {k}" for k, v in sorted(by_status.items())),
           file=sys.stderr)
     print(f"download bytes, measured variants: {total} ({total / 1e12:.2f} TB)", file=sys.stderr)
+    with_geometry = sum(1 for m in measurements if m.geometry)
+    with_layers = sum(1 for m in measurements if m.layers)
+    print(f"config geometry: {with_geometry} variants; repeated layers: {with_layers} variants", file=sys.stderr)
     for status in ("gated", "unmeasurable", "missing"):
         for m in sorted(by_status.get(status, []), key=lambda m: (m.model, m.variant)):
             print(f"  {status}: {m.model}/{m.variant}: {m.note}", file=sys.stderr)

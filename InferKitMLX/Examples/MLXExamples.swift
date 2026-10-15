@@ -177,6 +177,26 @@ final class MLXExamples: XCTestCase {
         XCTAssertTrue(speech.isLoaded)
     }
 
+    // Docs/examples.md: Running MLX models from Objective-C — building a catalog model with load options.
+    func testExampleBuildingWithLoadOptions() throws {
+        let releaseDirectory = URL(fileURLWithPath: "/nonexistent/qwen3-4b")
+        XCTAssertThrowsError(try NFKModelCatalog.shared.backend(
+            forModelIdentifier: "qwen3-4b",
+            options: [NFKModelLoadOptionQuantizationBits: 4, NFKModelLoadOptionContextLength: 8192],
+            location: releaseDirectory), "the release's files are what it needs")
+
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil, "no Metal library for MLX")
+        NFKMLXModelRegistry.register(name: "my-whisper", consumes: [NFKModelLoadOptionPrecision]) { weightsURL, options in
+            let precision = options.precision ?? .checkpoint    // "float32" → .float32; absent keeps the default
+            return try NFKMLXWhisper.backend(variant: .tiny, weightsURL: weightsURL, precision: precision)
+        }
+        defer { NFKMLXModelRegistry.unregisterModel(named: "my-whisper") }
+        let whisper = try NFKMLXModelRegistry.backend(named: "my-whisper", weightsURL: nil,
+                                                      options: [NFKModelLoadOptionPrecision: NFKModelPrecisionFloat32])
+        XCTAssertEqual(whisper.backendIdentifier, "whisper-tiny")
+        XCTAssertEqual(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: "my-whisper"), [NFKModelLoadOptionPrecision])
+    }
+
     // Docs/examples.md: Running MLX models from Objective-C — download from Hugging Face + build.
     // The download hits the network; this verifies the fail-fast path (unregistered model, no download).
     func testExampleHubFailsFastForAnUnregisteredModel() {

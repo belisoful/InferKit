@@ -94,9 +94,10 @@ public final class NFKMLXModuleBackend: NSObject, NFKInferenceBackend {
     /// The result keys the backend writes. Introduced in InferKit 0.4.0.
     @objc public var supportedOutputKeys: Set<String> { [NFKOutputImage] }
 
-    /// `NFKModelInfoResidentBytes` and `NFKModelInfoPeakBytes` from the last measured load; empty before
-    /// one. Introduced in InferKit 0.4.0.
-    @objc public var modelInfo: [String: Any] { lifecycle.measurementInfo }
+    /// `NFKModelInfoResidentBytes` and `NFKModelInfoPeakBytes` from the last measured load, and
+    /// `NFKModelInfoResidency` from a build with load options; empty before either. Introduced in
+    /// InferKit 0.4.0.
+    @objc public var modelInfo: [String: Any] { lifecycle.loadInfo }
 
     // MARK: Unloading
 
@@ -118,6 +119,10 @@ public final class NFKMLXModuleBackend: NSObject, NFKInferenceBackend {
     /// The peak of MLX's active memory during the model's last measured load, above its level before it.
     /// Introduced in InferKit 0.4.0.
     @objc public var peakByteCount: Int { lifecycle.peakByteCount }
+
+    /// The load options the backend was built with, keyed by `NFKModelLoadOption*` keys, as requested with
+    /// defaults filled; empty for a backend built without options. Introduced in InferKit 0.4.0.
+    @objc public var loadOptionValues: [String: Any] { lifecycle.loadOptionValues }
 
     /// Loads the model when it is unloaded. Introduced in InferKit 0.4.0.
     @objc(prepareWithError:)
@@ -170,6 +175,10 @@ public final class NFKMLXModuleBackend: NSObject, NFKInferenceBackend {
 extension NFKMLXModuleBackend: NFKMLXReloading {
 
     var canReload: Bool { lifecycle.canReload }
+
+    func setLoadOptions(_ options: NFKMLXLoadOptions) {
+        lifecycle.setLoadOptions(options)
+    }
 
     func enableReload(_ build: @escaping () throws -> any NFKInferenceBackend, measurement: NFKMLXLoadMeasurement?) {
         lifecycle.enableReload(building: build, as: NFKMLXModuleBackend.self, measurement: measurement) {

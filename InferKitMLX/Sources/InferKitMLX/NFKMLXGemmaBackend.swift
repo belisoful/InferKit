@@ -86,12 +86,14 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
 
     /// The decoder's parameter count, weight bytes, precision, and quantization, with the bytes its
     /// release directory occupies on disk and the `model_type` and `max_position_embeddings` its
-    /// `config.json` states (`NFKModelInfo*` keys). The 26B-A4B mixture's paged experts count toward
-    /// its parameters; its weight bytes are what memory holds, which leaves out experts read from the
-    /// release. Introduced in InferKit 0.4.0.
+    /// `config.json` states, and the residency, `paged` or `resident` (`NFKModelInfo*` keys). The 26B-A4B
+    /// mixture's paged experts count toward its parameters; its weight bytes are what memory holds, which
+    /// leaves out experts read from the release. Introduced in InferKit 0.4.0.
     @objc public var modelInfo: [String: Any] {
         modelInfoCache.value {
-            NFKMLXModelDescription.info(of: describedModules, releaseDirectoryURL: releaseDirectoryURL)
+            var info = NFKMLXModelDescription.info(of: describedModules, releaseDirectoryURL: releaseDirectoryURL)
+            info[NFKModelInfoResidency] = pagesExperts ? NFKModelResidencyPaged : NFKModelResidencyResident
+            return info
         }
     }
 

@@ -57,6 +57,40 @@ struct NFKMLXMeasuredVariant {
     /// The bytes of weight files whose tensors the measurement does not read (a pickle, a GGUF, an
     /// archive), by top-level directory.
     let opaqueBytes: [String: Int64]
+    /// The repeated layers of each top-level directory's largest layer container.
+    var layers: [String: NFKMLXMeasuredLayers] = [:]
+    /// The routed-expert tensor bytes as stored (names holding `.experts.`), by top-level directory and dtype.
+    var expertBytes: [String: [String: Int64]] = [:]
+    /// The elements a runtime weight quantization packs (rank-2 `.weight` tensors whose input width
+    /// divides 64, outside the embeddings and the norms), by top-level directory.
+    var quantizableElements: [String: Int64] = [:]
+    /// The geometry the repository's `config.json` states, or nil where it has none or refuses it.
+    var geometry: NFKMLXMeasuredGeometry? = nil
+}
+
+/// The repeated layers of one directory: how many, and the bytes of the largest as stored, by dtype.
+struct NFKMLXMeasuredLayers {
+    let count: Int
+    let largestBytes: [String: Int64]
+}
+
+/// The fields of a release's `config.json` the key-value cache follows, read from its root and from
+/// `text_config` where the release nests its decoder. A field the configuration does not state is nil.
+struct NFKMLXMeasuredGeometry {
+    var layerCount: Int? = nil
+    var attentionHeads: Int? = nil
+    var keyValueHeads: Int? = nil
+    var headDimension: Int? = nil
+    var hiddenSize: Int? = nil
+    var maximumPositions: Int? = nil
+    var slidingWindow: Int? = nil
+    var slidingWindowPattern: Int? = nil
+    var sharedKeyValueLayers: Int? = nil
+    var globalHeadDimension: Int? = nil
+    var globalKeyValueHeads: Int? = nil
+    var vocabularySize: Int? = nil
+    /// Each layer's kind, as `layer_types`, `layers_block_type`, or `hybrid_override_pattern` names it.
+    var layerTypes: [String] = []
 }
 
 /// The measurements `Tools/catalog/measure.py` generated, looked up by file and by variant.
@@ -221,21 +255,50 @@ extension NFKMLXLoadPlan {
 extension NFKMLXCatalogEntry {
 
     /// The entry with each variant's measured file sizes and digests, download bytes, parameter count,
-    /// resident bytes, and least working set, and the least of the variants' working sets as the
-    /// model's requirement where the entry names none.
+    /// and memory facts, and the load options, memory model, and presets its profile declares. A
+    /// variant with memory facts takes its resident bytes and least working set from the estimate
+    /// `NFKMLXModelDescriptors` derives; a variant without them takes the measured figures here.
     func measured() -> NFKMLXCatalogEntry {
         let plan = NFKMLXLoadPlan.plan(for: self)
+        let profile = NFKMLXLoadProfile.profile(for: self)
         var entry = self
-        entry.variants = variants.map { measured($0, plan: plan) }
-        if entry.minimumMemoryByteCount == nil {
-            entry.minimumMemoryByteCount = entry.variants.compactMap { $0.minimumMemoryByteCount?.int64Value }.min()
+        var stagePrecisions = [String: String]()
+        var maximumContextLength: Int?
+        entry.variants = variants.map { variant in
+            let (measuredVariant, precisions) = measured(variant, plan: plan, profile: profile)
+            stagePrecisions.merge(precisions) { first, _ in first }
+            if let length = measuredVariant.memoryFacts?.maximumContextLength?.intValue {
+                maximumContextLength = min(maximumContextLength ?? length, length)
+            }
+            return measuredVariant
         }
+        let declaration = (profile ?? .plain).declaration(for: entry, stagePrecisions: stagePrecisions,
+                                                          maximumContextLength: maximumContextLength, drafts: [])
+        entry.loadOptions = declaration.options
+        entry.memoryModel = declaration.memory
+        entry.presets = declaration.presets
         return entry
     }
 
-    private func measured(_ variant: NFKModelVariant, plan: NFKMLXLoadPlan) -> NFKModelVariant {
+    /// The entry with the draft-model options for `drafts`, declared after every entry is measured.
+    func declaringDrafts(_ drafts: [NFKMLXDraftChoice]) -> NFKMLXCatalogEntry {
+        guard !drafts.isEmpty, let profile = NFKMLXLoadProfile.profile(for: self), profile.drafts else {
+            return self
+        }
+        let maximumContextLength = variants.compactMap { $0.memoryFacts?.maximumContextLength?.intValue }.min()
+        var entry = self
+        let declaration = profile.declaration(for: entry, stagePrecisions: memoryModel?.stagePrecisions ?? [:],
+                                              maximumContextLength: maximumContextLength, drafts: drafts)
+        entry.loadOptions = declaration.options
+        entry.memoryModel = declaration.memory
+        entry.presets = declaration.presets
+        return entry
+    }
+
+    private func measured(_ variant: NFKModelVariant, plan: NFKMLXLoadPlan,
+                          profile: NFKMLXLoadProfile?) -> (NFKModelVariant, [String: String]) {
         guard let source = variant.source else {
-            return variant
+            return (variant, [:])
         }
         let measurement = NFKMLXCatalogMeasurements.variant(model: identifier, variant: variant.identifier)
         var sourceExtensions = source.extensions
@@ -255,6 +318,7 @@ extension NFKMLXCatalogEntry {
                                             extensions: sourceExtensions)
         var extensions = variant.extensions
         var figures = NFKMLXVariantFigures()
+        var facts: NFKMLXVariantFacts?
         if let measurement {
             if measurement.status != .measured {
                 extensions["measurement"] = measurement.status.rawValue
@@ -266,17 +330,179 @@ extension NFKMLXCatalogEntry {
             if figures.estimatesStoredBytes {
                 extensions["residentEstimate"] = "stored-dtype"
             }
+            facts = NFKMLXVariantFacts(measurement, plan: plan, converted: source.requiresConversion,
+                                       recipe: NFKMLXFactsRecipe(entry: self, profile: profile),
+                                       estimatesStoredBytes: figures.estimatesStoredBytes)
         }
-        return NFKModelVariant(identifier: variant.identifier, displayName: variant.displayName,
-                               isDefault: variant.isDefault, registryName: variant.registryName, source: measuredSource,
-                               downloadByteCount: variant.downloadByteCount ?? figures.downloadBytes.map(NSNumber.init(value:)),
-                               residentByteCount: variant.residentByteCount ?? figures.residentBytes.map(NSNumber.init(value:)),
-                               peakByteCount: variant.peakByteCount,
-                               parameterCount: variant.parameterCount ?? figures.parameterCount.map(NSNumber.init(value:)),
-                               precision: variant.precision ?? figures.precision,
-                               minimumMemoryByteCount: variant.minimumMemoryByteCount
-                                   ?? figures.minimumMemoryBytes.map(NSNumber.init(value:)),
-                               license: variant.license, extensions: extensions)
+        let derived = variant.memoryFacts == nil && facts != nil
+        let measuredVariant = NFKModelVariant(
+            identifier: variant.identifier, displayName: variant.displayName, isDefault: variant.isDefault,
+            registryName: variant.registryName, source: measuredSource,
+            downloadByteCount: variant.downloadByteCount ?? figures.downloadBytes.map(NSNumber.init(value:)),
+            residentByteCount: variant.residentByteCount ?? (derived ? nil : figures.residentBytes.map(NSNumber.init(value:))),
+            peakByteCount: variant.peakByteCount,
+            parameterCount: variant.parameterCount ?? figures.parameterCount.map(NSNumber.init(value:)),
+            precision: variant.precision ?? figures.precision,
+            minimumMemoryByteCount: variant.minimumMemoryByteCount
+                ?? (derived ? nil : figures.minimumMemoryBytes.map(NSNumber.init(value:))),
+            license: variant.license, memoryFacts: variant.memoryFacts ?? facts?.facts, extensions: extensions)
+        return (measuredVariant, facts?.stagePrecisions ?? [:])
+    }
+}
+
+// MARK: - Memory facts
+
+/// Which figures a variant's memory facts carry, read from its entry's profile and residencies.
+///
+/// @discussion A figure a loader cannot act on is left out, so the residency planner never picks a
+/// residency the model's factory does not offer: routed experts only where the entry pages, repeated
+/// layers only where it streams, quantizable elements only where its factory quantizes, and the
+/// key-value cache only where a context-length option sets it.
+struct NFKMLXFactsRecipe {
+    var stageIdentifier = "model"
+    var quantizes = false
+    var pagesExperts = false
+    var streamsLayers = false
+    var keyValue: NFKMLXKeyValueRule? = nil
+    var widenedStages: [String: String] = [:]
+
+    init(stageIdentifier: String = "model", quantizes: Bool = false, pagesExperts: Bool = false,
+         streamsLayers: Bool = false, keyValue: NFKMLXKeyValueRule? = nil, widenedStages: [String: String] = [:]) {
+        self.stageIdentifier = stageIdentifier
+        self.quantizes = quantizes
+        self.pagesExperts = pagesExperts
+        self.streamsLayers = streamsLayers
+        self.keyValue = keyValue
+        self.widenedStages = widenedStages
+    }
+
+    init(entry: NFKMLXCatalogEntry, profile: NFKMLXLoadProfile?) {
+        stageIdentifier = profile?.stageIdentifier ?? "model"
+        quantizes = profile?.quantizes ?? false
+        pagesExperts = profile != nil && entry.residencies.contains(NFKModelResidencyPaged)
+        streamsLayers = profile != nil && entry.residencies.contains(NFKModelResidencyStreamed)
+        keyValue = profile?.contextLength != nil ? profile?.keyValue : nil
+        widenedStages = profile?.widenedStages ?? [:]
+    }
+}
+
+/// A variant's memory facts and the precision each stage loads at.
+struct NFKMLXVariantFacts {
+    let facts: NFKModelMemoryFacts
+    /// Each stage's precision under the load plan: an `NFKModelPrecision*` string, or
+    /// ``loadedPrecision`` for a stage whose directories load at different precisions.
+    let stagePrecisions: [String: String]
+
+    /// The key of a stage's bytes as its directories load them, where they load at different precisions.
+    static let loadedPrecision = "loaded"
+
+    /// The facts of a measured variant, or nil where the measurement sized no weights.
+    init?(_ measurement: NFKMLXMeasuredVariant, plan: NFKMLXLoadPlan, converted: Bool, recipe: NFKMLXFactsRecipe,
+          estimatesStoredBytes: Bool) {
+        let directories = Set(measurement.tensorBytes.keys).union(measurement.opaqueBytes.keys)
+        guard measurement.downloadBytes != nil, !directories.isEmpty else {
+            return nil
+        }
+        var stages = [NFKModelStageFacts]()
+        var precisions = [String: String]()
+        for split in plan.stageSplit(of: directories, singleStage: recipe.stageIdentifier) {
+            let loads = split.directories.map { directory in
+                (directory, converted ? NFKMLXLoadPrecision.stored : plan.precision(ofDirectory: directory) ?? .stored)
+            }
+            let bytes = Self.bytesByPrecision(loads, tensors: measurement.tensorBytes, opaque: measurement.opaqueBytes)
+            let floating = Set(loads.filter { measurement.tensorBytes[$0.0]?.isEmpty == false }.map(\.1))
+            let precision = floating.count > 1 ? Self.loadedPrecision : Self.name(of: floating.first ?? .stored)
+            precisions[split.identifier] = precision
+            let pageable = recipe.pagesExperts
+                ? Self.bytesByPrecision(loads, tensors: measurement.expertBytes, opaque: [:]) : [:]
+            var layerCount = 0
+            var largestLayer = [String: NSNumber]()
+            if recipe.streamsLayers,
+               let (directory, layers) = loads.compactMap({ load in measurement.layers[load.0].map { (load, $0) } })
+                .max(by: { $0.1.count < $1.1.count }) {
+                layerCount = layers.count
+                largestLayer = Self.bytesByPrecision([directory], tensors: [directory.0: layers.largestBytes], opaque: [:])
+            }
+            let quantizable = recipe.quantizes ? split.directories.reduce(Int64(0)) {
+                $0 + (measurement.quantizableElements[$1] ?? 0)
+            } : 0
+            stages.append(NFKModelStageFacts(identifier: split.identifier, title: split.title,
+                                             byteCountByPrecision: bytes, quantizableElementCount: Int(quantizable),
+                                             pageableByteCountByPrecision: pageable, layerCount: layerCount,
+                                             largestLayerByteCountByPrecision: largestLayer,
+                                             widenedPrecision: recipe.widenedStages[split.identifier], extensions: nil))
+        }
+        let geometry = measurement.geometry
+        let keyValue = geometry.flatMap { recipe.keyValue?.keyValueBytes(of: $0) }
+        facts = NFKModelMemoryFacts(
+            stages: stages, keyValueByteCountPerToken: keyValue.map { NSNumber(value: $0.perToken) },
+            boundedKeyValueByteCount: keyValue.flatMap { $0.bounded > 0 ? NSNumber(value: $0.bounded) : nil },
+            maximumContextLength: keyValue != nil ? geometry?.maximumPositions.map(NSNumber.init(value:)) : nil,
+            vocabularySize: geometry?.vocabularySize.map(NSNumber.init(value:)), loadOverheadByteCount: 0,
+            basis: estimatesStoredBytes ? NFKModelMemoryBasisStoredDType : NFKModelMemoryBasisMeasured, extensions: nil)
+        stagePrecisions = precisions
+    }
+
+    /// The manifest's precision of a load precision.
+    static func name(of precision: NFKMLXLoadPrecision) -> String {
+        switch precision {
+        case .stored: return NFKModelPrecisionCheckpoint
+        case .float32: return NFKModelPrecisionFloat32
+        case .bfloat16: return NFKModelPrecisionBFloat16
+        }
+    }
+
+    /// The bytes of directories at the checkpoint's types, at float32, and at bfloat16, and, where the
+    /// directories load at different precisions, as they load. Opaque bytes count as stored at every
+    /// precision. A stage of opaque bytes alone states only the checkpoint's.
+    static func bytesByPrecision(_ loads: [(String, NFKMLXLoadPrecision)], tensors: [String: [String: Int64]],
+                                 opaque: [String: Int64]) -> [String: NSNumber] {
+        let opaqueBytes = loads.reduce(Int64(0)) { $0 + (opaque[$1.0] ?? 0) }
+        let held = loads.filter { tensors[$0.0]?.isEmpty == false }
+        guard !held.isEmpty || opaqueBytes > 0 else {
+            return [:]
+        }
+        func total(_ precision: (NFKMLXLoadPrecision) -> NFKMLXLoadPrecision) -> NSNumber {
+            NSNumber(value: held.reduce(opaqueBytes) { $0 + NFKMLXLoadPlan.bytes(tensors[$1.0] ?? [:], at: precision($1.1)) })
+        }
+        var bytes = [NFKModelPrecisionCheckpoint: total { _ in .stored }]
+        guard !held.isEmpty else {
+            return bytes
+        }
+        bytes[NFKModelPrecisionFloat32] = total { _ in .float32 }
+        bytes[NFKModelPrecisionBFloat16] = total { _ in .bfloat16 }
+        if Set(held.map(\.1)).count > 1 {
+            bytes[loadedPrecision] = total { $0 }
+        }
+        return bytes
+    }
+}
+
+/// One stage of a measured variant: the directories it loads together.
+struct NFKMLXStageSplit {
+    let identifier: String
+    let title: String?
+    let directories: [String]
+}
+
+extension NFKMLXLoadPlan {
+
+    /// The stages a variant's directories load in: the plan's stages, the directories they leave out
+    /// held with the last, or one stage of every directory where the plan names no stages. A stage takes
+    /// its first directory's name as its identifier, `model` for the root.
+    func stageSplit(of directories: Set<String>, singleStage identifier: String) -> [NFKMLXStageSplit] {
+        guard !stages.isEmpty else {
+            return [NFKMLXStageSplit(identifier: identifier, title: nil, directories: directories.sorted())]
+        }
+        let named = Set(stages.joined())
+        let leftOver = directories.subtracting(named).sorted()
+        return stages.enumerated().map { index, stage in
+            let held = stage + (index == stages.count - 1 ? leftOver : [])
+            let first = stage.first ?? ""
+            return NFKMLXStageSplit(identifier: first.isEmpty ? "model" : first,
+                                    title: held.map { $0.isEmpty ? "root" : $0 }.joined(separator: ", "),
+                                    directories: held)
+        }
     }
 }
 

@@ -27,7 +27,8 @@ against: 0.85 of `recommendedWorkingSetSize`, rounded down, with a 4 GiB reserve
 same rule `NFKMLXResidencyBudget` has applied since Music 3, now a core type, so a descriptor's memory
 estimate, its constraints, and the catalog's build entry need no companion. The residency planner moved
 with it (`NFKModelStageFootprint`, `NFKModelResidencyPlan`) with the Swift planner's arithmetic and
-refusal sentences; `NFKMLXResidencyBudget` keeps its Swift API and is to call through to the core.
+refusal sentences; `NFKMLXResidencyBudget` keeps its Swift API and calls through to the core
+(`NFKMLXPlannerDifferentialTests` compares the two).
 
 - `+leastWorkingSetHoldingByteCount:` is the catalog's `minimumMemoryBytes`: (bytes + reserve) / 0.85,
   rounded up.

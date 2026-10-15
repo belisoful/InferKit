@@ -91,6 +91,7 @@ final class NFKMLXLifecycle<State>: @unchecked Sendable {
     private var unloadRequested = false
     private var measurement: NFKMLXLoadMeasurement?
     private var freeHandler: (() -> Void)?
+    private var loadOptions: NFKMLXLoadOptions?
 
     init(_ state: State) {
         self.state = state
@@ -112,6 +113,15 @@ final class NFKMLXLifecycle<State>: @unchecked Sendable {
         lock.withLock { freeHandler = handler }
     }
 
+    /// Keeps the load options the state was built with, which ``loadOptionValues`` reports.
+    func setLoadOptions(_ options: NFKMLXLoadOptions) {
+        lock.withLock { loadOptions = options }
+    }
+
+    /// The load options the state was built with, as requested with defaults filled; empty for a state
+    /// built without options.
+    var loadOptionValues: [String: Any] { lock.withLock { loadOptions?.values ?? [:] } }
+
     var canReload: Bool { lock.withLock { load != nil } }
 
     var isLoaded: Bool { lock.withLock { state != nil } }
@@ -122,8 +132,17 @@ final class NFKMLXLifecycle<State>: @unchecked Sendable {
 
     var peakByteCount: Int { lock.withLock { measurement?.peakBytes ?? 0 } }
 
-    /// The last measured load's figures under the `NFKModelInfo*` keys, or none before a measured load.
-    var measurementInfo: [String: Any] { lock.withLock { measurement?.modelInfo ?? [:] } }
+    /// The last measured load's figures, and the residency the last load resolved to, under the
+    /// `NFKModelInfo*` keys; empty before a measured load of a backend built without options.
+    var loadInfo: [String: Any] {
+        lock.withLock {
+            var info = measurement?.modelInfo ?? [:]
+            if let residency = loadOptions?.resolvedResidency {
+                info[NFKModelInfoResidency] = residency.optionValue
+            }
+            return info
+        }
+    }
 
     /// The loaded state; throws when the lifecycle is not loaded. A fresh backend's state is read this way
     /// when an older backend of its class loads again.
@@ -294,6 +313,9 @@ protocol NFKMLXReloading: AnyObject {
     /// Gives the backend `build`, which builds a fresh backend of the same class from the same source, and
     /// the figures the first build measured.
     func enableReload(_ build: @escaping () throws -> any NFKInferenceBackend, measurement: NFKMLXLoadMeasurement?)
+
+    /// Gives the backend the load options it was built with, which its `loadOptionValues` reports.
+    func setLoadOptions(_ options: NFKMLXLoadOptions)
 }
 
 /// The paths that build a backend from a weights file or a release directory give it the closure that loads
@@ -304,16 +326,38 @@ enum NFKMLXReload {
     /// lifecycle backend takes `build` itself, and any other backend is wrapped in an
     /// ``NFKMLXReloadableBackend``. A backend that can already reload is returned as built.
     static func reloadable(_ build: @escaping () throws -> any NFKInferenceBackend) throws -> any NFKInferenceBackend {
+        try reloadable(loadOptions: nil, build)
+    }
+
+    /// ``reloadable(_:)`` for a backend built with `loadOptions`, which its `loadOptionValues` reports.
+    static func reloadable(loadOptions: NFKMLXLoadOptions?,
+                           _ build: @escaping () throws -> any NFKInferenceBackend) throws -> any NFKInferenceBackend {
         let (backend, measurement) = try NFKMLXLoadMeasurement.measuring(build)
-        if backend is NFKMLXReloadableBackend {
+        if let reloadable = backend as? NFKMLXReloadableBackend {
+            reportLoadOptions(of: reloadable, loadOptions)
             return backend
         }
         if let reloading = backend as? NFKMLXReloading {
             if !reloading.canReload {
                 reloading.enableReload(build, measurement: measurement)
             }
+            reportLoadOptions(of: backend, loadOptions)
             return backend
         }
-        return NFKMLXReloadableBackend(backend: backend, measurement: measurement, build: build)
+        return NFKMLXReloadableBackend(backend: backend, measurement: measurement, build: build,
+                                       loadOptions: loadOptions)
+    }
+
+    /// Gives a lifecycle backend, or a wrapper, the load options it was built with. Any other backend
+    /// reports none.
+    static func reportLoadOptions(of backend: any NFKInferenceBackend, _ loadOptions: NFKMLXLoadOptions?) {
+        guard let loadOptions else {
+            return
+        }
+        if let reloadable = backend as? NFKMLXReloadableBackend {
+            reloadable.setLoadOptions(loadOptions)
+        } else if let reloading = backend as? NFKMLXReloading {
+            reloading.setLoadOptions(loadOptions)
+        }
     }
 }

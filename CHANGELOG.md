@@ -147,7 +147,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   largest context length that fits, each with a sentence and its numbers. Up to 4096 combinations are
   enumerated in full; past that, each choice is judged alone and `exhaustive` is NO. A draft model
   counts its weights and its own key-value cache. `descriptorByDerivingMemoryFigures` fills each
-  choice's figure.
+  choice's figure, and `automatic` takes none, because its memory depends on the machine.
+  `descriptorByDerivingMemoryFiguresInCatalog:` looks the drafts up in a given catalog, which a provider
+  uses inside `+modelDescriptors` while the shared catalog loads it.
 - `NFKModelMemoryBudget` (0.85 of the recommended working set, a 4 GiB reserve) and the residency planner
   (`NFKModelStageFootprint`, `NFKModelResidencyPlan`, with `NFKModelResidencyAutomatic`) move to the core,
   with the MLX planner's arithmetic and refusal sentences.
@@ -164,6 +166,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKModelPreset.h`: a descriptor's `presets` are named load options and request defaults, reached as
   `model@preset`; `NFKModelNameSplitAtPreset` and `NFKModelToolName` map the names.
 - `NFKInferenceBackend` gains the optional `loadOptionValues`, read by `NFKInferenceLoadOptionValues`.
+  The values are the requested options with defaults filled. `NFKModelInfoResidency` reports in
+  `modelInfo` how the load held the weights, such as `paged` for an automatic load that paged.
   `NFKHardwareProfile` gains `isAppleSilicon`, `operatingSystemName`, `operatingSystemVersion`, and a
   snapshot (`dictionaryRepresentation`, `+profileWithDictionary:`).
 
@@ -874,6 +878,38 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Catalog models build with load options
+
+- `NFKModelCatalog`'s `backendForModelIdentifier:options:error:` builds every MLX model:
+  `+[NFKMLXModelDescriptors backendForBuildRequest:error:]` builds a descriptor of the package, and
+  `+[NFKMLXModelDescriptors registerBackendBuilder]` registers the same builder for the MLX engine, so a
+  descriptor a manifest adds builds too. A backend built from a location unloads and builds again with
+  the same options, and `loadOptionValues` reports them as requested. `modelInfo` reports the residency
+  the load resolved to under `NFKModelInfoResidency`.
+- `+[NFKMLXModelRegistry backendNamed:weightsURL:options:error:]` builds a registered model with load
+  options keyed by `NFKModelLoadOption*`, and `consumedOptionKeysForModelNamed:` names the keys its factory
+  reads. In Swift, `NFKMLXModelRegistry.register(name:consumes:factory:)` registers a factory that takes
+  `NFKMLXLoadOptions`: the residency, precision, runtime weight quantization, context length, cache
+  settings, and draft model as the MLX types the factories take.
+- The registered families read their options: the dense and mixture decoders (Qwen3, Qwen3-MoE,
+  Qwen2-MoE, Mixtral, gpt-oss, Mistral) the residency, the precision, a runtime weight quantization to 8
+  or 4 bits in groups of 64, a draft model and its bits, and the context length and cache settings as
+  generation defaults; Gemma 3 and TranslateGemma the residency, precision, and draft; Gemma 4, Qwen4-Exp,
+  Granite 4.0-H, and MADLAD-400 the residency and precision; Qwen3-VL the residency, precision, and
+  weight quantization; Gemma 3n, Qwen3.5, Whisper, and Stable Diffusion the precision; DeepSeek V4 the
+  residency and the `NFKMLXDeepSeekLoadOptions` properties; and the staged generators (FLUX.1 and its
+  ControlNet, FLUX.2, SD3 and its ControlNet, SANA, Z-Image, Qwen-Image, Wan, LTX-Video, MiniMax
+  Music 3) the residency.
+- The language backend reads `NFKModelLoadOptionContextLength`, `NFKModelLoadOptionCacheBits`, and
+  `NFKModelLoadOptionCacheGroupSize` as request parameters, which the `NFKMLXGenerationParameterKey`
+  keys override.
+- The module, matting, speech, generation, and language backends and `NFKMLXReloadableBackend` implement
+  `loadOptionValues`. Their `modelInfo`, and that of `NFKMLXGemmaBackend` and `NFKMLXGemma3Backend`,
+  carries `NFKModelInfoResidency` where the backend knows it: paged experts, streamed layers, or the
+  stages a generator holds.
+- `NFKMLXResidencyBudget` calls through to the core's `NFKModelResidencyPlan` and `NFKModelMemoryBudget`,
+  with the same plans and refusal sentences.
+
 #### The language backends count tokens
 
 - `NFKMLXLanguageBackend` (a release directory or a GGUF file), `NFKMLXDecoderBackend` (the hybrid
@@ -971,6 +1007,29 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   loads.
 - Every MLX backend declares `supportedOutputKeys`. `NFKMLXGenerationBackend` takes its output keys as a
   required argument, so each model it wraps states what it returns.
+
+#### Each model declares its load options and their memory
+
+- Every measured variant carries `memoryFacts`: each stage's bytes at the checkpoint's types, at float32,
+  and at bfloat16, and the figures its loader acts on. These are the quantizable elements where the
+  factory quantizes, the routed experts where the model pages, and the repeated layers where it streams.
+  A decoder with a context-length option (the Qwen3, Mistral, and mixture decoders and gpt-oss) adds
+  its key-value cache per position from its release's geometry. A gated configuration leaves its
+  geometry unmeasured.
+- Each family declares the load options its factory reads, with a memory model: residency (`automatic`
+  the default), precision, the runtime weight quantization (none, 8-bit, or 4-bit, an approximation of
+  the published weights), the context length and the key-value cache's bits and group size, and a draft
+  model with its quantization. `Docs/model-catalog.md` lists them by family.
+- A decoder's draft-model choices are the decoders of its family with its vocabulary and fewer
+  parameters, so Qwen3 4B offers Qwen3 0.6B and 1.7B.
+- Every memory-affecting choice carries its derived figure, `memoryByVariant` included, and a variant's
+  `residentBytes`, `peakBytes`, and `minimumMemoryBytes` are the estimate at the defaults, the key-value
+  cache at a 4096-position context included.
+- Suggested presets: `fast` on a decoder (4-bit weights, an 8-bit cache), `fast` on a generator (half the
+  default steps), and `precise` where float32 is offered and not the default.
+- `Tools/catalog/measure.py` reads the repeated layers, routed experts, and quantizable elements from the
+  safetensors headers and the cache geometry from each release's `config.json`. The regenerated table
+  and `Docs/model-catalog.json` carry them.
 
 #### Half-precision forwards compute MLX's arithmetic, or PyTorch's
 

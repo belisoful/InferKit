@@ -613,6 +613,62 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 						  @([NFKModelMemoryBudget leastWorkingSetHoldingByteCount:2820200000]));
 }
 
+- (void)testDerivingInACatalogFindsTheDraftThere
+{
+	NFKModelStageFacts *draftStage = [NFKModelStageFacts stageWithIdentifier:@"decoder"
+														byteCountByPrecision:@{ NFKModelPrecisionCheckpoint: @200000000 }];
+	NFKModelMemoryFacts *draftFacts = [[NFKModelMemoryFacts alloc] initWithStages:@[ draftStage ] keyValueByteCountPerToken:@10000
+														 boundedKeyValueByteCount:nil maximumContextLength:nil
+																   vocabularySize:@151936 loadOverheadByteCount:0 basis:nil
+																	   extensions:nil];
+	NFKModelVariant *draftVariant = [[NFKModelVariant alloc] initWithIdentifier:@"small" displayName:nil isDefault:YES
+																   registryName:nil source:nil downloadByteCount:nil
+															  residentByteCount:nil peakByteCount:nil
+																 parameterCount:@100000000 precision:NFKModelPrecisionBFloat16
+														 minimumMemoryByteCount:nil license:nil memoryFacts:draftFacts
+																	 extensions:nil];
+	NFKModelDescriptor *draft = [[NFKModelDescriptor alloc] initWithIdentifier:@"test.local-draft" displayName:nil
+																		family:@"test" summary:nil engine:NFKModelEnginePlugin
+																  registryName:nil providerClassName:nil tasks:nil
+															   inputModalities:nil outputModalities:nil inputs:nil outputs:nil
+																	   options:nil variants:@[ draftVariant ] license:nil
+																  requirements:nil residencies:nil standIn:NO
+															 introducedVersion:nil extensions:nil];
+	NFKModelDescriptor *decoder = [self decoderWithDraftOption];
+	NFKModelOption *listed = [[NFKModelOption alloc] initWithKey:NFKModelLoadOptionDraftModel
+															kind:NFKModelOptionKindModelReference title:@"Draft model" help:nil
+													defaultValue:nil minimum:nil maximum:nil step:nil
+														 choices:@[ [self choice:@"test.local-draft" title:@"Local draft"] ]
+														   stage:NFKModelOptionStageLoad group:nil extensions:nil];
+	NSMutableArray<NFKModelOption *> *options = [decoder.options mutableCopy];
+	[options replaceObjectAtIndex:options.count - 1 withObject:listed];
+	NFKModelDescriptor *listing = [[NFKModelDescriptor alloc] initWithIdentifier:decoder.identifier displayName:nil
+																		 family:decoder.family summary:nil
+																		 engine:decoder.engine registryName:nil
+															  providerClassName:nil tasks:nil inputModalities:nil
+															   outputModalities:nil inputs:nil outputs:nil options:options
+																	   variants:decoder.variants license:nil
+																   requirements:nil residencies:nil
+																	memoryModel:decoder.memoryModel presets:nil standIn:NO
+															  introducedVersion:nil extensions:nil];
+	NFKModelCatalog *catalog = [[NFKModelCatalog alloc] init];
+	[catalog addDescriptors:@[ draft, listing ]];
+	XCTAssertNil([NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"test.local-draft"]);
+
+	NFKModelDescriptor *derived = [listing descriptorByDerivingMemoryFiguresInCatalog:catalog];
+	NFKModelOptionChoice *choice = [[derived optionWithKey:NFKModelLoadOptionDraftModel] choiceWithValue:@"test.local-draft"];
+	// The model at its defaults, and the draft's weights with its own cache at 8192 positions.
+	XCTAssertEqual(choice.memory.residentByteCount, (NSInteger)2820200000 + 200000000 + 81920000);
+}
+
+- (void)testDerivingLeavesTheAutomaticResidencyWithoutAFigure
+{
+	NFKModelDescriptor *derived = [[self mixtureOfExperts] descriptorByDerivingMemoryFigures];
+	NFKModelOption *residency = [derived optionWithKey:NFKModelLoadOptionResidency];
+	XCTAssertNil([residency choiceWithValue:NFKModelResidencyAutomatic].memory);
+	XCTAssertEqual([residency choiceWithValue:NFKModelResidencyResident].memory.residentByteCount, 41 * NFKTestGiB);
+}
+
 - (void)testAStatedFigureWinsOverTheDerivedOne
 {
 	NFKModelDescriptor *decoder = [self decoderWithOverhead:0];

@@ -1750,6 +1750,32 @@
 	XCTAssertTrue(speech.isLoaded, @"the run built the model again");
 }
 
+// Docs/examples.md: Running MLX models from Objective-C — building a catalog model with load options.
+- (void)testObjectiveCBuildsWithLoadOptions
+{
+	NSError *error = nil;
+	NSURL *releaseDirectory = [NSURL fileURLWithPath:@"/nonexistent/qwen3-4b"];
+	NSDictionary<NSString *, id> *options = @{
+		NFKModelLoadOptionQuantizationBits: @4,
+		NFKModelLoadOptionContextLength: @8192,
+	};
+	id<NFKInferenceBackend> chat = [NFKModelCatalog.sharedCatalog backendForModelIdentifier:@"qwen3-4b"
+																					 options:options
+																					location:releaseDirectory
+																					   error:&error];
+	XCTAssertNil(chat, @"the release's files are what it needs");
+	XCTAssertNotNil(error);
+
+	[NFKMLXReferenceModels registerToneSpeech];
+	error = nil;
+	id<NFKInferenceBackend> speech = [NFKMLXModelRegistry backendNamed:@"tone-speech" weightsURL:nil
+															   options:@{ NFKModelLoadOptionResidency: NFKModelResidencyStaged }
+																 error:&error];
+	XCTAssertNotNil(speech, @"%@", error);
+	XCTAssertEqualObjects(NFKInferenceLoadOptionValues(speech)[NFKModelLoadOptionResidency], NFKModelResidencyStaged,
+						  @"a backend reports the options it was built with");
+}
+
 // A small opaque plate, for the examples that hand a model an image without running it.
 - (CGImageRef)examplePlate CF_RETURNS_RETAINED
 {

@@ -113,8 +113,8 @@ classifier as macOS 12, so every use sits under `@available`; the zero-warning g
 unguarded call.
 
 1. `swift build` + `swift test` on the host — **0 warnings**, all tests green. Grep the log for
-   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 1292 tests
-   (2026-10-15): the Objective-C `- (void)test` methods under `Tests/` (1183) and in
+   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 1294 tests
+   (2026-10-15): the Objective-C `- (void)test` methods under `Tests/` (1185) and in
    `Examples/NFKExamples.m` (57, the `InferKitExamples` target), plus the `func test` methods in
    `SwiftExamples/` (52).
 2. `xcodebuild build` for a `generic/platform=iOS` destination (cross-platform compile), and for tvOS
@@ -189,9 +189,9 @@ unguarded call.
    -skipPackagePluginValidation` throughout):
 
    ```
-   xcodebuild test -scheme InferKitMLXTests        …    # 2550 — the model and API suite
-   xcodebuild test -scheme InferKitMLXExamples     …    #  139 — the Swift documented snippets
-   xcodebuild test -scheme InferKitMLXObjCExamples …    #   56 — the Objective-C ones
+   xcodebuild test -scheme InferKitMLXTests        …    # 2594 — the model and API suite
+   xcodebuild test -scheme InferKitMLXExamples     …    #  140 — the Swift documented snippets
+   xcodebuild test -scheme InferKitMLXObjCExamples …    #   57 — the Objective-C ones
    ```
 
    Without the library, `swift test` must still exit 0, with the MLX-dependent tests reported as
