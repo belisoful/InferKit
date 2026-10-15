@@ -236,7 +236,7 @@ report to. Added 2026-10-15, InferKit 0.4.0.
   begins an activity, makes it current on the background queue around `build`, and ends the activity
   with `build`'s error. `NFKMLXReleaseDownload.async` is its form for a factory that delivers a backend,
   and wraps the backend so it can reload. The 39 asynchronous peers that ran their own
-  `DispatchQueue.global(...).async { do { completionHandler(try …, nil) } catch { … } }` now call it;
+  `DispatchQueue.global(...).async { do { completionHandler(try …, nil) } catch { … } }` now call one of the two;
   `NFKMLXDownload.backend` (the single-file factories and `NFKMLXHub`) brackets its own activity. A
   new asynchronous peer goes through one of the two, or it drops the download.
 - The download finishes when the factory delivers its result, building included, so a download
