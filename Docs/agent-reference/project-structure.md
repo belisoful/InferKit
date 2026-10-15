@@ -44,10 +44,17 @@ The full repository tree with per-directory notes.
 │   │   ├── NFKModality.h            # Text/Image/Video/Audio enum
 │   │   ├── NFKInferenceKeys.h       # Shared input/parameter/output key vocabulary
 │   │   ├── NFKErrors.h              # NFKInferenceErrorDomain + codes
+│   │   ├── NFKPlugin*.h             # Plugins: the protocol, manifest, signature policy, loader, process,
+│   │                                #   backend, service (NFKPluginHostMain), registry (plugins.md)
 │   │   └── NFK*.h                   # The remaining public headers: the Apple-framework engines, the other remote
 │   │                                #   backends and stores, and the value types. The directory is the full set.
 │   ├── NFK*.m                       # Implementations
 │   └── NFK_ARC.h                    # Private ARC/MRC shim (NARC_ macros)
+├── Sources/InferKitC/               # The pure-C target the core depends on
+│   ├── include/InferKitC/           # NFKAPIVersion.h (the API version macros), NFKPluginABI.h (what a
+│   │                                #   C/C++/Rust plugin implements), NFKInferKitC.h (the C API)
+│   └── NFKPluginABILayout.c         # Static assertions on every C structure's layout
+├── Sources/inferkit-plugin-host/    # main.m → NFKPluginHostMain; Entitlements/ (excluded, for codesign)
 ├── Tests/InferKitTests/             # XCTest (NFK*Tests.m)
 ├── Examples/                        # Compiled ObjC examples mirroring Docs/examples.md
 ├── SwiftExamples/                   # The same examples in Swift — pins the imported API shape

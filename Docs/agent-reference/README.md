@@ -38,6 +38,9 @@ file listed here, never back into `AGENTS.md` / `CLAUDE.md`. The Documentation S
   where Core ML places a language model.
 - [hardware-and-model-sizing.md](hardware-and-model-sizing.md) — `NFKHardwareProfile`, the memory
   ceilings, and the measured-bandwidth model sizing in the MLX companion.
+- [plugins.md](plugins.md) — the plugin system: the package layout and the `InferKitC` target, the
+  host's signing, the measurements behind the design, and the protocol (transport, hand-off, framing,
+  messages, attachments, shared memory, versioning, errors).
 
 ## InferKitMLX
 

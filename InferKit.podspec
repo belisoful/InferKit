@@ -28,8 +28,11 @@ Pod::Spec.new do |s|
 
   # Source pod: the same files SwiftPM (Package.swift) compiles. The MLX companion
   # (InferKitMLX) is SwiftPM-only, so it is deliberately excluded here.
-  s.source_files        = 'Sources/InferKit/**/*.{h,m}'
-  s.public_header_files  = 'Sources/InferKit/include/InferKit/*.h'
+  # InferKitC holds the pure-C headers (the API version, the plugin ABI, the C API) and their layout
+  # assertions. CocoaPods flattens every public header into InferKit/, which NFKInferKit.h's
+  # __has_include fallback reaches.
+  s.source_files        = 'Sources/InferKit/**/*.{h,m}', 'Sources/InferKitC/**/*.{h,c}'
+  s.public_header_files  = 'Sources/InferKit/include/InferKit/*.h', 'Sources/InferKitC/include/InferKitC/*.h'
   # Sibling headers directly under Sources/InferKit are private; the public API is include/InferKit.
   s.private_header_files = 'Sources/InferKit/*.h'
   s.requires_arc        = true

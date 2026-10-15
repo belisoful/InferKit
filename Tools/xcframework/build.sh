@@ -57,10 +57,14 @@ slice "iOS"            ios
 slice "iOS Simulator"  iossim
 
 echo "==> assembling the xcframework"
+# NFKInferKit.h finds the API version macros beside it once NFKAPIVersion.h joins the public headers.
+HEADERS="$WORK/headers"
+mkdir -p "$HEADERS"
+cp "$ROOT/Sources/InferKit/include/InferKit/"*.h "$ROOT/Sources/InferKitC/include/InferKitC/NFKAPIVersion.h" "$HEADERS/"
 xcodebuild -create-xcframework \
-    -library "$WORK/macos-lib/libInferKit.a"  -headers "$ROOT/Sources/InferKit/include/InferKit" \
-    -library "$WORK/ios-lib/libInferKit.a"    -headers "$ROOT/Sources/InferKit/include/InferKit" \
-    -library "$WORK/iossim-lib/libInferKit.a" -headers "$ROOT/Sources/InferKit/include/InferKit" \
+    -library "$WORK/macos-lib/libInferKit.a"  -headers "$HEADERS" \
+    -library "$WORK/ios-lib/libInferKit.a"    -headers "$HEADERS" \
+    -library "$WORK/iossim-lib/libInferKit.a" -headers "$HEADERS" \
     -output "$OUTPUT/InferKit.xcframework" > "$WORK/create.log" 2>&1 \
     || { tail -20 "$WORK/create.log"; exit 1; }
 

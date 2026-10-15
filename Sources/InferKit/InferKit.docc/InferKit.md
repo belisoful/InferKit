@@ -145,6 +145,24 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 - ``NFKBalancedBackend``
 - ``NFKServerStatus``
 
+### Plugins
+
+- ``NFKPlugin``
+- ``NFKPluginContext``
+- ``NFKPluginManifest``
+- ``NFKPluginEntryKind``
+- ``NFKPluginSignaturePolicy``
+- ``NFKPluginLoader``
+- ``NFKLoadedPlugin``
+- ``NFKPluginProcess``
+- ``NFKPluginProcessState``
+- ``NFKPluginBackend``
+- ``NFKPluginIsolation``
+- ``NFKPluginService``
+- ``NFKPluginRegistry``
+- ``NFKPluginLogLevel``
+- ``NFKPluginError``
+
 ### Media coding
 
 - ``NFKImageCoding``

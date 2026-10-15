@@ -246,10 +246,15 @@ def find_constant_value(node):
 
 
 def api_version(header_root):
-    path = os.path.join(header_root, "InferKit", "NFKInferKit.h")
-    try:
-        text = open(path).read()
-    except OSError:
+    # NFKAPIVersion.h holds the macros; headers from before the InferKitC target kept them in NFKInferKit.h.
+    text = None
+    for name in ("NFKAPIVersion.h", "NFKInferKit.h"):
+        try:
+            text = open(os.path.join(header_root, "InferKit", name)).read()
+            break
+        except OSError:
+            continue
+    if text is None:
         return None
     major = re.search(r"^#define NFK_API_VERSION_MAJOR (\d+)", text, re.M)
     minor = re.search(r"^#define NFK_API_VERSION_MINOR (\d+)", text, re.M)

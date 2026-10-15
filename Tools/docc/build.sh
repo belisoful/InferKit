@@ -49,7 +49,8 @@ build_mlx_from_its_module() {
         xcrun swift-symbolgraph-extract -module-name InferKitMLX \
             -target arm64-apple-macosx14.0 -sdk "$(xcrun --show-sdk-path)" \
             -I "$bin" -F "$bin" \
-            -Xcc "-I$ROOT/Sources/InferKit/include" -Xcc "-fmodule-map-file=$maps/InferKit.modulemap" \
+            -Xcc "-I$ROOT/Sources/InferKit/include" -Xcc "-I$ROOT/Sources/InferKitC/include" \
+            -Xcc "-fmodule-map-file=$maps/InferKit.modulemap" \
             ${clang_maps[@]+"${clang_maps[@]}"} \
             -minimum-access-level public -output-dir "$graphs"
         rm -rf "$out"
@@ -103,8 +104,8 @@ trap 'rm -rf "$GRAPH_DIR"' EXIT
 echo "==> Extracting the Objective-C symbol graph"
 xcrun clang -extract-api --product-name=InferKit -x objective-c-header \
     -target arm64-apple-macos11.0 -isysroot "$SDK" \
-    -I Sources/InferKit/include -I Sources/InferKit/include/InferKit \
-    Sources/InferKit/include/InferKit/*.h \
+    -I Sources/InferKit/include -I Sources/InferKit/include/InferKit -I Sources/InferKitC/include \
+    Sources/InferKit/include/InferKit/*.h Sources/InferKitC/include/InferKitC/NFKAPIVersion.h \
     -o "$GRAPH_DIR/InferKit.symbols.json"
 
 echo "==> Converting the DocC catalog"

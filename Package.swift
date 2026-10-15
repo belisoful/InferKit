@@ -10,10 +10,23 @@ let package = Package(
     ],
     products: [
         .library(name: "InferKit", targets: ["InferKit"]),
+        // The process that hosts one plugin bundle out of the app's process. macOS only; on other
+        // platforms its main returns at once.
+        .executable(name: "inferkit-plugin-host", targets: ["inferkit-plugin-host"]),
     ],
     targets: [
+        // The pure-C headers: the API version, the plugin ABI a C, C++, or Rust plugin implements, and
+        // the C API a program calls InferKit through. A second directory beside include/InferKit is
+        // rejected by SwiftPM, so they are a target of their own. NFKPluginABILayout.c holds the
+        // layout assertions and is the target's one source.
+        .target(
+            name: "InferKitC",
+            path: "Sources/InferKitC",
+            publicHeadersPath: "include"
+        ),
         .target(
             name: "InferKit",
+            dependencies: ["InferKitC"],
             path: "Sources/InferKit",
             // Public API is include/InferKit/, so `#import <InferKit/Foo.h>` resolves the same
             // way it does against the built framework.
@@ -41,6 +54,14 @@ let package = Package(
                 .linkedFramework("Security"),
                 .linkedFramework("IOKit", .when(platforms: [.macOS])),
             ]
+        ),
+        // SwiftPM cannot sign with entitlements, so the entitlement files are excluded and an app signs
+        // the host it embeds (Docs/agent-reference/plugins.md).
+        .executableTarget(
+            name: "inferkit-plugin-host",
+            dependencies: ["InferKit"],
+            path: "Sources/inferkit-plugin-host",
+            exclude: ["Entitlements"]
         ),
         .testTarget(
             name: "InferKitTests",

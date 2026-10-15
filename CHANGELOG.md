@@ -63,6 +63,19 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   conformance, constant, and function. The baseline is a framework, a git ref, or `current` (a
   self-check until the first tagged release).
 
+#### The package gains a C target and a plugin host
+
+- `InferKitC` is a pure-C target the core depends on. `NFKAPIVersion.h` now holds
+  `NFK_API_VERSION_MAJOR` and `NFK_API_VERSION_MINOR`, with the packed `NFK_API_VERSION`, and
+  `NFKInferKit.h` imports it, so an Objective-C client reads the same macros as before.
+  `NFKPluginABI.h` is the interface a C, C++, or Rust plugin implements, and `NFKInferKitC.h` the C
+  interface a program calls InferKit through. The Objective-C umbrella imports neither.
+- `inferkit-plugin-host` is the package's second product, a macOS executable that serves one plugin
+  bundle out of the app's process. Its entitlement files ship beside it for the app that signs it.
+- The plugin classes' headers are in the umbrella: `NFKPlugin`, `NFKPluginManifest`,
+  `NFKPluginSignaturePolicy`, `NFKPluginLoader`, `NFKPluginProcess`, `NFKPluginBackend`,
+  `NFKPluginService`, and `NFKPluginRegistry`. Their behavior lands in the following changes.
+
 #### Downloads are planned, observed, cancelled, and removed
 
 - `NFKHFHub` plans a download before it starts: `planDownloadOfRepo:revision:paths:error:` (paths may
