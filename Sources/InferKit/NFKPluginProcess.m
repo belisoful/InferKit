@@ -735,13 +735,18 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 		_admissionCondition = [[NSCondition alloc] init];
 		_heldAdmissions = [NSMutableArray array];
 		_crashTimes = [NSMutableArray array];
-		dispatch_queue_attr_t attributes = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0);
+		// A pool per block, so an object a block autoreleases, such as a backend, is freed when the block ends.
+		dispatch_queue_attr_t attributes = dispatch_queue_attr_make_with_autorelease_frequency(
+			dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INITIATED, 0),
+			DISPATCH_AUTORELEASE_FREQUENCY_WORK_ITEM);
 		_eventQueue = dispatch_queue_create("com.inferkit.plugin-process.events", attributes);
 		_controlQueue = dispatch_queue_create("com.inferkit.plugin-process.control", attributes);
 		_submissionQueue = dispatch_queue_create("com.inferkit.plugin-process.submissions", attributes);
 		_restartPhase = @"none";
 		_idleQueue = dispatch_queue_create("com.inferkit.plugin-process.idle",
-										   dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0));
+										   dispatch_queue_attr_make_with_autorelease_frequency(
+											   dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0),
+											   DISPATCH_AUTORELEASE_FREQUENCY_WORK_ITEM));
 	}
 	return self;
 }

@@ -23,7 +23,8 @@ NS_ASSUME_NONNULL_BEGIN
 				strict validation, and caches a success by the code's cdhash, so a second launch of the
 				same code does not hash it again. validateProcessWithAuditToken:error: checks a running
 				process, which is how a host confirms that the process on the other end of its channel
-				runs the code it verified. The class is macOS only. Introduced in InferKit 0.4.0.
+				runs the code it verified. Two policies are equal when they make the same four demands.
+				The class is macOS only. Introduced in InferKit 0.4.0.
 */
 API_UNAVAILABLE(ios, tvos, watchos)
 @interface NFKPluginSignaturePolicy : NSObject <NSCopying>

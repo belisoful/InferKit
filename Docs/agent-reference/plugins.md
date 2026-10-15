@@ -767,6 +767,26 @@ looks up a class a plugin's manifest names.
   the plugin on their first call and run its tool of the same name; every other plugin's are its process's
   `NFKPluginToolProxy`s.
 
+### Autorelease pools
+
+A plugin backend's handle lives until the `NFKPluginBackend` is freed, and its process idles only once no
+handle lives, so an autoreleased backend keeps a process running. Three paths autoreleased one into a pool
+that drains only when its thread exits, and `NFKPluginRegistryTests` (the server idle test) failed 3/3 on
+the first:
+
+- `-[NFKInferenceServer unloadIdleModels]` took the backend from inside `@synchronized`, which returns it
+  autoreleased into the caller's pool: the test's main thread, or the residency queue's thread. The take
+  now returns outside the lock, and one `@autoreleasepool` spans the take and the release.
+- A provider build and a run on a global queue: each block now drains its own pool.
+  `-[NFKPluginProcess backendForModelIdentifier:options:error:]` returns its new backend from inside a
+  `for` loop, so the return autoreleases it.
+- The channel's handler queue: `routeEvent:` reads the backend from the connection's weak map table, and
+  a weak read autoreleases. The channel's and the supervisor's queues use
+  `DISPATCH_AUTORELEASE_FREQUENCY_WORK_ITEM`.
+
+The test now also waits for the backend itself to be freed after the unload, which separates a held
+backend from an idle timer that does not fire.
+
 ### Tool names
 
 `checkToolNamesOfManifest:error:` runs on every add and reload, under the lock: a tool name another
@@ -952,6 +972,16 @@ Sign the bundle after the manifest and `Info.plist` are in place. The signature 
 - `+hostExecutableURL` is `NFK_PLUGIN_HOST_PATH` when set, else `inferkit-plugin-host` beside the
   test bundle, where `swift build --build-tests` and Xcode both place it.
 - `+tamperedCopyOfBundleAtURL:error:` copies a bundle and edits its manifest's summary after signing.
+- Builds within one test process run one at a time (`@synchronized` on the class), and a second caller
+  finds the finished cache. Builds in two processes use separate staging directories, named by UUID, and
+  the first `rename` wins. No two builds share a path.
+- `+runProgram:arguments:error:` closes the tool's standard input, sets `CODESIGN_ALLOCATE` to the
+  toolchain's `codesign_allocate` (found once with `xcrun --find`), and on its 300-second timeout lists
+  the processes below the tool in the error. On 2026-10-15 a full core run timed out in `codesign --force
+  --sign -` of the duplicate-runtime fixture after it printed "replacing existing signature", the point
+  where codesign runs `codesign_allocate`; through `/usr/bin/codesign_allocate` that is an xcrun shim
+  resolving the toolchain on each call. The same test passed alone. The cause was not observed, and the
+  listing records it if it recurs.
 
 ## Staging
 

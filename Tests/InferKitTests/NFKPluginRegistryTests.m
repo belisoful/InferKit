@@ -808,12 +808,14 @@ static BOOL NFKRegistryTestImageIsLoaded(NSURL *url)
 	server.unloadGracePeriod = 0;
 	server.idleUnloadInterval = 0.2;
 	NSMutableArray<NFKPluginProcess *> *processes = [NSMutableArray array];
+	NSHashTable<NFKPluginBackend *> *built = [NSHashTable weakObjectsHashTable];
 	[server addBackendProvider:^id<NFKInferenceBackend> _Nullable(NSError **providerError) {
 		NFKPluginBackend *backend = [registry backendForModelIdentifier:invert options:nil error:providerError];
 		backend.process.idleExitInterval = 0.5;
 		@synchronized (processes) {
-			if (backend.process != nil) {
+			if (backend != nil) {
 				[processes addObject:backend.process];
+				[built addObject:backend];
 			}
 		}
 		return backend;
@@ -842,6 +844,16 @@ static BOOL NFKRegistryTestImageIsLoaded(NSURL *url)
 		return [[server unloadIdleModels] containsObject:@"invert"];
 	} timeout:10], @"the server unloads the idle model");
 	XCTAssertEqual([server residencyForModelName:@"invert"], NFKServerModelResidencyNotLoaded);
+	XCTAssertTrue([self waitUntil:^BOOL {
+		// The array allObjects returns holds the backends it lists, so it is drained before the next poll.
+		NSUInteger alive = 0;
+		@autoreleasepool {
+			@synchronized (processes) {
+				alive = built.allObjects.count;
+			}
+		}
+		return alive == 0;
+	} timeout:10], @"the unload releases the last reference to the backend, so its handle is released");
 	XCTAssertTrue([self waitUntil:^BOOL {
 		return process.state == NFKPluginProcessStateNotRunning;
 	} timeout:30], @"the process exits once no backend holds it: %@", process.diagnosticDescription);

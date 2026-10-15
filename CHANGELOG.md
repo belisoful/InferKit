@@ -193,6 +193,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   it, and every `executable` plugin, is `NFKPluginErrorNotTrusted`.
 - `hostExecutableURL` finds `inferkit-plugin-host` in the main bundle's `Contents/Helpers`, among its
   auxiliary executables, beside its executable, or beside the image that contains InferKit.
+- A backend `NFKInferenceServer` unloads is freed by the unload. The idle unload, a lazy build, and a run
+  each drain their own autorelease pool, so a plugin backend's process exits after its idle interval
+  instead of living as long as the thread that last touched the backend. The plugin channel's and
+  supervisor's queues drain a pool per block for the same reason.
+- `NFKPluginSignaturePolicy` has value equality: two policies are equal when their four demands are.
 - `Docs/plugins.md` is the guide to writing, signing, listing, trusting, and hosting plugins, with the
   `codesign` line for the embedded host and the rules for sandboxed apps.
 

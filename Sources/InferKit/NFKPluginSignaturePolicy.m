@@ -72,6 +72,27 @@ typedef OSStatus (^NFKPluginCodeCheck)(SecRequirementRef _Nullable requirement, 
 	return copy;
 }
 
+- (BOOL)isEqual:(id)object
+{
+	if (object == self) {
+		return YES;
+	}
+	if (![object isKindOfClass:NFKPluginSignaturePolicy.class]) {
+		return NO;
+	}
+	NFKPluginSignaturePolicy *other = object;
+	return self.requiresValidSignature == other.requiresValidSignature
+		&& self.allowsAdHocSignature == other.allowsAdHocSignature
+		&& (self.teamIdentifier == other.teamIdentifier || [self.teamIdentifier isEqualToString:other.teamIdentifier])
+		&& (self.requirementString == other.requirementString || [self.requirementString isEqualToString:other.requirementString]);
+}
+
+- (NSUInteger)hash
+{
+	return self.teamIdentifier.hash ^ (self.requirementString.hash << 1) ^ ((NSUInteger)self.requiresValidSignature << 2)
+		^ ((NSUInteger)self.allowsAdHocSignature << 3);
+}
+
 #pragma mark Cache
 
 /*! The successful static validations of this process, each keyed by cdhash, policy, and the bundle's
