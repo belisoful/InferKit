@@ -67,6 +67,40 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKAppleModelDescriptors` describes the Apple-framework engines (engine `apple`): one descriptor per
   engine and task, built by `+backendNamed:`, with the operating system each needs.
 
+#### MCP servers launched as programs
+
+- `NFKMCPClient` speaks MCP's stdio transport on macOS.
+  `initWithCommand:arguments:environment:workingDirectoryURL:` takes what
+  `claude mcp add --transport stdio NAME -e KEY=value -- command args` takes. The first call launches
+  the server, and the client lists and calls its tools through the same API it uses over Streamable
+  HTTP. The client answers the server's `ping` and refuses its other requests with JSON-RPC error
+  `-32601`.
+- Every request has a deadline: `timeout` (600 s) for a tool call, and `protocolTimeout` (30 s) for
+  `initialize`, `ping`, and `tools/list`. A request past its deadline returns
+  `kNFKError_RemoteUnreachable`, and over stdio the client also sends `notifications/cancelled`.
+  A server that exits fails every pending call with `kNFKError_RemoteUnreachable`, naming its exit
+  status or signal and its last log line. It stays down, and later calls fail the same way, until
+  `connectWithError:` launches it or `NFKSubprocessRestartPolicyOnCrash` relaunches it; the client
+  initializes a new session with the relaunched process.
+- A stdio server inherits only `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM`, `USER`, `TMPDIR`, `LANG`,
+  and `LC_ALL` (`defaultInheritedEnvironmentVariables`), then the variables given, as the MCP
+  reference SDKs do, so a third party's server does not see an application's credentials.
+  `inheritsFullEnvironment` passes the whole environment.
+- `transport` names the client's transport, and `endpointURL` is nil over stdio.
+  `pingWithError:` sends `ping`. `disconnect` ends an HTTP session with DELETE, or stops a stdio
+  server.
+- `NFKSubprocess` launches and supervises a program on macOS: an argument array with no shell, an
+  inherited or clean environment, and a working directory. Its standard output arrives line by line,
+  its standard error is kept in a bounded buffer and forwarded line by line, and writes block while
+  the child's pipe is full. A bare command name that `PATH` does not hold is searched in the
+  directories `NFKAgentCLI` searches (Homebrew, `~/.local/bin`, the npm-global, Bun, Volta, Cargo,
+  and nvm bins), and a command found nowhere fails with an error naming every directory searched.
+  `inheritedEnvironmentVariables` limits what the child inherits; by default it inherits everything. `stop` closes standard input, then sends SIGTERM, then SIGKILL, to the
+  child's own process group. `restartPolicy` relaunches a crashed process with a doubling delay, up
+  to `maximumRestarts` times in a row. `stateHandler` reports starting, running, exited (with the
+  exit status or signal), and a failed launch (with its reason). An `NFKMCPClient`'s
+  `serverProcess` is one.
+
 #### Models as tools
 
 - `NFKInferenceTool` is a tool a language model calls: a name, a description, a JSON Schema for the

@@ -106,6 +106,9 @@ Pure Apple frameworks, always available:
   ``NFKInferenceJob``.
 - ``NFKToolLoop`` — runs a conversation in which a model calls tools, with any backend that returns
   tool calls. ``NFKBackendTool`` makes any backend a tool, so one model calls another.
+- ``NFKMCPClient`` — reads a Model Context Protocol server's tools as ``NFKInferenceTool``, over
+  Streamable HTTP or, on macOS, over stdio from a server it launches and supervises through
+  ``NFKSubprocess``.
 
 ### Companion (link to enable)
 
@@ -184,6 +187,10 @@ the core discovers it by name at runtime — see <doc:DynamicDiscovery>.
 - ``NFKToolResult``
 - ``NFKToolMessages``
 - ``NFKMCPClient``
+- ``NFKMCPTransport``
+- ``NFKSubprocess``
+- ``NFKSubprocessState``
+- ``NFKSubprocessRestartPolicy``
 
 ### Serving
 

@@ -37,6 +37,7 @@
 #import <InferKit/NFKToolLoop.h>
 #import <InferKit/NFKMCPClient.h>
 #import <InferKit/NFKAgentCLI.h>
+#import <InferKit/NFKSubprocess.h>
 #import <InferKit/NFKDynamicBackend.h>
 #import <InferKit/NFKModelVocabulary.h>
 #import <InferKit/NFKModelDescriptor.h>

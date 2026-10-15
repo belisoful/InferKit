@@ -982,7 +982,13 @@ model as a tool. Only the added tools are listed, each with its description and 
 text, images, and audio come back as MCP content. The route takes the server's key, and refuses a
 browser request whose `Origin` names another host, which closes DNS rebinding against a loopback
 server. `NFKMCPClient` reads any MCP server's tools back as `NFKInferenceTool`, so a loop gives a
-model a remote server's tools beside its own. A provider that calls MCP servers itself reaches a public
+model a remote server's tools beside its own. On macOS it also launches a server as a program and
+speaks to it over stdio, given the command, arguments, environment, and working directory an agent's
+`mcp add --transport stdio` takes. The server inherits only a few variables (`HOME`, `PATH`, `USER`,
+the locale), so a third party's program does not see an application's credentials. Its
+`serverProcess` reports the server's exits, keeps its log, restarts it after a crash when asked, and
+stops it by closing its input, then SIGTERM, then SIGKILL. A server that exits on its own stays down
+until `connectWithError:`. A provider that calls MCP servers itself reaches a public
 server through `NFKParameterMCPServers`: Claude's MCP connector and the Responses API's `mcp` tool.
 
 **A loop is a backend.** `submitInferenceJobForRequest:` streams each model turn's partial text and

@@ -123,6 +123,12 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 - ``NFKToolResult``
 - ``NFKToolMessages``
 - ``NFKMCPClient``
+- ``NFKMCPTransport``
+- ``NFKSubprocess``
+- ``NFKSubprocessState``
+- ``NFKSubprocessTerminationReason``
+- ``NFKSubprocessRestartPolicy``
+- ``NFKSubprocessError``
 - ``NFKAgentCLI``
 - ``NFKAgentMCPLink``
 

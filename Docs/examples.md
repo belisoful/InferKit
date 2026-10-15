@@ -5409,6 +5409,35 @@ NFKToolLoop *withRemoteTools = [[NFKToolLoop alloc] initWithBackend:llm tools:re
 NFKInferenceResult *done = [withRemoteTools runInferenceForRequest:ask error:&error];
 ```
 
+On macOS a server that runs as a program takes the stdio transport. The client launches it with an
+argument array, an environment, and a working directory, the way `claude mcp add --transport stdio`
+registers one, and reaches its tools through the same calls. The server starts on the first call and
+stops on `disconnect`. A server that exits stays down, and its calls fail, until `connectWithError:`
+launches it again or the restart policy relaunches it. `serverProcess` holds the restart policy, the
+stop timeouts, and the server's log. The server inherits only `HOME`, `LOGNAME`, `PATH`, `SHELL`,
+`TERM`, `USER`, `TMPDIR`, `LANG`, and `LC_ALL`, plus the variables given, so a third party's server
+does not see an application's credentials; `inheritsFullEnvironment` passes everything. A bare
+command name that `PATH` does not hold is looked for where `NFKAgentCLI` looks: Homebrew,
+`~/.local/bin`, and the Node, Bun, and Cargo bins.
+
+```objc
+NFKMCPClient *files = [[NFKMCPClient alloc] initWithCommand:@"/opt/homebrew/bin/npx"
+                                                  arguments:@[ @"-y", @"@modelcontextprotocol/server-filesystem", folder.path ]
+                                                environment:@{ @"NODE_ENV": @"production" }
+                                        workingDirectoryURL:folder];
+files.serverProcess.restartPolicy = NFKSubprocessRestartPolicyOnCrash;
+files.serverProcess.stateHandler = ^(NFKSubprocess *process, NFKSubprocessState state) {
+    if (state == NFKSubprocessStateExited) {
+        NSLog(@"exited %d: %@", process.terminationStatus, process.recentStandardError);   // the server's log
+    }
+};
+NSArray<NFKInferenceTool *> *fileTools = [files toolsWithError:&error];   // launches the server
+if (fileTools == nil && files.serverProcess.state == NFKSubprocessStateExited) {
+    [files connectWithError:&error];   // a server that exited stays down until this
+}
+[files disconnect];   // closes its input, then SIGTERM, then SIGKILL
+```
+
 A provider can call the server itself when it is public. Behind a tunnel that serves HTTPS,
 `NFKParameterMCPServers` hands it to Claude's MCP connector (`NFKAnthropicBackend`) or to the
 Responses API's `mcp` tool (`NFKRemoteResponsesBackend`), and what the service ran comes back under

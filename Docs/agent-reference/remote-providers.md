@@ -965,12 +965,102 @@ machine's remote clients reach a model this process hosts. Files:
     (`inferkit:///<file name>`), and a dictionary `NFKOutputStructured` as `structuredContent`.
   Only `addTool:` tools are listed, which is the user's decision of 2026-10-10: a hosted model is not
   exposed until the host writes it a tool with a description.
-- `NFKMCPClient.m` (public): blocking and serialized by a lock. It initializes on first use, sends
-  `notifications/initialized`, and pages `tools/list` by `nextCursor`. Each event's `data:` lines
-  join with newlines into one message, and the reply whose `id` matches is taken, past any progress
-  notification. The session id the server assigns goes back with each later request, beside
-  `MCP-Protocol-Version`. A JSON-RPC error is nil plus an error whose description is
-  `<method>: <message>`. `NFKMCPClientTool` re-runs the schema check locally before the remote call.
+- `NFKMCPClient.m` (public): blocking and serialized by a lock, over either transport. It
+  initializes on first use, sends `notifications/initialized`, and pages `tools/list` by
+  `nextCursor`. A JSON-RPC error is nil plus an error whose description is `<method>: <message>`.
+  `NFKMCPClientTool` re-runs the schema check locally before the remote call. `disconnect` sends
+  DELETE for an HTTP session the server assigned (the served route answers 204 and ends it) or stops
+  a stdio server, and forgets the session either way.
+  - Streamable HTTP: each event's `data:` lines join with newlines into one message, and the reply
+    whose `id` matches is taken, past any progress notification. The session id the server assigns
+    goes back with each later request, beside `MCP-Protocol-Version`.
+  - stdio (2026-10-15, the 2025-06-18 spec's stdio transport): one message per line, written with
+    `NSJSONWritingWithoutEscapingSlashes`. `NSJSONSerialization` writes a newline inside a string as
+    `\n`, so a message never holds a raw newline. `apiKey` and `additionalHeaders` do not apply.
+  - Replies match by `id` through a pending table under its own lock. The reader runs on the
+    subprocess's event queue and never takes the call lock, so it delivers while a call waits. A reply
+    is stored under the pending lock, so a wait that times out at the same moment still reads it.
+  - A line that is not JSON is skipped. A server notification is ignored.
+  - A server request: `ping` → `{}`; any other method → `-32601` "InferKit's MCP client does not
+    handle <method>", since the client declares no capabilities. Answers go out on a separate serial
+    queue: written from the reader, a server blocked on a full stdout pipe and a client blocked on a
+    full stdin pipe would deadlock.
+  - Deadlines (2026-10-15): `tools/call` waits `timeout` (600 s), and every other request waits
+    `protocolTimeout` (30 s), on both transports. A value that is not positive takes its default, so
+    no wait is unbounded. A timeout removes the pending entry, sends `notifications/cancelled` with
+    `requestId`, and returns `kNFKError_RemoteUnreachable`. The late reply finds no entry and is
+    dropped. Measured cause: the Swift example's stand-in server had no `ping` branch, so the
+    example's `ping()` waited the single 600 s timeout every request then used, and a test run
+    sampled it 9.5 minutes in, still in `semaphore_timedwait_trap`. A ping or a handshake now
+    gives up after 30 s.
+  - An exit or a failed launch fails every pending request with `kNFKError_RemoteUnreachable`, naming
+    the exit status or signal and the server's last nonblank standard-error line, and marks the
+    session ended.
+  - A server that exits stays down (decided 2026-10-15). A call launches the process
+    only when `launchesOnNextCall` is set: at creation, after `connectWithError:`, and after
+    `disconnect`. Any other call on a process that is not running returns the exit's error at once.
+    The restart policy relaunches without the client; the next call finds it running and initializes
+    again, since the exit marked the session ended.
+  - Environment (decided 2026-10-15): the client sets
+    `serverProcess.inheritedEnvironmentVariables` to HOME, LOGNAME, PATH, SHELL, TERM, USER, TMPDIR,
+    LANG, and LC_ALL, which is the MCP TypeScript SDK's `getDefaultEnvironment()` list for macOS plus
+    the last three. A third party's MCP server should not see an application's keys.
+    `inheritsFullEnvironment` sets it to nil. `NFKSubprocess` alone inherits everything, since a
+    plugin host is InferKit's own child.
+  - The client reads the process through `ownerLineHandler` and `ownerStateHandler`
+    (`NFKSubprocessPrivate.h`), which run before the public `lineHandler` and `stateHandler`, so an
+    application observes the same traffic without displacing the client. The client's `dealloc`
+    stops its server without waiting.
+- `NFKSubprocess.h/.m` (public, macOS only, 2026-10-15): the launcher and supervisor under the stdio
+  client, built to host a plugin process InferKit launches as well. Choices:
+  - The launch uses `posix_spawn` for flags `NSTask` does not expose. `POSIX_SPAWN_CLOEXEC_DEFAULT`
+    leaves only the three `dup2` targets open in the child. `POSIX_SPAWN_SETPGROUP` with 0 gives the
+    child its own process group, so a stop reaches what the server started (`npx` → `node`).
+    `SETSIGDEF` for every signal and an empty `SETSIGMASK` keep a host's ignored SIGPIPE out of the
+    child.
+  - `posix_spawn_file_actions_addchdir_np` sets the working directory. The macOS 26 SDK deprecates it
+    for the name without `_np`, which earlier systems lack, so the call silences the deprecation. A
+    directory that does not exist fails the spawn with ENOENT, which reads as `FailedToLaunch`.
+  - A command without a slash is searched on the PATH of the child's merged environment (or
+    `/usr/bin:/bin:/usr/sbin:/sbin` without one), then in `NFKAgentCLIToolDirectories()`
+    (`NFKAgentCLIPrivate.h`), the list `NFKAgentCLI` searches after PATH. A command found only there
+    has its directory appended to the child's PATH, since `npx` and the other Node launchers run
+    `#!/usr/bin/env node`. A command found nowhere fails with ENOENT and a description naming every
+    directory searched. An absolute path, or a path relative to the working directory, is used as
+    given.
+  - Parent ends: `FD_CLOEXEC`, `O_NONBLOCK`, and `F_SETNOSIGPIPE` on standard input, so a write to an
+    exited child returns EPIPE and raises no signal.
+  - Output: two read sources on one serial user-initiated queue. Framing scans only the new bytes,
+    since the pending buffer never holds a newline. A carriage return before a newline is dropped,
+    output left without a newline arrives as a final line, and a line past `maximumLineLength` is
+    dropped through its newline.
+  - Exit: a `DISPATCH_SOURCE_TYPE_PROC` source and `waitpid(WNOHANG)`, plus one `waitpid` queued right
+    after the source starts, for a child that exited before it registered. `Exited` is entered after
+    both pipes reach EOF, or 0.5 s after the exit when a grandchild holds them, so every line precedes
+    the state.
+  - Writes block under a lock and poll `POLLOUT` in 100 ms slices, up to `writeTimeout` (30 s; a value
+    that is not positive takes 30). `closeStandardInput` sets a flag before it takes the lock, so a
+    writer the child is not reading never holds it up for long. The blocking `stop` waits at most both
+    stop timeouts plus 5.5 s and returns whether the process exited.
+  - Stop: close standard input → `stopInputTimeout` (2 s) → SIGTERM to the group and the process →
+    `stopTerminateTimeout` (3 s) → SIGKILL. Signals go out only before the run is reaped, so a reused
+    process identifier is never signaled.
+  - Restart (`OnCrash`): a nonzero status, a signal, or an unreadable status, unless a stop caused the
+    exit. The delay is `restartDelay`·2ⁿ, capped at `maximumRestartDelay`, for at most
+    `maximumRestarts` consecutive crashes. A run that lasts `restartResetInterval` resets the count,
+    and so does an explicit start, which also replaces a pending relaunch. `restartPending` is set
+    before `Exited` is reported.
+  - Lifetime: the dispatch sources retain the subprocess, so a running one outlives its owner until its
+    process exits.
+  - Tests: `NFKSubprocessTests` (3), `NFKMCPStdioTests` (13), and `NFKMCPClientDisconnectTests` (1).
+    The fake server is a POSIX shell script the test writes to a temporary directory and runs as
+    `/bin/sh <script> <mode>`. `/bin/sh`, `/usr/bin/sed`, `/bin/sleep`, and `/bin/pwd` ship with
+    macOS, while `python3` is a Command Line Tools stub and a helper executable has no SwiftPM
+    test-target home. The script matches requests by substring and answers with `printf`. Modes
+    `ignore-input-close` and `ignore-sigterm` (`trap '' TERM`, which the `sleep` it runs inherits)
+    drive the stop escalation, and `silent-ping` leaves `ping` unanswered for the protocol timeout.
+    A stand-in server in an example answers every method the example sends, `ping` included, and
+    the example sets short timeouts.
 - `NFKAgentCLI.h/.m` (public, macOS only, 2026-10-11): registers an MCP server with an agent CLI
   by running its `mcp` subcommands through `NSTask`. It edits no configuration file itself; the
   user left config-file agents (Cursor, VS Code's remove, Claude Desktop) out for now. Each CLI
@@ -1003,7 +1093,8 @@ machine's remote clients reach a model this process hosts. Files:
     adds or updates.
   - Claude's `get` finds a name in any scope; a registration whose `Scope:` names another scope
     reads as absent for the requested one. Remove "not found" counts as success.
-  - A GUI app's PATH is `/usr/bin:/bin:/usr/sbin:/sbin`, so the search adds `~/.local/bin`,
+  - A GUI app's PATH is `/usr/bin:/bin:/usr/sbin:/sbin`, so the search adds (through
+    `NFKAgentCLIToolDirectories()`, which `NFKSubprocess` shares) `~/.local/bin`,
     `~/.claude/local`, `/opt/homebrew/bin`, `/usr/local/bin`, npm-global, Bun, Volta, Cargo, and nvm
     bins, and puts them on the child's PATH, since the Node CLIs run `#!/usr/bin/env node`.
   - A timed-out command gets SIGTERM, then SIGKILL after 2 s. A grandchild can keep the pipes open
@@ -1443,6 +1534,8 @@ closure nonisolated. The attribute changes nothing for Objective-C callers or ov
   providers, first local provider, models, Bonjour discovery), `NFKServerStatus` fetches, `NFKHFHub`
   download, `NFKComputePlan` (Core ML's queue), `NFKSpeechRecognitionBackend` authorization (an
   arbitrary thread).
+- `NFKSubprocess`: `lineHandler`, `standardErrorLineHandler`, and `stateHandler` → the subprocess's
+  event queue; `stopWithCompletionHandler:`'s handler → the same queue.
 - Transport seams: `NFKRemoteTransport`'s stream (line handler and `NFKRemoteStreamCompletion` on the
   session's delegate queue, the returned cancel block on the cancelling thread) and every backend's
   `streamRequest:lineHandler:completionHandler:` override point; `NFKOllamaRunner`'s pull seam.
