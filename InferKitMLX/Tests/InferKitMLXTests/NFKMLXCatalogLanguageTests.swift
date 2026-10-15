@@ -35,7 +35,11 @@ final class NFKMLXCatalogLanguageTests: XCTestCase {
                             file: StaticString = #filePath, line: UInt = #line) throws {
         let descriptor = try descriptor(name)
         XCTAssertEqual(Set(descriptor.inputs.map(\.key)), inputs, "\(name) inputs", file: file, line: line)
-        XCTAssertEqual(Set(descriptor.options.map(\.key)), parameters, "\(name) options", file: file, line: line)
+        // Load options configure the build, and a backend may also take the cache ones as request defaults,
+        // so the request options are compared with the request keys the backend reads beyond them.
+        let loadKeys = Set(descriptor.loadOptions.map(\.key))
+        XCTAssertEqual(Set(descriptor.requestOptions.map(\.key)), parameters.subtracting(loadKeys),
+                       "\(name) request options", file: file, line: line)
         XCTAssertEqual(Set(descriptor.outputs.map(\.key)), outputs, "\(name) outputs", file: file, line: line)
     }
 
