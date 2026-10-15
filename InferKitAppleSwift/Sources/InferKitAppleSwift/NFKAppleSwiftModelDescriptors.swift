@@ -12,7 +12,7 @@ import InferKit
 /// The shared catalog looks this class up by name, so linking the package is what lists the engines:
 /// `apple-speech-analyzer`, `apple-translation`, `vision-document`, and `vision-smudge`. Each
 /// descriptor's identifier is its backend's `backendIdentifier` and its registry name, its engine is
-/// `NFKModelEngineAppleSwift`, and its inputs, parameters, and outputs are the key sets of the backend
+/// `NFKModelEngineAppleSwift`, and its inputs, options, and outputs are the key sets of the backend
 /// `backend(named:)` builds. Each has one variant whose source is `NFKModelSourceKindSystem`, because
 /// the model is part of the operating system; the speech analyzer and the translator install their
 /// language assets through the system on first use. Introduced in InferKit 0.4.0.
@@ -72,7 +72,7 @@ public final class NFKAppleSwiftModelDescriptors: NSObject, NFKModelDescriptorPr
         let inputs = inputKeys.sorted().map { NFKModelPort(key: $0, required: inputKeys.count == 1) }
         // Every engine here writes each key it declares on every result.
         let outputs = outputKeys.sorted().map { NFKModelPort.outputPort(withKey: $0, required: true) }
-        let parameters = parameterKeys.sorted().map { NFKModelOption(key: $0) }
+        let options = parameterKeys.sorted().map { NFKModelOption(key: $0) }
         let source = NFKModelSource(kind: NFKModelSourceKindSystem, repository: nil, revision: nil, url: nil,
                                     layout: NFKModelSourceLayoutNone, files: nil, requiresConversion: false,
                                     extensions: nil)
@@ -99,7 +99,7 @@ public final class NFKAppleSwiftModelDescriptors: NSObject, NFKModelDescriptorPr
                                   outputModalities: nil,
                                   inputs: inputs,
                                   outputs: outputs,
-                                  parameters: parameters,
+                                  options: options,
                                   variants: [variant],
                                   license: license,
                                   requirements: requirements,

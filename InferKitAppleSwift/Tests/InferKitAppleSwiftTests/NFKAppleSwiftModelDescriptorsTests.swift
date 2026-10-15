@@ -21,7 +21,7 @@ final class NFKAppleSwiftModelDescriptorsTests: XCTestCase {
             XCTAssertEqual(backend.backendIdentifier, descriptor.identifier)
             XCTAssertEqual(Set(descriptor.inputs.map(\.key)), backend.supportedInputKeys ?? [], descriptor.identifier)
             XCTAssertEqual(Set(descriptor.outputs.map(\.key)), backend.supportedOutputKeys ?? [], descriptor.identifier)
-            XCTAssertEqual(Set(descriptor.parameters.map(\.key)), backend.supportedParameterKeys ?? [], descriptor.identifier)
+            XCTAssertEqual(Set(descriptor.options.map(\.key)), backend.supportedParameterKeys ?? [], descriptor.identifier)
             XCTAssertFalse(descriptor.outputs.isEmpty, descriptor.identifier)
             for port in descriptor.outputs {
                 XCTAssertEqual(port.valueType, NFKModelValueTypeForOutputKey(port.key), port.key)

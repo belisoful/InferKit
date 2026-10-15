@@ -12,6 +12,13 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class NFKHardwareProfile;
+@class NFKModelMemoryFacts;
+@class NFKModelMemoryFigure;
+@class NFKModelMemoryModel;
+@class NFKModelPreset;
+@class NFKModelRequirements;
+
 /*!
 	@header     NFKModelDescriptor
 	@abstract   Immutable value types that describe a model: what it takes, what it returns, the options
@@ -76,8 +83,11 @@ NS_ASSUME_NONNULL_BEGIN
 
 /*!
 	@class      NFKModelOptionChoice
-	@abstract   One value an option of kind NFKModelOptionKindChoice takes, with its name.
-	@discussion The value is a JSON scalar: an NSString or an NSNumber. Introduced in InferKit 0.4.0.
+	@abstract   One value an option of kind NFKModelOptionKindChoice or NFKModelOptionKindModelReference
+				takes, with its name, what it needs, and the memory it holds.
+	@discussion The value is a JSON scalar: an NSString or an NSNumber. memory is the figure at the
+				descriptor's default variant and default options with this choice selected, and
+				memoryByVariant gives the figure per variant identifier. Introduced in InferKit 0.4.0.
 */
 @interface NFKModelOptionChoice : NSObject <NSCopying>
 
@@ -85,13 +95,34 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, copy) id value;
 /*! The name a user interface shows for the choice. */
 @property (nonatomic, readonly, copy) NSString *title;
+/*! What a machine needs to take the choice, or nil when every machine that runs the model takes it.
+	Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NFKModelRequirements *requirements;
+/*! The memory the model holds with the choice selected, at the default variant and the default
+	options. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NFKModelMemoryFigure *memory;
+/*! The memory the model holds with the choice selected, per variant identifier. Introduced in
+	InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSDictionary<NSString *, NFKModelMemoryFigure *> *memoryByVariant;
 /*! The fields of the choice's dictionary this version does not read, written back as they came. */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *extensions;
 
-/*! A choice with every field. A nil title is the value's description. */
+/*! A choice with every field. A nil title is the value's description. Introduced in InferKit 0.4.0. */
 - (instancetype)initWithValue:(id)value
 						title:(nullable NSString *)title
+				 requirements:(nullable NFKModelRequirements *)requirements
+					   memory:(nullable NFKModelMemoryFigure *)memory
+			  memoryByVariant:(nullable NSDictionary<NSString *, NFKModelMemoryFigure *> *)memoryByVariant
 				   extensions:(nullable NSDictionary<NSString *, id> *)extensions NS_DESIGNATED_INITIALIZER;
+
+/*! A choice with no requirements and no memory figures. A nil title is the value's description. */
+- (instancetype)initWithValue:(id)value
+						title:(nullable NSString *)title
+				   extensions:(nullable NSDictionary<NSString *, id> *)extensions;
+
+/*! The memory figure for a variant: its entry in memoryByVariant, else memory. Introduced in
+	InferKit 0.4.0. */
+- (nullable NFKModelMemoryFigure *)memoryForVariant:(nullable NSString *)variantIdentifier;
 
 /*! A choice with a value and a title. */
 + (instancetype)choiceWithValue:(id)value title:(nullable NSString *)title;
@@ -100,7 +131,8 @@ NS_ASSUME_NONNULL_BEGIN
 	neither a string nor a number. */
 + (nullable instancetype)choiceWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error;
 
-/*! The choice as its manifest dictionary: value and title, with the extensions beside them. */
+/*! The choice as its manifest dictionary: value, title, requires, memory, and memoryByVariant when
+	present, with the extensions beside them. */
 - (NSDictionary<NSString *, id> *)dictionaryRepresentation;
 
 - (instancetype)init NS_UNAVAILABLE;
@@ -115,7 +147,13 @@ NS_ASSUME_NONNULL_BEGIN
 				load-stage option is fixed when the backend is built. kind is one of the
 				NFKModelOptionKind* strings and decides the control a user interface shows: minimum,
 				maximum, and step bound a number or an integer, and choices list the values of a
-				choice. Introduced in InferKit 0.4.0.
+				choice.
+
+				A load-stage option reaches the backend in one of two ways:
+				- propertyKeyPath set → the build sets the value on the backend by key-value coding,
+				  after the backend is constructed and before it prepares.
+				- propertyKeyPath nil → the engine's builder reads the value as a construction argument.
+				Introduced in InferKit 0.4.0.
 */
 @interface NFKModelOption : NSObject <NSCopying>
 
@@ -143,10 +181,20 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, copy) NSString *stage;
 /*! The name of the group a user interface shows the option in. */
 @property (nonatomic, readonly, copy, nullable) NSString *group;
+/*! What a machine needs to use the option, or nil when every machine that runs the model uses it.
+	Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NFKModelRequirements *requirements;
+/*! The backend property a load-stage option sets by key-value coding, such as "computeUnits". nil for
+	an option the builder reads as an argument. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSString *propertyKeyPath;
+/*! The bytes each unit of an integer option adds to the model's memory, such as the key-value cache
+	bytes of one context position. nil for an option whose memory is not linear. Introduced in
+	InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSNumber *memoryBytesPerUnit;
 /*! The fields of the option's dictionary this version does not read, written back as they came. */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *extensions;
 
-/*! An option with every field. A nil stage is NFKModelOptionStageRequest. */
+/*! An option with every field. A nil stage is NFKModelOptionStageRequest. Introduced in InferKit 0.4.0. */
 - (instancetype)initWithKey:(NSString *)key
 					   kind:(NSString *)kind
 					  title:(nullable NSString *)title
@@ -158,7 +206,29 @@ NS_ASSUME_NONNULL_BEGIN
 					choices:(nullable NSArray<NFKModelOptionChoice *> *)choices
 					  stage:(nullable NSString *)stage
 					  group:(nullable NSString *)group
+			   requirements:(nullable NFKModelRequirements *)requirements
+			propertyKeyPath:(nullable NSString *)propertyKeyPath
+		 memoryBytesPerUnit:(nullable NSNumber *)memoryBytesPerUnit
 				 extensions:(nullable NSDictionary<NSString *, id> *)extensions NS_DESIGNATED_INITIALIZER;
+
+/*! An option with no requirements, no property, and no linear memory. A nil stage is
+	NFKModelOptionStageRequest. */
+- (instancetype)initWithKey:(NSString *)key
+					   kind:(NSString *)kind
+					  title:(nullable NSString *)title
+					   help:(nullable NSString *)help
+			   defaultValue:(nullable id)defaultValue
+					minimum:(nullable NSNumber *)minimum
+					maximum:(nullable NSNumber *)maximum
+					   step:(nullable NSNumber *)step
+					choices:(nullable NSArray<NFKModelOptionChoice *> *)choices
+					  stage:(nullable NSString *)stage
+					  group:(nullable NSString *)group
+				 extensions:(nullable NSDictionary<NSString *, id> *)extensions;
+
+/*! The choice whose value equals value, or whose value's text equals it, or nil. Introduced in
+	InferKit 0.4.0. */
+- (nullable NFKModelOptionChoice *)choiceWithValue:(id)value;
 
 /*! A request-stage option of the given kind. */
 + (instancetype)optionWithKey:(NSString *)key kind:(NSString *)kind;
@@ -173,7 +243,8 @@ NS_ASSUME_NONNULL_BEGIN
 + (nullable instancetype)optionWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error;
 
 /*! The option as its manifest dictionary: key, kind, stage, and each field that is present (the
-	default under "default", choices only when there are some), with the extensions beside them. */
+	default under "default", choices only when there are some, the requirements under "requires", and
+	the property key path under "property"), with the extensions beside them. */
 - (NSDictionary<NSString *, id> *)dictionaryRepresentation;
 
 - (instancetype)init NS_UNAVAILABLE;
@@ -397,6 +468,9 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The license of the variant's weights where it differs from its descriptor's. nil when the
 	descriptor's license covers the variant. Introduced in InferKit 0.4.0. */
 @property (nonatomic, readonly, copy, nullable) NFKModelLicense *license;
+/*! What the variant's weights and caches weigh, stage by stage, from which the memory estimate of any
+	combination of load options is computed. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NFKModelMemoryFacts *memoryFacts;
 /*! The fields of the variant's dictionary this version does not read, written back as they came. */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *extensions;
 
@@ -413,7 +487,23 @@ NS_ASSUME_NONNULL_BEGIN
 						 precision:(nullable NSString *)precision
 			minimumMemoryByteCount:(nullable NSNumber *)minimumMemoryByteCount
 						   license:(nullable NFKModelLicense *)license
+					   memoryFacts:(nullable NFKModelMemoryFacts *)memoryFacts
 						extensions:(nullable NSDictionary<NSString *, id> *)extensions NS_DESIGNATED_INITIALIZER;
+
+/*! A variant without memory facts. A nil displayName is the identifier. Introduced in InferKit 0.4.0. */
+- (instancetype)initWithIdentifier:(NSString *)identifier
+					   displayName:(nullable NSString *)displayName
+						 isDefault:(BOOL)isDefault
+					  registryName:(nullable NSString *)registryName
+							source:(nullable NFKModelSource *)source
+				 downloadByteCount:(nullable NSNumber *)downloadByteCount
+				 residentByteCount:(nullable NSNumber *)residentByteCount
+					 peakByteCount:(nullable NSNumber *)peakByteCount
+					parameterCount:(nullable NSNumber *)parameterCount
+						 precision:(nullable NSString *)precision
+			minimumMemoryByteCount:(nullable NSNumber *)minimumMemoryByteCount
+						   license:(nullable NFKModelLicense *)license
+						extensions:(nullable NSDictionary<NSString *, id> *)extensions;
 
 /*! A variant under its descriptor's license. A nil displayName is the identifier. */
 - (instancetype)initWithIdentifier:(NSString *)identifier
@@ -437,8 +527,8 @@ NS_ASSUME_NONNULL_BEGIN
 + (nullable instancetype)variantWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error;
 
 /*! The variant as its manifest dictionary: id, displayName, isDefault, and each field that is present
-	(the byte counts as downloadBytes, residentBytes, peakBytes, and minimumMemoryBytes, and the license
-	as license), with the extensions beside them. */
+	(the byte counts as downloadBytes, residentBytes, peakBytes, and minimumMemoryBytes, the license as
+	license, and the facts as memoryFacts), with the extensions beside them. */
 - (NSDictionary<NSString *, id> *)dictionaryRepresentation;
 
 - (instancetype)init NS_UNAVAILABLE;
@@ -451,7 +541,9 @@ NS_ASSUME_NONNULL_BEGIN
 	@abstract   What a machine needs to run a model.
 	@discussion minimumOSVersions maps a platform name ("macOS", "iOS", "tvOS", "visionOS") to the
 				least version that runs the model, such as "14.0". A platform the dictionary leaves out
-				does not run the model. An empty dictionary runs everywhere InferKit runs. Introduced in
+				does not run the model. An empty dictionary runs everywhere InferKit runs.
+				requiredFeatures lists NFKModelFeature* strings the machine has to have. The same
+				requirements describe a model, an option, or one choice of an option. Introduced in
 				InferKit 0.4.0.
 */
 @interface NFKModelRequirements : NSObject <NSCopying>
@@ -472,24 +564,50 @@ NS_ASSUME_NONNULL_BEGIN
 				once. The MLX companion supplies the figures for its models.
 */
 @property (nonatomic, readonly, copy, nullable) NSNumber *minimumMemoryByteCount;
+/*! The NFKModelFeature* strings a machine has to have. A string the core does not know is never met.
+	Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSArray<NSString *> *requiredFeatures;
+/*! The sentence a user interface shows when the requirements are not met, in place of the one
+	problemForHardwareProfile: composes. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NSString *unmetReason;
 /*! The fields of the requirements' dictionary this version does not read, written back as they came. */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *extensions;
 
 /*! No requirements: every platform InferKit runs on, any processor, and no stated memory. */
 - (instancetype)init;
 
-/*! Requirements with every field. */
+/*! Requirements with every field. Introduced in InferKit 0.4.0. */
 - (instancetype)initWithMinimumOSVersions:(nullable NSDictionary<NSString *, NSString *> *)minimumOSVersions
 					 requiresAppleSilicon:(BOOL)requiresAppleSilicon
 				   minimumMemoryByteCount:(nullable NSNumber *)minimumMemoryByteCount
+						 requiredFeatures:(nullable NSArray<NSString *> *)requiredFeatures
+							  unmetReason:(nullable NSString *)unmetReason
 							   extensions:(nullable NSDictionary<NSString *, id> *)extensions NS_DESIGNATED_INITIALIZER;
+
+/*! Requirements without required features or an unmet reason. */
+- (instancetype)initWithMinimumOSVersions:(nullable NSDictionary<NSString *, NSString *> *)minimumOSVersions
+					 requiresAppleSilicon:(BOOL)requiresAppleSilicon
+				   minimumMemoryByteCount:(nullable NSNumber *)minimumMemoryByteCount
+							   extensions:(nullable NSDictionary<NSString *, id> *)extensions;
+
+/*!
+	@method     problemForHardwareProfile:
+	@abstract   A sentence naming the first requirement the machine does not meet, or nil when it meets
+				them all.
+	@discussion The checks run in order: the platform and its version, Apple silicon, then each
+				required feature. unmetReason replaces the composed sentence when it is set. Memory is
+				not checked here: the memory estimate (NFKModelMemory.h) answers it. Introduced in
+				InferKit 0.4.0.
+*/
+- (nullable NSString *)problemForHardwareProfile:(NFKHardwareProfile *)profile;
 
 /*! Reads requirements from their manifest dictionary. Returns nil and sets error when a field has the
 	wrong type. */
 + (nullable instancetype)requirementsWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error;
 
 /*! The requirements as their manifest dictionary: minimumOS, requiresAppleSilicon, and
-	minimumMemoryBytes when present, with the extensions beside them. */
+	minimumMemoryBytes, requiredFeatures, and unmetReason when present, with the extensions beside
+	them. */
 - (NSDictionary<NSString *, id> *)dictionaryRepresentation;
 
 @end
@@ -499,8 +617,10 @@ NS_ASSUME_NONNULL_BEGIN
 	@abstract   Everything an app needs to list, explain, download, and configure one model.
 	@discussion A descriptor names its engine and how that engine builds the model: registryName for an
 				engine registry, providerClassName for an NFKDynamicBackendProvider. tasks lists what
-				the model does, primary first. inputs, outputs, and parameters list the keys a request
-				and a result use, typed for a user interface. variants lists the releases.
+				the model does, primary first. inputs, outputs, and options list the keys a request
+				and a result use, typed for a user interface. variants lists the releases. memoryModel
+				names the options the memory estimate reads (NFKModelMemory.h), and presets lists named
+				option sets (NFKModelPreset.h).
 
 				Fields left nil take a value from the others:
 				- inputModalities and outputModalities: the value types of inputs and outputs, in port
@@ -538,8 +658,21 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, copy) NSArray<NFKModelPort *> *inputs;
 /*! The outputs a result carries. */
 @property (nonatomic, readonly, copy) NSArray<NFKModelPort *> *outputs;
-/*! The settings the model reads. */
-@property (nonatomic, readonly, copy) NSArray<NFKModelOption *> *parameters;
+/*! The settings the model reads, at load and on each request, as the manifest declares them. Introduced
+	in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSArray<NFKModelOption *> *options;
+/*! The load-stage options: a derived NFKModelLoadOptionVariant choice first when the descriptor has
+	more than one variant and declares no option under that key, then each declared load-stage option.
+	Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSArray<NFKModelOption *> *loadOptions;
+/*! The request-stage options. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSArray<NFKModelOption *> *requestOptions;
+/*! Which options the memory estimate reads, or nil for a descriptor whose memory does not depend on its
+	options. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy, nullable) NFKModelMemoryModel *memoryModel;
+/*! Named sets of load options and request defaults a server offers as model@preset. Introduced in
+	InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSArray<NFKModelPreset *> *presets;
 /*! The model's releases. */
 @property (nonatomic, readonly, copy) NSArray<NFKModelVariant *> *variants;
 /*! The variant whose isDefault is YES, else the first variant, else nil. */
@@ -571,19 +704,44 @@ NS_ASSUME_NONNULL_BEGIN
 				  outputModalities:(nullable NSArray<NSString *> *)outputModalities
 							inputs:(nullable NSArray<NFKModelPort *> *)inputs
 						   outputs:(nullable NSArray<NFKModelPort *> *)outputs
-						parameters:(nullable NSArray<NFKModelOption *> *)parameters
+						   options:(nullable NSArray<NFKModelOption *> *)options
+						  variants:(nullable NSArray<NFKModelVariant *> *)variants
+						   license:(nullable NFKModelLicense *)license
+					  requirements:(nullable NFKModelRequirements *)requirements
+					   residencies:(nullable NSArray<NSString *> *)residencies
+					   memoryModel:(nullable NFKModelMemoryModel *)memoryModel
+						   presets:(nullable NSArray<NFKModelPreset *> *)presets
+						   standIn:(BOOL)standIn
+				 introducedVersion:(nullable NSString *)introducedVersion
+						extensions:(nullable NSDictionary<NSString *, id> *)extensions NS_DESIGNATED_INITIALIZER;
+
+/*! A descriptor without a memory model or presets. A nil collection is empty, and the derived fields
+	follow the class discussion. */
+- (instancetype)initWithIdentifier:(NSString *)identifier
+					   displayName:(nullable NSString *)displayName
+							family:(NSString *)family
+						   summary:(nullable NSString *)summary
+							engine:(NSString *)engine
+					  registryName:(nullable NSString *)registryName
+				 providerClassName:(nullable NSString *)providerClassName
+							 tasks:(nullable NSArray<NSString *> *)tasks
+				   inputModalities:(nullable NSArray<NSString *> *)inputModalities
+				  outputModalities:(nullable NSArray<NSString *> *)outputModalities
+							inputs:(nullable NSArray<NFKModelPort *> *)inputs
+						   outputs:(nullable NSArray<NFKModelPort *> *)outputs
+						   options:(nullable NSArray<NFKModelOption *> *)options
 						  variants:(nullable NSArray<NFKModelVariant *> *)variants
 						   license:(nullable NFKModelLicense *)license
 					  requirements:(nullable NFKModelRequirements *)requirements
 					   residencies:(nullable NSArray<NSString *> *)residencies
 						   standIn:(BOOL)standIn
 				 introducedVersion:(nullable NSString *)introducedVersion
-						extensions:(nullable NSDictionary<NSString *, id> *)extensions NS_DESIGNATED_INITIALIZER;
+						extensions:(nullable NSDictionary<NSString *, id> *)extensions;
 
 /*!
 	@method     descriptorWithIdentifier:derivedFromBackend:
 	@abstract   A descriptor read from what a backend declares, for a backend an app or a plugin builds.
-	@discussion The inputs come from supportedInputKeys, the parameters from supportedParameterKeys,
+	@discussion The inputs come from supportedInputKeys, the options from supportedParameterKeys,
 				and the outputs from supportedOutputKeys, each sorted by key and typed from the core
 				table. A backend that does not declare a set contributes no entries for it. No port is
 				required. The family is the NFKModelInfoArchitecture the backend's modelInfo reports,
@@ -593,8 +751,9 @@ NS_ASSUME_NONNULL_BEGIN
 					  derivedFromBackend:(id<NFKInferenceBackend>)backend
 	NS_SWIFT_NAME(init(identifier:derivedFrom:));
 
-/*! Reads a descriptor from its manifest dictionary. Returns nil and sets error when id, family, or
-	engine is missing, or a field or a nested value is malformed. */
+/*! Reads a descriptor from its manifest dictionary. The options are read from "options", or from
+	"parameters" in a manifest that names the field that way. Returns nil and sets error when id,
+	family, or engine is missing, or a field or a nested value is malformed. */
 + (nullable instancetype)descriptorWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error;
 
 /*! The descriptor as its manifest dictionary, every nested value included, with the extensions
@@ -603,6 +762,13 @@ NS_ASSUME_NONNULL_BEGIN
 
 /*! The variant with the identifier, or nil. */
 - (nullable NFKModelVariant *)variantWithIdentifier:(NSString *)identifier;
+
+/*! The declared option with the key, else the derived variant option when the key is
+	NFKModelLoadOptionVariant, else nil. Introduced in InferKit 0.4.0. */
+- (nullable NFKModelOption *)optionWithKey:(NSString *)key;
+
+/*! The preset with the identifier, or nil. Introduced in InferKit 0.4.0. */
+- (nullable NFKModelPreset *)presetWithIdentifier:(NSString *)identifier;
 
 /*! The license of a variant's weights: the variant's own license, else the descriptor's. Introduced in
 	InferKit 0.4.0. */

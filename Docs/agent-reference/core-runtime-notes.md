@@ -248,11 +248,12 @@ InferKit 0.4.0. The consumer reference is `Docs/model-catalog.md`. The decisions
   a `valueType` through the second. Every other shared string (`image`, `audio`, `messages`, …) has
   one type on both sides.
 - **Minimum memory is the residency budget.** `minimumMemoryBytes` is the smallest recommended Metal
-  working set whose budget holds the largest resident stage: (largest stage bytes + the planner's
-  reserve) / the budgeted fraction of the working set. `NFKMLXResidencyBudget` holds the fraction
-  (0.85) and the reserve (4 GiB) and is the source the MLX provider computes from. A variant's
-  `peakBytes` is the most it holds at once while loading or running at its default options, which
-  can exceed `residentBytes`.
+  working set whose budget admits the model at its default options: (peak bytes + the reserve) / the
+  budgeted fraction of the working set. `NFKModelMemoryBudget` (core) holds the fraction (0.85) and the
+  reserve (4 GiB); the MLX provider still computes its figures through `NFKMLXResidencyBudget`, which
+  keeps its own copy of the two numbers until it calls through to the core (see "Load options, memory,
+  and the build entry" below). A variant's `peakBytes` is the most it holds at once while loading or
+  running at its default options, which can exceed `residentBytes`.
 - **Writing is deterministic.** `manifestDataWithError:` writes pretty-printed, sorted-key JSON with
   the models sorted by identifier, so a re-export of an imported manifest is byte-identical
   (`testAManifestRoundTripsByteForByte`). A writer leaves an absent optional value out and never
@@ -290,6 +291,72 @@ InferKit 0.4.0. The consumer reference is `Docs/model-catalog.md`. The decisions
   `vision-tracking-trajectory` because the kinds differ in outputs. `vision-coreml` has none: it
   runs a model the app supplies. The VideoToolbox descriptors set `requiresAppleSilicon`, as the
   frame processors need it; the rest do not.
+
+## Load options, memory, and the build entry
+
+Added 2026-10-15 for InferKit 0.4.0 (`NFKModelMemory.h`, `NFKModelOptions.h`, `NFKModelBuilding.h`,
+`NFKModelPreset.h`). The consumer reference is `Docs/model-catalog.md` ("Memory", "Presets", "Load
+options and the build"). The decisions behind them:
+
+- **`parameters` became `options`.** The descriptor field, the property, and the initializer label are
+  `options`, pre-1.0, everywhere in the tree. The reader still accepts `"parameters"` (only when
+  `"options"` is absent) and never keeps it in `extensions`; the writer writes `"options"`. The MLX
+  snapshot changed only by that rename (sorted keys moved the arrays).
+- **The derived `variant` option is not written.** A descriptor with several variants and no declared
+  `variant` option gets one from the variants, built in the initializer. It is in `loadOptions` and
+  `optionWithKey:`, not in `options` or the manifest, so a round trip is unchanged.
+- **`automatic` is a residency choice, the default, with no memory figure of its own.** The planner
+  resolves it per machine; the estimate reports `requestedResidency` and the resolved `residency`. A
+  constraint does not count `automatic` when it decides that exactly one residency fits.
+- **The planner is ported, not redesigned.** `NFKModelResidencyPlan +placementForStages:…refusal:`
+  (private) is the Swift `plan(_:residency:budget:)` line for line: the same budget rules
+  (`holds` = budget > 0 and bytes + reserve ≤ budget; `admits` = budget ≤ 0 or bytes + reserve ≤
+  budget), the same expert-cache headroom, the same streamed rooms, the same widening, and the same
+  refusal sentences, whose GiB figures are `%.1f` of bytes / 2^30. The public `planForStages:` returns
+  the refusal as `NFKModelCatalogErrorDoesNotFit`; the estimate keeps the refused plan's figure and
+  reports fits NO. `NFKMLXResidencyBudget` still runs its own body until the MLX companion calls
+  through, after a differential test of the two over a grid of footprints (`NFKModelMemoryTests` holds
+  the sentences the two must share).
+- **The estimate puts the key-value cache, the draft, and the linear options on the cache stage**
+  before planning, so a staged model's figure is its largest stage including them. With no budget,
+  `automatic` plans staged, so a budget-free figure (`descriptorByDerivingMemoryFigures`) is the
+  largest stage.
+- **Quantization approximations.** A quantized stage's pageable and largest-layer bytes scale by the
+  stage's own ratio, and a quantized stage does not widen. A precision a stage does not list converts
+  from its checkpoint bytes by the element-size ratio, integer tensors included.
+- **The linear maximum is analytic.** (budget − reserve − peak at 0) / bytes per unit, where the bytes
+  per unit come from the facts' per-position cache at the combination's cache precision or bits, and
+  is exact where the cache stage is the stage the plan holds largest. A combination fits when it fits at
+  the linear options' given values, else their minimums.
+- **Load-stage cache defaults ride in the request defaults.** The memory model's context length, cache
+  bits, and cache group size are load options a request may override. The build puts
+  their resolved values in `requestDefaults`, so the backend runs at the figure the estimate assumed.
+- **Builders.** The descriptor's provider class (the catalog records which provider supplied each
+  descriptor), then the engine builder, then `providerClass` through `NFKDynamicBackend` with only the
+  property options. A builder applies the property options itself, so a rebuild reapplies them; the
+  setter check runs before any value is set.
+- **`NFKDefaultedBackend` and the unload work.** It implements `unload`, `isLoaded`,
+  `residentByteCount`, and `peakByteCount` against a private protocol, forwarding through
+  `respondsToSelector:`, so it compiles before and after `NFKInferenceBackend` declares them.
+  `respondsToSelector:` answers the wrapped backend's for every optional member.
+- **Requirements checks** read `NFKHardwareProfile.operatingSystemName` / `operatingSystemVersion` /
+  `isAppleSilicon` / `hasNeuralAccelerators`. A snapshot profile answers from its dictionary, the
+  neural accelerators included, so an app checks a remote machine. An unknown feature string is never
+  met.
+- **A draft counts its own cache.** The draft component is the draft stage's weights plus the draft's
+  key-value cache (its default variant's facts) at the run's context length, cache precision, and cache
+  bits. The context length's bytes per position add the draft's per-position cache, so the analytic
+  maximum accounts for it.
+- **The enumeration is capped at 4096 combinations.** Past the cap, each option's choices are evaluated
+  one at a time with the others at the caller's selection, else the defaults; each combination is
+  tagged with the option it varies, and an option's statuses read only its own combinations.
+  `NFKModelMemoryConstraints.exhaustive` (JSON `exhaustive`, true when absent) says which happened.
+- **A refusal carries the way out.** The build's DoesNotFit computes constraints with nothing fixed and
+  the fitting combination nearest the requested load options (the private `preferred:` argument), puts
+  it and its estimate in userInfo, and appends "Choosing <key> <value>[, …] fits: it holds <peak>." to
+  the description, or the "No combination of options fits" sentence when nothing does.
+- **`vocabularySize` is in the memory facts.** The draft rule (same family, same vocabulary size, fewer
+  parameters) needed a field the spec did not list; the facts carry it.
 
 ## Hugging Face hub cache policy
 

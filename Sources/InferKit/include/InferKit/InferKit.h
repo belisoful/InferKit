@@ -42,6 +42,10 @@
 #import <InferKit/NFKModelVocabulary.h>
 #import <InferKit/NFKModelDescriptor.h>
 #import <InferKit/NFKModelCatalog.h>
+#import <InferKit/NFKModelMemory.h>
+#import <InferKit/NFKModelOptions.h>
+#import <InferKit/NFKModelPreset.h>
+#import <InferKit/NFKModelBuilding.h>
 #import <InferKit/NFKAppleModelDescriptors.h>
 #import <InferKit/NFKPassthroughBackend.h>
 #import <InferKit/NFKCoreMLBackend.h>

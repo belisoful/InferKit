@@ -5109,7 +5109,7 @@ A consumer brings any engine by adding a class conforming to `NFKDynamicBackendP
 ## Model catalog
 
 `NFKModelCatalog` lists the models the engines linked into the process run. Each entry is an
-`NFKModelDescriptor`: the tasks the model does, the inputs and outputs it uses, the settings it reads,
+`NFKModelDescriptor`: the tasks the model does, the inputs and outputs it uses, the options it reads,
 its releases with their download and memory figures, its license, and what a machine needs to run it.
 The JSON form, field by field, is in the [model catalog reference](model-catalog.md).
 
@@ -5129,7 +5129,7 @@ A plugin ships its descriptors as a manifest, and an app adds the manifest to th
       "tasks": ["upscaling"],
       "inputs": [{ "key": "image", "required": true }],
       "outputs": [{ "key": "image", "required": true }],
-      "parameters": [{ "key": "strength", "kind": "number", "default": 0.5, "minimum": 0, "maximum": 1 }],
+      "options": [{ "key": "strength", "kind": "number", "default": 0.5, "minimum": 0, "maximum": 1 }],
       "variants": [{ "id": "x4", "displayName": "×4", "isDefault": true, "downloadBytes": 67040989 }]
     }
   ]
@@ -5154,7 +5154,7 @@ for (NFKModelDescriptor *model in [NFKModelCatalog.sharedCatalog descriptorsForT
     for (NFKModelFile *file in variant.source.files) {
         NSString *repository = file.repository ?: variant.source.repository;  // a file can name another repository
     }
-    for (NFKModelOption *option in model.parameters) {
+    for (NFKModelOption *option in model.options) {
         // option.kind picks the control; option.minimum, maximum, and defaultValue configure it
     }
 }
@@ -5182,7 +5182,7 @@ catalog looks the class up by name, so it contributes only when it is linked:
                                        inputModalities:nil outputModalities:nil
                                                 inputs:@[ [NFKModelPort portWithKey:NFKInputImage required:YES] ]
                                                outputs:@[ [NFKModelPort outputPortWithKey:NFKOutputImage required:YES] ]
-                                            parameters:nil variants:nil license:nil requirements:nil
+                                               options:nil variants:nil license:nil requirements:nil
                                            residencies:@[ NFKModelResidencyResident ] standIn:NO
                                      introducedVersion:nil extensions:nil];
     return @[ upscaler ];
@@ -5202,6 +5202,101 @@ NFKModelDescriptor *described = [NFKModelDescriptor descriptorWithIdentifier:@"a
 [NFKModelCatalog.sharedCatalog addDescriptor:described];
 NSString *promptType = NFKModelValueTypeForKey(NFKInputPrompt);            // NFKModelValueTypeText
 ```
+
+### Memory, load options, and building
+
+A variant's `memoryFacts` record what its stages weigh, and the descriptor's `memoryModel` names the
+options that change the figure. This chat model has a weight quantization and a context length; the
+[model catalog reference](model-catalog.md#memory) gives the arithmetic.
+
+```json
+{
+  "id": "example.chat",
+  "family": "example",
+  "engine": "example-engine",
+  "tasks": ["text-generation"],
+  "options": [
+    { "key": "quantizationBits", "kind": "choice", "stage": "load", "default": 0,
+      "choices": [{ "value": 0, "title": "None" }, { "value": 8, "title": "8-bit" }, { "value": 4, "title": "4-bit" }] },
+    { "key": "contextLength", "kind": "integer", "stage": "load", "default": 8192,
+      "minimum": 512, "maximum": 32768, "step": 512 },
+    { "key": "temperature", "kind": "number", "default": 0.7, "minimum": 0, "maximum": 2 }
+  ],
+  "memoryModel": { "quantizationBits": "quantizationBits", "contextLength": "contextLength" },
+  "variants": [{
+    "id": "1b", "isDefault": true, "precision": "bfloat16", "parameterCount": 1000000000,
+    "memoryFacts": {
+      "stages": [{ "id": "decoder", "bytesByPrecision": { "checkpoint": 2000000000 },
+                   "quantizableElements": 900000000 }],
+      "keyValueBytesPerToken": 114688, "maximumContextLength": 32768, "basis": "measured"
+    }
+  }]
+}
+```
+
+An app asks what a combination of options holds, and what a machine leaves of each option, before it
+loads anything:
+
+```objc
+NFKModelDescriptor *chat = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"example.chat"];
+NSError *error = nil;
+NFKModelMemoryEstimate *estimate = [chat estimatedMemoryForOptions:@{ NFKModelLoadOptionQuantizationBits: @4 }
+                                                      memoryBudget:[NFKModelMemoryBudget currentBudget]
+                                                             error:&error];
+NSInteger peakBytes = estimate.peakByteCount;                  // weights plus the cache at 8192 positions
+if (!estimate.fits) {
+    NSString *why = estimate.reason;                           // "The model needs … against a … budget."
+}
+
+NFKModelMemoryConstraints *constraints =
+    [chat constraintsForHardwareProfile:NFKHardwareProfile.currentProfile];
+NFKModelOptionConstraint *context = [constraints constraintForOptionKey:NFKModelLoadOptionContextLength];
+NSNumber *longest = context.maximumValue;                      // nil when the option's own maximum fits
+for (NFKModelChoiceConstraint *choice in [constraints constraintForOptionKey:NFKModelLoadOptionQuantizationBits].choices) {
+    // choice.status is allowed, required, or ruled out; choice.reason says why
+}
+NSDictionary<NSString *, id> *fitting = constraints.fittingOptions;  // the defaults where they fit
+```
+
+The catalog builds a backend from a model's identifier and the options a user chose. It checks the
+options, the machine, and the memory estimate first, and an engine registers the builder that
+constructs its backends:
+
+```objc
+@interface ExampleChatBuilder : NSObject <NFKModelBackendBuilding>
+@end
+
+@implementation ExampleChatBuilder
+- (nullable id<NFKInferenceBackend>)backendForBuildRequest:(NFKModelBuildRequest *)request error:(NSError **)error
+{
+    NSNumber *bits = request.argumentOptions[NFKModelLoadOptionQuantizationBits];  // a construction argument
+    NSURL *files = request.location;                                               // the variant's local files
+    id<NFKInferenceBackend> backend = [NFKPassthroughBackend backend];             // the engine's own backend
+    return [request applyPropertyOptionsToBackend:backend error:error] ? backend : nil;
+}
+@end
+```
+
+<!-- objc-check: continues -->
+```objc
+[NFKModelCatalog registerBackendBuilder:[[ExampleChatBuilder alloc] init] forEngine:@"example-engine"];
+
+id<NFKInferenceBackend> backend =
+    [NFKModelCatalog.sharedCatalog backendForModelIdentifier:@"example.chat"
+                                                     options:@{ NFKModelLoadOptionQuantizationBits: @"4",
+                                                                NFKParameterTemperature: @0.2 }
+                                                       error:&error];
+if (backend == nil && error.code == NFKModelCatalogErrorDoesNotFit) {
+    // "… Choosing quantizationBits 4 fits: it holds 1.5 GiB." names the way out, and the options are here:
+    NSDictionary *fitting = error.userInfo[NFKModelMemoryFittingOptionsKey];   // nil when nothing fits
+    // Build anyway only when the user asks: add NFKModelLoadOptionIgnoreMemoryBudget: @YES to the options.
+}
+NSDictionary *loaded = NFKInferenceLoadOptionValues(backend);  // what the backend was built with
+```
+
+The options split by stage. The load options reach the builder, and the request options become
+defaults the returned `NFKDefaultedBackend` fills into each request that leaves them out. A model with
+presets is also reached as `model@preset`, such as `example.chat@fast`.
 
 ## Structured output and tools
 

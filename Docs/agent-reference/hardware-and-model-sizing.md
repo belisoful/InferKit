@@ -20,6 +20,27 @@ fail, and some Vision and speech models answer with an internal error or nothing
 those key their skips on it; the hosted CI runner is a guest
 (`Docs/agent-reference/build-and-verification.md`).
 
+## The residency budget lives in the core
+
+`NFKModelMemoryBudget` (core, `NFKModelMemory.h`, 2026-10-15) is the budget every placement plans
+against: 0.85 of `recommendedWorkingSetSize`, rounded down, with a 4 GiB reserve inside it. It is the
+same rule `NFKMLXResidencyBudget` has applied since Music 3, now a core type, so a descriptor's memory
+estimate, its constraints, and the catalog's build entry need no companion. The residency planner moved
+with it (`NFKModelStageFootprint`, `NFKModelResidencyPlan`) with the Swift planner's arithmetic and
+refusal sentences; `NFKMLXResidencyBudget` keeps its Swift API and is to call through to the core.
+
+- `+leastWorkingSetHoldingByteCount:` is the catalog's `minimumMemoryBytes`: (bytes + reserve) / 0.85,
+  rounded up.
+- A budget of 0 (no Metal device, or an OS that does not publish the working set) admits every load
+  and holds nothing resident.
+- `NFKHardwareProfile` writes a snapshot (`dictionaryRepresentation`) and reads one back
+  (`+profileWithDictionary:`), so `+budgetForHardwareProfile:` and
+  `constraintsForHardwareProfile:` answer for a machine the app is not running on. A snapshot carries
+  `hasNeuralAccelerators` as read, because the OS half of that gate is the remote machine's.
+- The profile gained `isAppleSilicon` (`hw.optional.arm64` on macOS, which stays 1 under Rosetta; YES on
+  every other platform), `operatingSystemName`, and `operatingSystemVersion`, the readings
+  `-[NFKModelRequirements problemForHardwareProfile:]` checks.
+
 `NFKMLXModelSizing` (companion) turns that into a decision. `parameterCount(of:)` counts a dense
 decoder from its geometry alone — counted rather than built, because the point is to answer before
 allocating anything and a 27B model cannot be instantiated to be measured — and

@@ -28,7 +28,7 @@
 		@"inputs": @[ @{ @"key": NFKInputImage, @"valueType": NFKModelValueTypeImage, @"required": @YES,
 						 @"title": @"Image", @"help": @"The image to enlarge." } ],
 		@"outputs": @[ @{ @"key": NFKOutputImage, @"valueType": NFKModelValueTypeImage, @"required": @YES } ],
-		@"parameters": @[ @{ @"key": @"strength", @"kind": NFKModelOptionKindNumber, @"title": @"Strength",
+		@"options": @[ @{ @"key": @"strength", @"kind": NFKModelOptionKindNumber, @"title": @"Strength",
 							 @"help": @"How far the result moves from the source.", @"default": @0.5,
 							 @"minimum": @0, @"maximum": @1, @"step": @0.05, @"stage": NFKModelOptionStageRequest,
 							 @"group": @"Quality" },
@@ -73,7 +73,7 @@
 	XCTAssertEqualObjects(descriptor.requirements.minimumOSVersions[@"macOS"], @"14.0");
 	XCTAssertTrue(descriptor.requirements.requiresAppleSilicon);
 	XCTAssertEqualObjects(descriptor.defaultVariant.source.files.firstObject.role, NFKModelFileRoleWeights);
-	XCTAssertEqualObjects(descriptor.parameters.lastObject.choices.lastObject.value, @512);
+	XCTAssertEqualObjects(descriptor.options.lastObject.choices.lastObject.value, @512);
 }
 
 - (void)testAPortRoundTripsThroughItsDictionary
@@ -97,7 +97,7 @@
 
 - (void)testAnOptionRoundTripsThroughItsDictionary
 {
-	NSDictionary *dictionary = [self fullDescriptorDictionary][@"parameters"][0];
+	NSDictionary *dictionary = [self fullDescriptorDictionary][@"options"][0];
 	NFKModelOption *option = [NFKModelOption optionWithDictionary:dictionary error:NULL];
 	XCTAssertEqualObjects(option.dictionaryRepresentation, dictionary);
 	XCTAssertEqualObjects(option.defaultValue, @0.5);
@@ -197,7 +197,7 @@
 	NFKModelDescriptor *descriptor = [[NFKModelDescriptor alloc]
 		initWithIdentifier:@"opus-mt" displayName:nil family:@"marian" summary:nil engine:NFKModelEngineMLX
 			  registryName:nil providerClassName:nil tasks:@[ NFKModelTaskTranslation ] inputModalities:nil
-		  outputModalities:nil inputs:nil outputs:nil parameters:nil variants:@[ variant, plain ] license:apache
+		  outputModalities:nil inputs:nil outputs:nil options:nil variants:@[ variant, plain ] license:apache
 			  requirements:nil residencies:nil standIn:NO introducedVersion:nil extensions:nil];
 	XCTAssertEqualObjects([descriptor licenseForVariant:variant].identifier, @"CC-BY-4.0");
 	XCTAssertEqualObjects([descriptor licenseForVariant:plain], apache);
@@ -225,7 +225,7 @@
 	NSMutableDictionary *dictionary = [[self fullDescriptorDictionary] mutableCopy];
 	dictionary[@"x-rating"] = @5;
 	dictionary[@"inputs"] = @[ @{ @"key": NFKInputImage, @"x-accepts": @[ @"png" ] } ];
-	dictionary[@"parameters"] = @[ @{ @"key": @"tile", @"kind": NFKModelOptionKindChoice,
+	dictionary[@"options"] = @[ @{ @"key": @"tile", @"kind": NFKModelOptionKindChoice,
 									  @"availability": @{ @"platforms": @[ @"macOS" ] },
 									  @"choices": @[ @{ @"value": @512, @"title": @"512", @"peakBytes": @1000 } ] } ];
 	dictionary[@"license"] = @{ @"name": @"Custom", @"x-review": @"pending" };
@@ -239,8 +239,8 @@
 	XCTAssertNotNil(descriptor, @"%@", error);
 	XCTAssertEqualObjects(descriptor.extensions, (@{ @"x-rating": @5 }));
 	XCTAssertEqualObjects(descriptor.inputs.firstObject.extensions, (@{ @"x-accepts": @[ @"png" ] }));
-	XCTAssertEqualObjects(descriptor.parameters.firstObject.extensions[@"availability"], (@{ @"platforms": @[ @"macOS" ] }));
-	XCTAssertEqualObjects(descriptor.parameters.firstObject.choices.firstObject.extensions, (@{ @"peakBytes": @1000 }));
+	XCTAssertEqualObjects(descriptor.options.firstObject.extensions[@"availability"], (@{ @"platforms": @[ @"macOS" ] }));
+	XCTAssertEqualObjects(descriptor.options.firstObject.choices.firstObject.extensions, (@{ @"peakBytes": @1000 }));
 	XCTAssertEqualObjects(descriptor.license.extensions, (@{ @"x-review": @"pending" }));
 	XCTAssertEqualObjects(descriptor.requirements.extensions, (@{ @"x-gpu": @"any" }));
 	XCTAssertEqualObjects(descriptor.variants.firstObject.extensions, (@{ @"x-tier": @"pro" }));
@@ -250,8 +250,8 @@
 	NSDictionary *written = descriptor.dictionaryRepresentation;
 	XCTAssertEqualObjects(written[@"x-rating"], @5);
 	XCTAssertEqualObjects(written[@"inputs"][0][@"x-accepts"], (@[ @"png" ]));
-	XCTAssertEqualObjects(written[@"parameters"][0][@"availability"], (@{ @"platforms": @[ @"macOS" ] }));
-	XCTAssertEqualObjects(written[@"parameters"][0][@"choices"][0][@"peakBytes"], @1000);
+	XCTAssertEqualObjects(written[@"options"][0][@"availability"], (@{ @"platforms": @[ @"macOS" ] }));
+	XCTAssertEqualObjects(written[@"options"][0][@"choices"][0][@"peakBytes"], @1000);
 	XCTAssertEqualObjects(written[@"license"][@"x-review"], @"pending");
 	XCTAssertEqualObjects(written[@"requirements"][@"x-gpu"], @"any");
 	XCTAssertEqualObjects(written[@"variants"][0][@"x-tier"], @"pro");
@@ -346,7 +346,7 @@
 														  [NFKModelPort portWithKey:NFKInputNegativePrompt required:NO],
 														  [NFKModelPort portWithKey:@"plugin.unknown" required:NO] ]
 											   outputs:@[ [NFKModelPort outputPortWithKey:NFKOutputText required:YES] ]
-											parameters:nil variants:nil license:nil requirements:nil residencies:nil
+											options:nil variants:nil license:nil requirements:nil residencies:nil
 											   standIn:NO introducedVersion:nil extensions:nil];
 	XCTAssertEqualObjects(descriptor.inputModalities, (@[ NFKModelValueTypeText, NFKModelValueTypeImage ]));
 	XCTAssertEqualObjects(descriptor.outputModalities, (@[ NFKModelValueTypeText ]));
@@ -378,7 +378,7 @@
 	return [[NFKModelDescriptor alloc] initWithIdentifier:@"m" displayName:nil family:@"f" summary:nil
 												   engine:NFKModelEngineMLX registryName:nil providerClassName:nil
 													tasks:nil inputModalities:nil outputModalities:nil inputs:nil
-												  outputs:nil parameters:nil variants:variants license:nil
+												  outputs:nil options:nil variants:variants license:nil
 											 requirements:nil residencies:nil standIn:NO introducedVersion:nil
 											   extensions:nil];
 }
@@ -525,8 +525,8 @@
 		@{ @"license": @"MIT" },
 		@{ @"requirements": @{ @"minimumOS": @{ @"macOS": @14 } } },
 		@{ @"variants": @[ @{ @"id": @"v", @"residentBytes": @YES } ] },
-		@{ @"parameters": @[ @{ @"key": @"k", @"default": NSNull.null } ] },
-		@{ @"parameters": @[ @{ @"key": @"k", @"choices": @[ @{ @"value": @[ @1 ] } ] } ] },
+		@{ @"options": @[ @{ @"key": @"k", @"default": NSNull.null } ] },
+		@{ @"options": @[ @{ @"key": @"k", @"choices": @[ @{ @"value": @[ @1 ] } ] } ] },
 		@{ @"license": @{ @"name": @"n", @"url": @42 } },
 	];
 	for (NSDictionary *change in changes) {

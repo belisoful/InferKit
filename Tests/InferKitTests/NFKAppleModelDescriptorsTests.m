@@ -37,7 +37,7 @@
 							  [self declaredKeysOf:backend selector:@selector(supportedInputKeys)], @"%@", descriptor.identifier);
 		XCTAssertEqualObjects([self keysOfPorts:descriptor.outputs],
 							  [self declaredKeysOf:backend selector:@selector(supportedOutputKeys)], @"%@", descriptor.identifier);
-		XCTAssertEqualObjects([NSSet setWithArray:[descriptor.parameters valueForKey:@"key"]],
+		XCTAssertEqualObjects([NSSet setWithArray:[descriptor.options valueForKey:@"key"]],
 							  [self declaredKeysOf:backend selector:@selector(supportedParameterKeys)], @"%@", descriptor.identifier);
 		XCTAssertGreaterThan(descriptor.outputs.count, (NSUInteger)0, @"%@ declares what it writes", descriptor.identifier);
 	}

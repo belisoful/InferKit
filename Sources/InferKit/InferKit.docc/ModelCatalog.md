@@ -5,7 +5,7 @@ Describe the models a process can run, so an app lists, downloads, and configure
 ## Overview
 
 ``NFKModelCatalog`` holds ``NFKModelDescriptor`` values. A descriptor names the model's engine and
-how that engine builds it, the tasks it does, the inputs and outputs it uses, the settings it reads,
+how that engine builds it, the tasks it does, the inputs and outputs it uses, the options it reads,
 its releases with their download and memory figures, the license of its weights, and what a machine
 needs to run it. ``NFKRemoteModelCatalog`` is a different class: it lists what a remote provider
 serves at the moment.
@@ -60,8 +60,40 @@ another license than its model names it in ``NFKModelVariant/license``, and
 
 A variant carries the bytes its download transfers, the bytes its weights hold once loaded, and the
 most bytes it holds at once. ``NFKModelRequirements/minimumMemoryByteCount`` is InferKit's residency
-budget: the bytes the largest resident stage holds plus the residency planner's reserve, as a
-fraction of the recommended Metal working set.
+budget: the bytes the model holds at its defaults plus the budget's reserve, as a fraction of the
+recommended Metal working set.
+
+### Load options and memory
+
+A descriptor's ``NFKModelDescriptor/options`` hold the settings it reads at load and on each request.
+A variant's ``NFKModelVariant/memoryFacts`` record what its stages weigh at each precision, and the
+descriptor's ``NFKModelDescriptor/memoryModel`` names the options that change the figure: precision,
+weight quantization, context length, cache quantization, a draft model, and residency. The estimate
+combines them for one set of options:
+
+```objc
+NFKModelMemoryEstimate *estimate = [chat estimatedMemoryForOptions:@{ NFKModelLoadOptionQuantizationBits: @4 }
+                                                      memoryBudget:[NFKModelMemoryBudget currentBudget]
+                                                             error:&error];
+```
+
+``NFKModelMemoryBudget`` plans against 0.85 of the recommended Metal working set with a 4 GiB reserve,
+and ``NFKModelResidencyPlan`` decides whether the stages stay resident, take turns, page their routed
+experts, or stream their layers. ``NFKModelDescriptor/constraintsForHardwareProfile:`` runs the estimate
+over every combination and states, for each option, which choices fit, which one is required, and the
+longest context that fits, each with a sentence and its numbers.
+
+### Building a backend
+
+``NFKModelCatalog/backendForModelIdentifier:options:error:`` resolves the options
+(``NFKModelDescriptor/resolvedOptions:stage:error:``), checks the machine and the memory estimate, finds
+the variant's files, and asks a builder for the backend: the descriptor's provider class, else the
+``NFKModelBackendBuilding`` registered for its engine. Request options become defaults an
+``NFKDefaultedBackend`` fills into each request. A combination that does not fit is refused with
+`NFKModelCatalogErrorDoesNotFit` unless the options set `NFKModelLoadOptionIgnoreMemoryBudget`, which an
+app sets only when its user asks. The refusal names the nearest combination that fits, under
+`NFKModelMemoryFittingOptionsKey`. A model with ``NFKModelPreset`` entries is also reached as
+`model@preset`.
 
 ## Topics
 
@@ -71,6 +103,29 @@ fraction of the recommended Metal working set.
 - ``NFKModelDescriptorProvider``
 - ``NFKModelCatalogError``
 - ``NFKAppleModelDescriptors``
+
+### Options and building
+
+- ``NFKModelOptionProblem``
+- ``NFKModelBuildRequest``
+- ``NFKModelBackendBuilding``
+- ``NFKDefaultedBackend``
+- ``NFKModelPreset``
+
+### Memory
+
+- ``NFKModelMemoryBudget``
+- ``NFKModelMemoryFacts``
+- ``NFKModelStageFacts``
+- ``NFKModelMemoryModel``
+- ``NFKModelMemoryFigure``
+- ``NFKModelMemoryEstimate``
+- ``NFKModelStageFootprint``
+- ``NFKModelResidencyPlan``
+- ``NFKModelMemoryConstraints``
+- ``NFKModelOptionConstraint``
+- ``NFKModelChoiceConstraint``
+- ``NFKModelChoiceStatus``
 
 ### Descriptors
 

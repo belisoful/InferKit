@@ -32,6 +32,20 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The shared profile. The static readings are taken once, on first use. */
 @property (class, nonatomic, readonly) NFKHardwareProfile *currentProfile;
 
+/*!
+	@method     profileWithDictionary:
+	@abstract   A profile of another machine, read from the snapshot dictionaryRepresentation writes.
+	@discussion The profile answers from the snapshot alone: hasNeuralAccelerators is the snapshot's
+				reading, not this machine's. A missing or mistyped field reads as zero, empty, or NO, as
+				an unreadable machine does. A snapshot lets an app ask which options fit a machine it
+				is not running on, such as a server it sends requests to. Introduced in InferKit 0.4.0.
+*/
++ (instancetype)profileWithDictionary:(NSDictionary<NSString *, id> *)dictionary;
+
+/*! The profile as a snapshot dictionary: every reading below except availableMemory, which is live.
+	Introduced in InferKit 0.4.0. */
+- (NSDictionary<NSString *, id> *)dictionaryRepresentation;
+
 #pragma mark What the machine is
 
 /*! The chip, as the system names it — "Apple M1 Max". Empty when it cannot be read. */
@@ -93,6 +107,17 @@ NS_ASSUME_NONNULL_BEGIN
 
 /*! Whether the CPU and GPU share one pool, which is what makes the whole question one number. */
 @property (nonatomic, readonly) BOOL hasUnifiedMemory;
+
+/*! YES on a Mac with Apple silicon, including a process translated by Rosetta, and on every iPhone,
+	iPad, and Apple TV. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly) BOOL isAppleSilicon;
+
+/*! The operating system: "macOS", "iOS", "tvOS", or "visionOS", the names a descriptor's minimumOS
+	uses. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSString *operatingSystemName;
+
+/*! The operating system's version, such as "26.1" or "26.1.2". Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSString *operatingSystemVersion;
 
 /*!
 	@property   isVirtualMachine

@@ -41,3 +41,11 @@ NFKInferenceJob *NFKInferenceSubmit(id<NFKInferenceBackend> backend,
 	});
 	return job;
 }
+
+NSDictionary<NSString *, id> *NFKInferenceLoadOptionValues(id<NFKInferenceBackend> backend)
+{
+	if (![backend respondsToSelector:@selector(loadOptionValues)]) {
+		return @{};
+	}
+	return backend.loadOptionValues ?: @{};
+}

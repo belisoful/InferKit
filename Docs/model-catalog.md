@@ -5,8 +5,9 @@ values an app shows, downloads, and configures. A catalog's JSON form is a **man
 each companion package, and a plugin all describe their models in the same schema, so an app reads
 every source the same way.
 
-This document is the schema reference: the manifest envelope, every field of every object, and the
-vocabulary strings. The [examples](examples.md#model-catalog) show the API in use.
+This document is the schema reference: the manifest envelope, every field of every object, the
+vocabulary strings, the memory model, and the build entry. The [examples](examples.md#model-catalog)
+show the API in use.
 
 - [The catalog](#the-catalog)
 - [Manifest](#manifest)
@@ -20,6 +21,9 @@ vocabulary strings. The [examples](examples.md#model-catalog) show the API in us
 - [Source](#source)
 - [File](#file)
 - [Requirements](#requirements)
+- [Memory](#memory)
+- [Presets](#presets)
+- [Load options and the build](#load-options-and-the-build)
 - [Vocabulary](#vocabulary)
 - [Errors](#errors)
 - [The MLX catalog's measurements](#the-mlx-catalogs-measurements)
@@ -103,16 +107,23 @@ lists them as `outputs` in a model's description, and `NFKRemoteInferKitBackend`
 | `outputModalities` | array of string | no | The value types the model writes. The value types of `outputs` when absent. |
 | `inputs` | array of [port](#port) | no | The inputs a request carries. |
 | `outputs` | array of [port](#port) | no | The outputs a result carries. |
-| `parameters` | array of [option](#option) | no | The settings the model reads. |
+| `options` | array of [option](#option) | no | The settings the model reads, at load and on each request. A manifest that names the field `parameters` reads the same. |
 | `license` | [license](#license) | no | The license of the model's weights. |
 | `variants` | array of [variant](#variant) | no | The releases. The default variant is the one with `isDefault` true, else the first. |
 | `requirements` | [requirements](#requirements) | no | What a machine needs. No requirements when absent. |
 | `residencies` | array of string | no | How the model can hold its weights: [residencies](#residencies). |
+| `memoryModel` | [memory model](#memory-model) | no | Which options change the model's memory. |
+| `presets` | array of [preset](#presets) | no | Named sets of load options and request defaults. |
 | `standIn` | boolean | no | True for a reference or test stand-in a user interface hides. False when absent. |
 | `introducedVersion` | string | no | The InferKit version that introduced the model, such as `"0.4.0"`. |
 
 A writer always writes `id`, `displayName`, `family`, `engine`, the arrays (empty when there is
-nothing in them), `requirements`, and `standIn`.
+nothing in them), `requirements`, and `standIn`. It writes `presets` only when there are some.
+
+A descriptor with more than one variant derives a load option under `variant`
+(`NFKModelLoadOptionVariant`): a choice of its variants' identifiers, the default variant by default.
+The derived option is in `loadOptions` and `optionWithKey:` and is not written to the manifest. A
+descriptor that declares an option under `variant` keeps its own.
 
 `+[NFKModelDescriptor descriptorWithIdentifier:derivedFromBackend:]` builds a model from a backend's
 `supportedInputKeys`, `supportedParameterKeys`, and `supportedOutputKeys`, typed from the core table.
@@ -137,7 +148,7 @@ a boolean as `NFKParameterCitations` and JSON as `NFKOutputCitations`.
 
 ## Option
 
-`NFKModelOption`, an entry of `parameters`.
+`NFKModelOption`, an entry of `options`.
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
@@ -152,6 +163,14 @@ a boolean as `NFKParameterCitations` and JSON as `NFKOutputCitations`.
 | `choices` | array of [choice](#choice) | no | The values of a `choice` option, in display order. A writer leaves the field out when there are none. |
 | `stage` | string | no | When the option applies: an [option stage](#option-stages). `"request"` when absent. |
 | `group` | string | no | The group a user interface shows the option in. |
+| `requires` | [requirements](#requirements) | no | What a machine needs to use the option. |
+| `property` | string | no | On a load option, the backend property the build sets to the value by key-value coding, after the backend is constructed and before it prepares. A load option without one is a construction argument the engine's builder reads. |
+| `memoryBytesPerUnit` | integer | no | On an integer option, the bytes each unit adds to the model's memory, such as one context position's key-value cache. |
+
+`loadOptions` lists the load-stage options, the derived `variant` option first, and `requestOptions`
+the request-stage ones. The memory model's context length, cache bits, and cache group size are
+load-stage options that set the backend's default, and a request may still set them, up to the
+option's maximum.
 
 ## Choice
 
@@ -161,6 +180,9 @@ a boolean as `NFKParameterCitations` and JSON as `NFKOutputCitations`.
 |---|---|---|---|
 | `value` | string or number | yes | The value a request carries when the choice is selected. |
 | `title` | string | no | The name a user interface shows. The value's text when absent. |
+| `requires` | [requirements](#requirements) | no | What a machine needs to take the choice. |
+| `memory` | [memory figure](#memory-figure) | no | The memory the model holds with the choice selected, at the default variant and the default options. |
+| `memoryByVariant` | object of [memory figure](#memory-figure) | no | The same figure per variant identifier. |
 
 ## License
 
@@ -195,6 +217,7 @@ a fine-tune.
 | `precision` | string | no | The type the weights are stored in, such as `"float32"`, `"float16"`, `"bfloat16"`, or `"int4"`. |
 | `minimumMemoryBytes` | integer | no | The least memory the variant runs in, as [requirements](#requirements) defines it. |
 | `license` | [license](#license) | no | The license of this variant's weights where it differs from the model's `license`. The model's license applies when absent. `-[NFKModelDescriptor licenseForVariant:]` reads the one that applies. |
+| `memoryFacts` | [memory facts](#memory-facts) | no | What the variant's stages and caches weigh, from which every memory estimate is computed. |
 
 ## Source
 
@@ -230,20 +253,355 @@ comes from its variant's source.
 
 ## Requirements
 
-`NFKModelRequirements`, a model's `requirements`.
+`NFKModelRequirements`, a model's `requirements`, an option's `requires`, or a choice's `requires`.
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `minimumOS` | object of string | no | The least operating-system version per platform: `"macOS"`, `"iOS"`, `"tvOS"`, `"visionOS"`, such as `{"macOS": "14.0", "iOS": "17.0"}`. A platform the object leaves out does not run the model. An empty object runs everywhere InferKit runs. |
 | `requiresAppleSilicon` | boolean | no | True when the model runs only on Apple silicon. |
 | `minimumMemoryBytes` | integer | no | The least memory the model runs in. |
+| `requiredFeatures` | array of string | no | The [hardware features](#hardware-features) a machine needs. A feature the reader does not know is never met. |
+| `unmetReason` | string | no | The sentence a user interface shows when the requirements are not met. |
 
 `minimumMemoryBytes` is InferKit's residency budget for the model. It is the smallest recommended
-Metal working set (`NFKHardwareProfile.recommendedWorkingSetSize`) whose budget holds the model's
-largest resident stage. The residency planner budgets a fixed fraction of the working set and keeps
-a reserve for activations inside that budget. The figure is therefore the bytes the largest resident
-stage holds plus the reserve, divided by the fraction. A model that stages, pages, or streams counts
-only what one stage holds at once. The MLX companion computes the figures for its models.
+Metal working set (`NFKHardwareProfile.recommendedWorkingSetSize`) whose budget admits the model at its
+default options. `NFKModelMemoryBudget` budgets 0.85 of the working set and keeps a 4 GiB reserve inside
+that budget. The figure is therefore the peak bytes at the defaults plus the reserve, divided by 0.85
+(`+[NFKModelMemoryBudget leastWorkingSetHoldingByteCount:]`). A model that stages, pages, or streams
+counts only what one stage holds at once.
+
+`-[NFKModelRequirements problemForHardwareProfile:]` names the first requirement a machine does not
+meet, or returns nil. The checks run in this order, and `unmetReason` replaces the sentence:
+
+| Check | Sentence |
+|---|---|
+| The platform is not in `minimumOS` | `This does not run on macOS.` |
+| The version is below the platform's | `This needs macOS 15.0 or later.` |
+| `requiresAppleSilicon`, or the `apple-silicon` feature | `This needs Apple silicon.` |
+| The `neural-accelerators` feature | `This needs a GPU with neural accelerators.` |
+| A feature the reader does not know | `This needs the <feature> feature.` |
+
+Memory is not checked here; the [memory estimate](#the-estimate) answers it. The machine is an
+`NFKHardwareProfile`: the current one, or a snapshot of another (`+profileWithDictionary:`) written by
+`dictionaryRepresentation`.
+
+## Memory
+
+`NFKModelMemory.h`. A variant's [memory facts](#memory-facts) state what its stages weigh. The
+descriptor's [memory model](#memory-model) names the options that change those figures. The
+[estimate](#the-estimate) combines the two for one combination of load options, and the
+[constraints](#constraints) run the estimate over every combination to say which choices fit a
+machine. Every figure is in bytes.
+
+Activation memory depends on the request, such as an image's size, and no descriptor states it. The
+budget's reserve covers it.
+
+### Memory facts
+
+`NFKModelMemoryFacts`, a variant's `memoryFacts`.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `stages` | array of [stage](#stage) | yes | The stages, in the order a staged load runs them. A model without stages has one. |
+| `keyValueBytesPerToken` | integer | no | The key-value cache one position adds, across the layers whose cache grows, at 16 bits per element. |
+| `boundedKeyValueBytes` | integer | no | The cache of the layers whose cache stops growing, such as sliding-window layers, at 16 bits per element. |
+| `maximumContextLength` | integer | no | The longest context the model reads. The context length when no option sets it. |
+| `vocabularySize` | integer | no | The tokens in the vocabulary, which a draft model shares with the model it drafts for. |
+| `loadOverheadBytes` | integer | no | The bytes a load holds beyond the resident figure for a moment. 0 where it is not measured. |
+| `basis` | string | no | `"measured"` (the tensor bytes at the precisions the loader holds them in, the default) or `"stored-dtype"` (the stored bytes, because the loader's precision is not known). |
+
+### Stage
+
+`NFKModelStageFacts`, an entry of a memory facts' `stages`. The `…ByPrecision` objects key a
+[precision](#precisions) to bytes, and `checkpoint` holds the bytes as stored.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | string | yes | The stage's identifier, such as `"text_encoder"` or `"decoder"`. |
+| `title` | string | no | The stage's name. The `id` when absent. |
+| `bytesByPrecision` | object of integer | yes | The stage's bytes per precision. |
+| `quantizableElements` | integer | no | The elements a runtime weight quantization packs: the stage's eligible matrices. |
+| `pageableBytesByPrecision` | object of integer | no | The routed-expert bytes a paged load leaves in the release. |
+| `layerCount` | integer | no | The repeated layers a streamed load may leave in the release. |
+| `largestLayerBytesByPrecision` | object of integer | no | The bytes of the largest repeated layer. |
+| `widenedPrecision` | string | no | A wider precision the stage takes where the budget holds it, such as a text encoder stored at bfloat16 and run at float32. |
+
+A precision a stage does not list converts from its `checkpoint` bytes by the ratio of element sizes,
+taking `checkpoint` as the variant's `precision`. Integer and packed tensors convert with the floating
+ones, so a converted figure is an approximation.
+
+### Memory model
+
+`NFKModelMemoryModel`, a descriptor's `memoryModel`. Each option field names the key of a declared
+option. The variant comes from the `variant` option.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `precision` | string | The option whose value is each stage's [precision](#precisions). The checkpoint's when absent. |
+| `quantizationBits` | string | The option whose value is the bits of a runtime weight quantization: 0 for none, 8, or 4. |
+| `quantizationGroupSize` | string | The option whose value is the quantization's group size. 64 when absent. |
+| `contextLength` | string | The option whose value is the positions the key-value cache holds. The facts' `maximumContextLength` when absent. |
+| `cacheBits` | string | The option whose value is the bits of a quantized key-value cache: 0 for none, 8, or 4. |
+| `cacheGroupSize` | string | The option whose value is the cache quantization's group size. 64 when absent. |
+| `draft` | string | The model-reference option whose value is the draft model's identifier. |
+| `draftBits` | string | The option whose value is the bits the draft model's weights are quantized to. |
+| `residency` | string | The option whose value is a [residency](#residencies). The model's only residency when absent, else `automatic`. |
+| `cacheStage` | string | The stage that holds the key-value cache and the draft model. The last stage when absent. |
+| `draftStage` | string | The stage of this model a draft for another model loads. Every stage when absent. |
+| `stagePrecisions` | object of string | The precision of each stage the precision option does not change, keyed by stage. |
+
+### The estimate
+
+`-[NFKModelDescriptor estimatedMemoryForOptions:memoryBudget:error:]` resolves the load options, fills
+their defaults, and computes per stage, at precision p, with e(p) the bytes of one element:
+
+- **Weights** w: the stage's bytes at p, where p is `stagePrecisions`' entry, else the precision option's
+  value, else `checkpoint`. A quantization of b bits in groups of g replaces the stage's Q quantizable
+  elements: w − Q·e(p) + Q·(b/8 + 4/g), rounded up.
+- **Key-value cache**, on the cache stage, for c positions:
+  - unquantized → (perToken·c + bounded)·e(p)/2;
+  - quantized to b bits in groups of g → (perToken·c + bounded)/2·(b/8 + 4/g).
+- **Draft**, on the cache stage: the draft descriptor's draft stage at the precision option's value and
+  the draft bits, plus the draft's own key-value cache from its default variant's facts at the same c
+  positions, cache precision, and cache bits: (perToken_draft·c + bounded_draft), converted as the cache
+  above.
+- **Linear options**, on the cache stage: each integer option with `memoryBytesPerUnit`, its value
+  times that figure. The context length counts here only when the facts state no per-position cache.
+
+The residency then decides what the model holds once loaded:
+
+| Residency | Resident bytes |
+|---|---|
+| `resident` | The sum of the stages. |
+| `staged` | The largest stage. |
+| `paged` | The largest stage without its routed experts, plus an expert cache of min(pageable, (budget − reserve − unpaged) / 2), or 4 GiB without a budget. |
+| `streamed` | A streamed stage's bytes outside its layers, its two largest layers, and the first layers that fit the rest of the budget. |
+| `automatic` | Whichever of the above the [residency planner](#the-residency-planner) picks. |
+
+The peak adds `loadOverheadBytes`. The estimate fits when the budget admits the peak: the peak plus the
+4 GiB reserve is at most the budget, or the machine reports no budget.
+`minimumWorkingSetByteCount` is the least working set that admits the peak. A variant without facts
+estimates its `residentBytes` and `peakBytes` as one stage, and a variant with neither estimates 0 with
+basis `"unknown"`. An estimate that does not fit says why:
+`The model needs 9.4 GiB plus a 4.0 GiB reserve, against a 6.8 GiB budget.`
+
+An estimate's dictionary holds `residentBytes`, `peakBytes`, `minimumWorkingSetBytes`,
+`requestedResidency`, `residency`, `components` (`weights`, `keyValueCache`, `draft` (the draft's weights and cache), `expertCache`,
+`linearOptions`, and `loadOverhead`, which sum to the resident bytes with the overhead aside),
+`stageBytes`, `options`, `budget`, `fits`, `reason`, and `basis`.
+
+### The budget
+
+`NFKModelMemoryBudget` is the memory a machine plans against: 0.85 of the recommended Metal working set,
+rounded down, with a 4 GiB reserve for activations and request buffers inside it. A machine that reports
+no working set has a budget of 0, which admits every stage (`admitsByteCount:`) and holds none
+(`holdsByteCount:`, the test for keeping stages resident or taking a wider precision).
+`+currentBudget` reads this machine, `+budgetForHardwareProfile:` a profile, and
+`+budgetWithWorkingSetByteCount:` a working set. Its dictionary holds `workingSetBytes`, `budgetBytes`,
+`reserveBytes`, and `workingSetFraction`.
+
+### The residency planner
+
+`+[NFKModelResidencyPlan planForStages:residency:budget:error:]` decides how a model of stages
+(`NFKModelStageFootprint`: bytes, pageable bytes, widened bytes, and layer bytes) holds them:
+
+- `resident` → every stage held; refused where the stages are known not to fit.
+- `staged` → stages take turns.
+- `paged` → stages take turns and routed experts are paged; refused where a stage does not fit even
+  paged. A model without routed experts is staged.
+- `streamed` → stages take turns, and a stage known not to fit whole streams its repeated layers;
+  refused where such a stage does not fit even streamed.
+- `automatic` → resident where the total fits, paged where the largest stage does not fit whole and
+  has experts, streamed where a stage with layers does not fit whole, else staged. With no budget,
+  staged.
+
+A stage with a wider precision takes it where that fits: in order while the total still fits when
+resident, alone when staged or paged, never without a budget. A refusal is
+`NFKModelCatalogErrorDoesNotFit`, and its description is the planner's sentence:
+
+| Refusal | Sentence |
+|---|---|
+| Resident | `the stages need 41.0 GiB together plus a 4.0 GiB reserve, against a 27.2 GiB working set; hold them staged or paged` |
+| Paged | `the largest stage needs 30.0 GiB with its routed experts paged, plus a 4.0 GiB reserve, against a 24.0 GiB working set` |
+| Streamed | `stage 0 needs 22.0 GiB streamed, two layers in flight, plus a 4.0 GiB reserve, against a 24.0 GiB working set` |
+| A staged stage alone | `transformer alone needs 30.0 GiB plus a 4.0 GiB reserve, against a 24.0 GiB working set` |
+
+The resident sentence names `or paged` and `or streamed` only where the stages have experts or
+layers. The last row is `+verifyEachStageLoads:plan:budget:names:error:`, which checks each stage of a
+staged plan alone.
+
+### Constraints
+
+`constraintsForHardwareProfile:`, `constraintsForMemoryBudget:`, and
+`constraintsForOptions:memoryBudget:` return `NFKModelMemoryConstraints`: what a budget leaves of each
+option.
+
+- The memory-affecting choice options (the variant and each choice option the memory model names)
+  vary over their choices. A draft option without choices varies over no draft and the
+  [compatible drafts](#draft-models).
+- Up to 4096 combinations are enumerated in full, and `exhaustive` is true. Past that, each option's
+  choices are evaluated one at a time with every other option at the caller's selection, else its
+  default, so every choice still has a status, and `exhaustive` is false: a choice ruled out alone
+  may still fit beside other changes.
+- A linear integer option is solved for: the largest value that fits is (budget − reserve − peak at 0)
+  / bytes per unit, clipped to the option's range and rounded down to its step. The context length's
+  bytes per position include a selected draft model's cache.
+- A combination fits when it fits with each linear option at its given value, else its minimum.
+- `constraintsForOptions:memoryBudget:` fixes the given options. Each option's constraint fixes the
+  other given options and lets the rest vary, so an app passes its current selections and reads what
+  each control still allows.
+- `constraintsForHardwareProfile:` also rules out each choice and option whose requirements the
+  machine does not meet.
+
+Each option's `NFKModelOptionConstraint` lists its choices' statuses (`allowed`, `required`,
+`ruled-out`), `requiredValue` where exactly one choice fits (`automatic` is not counted, since it picks
+one of the others), and `maximumValue` where the largest value that fits is below the option's own
+maximum. Each reason is a sentence from a fixed template, and its numbers ride beside it
+(`fullyResidentBytes`, `budgetBytes`, `techniqueBytes`) so an app can write its own:
+
+| Constraint | Sentence |
+|---|---|
+| A required residency | `The model needs 41.0 GiB fully resident plus a 4.0 GiB reserve, against a 27.2 GiB budget. Paged, it needs 16.1 GiB.` |
+| A required choice that is not the default | `With None, the model needs 9.4 GiB plus a 4.0 GiB reserve, against a 6.8 GiB budget. With 4-bit, it needs 2.6 GiB.` |
+| A required choice that is the default | `Only Checkpoint fits: it needs 1.9 GiB plus a 4.0 GiB reserve, against a 6.8 GiB budget.` |
+| A ruled-out choice | `Resident needs at least 41.0 GiB plus a 4.0 GiB reserve, against a 27.2 GiB budget.` |
+| A choice the machine cannot take | `Turbo is unavailable here. This needs Apple silicon.` |
+| A maximum | `Context length fits up to 9728 against a 6.8 GiB budget.` |
+| No combination | `No combination of options fits: the smallest needs 9.0 GiB plus a 4.0 GiB reserve, against a 3.4 GiB budget.` |
+
+`fittingOptions` is the fitting combination that changes the fewest options from their defaults, with
+each linear option at its default or the largest value that fits, and `fittingEstimate` its estimate.
+Every constraint type reads and writes its dictionary; the constraints' dictionary carries `exhaustive`,
+which reads as true when absent.
+
+### Memory figure
+
+`NFKModelMemoryFigure`, a choice's `memory`: `residentBytes` and `peakBytes` (the resident bytes when
+absent). `-[NFKModelDescriptor descriptorByDerivingMemoryFigures]` fills each memory-affecting choice's
+figure from the facts, without a budget and with every other option at its default, and
+`memoryByVariant` for a descriptor with several variants. It gives the context-length option the cache
+bytes of one position as `memoryBytesPerUnit`, and a variant with facts its `residentBytes`, `peakBytes`,
+and `minimumMemoryBytes` at the defaults. A figure the manifest states wins over the derived one.
+
+### Draft models
+
+A draft model is compatible with a model when it has the same `family`, the same `vocabularySize` in
+its default variant's facts, and a smaller `parameterCount`.
+`-[NFKModelDescriptor draftDescriptorsForVariant:inCatalog:]` lists them. A draft option that lists
+choices allows exactly those, whatever the rule says.
+
+## Presets
+
+`NFKModelPreset` (`NFKModelPreset.h`), an entry of a model's `presets`: a named set of load options and
+request defaults, reached as `model@preset`, such as `whisper@fast`.
+
+| Field | Type | Required | Meaning |
+|---|---|---|---|
+| `id` | string | yes | The identifier, unique within its model. |
+| `title` | string | no | The name a user interface shows. The `id` when absent. |
+| `help` | string | no | A sentence that explains the preset. |
+| `base` | string | no | The model the preset applies to. The descriptor it is listed under when absent. |
+| `loadOptions` | object | no | The load options the preset sets. |
+| `requestDefaults` | object | no | The request parameters the preset fills where a request leaves them out. |
+| `suggested` | boolean | no | True for a preset a server offers without being told to. |
+
+A preset that sets only request defaults runs on a backend loaded for its base model; one that sets
+load options needs a load of its own (`changesLoadOptions`).
+
+- `NFKModelPresetSeparator` is `"@"`. `NFKModelPresetModelName(@"whisper", @"fast")` is
+  `"whisper@fast"`.
+- `NFKModelNameSplitAtPreset` splits at the last separator, so `a@b@fast` is the preset `fast` of
+  `a@b`. The split happens only where the predicate it is given accepts the two parts, so
+  `claude-3@20240620` passes whole where no model `claude-3` has a preset `20240620`.
+- `NFKModelToolName` writes a name as a tool name: the separator becomes `"__"`
+  (`NFKModelToolNameSeparator`), every character other than a letter, a digit, `_`, and `-` becomes `_`,
+  and the result is cut to 64 characters. `whisper@fast` is `whisper__fast`.
+
+## Load options and the build
+
+### Option values
+
+`NFKModelOptions.h`. `-[NFKModelDescriptor resolvedOptions:stage:error:]` converts each value to its
+option's kind and fills each absent option's default; `problemsWithOptions:stage:` lists what it cannot
+use. A value converts as follows:
+
+| Kind | Takes |
+|---|---|
+| `integer` | A whole number, or a string of one such as `"8192"`. |
+| `number` | A number, or a numeric string. |
+| `boolean` | A boolean, or `"true"`, `"false"`, `"yes"`, `"no"`, `"1"`, `"0"`. |
+| `choice` | A value equal to a choice's, or with the same text, such as `"8"` for `8`. The result is the choice's value. |
+| `text` | A string. |
+| `text-list` | An array of strings, or one string. |
+| `file-or-folder` | A path or a file URL. The path has to exist. |
+| `model-reference` | A catalog model's identifier. A draft option takes one of its choices, else a [compatible draft](#draft-models), or `""` for none. |
+| `json` | Any JSON value. |
+
+Each problem is an `NFKModelOptionProblem` with the key, a code, a message, and the value:
+
+| Code | Message |
+|---|---|
+| `unknown-key` | `example.chat has no option "nope".` |
+| `wrong-type` | `"steps" takes an integer, and "many" is not one.` |
+| `below-minimum` | `"steps" takes 1 or more, and 0 is less.` |
+| `above-maximum` | `"steps" takes 50 or less, and 80 is more.` |
+| `off-step` | `"width" takes steps of 16 from 256, and 260 is between them.` |
+| `not-a-choice` | `"precision" takes one of "checkpoint", "float32", and "int2" is none of them.` |
+| `unavailable` | `"precision" cannot be "turbo" on this machine. This needs Apple silicon.` |
+| `wrong-stage` | `"precision" is set when the model loads.` or `"temperature" is set on each request.` |
+| `unknown-model` | `"draftModel" names "ghost", which is not in the catalog.` |
+| `missing-file` | `"adapter" names "/path", which does not exist.` |
+
+A request may set the memory model's context length, cache bits, and cache group size without a
+`wrong-stage` problem. `ignoreMemoryBudget` is accepted by every load and left out of the result.
+`canonicalLoadOptionsKey:` writes the resolved load options as sorted JSON, so two sets of options that
+build the same backend give the same string.
+
+### The build entry
+
+`NFKModelBuilding.h`. `-[NFKModelCatalog backendForModelIdentifier:options:location:error:]` takes a
+model's identifier, or `model@preset`, and the option values an app collected:
+
+1. The descriptor is found, and a preset's load options and request defaults are merged under the
+   given options (`NFKModelCatalogErrorUnknownModel`).
+2. The options resolve at both stages (`NFKModelCatalogErrorInvalidOptions`, the problems under
+   `NFKModelOptionProblemsKey`).
+3. The model's requirements and the chosen choices' are checked against this machine
+   (`NFKModelCatalogErrorUnavailable`).
+4. The estimate is checked against this machine's budget (`NFKModelCatalogErrorDoesNotFit`, the
+   estimate under `NFKModelMemoryEstimateKey`). `ignoreMemoryBudget` YES skips the refusal; an app sets
+   it only when its user asks. The refusal carries the way out:
+   - another combination fits → the one nearest the requested options is under
+     `NFKModelMemoryFittingOptionsKey`, its estimate under `NFKModelMemoryFittingEstimateKey`, and the
+     description names the options it changes and its peak:
+     `The model needs 41.0 GiB plus a 4.0 GiB reserve, against a 27.2 GiB budget. Choosing residency paged fits: it holds 16.1 GiB.`
+   - nothing fits → the description adds the smallest combination's need:
+     `… against a 6.8 GiB budget. No combination of options fits: the smallest needs 9.0 GiB plus a 4.0 GiB reserve, against a 6.8 GiB budget.`
+5. The variant's files are located: the given URL, else the catalog's `locator`. The default locator,
+   `hubCacheLocator`, finds a Hugging Face source in `NFKHFHub`'s default cache: the snapshot directory
+   of a directory layout, the first weights file of a file layout. A download store sets its own.
+6. A builder builds the backend from an `NFKModelBuildRequest`: the descriptor's provider class when it
+   implements `+backendForBuildRequest:error:`, else the `NFKModelBackendBuilding` registered for the
+   engine (`+registerBackendBuilder:forEngine:`), else the descriptor's `providerClass` through
+   `NFKDynamicBackend` with the property options set (`NFKModelCatalogErrorNoBuilder` when there is
+   none).
+7. Request defaults wrap the backend in an `NFKDefaultedBackend`.
+
+The build request carries `loadOptions` (every load option, defaults filled), `argumentOptions` (those
+without a `property`), `propertyOptions` (those with one), `requestDefaults`, `location`, and the
+`memoryEstimate`. A builder calls `applyPropertyOptionsToBackend:error:` on what it constructs, so a
+build that runs again sets the properties again; a key path without a setter is
+`NFKModelCatalogErrorInvalidOptions` and sets nothing. `locationForModelIdentifier:variant:error:` finds
+another model's files, such as a draft's.
+
+`requestDefaults` holds the request options the given options and the preset set, and the load-stage
+context length and cache settings, which a request may still override. `NFKDefaultedBackend` fills them
+into each request that leaves them out and forwards the rest to the backend it wraps, `unload`,
+`isLoaded`, and the byte counts included. A backend reports the load options it was built with as
+`loadOptionValues`, read by `NFKInferenceLoadOptionValues`; the defaulted backend reports the build's
+when the backend reports none.
+
+`NFKAppleModelDescriptors` builds its engines through `+backendNamed:`.
 
 ## Vocabulary
 
@@ -343,6 +701,42 @@ resolves through `+[NFKDynamicBackend backendForCapability:error:]` as it is.
 | `staged` | `NFKModelResidencyStaged` | Each stage loads for its turn and is released after it. |
 | `paged` | `NFKModelResidencyPaged` | Stages take turns, and each stage's routed experts load as a step routes to them. |
 | `streamed` | `NFKModelResidencyStreamed` | Stages take turns, and a stage's repeated layers that do not fit load in their turn on each pass. |
+| `automatic` | `NFKModelResidencyAutomatic` | The residency planner picks one of the others for the machine. The default; its memory depends on the machine. |
+
+### Hardware features
+
+| String | Constant | The machine has |
+|---|---|---|
+| `apple-silicon` | `NFKModelFeatureAppleSilicon` | Apple silicon: a Mac with an M-series chip, or any iPhone, iPad, or Apple TV. |
+| `neural-accelerators` | `NFKModelFeatureNeuralAccelerators` | A GPU with the neural accelerators of the M5 on (`NFKHardwareProfile.hasNeuralAccelerators`). |
+
+### Precisions
+
+| String | Constant | The type |
+|---|---|---|
+| `checkpoint` | `NFKModelPrecisionCheckpoint` | Each tensor's stored type. |
+| `float32` | `NFKModelPrecisionFloat32` | 32-bit floating point. |
+| `float16` | `NFKModelPrecisionFloat16` | 16-bit IEEE floating point. |
+| `bfloat16` | `NFKModelPrecisionBFloat16` | 16-bit brain floating point. |
+
+### Load options
+
+The keys an engine's load options share, so an app configures every engine the same way.
+
+| String | Constant | The value |
+|---|---|---|
+| `variant` | `NFKModelLoadOptionVariant` | The variant's identifier. |
+| `residency` | `NFKModelLoadOptionResidency` | A [residency](#residencies). |
+| `precision` | `NFKModelLoadOptionPrecision` | A [precision](#precisions). |
+| `quantizationBits` | `NFKModelLoadOptionQuantizationBits` | The bits of a runtime weight quantization: 0 for none, 8, or 4. |
+| `quantizationGroupSize` | `NFKModelLoadOptionQuantizationGroupSize` | The weights that share one scale and bias. |
+| `contextLength` | `NFKModelLoadOptionContextLength` | The positions the key-value cache holds by default. |
+| `cacheBits` | `NFKModelLoadOptionCacheBits` | The bits of a quantized key-value cache: 0 for none, 8, or 4. |
+| `cacheGroupSize` | `NFKModelLoadOptionCacheGroupSize` | The cache elements that share one scale and bias. |
+| `draftModel` | `NFKModelLoadOptionDraftModel` | The draft model's identifier. |
+| `draftBits` | `NFKModelLoadOptionDraftBits` | The bits of the draft model's weights. |
+| `computeUnits` | `NFKModelLoadOptionComputeUnits` | The Core ML compute units, an `MLComputeUnits` value. |
+| `ignoreMemoryBudget` | `NFKModelLoadOptionIgnoreMemoryBudget` | YES builds a combination the memory estimate says does not fit. |
 
 ### Option kinds
 
@@ -400,6 +794,11 @@ Every failure is in `NFKModelCatalogErrorDomain`.
 | `NFKModelCatalogErrorUnsupportedSchemaVersion` | The manifest's `schemaVersion` is newer than this release reads. |
 | `NFKModelCatalogErrorMalformedManifest` | The data is not a JSON object, or `schemaVersion`, `kind`, or `models` is missing or of the wrong type, or `kind` is not `"inferkit.model-catalog"`. |
 | `NFKModelCatalogErrorMalformedDescriptor` | An object is missing a required field, has a field of the wrong type, or holds a value JSON cannot carry. The description names the field by its path, such as `models[2].variants[0].source.kind is missing`. |
+| `NFKModelCatalogErrorInvalidOptions` | An option value does not resolve, or a build's property option names a key path the backend has no setter for. `NFKModelOptionProblemsKey` holds the problems. |
+| `NFKModelCatalogErrorUnknownModel` | The catalog has no model with the identifier: `The catalog has no model "ghost".` |
+| `NFKModelCatalogErrorNoBuilder` | Nothing builds the model's engine: `No builder builds models of the engine "x".` |
+| `NFKModelCatalogErrorUnavailable` | This machine does not meet the model's requirements, or a chosen choice's: `Example Chat cannot run on this machine. This needs Apple silicon.` |
+| `NFKModelCatalogErrorDoesNotFit` | The estimate does not fit the budget, or the residency planner refuses the residency. `NFKModelMemoryEstimateKey` holds the estimate where there is one; a build's refusal adds `NFKModelMemoryFittingOptionsKey` and `NFKModelMemoryFittingEstimateKey` where another combination fits. |
 
 ## The MLX catalog's measurements
 

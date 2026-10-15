@@ -12,8 +12,10 @@ NSString * const NFKModelCatalogManifestKind = @"inferkit.model-catalog";
 static const NSInteger NFKModelCatalogSchemaVersion = 1;
 
 @interface NFKModelCatalog ()
-// identifier -> descriptor. Guarded by @synchronized on itself.
+// identifier -> descriptor. Guarded by @synchronized on itself, as is providerNames.
 @property (nonatomic, readonly) NSMutableDictionary<NSString *, NFKModelDescriptor *> *storage;
+// identifier -> the provider class that supplied the descriptor.
+@property (nonatomic, readonly) NSMutableDictionary<NSString *, NSString *> *providerNames;
 @end
 
 @implementation NFKModelCatalog
@@ -97,6 +99,7 @@ static NFKModelCatalog *NFKSharedModelCatalog;
 	self = [super init];
 	if (self != nil) {
 		_storage = [NSMutableDictionary dictionary];
+		_providerNames = [NSMutableDictionary dictionary];
 	}
 	return self;
 }
@@ -158,9 +161,15 @@ static NFKModelCatalog *NFKSharedModelCatalog;
 
 - (void)addDescriptors:(NSArray<NFKModelDescriptor *> *)descriptors
 {
+	[self addDescriptors:descriptors providerClassName:nil];
+}
+
+- (void)addDescriptors:(NSArray<NFKModelDescriptor *> *)descriptors providerClassName:(nullable NSString *)className
+{
 	@synchronized (self.storage) {
 		for (NFKModelDescriptor *descriptor in descriptors) {
 			self.storage[descriptor.identifier] = descriptor;
+			self.providerNames[descriptor.identifier] = className;
 		}
 	}
 }
@@ -169,6 +178,14 @@ static NFKModelCatalog *NFKSharedModelCatalog;
 {
 	@synchronized (self.storage) {
 		[self.storage removeObjectForKey:identifier];
+		[self.providerNames removeObjectForKey:identifier];
+	}
+}
+
+- (nullable NSString *)providerClassNameForDescriptorIdentifier:(NSString *)identifier
+{
+	@synchronized (self.storage) {
+		return self.providerNames[identifier];
 	}
 }
 
@@ -179,7 +196,7 @@ static NFKModelCatalog *NFKSharedModelCatalog;
 		return NO;
 	}
 	NSArray<NFKModelDescriptor *> *descriptors = [(Class<NFKModelDescriptorProvider>)provider modelDescriptors];
-	[self addDescriptors:descriptors ?: @[]];
+	[self addDescriptors:descriptors ?: @[] providerClassName:className];
 	return YES;
 }
 

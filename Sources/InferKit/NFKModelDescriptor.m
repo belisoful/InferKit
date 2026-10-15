@@ -6,6 +6,9 @@
 #import "NFKModelDescriptor.h"
 #import "NFKModelDescriptorPrivate.h"
 #import "NFKModelCatalog.h"
+#import "NFKModelMemory.h"
+#import "NFKModelPreset.h"
+#import "NFKHardwareProfile.h"
 #import "NFKInferenceKeys.h"
 
 BOOL NFKModelCatalogFail(NFKModelCatalogError code, NSString *reason, NSError **error)
@@ -17,13 +20,13 @@ BOOL NFKModelCatalogFail(NFKModelCatalogError code, NSString *reason, NSError **
 	return NO;
 }
 
-static BOOL NFKModelIsBoolean(id value)
+BOOL NFKModelIsBoolean(id _Nullable value)
 {
 	return [value isKindOfClass:NSNumber.class] && CFGetTypeID((__bridge CFTypeRef)value) == CFBooleanGetTypeID();
 }
 
-static NSDictionary<NSString *, id> *NFKModelExtensionsWithout(NSDictionary<NSString *, id> * _Nullable extensions,
-															  NSArray<NSString *> *knownFields)
+NSDictionary<NSString *, id> *NFKModelExtensionsWithout(NSDictionary<NSString *, id> * _Nullable extensions,
+														NSArray<NSString *> *knownFields)
 {
 	if (extensions.count == 0) {
 		return @{};
@@ -60,7 +63,7 @@ static NSArray<NSString *> *NFKModelSortedKeys(NSSet<NSString *> * _Nullable key
 	return [keys.allObjects sortedArrayUsingSelector:@selector(compare:)] ?: @[];
 }
 
-static NSArray *NFKModelDictionariesOf(NSArray *values)
+NSArray *NFKModelDictionariesOf(NSArray *values)
 {
 	NSMutableArray *dictionaries = [NSMutableArray arrayWithCapacity:values.count];
 	for (id value in values) {
@@ -69,7 +72,7 @@ static NSArray *NFKModelDictionariesOf(NSArray *values)
 	return dictionaries;
 }
 
-static BOOL NFKModelIsEqualDescription(id object, id other, Class expectedClass)
+BOOL NFKModelIsEqualDescription(id object, id other, Class expectedClass)
 {
 	if (object == other) {
 		return YES;
@@ -80,15 +83,7 @@ static BOOL NFKModelIsEqualDescription(id object, id other, Class expectedClass)
 	return [[object dictionaryRepresentation] isEqualToDictionary:[other dictionaryRepresentation]];
 }
 
-typedef id _Nullable (^NFKModelElementReader)(id element, NSString *path, NSError **error);
-
 #pragma mark - Field reader
-
-// Reads typed fields from one manifest dictionary and names a failing field by its path.
-@interface NFKModelFieldReader : NSObject
-@property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *dictionary;
-@property (nonatomic, readonly, copy) NSString *path;
-@end
 
 @implementation NFKModelFieldReader
 
@@ -225,6 +220,69 @@ typedef id _Nullable (^NFKModelElementReader)(id element, NSString *path, NSErro
 		}
 	}
 	*value = raw;
+	return YES;
+}
+
+- (BOOL)readNumberDictionary:(NSString *)field
+						into:(NSDictionary<NSString *, NSNumber *> * _Nullable * _Nonnull)value
+					   error:(NSError **)error
+{
+	id raw = self.dictionary[field];
+	*value = nil;
+	if (raw == nil) {
+		return YES;
+	}
+	if (![raw isKindOfClass:NSDictionary.class]) {
+		return [self failField:field reason:@"is not an object of numbers" error:error];
+	}
+	for (id element in [raw allValues]) {
+		if (![element isKindOfClass:NSNumber.class] || NFKModelIsBoolean(element)) {
+			return [self failField:field reason:@"is not an object of numbers" error:error];
+		}
+	}
+	*value = raw;
+	return YES;
+}
+
+- (BOOL)readJSONDictionary:(NSString *)field
+					  into:(NSDictionary<NSString *, id> * _Nullable * _Nonnull)value
+					 error:(NSError **)error
+{
+	id raw = self.dictionary[field];
+	*value = nil;
+	if (raw == nil) {
+		return YES;
+	}
+	if (![raw isKindOfClass:NSDictionary.class] || ![NSJSONSerialization isValidJSONObject:raw]) {
+		return [self failField:field reason:@"is not a JSON object" error:error];
+	}
+	*value = raw;
+	return YES;
+}
+
+- (BOOL)readObjectDictionary:(NSString *)field
+				  withReader:(NFKModelElementReader)reader
+						into:(NSDictionary<NSString *, id> * _Nullable * _Nonnull)value
+					   error:(NSError **)error
+{
+	id raw = self.dictionary[field];
+	*value = nil;
+	if (raw == nil) {
+		return YES;
+	}
+	if (![raw isKindOfClass:NSDictionary.class]) {
+		return [self failField:field reason:@"is not an object" error:error];
+	}
+	NSMutableDictionary<NSString *, id> *read = [NSMutableDictionary dictionaryWithCapacity:[raw count]];
+	for (NSString *key in [[raw allKeys] sortedArrayUsingSelector:@selector(compare:)]) {
+		NSString *elementPath = [NSString stringWithFormat:@"%@.%@", [self pathForField:field], key];
+		id object = reader(raw[key], elementPath, error);
+		if (object == nil) {
+			return NO;
+		}
+		read[key] = object;
+	}
+	*value = read;
 	return YES;
 }
 
@@ -372,22 +430,43 @@ static NSArray<NSString *> *NFKModelPortFields(void)
 
 static NSArray<NSString *> *NFKModelOptionChoiceFields(void)
 {
-	return @[ @"value", @"title" ];
+	return @[ @"value", @"title", @"requires", @"memory", @"memoryByVariant" ];
 }
+
+static id _Nullable NFKModelReadRequirements(id element, NSString *elementPath, NSError **elementError);
 
 @implementation NFKModelOptionChoice
 
 - (instancetype)initWithValue:(id)value
 						title:(nullable NSString *)title
+				 requirements:(nullable NFKModelRequirements *)requirements
+					   memory:(nullable NFKModelMemoryFigure *)memory
+			  memoryByVariant:(nullable NSDictionary<NSString *, NFKModelMemoryFigure *> *)memoryByVariant
 				   extensions:(nullable NSDictionary<NSString *, id> *)extensions
 {
 	self = [super init];
 	if (self != nil) {
 		_value = [value copy];
 		_title = [title copy] ?: [value description];
+		_requirements = [requirements copy];
+		_memory = [memory copy];
+		_memoryByVariant = [memoryByVariant copy] ?: @{};
 		_extensions = NFKModelExtensionsWithout(extensions, NFKModelOptionChoiceFields());
 	}
 	return self;
+}
+
+- (instancetype)initWithValue:(id)value
+						title:(nullable NSString *)title
+				   extensions:(nullable NSDictionary<NSString *, id> *)extensions
+{
+	return [self initWithValue:value title:title requirements:nil memory:nil memoryByVariant:nil extensions:extensions];
+}
+
+- (nullable NFKModelMemoryFigure *)memoryForVariant:(nullable NSString *)variantIdentifier
+{
+	NFKModelMemoryFigure *figure = variantIdentifier != nil ? self.memoryByVariant[variantIdentifier] : nil;
+	return figure ?: self.memory;
 }
 
 + (instancetype)choiceWithValue:(id)value title:(nullable NSString *)title
@@ -416,10 +495,22 @@ static NSArray<NSString *> *NFKModelOptionChoiceFields(void)
 		return nil;
 	}
 	NSString *title = nil;
-	if (![reader readString:@"title" required:NO into:&title error:error]) {
+	id requirements = nil, memory = nil;
+	NSDictionary *memoryByVariant = nil;
+	NFKModelElementReader figureReader = ^id (id element, NSString *elementPath, NSError **elementError) {
+		return [NFKModelMemoryFigure figureFromObject:element path:elementPath error:elementError];
+	};
+	NFKModelElementReader requirementsReader = ^id (id element, NSString *elementPath, NSError **elementError) {
+		return NFKModelReadRequirements(element, elementPath, elementError);
+	};
+	if (![reader readString:@"title" required:NO into:&title error:error]
+		|| ![reader readObject:@"requires" withReader:requirementsReader into:&requirements error:error]
+		|| ![reader readObject:@"memory" withReader:figureReader into:&memory error:error]
+		|| ![reader readObjectDictionary:@"memoryByVariant" withReader:figureReader into:&memoryByVariant error:error]) {
 		return nil;
 	}
-	return [[self alloc] initWithValue:value title:title
+	return [[self alloc] initWithValue:value title:title requirements:requirements memory:memory
+					   memoryByVariant:memoryByVariant
 							extensions:[reader extensionsWithoutFields:NFKModelOptionChoiceFields()]];
 }
 
@@ -428,6 +519,15 @@ static NSArray<NSString *> *NFKModelOptionChoiceFields(void)
 	NSMutableDictionary<NSString *, id> *dictionary = [self.extensions mutableCopy];
 	dictionary[@"value"] = self.value;
 	dictionary[@"title"] = self.title;
+	dictionary[@"requires"] = self.requirements.dictionaryRepresentation;
+	dictionary[@"memory"] = self.memory.dictionaryRepresentation;
+	if (self.memoryByVariant.count > 0) {
+		NSMutableDictionary<NSString *, id> *byVariant = [NSMutableDictionary dictionary];
+		[self.memoryByVariant enumerateKeysAndObjectsUsingBlock:^(NSString *key, NFKModelMemoryFigure *figure, BOOL *stop) {
+			byVariant[key] = figure.dictionaryRepresentation;
+		}];
+		dictionary[@"memoryByVariant"] = byVariant;
+	}
 	return [dictionary copy];
 }
 
@@ -453,7 +553,7 @@ static NSArray<NSString *> *NFKModelOptionChoiceFields(void)
 static NSArray<NSString *> *NFKModelOptionFields(void)
 {
 	return @[ @"key", @"kind", @"title", @"help", @"default", @"minimum", @"maximum", @"step", @"choices",
-			  @"stage", @"group" ];
+			  @"stage", @"group", @"requires", @"property", @"memoryBytesPerUnit" ];
 }
 
 @implementation NFKModelOption
@@ -469,6 +569,9 @@ static NSArray<NSString *> *NFKModelOptionFields(void)
 					choices:(nullable NSArray<NFKModelOptionChoice *> *)choices
 					  stage:(nullable NSString *)stage
 					  group:(nullable NSString *)group
+			   requirements:(nullable NFKModelRequirements *)requirements
+			propertyKeyPath:(nullable NSString *)propertyKeyPath
+		 memoryBytesPerUnit:(nullable NSNumber *)memoryBytesPerUnit
 				 extensions:(nullable NSDictionary<NSString *, id> *)extensions
 {
 	self = [super init];
@@ -484,9 +587,46 @@ static NSArray<NSString *> *NFKModelOptionFields(void)
 		_choices = [choices copy] ?: @[];
 		_stage = [stage copy] ?: NFKModelOptionStageRequest;
 		_group = [group copy];
+		_requirements = [requirements copy];
+		_propertyKeyPath = [propertyKeyPath copy];
+		_memoryBytesPerUnit = [memoryBytesPerUnit copy];
 		_extensions = NFKModelExtensionsWithout(extensions, NFKModelOptionFields());
 	}
 	return self;
+}
+
+- (instancetype)initWithKey:(NSString *)key
+					   kind:(NSString *)kind
+					  title:(nullable NSString *)title
+					   help:(nullable NSString *)help
+			   defaultValue:(nullable id)defaultValue
+					minimum:(nullable NSNumber *)minimum
+					maximum:(nullable NSNumber *)maximum
+					   step:(nullable NSNumber *)step
+					choices:(nullable NSArray<NFKModelOptionChoice *> *)choices
+					  stage:(nullable NSString *)stage
+					  group:(nullable NSString *)group
+				 extensions:(nullable NSDictionary<NSString *, id> *)extensions
+{
+	return [self initWithKey:key kind:kind title:title help:help defaultValue:defaultValue minimum:minimum
+					 maximum:maximum step:step choices:choices stage:stage group:group requirements:nil
+			 propertyKeyPath:nil memoryBytesPerUnit:nil extensions:extensions];
+}
+
+- (nullable NFKModelOptionChoice *)choiceWithValue:(id)value
+{
+	for (NFKModelOptionChoice *choice in self.choices) {
+		if ([choice.value isEqual:value]) {
+			return choice;
+		}
+	}
+	NSString *text = [value description];
+	for (NFKModelOptionChoice *choice in self.choices) {
+		if ([[choice.value description] isEqualToString:text]) {
+			return choice;
+		}
+	}
+	return nil;
 }
 
 + (instancetype)optionWithKey:(NSString *)key kind:(NSString *)kind
@@ -508,9 +648,13 @@ static NSArray<NSString *> *NFKModelOptionFields(void)
 + (nullable instancetype)optionFromObject:(id)object path:(NSString *)path error:(NSError **)error
 {
 	NFKModelFieldReader *reader = [NFKModelFieldReader readerWithObject:object path:path error:error];
-	NSString *key = nil, *kind = nil, *title = nil, *help = nil, *stage = nil, *group = nil;
-	NSNumber *minimum = nil, *maximum = nil, *step = nil;
+	NSString *key = nil, *kind = nil, *title = nil, *help = nil, *stage = nil, *group = nil, *property = nil;
+	NSNumber *minimum = nil, *maximum = nil, *step = nil, *memoryBytesPerUnit = nil;
 	NSArray *choices = nil;
+	id requirements = nil;
+	NFKModelElementReader requirementsReader = ^id (id element, NSString *elementPath, NSError **elementError) {
+		return NFKModelReadRequirements(element, elementPath, elementError);
+	};
 	NFKModelElementReader choiceReader = ^id (id element, NSString *elementPath, NSError **elementError) {
 		return [NFKModelOptionChoice choiceFromObject:element path:elementPath error:elementError];
 	};
@@ -524,7 +668,10 @@ static NSArray<NSString *> *NFKModelOptionFields(void)
 		|| ![reader readNumber:@"step" into:&step error:error]
 		|| ![reader readObjects:@"choices" withReader:choiceReader into:&choices error:error]
 		|| ![reader readString:@"stage" required:NO into:&stage error:error]
-		|| ![reader readString:@"group" required:NO into:&group error:error]) {
+		|| ![reader readString:@"group" required:NO into:&group error:error]
+		|| ![reader readObject:@"requires" withReader:requirementsReader into:&requirements error:error]
+		|| ![reader readString:@"property" required:NO into:&property error:error]
+		|| ![reader readNumber:@"memoryBytesPerUnit" into:&memoryBytesPerUnit error:error]) {
 		return nil;
 	}
 	id defaultValue = reader.dictionary[@"default"];
@@ -540,10 +687,12 @@ static NSArray<NSString *> *NFKModelOptionFields(void)
 							 minimum:minimum
 							 maximum:maximum
 								step:step
-							 choices:choices
-							   stage:stage
-							   group:group
-						  extensions:[reader extensionsWithoutFields:NFKModelOptionFields()]];
+							 choices:choices								   stage:stage
+								   group:group
+							requirements:requirements
+						 propertyKeyPath:property
+					  memoryBytesPerUnit:memoryBytesPerUnit
+							  extensions:[reader extensionsWithoutFields:NFKModelOptionFields()]];
 }
 
 + (BOOL)isDefaultValue:(id)value
@@ -571,6 +720,9 @@ static NSArray<NSString *> *NFKModelOptionFields(void)
 	}
 	dictionary[@"stage"] = self.stage;
 	dictionary[@"group"] = self.group;
+	dictionary[@"requires"] = self.requirements.dictionaryRepresentation;
+	dictionary[@"property"] = self.propertyKeyPath;
+	dictionary[@"memoryBytesPerUnit"] = self.memoryBytesPerUnit;
 	return [dictionary copy];
 }
 
@@ -905,7 +1057,7 @@ static NSArray<NSString *> *NFKModelSourceFields(void)
 static NSArray<NSString *> *NFKModelVariantFields(void)
 {
 	return @[ @"id", @"displayName", @"isDefault", @"registryName", @"source", @"downloadBytes", @"residentBytes",
-			  @"peakBytes", @"parameterCount", @"precision", @"minimumMemoryBytes", @"license" ];
+			  @"peakBytes", @"parameterCount", @"precision", @"minimumMemoryBytes", @"license", @"memoryFacts" ];
 }
 
 @implementation NFKModelVariant
@@ -922,6 +1074,7 @@ static NSArray<NSString *> *NFKModelVariantFields(void)
 						 precision:(nullable NSString *)precision
 			minimumMemoryByteCount:(nullable NSNumber *)minimumMemoryByteCount
 						   license:(nullable NFKModelLicense *)license
+					   memoryFacts:(nullable NFKModelMemoryFacts *)memoryFacts
 						extensions:(nullable NSDictionary<NSString *, id> *)extensions
 {
 	self = [super init];
@@ -938,9 +1091,30 @@ static NSArray<NSString *> *NFKModelVariantFields(void)
 		_precision = [precision copy];
 		_minimumMemoryByteCount = [minimumMemoryByteCount copy];
 		_license = [license copy];
+		_memoryFacts = [memoryFacts copy];
 		_extensions = NFKModelExtensionsWithout(extensions, NFKModelVariantFields());
 	}
 	return self;
+}
+
+- (instancetype)initWithIdentifier:(NSString *)identifier
+					   displayName:(nullable NSString *)displayName
+						 isDefault:(BOOL)isDefault
+					  registryName:(nullable NSString *)registryName
+							source:(nullable NFKModelSource *)source
+				 downloadByteCount:(nullable NSNumber *)downloadByteCount
+				 residentByteCount:(nullable NSNumber *)residentByteCount
+					 peakByteCount:(nullable NSNumber *)peakByteCount
+					parameterCount:(nullable NSNumber *)parameterCount
+						 precision:(nullable NSString *)precision
+			minimumMemoryByteCount:(nullable NSNumber *)minimumMemoryByteCount
+						   license:(nullable NFKModelLicense *)license
+						extensions:(nullable NSDictionary<NSString *, id> *)extensions
+{
+	return [self initWithIdentifier:identifier displayName:displayName isDefault:isDefault registryName:registryName
+							 source:source downloadByteCount:downloadByteCount residentByteCount:residentByteCount
+					  peakByteCount:peakByteCount parameterCount:parameterCount precision:precision
+			 minimumMemoryByteCount:minimumMemoryByteCount license:license memoryFacts:nil extensions:extensions];
 }
 
 - (instancetype)initWithIdentifier:(NSString *)identifier
@@ -980,13 +1154,16 @@ static NSArray<NSString *> *NFKModelVariantFields(void)
 	NSString *identifier = nil, *displayName = nil, *registryName = nil, *precision = nil;
 	NSNumber *downloadByteCount = nil, *residentByteCount = nil, *peakByteCount = nil, *parameterCount = nil;
 	NSNumber *minimumMemoryByteCount = nil;
-	id source = nil, license = nil;
+	id source = nil, license = nil, memoryFacts = nil;
 	BOOL isDefault = NO;
 	NFKModelElementReader sourceReader = ^id (id element, NSString *elementPath, NSError **elementError) {
 		return [NFKModelSource sourceFromObject:element path:elementPath error:elementError];
 	};
 	NFKModelElementReader licenseReader = ^id (id element, NSString *elementPath, NSError **elementError) {
 		return [NFKModelLicense licenseFromObject:element path:elementPath error:elementError];
+	};
+	NFKModelElementReader factsReader = ^id (id element, NSString *elementPath, NSError **elementError) {
+		return [NFKModelMemoryFacts factsFromObject:element path:elementPath error:elementError];
 	};
 	if (reader == nil
 		|| ![reader readString:@"id" required:YES into:&identifier error:error]
@@ -1000,14 +1177,15 @@ static NSArray<NSString *> *NFKModelVariantFields(void)
 		|| ![reader readNumber:@"parameterCount" into:&parameterCount error:error]
 		|| ![reader readString:@"precision" required:NO into:&precision error:error]
 		|| ![reader readNumber:@"minimumMemoryBytes" into:&minimumMemoryByteCount error:error]
-		|| ![reader readObject:@"license" withReader:licenseReader into:&license error:error]) {
+		|| ![reader readObject:@"license" withReader:licenseReader into:&license error:error]
+		|| ![reader readObject:@"memoryFacts" withReader:factsReader into:&memoryFacts error:error]) {
 		return nil;
 	}
 	return [[self alloc] initWithIdentifier:identifier displayName:displayName isDefault:isDefault
 							   registryName:registryName source:source downloadByteCount:downloadByteCount
 						  residentByteCount:residentByteCount peakByteCount:peakByteCount
 							 parameterCount:parameterCount precision:precision
-					 minimumMemoryByteCount:minimumMemoryByteCount license:license
+					 minimumMemoryByteCount:minimumMemoryByteCount license:license memoryFacts:memoryFacts
 								 extensions:[reader extensionsWithoutFields:NFKModelVariantFields()]];
 }
 
@@ -1026,6 +1204,7 @@ static NSArray<NSString *> *NFKModelVariantFields(void)
 	dictionary[@"precision"] = self.precision;
 	dictionary[@"minimumMemoryBytes"] = self.minimumMemoryByteCount;
 	dictionary[@"license"] = self.license.dictionaryRepresentation;
+	dictionary[@"memoryFacts"] = self.memoryFacts.dictionaryRepresentation;
 	return [dictionary copy];
 }
 
@@ -1050,19 +1229,43 @@ static NSArray<NSString *> *NFKModelVariantFields(void)
 
 static NSArray<NSString *> *NFKModelRequirementsFields(void)
 {
-	return @[ @"minimumOS", @"requiresAppleSilicon", @"minimumMemoryBytes" ];
+	return @[ @"minimumOS", @"requiresAppleSilicon", @"minimumMemoryBytes", @"requiredFeatures", @"unmetReason" ];
+}
+
+static id _Nullable NFKModelReadRequirements(id element, NSString *elementPath, NSError **elementError)
+{
+	return [NFKModelRequirements requirementsFromObject:element path:elementPath error:elementError];
+}
+
+// Compares dotted version strings component by component, a missing component reading as 0.
+static NSComparisonResult NFKModelCompareVersions(NSString *version, NSString *other)
+{
+	NSArray<NSString *> *first = [version componentsSeparatedByString:@"."];
+	NSArray<NSString *> *second = [other componentsSeparatedByString:@"."];
+	NSUInteger count = MAX(first.count, second.count);
+	for (NSUInteger index = 0; index < count; index += 1) {
+		NSInteger a = index < first.count ? first[index].integerValue : 0;
+		NSInteger b = index < second.count ? second[index].integerValue : 0;
+		if (a != b) {
+			return a < b ? NSOrderedAscending : NSOrderedDescending;
+		}
+	}
+	return NSOrderedSame;
 }
 
 @implementation NFKModelRequirements
 
 - (instancetype)init
 {
-	return [self initWithMinimumOSVersions:nil requiresAppleSilicon:NO minimumMemoryByteCount:nil extensions:nil];
+	return [self initWithMinimumOSVersions:nil requiresAppleSilicon:NO minimumMemoryByteCount:nil requiredFeatures:nil
+							   unmetReason:nil extensions:nil];
 }
 
 - (instancetype)initWithMinimumOSVersions:(nullable NSDictionary<NSString *, NSString *> *)minimumOSVersions
 					 requiresAppleSilicon:(BOOL)requiresAppleSilicon
 				   minimumMemoryByteCount:(nullable NSNumber *)minimumMemoryByteCount
+						 requiredFeatures:(nullable NSArray<NSString *> *)requiredFeatures
+							  unmetReason:(nullable NSString *)unmetReason
 							   extensions:(nullable NSDictionary<NSString *, id> *)extensions
 {
 	self = [super init];
@@ -1070,9 +1273,66 @@ static NSArray<NSString *> *NFKModelRequirementsFields(void)
 		_minimumOSVersions = [minimumOSVersions copy] ?: @{};
 		_requiresAppleSilicon = requiresAppleSilicon;
 		_minimumMemoryByteCount = [minimumMemoryByteCount copy];
+		_requiredFeatures = [requiredFeatures copy] ?: @[];
+		_unmetReason = [unmetReason copy];
 		_extensions = NFKModelExtensionsWithout(extensions, NFKModelRequirementsFields());
 	}
 	return self;
+}
+
+- (instancetype)initWithMinimumOSVersions:(nullable NSDictionary<NSString *, NSString *> *)minimumOSVersions
+					 requiresAppleSilicon:(BOOL)requiresAppleSilicon
+				   minimumMemoryByteCount:(nullable NSNumber *)minimumMemoryByteCount
+							   extensions:(nullable NSDictionary<NSString *, id> *)extensions
+{
+	return [self initWithMinimumOSVersions:minimumOSVersions requiresAppleSilicon:requiresAppleSilicon
+					minimumMemoryByteCount:minimumMemoryByteCount requiredFeatures:nil unmetReason:nil
+								extensions:extensions];
+}
+
+- (nullable NSString *)problemForHardwareProfile:(NFKHardwareProfile *)profile
+{
+	NSString *problem = [self composedProblemForHardwareProfile:profile];
+	if (problem == nil) {
+		return nil;
+	}
+	return self.unmetReason ?: problem;
+}
+
+- (nullable NSString *)composedProblemForHardwareProfile:(NFKHardwareProfile *)profile
+{
+	NSString *platform = profile.operatingSystemName;
+	if (self.minimumOSVersions.count > 0 && platform.length > 0) {
+		NSString *minimum = self.minimumOSVersions[platform];
+		if (minimum == nil) {
+			return [NSString stringWithFormat:@"This does not run on %@.", platform];
+		}
+		if (NFKModelCompareVersions(profile.operatingSystemVersion, minimum) == NSOrderedAscending) {
+			return [NSString stringWithFormat:@"This needs %@ %@ or later.", platform, minimum];
+		}
+	}
+	BOOL needsAppleSilicon = self.requiresAppleSilicon || [self.requiredFeatures containsObject:NFKModelFeatureAppleSilicon];
+	if (needsAppleSilicon && !profile.isAppleSilicon) {
+		return @"This needs Apple silicon.";
+	}
+	for (NSString *feature in self.requiredFeatures) {
+		NSString *problem = [self problemForFeature:feature profile:profile];
+		if (problem != nil) {
+			return problem;
+		}
+	}
+	return nil;
+}
+
+- (nullable NSString *)problemForFeature:(NSString *)feature profile:(NFKHardwareProfile *)profile
+{
+	if ([feature isEqualToString:NFKModelFeatureAppleSilicon]) {
+		return nil;
+	}
+	if ([feature isEqualToString:NFKModelFeatureNeuralAccelerators]) {
+		return profile.hasNeuralAccelerators ? nil : @"This needs a GPU with neural accelerators.";
+	}
+	return [NSString stringWithFormat:@"This needs the %@ feature.", feature];
 }
 
 + (nullable instancetype)requirementsWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error
@@ -1085,15 +1345,20 @@ static NSArray<NSString *> *NFKModelRequirementsFields(void)
 	NFKModelFieldReader *reader = [NFKModelFieldReader readerWithObject:object path:path error:error];
 	NSDictionary<NSString *, NSString *> *minimumOSVersions = nil;
 	NSNumber *minimumMemoryByteCount = nil;
+	NSArray<NSString *> *requiredFeatures = nil;
+	NSString *unmetReason = nil;
 	BOOL requiresAppleSilicon = NO;
 	if (reader == nil
 		|| ![reader readStringDictionary:@"minimumOS" into:&minimumOSVersions error:error]
 		|| ![reader readBoolean:@"requiresAppleSilicon" into:&requiresAppleSilicon error:error]
-		|| ![reader readNumber:@"minimumMemoryBytes" into:&minimumMemoryByteCount error:error]) {
+		|| ![reader readNumber:@"minimumMemoryBytes" into:&minimumMemoryByteCount error:error]
+		|| ![reader readStringArray:@"requiredFeatures" into:&requiredFeatures error:error]
+		|| ![reader readString:@"unmetReason" required:NO into:&unmetReason error:error]) {
 		return nil;
 	}
 	return [[self alloc] initWithMinimumOSVersions:minimumOSVersions requiresAppleSilicon:requiresAppleSilicon
-							minimumMemoryByteCount:minimumMemoryByteCount
+							minimumMemoryByteCount:minimumMemoryByteCount requiredFeatures:requiredFeatures
+									   unmetReason:unmetReason
 										extensions:[reader extensionsWithoutFields:NFKModelRequirementsFields()]];
 }
 
@@ -1103,6 +1368,10 @@ static NSArray<NSString *> *NFKModelRequirementsFields(void)
 	dictionary[@"minimumOS"] = self.minimumOSVersions;
 	dictionary[@"requiresAppleSilicon"] = @(self.requiresAppleSilicon);
 	dictionary[@"minimumMemoryBytes"] = self.minimumMemoryByteCount;
+	if (self.requiredFeatures.count > 0) {
+		dictionary[@"requiredFeatures"] = self.requiredFeatures;
+	}
+	dictionary[@"unmetReason"] = self.unmetReason;
 	return [dictionary copy];
 }
 
@@ -1128,9 +1397,14 @@ static NSArray<NSString *> *NFKModelRequirementsFields(void)
 static NSArray<NSString *> *NFKModelDescriptorFields(void)
 {
 	return @[ @"id", @"displayName", @"family", @"summary", @"engine", @"registryName", @"providerClass", @"tasks",
-			  @"inputModalities", @"outputModalities", @"inputs", @"outputs", @"parameters", @"variants", @"license",
-			  @"requirements", @"residencies", @"standIn", @"introducedVersion" ];
+			  @"inputModalities", @"outputModalities", @"inputs", @"outputs", @"options", @"parameters", @"variants",
+			  @"license", @"requirements", @"residencies", @"memoryModel", @"presets", @"standIn",
+			  @"introducedVersion" ];
 }
+
+@interface NFKModelDescriptor ()
+@property (nonatomic, readonly, nullable) NFKModelOption *derivedVariantOption;
+@end
 
 @implementation NFKModelDescriptor
 
@@ -1146,11 +1420,13 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 				  outputModalities:(nullable NSArray<NSString *> *)outputModalities
 							inputs:(nullable NSArray<NFKModelPort *> *)inputs
 						   outputs:(nullable NSArray<NFKModelPort *> *)outputs
-						parameters:(nullable NSArray<NFKModelOption *> *)parameters
+						   options:(nullable NSArray<NFKModelOption *> *)options
 						  variants:(nullable NSArray<NFKModelVariant *> *)variants
 						   license:(nullable NFKModelLicense *)license
 					  requirements:(nullable NFKModelRequirements *)requirements
 					   residencies:(nullable NSArray<NSString *> *)residencies
+					   memoryModel:(nullable NFKModelMemoryModel *)memoryModel
+						   presets:(nullable NSArray<NFKModelPreset *> *)presets
 						   standIn:(BOOL)standIn
 				 introducedVersion:(nullable NSString *)introducedVersion
 						extensions:(nullable NSDictionary<NSString *, id> *)extensions
@@ -1169,16 +1445,125 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 		_outputs = [outputs copy] ?: @[];
 		_inputModalities = [inputModalities copy] ?: NFKModelValueTypesOfPorts(_inputs);
 		_outputModalities = [outputModalities copy] ?: NFKModelValueTypesOfPorts(_outputs);
-		_parameters = [parameters copy] ?: @[];
+		_options = [options copy] ?: @[];
 		_variants = [variants copy] ?: @[];
 		_license = [license copy];
 		_requirements = [requirements copy] ?: [[NFKModelRequirements alloc] init];
 		_residencies = [residencies copy] ?: @[];
+		_memoryModel = [memoryModel copy];
+		_presets = [presets copy] ?: @[];
 		_standIn = standIn;
 		_introducedVersion = [introducedVersion copy];
 		_extensions = NFKModelExtensionsWithout(extensions, NFKModelDescriptorFields());
+		_derivedVariantOption = [self makeDerivedVariantOption];
 	}
 	return self;
+}
+
+- (instancetype)initWithIdentifier:(NSString *)identifier
+					   displayName:(nullable NSString *)displayName
+							family:(NSString *)family
+						   summary:(nullable NSString *)summary
+							engine:(NSString *)engine
+					  registryName:(nullable NSString *)registryName
+				 providerClassName:(nullable NSString *)providerClassName
+							 tasks:(nullable NSArray<NSString *> *)tasks
+				   inputModalities:(nullable NSArray<NSString *> *)inputModalities
+				  outputModalities:(nullable NSArray<NSString *> *)outputModalities
+							inputs:(nullable NSArray<NFKModelPort *> *)inputs
+						   outputs:(nullable NSArray<NFKModelPort *> *)outputs
+						   options:(nullable NSArray<NFKModelOption *> *)options
+						  variants:(nullable NSArray<NFKModelVariant *> *)variants
+						   license:(nullable NFKModelLicense *)license
+					  requirements:(nullable NFKModelRequirements *)requirements
+					   residencies:(nullable NSArray<NSString *> *)residencies
+						   standIn:(BOOL)standIn
+				 introducedVersion:(nullable NSString *)introducedVersion
+						extensions:(nullable NSDictionary<NSString *, id> *)extensions
+{
+	return [self initWithIdentifier:identifier displayName:displayName family:family summary:summary engine:engine
+					   registryName:registryName providerClassName:providerClassName tasks:tasks
+					inputModalities:inputModalities outputModalities:outputModalities inputs:inputs outputs:outputs
+							options:options variants:variants license:license requirements:requirements
+						residencies:residencies memoryModel:nil presets:nil standIn:standIn
+				  introducedVersion:introducedVersion extensions:extensions];
+}
+
+// The variant choice a descriptor with several variants offers when it declares none of its own.
+- (nullable NFKModelOption *)makeDerivedVariantOption
+{
+	if (self.variants.count < 2) {
+		return nil;
+	}
+	for (NFKModelOption *option in self.options) {
+		if ([option.key isEqualToString:NFKModelLoadOptionVariant]) {
+			return nil;
+		}
+	}
+	NSMutableArray<NFKModelOptionChoice *> *choices = [NSMutableArray arrayWithCapacity:self.variants.count];
+	for (NFKModelVariant *variant in self.variants) {
+		NFKModelMemoryFigure *figure = nil;
+		if (variant.residentByteCount != nil) {
+			figure = [[NFKModelMemoryFigure alloc] initWithResidentByteCount:variant.residentByteCount.integerValue
+															   peakByteCount:(variant.peakByteCount ?: variant.residentByteCount).integerValue];
+		}
+		[choices addObject:[[NFKModelOptionChoice alloc] initWithValue:variant.identifier title:variant.displayName
+														  requirements:nil memory:figure memoryByVariant:nil
+															extensions:nil]];
+	}
+	return [[NFKModelOption alloc] initWithKey:NFKModelLoadOptionVariant kind:NFKModelOptionKindChoice title:@"Variant"
+										  help:@"The release of the model to load." defaultValue:self.defaultVariant.identifier
+									   minimum:nil maximum:nil step:nil choices:choices stage:NFKModelOptionStageLoad
+										 group:nil requirements:nil propertyKeyPath:nil memoryBytesPerUnit:nil
+									extensions:nil];
+}
+
+- (NSArray<NFKModelOption *> *)loadOptions
+{
+	NSMutableArray<NFKModelOption *> *options = [NSMutableArray array];
+	if (self.derivedVariantOption != nil) {
+		[options addObject:self.derivedVariantOption];
+	}
+	for (NFKModelOption *option in self.options) {
+		if ([option.stage isEqualToString:NFKModelOptionStageLoad]) {
+			[options addObject:option];
+		}
+	}
+	return [options copy];
+}
+
+- (NSArray<NFKModelOption *> *)requestOptions
+{
+	NSMutableArray<NFKModelOption *> *options = [NSMutableArray array];
+	for (NFKModelOption *option in self.options) {
+		if ([option.stage isEqualToString:NFKModelOptionStageRequest]) {
+			[options addObject:option];
+		}
+	}
+	return [options copy];
+}
+
+- (nullable NFKModelOption *)optionWithKey:(NSString *)key
+{
+	for (NFKModelOption *option in self.options) {
+		if ([option.key isEqualToString:key]) {
+			return option;
+		}
+	}
+	if ([key isEqualToString:NFKModelLoadOptionVariant]) {
+		return self.derivedVariantOption;
+	}
+	return nil;
+}
+
+- (nullable NFKModelPreset *)presetWithIdentifier:(NSString *)identifier
+{
+	for (NFKModelPreset *preset in self.presets) {
+		if ([preset.identifier isEqualToString:identifier]) {
+			return preset;
+		}
+	}
+	return nil;
 }
 
 + (instancetype)descriptorWithIdentifier:(NSString *)identifier derivedFromBackend:(id<NFKInferenceBackend>)backend
@@ -1195,16 +1580,16 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 			[outputs addObject:[NFKModelPort outputPortWithKey:key required:NO]];
 		}
 	}
-	NSMutableArray<NFKModelOption *> *parameters = [NSMutableArray array];
+	NSMutableArray<NFKModelOption *> *options = [NSMutableArray array];
 	if ([backend respondsToSelector:@selector(supportedParameterKeys)]) {
 		for (NSString *key in NFKModelSortedKeys(backend.supportedParameterKeys)) {
-			[parameters addObject:[NFKModelOption optionWithKey:key]];
+			[options addObject:[NFKModelOption optionWithKey:key]];
 		}
 	}
 	return [[self alloc] initWithIdentifier:identifier displayName:nil family:[self familyOfBackend:backend]
 									summary:nil engine:NFKModelEnginePlugin registryName:nil providerClassName:nil
 									  tasks:nil inputModalities:nil outputModalities:nil inputs:inputs
-									outputs:outputs parameters:parameters variants:nil license:nil
+									outputs:outputs options:options variants:nil license:nil
 							   requirements:nil residencies:nil standIn:NO introducedVersion:nil extensions:nil];
 }
 
@@ -1230,8 +1615,8 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 	NSString *identifier = nil, *displayName = nil, *family = nil, *summary = nil, *engine = nil;
 	NSString *registryName = nil, *providerClassName = nil, *introducedVersion = nil;
 	NSArray<NSString *> *tasks = nil, *inputModalities = nil, *outputModalities = nil, *residencies = nil;
-	NSArray *inputs = nil, *outputs = nil, *parameters = nil, *variants = nil;
-	id license = nil, requirements = nil;
+	NSArray *inputs = nil, *outputs = nil, *options = nil, *legacyOptions = nil, *variants = nil, *presets = nil;
+	id license = nil, requirements = nil, memoryModel = nil;
 	BOOL standIn = NO;
 	NFKModelElementReader inputReader = ^id (id element, NSString *elementPath, NSError **elementError) {
 		return [NFKModelPort portFromObject:element path:elementPath output:NO error:elementError];
@@ -1251,6 +1636,12 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 	NFKModelElementReader requirementsReader = ^id (id element, NSString *elementPath, NSError **elementError) {
 		return [NFKModelRequirements requirementsFromObject:element path:elementPath error:elementError];
 	};
+	NFKModelElementReader memoryModelReader = ^id (id element, NSString *elementPath, NSError **elementError) {
+		return [NFKModelMemoryModel memoryModelFromObject:element path:elementPath error:elementError];
+	};
+	NFKModelElementReader presetReader = ^id (id element, NSString *elementPath, NSError **elementError) {
+		return [NFKModelPreset presetFromObject:element path:elementPath error:elementError];
+	};
 	if (reader == nil
 		|| ![reader readString:@"id" required:YES into:&identifier error:error]
 		|| ![reader readString:@"displayName" required:NO into:&displayName error:error]
@@ -1264,11 +1655,14 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 		|| ![reader readStringArray:@"outputModalities" into:&outputModalities error:error]
 		|| ![reader readObjects:@"inputs" withReader:inputReader into:&inputs error:error]
 		|| ![reader readObjects:@"outputs" withReader:outputReader into:&outputs error:error]
-		|| ![reader readObjects:@"parameters" withReader:optionReader into:&parameters error:error]
+		|| ![reader readObjects:@"options" withReader:optionReader into:&options error:error]
+		|| (options == nil && ![reader readObjects:@"parameters" withReader:optionReader into:&legacyOptions error:error])
 		|| ![reader readObjects:@"variants" withReader:variantReader into:&variants error:error]
 		|| ![reader readObject:@"license" withReader:licenseReader into:&license error:error]
 		|| ![reader readObject:@"requirements" withReader:requirementsReader into:&requirements error:error]
 		|| ![reader readStringArray:@"residencies" into:&residencies error:error]
+		|| ![reader readObject:@"memoryModel" withReader:memoryModelReader into:&memoryModel error:error]
+		|| ![reader readObjects:@"presets" withReader:presetReader into:&presets error:error]
 		|| ![reader readBoolean:@"standIn" into:&standIn error:error]
 		|| ![reader readString:@"introducedVersion" required:NO into:&introducedVersion error:error]) {
 		return nil;
@@ -1276,9 +1670,10 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 	return [[self alloc] initWithIdentifier:identifier displayName:displayName family:family summary:summary
 									 engine:engine registryName:registryName providerClassName:providerClassName
 									  tasks:tasks inputModalities:inputModalities outputModalities:outputModalities
-									 inputs:inputs outputs:outputs parameters:parameters variants:variants
+									 inputs:inputs outputs:outputs options:options ?: legacyOptions variants:variants
 									license:license requirements:requirements residencies:residencies
-									standIn:standIn introducedVersion:introducedVersion
+								memoryModel:memoryModel presets:presets standIn:standIn
+						  introducedVersion:introducedVersion
 								 extensions:[reader extensionsWithoutFields:NFKModelDescriptorFields()]];
 }
 
@@ -1322,11 +1717,15 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 	dictionary[@"outputModalities"] = self.outputModalities;
 	dictionary[@"inputs"] = NFKModelDictionariesOf(self.inputs);
 	dictionary[@"outputs"] = NFKModelDictionariesOf(self.outputs);
-	dictionary[@"parameters"] = NFKModelDictionariesOf(self.parameters);
+	dictionary[@"options"] = NFKModelDictionariesOf(self.options);
 	dictionary[@"variants"] = NFKModelDictionariesOf(self.variants);
 	dictionary[@"license"] = self.license.dictionaryRepresentation;
 	dictionary[@"requirements"] = self.requirements.dictionaryRepresentation;
 	dictionary[@"residencies"] = self.residencies;
+	dictionary[@"memoryModel"] = self.memoryModel.dictionaryRepresentation;
+	if (self.presets.count > 0) {
+		dictionary[@"presets"] = NFKModelDictionariesOf(self.presets);
+	}
 	dictionary[@"standIn"] = @(self.isStandIn);
 	dictionary[@"introducedVersion"] = self.introducedVersion;
 	return [dictionary copy];

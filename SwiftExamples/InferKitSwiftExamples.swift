@@ -233,7 +233,7 @@ final class InferKitSwiftExamples: XCTestCase {
                                           tasks: [NFKModelTaskUpscaling], inputModalities: nil, outputModalities: nil,
                                           inputs: [NFKModelPort(key: NFKInputImage, required: true)],
                                           outputs: [NFKModelPort.outputPort(withKey: NFKOutputImage, required: true)],
-                                          parameters: [NFKModelOption(key: NFKParameterSeed)],
+                                          options: [NFKModelOption(key: NFKParameterSeed)],
                                           variants: [NFKModelVariant(identifier: "x4", displayName: "×4")],
                                           license: nil, requirements: nil, residencies: [NFKModelResidencyResident],
                                           standIn: false, introducedVersion: nil, extensions: nil)
@@ -246,7 +246,7 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(reread.descriptor(withIdentifier: "example.upscaler"), upscaler)
         XCTAssertEqual(reread.descriptors(forTask: NFKModelTaskUpscaling).map(\.identifier), ["example.upscaler"])
         XCTAssertEqual(upscaler.defaultVariant?.identifier, "x4")
-        XCTAssertEqual(upscaler.parameters.first?.kind, NFKModelOptionKindInteger)
+        XCTAssertEqual(upscaler.options.first?.kind, NFKModelOptionKindInteger)
         XCTAssertEqual(NFKModelValueTypeForKey(NFKInputPrompt), NFKModelValueTypeText)
 
         // A variant's own license overrides its model's; a file can come from another repository.
@@ -267,6 +267,45 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(NFKModelCatalog.schemaVersion, 1)
         XCTAssertTrue(NFKModelCatalog.providerClassNames.contains("NFKMLXModelDescriptors"))
         _ = NFKModelCatalog.shared
+    }
+
+    // Memory estimates, constraints, and model names from Swift.
+    func testExampleModelMemoryFromSwift() throws {
+        let decoder = NFKModelStageFacts(identifier: "decoder",
+                                         byteCountByPrecision: [NFKModelPrecisionCheckpoint: 2_000_000_000])
+        let facts = NFKModelMemoryFacts(stages: [decoder], keyValueByteCountPerToken: 114_688,
+                                        boundedKeyValueByteCount: nil, maximumContextLength: 32_768,
+                                        vocabularySize: nil, loadOverheadByteCount: 0, basis: nil, extensions: nil)
+        let variant = NFKModelVariant(identifier: "1b", displayName: nil, isDefault: true, registryName: nil,
+                                      source: nil, downloadByteCount: nil, residentByteCount: nil, peakByteCount: nil,
+                                      parameterCount: 1_000_000_000, precision: NFKModelPrecisionBFloat16,
+                                      minimumMemoryByteCount: nil, license: nil, memoryFacts: facts, extensions: nil)
+        let context = NFKModelOption(key: NFKModelLoadOptionContextLength, kind: NFKModelOptionKindInteger,
+                                     title: "Context length", help: nil, defaultValue: 8192, minimum: 512,
+                                     maximum: 32_768, step: 512, choices: nil, stage: NFKModelOptionStageLoad,
+                                     group: nil, extensions: nil)
+        let memoryModel = NFKModelMemoryModel(precisionOptionKey: nil, quantizationBitsOptionKey: nil,
+                                              quantizationGroupSizeOptionKey: nil,
+                                              contextLengthOptionKey: NFKModelLoadOptionContextLength,
+                                              cacheBitsOptionKey: nil, cacheGroupSizeOptionKey: nil, draftOptionKey: nil,
+                                              draftBitsOptionKey: nil, residencyOptionKey: nil, cacheStage: nil,
+                                              draftStage: nil, stagePrecisions: nil, extensions: nil)
+        let chat = NFKModelDescriptor(identifier: "example.chat", displayName: nil, family: "example", summary: nil,
+                                      engine: NFKModelEnginePlugin, registryName: nil, providerClassName: nil,
+                                      tasks: nil, inputModalities: nil, outputModalities: nil, inputs: nil,
+                                      outputs: nil, options: [context], variants: [variant], license: nil,
+                                      requirements: nil, residencies: nil, memoryModel: memoryModel, presets: nil,
+                                      standIn: false, introducedVersion: nil, extensions: nil)
+
+        // The `NSError **` estimate imports as `throws`; an option value may be a string.
+        let budget = NFKModelMemoryBudget(workingSetByteCount: 32 << 30)
+        let estimate = try chat.estimatedMemory(forOptions: [NFKModelLoadOptionContextLength: "4096"],
+                                                memoryBudget: budget)
+        XCTAssertEqual(estimate.peakByteCount, 2_000_000_000 + 114_688 * 4096)
+        XCTAssertTrue(estimate.fits)
+        let constraints = chat.constraints(for: budget)
+        XCTAssertTrue(constraints.anyCombinationFits)
+        XCTAssertEqual(NFKModelToolName(NFKModelPresetModelName("example.chat", "fast")), "example_chat__fast")
     }
 
     // Remote providers from Swift: the same presets, with the importer's own naming.

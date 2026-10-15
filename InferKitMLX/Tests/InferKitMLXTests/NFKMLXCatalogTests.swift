@@ -84,7 +84,7 @@ final class NFKMLXCatalogTests: XCTestCase {
             let name = try XCTUnwrap(descriptor.registryName, descriptor.identifier)
             let backend = try NFKMLXModelRegistry.backend(named: name, weightsURL: nil)
             XCTAssertEqual(backend.supportedInputKeys ?? [], Set(descriptor.inputs.map(\.key)), name)
-            XCTAssertEqual(backend.supportedParameterKeys ?? [], Set(descriptor.parameters.map(\.key)), name)
+            XCTAssertEqual(backend.supportedParameterKeys ?? [], Set(descriptor.options.map(\.key)), name)
             XCTAssertEqual(backend.supportedOutputKeys ?? [], Set(descriptor.outputs.map(\.key)), name)
         }
     }

@@ -20,6 +20,10 @@ The full repository tree with per-directory notes.
 │   │   ├── NFKModelCatalog.h        # The model catalog, its descriptor providers, and the JSON manifest
 │   │   ├── NFKModelDescriptor.h     # Model descriptor value types (ports, options, variants, sources, license)
 │   │   ├── NFKModelVocabulary.h     # Descriptor vocabularies + the key → value-type table
+│   │   ├── NFKModelMemory.h         # Memory facts, budget, residency planner, estimate, constraints
+│   │   ├── NFKModelOptions.h        # Option validation and resolution
+│   │   ├── NFKModelBuilding.h       # The build entry: builders, build request, locator, NFKDefaultedBackend
+│   │   ├── NFKModelPreset.h         # Presets and model@preset / tool-name mapping
 │   │   ├── NFKPassthroughBackend.h  # The mock; keeps builds/tests green with no weights
 │   │   ├── NFKCoreMLBackend.h       # In-process Core ML (image + tensor I/O)
 │   │   ├── NFKCoreMLLanguageBackend.h  # On-device causal language model through Core ML (macOS 15 / iOS 18)

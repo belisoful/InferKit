@@ -10,7 +10,7 @@ import InferKit
 ///
 /// The shared catalog looks this class up by name, so linking the package is what lists the model.
 /// The descriptor's engine is `NFKModelEngineFoundationModels`, its provider class is
-/// `NFKFoundationModelsProvider`, and its inputs, parameters, and outputs are the key sets of
+/// `NFKFoundationModelsProvider`, and its inputs, options, and outputs are the key sets of
 /// `NFKFoundationModelsBackend` on the running OS: the image inputs, the reasoning level, and the
 /// reasoning and usage outputs appear on macOS 27 / iOS 27, where the framework takes and reports
 /// them. Its one variant's source is `NFKModelSourceKindSystem`, because the model is part of the
@@ -30,7 +30,7 @@ public final class NFKFoundationModelsDescriptors: NSObject, NFKModelDescriptorP
         let backend = NFKFoundationModelsBackend()
         let inputs = backend.supportedInputKeys.sorted().map { NFKModelPort(key: $0, required: false) }
         let outputs = backend.supportedOutputKeys.sorted().map { NFKModelPort.outputPort(withKey: $0, required: false) }
-        let parameters = backend.supportedParameterKeys.sorted().map { NFKModelOption(key: $0) }
+        let options = backend.supportedParameterKeys.sorted().map { NFKModelOption(key: $0) }
         var tasks = [NFKModelTaskTextGeneration]
         if backend.supportedInputKeys.contains(NFKInputImage) {
             tasks.append(NFKModelTaskVisionQuestionAnswering)
@@ -62,7 +62,7 @@ public final class NFKFoundationModelsDescriptors: NSObject, NFKModelDescriptorP
                                   outputModalities: nil,
                                   inputs: inputs,
                                   outputs: outputs,
-                                  parameters: parameters,
+                                  options: options,
                                   variants: [variant],
                                   license: license,
                                   requirements: requirements,

@@ -82,6 +82,28 @@ NSString * const NFKModelResidencyResident			= @"resident";
 NSString * const NFKModelResidencyStaged			= @"staged";
 NSString * const NFKModelResidencyPaged				= @"paged";
 NSString * const NFKModelResidencyStreamed			= @"streamed";
+NSString * const NFKModelResidencyAutomatic			= @"automatic";
+
+NSString * const NFKModelFeatureAppleSilicon		= @"apple-silicon";
+NSString * const NFKModelFeatureNeuralAccelerators	= @"neural-accelerators";
+
+NSString * const NFKModelPrecisionCheckpoint		= @"checkpoint";
+NSString * const NFKModelPrecisionFloat32			= @"float32";
+NSString * const NFKModelPrecisionFloat16			= @"float16";
+NSString * const NFKModelPrecisionBFloat16			= @"bfloat16";
+
+NSString * const NFKModelLoadOptionVariant				= @"variant";
+NSString * const NFKModelLoadOptionResidency			= @"residency";
+NSString * const NFKModelLoadOptionPrecision			= @"precision";
+NSString * const NFKModelLoadOptionQuantizationBits		= @"quantizationBits";
+NSString * const NFKModelLoadOptionQuantizationGroupSize	= @"quantizationGroupSize";
+NSString * const NFKModelLoadOptionContextLength		= @"contextLength";
+NSString * const NFKModelLoadOptionCacheBits			= @"cacheBits";
+NSString * const NFKModelLoadOptionCacheGroupSize		= @"cacheGroupSize";
+NSString * const NFKModelLoadOptionDraftModel			= @"draftModel";
+NSString * const NFKModelLoadOptionDraftBits			= @"draftBits";
+NSString * const NFKModelLoadOptionComputeUnits			= @"computeUnits";
+NSString * const NFKModelLoadOptionIgnoreMemoryBudget	= @"ignoreMemoryBudget";
 
 NSString * const NFKModelOptionKindBoolean			= @"boolean";
 NSString * const NFKModelOptionKindInteger			= @"integer";

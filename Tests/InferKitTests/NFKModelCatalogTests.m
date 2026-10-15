@@ -21,7 +21,7 @@ static NSString * const NFKCatalogTestProviderIdentifier = @"test.catalog-provid
 													 family:@"test" summary:nil engine:NFKModelEnginePlugin
 											   registryName:nil providerClassName:nil
 													  tasks:@[ NFKModelTaskClassification ] inputModalities:nil
-										   outputModalities:nil inputs:nil outputs:nil parameters:nil variants:nil
+										   outputModalities:nil inputs:nil outputs:nil options:nil variants:nil
 													license:nil requirements:nil residencies:nil standIn:YES
 										  introducedVersion:nil extensions:nil] ];
 }
@@ -87,7 +87,7 @@ static NSString * const NFKCatalogTestProviderIdentifier = @"test.catalog-provid
 													tasks:tasks inputModalities:nil outputModalities:nil
 												   inputs:@[ [NFKModelPort portWithKey:NFKInputImage required:YES] ]
 												  outputs:@[ [NFKModelPort outputPortWithKey:NFKOutputImage required:YES] ]
-											   parameters:@[ [NFKModelOption optionWithKey:NFKParameterSeed] ]
+											      options:@[ [NFKModelOption optionWithKey:NFKParameterSeed] ]
 												 variants:@[ [NFKModelVariant variantWithIdentifier:@"base" displayName:@"Base"] ]
 												  license:[NFKModelLicense licenseWithIdentifier:@"MIT" name:@"MIT" URL:nil]
 											 requirements:nil residencies:@[ NFKModelResidencyResident ]
@@ -256,7 +256,7 @@ static NSString * const NFKCatalogTestProviderIdentifier = @"test.catalog-provid
 	[catalog addDescriptor:[[NFKModelDescriptor alloc] initWithIdentifier:@"m" displayName:nil family:@"f" summary:nil
 																   engine:NFKModelEngineMLX registryName:nil
 														providerClassName:nil tasks:nil inputModalities:nil
-														 outputModalities:nil inputs:nil outputs:nil parameters:nil
+														 outputModalities:nil inputs:nil outputs:nil options:nil
 																 variants:nil license:nil requirements:nil
 															  residencies:nil standIn:NO introducedVersion:nil
 															   extensions:@{ @"x-date": [NSDate date] }]];
@@ -316,9 +316,9 @@ static NSString * const NFKCatalogTestProviderIdentifier = @"test.catalog-provid
 	XCTAssertEqualObjects([descriptor.outputs valueForKey:@"key"], (@[ NFKOutputCitations, NFKOutputText ]));
 	XCTAssertEqualObjects([descriptor.outputs valueForKey:@"valueType"], (@[ NFKModelValueTypeJSON, NFKModelValueTypeText ]));
 
-	XCTAssertEqualObjects([descriptor.parameters valueForKey:@"key"],
+	XCTAssertEqualObjects([descriptor.options valueForKey:@"key"],
 						  (@[ NFKParameterMaxTokens, NFKParameterTemperature, @"test.mode" ]));
-	XCTAssertEqualObjects([descriptor.parameters valueForKey:@"kind"],
+	XCTAssertEqualObjects([descriptor.options valueForKey:@"kind"],
 						  (@[ NFKModelOptionKindInteger, NFKModelOptionKindNumber, NFKModelOptionKindJSON ]));
 }
 

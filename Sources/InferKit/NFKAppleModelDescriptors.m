@@ -4,6 +4,7 @@
 //
 
 #import "NFKAppleModelDescriptors.h"
+#import "NFKModelBuilding.h"
 #import "NFKModelDescriptor.h"
 #import "NFKModelVocabulary.h"
 #import "NFKVisionTextBackend.h"
@@ -253,6 +254,24 @@
 	return engine != nil ? engine.builder() : nil;
 }
 
++ (nullable id<NFKInferenceBackend>)backendForBuildRequest:(NFKModelBuildRequest *)request error:(NSError **)error
+{
+	NSString *name = request.variant.registryName ?: request.descriptor.registryName ?: request.descriptor.identifier;
+	id<NFKInferenceBackend> backend = [self backendNamed:name];
+	if (backend == nil) {
+		if (error != NULL) {
+			NSString *reason = [NSString stringWithFormat:@"The Apple engines have no backend named \"%@\".", name];
+			*error = [NSError errorWithDomain:NFKModelCatalogErrorDomain code:NFKModelCatalogErrorUnknownModel
+									 userInfo:@{ NSLocalizedDescriptionKey: reason }];
+		}
+		return nil;
+	}
+	if (![request applyPropertyOptionsToBackend:backend error:error]) {
+		return nil;
+	}
+	return backend;
+}
+
 #pragma mark Descriptors
 
 + (NSArray<NFKModelDescriptor *> *)modelDescriptors
@@ -283,9 +302,9 @@
 	for (NSString *key in [outputKeys.allObjects sortedArrayUsingSelector:@selector(compare:)]) {
 		[outputs addObject:[NFKModelPort outputPortWithKey:key required:YES]];
 	}
-	NSMutableArray<NFKModelOption *> *parameters = [NSMutableArray array];
+	NSMutableArray<NFKModelOption *> *options = [NSMutableArray array];
 	for (NSString *key in [parameterKeys.allObjects sortedArrayUsingSelector:@selector(compare:)]) {
-		[parameters addObject:[NFKModelOption optionWithKey:key]];
+		[options addObject:[NFKModelOption optionWithKey:key]];
 	}
 
 	NFKModelSource *source = [[NFKModelSource alloc] initWithKind:NFKModelSourceKindSystem repository:nil revision:nil
@@ -309,7 +328,7 @@
 												   family:engine.family summary:engine.summary engine:NFKModelEngineApple
 											 registryName:engine.identifier providerClassName:engine.providerClassName
 													tasks:engine.tasks inputModalities:nil outputModalities:nil
-												   inputs:inputs outputs:outputs parameters:parameters variants:@[ variant ]
+												   inputs:inputs outputs:outputs options:options variants:@[ variant ]
 												  license:license requirements:requirements residencies:nil standIn:NO
 										introducedVersion:@"0.4.0" extensions:nil];
 }

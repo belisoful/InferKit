@@ -73,6 +73,44 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKModelTaskDecision` (`"decision"`) names the task of a model that answers typed questions about a
   state.
 
+#### Load options, memory estimates, and building from the catalog
+
+- A descriptor's settings are its `options` (JSON `"options"`). A manifest that names the field
+  `"parameters"` still reads, and the writer writes `"options"`. `loadOptions` and `requestOptions` split
+  them by stage, and a descriptor with several variants derives an `NFKModelLoadOptionVariant` choice.
+- An option gains `requirements` (JSON `"requires"`), `propertyKeyPath` (`"property"`, a backend
+  property the build sets by key-value coding), and `memoryBytesPerUnit`. A choice gains `requirements`,
+  a `memory` figure, and `memoryByVariant`. `NFKModelRequirements` gains `requiredFeatures`
+  (`NFKModelFeatureAppleSilicon`, `NFKModelFeatureNeuralAccelerators`), `unmetReason`, and
+  `problemForHardwareProfile:`.
+- `NFKModelMemory.h`: a variant's `memoryFacts` record its stages' bytes per precision, quantizable
+  elements, routed experts, repeated layers, and key-value cache per position, and a descriptor's
+  `memoryModel` names the options that change them. `estimatedMemoryForOptions:memoryBudget:error:`
+  computes what a combination holds resident and at its peak, and `constraintsForHardwareProfile:` and
+  `constraintsForOptions:memoryBudget:` say which choices fit a machine, which one is required, and the
+  largest context length that fits, each with a sentence and its numbers. Up to 4096 combinations are
+  enumerated in full; past that, each choice is judged alone and `exhaustive` is NO. A draft model
+  counts its weights and its own key-value cache. `descriptorByDerivingMemoryFigures` fills each
+  choice's figure.
+- `NFKModelMemoryBudget` (0.85 of the recommended working set, a 4 GiB reserve) and the residency planner
+  (`NFKModelStageFootprint`, `NFKModelResidencyPlan`, with `NFKModelResidencyAutomatic`) move to the core,
+  with the MLX planner's arithmetic and refusal sentences.
+- `NFKModelOptions.h`: `problemsWithOptions:stage:` and `resolvedOptions:stage:error:` check option values,
+  convert strings such as `"8192"` and `"true"`, and fill defaults. `NFKModelCatalogError` gains
+  `InvalidOptions`, `UnknownModel`, `NoBuilder`, `Unavailable`, and `DoesNotFit`.
+- `NFKModelBuilding.h`: `-[NFKModelCatalog backendForModelIdentifier:options:error:]` builds a backend from
+  a model's identifier and options. It refuses options that do not resolve, a model this machine cannot
+  run, and a combination that does not fit the memory budget unless `NFKModelLoadOptionIgnoreMemoryBudget`
+  is YES. The refusal names the nearest combination that fits (`NFKModelMemoryFittingOptionsKey`,
+  `NFKModelMemoryFittingEstimateKey`), or the smallest need when nothing fits. A provider class, an engine's `NFKModelBackendBuilding` builder, or the descriptor's provider
+  class builds it, and `NFKDefaultedBackend` fills the request defaults. `NFKAppleModelDescriptors`
+  builds its engines through it.
+- `NFKModelPreset.h`: a descriptor's `presets` are named load options and request defaults, reached as
+  `model@preset`; `NFKModelNameSplitAtPreset` and `NFKModelToolName` map the names.
+- `NFKInferenceBackend` gains the optional `loadOptionValues`, read by `NFKInferenceLoadOptionValues`.
+  `NFKHardwareProfile` gains `isAppleSilicon`, `operatingSystemName`, `operatingSystemVersion`, and a
+  snapshot (`dictionaryRepresentation`, `+profileWithDictionary:`).
+
 #### MCP servers launched as programs
 
 - `NFKMCPClient` speaks MCP's stdio transport on macOS.
@@ -777,6 +815,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   linked, the six reference stand-ins marked as such.
 - Every released size of a family registers under its own name, and every registry name has a
   descriptor.
+- The catalog writes each model's settings as `"options"`, the core's renamed field, and the snapshot
+  `Docs/model-catalog.json` follows.
 - Each variant carries measured figures: its files' sizes and Git LFS digests, its download bytes, its
   parameter count, its resident bytes at the precision its loader holds the weights in, and the least
   working set the residency planner runs it in. `Tools/catalog/measure.py` measures the sources without

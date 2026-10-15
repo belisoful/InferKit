@@ -144,6 +144,16 @@ NS_ASSUME_NONNULL_BEGIN
 */
 - (nullable NSNumber *)tokenCountForRequest:(NFKInferenceRequest *)request error:(NSError **)error;
 
+/*!
+	@property   loadOptionValues
+	@abstract   The load options the backend was built with, keyed by the descriptor's option keys.
+	@discussion The values are JSON values: the variant under NFKModelLoadOptionVariant, the precision,
+				the residency, and the rest the build resolved, defaults filled. An app compares them
+				with the options it would build with to decide whether a backend it holds can serve a
+				request. NFKInferenceLoadOptionValues reads it uniformly. Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *loadOptionValues;
+
 @end
 
 /*!
@@ -167,6 +177,13 @@ BOOL NFKInferencePrepare(id<NFKInferenceBackend> backend, NSError * _Nullable * 
 NFKInferenceJob *NFKInferenceSubmit(id<NFKInferenceBackend> backend,
 									NFKInferenceRequest *request,
 									dispatch_queue_t _Nullable queue);
+
+/*!
+	@function   NFKInferenceLoadOptionValues
+	@abstract   A backend's loadOptionValues, or an empty dictionary when it does not implement them.
+	@discussion Introduced in InferKit 0.4.0.
+*/
+NSDictionary<NSString *, id> *NFKInferenceLoadOptionValues(id<NFKInferenceBackend> backend);
 
 NS_ASSUME_NONNULL_END
 

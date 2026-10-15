@@ -13,7 +13,8 @@ NS_ASSUME_NONNULL_BEGIN
 /*!
 	@header     NFKModelVocabulary
 	@abstract   The strings a model descriptor uses for value types, tasks, engines, residencies, option
-				kinds and stages, file roles, and source kinds and layouts.
+				kinds and stages, file roles, source kinds and layouts, hardware features, precisions,
+				and the shared load-option keys.
 	@discussion Each vocabulary is a set of plain string constants. A descriptor field holds any string,
 				so a plugin names a task, a value type, or an engine the core does not list, and a reader
 				passes an unknown string through unchanged. The constants are the values the core's own
@@ -185,6 +186,10 @@ extern NSString * const NFKModelResidencyPaged;
 /*! Stages take turns, and a stage's repeated layers that do not fit load in their turn on each pass.
 	Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelResidencyStreamed;
+/*! The residency planner picks one of the others for the machine: every stage resident where the
+	stages fit together, else paged, streamed, or staged. It is the default, and its memory depends on
+	the machine. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelResidencyAutomatic;
 
 #pragma mark Option kinds
 
@@ -245,6 +250,61 @@ extern NSString * const NFKModelSourceLayoutFile;
 extern NSString * const NFKModelSourceLayoutDirectory;
 /*! The model loads from no files of its own. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelSourceLayoutNone;
+
+#pragma mark Hardware features
+
+/*! A Mac with Apple silicon, or any iPhone, iPad, or Apple TV. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelFeatureAppleSilicon;
+/*! A GPU with the neural accelerators Apple silicon carries from the M5 on
+	(NFKHardwareProfile.hasNeuralAccelerators). Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelFeatureNeuralAccelerators;
+
+#pragma mark Precisions
+
+/*! The type each tensor of the checkpoint is stored in. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelPrecisionCheckpoint;
+/*! 32-bit floating point. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelPrecisionFloat32;
+/*! 16-bit IEEE floating point. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelPrecisionFloat16;
+/*! 16-bit brain floating point. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelPrecisionBFloat16;
+
+#pragma mark Load options
+
+/*! The variant to load, by its identifier. A descriptor with more than one variant derives this option.
+	Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelLoadOptionVariant;
+/*! How the weights are held, an NFKModelResidency* string. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelLoadOptionResidency;
+/*! The precision the weights load at, an NFKModelPrecision* string. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelLoadOptionPrecision;
+/*! The bits a runtime weight quantization packs each weight into: 0 for none, 8, or 4. Introduced in
+	InferKit 0.4.0. */
+extern NSString * const NFKModelLoadOptionQuantizationBits;
+/*! The weights that share one scale and bias in a runtime weight quantization. Introduced in
+	InferKit 0.4.0. */
+extern NSString * const NFKModelLoadOptionQuantizationGroupSize;
+/*! The positions the key-value cache holds by default. A request may set a shorter or longer window up
+	to the option's maximum. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelLoadOptionContextLength;
+/*! The bits a quantized key-value cache packs each element into: 0 for none, 8, or 4. A request may
+	override it. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelLoadOptionCacheBits;
+/*! The elements that share one scale and bias in a quantized key-value cache. A request may override it.
+	Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelLoadOptionCacheGroupSize;
+/*! The identifier of the descriptor that drafts tokens for speculative decoding. Introduced in
+	InferKit 0.4.0. */
+extern NSString * const NFKModelLoadOptionDraftModel;
+/*! The bits the draft model's weights are quantized to: 0 for none, 8, or 4. Introduced in
+	InferKit 0.4.0. */
+extern NSString * const NFKModelLoadOptionDraftBits;
+/*! The Core ML compute units, an MLComputeUnits value. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelLoadOptionComputeUnits;
+/*! YES builds the backend even where the memory estimate does not fit the machine's budget. An app sets
+	it only when its user asks. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelLoadOptionIgnoreMemoryBudget;
 
 #pragma mark Key types
 

@@ -19,7 +19,7 @@ NS_ASSUME_NONNULL_BEGIN
 	@discussion One descriptor per engine: the Vision backends, VideoToolbox's three frame
 				processors, Apple's speech recognizer, AVFoundation's voices, SoundAnalysis, and
 				NaturalLanguage's sentence embedding. Each descriptor's engine is
-				NFKModelEngineApple, and its inputs, parameters, and outputs are the key sets of the
+				NFKModelEngineApple, and its inputs, options, and outputs are the key sets of the
 				backend backendNamed: builds for its registry name. The registry name is the
 				descriptor's identifier.
 
@@ -52,6 +52,12 @@ NS_ASSUME_NONNULL_BEGIN
 	registry does not know. The backend is built whether or not this machine runs it, so isReady
 	answers that. */
 + (nullable id<NFKInferenceBackend>)backendNamed:(NSString *)registryName;
+
+/*! The backend the catalog's build entry asks for: backendNamed: of the variant's registry name, else
+	the descriptor's, with the request's property options set on it. Returns nil with
+	NFKModelCatalogErrorUnknownModel for a name this registry does not know. Introduced in
+	InferKit 0.4.0. */
++ (nullable id<NFKInferenceBackend>)backendForBuildRequest:(NFKModelBuildRequest *)request error:(NSError **)error;
 
 - (instancetype)init NS_UNAVAILABLE;
 + (instancetype)new NS_UNAVAILABLE;

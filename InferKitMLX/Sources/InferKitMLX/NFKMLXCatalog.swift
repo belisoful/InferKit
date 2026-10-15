@@ -86,7 +86,7 @@ struct NFKMLXCatalogEntry {
             "tasks": tasks,
             "inputs": inputs.map { $0.dictionaryRepresentation() },
             "outputs": outputs.map { $0.dictionaryRepresentation() },
-            "parameters": parameters.map { $0.dictionaryRepresentation() },
+            "options": parameters.map { $0.dictionaryRepresentation() },
             "variants": variants.map { $0.dictionaryRepresentation() },
             "requirements": requirements.dictionaryRepresentation(),
             "residencies": residencies,

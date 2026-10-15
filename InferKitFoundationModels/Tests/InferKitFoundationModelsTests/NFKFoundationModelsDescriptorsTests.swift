@@ -21,7 +21,7 @@ final class NFKFoundationModelsDescriptorsTests: XCTestCase {
         XCTAssertEqual(NFKFoundationModelsDescriptors.modelDescriptors().count, 1)
         XCTAssertEqual(Set(descriptor.inputs.map(\.key)), backend.supportedInputKeys)
         XCTAssertEqual(Set(descriptor.outputs.map(\.key)), backend.supportedOutputKeys)
-        XCTAssertEqual(Set(descriptor.parameters.map(\.key)), backend.supportedParameterKeys)
+        XCTAssertEqual(Set(descriptor.options.map(\.key)), backend.supportedParameterKeys)
         for port in descriptor.outputs {
             XCTAssertEqual(port.valueType, NFKModelValueTypeForOutputKey(port.key), port.key)
         }

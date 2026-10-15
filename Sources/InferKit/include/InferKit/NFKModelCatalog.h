@@ -11,6 +11,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+@class NFKModelBuildRequest;
+
 /*! The error domain for reading model descriptors and catalog manifests. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelCatalogErrorDomain;
 
@@ -25,12 +27,28 @@ extern NSString * const NFKModelCatalogErrorDomain;
 	@constant   NFKModelCatalogErrorMalformedDescriptor A descriptor or a value inside one is missing a
 				field it needs, has a field of the wrong type, or holds a value JSON cannot carry. The
 				error's description names the field.
+	@constant   NFKModelCatalogErrorInvalidOptions An option value does not resolve against the
+				descriptor. NFKModelOptionProblemsKey holds the problems, and the description is the
+				first problem's message.
+	@constant   NFKModelCatalogErrorUnknownModel The catalog has no descriptor with the identifier.
+	@constant   NFKModelCatalogErrorNoBuilder No builder builds the descriptor's engine, and the
+				descriptor names no provider class.
+	@constant   NFKModelCatalogErrorUnavailable This machine does not meet the requirements of the model
+				or of a chosen choice.
+	@constant   NFKModelCatalogErrorDoesNotFit The memory estimate does not fit the budget, or the
+				residency planner refuses the residency. NFKModelMemoryEstimateKey holds the estimate
+				where there is one.
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ERROR_ENUM(NFKModelCatalogErrorDomain, NFKModelCatalogError) {
 	NFKModelCatalogErrorUnsupportedSchemaVersion = 1,
 	NFKModelCatalogErrorMalformedManifest = 2,
 	NFKModelCatalogErrorMalformedDescriptor = 3,
+	NFKModelCatalogErrorInvalidOptions = 4,
+	NFKModelCatalogErrorUnknownModel = 5,
+	NFKModelCatalogErrorNoBuilder = 6,
+	NFKModelCatalogErrorUnavailable = 7,
+	NFKModelCatalogErrorDoesNotFit = 8,
 };
 
 /*! The kind a catalog manifest names: "inferkit.model-catalog". Introduced in InferKit 0.4.0. */
@@ -48,6 +66,13 @@ extern NSString * const NFKModelCatalogManifestKind;
 
 /*! The descriptors of the models the package ships. The catalog calls this on the class. */
 + (NSArray<NFKModelDescriptor *> *)modelDescriptors;
+
+@optional
+
+/*! A backend for one of the class's descriptors, or nil with an error. The catalog's build entry
+	(NFKModelBuilding.h) asks the class that supplied a descriptor before an engine's builder. Introduced
+	in InferKit 0.4.0. */
++ (nullable id<NFKInferenceBackend>)backendForBuildRequest:(NFKModelBuildRequest *)request error:(NSError **)error;
 
 @end
 

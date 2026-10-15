@@ -27,6 +27,11 @@
 	NSInteger _maximumBufferLength;
 	BOOL _hasUnifiedMemory;
 	BOOL _isVirtualMachine;
+	BOOL _isAppleSilicon;
+	NSString *_operatingSystemName;
+	NSString *_operatingSystemVersion;
+	// Set for a snapshot of another machine, whose accelerators this machine's OS cannot answer for.
+	NSNumber *_snapshotHasNeuralAccelerators;
 }
 
 #pragma mark Reading the machine
@@ -66,6 +71,94 @@ static NSInteger NFKSysctlInteger(const char *name)
 	return 0;
 }
 
+static NSString *NFKOperatingSystemName(void)
+{
+#if TARGET_OS_VISION
+	return @"visionOS";
+#elif TARGET_OS_TV
+	return @"tvOS";
+#elif TARGET_OS_MACCATALYST || TARGET_OS_OSX
+	return @"macOS";
+#else
+	return @"iOS";
+#endif
+}
+
+static NSString *NFKOperatingSystemVersion(void)
+{
+	NSOperatingSystemVersion version = NSProcessInfo.processInfo.operatingSystemVersion;
+	if (version.patchVersion > 0) {
+		return [NSString stringWithFormat:@"%ld.%ld.%ld", (long)version.majorVersion, (long)version.minorVersion,
+				(long)version.patchVersion];
+	}
+	return [NSString stringWithFormat:@"%ld.%ld", (long)version.majorVersion, (long)version.minorVersion];
+}
+
+static NSString *NFKSnapshotString(NSDictionary<NSString *, id> *dictionary, NSString *key)
+{
+	id value = dictionary[key];
+	return [value isKindOfClass:NSString.class] ? value : @"";
+}
+
+static NSInteger NFKSnapshotInteger(NSDictionary<NSString *, id> *dictionary, NSString *key)
+{
+	id value = dictionary[key];
+	return [value isKindOfClass:NSNumber.class] ? [value integerValue] : 0;
+}
+
+static BOOL NFKSnapshotBoolean(NSDictionary<NSString *, id> *dictionary, NSString *key)
+{
+	id value = dictionary[key];
+	return [value isKindOfClass:NSNumber.class] ? [value boolValue] : NO;
+}
+
++ (instancetype)profileWithDictionary:(NSDictionary<NSString *, id> *)dictionary
+{
+	return [[self alloc] initWithSnapshot:dictionary];
+}
+
+- (instancetype)initWithSnapshot:(NSDictionary<NSString *, id> *)dictionary
+{
+	self = [super init];
+	if (self != nil) {
+		_chipName = [NFKSnapshotString(dictionary, @"chipName") copy];
+		_modelIdentifier = [NFKSnapshotString(dictionary, @"modelIdentifier") copy];
+		_graphicsArchitecture = [NFKSnapshotString(dictionary, @"graphicsArchitecture") copy];
+		_operatingSystemName = [NFKSnapshotString(dictionary, @"operatingSystem") copy];
+		_operatingSystemVersion = [NFKSnapshotString(dictionary, @"operatingSystemVersion") copy];
+		_performanceCoreCount = NFKSnapshotInteger(dictionary, @"performanceCoreCount");
+		_efficiencyCoreCount = NFKSnapshotInteger(dictionary, @"efficiencyCoreCount");
+		_physicalMemory = NFKSnapshotInteger(dictionary, @"physicalMemory");
+		_recommendedWorkingSetSize = NFKSnapshotInteger(dictionary, @"recommendedWorkingSetSize");
+		_maximumBufferLength = NFKSnapshotInteger(dictionary, @"maximumBufferLength");
+		_hasUnifiedMemory = NFKSnapshotBoolean(dictionary, @"hasUnifiedMemory");
+		_isVirtualMachine = NFKSnapshotBoolean(dictionary, @"isVirtualMachine");
+		_isAppleSilicon = NFKSnapshotBoolean(dictionary, @"isAppleSilicon");
+		_snapshotHasNeuralAccelerators = @(NFKSnapshotBoolean(dictionary, @"hasNeuralAccelerators"));
+	}
+	return self;
+}
+
+- (NSDictionary<NSString *, id> *)dictionaryRepresentation
+{
+	return @{
+		@"chipName": self.chipName,
+		@"modelIdentifier": self.modelIdentifier,
+		@"graphicsArchitecture": self.graphicsArchitecture,
+		@"operatingSystem": self.operatingSystemName,
+		@"operatingSystemVersion": self.operatingSystemVersion,
+		@"performanceCoreCount": @(self.performanceCoreCount),
+		@"efficiencyCoreCount": @(self.efficiencyCoreCount),
+		@"physicalMemory": @(self.physicalMemory),
+		@"recommendedWorkingSetSize": @(self.recommendedWorkingSetSize),
+		@"maximumBufferLength": @(self.maximumBufferLength),
+		@"hasUnifiedMemory": @(self.hasUnifiedMemory),
+		@"isVirtualMachine": @(self.isVirtualMachine),
+		@"isAppleSilicon": @(self.isAppleSilicon),
+		@"hasNeuralAccelerators": @(self.hasNeuralAccelerators),
+	};
+}
+
 + (NFKHardwareProfile *)currentProfile
 {
 	static NFKHardwareProfile *shared = nil;
@@ -84,6 +177,14 @@ static NSInteger NFKSysctlInteger(const char *name)
 		_modelIdentifier = [NFKSysctlString("hw.model") copy];
 		_physicalMemory = NFKSysctlInteger("hw.memsize");
 		_isVirtualMachine = NFKSysctlInteger("kern.hv_vmm_present") != 0;
+		_operatingSystemName = [NFKOperatingSystemName() copy];
+		_operatingSystemVersion = [NFKOperatingSystemVersion() copy];
+#if TARGET_OS_OSX
+		// hw.optional.arm64 is 1 on Apple silicon, and stays 1 for a process Rosetta translates.
+		_isAppleSilicon = NFKSysctlInteger("hw.optional.arm64") == 1;
+#else
+		_isAppleSilicon = YES;
+#endif
 
 		// Apple Silicon reports two performance levels, level 0 being the performance cores. An Intel
 		// Mac reports one, and both counts stay zero rather than guessing a split that is not there.
@@ -150,6 +251,9 @@ static NSInteger NFKSysctlInteger(const char *name)
 
 - (BOOL)hasNeuralAccelerators
 {
+	if (_snapshotHasNeuralAccelerators != nil) {
+		return _snapshotHasNeuralAccelerators.boolValue;
+	}
 	if (![self.class architectureHasNeuralAccelerators:self.graphicsArchitecture]) {
 		return NO;
 	}
@@ -176,6 +280,9 @@ static NSInteger NFKSysctlInteger(const char *name)
 - (NSInteger)efficiencyCoreCount { return _efficiencyCoreCount; }
 - (BOOL)hasUnifiedMemory { return _hasUnifiedMemory; }
 - (BOOL)isVirtualMachine { return _isVirtualMachine; }
+- (BOOL)isAppleSilicon { return _isAppleSilicon; }
+- (NSString *)operatingSystemName { return _operatingSystemName; }
+- (NSString *)operatingSystemVersion { return _operatingSystemVersion; }
 - (NSInteger)physicalMemory { return _physicalMemory; }
 - (NSInteger)recommendedWorkingSetSize { return _recommendedWorkingSetSize; }
 - (NSInteger)maximumBufferLength { return _maximumBufferLength; }

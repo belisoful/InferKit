@@ -88,7 +88,7 @@
 									   inputModalities:nil outputModalities:nil
 												inputs:@[ [NFKModelPort portWithKey:NFKInputImage required:YES] ]
 											   outputs:@[ [NFKModelPort outputPortWithKey:NFKOutputImage required:YES] ]
-											parameters:nil variants:nil license:nil requirements:nil
+											options:nil variants:nil license:nil requirements:nil
 										   residencies:@[ NFKModelResidencyResident ] standIn:NO
 									 introducedVersion:nil extensions:nil];
 	return @[ upscaler ];
@@ -109,6 +109,22 @@
 - (NSSet<NSString *> *)supportedInputKeys { return [NSSet setWithObjects:NFKInputImage, NFKInputPrompt, nil]; }
 - (NSSet<NSString *> *)supportedParameterKeys { return [NSSet setWithObject:NFKParameterMaxTokens]; }
 - (NSSet<NSString *> *)supportedOutputKeys { return [NSSet setWithObject:NFKOutputText]; }
+@end
+
+// Docs/examples.md: Model catalog, building. The builder an engine registers.
+@interface ExampleChatBuilder : NSObject <NFKModelBackendBuilding>
+@property (nonatomic, nullable) NFKModelBuildRequest *lastRequest;
+@end
+
+@implementation ExampleChatBuilder
+- (nullable id<NFKInferenceBackend>)backendForBuildRequest:(NFKModelBuildRequest *)request error:(NSError **)error
+{
+	self.lastRequest = request;
+	NSNumber *bits = request.argumentOptions[NFKModelLoadOptionQuantizationBits];
+	NSURL *files = request.location;
+	id<NFKInferenceBackend> backend = [NFKPassthroughBackend backend];
+	return [request applyPropertyOptionsToBackend:backend error:error] ? backend : nil;
+}
 @end
 
 @interface NFKExamples : XCTestCase
@@ -1415,7 +1431,7 @@
 		"\"id\": \"example.upscaler\", \"displayName\": \"Example Upscaler\", \"family\": \"example\","
 		"\"engine\": \"plugin\", \"providerClass\": \"ExampleUpscalerProvider\", \"tasks\": [\"upscaling\"],"
 		"\"inputs\": [{ \"key\": \"image\", \"required\": true }], \"outputs\": [{ \"key\": \"image\", \"required\": true }],"
-		"\"parameters\": [{ \"key\": \"strength\", \"kind\": \"number\", \"default\": 0.5, \"minimum\": 0, \"maximum\": 1 }],"
+		"\"options\": [{ \"key\": \"strength\", \"kind\": \"number\", \"default\": 0.5, \"minimum\": 0, \"maximum\": 1 }],"
 		"\"variants\": [{ \"id\": \"x4\", \"displayName\": \"×4\", \"isDefault\": true, \"downloadBytes\": 67040989 }] } ] }";
 	NSData *manifest = [json dataUsingEncoding:NSUTF8StringEncoding];
 	NSError *error = nil;
@@ -1432,7 +1448,7 @@
 		for (NFKModelFile *file in variant.source.files) {
 			NSString *repository = file.repository ?: variant.source.repository;  // a file can name another repository
 		}
-		for (NFKModelOption *option in model.parameters) {
+		for (NFKModelOption *option in model.options) {
 			// option.kind picks the control; option.minimum, maximum, and defaultValue configure it
 		}
 		[listed addObject:model.identifier];
@@ -1441,7 +1457,7 @@
 
 	NFKModelDescriptor *upscaler = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"example.upscaler"];
 	XCTAssertEqualObjects(upscaler.defaultVariant.downloadByteCount, @67040989);
-	XCTAssertEqualObjects(upscaler.parameters.firstObject.kind, NFKModelOptionKindNumber);
+	XCTAssertEqualObjects(upscaler.options.firstObject.kind, NFKModelOptionKindNumber);
 	XCTAssertEqualObjects(upscaler.inputModalities, (@[ NFKModelValueTypeImage ]));
 }
 
@@ -1461,8 +1477,72 @@
 	NSString *promptType = NFKModelValueTypeForKey(NFKInputPrompt);
 	XCTAssertEqualObjects(promptType, NFKModelValueTypeText);
 	XCTAssertEqualObjects(described.inputModalities, (@[ NFKModelValueTypeImage, NFKModelValueTypeText ]));
-	XCTAssertEqualObjects(described.parameters.firstObject.kind, NFKModelOptionKindInteger);
+	XCTAssertEqualObjects(described.options.firstObject.kind, NFKModelOptionKindInteger);
 	XCTAssertEqualObjects(described.outputs.firstObject.valueType, NFKModelValueTypeText);
+}
+
+// Docs/examples.md: Model catalog, the example.chat manifest.
+- (void)addExampleChatToTheSharedCatalog
+{
+	NSString *json = @"{ \"schemaVersion\": 1, \"kind\": \"inferkit.model-catalog\", \"models\": [ {"
+		"\"id\": \"example.chat\", \"family\": \"example\", \"engine\": \"example-engine\", \"tasks\": [\"text-generation\"],"
+		"\"options\": ["
+		"{ \"key\": \"quantizationBits\", \"kind\": \"choice\", \"stage\": \"load\", \"default\": 0,"
+		"  \"choices\": [{ \"value\": 0, \"title\": \"None\" }, { \"value\": 8, \"title\": \"8-bit\" }, { \"value\": 4, \"title\": \"4-bit\" }] },"
+		"{ \"key\": \"contextLength\", \"kind\": \"integer\", \"stage\": \"load\", \"default\": 8192,"
+		"  \"minimum\": 512, \"maximum\": 32768, \"step\": 512 },"
+		"{ \"key\": \"temperature\", \"kind\": \"number\", \"default\": 0.7, \"minimum\": 0, \"maximum\": 2 } ],"
+		"\"memoryModel\": { \"quantizationBits\": \"quantizationBits\", \"contextLength\": \"contextLength\" },"
+		"\"variants\": [{ \"id\": \"1b\", \"isDefault\": true, \"precision\": \"bfloat16\", \"parameterCount\": 1000000000,"
+		"  \"memoryFacts\": { \"stages\": [{ \"id\": \"decoder\", \"bytesByPrecision\": { \"checkpoint\": 2000000000 },"
+		"    \"quantizableElements\": 900000000 }], \"keyValueBytesPerToken\": 114688, \"maximumContextLength\": 32768,"
+		"    \"basis\": \"measured\" } }] } ] }";
+	NSError *error = nil;
+	XCTAssertTrue([NFKModelCatalog.sharedCatalog addDescriptorsFromManifestData:[json dataUsingEncoding:NSUTF8StringEncoding]
+																		  error:&error], @"%@", error);
+}
+
+- (void)testExampleEstimatingMemoryAndReadingConstraints
+{
+	[self addExampleChatToTheSharedCatalog];
+	NFKModelDescriptor *chat = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"example.chat"];
+	NSError *error = nil;
+	NFKModelMemoryEstimate *estimate = [chat estimatedMemoryForOptions:@{ NFKModelLoadOptionQuantizationBits: @4 }
+														  memoryBudget:[NFKModelMemoryBudget currentBudget]
+																 error:&error];
+	XCTAssertNotNil(estimate, @"%@", error);
+	// 2e9 − 9e8 × 2 + 9e8 × (4/8 + 4/64) of weights, and 114,688 × 8192 bytes of cache at 16 bits.
+	XCTAssertEqual(estimate.peakByteCount, 706250000 + 939524096);
+
+	NFKModelMemoryConstraints *constraints = [chat constraintsForHardwareProfile:NFKHardwareProfile.currentProfile];
+	NFKModelOptionConstraint *bits = [constraints constraintForOptionKey:NFKModelLoadOptionQuantizationBits];
+	XCTAssertEqual(bits.choices.count, 3u);
+	XCTAssertEqualObjects(constraints.budget, [NFKModelMemoryBudget currentBudget]);
+}
+
+- (void)testExampleBuildingABackendWithOptions
+{
+	[self addExampleChatToTheSharedCatalog];
+	ExampleChatBuilder *builder = [[ExampleChatBuilder alloc] init];
+	[NFKModelCatalog registerBackendBuilder:builder forEngine:@"example-engine"];
+	[self addTeardownBlock:^{
+		[NFKModelCatalog registerBackendBuilder:nil forEngine:@"example-engine"];
+	}];
+
+	NSError *error = nil;
+	NSDictionary *options = @{ NFKModelLoadOptionQuantizationBits: @"4", NFKParameterTemperature: @0.2 };
+	NFKModelDescriptor *chat = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"example.chat"];
+	if (![chat estimatedMemoryForOptions:@{ NFKModelLoadOptionQuantizationBits: @4 }
+							memoryBudget:[NFKModelMemoryBudget currentBudget] error:NULL].fits) {
+		XCTSkip(@"this machine's memory budget does not hold the example model");
+	}
+	id<NFKInferenceBackend> backend = [NFKModelCatalog.sharedCatalog backendForModelIdentifier:@"example.chat"
+																					   options:options error:&error];
+	XCTAssertNotNil(backend, @"%@", error);
+	XCTAssertEqualObjects(builder.lastRequest.argumentOptions[NFKModelLoadOptionQuantizationBits], @4);
+	XCTAssertEqualObjects(((NFKDefaultedBackend *)backend).requestDefaults[NFKParameterTemperature], @0.2);
+	NSDictionary *loaded = NFKInferenceLoadOptionValues(backend);
+	XCTAssertEqualObjects(loaded[NFKModelLoadOptionContextLength], @8192);
 }
 
 // A QR code carrying the payload, for the examples that read one.

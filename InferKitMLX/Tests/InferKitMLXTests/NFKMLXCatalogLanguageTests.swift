@@ -35,7 +35,7 @@ final class NFKMLXCatalogLanguageTests: XCTestCase {
                             file: StaticString = #filePath, line: UInt = #line) throws {
         let descriptor = try descriptor(name)
         XCTAssertEqual(Set(descriptor.inputs.map(\.key)), inputs, "\(name) inputs", file: file, line: line)
-        XCTAssertEqual(Set(descriptor.parameters.map(\.key)), parameters, "\(name) parameters", file: file, line: line)
+        XCTAssertEqual(Set(descriptor.options.map(\.key)), parameters, "\(name) options", file: file, line: line)
         XCTAssertEqual(Set(descriptor.outputs.map(\.key)), outputs, "\(name) outputs", file: file, line: line)
     }
 
@@ -157,7 +157,7 @@ final class NFKMLXCatalogLanguageTests: XCTestCase {
     }
 
     func testEveryEntryThatTakesToolsListsTheToolCallingOutputs() {
-        for descriptor in descriptors where descriptor.parameters.contains(where: { $0.key == NFKParameterTools }) {
+        for descriptor in descriptors where descriptor.options.contains(where: { $0.key == NFKParameterTools }) {
             XCTAssertTrue(NFKMLXToolCalling.outputKeys.isSubset(of: Set(descriptor.outputs.map(\.key))),
                           descriptor.identifier)
         }
