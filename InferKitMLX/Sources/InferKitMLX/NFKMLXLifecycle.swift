@@ -79,6 +79,9 @@ enum NFKMLXActivity {
 /// A run takes the state through ``withState(_:)``, or ``begin()`` and ``end()`` when it outlives a call,
 /// and counts as in flight meanwhile. An unload with runs in flight is recorded, and the last run to end
 /// frees the state. Loads are serialized, so concurrent runs that find the model unloaded share one load.
+/// An unload during a load is recorded the same way: the load completes, the run that asked for it
+/// proceeds, and the state is freed when that run ends. A load reads local files only
+/// (``NFKMLXReload/reloading(_:)``).
 final class NFKMLXLifecycle<State>: @unchecked Sendable {
 
     typealias Load = () throws -> State
@@ -89,6 +92,7 @@ final class NFKMLXLifecycle<State>: @unchecked Sendable {
     private var load: Load?
     private var runsInFlight = 0
     private var unloadRequested = false
+    private var isLoading = false
     private var measurement: NFKMLXLoadMeasurement?
     private var freeHandler: (() -> Void)?
     private var loadOptions: NFKMLXLoadOptions?
@@ -200,18 +204,34 @@ final class NFKMLXLifecycle<State>: @unchecked Sendable {
                 case .unavailable:
                     throw NFKMLXError.notReady
                 case .load(let load):
-                    let (loaded, measured) = try NFKMLXLoadMeasurement.measuring(load)
-                    lock.withLock {
-                        state = loaded
-                        if let measured {
-                            measurement = measured
-                        }
-                        runsInFlight += 1
-                    }
+                    try loadState(load)
                 }
             }
         } catch {
             NFKMLXActivity.end()
+            throw error
+        }
+    }
+
+    /// Runs `load` on the load lock and counts the run that asked for it. An unload during the load is
+    /// recorded, so the state is freed when that run ends; a failed load withdraws it.
+    private func loadState(_ load: Load) throws {
+        lock.withLock { isLoading = true }
+        do {
+            let (loaded, measured) = try NFKMLXLoadMeasurement.measuring { try NFKMLXReload.reloading(load) }
+            lock.withLock {
+                isLoading = false
+                state = loaded
+                if let measured {
+                    measurement = measured
+                }
+                runsInFlight += 1
+            }
+        } catch {
+            lock.withLock {
+                isLoading = false
+                unloadRequested = false
+            }
             throw error
         }
     }
@@ -222,11 +242,12 @@ final class NFKMLXLifecycle<State>: @unchecked Sendable {
         leave()
     }
 
-    /// Frees the state now, or when the last run in flight ends. It does nothing without a way to load the
-    /// state again.
+    /// Frees the state now, or when the last run in flight ends. During a load it frees the state when the
+    /// run that asked for the load ends. It does nothing without a way to load the state again, or when
+    /// the state is neither loaded nor loading.
     func unload() {
         var taken: State? = lock.withLock {
-            guard load != nil, state != nil else {
+            guard load != nil, state != nil || isLoading else {
                 return nil
             }
             unloadRequested = true
@@ -320,7 +341,32 @@ protocol NFKMLXReloading: AnyObject {
 
 /// The paths that build a backend from a weights file or a release directory give it the closure that loads
 /// it again.
+///
+/// A load after an unload reads local files only. It runs inside ``reloading(_:)``, where the download
+/// helpers take a file from the cache and make no request: a file missing from the cache throws
+/// ``NFKMLXReloadError/modelFilesRemoved``. A build from a local file or folder records the files it
+/// found there, and a load fails with the same error when one of them is gone.
 enum NFKMLXReload {
+
+    @TaskLocal private static var reloadInProgress = false
+
+    /// Whether the calling code runs inside a load after an unload, where a download helper reads the
+    /// cache and makes no request.
+    static var isReloading: Bool { reloadInProgress }
+
+    /// Runs `load`, a load after an unload, with every download helper reading local files only.
+    static func reloading<T>(_ load: () throws -> T) rethrows -> T {
+        try $reloadInProgress.withValue(true, operation: load)
+    }
+
+    /// The error a load after an unload reports when the model's files are no longer on disk: `path` is
+    /// the first missing file, and `source` names the repository or folder the model came from.
+    static func modelFilesRemovedError(path: String, source: String) -> NSError {
+        let reason = "the model's files were removed: \(source) no longer holds \(path). Loading the model again "
+            + "reads local files only; download them again through an NFKDownload, and the next run loads them"
+        return NSError(domain: NFKMLXReloadError.errorDomain, code: NFKMLXReloadError.modelFilesRemoved.rawValue,
+                       userInfo: [NSLocalizedDescriptionKey: reason, NSFilePathErrorKey: path])
+    }
 
     /// Builds a backend through `build`, measured, and returns it able to unload and load again: a
     /// lifecycle backend takes `build` itself, and any other backend is wrapped in an
@@ -330,21 +376,29 @@ enum NFKMLXReload {
     }
 
     /// ``reloadable(_:)`` for a backend built with `loadOptions`, which its `loadOptionValues` reports.
-    static func reloadable(loadOptions: NFKMLXLoadOptions?,
+    /// When `source` is a local file or folder, the files the first build found there must all be on disk
+    /// for a load after an unload, which otherwise throws ``NFKMLXReloadError/modelFilesRemoved``.
+    static func reloadable(loadOptions: NFKMLXLoadOptions?, reading source: URL? = nil,
                            _ build: @escaping () throws -> any NFKInferenceBackend) throws -> any NFKInferenceBackend {
         let (backend, measurement) = try NFKMLXLoadMeasurement.measuring(build)
         if let reloadable = backend as? NFKMLXReloadableBackend {
             reportLoadOptions(of: reloadable, loadOptions)
             return backend
         }
+        let reload = NFKMLXLocalFiles(source).map { files in
+            { () throws -> any NFKInferenceBackend in
+                try files.requirePresent()
+                return try build()
+            }
+        } ?? build
         if let reloading = backend as? NFKMLXReloading {
             if !reloading.canReload {
-                reloading.enableReload(build, measurement: measurement)
+                reloading.enableReload(reload, measurement: measurement)
             }
             reportLoadOptions(of: backend, loadOptions)
             return backend
         }
-        return NFKMLXReloadableBackend(backend: backend, measurement: measurement, build: build,
+        return NFKMLXReloadableBackend(backend: backend, measurement: measurement, build: reload,
                                        loadOptions: loadOptions)
     }
 
@@ -358,6 +412,57 @@ enum NFKMLXReload {
             reloadable.setLoadOptions(loadOptions)
         } else if let reloading = backend as? NFKMLXReloading {
             reloading.setLoadOptions(loadOptions)
+        }
+    }
+}
+
+/// The files a build found at a local source, which a load after an unload requires on disk.
+struct NFKMLXLocalFiles {
+
+    /// The most files a folder's record holds; a folder with more is checked for the first ones found.
+    static let recordLimit = 4096
+
+    let source: URL
+    let paths: [String]
+
+    /// Records the file at `source`, or the folder and the files under it, skipping hidden files. nil
+    /// when `source` is nil, not a file URL, or not on disk.
+    init?(_ source: URL?) {
+        guard let source, source.isFileURL else {
+            return nil
+        }
+        var isFolder: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: source.path, isDirectory: &isFolder) else {
+            return nil
+        }
+        self.source = source
+        paths = isFolder.boolValue ? [source.path] + Self.files(under: source) : [source.path]
+    }
+
+    private static func files(under folder: URL) -> [String] {
+        guard let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil,
+                                                              options: [.skipsHiddenFiles]) else {
+            return []
+        }
+        var paths = [String]()
+        for case let url as URL in enumerator {
+            var isFolder: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder), !isFolder.boolValue else {
+                continue
+            }
+            paths.append(url.path)
+            if paths.count == recordLimit {
+                break
+            }
+        }
+        return paths
+    }
+
+    /// Throws ``NFKMLXReloadError/modelFilesRemoved`` naming the first recorded file no longer on disk. A
+    /// link whose target is gone counts as missing.
+    func requirePresent() throws {
+        if let missing = paths.first(where: { !FileManager.default.fileExists(atPath: $0) }) {
+            throw NFKMLXReload.modelFilesRemovedError(path: missing, source: source.path)
         }
     }
 }

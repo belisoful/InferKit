@@ -53,7 +53,7 @@ extension NFKMLXReleaseDownload {
         var absent = [String]()
         for component in components {
             for file in component.required {
-                note(try hub.downloadRepo(repo, revision: revision, path: file, sha256: nil), file)
+                note(try hub.fetchFile(repo: repo, revision: revision, path: file), file)
             }
             absent += try fetchOptional(component.optional, hub: hub, repo: repo, revision: revision, note: note)
             try fetchWeights(component.weights, hub: hub, repo: repo, revision: revision, listing: repoListing, note: note)
@@ -61,7 +61,7 @@ extension NFKMLXReleaseDownload {
         guard let root else {
             throw NFKMLXError.unsupportedConfiguration("the download of \(repo) names no files")
         }
-        try? hub.recordCompleteDownload(ofRepo: repo, revision: revision, paths: fetched, absentPaths: absent)
+        recordComplete(hub: hub, repo: repo, revision: revision, paths: fetched, absent: absent)
         return root
     }
 }

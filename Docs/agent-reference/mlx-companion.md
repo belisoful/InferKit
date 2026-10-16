@@ -744,6 +744,23 @@ The core protocol's optional `unload`, `isLoaded`, `residentByteCount`, and `pea
   separate load lock so concurrent runs share one load) and `begin`/`end` do the same for a run that
   outlives a call. `ifLoaded` reads the state without loading it and counts as a run meanwhile, so a
   `modelInfo` walk never races a free. `prepare` loads and withdraws a pending unload.
+- An unload during a load is recorded like one during a run (`isLoading`): the load completes, the run
+  that asked for it proceeds, and its `end` frees the state. A failed load withdraws the request. An
+  unload that finds the state neither loaded nor loading records nothing, so it cannot free a later
+  load.
+- A load after an unload reads local files only (2026-10-16). The lifecycle runs every load inside
+  `NFKMLXReload.reloading(_:)`, a task-local flag. Every package download site fetches through
+  `NFKHFHub.fetchFile(repo:revision:path:)` (`NFKMLXHub.swift`), which under the flag returns the
+  cached file's URL or throws `NFKMLXReloadError.modelFilesRemoved` without calling `downloadRepo`, so
+  no request is possible. Under the flag the release helpers in `NFKMLXMarian.swift` skip the listing,
+  read only the cached optional files, throw the same error when no weights candidate is cached, and
+  write no completion record. A build from a local source (the registry's `weightsURL`,
+  `NFKMLXDownload.backend`'s file) records the file, or the folder and up to 4096 non-hidden files
+  under it (`NFKMLXLocalFiles`), and the reload checks them before it builds. The error carries
+  `NSFilePathErrorKey`; the same backend loads on its next run once a download puts the files back.
+  The core's `NFKDownloadErrorInUse` describes a removal refused during a download and does not fit,
+  so the error is the package's own `@objc` enum (`NFKMLXReloadErrorDomain`). A reload does not mark
+  the snapshot used in the hub's eviction order, since the cache-only path never calls `downloadRepo`.
 - Decision: an unload never waits. With no run in flight it frees before returning; otherwise it is
   recorded and the last run's `end` frees. A blocking unload would deadlock a job completion handler
   that unloads, since `NFKMLXReloadableBackend` finishes its job before it ends the run. The free calls the backend's
@@ -771,9 +788,16 @@ The core protocol's optional `unload`, `isLoaded`, `residentByteCount`, and `pea
 - A registry build without a URL is not made reloadable: random weights would not come back the same.
   `NFKMLXReloadableBackend.init(build:)` does not check this, and its documentation states the rule.
 - `NFKMLXReloadableBackend` keeps the first backend's identifier and declared keys, and `responds(to:)`
-  answers for the held class on the optional keys and `backendStatus`, so a wrapper does not claim a
-  member the model lacks. An Objective-C message it does not implement goes to the held backend through
-  `forwardingTarget(for:)`, which loads the model first. Registry and asynchronous results of classes
+  answers for the held class on the optional keys, `backendStatus`, and `tokenCountForRequest:error:`,
+  so a wrapper does not claim a member the model lacks. It implements the token count itself, inside
+  `withState`. An Objective-C message it does not implement goes to the held backend through
+  `forwardingTarget(for:)`, which loads the model first and begins a run. The runtime sends the message
+  after that method returns, and Swift cannot implement `forwardInvocation:`, so the run's `end` sits in
+  an autoreleased `NFKMLXForwardedRun` and runs when the caller's autorelease pool drains, after the
+  message returns. An unload during a forwarded message therefore waits for the pool, which on a thread
+  without one is the thread's exit. Calling the protocol's optional throwing `tokenCount?(for:)` from
+  Swift crashes the Swift 6.4 compiler in IRGen (a reabstraction thunk), so the wrapper and its test
+  send the message through a private `@objc` protocol after a `responds(to:)` check. Registry and asynchronous results of classes
   other than the five lifecycle classes arrive wrapped, so a Swift cast to the model's class fails
   (decided acceptable, 2026-10-15; no shipped caller casts one). `wrappedBackend` returns the held backend
   for that cast, and is nil while the model is unloaded. Its `submitInferenceJob` runs a held
@@ -795,12 +819,18 @@ The core protocol's optional `unload`, `isLoaded`, `residentByteCount`, and `pea
   (`NFKMLXModelInfoCache.currentValue`).
 - `NFKMLXGPU` adopts the server's optional runtime members (`allocatedByteCount`, `peakAllocatedByteCount`,
   `resetPeakAllocatedByteCount`), so a server measures a provider build that measures nothing itself.
-- Tests: `NFKMLXLifecycleTests` (9), on seeded 8 MiB weights behind test registry factories with a
+- Tests: `NFKMLXLifecycleTests` (18), on seeded 8 MiB weights behind test registry factories with a
   placeholder URL: a closure backend and a URL-less registry build stay loaded, unload frees within 10%
   (plus 1 MiB) of the measured bytes and a run reloads to identical output, prepare reloads, a
   generation backend reloads, an unload during a gated run frees at its end, a plain backend is wrapped
   and built twice with `wrappedBackend` reaching its class while loaded, the wrapper over a direct build,
-  and the server's figures and unload.
+  and the server's figures and unload. Nine more run without weights or MLX: an unload during a gated
+  load frees when the run ends, a double unload leaves the next load resident, an unload during a gated
+  forwarded message and during a gated token count frees after it returns, a wrapper over a class
+  without a token count neither claims nor answers one, a fetch inside `reloading` makes no request, a
+  release removed from a failing-transport hub's cache fails the reload with the error and no request
+  and loads again once reseeded, and a removed weights file and a removed file inside a release folder
+  fail the reload naming the file.
 
 ## Load options and the build entry
 

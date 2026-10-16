@@ -81,7 +81,10 @@ backends unload in place and keep their class. Any other model arrives wrapped i
 is nil while it is unloaded. A backend built by a direct synchronous factory call reloads only when it is
 wrapped in an ``NFKMLXReloadableBackend``. An unload frees the model's arrays and returns MLX's cache when
 no other run or load is in flight; the next run loads the model again. `residentByteCount` is the rise in
-MLX's active memory over the load, and `peakByteCount` the peak above where the load started.
+MLX's active memory over the load, and `peakByteCount` the peak above where the load started. That load
+reads local files only and makes no network request. When the model's files were removed, the run fails
+with ``NFKMLXReloadError/modelFilesRemoved``; once a download puts the files back, the next run loads
+them.
 
 The figures have three limits:
 
@@ -530,6 +533,7 @@ The figures have three limits:
 - ``NFKMLXModelDescriptors``
 - ``NFKMLXHub``
 - ``NFKMLXReloadableBackend``
+- ``NFKMLXReloadError``
 - ``NFKStableDiffusionProvider``
 - ``NFKMLXTranslationProvider``
 - ``NFKMLXWhisperProvider``

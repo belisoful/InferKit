@@ -421,7 +421,7 @@ public final class NFKMLXOpenJevDeBERTa: NSObject, NFKMLXDecisionModel {
     static func download(revision: String?, hub: NFKHFHub) throws -> URL {
         var folder: URL?
         for path in releaseFiles {
-            folder = try hub.downloadRepo(repository, revision: revision, path: path, sha256: nil)
+            folder = try hub.fetchFile(repo: repository, revision: revision, path: path)
                 .deletingLastPathComponent()
         }
         guard let folder else { throw NFKMLXError.weightsMismatch("the release names no files") }

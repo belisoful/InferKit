@@ -259,6 +259,6 @@ struct NFKMLXStableDiffusionRelease {
     }
 
     private func fetch(_ path: String, from hub: NFKHFHub) throws -> URL {
-        try hub.downloadRepo(repository, revision: nil, path: path, sha256: nil)
+        try hub.fetchFile(repo: repository, revision: nil, path: path)
     }
 }

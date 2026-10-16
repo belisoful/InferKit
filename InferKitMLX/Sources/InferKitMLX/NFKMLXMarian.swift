@@ -303,17 +303,22 @@ enum NFKMLXReleaseDownload {
 
     /// Fetches the optional files the release serves and returns the ones the server refused. A file the
     /// snapshot's completion record lists as refused, and that is not cached, is not asked for again.
+    /// Inside a load after an unload, only the cached optional files are read.
     static func fetchOptional(_ optional: [String], hub: NFKHFHub, repo: String, revision: String?,
                               note: (URL, String) -> Void) throws -> [String] {
         let refused = Set(hub.recordedAbsentPaths(ofRepo: repo, revision: revision))
         var absent = [String]()
         for file in optional {
-            if refused.contains(file) && !hub.isCachedRepo(repo, revision: revision, path: file) {
+            let cached = hub.isCachedRepo(repo, revision: revision, path: file)
+            if refused.contains(file) && !cached {
                 absent.append(file)
                 continue
             }
+            if NFKMLXReload.isReloading && !cached {
+                continue
+            }
             do {
-                note(try hub.downloadRepo(repo, revision: revision, path: file, sha256: nil), file)
+                note(try hub.fetchFile(repo: repo, revision: revision, path: file), file)
             } catch {
                 try checkCancelled()
                 if isAbsent(error) {
@@ -326,21 +331,25 @@ enum NFKMLXReleaseDownload {
 
     /// Fetches a release's weights: the first candidate whole in the cache, with no request; otherwise
     /// the first candidate the repository serves, in order, with the shards a shard index names. Throws
-    /// when no candidate is served, naming what each candidate's download reported.
+    /// when no candidate is served, naming what each candidate's download reported. Inside a load after an
+    /// unload, no candidate whole in the cache throws `NFKMLXReloadError.modelFilesRemoved`.
     static func fetchWeights(_ candidates: [String], hub: NFKHFHub, repo: String, revision: String?,
                              listing: NFKDownloadPlan?, note: (URL, String) -> Void) throws {
         guard !candidates.isEmpty else { return }
         if let cached = cachedWeights(hub: hub, repo: repo, revision: revision, candidates: candidates) {
             for path in cached.paths {
-                note(try hub.downloadRepo(repo, revision: revision, path: path, sha256: nil), path)
+                note(try hub.fetchFile(repo: repo, revision: revision, path: path), path)
             }
             return
+        }
+        if NFKMLXReload.isReloading {
+            throw NFKMLXReload.modelFilesRemovedError(path: candidates.joined(separator: " or "), source: repo)
         }
         var failures = [String]()
         for file in candidates {
             let url: URL
             do {
-                url = try hub.downloadRepo(repo, revision: revision, path: file, sha256: nil)
+                url = try hub.fetchFile(repo: repo, revision: revision, path: file)
             } catch {
                 try checkCancelled()
                 failures.append("\(file): \(error.localizedDescription)")
@@ -354,7 +363,7 @@ enum NFKMLXReleaseDownload {
                 }
                 expect(shards, from: listing)
                 for shard in shards {
-                    note(try hub.downloadRepo(repo, revision: revision, path: shard, sha256: nil), shard)
+                    note(try hub.fetchFile(repo: repo, revision: revision, path: shard), shard)
                 }
             }
             return
@@ -376,10 +385,10 @@ enum NFKMLXReleaseDownload {
     }
 
     /// The repository's listing, fetched once for a current download when the release has a file to
-    /// fetch; nil without a current download, with nothing to fetch, or when the listing fails (the
-    /// fetches then report each file's size as it arrives).
+    /// fetch; nil without a current download, with nothing to fetch, inside a load after an unload, or
+    /// when the listing fails (the fetches then report each file's size as it arrives).
     static func listing(hub: NFKHFHub, repo: String, revision: String?, needsFetch: Bool) -> NFKDownloadPlan? {
-        guard NFKDownload.current != nil, needsFetch else { return nil }
+        guard NFKDownload.current != nil, needsFetch, !NFKMLXReload.isReloading else { return nil }
         return try? hub.planDownload(ofRepo: repo, revision: revision, paths: nil)
     }
 
@@ -422,18 +431,28 @@ enum NFKMLXReleaseDownload {
             }
         }
         for file in required {
-            note(try hub.downloadRepo(repo, revision: revision, path: file, sha256: nil), file)
+            note(try hub.fetchFile(repo: repo, revision: revision, path: file), file)
         }
         let absent = try fetchOptional(optional, hub: hub, repo: repo, revision: revision, note: note)
         try fetchWeights(weights, hub: hub, repo: repo, revision: revision, listing: repoListing, note: note)
         guard let root else { throw NFKMLXError.unsupportedConfiguration("\(repo): the release names no files") }
-        try? hub.recordCompleteDownload(ofRepo: repo, revision: revision, paths: fetched, absentPaths: absent)
+        recordComplete(hub: hub, repo: repo, revision: revision, paths: fetched, absent: absent)
         return root
+    }
+
+    /// Records a fetched release complete in its snapshot. A load after an unload fetched nothing and
+    /// records nothing.
+    static func recordComplete(hub: NFKHFHub, repo: String, revision: String?, paths: [String], absent: [String]) {
+        guard !NFKMLXReload.isReloading else {
+            return
+        }
+        try? hub.recordCompleteDownload(ofRepo: repo, revision: revision, paths: paths, absentPaths: absent)
     }
 
     /// Runs `build`, a release download and the build over it, through ``asyncValue(_:_:)`` and delivers the
     /// backend or the error to `completionHandler`. The backend can unload and load again through `build`
-    /// (`NFKMLXReload.reloadable(_:)`), which finds the release in the cache.
+    /// (`NFKMLXReload.reloadable(_:)`), which reads the release from the cache and makes no request: a
+    /// release removed from the cache fails the load with `NFKMLXReloadError.modelFilesRemoved`.
     static func async(_ completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void,
                       _ build: @escaping () throws -> any NFKInferenceBackend) {
         asyncValue(completionHandler) { try NFKMLXReload.reloadable(build) }
