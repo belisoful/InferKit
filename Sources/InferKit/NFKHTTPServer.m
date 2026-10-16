@@ -644,6 +644,12 @@ static NSString *NFKHTTPEndpointAddress(nw_endpoint_t _Nullable endpoint)
 
 - (void)sendStatus:(NSInteger)status JSONObject:(id)object headers:(nullable NSDictionary<NSString *, NSString *> *)headers
 {
+	// dataWithJSONObject: raises on a value JSON cannot carry, such as a non-finite number a backend returned.
+	if (![NSJSONSerialization isValidJSONObject:object]) {
+		status = 500;
+		object = @{ @"error": @{ @"message": @"the reply holds a value JSON cannot carry, such as a non-finite number",
+								 @"type": @"server_error" } };
+	}
 	NSData *body = [NSJSONSerialization dataWithJSONObject:object options:0 error:NULL] ?: [NSData data];
 	NSMutableDictionary<NSString *, NSString *> *fields = [NSMutableDictionary dictionaryWithDictionary:headers ?: @{}];
 	fields[@"Content-Type"] = @"application/json";

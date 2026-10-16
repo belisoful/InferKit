@@ -7,6 +7,7 @@
 #import "NFKServedOpenAI.h"
 #import "NFKInferenceWireCoding.h"
 #import "NFKInferenceServerPrivate.h"
+#import "NFKServedRequestChecks.h"
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKInferenceTool.h>
 #import <InferKit/NFKToolMessages.h>
@@ -37,19 +38,55 @@ static NSString *NFKServedAnthropicIdentifier(NSString *prefix)
 	return [prefix stringByAppendingString:digits];
 }
 
+/*! The documented fields of a Messages body and their types. */
+static NSDictionary<NSString *, NSString *> *NFKServedAnthropicFields(void)
+{
+	return @{ @"model": @"string", @"messages": @"array", @"system": @"string|array", @"max_tokens": @"integer",
+			  @"temperature": @"number", @"top_p": @"number", @"top_k": @"integer", @"stop_sequences": @"array",
+			  @"stream": @"boolean", @"tools": @"array", @"tool_choice": @"object", @"thinking": @"object",
+			  @"output_config": @"object", @"metadata": @"object", @"service_tier": @"string", @"mcp_servers": @"array" };
+}
+
+/*! The refusal of a Messages body's nested fields of the wrong type, or nil. */
+static NSError * _Nullable NFKServedAnthropicNestedTypeError(NSDictionary *body)
+{
+	NSError *error = NFKServedFieldTypeError(body[@"tool_choice"], @{ @"type": @"string", @"name": @"string",
+																	  @"disable_parallel_tool_use": @"boolean" }, @"tool_choice");
+	error = error ?: NFKServedFieldTypeError(body[@"thinking"], @{ @"type": @"string", @"budget_tokens": @"integer" }, @"thinking");
+	error = error ?: NFKServedFieldTypeError(body[@"output_config"], @{ @"effort": @"string", @"format": @"object" }, @"output_config");
+	NSArray *sequences = [body[@"stop_sequences"] isKindOfClass:NSArray.class] ? body[@"stop_sequences"] : @[];
+	for (NSUInteger index = 0; error == nil && index < sequences.count; index++) {
+		error = NFKServedValueTypeError(sequences[index], @"string", [NSString stringWithFormat:@"stop_sequences[%lu]", (unsigned long)index]);
+	}
+	NSArray *system = [body[@"system"] isKindOfClass:NSArray.class] ? body[@"system"] : @[];
+	for (NSUInteger index = 0; error == nil && index < system.count; index++) {
+		error = NFKServedFieldTypeError(system[index], @{ @"type": @"string", @"text": @"string" },
+										[NSString stringWithFormat:@"system[%lu]", (unsigned long)index]);
+	}
+	return error;
+}
+
+/*! The refusal of a content block whose fields are of the wrong type, or nil. */
+static NSError * _Nullable NFKServedAnthropicBlockTypeError(id block, NSString *path)
+{
+	return NFKServedFieldTypeError(block, @{ @"type": @"string", @"text": @"string", @"id": @"string", @"name": @"string",
+											 @"input": @"object", @"tool_use_id": @"string", @"content": @"string|array",
+											 @"is_error": @"boolean", @"source": @"object" }, path);
+}
+
 @implementation NFKServedAnthropic
 
 #pragma mark Routes
 
 + (void)serveMessages:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response server:(NFKInferenceServer *)server
 {
-	NSDictionary *body = [server JSONBodyOf:request response:response wire:NFKServedWireAnthropic];
+	NSDictionary *body = [server JSONBodyOf:request response:response wire:NFKServedWireAnthropic fields:NFKServedAnthropicFields()];
 	if (body == nil) {
 		return;
 	}
-	NSError *error = nil;
+	NSError *error = NFKServedAnthropicNestedTypeError(body);
 	NSString *forcedToolName = nil;
-	NFKServedTarget *target = [server modelNamed:body[@"model"] error:&error];
+	NFKServedTarget *target = error == nil ? [server modelNamed:body[@"model"] error:&error] : nil;
 	NFKInferenceRequest *inference = target != nil ? [self requestFromBody:body forcedToolName:&forcedToolName error:&error] : nil;
 	if (inference == nil) {
 		[server sendError:error response:response wire:NFKServedWireAnthropic];
@@ -59,7 +96,7 @@ static NSString *NFKServedAnthropicIdentifier(NSString *prefix)
 	NSString *modelName = target.name;
 	NFKServedRun *run = [[NFKServedRun alloc] init];
 	run.request = inference;
-	if (![body[@"stream"] boolValue]) {
+	if (![body[@"stream"] isEqual:@YES]) {
 		run.completionHandler = ^(NFKInferenceResult *result, NSError *runError) {
 			if (result == nil) {
 				[server sendError:runError response:response wire:NFKServedWireAnthropic];
@@ -102,12 +139,12 @@ static NSString *NFKServedAnthropicIdentifier(NSString *prefix)
 
 + (void)serveTokenCount:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response server:(NFKInferenceServer *)server
 {
-	NSDictionary *body = [server JSONBodyOf:request response:response wire:NFKServedWireAnthropic];
+	NSDictionary *body = [server JSONBodyOf:request response:response wire:NFKServedWireAnthropic fields:NFKServedAnthropicFields()];
 	if (body == nil) {
 		return;
 	}
-	NSError *error = nil;
-	NFKServedTarget *target = [server modelNamed:body[@"model"] error:&error];
+	NSError *error = NFKServedAnthropicNestedTypeError(body);
+	NFKServedTarget *target = error == nil ? [server modelNamed:body[@"model"] error:&error] : nil;
 	NFKInferenceRequest *inference = target != nil ? [self requestFromBody:body forcedToolName:NULL error:&error] : nil;
 	if (inference == nil) {
 		[server sendError:error response:response wire:NFKServedWireAnthropic];
@@ -235,7 +272,15 @@ static NSString *NFKServedAnthropicIdentifier(NSString *prefix)
 	NSMutableArray<NSString *> *texts = [NSMutableArray array];
 	NSMutableArray<NSDictionary *> *calls = [NSMutableArray array];
 	NSMutableArray<NSDictionary *> *toolTurns = [NSMutableArray array];
-	for (NSDictionary *block in content) {
+	for (NSUInteger index = 0; index < [content count]; index++) {
+		NSDictionary *block = content[index];
+		NSError *typeError = NFKServedAnthropicBlockTypeError(block, [NSString stringWithFormat:@"a %@ message's content[%lu]", role, (unsigned long)index]);
+		if (typeError != nil) {
+			if (outError != NULL) {
+				*outError = typeError;
+			}
+			return NO;
+		}
 		NSString *type = [block isKindOfClass:NSDictionary.class] && [block[@"type"] isKindOfClass:NSString.class] ? block[@"type"] : @"";
 		if ([type isEqualToString:@"text"]) {
 			[texts addObject:[block[@"text"] isKindOfClass:NSString.class] ? block[@"text"] : @""];
@@ -315,7 +360,7 @@ static NSString *NFKServedAnthropicIdentifier(NSString *prefix)
 		[pngs addObject:png];
 	}
 	NFKToolResult *result = [[NFKToolResult alloc] initWithText:[texts componentsJoinedByString:@"\n"] outputs:nil
-													  imagePNGs:pngs isError:[block[@"is_error"] boolValue]];
+													  imagePNGs:pngs isError:[block[@"is_error"] isEqual:@YES]];
 	return [NFKToolMessages messageForToolCallIdentifier:identifier name:name result:result];
 }
 
@@ -418,7 +463,7 @@ static NSString *NFKServedAnthropicIdentifier(NSString *prefix)
 		NSDictionary<NSString *, NSString *> *choices = @{ @"auto": @"auto", @"any": @"required", @"none": @"none" };
 		parameters[@"tool_choice"] = choices[choice[@"type"]];
 	}
-	if ([choice[@"disable_parallel_tool_use"] boolValue]) {
+	if ([choice[@"disable_parallel_tool_use"] isEqual:@YES]) {
 		parameters[@"parallel_tool_calls"] = @NO;
 	}
 	[self addReasoningOfBody:body to:parameters];
@@ -510,11 +555,11 @@ static NSString *NFKServedAnthropicIdentifier(NSString *prefix)
 + (NSDictionary<NSString *, id> *)usageForResult:(nullable NFKInferenceResult *)result
 {
 	NSDictionary *usage = [[result outputForKey:NFKOutputUsage] isKindOfClass:NSDictionary.class] ? [result outputForKey:NFKOutputUsage] : @{};
-	NSInteger input = [usage[NFKUsageInputTokens] integerValue];
+	NSInteger input = NFKServedUsageCount(usage, NFKUsageInputTokens);
 	NSNumber *cached = [usage[NFKUsageCachedTokens] isKindOfClass:NSNumber.class] ? usage[NFKUsageCachedTokens] : nil;
 	NSInteger cachedCount = MIN(cached.integerValue, input);
 	NSMutableDictionary *wire = [@{ @"input_tokens": @(input - cachedCount),
-									@"output_tokens": @([usage[NFKUsageOutputTokens] integerValue]) } mutableCopy];
+									@"output_tokens": @(NFKServedUsageCount(usage, NFKUsageOutputTokens)) } mutableCopy];
 	if (cached != nil) {
 		wire[@"cache_read_input_tokens"] = @(cachedCount);
 	}

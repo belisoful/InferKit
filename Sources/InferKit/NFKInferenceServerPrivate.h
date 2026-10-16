@@ -35,8 +35,14 @@ typedef NS_ENUM(NSInteger, NFKServedWire) {
 
 @interface NFKInferenceServer ()
 
-/*! The request's body as a JSON object, or nil after replying with the refusal in wire's shape. */
-- (nullable NSDictionary *)JSONBodyOf:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response wire:(NFKServedWire)wire;
+/*! The request's body as a JSON object whose fields carry the types fields gives them
+	(NFKServedFieldTypeError), its null fields removed so a route reads them as absent, or nil after
+	replying with the refusal in wire's shape: 415 for a Content-Type that names another type than JSON,
+	400 for a body that is not a JSON object or a field of another type. */
+- (nullable NSDictionary *)JSONBodyOf:(NFKHTTPRequest *)request
+							  response:(NFKHTTPResponse *)response
+								  wire:(NFKServedWire)wire
+								fields:(NSDictionary<NSString *, NSString *> *)fields;
 
 /*! What a request's model field reaches, or the only hosted model when it names none. Every route
 	resolves its model field here: a hosted model or an alias, else base@preset for a suggested
@@ -50,8 +56,10 @@ typedef NS_ENUM(NSInteger, NFKServedWire) {
 - (NSInteger)statusForError:(NSError *)error;
 
 /*! Queues a run for a target, with its request defaults filled, cancelling it when the client goes
-	away. The reply's head carries the model's load as it stands when the head is written, and the
-	target's base model and preset. */
+	away. A null under a contract key is removed from the request, and a run whose request carries an
+	input or parameter of another kind than its contract key is refused with NFKInferenceServerErrorInvalidRequest through its completion handler, before it queues,
+	and an exception the run's handlers raise answers 500. The reply's head carries the model's load as
+	it stands when the head is written, and the target's base model and preset. */
 - (void)enqueue:(NFKServedRun *)run on:(NFKServedTarget *)target request:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response;
 
 @end

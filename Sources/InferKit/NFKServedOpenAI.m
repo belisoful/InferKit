@@ -6,6 +6,7 @@
 #import "NFKServedOpenAI.h"
 #import "NFKRemoteMediaSupport.h"
 #import "NFKInferenceWireCoding.h"
+#import "NFKServedRequestChecks.h"
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKImageCoding.h>
 #import <InferKit/NFKAudioAsset.h>
@@ -55,9 +56,15 @@ void (^NFKServedEventWriter(NFKHTTPResponse *response))(NSString *, NSDictionary
 		if (!response.headersSent) {
 			[response beginStreamWithStatus:200 headers:@{ @"Content-Type": @"text/event-stream", @"Cache-Control": @"no-cache" }];
 		}
-		NSData *JSON = [NSJSONSerialization dataWithJSONObject:data options:0 error:NULL];
+		NSData *JSON = [NSJSONSerialization isValidJSONObject:data] ? [NSJSONSerialization dataWithJSONObject:data options:0 error:NULL] : nil;
 		[response sendEventNamed:name data:JSON != nil ? [[NSString alloc] initWithData:JSON encoding:NSUTF8StringEncoding] : @"{}"];
 	};
+}
+
+NSInteger NFKServedUsageCount(id _Nullable usage, NSString *key)
+{
+	id count = [usage isKindOfClass:NSDictionary.class] ? usage[key] : nil;
+	return [count isKindOfClass:NSNumber.class] && isfinite([count doubleValue]) ? [count integerValue] : 0;
 }
 
 NSData * _Nullable NFKServedDataURLBytes(id _Nullable url, NSString * _Nullable * _Nullable outMediaType)
@@ -110,9 +117,17 @@ static NSString *NFKServedExtensionForMediaType(NSString * _Nullable mediaType, 
 	NSMutableArray *audios = [NSMutableArray array];
 	NSMutableArray *videos = [NSMutableArray array];
 	NSMutableArray *documents = [NSMutableArray array];
-	for (NSDictionary *message in wireMessages) {
+	for (NSUInteger index = 0; index < wireMessages.count; index++) {
+		NSDictionary *message = wireMessages[index];
 		if (![message isKindOfClass:NSDictionary.class]) {
 			[self setError:outError code:kNFKError_InferenceMissingInput reason:@"a message is not an object"];
+			return nil;
+		}
+		NSError *typeError = [self typeErrorOfChatMessage:message path:[NSString stringWithFormat:@"messages[%lu]", (unsigned long)index]];
+		if (typeError != nil) {
+			if (outError != NULL) {
+				*outError = typeError;
+			}
 			return nil;
 		}
 		if (![message[@"content"] isKindOfClass:NSArray.class]) {
@@ -145,6 +160,27 @@ static NSString *NFKServedExtensionForMediaType(NSString * _Nullable mediaType, 
 	NFKModality modality = [modalities containsObject:@"image"] ? NFKModalityImage
 		: ([modalities containsObject:@"audio"] ? NFKModalityAudio : NFKModalityText);
 	return [NFKInferenceRequest requestWithInputs:inputs parameters:[self chatParametersFromBody:body] outputModality:modality];
+}
+
+/*! The refusal of a chat message whose fields, tool calls, or content parts are of the wrong type, or nil. */
++ (nullable NSError *)typeErrorOfChatMessage:(NSDictionary *)message path:(NSString *)path
+{
+	NSError *error = NFKServedFieldTypeError(message, @{ @"role": @"string", @"content": @"string|array", @"name": @"string",
+														 @"tool_call_id": @"string", @"tool_calls": @"array",
+														 @"reasoning_content": @"string" }, path);
+	NSArray *calls = [message[@"tool_calls"] isKindOfClass:NSArray.class] ? message[@"tool_calls"] : @[];
+	for (NSUInteger index = 0; error == nil && index < calls.count; index++) {
+		NSString *callPath = [NSString stringWithFormat:@"%@.tool_calls[%lu]", path, (unsigned long)index];
+		error = NFKServedFieldTypeError(calls[index], @{ @"id": @"string", @"type": @"string", @"function": @"object" }, callPath);
+		error = error ?: NFKServedFieldTypeError([calls[index] isKindOfClass:NSDictionary.class] ? calls[index][@"function"] : nil, @{ @"name": @"string", @"arguments": @"string" },
+												 [callPath stringByAppendingString:@".function"]);
+	}
+	NSArray *parts = [message[@"content"] isKindOfClass:NSArray.class] ? message[@"content"] : @[];
+	for (NSUInteger index = 0; error == nil && index < parts.count; index++) {
+		error = NFKServedFieldTypeError(parts[index], @{ @"type": @"string", @"text": @"string" },
+										[NSString stringWithFormat:@"%@.content[%lu]", path, (unsigned long)index]);
+	}
+	return error;
 }
 
 + (void)addMedia:(NSArray *)media firstKey:(NSString *)firstKey restKey:(NSString *)restKey to:(NSMutableDictionary *)inputs
@@ -398,8 +434,8 @@ static NSString *NFKServedExtensionForMediaType(NSString * _Nullable mediaType, 
 	if (![usage isKindOfClass:NSDictionary.class] || usage.count == 0) {
 		return nil;
 	}
-	NSInteger input = [usage[NFKUsageInputTokens] integerValue];
-	NSInteger output = [usage[NFKUsageOutputTokens] integerValue];
+	NSInteger input = NFKServedUsageCount(usage, NFKUsageInputTokens);
+	NSInteger output = NFKServedUsageCount(usage, NFKUsageOutputTokens);
 	NSMutableDictionary *wire = [@{ @"prompt_tokens": @(input), @"completion_tokens": @(output),
 									@"total_tokens": @(input + output) } mutableCopy];
 	if (usage[NFKUsageCachedTokens] != nil) {
@@ -512,8 +548,12 @@ static NSString *NFKServedExtensionForMediaType(NSString * _Nullable mediaType, 
 														 @"timestamp_granularities", @"timestamp_granularities[]",
 														 @"stream", @"diarize", @"keywords", @"keywords[]", @"temperature" ]];
 	for (NFKHTTPFormPart *part in parts) {
-		if (![consumed containsObject:part.name] && part.filename == nil) {
-			parameters[part.name] = part.stringValue;
+		if ([consumed containsObject:part.name] || part.filename != nil) {
+			continue;
+		}
+		parameters[part.name] = NFKServedFormValue(part.name, part.stringValue, outError);
+		if (parameters[part.name] == nil) {
+			return nil;
 		}
 	}
 	NSString *language = [self partNamed:@"language" in:parts].stringValue;
@@ -525,7 +565,10 @@ static NSString *NFKServedExtensionForMediaType(NSString * _Nullable mediaType, 
 	}
 	NSString *temperature = [self partNamed:@"temperature" in:parts].stringValue;
 	if (temperature.length > 0) {
-		parameters[NFKParameterTemperature] = @(temperature.doubleValue);
+		parameters[NFKParameterTemperature] = NFKServedFormValue(NFKParameterTemperature, temperature, outError);
+		if (parameters[NFKParameterTemperature] == nil) {
+			return nil;
+		}
 	}
 	if ([[self valuesNamed:@"timestamp_granularities" in:parts] containsObject:@"word"]) {
 		parameters[NFKParameterWordTimestamps] = @YES;
@@ -586,7 +629,7 @@ static NSString *NFKServedExtensionForMediaType(NSString * _Nullable mediaType, 
 		}
 	}
 	*outContentType = @"application/json";
-	return [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL] ?: [NSData data];
+	return [NSJSONSerialization isValidJSONObject:body] ? [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL] : [NSData data];
 }
 
 + (NSString *)subtitlesForSegments:(NSArray<NFKAudioSegment *> *)segments vtt:(BOOL)vtt
@@ -777,7 +820,7 @@ static NSString *NFKServedExtensionForMediaType(NSString * _Nullable mediaType, 
 	NSMutableArray *images = [NSMutableArray array];
 	id mask = nil;
 	NSMutableDictionary<NSString *, id> *fields = [NSMutableDictionary dictionary];
-	NSSet<NSString *> *numeric = [NSSet setWithArray:@[ @"n", @"seed", @"steps", @"guidance_scale" ]];
+	NSDictionary<NSString *, NSString *> *renamed = NFKServedImageParameterNames();
 	for (NFKHTTPFormPart *part in parts) {
 		BOOL image = [part.name isEqualToString:@"image"] || [part.name isEqualToString:@"image[]"];
 		if (image || [part.name isEqualToString:@"mask"]) {
@@ -795,7 +838,10 @@ static NSString *NFKServedExtensionForMediaType(NSString * _Nullable mediaType, 
 			}
 			continue;
 		}
-		fields[part.name] = [numeric containsObject:part.name] ? @(part.stringValue.doubleValue) : part.stringValue;
+		fields[part.name] = NFKServedFormValue(renamed[part.name] ?: part.name, part.stringValue, outError);
+		if (fields[part.name] == nil) {
+			return nil;
+		}
 	}
 	if (images.count == 0) {
 		[self setError:outError code:kNFKError_InferenceMissingInput reason:@"the request carries no image to edit"];

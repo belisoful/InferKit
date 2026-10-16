@@ -727,6 +727,38 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   sends the same body, so a conversation with tool calls, tool results, images, and tools counts what
   a run of it costs.
 
+#### The server checks a request before it runs it
+
+- Every field a JSON route documents is checked for its type before the route reads it, on the chat,
+  embeddings, speech, image, Messages, Responses, token-counting, native, and estimate routes, and in
+  nested values: messages, content blocks, tool calls, input items, `tool_choice`, `thinking`,
+  `stream_options`, and the native request. A field that is present carries its documented type, and
+  a wrong type is refused with 400 (`NFKInferenceServerErrorInvalidRequest`) in the route's error
+  shape. A null field is an absent one, as the providers' APIs read it, since clients send null for an
+  optional parameter they leave unset; a required field that is null is missing. `"stream": null` runs
+  unstreamed, and an array in place of a flag is refused. Neither raises and ends the process any
+  longer.
+- An input or parameter that reaches a backend with a value of another kind than its contract key
+  carries (`NFKModelValueTypeForKey`), such as a `temperature` that is a string, is refused with 400
+  before it queues. A form field of the transcription and image-edit routes is read as its contract
+  kind, and one that does not read as that kind is refused.
+- A `model` that is not a string is refused with 400. It no longer reaches the only hosted model.
+- The `/v1` routes refuse a browser request whose `Origin` names a site other than `localhost`,
+  127.0.0.1, `[::1]`, or the host the request was sent to, with 403
+  (`NFKInferenceServerErrorOriginRefused`), as `/mcp` does. A client that sends no `Origin`, which is
+  every agent CLI and SDK, passes, and loopback stays key-free for it.
+- A JSON route and `/mcp` read a body under `Content-Type: application/json`, a `+json` type, or none.
+  A request that names another type (`text/plain`, a form, multipart) is refused with 415
+  (`NFKInferenceServerErrorUnsupportedMediaType`). A browser's cross-origin post carries an `Origin`,
+  which the check above refuses, so a missing type admits no page.
+- An exception raised while a request is served, in a route, an app route, a backend's run or build,
+  or a reply that JSON cannot carry, answers 500 and leaves the server serving.
+- `/mcp` runs a hosted model's tool (`addToolForModelName:outputModality:purpose:error:`) as a run in
+  the model's queue that holds no thread while it waits, so a hundred concurrent `tools/call` requests
+  all answer. The calls in a batch run at once, and a client that leaves cancels them. A message whose
+  envelope or params are of the wrong type is a JSON-RPC error, answered with 400 when it is the
+  request's only message.
+
 #### Claude's usage counts the whole input
 
 - `NFKAnthropicBackend` reports the whole input under `NFKUsageInputTokens`: `input_tokens` plus

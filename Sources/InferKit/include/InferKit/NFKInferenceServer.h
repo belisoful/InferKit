@@ -57,6 +57,14 @@ extern NSString * const NFKInferenceServerErrorDomain;
 	@constant   NFKInferenceServerErrorNameConflict A name the call adds is taken: an alias or a preset
 				names a model hosted under that name, or a model's MCP tool name is the name of another
 				served tool.
+	@constant   NFKInferenceServerErrorInvalidRequest A request's body has a field of the wrong type,
+				such as a stream flag that is an array or a model that is a number. A null field is
+				an absent one. The reply is 400, in the route's own error shape.
+	@constant   NFKInferenceServerErrorUnsupportedMediaType A JSON route received a body whose
+				Content-Type names a type other than application/json or a +json type. The reply is
+				415.
+	@constant   NFKInferenceServerErrorOriginRefused A browser request's Origin names a site other than
+				this machine or the host the request was sent to. The reply is 403.
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
@@ -69,6 +77,9 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 	NFKInferenceServerErrorInsufficientScope = 7,
 	NFKInferenceServerErrorMisdirected = 8,
 	NFKInferenceServerErrorNameConflict = 9,
+	NFKInferenceServerErrorInvalidRequest = 10,
+	NFKInferenceServerErrorUnsupportedMediaType = 11,
+	NFKInferenceServerErrorOriginRefused = 12,
 };
 
 /*! The name apiKey reads and writes among the server's keys. Introduced in InferKit 0.4.0. */
@@ -219,7 +230,24 @@ NS_SWIFT_SENDABLE
 				native route's reply carries model, base, preset, and loadOptions beside the result.
 
 				A hosted backend that implements tokenCountForRequest:error: answers the two
-				token-counting routes; any other answers 400.
+				token-counting routes; any other answers 400. A count takes the model's run slot, so it
+				waits behind the runs queued ahead of it: the backend contract promises that a count
+				never overlaps a run of the same backend, and a model that is not resident is built
+				before it counts.
+
+				Requests are checked before they run:
+				- A field of a JSON body that is present carries its documented type. A null field is
+				  an absent one, as the providers' APIs read it, since clients and SDKs send null for
+				  an optional parameter they leave unset; a required field that is null is missing. A
+				  wrong type is refused with 400 (NFKInferenceServerErrorInvalidRequest) in the
+				  route's error shape, before any run starts. So is an input or parameter that reaches
+				  the backend with a value of another kind than its contract key carries
+				  (NFKModelValueTypeForKey), such as a temperature that is a string.
+				- A JSON route reads its body under Content-Type application/json, a +json type, or
+				  none. A request that names any other type, such as text/plain, a form, or
+				  multipart, is refused with 415 (NFKInferenceServerErrorUnsupportedMediaType).
+				- An exception raised while a request is served answers 500 and leaves the server
+				  serving.
 
 				Access:
 				- A client presents a key as a Bearer token, which is what the remote backends' apiKey
@@ -238,6 +266,12 @@ NS_SWIFT_SENDABLE
 				  (NFKInferenceServerErrorMisdirected). A browser page that reaches the server through
 				  DNS rebinding sends its own host name, so it gets no key-free access. localhost,
 				  127.0.0.1, and [::1] are loopback names.
+				- A browser request to a /v1 route or /mcp whose Origin names a site other than
+				  localhost, 127.0.0.1, [::1], or the host the request was sent to is refused with 403
+				  (NFKInferenceServerErrorOriginRefused), whatever key it presents. A client that is not
+				  a browser sends no Origin and passes, so a local agent keeps its key-free access. A
+				  browser's cross-origin post always carries an Origin, so this check, with the JSON
+				  Content-Type rule above, keeps a web page from starting a run.
 				- startWithError: fails with NFKInferenceServerErrorAPIKeyRequired when the
 				  configuration requires a key and none is set.
 				Keys are compared by their SHA-256 digests in constant time. Neither a key's value nor

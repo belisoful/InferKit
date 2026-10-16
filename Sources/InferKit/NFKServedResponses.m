@@ -6,6 +6,7 @@
 #import "NFKServedResponses.h"
 #import "NFKServedOpenAI.h"
 #import "NFKInferenceServerPrivate.h"
+#import "NFKServedRequestChecks.h"
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKInferenceTool.h>
 #import <InferKit/NFKToolMessages.h>
@@ -60,19 +61,74 @@ static NSDictionary *NFKServedCustomToolParameters(void)
 }
 @end
 
+/*! The documented fields of a Responses body and their types. */
+static NSDictionary<NSString *, NSString *> *NFKServedResponsesFields(void)
+{
+	return @{ @"model": @"string", @"input": @"string|array", @"instructions": @"string", @"stream": @"boolean",
+			  @"stream_options": @"object", @"tools": @"array", @"tool_choice": @"string|object", @"temperature": @"number",
+			  @"top_p": @"number", @"max_output_tokens": @"integer", @"reasoning": @"object", @"text": @"object",
+			  @"prompt_cache_key": @"string", @"previous_response_id": @"string", @"conversation": @"string|object",
+			  @"store": @"boolean", @"include": @"array", @"background": @"boolean", @"metadata": @"object", @"user": @"string",
+			  @"safety_identifier": @"string", @"service_tier": @"string", @"truncation": @"string",
+			  @"parallel_tool_calls": @"boolean", @"max_tool_calls": @"integer", @"top_logprobs": @"integer" };
+}
+
+/*! The refusal of a Responses body's nested fields of the wrong type, or nil. */
+static NSError * _Nullable NFKServedResponsesNestedTypeError(NSDictionary *body)
+{
+	NSError *error = NFKServedFieldTypeError(body[@"reasoning"], @{ @"effort": @"string", @"summary": @"string" }, @"reasoning");
+	error = error ?: NFKServedFieldTypeError(body[@"text"], @{ @"format": @"object", @"verbosity": @"string" }, @"text");
+	error = error ?: NFKServedFieldTypeError(body[@"text"][@"format"], @{ @"type": @"string", @"schema": @"object" }, @"text.format");
+	NSArray *tools = [body[@"tools"] isKindOfClass:NSArray.class] ? body[@"tools"] : @[];
+	for (NSUInteger index = 0; error == nil && index < tools.count; index++) {
+		error = NFKServedFieldTypeError(tools[index], @{ @"type": @"string", @"name": @"string", @"description": @"string",
+														 @"parameters": @"object" },
+										[NSString stringWithFormat:@"tools[%lu]", (unsigned long)index]);
+	}
+	return error;
+}
+
+/*! The refusal of an input item or one of its content parts whose fields are of the wrong type, or nil.
+	A reasoning item, which the server skips, is not read. */
+static NSError * _Nullable NFKServedResponsesItemTypeError(id item, NSString *path)
+{
+	NSError *error = NFKServedFieldTypeError(item, @{ @"type": @"string" }, path);
+	if (error != nil || [item[@"type"] isEqual:@"reasoning"]) {
+		return error;
+	}
+	error = NFKServedFieldTypeError(item, @{ @"role": @"string", @"content": @"string|array",
+											 @"call_id": @"string", @"id": @"string", @"name": @"string",
+													  @"arguments": @"string", @"input": @"string", @"output": @"string|array" }, path);
+	NSMutableArray *parts = [NSMutableArray array];
+	for (NSString *field in @[ @"content", @"output" ]) {
+		if (error == nil && [item[field] isKindOfClass:NSArray.class]) {
+			[parts addObject:@[ field, item[field] ]];
+		}
+	}
+	for (NSArray *pair in parts) {
+		NSArray *list = pair[1];
+		for (NSUInteger index = 0; error == nil && index < list.count; index++) {
+			error = NFKServedFieldTypeError(list[index], @{ @"type": @"string", @"text": @"string", @"refusal": @"string",
+															@"image_url": @"string|object", @"file_data": @"string" },
+											[NSString stringWithFormat:@"%@.%@[%lu]", path, pair[0], (unsigned long)index]);
+		}
+	}
+	return error;
+}
+
 @implementation NFKServedResponses
 
 #pragma mark Routes
 
 + (void)serveResponses:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response server:(NFKInferenceServer *)server
 {
-	NSDictionary *body = [server JSONBodyOf:request response:response wire:NFKServedWireOpenAI];
+	NSDictionary *body = [server JSONBodyOf:request response:response wire:NFKServedWireOpenAI fields:NFKServedResponsesFields()];
 	if (body == nil) {
 		return;
 	}
-	NSError *error = nil;
+	NSError *error = NFKServedResponsesNestedTypeError(body);
 	NSSet<NSString *> *customToolNames = nil;
-	NFKServedTarget *target = [server modelNamed:body[@"model"] error:&error];
+	NFKServedTarget *target = error == nil ? [server modelNamed:body[@"model"] error:&error] : nil;
 	NFKInferenceRequest *inference = target != nil ? [self requestFromBody:body customToolNames:&customToolNames error:&error] : nil;
 	if (inference == nil) {
 		[server sendError:error response:response wire:NFKServedWireOpenAI];
@@ -84,7 +140,7 @@ static NSDictionary *NFKServedCustomToolParameters(void)
 	NSSet<NSString *> *customNames = customToolNames ?: [NSSet set];
 	NFKServedRun *run = [[NFKServedRun alloc] init];
 	run.request = inference;
-	if (![body[@"stream"] boolValue]) {
+	if (![body[@"stream"] isEqual:@YES]) {
 		run.completionHandler = ^(NFKInferenceResult *result, NSError *runError) {
 			if (result == nil) {
 				[server sendError:runError response:response wire:NFKServedWireOpenAI];
@@ -126,12 +182,12 @@ static NSDictionary *NFKServedCustomToolParameters(void)
 
 + (void)serveInputTokens:(NFKHTTPRequest *)request response:(NFKHTTPResponse *)response server:(NFKInferenceServer *)server
 {
-	NSDictionary *body = [server JSONBodyOf:request response:response wire:NFKServedWireOpenAI];
+	NSDictionary *body = [server JSONBodyOf:request response:response wire:NFKServedWireOpenAI fields:NFKServedResponsesFields()];
 	if (body == nil) {
 		return;
 	}
-	NSError *error = nil;
-	NFKServedTarget *target = [server modelNamed:body[@"model"] error:&error];
+	NSError *error = NFKServedResponsesNestedTypeError(body);
+	NFKServedTarget *target = error == nil ? [server modelNamed:body[@"model"] error:&error] : nil;
 	NFKInferenceRequest *inference = target != nil ? [self requestFromBody:body customToolNames:NULL error:&error] : nil;
 	if (inference == nil) {
 		[server sendError:error response:response wire:NFKServedWireOpenAI];
@@ -232,9 +288,17 @@ static NSDictionary *NFKServedCustomToolParameters(void)
 {
 	NSMutableDictionary<NSString *, NSString *> *toolNames = [NSMutableDictionary dictionary];
 	NFKServedResponsesAssistantTurn *turn = nil;
-	for (NSDictionary *item in items) {
+	for (NSUInteger index = 0; index < items.count; index++) {
+		NSDictionary *item = items[index];
 		if (![item isKindOfClass:NSDictionary.class]) {
 			return [NFKServedOpenAI setError:outError code:kNFKError_InferenceMissingInput reason:@"an input item is not an object"];
+		}
+		NSError *typeError = NFKServedResponsesItemTypeError(item, [NSString stringWithFormat:@"input[%lu]", (unsigned long)index]);
+		if (typeError != nil) {
+			if (outError != NULL) {
+				*outError = typeError;
+			}
+			return NO;
 		}
 		NSString *type = NFKServedResponsesValue(item, @"type", NSString.class) ?: @"message";
 		if ([type isEqualToString:@"reasoning"]) {
@@ -559,8 +623,8 @@ static NSDictionary *NFKServedCustomToolParameters(void)
 	if (![usage isKindOfClass:NSDictionary.class] || usage.count == 0) {
 		return NSNull.null;
 	}
-	NSInteger input = [usage[NFKUsageInputTokens] integerValue];
-	NSInteger output = [usage[NFKUsageOutputTokens] integerValue];
+	NSInteger input = NFKServedUsageCount(usage, NFKUsageInputTokens);
+	NSInteger output = NFKServedUsageCount(usage, NFKUsageOutputTokens);
 	NSMutableDictionary *wire = [@{ @"input_tokens": @(input), @"output_tokens": @(output), @"total_tokens": @(input + output) } mutableCopy];
 	if ([usage[NFKUsageCachedTokens] isKindOfClass:NSNumber.class]) {
 		wire[@"input_tokens_details"] = @{ @"cached_tokens": usage[NFKUsageCachedTokens] };
