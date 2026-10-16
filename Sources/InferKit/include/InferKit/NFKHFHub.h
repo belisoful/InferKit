@@ -407,8 +407,9 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 				of the snapshot first and deletes them once every move succeeded. It removes a
 				snapshot or folder it leaves empty, keeps a pin (.inferkit-keep), and refuses with
 				NFKDownloadErrorInUse while an NFKDownload in this process downloads into the
-				snapshot or a download call or hold keeps it in use. It keeps a file that a link elsewhere in the cache resolves to, and the
-				target of a removed link when that target is a file of another snapshot.
+				snapshot or a download call or hold keeps it in use. It keeps a file that a link
+				elsewhere in the cache resolves to, and the target of a removed link when that target
+				is a file of another snapshot.
 				Introduced in InferKit 0.4.0.
 */
 @interface NFKHFHub (NFKDownloads)
