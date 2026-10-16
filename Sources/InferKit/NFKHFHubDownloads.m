@@ -656,23 +656,6 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 
 #pragma mark Downloads
 
-/*! The free bytes of the volume holding the cache; -1 when the volume does not say. */
-- (long long)availableCapacityOfCache
-{
-	NSURL *cacheDirectoryURL = self.cacheDirectoryURL;
-	if (cacheDirectoryURL == nil) {
-		return -1;
-	}
-#if TARGET_OS_TV
-	NSURLResourceKey key = NSURLVolumeAvailableCapacityKey;
-#else
-	NSURLResourceKey key = NSURLVolumeAvailableCapacityForImportantUsageKey;
-#endif
-	NSNumber *capacity = nil;
-	[cacheDirectoryURL getResourceValue:&capacity forKey:key error:NULL];
-	return capacity != nil ? capacity.longLongValue : -1;
-}
-
 /*! Why the plan cannot start, or nil. */
 - (nullable NSError *)admissionErrorForPlan:(NFKDownloadPlan *)plan
 {

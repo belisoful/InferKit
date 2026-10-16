@@ -725,6 +725,22 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 	return inUse;
 }
 
++ (NSString *)holdSnapshotURL:(NSURL *)snapshotURL
+{
+	NSString *key = NFKDownloadSnapshotKey(snapshotURL);
+	[NFKDownloadRegistryLock() lock];
+	[NFKDownloadActiveSnapshots() addObject:key];
+	[NFKDownloadRegistryLock() unlock];
+	return key;
+}
+
++ (void)endHoldOfSnapshotKey:(NSString *)key
+{
+	[NFKDownloadRegistryLock() lock];
+	[NFKDownloadActiveSnapshots() removeObject:key];
+	[NFKDownloadRegistryLock() unlock];
+}
+
 + (void)performWithSnapshotRegistryLocked:(void (NS_NOESCAPE ^)(void))block
 {
 	[NFKDownloadRegistryLock() lock];

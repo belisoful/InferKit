@@ -418,6 +418,8 @@ enum NFKMLXReleaseDownload {
     static func directory(repo: String, revision: String?, cacheDirectoryURL: URL?,
                           required: [String], optional: [String], weights: [String]) throws -> URL {
         let hub = hub(cacheDirectoryURL: cacheDirectoryURL)
+        let hold = try hub.holdRelease(repo: repo, revision: revision)
+        defer { hold.invalidate() }
         let repoListing = listing(hub: hub, repo: repo, revision: revision,
                               needsFetch: needsFetch(hub: hub, repo: repo, revision: revision,
                                                      required: required, weights: weights))

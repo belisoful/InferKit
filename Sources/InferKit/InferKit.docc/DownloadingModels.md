@@ -48,7 +48,9 @@ substitute `defaultCacheDirectoryURL` when passed `nil`.
 `cacheSizeLimit` caps the bytes the cache holds; `NFKHFHubUnlimitedCacheSize` (-1) is no cap. Over
 the limit, a download evicts whole `<repo>/<revision>` snapshots, least recently used first. The
 snapshot just requested stays even when it alone exceeds the limit, and so does every snapshot a
-running ``NFKDownload`` writes into.
+running ``NFKDownload`` or download call writes into. A loader that fetches a release file by file
+holds its snapshot across the calls with `-holdSnapshotOfRepo:revision:error:` and invalidates the
+``NFKHFHubSnapshotHold`` when the load ends.
 
 Only a snapshot the hub owns is eligible, so a shared folder keeps everything else. The hub owns a
 snapshot it downloads into. A snapshot cached before InferKit 0.4.0 becomes owned on its next download
@@ -82,12 +84,16 @@ partial file: a file streams into a temporary `.download` name and moves into pl
 transfer that drops resumes with an HTTP Range request. A plan larger than `cacheSizeLimit` or than
 the volume's free space is refused before any transfer. A file whose size differs from its listed
 size fails with `NFKDownloadErrorSizeMismatch`, and one whose contents differ from its listed SHA-256
-with `NFKDownloadErrorChecksumMismatch`; neither stays in the cache.
+with `NFKDownloadErrorChecksumMismatch`; neither stays in the cache. A transfer stops as soon as it
+streams past the listed size, the announced length, or, for a file of unknown size, the cache volume's
+free space; `maximumFileByteCount` lowers every limit.
 
 Every repository, revision, path, and file name names a place inside the cache. One that is empty or
 absolute, holds an empty, `.`, or `..` component, or holds a backslash or a NUL character is refused
 with `NFKDownloadErrorUnsafePath` before anything is read, written, or removed, and so is a repository
-listing that names such a file.
+listing that names such a file. A folder inside the cache that links outside it is refused too, unless
+`followsFolderLinksOutOfCache` is set. A revision is one folder, with `/` stored as `%2F`: `refs/pr/1`
+caches at `<repo>/refs%2Fpr%2F1`.
 
 ```objc
 NFKDownloadPlan *plan = [hub planDownloadOfRepo:@"Qwen/Qwen3-0.6B" revision:nil
@@ -140,3 +146,4 @@ the process writes into the same snapshot.
 - ``NFKDownloadStatus``
 - ``NFKRemovalPlan``
 - ``NFKCachedFile``
+- ``NFKHFHubSnapshotHold``

@@ -327,7 +327,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   the cache. One that is empty or absolute, holds an empty, `.`, or `..` component, or holds a
   backslash or a NUL character is refused with `NFKDownloadErrorUnsafePath` before the hub reads,
   writes, or removes anything, and every write and removal checks that its location lies inside the
-  cache folder.
+  cache folder. A folder inside the cache that links to a place outside it is refused unless
+  `followsFolderLinksOutOfCache` is set; a cache folder that is itself a link, and file links inside a
+  snapshot, stay usable.
+- A revision is one cache folder: `/` in it is stored as `%2F`, so `refs/pr/1` caches at
+  `<repo>/refs%2Fpr%2F1` and a revision `main/x` no longer nests inside `main`.
+- A transfer stops with `NFKDownloadErrorSizeMismatch` once it streams past the file's listed size,
+  the length the server announced, or, for a file of unknown size, the cache volume's free space.
+  `NFKHFHub.maximumFileByteCount` lowers every limit.
 - A downloaded file whose size differs from its listed size fails with `NFKDownloadErrorSizeMismatch`
   and is not kept. A URL source's listed size takes precedence over the server's HEAD answer.
 - A removal keeps a file that a link in another snapshot resolves to, and the target of a removed link
@@ -338,7 +345,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   uses.
 - `trimCacheToSizeLimitWithError:` and the eviction after each download skip a snapshot an unfinished
   `NFKDownload` writes into, including between its files, and `removeCachedRepo:revision:error:`
-  refuses one with `NFKDownloadErrorInUse`.
+  refuses one with `NFKDownloadErrorInUse`. Each `downloadRepo:revision:path:sha256:error:` call keeps
+  its snapshot in use while it runs, and `holdSnapshotOfRepo:revision:error:` returns an
+  `NFKHFHubSnapshotHold` that keeps one in use across calls until it is invalidated.
 
 #### A catalog of the models a process can run
 
@@ -1195,6 +1204,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### A release stays cached while it loads
+
+- A release download holds its snapshot (`NFKHFHubSnapshotHold`) while it fetches every file, so a
+  cache trim another download runs between two of its files cannot evict the files fetched first.
+  The Open-Jev, Open-Jev DeBERTa, Laya, VoiceRestore, and Stable Diffusion downloads hold each
+  repository they fetch from the same way.
 
 #### Catalog models build with load options
 

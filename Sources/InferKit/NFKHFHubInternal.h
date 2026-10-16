@@ -65,6 +65,9 @@ extern NSError * _Nullable NFKHFHubUnsafePathError(NSString * _Nullable string, 
 				   expectedByteCount:(long long)expectedByteCount
 							   error:(NSError * _Nullable *)outError;
 
+/*! The free bytes of the volume holding the cache; -1 when the volume does not say. */
+- (long long)availableCapacityOfCache;
+
 /*! The SHA-256 of a file as lowercase hexadecimal digits; nil when it cannot be read. */
 - (nullable NSString *)sha256OfFileAtURL:(NSURL *)url;
 

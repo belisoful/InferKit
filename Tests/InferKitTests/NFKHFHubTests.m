@@ -2,8 +2,8 @@
 //  NFKHFHubTests.m
 //  NFKTests
 //
-//  Covers URL construction, caching, checksum, and the refusal of unsafe names through a stub
-//  transport. A live download is integration-verified.
+//  Covers URL construction, caching, checksum, revision folders, holds, and the refusal of unsafe
+//  names and linked folders through a stub transport. A live download is integration-verified.
 //
 
 #import <XCTest/XCTest.h>
@@ -20,8 +20,30 @@
 
 - (BOOL)fetchURL:(NSURL *)remoteURL toFileURL:(NSURL *)destinationURL error:(NSError **)outError
 {
-	self.fetchCount += 1;
+	@synchronized (self) {
+		self.fetchCount += 1;
+	}
 	return [self.stagedData writeToURL:destinationURL atomically:YES];
+}
+
+@end
+
+/*! A stub that holds the fetch of one file until the test opens the gate. */
+@interface FxGatedHFHubStub : FxHFHubStub
+@property (nonatomic, copy) NSString *gatedFileName;
+@property (nonatomic, strong) dispatch_semaphore_t arrived;
+@property (nonatomic, strong) dispatch_semaphore_t gate;
+@end
+
+@implementation FxGatedHFHubStub
+
+- (BOOL)fetchURL:(NSURL *)remoteURL toFileURL:(NSURL *)destinationURL error:(NSError **)outError
+{
+	if ([remoteURL.lastPathComponent isEqualToString:self.gatedFileName]) {
+		dispatch_semaphore_signal(self.arrived);
+		dispatch_semaphore_wait(self.gate, dispatch_time(DISPATCH_TIME_NOW, 20 * (int64_t)NSEC_PER_SEC));
+	}
+	return [super fetchURL:remoteURL toFileURL:destinationURL error:outError];
 }
 
 @end
@@ -498,7 +520,7 @@
 	}
 	XCTAssertEqual(self.hub.fetchCount, (NSUInteger)0);
 	NSURL *nested = [self.hub localURLForRepo:@"org/model" revision:@"refs/pr/1" path:@"f.bin"];
-	XCTAssertEqualObjects(nested.path, [self.cacheDir URLByAppendingPathComponent:@"org/model/refs/pr/1/f.bin"].path);
+	XCTAssertEqualObjects(nested.path, [self.cacheDir URLByAppendingPathComponent:@"org/model/refs%2Fpr%2F1/f.bin"].path);
 }
 
 - (void)testRemovingAnUnsafeRepositoryIsRefused
@@ -526,6 +548,151 @@
 	[self assertUnsafePathError:error];
 	XCTAssertTrue([NSFileManager.defaultManager fileExistsAtPath:keep.path], @"the outside file stays");
 	XCTAssertFalse([self.hub isCachedRepoPinned:[self hostileRepo] revision:nil]);
+}
+
+#pragma mark Revision folders
+
+- (void)testARevisionWithASlashIsOneFolderBesideItsPrefix
+{
+	XCTAssertNotNil([self.hub downloadRepo:@"org/model" revision:@"main" path:@"f.bin" sha256:nil error:NULL]);
+	NSURL *inner = [self.hub downloadRepo:@"org/model" revision:@"main/x" path:@"f.bin" sha256:nil error:NULL];
+	XCTAssertEqualObjects(inner.path, [self.cacheDir URLByAppendingPathComponent:@"org/model/main%2Fx/f.bin"].path);
+
+	XCTAssertTrue([self.hub removeCachedRepo:@"org/model" revision:@"main" error:NULL]);
+	XCTAssertFalse([self.hub isCachedRepo:@"org/model" revision:@"main" path:@"f.bin"]);
+	XCTAssertTrue([self.hub isCachedRepo:@"org/model" revision:@"main/x" path:@"f.bin"], @"removing main leaves main/x");
+}
+
+- (void)testAPullRequestRevisionCachesAndResolvesUnderItsName
+{
+	NSURL *local = [self.hub downloadRepo:@"org/model" revision:@"refs/pr/1" path:@"f.bin" sha256:nil error:NULL];
+	XCTAssertEqualObjects(local.lastPathComponent, @"f.bin");
+	XCTAssertEqualObjects(local.URLByDeletingLastPathComponent.lastPathComponent, @"refs%2Fpr%2F1");
+	XCTAssertTrue([self.hub isCachedRepo:@"org/model" revision:@"refs/pr/1" path:@"f.bin"]);
+	XCTAssertEqualObjects([self.hub remoteURLForRepo:@"org/model" revision:@"refs/pr/1" path:@"f.bin"].absoluteString,
+						  @"https://huggingface.co/org/model/resolve/refs/pr/1/f.bin", @"the resolve URL is unchanged");
+	XCTAssertTrue([self.hub pinCachedRepo:@"org/model" revision:@"refs/pr/1" error:NULL]);
+	XCTAssertTrue([self.hub isCachedRepoPinned:@"org/model" revision:@"refs/pr/1"]);
+	XCTAssertFalse([self.hub isCachedRepoPinned:@"org/model" revision:@"refs"]);
+}
+
+#pragma mark Linked folders
+
+- (void)testAFolderInsideTheCacheThatLinksOutsideIsRefusedUnlessFollowed
+{
+	NSURL *link = [self.cacheDir URLByAppendingPathComponent:@"linked"];
+	XCTAssertTrue([NSFileManager.defaultManager createSymbolicLinkAtURL:link withDestinationURL:self.outsideDir error:NULL]);
+
+	NSError *error = nil;
+	XCTAssertNil([self.hub downloadRepo:@"linked" revision:nil path:@"planted.bin" sha256:nil error:&error]);
+	[self assertUnsafePathError:error];
+	error = nil;
+	XCTAssertFalse([self.hub removeCachedRepo:@"linked" revision:nil error:&error], @"the snapshot resolves to the outside folder");
+	[self assertUnsafePathError:error];
+	error = nil;
+	XCTAssertFalse([self.hub pinCachedRepo:@"linked" revision:nil error:&error]);
+	[self assertUnsafePathError:error];
+	XCTAssertEqual(self.hub.fetchCount, (NSUInteger)0);
+	[self assertTheOutsideFolderIsUntouched];
+
+	self.hub.followsFolderLinksOutOfCache = YES;
+	NSURL *planted = [self.hub downloadRepo:@"linked" revision:nil path:@"planted.bin" sha256:nil error:&error];
+	XCTAssertNotNil(planted, @"%@", error);
+	XCTAssertTrue([NSFileManager.defaultManager fileExistsAtPath:[[self victimURL].URLByDeletingLastPathComponent
+																  URLByAppendingPathComponent:@"planted.bin"].path],
+		@"the opt-in writes through the linked folder");
+}
+
+- (void)testACacheFolderThatIsItselfALinkStaysUsable
+{
+	NSURL *alias = [NSURL fileURLWithPath:[self.cacheDir.path stringByAppendingString:@"-alias"]];
+	XCTAssertTrue([NSFileManager.defaultManager createSymbolicLinkAtURL:alias withDestinationURL:self.cacheDir error:NULL]);
+	FxHFHubStub *hub = [[FxHFHubStub alloc] init];
+	hub.cacheDirectoryURL = alias;
+	hub.stagedData = self.hub.stagedData;
+	NSError *error = nil;
+	XCTAssertNotNil([hub downloadRepo:@"org/model" revision:nil path:@"f.bin" sha256:nil error:&error], @"%@", error);
+	XCTAssertTrue([hub removeCachedRepo:@"org/model" revision:nil error:&error], @"%@", error);
+	XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:[self.cacheDir URLByAppendingPathComponent:@"org"].path]);
+	[NSFileManager.defaultManager removeItemAtURL:alias error:NULL];
+}
+
+#pragma mark Holds
+
+- (FxGatedHFHubStub *)gatedHubHoldingFileNamed:(NSString *)name
+{
+	FxGatedHFHubStub *hub = [[FxGatedHFHubStub alloc] init];
+	hub.cacheDirectoryURL = self.cacheDir;
+	hub.stagedData = [NSMutableData dataWithLength:8192];
+	hub.gatedFileName = name;
+	hub.arrived = dispatch_semaphore_create(0);
+	hub.gate = dispatch_semaphore_create(0);
+	return hub;
+}
+
+- (BOOL)trimToZero
+{
+	NFKHFHub *other = [NFKHFHub hubWithCacheDirectoryURL:self.cacheDir];
+	other.cacheSizeLimit = 0;
+	return [other trimCacheToSizeLimitWithError:NULL];
+}
+
+- (void)testASynchronousDownloadKeepsItsSnapshotWhileItRuns
+{
+	FxGatedHFHubStub *hub = [self gatedHubHoldingFileNamed:@"b.bin"];
+	XCTAssertNotNil([hub downloadRepo:@"org/load" revision:nil path:@"a.bin" sha256:nil error:NULL]);
+	dispatch_semaphore_t finished = dispatch_semaphore_create(0);
+	__block NSURL *second = nil;
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		second = [hub downloadRepo:@"org/load" revision:nil path:@"b.bin" sha256:nil error:NULL];
+		dispatch_semaphore_signal(finished);
+	});
+	XCTAssertEqual(dispatch_semaphore_wait(hub.arrived, dispatch_time(DISPATCH_TIME_NOW, 10 * (int64_t)NSEC_PER_SEC)), 0L);
+
+	XCTAssertTrue([self trimToZero]);
+	XCTAssertTrue([hub isCachedRepo:@"org/load" revision:nil path:@"a.bin"], @"the running call keeps its snapshot");
+
+	dispatch_semaphore_signal(hub.gate);
+	XCTAssertEqual(dispatch_semaphore_wait(finished, dispatch_time(DISPATCH_TIME_NOW, 20 * (int64_t)NSEC_PER_SEC)), 0L);
+	XCTAssertNotNil(second);
+	XCTAssertTrue([hub isCachedRepo:@"org/load" revision:nil path:@"a.bin"]);
+}
+
+- (void)testAHoldKeepsASnapshotBetweenSynchronousDownloads
+{
+	NSError *error = nil;
+	NFKHFHubSnapshotHold *hold = [self.hub holdSnapshotOfRepo:@"org/load" revision:nil error:&error];
+	XCTAssertNotNil(hold, @"%@", error);
+	XCTAssertTrue(hold.isValid);
+	XCTAssertNotNil([self.hub downloadRepo:@"org/load" revision:nil path:@"a.bin" sha256:nil error:NULL]);
+
+	XCTAssertTrue([self trimToZero]);
+	XCTAssertTrue([self.hub isCachedRepo:@"org/load" revision:nil path:@"a.bin"], @"no call runs, and the hold keeps the snapshot");
+	error = nil;
+	XCTAssertFalse([self.hub removeCachedRepo:@"org/load" revision:nil error:&error]);
+	XCTAssertEqual(error.code, NFKDownloadErrorInUse, @"%@", error);
+	XCTAssertNotNil([self.hub downloadRepo:@"org/load" revision:nil path:@"b.bin" sha256:nil error:NULL]);
+
+	[hold invalidate];
+	XCTAssertFalse(hold.isValid);
+	[hold invalidate];
+	XCTAssertTrue([self trimToZero]);
+	XCTAssertFalse([self.hub isCachedRepo:@"org/load" revision:nil path:@"a.bin"], @"the snapshot is evictable once released");
+}
+
+- (void)testADeallocatedHoldReleasesItsSnapshot
+{
+	@autoreleasepool {
+		NFKHFHubSnapshotHold *hold = [self.hub holdSnapshotOfRepo:@"org/load" revision:nil error:NULL];
+		XCTAssertNotNil(hold);
+		XCTAssertNotNil([self.hub downloadRepo:@"org/load" revision:nil path:@"a.bin" sha256:nil error:NULL]);
+		hold = nil;
+	}
+	XCTAssertTrue([self trimToZero]);
+	XCTAssertFalse([self.hub isCachedRepo:@"org/load" revision:nil path:@"a.bin"]);
+	NSError *error = nil;
+	XCTAssertNil([self.hub holdSnapshotOfRepo:@"../escape" revision:nil error:&error]);
+	[self assertUnsafePathError:error];
 }
 
 @end

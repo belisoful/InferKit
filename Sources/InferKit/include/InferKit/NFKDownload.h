@@ -46,7 +46,8 @@ typedef NS_ERROR_ENUM(NFKDownloadErrorDomain, NFKDownloadError) {
 	NFKDownloadErrorRequiresConversion			= 8,
 	/*! The source names no repository or URL, or its kind is not one the hub downloads. */
 	NFKDownloadErrorUnsupportedSource			= 9,
-	/*! A removal named files that an NFKDownload in this process is downloading. */
+	/*! A removal named files that an NFKDownload in this process is downloading, or that a download
+		call or an NFKHFHubSnapshotHold keeps in use. */
 	NFKDownloadErrorInUse						= 10,
 	/*! The transfer ended with fewer or more bytes than the server announced. */
 	NFKDownloadErrorIncomplete					= 11,
@@ -56,7 +57,8 @@ typedef NS_ERROR_ENUM(NFKDownloadErrorDomain, NFKDownloadError) {
 		anything. */
 	NFKDownloadErrorUnsafePath					= 12,
 	/*! A downloaded file's size differs from the size the repository listing or the model source
-		gives. The file is not kept. */
+		gives, or its transfer streamed past its limit (NFKHFHub.maximumFileByteCount). The file is
+		not kept. */
 	NFKDownloadErrorSizeMismatch				= 13,
 };
 

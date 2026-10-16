@@ -780,4 +780,49 @@ static NSString * const NFKTestRepo = @"org/model";
 	XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:[self.cacheDir.path stringByAppendingString:@"-outside"]]);
 }
 
+#pragma mark Streaming limits
+
+- (void)testATransferStopsOnceItStreamsPastTheListedSize
+{
+	NSDictionary<NSString *, NFKStubHubResponse *> *responses = [self serveTheModel];
+	responses[@"config.json"].body = self.weights;
+	responses[@"config.json"].chunkSize = 4096;
+	responses[@"config.json"].stallsAfterFirstChunk = YES;
+
+	NFKDownload *download = nil;
+	NSError *error = nil;
+	[self runDownloadOfPlan:[self planPaths:@[ @"config.json" ]] download:&download error:&error];
+	[download cancel];
+	XCTAssertEqual(download.state, NFKDownloadStateFailed, @"a stalled body past the listed size ends without waiting for it");
+	XCTAssertEqual(error.code, NFKDownloadErrorSizeMismatch, @"%@", error);
+	NSURL *localURL = [self.hub localURLForRepo:NFKTestRepo revision:nil path:@"config.json"];
+	XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:localURL.path]);
+	XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:[localURL URLByAppendingPathExtension:@"download"].path]);
+}
+
+- (void)testAnUnlistedTransferStopsAtTheHubsMaximum
+{
+	NSDictionary<NSString *, NFKStubHubResponse *> *responses = [self serveTheModel];
+	responses[@"model.safetensors"].stallsAfterFirstChunk = YES;
+	self.hub.maximumFileByteCount = 1000;
+
+	XCTestExpectation *done = [self expectationWithDescription:@"download"];
+	__block NSError *finalError = nil;
+	__block NSURL *location = nil;
+	[self.hub downloadRepo:NFKTestRepo revision:nil path:@"model.safetensors" sha256:nil completionHandler:^(NSURL *localURL, NSError *error) {
+		location = localURL;
+		finalError = error;
+		[done fulfill];
+	}];
+	[self waitForExpectations:@[ done ] timeout:10];
+	XCTAssertNil(location);
+	XCTAssertEqual(finalError.code, NFKDownloadErrorSizeMismatch, @"%@", finalError);
+	XCTAssertFalse([self.hub isCachedRepo:NFKTestRepo revision:nil path:@"model.safetensors"]);
+
+	self.hub.maximumFileByteCount = -1;
+	responses[@"model.safetensors"].stallsAfterFirstChunk = NO;
+	NSError *error = nil;
+	XCTAssertNotNil([self.hub downloadRepo:NFKTestRepo revision:nil path:@"config.json" sha256:nil error:&error], @"%@", error);
+}
+
 @end

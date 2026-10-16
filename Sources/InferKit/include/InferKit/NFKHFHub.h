@@ -22,6 +22,31 @@ extern NSString * const NFKHFHubDefaultRevision;
 extern const long long NFKHFHubUnlimitedCacheSize;
 
 /*!
+	@class      NFKHFHubSnapshotHold
+	@abstract   Keeps one cached snapshot in use until it is invalidated.
+	@discussion While a hold is valid, eviction skips the snapshot and a removal of it fails with
+				NFKDownloadErrorInUse, as for a snapshot an NFKDownload writes into. A loader that
+				fetches a release file by file holds the release's snapshot across its calls, so a
+				trim another download runs between two files cannot evict the files fetched first.
+				Holds count: a snapshot stays in use while any hold on it is valid. Deallocating a
+				hold invalidates it. Introduced in InferKit 0.4.0.
+*/
+@interface NFKHFHubSnapshotHold : NSObject
+
+/*! The snapshot folder the hold keeps in use. */
+@property (nonatomic, readonly, copy) NSURL *snapshotURL;
+/*! YES until invalidate is sent. */
+@property (nonatomic, readonly, getter=isValid) BOOL valid;
+
+/*! Ends the hold. Later calls do nothing. */
+- (void)invalidate;
+
+- (instancetype)init NS_UNAVAILABLE;
++ (instancetype)new NS_UNAVAILABLE;
+
+@end
+
+/*!
 	@class      NFKHFHub
 	@abstract   Resolves and downloads public Hugging Face model files into a local cache.
 	@discussion The access layer, kept separate from execution: it
@@ -61,7 +86,13 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 				that is empty or absolute, holds an empty, ".", or ".." component, or holds a
 				backslash or a NUL character is refused with NFKDownloadErrorUnsafePath before the hub
 				reads, writes, or removes anything; the URL methods return nil for it. Each write and
-				removal also checks that its location lies inside cacheDirectoryURL.
+				removal also checks that its location lies inside cacheDirectoryURL, and that the
+				folder it lands in does not resolve through a symbolic link to a place outside the
+				cache folder's real path (followsFolderLinksOutOfCache). A revision is one folder: a
+				"/" in it is stored as %2F, so refs/pr/1 caches at <cache>/<repo>/refs%2Fpr%2F1.
+
+				Each call of downloadRepo:revision:path:sha256:error: keeps its snapshot in use while
+				it runs; holdSnapshotOfRepo:revision:error: keeps one in use across calls.
 */
 @interface NFKHFHub : NSObject
 
@@ -158,6 +189,29 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 @property (nonatomic, assign) BOOL excludesCacheFromBackup;
 
 /*!
+	@property   followsFolderLinksOutOfCache
+	@abstract   Whether the hub writes and removes through a folder inside the cache that links to a
+				place outside it. Defaults to NO.
+	@discussion NO → a write or removal whose folder resolves, through a symbolic link, outside the
+				real path of cacheDirectoryURL fails with NFKDownloadErrorUnsafePath. A cache folder
+				that is itself a link resolves to its real path and stays usable, and so does a file
+				link inside a snapshot. YES → a repository or snapshot folder inside the cache may link
+				to another volume. Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, assign) BOOL followsFolderLinksOutOfCache;
+
+/*!
+	@property   maximumFileByteCount
+	@abstract   The most bytes one file's transfer may stream; -1 (the default) for no maximum beyond
+				the limits below.
+	@discussion A transfer stops with NFKDownloadErrorSizeMismatch, and keeps nothing, once it streams
+				past its limit: the file's listed size when the plan has one, else the length the
+				server announces, else the free space of the cache volume. A non-negative
+				maximumFileByteCount lowers every limit to itself. Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, assign) long long maximumFileByteCount;
+
+/*!
 	@method     setExcludedFromBackup:forURL:error:
 	@abstract   Excludes a file or folder from backup, or includes it again; YES on success.
 	@discussion Sets NSURLIsExcludedFromBackupKey. The setting travels with the item when it moves.
@@ -185,8 +239,9 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 				success.
 	@discussion A download calls it after each fetch; a caller calls it after lowering the limit.
 				A negative limit evicts nothing. A snapshot that an unfinished NFKDownload in this
-				process writes into is not evicted, including between its files. Introduced in
-				InferKit 0.4.0.
+				process writes into is not evicted, including between its files, and neither is one a
+				running downloadRepo:revision:path:sha256:error: call or an NFKHFHubSnapshotHold
+				keeps in use. Introduced in InferKit 0.4.0.
 */
 - (BOOL)trimCacheToSizeLimitWithError:(NSError * _Nullable *)outError;
 
@@ -223,11 +278,23 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 - (BOOL)isCachedRepoPinned:(NSString *)repo revision:(nullable NSString *)revision;
 
 /*!
+	@method     holdSnapshotOfRepo:revision:error:
+	@abstract   Keeps a snapshot in use until the returned hold is invalidated; nil with an error
+				without a cache folder or for an unsafe repository or revision.
+	@discussion The snapshot need not exist yet. A loader holds a release's snapshot for its whole
+				load and invalidates the hold when the load ends. A nil revision is "main".
+				Introduced in InferKit 0.4.0.
+*/
+- (nullable NFKHFHubSnapshotHold *)holdSnapshotOfRepo:(NSString *)repo
+											 revision:(nullable NSString *)revision
+												error:(NSError * _Nullable *)outError NS_SWIFT_NAME(holdSnapshot(repo:revision:));
+
+/*!
 	@method     removeCachedRepo:revision:error:
 	@abstract   Removes one cached snapshot and any folder it leaves empty; YES on success, including
 				when nothing was cached.
 	@discussion Refuses with NFKDownloadErrorInUse while an NFKDownload in this process writes into
-				the snapshot. A nil revision is "main". Introduced in InferKit 0.4.0.
+				the snapshot or a hold keeps it. A nil revision is "main". Introduced in InferKit 0.4.0.
 */
 - (BOOL)removeCachedRepo:(NSString *)repo revision:(nullable NSString *)revision error:(NSError * _Nullable *)outError;
 
@@ -340,7 +407,7 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 				of the snapshot first and deletes them once every move succeeded. It removes a
 				snapshot or folder it leaves empty, keeps a pin (.inferkit-keep), and refuses with
 				NFKDownloadErrorInUse while an NFKDownload in this process downloads into the
-				snapshot. It keeps a file that a link elsewhere in the cache resolves to, and the
+				snapshot or a download call or hold keeps it in use. It keeps a file that a link elsewhere in the cache resolves to, and the
 				target of a removed link when that target is a file of another snapshot.
 				Introduced in InferKit 0.4.0.
 */
@@ -547,7 +614,8 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 				error when nothing was removed.
 	@discussion Plans again first, so a file that became shared since the plan was made is kept. The
 				result's freedByteCount is the bytes freed. Refuses with NFKDownloadErrorInUse while an
-				NFKDownload in this process downloads into the snapshot.
+				NFKDownload in this process downloads into the snapshot or a download call or
+				NFKHFHubSnapshotHold keeps it in use.
 */
 - (nullable NFKRemovalPlan *)removeFilesInPlan:(NFKRemovalPlan *)plan error:(NSError * _Nullable *)outError;
 

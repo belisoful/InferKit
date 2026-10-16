@@ -88,6 +88,29 @@ static NSString *NFKHFHubLexicalPath(NSString *path)
 	return [@"/" stringByAppendingString:[stack componentsJoinedByString:@"/"]];
 }
 
+/*! path with the links of its deepest existing ancestor resolved by realpath and the missing
+	components appended, so a path that does not exist yet still resolves through the folders that do. */
+static NSString *NFKHFHubRealPath(NSString *path)
+{
+	NSString *existing = path;
+	NSMutableArray<NSString *> *missing = [NSMutableArray array];
+	while (YES) {
+		char resolved[PATH_MAX];
+		if (realpath(existing.fileSystemRepresentation, resolved) != NULL) {
+			NSString *real = [NSFileManager.defaultManager stringWithFileSystemRepresentation:resolved length:strlen(resolved)];
+			for (NSString *component in missing.reverseObjectEnumerator) {
+				real = [real stringByAppendingPathComponent:component];
+			}
+			return real;
+		}
+		if (existing.length <= 1) {
+			return path;
+		}
+		[missing addObject:existing.lastPathComponent];
+		existing = existing.stringByDeletingLastPathComponent;
+	}
+}
+
 static long long NFKHFHubDefaultCacheSizeLimitValue = -1;
 static BOOL NFKHFHubDefaultExcludesCacheFromBackupValue = YES;
 static NSString *NFKHFHubDefaultAccessTokenValue = nil;
@@ -101,6 +124,63 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 @implementation NFKHFHubSnapshot
 @end
 
+@interface NFKHFHubSnapshotHold ()
+@property (nonatomic, copy) NSString *registryKey;
+@property (nonatomic, readwrite, getter=isValid) BOOL valid;
+- (instancetype)initWithSnapshotURL:(NSURL *)snapshotURL;
+@end
+
+@implementation NFKHFHubSnapshotHold
+
+@synthesize snapshotURL = _snapshotURL;
+@synthesize registryKey = _registryKey;
+@synthesize valid = _valid;
+
+- (instancetype)initWithSnapshotURL:(NSURL *)snapshotURL
+{
+	self = [super init];
+	if (self != nil) {
+		_snapshotURL = [snapshotURL copy];
+		_registryKey = [NFKDownload holdSnapshotURL:snapshotURL];
+		_valid = YES;
+	}
+	return self;
+}
+
+- (void)dealloc
+{
+	[self invalidate];
+}
+
+- (BOOL)isValid
+{
+	@synchronized (self) {
+		return _valid;
+	}
+}
+
+- (void)invalidate
+{
+	NSString *key = nil;
+	@synchronized (self) {
+		if (!self.valid) {
+			return;
+		}
+		self.valid = NO;
+		key = self.registryKey;
+	}
+	[NFKDownload endHoldOfSnapshotKey:key];
+}
+
+- (void)setValid:(BOOL)valid
+{
+	@synchronized (self) {
+		_valid = valid;
+	}
+}
+
+@end
+
 @implementation NFKHFHub
 
 @synthesize cacheDirectoryURL = _cacheDirectoryURL;
@@ -110,6 +190,8 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 @synthesize cacheSizeLimit = _cacheSizeLimit;
 @synthesize excludesCacheFromBackup = _excludesCacheFromBackup;
 @synthesize modelCatalog = _modelCatalog;
+@synthesize followsFolderLinksOutOfCache = _followsFolderLinksOutOfCache;
+@synthesize maximumFileByteCount = _maximumFileByteCount;
 
 + (instancetype)hubWithCacheDirectoryURL:(nullable NSURL *)cacheDirectoryURL
 {
@@ -124,6 +206,7 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 	if (self != nil) {
 		_cacheSizeLimit = NFKHFHub.defaultCacheSizeLimit;
 		_excludesCacheFromBackup = NFKHFHub.defaultExcludesCacheFromBackup;
+		_maximumFileByteCount = -1;
 	}
 	return self;
 }
@@ -308,7 +391,26 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 		return nil;
 	}
 	NSURL *url = [self URL:self.cacheDirectoryURL byAppendingPathString:repo];
-	return [self URL:url byAppendingPathString:[self normalizedRevision:revision]];
+	return [url URLByAppendingPathComponent:[self revisionFolderName:revision]];
+}
+
+/*! The folder name of a revision: the normalized revision with "%" stored as %25 and "/" as %2F, so
+	every revision is one folder and refs/pr/1 never nests inside a revision named refs. */
+- (NSString *)revisionFolderName:(nullable NSString *)revision
+{
+	NSString *escaped = [[self normalizedRevision:revision] stringByReplacingOccurrencesOfString:@"%" withString:@"%25"];
+	return [escaped stringByReplacingOccurrencesOfString:@"/" withString:@"%2F"];
+}
+
+- (nullable NFKHFHubSnapshotHold *)holdSnapshotOfRepo:(NSString *)repo
+											 revision:(nullable NSString *)revision
+												error:(NSError * _Nullable *)outError
+{
+	NSURL *snapshotURL = [self snapshotURLForRepo:repo revision:revision error:outError];
+	if (snapshotURL == nil) {
+		return nil;
+	}
+	return [[NFKHFHubSnapshotHold alloc] initWithSnapshotURL:snapshotURL];
 }
 
 - (BOOL)isURL:(NSURL *)url insideCacheURL:(NSURL *)cacheDirectoryURL
@@ -322,16 +424,25 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 	if (realpath(cacheDirectoryURL.fileSystemRepresentation, resolved) != NULL) {
 		[roots addObject:[NSFileManager.defaultManager stringWithFileSystemRepresentation:resolved length:strlen(resolved)]];
 	}
+	BOOL lexicallyInside = NO;
 	for (NSString *root in roots) {
 		NSString *prefix = NFKHFHubLexicalPath(root);
 		if (![prefix hasSuffix:@"/"]) {
 			prefix = [prefix stringByAppendingString:@"/"];
 		}
 		if ([path hasPrefix:prefix] && path.length > prefix.length) {
-			return YES;
+			lexicallyInside = YES;
+			break;
 		}
 	}
-	return NO;
+	if (!lexicallyInside || self.followsFolderLinksOutOfCache) {
+		return lexicallyInside;
+	}
+	// The folder the item lands in, with its links resolved, must stay under the cache's real path.
+	// The item itself is not resolved: a removal moves a link, not its target.
+	NSString *realRoot = NFKHFHubRealPath(NFKHFHubLexicalPath(cacheDirectoryURL.path));
+	NSString *realFolder = NFKHFHubRealPath(path.stringByDeletingLastPathComponent);
+	return [realFolder isEqualToString:realRoot] || [realFolder hasPrefix:[realRoot stringByAppendingString:@"/"]];
 }
 
 - (BOOL)requireURL:(NSURL *)url insideCacheURL:(NSURL *)cacheDirectoryURL error:(NSError * _Nullable *)outError
@@ -339,8 +450,8 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 	if ([self isURL:url insideCacheURL:cacheDirectoryURL]) {
 		return YES;
 	}
-	NSString *reason = [NSString stringWithFormat:@"%@ is outside the cache folder %@, and the hub writes and removes only inside it",
-						url.path, cacheDirectoryURL.path];
+	NSString *reason = [NSString stringWithFormat:@"%@ is outside the cache folder %@, directly or through a linked "
+						"folder, and the hub writes and removes only inside it", url.path, cacheDirectoryURL.path];
 	return [self propagateError:[NFKDownload errorWithCode:NFKDownloadErrorUnsafePath reason:reason] to:outError];
 }
 
@@ -422,6 +533,9 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 
 	NSFileManager *fileManager = NSFileManager.defaultManager;
 	BOOL scoped = [cacheDirectoryURL startAccessingSecurityScopedResource];
+	// Held for the call, so a trim another download runs meanwhile cannot evict the snapshot, with or
+	// without a current NFKDownload.
+	NSString *holdKey = [NFKDownload holdSnapshotURL:snapshotURL];
 	@try {
 		if ([fileManager fileExistsAtPath:localURL.path]) {
 			if ([self cachedFileAtURL:localURL matchesSHA256:expectedSHA256 byteCount:expectedByteCount]) {
@@ -480,6 +594,7 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 		[self trimCacheKeepingSnapshotURL:snapshotURL error:NULL];
 		return localURL;
 	} @finally {
+		[NFKDownload endHoldOfSnapshotKey:holdKey];
 		if (scoped) {
 			[cacheDirectoryURL stopAccessingSecurityScopedResource];
 		}
@@ -521,16 +636,13 @@ expectedByteCount:(long long)expectedByteCount
 {
 	NSMutableDictionary *threadDictionary = NSThread.currentThread.threadDictionary;
 	id previous = threadDictionary[NFKHFHubTransferReportKey];
-	if (download != nil) {
-		NFKHFHubTransferReport *report = [[NFKHFHubTransferReport alloc] init];
-		report.download = download;
-		report.localURL = localURL;
-		report.path = path;
-		report.expectedByteCount = expectedByteCount;
-		threadDictionary[NFKHFHubTransferReportKey] = report;
-	} else {
-		[threadDictionary removeObjectForKey:NFKHFHubTransferReportKey];
-	}
+	NFKHFHubTransferReport *report = [[NFKHFHubTransferReport alloc] init];
+	report.download = download;
+	report.localURL = localURL;
+	report.path = path;
+	report.expectedByteCount = expectedByteCount;
+	report.ceilingByteCount = [self ceilingByteCountForExpectedByteCount:expectedByteCount];
+	threadDictionary[NFKHFHubTransferReportKey] = report;
 	@try {
 		return [self fetchURL:remoteURL toFileURL:partialURL error:outError];
 	} @finally {
@@ -540,6 +652,17 @@ expectedByteCount:(long long)expectedByteCount
 			[threadDictionary removeObjectForKey:NFKHFHubTransferReportKey];
 		}
 	}
+}
+
+/*! The most bytes a transfer streams whatever the server announces: maximumFileByteCount when set,
+	else the cache volume's free space for a file of unknown size; -1 for none. */
+- (long long)ceilingByteCountForExpectedByteCount:(long long)expectedByteCount
+{
+	long long maximum = self.maximumFileByteCount;
+	if (maximum >= 0) {
+		return maximum;
+	}
+	return expectedByteCount < 0 ? [self availableCapacityOfCache] : -1;
 }
 
 - (void)downloadRepo:(NSString *)repo
@@ -662,6 +785,10 @@ expectedByteCount:(long long)expectedByteCount
 {
 	NSFileManager *fileManager = NSFileManager.defaultManager;
 	NSString *markerPath = [snapshotURL URLByAppendingPathComponent:NFKHFHubOwnedMarkerName].path;
+	// A marker that is a link would carry the writes below to the link's target.
+	if ([[fileManager attributesOfItemAtPath:markerPath error:NULL][NSFileType] isEqualToString:NSFileTypeSymbolicLink]) {
+		[fileManager removeItemAtPath:markerPath error:NULL];
+	}
 	if (![fileManager fileExistsAtPath:markerPath]) {
 		[fileManager createFileAtPath:markerPath contents:[NSData data] attributes:nil];
 		return;
@@ -715,6 +842,24 @@ expectedByteCount:(long long)expectedByteCount
 		}
 	}
 	return total;
+}
+
+- (long long)availableCapacityOfCache
+{
+	NSURL *cacheDirectoryURL = self.cacheDirectoryURL;
+	if (cacheDirectoryURL == nil) {
+		return -1;
+	}
+#if TARGET_OS_TV
+	NSURLResourceKey key = NSURLVolumeAvailableCapacityKey;
+#else
+	NSURLResourceKey key = NSURLVolumeAvailableCapacityForImportantUsageKey;
+#endif
+	NSNumber *capacity = nil;
+	// NSURL caches resource values per instance, and the free space changes with every download.
+	[cacheDirectoryURL removeCachedResourceValueForKey:key];
+	[cacheDirectoryURL getResourceValue:&capacity forKey:key error:NULL];
+	return capacity != nil ? capacity.longLongValue : -1;
 }
 
 - (long long)cacheSize
@@ -899,7 +1044,8 @@ expectedByteCount:(long long)expectedByteCount
 			return;
 		}
 		NSURL *keepURL = [snapshotURL URLByAppendingPathComponent:NFKHFHubKeepMarkerName];
-		pinned = [[NSData data] writeToURL:keepURL options:0 error:&pinError];
+		// Written atomically, so a pin that is a link is replaced, never written through.
+		pinned = [[NSData data] writeToURL:keepURL options:NSDataWritingAtomic error:&pinError];
 	}];
 	if (!pinned) {
 		return [self propagateError:pinError to:outError];

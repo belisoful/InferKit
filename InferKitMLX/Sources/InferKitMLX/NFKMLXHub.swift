@@ -191,6 +191,14 @@ enum NFKMLXDownload {
 
 extension NFKHFHub {
 
+    /// Holds the snapshot of `repo` at `revision` in use (`holdSnapshot(repo:revision:)`) until the
+    /// returned hold is invalidated, so a trim another download runs between the files of a release
+    /// load cannot evict the files fetched first. A load after an unload holds too: it reads the files
+    /// the hold keeps.
+    func holdRelease(repo: String, revision: String?) throws -> NFKHFHubSnapshotHold {
+        try holdSnapshot(repo: repo, revision: revision)
+    }
+
     /// The local URL of `path` in `repo`, downloaded when it is not cached. Inside a load after an unload
     /// (`NFKMLXReload.reloading(_:)`) the file comes from the cache only: a file missing from it throws
     /// `NFKMLXReloadError.modelFilesRemoved`, and no request is made. Every download helper in the package
