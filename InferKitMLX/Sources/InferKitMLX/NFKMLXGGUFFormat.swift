@@ -83,6 +83,7 @@ public struct NFKMLXGGUFFormat {
     private static let magic: UInt32 = 0x4655_4747       // "GGUF" little-endian
 
     public init(contentsOf url: URL) throws {
+        NFKMLXFileReads.note(url)
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
         var cursor = 0
         guard data.count >= 8, NFKMLXGGUFFormat.readU32(data, &cursor) == NFKMLXGGUFFormat.magic else {

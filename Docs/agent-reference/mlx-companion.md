@@ -755,8 +755,19 @@ The core protocol's optional `unload`, `isLoaded`, `residentByteCount`, and `pea
   no request is possible. Under the flag the release helpers in `NFKMLXMarian.swift` skip the listing,
   read only the cached optional files, throw the same error when no weights candidate is cached, and
   write no completion record. A build from a local source (the registry's `weightsURL`,
-  `NFKMLXDownload.backend`'s file) records the file, or the folder and up to 4096 non-hidden files
-  under it (`NFKMLXLocalFiles`), and the reload checks them before it builds. The error carries
+  `NFKMLXDownload.backend`'s file) records the model's own files (`NFKMLXLocalFiles`), and the reload
+  checks them before it builds: the source itself, the files the first build opened, and, for a
+  catalog build (`NFKMLXCatalogBuilding`, `NFKMLXHub.backend(for:variant:…)`), the variant's listed
+  files under the folder that were on disk (`NFKModelSource.localFilePaths`, which drops a file fetched
+  from another repository). A build records what it opens through `NFKMLXFileReads`, a task-local
+  record that `NFKMLXWeights.loadCheckpoint`, `NFKMLXSafetensors.entries`, `NFKMLXMappedFile`,
+  `NFKMLXGGUFFormat`, and `fetchFile` note into; reads on another thread, and configuration and
+  tokenizer reads through `Data(contentsOf:)`, are not noted. A folder's other files are never
+  recorded: a shared snapshot holds other variants' files, and a `*.download` partial goes away when
+  its transfer completes, and either would fail a reload whose model is intact (2026-10-16, Commit
+  Manager review). A reload's build error that reports a missing file under the source
+  (`NSFileReadNoSuchFileError`, `NSFileNoSuchFileError`, or `ENOENT`, directly or underlying) becomes
+  the same error naming that file, which covers the unrecorded reads. The error carries
   `NSFilePathErrorKey`; the same backend loads on its next run once a download puts the files back.
   The core's `NFKDownloadErrorInUse` describes a removal refused during a download and does not fit,
   so the error is the package's own `@objc` enum (`NFKMLXReloadErrorDomain`). A reload does not mark
@@ -790,12 +801,20 @@ The core protocol's optional `unload`, `isLoaded`, `residentByteCount`, and `pea
 - `NFKMLXReloadableBackend` keeps the first backend's identifier and declared keys, and `responds(to:)`
   answers for the held class on the optional keys, `backendStatus`, and `tokenCountForRequest:error:`,
   so a wrapper does not claim a member the model lacks. It implements the token count itself, inside
-  `withState`. An Objective-C message it does not implement goes to the held backend through
-  `forwardingTarget(for:)`, which loads the model first and begins a run. The runtime sends the message
-  after that method returns, and Swift cannot implement `forwardInvocation:`, so the run's `end` sits in
-  an autoreleased `NFKMLXForwardedRun` and runs when the caller's autorelease pool drains, after the
-  message returns. An unload during a forwarded message therefore waits for the pool, which on a thread
-  without one is the thread's exit. Calling the protocol's optional throwing `tokenCount?(for:)` from
+  `withState`. An Objective-C message it does not implement goes to the held backend through the
+  runtime's full forwarding path, as a run from before the message to its return. Swift cannot declare
+  `methodSignatureForSelector:` or `forwardInvocation:` (both `OBJC_SWIFT_UNAVAILABLE`, and a method
+  with either selector conflicts with `NSObject`'s), so the class adds both as block implementations
+  (`imp_implementationWithBlock`, `class_replaceMethod`) once. The signature comes from the held class's
+  method encoding through `+[NSMethodSignature signatureWithObjCTypes:]`, and `NSObject`'s own lookup
+  answers for the wrapper's methods. `forwardInvocation:` begins a run (loading the model), calls
+  `-[NSInvocation invokeWithTarget:]` on the held backend, and ends the run when that returns. Both
+  `NSInvocation` calls go through the method implementations, cast to `@convention(c)` types. A probe
+  forwarding integer, object, error-pointer, and `CGRect` messages 100,000 times leaked nothing. A
+  backend that cannot be built raises `NSInvalidArgumentException` with the reason. An Objective-C
+  exception from the forwarded method unwinds past the run's `end`, which then never runs. A run that
+  `forwardingTarget(for:)` begins and an autoreleased object ends outlives the call: a block on a global
+  queue drains no autorelease pool per block. Calling the protocol's optional throwing `tokenCount?(for:)` from
   Swift crashes the Swift 6.4 compiler in IRGen (a reabstraction thunk), so the wrapper and its test
   send the message through a private `@objc` protocol after a `responds(to:)` check. Registry and asynchronous results of classes
   other than the five lifecycle classes arrive wrapped, so a Swift cast to the model's class fails
@@ -819,18 +838,22 @@ The core protocol's optional `unload`, `isLoaded`, `residentByteCount`, and `pea
   (`NFKMLXModelInfoCache.currentValue`).
 - `NFKMLXGPU` adopts the server's optional runtime members (`allocatedByteCount`, `peakAllocatedByteCount`,
   `resetPeakAllocatedByteCount`), so a server measures a provider build that measures nothing itself.
-- Tests: `NFKMLXLifecycleTests` (18), on seeded 8 MiB weights behind test registry factories with a
+- Tests: `NFKMLXLifecycleTests` (21), on seeded 8 MiB weights behind test registry factories with a
   placeholder URL: a closure backend and a URL-less registry build stay loaded, unload frees within 10%
   (plus 1 MiB) of the measured bytes and a run reloads to identical output, prepare reloads, a
   generation backend reloads, an unload during a gated run frees at its end, a plain backend is wrapped
   and built twice with `wrappedBackend` reaching its class while loaded, the wrapper over a direct build,
-  and the server's figures and unload. Nine more run without weights or MLX: an unload during a gated
+  and the server's figures and unload. Twelve more run without weights or MLX: an unload during a gated
   load frees when the run ends, a double unload leaves the next load resident, an unload during a gated
-  forwarded message and during a gated token count frees after it returns, a wrapper over a class
+  forwarded message sent from a global-queue block with no autorelease pool frees when the message
+  returns while the block still runs, a forwarded message carries its arguments and result and loads an
+  unloaded model, an unload during a gated token count frees after it returns, a wrapper over a class
   without a token count neither claims nor answers one, a fetch inside `reloading` makes no request, a
   release removed from a failing-transport hub's cache fails the reload with the error and no request
-  and loads again once reseeded, and a removed weights file and a removed file inside a release folder
-  fail the reload naming the file.
+  and loads again once reseeded, a removed weights file and a removed file the build read inside a
+  release folder fail the reload naming the file, a sibling variant's file and a `*.download` partial
+  removed from the folder leave the reload working while the removed file the build opened fails it,
+  and a listed file removed fails the reload while an unlisted one does not.
 
 ## Load options and the build entry
 

@@ -345,7 +345,8 @@ protocol NFKMLXReloading: AnyObject {
 /// A load after an unload reads local files only. It runs inside ``reloading(_:)``, where the download
 /// helpers take a file from the cache and make no request: a file missing from the cache throws
 /// ``NFKMLXReloadError/modelFilesRemoved``. A build from a local file or folder records the files it
-/// found there, and a load fails with the same error when one of them is gone.
+/// opened (``NFKMLXFileReads``) and the files its catalog variant lists, and a load fails with the same
+/// error when one of them is gone.
 enum NFKMLXReload {
 
     @TaskLocal private static var reloadInProgress = false
@@ -376,19 +377,26 @@ enum NFKMLXReload {
     }
 
     /// ``reloadable(_:)`` for a backend built with `loadOptions`, which its `loadOptionValues` reports.
-    /// When `source` is a local file or folder, the files the first build found there must all be on disk
-    /// for a load after an unload, which otherwise throws ``NFKMLXReloadError/modelFilesRemoved``.
-    static func reloadable(loadOptions: NFKMLXLoadOptions?, reading source: URL? = nil,
+    /// When `source` is a local file or folder, a load after an unload requires on disk the files the first
+    /// build opened and the files of `listed` (paths under a folder `source`) it found there, and otherwise
+    /// throws ``NFKMLXReloadError/modelFilesRemoved``. The same error replaces a build error that reports a
+    /// missing file under `source`.
+    static func reloadable(loadOptions: NFKMLXLoadOptions?, reading source: URL? = nil, listing listed: [String] = [],
                            _ build: @escaping () throws -> any NFKInferenceBackend) throws -> any NFKInferenceBackend {
-        let (backend, measurement) = try NFKMLXLoadMeasurement.measuring(build)
+        let opened = NFKMLXFileReads()
+        let (backend, measurement) = try NFKMLXLoadMeasurement.measuring { try opened.recording(build) }
         if let reloadable = backend as? NFKMLXReloadableBackend {
             reportLoadOptions(of: reloadable, loadOptions)
             return backend
         }
-        let reload = NFKMLXLocalFiles(source).map { files in
+        let reload = NFKMLXLocalFiles(source: source, listed: listed, opened: opened.urls).map { files in
             { () throws -> any NFKInferenceBackend in
                 try files.requirePresent()
-                return try build()
+                do {
+                    return try build()
+                } catch {
+                    throw files.attributing(error)
+                }
             }
         } ?? build
         if let reloading = backend as? NFKMLXReloading {
@@ -416,18 +424,51 @@ enum NFKMLXReload {
     }
 }
 
-/// The files a build found at a local source, which a load after an unload requires on disk.
-struct NFKMLXLocalFiles {
+/// The files one build opens, which the package's weight readers and download helpers note while a
+/// build records them.
+final class NFKMLXFileReads: @unchecked Sendable {
 
-    /// The most files a folder's record holds; a folder with more is checked for the first ones found.
-    static let recordLimit = 4096
+    @TaskLocal private static var current: NFKMLXFileReads?
+
+    private let lock = NSLock()
+    private var recorded = [URL]()
+
+    /// Notes `url` in the record of the build running on the calling task, if one is recording.
+    static func note(_ url: URL) {
+        current?.append(url)
+    }
+
+    /// Runs `build` with every file it opens noted here.
+    func recording<T>(_ build: () throws -> T) rethrows -> T {
+        try Self.$current.withValue(self, operation: build)
+    }
+
+    /// The files noted, in the order first noted.
+    var urls: [URL] { lock.withLock { recorded } }
+
+    private func append(_ url: URL) {
+        lock.withLock {
+            if !recorded.contains(url) {
+                recorded.append(url)
+            }
+        }
+    }
+}
+
+/// The model's own files at a local source, which a load after an unload requires on disk.
+///
+/// @discussion The record holds the source, the files the first build opened, and the listed files under a
+/// folder source, each only when it was on disk at the build. A folder's other files are not recorded:
+/// a shared snapshot holds other variants' files, and a transfer's `*.download` partial goes away when it
+/// completes.
+struct NFKMLXLocalFiles {
 
     let source: URL
     let paths: [String]
 
-    /// Records the file at `source`, or the folder and the files under it, skipping hidden files. nil
-    /// when `source` is nil, not a file URL, or not on disk.
-    init?(_ source: URL?) {
+    /// nil when `source` is nil, not a file URL, or not on disk. `listed` paths are relative to a folder
+    /// `source` and ignored for a file `source`.
+    init?(source: URL?, listed: [String], opened: [URL]) {
         guard let source, source.isFileURL else {
             return nil
         }
@@ -435,27 +476,17 @@ struct NFKMLXLocalFiles {
         guard FileManager.default.fileExists(atPath: source.path, isDirectory: &isFolder) else {
             return nil
         }
+        let listedURLs = isFolder.boolValue ? listed.map { source.appendingPathComponent($0) } : []
+        var paths = [source.path]
+        for url in listedURLs + opened where url.isFileURL && !paths.contains(url.path) && Self.isModelFile(url) {
+            paths.append(url.path)
+        }
         self.source = source
-        paths = isFolder.boolValue ? [source.path] + Self.files(under: source) : [source.path]
+        self.paths = paths
     }
 
-    private static func files(under folder: URL) -> [String] {
-        guard let enumerator = FileManager.default.enumerator(at: folder, includingPropertiesForKeys: nil,
-                                                              options: [.skipsHiddenFiles]) else {
-            return []
-        }
-        var paths = [String]()
-        for case let url as URL in enumerator {
-            var isFolder: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isFolder), !isFolder.boolValue else {
-                continue
-            }
-            paths.append(url.path)
-            if paths.count == recordLimit {
-                break
-            }
-        }
-        return paths
+    private static func isModelFile(_ url: URL) -> Bool {
+        url.pathExtension != "download" && FileManager.default.fileExists(atPath: url.path)
     }
 
     /// Throws ``NFKMLXReloadError/modelFilesRemoved`` naming the first recorded file no longer on disk. A
@@ -464,5 +495,42 @@ struct NFKMLXLocalFiles {
         if let missing = paths.first(where: { !FileManager.default.fileExists(atPath: $0) }) {
             throw NFKMLXReload.modelFilesRemovedError(path: missing, source: source.path)
         }
+    }
+
+    /// `error` as ``NFKMLXReloadError/modelFilesRemoved`` when it, or an error under it, reports a file
+    /// under the source as missing and the file is still missing; otherwise `error` itself.
+    func attributing(_ error: Error) -> Error {
+        var next: NSError? = error as NSError
+        while let current = next {
+            if let path = Self.missingFilePath(in: current), isUnderSource(path),
+               !FileManager.default.fileExists(atPath: path) {
+                return NFKMLXReload.modelFilesRemovedError(path: path, source: source.path)
+            }
+            next = current.userInfo[NSUnderlyingErrorKey] as? NSError
+        }
+        return error
+    }
+
+    /// The path a missing-file error names, or nil for any other error.
+    private static func missingFilePath(in error: NSError) -> String? {
+        let isMissing = (error.domain == NSCocoaErrorDomain
+                         && [NSFileNoSuchFileError, NSFileReadNoSuchFileError].contains(error.code))
+            || (error.domain == NSPOSIXErrorDomain && error.code == Int(ENOENT))
+        guard isMissing else {
+            return nil
+        }
+        return error.userInfo[NSFilePathErrorKey] as? String ?? (error.userInfo[NSURLErrorKey] as? URL)?.path
+    }
+
+    /// Whether `path` is the source or under it. `/private/var` and `/var` name the same folder.
+    private func isUnderSource(_ path: String) -> Bool {
+        let folder = Self.canonical(source.path)
+        let candidate = Self.canonical(path)
+        return candidate == folder || candidate.hasPrefix(folder + "/")
+    }
+
+    private static func canonical(_ path: String) -> String {
+        let standardized = (path as NSString).standardizingPath
+        return standardized.hasPrefix("/private/") ? String(standardized.dropFirst("/private".count)) : standardized
     }
 }

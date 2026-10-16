@@ -51,7 +51,8 @@ extension NFKMLXModelDescriptors {
                                                             in: request.catalog)
         let options = NFKMLXLoadOptions(request.loadOptions, draftURL: draftURL)
         let consumed = NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: name)
-        return try NFKMLXModelRegistry.backend(named: name, weightsURL: request.location, loadOptions: options) {
+        return try NFKMLXModelRegistry.backend(named: name, weightsURL: request.location, loadOptions: options,
+                                               listing: request.variant?.source?.localFilePaths ?? []) {
             try applyPropertyOptions(of: request, to: $0, skipping: consumed)
         }
     }
