@@ -32,7 +32,9 @@ public enum NFKMLXSDLoRA {
 
     /// What a merge did: how many layers it changed and how many text-tower keys it left alone.
     public struct Report: Sendable {
+        /// The linear and convolution layers whose weights took a delta.
         public let mergedLayers: Int
+        /// The `lora_te…` and `text_encoder…` keys the merge did not reach.
         public let skippedTextEncoderKeys: Int
     }
 
@@ -43,8 +45,13 @@ public enum NFKMLXSDLoRA {
     /// weight's type, as diffusers' `fuse_lora` does. A key that names no layer of this UNet is an error,
     /// so an adapter trained for another geometry fails before it changes a weight.
     ///
-    /// - Parameter ignoringTextEncoderKeys: merge the UNet half of an adapter that also adapts the text
-    ///   towers, and count the keys left alone in the report. False, the default, refuses such a file.
+    /// - Parameters:
+    ///   - url: the adapter's safetensors file.
+    ///   - unet: the UNet whose weights take the delta.
+    ///   - scale: the strength multiplier on every delta; 1 merges the adapter as released.
+    ///   - ignoringTextEncoderKeys: merge the UNet half of an adapter that also adapts the text towers,
+    ///     and count the keys left alone in the report. False, the default, refuses such a file.
+    /// - Returns: the merge's layer count and the count of text-tower keys left alone.
     /// - Throws: `NFKMLXError.weightsMismatch` when a target is missing from the UNet, a shape disagrees,
     ///   a target lacks its pair of weights, or the file carries text-tower keys without the opt-in.
     @discardableResult
