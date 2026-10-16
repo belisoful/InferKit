@@ -11,6 +11,7 @@
 #import "NFKVideoAsset.h"
 #import "NFKErrors.h"
 #import "NFKRemoteTransportPrivate.h"
+#import "NFKJobGuard.h"
 
 @implementation NFKAsyncGenerationBackend
 
@@ -56,7 +57,7 @@
 		return job;
 	}
 
-	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+	NFKJobDispatchGuarded(job, ^{
 		[self runJob:job forRequest:request];
 	});
 	return job;

@@ -201,7 +201,7 @@
 	NSInteger status = 0;
 	NSDictionary *ping = @{ @"jsonrpc": @"2.0", @"id": @1, @"method": @"ping" };
 	[self post:ping headers:@{ @"Origin": @"https://attacker.example" } status:&status response:NULL];
-	XCTAssertEqual(status, 403, @"DNS rebinding reaches a loopback server from another site's page");
+	XCTAssertEqual(status, 403, @"a page on another site that posts to the loopback server is refused");
 	[self post:ping headers:@{ @"Origin": @"http://localhost:3000" } status:&status response:NULL];
 	XCTAssertEqual(status, 200);
 	[self post:ping headers:nil status:&status response:NULL];

@@ -19,6 +19,7 @@
 #import "NFKToolMessageSupport.h"
 #import <InferKit/NFKToolMessages.h>
 #import <InferKit/NFKRemoteFileStore.h>
+#import "NFKJobGuard.h"
 
 /*! The contract keys this backend translates; every other parameter goes into generation_config. */
 static NSSet<NSString *> *NFKInteractionsMappedParameters(void)
@@ -181,7 +182,7 @@ static double NFKInteractionsSeconds(id offset)
 {
 	NFKInferenceJob *job = [[NFKInferenceJob alloc] init];
 	if ([self runsRequestInBackground:request]) {
-		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		NFKJobDispatchGuarded(job, ^{
 			[self runBackgroundJob:job forRequest:request];
 		});
 		return job;

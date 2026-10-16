@@ -14,6 +14,7 @@
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
 #import "NFKRemoteTransportPrivate.h"
+#import "NFKJobGuard.h"
 
 /*! The contract keys this backend translates; every other parameter goes out under its own name. */
 static NSSet<NSString *> *NFKImageMappedParameters(void)
@@ -148,7 +149,7 @@ static NSInteger NFKImageGreatestCommonDivisor(NSInteger a, NSInteger b)
 	NFKInferenceJob *job = [[NFKInferenceJob alloc] init];
 	BOOL streamable = self.streams && (self.apiStyle == NFKRemoteImageAPIStyleOpenAI || self.apiStyle == NFKRemoteImageAPIStyleOpenRouter);
 	if (!streamable) {
-		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		NFKJobDispatchGuarded(job, ^{
 			if (job.status == NFKInferenceJobStatusCancelled) {
 				return;
 			}

@@ -37,8 +37,8 @@ typedef NS_ENUM(NSInteger, NFKServedWire) {
 
 /*! The request's body as a JSON object whose fields carry the types fields gives them
 	(NFKServedFieldTypeError), its null fields removed so a route reads them as absent, or nil after
-	replying with the refusal in wire's shape: 415 for a Content-Type that names another type than JSON,
-	400 for a body that is not a JSON object or a field of another type. */
+	replying with the refusal in wire's shape: 400 for a body that is not a JSON object or a field of
+	another type. The body reads as JSON whatever its Content-Type. */
 - (nullable NSDictionary *)JSONBodyOf:(NFKHTTPRequest *)request
 							  response:(NFKHTTPResponse *)response
 								  wire:(NFKServedWire)wire

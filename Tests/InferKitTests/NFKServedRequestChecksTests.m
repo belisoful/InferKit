@@ -4,9 +4,9 @@
 //
 //  What the server checks of a request before it runs, over real HTTP on a loopback port: every
 //  documented body field of every JSON route refused with 400 when it carries another type, the
-//  contract types of what reaches a backend, form fields, a browser Origin, a JSON Content-Type, an
-//  exception answered with 500 while the server keeps serving, and MCP model-tool calls that hold no
-//  thread while they wait.
+//  contract types of what reaches a backend, form fields, a browser Origin and allowedOrigins, a body
+//  read as JSON whatever its Content-Type, an exception answered with 500 while the server keeps
+//  serving, and MCP model-tool calls that hold no thread while they wait.
 //
 
 #import <XCTest/XCTest.h>
@@ -459,9 +459,11 @@
 
 #pragma mark Content-Type and Origin
 
-/*! The status of a POST written to the listener by hand, without a Content-Type header, which a URL
-	session would add. 0 when no reply arrives within the socket's 10 s deadline. */
-- (NSInteger)statusOfPostWithoutContentType:(NSString *)path body:(NSData *)body
+/*! The status of a POST written to the listener by hand, so its Host and its other headers are the
+	test's own; a URL session replaces Host and adds a Content-Type to a body without one. 0 when no
+	reply arrives within the socket's 10 s deadline. */
+- (NSInteger)statusOfHandWrittenPost:(NSString *)path host:(NSString *)host
+							 headers:(NSDictionary<NSString *, NSString *> *)headers body:(NSData *)body
 {
 	int descriptor = socket(AF_INET, SOCK_STREAM, 0);
 	XCTAssertGreaterThanOrEqual(descriptor, 0);
@@ -477,8 +479,11 @@
 		close(descriptor);
 		return 0;
 	}
-	NSString *head = [NSString stringWithFormat:@"POST %@ HTTP/1.1\r\nHost: localhost:%u\r\nConnection: close\r\nContent-Length: %lu\r\n\r\n",
-					  path, (unsigned)self.server.listeningPort, (unsigned long)body.length];
+	NSMutableString *head = [NSMutableString stringWithFormat:@"POST %@ HTTP/1.1\r\nHost: %@\r\nConnection: close\r\n", path, host];
+	[headers enumerateKeysAndObjectsUsingBlock:^(NSString *field, NSString *value, BOOL *stop) {
+		[head appendFormat:@"%@: %@\r\n", field, value];
+	}];
+	[head appendFormat:@"Content-Length: %lu\r\n\r\n", (unsigned long)body.length];
 	NSMutableData *message = [[head dataUsingEncoding:NSUTF8StringEncoding] mutableCopy];
 	[message appendData:body];
 	write(descriptor, message.bytes, message.length);
@@ -488,6 +493,12 @@
 	NSString *line = received > 0 ? [[NSString alloc] initWithBytes:reply length:(NSUInteger)received encoding:NSASCIIStringEncoding] : nil;
 	NSArray<NSString *> *words = [line componentsSeparatedByString:@" "];
 	return words.count > 1 ? words[1].integerValue : 0;
+}
+
+- (NSInteger)statusOfPostWithoutContentType:(NSString *)path body:(NSData *)body
+{
+	NSString *host = [NSString stringWithFormat:@"localhost:%u", (unsigned)self.server.listeningPort];
+	return [self statusOfHandWrittenPost:path host:host headers:@{} body:body];
 }
 
 - (void)testAPostWithoutAContentTypeIsRead
@@ -500,24 +511,29 @@
 	XCTAssertEqual(self.backend.runs, 1u);
 }
 
-- (void)testAJSONRouteReadsOnlyAJSONBody
+- (void)testAJSONBodyIsReadWhateverItsContentType
 {
-	NSData *data = [NSJSONSerialization dataWithJSONObject:[self chatBody] options:0 error:NULL];
-	NSArray<NSDictionary *> *refused = @[ @{ @"Content-Type": @"text/plain;charset=UTF-8" },
-										  @{ @"Content-Type": @"application/x-www-form-urlencoded" },
-										  @{ @"Content-Type": @"multipart/form-data; boundary=x" } ];
-	for (NSDictionary *headers in refused) {
-		for (NSString *path in @[ @"/v1/chat/completions", @"/v1/messages", @"/v1/responses", @"/v1/inferkit/run", @"/mcp" ]) {
+	NSDictionary *messages = @{ @"model": @"served", @"max_tokens": @16, @"messages": @[ @{ @"role": @"user", @"content": @"hi" } ] };
+	NSDictionary<NSString *, NSDictionary *> *bodies = @{ @"/v1/chat/completions": [self chatBody], @"/v1/messages": messages,
+														  @"/v1/responses": @{ @"model": @"served", @"input": @"hi" },
+														  @"/v1/inferkit/run": @{ @"model": @"served", @"request": @{ @"inputs": @{ NFKInputPrompt: @"hi" } } },
+														  @"/mcp": @{ @"jsonrpc": @"2.0", @"id": @1, @"method": @"ping" } };
+	NSArray<NSString *> *types = @[ @"text/plain;charset=UTF-8", @"application/x-www-form-urlencoded", @"multipart/form-data; boundary=x",
+									@"application/json; charset=utf-8", @"application/vnd.inferkit+json" ];
+	for (NSString *type in types) {
+		for (NSString *path in bodies) {
 			NSInteger status = 0;
-			[self send:@"POST" path:path data:data headers:headers status:&status];
-			XCTAssertEqual(status, 415, @"%@ with %@", path, headers);
+			NSData *data = [NSJSONSerialization dataWithJSONObject:bodies[path] options:0 error:NULL];
+			id reply = [self send:@"POST" path:path data:data headers:@{ @"Content-Type": type } status:&status];
+			XCTAssertEqual(status, 200, @"%@ under %@, as curl -d sends it: %@", path, type, reply);
 		}
 	}
-	XCTAssertEqual(self.backend.runs, 0u, @"a page's simple request starts no run");
-	for (NSString *type in @[ @"application/json; charset=utf-8", @"Application/JSON", @"application/vnd.inferkit+json" ]) {
+	XCTAssertEqual(self.backend.runs, 4u * types.count);
+	NSData *notJSON = [@"model=served&prompt=hi" dataUsingEncoding:NSUTF8StringEncoding];
+	for (NSString *path in bodies) {
 		NSInteger status = 0;
-		[self send:@"POST" path:@"/v1/chat/completions" data:data headers:@{ @"Content-Type": type } status:&status];
-		XCTAssertEqual(status, 200, @"%@", type);
+		[self send:@"POST" path:path data:notJSON headers:@{ @"Content-Type": @"application/x-www-form-urlencoded" } status:&status];
+		XCTAssertEqual(status, 400, @"%@: a body that is not JSON is the route's usual refusal", path);
 	}
 }
 
@@ -555,6 +571,66 @@
 	XCTAssertEqual(status, 200, @"a page served from this machine passes");
 	[self send:@"POST" path:@"/v1/chat/completions" data:data headers:json status:&status];
 	XCTAssertEqual(status, 200, @"a local agent sends no Origin and needs no key on loopback");
+}
+
+- (void)testAllowedOriginsAdmitAPageBehindAProxyThatRewritesHost
+{
+	self.server.apiKey = @"secret";
+	NSData *chat = [NSJSONSerialization dataWithJSONObject:[self chatBody] options:0 error:NULL];
+	NSDictionary *key = @{ @"Authorization": @"Bearer secret" };
+	NSMutableDictionary *sameHost = [key mutableCopy];
+	sameHost[@"Origin"] = @"https://models.example.com";
+	XCTAssertEqual([self statusOfHandWrittenPost:@"/v1/chat/completions" host:@"models.example.com" headers:sameHost body:chat], 200,
+				   @"without allowedOrigins a page on the host the request names passes");
+	NSString *upstream = [NSString stringWithFormat:@"127.0.0.1:%u", (unsigned)self.server.listeningPort];
+	XCTAssertEqual([self statusOfHandWrittenPost:@"/v1/chat/completions" host:upstream headers:sameHost body:chat], 403,
+				   @"a proxy that rewrites Host to its upstream makes the same page look foreign");
+
+	self.server.allowedOrigins = [NSSet setWithObject:@"https://models.example.com"];
+	XCTAssertEqual([self statusOfHandWrittenPost:@"/v1/chat/completions" host:upstream headers:sameHost body:chat], 200,
+				   @"the listed origin passes behind the proxy");
+	for (NSString *origin in @[ @"HTTPS://Models.Example.com/", @"https://models.example.com" ]) {
+		NSInteger status = 0;
+		[self send:@"POST" path:@"/v1/chat/completions" data:chat headers:@{ @"Content-Type": @"application/json", @"Origin": origin } status:&status];
+		XCTAssertEqual(status, 200, @"%@ compares without case or a trailing slash", origin);
+	}
+	NSMutableDictionary *unlisted = [key mutableCopy];
+	unlisted[@"Origin"] = @"https://models.example.com:8443";
+	XCTAssertEqual([self statusOfHandWrittenPost:@"/v1/chat/completions" host:@"models.example.com:8443" headers:unlisted body:chat], 403,
+				   @"with allowedOrigins set, a same-host origin it does not list is refused");
+	NSInteger status = 0;
+	[self send:@"POST" path:@"/v1/chat/completions" data:chat headers:@{ @"Content-Type": @"application/json", @"Origin": @"http://localhost:5173" } status:&status];
+	XCTAssertEqual(status, 200, @"a page on this machine passes either way");
+
+	NSDictionary *ping = @{ @"jsonrpc": @"2.0", @"id": @1, @"method": @"ping" };
+	NSData *pingData = [NSJSONSerialization dataWithJSONObject:ping options:0 error:NULL];
+	[self send:@"POST" path:@"/mcp" data:pingData headers:@{ @"Origin": @"https://models.example.com" } status:&status];
+	XCTAssertEqual(status, 200, @"/mcp applies the same set");
+	NSDictionary *refusal = [self send:@"POST" path:@"/mcp" data:pingData headers:@{ @"Origin": @"https://attacker.example" } status:&status];
+	XCTAssertEqual(status, 403);
+	XCTAssertEqualObjects(refusal[@"error"][@"code"], @(-32600), @"the MCP transport's JSON-RPC shape");
+	XCTAssertEqualObjects(refusal[@"error"][@"data"][@"inferkit_domain"], NFKInferenceServerErrorDomain);
+	XCTAssertEqualObjects(refusal[@"error"][@"data"][@"inferkit_code"], @(NFKInferenceServerErrorOriginRefused));
+}
+
+- (void)testAnIntegerPastTheLargestLongIsRefused
+{
+	NSArray *refused = @[ @(9223372036854775808.0), @(9223372036854775808ULL), @(1.8e19) ];
+	for (NSNumber *seed in refused) {
+		NSMutableDictionary *body = [[self chatBody] mutableCopy];
+		body[@"seed"] = seed;
+		NSInteger status = 0;
+		NSDictionary *reply = [self post:body path:@"/v1/chat/completions" status:&status];
+		XCTAssertEqual(status, 400, @"seed %@ overflows a long long: %@", seed, reply);
+	}
+	XCTAssertEqual(self.backend.runs, 0u);
+	for (NSNumber *seed in @[ @(LLONG_MIN), @(LLONG_MAX), @(9223372036854774784.0) ]) {
+		NSMutableDictionary *body = [[self chatBody] mutableCopy];
+		body[@"seed"] = seed;
+		NSInteger status = 0;
+		[self post:body path:@"/v1/chat/completions" status:&status];
+		XCTAssertEqual(status, 200, @"seed %@ fits", seed);
+	}
 }
 
 #pragma mark Exceptions
@@ -617,12 +693,10 @@
 	XCTAssertEqualObjects(replies[1][@"result"], @{});
 }
 
-- (void)testMoreConcurrentModelToolCallsThanTheThreadPoolAllAnswer
+/*! Sends count concurrent tools/call requests for tool to server's /mcp, and asserts that each answers
+	with a result before a 90 s deadline. */
+- (void)callTool:(NSString *)tool concurrently:(NSUInteger)count onServer:(NFKInferenceServer *)server
 {
-	self.backend.pause = 0.01;
-	NSError *error = nil;
-	NFKBackendTool *tool = [self.server addToolForModelName:@"served" outputModality:NFKModalityText purpose:nil error:&error];
-	XCTAssertNotNil(tool, @"%@", error);
 	NSURLSessionConfiguration *configuration = NSURLSessionConfiguration.ephemeralSessionConfiguration;
 	configuration.HTTPMaximumConnectionsPerHost = 128;
 	configuration.timeoutIntervalForRequest = 120;
@@ -630,15 +704,14 @@
 	[self addTeardownBlock:^{
 		[session invalidateAndCancel];
 	}];
-	NSUInteger calls = 100;
 	dispatch_group_t group = dispatch_group_create();
 	NSMutableArray *replies = [NSMutableArray array];
-	for (NSUInteger index = 0; index < calls; index++) {
-		NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:self.server.localMCPURL];
+	for (NSUInteger index = 0; index < count; index++) {
+		NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:server.localMCPURL];
 		request.HTTPMethod = @"POST";
 		[request setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
 		request.HTTPBody = [NSJSONSerialization dataWithJSONObject:@{ @"jsonrpc": @"2.0", @"id": @(index), @"method": @"tools/call",
-																	  @"params": @{ @"name": tool.name, @"arguments": @{ NFKInputPrompt: @"hi" } } }
+																	  @"params": @{ @"name": tool, @"arguments": @{ NFKInputPrompt: @"hi" } } }
 														   options:0 error:NULL];
 		dispatch_group_enter(group);
 		[[session dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *taskError) {
@@ -652,13 +725,44 @@
 	long waited = dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(90 * NSEC_PER_SEC)));
 	XCTAssertEqual(waited, 0, @"every call answers before the deadline; a blocked worker per call starves the runs");
 	@synchronized (replies) {
-		XCTAssertEqual(replies.count, calls);
+		XCTAssertEqual(replies.count, count);
 		for (id reply in replies) {
 			XCTAssertTrue([reply isKindOfClass:NSDictionary.class], @"%@", reply);
 			XCTAssertEqualObjects(reply[@"result"][@"isError"], @NO, @"%@", reply);
 		}
 	}
-	XCTAssertEqual(self.backend.runs, calls);
+}
+
+- (void)testMoreConcurrentModelToolCallsThanTheThreadPoolAllAnswer
+{
+	self.backend.pause = 0.01;
+	NSError *error = nil;
+	NFKBackendTool *tool = [self.server addToolForModelName:@"served" outputModality:NFKModalityText purpose:nil error:&error];
+	XCTAssertNotNil(tool, @"%@", error);
+	[self callTool:tool.name concurrently:100 onServer:self.server];
+	XCTAssertEqual(self.backend.runs, 100u);
+}
+
+- (void)testAModelToolOfAnotherServerRunsInThatServerWithoutHoldingAThread
+{
+	NFKRequestChecksBackend *other = [[NFKRequestChecksBackend alloc] init];
+	other.pause = 0.01;
+	NFKInferenceServer *owner = [[NFKInferenceServer alloc] init];
+	owner.port = 0;
+	owner.loopbackOnly = YES;
+	owner.advertisesService = NO;
+	[owner addBackend:other forModelName:@"elsewhere"];
+	NSError *error = nil;
+	XCTAssertTrue([owner startWithError:&error], @"%@", error);
+	[self addTeardownBlock:^{
+		[owner stop];
+	}];
+	NFKBackendTool *tool = [owner addToolForModelName:@"elsewhere" outputModality:NFKModalityText purpose:nil error:&error];
+	XCTAssertNotNil(tool, @"%@", error);
+	[self.server addTool:tool];
+	[self callTool:tool.name concurrently:100 onServer:self.server];
+	XCTAssertEqual(other.runs, 100u, @"the runs happen in the owning server's queue");
+	XCTAssertEqual(self.backend.runs, 0u);
 }
 
 - (void)testABatchOfModelToolCallsAnswersInOrder

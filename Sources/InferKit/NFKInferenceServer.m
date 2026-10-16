@@ -1351,6 +1351,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		_appRoutes = [NSMutableDictionary dictionary];
 		_keys = [NSMutableDictionary dictionary];
 		_loopbackExemptScopes = NFKServerKeyScopeAll;
+		_allowedOrigins = [NSSet set];
 		_port = NFKInferenceServerDefaultPort;
 		_requiresAPIKey = YES;
 		_advertisesService = YES;
@@ -1589,8 +1590,9 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 
 /*! Starts a call of a hosted model's tool (addToolForModelName:outputModality:purpose:error:) as a run in
 	the model's queue, which calls completion with the tool's result when the run ends and holds no
-	thread meanwhile; returns the block that cancels the run. nil for any other tool. The arguments are
-	checked, the request built, and the result described as invokeWithArguments: does. */
+	thread meanwhile; returns the block that cancels the run. A model tool another server added runs in
+	that server's queue; nil for any other tool. The arguments are checked, the request built, and the
+	result described as invokeWithArguments: does. */
 - (nullable dispatch_block_t)startModelTool:(NFKInferenceTool *)tool
 								  arguments:(NSDictionary<NSString *, id> *)arguments
 									request:(NFKHTTPRequest *)request
@@ -1599,8 +1601,12 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	NFKBackendTool *backendTool = [tool isKindOfClass:NFKBackendTool.class] ? (NFKBackendTool *)tool : nil;
 	NFKServedModelToolBackend *backend = [backendTool.backend isKindOfClass:NFKServedModelToolBackend.class]
 		? (NFKServedModelToolBackend *)backendTool.backend : nil;
-	if (backend == nil || backend.server != self) {
+	NFKInferenceServer *owner = backend.server;
+	if (backend == nil || owner == nil) {
 		return nil;
+	}
+	if (owner != self) {
+		return [owner startModelTool:tool arguments:arguments request:request completion:completion];
 	}
 	NSString *name = tool.name;
 	void (^fail)(NSString *) = ^(NSString *reason) {
@@ -2750,7 +2756,8 @@ static NSDictionary<NSString *, id> *NFKServedOptionsAtStage(NFKModelDescriptor 
 		}
 	}
 	if (outError != NULL) {
-		*outError = NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorModelNotFound, failure);
+		*outError = NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorModelNotFound,
+								   failure ?: @"the model is not served here; GET /v1/models lists what is");
 	}
 	return nil;
 }
@@ -2988,7 +2995,7 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	NFKServerKeyScope scope = [self scopeOfPath:path appRoutePrefix:&appRoutePrefix];
 	NFKServedWire wire = appRoutePrefix == nil && NFKServedRequestIsAnthropic(request, path) ? NFKServedWireAnthropic : NFKServedWireOpenAI;
 	BOOL servedRoute = [path isEqualToString:NFKServedBasePath] || [path hasPrefix:[NFKServedBasePath stringByAppendingString:@"/"]];
-	if (servedRoute && !NFKServedOriginIsAllowed(request)) {
+	if (servedRoute && !NFKServedOriginIsAllowed(request, self.allowedOrigins)) {
 		[self sendError:NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorOriginRefused,
 									   @"the Origin header names another site; a web page does not reach this server")
 			   response:response wire:wire];
@@ -3009,7 +3016,7 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	if ([path isEqualToString:@"/mcp"]) {
 		__weak NFKInferenceServer *weakSelf = self;
 		[NFKServedMCP serveRequest:request response:response tools:self.tools instructions:self.MCPInstructions sessions:self.mcpSessions
-					   toolStarter:^dispatch_block_t (NFKInferenceTool *tool, NSDictionary<NSString *, id> *arguments,
+					allowedOrigins:self.allowedOrigins toolStarter:^dispatch_block_t (NFKInferenceTool *tool, NSDictionary<NSString *, id> *arguments,
 													  void (^completion)(NFKToolResult *)) {
 			return [weakSelf startModelTool:tool arguments:arguments request:request completion:completion];
 		}];
@@ -3130,7 +3137,6 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 															@(NFKInferenceServerErrorMisdirected): @421,
 															@(NFKInferenceServerErrorBusy): @503,
 															@(NFKInferenceServerErrorInvalidRequest): @400,
-															@(NFKInferenceServerErrorUnsupportedMediaType): @415,
 															@(NFKInferenceServerErrorOriginRefused): @403 };
 		return statuses[@(error.code)].integerValue ?: 400;
 	}
@@ -3187,12 +3193,6 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 								  wire:(NFKServedWire)wire
 								fields:(NSDictionary<NSString *, NSString *> *)fields
 {
-	if (!NFKServedContentTypeAcceptsJSON([request valueForHeader:@"content-type"])) {
-		[self sendError:NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorUnsupportedMediaType,
-									   [request.path stringByAppendingString:@" reads a JSON body; send it with Content-Type: application/json"])
-			   response:response wire:wire];
-		return nil;
-	}
 	id body = request.body.length > 0 ? [NSJSONSerialization JSONObjectWithData:request.body options:0 error:NULL] : nil;
 	if (![body isKindOfClass:NSDictionary.class]) {
 		[self sendError:NFKServedError(NFKInferenceErrorDomain, kNFKError_InferenceMissingInput, @"the body is not a JSON object")

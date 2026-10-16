@@ -14,6 +14,7 @@
 #import "NFKAudioSegment.h"
 #import "NFKErrors.h"
 #import "NFKRemoteTransportPrivate.h"
+#import "NFKJobGuard.h"
 
 /*! The contract keys this backend translates; every other parameter goes out as a form field. */
 static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
@@ -154,7 +155,7 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 {
 	NFKInferenceJob *job = [[NFKInferenceJob alloc] init];
 	if (!self.streams || self.apiStyle == NFKRemoteTranscriptionAPIStyleXAI) {
-		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		NFKJobDispatchGuarded(job, ^{
 			if (job.status == NFKInferenceJobStatusCancelled) {
 				return;
 			}

@@ -55,16 +55,15 @@ FOUNDATION_EXPORT NSError * _Nullable NFKServedContractTypeError(NSDictionary<NS
 	when the text does not read as the kind. */
 FOUNDATION_EXPORT id _Nullable NFKServedFormValue(NSString *name, NSString *text, NSError * _Nullable * _Nullable error);
 
-/*! Whether a JSON route reads a body under a Content-Type header: none at all, application/json, or a
-	type whose subtype ends in +json, with any parameters. A browser's cross-origin post always carries
-	an Origin, which NFKServedOriginIsAllowed refuses, so a missing type admits no page. */
-FOUNDATION_EXPORT BOOL NFKServedContentTypeAcceptsJSON(NSString * _Nullable contentType);
-
 /*! Whether a request's Origin header lets it through. A request without one passes, as a client that
-	is not a browser sends none. A browser's origin passes when it is a loopback name (localhost,
-	127.0.0.1, ::1) or the host the request was sent to; null and any other host are refused, which
-	keeps a page on another site from reaching the server through DNS rebinding. */
-FOUNDATION_EXPORT BOOL NFKServedOriginIsAllowed(NFKHTTPRequest *request);
+	is not a browser sends none. A browser's origin passes when its host is a loopback name (localhost,
+	127.0.0.1, ::1). Otherwise, with allowedOrigins empty, it passes when its host is the host the
+	request was sent to; with allowedOrigins set, it passes when it is one of them, compared as
+	scheme://host[:port] without case or a trailing slash. null and any other origin are refused, which
+	keeps a page on another site from sending a request to the server's own address. A page that
+	reaches the server through DNS rebinding sends an Origin that names the Host it sent, so this check
+	passes it; the Host check in the key refusal stops it. */
+FOUNDATION_EXPORT BOOL NFKServedOriginIsAllowed(NFKHTTPRequest *request, NSSet<NSString *> *allowedOrigins);
 
 /*! The error that reports an exception raised while serving a request:
 	kNFKError_InferenceBackendFailure, naming the exception and its reason. */

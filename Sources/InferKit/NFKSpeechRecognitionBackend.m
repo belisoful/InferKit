@@ -11,6 +11,7 @@
 #import "NFKAudioAsset.h"
 #import "NFKAudioSegment.h"
 #import "NFKErrors.h"
+#import "NFKJobGuard.h"
 
 // Apple ships no speech recognizer on tvOS, so the class is there and says so rather than the
 // header changing shape per platform.
@@ -170,12 +171,14 @@
 		if (result == nil) {
 			return;
 		}
-		NFKInferenceResult *mapped = [backend resultFromTranscription:result.bestTranscription];
-		if (!result.isFinal) {
-			[job reportProgress:-1.0 partialResult:mapped];
-			return;
-		}
-		[job finishWithResult:mapped];
+		NFKJobRunGuarded(job, ^{
+			NFKInferenceResult *mapped = [backend resultFromTranscription:result.bestTranscription];
+			if (!result.isFinal) {
+				[job reportProgress:-1.0 partialResult:mapped];
+				return;
+			}
+			[job finishWithResult:mapped];
+		});
 	}];
 	job.cancellationHandler = ^{
 		[task cancel];

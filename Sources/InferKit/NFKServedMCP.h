@@ -84,10 +84,12 @@ typedef dispatch_block_t _Nullable (^NFKServedMCPToolStarter)(NFKInferenceTool *
 				the server-to-client event stream, which carries the server's pings; DELETE with a
 				session ends it. GET without a session is 405.
 
-				An Origin header naming another host is refused with 403, which keeps a web page from
-				reaching a local server through DNS rebinding, and a POST whose Content-Type names a type
-				other than JSON is refused with 415; a POST without one is read. A null params, or a
-				null field in it, is an absent one. A message whose envelope or params are of the wrong type is a
+				An Origin the server does not admit (NFKServedOriginIsAllowed over allowedOrigins) is
+				refused with 403 and, as the Streamable HTTP transport prescribes, a JSON-RPC error
+				without an id: -32600, whose data carries NFKInferenceServerErrorDomain and
+				NFKInferenceServerErrorOriginRefused under inferkit_domain and inferkit_code. A POST's
+				body reads as JSON whatever its Content-Type. A null params, or a null field in it, is
+				an absent one. A message whose envelope or params are of the wrong type is a
 				JSON-RPC error (-32600 or -32602); when it is the request's only message the reply is
 				400. A tools/call runs off the connection's queue and answers when the tool finishes; a
 				call the toolStarter starts holds no thread while it waits, and the calls of a batch
@@ -106,6 +108,7 @@ typedef dispatch_block_t _Nullable (^NFKServedMCPToolStarter)(NFKInferenceTool *
 			   tools:(NSArray<NFKInferenceTool *> *)tools
 		instructions:(nullable NSString *)instructions
 			sessions:(NFKServedMCPSessionStore *)sessions
+	  allowedOrigins:(NSSet<NSString *> *)allowedOrigins
 		 toolStarter:(nullable NFKServedMCPToolStarter)toolStarter;
 
 @end

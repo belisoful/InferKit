@@ -13,6 +13,7 @@
 #import <InferKit/NFKAudioAsset.h>
 #import <InferKit/NFKErrors.h>
 #import "NFKRemoteTransportPrivate.h"
+#import "NFKJobGuard.h"
 
 /*! The contract keys this backend translates; every other parameter goes out under its own name. */
 static NSSet<NSString *> *NFKSpeechMappedParameters(void)
@@ -188,7 +189,7 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 	BOOL streamable = self.streams && self.apiStyle != NFKRemoteSpeechAPIStyleXAI
 		&& (self.maximumInputLength == 0 || text.length <= self.maximumInputLength);
 	if (!streamable) {
-		dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		NFKJobDispatchGuarded(job, ^{
 			if (job.status == NFKInferenceJobStatusCancelled) {
 				return;
 			}
