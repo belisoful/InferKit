@@ -11,6 +11,7 @@
 #import <InferKit/NFKInferenceKeys.h>
 #import "NFKRemoteTransportPrivate.h"
 #import <CommonCrypto/CommonDigest.h>
+#import "NFKJobGuard.h"
 
 static NSString * const NFKBalancedIdentifier = @"inferkit-balanced";
 static const NSTimeInterval NFKBalancedFirstBackoff = 2.0;
@@ -821,7 +822,7 @@ typedef struct {
 				tried:(NSMutableSet<NFKBalancedServer *> *)tried
 			lastError:(nullable NSError *)lastError
 {
-	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+	NFKJobDispatchGuarded(job, ^{
 		if (job.status == NFKInferenceJobStatusCancelled) {
 			return;
 		}

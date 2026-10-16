@@ -12,6 +12,7 @@
 #import "NFKTokenConstraint.h"
 #import "NFKModelInfoSupport.h"
 #import <CoreML/CoreML.h>
+#import "NFKJobGuard.h"
 
 #pragma mark Sampling primitives
 
@@ -168,7 +169,7 @@ API_AVAILABLE(macos(15.0), ios(18.0), tvos(18.0))
 	job.cancellationHandler = ^{
 		cancelled = YES;
 	};
-	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+	NFKJobDispatchGuarded(job, ^{
 		NSError *error = nil;
 		NFKInferenceResult *result =
 			[self generateForRequest:request

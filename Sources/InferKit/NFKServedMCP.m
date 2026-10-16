@@ -7,6 +7,7 @@
 #import "NFKServerObservationPrivate.h"
 #import "NFKServedRequestChecks.h"
 #import <InferKit/NFKInferKit.h>
+#import <InferKit/NFKInferenceServer.h>
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKAudioAsset.h>
 #import <InferKit/NFKVideoAsset.h>
@@ -659,11 +660,16 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 			   tools:(NSArray<NFKInferenceTool *> *)tools
 		instructions:(nullable NSString *)instructions
 			sessions:(NFKServedMCPSessionStore *)sessions
+	  allowedOrigins:(NSSet<NSString *> *)allowedOrigins
 		 toolStarter:(nullable NFKServedMCPToolStarter)toolStarter
 {
-	if (!NFKServedOriginIsAllowed(request)) {
-		[response sendStatus:403 JSONObject:[self errorWithIdentifier:nil code:NFKJSONRPCInvalidRequest
-															  message:@"the Origin header names another host"] headers:nil];
+	if (!NFKServedOriginIsAllowed(request, allowedOrigins)) {
+		NSMutableDictionary *refusal = [[self errorWithIdentifier:nil code:NFKJSONRPCInvalidRequest
+														  message:@"the Origin header names a site this server does not admit"] mutableCopy];
+		NSMutableDictionary *error = [refusal[@"error"] mutableCopy];
+		error[@"data"] = @{ @"inferkit_domain": NFKInferenceServerErrorDomain, @"inferkit_code": @(NFKInferenceServerErrorOriginRefused) };
+		refusal[@"error"] = error;
+		[response sendStatus:403 JSONObject:refusal headers:nil];
 		return;
 	}
 	NSString *version = [request valueForHeader:@"mcp-protocol-version"];
@@ -679,11 +685,6 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 	}
 	if (![request.method isEqualToString:@"POST"]) {
 		[response sendStatus:405 headers:@{ @"Allow": @"GET, POST, DELETE" } body:nil];
-		return;
-	}
-	if (!NFKServedContentTypeAcceptsJSON([request valueForHeader:@"content-type"])) {
-		[response sendStatus:415 JSONObject:[self errorWithIdentifier:nil code:NFKJSONRPCInvalidRequest
-															  message:@"the body is JSON-RPC; send it with Content-Type: application/json"] headers:nil];
 		return;
 	}
 	id body = request.body.length > 0 ? [NSJSONSerialization JSONObjectWithData:request.body options:0 error:NULL] : nil;

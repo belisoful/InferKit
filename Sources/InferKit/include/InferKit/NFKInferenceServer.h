@@ -60,11 +60,10 @@ extern NSString * const NFKInferenceServerErrorDomain;
 	@constant   NFKInferenceServerErrorInvalidRequest A request's body has a field of the wrong type,
 				such as a stream flag that is an array or a model that is a number. A null field is
 				an absent one. The reply is 400, in the route's own error shape.
-	@constant   NFKInferenceServerErrorUnsupportedMediaType A JSON route received a body whose
-				Content-Type names a type other than application/json or a +json type. The reply is
-				415.
-	@constant   NFKInferenceServerErrorOriginRefused A browser request's Origin names a site other than
-				this machine or the host the request was sent to. The reply is 403.
+	@constant   NFKInferenceServerErrorOriginRefused A browser request's Origin names a site the server
+				does not admit: not this machine, and neither the host the request was sent to nor, when
+				allowedOrigins is set, one of those origins. A /v1 route replies 403 in its own error
+				shape; /mcp replies 403 with a JSON-RPC error whose data carries this domain and code.
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
@@ -78,8 +77,7 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 	NFKInferenceServerErrorMisdirected = 8,
 	NFKInferenceServerErrorNameConflict = 9,
 	NFKInferenceServerErrorInvalidRequest = 10,
-	NFKInferenceServerErrorUnsupportedMediaType = 11,
-	NFKInferenceServerErrorOriginRefused = 12,
+	NFKInferenceServerErrorOriginRefused = 11,
 };
 
 /*! The name apiKey reads and writes among the server's keys. Introduced in InferKit 0.4.0. */
@@ -243,11 +241,20 @@ NS_SWIFT_SENDABLE
 				  route's error shape, before any run starts. So is an input or parameter that reaches
 				  the backend with a value of another kind than its contract key carries
 				  (NFKModelValueTypeForKey), such as a temperature that is a string.
-				- A JSON route reads its body under Content-Type application/json, a +json type, or
-				  none. A request that names any other type, such as text/plain, a form, or
-				  multipart, is refused with 415 (NFKInferenceServerErrorUnsupportedMediaType).
-				- An exception raised while a request is served answers 500 and leaves the server
-				  serving.
+				- A JSON route reads its body as JSON whatever its Content-Type, so curl -d, which
+				  sends a form type, is served. A body that is not a JSON object is refused with 400.
+				- An Objective-C exception answers 500 and leaves the server serving when it is raised
+				  by a route, an app route's handler, the code that writes a reply, a model's build, or
+				  a backend's runInferenceForRequest:error: or submitInferenceJobForRequest: call on the
+				  server's own queue. These job backends of the core catch an exception their work
+				  raises on their own queues and fail the job with kNFKError_InferenceBackendFailure,
+				  which the route answers with 500: the remote and provider backends, through the
+				  streams of NFKRemoteTransport and the work they queue; NFKCoreMLLanguageBackend;
+				  NFKAsyncGenerationBackend; NFKBalancedBackend; NFKSpeechRecognitionBackend's
+				  recognition callbacks; NFKPluginBackend, in reading a plugin's reply; and the run
+				  NFKInferenceSubmit queues for a synchronous backend. A third-party
+				  backend's work on its own queues is that backend's to guard: an exception raised
+				  there ends the process.
 
 				Access:
 				- A client presents a key as a Bearer token, which is what the remote backends' apiKey
@@ -265,13 +272,20 @@ NS_SWIFT_SENDABLE
 				  route, whatever the exemptions; without one it is refused with 421
 				  (NFKInferenceServerErrorMisdirected). A browser page that reaches the server through
 				  DNS rebinding sends its own host name, so it gets no key-free access. localhost,
-				  127.0.0.1, and [::1] are loopback names.
-				- A browser request to a /v1 route or /mcp whose Origin names a site other than
-				  localhost, 127.0.0.1, [::1], or the host the request was sent to is refused with 403
-				  (NFKInferenceServerErrorOriginRefused), whatever key it presents. A client that is not
-				  a browser sends no Origin and passes, so a local agent keeps its key-free access. A
-				  browser's cross-origin post always carries an Origin, so this check, with the JSON
-				  Content-Type rule above, keeps a web page from starting a run.
+				  127.0.0.1, and [::1] are loopback names. This Host check is what stops DNS
+				  rebinding: such a page's Origin names the same host as its Host header.
+				- A browser request to a /v1 route or /mcp whose Origin the server does not admit is
+				  refused with 403 (NFKInferenceServerErrorOriginRefused), whatever key it presents.
+				  An origin on localhost, 127.0.0.1, or [::1] is admitted. With allowedOrigins empty,
+				  so is an origin whose host is the host the request was sent to; with it set, so is
+				  each origin it lists, and no other. A client that is not a browser sends no Origin
+				  and passes, so a local agent keeps its key-free access. A browser's cross-origin
+				  request always carries an Origin, so this check keeps a page on another site from
+				  starting a run.
+				- A reverse proxy that rewrites Host, as nginx does by default (proxy_pass sends the
+				  upstream's address), makes a same-origin page's Origin differ from the Host the server
+				  sees, and the page is refused. Name the page's origin in allowedOrigins, such as
+				  https://models.example.com, or have the proxy pass the original Host.
 				- startWithError: fails with NFKInferenceServerErrorAPIKeyRequired when the
 				  configuration requires a key and none is set.
 				Keys are compared by their SHA-256 digests in constant time. Neither a key's value nor
@@ -405,7 +419,7 @@ NS_SWIFT_SENDABLE
 				host, idleness, pressure, or removal), when a client's connection passes its first key
 				check, and when an MCP session starts or ends.
 
-				The keys, requiresAPIKey, loopbackExemptScopes, reportsHostDetails,
+				The keys, requiresAPIKey, loopbackExemptScopes, allowedOrigins, reportsHostDetails,
 				storageDirectoryURL, the app routes, and the hosted models take effect on the next
 				request, and
 				maximumConcurrentRunsPerModel and maximumQueuedRunsPerModel at once for every hosted
@@ -438,6 +452,18 @@ NS_SWIFT_SENDABLE
 /*! The scopes a client on this machine reaches without a key. Defaults to NFKServerKeyScopeAll.
 	Introduced in InferKit 0.4.0. */
 @property (nonatomic, assign) NFKServerKeyScope loopbackExemptScopes;
+
+/*!
+	@property   allowedOrigins
+	@abstract   The browser origins the /v1 routes and /mcp admit, as scheme://host[:port] strings.
+	@discussion Empty, the default, admits an origin whose host is the host the request was sent to.
+				Set, it admits exactly the origins it lists, compared without case or a trailing slash,
+				such as https://models.example.com for a page served behind a reverse proxy that
+				rewrites Host. An origin on localhost, 127.0.0.1, or [::1] is admitted either way, and a
+				request without an Origin header is not a browser's and passes. Takes effect on the next
+				request. Introduced in InferKit 0.4.0.
+*/
+@property (atomic, copy) NSSet<NSString *> *allowedOrigins;
 
 /*!
 	@method     addAPIKey:named:scopes:

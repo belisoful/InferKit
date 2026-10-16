@@ -803,19 +803,26 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   before it queues. A form field of the transcription and image-edit routes is read as its contract
   kind, and one that does not read as that kind is refused.
 - A `model` that is not a string is refused with 400. It no longer reaches the only hosted model.
+- An integer field takes a value a `long long` holds; 2^63 and past is refused.
 - The `/v1` routes refuse a browser request whose `Origin` names a site other than `localhost`,
   127.0.0.1, `[::1]`, or the host the request was sent to, with 403
   (`NFKInferenceServerErrorOriginRefused`), as `/mcp` does. A client that sends no `Origin`, which is
-  every agent CLI and SDK, passes, and loopback stays key-free for it.
-- A JSON route and `/mcp` read a body under `Content-Type: application/json`, a `+json` type, or none.
-  A request that names another type (`text/plain`, a form, multipart) is refused with 415
-  (`NFKInferenceServerErrorUnsupportedMediaType`). A browser's cross-origin post carries an `Origin`,
-  which the check above refuses, so a missing type admits no page.
+  every agent CLI and SDK, passes, and loopback stays key-free for it. `/mcp` answers the refusal with
+  a JSON-RPC error whose `data` names the domain and code.
+- `allowedOrigins` on `NFKInferenceServer` lists the browser origins the `/v1` routes and `/mcp` admit
+  in place of the same-host rule, as `scheme://host[:port]` strings, so a page served through a reverse
+  proxy that rewrites `Host` (nginx's default) reaches the server.
+- A JSON route and `/mcp` read the body as JSON whatever its Content-Type, so `curl -d` is served.
 - An exception raised while a request is served, in a route, an app route, a backend's run or build,
-  or a reply that JSON cannot carry, answers 500 and leaves the server serving.
+  or a reply that JSON cannot carry, answers 500 and leaves the server serving. The core's job
+  backends fail the job with `kNFKError_InferenceBackendFailure` when work on their own queues raises:
+  every stream `NFKRemoteTransport` reads, the queued work of the remote, Core ML language, async
+  generation, balanced, and speech recognition backends, a plugin's reply, and the run
+  `NFKInferenceSubmit` queues. A third-party backend's own queues are its own to guard.
 - `/mcp` runs a hosted model's tool (`addToolForModelName:outputModality:purpose:error:`) as a run in
   the model's queue that holds no thread while it waits, so a hundred concurrent `tools/call` requests
-  all answer. The calls in a batch run at once, and a client that leaves cancels them. A message whose
+  all answer, and so does a model tool another server added. The calls in a batch run at once, and a
+  client that leaves cancels them. A message whose
   envelope or params are of the wrong type is a JSON-RPC error, answered with 400 when it is the
   request's only message.
 

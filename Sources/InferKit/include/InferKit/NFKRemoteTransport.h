@@ -79,7 +79,11 @@ typedef void (^ NS_SWIFT_SENDABLE NFKRemoteStreamCompletion)(NSHTTPURLResponse *
 				returned block cancels the request; a cancelled request completes with
 				NSURLErrorCancelled. The session's configuration is reused, so a caller's proxy or
 				headers carry over, and so does the pin of a session from
-				sessionWithPinnedCertificateSHA256:.
+				sessionWithPinnedCertificateSHA256:. A lineHandler that raises an Objective-C exception
+				ends the stream: no further line arrives, and the completion receives
+				kNFKError_InferenceBackendFailure naming the exception. A completion that raises is
+				called once more with that error and no response, so a job it finishes fails instead of
+				waiting.
 */
 + (void (^ NS_SWIFT_SENDABLE)(void))streamRequest:(NSURLRequest *)request
 						session:(NSURLSession *)session

@@ -1389,27 +1389,29 @@ Macs broke every local agent link, and a second `NFKInferenceServer` would build
   replaces `Host`), a foreign `Host` refused with 421 unless its key opens the route and `/mcp`'s
   `Origin` check.
 
-**Request checks (2026-10-16).** From the Commit Manager's review of the groundwork: `{"stream": null}`
-or an array reached `boolValue` on the Messages, Responses, chat, image, and native routes and raised,
-which ended the process and every hosted model, with no key needed on loopback.
+**Request checks (2026-10-16).** A JSON value of an unexpected type, such as `{"stream": null}` or an
+array where a flag goes, must never reach `boolValue` or another selector it does not answer: the
+exception would end the process and every hosted model, and loopback needs no key.
 
 - Field types: each JSON route declares its documented fields and their types (a dictionary such as
   `@{ @"stream": @"boolean", @"stop": @"string|array" }`), and `JSONBodyOf:response:wire:fields:`
-  checks them through `NFKServedFieldTypeError` (`NFKServedRequestChecks.h`) after the Content-Type
-  and the parse. Nested values are checked where the parser reads them: chat messages, their tool
-  calls and parts; Messages' `tool_choice`, `thinking`, `output_config`, `system` blocks,
-  `stop_sequences`, and every content block (`is_error` included); Responses' `reasoning`, `text`,
-  `tools`, and input items with their parts; the native `request`. A wrong type is
-  `NFKInferenceServerErrorInvalidRequest` (10, 400), whose reason names the field's path. A
-  `reasoning` item, which the route skips, is not read.
-- Null is absent (the coordinator's decision, 2026-10-16): OpenAI's, Anthropic's, and the Responses
-  clients and SDKs send null for an unset optional parameter (`stream`, `temperature`, `stop`, `tools`,
-  `max_tokens`), and the real APIs accept it. `NFKServedValueTypeError` and `NFKServedFieldTypeError`
-  pass null; `JSONBodyOf:response:wire:fields:` returns the body through `NFKServedWithoutNulls`, so a
-  route reads a null top-level field as absent and never hands `NSNull` to a backend as a parameter;
-  MCP strips null from `params`. A required field that is null is missing, and the parser's own
-  missing-field refusal answers it (400). Nested nulls pass the type check and meet `isKindOfClass:`
-  reads. `enqueue:` (and the MCP model-tool path) runs the request through
+  checks them through `NFKServedFieldTypeError` (`NFKServedRequestChecks.h`) after the parse. Nested
+  values are checked where the parser reads them: chat messages, their tool calls and parts; Messages'
+  `tool_choice`, `thinking`, `output_config`, `system` blocks, `stop_sequences`, and every content block
+  (`is_error` included); Responses' `reasoning`, `text`, `tools`, and input items with their parts; the
+  native `request`. A wrong type is `NFKInferenceServerErrorInvalidRequest` (10, 400), whose reason
+  names the field's path. A `reasoning` item, which the route skips, is not read.
+- Integers: a JSON integer stored as a signed integer passes, one stored unsigned passes up to
+  `LLONG_MAX`, and one stored as a double passes when it has no fraction and lies in [-2^63, 2^63).
+  2^63 is the first double past `LLONG_MAX`, so `integerValue` would overflow on it.
+- Null is absent. OpenAI's, Anthropic's, and the Responses clients and SDKs send null for an unset
+  optional parameter (`stream`, `temperature`, `stop`, `tools`, `max_tokens`), and those APIs accept
+  it. `NFKServedValueTypeError` and `NFKServedFieldTypeError` pass null;
+  `JSONBodyOf:response:wire:fields:` returns the body through `NFKServedWithoutNulls`, so a route reads
+  a null top-level field as absent and never hands `NSNull` to a backend as a parameter; MCP strips
+  null from `params`. A required field that is null is missing, and the parser's own missing-field
+  refusal answers it (400). Nested nulls pass the type check and meet `isKindOfClass:` reads.
+  `enqueue:` (and the MCP model-tool path) runs the request through
   `NFKServedRequestWithoutNullContractValues`, which drops a null under a contract key, since the
   native wire carries `NSNull` and an Objective-C backend would send it `doubleValue`; a null under any
   other key stays, as the wire round-trip test needs.
@@ -1421,37 +1423,54 @@ which ended the process and every hosted model, with no key needed on loopback.
   meet with `integerValue`. The embeddings route checks its parameters itself, since its run has no
   request. Form fields (transcription, image edit) go through `NFKServedFormValue`, which reads a
   contract key's text as its kind and refuses text that does not read.
-- `model`: `modelNamed:error:` refuses a non-string (`NSNull` included) with InvalidRequest instead of
-  falling through to the only hosted model.
-- Browser refusal: a `/v1` request whose `Origin` fails `NFKServedOriginIsAllowed` (absent passes;
-  `null` fails; loopback names and the request's own `Host` pass) is
-  `NFKInferenceServerErrorOriginRefused` (12, 403), checked before the key, so a key does not admit a
-  page. `/mcp` uses the same function. A JSON route, and a POST to `/mcp`, reads a body under a JSON
-  Content-Type (`application/json`, or a `+json` subtype, any parameters) or none
-  (`NFKServedContentTypeAcceptsJSON`); a named other type is
-  `NFKInferenceServerErrorUnsupportedMediaType` (11, 415). A missing type is accepted (the
-  coordinator's decision, 2026-10-16): some clients omit it, and a browser's cross-origin post, a Blob
-  body without a type included, always carries an Origin, which the Origin check refuses. A URL
-  session adds `application/x-www-form-urlencoded` to a body without a type, so the test of a missing
-  type writes its request to a socket by hand.
+- `model`: `modelNamed:error:` refuses a value that is not a string with InvalidRequest. A null
+  `model` is absent and reaches the only hosted model, as a missing one does.
+- Content-Type: a JSON route, and a POST to `/mcp`, reads its body as JSON whatever its Content-Type,
+  so `curl -d` (form-urlencoded) and a missing type are served. A body that is not a JSON object is the
+  route's 400. A media-type rule adds no protection: a browser's cross-origin request always carries
+  an `Origin`, which the Origin check refuses.
+- Origin: a `/v1` request whose `Origin` fails `NFKServedOriginIsAllowed` is
+  `NFKInferenceServerErrorOriginRefused` (11, 403), checked before the key, so a key does not admit a
+  page. A missing `Origin` passes, `null` fails, and a loopback origin passes. With `allowedOrigins`
+  empty, an origin whose host is the request's `Host` passes; with it set, exactly the listed origins
+  pass, compared as `scheme://host[:port]` without case or a trailing slash. `/mcp` applies the same
+  rule and answers 403 with a JSON-RPC error without an id (-32600), as the Streamable HTTP transport
+  prescribes, whose `data` carries `inferkit_domain` and `inferkit_code`. A reverse proxy that rewrites
+  `Host` (nginx's default `proxy_pass`) makes a same-origin page's `Origin` differ from the `Host` the
+  server sees; `allowedOrigins` names that page's origin.
+- DNS rebinding: a rebound page sends an `Origin` and a `Host` that name the same attacker host, so
+  the Origin check passes it. `refusalOf:scope:wire:`'s Host check stops it: a loopback request whose
+  `Host` is not a loopback name needs a key (421 otherwise).
 - Exceptions: the listener's block wraps `routeRequest:response:` (app routes run inside it), the
   run's completion and partial handlers are wrapped in `enqueue:`, and `NFKServedModel` wraps a
   backend's synchronous run, `submitInferenceJobForRequest:`, and the provider's build. Each answers
   `kNFKError_InferenceBackendFailure` naming the exception (500), or ends a begun stream. ARC code is
-  not exception-safe, so an exception leaks what its frames held; that is the price of not ending the
-  process. `-[NFKHTTPResponse sendStatus:JSONObject:headers:]`, `NFKServedJSONString`, and the event
-  writer check `isValidJSONObject:` first, since `dataWithJSONObject:` raises on a non-finite number.
+  not exception-safe, so an exception leaks what its frames held. `-[NFKHTTPResponse
+  sendStatus:JSONObject:headers:]`, `NFKServedJSONString`, and the event writer check
+  `isValidJSONObject:` first, since `dataWithJSONObject:` raises on a non-finite number.
+- Job backends: work a job backend runs on its own queue is outside the server's `@try`.
+  `NFKJobGuard.h` (private) gives the core's job backends `NFKJobRunGuarded` and
+  `NFKJobDispatchGuarded`, which fail the job with `NFKJobExceptionError` when the work raises.
+  `NFKRemoteLineStream` (`NFKRemoteTransport`) guards each line handler call, cancelling the task and
+  handing the completion the exception's error, and calls a raising completion once more with that
+  error, so every streaming remote and provider backend is covered in one place. The queued paths of
+  the Responses, speech, image, transcription, Gemini Interactions, Core ML language, async generation,
+  and balanced backends dispatch through `NFKJobDispatchGuarded`; `NFKInferenceSubmit`'s run,
+  `NFKSpeechRecognitionBackend`'s result handler, and `NFKPluginBackend`'s reply decoding run through
+  `NFKJobRunGuarded` or their own `@try`. A plugin partial that raises while it is read is dropped.
+  A third-party backend's own queues are its own responsibility, as `NFKInferenceServer.h` states.
 - MCP model tools: the endpoint ran each `tools/call` on a global-queue worker, and a model tool
   waited there (`DISPATCH_TIME_FOREVER`) for a run that needed another worker, so about 64 concurrent
-  calls starved the pool. `serveRequest:…toolStarter:` now offers each call to the server's
-  `startModelTool:arguments:request:completion:`, which, for an `NFKBackendTool` over the server's own
+  calls starved the pool. `serveRequest:…toolStarter:` offers each call to the server's
+  `startModelTool:arguments:request:completion:`, which, for an `NFKBackendTool` over an
   `NFKServedModelToolBackend`, checks the arguments, builds the request (the tool's `requestBuilder`
   or `defaultRequestForArguments:`), enqueues an `NFKServedRun`, and describes the result on
-  completion, as `invokeWithArguments:` does. `NFKServedMCPExchange` collects a POST's replies in
-  message order, filling a slot when a call ends, and answers when every slot is filled; a client that
-  leaves cancels the started runs. Any other tool still runs on the worker. A message whose envelope
-  (`jsonrpc`, `id`, `method`) or params are of the wrong type is -32600 or -32602, and 400 when it is
-  the request's only message; a tool that raises is -32603. The in-process path
+  completion, as `invokeWithArguments:` does. A model tool another server added starts in its owning
+  server the same way. `NFKServedMCPExchange` collects a POST's replies in message order, filling a
+  slot when a call ends, and answers when every slot is filled; a client that leaves cancels the
+  started runs. Any other tool still runs on the worker. A message whose envelope (`jsonrpc`, `id`,
+  `method`) or params are of the wrong type is -32600 or -32602, and 400 when it is the request's only
+  message; a tool that raises is -32603. The in-process path
   (`-[NFKServedModelToolBackend runInferenceForRequest:error:]`, used by a tool loop in the app) still
   waits on a semaphore: its caller holds its own thread.
 - Token counting stays in the model's run slot. The backend contract promises a count never overlaps a
@@ -1459,16 +1478,20 @@ which ended the process and every hosted model, with no key needed on loopback.
   clip, Phi-4-multimodal's computes a clip's log-mel spectrogram in MLX, and DeepSeek's builds the
   vision graph, each on the thread the count runs on. A count for a model that is not resident also
   needs the build the slot starts. `NFKInferenceServer.h` states the wait.
-- Tests: `NFKServedRequestChecksTests` (16): every stream flag and the nested flags (`is_error`,
+- Tests: `NFKServedRequestChecksTests` (19): every stream flag and the nested flags (`is_error`,
   `disable_parallel_tool_use`, `include_usage`) as array, string, and object refused, and as null run as
   absent; every documented field of every JSON route with each non-null value not of its type refused,
   and as null read as absent, or as missing for a required field; a `model` that is a number, array,
-  object, or boolean, and a null one that reaches the only model; null contract values on the native
-  route dropped; nested messages and items; contract values on the chat and native routes, streamed and
-  not; form fields; the Content-Type (none accepted over a hand-written socket request) and Origin
-  rules; a backend, a reply, and an app route that raise; malformed MCP messages alone and in a batch;
-  100 concurrent MCP model-tool calls under a 90 s deadline; and a batch of model-tool calls answered in
-  order. Each refusal test then asserts that the server serves the next request.
+  object, or boolean, and a null one that reaches the only model; integers at and past 2^63; null
+  contract values on the native route dropped; nested messages and items; contract values on the chat
+  and native routes, streamed and not; form fields; a JSON body under text/plain, form-urlencoded,
+  multipart, and no Content-Type; the Origin rule and `allowedOrigins` behind a Host-rewriting proxy,
+  on `/v1` and `/mcp`; a backend, a reply, and an app route that raise; malformed MCP messages alone
+  and in a batch; 100 concurrent MCP model-tool calls under a 90 s deadline, on the server's own model
+  and on another server's; and a batch of model-tool calls answered in order. Each refusal test then
+  asserts that the server serves the next request. `NFKJobGuardTests` (4): a run
+  `NFKInferenceSubmit` queues that raises, a stream whose line handler raises, a stream whose
+  completion raises, and a served job backend that raises on its own queue answered 500.
 
 **Residency and unloading (2026-10-13).** Asked for by an app's service, which lists models without
 keeping them in memory, and unloads idle ones.

@@ -8,6 +8,7 @@
 #import <InferKit/NFKRemoteProvider.h>
 #import "NFKRemoteTransportPrivate.h"
 #import <objc/runtime.h>
+#import "NFKJobGuard.h"
 
 NSString * const NFKAnthropicAPIVersion = @"2023-06-01";
 NSString * const NFKRemoteErrorStatusCodeKey = @"NFKRemoteErrorStatusCode";
@@ -147,7 +148,10 @@ NSError * _Nullable NFKRemotePinPreflightError(NSURLSession *session, NSURL * _N
 
 #pragma mark - Line stream
 
-/*! Splits a streamed body into lines as the bytes arrive; collects a failing status's body whole. */
+/*! Splits a streamed body into lines as the bytes arrive; collects a failing status's body whole. A line
+	handler that raises ends the stream, and the completion handler receives the exception as its
+	error; a completion handler that raises is called once more with that error, so the job it
+	finishes fails instead of waiting. */
 @interface NFKRemoteLineStream : NSObject <NSURLSessionDataDelegate>
 @property (nonatomic, copy) void (^lineHandler)(NSString *line);
 @property (nonatomic, copy) NFKRemoteStreamCompletion completionHandler;
@@ -156,6 +160,10 @@ NSError * _Nullable NFKRemotePinPreflightError(NSURLSession *session, NSURL * _N
 @property (nonatomic, assign) BOOL collectsWholeBody;
 /*! The pin of the session the stream was started on, which the stream's own session applies. */
 @property (nonatomic, strong, nullable) NFKRemotePinnedTrust *pin;
+/*! The task the stream reads, which a raising line handler cancels. */
+@property (nonatomic, weak, nullable) NSURLSessionTask *task;
+/*! The error of an exception a line handler raised, which the completion handler receives. */
+@property (nonatomic, strong, nullable) NSError *handlerFailure;
 @end
 
 @implementation NFKRemoteLineStream
@@ -223,7 +231,19 @@ didReceiveResponse:(NSURLResponse *)response
 	} else if (error != nil && self.response == nil && error.code != NSURLErrorCancelled) {
 		reported = NFKRemoteUnreachableError(task.originalRequest.URL, error);
 	}
-	self.completionHandler(self.response, errorBody, reported);
+	if (self.handlerFailure != nil) {
+		reported = self.handlerFailure;
+		errorBody = nil;
+	}
+	@try {
+		self.completionHandler(self.response, errorBody, reported);
+	} @catch (NSException *exception) {
+		@try {
+			self.completionHandler(nil, nil, NFKJobExceptionError(exception));
+		} @catch (NSException *repeated) {
+			// The handler raised on its error path too; the process keeps running.
+		}
+	}
 	[session finishTasksAndInvalidate];
 }
 
@@ -248,7 +268,15 @@ didReceiveResponse:(NSURLResponse *)response
 	if ([line hasSuffix:@"\r"]) {
 		line = [line substringToIndex:line.length - 1];
 	}
-	self.lineHandler(line);
+	if (self.handlerFailure != nil) {
+		return;
+	}
+	@try {
+		self.lineHandler(line);
+	} @catch (NSException *exception) {
+		self.handlerFailure = NFKJobExceptionError(exception);
+		[self.task cancel];
+	}
 }
 
 @end
@@ -404,6 +432,7 @@ static NSError *NFKRemoteUnreachableError(NSURL * _Nullable url, NSError * _Null
 																  delegate:stream
 															 delegateQueue:nil];
 	NSURLSessionDataTask *task = [streamingSession dataTaskWithRequest:request];
+	stream.task = task;
 	[task resume];
 	return ^{ [task cancel]; };
 }

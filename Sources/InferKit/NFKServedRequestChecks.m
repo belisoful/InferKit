@@ -29,8 +29,16 @@ static BOOL NFKServedIsInteger(id _Nullable value)
 	if (!NFKServedIsNumber(value)) {
 		return NO;
 	}
+	const char *encoding = [value objCType];
+	if (strchr("QLIS", encoding[0]) != NULL) {
+		return [value unsignedLongLongValue] <= (unsigned long long)LLONG_MAX;
+	}
+	if (strchr("qlisc", encoding[0]) != NULL) {
+		return YES;
+	}
 	double number = [value doubleValue];
-	return number == trunc(number) && fabs(number) <= 9223372036854775807.0;
+	// 2^63 is the first double past LLONG_MAX, which no double equals; -2^63 is LLONG_MIN itself.
+	return number == trunc(number) && number >= -9223372036854775808.0 && number < 9223372036854775808.0;
 }
 
 static BOOL NFKServedValueIsOfOneType(id _Nullable value, NSString *type)
@@ -217,20 +225,6 @@ id _Nullable NFKServedFormValue(NSString *name, NSString *text, NSError * _Nulla
 	return value;
 }
 
-BOOL NFKServedContentTypeAcceptsJSON(NSString * _Nullable contentType)
-{
-	if ([contentType stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet].length == 0) {
-		return YES;
-	}
-	NSString *mediaType = [[contentType componentsSeparatedByString:@";"].firstObject
-						   stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet].lowercaseString;
-	if ([mediaType isEqualToString:@"application/json"]) {
-		return YES;
-	}
-	NSArray<NSString *> *sides = [mediaType componentsSeparatedByString:@"/"];
-	return sides.count == 2 && sides[0].length > 0 && [sides[1] hasSuffix:@"+json"];
-}
-
 /*! The host a Host header names, lowercased and without its port or an IPv6 address's brackets. */
 static NSString *NFKServedHostOfHeader(NSString * _Nullable header)
 {
@@ -243,7 +237,17 @@ static NSString *NFKServedHostOfHeader(NSString * _Nullable header)
 	return sides.count == 2 ? sides[0] : host;
 }
 
-BOOL NFKServedOriginIsAllowed(NFKHTTPRequest *request)
+/*! An origin as allowedOrigins compares it: lowercased, without a trailing slash. */
+static NSString *NFKServedNormalizedOrigin(NSString *origin)
+{
+	NSString *normalized = [origin stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet].lowercaseString;
+	while ([normalized hasSuffix:@"/"]) {
+		normalized = [normalized substringToIndex:normalized.length - 1];
+	}
+	return normalized;
+}
+
+BOOL NFKServedOriginIsAllowed(NFKHTTPRequest *request, NSSet<NSString *> *allowedOrigins)
 {
 	NSString *origin = [request valueForHeader:@"origin"];
 	if (origin.length == 0) {
@@ -258,6 +262,15 @@ BOOL NFKServedOriginIsAllowed(NFKHTTPRequest *request)
 	}
 	if ([@[ @"localhost", @"127.0.0.1", @"::1" ] containsObject:host]) {
 		return YES;
+	}
+	if (allowedOrigins.count > 0) {
+		NSString *normalized = NFKServedNormalizedOrigin(origin);
+		for (NSString *allowed in allowedOrigins) {
+			if ([NFKServedNormalizedOrigin(allowed) isEqualToString:normalized]) {
+				return YES;
+			}
+		}
+		return NO;
 	}
 	return [host isEqualToString:NFKServedHostOfHeader([request valueForHeader:@"host"])];
 }

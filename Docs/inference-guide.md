@@ -809,6 +809,13 @@ CLIs that do not trust a self-signed certificate. Both listeners serve the same 
 one. A request from this machine whose `Host` header names another host, as a browser page reaching the
 server through DNS rebinding sends, needs a key whatever the exemptions.
 
+A browser request to a `/v1` route or `/mcp` whose `Origin` names another site is refused with 403,
+whatever key it presents; a client that is not a browser sends no `Origin` and passes. By default an
+origin passes when its host is the host the request was sent to. A reverse proxy that rewrites `Host`,
+as nginx's `proxy_pass` does by default, hides that host, so a page served through it is refused: set
+`allowedOrigins` to the page's origin, such as `https://models.example.com`, or have the proxy pass the
+original `Host`.
+
 A server can hold several keys, each named and limited to the routes it opens: inference, the status
 route, MCP, and the app's own routes. Removing a key refuses it from the next request.
 `loopbackExemptScopes` chooses which of those a client on the same machine reaches without a key.
@@ -1182,8 +1189,8 @@ writes the release's tool format.
 Protocol at `/mcp` (Streamable HTTP), so Claude Code, Claude Desktop, and any MCP client call a local
 model as a tool. Only the added tools are listed, each with its description and schema, and a call's
 text, images, and audio come back as MCP content. The route takes the server's key, and refuses a
-browser request whose `Origin` names another host, which closes DNS rebinding against a loopback
-server. `NFKMCPClient` reads any MCP server's tools back as `NFKInferenceTool`, so a loop gives a
+browser request whose `Origin` names another site, so a page elsewhere cannot post to a local server;
+the `Host` check above is what stops DNS rebinding. `NFKMCPClient` reads any MCP server's tools back as `NFKInferenceTool`, so a loop gives a
 model a remote server's tools beside its own. On macOS it also launches a server as a program and
 speaks to it over stdio, given the command, arguments, environment, and working directory an agent's
 `mcp add --transport stdio` takes. The server inherits only a few variables (`HOME`, `PATH`, `USER`,

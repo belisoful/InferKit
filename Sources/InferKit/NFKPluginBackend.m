@@ -14,6 +14,7 @@
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKModelVocabulary.h>
 #import <objc/runtime.h>
+#import "NFKJobGuard.h"
 
 static const void *NFKPluginRunDirectoryKey = &NFKPluginRunDirectoryKey;
 
@@ -624,15 +625,25 @@ id _Nullable NFKPluginResultFileOwner(NFKInferenceResult *result)
 		NFKPluginProgressHandler progress = nil;
 		if (job != nil) {
 			progress = ^(NSDictionary<NSString *, id> *update, NSArray<NFKPluginDescriptor *> *descriptors) {
-				[self relayProgress:update descriptors:descriptors directory:directory job:job];
+				// A partial that cannot be read is dropped; the run's reply still finishes the job.
+				@try {
+					[self relayProgress:update descriptors:descriptors directory:directory job:job];
+				} @catch (NSException *exception) {
+				}
 			};
 		}
 		NSInteger identifier = [connection sendRequest:message descriptors:writer.descriptors progressHandler:progress
 										  replyHandler:^(NSDictionary<NSString *, id> * _Nullable reply, NSArray<NFKPluginDescriptor *> *descriptors, NSError * _Nullable replyError) {
-			NSError *runError = reply != nil ? NFKPluginErrorFromReply(reply) : replyError;
+			NSError *runError = nil;
 			NFKInferenceResult *result = nil;
-			if (runError == nil) {
-				result = [self resultFromJSONObject:reply[@"result"] descriptors:descriptors directory:directory error:&runError];
+			@try {
+				runError = reply != nil ? NFKPluginErrorFromReply(reply) : replyError;
+				if (runError == nil) {
+					result = [self resultFromJSONObject:reply[@"result"] descriptors:descriptors directory:directory error:&runError];
+				}
+			} @catch (NSException *exception) {
+				result = nil;
+				runError = NFKJobExceptionError(exception);
 			}
 			completion(result, result != nil ? nil : runError);
 		} error:blockError];
