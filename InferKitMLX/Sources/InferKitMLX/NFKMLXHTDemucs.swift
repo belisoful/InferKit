@@ -1074,8 +1074,10 @@ public final class NFKMLXHTDemucs: NSObject {
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, weightsPath: String, revision: String?,
                                cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        try backend(variant: .fourStem, repo: repo, weightsPath: weightsPath, revision: revision,
-                    cacheDirectoryURL: cacheDirectoryURL)
+        try NFKMLXBuildHolds.keeping {
+            try backend(variant: .fourStem, repo: repo, weightsPath: weightsPath, revision: revision,
+                        cacheDirectoryURL: cacheDirectoryURL)
+        }
     }
 
     /// The download factory at a chosen geometry.
@@ -1084,9 +1086,11 @@ public final class NFKMLXHTDemucs: NSObject {
     @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(variant: NFKMLXHTDemucsVariant, repo: String, weightsPath: String,
                                revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath,
-                                                revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(variant: variant, weightsURL: url)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath,
+                                                    revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(variant: variant, weightsURL: url)
+        }
     }
 
     /// The asynchronous form of the download factory.

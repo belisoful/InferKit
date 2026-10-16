@@ -962,8 +962,10 @@ public final class NFKMLXDepthAnything3: NSObject {
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, weightsPath: String, revision: String?,
                                cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        try backend(variant: .small, repo: repo, weightsPath: weightsPath, revision: revision,
-                    cacheDirectoryURL: cacheDirectoryURL)
+        try NFKMLXBuildHolds.keeping {
+            try backend(variant: .small, repo: repo, weightsPath: weightsPath, revision: revision,
+                        cacheDirectoryURL: cacheDirectoryURL)
+        }
     }
 
     /// The download factory at a chosen size.
@@ -972,8 +974,10 @@ public final class NFKMLXDepthAnything3: NSObject {
     @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(variant: NFKMLXDepth3Variant, repo: String, weightsPath: String,
                                revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(variant: variant, weightsURL: url)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(variant: variant, weightsURL: url)
+        }
     }
 
     /// The asynchronous form of the download factory.
@@ -1177,9 +1181,11 @@ public final class NFKMLXDepth3Estimator: NSObject {
     @objc(estimatorWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func estimator(variant: NFKMLXDepth3Variant, repo: String, weightsPath: String,
                                  revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXDepth3Estimator {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
-                                                cacheDirectoryURL: cacheDirectoryURL)
-        return try estimator(variant: variant, weightsURL: url)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
+                                                    cacheDirectoryURL: cacheDirectoryURL)
+            return try estimator(variant: variant, weightsURL: url)
+        }
     }
 
     /// The asynchronous form of ``estimator(variant:repo:weightsPath:revision:cacheDirectoryURL:)``. The

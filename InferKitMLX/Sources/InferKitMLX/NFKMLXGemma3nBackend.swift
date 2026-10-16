@@ -343,7 +343,9 @@ extension NFKMLXGemma3n {
     /// `unsloth/gemma-3n-E4B-it`. Introduced in InferKit 0.4.0.
     @objc(gemma3nWithRepo:revision:cacheDirectoryURL:error:)
     public static func gemma3n(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXGemma3n {
-        try load(directoryURL: try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL))
+        try NFKMLXBuildHolds.keeping {
+            try load(directoryURL: try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL))
+        }
     }
 
     /// The asynchronous form of ``gemma3n(repo:revision:cacheDirectoryURL:)``, delivered on a
@@ -360,7 +362,9 @@ extension NFKMLXGemma3n {
     /// builds the backend. Introduced in InferKit 0.4.0.
     @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        try backend(directoryURL: try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL))
+        try NFKMLXBuildHolds.keeping {
+            try backend(directoryURL: try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL))
+        }
     }
 
     /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``. Introduced in

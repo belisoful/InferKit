@@ -266,9 +266,11 @@ public final class NFKMLXNLLB: NSObject {
     /// Downloads a variant's release and builds the backend. Blocking on the network.
     @objc(backendWithVariant:revision:cacheDirectoryURL:error:)
     public static func backend(variant: NFKMLXNLLBVariant, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        try backend(variant: variant, directoryURL: try NFKMLXReleaseDownload.directory(
-            repo: variant.repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-            required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+        try NFKMLXBuildHolds.keeping {
+            try backend(variant: variant, directoryURL: try NFKMLXReleaseDownload.directory(
+                repo: variant.repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+        }
     }
 
     /// The asynchronous form of ``backend(variant:revision:cacheDirectoryURL:)``.

@@ -201,14 +201,16 @@ extension NFKMLXVoiceRestoreFactory {
     /// network, so run it off the main and render threads. Introduced in InferKit 0.4.0.
     @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let hub = NFKMLXReleaseDownload.hub(cacheDirectoryURL: cacheDirectoryURL)
-        let transformerHold = try hub.holdRelease(repo: repo, revision: revision)
-        defer { transformerHold.invalidate() }
-        let vocoderHold = try hub.holdRelease(repo: vocoderRepo, revision: nil)
-        defer { vocoderHold.invalidate() }
-        let transformer = try NFKMLXReleaseDownload.firstServed(weightFiles, hub: hub, repo: repo, revision: revision)
-        let vocoder = try hub.fetchFile(repo: vocoderRepo, revision: nil, path: vocoderFile)
-        return try backend(weightsURL: transformer, vocoderURL: vocoder, steps: 32, cfgStrength: 0.5)
+        try NFKMLXBuildHolds.keeping {
+            let hub = NFKMLXReleaseDownload.hub(cacheDirectoryURL: cacheDirectoryURL)
+            let transformerHold = try hub.holdRelease(repo: repo, revision: revision)
+            defer { transformerHold?.invalidate() }
+            let vocoderHold = try hub.holdRelease(repo: vocoderRepo, revision: nil)
+            defer { vocoderHold?.invalidate() }
+            let transformer = try NFKMLXReleaseDownload.firstServed(weightFiles, hub: hub, repo: repo, revision: revision)
+            let vocoder = try hub.fetchFile(repo: vocoderRepo, revision: nil, path: vocoderFile)
+            return try backend(weightsURL: transformer, vocoderURL: vocoder, steps: 32, cfgStrength: 0.5)
+        }
     }
 
     /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``. Introduced in InferKit 0.4.0.

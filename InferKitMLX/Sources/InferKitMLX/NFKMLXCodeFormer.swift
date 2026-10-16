@@ -535,12 +535,14 @@ public final class NFKMLXCodeFormer: NSObject {
     public static func photoBackend(fidelity: Float, repo: String, weightsPath: String, revision: String?,
                                     detectorRepo: String, detectorWeightsPath: String, detectorRevision: String?,
                                     cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
-                                                cacheDirectoryURL: cacheDirectoryURL)
-        let detectorURL = try NFKMLXDownload.weightsURL(repo: detectorRepo, weightsPath: detectorWeightsPath,
-                                                        revision: detectorRevision,
-                                                        cacheDirectoryURL: cacheDirectoryURL)
-        return try photoBackend(fidelity: fidelity, weightsURL: url, detectorWeightsURL: detectorURL)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
+                                                    cacheDirectoryURL: cacheDirectoryURL)
+            let detectorURL = try NFKMLXDownload.weightsURL(repo: detectorRepo, weightsPath: detectorWeightsPath,
+                                                            revision: detectorRevision,
+                                                            cacheDirectoryURL: cacheDirectoryURL)
+            return try photoBackend(fidelity: fidelity, weightsURL: url, detectorWeightsURL: detectorURL)
+        }
     }
 
     /// The asynchronous form of
@@ -608,8 +610,10 @@ public final class NFKMLXCodeFormer: NSObject {
     /// Blocking on the network; run off the render thread.
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        try backend(fidelity: NFKMLXCodeFormerConfiguration.base.fidelity, repo: repo, weightsPath: weightsPath,
-                    revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        try NFKMLXBuildHolds.keeping {
+            try backend(fidelity: NFKMLXCodeFormerConfiguration.base.fidelity, repo: repo, weightsPath: weightsPath,
+                        revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        }
     }
 
     /// The download factory at a chosen fidelity weight. Blocking on the
@@ -617,8 +621,10 @@ public final class NFKMLXCodeFormer: NSObject {
     @objc(backendWithFidelity:repo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(fidelity: Float, repo: String, weightsPath: String, revision: String?,
                                cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(fidelity: fidelity, weightsURL: url)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(fidelity: fidelity, weightsURL: url)
+        }
     }
 
     /// The asynchronous form of the download factory: downloads on a background queue, then builds and

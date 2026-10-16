@@ -233,7 +233,9 @@ public final class NFKMLXQwen3VLEmbedder: NSObject, NFKTextEmbedding {
     /// `Qwen/Qwen3-VL-Embedding-8B`.
     @objc(embedderWithRepo:revision:cacheDirectoryURL:error:)
     public static func embedder(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXQwen3VLEmbedder {
-        try embedder(directoryURL: try downloadedDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL))
+        try NFKMLXBuildHolds.keeping {
+            try embedder(directoryURL: try downloadedDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL))
+        }
     }
 
     /// The asynchronous form of ``embedder(repo:revision:cacheDirectoryURL:)``. The handler runs on a
@@ -250,7 +252,9 @@ public final class NFKMLXQwen3VLEmbedder: NSObject, NFKTextEmbedding {
     /// and builds the text-embedding backend over it.
     @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        try backend(directoryURL: try downloadedDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL))
+        try NFKMLXBuildHolds.keeping {
+            try backend(directoryURL: try downloadedDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL))
+        }
     }
 
     /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``.
@@ -349,9 +353,11 @@ public final class NFKMLXQwen3VLReranker: NSObject {
     /// `Qwen/Qwen3-VL-Reranker-8B`.
     @objc(rerankerWithRepo:revision:cacheDirectoryURL:error:)
     public static func reranker(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXQwen3VLReranker {
-        try reranker(directoryURL: try NFKMLXReleaseDownload.directory(
-            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-            required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+        try NFKMLXBuildHolds.keeping {
+            try reranker(directoryURL: try NFKMLXReleaseDownload.directory(
+                repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+        }
     }
 
     /// The asynchronous form of ``reranker(repo:revision:cacheDirectoryURL:)``. The handler runs on a

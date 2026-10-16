@@ -43,6 +43,9 @@ build_mlx_from_its_module() {
     while IFS= read -r map; do
         clang_maps+=(-Xcc "-fmodule-map-file=$map" -Xcc "-I$(dirname "$map")")
     done < <(find "$dir/.build/checkouts" -path '*/include/module.modulemap')
+    # The package's own C target, which InferKitMLX imports internally, through the map SwiftPM generates.
+    clang_maps+=(-Xcc "-fmodule-map-file=$maps/InferKitMLXSupport.modulemap"
+                 -Xcc "-I$dir/Sources/InferKitMLXSupport/include")
     (
         graphs="$(mktemp -d)"
         trap 'rm -rf "$graphs"' EXIT

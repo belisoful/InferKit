@@ -164,12 +164,14 @@ public final class NFKMLXFluxControlNetGenerator: NSObject {
     @objc(generatorWithRepo:controlNetRepo:revision:cacheDirectoryURL:residency:error:)
     public static func generator(repo: String?, controlNetRepo: String?, revision: String?, cacheDirectoryURL: URL?,
                                  residency: NFKMLXResidency) throws -> NFKMLXFluxControlNetGenerator {
-        let base = try NFKMLXFlux.releaseDirectory(repo: repo ?? releaseRepo, revision: revision,
-                                                   cacheDirectoryURL: cacheDirectoryURL)
-        let control = try NFKMLXReleaseDownload.directory(repo: controlNetRepo ?? controlNetReleaseRepo, revision: nil,
-                                                          cacheDirectoryURL: cacheDirectoryURL,
-                                                          components: controlNetComponents)
-        return try generator(directoryURL: base, controlNetDirectoryURL: control, residency: residency)
+        try NFKMLXBuildHolds.keeping {
+            let base = try NFKMLXFlux.releaseDirectory(repo: repo ?? releaseRepo, revision: revision,
+                                                       cacheDirectoryURL: cacheDirectoryURL)
+            let control = try NFKMLXReleaseDownload.directory(repo: controlNetRepo ?? controlNetReleaseRepo, revision: nil,
+                                                              cacheDirectoryURL: cacheDirectoryURL,
+                                                              components: controlNetComponents)
+            return try generator(directoryURL: base, controlNetDirectoryURL: control, residency: residency)
+        }
     }
 
     /// The asynchronous form of ``generator(repo:controlNetRepo:revision:cacheDirectoryURL:residency:)``.

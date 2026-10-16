@@ -510,9 +510,11 @@ public final class NFKMLXQwen3VL: NSObject {
     /// Introduced in InferKit 0.4.0.
     @objc(modelWithRepo:revision:cacheDirectoryURL:error:)
     public static func model(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXQwen3VL {
-        try model(directoryURL: try NFKMLXReleaseDownload.directory(
-            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-            required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+        try NFKMLXBuildHolds.keeping {
+            try model(directoryURL: try NFKMLXReleaseDownload.directory(
+                repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+        }
     }
 
     /// The asynchronous form of ``model(repo:revision:cacheDirectoryURL:)``. The download and the build

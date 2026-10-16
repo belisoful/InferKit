@@ -278,9 +278,11 @@ extension NFKMLXGemmaLanguage {
     @objc(gemmaMultimodalBackendWithRepo:revision:cacheDirectoryURL:residency:error:)
     public static func gemmaMultimodalBackend(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                               residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
-        try gemmaMultimodalBackend(directoryURL: try NFKMLXReleaseDownload.directory(
-            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-            required: requiredFiles, optional: optionalFiles, weights: weightFiles), residency: residency)
+        try NFKMLXBuildHolds.keeping {
+            try gemmaMultimodalBackend(directoryURL: try NFKMLXReleaseDownload.directory(
+                repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                required: requiredFiles, optional: optionalFiles, weights: weightFiles), residency: residency)
+        }
     }
 
     /// The asynchronous form of ``gemmaMultimodalBackend(repo:revision:cacheDirectoryURL:residency:)``.

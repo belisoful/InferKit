@@ -118,9 +118,11 @@ public final class NFKMLXTimesFM: NSObject {
     /// the render thread.
     @objc(timesFMWithRepo:revision:cacheDirectoryURL:error:)
     public static func timesFM(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXTimesFM {
-        try timesFM(directoryURL: try NFKMLXReleaseDownload.directory(
-            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-            required: requiredFiles, optional: [], weights: weightFiles))
+        try NFKMLXBuildHolds.keeping {
+            try timesFM(directoryURL: try NFKMLXReleaseDownload.directory(
+                repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                required: requiredFiles, optional: [], weights: weightFiles))
+        }
     }
 
     /// The asynchronous form of ``timesFM(repo:revision:cacheDirectoryURL:)``.

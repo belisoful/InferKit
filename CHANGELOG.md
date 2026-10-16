@@ -1330,6 +1330,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   catalog variant's listed files. Another variant's file in a shared snapshot, or a partial transfer,
   that goes away leaves the reload working. A reload build error that reports a missing file under the
   source becomes `NFKMLXReloadErrorModelFilesRemoved` naming that file.
+- A forwarded message that raises an Objective-C exception ends its run before the exception reaches
+  the sender, so the model still unloads and the cache release still runs.
+- A download factory keeps the release's snapshot held until its build returns, so a trim another
+  download runs cannot delete the files between the fetch and the read. A load after an unload holds
+  the same way.
 
 #### Every model describes itself in the catalog
 

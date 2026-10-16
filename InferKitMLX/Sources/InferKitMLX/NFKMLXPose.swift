@@ -241,8 +241,10 @@ public final class NFKMLXPose: NSObject {
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:jointNames:error:)
     public static func backend(repo: String, weightsPath: String, revision: String?,
                                cacheDirectoryURL: URL?, jointNames: [String]?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(weightsURL: url, jointNames: jointNames)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(weightsURL: url, jointNames: jointNames)
+        }
     }
 
     /// The asynchronous form of the download factory: downloads on a background queue, then builds and

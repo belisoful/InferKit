@@ -66,8 +66,10 @@ extension NFKMLXChronos {
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, weightsPath: String, revision: String?,
                                cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        try chronos(repo: repo, weightsPath: weightsPath, revision: revision,
-                    cacheDirectoryURL: cacheDirectoryURL).inferenceBackend()
+        try NFKMLXBuildHolds.keeping {
+            try chronos(repo: repo, weightsPath: weightsPath, revision: revision,
+                        cacheDirectoryURL: cacheDirectoryURL).inferenceBackend()
+        }
     }
 
     /// The asynchronous form of ``backend(repo:weightsPath:revision:cacheDirectoryURL:)``. The handler runs

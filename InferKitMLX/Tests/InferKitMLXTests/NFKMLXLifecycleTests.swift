@@ -10,6 +10,7 @@
 import XCTest
 import CoreGraphics
 import InferKit
+import InferKitMLXSupport
 import MLX
 @testable import InferKitMLX
 
@@ -93,6 +94,10 @@ private final class NFKMLXGatedTestBackend: NSObject, NFKInferenceBackend {
     func tokenCount(for request: NFKInferenceRequest) throws -> NSNumber {
         waitAtGate()
         return 3
+    }
+
+    @objc func raiseAnException() {
+        NSException(name: .genericException, reason: "the held backend raised", userInfo: nil).raise()
     }
 
     @objc func scaled(_ value: Int, by factor: Int) -> Int {
@@ -450,6 +455,20 @@ final class NFKMLXLifecycleTests: XCTestCase {
         workerMayEnd.signal()
     }
 
+    func testAForwardedMessageThatRaisesEndsItsRunAndAnUnloadFreesTheModel() throws {
+        let backend = try NFKMLXReloadableBackend {
+            NFKMLXGatedTestBackend(entered: DispatchSemaphore(value: 0), gate: DispatchSemaphore(value: 0))
+        }
+        let inFlight = NFKMLXActivity.inFlightCount
+        let exception = NFKMLXCatchException {
+            _ = backend.perform(NSSelectorFromString("raiseAnException"))
+        }
+        XCTAssertEqual(exception?.reason, "the held backend raised", "the exception reaches the sender")
+        XCTAssertEqual(NFKMLXActivity.inFlightCount, inFlight, "the forwarded run ended during the unwind")
+        backend.unload()
+        XCTAssertFalse(backend.isLoaded, "no run is left counted, so the unload frees the model")
+    }
+
     func testAForwardedMessageCarriesItsArgumentsAndResultAndLoadsAnUnloadedModel() throws {
         let backend = try NFKMLXReloadableBackend {
             NFKMLXGatedTestBackend(entered: DispatchSemaphore(value: 0), gate: DispatchSemaphore(value: 0))
@@ -665,5 +684,46 @@ final class NFKMLXLifecycleTests: XCTestCase {
         XCTAssertThrowsError(try backend.runInference(for: textRequest)) {
             assertModelFilesRemoved($0, path: weights.path)
         }
+    }
+
+    // MARK: Snapshot holds across a build
+
+    func testAReleaseFetchedInsideABuildStaysHeldUntilTheBuildReturns() throws {
+        let cache = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: cache) }
+        let hub = NFKFailingTransportHub()
+        hub.cacheDirectoryURL = cache
+        let repo = "org/held-release"
+        for path in ["config.json", "model.safetensors"] {
+            try writePlaceholder(try XCTUnwrap(hub.localURL(forRepo: repo, revision: nil, path: path)))
+        }
+        try NFKMLXReleaseDownload.using(hub) {
+            try NFKMLXBuildHolds.keeping {
+                _ = try NFKMLXReleaseDownload.directory(repo: repo, revision: nil, cacheDirectoryURL: cache,
+                                                        required: ["config.json"], optional: [],
+                                                        weights: ["model.safetensors"])
+                XCTAssertThrowsError(try hub.removeCachedRepo(repo, revision: nil),
+                                     "the fetch returned, and the build still holds the release") { error in
+                    XCTAssertEqual((error as NSError).domain, NFKDownloadErrorDomain)
+                    XCTAssertEqual((error as NSError).code, NFKDownloadError.inUse.rawValue)
+                }
+            }
+        }
+        XCTAssertNoThrow(try hub.removeCachedRepo(repo, revision: nil), "the hold ended when the build returned")
+        XCTAssertEqual(hub.attempts, [], "the release came from the cache")
+    }
+
+    func testAReleaseFetchedOutsideABuildIsReleasedWhenTheFetchReturns() throws {
+        let cache = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: cache) }
+        let hub = NFKFailingTransportHub()
+        hub.cacheDirectoryURL = cache
+        let repo = "org/unheld-release"
+        try writePlaceholder(try XCTUnwrap(hub.localURL(forRepo: repo, revision: nil, path: "config.json")))
+        try NFKMLXReleaseDownload.using(hub) {
+            _ = try NFKMLXReleaseDownload.directory(repo: repo, revision: nil, cacheDirectoryURL: cache,
+                                                    required: ["config.json"], optional: [], weights: [])
+        }
+        XCTAssertNoThrow(try hub.removeCachedRepo(repo, revision: nil))
     }
 }

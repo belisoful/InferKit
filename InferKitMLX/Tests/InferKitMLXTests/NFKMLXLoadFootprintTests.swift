@@ -10,6 +10,11 @@
 //  one 256 MiB group above its result and a stored-type read holds nothing; a lazy widening, its reads
 //  left to one evaluation, holds 1216 MiB. The budgets sit at twice the read-first measurement.
 //
+//  A measurement starts only once the footprint holds no memory MLX has released: the GPU and CPU
+//  streams drained, MLX's cache at 0 bytes, and the footprint less MLX's own bytes back at the level
+//  the class reads with nothing released. A start taken earlier counted up to 1.8 GiB that the load
+//  then took over, and the guard failed (`mlx-runtime-gotchas.md`).
+//
 
 import Darwin
 import XCTest
@@ -26,6 +31,13 @@ final class NFKMLXLoadFootprintTests: XCTestCase {
     /// One synthetic tensor: `[4096, 4096]` bfloat16 is 32 MiB, eight to a group.
     private static let tensorShape = [4096, 4096]
 
+    /// How far the footprint less MLX's own bytes may sit above its quiet level when a measurement starts.
+    private static let releasedTolerance = 64 * mebibyte
+
+    /// The lowest settled footprint less MLX's active and cached bytes the class has read: the process's
+    /// own memory with no released MLX buffer still counted.
+    nonisolated(unsafe) private static var quietUnownedFootprint = Int.max
+
     private var directory: URL!
 
     override func setUpWithError() throws {
@@ -35,6 +47,8 @@ final class NFKMLXLoadFootprintTests: XCTestCase {
         directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("NFKMLXLoadFootprintTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try warmUp()
+        _ = try Self.settledFootprint(requiringQuiet: false)
     }
 
     override func tearDownWithError() throws {
@@ -66,24 +80,61 @@ final class NFKMLXLoadFootprintTests: XCTestCase {
         return (Int(info.ri_phys_footprint), Int(info.ri_interval_max_phys_footprint))
     }
 
-    /// The footprint once memory released before a measurement has left it. Buffers MLX releases leave
-    /// the footprint over the following moments, so it is read until it holds for 200 ms, or for 5 s.
-    private static func settledFootprint() -> Int {
-        var last = footprint().now
+    /// MLX's live and cached bytes.
+    private static var mlxBytes: Int { NFKMLXGPU.activeMemory + NFKMLXGPU.cacheMemory }
+
+    /// The footprint once memory MLX released has left it.
+    ///
+    /// @discussion Each reading drains the GPU and CPU streams, so command-buffer completions have
+    /// returned their buffers to MLX's cache, then empties the cache. The footprint is read every 50 ms
+    /// until MLX's cache reads 0, the footprint holds within 4 MiB for 200 ms, and, with
+    /// `requiringQuiet`, the footprint less MLX's own bytes is within ``releasedTolerance`` of
+    /// ``quietUnownedFootprint``. The settled reading lowers the quiet level when it is lower. Past 30 s
+    /// it throws, naming the cache, the footprint, and the memory MLX no longer owns.
+    private static func settledFootprint(requiringQuiet: Bool) throws -> Int {
+        let deadline = Date().addingTimeInterval(30)
+        var last = -1
         var steady = 0
-        for _ in 0 ..< 100 where steady < 4 {
-            usleep(50_000)
+        while true {
+            Stream.gpu.synchronize()
+            Stream.cpu.synchronize()
+            NFKMLXGPU.clearCache()
             let now = footprint().now
-            steady = last - now < 4 * mebibyte ? steady + 1 : 0
+            let cache = NFKMLXGPU.cacheMemory
+            let unowned = now - mlxBytes
+            steady = last >= 0 && abs(last - now) < 4 * mebibyte ? steady + 1 : 0
             last = now
+            let quiet = !requiringQuiet || unowned - releasedTolerance <= quietUnownedFootprint
+            if cache == 0, steady >= 4, quiet {
+                quietUnownedFootprint = min(quietUnownedFootprint, unowned)
+                return now
+            }
+            if Date() > deadline {
+                throw NSError(domain: "NFKMLXLoadFootprintTests", code: 1, userInfo: [NSLocalizedDescriptionKey:
+                    "the footprint did not settle in 30 s: MLX's cache holds \(cache) bytes, the footprint is "
+                    + "\(now) bytes, MLX holds \(NFKMLXGPU.activeMemory) bytes active, and the footprint less "
+                    + "MLX's own bytes is \(unowned), against a quiet level of \(quietUnownedFootprint) "
+                    + "and a tolerance of \(releasedTolerance)"])
+            }
+            usleep(50_000)
         }
-        return last
+    }
+
+    /// Runs the operations the class measures on small arrays, so the device, its queues, and the kernels
+    /// exist before the quiet level is read.
+    private func warmUp() throws {
+        let url = directory.appendingPathComponent("warm-up.safetensors")
+        let small = MLXRandom.uniform(low: -1, high: 1, [64, 64])
+        try save(arrays: ["a": small, "b": small.asType(.bfloat16)], url: url)
+        let read = try NFKMLXWeights.loadCheckpoint(url: url).arrays
+        eval(read.values.flatMap { [$0.asType(.bfloat16), $0.asType(.float32)] })
+        try FileManager.default.removeItem(at: url)
     }
 
     /// The bytes a load held above its result at its peak, with the result evaluated and held.
-    private func transient(_ label: String, _ load: () throws -> [MLXArray]) rethrows -> Int {
-        NFKMLXGPU.clearCache()
-        let before = Self.settledFootprint()
+    private func transient(_ label: String, _ load: () throws -> [MLXArray]) throws -> Int {
+        let before = try Self.settledFootprint(requiringQuiet: true)
+        let unownedBefore = before - Self.mlxBytes
         _ = Self.resetFootprintInterval?(getpid())
         let result = try load()
         eval(result)
@@ -93,7 +144,7 @@ final class NFKMLXLoadFootprintTests: XCTestCase {
         let transient = peak - before - held
         print("FOOTPRINT \(label): start \(before / Self.mebibyte) MiB, peak \((peak - before) / Self.mebibyte) MiB "
               + "and end \((after - before) / Self.mebibyte) MiB above the start, result \(held / Self.mebibyte) MiB, "
-              + "transient \(transient / Self.mebibyte) MiB")
+              + "transient \(transient / Self.mebibyte) MiB, start beside MLX's own bytes \(unownedBefore / Self.mebibyte) MiB")
         XCTAssertGreaterThanOrEqual(peak - before + 64 * Self.mebibyte, held,
                                     "\(label): the measured peak must cover the result, or the start had not settled")
         return transient
@@ -116,7 +167,7 @@ final class NFKMLXLoadFootprintTests: XCTestCase {
         }
         let index = try JSONSerialization.data(withJSONObject: ["weight_map": weightMap])
         try index.write(to: directory.appendingPathComponent("model.safetensors.index.json"))
-        NFKMLXGPU.clearCache()
+        _ = try Self.settledFootprint(requiringQuiet: true)
     }
 
     // MARK: Budgets
@@ -167,6 +218,7 @@ final class NFKMLXLoadFootprintTests: XCTestCase {
         let url = directory.appendingPathComponent("model.safetensors")
         try save(arrays: arrays, url: url)
         arrays.removeAll()
+        _ = try Self.settledFootprint(requiringQuiet: true)
         let single = try transient("materializedCheckpoint") {
             Array(try NFKMLXWeights.materializedCheckpoint(url: url).arrays.values)
         }

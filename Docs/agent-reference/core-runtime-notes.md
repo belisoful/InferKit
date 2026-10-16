@@ -598,10 +598,10 @@ added 2026-10-15, InferKit 0.4.0). The transfer is `NFKHFHubTransfer` (private).
   loaders that fetch file by file outside them: `NFKMLXOpenJev` (release and base, each its own hold),
   `NFKMLXLayaRelease`, `NFKMLXOpenJevDeBERTa`, `NFKMLXVoiceRestoreBackend` (transformer and vocoder
   repositories), and `NFKMLXBackend`'s Stable Diffusion release download.
-- A hold ends when the fetch returns, before the model build reads the files. A trim or removal in
-  that window still deletes them: weights already memory-mapped survive the unlink, and a
-  configuration or tokenizer file read afterward does not, so the build fails with a missing file.
-  Holding through the build would need a hold in each backend factory.
+- InferKitMLX keeps each hold until the model build that reads the files returns. Its download
+  factories open an `NFKMLXBuildHolds` scope around the fetch and the build, and `holdRelease` hands its
+  hold to that scope, so no trim or removal deletes a release between its fetch and its read
+  (`mlx-companion.md`, "Holds across a build").
 - Streaming limit: each transfer stops with `NFKDownloadErrorSizeMismatch` once it would write past
   its limit: the listed size, else the length the response announces, lowered to a ceiling. The
   ceiling is `maximumFileByteCount` when set, else the cache volume's free space for a file of unknown

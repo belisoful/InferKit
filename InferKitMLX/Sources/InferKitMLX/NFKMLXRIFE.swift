@@ -265,8 +265,10 @@ public final class NFKMLXRIFE: NSObject {
     /// Blocking on the network; run off the render thread.
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(weightsURL: url)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(weightsURL: url)
+        }
     }
 
     /// The asynchronous form of the download factory: downloads on a background queue, then builds and
@@ -286,9 +288,11 @@ public final class NFKMLXRIFE: NSObject {
     @objc(clipBackendWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func clipBackend(repo: String, weightsPath: String, revision: String?,
                                    cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
-                                                cacheDirectoryURL: cacheDirectoryURL)
-        return try clipBackend(weightsURL: url)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
+                                                    cacheDirectoryURL: cacheDirectoryURL)
+            return try clipBackend(weightsURL: url)
+        }
     }
 
     /// The asynchronous form of ``clipBackend(repo:weightsPath:revision:cacheDirectoryURL:)``. The handler
@@ -674,8 +678,10 @@ public final class NFKMLXRIFEv4: NSObject {
     /// thread.
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(weightsURL: url)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(weightsURL: url)
+        }
     }
 
     /// The asynchronous form of the download factory.

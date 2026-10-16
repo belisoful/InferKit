@@ -503,9 +503,11 @@ public final class NFKMLXSmolVLM: NSObject {
     /// Introduced in InferKit 0.4.0.
     @objc(smolVLMWithRepo:revision:cacheDirectoryURL:error:)
     public static func load(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXSmolVLM {
-        try load(directoryURL: try NFKMLXReleaseDownload.directory(
-            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-            required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+        try NFKMLXBuildHolds.keeping {
+            try load(directoryURL: try NFKMLXReleaseDownload.directory(
+                repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+        }
     }
 
     /// The asynchronous form of ``load(repo:revision:cacheDirectoryURL:)``. The download and the build

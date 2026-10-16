@@ -380,9 +380,11 @@ public final class NFKMLXModernBERTReranker: NSObject {
     /// release is `Alibaba-NLP/gte-reranker-modernbert-base`.
     @objc(rerankerWithRepo:revision:cacheDirectoryURL:error:)
     public static func reranker(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXModernBERTReranker {
-        try reranker(directoryURL: try NFKMLXReleaseDownload.directory(
-            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-            required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+        try NFKMLXBuildHolds.keeping {
+            try reranker(directoryURL: try NFKMLXReleaseDownload.directory(
+                repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+        }
     }
 
     /// The asynchronous form of ``reranker(repo:revision:cacheDirectoryURL:)``. The handler runs on a

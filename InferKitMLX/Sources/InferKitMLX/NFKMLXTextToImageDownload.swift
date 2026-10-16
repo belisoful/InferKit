@@ -36,8 +36,10 @@ extension NFKMLXTextToImage {
     /// the main and render threads. Introduced in InferKit 0.4.0.
     @objc(backendWithModel:cacheDirectoryURL:error:)
     public static func backend(model: NFKMLXStableDiffusionModel, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        try backend(model: model,
-                    directoryURL: try NFKMLXStableDiffusionRelease(model).download(cacheDirectoryURL: cacheDirectoryURL))
+        try NFKMLXBuildHolds.keeping {
+            try backend(model: model,
+                        directoryURL: try NFKMLXStableDiffusionRelease(model).download(cacheDirectoryURL: cacheDirectoryURL))
+        }
     }
 
     /// The asynchronous form of ``backend(model:cacheDirectoryURL:)``. The handler runs on a background
@@ -63,12 +65,14 @@ extension NFKMLXTextToImage {
     public static func backend(model: NFKMLXStableDiffusionModel, adapterRepo: String, adapterWeightsPath: String,
                                adapterRevision: String?, adapterScale: Float, sampler: NFKMLXSDSampler,
                                cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let directory = try NFKMLXStableDiffusionRelease(model).download(cacheDirectoryURL: cacheDirectoryURL)
-        let adapterURL = try NFKMLXDownload.weightsURL(repo: adapterRepo, weightsPath: adapterWeightsPath,
-                                                       revision: adapterRevision,
-                                                       cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(model: model, directoryURL: directory, adapterURL: adapterURL,
-                           adapterScale: adapterScale, sampler: sampler)
+        try NFKMLXBuildHolds.keeping {
+            let directory = try NFKMLXStableDiffusionRelease(model).download(cacheDirectoryURL: cacheDirectoryURL)
+            let adapterURL = try NFKMLXDownload.weightsURL(repo: adapterRepo, weightsPath: adapterWeightsPath,
+                                                           revision: adapterRevision,
+                                                           cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(model: model, directoryURL: directory, adapterURL: adapterURL,
+                               adapterScale: adapterScale, sampler: sampler)
+        }
     }
 
     /// The asynchronous form of
@@ -98,11 +102,13 @@ extension NFKMLXTextToImage {
     public static func imageAdapterBackend(model: NFKMLXStableDiffusionModel, adapterRepo: String,
                                            adapterWeightsPath: String, adapterRevision: String?, scale: Float,
                                            cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let directory = try NFKMLXStableDiffusionRelease(model).download(cacheDirectoryURL: cacheDirectoryURL)
-        let adapterURL = try NFKMLXDownload.weightsURL(repo: adapterRepo, weightsPath: adapterWeightsPath,
-                                                       revision: adapterRevision,
-                                                       cacheDirectoryURL: cacheDirectoryURL)
-        return try imageAdapterBackend(model: model, directoryURL: directory, adapterURL: adapterURL, scale: scale)
+        try NFKMLXBuildHolds.keeping {
+            let directory = try NFKMLXStableDiffusionRelease(model).download(cacheDirectoryURL: cacheDirectoryURL)
+            let adapterURL = try NFKMLXDownload.weightsURL(repo: adapterRepo, weightsPath: adapterWeightsPath,
+                                                           revision: adapterRevision,
+                                                           cacheDirectoryURL: cacheDirectoryURL)
+            return try imageAdapterBackend(model: model, directoryURL: directory, adapterURL: adapterURL, scale: scale)
+        }
     }
 
     /// The asynchronous form of

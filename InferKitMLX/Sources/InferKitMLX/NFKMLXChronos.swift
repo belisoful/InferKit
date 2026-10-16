@@ -385,7 +385,9 @@ public final class NFKMLXChronos: NSObject {
     /// render thread.
     @objc(chronosWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func chronos(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXChronos {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try chronos(weightsURL: url)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            return try chronos(weightsURL: url)
+        }
     }
 }

@@ -211,11 +211,13 @@ extension NFKMLXChatterbox {
     @objc(chatterboxBackendWithRepo:revision:cacheDirectoryURL:voiceURL:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                voiceURL: URL?) throws -> NFKMLXSpeechBackend {
-        let directory = try NFKMLXReleaseDownload.directory(
-            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-            required: requiredFiles + (voiceURL == nil ? [builtinVoiceFile] : []),
-            optional: optionalFiles, weights: weightFiles)
-        return try backend(directoryURL: directory, voiceURL: voiceURL)
+        try NFKMLXBuildHolds.keeping {
+            let directory = try NFKMLXReleaseDownload.directory(
+                repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                required: requiredFiles + (voiceURL == nil ? [builtinVoiceFile] : []),
+                optional: optionalFiles, weights: weightFiles)
+            return try backend(directoryURL: directory, voiceURL: voiceURL)
+        }
     }
 
     /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:voiceURL:)``. The handler

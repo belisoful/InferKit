@@ -683,9 +683,11 @@ extension NFKMLXParakeet {
     /// `nvidia/parakeet-tdt-0.6b-v3` (multilingual).
     @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let hub = NFKMLXReleaseDownload.hub(cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(archiveURL: try NFKMLXReleaseDownload.firstServed(weightFiles, hub: hub, repo: repo,
-                                                                             revision: revision))
+        try NFKMLXBuildHolds.keeping {
+            let hub = NFKMLXReleaseDownload.hub(cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(archiveURL: try NFKMLXReleaseDownload.firstServed(weightFiles, hub: hub, repo: repo,
+                                                                                 revision: revision))
+        }
     }
 
     /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``.

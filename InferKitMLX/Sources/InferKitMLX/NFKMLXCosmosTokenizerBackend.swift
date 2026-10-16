@@ -353,9 +353,11 @@ public final class NFKMLXCosmosTokenizer: NSObject {
     @objc(tokenizerWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func tokenizer(variant: NFKMLXCosmosTokenizerVariant, repo: String, weightsPath: String,
                                  revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXCosmosTokenizer {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
-                                                cacheDirectoryURL: cacheDirectoryURL)
-        return try tokenizer(variant: variant, weightsURL: url)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
+                                                    cacheDirectoryURL: cacheDirectoryURL)
+            return try tokenizer(variant: variant, weightsURL: url)
+        }
     }
 
     /// The asynchronous form of ``tokenizer(variant:repo:weightsPath:revision:cacheDirectoryURL:)``. The
@@ -378,11 +380,13 @@ public final class NFKMLXCosmosTokenizer: NSObject {
     public static func tokenizer(variant: NFKMLXCosmosTokenizerVariant, repo: String, encoderWeightsPath: String,
                                  decoderWeightsPath: String, revision: String?,
                                  cacheDirectoryURL: URL?) throws -> NFKMLXCosmosTokenizer {
-        let encoderURL = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: encoderWeightsPath,
-                                                       revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        let decoderURL = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: decoderWeightsPath,
-                                                       revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try tokenizer(variant: variant, encoderWeightsURL: encoderURL, decoderWeightsURL: decoderURL)
+        try NFKMLXBuildHolds.keeping {
+            let encoderURL = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: encoderWeightsPath,
+                                                           revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            let decoderURL = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: decoderWeightsPath,
+                                                           revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            return try tokenizer(variant: variant, encoderWeightsURL: encoderURL, decoderWeightsURL: decoderURL)
+        }
     }
 
     /// The asynchronous form of
@@ -412,9 +416,11 @@ public final class NFKMLXCosmosTokenizer: NSObject {
     @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(variant: NFKMLXCosmosTokenizerVariant, repo: String, weightsPath: String,
                                revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
-                                                cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(variant: variant, weightsURL: url)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
+                                                    cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(variant: variant, weightsURL: url)
+        }
     }
 
     /// The asynchronous form of the download factory.

@@ -123,11 +123,13 @@ extension NFKMLXFastSpeech2 {
     @objc(voiceBackendWithRepo:revision:cacheDirectoryURL:phonemizer:error:)
     public static func voiceBackend(repo: String?, revision: String?, cacheDirectoryURL: URL?,
                                     phonemizer: any NFKMLXPhonemizing) throws -> any NFKInferenceBackend {
-        let directory = try NFKMLXReleaseDownload.directory(
-            repo: repo ?? voiceReleaseRepo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-            required: ["config.json", "vocab.json"], optional: [],
-            weights: ["model.safetensors", "pytorch_model.bin"])
-        return try voiceBackend(directoryURL: directory, phonemizer: phonemizer)
+        try NFKMLXBuildHolds.keeping {
+            let directory = try NFKMLXReleaseDownload.directory(
+                repo: repo ?? voiceReleaseRepo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                required: ["config.json", "vocab.json"], optional: [],
+                weights: ["model.safetensors", "pytorch_model.bin"])
+            return try voiceBackend(directoryURL: directory, phonemizer: phonemizer)
+        }
     }
 
     /// The asynchronous form of ``voiceBackend(repo:revision:cacheDirectoryURL:phonemizer:)``. The handler

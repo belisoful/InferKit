@@ -60,6 +60,9 @@ enum NFKMLXActivity {
         lock.withLock { inFlight -= 1 }
     }
 
+    /// The runs and loads in flight.
+    static var inFlightCount: Int { lock.withLock { inFlight } }
+
     /// Synchronizes the GPU stream and clears MLX's cache when no managed run or load is in flight.
     static func releaseCachedMemoryWhenIdle() {
         lock.withLock {
@@ -218,7 +221,9 @@ final class NFKMLXLifecycle<State>: @unchecked Sendable {
     private func loadState(_ load: Load) throws {
         lock.withLock { isLoading = true }
         do {
-            let (loaded, measured) = try NFKMLXLoadMeasurement.measuring { try NFKMLXReload.reloading(load) }
+            let (loaded, measured) = try NFKMLXLoadMeasurement.measuring {
+                try NFKMLXBuildHolds.keeping { try NFKMLXReload.reloading(load) }
+            }
             lock.withLock {
                 isLoading = false
                 state = loaded

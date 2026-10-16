@@ -802,3 +802,26 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   behaves differently by how the table was built. Key tokenizer tables by `[UInt32]` scalar sequences
   and read JSON vocabularies through `NSDictionary` into pairs. A dictionary literal with both
   spellings is a duplicate-key fatal error. Found by the 2026-10-02 translation language probes.
+- **A footprint start can count memory MLX has already released (2026-10-16).** `NFKMLXLoadFootprintTests`
+  read its start after `clearCache()` and a footprint steady for 200 ms, and the narrowing test failed
+  its guard about once a run, alone too (2 of 7 on 2026-10-14; `cc42-rerun2` failed in a fresh process
+  running that one test in 0.99 s). Every failing reading has the start raised by what the test had
+  just freed, the rise over the load short by the same amount, and the end where a passing run ends:
+  - narrowing f32 → bf16: passing start 21 to 23 MiB, peak and end 1280 MiB above it; failing start
+    1046 to 1047 MiB (1611 in one full-suite run, over a 587 MiB baseline), peak and end 256 MiB above it.
+    The end is 1302 MiB either way, so the extra 1024 MiB (one shard of the synthetic release) was
+    gone by the end.
+  - stored type: passing start 23 to 26 MiB, peak 2049 MiB above it; failing start 1880 MiB (CC#44),
+    peak 193 MiB above it, the end again about 2072 MiB.
+
+  MLX's buffer cache cannot account for the narrowing case: it reuses a cached buffer only below twice
+  the request (`BufferCache::reuse_from_cache`), so the writer's 64 MiB float32 buffers cannot hold the
+  32 MiB bfloat16 results, and memory still cached at the start would still be there at the end. The
+  start counted memory MLX had already released, which left the footprint, or was taken over, during
+  the load. Which of the two Metal does is not measured. A steady footprint does not show it, since the
+  footprint holds level until the release lands. The class now starts a measurement only when the
+  GPU and CPU streams are drained, MLX's cache reads 0, the footprint has held for 200 ms, and the
+  footprint less MLX's active and cached bytes is within 64 MiB of the lowest level the class has read
+  after a warm-up; past 30 s it fails naming the cache, the footprint, and the unowned bytes. Any
+  footprint measurement taken after freeing large MLX arrays needs the same check. Its printed line adds
+  the start's bytes beside MLX's own.

@@ -674,8 +674,10 @@ public final class NFKMLXVitPose: NSObject {
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:jointNames:error:)
     public static func backend(repo: String, weightsPath: String, revision: String?,
                                cacheDirectoryURL: URL?, jointNames: [String]?) throws -> any NFKInferenceBackend {
-        try backend(variant: .baseSimple, repo: repo, weightsPath: weightsPath, revision: revision,
-                    cacheDirectoryURL: cacheDirectoryURL, jointNames: jointNames)
+        try NFKMLXBuildHolds.keeping {
+            try backend(variant: .baseSimple, repo: repo, weightsPath: weightsPath, revision: revision,
+                        cacheDirectoryURL: cacheDirectoryURL, jointNames: jointNames)
+        }
     }
 
     /// The download factory at a chosen size.
@@ -683,9 +685,11 @@ public final class NFKMLXVitPose: NSObject {
     public static func backend(variant: NFKMLXVitPoseVariant, repo: String, weightsPath: String,
                                revision: String?, cacheDirectoryURL: URL?,
                                jointNames: [String]?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
-                                                cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(variant: variant, weightsURL: url, jointNames: jointNames)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
+                                                    cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(variant: variant, weightsURL: url, jointNames: jointNames)
+        }
     }
 
     /// The asynchronous form of the download factory.

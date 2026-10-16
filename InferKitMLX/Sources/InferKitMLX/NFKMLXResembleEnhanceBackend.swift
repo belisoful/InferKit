@@ -116,11 +116,13 @@ extension NFKMLXResembleEnhanceFactory {
     /// render threads. Introduced in InferKit 0.4.0.
     @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let checkpoint = try NFKMLXReleaseDownload.hub(cacheDirectoryURL: cacheDirectoryURL)
-            .fetchFile(repo: repo, revision: revision, path: checkpointFile)
-        let stageDirectory = checkpointFile.split(separator: "/").dropFirst()
-            .reduce(checkpoint) { folder, _ in folder.deletingLastPathComponent() }
-        return try backend(directoryURL: stageDirectory)
+        try NFKMLXBuildHolds.keeping {
+            let checkpoint = try NFKMLXReleaseDownload.hub(cacheDirectoryURL: cacheDirectoryURL)
+                .fetchFile(repo: repo, revision: revision, path: checkpointFile)
+            let stageDirectory = checkpointFile.split(separator: "/").dropFirst()
+                .reduce(checkpoint) { folder, _ in folder.deletingLastPathComponent() }
+            return try backend(directoryURL: stageDirectory)
+        }
     }
 
     /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``. Introduced in InferKit 0.4.0.

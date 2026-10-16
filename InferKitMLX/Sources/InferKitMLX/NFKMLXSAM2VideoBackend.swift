@@ -165,17 +165,21 @@ extension NFKMLXSAM2 {
     public static func videoBackend(variant: NFKMLXSAM2Variant, release: NFKMLXSAM2Release, repo: String,
                                     weightsPath: String, revision: String?,
                                     cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
-                                                cacheDirectoryURL: cacheDirectoryURL)
-        return try videoBackend(variant: variant, release: release, weightsURL: url)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
+                                                    cacheDirectoryURL: cacheDirectoryURL)
+            return try videoBackend(variant: variant, release: release, weightsURL: url)
+        }
     }
 
     /// The download factory at the tiny SAM 2.1 size. Introduced in InferKit 0.4.0.
     @objc(videoBackendWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func videoBackend(repo: String, weightsPath: String, revision: String?,
                                     cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        try videoBackend(variant: .tiny, release: .sam21, repo: repo, weightsPath: weightsPath,
-                         revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        try NFKMLXBuildHolds.keeping {
+            try videoBackend(variant: .tiny, release: .sam21, repo: repo, weightsPath: weightsPath,
+                             revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        }
     }
 
     /// The asynchronous form of

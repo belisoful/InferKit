@@ -272,10 +272,12 @@ public final class NFKMLXSD3Generator: NSObject {
     @objc(generatorWithRepo:revision:cacheDirectoryURL:residency:error:)
     public static func generator(repo: String?, revision: String?, cacheDirectoryURL: URL?,
                                  residency: NFKMLXResidency) throws -> NFKMLXSD3Generator {
-        let directory = try NFKMLXReleaseDownload.directory(repo: repo ?? releaseRepo, revision: revision,
-                                                            cacheDirectoryURL: cacheDirectoryURL,
-                                                            components: releaseComponents)
-        return try generator(directoryURL: directory, residency: residency)
+        try NFKMLXBuildHolds.keeping {
+            let directory = try NFKMLXReleaseDownload.directory(repo: repo ?? releaseRepo, revision: revision,
+                                                                cacheDirectoryURL: cacheDirectoryURL,
+                                                                components: releaseComponents)
+            return try generator(directoryURL: directory, residency: residency)
+        }
     }
 
     /// The asynchronous form of ``generator(repo:revision:cacheDirectoryURL:residency:)``. The handler

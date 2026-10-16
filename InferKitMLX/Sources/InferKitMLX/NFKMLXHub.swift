@@ -41,14 +41,16 @@ public final class NFKMLXHub: NSObject {
                                weightsPath: String,
                                revision: String?,
                                cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        guard NFKMLXModelRegistry.isModelRegistered(modelName) else {
-            throw NSError(domain: NFKInferenceErrorDomain,
-                          code: NFKInferenceError.error_InferenceNotReady.rawValue,
-                          userInfo: [NSLocalizedDescriptionKey: "no MLX model is registered under '\(modelName)'"])
+        try NFKMLXBuildHolds.keeping {
+            guard NFKMLXModelRegistry.isModelRegistered(modelName) else {
+                throw NSError(domain: NFKInferenceErrorDomain,
+                              code: NFKInferenceError.error_InferenceNotReady.rawValue,
+                              userInfo: [NSLocalizedDescriptionKey: "no MLX model is registered under '\(modelName)'"])
+            }
+            let weightsURL = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath,
+                                                           revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            return try NFKMLXModelRegistry.backend(named: modelName, weightsURL: weightsURL)
         }
-        let weightsURL = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath,
-                                                       revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try NFKMLXModelRegistry.backend(named: modelName, weightsURL: weightsURL)
     }
 
     /// The asynchronous form of ``backend(named:repo:weightsPath:revision:cacheDirectoryURL:)``: it runs
@@ -126,7 +128,10 @@ public final class NFKMLXHub: NSObject {
             return download
         }
         let listed = source.localFilePaths
-        return hub(cacheDirectoryURL: cacheDirectoryURL).download(source: source, progressHandler: progressHandler) { url, error in
+        let hub = hub(cacheDirectoryURL: cacheDirectoryURL)
+        let hold = source.repository.flatMap { try? hub.holdSnapshot(repo: $0, revision: source.revision) }
+        return hub.download(source: source, progressHandler: progressHandler) { url, error in
+            defer { hold?.invalidate() }
             if let error {
                 completionHandler(nil, error)
                 return
@@ -150,6 +155,8 @@ enum NFKMLXDownload {
     /// render thread. A load after an unload reads the cache only (`NFKHFHub.fetchFile(repo:revision:path:)`).
     static func weightsURL(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?) throws -> URL {
         let hub = NFKHFHub(cacheDirectoryURL: cacheDirectoryURL ?? NFKHFHub.defaultCacheDirectoryURL())
+        let hold = try hub.holdRelease(repo: repo, revision: revision)
+        defer { hold?.invalidate() }
         return try hub.fetchFile(repo: repo, revision: revision, path: weightsPath)
     }
 
@@ -158,7 +165,8 @@ enum NFKMLXDownload {
     /// error) to `completionHandler` on that queue. The download current on the calling thread observes
     /// the fetch and finishes when the backend is delivered. Shared by `NFKMLXHub` and the per-model
     /// `backendWithRepo:…completionHandler:` / `backendWithVariant:repo:…completionHandler:` factories so
-    /// the async plumbing lives in one place. The backend can unload and load again from the downloaded
+    /// the async plumbing lives in one place. The file's snapshot is held from before the download until
+    /// the build returns. The backend can unload and load again from the downloaded
     /// file (`NFKMLXReload.reloadable(_:)`), and a load after the file is removed fails with
     /// `NFKMLXReloadError.modelFilesRemoved`.
     static func backend(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?,
@@ -167,7 +175,9 @@ enum NFKMLXDownload {
         let hub = NFKHFHub(cacheDirectoryURL: cacheDirectoryURL ?? NFKHFHub.defaultCacheDirectoryURL())
         let download = NFKDownload.current
         download?.beginActivity()
+        let hold = try? hub.holdSnapshot(repo: repo, revision: revision)
         let finish = { (backend: (any NFKInferenceBackend)?, error: Error?) in
+            hold?.invalidate()
             download?.endActivity(error: error)
             completionHandler(backend, error)
         }
@@ -193,12 +203,16 @@ enum NFKMLXDownload {
 
 extension NFKHFHub {
 
-    /// Holds the snapshot of `repo` at `revision` in use (`holdSnapshot(repo:revision:)`) until the
-    /// returned hold is invalidated, so a trim another download runs between the files of a release
-    /// load cannot evict the files fetched first. A load after an unload holds too: it reads the files
-    /// the hold keeps.
-    func holdRelease(repo: String, revision: String?) throws -> NFKHFHubSnapshotHold {
-        try holdSnapshot(repo: repo, revision: revision)
+    /// Holds the snapshot of `repo` at `revision` in use (`holdSnapshot(repo:revision:)`), so a trim
+    /// another download runs cannot evict the files fetched first while the release's other files are
+    /// fetched and the build reads them.
+    ///
+    /// @discussion Inside ``NFKMLXBuildHolds/keeping(_:)``, which every download factory and every load
+    /// after an unload opens, the scope keeps the hold until the build returns, and this returns nil.
+    /// Outside one it returns the hold, which the caller invalidates when its fetch returns.
+    func holdRelease(repo: String, revision: String?) throws -> NFKHFHubSnapshotHold? {
+        let hold = try holdSnapshot(repo: repo, revision: revision)
+        return NFKMLXBuildHolds.adopt(hold) ? nil : hold
     }
 
     /// The local URL of `path` in `repo`, downloaded when it is not cached. Inside a load after an unload
@@ -225,5 +239,47 @@ extension NFKModelSource {
     /// fetched from another repository or URL.
     var localFilePaths: [String] {
         files.filter { !$0.overridesSource }.map(\.path)
+    }
+}
+
+/// The snapshot holds a build keeps until it returns.
+///
+/// @discussion A download factory fetches a release and then builds from the fetched files. A hold that
+/// ended with the fetch would leave a window in which a trim another download runs deletes the files the
+/// build has yet to read. ``keeping(_:)`` opens a scope on the calling task; ``NFKHFHub/holdRelease(repo:revision:)``
+/// hands each hold it takes to the open scope, and the scope ends them when the build returns.
+final class NFKMLXBuildHolds: @unchecked Sendable {
+
+    @TaskLocal private static var current: NFKMLXBuildHolds?
+
+    private let lock = NSLock()
+    private var holds = [NFKHFHubSnapshotHold]()
+
+    /// Runs `build` keeping every release hold taken inside it until it returns. Inside an open scope it
+    /// joins that scope.
+    static func keeping<T>(_ build: () throws -> T) rethrows -> T {
+        guard current == nil else {
+            return try build()
+        }
+        let scope = NFKMLXBuildHolds()
+        defer { scope.invalidate() }
+        return try $current.withValue(scope, operation: build)
+    }
+
+    /// Hands `hold` to the scope open on the calling task; false when none is open.
+    static func adopt(_ hold: NFKHFHubSnapshotHold) -> Bool {
+        guard let current else {
+            return false
+        }
+        current.lock.withLock { current.holds.append(hold) }
+        return true
+    }
+
+    private func invalidate() {
+        let ended = lock.withLock { () -> [NFKHFHubSnapshotHold] in
+            defer { holds.removeAll() }
+            return holds
+        }
+        ended.forEach { $0.invalidate() }
     }
 }

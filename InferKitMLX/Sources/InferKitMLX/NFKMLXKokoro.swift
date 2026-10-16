@@ -1071,10 +1071,12 @@ extension NFKMLXKokoro {
     @objc(kokoroBackendWithRepo:revision:cacheDirectoryURL:voiceName:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                voiceName: String) throws -> NFKMLXSpeechBackend {
-        let files = releaseFiles(voiceName: voiceName)
-        let directory = try NFKMLXReleaseDownload.directory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-                                                            required: files.required, optional: [], weights: files.weights)
-        return try speechBackend(directoryURL: directory, voiceName: voiceName)
+        try NFKMLXBuildHolds.keeping {
+            let files = releaseFiles(voiceName: voiceName)
+            let directory = try NFKMLXReleaseDownload.directory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                                                                required: files.required, optional: [], weights: files.weights)
+            return try speechBackend(directoryURL: directory, voiceName: voiceName)
+        }
     }
 
     /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:voiceName:)``; the handler
