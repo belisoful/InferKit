@@ -31,9 +31,11 @@ extension NFKMLXSigLIP2 {
     @objc(modelWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func model(variant: NFKMLXSigLIP2Variant, repo: String, weightsPath: String,
                              revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXSigLIP2 {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
-                                                cacheDirectoryURL: cacheDirectoryURL)
-        return try model(variant: variant, weightsURL: url)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
+                                                    cacheDirectoryURL: cacheDirectoryURL)
+            return try model(variant: variant, weightsURL: url)
+        }
     }
 
     /// The asynchronous form of ``model(variant:repo:weightsPath:revision:cacheDirectoryURL:)``. The

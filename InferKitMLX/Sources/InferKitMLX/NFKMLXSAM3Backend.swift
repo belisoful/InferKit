@@ -153,9 +153,11 @@ extension NFKMLXSAM3 {
     /// 0.4.0.
     @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String?, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        try backend(directoryURL: try NFKMLXReleaseDownload.directory(
-            repo: repo ?? releaseRepo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-            components: releaseComponents))
+        try NFKMLXBuildHolds.keeping {
+            try backend(directoryURL: try NFKMLXReleaseDownload.directory(
+                repo: repo ?? releaseRepo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                components: releaseComponents))
+        }
     }
 
     /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``. The handler runs on a

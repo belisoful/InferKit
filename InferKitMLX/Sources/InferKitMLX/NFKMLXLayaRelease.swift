@@ -56,14 +56,16 @@ extension NFKMLXLaya {
     @objc(downloadVariant:revision:cacheDirectoryURL:error:)
     public static func download(variant: NFKMLXLayaVariant, revision: String?,
                                 cacheDirectoryURL: URL?) throws -> URL {
-        try download(variant: variant, revision: revision,
-                     hub: NFKHFHub(cacheDirectoryURL: cacheDirectoryURL ?? NFKHFHub.defaultCacheDirectoryURL()))
+        try NFKMLXBuildHolds.keeping {
+            try download(variant: variant, revision: revision,
+                         hub: NFKHFHub(cacheDirectoryURL: cacheDirectoryURL ?? NFKHFHub.defaultCacheDirectoryURL()))
+        }
     }
 
     /// The download over a given hub, which is the seam a test replaces the transport through.
     static func download(variant: NFKMLXLayaVariant, revision: String?, hub: NFKHFHub) throws -> URL {
         let hold = try hub.holdRelease(repo: repository, revision: revision)
-        defer { hold.invalidate() }
+        defer { hold?.invalidate() }
         var folder: URL?
         for path in releaseFiles(for: variant) {
             let local = try hub.fetchFile(repo: repository, revision: revision, path: path)
@@ -90,7 +92,9 @@ extension NFKMLXLaya {
     @objc(layaWithVariant:revision:cacheDirectoryURL:error:)
     public static func laya(variant: NFKMLXLayaVariant, revision: String?,
                             cacheDirectoryURL: URL?) throws -> NFKMLXLaya {
-        try laya(directoryURL: download(variant: variant, revision: revision, cacheDirectoryURL: cacheDirectoryURL))
+        try NFKMLXBuildHolds.keeping {
+            try laya(directoryURL: download(variant: variant, revision: revision, cacheDirectoryURL: cacheDirectoryURL))
+        }
     }
 
     /// The asynchronous form of ``laya(variant:revision:cacheDirectoryURL:)``: downloads and builds on
@@ -108,7 +112,9 @@ extension NFKMLXLaya {
     @objc(backendWithVariant:revision:cacheDirectoryURL:error:)
     public static func backend(variant: NFKMLXLayaVariant, revision: String?,
                                cacheDirectoryURL: URL?) throws -> NFKMLXLayaBackend {
-        try laya(variant: variant, revision: revision, cacheDirectoryURL: cacheDirectoryURL).makeBackend()
+        try NFKMLXBuildHolds.keeping {
+            try laya(variant: variant, revision: revision, cacheDirectoryURL: cacheDirectoryURL).makeBackend()
+        }
     }
 
     /// The asynchronous form of ``backend(variant:revision:cacheDirectoryURL:)``.

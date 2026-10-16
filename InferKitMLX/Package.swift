@@ -27,9 +27,15 @@ let package = Package(
         .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.3.0"),
     ],
     targets: [
+        // Objective-C exception scopes, which Swift cannot write. InferKitMLX imports it internally, so no
+        // product exports it and a binary consumer never imports it.
+        .target(
+            name: "InferKitMLXSupport"
+        ),
         .target(
             name: "InferKitMLX",
             dependencies: [
+                "InferKitMLXSupport",
                 .product(name: "InferKit", package: "InferKit"),
                 .product(name: "MLX", package: "mlx-swift"),
                 .product(name: "MLXNN", package: "mlx-swift"),
@@ -50,7 +56,7 @@ let package = Package(
         ),
         .testTarget(
             name: "InferKitMLXTests",
-            dependencies: ["InferKitMLX"]
+            dependencies: ["InferKitMLX", "InferKitMLXSupport"]
         ),
         // Compiled + run by CI so the MLX snippets in Docs/examples.md cannot silently drift.
         .testTarget(

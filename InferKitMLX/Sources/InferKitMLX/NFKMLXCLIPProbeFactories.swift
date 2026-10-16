@@ -44,9 +44,11 @@ extension NFKMLXCLIP {
     public static func probeBackend(variant: NFKMLXCLIPVariant, repo: String, weightsPath: String, revision: String?,
                                     cacheDirectoryURL: URL?, probeURL: URL,
                                     labels: [String]?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
-                                                cacheDirectoryURL: cacheDirectoryURL)
-        return try probeBackend(variant: variant, weightsURL: url, probeURL: probeURL, labels: labels)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
+                                                    cacheDirectoryURL: cacheDirectoryURL)
+            return try probeBackend(variant: variant, weightsURL: url, probeURL: probeURL, labels: labels)
+        }
     }
 
     /// The asynchronous form of

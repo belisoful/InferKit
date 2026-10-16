@@ -7,6 +7,7 @@
 
 import Foundation
 import InferKit
+internal import InferKitMLXSupport
 import MLX
 
 /// A backend that can unload any MLX backend's model and build it again on demand.
@@ -291,8 +292,9 @@ public final class NFKMLXReloadableBackend: NSObject, NFKInferenceBackend {
     }
 
     /// Sends a message only the held class implements to the held backend, built first when the model is
-    /// unloaded, as a run in flight from before the message to its return. A backend that cannot be built
-    /// raises `NSInvalidArgumentException` with the reason.
+    /// unloaded, as a run in flight from before the message to its return. The run also ends when the
+    /// message raises an Objective-C exception, which then continues to the sender. A backend that cannot
+    /// be built raises `NSInvalidArgumentException` with the reason.
     private func forward(_ invocation: AnyObject) {
         let selector = NFKMLXInvocation.selector(of: invocation)
         if let failure = invokeAsRun(invocation, selector: selector) {
@@ -300,18 +302,28 @@ public final class NFKMLXReloadableBackend: NSObject, NFKInferenceBackend {
         }
     }
 
-    /// Invokes `invocation` on the held backend inside a run, and returns why it could not, or nil.
+    /// Invokes `invocation` on the held backend inside a run, and returns why it could not, or nil. The
+    /// run ends in an Objective-C `@finally`, since a Swift `defer` does not run while an Objective-C
+    /// exception unwinds.
     private func invokeAsRun(_ invocation: AnyObject, selector: Selector) -> String? {
+        let lifecycle = self.lifecycle
         do {
             try lifecycle.begin()
         } catch {
             return error.localizedDescription
         }
-        defer { lifecycle.end() }
-        guard let backend = try? lifecycle.loadedState(), backend.responds(to: selector) else {
+        let backend: any NFKInferenceBackend
+        do {
+            backend = try lifecycle.loadedState()
+        } catch {
+            lifecycle.end()
+            return error.localizedDescription
+        }
+        guard backend.responds(to: selector) else {
+            lifecycle.end()
             return "the built backend does not implement it"
         }
-        NFKMLXInvocation.invoke(invocation, on: backend)
+        NFKMLXPerformWithCleanup({ NFKMLXInvocation.invoke(invocation, on: backend) }, { lifecycle.end() })
         return nil
     }
 }

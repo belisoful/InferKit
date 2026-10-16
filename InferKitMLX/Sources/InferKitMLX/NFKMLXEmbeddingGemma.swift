@@ -309,7 +309,9 @@ public final class NFKMLXEmbeddingGemma: NSObject {
     /// `unsloth/embeddinggemma-300m` is a public mirror of the same files.
     @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL, outputDimensions: 0)
+        try NFKMLXBuildHolds.keeping {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL, outputDimensions: 0)
+        }
     }
 
     /// Downloads an EmbeddingGemma release and builds a backend that truncates each embedding to a
@@ -317,9 +319,11 @@ public final class NFKMLXEmbeddingGemma: NSObject {
     @objc(backendWithRepo:revision:cacheDirectoryURL:outputDimensions:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                outputDimensions dimensions: Int) throws -> any NFKInferenceBackend {
-        try backend(directoryURL: try NFKMLXReleaseDownload.directory(
-            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-            required: requiredFiles, optional: optionalFiles, weights: weightFiles), outputDimensions: dimensions)
+        try NFKMLXBuildHolds.keeping {
+            try backend(directoryURL: try NFKMLXReleaseDownload.directory(
+                repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                required: requiredFiles, optional: optionalFiles, weights: weightFiles), outputDimensions: dimensions)
+        }
     }
 
     /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``.

@@ -75,8 +75,10 @@ extension NFKMLXSD3Generator {
     @objc(backendWithRepo:revision:cacheDirectoryURL:residency:error:)
     public static func backend(repo: String?, revision: String?, cacheDirectoryURL: URL?,
                                residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
-        try generator(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-                      residency: residency).inferenceBackend()
+        try NFKMLXBuildHolds.keeping {
+            try generator(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                          residency: residency).inferenceBackend()
+        }
     }
 
     /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:residency:)``. The handler runs

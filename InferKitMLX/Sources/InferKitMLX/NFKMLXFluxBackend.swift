@@ -81,7 +81,9 @@ extension NFKMLXFlux {
     @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, revision: String?,
                                cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        try flux(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL).inferenceBackend()
+        try NFKMLXBuildHolds.keeping {
+            try flux(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL).inferenceBackend()
+        }
     }
 
     /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``. The handler runs on a
@@ -99,8 +101,10 @@ extension NFKMLXFlux {
     @objc(backendWithRepo:revision:cacheDirectoryURL:residency:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
-        try flux(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-                 residency: residency).inferenceBackend()
+        try NFKMLXBuildHolds.keeping {
+            try flux(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                     residency: residency).inferenceBackend()
+        }
     }
 
     /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:residency:)``. The handler runs

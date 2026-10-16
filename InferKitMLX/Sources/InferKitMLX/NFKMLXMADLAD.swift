@@ -662,9 +662,11 @@ public final class NFKMLXMADLAD: NSObject {
     /// Downloads a release (`google/madlad400-3b-mt`) and builds the backend. Blocking on the network.
     @objc(backendWithRepo:revision:cacheDirectoryURL:halfPrecision:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?, half: Bool) throws -> any NFKInferenceBackend {
-        try backend(directoryURL: try NFKMLXReleaseDownload.directory(
-            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-            required: requiredFiles, optional: optionalFiles, weights: weightFiles), half: half)
+        try NFKMLXBuildHolds.keeping {
+            try backend(directoryURL: try NFKMLXReleaseDownload.directory(
+                repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                required: requiredFiles, optional: optionalFiles, weights: weightFiles), half: half)
+        }
     }
 
     /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:half:)``.

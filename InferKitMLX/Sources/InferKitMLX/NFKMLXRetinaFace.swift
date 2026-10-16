@@ -537,10 +537,12 @@ extension NFKMLXRetinaFace {
     public static func detector(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?,
                                 confidenceThreshold: Float = 0.8,
                                 suppressionThreshold: Float = 0.4) throws -> NFKMLXRetinaFaceDetector {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
-                                                cacheDirectoryURL: cacheDirectoryURL)
-        return try detector(weightsURL: url, confidenceThreshold: confidenceThreshold,
-                            suppressionThreshold: suppressionThreshold)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
+                                                    cacheDirectoryURL: cacheDirectoryURL)
+            return try detector(weightsURL: url, confidenceThreshold: confidenceThreshold,
+                                suppressionThreshold: suppressionThreshold)
+        }
     }
 
     /// The asynchronous form of
@@ -593,9 +595,11 @@ extension NFKMLXRetinaFace {
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, weightsPath: String, revision: String?,
                                cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath,
-                                                revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(weightsURL: url)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath,
+                                                    revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(weightsURL: url)
+        }
     }
 
     /// The asynchronous form of the download factory: downloads on a background queue, then builds and

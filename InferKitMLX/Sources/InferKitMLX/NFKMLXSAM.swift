@@ -630,16 +630,20 @@ public final class NFKMLXSAM: NSObject {
     @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(variant: NFKMLXSAMVariant, repo: String, weightsPath: String,
                                revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(variant: variant, weightsURL: url)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(variant: variant, weightsURL: url)
+        }
     }
 
     /// Downloads the checkpoint from Hugging Face, then builds — no registry required.
     /// Blocking on the network; run off the render thread.
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        try backend(variant: .compact, repo: repo, weightsPath: weightsPath, revision: revision,
-                    cacheDirectoryURL: cacheDirectoryURL)
+        try NFKMLXBuildHolds.keeping {
+            try backend(variant: .compact, repo: repo, weightsPath: weightsPath, revision: revision,
+                        cacheDirectoryURL: cacheDirectoryURL)
+        }
     }
 
     /// The asynchronous form of the variant download factory: downloads on a background queue, then

@@ -203,11 +203,13 @@ public final class NFKMLXAdaIN: NSObject {
     @objc(backendWithRepo:encoderPath:decoderPath:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, encoderPath: String, decoderPath: String, revision: String?,
                                cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let encoderURL = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: encoderPath,
-                                                       revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        let decoderURL = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: decoderPath,
-                                                       revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(encoderURL: encoderURL, decoderURL: decoderURL)
+        try NFKMLXBuildHolds.keeping {
+            let encoderURL = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: encoderPath,
+                                                           revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            let decoderURL = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: decoderPath,
+                                                           revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(encoderURL: encoderURL, decoderURL: decoderURL)
+        }
     }
 
     /// The asynchronous form of the download factory: downloads on a background queue, then builds and

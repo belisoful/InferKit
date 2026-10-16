@@ -172,9 +172,11 @@ extension NFKMLXYOLOGenerations {
     public static func backend(release: NFKMLXYOLORelease, repo: String, weightsPath: String,
                                revision: String?, cacheDirectoryURL: URL?,
                                labels: [String]?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
-                                                cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(release: release, weightsURL: url, labels: labels)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
+                                                    cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(release: release, weightsURL: url, labels: labels)
+        }
     }
 
     /// The asynchronous form of the download factory.

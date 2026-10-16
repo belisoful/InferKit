@@ -587,8 +587,10 @@ public final class NFKMLXYOLO: NSObject {
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:labels:error:)
     public static func backend(repo: String, weightsPath: String, revision: String?,
                                cacheDirectoryURL: URL?, labels: [String]?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(weightsURL: url, labels: labels)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(weightsURL: url, labels: labels)
+        }
     }
 
     /// The asynchronous form of the download factory: downloads on a background queue, then builds and
@@ -608,8 +610,10 @@ public final class NFKMLXYOLO: NSObject {
     @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:labels:error:)
     public static func backend(variant: NFKMLXYOLOVariant, repo: String, weightsPath: String,
                                revision: String?, cacheDirectoryURL: URL?, labels: [String]?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(variant: variant, weightsURL: url, labels: labels)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(variant: variant, weightsURL: url, labels: labels)
+        }
     }
 
     /// The asynchronous form of the variant download factory.

@@ -1283,8 +1283,10 @@ public final class NFKMLXRFDetr: NSObject {
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:labels:error:)
     public static func backend(repo: String, weightsPath: String, revision: String?,
                                cacheDirectoryURL: URL?, labels: [String]?) throws -> any NFKInferenceBackend {
-        try backend(variant: .base, repo: repo, weightsPath: weightsPath, revision: revision,
-                    cacheDirectoryURL: cacheDirectoryURL, labels: labels)
+        try NFKMLXBuildHolds.keeping {
+            try backend(variant: .base, repo: repo, weightsPath: weightsPath, revision: revision,
+                        cacheDirectoryURL: cacheDirectoryURL, labels: labels)
+        }
     }
 
     /// The download factory at a chosen size.
@@ -1293,8 +1295,10 @@ public final class NFKMLXRFDetr: NSObject {
     @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:labels:error:)
     public static func backend(variant: NFKMLXRFDetrVariant, repo: String, weightsPath: String, revision: String?,
                                cacheDirectoryURL: URL?, labels: [String]?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(variant: variant, weightsURL: url, labels: labels)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(variant: variant, weightsURL: url, labels: labels)
+        }
     }
 
     /// The asynchronous form of the download factory.

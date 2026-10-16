@@ -469,9 +469,11 @@ public final class NFKMLXHAT: NSObject {
     @objc(backendWithVariant:repo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(variant: NFKMLXHATVariant, repo: String, weightsPath: String,
                                revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
-                                                cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(variant: variant, weightsURL: url)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath, revision: revision,
+                                                    cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(variant: variant, weightsURL: url)
+        }
     }
 
     /// The asynchronous form of the download factory: downloads on a background queue, then builds and

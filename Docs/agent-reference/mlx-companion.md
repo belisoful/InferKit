@@ -811,8 +811,16 @@ The core protocol's optional `unload`, `isLoaded`, `residentByteCount`, and `pea
   `-[NSInvocation invokeWithTarget:]` on the held backend, and ends the run when that returns. Both
   `NSInvocation` calls go through the method implementations, cast to `@convention(c)` types. A probe
   forwarding integer, object, error-pointer, and `CGRect` messages 100,000 times leaked nothing. A
-  backend that cannot be built raises `NSInvalidArgumentException` with the reason. An Objective-C
-  exception from the forwarded method unwinds past the run's `end`, which then never runs. A run that
+  backend that cannot be built raises `NSInvalidArgumentException` with the build error's reason. The
+  run ends in an Objective-C `@finally` (`NFKMLXPerformWithCleanup`), because a Swift `defer` does not
+  run while an Objective-C exception unwinds: a forwarded method that raises would otherwise leave the
+  run and `NFKMLXActivity` counted, so the model never unloads and no cache release runs again in the
+  process. The exception continues to the sender after the run ends. The helper lives in the package's
+  Objective-C target `InferKitMLXSupport` (`Sources/InferKitMLXSupport`, compiled under ARC, which its
+  source checks), which `InferKitMLX` imports with `internal import`, so its module stays out of the
+  public interface and of a binary consumer's imports; `Tools/xcframework/build-mlx.sh` sweeps its
+  objects into the archive with every other target's. The name `InferKitMLXObjC` is taken by the
+  xcframework's module over the generated header. A run that
   `forwardingTarget(for:)` begins and an autoreleased object ends outlives the call: a block on a global
   queue drains no autorelease pool per block. Calling the protocol's optional throwing `tokenCount?(for:)` from
   Swift crashes the Swift 6.4 compiler in IRGen (a reabstraction thunk), so the wrapper and its test
@@ -838,7 +846,7 @@ The core protocol's optional `unload`, `isLoaded`, `residentByteCount`, and `pea
   (`NFKMLXModelInfoCache.currentValue`).
 - `NFKMLXGPU` adopts the server's optional runtime members (`allocatedByteCount`, `peakAllocatedByteCount`,
   `resetPeakAllocatedByteCount`), so a server measures a provider build that measures nothing itself.
-- Tests: `NFKMLXLifecycleTests` (21), on seeded 8 MiB weights behind test registry factories with a
+- Tests: `NFKMLXLifecycleTests` (24), on seeded 8 MiB weights behind test registry factories with a
   placeholder URL: a closure backend and a URL-less registry build stay loaded, unload frees within 10%
   (plus 1 MiB) of the measured bytes and a run reloads to identical output, prepare reloads, a
   generation backend reloads, an unload during a gated run frees at its end, a plain backend is wrapped
@@ -853,7 +861,21 @@ The core protocol's optional `unload`, `isLoaded`, `residentByteCount`, and `pea
   and loads again once reseeded, a removed weights file and a removed file the build read inside a
   release folder fail the reload naming the file, a sibling variant's file and a `*.download` partial
   removed from the folder leave the reload working while the removed file the build opened fails it,
-  and a listed file removed fails the reload while an unlisted one does not.
+  a listed file removed fails the reload while an unlisted one does not, a forwarded message that
+  raises reaches the sender through `NFKMLXCatchException` with the activity count back where it was
+  and an unload freeing the model, a release fetched inside `NFKMLXBuildHolds.keeping` refuses removal
+  (`NFKDownloadErrorInUse`) until the scope returns, and one fetched outside a scope is released when
+  the fetch returns.
+- Holds across a build (2026-10-16). `NFKHFHub.holdRelease(repo:revision:)` hands its hold to the
+  `NFKMLXBuildHolds` scope open on the calling task, which ends it when the build returns; with no scope
+  open it returns the hold, and the helper ends it when the fetch returns. Scopes open at every public
+  synchronous factory that takes a `cacheDirectoryURL` (each body runs in `NFKMLXBuildHolds.keeping`),
+  at `NFKMLXReleaseDownload.asyncValue` (every asynchronous release factory), and around every load
+  after an unload; a nested scope joins the outer one. `NFKMLXDownload.weightsURL` holds the single
+  file's snapshot too, `NFKMLXDownload.backend` takes its hold before the asynchronous download and
+  ends it after the build, and `NFKMLXHub.backend(for:variant:…)` holds a repository source's snapshot
+  the same way. A new public download factory with a `cacheDirectoryURL` parameter wraps its body in
+  `NFKMLXBuildHolds.keeping` the same way.
 
 ## Load options and the build entry
 

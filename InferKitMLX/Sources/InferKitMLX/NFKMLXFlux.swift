@@ -182,7 +182,9 @@ public final class NFKMLXFlux: NSObject {
     /// the first download. Introduced in InferKit 0.4.0.
     @objc(fluxWithRepo:revision:cacheDirectoryURL:error:)
     public static func flux(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXFlux {
-        try flux(directoryURL: try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL))
+        try NFKMLXBuildHolds.keeping {
+            try flux(directoryURL: try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL))
+        }
     }
 
     /// The asynchronous form of ``flux(repo:revision:cacheDirectoryURL:)``. The handler runs on a
@@ -199,8 +201,10 @@ public final class NFKMLXFlux: NSObject {
     @objc(fluxWithRepo:revision:cacheDirectoryURL:residency:error:)
     public static func flux(repo: String, revision: String?, cacheDirectoryURL: URL?,
                             residency: NFKMLXResidency) throws -> NFKMLXFlux {
-        try flux(directoryURL: try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL),
-                 residency: residency)
+        try NFKMLXBuildHolds.keeping {
+            try flux(directoryURL: try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL),
+                     residency: residency)
+        }
     }
 
     /// The asynchronous form of ``flux(repo:revision:cacheDirectoryURL:residency:)``. The handler runs

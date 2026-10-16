@@ -414,13 +414,15 @@ public final class NFKMLXOpenJevDeBERTa: NSObject, NFKMLXDecisionModel {
     /// again. Blocks on the network; run it off the render thread.
     @objc(downloadRevision:cacheDirectoryURL:error:)
     public static func download(revision: String?, cacheDirectoryURL: URL?) throws -> URL {
-        try download(revision: revision,
-                     hub: NFKHFHub(cacheDirectoryURL: cacheDirectoryURL ?? NFKHFHub.defaultCacheDirectoryURL()))
+        try NFKMLXBuildHolds.keeping {
+            try download(revision: revision,
+                         hub: NFKHFHub(cacheDirectoryURL: cacheDirectoryURL ?? NFKHFHub.defaultCacheDirectoryURL()))
+        }
     }
 
     static func download(revision: String?, hub: NFKHFHub) throws -> URL {
         let hold = try hub.holdRelease(repo: repository, revision: revision)
-        defer { hold.invalidate() }
+        defer { hold?.invalidate() }
         var folder: URL?
         for path in releaseFiles {
             folder = try hub.fetchFile(repo: repository, revision: revision, path: path)
@@ -433,7 +435,9 @@ public final class NFKMLXOpenJevDeBERTa: NSObject, NFKMLXDecisionModel {
     /// Downloads the release (or reads it from the cache) and builds the model.
     @objc(openJevWithRevision:cacheDirectoryURL:error:)
     public static func openJev(revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXOpenJevDeBERTa {
-        try openJev(directoryURL: download(revision: revision, cacheDirectoryURL: cacheDirectoryURL))
+        try NFKMLXBuildHolds.keeping {
+            try openJev(directoryURL: download(revision: revision, cacheDirectoryURL: cacheDirectoryURL))
+        }
     }
 
     /// The asynchronous form of ``openJev(revision:cacheDirectoryURL:)``; the handler runs on a
@@ -449,7 +453,9 @@ public final class NFKMLXOpenJevDeBERTa: NSObject, NFKMLXDecisionModel {
     /// Downloads the release (or reads it from the cache) and builds the backend.
     @objc(backendWithRevision:cacheDirectoryURL:error:)
     public static func backend(revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXDecisionBackend {
-        try openJev(revision: revision, cacheDirectoryURL: cacheDirectoryURL).makeBackend()
+        try NFKMLXBuildHolds.keeping {
+            try openJev(revision: revision, cacheDirectoryURL: cacheDirectoryURL).makeBackend()
+        }
     }
 
     /// The asynchronous form of ``backend(revision:cacheDirectoryURL:)``.

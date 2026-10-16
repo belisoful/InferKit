@@ -89,7 +89,8 @@ The full repository tree with per-directory notes.
 │                                    #   `package(url:range:)` — no subpath — so a package must sit at
 │                                    #   the repository root to be consumable by URL at all.
 ├── InferKitMLX/                     # Optional MLX companion package (own Package.swift + tests);
-│                                    #   Sources/inferkit-catalog is the catalog export tool, an executable no product names
+│                                    #   Sources/inferkit-catalog is the catalog export tool, an executable no product names;
+│                                    #   Sources/InferKitMLXSupport holds the Objective-C exception scopes, imported internally
 ├── InferKitFoundationModels/        # Optional Foundation Models companion (own Package.swift + tests)
 ├── InferKitAppleSwift/              # Optional companion for Apple's Swift-only inference APIs (own Package.swift + tests)
 ├── Tools/inferkit-convert/          # Offline Python converter: HF causal-LM -> Core ML model dir

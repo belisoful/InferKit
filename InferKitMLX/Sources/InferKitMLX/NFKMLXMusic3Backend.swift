@@ -624,7 +624,9 @@ extension NFKMLXMusic3 {
     /// Community License. Introduced in InferKit 0.4.0.
     @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL, residency: .automatic)
+        try NFKMLXBuildHolds.keeping {
+            try backend(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL, residency: .automatic)
+        }
     }
 
     /// ``backend(repo:revision:cacheDirectoryURL:)`` holding its stages as `residency` says.
@@ -632,8 +634,10 @@ extension NFKMLXMusic3 {
     @objc(backendWithRepo:revision:cacheDirectoryURL:residency:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?,
                                residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
-        try backend(directoryURL: try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL),
-                    residency: residency)
+        try NFKMLXBuildHolds.keeping {
+            try backend(directoryURL: try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL),
+                        residency: residency)
+        }
     }
 
     /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``. Introduced in InferKit 0.4.0.

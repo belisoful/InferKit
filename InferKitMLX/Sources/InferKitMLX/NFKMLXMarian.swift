@@ -174,9 +174,11 @@ public final class NFKMLXMarian: NSObject {
     /// network; call off the render thread.
     @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        try backend(directoryURL: try NFKMLXReleaseDownload.directory(
-            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-            required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+        try NFKMLXBuildHolds.keeping {
+            try backend(directoryURL: try NFKMLXReleaseDownload.directory(
+                repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+        }
     }
 
     /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``.
@@ -194,8 +196,10 @@ public final class NFKMLXMarian: NSObject {
     /// Downloads the pair's release and builds the backend.
     @objc(backendWithSourceLanguage:targetLanguage:cacheDirectoryURL:error:)
     public static func backend(sourceLanguage: String, targetLanguage: String, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        try backend(repo: repo(sourceLanguage: sourceLanguage, targetLanguage: targetLanguage),
-                    revision: nil, cacheDirectoryURL: cacheDirectoryURL)
+        try NFKMLXBuildHolds.keeping {
+            try backend(repo: repo(sourceLanguage: sourceLanguage, targetLanguage: targetLanguage),
+                        revision: nil, cacheDirectoryURL: cacheDirectoryURL)
+        }
     }
 
     /// The asynchronous form of ``backend(sourceLanguage:targetLanguage:cacheDirectoryURL:)``.
@@ -419,7 +423,7 @@ enum NFKMLXReleaseDownload {
                           required: [String], optional: [String], weights: [String]) throws -> URL {
         let hub = hub(cacheDirectoryURL: cacheDirectoryURL)
         let hold = try hub.holdRelease(repo: repo, revision: revision)
-        defer { hold.invalidate() }
+        defer { hold?.invalidate() }
         let repoListing = listing(hub: hub, repo: repo, revision: revision,
                               needsFetch: needsFetch(hub: hub, repo: repo, revision: revision,
                                                      required: required, weights: weights))
@@ -463,13 +467,13 @@ enum NFKMLXReleaseDownload {
     /// Runs `build` on a background queue and delivers its result to `completionHandler` there. The
     /// download current on the calling thread is carried to the queue and made current around
     /// `build`, with one activity spanning it, so the download observes the fetches and finishes when
-    /// `build` returns.
+    /// `build` returns. The release holds `build` takes last until it returns (`NFKMLXBuildHolds`).
     static func asyncValue<T>(_ completionHandler: @escaping (T?, Error?) -> Void, _ build: @escaping () throws -> T) {
         let download = NFKDownload.current
         download?.beginActivity()
         DispatchQueue.global(qos: .userInitiated).async {
             download?.becomeCurrent()
-            let result = Result { try build() }
+            let result = Result { try NFKMLXBuildHolds.keeping(build) }
             download?.resignCurrent()
             switch result {
             case .success(let value):

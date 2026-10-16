@@ -468,15 +468,19 @@ public final class NFKMLXFlux2: NSObject {
     /// 0.4.0.
     @objc(flux2WithRepo:revision:cacheDirectoryURL:error:)
     public static func flux2(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXFlux2 {
-        try flux2(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL, residency: .automatic)
+        try NFKMLXBuildHolds.keeping {
+            try flux2(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL, residency: .automatic)
+        }
     }
 
     /// ``flux2(repo:revision:cacheDirectoryURL:)`` held as `residency` says. Introduced in InferKit 0.4.0.
     @objc(flux2WithRepo:revision:cacheDirectoryURL:residency:error:)
     public static func flux2(repo: String, revision: String?, cacheDirectoryURL: URL?,
                              residency: NFKMLXResidency) throws -> NFKMLXFlux2 {
-        try flux2(directoryURL: try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL),
-                  residency: residency)
+        try NFKMLXBuildHolds.keeping {
+            try flux2(directoryURL: try releaseDirectory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL),
+                      residency: residency)
+        }
     }
 
     /// The asynchronous form of ``flux2(repo:revision:cacheDirectoryURL:)``. The handler runs on a

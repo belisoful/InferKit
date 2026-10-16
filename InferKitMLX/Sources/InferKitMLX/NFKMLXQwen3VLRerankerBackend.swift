@@ -60,7 +60,9 @@ extension NFKMLXQwen3VLReranker {
     /// run it off the main and render threads. Introduced in InferKit 0.4.0.
     @objc(backendWithRepo:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        try reranker(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL).inferenceBackend()
+        try NFKMLXBuildHolds.keeping {
+            try reranker(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL).inferenceBackend()
+        }
     }
 
     /// The asynchronous form of ``backend(repo:revision:cacheDirectoryURL:)``. The handler runs on a

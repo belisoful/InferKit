@@ -493,14 +493,16 @@ public final class NFKMLXOpenJev: NSObject, NFKMLXDecisionModel {
     @objc(downloadVariant:revision:cacheDirectoryURL:error:)
     public static func download(variant: NFKMLXOpenJevVariant, revision: String?,
                                 cacheDirectoryURL: URL?) throws -> NFKMLXOpenJevRelease {
-        try download(variant: variant, revision: revision,
-                     hub: NFKHFHub(cacheDirectoryURL: cacheDirectoryURL ?? NFKHFHub.defaultCacheDirectoryURL()))
+        try NFKMLXBuildHolds.keeping {
+            try download(variant: variant, revision: revision,
+                         hub: NFKHFHub(cacheDirectoryURL: cacheDirectoryURL ?? NFKHFHub.defaultCacheDirectoryURL()))
+        }
     }
 
     static func download(variant: NFKMLXOpenJevVariant, revision: String?, hub: NFKHFHub) throws -> NFKMLXOpenJevRelease {
         let release = revision ?? variant.measuredRevision
         let releaseHold = try hub.holdRelease(repo: variant.repository, revision: release)
-        defer { releaseHold.invalidate() }
+        defer { releaseHold?.invalidate() }
         var checkpoint: URL?
         for path in checkpointFiles {
             let local = try hub.fetchFile(repo: variant.repository, revision: release, path: "package/checkpoint/\(path)")
@@ -510,7 +512,7 @@ public final class NFKMLXOpenJev: NSObject, NFKMLXDecisionModel {
         let model = try JSONSerialization.jsonObject(with: Data(contentsOf: checkpoint.appendingPathComponent("model.json"))) as? [String: Any]
         let baseRevision = model?["revision"] as? String ?? variant.baseRevision
         let baseHold = try hub.holdRelease(repo: variant.baseRepository, revision: baseRevision)
-        defer { baseHold.invalidate() }
+        defer { baseHold?.invalidate() }
         var base: URL?
         for path in baseFiles {
             base = try hub.fetchFile(repo: variant.baseRepository, revision: baseRevision, path: path)
@@ -529,8 +531,10 @@ public final class NFKMLXOpenJev: NSObject, NFKMLXDecisionModel {
     /// base's own precision.
     @objc(openJevWithVariant:revision:cacheDirectoryURL:error:)
     public static func openJev(variant: NFKMLXOpenJevVariant, revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXOpenJev {
-        let release = try download(variant: variant, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try openJev(checkpointDirectoryURL: release.checkpointDirectoryURL, baseDirectoryURL: release.baseDirectoryURL)
+        try NFKMLXBuildHolds.keeping {
+            let release = try download(variant: variant, revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            return try openJev(checkpointDirectoryURL: release.checkpointDirectoryURL, baseDirectoryURL: release.baseDirectoryURL)
+        }
     }
 
     /// The asynchronous form of ``openJev(variant:revision:cacheDirectoryURL:)``; the handler runs on
@@ -546,7 +550,9 @@ public final class NFKMLXOpenJev: NSObject, NFKMLXDecisionModel {
     /// Downloads a release and its base (or reads them from the cache) and builds the backend.
     @objc(backendWithVariant:revision:cacheDirectoryURL:error:)
     public static func backend(variant: NFKMLXOpenJevVariant, revision: String?, cacheDirectoryURL: URL?) throws -> NFKMLXDecisionBackend {
-        try openJev(variant: variant, revision: revision, cacheDirectoryURL: cacheDirectoryURL).makeBackend()
+        try NFKMLXBuildHolds.keeping {
+            try openJev(variant: variant, revision: revision, cacheDirectoryURL: cacheDirectoryURL).makeBackend()
+        }
     }
 
     /// The asynchronous form of ``backend(variant:revision:cacheDirectoryURL:)``.

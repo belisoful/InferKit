@@ -570,9 +570,11 @@ extension NFKMLXSAM2 {
     public static func backend(variant: NFKMLXSAM2Variant, release: NFKMLXSAM2Release, repo: String,
                                weightsPath: String, revision: String?,
                                cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath,
-                                                revision: revision, cacheDirectoryURL: cacheDirectoryURL)
-        return try backend(variant: variant, release: release, weightsURL: url)
+        try NFKMLXBuildHolds.keeping {
+            let url = try NFKMLXDownload.weightsURL(repo: repo, weightsPath: weightsPath,
+                                                    revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+            return try backend(variant: variant, release: release, weightsURL: url)
+        }
     }
 
     /// Downloads the checkpoint from Hugging Face, then builds — no registry required.
@@ -580,8 +582,10 @@ extension NFKMLXSAM2 {
     @objc(backendWithRepo:weightsPath:revision:cacheDirectoryURL:error:)
     public static func backend(repo: String, weightsPath: String, revision: String?,
                                cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
-        try backend(variant: .tiny, release: .sam21, repo: repo, weightsPath: weightsPath,
-                    revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        try NFKMLXBuildHolds.keeping {
+            try backend(variant: .tiny, release: .sam21, repo: repo, weightsPath: weightsPath,
+                        revision: revision, cacheDirectoryURL: cacheDirectoryURL)
+        }
     }
 
     /// The asynchronous form of the variant download factory.
