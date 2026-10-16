@@ -1427,8 +1427,8 @@ exception would end the process and every hosted model, and loopback needs no ke
   `model` is absent and reaches the only hosted model, as a missing one does.
 - Content-Type: a JSON route, and a POST to `/mcp`, reads its body as JSON whatever its Content-Type,
   so `curl -d` (form-urlencoded) and a missing type are served. A body that is not a JSON object is the
-  route's 400. A media-type rule adds no protection: a browser's cross-origin request always carries
-  an `Origin`, which the Origin check refuses.
+  route's 400. A browser's cross-origin request always carries an `Origin`, which the Origin check
+  refuses.
 - Origin: a `/v1` request whose `Origin` fails `NFKServedOriginIsAllowed` is
   `NFKInferenceServerErrorOriginRefused` (11, 403), checked before the key, so a key does not admit a
   page. A missing `Origin` passes, `null` fails, and a loopback origin passes. With `allowedOrigins`
@@ -1452,8 +1452,14 @@ exception would end the process and every hosted model, and loopback needs no ke
   `NFKJobGuard.h` (private) gives the core's job backends `NFKJobRunGuarded` and
   `NFKJobDispatchGuarded`, which fail the job with `NFKJobExceptionError` when the work raises.
   `NFKRemoteLineStream` (`NFKRemoteTransport`) guards each line handler call, cancelling the task and
-  handing the completion the exception's error, and calls a raising completion once more with that
-  error, so every streaming remote and provider backend is covered in one place. The queued paths of
+  handing the completion the exception's error, so every streaming backend's line handler is covered
+  in one place. The completion runs exactly once, since a wrapper such as `NFKOllamaRunner`'s forwards
+  it to a caller's completion: an exception it raises is caught and logged with `os_log_fault`
+  (subsystem `com.inferkit`, category `transport`), and nothing calls it again. Each streaming job
+  backend (OpenAI chat, completions, InferKit native, Responses, speech, image, transcription,
+  Anthropic, Gemini generateContent, Gemini Interactions) runs its stream completion's body through
+  `NFKJobRunGuarded`, so a raise there fails its job on its own path. `NFKOllamaRunner`'s pull
+  completion only finishes its job with an error it builds. The queued paths of
   the Responses, speech, image, transcription, Gemini Interactions, Core ML language, async generation,
   and balanced backends dispatch through `NFKJobDispatchGuarded`; `NFKInferenceSubmit`'s run,
   `NFKSpeechRecognitionBackend`'s result handler, and `NFKPluginBackend`'s reply decoding run through
@@ -1489,9 +1495,11 @@ exception would end the process and every hosted model, and loopback needs no ke
   on `/v1` and `/mcp`; a backend, a reply, and an app route that raise; malformed MCP messages alone
   and in a batch; 100 concurrent MCP model-tool calls under a 90 s deadline, on the server's own model
   and on another server's; and a batch of model-tool calls answered in order. Each refusal test then
-  asserts that the server serves the next request. `NFKJobGuardTests` (4): a run
+  asserts that the server serves the next request. `NFKJobGuardTests` (5): a run
   `NFKInferenceSubmit` queues that raises, a stream whose line handler raises, a stream whose
-  completion raises, and a served job backend that raises on its own queue answered 500.
+  completion raises and runs once while the next stream is served, a remote backend whose stream
+  completion raises and fails its job once, and a served job backend that raises on its own queue
+  answered 500.
 
 **Residency and unloading (2026-10-13).** Asked for by an app's service, which lists models without
 keeping them in memory, and unloads idle ones.

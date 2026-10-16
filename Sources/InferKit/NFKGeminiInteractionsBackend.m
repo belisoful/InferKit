@@ -223,29 +223,31 @@ static double NFKInteractionsSeconds(id offset)
 			}
 		}
 	} completionHandler:^(NSHTTPURLResponse * _Nullable response, NSData * _Nullable errorBody, NSError * _Nullable streamError) {
-		if (finished || job.status == NFKInferenceJobStatusCancelled) {
-			return;
-		}
-		finished = YES;
-		NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
-		if (failure == nil && streamFailure != nil) {
-			failure = [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:streamFailure];
-		}
-		// The stream carries the text; the finished interaction, read back by id, carries the rest.
-		NSDictionary *interaction = finalInteraction;
-		if (failure == nil && interaction == nil && identifier != nil) {
-			interaction = [self JSONForRequest:[self requestForInteraction:identifier suffix:nil method:@"GET"] error:&failure];
-		}
-		NFKInferenceResult *result = nil;
-		if (failure == nil) {
-			result = interaction != nil ? [self resultFromInteraction:interaction request:request error:&failure]
-										: [NFKInferenceResult resultWithOutputs:@{ NFKOutputText: [text copy] }];
-		}
-		if (result != nil) {
-			[job finishWithResult:result];
-		} else {
-			[job finishWithError:failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the interaction failed"]];
-		}
+		NFKJobRunGuarded(job, ^{
+			if (finished || job.status == NFKInferenceJobStatusCancelled) {
+				return;
+			}
+			finished = YES;
+			NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
+			if (failure == nil && streamFailure != nil) {
+				failure = [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:streamFailure];
+			}
+			// The stream carries the text; the finished interaction, read back by id, carries the rest.
+			NSDictionary *interaction = finalInteraction;
+			if (failure == nil && interaction == nil && identifier != nil) {
+				interaction = [self JSONForRequest:[self requestForInteraction:identifier suffix:nil method:@"GET"] error:&failure];
+			}
+			NFKInferenceResult *result = nil;
+			if (failure == nil) {
+				result = interaction != nil ? [self resultFromInteraction:interaction request:request error:&failure]
+											: [NFKInferenceResult resultWithOutputs:@{ NFKOutputText: [text copy] }];
+			}
+			if (result != nil) {
+				[job finishWithResult:result];
+			} else {
+				[job finishWithError:failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the interaction failed"]];
+			}
+		});
 	}];
 	job.cancellationHandler = cancel;
 	return job;

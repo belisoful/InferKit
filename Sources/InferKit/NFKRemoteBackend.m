@@ -15,6 +15,7 @@
 #import "NFKRemoteFileStore.h"
 #import "NFKErrors.h"
 #import "NFKToolMessageSupport.h"
+#import "NFKJobGuard.h"
 
 /*! The endpoint's spelling for each core text parameter the contract names. The core keys are
 	camelCase and an OpenAI-compatible service reads underscored names, so the key is renamed and the
@@ -265,17 +266,19 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 			[job reportProgress:-1.0 partialResult:[NFKInferenceResult resultWithOutputs:partial]];
 		}
 	} completionHandler:^(NSHTTPURLResponse * _Nullable response, NSData * _Nullable errorBody, NSError * _Nullable streamError) {
-		if (state.finished || job.status == NFKInferenceJobStatusCancelled) {
-			return;
-		}
-		state.finished = YES;
-		NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
-		if (failure != nil) {
-			[job finishWithError:failure];
-			return;
-		}
-		// A stream that closes without [DONE] still delivered what it delivered.
-		[self finishJob:job fromStreamState:state expectsStructured:expectsStructured audioFormat:audioFormat];
+		NFKJobRunGuarded(job, ^{
+			if (state.finished || job.status == NFKInferenceJobStatusCancelled) {
+				return;
+			}
+			state.finished = YES;
+			NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
+			if (failure != nil) {
+				[job finishWithError:failure];
+				return;
+			}
+			// A stream that closes without [DONE] still delivered what it delivered.
+			[self finishJob:job fromStreamState:state expectsStructured:expectsStructured audioFormat:audioFormat];
+		});
 	}];
 	job.cancellationHandler = cancel;
 	return job;

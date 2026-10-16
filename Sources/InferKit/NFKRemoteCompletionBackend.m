@@ -13,6 +13,7 @@
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
 #import "NFKRemoteTransportPrivate.h"
+#import "NFKJobGuard.h"
 
 @implementation NFKRemoteCompletionBackend
 
@@ -137,16 +138,18 @@
 			[job reportProgress:-1.0 partialResult:[NFKInferenceResult resultWithOutputs:@{ NFKOutputText: [text copy] }]];
 		}
 	} completionHandler:^(NSHTTPURLResponse * _Nullable response, NSData * _Nullable errorBody, NSError * _Nullable streamError) {
-		if (finished || job.status == NFKInferenceJobStatusCancelled) {
-			return;
-		}
-		finished = YES;
-		NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
-		if (failure != nil) {
-			[job finishWithError:failure];
-			return;
-		}
-		[job finishWithResult:[NFKInferenceResult resultWithOutputs:@{ NFKOutputText: [text copy] }]];
+		NFKJobRunGuarded(job, ^{
+			if (finished || job.status == NFKInferenceJobStatusCancelled) {
+				return;
+			}
+			finished = YES;
+			NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
+			if (failure != nil) {
+				[job finishWithError:failure];
+				return;
+			}
+			[job finishWithResult:[NFKInferenceResult resultWithOutputs:@{ NFKOutputText: [text copy] }]];
+		});
 	}];
 	job.cancellationHandler = cancel;
 	return job;

@@ -811,7 +811,7 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   carries (`NFKModelValueTypeForKey`), such as a `temperature` that is a string, is refused with 400
   before it queues. A form field of the transcription and image-edit routes is read as its contract
   kind, and one that does not read as that kind is refused.
-- A `model` that is not a string is refused with 400. It no longer reaches the only hosted model.
+- A `model` that is not a string is refused with 400.
 - An integer field takes a value a `long long` holds; 2^63 and past is refused.
 - The `/v1` routes refuse a browser request whose `Origin` names a site other than `localhost`,
   127.0.0.1, `[::1]`, or the host the request was sent to, with 403

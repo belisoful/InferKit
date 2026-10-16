@@ -172,25 +172,27 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 		}
 		[job reportProgress:-1.0 partialResult:[NFKInferenceResult resultWithOutputs:partial]];
 	} completionHandler:^(NSHTTPURLResponse * _Nullable response, NSData * _Nullable errorBody, NSError * _Nullable streamError) {
-		if (finished || job.status == NFKInferenceJobStatusCancelled) {
-			return;
-		}
-		finished = YES;
-		NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
-		if (failure == nil && streamFailure != nil) {
-			failure = [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:streamFailure];
-		}
-		NFKInferenceResult *result = nil;
-		if (failure == nil) {
-			result = completed != nil
-				? [self resultFromReply:completed expectsStructured:expectsStructured error:&failure]
-				: [NFKInferenceResult resultWithOutputs:@{ NFKOutputText: [text copy] }];
-		}
-		if (result != nil) {
-			[job finishWithResult:result];
-		} else {
-			[job finishWithError:failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the responses call failed"]];
-		}
+		NFKJobRunGuarded(job, ^{
+			if (finished || job.status == NFKInferenceJobStatusCancelled) {
+				return;
+			}
+			finished = YES;
+			NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
+			if (failure == nil && streamFailure != nil) {
+				failure = [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:streamFailure];
+			}
+			NFKInferenceResult *result = nil;
+			if (failure == nil) {
+				result = completed != nil
+					? [self resultFromReply:completed expectsStructured:expectsStructured error:&failure]
+					: [NFKInferenceResult resultWithOutputs:@{ NFKOutputText: [text copy] }];
+			}
+			if (result != nil) {
+				[job finishWithResult:result];
+			} else {
+				[job finishWithError:failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the responses call failed"]];
+			}
+		});
 	}];
 	job.cancellationHandler = cancel;
 	return job;
