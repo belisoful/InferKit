@@ -46,6 +46,21 @@ The version lives in three places that must move together on release: `s.version
 version from the sources, so the framework's `Info.plist` and `release.json` record what the build
 compiled.
 
+A release build refuses an inconsistent version before it compiles or writes anything.
+`release.sh`, and `build-mlx.sh` whenever it writes `release/`, run `inferkit_check_release_version`:
+
+- `s.version` in the podspec differs from `NFKInferKit.releaseVersion` → refused.
+- The version is not `X.Y.Z` → refused.
+- The tree is not a git checkout → refused.
+- `HEAD` carries a `v*` tag other than `v<version>` → refused.
+- An existing `vX.Y.Z` tag on another commit is as new as the version or newer → refused.
+- `v<version>` on `HEAD` → passes, so a tagged commit rebuilds.
+
+The check reads the local tags, so a release build fetches the tags first. The scripts never move the
+version: moving it is the release step above. A `--no-release` build of `build-mlx.sh` is a
+development build and skips the check; its frameworks carry the source version as it stands.
+`Tools/xcframework/test_release_version.py` exercises the rule on throwaway git trees.
+
 ## API version
 
 `NFKInferKit.APIVersion` (`"major.minor"`) with `APIMajorVersion` and `APIMinorVersion` versions the
@@ -96,9 +111,9 @@ Which change moves which number:
 The starting point is 1.0. A loader compares numbers by one rule, same major and minor at least the
 client's, and a 0.x API version would need a second rule because semantic versioning gives 0.x no
 compatibility promise. The API version is independent of the release version, so it need not wait
-for a 1.0 release. Before the first tagged release the API version stays 1.0 while the interface
-changes, and the first tagged release fixes what 1.0 names. From then on `Tools/abi/check-abi.sh`
-holds each release to the rule.
+for a 1.0 release. InferKit 0.4.0 is the first release with an API version. Until it ships, the API
+version stays 1.0 while the interface changes, and that release fixes what 1.0 names. From then on
+`Tools/abi/check-abi.sh` holds each release to the rule.
 
 Swift names through the Objective-C interface follow the Objective-C importer, which can differ from
 the Swift module's own spelling: `+backendNamed:weightsURL:error:` is
@@ -351,8 +366,10 @@ it downloads, so the iOS slices ship inside the xcframework zips and are embedde
 - `version` and `apiVersion` come from the sources (`inferkit-version.sh`). The framework's
   `Info.plist` carries the same two values as `CFBundleShortVersionString` and `NFKAPIVersion`.
 - `minimumSystemVersions` lists the platforms the build included.
-- `commitHasLocalChanges` is true when tracked files differed from the commit. A published release has
-  false.
+- `commitHasLocalChanges` is true when the tree differed from the commit: a tracked file changed, or an
+  untracked file is present that `.gitignore` does not exclude. SwiftPM and the podspec glob source
+  files, so an untracked file can be compiled into the build. Ignored files, the default
+  `xcframework-build/` output among them, do not count. A published release has false.
 - `mlxSwift` records the pin from `InferKitMLX/Package.resolved`; `version` is null while the pin is a
   revision. `mlxCoreVersion` is read from the build's own checkout (`mlx/version.h`), and is null when
   `release.sh` runs without one.
@@ -362,13 +379,13 @@ it downloads, so the iOS slices ship inside the xcframework zips and are embedde
 
 ### The signing step (open)
 
-Signing, notarization, and publishing wait for the developer. The manifest leaves room for a detached
+Signing, notarization, and publishing are not implemented. The manifest leaves room for a detached
 signature with one rule: the signed bytes are the manifest's bytes as `release.sh` writes them, with the
 `signature` value empty. A verifier restores those bytes by replacing the value of the last
 `"signature": "…"` line with `""`, with no JSON canonicalization. The proposed value is
 `ed25519:<base64 of the 64-byte signature>`.
 
-Open question for the developer, which key signs what:
+Which key signs what is open:
 
 - **Ed25519 over the manifest.** The app pins the public key and verifies the manifest before it
   downloads anything, then checks the zip against the manifest's `sha256`. It authenticates the
@@ -457,9 +474,9 @@ and function with `dlsym`. With a baseline framework at hand, it reads every str
 constant from both frameworks and fails on a changed value. A git ref is exported with `git archive`
 and built with that tree's own `build-mlx.sh`, about seven minutes.
 
-The first real baseline is the first tagged release. Until then `--baseline current` checks that the
-framework implements every declaration its headers make, and that no public class or protocol has a
-mangled runtime name. On 2026-10-15 that self-check passed with
+The first real baseline is InferKit 0.4.0, the first release with an API version. Until it ships,
+`--baseline current` checks that the framework implements every declaration its headers make, and
+that no public class or protocol has a mangled runtime name. On 2026-10-15 that self-check passed with
 406 classes, 3697 selectors, 177 conformances, 241 constants, and 10 functions, none missing. With the
 C headers covered, the self-check on 2026-10-15 read 440 classes, 4277 selectors, 301 constants, 42
 functions (the 23 of the C API among them), 101 enumerations, 3 structures, and 9 typedefs under API 1.0,

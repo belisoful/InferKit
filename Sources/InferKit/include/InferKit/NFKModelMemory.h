@@ -149,8 +149,18 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 /*! The routed-expert bytes a paged load leaves in the release, per precision. Empty for a stage without
 	routed experts. */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, NSNumber *> *pageableByteCountByPrecision;
-/*! The repeated layers a streamed load may leave in the release. 0 for a stage that cannot stream. */
+/*! The repeated layers a streamed load may leave in the release, from 0 to maximumLayerCount. 0 for a
+	stage that cannot stream. */
 @property (nonatomic, readonly) NSInteger layerCount;
+/*!
+	@abstract   The most repeated layers a stage states: 4096.
+	@discussion A stage's dictionary whose layerCount is above it, negative, or fractional is malformed,
+				and stageWithDictionary:error: refuses it with NFKModelCatalogErrorMalformedDescriptor. The
+				initializer clamps layerCount to the range 0 to this maximum. The planner sizes one entry
+				per layer, so the bound keeps a hostile manifest from driving that loop. Introduced in
+				InferKit 0.4.0.
+*/
+@property (class, nonatomic, readonly) NSInteger maximumLayerCount;
 /*! The bytes of the largest repeated layer, per precision. */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, NSNumber *> *largestLayerByteCountByPrecision;
 /*! A wider precision the stage takes where the budget holds it, such as a text encoder stored at
@@ -175,8 +185,8 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 			   byteCountByPrecision:(NSDictionary<NSString *, NSNumber *> *)byteCountByPrecision
 	NS_SWIFT_NAME(init(identifier:byteCountByPrecision:));
 
-/*! Reads a stage from its dictionary. Returns nil and sets error when id or bytesByPrecision is missing
-	or a field has the wrong type. */
+/*! Reads a stage from its dictionary. Returns nil and sets error when id or bytesByPrecision is missing,
+	a field has the wrong type, or layerCount is not a whole number from 0 to maximumLayerCount. */
 + (nullable instancetype)stageWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error
 	NS_SWIFT_NAME(init(dictionary:));
 /*! The stage as its dictionary: id, title, bytesByPrecision, quantizableElements,
@@ -233,8 +243,8 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 /*! The stage with the identifier, or nil. */
 - (nullable NFKModelStageFacts *)stageWithIdentifier:(NSString *)identifier;
 
-/*! Reads facts from their dictionary. Returns nil and sets error when stages is missing or a field has
-	the wrong type. */
+/*! Reads facts from their dictionary. Returns nil and sets error when stages is missing, a field has
+	the wrong type, a stage is malformed, or two stages share an id. */
 + (nullable instancetype)factsWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error;
 /*! The facts as their dictionary: stages, keyValueBytesPerToken, boundedKeyValueBytes,
 	maximumContextLength, vocabularySize, loadOverheadBytes, and basis. */

@@ -87,6 +87,11 @@ lists them as `outputs` in a model's description, and `NFKRemoteInferKitBackend`
   roles, source kinds, and layouts are open string sets. The [vocabulary](#vocabulary) lists the
   values the core uses, and a reader passes any other string through, so a plugin extends a set by
   using a new string.
+- **Identifiers do not repeat.** Two models of one manifest with one `id` →
+  `NFKModelCatalogErrorMalformedManifest`. Within a model, two inputs, outputs, or options with one
+  `key`, or two variants or presets with one `id` → `NFKModelCatalogErrorMalformedDescriptor`. Two
+  stages of one variant's facts with one `id` → the same. The error names both entries.
+- **Counts that drive a loop are bounded.** A stage's `layerCount` above 4096 is malformed.
 - Booleans are JSON `true` and `false`. Byte counts and parameter counts are JSON integers.
 
 ## Model
@@ -107,7 +112,7 @@ lists them as `outputs` in a model's description, and `NFKRemoteInferKitBackend`
 | `outputModalities` | array of string | no | The value types the model writes. The value types of `outputs` when absent. |
 | `inputs` | array of [port](#port) | no | The inputs a request carries. |
 | `outputs` | array of [port](#port) | no | The outputs a result carries. |
-| `options` | array of [option](#option) | no | The settings the model reads, at load and on each request. A manifest that names the field `parameters` reads the same. |
+| `options` | array of [option](#option) | no | The settings the model reads, at load and on each request. |
 | `license` | [license](#license) | no | The license of the model's weights. |
 | `variants` | array of [variant](#variant) | no | The releases. The default variant is the one with `isDefault` true, else the first. |
 | `requirements` | [requirements](#requirements) | no | What a machine needs. No requirements when absent. |
@@ -331,7 +336,7 @@ budget's reserve covers it.
 | `bytesByPrecision` | object of integer | yes | The stage's bytes per precision. |
 | `quantizableElements` | integer | no | The elements a runtime weight quantization packs: the stage's eligible matrices. |
 | `pageableBytesByPrecision` | object of integer | no | The routed-expert bytes a paged load leaves in the release. |
-| `layerCount` | integer | no | The repeated layers a streamed load may leave in the release. |
+| `layerCount` | integer | no | The repeated layers a streamed load may leave in the release, from 0 to 4096 (`NFKModelStageFacts.maximumLayerCount`). A stage with more is malformed. |
 | `largestLayerBytesByPrecision` | object of integer | no | The bytes of the largest repeated layer. |
 | `widenedPrecision` | string | no | A wider precision the stage takes where the budget holds it, such as a text encoder stored at bfloat16 and run at float32. |
 
@@ -430,13 +435,14 @@ resident, alone when staged or paged, never without a budget. A refusal is
 
 | Refusal | Sentence |
 |---|---|
-| Resident | `the stages need 41.0 GiB together plus a 4.0 GiB reserve, against a 27.2 GiB working set; hold them staged or paged` |
-| Paged | `the largest stage needs 30.0 GiB with its routed experts paged, plus a 4.0 GiB reserve, against a 24.0 GiB working set` |
-| Streamed | `stage 0 needs 22.0 GiB streamed, two layers in flight, plus a 4.0 GiB reserve, against a 24.0 GiB working set` |
-| A staged stage alone | `transformer alone needs 30.0 GiB plus a 4.0 GiB reserve, against a 24.0 GiB working set` |
+| Resident | `the stages need 41.0 GiB together plus a 4.0 GiB reserve, against a 27.2 GiB budget; hold them staged or paged` |
+| Paged | `the largest stage needs 30.0 GiB with its routed experts paged, plus a 4.0 GiB reserve, against a 24.0 GiB budget` |
+| Streamed | `stage 0 needs 22.0 GiB streamed, two layers in flight, plus a 4.0 GiB reserve, against a 24.0 GiB budget` |
+| A staged stage alone | `transformer alone needs 30.0 GiB plus a 4.0 GiB reserve, against a 24.0 GiB budget` |
 
-The resident sentence names `or paged` and `or streamed` only where the stages have experts or
-layers. The last row is `+verifyEachStageLoads:plan:budget:names:error:`, which checks each stage of a
+The figure after "against a" is the budget the planner was given, which an estimate passes as
+`NFKModelMemoryBudget.byteCount`: 27.2 GiB is the budget of a 32 GiB working set. The resident sentence
+names `or paged` and `or streamed` only where the stages have experts or layers. The last row is `+verifyEachStageLoads:plan:budget:names:error:`, which checks each stage of a
 staged plan alone.
 
 ### Constraints
@@ -816,7 +822,7 @@ Every failure is in `NFKModelCatalogErrorDomain`.
 | Code | When |
 |---|---|
 | `NFKModelCatalogErrorUnsupportedSchemaVersion` | The manifest's `schemaVersion` is newer than this release reads. |
-| `NFKModelCatalogErrorMalformedManifest` | The data is not a JSON object, or `schemaVersion`, `kind`, or `models` is missing or of the wrong type, or `kind` is not `"inferkit.model-catalog"`. |
+| `NFKModelCatalogErrorMalformedManifest` | The data is not valid JSON or not a JSON object, `schemaVersion`, `kind`, or `models` is missing or of the wrong type, `kind` is not `"inferkit.model-catalog"`, or two models share an `id`. Data that does not parse carries the parser's error as `NSUnderlyingErrorKey`. |
 | `NFKModelCatalogErrorMalformedDescriptor` | An object is missing a required field, has a field of the wrong type, or holds a value JSON cannot carry. The description names the field by its path, such as `models[2].variants[0].source.kind is missing`. |
 | `NFKModelCatalogErrorInvalidOptions` | An option value does not resolve, or a build's property option names a key path the backend has no setter for. `NFKModelOptionProblemsKey` holds the problems. |
 | `NFKModelCatalogErrorUnknownModel` | The catalog has no model with the identifier: `The catalog has no model "ghost".` |

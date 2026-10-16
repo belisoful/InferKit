@@ -247,8 +247,8 @@ report to. Added 2026-10-15, InferKit 0.4.0.
   the first weights candidate it holds). The shards a `*.index.json` names are declared when the index
   is read, before their bytes, so `expectedByteCount` grows once by the shard bytes. A listing that
   fails is ignored and the fetches report sizes as they start.
-- A cached release loads with no network (2026-10-15, at the developer's request: offline use depends
-  on it). Two lookups used to reach the server on every cached build, and both are gone:
+- A cached release loads with no network, because offline use depends on it (2026-10-15). Two
+  lookups used to reach the server on every cached build, and both are gone:
   - Weights: `cachedWeights` picks the first candidate whole in the cache (a shard index counts only
     with every shard it names), in candidate order, and `fetchWeights` uses it with no request. A
     sharded release used to ask for `model.safetensors` first on every build. With nothing cached the

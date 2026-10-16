@@ -30,6 +30,7 @@ static const NSInteger NFKModelReserveByteCount = (NSInteger)4 << 30;
 static const NSInteger NFKModelDefaultExpertCacheByteCount = (NSInteger)4 << 30;
 static const NSInteger NFKModelDefaultQuantizationGroupSize = 64;
 static const NSUInteger NFKModelMaximumCombinationCount = 4096;
+static const NSInteger NFKModelMaximumLayerCount = 4096;
 
 #pragma mark - Budget rules
 
@@ -125,6 +126,13 @@ static NSInteger NFKModelIntegerValue(id _Nullable value)
 		return [value integerValue];
 	}
 	return 0;
+}
+
+// YES for a number that is a whole number from minimum to maximum. NaN and infinities are not.
+static BOOL NFKModelIsWholeNumberInRange(NSNumber *number, NSInteger minimum, NSInteger maximum)
+{
+	double value = number.doubleValue;
+	return value >= (double)minimum && value <= (double)maximum && value == floor(value);
 }
 
 #pragma mark - NFKModelMemoryBudget
@@ -249,6 +257,11 @@ static NSArray<NSString *> *NFKModelStageFactsFields(void)
 
 @implementation NFKModelStageFacts
 
++ (NSInteger)maximumLayerCount
+{
+	return NFKModelMaximumLayerCount;
+}
+
 - (instancetype)initWithIdentifier:(NSString *)identifier
 							 title:(nullable NSString *)title
 			  byteCountByPrecision:(NSDictionary<NSString *, NSNumber *> *)byteCountByPrecision
@@ -266,7 +279,7 @@ static NSArray<NSString *> *NFKModelStageFactsFields(void)
 		_byteCountByPrecision = [byteCountByPrecision copy];
 		_quantizableElementCount = quantizableElementCount;
 		_pageableByteCountByPrecision = [pageableByteCountByPrecision copy] ?: @{};
-		_layerCount = layerCount;
+		_layerCount = MIN(MAX(layerCount, 0), NFKModelMaximumLayerCount);
 		_largestLayerByteCountByPrecision = [largestLayerByteCountByPrecision copy] ?: @{};
 		_widenedPrecision = [widenedPrecision copy];
 		_extensions = NFKModelExtensionsWithout(extensions, NFKModelStageFactsFields());
@@ -306,6 +319,12 @@ static NSArray<NSString *> *NFKModelStageFactsFields(void)
 	}
 	if (bytes == nil) {
 		[reader failField:@"bytesByPrecision" reason:@"is missing" error:error];
+		return nil;
+	}
+	if (layerCount != nil && !NFKModelIsWholeNumberInRange(layerCount, 0, NFKModelMaximumLayerCount)) {
+		[reader failField:@"layerCount"
+				   reason:[NSString stringWithFormat:@"is not a whole number from 0 to %ld", (long)NFKModelMaximumLayerCount]
+					error:error];
 		return nil;
 	}
 	return [[self alloc] initWithIdentifier:identifier title:title byteCountByPrecision:bytes
@@ -418,7 +437,8 @@ static NSArray<NSString *> *NFKModelMemoryFactsFields(void)
 		|| ![reader readNumber:@"maximumContextLength" into:&maximumContext error:error]
 		|| ![reader readNumber:@"vocabularySize" into:&vocabulary error:error]
 		|| ![reader readNumber:@"loadOverheadBytes" into:&overhead error:error]
-		|| ![reader readString:@"basis" required:NO into:&basis error:error]) {
+		|| ![reader readString:@"basis" required:NO into:&basis error:error]
+		|| ![reader requireUniqueElements:stages ofField:@"stages" keyPath:@"identifier" name:@"id" error:error]) {
 		return nil;
 	}
 	if (stages == nil) {
@@ -849,7 +869,7 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 	NSString *reserve = NFKModelGiB(NFKModelReserveByteCount);
 	NFKModelResidencyPlan *(^paged)(void) = ^NFKModelResidencyPlan *(void) {
 		if (!NFKModelBudgetAdmits(largestUnpaged, budget)) {
-			found = [NSString stringWithFormat:@"the largest stage needs %@ with its routed experts paged, plus a %@ reserve, against a %@ working set",
+			found = [NSString stringWithFormat:@"the largest stage needs %@ with its routed experts paged, plus a %@ reserve, against a %@ budget",
 						NFKModelGiB(largestUnpaged), reserve, NFKModelGiB(budget)];
 		}
 		NSInteger headroom = budget > 0 ? (budget - NFKModelReserveByteCount - largestUnpaged) / 2
@@ -863,7 +883,7 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 		for (NSNumber *index in oversized) {
 			NSInteger minimum = stages[index.unsignedIntegerValue].streamedMinimumByteCount;
 			if (!NFKModelBudgetAdmits(minimum, budget) && found == nil) {
-				found = [NSString stringWithFormat:@"stage %ld needs %@ streamed, two layers in flight, plus a %@ reserve, against a %@ working set",
+				found = [NSString stringWithFormat:@"stage %ld needs %@ streamed, two layers in flight, plus a %@ reserve, against a %@ budget",
 							(long)index.integerValue, NFKModelGiB(minimum), reserve, NFKModelGiB(budget)];
 			}
 			rooms[index] = @(budget > 0 ? MAX(0, budget - NFKModelReserveByteCount - minimum) : 0);
@@ -874,7 +894,7 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 	NFKModelResidencyPlan *placement = nil;
 	if ([residency isEqualToString:NFKModelResidencyResident]) {
 		if (!NFKModelBudgetAdmits(total, budget)) {
-			found = [NSString stringWithFormat:@"the stages need %@ together plus a %@ reserve, against a %@ working set; hold them staged%@%@",
+			found = [NSString stringWithFormat:@"the stages need %@ together plus a %@ reserve, against a %@ budget; hold them staged%@%@",
 						NFKModelGiB(total), reserve, NFKModelGiB(budget), pageable ? @" or paged" : @"",
 						streamable.count == 0 ? @"" : @" or streamed"];
 		}
@@ -939,7 +959,7 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 			: (plan.pagesExperts ? stage.unpagedByteCount : stage.byteCount);
 		if (!NFKModelBudgetAdmits(bytes, budget)) {
 			NSString *name = index < names.count ? names[index] : [NSString stringWithFormat:@"stage %lu", (unsigned long)index];
-			NSString *reason = [NSString stringWithFormat:@"%@ alone needs %@ plus a %@ reserve, against a %@ working set",
+			NSString *reason = [NSString stringWithFormat:@"%@ alone needs %@ plus a %@ reserve, against a %@ budget",
 								name, NFKModelGiB(bytes), NFKModelGiB(NFKModelReserveByteCount), NFKModelGiB(budget)];
 			if (error != NULL) {
 				*error = NFKModelDoesNotFitError(reason, nil);

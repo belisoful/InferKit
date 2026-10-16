@@ -47,8 +47,8 @@ rest. Its bf16 check differs from the dense sizes' in two ways, each measured on
   same roundings, reads 0.27 of the floor at layer 0. A mixture layer's isolated bar is 0.5 of the
   floor; a dense layer's stays 0.25.
 
-The vision towers compute in their load's type too (user decision 2026-10-03): the pixels take the
-tower's type, as transformers and timm cast them.
+The vision towers compute in their load's type too: the pixels take the tower's type, as transformers
+and timm cast them.
 - Gemma 3's SigLIP reuses the shared SigLIP encoder; its patch convolution and post layer norm round
   once, and the projector's 4×4 average pool accumulates in float32.
 - Gemma 3n's MobileNetV5 follows timm's `rms_norm2d`, which rounds each of its operations in half

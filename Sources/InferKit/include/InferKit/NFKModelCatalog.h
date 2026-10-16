@@ -21,9 +21,10 @@ extern NSString * const NFKModelCatalogErrorDomain;
 	@abstract   Error codes in NFKModelCatalogErrorDomain.
 	@constant   NFKModelCatalogErrorUnsupportedSchemaVersion The manifest's schemaVersion is newer than
 				NFKModelCatalog.schemaVersion.
-	@constant   NFKModelCatalogErrorMalformedManifest The data is not a JSON object, or its schemaVersion,
-				kind, or models field is missing or of the wrong type, or kind is not
-				"inferkit.model-catalog".
+	@constant   NFKModelCatalogErrorMalformedManifest The data is not valid JSON or not a JSON object,
+				its schemaVersion, kind, or models field is missing or of the wrong type, kind is not
+				"inferkit.model-catalog", or two models share an id. For data that does not parse,
+				NSUnderlyingErrorKey holds the parser's error.
 	@constant   NFKModelCatalogErrorMalformedDescriptor A descriptor or a value inside one is missing a
 				field it needs, has a field of the wrong type, or holds a value JSON cannot carry. The
 				error's description names the field.
@@ -145,9 +146,10 @@ extern NSString * const NFKModelCatalogManifestKind;
 	@abstract   Adds every descriptor in a JSON manifest, or none.
 	@discussion A manifest whose schemaVersion is newer than schemaVersion fails with
 				NFKModelCatalogErrorUnsupportedSchemaVersion. A manifest without kind
-				"inferkit.model-catalog" fails with NFKModelCatalogErrorMalformedManifest. A malformed
-				descriptor fails with NFKModelCatalogErrorMalformedDescriptor, and the catalog is left
-				as it was.
+				"inferkit.model-catalog", data that is not valid JSON, and a manifest in which two models
+				share an id fail with NFKModelCatalogErrorMalformedManifest. A malformed descriptor fails
+				with NFKModelCatalogErrorMalformedDescriptor. On any failure the catalog is left as it
+				was.
 */
 - (BOOL)addDescriptorsFromManifestData:(NSData *)data error:(NSError **)error;
 

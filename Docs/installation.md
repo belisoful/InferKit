@@ -324,8 +324,8 @@ mlx-swift types that change between mlx-swift releases.
 
 A client compiled against `NFK_API_VERSION_MAJOR` and `NFK_API_VERSION_MINOR` (macros in
 `NFKInferKit.h`) runs on a library with the same major version and a minor version at least as high.
-The API version starts at 1.0. Before the first tagged release it stays 1.0 while the interface
-changes, and the first tagged release fixes what 1.0 names.
+The API version starts at 1.0. InferKit 0.4.0 is the first release with an API version. Until it
+ships, the API version stays 1.0 while the interface changes, and that release fixes what 1.0 names.
 
 ## Side-by-side releases
 

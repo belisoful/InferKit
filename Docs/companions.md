@@ -309,7 +309,8 @@ weights:
   stage-1 pretrained ones) loads from its directory. Fine-tunes on your own lines on the device the way
   the authors fine-tuned it: `NFKMLXTrOCR.network(directoryURL:)`, `fineTune`, then
   `save(_:toDirectoryURL:release:)`, which the same factory loads.
-- **`NFKMLXSa2VA`** — Sa2VA (ByteDance, Apache-2.0), a segmentation VLM: one image and a referring
+- **`NFKMLXSa2VA`** — Sa2VA (ByteDance; each repository states Apache-2.0, and four releases carry a
+  component under its own license, listed below), a segmentation VLM: one image and a referring
   prompt in, an answer out, and a mask for each `[SEG]` the answer carries. One directory factory,
   `NFKMLXSa2VA.backend(directoryURL:)`, serves the four families the releases span: InternVL
   (`Sa2VA-1B`/`-4B`/`-8B`/`-26B`, `Sa2VA-InternVL3-2B`/`-8B`/`-14B`; InternViT-300M or -6B under a qwen2,
@@ -322,7 +323,12 @@ weights:
   language model, the mask decoder and `[SEG]` bridge trained, a language-plus-mask objective):
   `NFKMLXSa2VA.network(directoryURL:)` (or the Qwen-VL and LLaVA nets' `load(directoryURL:)`),
   `fineTune`, `NFKMLXLoRA.merge(into:)`, then `save(_:toDirectoryURL:release:)`, which the same factory
-  loads.
+  loads. The catalog records the license that governs each release's weights:
+  - `Sa2VA-4B` → the Qwen Research License of its decoder, Qwen2.5-3B-Instruct (non-commercial).
+  - `Sa2VA-Qwen2_5-VL-3B` → the Qwen Research License of Qwen2.5-VL-3B-Instruct (non-commercial).
+  - `Sa2VA-Qwen3-VL-4B-SAM3` → the SAM License of its SAM 3 grounding model.
+  - `Sa2VA-LLaVA-1.5-7B` → the Llama 2 Community License of its Vicuna-7B v1.5 decoder.
+  - `Sa2VA-1B`, `Sa2VA-InternVL3-2B`, `Sa2VA-Qwen3-VL-2B`, and `Sa2VA-Qwen3-VL-4B` → Apache-2.0.
 - **`NFKMLXPhi4MM`** — Phi-4-multimodal (`microsoft/Phi-4-multimodal-instruct`, Microsoft, MIT), one model
   that reads text, images, and speech: a prompt or a multi-turn conversation with any number of pictures
   and clips in, an answer out, so it captions, answers questions about pictures, transcribes, and answers

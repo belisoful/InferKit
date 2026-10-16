@@ -321,7 +321,8 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
 
 ## Sa2VA
 
-- `NFKMLXSa2VA` (`ByteDance/Sa2VA-4B`, ByteDance, Apache-2.0), a segmentation VLM: one image plus a
+- `NFKMLXSa2VA` (`ByteDance/Sa2VA-4B`, ByteDance; the repository states Apache-2.0, its Qwen2.5-3B-Instruct
+  decoder is under the Qwen Research License), a segmentation VLM: one image plus a
   referring prompt in, an answer out, and a segmentation mask when the answer carries `[SEG]`. Four
   parts, ported at reference parity (float32 on both sides, all seams first numeric run): an **InternViT-300M image encoder** (`NFKMLXSa2VAVisionNet`, a pre-norm ViT — a stride-14 patch
   convolution over the 448-square tile, a class token, a learned 1025-position table, sixteen-head
@@ -440,7 +441,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   both sides, and at bf16 against the release's own code at bf16. `imageFeatures(pixelValues:)` casts
   the pixels to the tower's weight type, as the release's `predict_forward` casts them; float32 pixels
   on bf16 weights had promoted the tower and, through the fused embeddings, the whole decoder to
-  float32 (user decision 2026-10-03: compute as the reference does). At bf16 the tower's and the
+  float32. The tower computes in its weights' type, as the reference does. At bf16 the tower's and the
   projector's layer norms and patch convolution round once (`NFKLayerNorm`, `NFKConv2d`), the
   attention scales the queries and rounds before forming the scores, as the release's naive attention
   does, and GELU is formed wide. Sa2VA-1B (`sa2va_probe`, `testSa2VA1BInBFloat16…` and its pieces
@@ -646,6 +647,22 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     magnitude.
 
   Every released size is measured.
+- Licenses, read 2026-10-16 from each repository's model API (`cardData.license`, `gated`), its card,
+  and its files. Every Sa2VA repository states `apache-2.0` in its metadata, carries no license file,
+  says nothing about licensing in its card, and is not gated. `bytedance/Sa2VA` on GitHub is Apache 2.0
+  and vendors SAM 2 and SAM 3 code. The component repositories decide four releases, and the catalog
+  (`NFKMLXCatalogImage.sa2VALicense`) gives each its governing license with the stated one in the note:
+  - `Sa2VA-4B`: its decoder, `Qwen/Qwen2.5-3B-Instruct`, states `license_name: qwen-research` (Qwen
+    Research License, non-commercial). `OpenGVLab/InternVL2_5-4B`'s card calls that part Apache 2.0,
+    which Qwen's own repository contradicts.
+  - `Sa2VA-Qwen2_5-VL-3B`: `Qwen/Qwen2.5-VL-3B-Instruct` states `qwen-research`.
+  - `Sa2VA-Qwen3-VL-4B-SAM3`: `facebook/sam3` states `license: other`, the SAM License, gated
+    manually; its terms follow a redistribution or a derivative. The Sa2VA repository itself is not
+    gated, so the catalog entry is not either.
+  - `Sa2VA-LLaVA-1.5-7B`: `lmsys/vicuna-7b-v1.5` states `llama2` and is fine-tuned from Llama 2.
+  - Apache-2.0 holds for `Sa2VA-1B` (Qwen2.5-0.5B-Instruct), `Sa2VA-InternVL3-2B` (Qwen2.5-1.5B),
+    `Sa2VA-Qwen3-VL-2B`, and `Sa2VA-Qwen3-VL-4B` (Qwen3-VL Instruct, Apache-2.0), each over SAM 2
+    (`facebook/sam2.1-hiera-large`, Apache-2.0).
 
 ## Phi-4-multimodal
 

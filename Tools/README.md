@@ -40,7 +40,8 @@ is **irreducibly Python**: a Swift port cannot be validated against another Swif
 ### Build and packaging — `xcframework/`, `docc/`, `ane-placement/`, `espeak/`, `build-all.sh`, `mlx-metallib.sh`
 
 XCFramework packaging (`xcframework/build*.sh`, `verify-mlx.sh`, and `release.sh`, which writes the
-release zips and `release.json`), the DocC catalog builder
+release zips and `release.json` and refuses an inconsistent version; `test_release_version.py` tests
+that rule), the DocC catalog builder
 (`docc/build.sh`), the Core ML ANE-placement measurement (`ane-placement/`), the optional system
 espeak-ng installer (`espeak/install.sh`, GPLv3, not bundled), the build/test driver for the core, InferKitMLX,
 InferKitFoundationModels, and InferKitAppleSwift (`build-all.sh`), and `mlx-metallib.sh`, which compiles mlx-swift's Metal kernels with `xcrun metal`

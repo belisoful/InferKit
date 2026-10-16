@@ -2,7 +2,7 @@
 //  NFKMLXMusic3Tests.swift
 //  InferKitMLXTests
 //
-//  Stage 1 of the MiniMax Music 3 port: the Flow-VAE vocoder. The numeric comparison against
+//  The Flow-VAE vocoder of MiniMax Music 3. The numeric comparison against
 //  diffusers' own MiniMaxMusic3Vocoder lives in NFKMLXReferenceParityTests; these cover the
 //  structure — the activation, the exact upsampling, the stereo fold, and that the released
 //  checkpoint and the module account for each other tensor for tensor.

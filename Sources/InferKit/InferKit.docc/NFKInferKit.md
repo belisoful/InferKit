@@ -26,9 +26,10 @@ BOOL supported = NFKInferKit.APIMajorVersion == NFK_API_VERSION_MAJOR
               && NFKInferKit.APIMinorVersion >= NFK_API_VERSION_MINOR;
 ```
 
-The API version starts at 1.0. Before the first tagged release it stays 1.0 while the interface
-changes, and the first tagged release fixes what 1.0 names. `Docs/installation.md` describes the
-release folders an app installs side by side and how it picks the newest one it supports.
+The API version starts at 1.0. InferKit 0.4.0 is the first release with an API version. Until it
+ships, the API version stays 1.0 while the interface changes, and that release fixes what 1.0 names.
+`Docs/installation.md` describes the release folders an app installs side by side and how it picks the
+newest one it supports.
 
 ## Topics
 

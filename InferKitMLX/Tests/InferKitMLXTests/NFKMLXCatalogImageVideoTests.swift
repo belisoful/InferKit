@@ -53,6 +53,40 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
         }
     }
 
+    func testEachSa2VAReleaseCarriesTheLicenseOfItsMostRestrictiveComponent() throws {
+        let expected: [String: (name: String, restrictsCommercialUse: Bool)] = [
+            "sa2va-1b": ("Apache License 2.0", false),
+            "sa2va-4b": ("Qwen Research License", true),
+            "sa2va-internvl3-2b": ("Apache License 2.0", false),
+            "sa2va-qwen2.5-vl-3b": ("Qwen Research License", true),
+            "sa2va-qwen3-vl-2b": ("Apache License 2.0", false),
+            "sa2va-qwen3-vl-4b": ("Apache License 2.0", false),
+            "sa2va-qwen3-vl-4b-sam3": ("SAM License", false),
+            "sa2va-llava-1.5-7b": ("Llama 2 Community License", true),
+        ]
+        XCTAssertEqual(Set(NFKMLXCatalogImage.sa2VAEntries.map(\.identifier)), Set(expected.keys))
+        for (identifier, license) in expected {
+            let descriptor = try XCTUnwrap(entry(identifier)).descriptor()
+            let stated = try XCTUnwrap(descriptor.license, identifier)
+            XCTAssertEqual(stated.name, license.name, identifier)
+            XCTAssertEqual(stated.restrictsCommercialUse, license.restrictsCommercialUse, identifier)
+            XCTAssertFalse(stated.isGated, identifier)
+            if license.name != "Apache License 2.0" {
+                XCTAssertTrue(stated.note?.hasPrefix("The repository states Apache-2.0.") ?? false, identifier)
+            }
+        }
+    }
+
+    func testEveryRFDetrReleaseInTheCatalogIsApache() throws {
+        let identifiers = (NFKMLXCatalogImage.rfDetrEntries + NFKMLXCatalogImage.rfDetrSegmentationEntries).map(\.identifier)
+        XCTAssertEqual(identifiers.count, 12)
+        for identifier in identifiers {
+            let license = try XCTUnwrap(XCTUnwrap(entry(identifier)).descriptor().license, identifier)
+            XCTAssertEqual(license.identifier, "Apache-2.0", identifier)
+            XCTAssertFalse(license.restrictsCommercialUse, identifier)
+        }
+    }
+
     /// Asserts that the entry under `name` declares exactly the backend's key sets.
     private func assertPorts(_ name: String, inputs: Set<String>, parameters: Set<String>, outputs: Set<String>,
                              file: StaticString = #filePath, line: UInt = #line) {

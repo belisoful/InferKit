@@ -52,6 +52,11 @@
 #   Tools/xcframework/build-mlx.sh --no-swift-interfaces  # dynamic only, ~13 MB a slice
 #   Tools/xcframework/build-mlx.sh --no-release           # skip release/ (the zips and release.json)
 #
+# A build that writes release/ checks the version first, before compiling anything: release.sh's rule,
+# inferkit_check_release_version in inferkit-version.sh. The frameworks' CFBundleShortVersionString and
+# CFBundleVersion, release.json, and the zip names all take the one version inferkit_version reads. A
+# `--no-release` build is a development build and skips the check.
+#
 # Each slice is a full compile of those 289 translation units, so `--slices` is the difference between
 # roughly seven minutes and twenty. `--variant` and `--no-swift-interfaces` cost nothing to build and
 # only trim what is written.
@@ -98,6 +103,9 @@ done
 wants() {                               # wants <static|dynamic>
     [ "$VARIANT" = both ] || [ "$VARIANT" = "$1" ]
 }
+if wants dynamic && [ "$RELEASE" = yes ]; then
+    inferkit_check_release_version "$ROOT" || { echo "nothing built; pass --no-release for a development build"; exit 1; }
+fi
 building() {                            # building <slice tag>
     case " $SLICES " in *" $1 "*) return 0;; *) return 1;; esac
 }

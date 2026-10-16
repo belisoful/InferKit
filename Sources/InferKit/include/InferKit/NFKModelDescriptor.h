@@ -751,9 +751,9 @@ NS_ASSUME_NONNULL_BEGIN
 					  derivedFromBackend:(id<NFKInferenceBackend>)backend
 	NS_SWIFT_NAME(init(identifier:derivedFrom:));
 
-/*! Reads a descriptor from its manifest dictionary. The options are read from "options", or from
-	"parameters" in a manifest that names the field that way. Returns nil and sets error when id,
-	family, or engine is missing, or a field or a nested value is malformed. */
+/*! Reads a descriptor from its manifest dictionary. Returns nil and sets error when id, family, or
+	engine is missing, a field or a nested value is malformed, or two inputs, outputs, or options share
+	a key, or two variants or presets share an id. */
 + (nullable instancetype)descriptorWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error;
 
 /*! The descriptor as its manifest dictionary, every nested value included, with the extensions

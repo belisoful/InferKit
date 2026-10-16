@@ -104,7 +104,7 @@ Notes:
 | **Table Transformer (TATR)** — SHIPPED (`NFKMLXTableTransformer`) | Microsoft | Table detection and structure | Vanilla DETR, ResNet-18 backbone, no deformable attention | MIT | HF `transformers` + official repo | Low–Med |
 | **TimesFM 2.5** — SHIPPED (`NFKMLXTimesFM`) | Google | Time-series forecasting | Decoder-only over non-overlapping patches, single-pass horizon, 9-quantile head | Apache-2.0 (2.5 only) | HF + `google-research/timesfm` | Med |
 | **Cosmos Tokenizer** — SHIPPED (`NFKMLXCosmosTokenizer`) | NVIDIA | Image and video tokenizer | Haar wavelet patcher → 2D (image) or factorized causal 3D (video) autoencoder; continuous latents or FSQ tokens; all ten 0.1 releases | Code Apache-2.0, weights NVIDIA Open Model License | `nvidia-cosmos/cosmos-predict1` tokenizer modules + HF | Med |
-| **Sa2VA** — SHIPPED (`NFKMLXSa2VA`) | ByteDance | Segmentation VLM | SAM 2 and a LLaVA-style VLM fused in a shared token space | Apache-2.0 | `bytedance/Sa2VA` + HF | Med |
+| **Sa2VA** — SHIPPED (`NFKMLXSa2VA`) | ByteDance | Segmentation VLM | SAM 2 and a LLaVA-style VLM fused in a shared token space | Apache-2.0 as stated; four releases carry a Qwen Research, SAM, or Llama 2 component (`Docs/companions.md`) | `bytedance/Sa2VA` + HF | Med |
 | **SD 3.5 Large/Medium** — medium at release parity; large and turbo measured on cuts | Stability AI | Text-to-image | MMDiT-X with QK-norm and dual attention, three text encoders (2×CLIP + T5) | Stability Community (free under $1M revenue) | HF `diffusers` (`SD3Transformer2DModel`) | Med–High |
 | **Stable Audio Open 1.0** | Stability AI | Text-to-audio | Latent audio DiT over an Oobleck autoencoder, T5 conditioning | Stability Community | HF `diffusers` (`StableAudioPipeline`) | Med–High |
 
@@ -172,8 +172,7 @@ Notes:
   on-device LoRA fine-tune. This closes the SSM/hybrid track — one selective-scan mixer now serves all
   three (Codestral-Mamba, Granite 4.0-H, Nemotron Nano 2).
 - **BAGEL** is the scheduled priority-1 port (permissive Apache-2.0, runnable official reference). Its
-  weights download to the model store (`/Volumes/InferKit Models`) through the IO Manager, as for every
-  scheduled port.
+  weights download to the model store (`/Volumes/InferKit Models`), as for every scheduled port.
 - **BAGEL** and **Phi-4-multimodal** are large multi-component integrations whose novelty concentrates
   in one part (the Mixture-of-Transformer routing; the audio Conformer and mixture-of-LoRAs).
   **Phi-4-multimodal is now shipped at reference parity** (`NFKMLXPhi4MM`) in all four of its modes
@@ -264,7 +263,7 @@ releases postdate the survey author's knowledge, so audition samples before comm
 Priority rules:
 
 - Priority 1 is scheduled. Its weights are downloaded to the model store (`/Volumes/InferKit Models`)
-  through the IO Manager, at the pinned revisions below.
+  at the pinned revisions below.
 - Priority 2 is permissive and unscheduled.
 - Priority 3 holds every model whose weight license is non-commercial, research-only, or undeclared. A
   restrictive license keeps a model at priority 3 unless the user asks for that model by name. A model
