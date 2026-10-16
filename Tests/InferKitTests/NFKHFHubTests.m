@@ -2,8 +2,8 @@
 //  NFKHFHubTests.m
 //  NFKTests
 //
-//  Covers URL construction, caching, and checksum through a stub transport. A live download
-//  is integration-verified.
+//  Covers URL construction, caching, checksum, and the refusal of unsafe names through a stub
+//  transport. A live download is integration-verified.
 //
 
 #import <XCTest/XCTest.h>
@@ -29,6 +29,8 @@
 @interface NFKHFHubTests : XCTestCase
 @property (nonatomic, strong) FxHFHubStub *hub;
 @property (nonatomic, strong) NSURL *cacheDir;
+/*! A sibling of the cache holding main/victim.bin, which no refused request may reach. */
+@property (nonatomic, strong) NSURL *outsideDir;
 @property (nonatomic, assign) long long savedDefaultLimit;
 @property (nonatomic, assign) BOOL savedDefaultExclusion;
 @property (nonatomic, copy) NSString *savedDefaultToken;
@@ -47,6 +49,10 @@
 	NSString *name = [@"NFKHFHubTests-" stringByAppendingString:NSUUID.UUID.UUIDString];
 	self.cacheDir = [NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:name]];
 	[NSFileManager.defaultManager createDirectoryAtURL:self.cacheDir withIntermediateDirectories:YES attributes:nil error:NULL];
+	self.outsideDir = [NSURL fileURLWithPath:[self.cacheDir.path stringByAppendingString:@"-outside"]];
+	[NSFileManager.defaultManager createDirectoryAtURL:[self.outsideDir URLByAppendingPathComponent:@"main"]
+						   withIntermediateDirectories:YES attributes:nil error:NULL];
+	XCTAssertTrue([[@"keep" dataUsingEncoding:NSUTF8StringEncoding] writeToURL:[self victimURL] atomically:YES]);
 
 	self.hub = [[FxHFHubStub alloc] init];
 	self.hub.cacheDirectoryURL = self.cacheDir;
@@ -56,6 +62,7 @@
 - (void)tearDown
 {
 	[NSFileManager.defaultManager removeItemAtURL:self.cacheDir error:NULL];
+	[NSFileManager.defaultManager removeItemAtURL:self.outsideDir error:NULL];
 	NFKHFHub.defaultCacheSizeLimit = self.savedDefaultLimit;
 	NFKHFHub.defaultExcludesCacheFromBackup = self.savedDefaultExclusion;
 	NFKHFHub.defaultAccessToken = self.savedDefaultToken;
@@ -416,6 +423,109 @@
 	XCTAssertTrue([self.hub removeCachedRepo:@"org/one" revision:nil error:NULL]);
 	XCTAssertFalse([self.hub isCachedRepo:@"org/one" revision:nil path:@"f.bin"]);
 	XCTAssertFalse([self.hub isCachedRepoPinned:@"org/one" revision:nil]);
+}
+
+#pragma mark Unsafe names
+
+- (NSURL *)victimURL
+{
+	return [[self.outsideDir URLByAppendingPathComponent:@"main"] URLByAppendingPathComponent:@"victim.bin"];
+}
+
+/*! A repository whose snapshot, <cache>/<repo>/main, is the outside folder's main/. */
+- (NSString *)hostileRepo
+{
+	return [@"../" stringByAppendingString:self.outsideDir.lastPathComponent];
+}
+
+- (void)assertTheOutsideFolderIsUntouched
+{
+	NSArray<NSString *> *contents = [NSFileManager.defaultManager contentsOfDirectoryAtPath:[self victimURL].URLByDeletingLastPathComponent.path error:NULL];
+	XCTAssertEqualObjects(contents, @[ @"victim.bin" ], @"nothing was written into or removed from the outside folder");
+	XCTAssertEqualObjects([NSData dataWithContentsOfURL:[self victimURL]], [@"keep" dataUsingEncoding:NSUTF8StringEncoding]);
+}
+
+- (void)assertUnsafePathError:(NSError *)error
+{
+	XCTAssertEqualObjects(error.domain, NFKDownloadErrorDomain);
+	XCTAssertEqual(error.code, NFKDownloadErrorUnsafePath, @"%@", error);
+	XCTAssertGreaterThan(error.localizedDescription.length, (NSUInteger)0);
+}
+
+- (void)testDownloadingFromAnUnsafeRepositoryIsRefused
+{
+	NSError *error = nil;
+	XCTAssertNil([self.hub downloadRepo:[self hostileRepo] revision:nil path:@"victim.bin" sha256:@"00" error:&error]);
+	[self assertUnsafePathError:error];
+	XCTAssertEqual(self.hub.fetchCount, (NSUInteger)0);
+	[self assertTheOutsideFolderIsUntouched];
+}
+
+- (void)testDownloadingAnUnsafeRevisionIsRefused
+{
+	NSString *revision = [NSString stringWithFormat:@"../../../%@/main", self.outsideDir.lastPathComponent];
+	NSError *error = nil;
+	XCTAssertNil([self.hub downloadRepo:@"org/model" revision:revision path:@"victim.bin" sha256:@"00" error:&error]);
+	[self assertUnsafePathError:error];
+	XCTAssertEqual(self.hub.fetchCount, (NSUInteger)0);
+	[self assertTheOutsideFolderIsUntouched];
+}
+
+- (void)testDownloadingAnUnsafePathIsRefused
+{
+	NSString *path = [NSString stringWithFormat:@"../../../../%@/main/victim.bin", self.outsideDir.lastPathComponent];
+	NSError *error = nil;
+	XCTAssertNil([self.hub downloadRepo:@"org/model" revision:nil path:path sha256:@"00" error:&error]);
+	[self assertUnsafePathError:error];
+	XCTAssertEqual(self.hub.fetchCount, (NSUInteger)0);
+	[self assertTheOutsideFolderIsUntouched];
+}
+
+- (void)testEveryUnsafeNameIsRefusedAndASafeNestedRevisionIsNot
+{
+	NSArray<NSString *> *unsafe = @[ @"", @".", @"..", @"/etc/hosts", @"a//b", @"a/", @"./a", @"a/../b", @"a\\b",
+									 [NSString stringWithFormat:@"a%Cb", (unichar)0] ];
+	for (NSString *name in unsafe) {
+		NSError *error = nil;
+		XCTAssertNil([self.hub downloadRepo:@"org/model" revision:nil path:name sha256:nil error:&error], @"path %@", name);
+		[self assertUnsafePathError:error];
+		XCTAssertNil([self.hub localURLForRepo:@"org/model" revision:nil path:name], @"path %@", name);
+		XCTAssertNil([self.hub remoteURLForRepo:@"org/model" revision:nil path:name], @"path %@", name);
+		XCTAssertNil([self.hub localURLForRepo:name revision:nil path:@"f.bin"], @"repository %@", name);
+		if (name.length > 0) {
+			XCTAssertNil([self.hub localURLForRepo:@"org/model" revision:name path:@"f.bin"], @"revision %@", name);
+		}
+	}
+	XCTAssertEqual(self.hub.fetchCount, (NSUInteger)0);
+	NSURL *nested = [self.hub localURLForRepo:@"org/model" revision:@"refs/pr/1" path:@"f.bin"];
+	XCTAssertEqualObjects(nested.path, [self.cacheDir URLByAppendingPathComponent:@"org/model/refs/pr/1/f.bin"].path);
+}
+
+- (void)testRemovingAnUnsafeRepositoryIsRefused
+{
+	NSError *error = nil;
+	XCTAssertFalse([self.hub removeCachedRepo:[self hostileRepo] revision:nil error:&error]);
+	[self assertUnsafePathError:error];
+	[self assertTheOutsideFolderIsUntouched];
+}
+
+- (void)testPinningAdoptingAndUnpinningAnUnsafeRepositoryAreRefused
+{
+	NSError *error = nil;
+	XCTAssertFalse([self.hub pinCachedRepo:[self hostileRepo] revision:nil error:&error]);
+	[self assertUnsafePathError:error];
+	error = nil;
+	XCTAssertFalse([self.hub adoptCachedRepo:[self hostileRepo] revision:nil error:&error]);
+	[self assertUnsafePathError:error];
+	[self assertTheOutsideFolderIsUntouched];
+
+	NSURL *keep = [[self victimURL].URLByDeletingLastPathComponent URLByAppendingPathComponent:@".inferkit-keep"];
+	XCTAssertTrue([[NSData data] writeToURL:keep atomically:YES]);
+	error = nil;
+	XCTAssertFalse([self.hub unpinCachedRepo:[self hostileRepo] revision:nil error:&error]);
+	[self assertUnsafePathError:error];
+	XCTAssertTrue([NSFileManager.defaultManager fileExistsAtPath:keep.path], @"the outside file stays");
+	XCTAssertFalse([self.hub isCachedRepoPinned:[self hostileRepo] revision:nil]);
 }
 
 @end

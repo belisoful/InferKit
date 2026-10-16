@@ -27,9 +27,23 @@ static NSString * const NFKHFHubTrashPrefix = @".inferkit-removing-";
 @property (nonatomic, copy, nullable) NSURL *snapshotURL;
 /*! nil for every file in the snapshot. */
 @property (nonatomic, copy, nullable) NSArray<NSString *> *paths;
+/*! Why the target cannot be removed, such as an unsafe repository name; nil when it can. */
+@property (nonatomic, strong, nullable) NSError *refusal;
 @end
 
 @implementation NFKHFHubRemovalTarget
+@end
+
+/*! The files of a catalog source that come from one place: a repository at a revision, or a URL. */
+@interface NFKHFHubSourcePart : NSObject
+@property (nonatomic, copy, nullable) NSString *repository;
+@property (nonatomic, copy, nullable) NSString *revision;
+@property (nonatomic, copy, nullable) NSURL *URL;
+/*! nil for a source that lists no files, which names the whole repository. */
+@property (nonatomic, strong, nullable) NSMutableArray<NFKModelFile *> *files;
+@end
+
+@implementation NFKHFHubSourcePart
 @end
 
 static BOOL NFKHFHubIsGlob(NSString *path)
@@ -114,10 +128,17 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 			return nil;
 		}
 		for (id entry in (NSArray *)listing) {
-			if ([entry isKindOfClass:NSDictionary.class] && [entry[@"type"] isEqual:@"file"]
-				&& [entry[@"path"] isKindOfClass:NSString.class]) {
-				[entries addObject:entry];
+			if (![entry isKindOfClass:NSDictionary.class] || ![entry[@"type"] isEqual:@"file"]
+				|| ![entry[@"path"] isKindOfClass:NSString.class]) {
+				continue;
 			}
+			NSString *kind = [NSString stringWithFormat:@"listing of %@ at %@ names the file", repo, revision];
+			NSError *refusal = NFKHFHubUnsafePathError(entry[@"path"], kind, YES);
+			if (refusal != nil) {
+				[self propagateError:refusal to:outError];
+				return nil;
+			}
+			[entries addObject:entry];
 		}
 		pageURL = response != nil ? [self nextPageURLFromResponse:response] : nil;
 	}
@@ -165,13 +186,15 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	}
 	NSString *sha256 = [lfs[@"oid"] isKindOfClass:NSString.class] ? lfs[@"oid"] : listing.sha256;
 	NSURL *localURL = [self localURLForRepo:repo revision:revision path:path];
-	return [[NFKDownloadPlanFile alloc] initWithPath:path
-										   remoteURL:[self remoteURLForRepo:repo revision:revision path:path]
-											localURL:localURL
-										   byteCount:byteCount
-											  sha256:sha256
-											  cached:[self fileAtURL:localURL isWholeWithByteCount:byteCount]
-											optional:optional];
+	NFKDownloadPlanFile *file = [[NFKDownloadPlanFile alloc] initWithPath:path
+																remoteURL:[self remoteURLForRepo:repo revision:revision path:path]
+																 localURL:localURL
+																byteCount:byteCount
+																   sha256:sha256
+																   cached:[self fileAtURL:localURL isWholeWithByteCount:byteCount]
+																 optional:optional];
+	file.snapshotURL = [self snapshotURLForRepo:repo revision:revision];
+	return file;
 }
 
 /*! Plans a repository's files. requiredPaths nil plans every file; optional paths absent from the
@@ -190,6 +213,11 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	if (repo.length == 0) {
 		[self propagateError:[NFKDownload errorWithCode:NFKDownloadErrorUnsupportedSource reason:@"no repository is named"]
 						  to:outError];
+		return nil;
+	}
+	NSError *refusal = [self refusalForRepo:repo revision:revision path:nil];
+	if (refusal != nil) {
+		[self propagateError:refusal to:outError];
 		return nil;
 	}
 	NSString *normalized = [self normalizedRevision:revision];
@@ -273,37 +301,65 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	});
 }
 
-- (nullable NSString *)URLCacheRepositoryForURL:(NSURL *)URL
+/*! The repository-relative path of a URL's cache folder, @url/<host>/<digest>; nil with an error
+	for an empty URL or a host that is not one safe folder name. */
+- (nullable NSString *)URLCacheRepositoryForURL:(NSURL *)URL error:(NSError **)outError
 {
 	NSString *absolute = URL.absoluteString;
 	if (absolute.length == 0) {
+		[self propagateError:[NFKDownload errorWithCode:NFKDownloadErrorUnsupportedSource reason:@"the URL is empty"] to:outError];
 		return nil;
 	}
 	NSString *digest = [NFKHFHubHexDigest([absolute dataUsingEncoding:NSUTF8StringEncoding]) substringToIndex:16];
 	NSString *host = URL.host.length > 0 ? URL.host.lowercaseString : @"local";
+	NSError *refusal = NFKHFHubUnsafePathError(host, @"URL host", NO);
+	if (refusal != nil) {
+		[self propagateError:refusal to:outError];
+		return nil;
+	}
 	return [NSString stringWithFormat:@"%@/%@/%@", NFKHFHubURLCacheFolder, host, digest];
 }
 
-- (nullable NSURL *)URLSnapshotURLForURL:(NSURL *)URL
+- (nullable NSURL *)URLSnapshotURLForURL:(NSURL *)URL error:(NSError **)outError
 {
-	NSString *cacheRepository = [self URLCacheRepositoryForURL:URL];
-	if (self.cacheDirectoryURL == nil || cacheRepository == nil) {
+	if (![self requireCacheDirectory:outError]) {
+		return nil;
+	}
+	NSString *cacheRepository = [self URLCacheRepositoryForURL:URL error:outError];
+	if (cacheRepository == nil) {
 		return nil;
 	}
 	return [self URL:self.cacheDirectoryURL byAppendingPathString:cacheRepository];
 }
 
-- (nullable NSURL *)localURLForURL:(NSURL *)URL fileName:(nullable NSString *)fileName
+/*! The cache location of a URL download; nil with an error without a cache folder, or when the URL's
+	host, the file name, or the URL's last path component is unsafe. */
+- (nullable NSURL *)localURLForURL:(NSURL *)URL fileName:(nullable NSString *)fileName error:(NSError **)outError
 {
-	NSURL *snapshotURL = [self URLSnapshotURLForURL:URL];
+	NSURL *snapshotURL = [self URLSnapshotURLForURL:URL error:outError];
 	if (snapshotURL == nil) {
+		return nil;
+	}
+	NSError *refusal = fileName.length > 0 ? NFKHFHubUnsafePathError(fileName, @"file name", YES) : nil;
+	if (refusal != nil) {
+		[self propagateError:refusal to:outError];
 		return nil;
 	}
 	NSString *name = fileName.length > 0 ? fileName.lastPathComponent : URL.lastPathComponent;
 	if (name.length == 0 || [name isEqualToString:@"/"]) {
 		name = @"download";
 	}
+	refusal = NFKHFHubUnsafePathError(name, @"file name", NO);
+	if (refusal != nil) {
+		[self propagateError:refusal to:outError];
+		return nil;
+	}
 	return [snapshotURL URLByAppendingPathComponent:name];
+}
+
+- (nullable NSURL *)localURLForURL:(NSURL *)URL fileName:(nullable NSString *)fileName
+{
+	return [self localURLForURL:URL fileName:fileName error:NULL];
 }
 
 - (nullable NFKDownloadPlan *)planDownloadOfURL:(NSURL *)URL
@@ -312,12 +368,18 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 									  byteCount:(long long)listedByteCount
 										  error:(NSError **)outError
 {
-	if (![self requireCacheDirectory:outError]) {
-		return nil;
-	}
-	NSURL *localURL = [self localURLForURL:URL fileName:fileName];
+	return [self planDownloadOfURL:URL sha256:expectedSHA256 fileName:fileName byteCount:listedByteCount optional:NO error:outError];
+}
+
+- (nullable NFKDownloadPlan *)planDownloadOfURL:(NSURL *)URL
+										 sha256:(nullable NSString *)expectedSHA256
+									   fileName:(nullable NSString *)fileName
+									  byteCount:(long long)listedByteCount
+									   optional:(BOOL)optional
+										  error:(NSError **)outError
+{
+	NSURL *localURL = [self localURLForURL:URL fileName:fileName error:outError];
 	if (localURL == nil) {
-		[self propagateError:[NFKDownload errorWithCode:NFKDownloadErrorUnsupportedSource reason:@"the URL is empty"] to:outError];
 		return nil;
 	}
 	NSHTTPURLResponse *response = nil;
@@ -328,7 +390,7 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	long long byteCount = listedByteCount;
 	if (status >= 200 && status < 300) {
 		NSString *encoding = [response valueForHTTPHeaderField:@"Content-Encoding"];
-		if (encoding.length == 0 && response.expectedContentLength >= 0) {
+		if (byteCount < 0 && encoding.length == 0 && response.expectedContentLength >= 0) {
 			byteCount = response.expectedContentLength;
 		}
 	} else if (status == 401 || status == 403 || status == 404) {
@@ -342,10 +404,11 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 																byteCount:byteCount
 																   sha256:expectedSHA256
 																   cached:[self fileAtURL:localURL isWholeWithByteCount:byteCount]
-																 optional:NO];
+																 optional:optional];
+	file.snapshotURL = localURL.URLByDeletingLastPathComponent;
 	NFKDownloadPlan *plan = [[NFKDownloadPlan alloc] initWithRepository:nil revision:nil sourceURL:URL files:@[ file ] localURL:localURL];
 	plan.snapshotURL = localURL.URLByDeletingLastPathComponent;
-	plan.cacheRepository = [self URLCacheRepositoryForURL:URL];
+	plan.cacheRepository = [self URLCacheRepositoryForURL:URL error:NULL];
 	return plan;
 }
 
@@ -417,15 +480,168 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 		return [self planRepo:source.repository revision:source.revision requiredPaths:nil optionalPaths:@[]
 					 listings:@{} singleFile:singleFile error:outError];
 	}
+	NSArray<NFKHFHubSourcePart *> *parts = [self partsOfModelSource:source];
+	if (parts.count == 1 && [self part:parts.firstObject isTheRepositoryOfSource:source]) {
+		return [self planPart:parts.firstObject singleFile:singleFile error:outError];
+	}
+	return [self planParts:parts ofModelSource:source singleFile:singleFile error:outError];
+}
+
+#pragma mark Source parts
+
+/*! The places a source's files come from, in the order of the first file from each. A file names its
+	own place through its repository, revision, or URL; the rest come from the source. A URL file is a
+	place of its own. */
+- (NSArray<NFKHFHubSourcePart *> *)partsOfModelSource:(NFKModelSource *)source
+{
+	if ([self modelSourceHoldsNoFiles:source]) {
+		return @[];
+	}
+	if ([source.kind isEqualToString:NFKModelSourceKindURL]) {
+		if (source.URL == nil) {
+			return @[];
+		}
+		NFKHFHubSourcePart *part = [[NFKHFHubSourcePart alloc] init];
+		part.URL = source.URL;
+		part.files = source.files.count > 0 ? [NSMutableArray arrayWithObject:source.files.firstObject] : [NSMutableArray array];
+		return @[ part ];
+	}
+	if (source.files.count == 0) {
+		NFKHFHubSourcePart *part = [[NFKHFHubSourcePart alloc] init];
+		part.repository = source.repository;
+		part.revision = source.revision;
+		return @[ part ];
+	}
+	NSMutableArray<NFKHFHubSourcePart *> *parts = [NSMutableArray array];
+	NSMutableDictionary<NSString *, NFKHFHubSourcePart *> *partsByKey = [NSMutableDictionary dictionary];
+	for (NFKModelFile *file in source.files) {
+		NFKHFHubSourcePart *candidate = [[NFKHFHubSourcePart alloc] init];
+		NSString *key = nil;
+		if (file.URL != nil) {
+			candidate.URL = file.URL;
+			key = [NSString stringWithFormat:@"url\n%@\n%@", file.URL.absoluteString, file.path];
+		} else {
+			candidate.repository = file.repository ?: source.repository;
+			candidate.revision = file.repository != nil ? file.revision : (file.revision ?: source.revision);
+			key = [NSString stringWithFormat:@"repository\n%@\n%@", candidate.repository ?: @"",
+				   [self normalizedRevision:candidate.revision]];
+		}
+		NFKHFHubSourcePart *part = partsByKey[key];
+		if (part == nil) {
+			part = candidate;
+			part.files = [NSMutableArray array];
+			partsByKey[key] = part;
+			[parts addObject:part];
+		}
+		[part.files addObject:file];
+	}
+	return parts;
+}
+
+- (BOOL)part:(NFKHFHubSourcePart *)part isTheRepositoryOfSource:(NFKModelSource *)source
+{
+	return part.URL == nil && source.repository != nil && [part.repository isEqualToString:source.repository]
+		&& [[self normalizedRevision:part.revision] isEqualToString:[self normalizedRevision:source.revision]];
+}
+
+/*! The local file name of a URL part's file. */
+- (nullable NSURL *)localURLOfURLPart:(NFKHFHubSourcePart *)part error:(NSError **)outError
+{
+	return [self localURLForURL:part.URL fileName:part.files.firstObject.path error:outError];
+}
+
+/*! Why a part cannot be planned, read, or removed: an unsafe repository, revision, path, or URL; nil
+	when it can. */
+- (nullable NSError *)refusalOfPart:(NFKHFHubSourcePart *)part
+{
+	if (part.URL != nil) {
+		NSError *refusal = nil;
+		return [self localURLOfURLPart:part error:&refusal] == nil ? refusal : nil;
+	}
+	NSError *refusal = [self refusalForRepo:part.repository revision:part.revision path:nil];
+	for (NFKModelFile *file in part.files) {
+		if (refusal != nil) {
+			break;
+		}
+		refusal = NFKHFHubUnsafePathError(file.path, @"path", YES);
+	}
+	return refusal;
+}
+
+/*! Plans one repository part: its listed files, required and optional. */
+- (nullable NFKDownloadPlan *)planPart:(NFKHFHubSourcePart *)part singleFile:(BOOL)singleFile error:(NSError **)outError
+{
 	NSMutableArray<NSString *> *required = [NSMutableArray array];
 	NSMutableArray<NSString *> *optional = [NSMutableArray array];
 	NSMutableDictionary<NSString *, NFKModelFile *> *listings = [NSMutableDictionary dictionary];
-	for (NFKModelFile *file in source.files) {
+	for (NFKModelFile *file in part.files) {
 		[(file.optional ? optional : required) addObject:file.path];
 		listings[file.path] = file;
 	}
-	return [self planRepo:source.repository revision:source.revision requiredPaths:required optionalPaths:optional
+	return [self planRepo:part.repository revision:part.revision requiredPaths:required optionalPaths:optional
 				 listings:listings singleFile:singleFile error:outError];
+}
+
+/*! The planned files of one part. An optional URL file the server does not have is left out. */
+- (nullable NSArray<NFKDownloadPlanFile *> *)planFilesOfPart:(NFKHFHubSourcePart *)part error:(NSError **)outError
+{
+	if (part.URL == nil) {
+		return [self planPart:part singleFile:NO error:outError].files;
+	}
+	NFKModelFile *file = part.files.firstObject;
+	NSError *error = nil;
+	NFKDownloadPlan *plan = [self planDownloadOfURL:part.URL
+											 sha256:file.sha256
+										   fileName:file.path
+										  byteCount:file.byteCount != nil ? file.byteCount.longLongValue : NFKDownloadUnknownByteCount
+										   optional:file.optional
+											  error:&error];
+	if (plan != nil) {
+		return plan.files;
+	}
+	if (file.optional && [error.domain isEqualToString:NFKDownloadErrorDomain] && error.code == NFKDownloadErrorNotFound) {
+		return @[];
+	}
+	[self propagateError:error to:outError];
+	return nil;
+}
+
+/*! Plans a source whose files span several repositories or URLs. Every place is checked before the
+	first request. The plan's localURL is the source's own snapshot; each file lands in its own
+	place's. */
+- (nullable NFKDownloadPlan *)planParts:(NSArray<NFKHFHubSourcePart *> *)parts
+						  ofModelSource:(NFKModelSource *)source
+							 singleFile:(BOOL)singleFile
+								  error:(NSError **)outError
+{
+	NSURL *sourceSnapshotURL = [self snapshotURLForRepo:source.repository revision:source.revision error:outError];
+	if (sourceSnapshotURL == nil) {
+		return nil;
+	}
+	for (NFKHFHubSourcePart *part in parts) {
+		NSError *refusal = [self refusalOfPart:part];
+		if (refusal != nil) {
+			[self propagateError:refusal to:outError];
+			return nil;
+		}
+	}
+	NSMutableArray<NFKDownloadPlanFile *> *files = [NSMutableArray array];
+	for (NFKHFHubSourcePart *part in parts) {
+		NSArray<NFKDownloadPlanFile *> *partFiles = [self planFilesOfPart:part error:outError];
+		if (partFiles == nil) {
+			return nil;
+		}
+		[files addObjectsFromArray:partFiles];
+	}
+	NSURL *localURL = singleFile && files.count == 1 ? files.firstObject.localURL : sourceSnapshotURL;
+	NFKDownloadPlan *plan = [[NFKDownloadPlan alloc] initWithRepository:source.repository
+															   revision:[self normalizedRevision:source.revision]
+															  sourceURL:nil
+																  files:files
+															   localURL:files.count > 0 ? localURL : nil];
+	plan.snapshotURL = sourceSnapshotURL;
+	plan.cacheRepository = source.repository;
+	return plan;
 }
 
 - (void)planDownloadOfModelSource:(NFKModelSource *)source
@@ -493,6 +709,9 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	if (plan.snapshotURL != nil) {
 		[download registerSnapshotURL:plan.snapshotURL];
 	}
+	for (NFKDownloadPlanFile *file in plan.files) {
+		[download registerSnapshotURL:[self snapshotURLOfPlanFile:file inPlan:plan]];
+	}
 	NSError *error = nil;
 	[download becomeCurrent];
 	@try {
@@ -502,7 +721,7 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 			}
 			NSURL *fetched = [self fetchFileFromURL:file.remoteURL
 										   localURL:file.localURL
-										snapshotURL:plan.snapshotURL ?: file.localURL.URLByDeletingLastPathComponent
+										snapshotURL:[self snapshotURLOfPlanFile:file inPlan:plan]
 											   path:file.path
 											 sha256:file.sha256
 								  expectedByteCount:file.byteCount
@@ -519,6 +738,12 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 									 paths:[plan.files valueForKey:@"path"] error:NULL];
 	}
 	return nil;
+}
+
+/*! The snapshot a plan file caches in: its own place's, else the plan's, else its folder. */
+- (NSURL *)snapshotURLOfPlanFile:(NFKDownloadPlanFile *)file inPlan:(NFKDownloadPlan *)plan
+{
+	return file.snapshotURL ?: plan.snapshotURL ?: file.localURL.URLByDeletingLastPathComponent;
 }
 
 - (NFKDownload *)downloadWithPlan:(NFKDownloadPlan *)plan
@@ -713,6 +938,12 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 						 absentPaths:(NSArray<NSString *> *)absentPaths
 							   error:(NSError * _Nullable *)outError
 {
+	for (NSString *path in [paths arrayByAddingObjectsFromArray:absentPaths]) {
+		NSError *refusal = NFKHFHubUnsafePathError(path, @"recorded path", YES);
+		if (refusal != nil) {
+			return [self propagateError:refusal to:outError];
+		}
+	}
 	return [self updateCompletionRecordOfRepo:repo revision:revision error:outError
 								   withBlock:^(NSMutableOrderedSet<NSString *> *recorded, NSMutableOrderedSet<NSString *> *absent) {
 		[recorded addObjectsFromArray:paths];
@@ -752,13 +983,16 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 						   withBlock:(void (NS_NOESCAPE ^)(NSMutableOrderedSet<NSString *> *recorded,
 														   NSMutableOrderedSet<NSString *> *absent))change
 {
-	NSURL *snapshotURL = [self snapshotURLForRepo:repo revision:revision];
+	NSURL *snapshotURL = [self snapshotURLForRepo:repo revision:revision error:outError];
 	if (snapshotURL == nil) {
-		return [self setError:outError code:kNFKError_InferenceNotReady reason:@"no cache directory is set"];
+		return NO;
 	}
 	__block NSError *writeError = nil;
 	__block BOOL written = NO;
 	[self performWithCacheAccess:^(NSURL *cacheDirectoryURL) {
+		if (![self requireURL:snapshotURL insideCacheURL:cacheDirectoryURL error:&writeError]) {
+			return;
+		}
 		@synchronized (NFKHFHub.class) {
 			NSDictionary<NSString *, NSArray<NSString *> *> *record = [self completionRecordInSnapshotURL:snapshotURL];
 			NSMutableOrderedSet<NSString *> *recorded = [NSMutableOrderedSet orderedSetWithArray:record[@"paths"]];
@@ -894,58 +1128,123 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	if (source.files.count == 0) {
 		return [self statusInSnapshotURL:snapshotURL requiredPaths:nil optionalPaths:@[] localURL:nil];
 	}
+	NSArray<NFKHFHubSourcePart *> *parts = [self partsOfModelSource:source];
+	NSMutableOrderedSet<NSString *> *present = [NSMutableOrderedSet orderedSet];
+	NSMutableArray<NSString *> *missing = [NSMutableArray array];
+	long long bytes = 0;
+	for (NFKHFHubSourcePart *part in parts) {
+		NFKDownloadStatus *status = [self statusOfPart:part];
+		[present addObjectsFromArray:status.presentPaths];
+		[missing addObjectsFromArray:status.missingPaths];
+		bytes += status.byteCount;
+	}
+	NSURL *localURL = snapshotURL;
+	if ([source.layout isEqualToString:NFKModelSourceLayoutFile] && source.files.count == 1 && parts.count == 1) {
+		NFKHFHubSourcePart *part = parts.firstObject;
+		localURL = part.URL != nil ? [self localURLOfURLPart:part error:NULL]
+								   : [self localURLForRepo:part.repository revision:part.revision path:part.files.firstObject.path];
+	}
+	NFKDownloadPresence presence = NFKDownloadPresenceAbsent;
+	if (present.count > 0) {
+		presence = missing.count == 0 ? NFKDownloadPresenceComplete : NFKDownloadPresencePartial;
+	}
+	return [[NFKDownloadStatus alloc] initWithPresence:presence
+											 byteCount:bytes
+										  presentPaths:present.array
+										  missingPaths:missing
+											  localURL:snapshotURL != nil ? localURL : nil];
+}
+
+/*! Whether one part's files are in the cache, read in its own repository's or URL's snapshot. */
+- (NFKDownloadStatus *)statusOfPart:(NFKHFHubSourcePart *)part
+{
 	NSMutableArray<NSString *> *required = [NSMutableArray array];
 	NSMutableArray<NSString *> *optional = [NSMutableArray array];
-	for (NFKModelFile *file in source.files) {
+	for (NFKModelFile *file in part.files) {
 		[(file.optional ? optional : required) addObject:file.path];
 	}
-	NSURL *localURL = nil;
-	if ([source.layout isEqualToString:NFKModelSourceLayoutFile] && source.files.count == 1) {
-		localURL = [self localURLForRepo:source.repository revision:source.revision path:source.files.firstObject.path];
+	if (part.URL == nil) {
+		return [self statusInSnapshotURL:[self snapshotURLForRepo:part.repository revision:part.revision]
+						   requiredPaths:required
+						   optionalPaths:optional
+								localURL:nil];
 	}
-	return [self statusInSnapshotURL:snapshotURL requiredPaths:required optionalPaths:optional localURL:localURL];
+	NSURL *localURL = [self localURLOfURLPart:part error:NULL];
+	if (localURL == nil) {
+		return [self statusInSnapshotURL:nil requiredPaths:required optionalPaths:@[] localURL:nil];
+	}
+	NSArray<NSString *> *name = @[ localURL.lastPathComponent ];
+	BOOL optionalFile = part.files.firstObject.optional;
+	return [self statusInSnapshotURL:localURL.URLByDeletingLastPathComponent
+					   requiredPaths:optionalFile ? @[] : name
+					   optionalPaths:optionalFile ? name : @[]
+							localURL:localURL];
 }
 
 #pragma mark Removal plans
 
-/*! The paths of a Hugging Face source, or nil when it lists none. */
-- (nullable NSSet<NSString *> *)listedPathsOfSource:(NFKModelSource *)source
+/*! The paths a part names in its snapshot: the listed paths of a repository part, nil for a part that
+	names the whole repository, and the cached file name of a URL part. */
+- (nullable NSSet<NSString *> *)listedPathsOfPart:(NFKHFHubSourcePart *)part
 {
-	if (source.files.count == 0) {
+	if (part.URL != nil) {
+		NSURL *localURL = [self localURLOfURLPart:part error:NULL];
+		return localURL != nil ? [NSSet setWithObject:localURL.lastPathComponent] : [NSSet set];
+	}
+	if (part.files == nil) {
 		return nil;
 	}
-	return [NSSet setWithArray:[source.files valueForKey:@"path"]];
+	return [NSSet setWithArray:[part.files valueForKey:@"path"]];
+}
+
+/*! YES when part's files cache in the target's snapshot. */
+- (BOOL)part:(NFKHFHubSourcePart *)part isInSnapshotOfTarget:(NFKHFHubRemovalTarget *)target
+{
+	if (target.repository != nil) {
+		return part.URL == nil && [part.repository isEqualToString:target.repository]
+			&& [[self normalizedRevision:part.revision] isEqualToString:[self normalizedRevision:target.revision]];
+	}
+	if (target.sourceURL == nil || part.URL == nil) {
+		return NO;
+	}
+	NSURL *partSnapshotURL = [self URLSnapshotURLForURL:part.URL error:NULL];
+	return partSnapshotURL != nil && [partSnapshotURL.path isEqualToString:target.snapshotURL.path];
 }
 
 /*! The paths another catalog variant whose download is complete uses in the target's snapshot, each
-	with the reason it is kept. */
+	with the reason it is kept. A variant's files count wherever they come from: its source's
+	repository, another repository, or a URL. */
 - (NSDictionary<NSString *, NSString *> *)claimedPathsForTarget:(NFKHFHubRemovalTarget *)target
 {
 	NSMutableDictionary<NSString *, NSString *> *claims = [NSMutableDictionary dictionary];
-	if (target.repository == nil) {
+	if (target.repository == nil && target.sourceURL == nil) {
 		return claims;
 	}
-	NSString *revision = [self normalizedRevision:target.revision];
 	NSSet<NSString *> *targetPaths = target.paths != nil ? [NSSet setWithArray:target.paths] : nil;
 	for (NFKModelDescriptor *descriptor in self.modelCatalog.descriptors) {
 		for (NFKModelVariant *variant in descriptor.variants) {
 			NFKModelSource *source = variant.source;
-			if (![source.kind isEqualToString:NFKModelSourceKindHuggingFace]
-				|| ![source.repository isEqualToString:target.repository]
-				|| ![[self normalizedRevision:source.revision] isEqualToString:revision]) {
+			BOOL kindDownloads = [source.kind isEqualToString:NFKModelSourceKindHuggingFace]
+				|| [source.kind isEqualToString:NFKModelSourceKindURL];
+			if (!kindDownloads) {
 				continue;
 			}
-			NSSet<NSString *> *listed = [self listedPathsOfSource:source];
-			BOOL sameDownload = (listed == nil && targetPaths == nil) || [listed isEqualToSet:targetPaths];
-			if (sameDownload || [self downloadStatusForModelSource:source].presence != NFKDownloadPresenceComplete) {
-				continue;
-			}
-			NSArray<NSString *> *used = listed != nil ? listed.allObjects : [self recordedCompletePathsInSnapshotURL:target.snapshotURL];
-			NSString *reason = [NSString stringWithFormat:@"used by %@ (%@), whose download is complete in this cache",
-								descriptor.identifier, variant.identifier];
-			for (NSString *path in used) {
-				if (claims[path] == nil) {
-					claims[path] = reason;
+			for (NFKHFHubSourcePart *part in [self partsOfModelSource:source]) {
+				if (![self part:part isInSnapshotOfTarget:target]) {
+					continue;
+				}
+				NSSet<NSString *> *listed = [self listedPathsOfPart:part];
+				BOOL sameDownload = (listed == nil && targetPaths == nil) || [listed isEqualToSet:targetPaths];
+				if (sameDownload || [self downloadStatusForModelSource:source].presence != NFKDownloadPresenceComplete) {
+					continue;
+				}
+				NSArray<NSString *> *used = listed != nil ? listed.allObjects : [self recordedCompletePathsInSnapshotURL:target.snapshotURL];
+				NSString *reason = [NSString stringWithFormat:@"used by %@ (%@), whose download is complete in this cache",
+									descriptor.identifier, variant.identifier];
+				for (NSString *path in used) {
+					if (claims[path] == nil) {
+						claims[path] = reason;
+					}
 				}
 			}
 		}
@@ -984,9 +1283,50 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	return [self relativePathOfURL:url underURL:cacheDirectoryURL] ?: url.path;
 }
 
+/*! The links in the cache that resolve to targetPath and stay after the removal: every link outside
+	the snapshot, and the links in it that the removal does not take. */
+- (NSArray<NSString *> *)remainingLinksToTargetPath:(NSString *)targetPath
+									  linksByTarget:(NSDictionary<NSString *, NSArray<NSString *> *> *)linksByTarget
+										snapshotURL:(NSURL *)snapshotURL
+											 chosen:(NSArray<NSString *> *)chosen
+											 claims:(NSDictionary<NSString *, NSString *> *)claims
+{
+	NSMutableArray<NSString *> *remaining = [NSMutableArray array];
+	for (NSString *linkPath in linksByTarget[targetPath]) {
+		NSString *relative = [self relativePathOfURL:[NSURL fileURLWithPath:linkPath] underURL:snapshotURL];
+		if (relative == nil || ![chosen containsObject:relative] || claims[relative] != nil) {
+			[remaining addObject:linkPath];
+		}
+	}
+	return remaining;
+}
+
+/*! YES when url lies in a snapshot of the cache other than snapshotURL: a folder between url and the
+	cache root, below snapshotURL's own, holds one of the hub's bookkeeping files. */
+- (BOOL)isURL:(NSURL *)url inSnapshotOtherThanURL:(NSURL *)snapshotURL cacheURL:(NSURL *)cacheDirectoryURL
+{
+	NSString *cachePrefix = [cacheDirectoryURL.URLByResolvingSymlinksInPath.path stringByAppendingString:@"/"];
+	NSString *ownPath = snapshotURL.URLByResolvingSymlinksInPath.path;
+	NSArray<NSString *> *bookkeeping = NFKHFHubBookkeepingNames();
+	NSURL *folder = url.URLByResolvingSymlinksInPath.URLByDeletingLastPathComponent;
+	while ([folder.path hasPrefix:cachePrefix] && ![folder.path isEqualToString:ownPath]) {
+		for (NSString *name in bookkeeping) {
+			if ([NSFileManager.defaultManager fileExistsAtPath:[folder.path stringByAppendingPathComponent:name]]) {
+				return YES;
+			}
+		}
+		folder = folder.URLByDeletingLastPathComponent;
+	}
+	return NO;
+}
+
 - (nullable NFKRemovalPlan *)removalPlanForTarget:(NFKHFHubRemovalTarget *)target error:(NSError **)outError
 {
 	if (![self requireCacheDirectory:outError]) {
+		return nil;
+	}
+	if (target.refusal != nil) {
+		[self propagateError:target.refusal to:outError];
 		return nil;
 	}
 	if (target.snapshotURL == nil) {
@@ -1023,8 +1363,22 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 			[kept addObject:[[NFKCachedFile alloc] initWithURL:url path:cachePath byteCount:[self onDiskSizeOfURL:url] reason:claim]];
 			continue;
 		}
-		[removedPaths addObject:url.path];
+		if (linksByTarget == nil) {
+			linksByTarget = [self symbolicLinksByTargetInCacheURL:cacheDirectoryURL];
+		}
 		if (![self isSymbolicLinkAtURL:url]) {
+			NSArray<NSString *> *linksToFile = [self remainingLinksToTargetPath:url.URLByResolvingSymlinksInPath.path
+																   linksByTarget:linksByTarget
+																	 snapshotURL:snapshotURL
+																		  chosen:chosen
+																		  claims:claims];
+			if (linksToFile.count > 0) {
+				NSString *reason = [NSString stringWithFormat:@"linked from %lu other cached file(s)", (unsigned long)linksToFile.count];
+				[kept addObject:[[NFKCachedFile alloc] initWithURL:url path:cachePath byteCount:[self allocatedSizeOfFileAtURL:url]
+															reason:reason]];
+				continue;
+			}
+			[removedPaths addObject:url.path];
 			NSDictionary<NSFileAttributeKey, id> *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:url.path error:NULL];
 			NSUInteger links = [attributes[NSFileReferenceCount] unsignedIntegerValue];
 			if (links > 1) {
@@ -1039,6 +1393,7 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 			continue;
 		}
 
+		[removedPaths addObject:url.path];
 		NSURL *targetURL = url.URLByResolvingSymlinksInPath;
 		NSString *targetPath = targetURL.path;
 		long long targetSize = [self allocatedSizeOfFileAtURL:targetURL];
@@ -1052,27 +1407,27 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 			}
 			continue;
 		}
-		if (linksByTarget == nil) {
-			linksByTarget = [self symbolicLinksByTargetInCacheURL:cacheDirectoryURL];
-		}
-		NSMutableArray<NSString *> *otherLinks = [NSMutableArray array];
-		for (NSString *linkPath in linksByTarget[targetPath]) {
-			NSString *relative = [self relativePathOfURL:[NSURL fileURLWithPath:linkPath] underURL:snapshotURL];
-			if (relative == nil || ![chosen containsObject:relative] || claims[relative] != nil) {
-				[otherLinks addObject:linkPath];
-			}
-		}
+		NSArray<NSString *> *otherLinks = [self remainingLinksToTargetPath:targetPath
+															  linksByTarget:linksByTarget
+																snapshotURL:snapshotURL
+																	 chosen:chosen
+																	 claims:claims];
 		NSString *targetCachePath = [self cachePathOfURL:targetURL cacheURL:cacheDirectoryURL];
 		NSString *targetInSnapshot = [self relativePathOfURL:targetURL underURL:snapshotURL];
 		BOOL targetIsChosen = targetInSnapshot != nil && [chosen containsObject:targetInSnapshot] && claims[targetInSnapshot] == nil;
-		if (otherLinks.count > 0 || (targetInSnapshot != nil && !targetIsChosen)) {
+		BOOL targetInOtherSnapshot = targetInSnapshot == nil
+			&& [self isURL:targetURL inSnapshotOtherThanURL:snapshotURL cacheURL:cacheDirectoryURL];
+		if (otherLinks.count > 0 || (targetInSnapshot != nil && !targetIsChosen) || targetInOtherSnapshot) {
 			[removed addObject:[[NFKCachedFile alloc] initWithURL:url path:cachePath byteCount:0
 														   reason:@"a symbolic link whose target stays"]];
 			if (![removedTargets containsObject:targetPath] && !targetIsChosen) {
 				[removedTargets addObject:targetPath];
-				NSString *reason = otherLinks.count > 0
-					? [NSString stringWithFormat:@"linked from %lu other cached file(s)", (unsigned long)otherLinks.count]
-					: @"a file of the snapshot the removal keeps";
+				NSString *reason = @"a file of the snapshot the removal keeps";
+				if (otherLinks.count > 0) {
+					reason = [NSString stringWithFormat:@"linked from %lu other cached file(s)", (unsigned long)otherLinks.count];
+				} else if (targetInOtherSnapshot) {
+					reason = @"a file of another cached snapshot";
+				}
 				[kept addObject:[[NFKCachedFile alloc] initWithURL:targetURL path:targetCachePath byteCount:targetSize reason:reason]];
 			}
 			continue;
@@ -1123,16 +1478,25 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	NFKHFHubRemovalTarget *target = [[NFKHFHubRemovalTarget alloc] init];
 	target.repository = repo;
 	target.revision = [self normalizedRevision:revision];
-	target.snapshotURL = [self snapshotURLForRepo:repo revision:revision];
 	target.paths = paths;
+	NSError *refusal = nil;
+	target.snapshotURL = [self snapshotURLForRepo:repo revision:revision error:&refusal];
+	if (target.snapshotURL == nil && self.cacheDirectoryURL != nil) {
+		target.refusal = refusal;
+	}
 	return target;
 }
 
-- (NFKHFHubRemovalTarget *)removalTargetForURL:(NSURL *)URL
+- (NFKHFHubRemovalTarget *)removalTargetForURL:(NSURL *)URL paths:(nullable NSArray<NSString *> *)paths
 {
 	NFKHFHubRemovalTarget *target = [[NFKHFHubRemovalTarget alloc] init];
 	target.sourceURL = URL;
-	target.snapshotURL = [self URLSnapshotURLForURL:URL];
+	target.paths = paths;
+	NSError *refusal = nil;
+	target.snapshotURL = [self URLSnapshotURLForURL:URL error:&refusal];
+	if (target.snapshotURL == nil && self.cacheDirectoryURL != nil) {
+		target.refusal = refusal;
+	}
 	return target;
 }
 
@@ -1146,7 +1510,54 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 
 - (nullable NFKRemovalPlan *)removalPlanForURL:(NSURL *)URL error:(NSError * _Nullable *)outError
 {
-	return [self removalPlanForTarget:[self removalTargetForURL:URL] error:outError];
+	return [self removalPlanForTarget:[self removalTargetForURL:URL paths:nil] error:outError];
+}
+
+/*! The removal target of one part of a source: its listed paths in its repository's snapshot, or its
+	cached file in its URL's snapshot. */
+- (NFKHFHubRemovalTarget *)removalTargetForPart:(NFKHFHubSourcePart *)part
+{
+	if (part.URL == nil) {
+		NSArray<NSString *> *paths = part.files != nil ? [part.files valueForKey:@"path"] : nil;
+		return [self removalTargetForRepo:part.repository revision:part.revision paths:paths];
+	}
+	NFKHFHubRemovalTarget *target = [self removalTargetForURL:part.URL paths:nil];
+	NSError *refusal = nil;
+	NSURL *localURL = [self localURLOfURLPart:part error:&refusal];
+	if (localURL != nil) {
+		target.paths = @[ localURL.lastPathComponent ];
+	} else if (target.refusal == nil && self.cacheDirectoryURL != nil) {
+		target.refusal = refusal;
+	}
+	return target;
+}
+
+/*! One plan over the plans of several snapshots: their files, kept files, and freed bytes together. */
+- (NFKRemovalPlan *)removalPlanWithParts:(NSArray<NFKRemovalPlan *> *)parts
+							  repository:(nullable NSString *)repository
+								revision:(nullable NSString *)revision
+							 snapshotURL:(nullable NSURL *)snapshotURL
+{
+	NSMutableArray<NFKCachedFile *> *removed = [NSMutableArray array];
+	NSMutableArray<NFKCachedFile *> *kept = [NSMutableArray array];
+	NSMutableArray<NSURL *> *bookkeeping = [NSMutableArray array];
+	long long freed = 0;
+	for (NFKRemovalPlan *part in parts) {
+		[removed addObjectsFromArray:part.removedFiles];
+		[kept addObjectsFromArray:part.keptFiles];
+		[bookkeeping addObjectsFromArray:part.bookkeepingURLs];
+		freed += part.freedByteCount;
+	}
+	NFKRemovalPlan *plan = [[NFKRemovalPlan alloc] initWithRepository:repository
+															 revision:revision
+															sourceURL:nil
+														 removedFiles:removed
+															keptFiles:kept
+													   freedByteCount:freed
+														  snapshotURL:snapshotURL];
+	plan.bookkeepingURLs = bookkeeping;
+	plan.parts = parts;
+	return plan;
 }
 
 - (nullable NFKRemovalPlan *)removalPlanForModelSource:(NFKModelSource *)source error:(NSError * _Nullable *)outError
@@ -1154,16 +1565,41 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	if ([self modelSourceHoldsNoFiles:source]) {
 		return [self removalPlanForTarget:[[NFKHFHubRemovalTarget alloc] init] error:outError];
 	}
-	if ([source.kind isEqualToString:NFKModelSourceKindURL] && source.URL != nil) {
-		return [self removalPlanForURL:source.URL error:outError];
-	}
-	if (source.repository.length == 0) {
+	NSArray<NFKHFHubSourcePart *> *parts = [self partsOfModelSource:source];
+	BOOL namesSource = [source.kind isEqualToString:NFKModelSourceKindURL] || source.repository.length > 0;
+	if (parts.count == 0 || !namesSource) {
 		[self propagateError:[NFKDownload errorWithCode:NFKDownloadErrorUnsupportedSource reason:@"the source names no repository"]
 						  to:outError];
 		return nil;
 	}
-	NSArray<NSString *> *paths = source.files.count > 0 ? [source.files valueForKey:@"path"] : nil;
-	return [self removalPlanForRepo:source.repository revision:source.revision paths:paths error:outError];
+	if (parts.count == 1) {
+		return [self removalPlanForTarget:[self removalTargetForPart:parts.firstObject] error:outError];
+	}
+	NSURL *sourceSnapshotURL = [self snapshotURLForRepo:source.repository revision:source.revision error:outError];
+	if (sourceSnapshotURL == nil) {
+		return nil;
+	}
+	NSMutableArray<NFKHFHubRemovalTarget *> *targets = [NSMutableArray arrayWithCapacity:parts.count];
+	for (NFKHFHubSourcePart *part in parts) {
+		NFKHFHubRemovalTarget *target = [self removalTargetForPart:part];
+		if (target.refusal != nil) {
+			[self propagateError:target.refusal to:outError];
+			return nil;
+		}
+		[targets addObject:target];
+	}
+	NSMutableArray<NFKRemovalPlan *> *plans = [NSMutableArray arrayWithCapacity:targets.count];
+	for (NFKHFHubRemovalTarget *target in targets) {
+		NFKRemovalPlan *plan = [self removalPlanForTarget:target error:outError];
+		if (plan == nil) {
+			return nil;
+		}
+		[plans addObject:plan];
+	}
+	return [self removalPlanWithParts:plans
+						   repository:source.repository
+							 revision:[self normalizedRevision:source.revision]
+						  snapshotURL:sourceSnapshotURL];
 }
 
 #pragma mark Removal
@@ -1171,7 +1607,7 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 - (NFKHFHubRemovalTarget *)targetOfPlan:(NFKRemovalPlan *)plan
 {
 	if (plan.sourceURL != nil) {
-		return [self removalTargetForURL:plan.sourceURL];
+		return [self removalTargetForURL:plan.sourceURL paths:plan.targetPaths];
 	}
 	if (plan.repository != nil) {
 		return [self removalTargetForRepo:plan.repository revision:plan.revision paths:plan.targetPaths];
@@ -1197,6 +1633,11 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	files to their places. Returns the trash folder. */
 - (nullable NSURL *)moveURLs:(NSArray<NSURL *> *)URLs toTrashInCacheURL:(NSURL *)cacheDirectoryURL error:(NSError **)outError
 {
+	for (NSURL *url in URLs) {
+		if (![self requireURL:url insideCacheURL:cacheDirectoryURL error:outError]) {
+			return nil;
+		}
+	}
 	NSFileManager *fileManager = NSFileManager.defaultManager;
 	NSURL *trashURL = [cacheDirectoryURL URLByAppendingPathComponent:[NFKHFHubTrashPrefix stringByAppendingString:NSUUID.UUID.UUIDString]];
 	NSError *error = nil;
@@ -1226,74 +1667,104 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	if (![self requireCacheDirectory:outError]) {
 		return nil;
 	}
-	NFKHFHubRemovalTarget *target = [self targetOfPlan:plan];
-	if (target.snapshotURL == nil) {
+	NSMutableArray<NFKRemovalPlan *> *plans = [NSMutableArray array];
+	NSMutableArray<NFKHFHubRemovalTarget *> *targets = [NSMutableArray array];
+	for (NFKRemovalPlan *part in plan.parts ?: @[ plan ]) {
+		NFKHFHubRemovalTarget *target = [self targetOfPlan:part];
+		if (target.refusal != nil) {
+			[self propagateError:target.refusal to:outError];
+			return nil;
+		}
+		if (target.snapshotURL != nil) {
+			[plans addObject:part];
+			[targets addObject:target];
+		}
+	}
+	if (targets.count == 0) {
 		return plan;
 	}
-	__block NFKRemovalPlan *executed = nil;
+	__block NSArray<NFKRemovalPlan *> *executed = nil;
 	__block NSError *error = nil;
 	[NFKDownload performWithSnapshotRegistryLocked:^{
-		if ([NFKDownload isSnapshotURLInUse:target.snapshotURL]) {
-			NSString *name = target.repository ?: target.sourceURL.absoluteString;
-			NSString *reason = [NSString stringWithFormat:@"%@ is being downloaded; cancel the download before removing it", name];
-			error = [NFKDownload errorWithCode:NFKDownloadErrorInUse reason:reason];
-			return;
+		for (NFKHFHubRemovalTarget *target in targets) {
+			if ([NFKDownload isSnapshotURLInUse:target.snapshotURL]) {
+				NSString *name = target.repository ?: target.sourceURL.absoluteString;
+				NSString *reason = [NSString stringWithFormat:@"%@ is being downloaded; cancel the download before removing it", name];
+				error = [NFKDownload errorWithCode:NFKDownloadErrorInUse reason:reason];
+				return;
+			}
 		}
 		[self performWithCacheAccess:^(NSURL *cacheDirectoryURL) {
-			executed = [self executeRemovalOfPlan:plan target:target cacheURL:cacheDirectoryURL error:&error];
+			executed = [self executeRemovalOfPlans:plans targets:targets cacheURL:cacheDirectoryURL error:&error];
 		}];
 	}];
 	if (executed == nil) {
 		[self propagateError:error to:outError];
+		return nil;
 	}
-	return executed;
+	if (plan.parts == nil) {
+		return executed.firstObject;
+	}
+	return [self removalPlanWithParts:executed repository:plan.repository revision:plan.revision snapshotURL:plan.snapshotURL];
 }
 
-- (nullable NFKRemovalPlan *)executeRemovalOfPlan:(NFKRemovalPlan *)plan
-										   target:(NFKHFHubRemovalTarget *)target
-										 cacheURL:(NSURL *)cacheDirectoryURL
-											error:(NSError **)outError
+/*! Removes the files of every plan in one all-or-none move: each target is planned again and only the
+	files both plans remove go. Returns each plan as carried out. */
+- (nullable NSArray<NFKRemovalPlan *> *)executeRemovalOfPlans:(NSArray<NFKRemovalPlan *> *)plans
+													  targets:(NSArray<NFKHFHubRemovalTarget *> *)targets
+													 cacheURL:(NSURL *)cacheDirectoryURL
+														error:(NSError **)outError
 {
 	[self removeLeftoverTrashInCacheURL:cacheDirectoryURL];
-	NFKRemovalPlan *fresh = [self removalPlanForTarget:target cacheURL:cacheDirectoryURL];
-	NSSet<NSString *> *planned = [NSSet setWithArray:[plan.removedFiles valueForKeyPath:@"URL.path"]];
-	NSMutableArray<NFKCachedFile *> *removing = [NSMutableArray array];
-	long long freed = 0;
-	for (NFKCachedFile *file in fresh.removedFiles) {
-		if ([planned containsObject:file.URL.path]) {
-			[removing addObject:file];
-			freed += file.byteCount;
+	NSMutableArray<NFKRemovalPlan *> *executed = [NSMutableArray arrayWithCapacity:plans.count];
+	NSMutableArray<NSURL *> *URLs = [NSMutableArray array];
+	NSMutableSet<NSString *> *movedPaths = [NSMutableSet set];
+	for (NSUInteger index = 0; index < plans.count; index++) {
+		NFKRemovalPlan *plan = plans[index];
+		NFKRemovalPlan *fresh = [self removalPlanForTarget:targets[index] cacheURL:cacheDirectoryURL];
+		NSSet<NSString *> *planned = [NSSet setWithArray:[plan.removedFiles valueForKeyPath:@"URL.path"]];
+		NSMutableArray<NFKCachedFile *> *removing = [NSMutableArray array];
+		long long freed = 0;
+		for (NFKCachedFile *file in fresh.removedFiles) {
+			if ([planned containsObject:file.URL.path] && ![movedPaths containsObject:file.URL.path]) {
+				[removing addObject:file];
+				freed += file.byteCount;
+			}
 		}
-	}
-	NSArray<NSURL *> *bookkeeping = removing.count == fresh.removedFiles.count ? fresh.bookkeepingURLs : @[];
-	for (NSURL *url in bookkeeping) {
-		freed += [self allocatedSizeOfFileAtURL:url];
+		NSArray<NSURL *> *bookkeeping = removing.count == fresh.removedFiles.count ? fresh.bookkeepingURLs : @[];
+		for (NSURL *url in bookkeeping) {
+			freed += [self allocatedSizeOfFileAtURL:url];
+		}
+		for (NSURL *url in [[removing valueForKey:@"URL"] arrayByAddingObjectsFromArray:bookkeeping]) {
+			if (![movedPaths containsObject:url.path]) {
+				[movedPaths addObject:url.path];
+				[URLs addObject:url];
+			}
+		}
+		NFKRemovalPlan *part = [[NFKRemovalPlan alloc] initWithRepository:fresh.repository
+																  revision:fresh.revision
+																 sourceURL:fresh.sourceURL
+															  removedFiles:removing
+																 keptFiles:fresh.keptFiles
+															freedByteCount:freed
+															   snapshotURL:fresh.snapshotURL];
+		part.targetPaths = fresh.targetPaths;
+		part.bookkeepingURLs = bookkeeping;
+		[executed addObject:part];
 	}
 
-	NSMutableArray<NSURL *> *URLs = [[removing valueForKey:@"URL"] mutableCopy];
-	[URLs addObjectsFromArray:bookkeeping];
 	if (URLs.count > 0) {
 		NSURL *trashURL = [self moveURLs:URLs toTrashInCacheURL:cacheDirectoryURL error:outError];
 		if (trashURL == nil) {
 			return nil;
 		}
-		// The files are out of the snapshot; a trash folder this fails to delete goes with the next
+		// The files are out of the snapshots; a trash folder this fails to delete goes with the next
 		// removal.
 		[NSFileManager.defaultManager removeItemAtURL:trashURL error:NULL];
 		for (NSURL *url in URLs) {
 			[self removeEmptyFoldersAboveURL:url inDirectoryAtURL:cacheDirectoryURL];
 		}
 	}
-
-	NFKRemovalPlan *executed = [[NFKRemovalPlan alloc] initWithRepository:fresh.repository
-																 revision:fresh.revision
-																sourceURL:fresh.sourceURL
-															 removedFiles:removing
-																keptFiles:fresh.keptFiles
-														   freedByteCount:freed
-															  snapshotURL:fresh.snapshotURL];
-	executed.targetPaths = fresh.targetPaths;
-	executed.bookkeepingURLs = bookkeeping;
 	return executed;
 }
 

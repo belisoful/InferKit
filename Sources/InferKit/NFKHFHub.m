@@ -30,6 +30,64 @@ NSArray<NSString *> *NFKHFHubBookkeepingNames(void)
 	return @[ NFKHFHubOwnedMarkerName, NFKHFHubKeepMarkerName, NFKHFHubCompleteMarkerName ];
 }
 
+/*! Why string cannot name a place inside the folder it is appended to, or nil when it can. Without
+	separators the string is a single component. */
+static NSString * _Nullable NFKHFHubUnsafePathReason(NSString * _Nullable string, BOOL allowsSeparators)
+{
+	if (string.length == 0) {
+		return @"is empty";
+	}
+	if ([string hasPrefix:@"/"]) {
+		return @"is an absolute path";
+	}
+	if ([string rangeOfString:@"\\"].location != NSNotFound) {
+		return @"holds a backslash";
+	}
+	if ([string rangeOfCharacterFromSet:[NSCharacterSet characterSetWithRange:NSMakeRange(0, 1)]].location != NSNotFound) {
+		return @"holds a NUL character";
+	}
+	NSArray<NSString *> *components = [string componentsSeparatedByString:@"/"];
+	if (!allowsSeparators && components.count > 1) {
+		return @"holds a /";
+	}
+	for (NSString *component in components) {
+		if (component.length == 0 || [component isEqualToString:@"."] || [component isEqualToString:@".."]) {
+			return @"holds an empty, \".\", or \"..\" component";
+		}
+	}
+	return nil;
+}
+
+NSError * _Nullable NFKHFHubUnsafePathError(NSString * _Nullable string, NSString *kind, BOOL allowsSeparators)
+{
+	NSString *problem = NFKHFHubUnsafePathReason(string, allowsSeparators);
+	if (problem == nil) {
+		return nil;
+	}
+	NSString *reason = [NSString stringWithFormat:@"the %@ \"%@\" %@, so it can name a location outside the cache folder",
+						kind, string ?: @"", problem];
+	return [NFKDownload errorWithCode:NFKDownloadErrorUnsafePath reason:reason];
+}
+
+/*! path with "." and ".." components applied and empty ones dropped, reading nothing from disk. */
+static NSString *NFKHFHubLexicalPath(NSString *path)
+{
+	NSMutableArray<NSString *> *stack = [NSMutableArray array];
+	for (NSString *component in [path componentsSeparatedByString:@"/"]) {
+		if (component.length == 0 || [component isEqualToString:@"."]) {
+			continue;
+		}
+		if ([component isEqualToString:@".."]) {
+			if (stack.count > 0) {
+				[stack removeLastObject];
+			}
+			continue;
+		}
+		[stack addObject:component];
+	}
+	return [@"/" stringByAppendingString:[stack componentsJoinedByString:@"/"]];
+}
+
 static long long NFKHFHubDefaultCacheSizeLimitValue = -1;
 static BOOL NFKHFHubDefaultExcludesCacheFromBackupValue = YES;
 static NSString *NFKHFHubDefaultAccessTokenValue = nil;
@@ -193,11 +251,25 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 	return result;
 }
 
+- (nullable NSError *)refusalForRepo:(nullable NSString *)repo
+							revision:(nullable NSString *)revision
+								path:(nullable NSString *)path
+{
+	NSError *refusal = NFKHFHubUnsafePathError(repo, @"repository", YES);
+	if (refusal == nil && revision.length > 0) {
+		refusal = NFKHFHubUnsafePathError(revision, @"revision", YES);
+	}
+	if (refusal == nil && path != nil) {
+		refusal = NFKHFHubUnsafePathError(path, @"path", YES);
+	}
+	return refusal;
+}
+
 - (nullable NSURL *)remoteURLForRepo:(NSString *)repo
 						  revision:(nullable NSString *)revision
 							  path:(NSString *)path
 {
-	if (repo.length == 0 || path.length == 0) {
+	if ([self refusalForRepo:repo revision:revision path:path] != nil) {
 		return nil;
 	}
 	NSURL *url = [self URL:self.endpointURL byAppendingPathString:repo];
@@ -210,21 +282,66 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 						 revision:(nullable NSString *)revision
 							 path:(NSString *)path
 {
-	if (self.cacheDirectoryURL == nil || repo.length == 0 || path.length == 0) {
+	NSURL *snapshotURL = [self snapshotURLForRepo:repo revision:revision];
+	if (snapshotURL == nil || NFKHFHubUnsafePathReason(path, YES) != nil) {
 		return nil;
 	}
-	NSURL *url = [self URL:self.cacheDirectoryURL byAppendingPathString:repo];
-	url = [url URLByAppendingPathComponent:[self normalizedRevision:revision]];
-	return [self URL:url byAppendingPathString:path];
+	return [self URL:snapshotURL byAppendingPathString:path];
 }
 
 - (nullable NSURL *)snapshotURLForRepo:(NSString *)repo revision:(nullable NSString *)revision
 {
-	if (self.cacheDirectoryURL == nil || repo.length == 0) {
+	return [self snapshotURLForRepo:repo revision:revision error:NULL];
+}
+
+- (nullable NSURL *)snapshotURLForRepo:(nullable NSString *)repo
+							  revision:(nullable NSString *)revision
+								 error:(NSError * _Nullable *)outError
+{
+	NSError *refusal = [self refusalForRepo:repo revision:revision path:nil];
+	if (refusal != nil) {
+		[self propagateError:refusal to:outError];
+		return nil;
+	}
+	if (self.cacheDirectoryURL == nil) {
+		[self setError:outError code:kNFKError_InferenceNotReady reason:@"no cache directory is set"];
 		return nil;
 	}
 	NSURL *url = [self URL:self.cacheDirectoryURL byAppendingPathString:repo];
-	return [url URLByAppendingPathComponent:[self normalizedRevision:revision]];
+	return [self URL:url byAppendingPathString:[self normalizedRevision:revision]];
+}
+
+- (BOOL)isURL:(NSURL *)url insideCacheURL:(NSURL *)cacheDirectoryURL
+{
+	NSString *path = NFKHFHubLexicalPath(url.path);
+	NSMutableArray<NSString *> *roots = [NSMutableArray arrayWithObjects:cacheDirectoryURL.path,
+										 cacheDirectoryURL.URLByResolvingSymlinksInPath.path, nil];
+	// URLByResolvingSymlinksInPath drops a leading /private that realpath keeps, and a directory
+	// enumerator can hand back either form.
+	char resolved[PATH_MAX];
+	if (realpath(cacheDirectoryURL.fileSystemRepresentation, resolved) != NULL) {
+		[roots addObject:[NSFileManager.defaultManager stringWithFileSystemRepresentation:resolved length:strlen(resolved)]];
+	}
+	for (NSString *root in roots) {
+		NSString *prefix = NFKHFHubLexicalPath(root);
+		if (![prefix hasSuffix:@"/"]) {
+			prefix = [prefix stringByAppendingString:@"/"];
+		}
+		if ([path hasPrefix:prefix] && path.length > prefix.length) {
+			return YES;
+		}
+	}
+	return NO;
+}
+
+- (BOOL)requireURL:(NSURL *)url insideCacheURL:(NSURL *)cacheDirectoryURL error:(NSError * _Nullable *)outError
+{
+	if ([self isURL:url insideCacheURL:cacheDirectoryURL]) {
+		return YES;
+	}
+	NSString *reason = [NSString stringWithFormat:@"%@ is outside the cache folder %@, and the hub writes and removes only inside it",
+						url.path, cacheDirectoryURL.path];
+	return [self propagateError:[NFKDownload errorWithCode:NFKDownloadErrorUnsafePath reason:reason] to:outError];
 }
 
 - (BOOL)isCachedRepo:(NSString *)repo revision:(nullable NSString *)revision path:(NSString *)path
@@ -243,6 +360,11 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 {
 	if (self.cacheDirectoryURL == nil) {
 		[self setError:outError code:kNFKError_InferenceNotReady reason:@"no cache directory is set"];
+		return nil;
+	}
+	NSError *refusal = [self refusalForRepo:repo revision:revision path:path];
+	if (refusal != nil) {
+		[self propagateError:refusal to:outError];
 		return nil;
 	}
 	NSURL *localURL = [self localURLForRepo:repo revision:revision path:path];
@@ -288,9 +410,18 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 		[self propagateError:[NFKDownload cancellationError] to:outError];
 		return nil;
 	}
+	NSURL *cacheDirectoryURL = self.cacheDirectoryURL;
+	if (cacheDirectoryURL == nil) {
+		[self setError:outError code:kNFKError_InferenceNotReady reason:@"no cache directory is set"];
+		return nil;
+	}
+	if (![self requireURL:snapshotURL insideCacheURL:cacheDirectoryURL error:outError]
+		|| ![self requireURL:localURL insideCacheURL:cacheDirectoryURL error:outError]) {
+		return nil;
+	}
 
 	NSFileManager *fileManager = NSFileManager.defaultManager;
-	BOOL scoped = [self.cacheDirectoryURL startAccessingSecurityScopedResource];
+	BOOL scoped = [cacheDirectoryURL startAccessingSecurityScopedResource];
 	@try {
 		if ([fileManager fileExistsAtPath:localURL.path]) {
 			if ([self cachedFileAtURL:localURL matchesSHA256:expectedSHA256 byteCount:expectedByteCount]) {
@@ -302,6 +433,8 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 			[fileManager removeItemAtURL:localURL error:NULL];
 		}
 
+		// Registered before the folder exists, so a trim running meanwhile cannot evict it.
+		[download registerSnapshotURL:snapshotURL];
 		NSError *dirError = nil;
 		if (![fileManager createDirectoryAtURL:localURL.URLByDeletingLastPathComponent
 				   withIntermediateDirectories:YES
@@ -310,7 +443,6 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 			[self propagateError:dirError to:outError];
 			return nil;
 		}
-		[download registerSnapshotURL:snapshotURL];
 		[self excludeCacheFromBackupIfNeeded];
 		[self markSnapshotUsedAtURL:snapshotURL];
 
@@ -324,11 +456,12 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 			return nil;
 		}
 
-		if (expectedSHA256 != nil && ![self fileAtURL:partialURL matchesSHA256:expectedSHA256]) {
+		NSError *contentError = [self contentErrorOfFileAtURL:partialURL path:path
+											 expectedByteCount:expectedByteCount sha256:expectedSHA256];
+		if (contentError != nil) {
 			[fileManager removeItemAtURL:partialURL error:NULL];
 			[download fileDidFailAtLocalURL:localURL];
-			NSString *reason = [NSString stringWithFormat:@"%@ failed its checksum", path];
-			[self propagateError:[NFKDownload errorWithCode:NFKDownloadErrorChecksumMismatch reason:reason] to:outError];
+			[self propagateError:contentError to:outError];
 			return nil;
 		}
 
@@ -348,9 +481,32 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 		return localURL;
 	} @finally {
 		if (scoped) {
-			[self.cacheDirectoryURL stopAccessingSecurityScopedResource];
+			[cacheDirectoryURL stopAccessingSecurityScopedResource];
 		}
 	}
+}
+
+/*! Why a fetched file is not the listed one, or nil: its size differs from a non-negative
+	expectedByteCount, or its contents from expectedSHA256. */
+- (nullable NSError *)contentErrorOfFileAtURL:(NSURL *)url
+										 path:(NSString *)path
+							expectedByteCount:(long long)expectedByteCount
+									   sha256:(nullable NSString *)expectedSHA256
+{
+	if (expectedByteCount >= 0) {
+		NSDictionary<NSFileAttributeKey, id> *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:url.path error:NULL];
+		long long byteCount = attributes != nil ? [attributes[NSFileSize] longLongValue] : -1;
+		if (byteCount != expectedByteCount) {
+			NSString *reason = [NSString stringWithFormat:@"%@ arrived with %lld bytes, and its listed size is %lld",
+								path, byteCount, expectedByteCount];
+			return [NFKDownload errorWithCode:NFKDownloadErrorSizeMismatch reason:reason];
+		}
+	}
+	if (expectedSHA256 != nil && ![self fileAtURL:url matchesSHA256:expectedSHA256]) {
+		NSString *reason = [NSString stringWithFormat:@"%@ failed its checksum", path];
+		return [NFKDownload errorWithCode:NFKDownloadErrorChecksumMismatch reason:reason];
+	}
+	return nil;
 }
 
 /*! Runs the transport seam with the file's report set on the calling thread for the default
@@ -570,7 +726,8 @@ expectedByteCount:(long long)expectedByteCount
 	return size;
 }
 
-/*! The owned snapshots under the cache, least recently used first, less the pinned and any holding a .download file. */
+/*! The owned snapshots under the cache, least recently used first, less the pinned, any holding a
+	.download file, and any an unfinished NFKDownload in this process writes into. */
 - (NSArray<NFKHFHubSnapshot *> *)evictableSnapshotsInDirectoryAtURL:(NSURL *)cacheDirectoryURL
 {
 	NSArray<NSURLResourceKey> *keys = @[ NSURLContentModificationDateKey ];
@@ -602,7 +759,7 @@ expectedByteCount:(long long)expectedByteCount
 	}
 
 	NSIndexSet *busy = [snapshots indexesOfObjectsPassingTest:^BOOL(NFKHFHubSnapshot *snapshot, NSUInteger index, BOOL *stop) {
-		if ([pinnedPaths containsObject:snapshot.URL.path]) {
+		if ([pinnedPaths containsObject:snapshot.URL.path] || [NFKDownload isSnapshotURLInUse:snapshot.URL]) {
 			return YES;
 		}
 		NSString *prefix = [snapshot.URL.path stringByAppendingString:@"/"];
@@ -642,11 +799,21 @@ expectedByteCount:(long long)expectedByteCount
 			if ([snapshot.URL.URLByStandardizingPath.path isEqualToString:keptPath]) {
 				continue;
 			}
-			long long size = [self allocatedSizeOfDirectoryAtURL:snapshot.URL];
-			if (![self removeSnapshotAtURL:snapshot.URL inDirectoryAtURL:cacheDirectoryURL error:&removeError]) {
+			__block long long freed = 0;
+			// Checked and removed under the registry lock, so no download registers the snapshot between.
+			[NFKDownload performWithSnapshotRegistryLocked:^{
+				if ([NFKDownload isSnapshotURLInUse:snapshot.URL]) {
+					return;
+				}
+				long long size = [self allocatedSizeOfDirectoryAtURL:snapshot.URL];
+				if ([self removeSnapshotAtURL:snapshot.URL inDirectoryAtURL:cacheDirectoryURL error:&removeError]) {
+					freed = size;
+				}
+			}];
+			if (removeError != nil) {
 				break;
 			}
-			total -= size;
+			total -= freed;
 		}
 	}];
 	if (removeError != nil) {
@@ -659,6 +826,9 @@ expectedByteCount:(long long)expectedByteCount
 		   inDirectoryAtURL:(NSURL *)cacheDirectoryURL
 					  error:(NSError * _Nullable *)outError
 {
+	if (![self requireURL:snapshotURL insideCacheURL:cacheDirectoryURL error:outError]) {
+		return NO;
+	}
 	NSFileManager *fileManager = NSFileManager.defaultManager;
 	NSError *error = nil;
 	if (![fileManager removeItemAtURL:snapshotURL error:&error] && [fileManager fileExistsAtPath:snapshotURL.path]) {
@@ -688,15 +858,16 @@ expectedByteCount:(long long)expectedByteCount
 
 - (BOOL)adoptCachedRepo:(NSString *)repo revision:(nullable NSString *)revision error:(NSError * _Nullable *)outError
 {
-	if (self.cacheDirectoryURL == nil) {
-		return [self setError:outError code:kNFKError_InferenceNotReady reason:@"no cache directory is set"];
-	}
-	NSURL *snapshotURL = [self snapshotURLForRepo:repo revision:revision];
+	NSURL *snapshotURL = [self snapshotURLForRepo:repo revision:revision error:outError];
 	if (snapshotURL == nil) {
-		return [self setError:outError code:kNFKError_InferenceBackendFailure reason:@"invalid repo"];
+		return NO;
 	}
 	__block BOOL adopted = NO;
+	__block NSError *refusal = nil;
 	[self performWithCacheAccess:^(NSURL *cacheDirectoryURL) {
+		if (![self requireURL:snapshotURL insideCacheURL:cacheDirectoryURL error:&refusal]) {
+			return;
+		}
 		BOOL isDirectory = NO;
 		if (![NSFileManager.defaultManager fileExistsAtPath:snapshotURL.path isDirectory:&isDirectory] || !isDirectory) {
 			return;
@@ -704,6 +875,9 @@ expectedByteCount:(long long)expectedByteCount
 		[self markSnapshotUsedAtURL:snapshotURL];
 		adopted = YES;
 	}];
+	if (refusal != nil) {
+		return [self propagateError:refusal to:outError];
+	}
 	if (!adopted) {
 		return [self setError:outError code:kNFKError_InferenceBackendFailure reason:@"nothing is cached for the repo and revision"];
 	}
@@ -712,18 +886,16 @@ expectedByteCount:(long long)expectedByteCount
 
 - (BOOL)pinCachedRepo:(NSString *)repo revision:(nullable NSString *)revision error:(NSError * _Nullable *)outError
 {
-	if (self.cacheDirectoryURL == nil) {
-		return [self setError:outError code:kNFKError_InferenceNotReady reason:@"no cache directory is set"];
-	}
-	NSURL *snapshotURL = [self snapshotURLForRepo:repo revision:revision];
+	NSURL *snapshotURL = [self snapshotURLForRepo:repo revision:revision error:outError];
 	if (snapshotURL == nil) {
-		return [self setError:outError code:kNFKError_InferenceBackendFailure reason:@"invalid repo"];
+		return NO;
 	}
 	__block NSError *pinError = nil;
 	__block BOOL pinned = NO;
 	[self performWithCacheAccess:^(NSURL *cacheDirectoryURL) {
 		NSFileManager *fileManager = NSFileManager.defaultManager;
-		if (![fileManager createDirectoryAtURL:snapshotURL withIntermediateDirectories:YES attributes:nil error:&pinError]) {
+		if (![self requireURL:snapshotURL insideCacheURL:cacheDirectoryURL error:&pinError]
+			|| ![fileManager createDirectoryAtURL:snapshotURL withIntermediateDirectories:YES attributes:nil error:&pinError]) {
 			return;
 		}
 		NSURL *keepURL = [snapshotURL URLByAppendingPathComponent:NFKHFHubKeepMarkerName];
@@ -737,17 +909,25 @@ expectedByteCount:(long long)expectedByteCount
 
 - (BOOL)unpinCachedRepo:(NSString *)repo revision:(nullable NSString *)revision error:(NSError * _Nullable *)outError
 {
+	NSError *refusal = [self refusalForRepo:repo revision:revision path:nil];
+	if (refusal != nil) {
+		return [self propagateError:refusal to:outError];
+	}
 	if (self.cacheDirectoryURL == nil) {
 		return YES;
 	}
-	NSURL *snapshotURL = [self snapshotURLForRepo:repo revision:revision];
+	NSURL *snapshotURL = [self snapshotURLForRepo:repo revision:revision error:outError];
 	if (snapshotURL == nil) {
-		return [self setError:outError code:kNFKError_InferenceBackendFailure reason:@"invalid repo"];
+		return NO;
 	}
 	__block NSError *unpinError = nil;
 	__block BOOL unpinned = YES;
 	[self performWithCacheAccess:^(NSURL *cacheDirectoryURL) {
 		NSFileManager *fileManager = NSFileManager.defaultManager;
+		if (![self requireURL:snapshotURL insideCacheURL:cacheDirectoryURL error:&unpinError]) {
+			unpinned = NO;
+			return;
+		}
 		NSURL *keepURL = [snapshotURL URLByAppendingPathComponent:NFKHFHubKeepMarkerName];
 		if (![fileManager removeItemAtURL:keepURL error:&unpinError] && [fileManager fileExistsAtPath:keepURL.path]) {
 			unpinned = NO;
@@ -777,17 +957,29 @@ expectedByteCount:(long long)expectedByteCount
 
 - (BOOL)removeCachedRepo:(NSString *)repo revision:(nullable NSString *)revision error:(NSError * _Nullable *)outError
 {
+	NSError *refusal = [self refusalForRepo:repo revision:revision path:nil];
+	if (refusal != nil) {
+		return [self propagateError:refusal to:outError];
+	}
 	if (self.cacheDirectoryURL == nil) {
 		return YES;
 	}
-	NSURL *snapshotURL = [self snapshotURLForRepo:repo revision:revision];
+	NSURL *snapshotURL = [self snapshotURLForRepo:repo revision:revision error:outError];
 	if (snapshotURL == nil) {
-		return [self setError:outError code:kNFKError_InferenceBackendFailure reason:@"invalid repo"];
+		return NO;
 	}
 	__block BOOL removed = YES;
 	__block NSError *removeError = nil;
-	[self performWithCacheAccess:^(NSURL *cacheDirectoryURL) {
-		removed = [self removeSnapshotAtURL:snapshotURL inDirectoryAtURL:cacheDirectoryURL error:&removeError];
+	[NFKDownload performWithSnapshotRegistryLocked:^{
+		if ([NFKDownload isSnapshotURLInUse:snapshotURL]) {
+			NSString *reason = [NSString stringWithFormat:@"%@ is being downloaded; cancel the download before removing it", repo];
+			removeError = [NFKDownload errorWithCode:NFKDownloadErrorInUse reason:reason];
+			removed = NO;
+			return;
+		}
+		[self performWithCacheAccess:^(NSURL *cacheDirectoryURL) {
+			removed = [self removeSnapshotAtURL:snapshotURL inDirectoryAtURL:cacheDirectoryURL error:&removeError];
+		}];
 	}];
 	if (!removed) {
 		return [self propagateError:removeError to:outError];

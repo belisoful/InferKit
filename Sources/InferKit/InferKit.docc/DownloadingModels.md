@@ -47,7 +47,8 @@ substitute `defaultCacheDirectoryURL` when passed `nil`.
 
 `cacheSizeLimit` caps the bytes the cache holds; `NFKHFHubUnlimitedCacheSize` (-1) is no cap. Over
 the limit, a download evicts whole `<repo>/<revision>` snapshots, least recently used first. The
-snapshot just requested stays even when it alone exceeds the limit.
+snapshot just requested stays even when it alone exceeds the limit, and so does every snapshot a
+running ``NFKDownload`` writes into.
 
 Only a snapshot the hub owns is eligible, so a shared folder keeps everything else. The hub owns a
 snapshot it downloads into. A snapshot cached before InferKit 0.4.0 becomes owned on its next download
@@ -79,7 +80,14 @@ bytes received and expected per file and overall, the current file, the transfer
 Its `progress` is the same as an `NSProgress`. `cancel` stops the transfer in flight and removes the
 partial file: a file streams into a temporary `.download` name and moves into place only whole. A
 transfer that drops resumes with an HTTP Range request. A plan larger than `cacheSizeLimit` or than
-the volume's free space is refused before any transfer.
+the volume's free space is refused before any transfer. A file whose size differs from its listed
+size fails with `NFKDownloadErrorSizeMismatch`, and one whose contents differ from its listed SHA-256
+with `NFKDownloadErrorChecksumMismatch`; neither stays in the cache.
+
+Every repository, revision, path, and file name names a place inside the cache. One that is empty or
+absolute, holds an empty, `.`, or `..` component, or holds a backslash or a NUL character is refused
+with `NFKDownloadErrorUnsafePath` before anything is read, written, or removed, and so is a repository
+listing that names such a file.
 
 ```objc
 NFKDownloadPlan *plan = [hub planDownloadOfRepo:@"Qwen/Qwen3-0.6B" revision:nil
@@ -98,14 +106,18 @@ cancelled, and the companion packages' asynchronous factories carry it to their 
 
 `-downloadModelSource:progressHandler:completionHandler:` plans and downloads a catalog variant's
 source, so an app fetches every catalog model the same way. A source that needs a converter fails
-with `NFKDownloadErrorRequiresConversion`.
+with `NFKDownloadErrorRequiresConversion`. A file that names its own repository, revision, or URL,
+such as an adapter published apart from its base model, is fetched from there and caches in that
+repository's snapshot, where the base model's own download finds it. The plan, the status, and the
+removal cover every repository a source's files come from.
 
 ### Downloaded or not, and removal
 
 `-downloadStatusForModelSource:` reads the cache alone and answers complete, partial, or absent, with
 the bytes on disk. `-removalPlanForModelSource:error:` lists the files a removal deletes and the files
 it keeps, each with its reason: a file another catalog model whose download is complete uses, or the
-target of a symbolic link that something else still needs. `-removeFilesInPlan:error:` deletes them,
+target of a symbolic link that something else still needs, such as a file of another snapshot. A file
+that a link elsewhere in the cache resolves to stays too. `-removeFilesInPlan:error:` deletes them,
 all or none, and returns the bytes freed. It refuses with `NFKDownloadErrorInUse` while a download in
 the process writes into the same snapshot.
 

@@ -50,6 +50,14 @@ typedef NS_ERROR_ENUM(NFKDownloadErrorDomain, NFKDownloadError) {
 	NFKDownloadErrorInUse						= 10,
 	/*! The transfer ended with fewer or more bytes than the server announced. */
 	NFKDownloadErrorIncomplete					= 11,
+	/*! A repository, revision, path, or file name names a location outside the cache folder or its
+		snapshot: it is empty or absolute, holds an empty, ".", or ".." component, or holds a
+		backslash or a NUL character. The hub refuses it before it reads, writes, or removes
+		anything. */
+	NFKDownloadErrorUnsafePath					= 12,
+	/*! A downloaded file's size differs from the size the repository listing or the model source
+		gives. The file is not kept. */
+	NFKDownloadErrorSizeMismatch				= 13,
 };
 
 /*!

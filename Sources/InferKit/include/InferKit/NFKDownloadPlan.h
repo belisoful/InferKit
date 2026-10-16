@@ -17,7 +17,7 @@ NS_ASSUME_NONNULL_BEGIN
 */
 @interface NFKDownloadPlanFile : NSObject <NSCopying>
 
-/*! The path inside the repository, or the file name for a URL. */
+/*! The path inside the repository the file comes from, or the file name for a URL. */
 @property (nonatomic, readonly, copy) NSString *path;
 /*! The URL the file is fetched from. */
 @property (nonatomic, readonly, copy) NSURL *remoteURL;
@@ -65,7 +65,8 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The files, in repository order. */
 @property (nonatomic, readonly, copy) NSArray<NFKDownloadPlanFile *> *files;
 /*! Where the files land: the snapshot folder of a repository, or the file of a single-file source.
-	nil when the plan holds no files. */
+	A catalog source's file that names its own repository or URL lands in that place's snapshot, and
+	this stays the source's own. nil when the plan holds no files. */
 @property (nonatomic, readonly, copy, nullable) NSURL *localURL;
 /*! The bytes of every file whose size is known. */
 @property (nonatomic, readonly) long long totalByteCount;
@@ -157,9 +158,13 @@ typedef NS_ENUM(NSInteger, NFKDownloadPresence) {
 				- a file that another catalog variant lists, when that variant's download is complete
 				  in the same cache. Its reason names the model and the variant.
 				- the target of a symbolic link that lies outside the cache folder.
-				- the target of a symbolic link that another cached file also links to.
+				- the target of a symbolic link that another cached file also links to, or that is a
+				  file of another snapshot.
+				- a file that a symbolic link the removal leaves resolves to.
 				A removed hard link whose storage another name shares frees nothing, and its reason
-				says so. Introduced in InferKit 0.4.0.
+				says so. A catalog source whose files come from several repositories or URLs yields
+				one plan over each of their snapshots, removed together, all or none; snapshotURL is
+				the source's own. Introduced in InferKit 0.4.0.
 */
 @interface NFKRemovalPlan : NSObject
 

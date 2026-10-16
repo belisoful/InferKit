@@ -9,6 +9,8 @@
 
 @implementation NFKDownloadPlanFile
 
+@synthesize snapshotURL = _snapshotURL;
+
 - (instancetype)initWithPath:(NSString *)path
 				   remoteURL:(NSURL *)remoteURL
 					localURL:(NSURL *)localURL
@@ -199,6 +201,7 @@
 
 @synthesize targetPaths = _targetPaths;
 @synthesize bookkeepingURLs = _bookkeepingURLs;
+@synthesize parts = _parts;
 
 - (instancetype)initWithRepository:(nullable NSString *)repository
 						  revision:(nullable NSString *)revision
