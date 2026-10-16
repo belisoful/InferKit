@@ -20,6 +20,11 @@ static const void *NFKPluginRunDirectoryKey = &NFKPluginRunDirectoryKey;
 /*! How often backendStatus asks the plugin for a fresh status, at most, in seconds. */
 static const NSTimeInterval NFKPluginStatusRefreshInterval = 1;
 
+id _Nullable NFKPluginResultFileOwner(NFKInferenceResult *result)
+{
+	return objc_getAssociatedObject(result, NFKPluginRunDirectoryKey);
+}
+
 #pragma mark - Run directory
 
 /*! The directory the host makes for one run's output files. It is removed when the object is

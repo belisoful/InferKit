@@ -8,6 +8,9 @@
 #import "NFKPluginWire.h"
 #import "NFKInferKit.h"
 #import "NFKModelVocabulary.h"
+#import <limits.h>
+#import <stdlib.h>
+#import <sys/stat.h>
 
 #if __has_include(<InferKitC/NFKPluginABI.h>)
 #import <InferKitC/NFKPluginABI.h>
@@ -76,6 +79,13 @@ static BOOL NFKPluginManifestIsContainedPath(NSString *path)
 		}
 	}
 	return YES;
+}
+
+/*! The path of an existing file with every symbolic link resolved, or nil. */
+static NSString * _Nullable NFKPluginManifestResolvedPath(NSURL *url)
+{
+	char resolved[PATH_MAX];
+	return realpath(url.fileSystemRepresentation, resolved) != NULL ? [NSString stringWithUTF8String:resolved] : nil;
 }
 
 /*! Reads the manifest's fields from its JSON object, reporting the first problem by its path. */
@@ -532,23 +542,45 @@ static BOOL NFKPluginManifestIsContainedPath(NSString *path)
 
 - (BOOL)hasExecutableWithError:(NSError **)error
 {
-	NSURL *executable = self.executableURL;
-	BOOL isDirectory = NO;
-	if (executable == nil || ![NSFileManager.defaultManager fileExistsAtPath:executable.path isDirectory:&isDirectory] || isDirectory) {
-		return NFKPluginManifestFail(error, NFKPluginErrorManifestMismatch,
-									 [NSString stringWithFormat:@"the plugin's executable \"%@\" is not in Contents/MacOS",
-									  self.executablePath ?: self.bundleExecutableName ?: @"(no CFBundleExecutable)"]);
-	}
-	return YES;
+	return [self containedExecutableURLWithError:error] != nil;
 }
 
 - (nullable NSURL *)executableURL
 {
+	return [self containedExecutableURLWithError:NULL];
+}
+
+- (nullable NSURL *)containedExecutableURLWithError:(NSError **)error
+{
 	NSString *name = self.executablePath ?: self.bundleExecutableName;
 	if (self.bundleURL == nil || name == nil) {
+		NFKPluginManifestFail(error, NFKPluginErrorManifestMismatch,
+							  [NSString stringWithFormat:@"the plugin's bundle names no executable: %@",
+							   self.bundleURL == nil ? @"the manifest was read without its bundle" : @"no entry.executable and no CFBundleExecutable"]);
 		return nil;
 	}
-	return [[self.bundleURL URLByAppendingPathComponent:@"Contents/MacOS" isDirectory:YES] URLByAppendingPathComponent:name isDirectory:NO];
+	if (!NFKPluginManifestIsContainedPath(name)) {
+		NFKPluginManifestFail(error, NFKPluginErrorManifestMismatch,
+							  [NSString stringWithFormat:@"the plugin's executable \"%@\" is not a relative path inside Contents/MacOS", name]);
+		return nil;
+	}
+	NSURL *candidate = [[self.bundleURL URLByAppendingPathComponent:@"Contents/MacOS" isDirectory:YES] URLByAppendingPathComponent:name isDirectory:NO];
+	NSString *bundle = NFKPluginManifestResolvedPath(self.bundleURL);
+	NSString *resolved = NFKPluginManifestResolvedPath(candidate);
+	struct stat status;
+	if (bundle == nil || resolved == nil || stat(resolved.fileSystemRepresentation, &status) != 0 || !S_ISREG(status.st_mode)) {
+		NFKPluginManifestFail(error, NFKPluginErrorManifestMismatch,
+							  [NSString stringWithFormat:@"the plugin's executable \"%@\" is not a file in Contents/MacOS", name]);
+		return nil;
+	}
+	NSString *prefix = [bundle stringByAppendingString:@"/Contents/MacOS/"];
+	if (![resolved hasPrefix:prefix]) {
+		NFKPluginManifestFail(error, NFKPluginErrorManifestMismatch,
+							  [NSString stringWithFormat:@"the plugin's executable \"%@\" resolves to %@, outside the bundle's Contents/MacOS",
+							   name, resolved]);
+		return nil;
+	}
+	return [NSURL fileURLWithPath:resolved isDirectory:NO];
 }
 
 - (nullable NFKModelDescriptor *)modelWithIdentifier:(NSString *)identifier

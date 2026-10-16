@@ -15,6 +15,7 @@
 #endif
 
 #import "NFKInferKit.h"
+#import "NFKCStructSizes.h"
 #import "NFKInferKitCDelivery.h"
 #import "NFKErrors.h"
 #import "NFKInferenceBackend.h"
@@ -27,10 +28,12 @@
 #import "NFKModelOptions.h"
 #if TARGET_OS_OSX
 #import "NFKPluginRegistry.h"
+#import "NFKPluginWire.h"
 #endif
 
 #import <IOSurface/IOSurfaceRef.h>
 #import <errno.h>
+#import <os/log.h>
 #import <stdlib.h>
 #import <string.h>
 #import <sys/stat.h>
@@ -261,18 +264,19 @@ static void NFKCClearError(nfk_error * _Nullable * _Nullable outError)
 
 #pragma mark - Request
 
-/*! The buffer at index of a payload, striding by the first buffer's struct_size, or NULL. */
+/*! The buffer at index of a payload, striding by the first buffer's struct_size, or NULL. A buffer
+	shorter than version 1.0's is NULL. */
 static const nfk_buffer * _Nullable NFKCBufferAtIndex(const nfk_payload *payload, NSInteger index)
 {
 	if (index < 0 || (uint32_t)index >= payload->buffer_count || payload->buffers == NULL) {
 		return NULL;
 	}
 	uint32_t stride = payload->buffers[0].struct_size;
-	if (stride < sizeof(nfk_buffer) || stride % _Alignof(nfk_buffer) != 0) {
+	if (stride < NFKCBufferSize1_0 || stride % _Alignof(nfk_buffer) != 0) {
 		return NULL;
 	}
 	const nfk_buffer *buffer = (const nfk_buffer *)((const uint8_t *)payload->buffers + (size_t)stride * (size_t)index);
-	return buffer->struct_size >= sizeof(nfk_buffer) ? buffer : NULL;
+	return buffer->struct_size >= NFKCBufferSize1_0 ? buffer : NULL;
 }
 
 /*! The attachment source over a caller's payload. Bytes and surfaces are wrapped without a copy; each
@@ -452,9 +456,9 @@ static NFKInferenceRequest * _Nullable NFKCRequestFromPayload(const nfk_payload 
 		*error = NFKCMakeError(NFKInferenceErrorDomain, kNFKError_InferenceMissingInput, @"The request carries no JSON.");
 		return nil;
 	}
-	if (payload->struct_size < sizeof(nfk_payload)) {
-		NSString *reason = [NSString stringWithFormat:@"The request's struct_size %u is smaller than nfk_payload's %zu bytes.",
-							payload->struct_size, sizeof(nfk_payload)];
+	if (payload->struct_size < NFKCPayloadSize1_0) {
+		NSString *reason = [NSString stringWithFormat:@"The request's struct_size %u is smaller than nfk_payload's %zu bytes at version 1.0.",
+							payload->struct_size, NFKCPayloadSize1_0];
 		*error = NFKCMakeError(NFKInferenceErrorDomain, kNFKError_InferenceMissingInput, reason);
 		return nil;
 	}
@@ -481,12 +485,14 @@ static NFKInferenceRequest * _Nullable NFKCRequestFromPayload(const nfk_payload 
 #pragma mark - Result
 
 /*! A result in the C form: its tagged JSON and one bytes buffer per attachment, all owned until
-	nfk_result_free. Every value with bytes is attached, so a C reader decodes no base64 for them. */
+	nfk_result_free. Every value with bytes is attached, so a C reader decodes no base64 for them. It keeps
+	the owner of the files the JSON names, never the result's values, which may wrap a request's surface
+	and hold its read-only lock. */
 @interface NFKCResult : NSObject <NFKWireAttachmentSink>
 @property (nonatomic, readonly) NSMutableArray<NSMutableData *> *regions;
 @property (nonatomic, strong, nullable) NSData *JSON;
 @property (nonatomic, strong, nullable) NSMutableData *table;
-@property (nonatomic, strong, nullable) NFKInferenceResult *result;
+@property (nonatomic, strong, nullable) id fileOwner;
 @property (nonatomic, strong, nullable) NFKCRunFiles *files;
 @property (nonatomic, readonly, nullable) const char *JSONString;
 @property (nonatomic, readonly) uint32_t bufferCount;
@@ -548,7 +554,9 @@ static NFKInferenceRequest * _Nullable NFKCRequestFromPayload(const nfk_payload 
 		buffers[index] = (nfk_buffer){ .struct_size = sizeof(nfk_buffer), .kind = NFK_BUFFER_BYTES, .bytes = region.bytes,
 									   .length = region.length, .surface = NULL, .path = NULL, .descriptor = -1, .reserved = 0 };
 	}];
-	self.result = result;
+#if TARGET_OS_OSX
+	self.fileOwner = NFKPluginResultFileOwner(result);
+#endif
 	return YES;
 }
 
@@ -644,8 +652,11 @@ static nfk_result * _Nullable NFKCResultHandle(NFKInferenceResult *result, NFKCR
 
 static const void * const NFKCJobQueueKey = &NFKCJobQueueKey;
 
+/*! How long nfk_job_free waits for a run to release the request's buffers between reports to the log. */
+static const NSTimeInterval NFKCJobReleaseReportInterval = 10;
+
 /*! A submitted run as the C interface hands it out. Its callbacks run one at a time on its serial queue.
-	freed, delivering, and completed are read and written under condition. */
+	freed, delivering, completed, and released are read and written under condition. */
 @interface NFKCJob : NSObject
 @property (nonatomic, readonly) dispatch_queue_t queue;
 @property (nonatomic, readonly) NSCondition *condition;
@@ -656,8 +667,14 @@ static const void * const NFKCJobQueueKey = &NFKCJobQueueKey;
 @property (nonatomic) BOOL freed;
 @property (nonatomic) BOOL delivering;
 @property (nonatomic) BOOL completed;
-@property (nonatomic, strong, nullable) NFKInferenceResult *lastPartial;
-@property (nonatomic, strong, nullable) NFKCResult *lastEncodedPartial;
+/*! Whether the run reads the caller's buffers no more: it returned a result, or every wrapper over the
+	caller's memory is gone. */
+@property (nonatomic) BOOL released;
+/*! The last partial the run reported, weakly, so a repeat is encoded once and the job never keeps a
+	partial that holds the caller's memory. */
+@property (atomic, weak, nullable) NFKInferenceResult *lastPartial;
+/*! The last partial in the C form. It holds copies, not the caller's memory. */
+@property (atomic, strong, nullable) NFKCResult *lastEncodedPartial;
 @end
 
 @implementation NFKCJob
@@ -700,6 +717,24 @@ static const void * const NFKCJobQueueKey = &NFKCJobQueueKey;
 	[self.condition unlock];
 }
 
+- (void)markReleased
+{
+	[self.condition lock];
+	self.released = YES;
+	[self.condition broadcast];
+	[self.condition unlock];
+}
+
+/*! Marks the released state once group is empty. Wrappers enter group only while the request decodes, so
+	the notification registered after the decoding is final. */
+- (void)markReleasedWhenGroupEmpties:(dispatch_group_t)group
+{
+	__weak NFKCJob *weakSelf = self;
+	dispatch_group_notify(group, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		[weakSelf markReleased];
+	});
+}
+
 /*! Marks the job freed, waits for a callback running on another thread, and answers whether the run had
 	not completed. */
 - (BOOL)markFreed
@@ -715,22 +750,53 @@ static const void * const NFKCJobQueueKey = &NFKCJobQueueKey;
 	return !completed;
 }
 
+/*! Lets go of the run's job, whose partial result may hold the caller's memory, and waits until the run
+	releases the request's buffers. The wait has no deadline: the caller frees the buffers next, and a run
+	still reading them would read freed memory. A report goes to the log every
+	NFKCJobReleaseReportInterval seconds. */
+- (void)waitForRelease
+{
+	self.job = nil;
+	NSTimeInterval waited = 0;
+	[self.condition lock];
+	while (!self.released) {
+		NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:NFKCJobReleaseReportInterval];
+		if (![self.condition waitUntilDate:deadline] && !self.released) {
+			waited += NFKCJobReleaseReportInterval;
+			os_log_fault(OS_LOG_DEFAULT, "nfk_job_free has waited %.0f s for a cancelled run to release the request's buffers",
+						 waited);
+		}
+	}
+	[self.condition unlock];
+}
+
+/*! A partial in the C form, encoded once per partial. Runs on the thread that reports the progress, so
+	the queue receives copies and never the partial itself. */
+- (nullable NFKCResult *)encodedPartial:(nullable NFKInferenceResult *)partial
+{
+	if (partial == nil) {
+		return nil;
+	}
+	@synchronized (self) {
+		if (partial != self.lastPartial) {
+			self.lastPartial = partial;
+			@try {
+				self.lastEncodedPartial = [NFKCResult resultEncoding:partial error:NULL];
+			} @catch (NSException *exception) {
+				self.lastEncodedPartial = nil;
+			}
+		}
+		return self.lastEncodedPartial;
+	}
+}
+
 // Runs on the queue.
-- (void)deliverProgress:(double)fraction partial:(nullable NFKInferenceResult *)partial
+- (void)deliverProgress:(double)fraction partial:(nullable NFKCResult *)encoded
 {
 	nfk_progress_callback progress = self.progress;
 	if (progress == NULL || ![self beginCallbackCompleting:NO]) {
 		return;
 	}
-	if (partial != nil && partial != self.lastPartial) {
-		self.lastPartial = partial;
-		@try {
-			self.lastEncodedPartial = [NFKCResult resultEncoding:partial error:NULL];
-		} @catch (NSException *exception) {
-			self.lastEncodedPartial = nil;
-		}
-	}
-	NFKCResult *encoded = partial != nil ? self.lastEncodedPartial : nil;
 	progress(self.context, fraction, (__bridge const nfk_result *)encoded);
 	[self endCallback];
 }
@@ -756,7 +822,6 @@ static const void * const NFKCJobQueueKey = &NFKCJobQueueKey;
 	NFKCDeliverCompletion(self.completion, self.context, encoded != nil ? CFBridgingRetain(encoded) : NULL,
 						  failureObject != nil ? CFBridgingRetain(failureObject) : NULL);
 	self.job = nil;
-	self.lastPartial = nil;
 	self.lastEncodedPartial = nil;
 	[self endCallback];
 }
@@ -770,13 +835,14 @@ static const void * const NFKCJobQueueKey = &NFKCJobQueueKey;
 	if (self.progress != NULL) {
 		job.progressHandler = ^(NFKInferenceJob *observed) {
 			NFKCJob *strongSelf = weakSelf;
-			double fraction = observed.progress;
-			NFKInferenceResult *partial = observed.partialResult;
-			if (strongSelf != nil) {
-				dispatch_async(strongSelf.queue, ^{
-					[strongSelf deliverProgress:fraction partial:partial];
-				});
+			if (strongSelf == nil) {
+				return;
 			}
+			double fraction = observed.progress;
+			NFKCResult *encoded = [strongSelf encodedPartial:observed.partialResult];
+			dispatch_async(strongSelf.queue, ^{
+				[strongSelf deliverProgress:fraction partial:encoded];
+			});
 		};
 	}
 	job.completionHandler = ^(NFKInferenceJob *observed) {
@@ -790,10 +856,13 @@ static const void * const NFKCJobQueueKey = &NFKCJobQueueKey;
 			[strongSelf finishWithResult:result error:error files:files];
 		};
 		if (result != nil) {
+			[strongSelf markReleased];
 			dispatch_async(strongSelf.queue, finish);
-		} else {
-			dispatch_group_notify(group, strongSelf.queue, finish);
+			return;
 		}
+		// The job's partial result may hold the caller's memory, which would keep the group from emptying.
+		strongSelf.job = nil;
+		dispatch_group_notify(group, strongSelf.queue, finish);
 	};
 }
 
@@ -1026,6 +1095,7 @@ nfk_job *nfk_backend_submit(nfk_backend *backend, const nfk_payload *request, nf
 			NFKCRunFiles *files = [[NFKCRunFiles alloc] init];
 			NSError *error = nil;
 			NFKInferenceRequest *decoded = NFKCRequestFromPayload(request, group, files, &error);
+			[job markReleasedWhenGroupEmpties:group];
 			if (decoded == nil) {
 				dispatch_group_notify(group, job.queue, ^{
 					[job finishWithResult:nil error:error files:files];
@@ -1062,6 +1132,7 @@ void nfk_job_free(nfk_job *job)
 			}
 			if ([object markFreed]) {
 				[object.job cancel];
+				[object waitForRelease];
 			}
 			NFKCReleaseHandle(job, NFKCJob.class);
 		} @catch (NSException *exception) {

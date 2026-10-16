@@ -156,7 +156,10 @@ An app that loads a trusted `objc` plugin into its own process keeps the core's 
   seconds for a host that never reads (measurement 9). `channelByHandingOffDescriptor:error:` does this
   on a queue of its own and returns at once. An executable plugin performs the same hand-off and the
   same hold; the executable fixture holds them on a thread.
-- Both ends set `SO_NOSIGPIPE`, close-on-exec, and 1 MiB socket buffers. The channel reads on a queue of
+- Both ends set `SO_NOSIGPIPE`, close-on-exec, and 1 MiB socket buffers. macOS has no `SOCK_CLOEXEC` or
+  `pipe2`, so close-on-exec is the first call after `socketpair`, and `NFKSubprocess` sets it on its
+  standard-stream pipes right after `pipe`, before the spawn, so a process another thread spawns
+  meanwhile inherits no end. The window between the two calls remains. The channel reads on a queue of
   its own and delivers on a serial handler queue, so a handler blocked in a send does not stop the reads
   that would unblock it.
 
@@ -175,10 +178,14 @@ A frame is a header and a JSON object:
 - The header and the JSON go out in one `sendmsg` whose `SCM_RIGHTS` carries the descriptors. A partial
   send continues without control data; the descriptors rode the first byte.
 - The receiver queues every descriptor it receives in order and gives each frame as many as its header
-  counts, from the front.
+  counts. One read returns one send's descriptors at that send's first byte (measurement 5), so the
+  queue holds exactly the current frame's descriptors and the queue never grows past one read's 64.
 - These close the channel with `NFKPluginErrorProtocolViolation`: a wrong magic number; a length or
-  count over its limit; a complete frame whose descriptors are not queued (they arrive with the frame's
-  first byte, so they never come later); `MSG_CTRUNC`; JSON that is not an object with a string type.
+  count over its limit; a complete frame whose queued descriptors differ in number from its count (fewer
+  never grow, since they arrive with the frame's first byte; more belong to no frame); descriptors that
+  arrive while part of a frame is pending or another frame's descriptors are queued; `MSG_CTRUNC`; JSON
+  that is not an object with a string type. Every descriptor the reader still holds closes with the
+  channel.
 - End of file closes the channel with no error. A send on a closed channel fails with
   `NFKPluginErrorStopped`. A send that the peer does not drain within `sendTimeout` (30 s) fails.
 - The sender keeps its own descriptors open; the receiver owns the duplicates it receives
@@ -309,7 +316,10 @@ against literal dictionaries, and the existing server tests keep their expectati
 - A file, audio, or video value crosses by reference in this mode: its tag with `"path"` and `"name"` in
   place of `"base64"`, and `"index"` when the writer attaches an open descriptor
   (`passesFilesAsDescriptors`, for a sandboxed peer). The reader copies an indexed file into its
-  temporary directory, and refuses a path outside `allowedFileDirectoryURL` when one is set. Without a
+  temporary directory, and refuses a path outside `allowedFileDirectoryURL` when one is set. The check
+  resolves symbolic links in the path and in the directory (`realpath`), and the URL it returns names
+  the resolved file under the directory's own spelling; a missing file, a relative path, and a missing
+  directory are refused. Without a
   source, a reference by path is refused as before ("carries no bytes"), so an HTTP client cannot name a
   path on the server.
 - `NFKPluginAttachmentWriter` makes one region per attachment and lists their descriptors in index
@@ -383,6 +393,11 @@ initializers.
   - no hand-off, a hello error, another plugin identifier or version → `NFKPluginErrorHandshakeFailed`;
   - a verification, hello, or describe that misses its deadline → `NFKPluginErrorTimedOut`, naming the
     step and the limit;
+  - a process that exits during hello or describe → `NFKPluginErrorProcessExited`, with its status or
+    signal and the end of its standard error, at once. A connection's close during its launch skips the
+    start lock the launch holds: it stops the launcher and fails the launch's requests with the exit,
+    and the launch records the termination. A close after the launch finished (`markEstablished`, under
+    the connection's lock with `closed`) takes the lock and records a crash;
   - another major protocol version → `NFKPluginErrorProtocolUnsupported`;
   - a manifest model `describe` does not list → `NFKPluginErrorUnknownModel`.
 - A Failed process refuses every request with `failureError` and launches nothing. `startWithError:`
@@ -392,8 +407,12 @@ initializers.
 ### Code checks
 
 - Before a launch: the bundle under `signaturePolicy`, and for `objc` and `c-abi` the host executable
-  under the host policy. The host policy is `signaturePolicy` without its team and requirement, which
-  name the plugin's signer; the host is the app's helper, signed by the app's team.
+  under the host policy. The host policy is `signaturePolicy` pinned to the team that signed this process
+  (`SecCodeCopySelf`), since the app's team signs the host, without the plugin's requirement, which names
+  the plugin's signer. No team is pinned when this process names none (`xctest` is ad hoc) or when the
+  policy accepts ad hoc signatures, as the development policy does for a host built locally.
+- Before a launch, for every kind: the manifest's executable checked against the bundle on disk
+  (`containedExecutableURLWithError:`), since the bundle may have changed since the manifest was read.
 - After the hand-off: the peer's `LOCAL_PEERPID` equals the launched process's identifier, and its audit
   token passes the policy (`executable`) or the host policy (`objc`, `c-abi`).
 
@@ -413,8 +432,9 @@ initializers.
   `handshakeTimeout` alone.
 - Verification hashes every file the bundle's seal covers, on every launch. A plugin keeps large
   weights outside its bundle, in a download cache.
-- `executable` → `Contents/MacOS/<entry.executable>`, which must stay inside the bundle, or the bundle's
-  own executable, with `entry.arguments`.
+- `executable` → the resolved `Contents/MacOS/<entry.executable>`, else `CFBundleExecutable`, with
+  `entry.arguments`. A path that resolves outside `Contents/MacOS` → `NFKPluginErrorManifestMismatch`,
+  and nothing launches.
 - `launcherFactory` (private) makes the launcher per launch. A test returns an in-test peer that adopts
   `NFKPluginLauncher`, performs the hand-off on the descriptor it receives, and answers the protocol:
   `Tests/InferKitTests/NFKPluginTestPeer`. A launcher that implements
@@ -531,6 +551,11 @@ result, a `{text, isError}` object, or a string. An error reply keeps its domain
   `CFBundleShortVersionString` must equal `version`; the executable (`entry.executable`, else
   `CFBundleExecutable`) must be a file in `Contents/MacOS`. Each disagreement →
   `NFKPluginErrorManifestMismatch`.
+- The executable check (`containedExecutableURLWithError:`, `NFKPluginManifestPrivate.h`): the name, from
+  either source, has no leading "/" and no "." or ".." component; the file exists and is regular; and its
+  `realpath` lies under `realpath(bundle)/Contents/MacOS/`, so a symbolic link out of the bundle is
+  refused. `executableURL` is that resolved URL, or nil. The loaders and the launcher call it again
+  immediately before `dlopen`, `NSBundle` loading, or a spawn.
 - `schemaVersion` above 1 → `NFKPluginErrorUnsupportedManifestVersion`. An entry kind other than `objc`,
   `c-abi`, `executable` → `NFKPluginErrorIncompatible`. Every other problem →
   `NFKPluginErrorMalformedManifest`, naming the field by its path ("compatibility.inferkitAPI").
@@ -573,6 +598,12 @@ result, a `{text, isError}` object, or a string. An error reply keeps its domain
   process cannot set back, so it misses the cache and validates again.
 - A running process: `SecCodeCopyGuestWithAttributes` with `kSecGuestAttributeAudit`, then
   `SecCodeCheckValidityWithErrors`, through the same order. No cache.
+- A `teamIdentifier` that is not ten uppercase ASCII letters and digits → `NFKPluginErrorTeamMismatch`
+  before any check, since only such a value is placed in the requirement's text.
+- Measured 2026-10-16: `SecStaticCodeCreateWithPath` on a bundle whose `Contents/MacOS` executable is a
+  symbolic link to `/usr/bin/true` succeeds, and the signing information names `com.apple.true`, the
+  link's target; strict validation then fails (-67056). A bundle whose executable is not Mach-O names no
+  identifier.
 - Measured: the `xctest` runner under Xcode 27 is signed ad hoc (`flags=0x2`), so the test of the
   running process uses the development policy.
 
@@ -590,8 +621,10 @@ result, a `{text, isError}` object, or a string. An error reply keeps its domain
 5. The registry, by plugin identifier: the same resolved bundle path and version → the same
    `NFKLoadedPlugin`, after the signature passes the caller's policy, so a caller with a stricter policy
    never receives a loaded plugin it would refuse; another version or another copy →
-   `NFKPluginErrorLoadFailed`. A load that failed after code entered the process answers the same error
-   again.
+   `NFKPluginErrorLoadFailed`. A load that failed after code entered the process (`dlopen` or
+   `loadAndReturnError:` succeeded) answers the same error again, since that code stays. A failure
+   before it, such as a library `dlopen` refuses, is not kept, so a retry after the bundle is fixed
+   loads it.
 6. The signature under the policy, immediately before the code loads and never earlier.
 7. The code:
    - `objc` → `NSBundle` `loadAndReturnError:`. `entry.executable`, when set, must be the bundle's
@@ -646,7 +679,12 @@ backends.
   - every string (`describe`, errors, `describe_backend`, `call_tool`) → copied, then `free_string`.
   - a backend → `destroy_backend` when the `NFKPluginCBackend` is released; runs in flight retain it.
 - Buffers stride by the first buffer's `struct_size`, so a host reads a later minor's longer buffers;
-  a buffer shorter than ABI 1.0's is refused. `SURFACE` buffers are locked read-only for the life of
+  a buffer shorter than ABI 1.0's, or a stride that is not a multiple of the buffer's alignment, is
+  refused.
+- Every `struct_size` check compares with the structure's size at ABI 1.0 (`NFKCStructSizes.h`:
+  `offsetof` of the last 1.0 field plus its size), never with `sizeof`, so a library built against a
+  later minor still reads a 1.0 writer. A field a later minor appends is read only under
+  `NFKCStructCovers`. The C API reads `nfk_buffer` and `nfk_payload` the same way. `SURFACE` buffers are locked read-only for the life of
   the wrapping data; `FILE` buffers are read from the path or the descriptor.
 - `run` is limited to `maximumConcurrentRuns` per backend by `NFKPluginRunSlots` (`NFKPluginWire.h`):
   a run waiting for a slot is a block in a FIFO and holds no thread, and the run that ends starts the
@@ -784,9 +822,10 @@ looks up a class a plugin's manifest names.
   before the loader runs.
 - Trust is an in-memory set read at each backend request, which is "the next load". Withdrawing it sends
   the next backend to a process; the loaded code stays.
-- `tools`: a trusted in-process plugin's tools are handler tools from the manifest declarations that load
-  the plugin on their first call and run its tool of the same name; every other plugin's are its process's
-  `NFKPluginToolProxy`s.
+- `tools`: a trusted plugin's tools are handler tools from the manifest declarations that load the plugin
+  on their first call and run its tool of the same name; every other plugin's are its process's
+  `NFKPluginToolProxy`s. A trusted plugin whose manifest does not allow the app's process fails each
+  call with `NFKPluginErrorNotTrusted`, as its backends do.
 
 ### Autorelease pools
 
@@ -908,11 +947,21 @@ tests.
   request's group, so a cancelled run's completion waits until the backend has released every wrapper
   over the caller's memory. A result waits for nothing, since a backend that echoes its input keeps a
   wrapper alive inside the result.
-- `NFKCJob` keeps `freed`, `delivering`, and `completed` under an `NSCondition`. A callback starts only
-  while neither freed nor completed. `nfk_job_free` sets `freed`, waits while a callback runs unless it
-  is called on the job's own queue (`dispatch_get_specific`), cancels a run that has not completed, and
-  releases the handle. The handlers on the `NFKInferenceJob` hold the `NFKCJob` weakly, so a freed job
-  deallocates while its run continues.
+- `NFKCJob` keeps `freed`, `delivering`, `completed`, and `released` under an `NSCondition`. A callback
+  starts only while neither freed nor completed. `released` turns YES when the run returns a result, or
+  when the request's group empties (`dispatch_group_notify` registered once the request has decoded,
+  since wrappers enter the group only while it decodes; a request with no buffers is released at once).
+- `nfk_job_free` sets `freed`, waits while a callback runs unless it is called on the job's own queue
+  (`dispatch_get_specific`), and for a run that has not completed cancels it, drops the `NFKInferenceJob`
+  (its partial result may hold a wrapper), and waits for `released` before it releases the handle. The
+  caller frees its buffers next, so the wait has no deadline; it logs a fault every 10 s. It waits from
+  inside a progress callback as well: the run never waits on the job's queue, since every handler only
+  dispatches to it. Inside the completion `completed` is set, so it returns at once. The handlers on the
+  `NFKInferenceJob` hold the `NFKCJob` weakly, so a freed job deallocates while its run continues.
+- A partial is encoded on the thread that reports it and reaches the queue as copies. The job keeps the
+  partial weakly, to encode a repeat once, so nothing it holds keeps a wrapper over the caller's memory.
+- `NFKInferenceSubmit` runs the backend inside `@autoreleasepool`: a global queue drains no pool per
+  block, and a wrapper the run autoreleased would otherwise hold the group until the worker thread exits.
 - A result and a partial encode with `encodesValueObjectsAsJSON` YES, so the value classes are tagged
   JSON objects (`NFKWireValueObjects.h` lists the fields) and never keyed archives. The plugin channel
   sets it too; the HTTP route leaves it off and keeps its bytes. The decoder reads the JSON form in every
@@ -932,10 +981,13 @@ tests.
   themselves, anything else left out; `NSLocalizedDescriptionKey` is left out because the message holds it.
 - A result encodes with `inlineByteLimit` 0, so every value with bytes is an attachment, into an
   `NSMutableData` region per attachment. The `nfk_buffer` table, the NUL-terminated JSON, the
-  Objective-C result (whose associated objects may own files), and the run's file directory live as long
-  as the `NFKCResult`. JSON is written with sorted keys and unescaped slashes.
+  owner of a plugin result's files (`NFKPluginResultFileOwner`, the run directory the JSON's paths name),
+  and the request's file directory live as long as the `NFKCResult`. It keeps no reference to the
+  Objective-C result, whose values may wrap a request's surface and hold its read-only lock. JSON is written with sorted keys and unescaped slashes.
 - A partial result is encoded once per distinct object the job reports and passed as a borrowed
   `NFKCResult` valid during the callback.
+- `struct_size` is compared with the 1.0 sizes of `NFKCStructSizes.h` (48 for `nfk_buffer`, 24 for
+  `nfk_payload`), never with `sizeof`; a stride must also keep each buffer aligned.
 - Files decoded from a request (inline base64, or a descriptor-only file buffer) land in
   `$TMPDIR/InferKit/c-api/<UUID>`, removed when the last of the request, the job, and the result
   releases it. A file reference by path is taken as it is.

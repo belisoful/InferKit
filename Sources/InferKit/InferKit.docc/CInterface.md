@@ -23,8 +23,9 @@ nfk_backend_free(backend);
 The rules every function follows:
 
 - Everything InferKit returns is freed with its own `*_free` function, and each accepts NULL.
-- A request's memory stays valid until ``nfk_backend_run`` returns, or until the completion of
-  ``nfk_backend_submit`` fires.
+- A request's memory stays valid until ``nfk_backend_run`` returns, until the completion of
+  ``nfk_backend_submit`` fires, or until ``nfk_job_free`` returns when it comes first. ``nfk_job_free``
+  waits for the run to stop reading the request's buffers.
 - A job's callbacks run on a serial queue of its own at user-initiated quality of service. The
   completion fires exactly once, unless ``nfk_job_free`` comes first, and no callback runs after
   ``nfk_job_free`` returns.

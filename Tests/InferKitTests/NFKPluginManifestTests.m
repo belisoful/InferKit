@@ -313,6 +313,44 @@
 	XCTAssertTrue([manifest.executableURL.path hasSuffix:@"Contents/MacOS/Helpers/serve"], @"%@", manifest.executableURL);
 }
 
+- (void)testRefusesAnExecutableThatResolvesOutsideContentsMacOS
+{
+	NSMutableDictionary *object = [self minimalObject];
+	NSMutableDictionary *escaping = [[self infoForObject:object] mutableCopy];
+	escaping[@"CFBundleExecutable"] = @"../../x.dylib";
+	NSURL *bundle = [self bundleWithInfo:escaping manifest:object executable:nil];
+	XCTAssertTrue([[NSData data] writeToURL:[bundle URLByAppendingPathComponent:@"x.dylib"] atomically:YES], @"the file it names exists");
+	NSError *error = nil;
+	XCTAssertNil([NFKPluginManifest manifestWithBundleURL:bundle error:&error], @"CFBundleExecutable is checked as entry.executable is");
+	XCTAssertEqual(error.code, NFKPluginErrorManifestMismatch, @"%@", error);
+	XCTAssertTrue([error.localizedDescription containsString:@"../../x.dylib"], @"%@", error);
+
+	NSURL *outside = [[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:
+					  [NSString stringWithFormat:@"manifest-test-outside-%@.dylib", NSUUID.UUID.UUIDString]];
+	[self.temporaryURLs addObject:outside];
+	XCTAssertTrue([[NSData data] writeToURL:outside atomically:YES]);
+	NSURL *linked = [self bundleWithInfo:[self infoForObject:object] manifest:object executable:nil];
+	NSURL *link = [linked URLByAppendingPathComponent:@"Contents/MacOS/Minimal"];
+	XCTAssertTrue([NSFileManager.defaultManager createSymbolicLinkAtURL:link withDestinationURL:outside error:&error], @"%@", error);
+	XCTAssertNil([NFKPluginManifest manifestWithBundleURL:linked error:&error], @"a link out of the bundle is refused");
+	XCTAssertEqual(error.code, NFKPluginErrorManifestMismatch, @"%@", error);
+	XCTAssertTrue([error.localizedDescription containsString:@"outside"], @"%@", error);
+
+	NSMutableDictionary *named = [self object:object setting:@"Minimal" atPath:@"entry.executable"];
+	NSURL *namedLink = [self bundleWithInfo:[self infoForObject:named] manifest:named executable:nil];
+	XCTAssertTrue([NSFileManager.defaultManager createSymbolicLinkAtURL:[namedLink URLByAppendingPathComponent:@"Contents/MacOS/Minimal"]
+													 withDestinationURL:outside error:&error], @"%@", error);
+	XCTAssertNil([NFKPluginManifest manifestWithBundleURL:namedLink error:&error], @"entry.executable resolves the same way");
+	XCTAssertEqual(error.code, NFKPluginErrorManifestMismatch, @"%@", error);
+
+	NSURL *inside = [self bundleWithInfo:[self infoForObject:object] manifest:object executable:@"Real"];
+	XCTAssertTrue([NSFileManager.defaultManager createSymbolicLinkAtPath:[inside URLByAppendingPathComponent:@"Contents/MacOS/Minimal"].path
+												 withDestinationPath:@"Real" error:&error], @"%@", error);
+	NFKPluginManifest *manifest = [NFKPluginManifest manifestWithBundleURL:inside error:&error];
+	XCTAssertNotNil(manifest, @"a link that stays in Contents/MacOS is accepted: %@", error);
+	XCTAssertEqualObjects(manifest.executableURL.lastPathComponent, @"Real", @"the executable is the file the link resolves to");
+}
+
 - (void)testRefusesABundleWhoseInfoDisagrees
 {
 	NSMutableDictionary *object = [self minimalObject];

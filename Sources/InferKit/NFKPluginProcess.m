@@ -10,12 +10,14 @@
 #if TARGET_OS_OSX
 
 #import "NFKPluginChannel.h"
+#import "NFKPluginManifestPrivate.h"
 #import "NFKPluginProcessPrivate.h"
 #import "NFKPluginToolProxy.h"
 #import "NFKServedHostStatus.h"
 #import "NFKSubprocessPrivate.h"
 #import <InferKit/NFKErrors.h>
 #import <InferKit/NFKInferKit.h>
+#import <Security/Security.h>
 #import <signal.h>
 #import <string.h>
 #import <unistd.h>
@@ -90,10 +92,38 @@ static NSError *NFKPluginMakeError(NSInteger code, NSString *reason)
 	return [NSError errorWithDomain:NFKPluginErrorDomain code:code userInfo:@{ NSLocalizedDescriptionKey: reason }];
 }
 
-/*! Whether error is a missed deadline, which passes through unwrapped. */
+/*! Whether error is a missed deadline. */
 static BOOL NFKPluginIsTimeout(NSError * _Nullable error)
 {
 	return error.code == NFKPluginErrorTimedOut && [error.domain isEqualToString:NFKPluginErrorDomain];
+}
+
+/*! Whether a handshake error passes through unwrapped: a missed deadline, or the process's exit with its
+	status, signal, and standard error. */
+static BOOL NFKPluginPassesThrough(NSError * _Nullable error)
+{
+	return NFKPluginIsTimeout(error) || (error.code == NFKPluginErrorProcessExited && [error.domain isEqualToString:NFKPluginErrorDomain]);
+}
+
+/*! The team that signed this process, or nil for code that names no team, such as an ad hoc or unsigned
+	build. */
+static NSString * _Nullable NFKPluginTeamIdentifierOfThisProcess(void)
+{
+	static NSString *team = nil;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		SecCodeRef code = NULL;
+		if (SecCodeCopySelf(kSecCSDefaultFlags, &code) != errSecSuccess || code == NULL) {
+			return;
+		}
+		CFDictionaryRef rawInformation = NULL;
+		SecCodeCopySigningInformation((SecStaticCodeRef)code, kSecCSSigningInformation, &rawInformation);
+		NSDictionary *information = CFBridgingRelease(rawInformation);
+		id value = information[(__bridge NSString *)kSecCodeInfoTeamIdentifier];
+		team = [value isKindOfClass:NSString.class] ? [value copy] : nil;
+		CFRelease(code);
+	});
+	return team;
 }
 
 static NSString *NFKPluginHandleKey(id handle)
@@ -193,6 +223,12 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 		NFKPluginSetError(error, NFKPluginErrorLaunchFailed, [NSString stringWithFormat:@"the manifest of %@ names no bundle", manifest.identifier]);
 		return nil;
 	}
+	// Checked against the bundle on disk at each launch, since the bundle may have changed since its
+	// manifest was read. The plugin host checks the same before it loads the code.
+	NSURL *executable = [manifest containedExecutableURLWithError:error];
+	if (executable == nil) {
+		return nil;
+	}
 	if (![manifest.entryKind isEqualToString:NFKPluginEntryKindExecutable]) {
 		if (process.hostExecutableURL == nil) {
 			NFKPluginSetError(error, NFKPluginErrorLaunchFailed, @"no plugin host executable is set");
@@ -216,22 +252,6 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 		}
 		*outArguments = arguments;
 		return process.hostExecutableURL.path;
-	}
-	NSURL *executable = nil;
-	if (manifest.executablePath.length > 0) {
-		NSURL *directory = [bundle URLByAppendingPathComponent:@"Contents/MacOS" isDirectory:YES].URLByStandardizingPath;
-		executable = [directory URLByAppendingPathComponent:manifest.executablePath].URLByStandardizingPath;
-		NSString *prefix = [directory.path stringByAppendingString:@"/"];
-		if (![executable.path hasPrefix:prefix]) {
-			NFKPluginSetError(error, NFKPluginErrorLaunchFailed, @"the manifest's executable lies outside the bundle");
-			return nil;
-		}
-	} else {
-		executable = [NSBundle bundleWithURL:bundle].executableURL;
-	}
-	if (executable == nil) {
-		NFKPluginSetError(error, NFKPluginErrorLaunchFailed, [NSString stringWithFormat:@"%@ names no executable", bundle.lastPathComponent]);
-		return nil;
 	}
 	*outArguments = manifest.arguments;
 	return executable.path;
@@ -321,7 +341,12 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 @property (nonatomic, assign) NSTimeInterval lastActivity;
 @property (nonatomic, assign) BOOL retiring;
 @property (nonatomic, assign) BOOL intentional;
+/*! Whether the launch that made the connection finished with it, read and written under lock. Final once
+	the connection closes. */
+@property (nonatomic, assign) BOOL launchFinished;
 @property (nonatomic, strong, nullable) NSError *closeError;
+- (BOOL)markEstablished;
+- (BOOL)isEstablished;
 @end
 
 @implementation NFKPluginConnection
@@ -587,6 +612,26 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 		self.intentional = YES;
 	}
 	[self.channel close];
+}
+
+/*! Marks the launch that made the connection finished. NO, changing nothing, once the channel has closed:
+	the launch then fails with the process's exit. */
+- (BOOL)markEstablished
+{
+	@synchronized (self.lock) {
+		if (self.closed) {
+			return NO;
+		}
+		self.launchFinished = YES;
+		return YES;
+	}
+}
+
+- (BOOL)isEstablished
+{
+	@synchronized (self.lock) {
+		return self.launchFinished;
+	}
 }
 
 #pragma mark Backends
@@ -958,12 +1003,15 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 	return [self.manifest.entryKind isEqualToString:NFKPluginEntryKindExecutable];
 }
 
-/*! The policy for the plugin host: the plugin's policy without its team or requirement, which name the
-	plugin's signer and not the app's. */
 - (NFKPluginSignaturePolicy *)hostSignaturePolicy
 {
+	return [self hostSignaturePolicyForAppTeamIdentifier:NFKPluginTeamIdentifierOfThisProcess()];
+}
+
+- (NFKPluginSignaturePolicy *)hostSignaturePolicyForAppTeamIdentifier:(nullable NSString *)teamIdentifier
+{
 	NFKPluginSignaturePolicy *policy = [self.signaturePolicy copy];
-	policy.teamIdentifier = nil;
+	policy.teamIdentifier = policy.allowsAdHocSignature ? nil : teamIdentifier;
 	policy.requirementString = nil;
 	return policy;
 }
@@ -1024,6 +1072,13 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 		[self stopLauncher:launcher];
 		return nil;
 	}
+	if (![connection markEstablished]) {
+		[self stopLauncher:launcher];
+		if (error != NULL) {
+			*error = [self exitErrorOfLauncher:launcher];
+		}
+		return nil;
+	}
 	self.generation = connection.generation;
 	return connection;
 }
@@ -1068,7 +1123,7 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 	id reply = [self sendHello:hello onConnection:connection error:&replyError];
 	if (reply == nil) {
 		if (error != NULL) {
-			*error = NFKPluginIsTimeout(replyError) ? replyError
+			*error = NFKPluginPassesThrough(replyError) ? replyError
 				: NFKPluginWrappedError(NFKPluginErrorHandshakeFailed, @"the plugin did not complete the hello exchange", replyError);
 		}
 		return NO;
@@ -1159,7 +1214,7 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 	id reply = [connection sendRequestAndWait:@{ @"type": NFKPluginMessageDescribe } timeout:self.handshakeTimeout error:&replyError];
 	if (reply == nil) {
 		if (error != NULL) {
-			*error = NFKPluginIsTimeout(replyError) ? replyError
+			*error = NFKPluginPassesThrough(replyError) ? replyError
 				: NFKPluginWrappedError(NFKPluginErrorHandshakeFailed, @"the plugin did not describe its models", replyError);
 		}
 		return NO;
@@ -1211,15 +1266,21 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 
 #pragma mark Ending
 
-/*! Stops a launcher and waits for its exit, up to NFKPluginLauncherStopTimeout, then records how the
-	process ended. */
-- (void)stopLauncher:(id<NFKPluginLauncher>)launcher
+/*! Stops a launcher and waits for its exit, up to NFKPluginLauncherStopTimeout. */
+- (void)waitForStopOfLauncher:(id<NFKPluginLauncher>)launcher
 {
 	dispatch_semaphore_t stopped = dispatch_semaphore_create(0);
 	[launcher stopWithCompletionHandler:^{
 		dispatch_semaphore_signal(stopped);
 	}];
 	dispatch_semaphore_wait(stopped, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(NFKPluginLauncherStopTimeout * NSEC_PER_SEC)));
+}
+
+/*! Stops a launcher and waits for its exit, up to NFKPluginLauncherStopTimeout, then records how the
+	process ended. */
+- (void)stopLauncher:(id<NFKPluginLauncher>)launcher
+{
+	[self waitForStopOfLauncher:launcher];
 	[self recordTerminationOfLauncher:launcher];
 }
 
@@ -1260,6 +1321,13 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 // Runs on the ended channel's handler queue, for a channel the supervisor did not close.
 - (void)connectionDidEnd:(NFKPluginConnection *)connection error:(nullable NSError *)error
 {
+	if (!connection.isEstablished) {
+		// The launch that greets the connection holds the start lock while it waits for the reply. The
+		// exit fails that wait at once, and the launch records the termination when it stops the launcher.
+		[self waitForStopOfLauncher:connection.launcher];
+		[connection failAllPendingWithError:[self exitErrorOfLauncher:connection.launcher]];
+		return;
+	}
 	[self.startLock lock];
 	BOOL current = self.connection == connection;
 	if (current) {

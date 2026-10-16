@@ -16,6 +16,7 @@
 #import "../../Sources/InferKit/NFKPluginWire.h"
 #import "../../Sources/InferKit/NFKSubprocessPrivate.h"
 #import <mach/vm_page_size.h>
+#import <poll.h>
 #import <sys/socket.h>
 #import <unistd.h>
 
@@ -115,6 +116,44 @@
 		(uint8_t)count, (uint8_t)(count >> 8), 0, 0,
 	};
 	return [NSData dataWithBytes:header length:sizeof header];
+}
+
+/*! Writes a frame declaring declared descriptors to a raw socket in one sendmsg that carries every
+	descriptor of attached. Returns whether the whole frame went out. */
+- (BOOL)writeFrameTo:(int)socket declaring:(uint16_t)declared attaching:(NSArray<NSNumber *> *)attached
+{
+	NSData *JSON = [@"{\"type\":\"ping\",\"id\":1}" dataUsingEncoding:NSUTF8StringEncoding];
+	NSMutableData *frame = [[self headerWithMagic:NFKPluginFrameMagic length:(uint32_t)JSON.length descriptors:declared] mutableCopy];
+	[frame appendData:JSON];
+	NSMutableData *control = [NSMutableData dataWithLength:CMSG_SPACE(sizeof(int) * attached.count)];
+	struct cmsghdr *header = (struct cmsghdr *)control.mutableBytes;
+	header->cmsg_level = SOL_SOCKET;
+	header->cmsg_type = SCM_RIGHTS;
+	header->cmsg_len = (socklen_t)CMSG_LEN(sizeof(int) * attached.count);
+	for (NSUInteger index = 0; index < attached.count; index++) {
+		((int *)CMSG_DATA(header))[index] = attached[index].intValue;
+	}
+	struct iovec piece = { .iov_base = frame.mutableBytes, .iov_len = frame.length };
+	struct msghdr message = { 0 };
+	message.msg_iov = &piece;
+	message.msg_iovlen = 1;
+	message.msg_control = control.mutableBytes;
+	message.msg_controllen = (socklen_t)control.length;
+	return sendmsg(socket, &message, 0) == (ssize_t)frame.length;
+}
+
+/*! Whether descriptor, the read end of a pipe, reads end of file within timeout: every write end closed. */
+- (BOOL)pipeReadsEndOfFile:(int)descriptor within:(NSTimeInterval)timeout
+{
+	NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:timeout];
+	while (deadline.timeIntervalSinceNow > 0) {
+		struct pollfd readable = { .fd = descriptor, .events = POLLIN, .revents = 0 };
+		if (poll(&readable, 1, 50) > 0) {
+			char byte;
+			return read(descriptor, &byte, 1) == 0;
+		}
+	}
+	return NO;
 }
 
 - (void)testAMessageRoundTripsWithItsFields
@@ -263,6 +302,38 @@
 	XCTAssertTrue([recorder.closeError.localizedDescription containsString:@"descriptor"], @"%@", recorder.closeError);
 	XCTAssertEqual(recorder.messageCount, 0u);
 	close(raw);
+}
+
+- (void)testDescriptorsBeyondAFramesCountCloseTheChannelAndAreClosed
+{
+	NSArray<NSNumber *> *declared = @[ @0, @1 ];
+	for (NSNumber *count in declared) {
+		int raw = -1;
+		NFKPluginChannel *channel = [self channelWithRawPeer:&raw];
+		NFKChannelRecorder *recorder = [[NFKChannelRecorder alloc] init];
+		[recorder attachToChannel:channel];
+		[channel resume];
+
+		int first[2] = { -1, -1 };
+		int second[2] = { -1, -1 };
+		XCTAssertEqual(pipe(first), 0);
+		XCTAssertEqual(pipe(second), 0);
+		NSArray<NSNumber *> *attached = @[ @(first[1]), @(second[1]) ];
+		XCTAssertTrue([self writeFrameTo:raw declaring:count.unsignedShortValue attaching:attached]);
+		close(first[1]);
+		close(second[1]);
+
+		XCTAssertTrue([self waitUntil:^BOOL { return recorder.isClosed; } timeout:5], @"a frame declaring %@ of 2", count);
+		XCTAssertEqualObjects(recorder.closeError.domain, NFKPluginErrorDomain);
+		XCTAssertEqual(recorder.closeError.code, NFKPluginErrorProtocolViolation);
+		XCTAssertTrue([recorder.closeError.localizedDescription containsString:@"descriptors"], @"%@", recorder.closeError);
+		XCTAssertEqual(recorder.messageCount, 0u, @"the frame is not delivered");
+		XCTAssertTrue([self pipeReadsEndOfFile:first[0] within:5], @"the channel closed the descriptors it received");
+		XCTAssertTrue([self pipeReadsEndOfFile:second[0] within:5]);
+		close(first[0]);
+		close(second[0]);
+		close(raw);
+	}
 }
 
 - (void)testAPeerThatExitsEndsTheChannelAtEndOfFile

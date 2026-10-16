@@ -761,7 +761,9 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 {
 	NSMutableArray<NFKInferenceTool *> *tools = [NSMutableArray array];
 	for (NFKPluginManifest *manifest in self.manifests) {
-		if ([self isTrustedPluginIdentifier:manifest.identifier] && NFKPluginRunsInProcess(manifest)) {
+		// A trusted plugin's tools run where its backends do: in this process, and a manifest that does not
+		// allow it fails each call with NFKPluginErrorNotTrusted, as its backends do.
+		if ([self isTrustedPluginIdentifier:manifest.identifier]) {
 			[tools addObjectsFromArray:[self inProcessToolsOfManifest:manifest]];
 			continue;
 		}

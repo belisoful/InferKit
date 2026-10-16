@@ -59,15 +59,19 @@ NFKInferenceJob *NFKInferenceSubmit(id<NFKInferenceBackend> backend,
 		if (job.status == NFKInferenceJobStatusCancelled) {
 			return;
 		}
-		[job reportProgress:-1.0];
-		NSError *error = nil;
-		NFKInferenceResult *result = [backend runInferenceForRequest:request error:&error];
-		if (result != nil) {
-			[job finishWithResult:result];
-		} else {
-			[job finishWithError:error ?: [NSError errorWithDomain:NFKInferenceErrorDomain
-															   code:kNFKError_InferenceBackendFailure
-														   userInfo:@{ NSLocalizedDescriptionKey: @"the inference run failed" }]];
+		// A global queue drains no pool per block, so this pool releases what the run autoreleases, such as
+		// a wrapper over a C caller's buffer, when the run ends.
+		@autoreleasepool {
+			[job reportProgress:-1.0];
+			NSError *error = nil;
+			NFKInferenceResult *result = [backend runInferenceForRequest:request error:&error];
+			if (result != nil) {
+				[job finishWithResult:result];
+			} else {
+				[job finishWithError:error ?: [NSError errorWithDomain:NFKInferenceErrorDomain
+																   code:kNFKError_InferenceBackendFailure
+															   userInfo:@{ NSLocalizedDescriptionKey: @"the inference run failed" }]];
+			}
 		}
 	});
 	return job;

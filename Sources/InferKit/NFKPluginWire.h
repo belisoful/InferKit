@@ -188,6 +188,10 @@ extern NSString * const NFKPluginCapabilityFileDescriptors;
 
 @end
 
+/*! The object that owns the files a plugin's result names, or nil. The files last as long as it does, so a
+	holder of the result's file paths keeps it, and need not keep the result's values. */
+id _Nullable NFKPluginResultFileOwner(NFKInferenceResult *result);
+
 #endif
 
 NS_ASSUME_NONNULL_END

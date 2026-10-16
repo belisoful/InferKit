@@ -170,6 +170,15 @@ typedef void (^NFKPluginReplyHandler)(NSDictionary<NSString *, id> * _Nullable r
 /*! Reports a log message through logHandler. */
 - (void)logMessage:(NSString *)message level:(NFKPluginLogLevel)level;
 
+/*! The policy the plugin host and its process are checked under: signaturePolicy pinned to the team
+	that signed this process. No team is pinned when this process names none, or when the policy accepts
+	ad hoc signatures, as the development policy does for local builds. The plugin's requirement is left
+	out, since it names the plugin's signer and the app's team signs the host. */
+- (NFKPluginSignaturePolicy *)hostSignaturePolicy;
+
+/*! hostSignaturePolicy for an app signed by teamIdentifier, or by no team when it is nil. */
+- (NFKPluginSignaturePolicy *)hostSignaturePolicyForAppTeamIdentifier:(nullable NSString *)teamIdentifier;
+
 /*! Takes manifest as the version the next start launches, when no process runs, no restart is pending,
 	and no start is under way. A Failed process returns to NotRunning, since the new version deserves a
 	start. Returns NO, changing nothing, otherwise; the caller then restarts. */

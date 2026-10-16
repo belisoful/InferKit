@@ -187,7 +187,9 @@ API_UNAVAILABLE(ios, tvos, watchos)
 	NS_SWIFT_NAME(backend(forModelIdentifier:options:));
 
 /*! Every plugin's tools, read from the manifests, sorted by plugin identifier. Listing them starts no
-	process and loads no code: calling a tool starts the plugin's process, or loads a trusted plugin. */
+	process and loads no code: calling a tool starts the plugin's process, or loads a trusted plugin. A
+	trusted plugin that cannot run in the app's process fails each call with NFKPluginErrorNotTrusted, as
+	its backends do. */
 @property (nonatomic, readonly, copy) NSArray<NFKInferenceTool *> *tools;
 
 @end

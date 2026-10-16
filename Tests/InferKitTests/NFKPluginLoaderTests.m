@@ -47,6 +47,42 @@ static NSString * const NFKLoaderTestsSecondMajorSource =
 	@"NFK_PLUGIN_EXPORT nfk_plugin_status nfk_plugin_entry(uint32_t v, const nfk_plugin_host *h, const nfk_plugin **out)\n"
 	@"{ *out = &table; return NFK_PLUGIN_STATUS_OK; }\n";
 
+/*! A C plugin whose function table, result payload, and result buffers are each NFK_TEST_LONGER bytes
+	longer than plugin ABI 1.0's, as a plugin built against a later minor version writes them. Model
+	"invert" answers every run with two attachments, "abcd" under "first" and "wxyz" under "second". */
+static NSString * const NFKLoaderTestsLongerStructuresSource =
+	@"#include <InferKitC/NFKPluginABI.h>\n"
+	@"#include <stdlib.h>\n"
+	@"#include <string.h>\n"
+	@"#define STRIDE (sizeof(nfk_plugin_buffer) + NFK_TEST_LONGER)\n"
+	@"typedef struct { nfk_plugin_payload payload; unsigned char later[NFK_TEST_LONGER + 1]; "
+	@"unsigned char buffers[2 * STRIDE] __attribute__((aligned(8))); char first[4]; char second[4]; } result_t;\n"
+	@"static int backend_token;\n"
+	@"static char *copy_string(const char *text) { char *copy = malloc(strlen(text) + 1); strcpy(copy, text); return copy; }\n"
+	@"static nfk_plugin_status describe(void *c, char **json) { *json = copy_string(\"{\\\"models\\\":[{\\\"id\\\":\\\"invert\\\"}]}\"); return NFK_PLUGIN_STATUS_OK; }\n"
+	@"static nfk_plugin_status create_backend(void *c, const char *m, const char *o, nfk_plugin_backend **b, char **e)\n"
+	@"{ *b = (nfk_plugin_backend *)&backend_token; *e = 0; return NFK_PLUGIN_STATUS_OK; }\n"
+	@"static void put_buffer(result_t *r, int index, const char *bytes)\n"
+	@"{ nfk_plugin_buffer buffer; memset(&buffer, 0, sizeof buffer); buffer.struct_size = (uint32_t)STRIDE; buffer.kind = NFK_PLUGIN_BUFFER_BYTES;\n"
+	@"  buffer.bytes = bytes; buffer.length = 4; buffer.descriptor = -1; memcpy(r->buffers + index * STRIDE, &buffer, sizeof buffer); }\n"
+	@"static nfk_plugin_status run(void *c, nfk_plugin_backend *b, nfk_plugin_run *run, const nfk_plugin_payload *request,\n"
+	@"  nfk_plugin_payload **out, char **e)\n"
+	@"{ result_t *r = calloc(1, sizeof *r); memcpy(r->first, \"abcd\", 4); memcpy(r->second, \"wxyz\", 4);\n"
+	@"  put_buffer(r, 0, r->first); put_buffer(r, 1, r->second);\n"
+	@"  r->payload.struct_size = (uint32_t)(sizeof(nfk_plugin_payload) + NFK_TEST_LONGER); r->payload.buffer_count = 2;\n"
+	@"  r->payload.json = \"{\\\"outputs\\\":{\\\"first\\\":{\\\"$nfk\\\":\\\"buffer\\\",\\\"index\\\":0,\\\"as\\\":\\\"data\\\",\\\"length\\\":4},\"\n"
+	@"    \"\\\"second\\\":{\\\"$nfk\\\":\\\"buffer\\\",\\\"index\\\":1,\\\"as\\\":\\\"data\\\",\\\"length\\\":4}}}\";\n"
+	@"  r->payload.buffers = (const nfk_plugin_buffer *)r->buffers; *out = &r->payload; *e = 0; return NFK_PLUGIN_STATUS_OK; }\n"
+	@"static void destroy_backend(void *c, nfk_plugin_backend *b) { }\n"
+	@"static void free_payload(void *c, nfk_plugin_payload *p) { free(p); }\n"
+	@"static void free_string(void *c, char *s) { free(s); }\n"
+	@"static void shutdown_plugin(void *c) { }\n"
+	@"static struct { nfk_plugin table; unsigned char later[NFK_TEST_LONGER + 1]; } longer_table = {\n"
+	@"  { (uint32_t)(sizeof(nfk_plugin) + NFK_TEST_LONGER), NFK_PLUGIN_ABI_VERSION, 0, describe, create_backend, 0, run, 0, 0,\n"
+	@"    destroy_backend, 0, free_payload, free_string, shutdown_plugin } };\n"
+	@"NFK_PLUGIN_EXPORT nfk_plugin_status nfk_plugin_entry(uint32_t v, const nfk_plugin_host *h, const nfk_plugin **out)\n"
+	@"{ *out = &longer_table.table; return NFK_PLUGIN_STATUS_OK; }\n";
+
 @interface NFKPluginLoaderTests : XCTestCase
 @property (nonatomic, strong) NSMutableArray<NSURL *> *temporaryURLs;
 @end
@@ -131,6 +167,66 @@ static NSString * const NFKLoaderTestsSecondMajorSource =
 		return nil;
 	}
 	return copy;
+}
+
+/*! A copy of bundle under identifier in a directory of its own, edited by edit and not signed again. */
+- (nullable NSURL *)unsignedCopyOfBundle:(NSURL *)bundle identifier:(NSString *)identifier edit:(nullable void (^)(NSURL *copy))edit
+{
+	NSURL *directory = [[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:
+						[NSString stringWithFormat:@"loader-test-%@", NSUUID.UUID.UUIDString] isDirectory:YES];
+	[self.temporaryURLs addObject:directory];
+	NSURL *copy = [directory URLByAppendingPathComponent:bundle.lastPathComponent isDirectory:YES];
+	NSError *error = nil;
+	if (![NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:nil error:&error]
+		|| ![NSFileManager.defaultManager copyItemAtURL:bundle toURL:copy error:&error]) {
+		XCTFail(@"%@", error);
+		return nil;
+	}
+	NSURL *infoURL = [copy URLByAppendingPathComponent:@"Contents/Info.plist"];
+	NSMutableDictionary *info = [NSMutableDictionary dictionaryWithContentsOfURL:infoURL];
+	info[@"CFBundleIdentifier"] = identifier;
+	XCTAssertTrue([info writeToURL:infoURL error:NULL]);
+	NSURL *manifestURL = [copy URLByAppendingPathComponent:@"Contents/Resources/inferkit-plugin.json"];
+	NSMutableDictionary *manifest = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:manifestURL]
+																	options:NSJSONReadingMutableContainers error:NULL];
+	manifest[@"id"] = identifier;
+	XCTAssertTrue([[NSJSONSerialization dataWithJSONObject:manifest options:0 error:NULL] writeToURL:manifestURL atomically:YES]);
+	if (edit != nil) {
+		edit(copy);
+	}
+	return copy;
+}
+
+/*! A library compiled from source with the plugin headers and the given -D definitions, or nil. */
+- (nullable NSURL *)libraryFromSource:(NSString *)source named:(NSString *)name definitions:(NSArray<NSString *> *)definitions
+{
+	NSURL *directory = [[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:
+						[NSString stringWithFormat:@"loader-test-library-%@", NSUUID.UUID.UUIDString] isDirectory:YES];
+	[self.temporaryURLs addObject:directory];
+	XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtURL:directory withIntermediateDirectories:YES attributes:nil error:NULL]);
+	NSURL *sourceURL = [directory URLByAppendingPathComponent:[name stringByAppendingPathExtension:@"c"]];
+	NSURL *library = [directory URLByAppendingPathComponent:[name stringByAppendingPathExtension:@"dylib"]];
+	XCTAssertTrue([source writeToURL:sourceURL atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
+	NSString *include = [NFKPluginFixtures.sourceRootURL URLByAppendingPathComponent:@"Sources/InferKitC/include"].path;
+	NSMutableArray<NSString *> *compile = [NSMutableArray arrayWithObjects:@"clang", @"-dynamiclib", @"-I", include, nil];
+	[compile addObjectsFromArray:definitions];
+	[compile addObjectsFromArray:@[ @"-o", library.path, sourceURL.path ]];
+	NSError *error = nil;
+	if ([NFKPluginFixtures runProgram:@"/usr/bin/xcrun" arguments:compile error:&error] == nil) {
+		XCTFail(@"%@", error);
+		return nil;
+	}
+	return library;
+}
+
+/*! Whether the image at url is loaded in this process. */
+- (BOOL)isLoaded:(NSURL *)url
+{
+	void *handle = dlopen(url.fileSystemRepresentation, RTLD_NOLOAD | RTLD_LOCAL);
+	if (handle != NULL) {
+		dlclose(handle);
+	}
+	return handle != NULL;
 }
 
 /*! The C fixture's count of live allocations. */
@@ -416,6 +512,95 @@ static NSString * const NFKLoaderTestsSecondMajorSource =
 							 (long)(most - baseline), (long)baseline);
 	for (NFKInferenceJob *job in jobs) {
 		XCTAssertEqual(job.status, NFKInferenceJobStatusSucceeded, @"%@", job.error);
+	}
+}
+
+#pragma mark Containment
+
+- (void)testALibraryOutsideTheBundleIsNeverLoaded
+{
+	NSURL *fixture = [self fixtureOfKind:NFKPluginEntryKindCABI version:@"1.0.0"];
+	NSURL *outside = [self libraryFromSource:NFKLoaderTestsSecondMajorSource named:@"outside" definitions:@[]];
+	XCTAssertNotNil(outside);
+	NFKPluginSignaturePolicy *unsignedPolicy = NFKPluginSignaturePolicy.developmentPolicy;
+	unsignedPolicy.requiresValidSignature = NO;
+
+	NSURL *escaping = [self unsignedCopyOfBundle:fixture identifier:@"com.example.inferkit.loader-test-escape" edit:^(NSURL *copy) {
+		NSURL *infoURL = [copy URLByAppendingPathComponent:@"Contents/Info.plist"];
+		NSMutableDictionary *info = [NSMutableDictionary dictionaryWithContentsOfURL:infoURL];
+		info[@"CFBundleExecutable"] = @"../../x.dylib";
+		XCTAssertTrue([info writeToURL:infoURL error:NULL]);
+		NSURL *manifestURL = [copy URLByAppendingPathComponent:@"Contents/Resources/inferkit-plugin.json"];
+		NSMutableDictionary *manifest = [NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:manifestURL]
+																		options:NSJSONReadingMutableContainers error:NULL];
+		[manifest[@"entry"] removeObjectForKey:@"executable"];
+		XCTAssertTrue([[NSJSONSerialization dataWithJSONObject:manifest options:0 error:NULL] writeToURL:manifestURL atomically:YES]);
+		XCTAssertTrue([NSFileManager.defaultManager copyItemAtURL:outside toURL:[copy URLByAppendingPathComponent:@"x.dylib"] error:NULL]);
+	}];
+	NSError *error = nil;
+	XCTAssertNil([NFKPluginLoader loadPluginAtURL:escaping signaturePolicy:unsignedPolicy error:&error]);
+	[self assertError:error domain:NFKPluginErrorDomain code:NFKPluginErrorManifestMismatch];
+	XCTAssertFalse([self isLoaded:[escaping URLByAppendingPathComponent:@"x.dylib"]], @"the refusal comes before dlopen");
+
+	NSURL *linked = [self unsignedCopyOfBundle:fixture identifier:@"com.example.inferkit.loader-test-link" edit:^(NSURL *copy) {
+		NSURL *executable = [NFKPluginFixtures executableURLOfBundleAtURL:copy];
+		XCTAssertTrue([NSFileManager.defaultManager removeItemAtURL:executable error:NULL]);
+		XCTAssertTrue([NSFileManager.defaultManager createSymbolicLinkAtURL:executable withDestinationURL:outside error:NULL]);
+	}];
+	XCTAssertNil([NFKPluginLoader loadPluginAtURL:linked signaturePolicy:unsignedPolicy error:&error]);
+	[self assertError:error domain:NFKPluginErrorDomain code:NFKPluginErrorManifestMismatch];
+	XCTAssertTrue([error.localizedDescription containsString:@"outside"], @"%@", error);
+	XCTAssertFalse([self isLoaded:outside], @"a link out of the bundle is never followed into dlopen");
+}
+
+- (void)testALoadThatFailsBeforeItsCodeLoadsIsTriedAgain
+{
+	NSURL *fixture = [self fixtureOfKind:NFKPluginEntryKindCABI version:@"1.0.0"];
+	NSURL *library = [NFKPluginFixtures executableURLOfBundleAtURL:fixture];
+	NFKPluginSignaturePolicy *unsignedPolicy = NFKPluginSignaturePolicy.developmentPolicy;
+	unsignedPolicy.requiresValidSignature = NO;
+	__block NSURL *executable = nil;
+	NSURL *copy = [self unsignedCopyOfBundle:fixture identifier:@"com.example.inferkit.loader-test-retry" edit:^(NSURL *bundle) {
+		executable = [NFKPluginFixtures executableURLOfBundleAtURL:bundle];
+		XCTAssertTrue([NSFileManager.defaultManager removeItemAtURL:executable error:NULL]);
+		XCTAssertTrue([[@"not a library" dataUsingEncoding:NSUTF8StringEncoding] writeToURL:executable atomically:YES]);
+	}];
+	NSError *error = nil;
+	XCTAssertNil([NFKPluginLoader loadPluginAtURL:copy signaturePolicy:unsignedPolicy error:&error]);
+	[self assertError:error domain:NFKPluginErrorDomain code:NFKPluginErrorLoadFailed];
+	XCTAssertTrue([error.localizedDescription containsString:@"did not load"], @"%@", error);
+
+	XCTAssertTrue([NSFileManager.defaultManager removeItemAtURL:executable error:NULL]);
+	XCTAssertTrue([NSFileManager.defaultManager copyItemAtURL:library toURL:executable error:&error], @"%@", error);
+	NFKLoadedPlugin *plugin = [NFKPluginLoader loadPluginAtURL:copy signaturePolicy:unsignedPolicy error:&error];
+	XCTAssertNotNil(plugin, @"a library dlopen refused left nothing behind, so the fixed bundle loads: %@", error);
+}
+
+#pragma mark Structure sizes
+
+- (void)testStructuresAtTheOneZeroSizeAndLongerOnesAreRead
+{
+	NSURL *fixture = [self fixtureOfKind:NFKPluginEntryKindCABI version:@"1.0.0"];
+	NSDictionary<NSString *, NSNumber *> *longerBy = @{ @"com.example.inferkit.loader-test-size-1-0": @0,
+													  @"com.example.inferkit.loader-test-size-longer": @16 };
+	for (NSString *identifier in longerBy) {
+		NSString *definition = [NSString stringWithFormat:@"-DNFK_TEST_LONGER=%@", longerBy[identifier]];
+		NSURL *library = [self libraryFromSource:NFKLoaderTestsLongerStructuresSource named:@"longer" definitions:@[ definition ]];
+		NSURL *copy = library != nil ? [self copyOfBundle:fixture identifier:identifier executable:library editManifest:nil] : nil;
+		XCTAssertNotNil(copy);
+		if (copy == nil) {
+			continue;
+		}
+		NSError *error = nil;
+		NFKLoadedPlugin *plugin = [NFKPluginLoader loadPluginAtURL:copy signaturePolicy:NFKPluginSignaturePolicy.developmentPolicy error:&error];
+		XCTAssertNotNil(plugin, @"a function table %@ bytes longer than 1.0's loads: %@", longerBy[identifier], error);
+		id<NFKInferenceBackend> backend = [plugin backendForModelIdentifier:@"invert" options:@{} error:&error];
+		XCTAssertNotNil(backend, @"%@", error);
+		NFKInferenceResult *result = [backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{}] error:&error];
+		XCTAssertNotNil(result, @"a payload and buffers %@ bytes longer than 1.0's are read: %@", longerBy[identifier], error);
+		XCTAssertEqualObjects(result.outputs[@"first"], [@"abcd" dataUsingEncoding:NSUTF8StringEncoding]);
+		XCTAssertEqualObjects(result.outputs[@"second"], [@"wxyz" dataUsingEncoding:NSUTF8StringEncoding],
+							  @"the second buffer is found at its stride of %@ bytes past 1.0's", longerBy[identifier]);
 	}
 }
 

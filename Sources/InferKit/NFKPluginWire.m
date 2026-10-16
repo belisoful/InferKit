@@ -13,6 +13,8 @@
 #import <os/lock.h>
 #import <copyfile.h>
 #import <fcntl.h>
+#import <limits.h>
+#import <stdlib.h>
 #import <unistd.h>
 #endif
 
@@ -448,20 +450,36 @@ BOOL NFKPluginSetNotImplemented(NSError **error, SEL selector)
 	return target;
 }
 
+// The check compares resolved paths, and the URL it returns names the resolved file under the allowed
+// directory's own spelling, so a symbolic link inside the directory cannot name a file outside it.
 - (nullable NSURL *)fileURLForPath:(NSString *)path error:(NSError **)outError
 {
 	NSURL *url = [NSURL fileURLWithPath:path].URLByStandardizingPath;
-	NSURL *allowed = self.allowedFileDirectoryURL.URLByStandardizingPath;
+	NSURL *allowed = self.allowedFileDirectoryURL;
 	if (allowed == nil) {
 		return url;
 	}
-	NSString *prefix = [allowed.path hasSuffix:@"/"] ? allowed.path : [allowed.path stringByAppendingString:@"/"];
-	if (![url.path hasPrefix:prefix]) {
+	char resolvedFile[PATH_MAX];
+	char resolvedDirectory[PATH_MAX];
+	if (realpath(allowed.fileSystemRepresentation, resolvedDirectory) == NULL) {
+		NFKPluginSetError(outError, NFKPluginErrorProtocolViolation,
+						  [NSString stringWithFormat:@"a file reference lies outside %@, which does not exist", allowed.lastPathComponent]);
+		return nil;
+	}
+	if (!path.isAbsolutePath || realpath(url.fileSystemRepresentation, resolvedFile) == NULL) {
+		NFKPluginSetError(outError, NFKPluginErrorProtocolViolation,
+						  [NSString stringWithFormat:@"a file reference names no file inside %@", allowed.lastPathComponent]);
+		return nil;
+	}
+	NSString *file = [NSString stringWithUTF8String:resolvedFile];
+	NSString *directory = [NSString stringWithUTF8String:resolvedDirectory];
+	NSString *prefix = [directory hasSuffix:@"/"] ? directory : [directory stringByAppendingString:@"/"];
+	if (![file hasPrefix:prefix]) {
 		NFKPluginSetError(outError, NFKPluginErrorProtocolViolation,
 						  [NSString stringWithFormat:@"a file reference lies outside %@", allowed.lastPathComponent]);
 		return nil;
 	}
-	return url;
+	return [allowed URLByAppendingPathComponent:[file substringFromIndex:prefix.length] isDirectory:NO];
 }
 
 // Runs under the reader's lock.

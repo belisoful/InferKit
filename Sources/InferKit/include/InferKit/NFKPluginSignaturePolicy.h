@@ -38,7 +38,8 @@ API_UNAVAILABLE(ios, tvos, watchos)
 /*! Whether code without a valid signature is refused. Defaults to YES. */
 @property (nonatomic, assign) BOOL requiresValidSignature;
 
-/*! The team whose signature is required, or nil for any team. */
+/*! The team whose signature is required, or nil for any team. A team identifier is ten uppercase ASCII
+	letters and digits; any other value refuses every signer with NFKPluginErrorTeamMismatch. */
 @property (nonatomic, copy, nullable) NSString *teamIdentifier;
 
 /*! Whether an ad hoc signature, which names no signer, is accepted. Defaults to NO. */
