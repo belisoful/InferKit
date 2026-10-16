@@ -24,6 +24,8 @@ typedef NS_ENUM(NSInteger, NFKHFHubAttemptOutcome) {
 @property (nonatomic, strong, nullable) NSFileHandle *fileHandle;
 @property (nonatomic, assign) long long writtenByteCount;
 @property (nonatomic, assign) long long expectedByteCount;
+@property (nonatomic, assign) long long listedByteCount;
+@property (nonatomic, assign) long long ceilingByteCount;
 @property (nonatomic, copy, nullable) NSString *entityTag;
 @property (nonatomic, strong, nullable) NSError *attemptError;
 @property (nonatomic, assign) BOOL attemptRestarts;
@@ -49,6 +51,8 @@ typedef NS_ENUM(NSInteger, NFKHFHubAttemptOutcome) {
 	transfer.destinationURL = destinationURL;
 	transfer.report = report;
 	transfer.expectedByteCount = report != nil ? report.expectedByteCount : NFKDownloadUnknownByteCount;
+	transfer.listedByteCount = transfer.expectedByteCount;
+	transfer.ceilingByteCount = report != nil ? report.ceilingByteCount : -1;
 	transfer.attemptDone = dispatch_semaphore_create(0);
 	NSError *error = nil;
 	BOOL succeeded = [transfer runWithConfiguration:configuration error:&error];
@@ -272,8 +276,28 @@ didReceiveResponse:(NSURLResponse *)response
 	completionHandler(NSURLSessionResponseCancel);
 }
 
+/*! The most bytes the file may hold: its listed size, else the length the server announced, lowered
+	to the ceiling; -1 for no limit. */
+- (long long)streamLimit
+{
+	long long limit = self.listedByteCount >= 0 ? self.listedByteCount : self.expectedByteCount;
+	long long ceiling = self.ceilingByteCount;
+	if (ceiling >= 0 && (limit < 0 || ceiling < limit)) {
+		limit = ceiling;
+	}
+	return limit;
+}
+
 - (void)URLSession:(NSURLSession *)session dataTask:(NSURLSessionDataTask *)dataTask didReceiveData:(NSData *)data
 {
+	long long limit = [self streamLimit];
+	if (limit >= 0 && self.writtenByteCount + (long long)data.length > limit) {
+		NSString *reason = [NSString stringWithFormat:@"%@ streamed past its limit of %lld bytes",
+							self.baseRequest.URL.lastPathComponent, limit];
+		self.attemptError = [NFKDownload errorWithCode:NFKDownloadErrorSizeMismatch reason:reason];
+		[dataTask cancel];
+		return;
+	}
 	NSError *writeError = nil;
 	if (![self.fileHandle writeData:data error:&writeError]) {
 		self.attemptError = writeError;

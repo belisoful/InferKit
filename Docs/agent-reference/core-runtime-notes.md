@@ -485,15 +485,26 @@ added 2026-10-15, InferKit 0.4.0). The transfer is `NFKHFHubTransfer` (private).
   hold `/`. The URL builders (`localURLForRepo:…`, `remoteURLForRepo:…`, `localURLForURL:fileName:`)
   return nil; every other entry point fails with `NFKDownloadErrorUnsafePath` before any request or
   file access, and a status reads absent. A listing with one unsafe file entry refuses the whole plan:
-  the server is broken or hostile. A revision may hold `/` (`refs/pr/1` nests folders).
+  the server is broken or hostile. A revision may hold `/` and is still one folder:
+  `revisionFolderName:` stores `%` as `%25` and `/` as `%2F`, so `refs/pr/1` caches at
+  `<repo>/refs%2Fpr%2F1` and a revision `main/x` sits beside `main`, never inside it (removing `main`
+  once deleted `main/x` with it). A revision without either character keeps its plain name. The
+  resolve URL keeps the revision as it was (`resolve/refs/pr/1/<path>`); the tree API percent-encodes
+  it as one segment.
 - Containment is the second guard: `requireURL:insideCacheURL:error:` runs before every write, trash
   move, and removal (`fetchFileFromURL:…`, `removeSnapshotAtURL:…`, `moveURLs:toTrashInCacheURL:…`,
   the completion record, pin, unpin, adopt). It applies `.` and `..` lexically and accepts a path
   strictly under any of three forms of the root: as given, `URLByResolvingSymlinksInPath` (which
   drops a leading `/private`), and `realpath` (which keeps it). `NSDirectoryEnumerator` over a
   `/var/folders/…` root hands back `/private/var/folders/…` URLs, so a trim needs the `realpath` form
-  (probed 2026-10-16). It does not resolve links inside the cache: a repository folder linked to
-  another volume is a supported layout, so a link someone placed inside the cache is trusted.
+  (probed 2026-10-16). The lexical check is followed by a real-path check unless
+  `followsFolderLinksOutOfCache` is set: the folder the item lands in, resolved by `realpath` through
+  its deepest existing ancestor (`NFKHFHubRealPath`), must lie under the real path of the cache root.
+  The item itself is not resolved, because a removal moves a link and never its target, and a write
+  replaces a link. So a file link inside a snapshot (the InferKitMLX release-store tests seed those) and
+  a cache root that is itself a link stay supported, and a folder inside the cache that links to
+  another volume needs the opt-in. The `.inferkit-owned` marker is removed first when it is a link,
+  and the pin is written atomically, so neither writes through a link.
 - `NSURL.lastPathComponent` percent-decodes and then splits, so `a%2F..%2Fx.bin` reads `x.bin`; a final
   `..` segment reads `..` and is refused.
 - Plans: `<endpoint>/api/models/<repo>/tree/<revision>?recursive=1`, the revision percent-encoded as
@@ -576,6 +587,27 @@ added 2026-10-15, InferKit 0.4.0). The transfer is `NFKHFHubTransfer` (private).
   snapshot, and the trim checks and removes each snapshot under the registry lock, so a multi-file
   `NFKDownload` keeps its snapshot between files, when no `.download` file marks it. A fetch registers
   its snapshot before it creates the folder.
+- Holds: `fetchFileFromURL:…` holds its snapshot in the registry for the whole call
+  (`+[NFKDownload holdSnapshotURL:]` / `endHoldOfSnapshotKey:`), with or without a current
+  `NFKDownload`, so a synchronous `downloadRepo:…error:` is safe from a concurrent trim and removal
+  while it runs. Between calls, `holdSnapshotOfRepo:revision:error:` returns an `NFKHFHubSnapshotHold`
+  that keeps the snapshot in use until `invalidate` or deallocation. Holds and downloads share one
+  counted set, so a snapshot is free only when every hold and download has let go. InferKitMLX's two
+  release helpers (`NFKMLXReleaseDownload.directory(…)`, the flat and the component form) hold the
+  release for the fetch of all its files through `NFKHFHub.holdRelease(repo:revision:)`, and so do the
+  loaders that fetch file by file outside them: `NFKMLXOpenJev` (release and base, each its own hold),
+  `NFKMLXLayaRelease`, `NFKMLXOpenJevDeBERTa`, `NFKMLXVoiceRestoreBackend` (transformer and vocoder
+  repositories), and `NFKMLXBackend`'s Stable Diffusion release download.
+- A hold ends when the fetch returns, before the model build reads the files. A trim or removal in
+  that window still deletes them: weights already memory-mapped survive the unlink, and a
+  configuration or tokenizer file read afterward does not, so the build fails with a missing file.
+  Holding through the build would need a hold in each backend factory.
+- Streaming limit: each transfer stops with `NFKDownloadErrorSizeMismatch` once it would write past
+  its limit: the listed size, else the length the response announces, lowered to a ceiling. The
+  ceiling is `maximumFileByteCount` when set, else the cache volume's free space for a file of unknown
+  size. The transfer report is now made on every fetch, a download or not, to carry the limit. A stub
+  body that stalls after its first chunk proves the stop: without the limit the transfer waits for
+  bytes that never come.
 - Tests: `NFKDownloadTests` and `NFKDownloadRemovalTests` against `NFKStubHubProtocol` (an
   `NSURLProtocol` at `http://hub.test` with Range, a stall after the first chunk, and a drop part-way),
   never the network. A cancellation test polls `currentProgress`: the throttled handler may never

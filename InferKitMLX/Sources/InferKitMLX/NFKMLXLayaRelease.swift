@@ -62,6 +62,8 @@ extension NFKMLXLaya {
 
     /// The download over a given hub, which is the seam a test replaces the transport through.
     static func download(variant: NFKMLXLayaVariant, revision: String?, hub: NFKHFHub) throws -> URL {
+        let hold = try hub.holdRelease(repo: repository, revision: revision)
+        defer { hold.invalidate() }
         var folder: URL?
         for path in releaseFiles(for: variant) {
             let local = try hub.fetchFile(repo: repository, revision: revision, path: path)

@@ -419,6 +419,8 @@ public final class NFKMLXOpenJevDeBERTa: NSObject, NFKMLXDecisionModel {
     }
 
     static func download(revision: String?, hub: NFKHFHub) throws -> URL {
+        let hold = try hub.holdRelease(repo: repository, revision: revision)
+        defer { hold.invalidate() }
         var folder: URL?
         for path in releaseFiles {
             folder = try hub.fetchFile(repo: repository, revision: revision, path: path)

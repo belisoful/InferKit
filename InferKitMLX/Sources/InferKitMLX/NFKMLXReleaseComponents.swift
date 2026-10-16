@@ -38,6 +38,8 @@ extension NFKMLXReleaseDownload {
     static func directory(repo: String, revision: String?, cacheDirectoryURL: URL?,
                           components: [NFKMLXReleaseComponent]) throws -> URL {
         let hub = hub(cacheDirectoryURL: cacheDirectoryURL)
+        let hold = try hub.holdRelease(repo: repo, revision: revision)
+        defer { hold.invalidate() }
         let missing = components.contains {
             needsFetch(hub: hub, repo: repo, revision: revision, required: $0.required, weights: $0.weights)
         }

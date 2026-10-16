@@ -13,10 +13,14 @@ NS_ASSUME_NONNULL_BEGIN
 
 /*! The file a transfer reports to a download: the cache location the download keys it by. */
 @interface NFKHFHubTransferReport : NSObject
-@property (nonatomic, strong) NFKDownload *download;
+/*! The download the bytes report to; nil when the fetch runs without one. */
+@property (nonatomic, strong, nullable) NFKDownload *download;
 @property (nonatomic, copy) NSURL *localURL;
 @property (nonatomic, copy) NSString *path;
+/*! The listed size; NFKDownloadUnknownByteCount when the plan has none. */
 @property (nonatomic, assign) long long expectedByteCount;
+/*! The most bytes the transfer streams whatever else limits it; -1 for none. */
+@property (nonatomic, assign) long long ceilingByteCount;
 @end
 
 /*!
@@ -25,8 +29,10 @@ NS_ASSUME_NONNULL_BEGIN
 	@discussion The bytes go straight into the destination file. A transfer that drops on a
 				transient network error is resumed with an HTTP Range request, at most
 				maximumResumeCount times; a strong ETag from the first response rides along as
-				If-Range, so a file that changed restarts from its first byte. A failed or cancelled
-				transfer removes the destination.
+				If-Range, so a file that changed restarts from its first byte. A transfer stops with
+				NFKDownloadErrorSizeMismatch once it streams past its limit: the listed size, else the
+				announced length, lowered to the report's ceiling. A failed or cancelled transfer
+				removes the destination.
 */
 @interface NFKHFHubTransfer : NSObject
 

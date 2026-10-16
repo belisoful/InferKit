@@ -41,7 +41,13 @@ typedef void (^NFKDownloadCompletionHandler)(NSURL * _Nullable localURL, NSError
 /*! Marks a snapshot folder as one the download writes into, until it finishes. */
 - (void)registerSnapshotURL:(NSURL *)snapshotURL;
 
-/*! YES when an unfinished download in this process writes into the snapshot folder. */
+/*! Registers the snapshot folder as in use until endHoldOfSnapshotKey: is sent the returned key.
+	Holds count: a folder stays in use while any hold or download has it. */
++ (NSString *)holdSnapshotURL:(NSURL *)snapshotURL;
+/*! Ends one hold that holdSnapshotURL: returned key for. */
++ (void)endHoldOfSnapshotKey:(NSString *)key;
+
+/*! YES when an unfinished download or a hold in this process has the snapshot folder in use. */
 + (BOOL)isSnapshotURLInUse:(NSURL *)snapshotURL;
 
 /*! Runs block while no download can register a snapshot. */

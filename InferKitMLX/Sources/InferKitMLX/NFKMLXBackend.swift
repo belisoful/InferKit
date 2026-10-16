@@ -232,6 +232,8 @@ struct NFKMLXStableDiffusionRelease {
     func download(cacheDirectoryURL: URL?) throws -> URL {
         let cache = cacheDirectoryURL ?? NFKHFHub.defaultCacheDirectoryURL()
         let hub = NFKHFHub(cacheDirectoryURL: cache)
+        let hold = try hub.holdRelease(repo: repository, revision: nil)
+        defer { hold.invalidate() }
         var root: URL?
         for file in vocabularyFiles {
             do {
