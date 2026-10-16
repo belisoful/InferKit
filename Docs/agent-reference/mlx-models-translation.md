@@ -303,7 +303,7 @@ Coordinator and every run through the Testing Coordinator.
 ## Not yet ported
 
 The toolkit is license agnostic: a weight license is the consumer's to read and comply with, and it does
-not block a port (user decision, 2026-10-02). Each entry below names the port cost, not a bar.
+not block a port. Each entry below names the port cost, not a bar.
 
 - SeamlessM4T v2 (`facebook/seamless-m4t-v2-large`, CC-BY-NC-4.0): its text-to-text path is an
   NLLB-style 24 + 24 encoder-decoder over the same 256k vocabulary; the speech paths add the shipped

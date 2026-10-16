@@ -12,14 +12,8 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-/*! The code a stub answers with until its stage implements it. Outside the public NFKPluginError range. */
-static const NSInteger NFKPluginErrorNotImplemented = 1000;
-
 /*! Sets error to an NFKPluginErrorDomain error with code and reason, and returns NO. */
 BOOL NFKPluginSetError(NSError * _Nullable * _Nullable error, NSInteger code, NSString *reason);
-
-/*! Sets error to the not-implemented error naming selector, and returns NO. */
-BOOL NFKPluginSetNotImplemented(NSError * _Nullable * _Nullable error, SEL selector);
 
 #if TARGET_OS_OSX
 

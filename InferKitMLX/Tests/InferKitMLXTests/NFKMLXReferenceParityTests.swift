@@ -4916,11 +4916,10 @@ final class NFKMLXReferenceParityTests: XCTestCase {
 
     // MARK: MiniMax Music 3 vocoder
 
-    // Stage 1 of the music port: the Flow-VAE decoder against diffusers' own MiniMaxMusic3Vocoder on
-    // the released checkpoint. A vocoder is a pure function of its latent, so it is the one stage
-    // that reaches measured parity before any other stage exists; the input is the record's own
-    // deterministic standard-normal latent. The reference computes its weight norm as a
-    // parametrization at run time, which is the fusion the Swift loader bakes in at load.
+    // The Flow-VAE decoder against diffusers' own MiniMaxMusic3Vocoder on the released checkpoint.
+    // A vocoder is a pure function of its latent, so its parity is measured on its own; the input is
+    // the record's own deterministic standard-normal latent. The reference computes its weight norm as
+    // a parametrization at run time, which is the fusion the Swift loader bakes in at load.
     func testMusic3VocoderMatchesTheReference() throws {
         try requireMLXRuntime()
         guard let path = config["IK_PARITY_MUSIC3_VOCODER"] else {

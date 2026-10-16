@@ -268,6 +268,40 @@
 	XCTAssertEqualObjects(port.dictionaryRepresentation[@"key"], NFKInputPrompt);
 }
 
+#pragma mark Repeated identifiers
+
+- (void)testARepeatedIdentifierOrKeyInADescriptorIsMalformed
+{
+	NSDictionary<NSString *, id> *full = [self fullDescriptorDictionary];
+	NSDictionary<NSString *, NSString *> *expected = @{
+		@"inputs": @"model.inputs[1].key \"image\" repeats model.inputs[0].key",
+		@"outputs": @"model.outputs[1].key \"image\" repeats model.outputs[0].key",
+		@"options": @"model.options[2].key \"strength\" repeats model.options[0].key",
+		@"variants": @"model.variants[1].id \"x4\" repeats model.variants[0].id",
+	};
+	for (NSString *field in expected) {
+		NSMutableDictionary *dictionary = [full mutableCopy];
+		NSArray *elements = full[field];
+		dictionary[field] = [elements arrayByAddingObject:elements.firstObject];
+		NSError *error = nil;
+		XCTAssertNil([NFKModelDescriptor descriptorWithDictionary:dictionary error:&error], @"%@", field);
+		XCTAssertEqual(error.code, NFKModelCatalogErrorMalformedDescriptor, @"%@", field);
+		XCTAssertEqualObjects(error.localizedDescription, expected[field]);
+	}
+
+	NSMutableDictionary *presets = [full mutableCopy];
+	presets[@"presets"] = @[ @{ @"id": @"fast" }, @{ @"id": @"fast", @"title": @"Fast again" } ];
+	NSError *error = nil;
+	XCTAssertNil([NFKModelDescriptor descriptorWithDictionary:presets error:&error]);
+	XCTAssertEqualObjects(error.localizedDescription, @"model.presets[1].id \"fast\" repeats model.presets[0].id");
+
+	NSDictionary *stage = @{ @"id": @"decoder", @"bytesByPrecision": @{ @"checkpoint": @10 } };
+	NSDictionary *facts = @{ @"stages": @[ stage, stage ] };
+	XCTAssertNil([NFKModelMemoryFacts factsWithDictionary:facts error:&error]);
+	XCTAssertEqual(error.code, NFKModelCatalogErrorMalformedDescriptor);
+	XCTAssertEqualObjects(error.localizedDescription, @"memoryFacts.stages[1].id \"decoder\" repeats memoryFacts.stages[0].id");
+}
+
 #pragma mark Defaults and derived fields
 
 - (void)testAMinimalDescriptorTakesItsDefaults

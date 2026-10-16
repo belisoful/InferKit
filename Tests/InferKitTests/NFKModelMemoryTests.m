@@ -571,6 +571,57 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 	XCTAssertEqualObjects(error.localizedDescription, @"memoryFacts.stages[0].bytesByPrecision is missing");
 }
 
+- (void)testALayerCountOutsideTheMaximumIsMalformed
+{
+	XCTAssertEqual(NFKModelStageFacts.maximumLayerCount, 4096);
+	NSArray<NSNumber *> *malformed = @[ @1e12, @(NFKModelStageFacts.maximumLayerCount + 1), @-1, @2.5 ];
+	for (NSNumber *layerCount in malformed) {
+		NSDictionary *dictionary = @{ @"stages": @[ @{ @"id": @"decoder", @"bytesByPrecision": @{ @"checkpoint": @1000 },
+														@"layerCount": layerCount } ] };
+		NSError *error = nil;
+		XCTAssertNil([NFKModelMemoryFacts factsWithDictionary:dictionary error:&error], @"%@", layerCount);
+		XCTAssertEqualObjects(error.domain, NFKModelCatalogErrorDomain);
+		XCTAssertEqual(error.code, NFKModelCatalogErrorMalformedDescriptor);
+		XCTAssertEqualObjects(error.localizedDescription,
+							  @"memoryFacts.stages[0].layerCount is not a whole number from 0 to 4096");
+	}
+	NSDictionary *atMaximum = @{ @"id": @"decoder", @"bytesByPrecision": @{ @"checkpoint": @1000 },
+								 @"layerCount": @(NFKModelStageFacts.maximumLayerCount) };
+	XCTAssertEqual([NFKModelStageFacts stageWithDictionary:atMaximum error:NULL].layerCount,
+				   NFKModelStageFacts.maximumLayerCount);
+}
+
+- (void)testADescriptorWhoseStageStatesATrillionLayersIsMalformed
+{
+	NSMutableDictionary *dictionary = [[self decoderWithOverhead:0].dictionaryRepresentation mutableCopy];
+	NSMutableDictionary *variant = [dictionary[@"variants"][0] mutableCopy];
+	NSMutableDictionary *facts = [variant[@"memoryFacts"] mutableCopy];
+	NSMutableDictionary *stage = [facts[@"stages"][0] mutableCopy];
+	stage[@"layerCount"] = @1e12;
+	stage[@"largestLayerBytesByPrecision"] = @{ @"checkpoint": @1 };
+	facts[@"stages"] = @[ stage ];
+	variant[@"memoryFacts"] = facts;
+	dictionary[@"variants"] = @[ variant ];
+	NSError *error = nil;
+	XCTAssertNil([NFKModelDescriptor descriptorWithDictionary:dictionary error:&error]);
+	XCTAssertEqual(error.code, NFKModelCatalogErrorMalformedDescriptor);
+	XCTAssertTrue([error.localizedDescription hasSuffix:@"layerCount is not a whole number from 0 to 4096"], @"%@",
+				  error.localizedDescription);
+}
+
+- (void)testTheInitializerClampsTheLayerCountToItsRange
+{
+	NFKModelStageFacts *(^stage)(NSInteger) = ^NFKModelStageFacts *(NSInteger layerCount) {
+		return [[NFKModelStageFacts alloc] initWithIdentifier:@"decoder" title:nil
+										 byteCountByPrecision:@{ NFKModelPrecisionCheckpoint: @1000 }
+									  quantizableElementCount:0 pageableByteCountByPrecision:nil layerCount:layerCount
+							 largestLayerByteCountByPrecision:nil widenedPrecision:nil extensions:nil];
+	};
+	XCTAssertEqual(stage(1000000000000).layerCount, NFKModelStageFacts.maximumLayerCount);
+	XCTAssertEqual(stage(-5).layerCount, 0);
+	XCTAssertEqual(stage(32).layerCount, 32);
+}
+
 - (void)testAMemoryModelRoundTripsThroughItsDictionary
 {
 	NSDictionary *dictionary = @{ @"precision": @"precision", @"quantizationBits": @"quantizationBits",
@@ -710,7 +761,7 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 												error:&error]);
 	XCTAssertEqual(error.code, NFKModelCatalogErrorDoesNotFit);
 	XCTAssertEqualObjects(error.localizedDescription,
-						  @"the stages need 41.0 GiB together plus a 4.0 GiB reserve, against a 27.2 GiB working set; hold them staged or paged");
+						  @"the stages need 41.0 GiB together plus a 4.0 GiB reserve, against a 27.2 GiB budget; hold them staged or paged");
 
 	NFKModelStageFootprint *heavyExperts = [[NFKModelStageFootprint alloc] initWithByteCount:40 * NFKTestGiB
 																		   pageableByteCount:10 * NFKTestGiB
@@ -718,7 +769,7 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 	XCTAssertNil([NFKModelResidencyPlan planForStages:@[ heavyExperts ] residency:NFKModelResidencyPaged budget:budget
 												error:&error]);
 	XCTAssertEqualObjects(error.localizedDescription,
-						  @"the largest stage needs 30.0 GiB with its routed experts paged, plus a 4.0 GiB reserve, against a 24.0 GiB working set");
+						  @"the largest stage needs 30.0 GiB with its routed experts paged, plus a 4.0 GiB reserve, against a 24.0 GiB budget");
 
 	NFKModelStageFootprint *dense = [[NFKModelStageFootprint alloc] initWithByteCount:30 * NFKTestGiB pageableByteCount:0
 																	 widenedByteCount:nil
@@ -727,12 +778,25 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 	XCTAssertNil([NFKModelResidencyPlan planForStages:@[ dense ] residency:NFKModelResidencyStreamed budget:budget
 												error:&error]);
 	XCTAssertEqualObjects(error.localizedDescription,
-						  @"stage 0 needs 22.0 GiB streamed, two layers in flight, plus a 4.0 GiB reserve, against a 24.0 GiB working set");
+						  @"stage 0 needs 22.0 GiB streamed, two layers in flight, plus a 4.0 GiB reserve, against a 24.0 GiB budget");
 
 	XCTAssertNil([NFKModelResidencyPlan planForStages:@[ dense ] residency:NFKModelResidencyResident budget:budget
 												error:&error]);
 	XCTAssertEqualObjects(error.localizedDescription,
-						  @"the stages need 30.0 GiB together plus a 4.0 GiB reserve, against a 24.0 GiB working set; hold them staged or streamed");
+						  @"the stages need 30.0 GiB together plus a 4.0 GiB reserve, against a 24.0 GiB budget; hold them staged or streamed");
+}
+
+- (void)testAPlannerRefusalPrintsTheBudgetAndNotTheWorkingSet
+{
+	NFKModelMemoryBudget *budget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:32 * NFKTestGiB];
+	NFKModelStageFootprint *stage = [NFKModelStageFootprint footprintWithByteCount:30 * NFKTestGiB];
+	NSError *error = nil;
+	XCTAssertNil([NFKModelResidencyPlan planForStages:@[ stage ] residency:NFKModelResidencyResident
+											   budget:budget.byteCount error:&error]);
+	XCTAssertEqualObjects(error.localizedDescription,
+						  @"the stages need 30.0 GiB together plus a 4.0 GiB reserve, against a 27.2 GiB budget; hold them staged");
+	XCTAssertFalse([error.localizedDescription containsString:@"working set"]);
+	XCTAssertFalse([error.localizedDescription containsString:@"32.0 GiB"]);
 }
 
 - (void)testVerifyingEachStageNamesTheStageThatDoesNotLoad
@@ -746,11 +810,11 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 	XCTAssertFalse([NFKModelResidencyPlan verifyEachStageLoads:stages plan:plan budget:budget names:@[ @"text encoder" ]
 														 error:&error]);
 	XCTAssertEqualObjects(error.localizedDescription,
-						  @"stage 1 alone needs 30.0 GiB plus a 4.0 GiB reserve, against a 24.0 GiB working set");
+						  @"stage 1 alone needs 30.0 GiB plus a 4.0 GiB reserve, against a 24.0 GiB budget");
 	NSArray<NSString *> *names = @[ @"text encoder", @"transformer" ];
 	XCTAssertFalse([NFKModelResidencyPlan verifyEachStageLoads:stages plan:plan budget:budget names:names error:&error]);
 	XCTAssertEqualObjects(error.localizedDescription,
-						  @"transformer alone needs 30.0 GiB plus a 4.0 GiB reserve, against a 24.0 GiB working set");
+						  @"transformer alone needs 30.0 GiB plus a 4.0 GiB reserve, against a 24.0 GiB budget");
 }
 
 - (void)testAutomaticPicksTheFirstResidencyThatFits

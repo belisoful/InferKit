@@ -222,16 +222,19 @@
 
 #pragma mark Manifest fields
 
-- (void)testTheManifestReadsParametersAsOptionsAndWritesOptions
+- (void)testTheManifestReadsOptionsOnlyFromTheOptionsField
 {
-	NSDictionary *legacy = @{ @"id": @"m", @"family": @"f", @"engine": NFKModelEnginePlugin,
-							  @"parameters": @[ @{ @"key": NFKParameterSeed, @"kind": NFKModelOptionKindInteger } ] };
-	NFKModelDescriptor *descriptor = [NFKModelDescriptor descriptorWithDictionary:legacy error:NULL];
+	NSArray *seed = @[ @{ @"key": NFKParameterSeed, @"kind": NFKModelOptionKindInteger } ];
+	NSDictionary *named = @{ @"id": @"m", @"family": @"f", @"engine": NFKModelEnginePlugin, @"parameters": seed };
+	NFKModelDescriptor *descriptor = [NFKModelDescriptor descriptorWithDictionary:named error:NULL];
+	XCTAssertEqual(descriptor.options.count, 0u);
+	XCTAssertEqualObjects(descriptor.extensions[@"parameters"], seed);
+	XCTAssertEqualObjects(descriptor.dictionaryRepresentation[@"parameters"], seed);
+
+	NSDictionary *options = @{ @"id": @"m", @"family": @"f", @"engine": NFKModelEnginePlugin, @"options": seed };
+	descriptor = [NFKModelDescriptor descriptorWithDictionary:options error:NULL];
 	XCTAssertEqualObjects(descriptor.options.firstObject.key, NFKParameterSeed);
-	XCTAssertNil(descriptor.extensions[@"parameters"]);
-	NSDictionary *written = descriptor.dictionaryRepresentation;
-	XCTAssertNotNil(written[@"options"]);
-	XCTAssertNil(written[@"parameters"]);
+	XCTAssertNotNil(descriptor.dictionaryRepresentation[@"options"]);
 }
 
 - (void)testAnOptionCarriesItsRequirementsPropertyAndLinearMemory

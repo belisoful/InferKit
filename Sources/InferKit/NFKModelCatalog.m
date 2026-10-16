@@ -202,10 +202,29 @@ static NFKModelCatalog *NFKSharedModelCatalog;
 
 #pragma mark Manifests
 
+// A manifest that does not parse, with the parser's own account as the underlying error.
+static BOOL NFKModelCatalogFailParsing(NSError * _Nullable parseError, NSError **error)
+{
+	if (error == NULL) {
+		return NO;
+	}
+	NSString *detail = parseError.userInfo[NSDebugDescriptionErrorKey] ?: parseError.localizedDescription;
+	NSMutableDictionary<NSString *, id> *userInfo = [NSMutableDictionary dictionary];
+	userInfo[NSLocalizedDescriptionKey] = detail != nil ? [NSString stringWithFormat:@"The manifest is not valid JSON: %@", detail]
+		: @"The manifest is not valid JSON.";
+	userInfo[NSUnderlyingErrorKey] = parseError;
+	*error = [NSError errorWithDomain:NFKModelCatalogErrorDomain code:NFKModelCatalogErrorMalformedManifest
+							 userInfo:userInfo];
+	return NO;
+}
+
 - (BOOL)addDescriptorsFromManifestData:(NSData *)data error:(NSError **)error
 {
 	NSError *parseError = nil;
 	id manifest = [NSJSONSerialization JSONObjectWithData:data options:0 error:&parseError];
+	if (manifest == nil) {
+		return NFKModelCatalogFailParsing(parseError, error);
+	}
 	if (![manifest isKindOfClass:NSDictionary.class]) {
 		return NFKModelCatalogFail(NFKModelCatalogErrorMalformedManifest, @"The manifest is not a JSON object.", error);
 	}
@@ -218,6 +237,7 @@ static NFKModelCatalog *NFKSharedModelCatalog;
 								   error);
 	}
 	NSMutableArray<NFKModelDescriptor *> *descriptors = [NSMutableArray arrayWithCapacity:[models count]];
+	NSMutableDictionary<NSString *, NSNumber *> *indexByIdentifier = [NSMutableDictionary dictionary];
 	NSUInteger index = 0;
 	for (id model in models) {
 		NSString *path = [NSString stringWithFormat:@"models[%lu]", (unsigned long)index];
@@ -225,6 +245,13 @@ static NFKModelCatalog *NFKSharedModelCatalog;
 		if (descriptor == nil) {
 			return NO;
 		}
+		NSNumber *earlier = indexByIdentifier[descriptor.identifier];
+		if (earlier != nil) {
+			NSString *reason = [NSString stringWithFormat:@"%@.id \"%@\" repeats models[%lu].id; each model's id is unique within a manifest.",
+								path, descriptor.identifier, (unsigned long)earlier.unsignedIntegerValue];
+			return NFKModelCatalogFail(NFKModelCatalogErrorMalformedManifest, reason, error);
+		}
+		indexByIdentifier[descriptor.identifier] = @(index);
 		[descriptors addObject:descriptor];
 		index += 1;
 	}

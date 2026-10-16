@@ -264,6 +264,17 @@ InferKit 0.4.0. The consumer reference is `Docs/model-catalog.md`. The decisions
   file `role` is `other`, a missing source `layout` is `none`, and missing `requirements` are none.
   `id`, `family`, and `engine` are required on a model; `key` on a port and an option; `kind` on a
   source; `path` on a file; `id` on a variant; `value` on a choice.
+- **Refused where a value would mislead or run away.** A repeated identifier is malformed: two models
+  of one manifest with one `id` (`MalformedManifest`, checked in `addDescriptorsFromManifestData:error:`),
+  and within a model two inputs, outputs, or options with one `key`, two variants or presets with one
+  `id`, or two stages of one variant's facts with one `id` (`MalformedDescriptor`, through
+  `-[NFKModelFieldReader requireUniqueElements:ofField:keyPath:name:error:]`). A lookup by identifier
+  returns the first match, so a repeat would hide an entry without a word. A count that drives a loop
+  has a documented maximum: a stage's `layerCount` is at most 4096
+  (`NFKModelStageFacts.maximumLayerCount`), because the planner builds one entry per layer and a
+  manifest stating 1e12 would hang the estimate. It is the only such count in the schema; the option
+  combinations already stop at 4096, and the other numbers enter arithmetic only. Data that does not
+  parse keeps the parser's error as `NSUnderlyingErrorKey` and its debug description in the message.
 - `descriptorWithIdentifier:derivedFromBackend:` reads the optional `supportedInputKeys`,
   `supportedParameterKeys`, and `supportedOutputKeys` (the last added to `NFKInferenceBackend` with
   the catalog), sorts each, and types each key from the table. The family is the backend's
@@ -298,10 +309,9 @@ Added 2026-10-15 for InferKit 0.4.0 (`NFKModelMemory.h`, `NFKModelOptions.h`, `N
 `NFKModelPreset.h`). The consumer reference is `Docs/model-catalog.md` ("Memory", "Presets", "Load
 options and the build"). The decisions behind them:
 
-- **`parameters` became `options`.** The descriptor field, the property, and the initializer label are
-  `options`, pre-1.0, everywhere in the tree. The reader still accepts `"parameters"` (only when
-  `"options"` is absent) and never keeps it in `extensions`; the writer writes `"options"`. The MLX
-  snapshot changed only by that rename (sorted keys moved the arrays).
+- **The settings field is `options`.** The descriptor field, the property, and the initializer label
+  are `options`. The reader reads no other spelling, since schema 1 has no earlier writer to stay
+  compatible with: a descriptor that names the field `"parameters"` keeps it in `extensions`.
 - **The derived `variant` option is not written.** A descriptor with several variants and no declared
   `variant` option gets one from the variants, built in the initializer. It is in `loadOptions` and
   `optionWithKey:`, not in `options` or the manifest, so a round trip is unchanged.
@@ -318,7 +328,10 @@ options and the build"). The decisions behind them:
   (private) is the Swift `plan(_:residency:budget:)` line for line: the same budget rules
   (`holds` = budget > 0 and bytes + reserve ≤ budget; `admits` = budget ≤ 0 or bytes + reserve ≤
   budget), the same expert-cache headroom, the same streamed rooms, the same widening, and the same
-  refusal sentences, whose GiB figures are `%.1f` of bytes / 2^30. The public `planForStages:` returns
+  refusal sentences, whose GiB figures are `%.1f` of bytes / 2^30. A sentence ends "against a N GiB
+  budget": the figure is the planner's `budget` argument, which a caller passes as
+  `NFKModelMemoryBudget.byteCount` (0.85 of the working set), so the word names what it prints. The
+  Swift reference in `NFKMLXPlannerDifferentialTests` says the same. The public `planForStages:` returns
   the refusal as `NFKModelCatalogErrorDoesNotFit`; the estimate keeps the refused plan's figure and
   reports fits NO. `NFKMLXResidencyBudget` calls through to it. `NFKMLXPlannerDifferentialTests` keeps
   the Swift planner's last body as its reference and compares it with the core planner and the

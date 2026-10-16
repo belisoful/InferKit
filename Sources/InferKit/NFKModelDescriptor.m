@@ -286,6 +286,31 @@ BOOL NFKModelIsEqualDescription(id object, id other, Class expectedClass)
 	return YES;
 }
 
+- (BOOL)requireUniqueElements:(nullable NSArray *)elements
+					  ofField:(NSString *)field
+					  keyPath:(NSString *)keyPath
+						 name:(NSString *)name
+						error:(NSError **)error
+{
+	NSMutableDictionary<id, NSNumber *> *indexByValue = [NSMutableDictionary dictionaryWithCapacity:elements.count];
+	NSString *fieldPath = [self pathForField:field];
+	NSUInteger index = 0;
+	for (id element in elements) {
+		id value = [element valueForKey:keyPath];
+		NSNumber *earlier = value != nil ? indexByValue[value] : nil;
+		if (earlier != nil) {
+			NSString *reason = [NSString stringWithFormat:@"%@[%lu].%@ \"%@\" repeats %@[%lu].%@", fieldPath,
+								(unsigned long)index, name, value, fieldPath, (unsigned long)earlier.unsignedIntegerValue, name];
+			return NFKModelCatalogFail(NFKModelCatalogErrorMalformedDescriptor, reason, error);
+		}
+		if (value != nil) {
+			indexByValue[value] = @(index);
+		}
+		index += 1;
+	}
+	return YES;
+}
+
 - (BOOL)readObject:(NSString *)field
 		 withReader:(NFKModelElementReader)reader
 			   into:(id _Nullable * _Nonnull)value
@@ -1397,7 +1422,7 @@ static NSComparisonResult NFKModelCompareVersions(NSString *version, NSString *o
 static NSArray<NSString *> *NFKModelDescriptorFields(void)
 {
 	return @[ @"id", @"displayName", @"family", @"summary", @"engine", @"registryName", @"providerClass", @"tasks",
-			  @"inputModalities", @"outputModalities", @"inputs", @"outputs", @"options", @"parameters", @"variants",
+			  @"inputModalities", @"outputModalities", @"inputs", @"outputs", @"options", @"variants",
 			  @"license", @"requirements", @"residencies", @"memoryModel", @"presets", @"standIn",
 			  @"introducedVersion" ];
 }
@@ -1615,7 +1640,7 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 	NSString *identifier = nil, *displayName = nil, *family = nil, *summary = nil, *engine = nil;
 	NSString *registryName = nil, *providerClassName = nil, *introducedVersion = nil;
 	NSArray<NSString *> *tasks = nil, *inputModalities = nil, *outputModalities = nil, *residencies = nil;
-	NSArray *inputs = nil, *outputs = nil, *options = nil, *legacyOptions = nil, *variants = nil, *presets = nil;
+	NSArray *inputs = nil, *outputs = nil, *options = nil, *variants = nil, *presets = nil;
 	id license = nil, requirements = nil, memoryModel = nil;
 	BOOL standIn = NO;
 	NFKModelElementReader inputReader = ^id (id element, NSString *elementPath, NSError **elementError) {
@@ -1656,7 +1681,6 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 		|| ![reader readObjects:@"inputs" withReader:inputReader into:&inputs error:error]
 		|| ![reader readObjects:@"outputs" withReader:outputReader into:&outputs error:error]
 		|| ![reader readObjects:@"options" withReader:optionReader into:&options error:error]
-		|| (options == nil && ![reader readObjects:@"parameters" withReader:optionReader into:&legacyOptions error:error])
 		|| ![reader readObjects:@"variants" withReader:variantReader into:&variants error:error]
 		|| ![reader readObject:@"license" withReader:licenseReader into:&license error:error]
 		|| ![reader readObject:@"requirements" withReader:requirementsReader into:&requirements error:error]
@@ -1664,13 +1688,18 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 		|| ![reader readObject:@"memoryModel" withReader:memoryModelReader into:&memoryModel error:error]
 		|| ![reader readObjects:@"presets" withReader:presetReader into:&presets error:error]
 		|| ![reader readBoolean:@"standIn" into:&standIn error:error]
-		|| ![reader readString:@"introducedVersion" required:NO into:&introducedVersion error:error]) {
+		|| ![reader readString:@"introducedVersion" required:NO into:&introducedVersion error:error]
+		|| ![reader requireUniqueElements:inputs ofField:@"inputs" keyPath:@"key" name:@"key" error:error]
+		|| ![reader requireUniqueElements:outputs ofField:@"outputs" keyPath:@"key" name:@"key" error:error]
+		|| ![reader requireUniqueElements:options ofField:@"options" keyPath:@"key" name:@"key" error:error]
+		|| ![reader requireUniqueElements:variants ofField:@"variants" keyPath:@"identifier" name:@"id" error:error]
+		|| ![reader requireUniqueElements:presets ofField:@"presets" keyPath:@"identifier" name:@"id" error:error]) {
 		return nil;
 	}
 	return [[self alloc] initWithIdentifier:identifier displayName:displayName family:family summary:summary
 									 engine:engine registryName:registryName providerClassName:providerClassName
 									  tasks:tasks inputModalities:inputModalities outputModalities:outputModalities
-									 inputs:inputs outputs:outputs options:options ?: legacyOptions variants:variants
+									 inputs:inputs outputs:outputs options:options variants:variants
 									license:license requirements:requirements residencies:residencies
 								memoryModel:memoryModel presets:presets standIn:standIn
 						  introducedVersion:introducedVersion

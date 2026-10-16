@@ -25,6 +25,10 @@
 # The `signature` field is written empty and last, on its own line. The signing step fills it; the
 # format is in Docs/agent-reference/distribution-and-packaging.md ("Release manifest").
 #
+# It refuses, before writing anything, a tree whose version is inconsistent: NFKInferKit.releaseVersion
+# and the podspec's s.version must agree, a v* tag on HEAD must be v<version>, and the version must be
+# newer than every other vX.Y.Z tag (inferkit_check_release_version in inferkit-version.sh).
+#
 # Requires: Xcode command line tools, python3.
 
 set -euo pipefail
@@ -45,6 +49,7 @@ source "$ROOT/Tools/xcframework/inferkit-version.sh"
 VERSION="$(inferkit_version "$ROOT")"
 API_VERSION="$(inferkit_api_version "$ROOT")"
 [ -n "$VERSION" ] && [ -n "$API_VERSION" ] || { echo "cannot read the version or API version from $ROOT"; exit 1; }
+inferkit_check_release_version "$ROOT" || { echo "no release written"; exit 1; }
 
 DYNAMIC="$OUTPUT/InferKitMLXDynamic.xcframework"
 STATIC="$OUTPUT/InferKitMLX.xcframework"
@@ -70,7 +75,7 @@ fi
 
 COMMIT="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || echo "")"
 LOCAL_CHANGES=false
-if [ -n "$(git -C "$ROOT" status --porcelain --untracked-files=no 2>/dev/null || true)" ]; then
+if inferkit_tree_has_local_changes "$ROOT"; then
     LOCAL_CHANGES=true
 fi
 

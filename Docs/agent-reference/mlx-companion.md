@@ -865,7 +865,7 @@ MLX model through the registry. The pieces:
   converted to the enumeration's raw value where the property currently holds an `NSNumber`, so
   `NFKMLXBackend.precision` takes `"float32"`. Key-value coding a string into an `@objc` enum property
   raises otherwise.
-- `loadOptionValues` (decision 2026-10-15): the requested options with defaults filled, `automatic`
+- `loadOptionValues`: the requested options with defaults filled, `automatic`
   included, so an app's comparison with the options it would build with matches.
   `NFKMLXLifecycle.setLoadOptions` keeps the options, and the five lifecycle classes and
   `NFKMLXReloadableBackend` report `NFKMLXLoadOptions.values`. The residency the load resolved to goes to
@@ -907,8 +907,8 @@ Gemma 3, Gemma 3n, Gemma 4, and Qwen3-VL; stored for Qwen3.5, Qwen4-Exp, Granite
 Whisper, and Stable Diffusion; half for MADLAD; automatic residency).
 
 Not consumed: the context and cache keys on Gemma 3, Gemma 3n, Gemma 4, Qwen3.5 (no key-value cache),
-Granite, and Qwen3-VL, whose backends read no cache parameters, so their descriptors do not declare them
-(decision 2026-10-15); and the weight quantization outside the language families and Qwen3-VL.
+Granite, and Qwen3-VL, whose backends read no cache parameters, so their descriptors do not declare them;
+and the weight quantization outside the language families and Qwen3-VL.
 `NFKMLXModelBuilderTests.testEveryDeclaredArgumentLoadOptionIsConsumed` fails for a descriptor that
 declares an argument load option its factory does not read.
 

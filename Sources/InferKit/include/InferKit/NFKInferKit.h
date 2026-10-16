@@ -57,9 +57,10 @@ NS_ASSUME_NONNULL_BEGIN
 				- A release that changes neither keeps the API version.
 
 				A client built against @c NFK_API_VERSION_MAJOR and @c NFK_API_VERSION_MINOR runs on a
-				library with the same major version and a minor version at least as high. Before the
-				first tagged release the API version stays 1.0 while the interface changes, and the
-				first tagged release fixes what 1.0 names. Introduced in InferKit 0.4.0.
+				library with the same major version and a minor version at least as high. InferKit 0.4.0
+				is the first release with an API version. Until it ships, the API version stays 1.0
+				while the interface changes, and that release fixes what 1.0 names. Introduced in
+				InferKit 0.4.0.
 */
 @property (class, nonatomic, readonly, copy) NSString *APIVersion;
 

@@ -229,12 +229,6 @@ BOOL NFKPluginSetError(NSError **error, NSInteger code, NSString *reason)
 	return NO;
 }
 
-BOOL NFKPluginSetNotImplemented(NSError **error, SEL selector)
-{
-	return NFKPluginSetError(error, NFKPluginErrorNotImplemented,
-							 [NSString stringWithFormat:@"%@ is not implemented yet", NSStringFromSelector(selector)]);
-}
-
 #if TARGET_OS_OSX
 
 #pragma mark - Run slots

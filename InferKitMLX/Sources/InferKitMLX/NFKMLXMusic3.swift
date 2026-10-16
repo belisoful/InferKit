@@ -2,11 +2,10 @@
 //  NFKMLXMusic3.swift
 //  InferKitMLX
 //
-//  MiniMax Music 3, stage 1 of the port: the Flow-VAE waveform decoder (a DAC-style Snake vocoder).
+//  MiniMax Music 3's Flow-VAE waveform decoder (a DAC-style Snake vocoder).
 //  The full model is a hybrid — a Qwen3 autoregressive stage over RVQ codes conditions a flow-matching
 //  DiT through fused hidden states, and this decoder turns the DiT's latents into stereo audio. The
-//  vocoder is a pure function of its latent, so it reaches measured parity on its own before any other
-//  stage exists. The reference is diffusers' own `MiniMaxMusic3Vocoder` (>= 0.40.0), which is what the
+//  vocoder is a pure function of its latent, so its parity is measured on its own. The reference is diffusers' own `MiniMaxMusic3Vocoder` (>= 0.40.0), which is what the
 //  released checkpoint's `_class_name` names.
 //
 //  The weights are NOT permissively licensed: the MiniMax-Music3 Community License requires UI

@@ -9,7 +9,7 @@
 
 // The single in-code source of truth for the release version. On release, bump this together with
 // `s.version` in InferKit.podspec and the `vX.Y.Z` git tag. Tools/xcframework/inferkit-version.sh
-// reads this line.
+// reads this line, and a release build refuses a version that disagrees with the podspec or the tags.
 + (NSString *)releaseVersion
 {
 	return @"0.3.1";

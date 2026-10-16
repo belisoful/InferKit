@@ -334,7 +334,10 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `rf_detr_real` under the `rfdetr` env (transformers 5.16.1).
 
 - `NFKMLXRFDetrSegmentationNet` (`NFKMLXRFDetrSegmentation.swift`) — **RF-DETR instance segmentation**
-  (`RfDetrForInstanceSegmentation`, the seven released `Roboflow/rf-detr-seg-*` sizes, Apache-2.0). The
+  (`RfDetrForInstanceSegmentation`, the seven released `Roboflow/rf-detr-seg-*` sizes, Apache-2.0: each
+  repository's metadata and Roboflow's README table state Apache 2.0 for Seg-XL and Seg-2XL too, read
+  2026-10-16; the README's PML 1.0 sizes are the detection XL, 2XL, Atto, Femto, and Pico, which ship
+  through `rfdetr_plus` and are not ported). The
   detector underneath is the one already at parity; the mask head is the only new network. It resamples
   the PROJECTOR's output (the reference's `backbone_features`, the tensor whose flatten becomes the
   encoder's source) to a quarter of the input, then walks one ConvNeXt-style block per decoder layer —

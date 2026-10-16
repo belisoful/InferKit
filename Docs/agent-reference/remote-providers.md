@@ -1200,7 +1200,7 @@ code is in its own file and reaches the server through `NFKInferenceServerPrivat
   (`web_search`, `local_shell`, `file_search`, `image_generation`, `mcp`) are not offered. Keys the core
   client sends under their own contract names (`stopSequences`, `topK`, `seed`) pass through, as on the
   chat route.
-- Stored responses: none (decision 2026-10-15). Every reply says `store: false`; `previous_response_id`,
+- Stored responses: none. Every reply says `store: false`; `previous_response_id`,
   `conversation`, and `item_reference` are 400; `GET`/`DELETE /v1/responses/{id}` are 404. Reasons:
   Codex sends the whole conversation each turn (`store: false`, reasoning replayed from
   `encrypted_content`), so storage buys it nothing; stored responses would need a retention policy, a
@@ -1287,7 +1287,7 @@ and start times on `systemUptime`, and the job's last reported progress.
 - GPU utilization is `IOAccelerator`'s `PerformanceStatistics` → `"Device Utilization %"`,
   undocumented, readable without an entitlement on an M1 Max under `swift test` (2026-10-05). The
   busiest accelerator is reported, as a fraction. It covers every process, so it stays out of
-  routing (user decision, 2026-10-05).
+  routing.
 - Under App Sandbox (an ad-hoc-signed `.app` with only `app-sandbox` and `network.server`, macOS
   26.6.2, M1 Max, 2026-10-07), every host field reads as it does unsandboxed: the IORegistry GPU
   figure, the memory-pressure sysctl (no fallback taken), processor ticks, the footprint, and storage,
@@ -1365,9 +1365,9 @@ Macs broke every local agent link, and a second `NFKInferenceServer` would build
   never advertised. Both listeners hand requests to the same `routeRequest:response:`, so models,
   residency, counts, keys, app routes, MCP sessions, and observation are one set. A request on it has
   `fromLoopback` set, so `loopbackExemptScopes` applies as it does on the main listener's loopback side.
-- DNS rebinding (the Commit Manager's review, 2026-10-14): TLS kept a browser page out, since a page on
+- DNS rebinding (2026-10-14): TLS kept a browser page out, since a page on
   `attacker.example` re-resolved to 127.0.0.1 fails the handshake on a certificate that does not name
-  it; a plain listener with every scope loopback-exempt would serve that page with no key. Decision:
+  it; a plain listener with every scope loopback-exempt would serve that page with no key. The rule:
   a loopback request whose `Host` names anything but `localhost`, 127.0.0.0/8, or `::1` (port optional;
   no `Host` passes) gets no exemption on any listener. It is served only with a key that opens the
   route, and is otherwise 421 (`NFKInferenceServerErrorMisdirected`) before routing. A browser cannot
@@ -1726,11 +1726,12 @@ rules.
   reply releasing a disconnect handler that captures it and a handler set after the client left
   running at once.
 
-**Presets and aliases (2026-10-15).** Phase 0 item 3: the server hosts catalog models through the build
-entry and serves them under `model@preset` names and aliases. Decisions 9, 11, and 12 of the options
-work bind it: the build refuses a combination that does not fit, a suggested preset that sets only
-request defaults resolves without being added, and an MCP tool-name collision is refused.
+**Presets and aliases (2026-10-15).** The server hosts catalog models through the build entry and
+serves them under `model@preset` names and aliases.
 
+- The build refuses a combination that does not fit.
+- A suggested preset that sets only request defaults resolves without being added.
+- An MCP tool-name collision is refused.
 - Hosting: `addModelWithIdentifier:options:catalog:forModelName:error:` resolves the identifier
   (`identifier@preset` through the descriptor's own presets, the catalog preset's load options and
   request defaults merged under the given options) and the options at every stage now, so an unknown

@@ -285,8 +285,6 @@ callers slows descriptor-heavy tests.
   return from main) found no wait without a bound, and `NFKSubprocess` reports an exit within
   `NFKSubprocessDrainGrace` (0.5 s) of the reap, so the host had not exited. On that failure the test now
   samples every thread of the host for a second and reports it with `ps` and the end of standard error.
-- Until a stage implements a stub, it answers `NFKPluginErrorNotImplemented` (1000), a private code
-  outside the public `NFKPluginError` range. No stub remains once Phase 0 is complete.
 
 ## Attachments
 
@@ -1142,23 +1140,6 @@ Sign the bundle after the manifest and `Info.plist` are in place. The signature 
   where codesign runs `codesign_allocate`; through `/usr/bin/codesign_allocate` that is an xcrun shim
   resolving the toolchain on each call. The same test passed alone. The cause was not observed, and the
   listing records it if it recurs.
-
-## Staging
-
-- Stage 0: the layout, the C headers, every public header with a stub, the channel, shared memory, the
-  attachment mode, the subprocess hooks, this note, and `NFKPluginChannelTests`,
-  `NFKWireAttachmentTests`, `NFKSubprocessDescriptorTests`.
-- Stage 1: the host side (`NFKPluginProcess`, `NFKPluginBackend`, a private tool proxy, and a launcher
-  seam for an in-test peer), the loaders and serving (`NFKPluginLoader`, the C adapter,
-  `NFKPluginService`, `NFKPluginHostMain`, `NFKPluginManifest`, `NFKPluginSignaturePolicy`), and the
-  fixtures with the C header checks.
-- Stage 2, after the catalog's build entry merges: `NFKInferKitC.m`, `NFKPluginRegistry` with the
-  `plugin` engine builder, the completeness test, the consumer docs, the examples, and the ABI tool's
-  coverage of both C headers.
-- Stage 2 registry: `NFKPluginRegistry`, the `plugin` engine builder, `NFKPluginRegistryTests`,
-  `Docs/plugins.md`, the DocC article `Plugins`, and the plugin examples.
-- Item 13: `NFKPluginCompletenessTests`, the fixtures' `region` detection, the DocC article
-  `CPluginInterface` over `NFKPluginABI.h`, and option values re-checked on a reload.
 
 ## Completeness test
 

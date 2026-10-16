@@ -135,8 +135,9 @@ Models floor; the model itself needs Apple Intelligence enabled). It depends onl
     Swift (`backend.prepare?()`) crashed swift-frontend 6.4 in IRGen, emitting the reabstraction
     thunk for the imported throwing function. The core's `NFKInferencePrepare(backend, &error)`
     replaces it and is the shape to use for any other optional member.
-- Images, reasoning, and usage (2026-09-19, item 4 of the Xcode 27 audit). All three are 27-only, so
-  all three take both gates.
+- Images, reasoning, and usage (2026-09-19, item 4 of
+  `xcode27-foundation-models-and-neural-accelerators.md`). All three are 27-only, so all three take
+  both gates.
   - Images: `NFKInputImage` / `NFKInputImages` → `Attachment(cgImage)` appended to the prompt. The
     prompt stops being a `String` and becomes a `Prompt` built through
     `Prompt(@PromptBuilder _:)`, whose builder has `buildArray`, so a `for` over the images works
@@ -176,7 +177,7 @@ Models floor; the model itself needs Apple Intelligence enabled). It depends onl
   - **The 26 error carries no counts.** `LanguageModelSession.GenerationError.exceededContextWindowSize`
     has only a `Context` with a debug description, where 27's `LanguageModelError.ContextSizeExceeded`
     has `tokenCount` and `contextSize`. That asymmetry is why the backend's own token preflight
-    (item 1) still earns its place below 27.
+    (item 1 of that note) still earns its place below 27.
   - **The 26 mapping is testable and the 27 mapping is not, for a reason that is not the OS.**
     `GenerationError.Context` has a public initializer, so every 26 case is constructed in
     `NFKFoundationModelsErrorTests`. The 27 payloads have initializers too, but the types need

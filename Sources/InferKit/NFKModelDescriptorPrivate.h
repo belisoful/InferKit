@@ -70,6 +70,13 @@ typedef id _Nullable (^NFKModelElementReader)(id element, NSString *path, NSErro
 				  withReader:(NFKModelElementReader)reader
 						into:(NSDictionary<NSString *, id> * _Nullable * _Nonnull)value
 					   error:(NSError **)error;
+/*! Fails with NFKModelCatalogErrorMalformedDescriptor when two of the elements read from field share the
+	value at keyPath, naming both by their JSON member name. */
+- (BOOL)requireUniqueElements:(nullable NSArray *)elements
+					  ofField:(NSString *)field
+					  keyPath:(NSString *)keyPath
+						 name:(NSString *)name
+						error:(NSError **)error;
 
 @end
 

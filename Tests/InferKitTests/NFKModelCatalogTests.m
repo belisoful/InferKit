@@ -237,6 +237,36 @@ static NSString * const NFKCatalogTestProviderIdentifier = @"test.catalog-provid
 	}
 }
 
+- (void)testDataThatDoesNotParseReportsTheParsersError
+{
+	NFKModelCatalog *catalog = [[NFKModelCatalog alloc] init];
+	NSError *error = nil;
+	XCTAssertFalse([catalog addDescriptorsFromManifestData:[@"{\"schemaVersion\": 1," dataUsingEncoding:NSUTF8StringEncoding]
+													 error:&error]);
+	XCTAssertEqual(error.code, NFKModelCatalogErrorMalformedManifest);
+	NSError *underlying = error.userInfo[NSUnderlyingErrorKey];
+	XCTAssertNotNil(underlying);
+	XCTAssertEqualObjects(underlying.domain, NSCocoaErrorDomain);
+	XCTAssertTrue([error.localizedDescription hasPrefix:@"The manifest is not valid JSON: "], @"%@",
+				  error.localizedDescription);
+	XCTAssertGreaterThan(error.localizedDescription.length, @"The manifest is not valid JSON: ".length);
+}
+
+- (void)testTwoModelsWithOneIdentifierInAManifestAreRefused
+{
+	NFKModelCatalog *catalog = [[NFKModelCatalog alloc] init];
+	NSDictionary *header = @{ @"schemaVersion": @1, @"kind": NFKModelCatalogManifestKind };
+	NSArray *models = @[ @{ @"id": @"m", @"family": @"f", @"engine": NFKModelEngineMLX },
+						 @{ @"id": @"other", @"family": @"f", @"engine": NFKModelEngineMLX },
+						 @{ @"id": @"m", @"family": @"g", @"engine": NFKModelEngineMLX } ];
+	NSError *error = nil;
+	XCTAssertFalse([catalog addDescriptorsFromManifestData:[self manifestWithHeader:header models:models] error:&error]);
+	XCTAssertEqual(error.code, NFKModelCatalogErrorMalformedManifest);
+	XCTAssertEqualObjects(error.localizedDescription,
+						  @"models[2].id \"m\" repeats models[0].id; each model's id is unique within a manifest.");
+	XCTAssertEqual(catalog.descriptors.count, (NSUInteger)0);
+}
+
 - (void)testAMalformedDescriptorLeavesTheCatalogUnchanged
 {
 	NFKModelCatalog *catalog = [[NFKModelCatalog alloc] init];

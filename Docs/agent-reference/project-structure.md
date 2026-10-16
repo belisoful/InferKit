@@ -160,7 +160,9 @@ The full repository tree with per-directory notes.
 │                                    #   a binary that links can still fail to find its metallib.
 ├── Tools/xcframework/release.sh     # Zips each macOS framework slice and writes release.json (versions,
 │                                    #   commit, mlx-swift pin, SHA-256s). See "Release manifest".
-├── Tools/xcframework/inferkit-version.sh # Sourced: reads the release and API versions from the sources
+├── Tools/xcframework/inferkit-version.sh # Sourced: reads the release and API versions from the sources,
+│                                    #   and refuses a release whose version disagrees with the podspec or tags.
+├── Tools/xcframework/test_release_version.py # Tests that refusal on throwaway git trees.
 ├── Tools/abi/                       # check-abi.sh + abi-surface.py: holds a built framework to a baseline's
 │                                    #   binary interface read from its headers. See "ABI baseline check".
 ├── Tools/validation-assets/         # Manifest + fetch.py: every real checkpoint the parity/triage suites load, and the reference sources the oracles import, into the validation root (/Volumes/InferKit Models/inferkit-validation)

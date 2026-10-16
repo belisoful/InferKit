@@ -1538,6 +1538,34 @@ enum NFKMLXCatalogImage {
                          displayName: "Sa2VA LLaVA-1.5 7B"),
     ]
 
+    /// The license that governs a Sa2VA release's weights. Every repository states Apache-2.0, and four
+    /// carry a component whose own repository states a different license; those carry that license, with
+    /// the repository's statement in the note.
+    static func sa2VALicense(_ release: DirectoryRelease) -> NFKModelLicense {
+        let stated = "The repository states Apache-2.0."
+        switch release.repository {
+        case "ByteDance/Sa2VA-4B":
+            return .license(nil, name: "Qwen Research License",
+                            url: "https://huggingface.co/Qwen/Qwen2.5-3B-Instruct/blob/main/LICENSE",
+                            restrictsCommercialUse: true,
+                            note: "\(stated) Its language model, Qwen2.5-3B-Instruct, is under the Qwen Research License: non-commercial use, and a commercial use requests a license from Alibaba Cloud.")
+        case "ByteDance/Sa2VA-Qwen2_5-VL-3B":
+            return .license(nil, name: "Qwen Research License",
+                            url: "https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct/blob/main/LICENSE",
+                            restrictsCommercialUse: true,
+                            note: "\(stated) Its vision-language model, Qwen2.5-VL-3B-Instruct, is under the Qwen Research License: non-commercial use, and a commercial use requests a license from Alibaba Cloud.")
+        case "ByteDance/Sa2VA-Qwen3-VL-4B-SAM3":
+            return .license(nil, name: "SAM License", url: "https://huggingface.co/facebook/sam3/blob/main/LICENSE",
+                            note: "\(stated) Its grounding model, SAM 3, is under the SAM License, which a redistribution or a derivative keeps.")
+        case "ByteDance/Sa2VA-LLaVA-1.5-7B":
+            return .license(nil, name: "Llama 2 Community License", url: "https://ai.meta.com/llama/license/",
+                            restrictsCommercialUse: true,
+                            note: "\(stated) Its language model, Vicuna-7B v1.5, is fine-tuned from Llama 2 and is under the Llama 2 Community License: a product with more than 700 million monthly active users requests a license from Meta, and use follows Meta's Acceptable Use Policy.")
+        default:
+            return .license("Apache-2.0", name: "Apache License 2.0", url: "https://huggingface.co/\(release.repository)")
+        }
+    }
+
     static var sa2VAEntries: [NFKMLXCatalogEntry] {
         sa2VAReleases.map { release in
             model(release.name, release.displayName, family: "sa2va",
@@ -1549,8 +1577,7 @@ enum NFKMLXCatalogImage {
                   outputs: [.output(NFKOutputText, required: true, title: "Answer", help: "The model's answer."),
                             .output(NFKOutputMask, title: "Mask",
                                     help: "The mask of what the answer's [SEG] token refers to. Absent when the answer has none.")],
-                  license: .license("Apache-2.0", name: "Apache License 2.0",
-                                    url: "https://huggingface.co/\(release.repository)"),
+                  license: sa2VALicense(release),
                   source: hubRelease(release.repository, required: NFKMLXSa2VA.requiredFiles,
                                      optional: NFKMLXSa2VA.optionalFiles, weights: NFKMLXSa2VA.weightFiles))
         }

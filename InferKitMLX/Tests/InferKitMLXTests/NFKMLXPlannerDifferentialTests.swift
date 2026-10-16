@@ -72,7 +72,7 @@ private enum NFKMLXLegacyPlanner {
             guard admits(largestUnpaged, budget: budget) else {
                 throw Refusal(sentence:
                     "the largest stage needs \(gib(largestUnpaged)) with its routed experts paged, plus "
-                    + "a \(gib(reserve)) reserve, against a \(gib(budget)) working set")
+                    + "a \(gib(reserve)) reserve, against a \(gib(budget)) budget")
             }
             let largestPageable = stages.map(\.pageableBytes).max() ?? 0
             let headroom = budget > 0 ? (budget - reserve - largestUnpaged) / 2 : defaultExpertCacheBytes
@@ -88,7 +88,7 @@ private enum NFKMLXLegacyPlanner {
                 guard admits(minimum, budget: budget) else {
                     throw Refusal(sentence:
                         "stage \(index) needs \(gib(minimum)) streamed, two layers in flight, plus a "
-                        + "\(gib(reserve)) reserve, against a \(gib(budget)) working set")
+                        + "\(gib(reserve)) reserve, against a \(gib(budget)) budget")
                 }
                 plan.streamedStages[index] = budget > 0 ? budget - reserve - minimum : 0
             }
@@ -100,7 +100,7 @@ private enum NFKMLXLegacyPlanner {
             guard admits(total, budget: budget) else {
                 throw Refusal(sentence:
                     "the stages need \(gib(total)) together plus a \(gib(reserve)) reserve, against a "
-                    + "\(gib(budget)) working set; hold them staged"
+                    + "\(gib(budget)) budget; hold them staged"
                     + (pageable ? " or paged" : "") + (streamable.isEmpty ? "" : " or streamed"))
             }
             placement = .resident
@@ -150,7 +150,7 @@ private enum NFKMLXLegacyPlanner {
                 let name = index < names.count ? names[index] : "stage \(index)"
                 throw Refusal(sentence:
                     "\(name) alone needs \(gib(bytes)) plus a \(gib(reserve)) reserve, against a "
-                    + "\(gib(budget)) working set")
+                    + "\(gib(budget)) budget")
             }
         }
     }

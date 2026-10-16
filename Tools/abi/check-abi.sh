@@ -28,8 +28,8 @@
 #   3. The constant values. With a baseline framework at hand, the client reads every string and
 #      numeric constant from both frameworks, and a changed value fails: a client may have stored it.
 #
-# The first real baseline is the first tagged release. Until one exists, `--baseline current` checks
-# that the framework implements what its own headers declare.
+# The first real baseline is InferKit 0.4.0, the first release with an API version. Until it ships,
+# `--baseline current` checks that the framework implements what its own headers declare.
 #
 # A git ref is exported with `git archive` into a temporary directory and built with that tree's own
 # build-mlx.sh, which takes about seven minutes and needs the mlx-swift checkout to resolve.

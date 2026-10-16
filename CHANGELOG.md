@@ -61,7 +61,7 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   sets of public headers through clang, applies the API version rule to the differences, and loads the
   framework into a client compiled against the baseline headers to find every class, selector,
   conformance, constant, and function. The baseline is a framework, a git ref, or `current` (a
-  self-check until the first tagged release).
+  self-check until 0.4.0, the first release with an API version, ships).
 
 #### The package gains a C target and a plugin host
 
@@ -74,7 +74,7 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   bundle out of the app's process. Its entitlement files ship beside it for the app that signs it.
 - The plugin classes' headers are in the umbrella: `NFKPlugin`, `NFKPluginManifest`,
   `NFKPluginSignaturePolicy`, `NFKPluginLoader`, `NFKPluginProcess`, `NFKPluginBackend`,
-  `NFKPluginService`, and `NFKPluginRegistry`. Their behavior lands in the following changes.
+  `NFKPluginService`, and `NFKPluginRegistry`. The next section describes their behavior.
 
 #### Plugins are read, verified, loaded, and served
 
@@ -372,11 +372,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `-[NFKModelDescriptor licenseForVariant:]` reads the one that applies.
 - `NFKModelTaskDecision` (`"decision"`) names the task of a model that answers typed questions about a
   state.
+- A manifest is refused when it repeats an identifier: two models with one `id`
+  (`NFKModelCatalogErrorMalformedManifest`), or, within a model, two inputs, outputs, or options with one
+  `key`, two variants or presets with one `id`, or two stages of a variant with one `id`
+  (`NFKModelCatalogErrorMalformedDescriptor`). The error names both entries.
+- Data that is not valid JSON fails with the parser's account in the description and its error as
+  `NSUnderlyingErrorKey`.
+- A stage's `layerCount` is at most `NFKModelStageFacts.maximumLayerCount` (4096). A manifest with more
+  is malformed, and the initializer clamps the count to that range.
 
 #### Load options, memory estimates, and building from the catalog
 
-- A descriptor's settings are its `options` (JSON `"options"`). A manifest that names the field
-  `"parameters"` still reads, and the writer writes `"options"`. `loadOptions` and `requestOptions` split
+- A descriptor's settings are its `options` (JSON `"options"`). `loadOptions` and `requestOptions` split
   them by stage, and a descriptor with several variants derives an `NFKModelLoadOptionVariant` choice.
 - An option gains `requirements` (JSON `"requires"`), `propertyKeyPath` (`"property"`, a backend
   property the build sets by key-value coding), and `memoryBytesPerUnit`. A choice gains `requirements`,
@@ -396,7 +403,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   uses inside `+modelDescriptors` while the shared catalog loads it.
 - `NFKModelMemoryBudget` (0.85 of the recommended working set, a 4 GiB reserve) and the residency planner
   (`NFKModelStageFootprint`, `NFKModelResidencyPlan`, with `NFKModelResidencyAutomatic`) move to the core,
-  with the MLX planner's arithmetic and refusal sentences.
+  with the MLX planner's arithmetic and refusal sentences. A refusal names the budget it compares
+  against, 0.85 of the working set, as "against a 27.2 GiB budget".
 - `NFKModelOptions.h`: `problemsWithOptions:stage:` and `resolvedOptions:stage:error:` check option values,
   convert strings such as `"8192"` and `"true"`, and fill defaults. `NFKModelCatalogError` gains
   `InvalidOptions`, `UnknownModel`, `NoBuilder`, `Unavailable`, and `DoesNotFit`.
@@ -1247,6 +1255,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   mlx-swift pin and mlx core version, each zip's size and SHA-256, and an empty `signature` for the
   signing step (`Tools/xcframework/release.sh`; `--no-release` skips it). The framework's
   `Info.plist` records the release version and `NFKAPIVersion`.
+- A release build refuses an inconsistent version before it compiles: `NFKInferKit.releaseVersion` and
+  the podspec's `s.version` must agree, a `v*` tag on `HEAD` must name that version, and the version
+  must be newer than every other `vX.Y.Z` tag. The scripts never move the version.
+  `commitHasLocalChanges` also counts an untracked file `.gitignore` does not exclude, since SwiftPM
+  compiles the files it globs.
 - `Docs/installation.md` describes the release folders an app installs (`<root>/<version>/`), how it
   picks the newest release it supports, and a sample loader.
 - Every public class has an Objective-C name equal to its Swift name, so `NSClassFromString` finds it:
@@ -1309,6 +1322,10 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - VoiceRestore names its vocoder's repository, Open-Jev its base model's at the commit the adapter was
   trained over, and the two ControlNets the base releases they steer. OPUS-MT's en-de and zh-en pairs
   state CC BY 4.0, the others Apache 2.0. Laya and Open-Jev answer the `decision` task.
+- Four Sa2VA releases carry the license of a component whose own repository states a narrower one,
+  with the repository's Apache-2.0 in the note: `sa2va-4b` and `sa2va-qwen2.5-vl-3b` the Qwen Research
+  License, `sa2va-qwen3-vl-4b-sam3` the SAM License, and `sa2va-llava-1.5-7b` the Llama 2 Community
+  License. Every RF-DETR release in the catalog is Apache-2.0, as Roboflow states.
 - SAM 3.1 lists the `sam3.1_multiplex.pt` its repository serves, marked as needing a converter, with a
   note on why. Stable Diffusion 2.1 base keeps its entry and registry name for a local copy, and its source
   notes that the publisher no longer serves the repository publicly (`"publiclyServed": false`).
