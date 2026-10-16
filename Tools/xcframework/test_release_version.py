@@ -117,6 +117,7 @@ class ReleaseVersionTests(unittest.TestCase):
         self.write_versions("0.3.1")
         self.commit()
         self.git("tag", "v0.10.0")
+        self.commit("later work without a version move")
         result = self.check()
         self.assertEqual(result.returncode, 1)
         self.assertIn("not newer than the existing tag v0.10.0", result.stdout)

@@ -59,7 +59,7 @@ static NSString * const NFKLoaderTestsLongerStructuresSource =
 	@"unsigned char buffers[2 * STRIDE] __attribute__((aligned(8))); char first[4]; char second[4]; } result_t;\n"
 	@"static int backend_token;\n"
 	@"static char *copy_string(const char *text) { char *copy = malloc(strlen(text) + 1); strcpy(copy, text); return copy; }\n"
-	@"static nfk_plugin_status describe(void *c, char **json) { *json = copy_string(\"{\\\"models\\\":[{\\\"id\\\":\\\"invert\\\"}]}\"); return NFK_PLUGIN_STATUS_OK; }\n"
+	@"static nfk_plugin_status describe(void *c, char **json) { *json = copy_string(\"{\\\"models\\\":[{\\\"id\\\":\\\"invert\\\",\\\"family\\\":\\\"sample-invert\\\"}]}\"); return NFK_PLUGIN_STATUS_OK; }\n"
 	@"static nfk_plugin_status create_backend(void *c, const char *m, const char *o, nfk_plugin_backend **b, char **e)\n"
 	@"{ *b = (nfk_plugin_backend *)&backend_token; *e = 0; return NFK_PLUGIN_STATUS_OK; }\n"
 	@"static void put_buffer(result_t *r, int index, const char *bytes)\n"
