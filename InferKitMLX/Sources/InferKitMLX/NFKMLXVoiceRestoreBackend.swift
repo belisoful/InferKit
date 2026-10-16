@@ -203,7 +203,7 @@ extension NFKMLXVoiceRestoreFactory {
     public static func backend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
         let hub = NFKMLXReleaseDownload.hub(cacheDirectoryURL: cacheDirectoryURL)
         let transformer = try NFKMLXReleaseDownload.firstServed(weightFiles, hub: hub, repo: repo, revision: revision)
-        let vocoder = try hub.downloadRepo(vocoderRepo, revision: nil, path: vocoderFile, sha256: nil)
+        let vocoder = try hub.fetchFile(repo: vocoderRepo, revision: nil, path: vocoderFile)
         return try backend(weightsURL: transformer, vocoderURL: vocoder, steps: 32, cfgStrength: 0.5)
     }
 

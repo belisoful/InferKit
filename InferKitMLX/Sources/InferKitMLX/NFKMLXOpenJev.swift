@@ -501,7 +501,7 @@ public final class NFKMLXOpenJev: NSObject, NFKMLXDecisionModel {
         let release = revision ?? variant.measuredRevision
         var checkpoint: URL?
         for path in checkpointFiles {
-            let local = try hub.downloadRepo(variant.repository, revision: release, path: "package/checkpoint/\(path)", sha256: nil)
+            let local = try hub.fetchFile(repo: variant.repository, revision: release, path: "package/checkpoint/\(path)")
             if path == "model.json" { checkpoint = local.deletingLastPathComponent() }
         }
         guard let checkpoint else { throw NFKMLXError.weightsMismatch("the release names no model.json") }
@@ -509,14 +509,14 @@ public final class NFKMLXOpenJev: NSObject, NFKMLXDecisionModel {
         let baseRevision = model?["revision"] as? String ?? variant.baseRevision
         var base: URL?
         for path in baseFiles {
-            base = try hub.downloadRepo(variant.baseRepository, revision: baseRevision, path: path, sha256: nil)
+            base = try hub.fetchFile(repo: variant.baseRepository, revision: baseRevision, path: path)
                 .deletingLastPathComponent()
         }
         guard let base else { throw NFKMLXError.weightsMismatch("the base names no files") }
         let index = try JSONSerialization.jsonObject(with: Data(contentsOf: base.appendingPathComponent("model.safetensors.index.json"))) as? [String: Any]
         let shards = Set(((index?["weight_map"] as? [String: String]) ?? [:]).values).sorted()
         for shard in shards {
-            _ = try hub.downloadRepo(variant.baseRepository, revision: baseRevision, path: shard, sha256: nil)
+            _ = try hub.fetchFile(repo: variant.baseRepository, revision: baseRevision, path: shard)
         }
         return NFKMLXOpenJevRelease(checkpointDirectoryURL: checkpoint, baseDirectoryURL: base)
     }

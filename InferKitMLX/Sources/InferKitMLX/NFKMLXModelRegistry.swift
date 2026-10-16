@@ -142,6 +142,6 @@ public final class NFKMLXModelRegistry: NSObject {
             NFKMLXReload.reportLoadOptions(of: backend, loadOptions)
             return backend
         }
-        return try NFKMLXReload.reloadable(loadOptions: loadOptions, build)
+        return try NFKMLXReload.reloadable(loadOptions: loadOptions, reading: weightsURL, build)
     }
 }

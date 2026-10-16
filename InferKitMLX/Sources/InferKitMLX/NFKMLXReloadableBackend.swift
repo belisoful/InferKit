@@ -30,8 +30,12 @@ import MLX
 ///
 /// The identifier and the declared keys are those of the first backend built, and they hold while the
 /// model is unloaded. An Objective-C message the wrapper does not implement goes to the backend it holds,
-/// which is built first when the model is unloaded. A Swift cast of the wrapper to the model's class
-/// fails; cast ``wrappedBackend`` instead.
+/// which is built first when the model is unloaded. A forwarded message counts as a run in flight until
+/// the autorelease pool around it drains, so an unload during it frees the model after it returns. A
+/// Swift cast of the wrapper to the model's class fails; cast ``wrappedBackend`` instead.
+///
+/// A build after an unload reads local files only. When the files the model was built from are gone,
+/// the run fails with ``NFKMLXReloadError/modelFilesRemoved`` and makes no network request.
 ///
 /// Introduced in InferKit 0.4.0.
 @objc(NFKMLXReloadableBackend)
@@ -174,6 +178,19 @@ public final class NFKMLXReloadableBackend: NSObject, NFKInferenceBackend {
         try lifecycle.withState { try $0.runInference(for: request) }
     }
 
+    /// The held backend's count of the request's input tokens, as a run in flight. The backend is built
+    /// first when the model is unloaded. The wrapper responds to `tokenCountForRequest:error:` only when
+    /// the held backend's class counts tokens. Introduced in InferKit 0.4.0.
+    @objc(tokenCountForRequest:error:)
+    public func tokenCount(for request: NFKInferenceRequest) throws -> NSNumber {
+        try lifecycle.withState { backend in
+            guard backend.responds(to: Self.tokenCountSelector) else {
+                throw NFKMLXError.unsupportedConfiguration("\(identifier) does not count tokens")
+            }
+            return try unsafeBitCast(backend, to: NFKMLXTokenCounting.self).tokenCount(for: request)
+        }
+    }
+
     /// Runs the request on a background task: a held backend that submits its own jobs reports progress and
     /// partial results through the returned job, and one that does not runs synchronously there. The run
     /// counts as in flight until the held backend's job ends. Introduced in InferKit 0.4.0.
@@ -223,13 +240,15 @@ public final class NFKMLXReloadableBackend: NSObject, NFKInferenceBackend {
 
     // MARK: Objective-C forwarding
 
+    private static let tokenCountSelector = NSSelectorFromString("tokenCountForRequest:error:")
+
     private static let heldOnlySelectors: Set<Selector> = [
         NSSelectorFromString("supportedParameterKeys"), NSSelectorFromString("supportedInputKeys"),
-        NSSelectorFromString("supportedOutputKeys"), NSSelectorFromString("backendStatus"),
+        NSSelectorFromString("supportedOutputKeys"), NSSelectorFromString("backendStatus"), tokenCountSelector,
     ]
 
-    /// Answers for the held backend's class on the optional keys and status, and for either object
-    /// otherwise.
+    /// Answers for the held backend's class on the optional keys, status, and token count, and for either
+    /// object otherwise.
     public override func responds(to aSelector: Selector!) -> Bool {
         guard let aSelector else {
             return false
@@ -241,10 +260,45 @@ public final class NFKMLXReloadableBackend: NSObject, NFKInferenceBackend {
     }
 
     /// The held backend, built first when the model is unloaded, for a message only it implements.
+    ///
+    /// @discussion The runtime sends the message after this method returns, so the run it counts ends
+    /// when the current autorelease pool drains, which follows the message's return.
     public override func forwardingTarget(for aSelector: Selector!) -> Any? {
         guard let aSelector, class_respondsToSelector(backendClass, aSelector) else {
             return nil
         }
-        return try? lifecycle.withState { $0 }
+        let lifecycle = self.lifecycle
+        do {
+            try lifecycle.begin()
+        } catch {
+            return nil
+        }
+        guard let backend = try? lifecycle.loadedState() else {
+            lifecycle.end()
+            return nil
+        }
+        _ = Unmanaged.passRetained(NFKMLXForwardedRun { lifecycle.end() }).autorelease()
+        return backend
+    }
+}
+
+/// The optional token count of `NFKInferenceBackend`, sent as a message after a `responds(to:)` check.
+/// The Swift 6.4 compiler crashes generating the call through the protocol's optional requirement.
+@objc private protocol NFKMLXTokenCounting {
+    @objc(tokenCountForRequest:error:)
+    func tokenCount(for request: NFKInferenceRequest) throws -> NSNumber
+}
+
+/// Ends the run a forwarded message counts, when the autorelease pool holding it drains.
+private final class NFKMLXForwardedRun: NSObject {
+    private let end: () -> Void
+
+    init(end: @escaping () -> Void) {
+        self.end = end
+        super.init()
+    }
+
+    deinit {
+        end()
     }
 }

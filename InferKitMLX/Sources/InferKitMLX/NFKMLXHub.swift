@@ -145,10 +145,10 @@ public final class NFKMLXHub: NSObject {
 enum NFKMLXDownload {
     /// Downloads `weightsPath` from the Hugging Face `repo` (caching under `cacheDirectoryURL`, or the
     /// default cache when nil) and returns the local file URL. Blocking on the network; call off the
-    /// render thread.
+    /// render thread. A load after an unload reads the cache only (`NFKHFHub.fetchFile(repo:revision:path:)`).
     static func weightsURL(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?) throws -> URL {
         let hub = NFKHFHub(cacheDirectoryURL: cacheDirectoryURL ?? NFKHFHub.defaultCacheDirectoryURL())
-        return try hub.downloadRepo(repo, revision: revision, path: weightsPath, sha256: nil)
+        return try hub.fetchFile(repo: repo, revision: revision, path: weightsPath)
     }
 
     /// Asynchronous "download then build": fetches `weightsPath` on a background queue over the core's
@@ -157,7 +157,8 @@ enum NFKMLXDownload {
     /// the fetch and finishes when the backend is delivered. Shared by `NFKMLXHub` and the per-model
     /// `backendWithRepo:…completionHandler:` / `backendWithVariant:repo:…completionHandler:` factories so
     /// the async plumbing lives in one place. The backend can unload and load again from the downloaded
-    /// file (`NFKMLXReload.reloadable(_:)`).
+    /// file (`NFKMLXReload.reloadable(_:)`), and a load after the file is removed fails with
+    /// `NFKMLXReloadError.modelFilesRemoved`.
     static func backend(repo: String, weightsPath: String, revision: String?, cacheDirectoryURL: URL?,
                         build: @escaping (URL) throws -> any NFKInferenceBackend,
                         completionHandler: @escaping ((any NFKInferenceBackend)?, Error?) -> Void) {
@@ -180,10 +181,28 @@ enum NFKMLXDownload {
                 return
             }
             do {
-                finish(try NFKMLXReload.reloadable { try build(url) }, nil)
+                finish(try NFKMLXReload.reloadable(loadOptions: nil, reading: url) { try build(url) }, nil)
             } catch {
                 finish(nil, error)
             }
         }
+    }
+}
+
+extension NFKHFHub {
+
+    /// The local URL of `path` in `repo`, downloaded when it is not cached. Inside a load after an unload
+    /// (`NFKMLXReload.reloading(_:)`) the file comes from the cache only: a file missing from it throws
+    /// `NFKMLXReloadError.modelFilesRemoved`, and no request is made. Every download helper in the package
+    /// fetches through this method.
+    func fetchFile(repo: String, revision: String?, path: String) throws -> URL {
+        guard NFKMLXReload.isReloading else {
+            return try downloadRepo(repo, revision: revision, path: path, sha256: nil)
+        }
+        guard isCachedRepo(repo, revision: revision, path: path),
+              let local = localURL(forRepo: repo, revision: revision, path: path) else {
+            throw NFKMLXReload.modelFilesRemovedError(path: path, source: repo)
+        }
+        return local
     }
 }

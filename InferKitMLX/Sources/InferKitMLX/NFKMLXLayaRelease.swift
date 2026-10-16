@@ -64,7 +64,7 @@ extension NFKMLXLaya {
     static func download(variant: NFKMLXLayaVariant, revision: String?, hub: NFKHFHub) throws -> URL {
         var folder: URL?
         for path in releaseFiles(for: variant) {
-            let local = try hub.downloadRepo(repository, revision: revision, path: path, sha256: nil)
+            let local = try hub.fetchFile(repo: repository, revision: revision, path: path)
             if path.hasSuffix("rl_agent_config.json") {
                 folder = local.deletingLastPathComponent()
             }

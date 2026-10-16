@@ -1198,6 +1198,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   flight.
 - `NFKMLXGPU` reports its allocation to an `NFKInferenceServer`, which measures an MLX model built
   without its own figures.
+- A load after an unload reads local files only and makes no network request. When the files the model
+  was built from are gone, the run fails with `NFKMLXReloadErrorModelFilesRemoved` in
+  `NFKMLXReloadErrorDomain`, its `NSFilePathErrorKey` naming the first missing file. Downloading the
+  files again through an `NFKDownload` lets the same backend load on its next run.
+- An unload during a load frees the model when the run that asked for the load ends.
+- `NFKMLXReloadableBackend` implements `tokenCountForRequest:error:` as a run in flight. Any other
+  message it forwards to the held backend counts as a run until the autorelease pool around the
+  message drains, so an unload during the message frees the model after it returns.
 
 #### Every model describes itself in the catalog
 
