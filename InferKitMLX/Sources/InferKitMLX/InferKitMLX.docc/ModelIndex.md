@@ -950,7 +950,7 @@ let backend = try NFKMLXMusic3.backend(directoryURL: dir)
 
 | Model | Entry class | Network | Configuration for the released weights | Registered name / factory | Base backend |
 | --- | --- | --- | --- | --- | --- |
-| Stable Diffusion 1.5 / 2.1 / SDXL-Turbo | ``NFKMLXBackend``, ``NFKMLXTextToImage`` | ``NFKMLXSDUNet``, ``NFKMLXSDAutoencoder``, ``NFKMLXSDTextEncoderNet`` | `NFKMLXSDTextToImageConfiguration.stableDiffusion15` / `.stableDiffusion21` / `.stableDiffusion21V` / `.sdxlTurbo`; ``NFKMLXWeightPrecision`` | `stable-diffusion`; `backend(model:directoryURL:)`; ``NFKMLXStableDiffusionModel`` release enum on ``NFKMLXBackend`` | ``NFKMLXDiffusionBackend`` + ``NFKDDIMScheduler`` |
+| Stable Diffusion 1.5 / 2.1 / SDXL / SDXL-Turbo, with LCM-LoRA, SDXL-Lightning, and LCM Dreamshaper | ``NFKMLXBackend``, ``NFKMLXTextToImage`` | ``NFKMLXSDUNet``, ``NFKMLXSDAutoencoder``, ``NFKMLXSDTextEncoderNet``; ``NFKMLXSDLoRA`` merges a released adapter | `NFKMLXSDTextToImageConfiguration.stableDiffusion15` / `.stableDiffusion21` / `.stableDiffusion21V` / `.sdxl` / `.sdxlTurbo` / `.sdxlLightning` / `.latentConsistency15`; `withSampler(_:steps:guidanceScale:)` for an adapter; ``NFKMLXWeightPrecision`` | `stable-diffusion`; `backend(model:directoryURL:)`; ``NFKMLXStableDiffusionModel`` release enum on ``NFKMLXBackend`` | ``NFKMLXDiffusionBackend`` + ``NFKDDIMScheduler`` / ``NFKLCMScheduler`` |
 | SD networks | ``NFKMLXSDPipeline`` | ``NFKMLXSDUNet`` + ``NFKMLXSDAutoencoder`` | `NFKMLXSDUNetConfiguration()` (SD 1.5) / `.sdxl` / `.inpainting` / `.marigold` / `.upscaler`; `NFKMLXSDVAEConfiguration.stableDiffusion` / `.upscaler` / `.flux` | — | Swift API |
 | IP-Adapter | ``NFKMLXIPAdapterImageProjection``, ``NFKMLXIPAdapterAttention`` | — | `imageEmbedDim` 1024 → `crossAttentionDim` 768, 4 tokens | — | Swift API |
 | Z-Image / Z-Image-Turbo | ``NFKMLXZImageGenerator``, ``NFKMLXZImagePipeline`` | ``NFKMLXZImageTransformerNet`` + ``NFKMLXSDAutoencoder`` (`.flux`) + Qwen3-4B | `NFKMLXZImageConfiguration`, the Flux VAE configuration, and `NFKMLXFlowMatchConfiguration.zImageTurbo` / `.zImage`, each read from the release | `z-image`; `backend(directoryURL:)`, `generator(directoryURL:residency:)` | ``NFKMLXGenerationBackend`` (``NFKMLXFlowMatchScheduler``) |
@@ -969,9 +969,12 @@ let backend = try NFKMLXMusic3.backend(directoryURL: dir)
 | Reference diffusion stand-ins | ``NFKMLXReferenceModels`` | oracle `denoise` closures | — | `diffusion-upscaler` · `diffusion-depth` · `diffusion-inpaint` · `diffusion-controlnet` | ``NFKMLXDiffusionBackend`` |
 
 ```swift
-// Stable Diffusion 1.5 / 2.1 / SDXL-Turbo
+// Stable Diffusion 1.5 / 2.1 / SDXL / SDXL-Turbo
 let backend = try NFKMLXTextToImage.backend(model: .stableDiffusion15, directoryURL: dir)
-// download on first use: NFKMLXBackend(model: .stableDiffusion15) · [[NFKMLXBackend alloc] initWithModel:NFKMLXStableDiffusionModelStableDiffusion15]; .stableDiffusion21Base / .sdxlTurbo
+// download on first use: NFKMLXBackend(model: .stableDiffusion15) · [[NFKMLXBackend alloc] initWithModel:NFKMLXStableDiffusionModelStableDiffusion15]; .stableDiffusion21Base / .sdxlTurbo / .sdxlBase / .lcmDreamshaperV7
+// a released LoRA merged into the UNet: LCM-LoRA on SD 1.5 under the latent consistency sampler, SDXL-Lightning on SDXL base under trailing DDIM
+let lcm = try NFKMLXTextToImage.backend(configuration: .stableDiffusion15.withSampler(.lcm), directoryURL: dir, adapterURL: lcmLoRA)
+let lightning = try NFKMLXTextToImage.backend(configuration: .sdxlLightning, directoryURL: sdxlDir, adapterURL: lightningLoRA)
 // SD networks
 let pipeline = NFKMLXSDPipeline(unet: .stableDiffusion, vae: .stableDiffusion); try pipeline.loadWeights(unetURL: unetURL, vaeURL: vaeURL)
 // Swift only
@@ -1045,8 +1048,11 @@ NFKMLXReferenceModels.registerAll(); let backend = try NFKMLXModelRegistry.backe
 ```
 
 ```objc
-// Stable Diffusion 1.5 / 2.1 / SDXL-Turbo
+// Stable Diffusion 1.5 / 2.1 / SDXL / SDXL-Turbo
 [NFKMLXTextToImage backendWithModel:NFKMLXStableDiffusionModelStableDiffusion15 directoryURL:dir error:&error]
+// a released LoRA merged into the UNet, with the sampler it needs
+[NFKMLXTextToImage backendWithModel:NFKMLXStableDiffusionModelStableDiffusion15 directoryURL:dir adapterURL:lcmLoRA adapterScale:1 sampler:NFKMLXSDSamplerLCM error:&error]
+[NFKMLXTextToImage backendWithModel:NFKMLXStableDiffusionModelSdxlBase directoryURL:sdxlDir adapterURL:lightningLoRA adapterScale:1 sampler:NFKMLXSDSamplerDDIMTrailing error:&error]
 // Stable Diffusion 3 / 3.5
 [NFKMLXSD3Generator backendWithDirectoryURL:dir error:&error]
 // the generator, then imageForPrompt:negativePrompt:width:height:seed:error:

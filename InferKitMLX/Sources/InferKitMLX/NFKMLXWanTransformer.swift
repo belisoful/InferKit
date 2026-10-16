@@ -183,12 +183,12 @@ final class NFKWanBlock: Module {
         let mod = scaleShiftTable[0].asType(.float32) + temb.asType(.float32)
         func row(_ index: Int) -> MLXArray { mod[index].reshaped([1, inner]) }
         func normed(_ y: MLXArray) -> MLXArray {
-            MLXFast.layerNorm(y.asType(.float32), weight: nil, bias: nil, eps: eps)
+            NFKReferenceRounding.layerNorm(y.asType(.float32), weight: nil, bias: nil, eps: eps)
         }
         let attended = attn1((normed(x) * (1 + row(1)) + row(0)).asType(dtype), context: nil, cos: c, sin: s)
         var h = (x.asType(.float32) + attended.asType(.float32) * row(2)).asType(dtype)
-        let crossNormed = MLXFast.layerNorm(h.asType(.float32), weight: norm2.weight?.asType(.float32),
-                                            bias: norm2.bias?.asType(.float32), eps: eps).asType(dtype)
+        let crossNormed = NFKReferenceRounding.layerNorm(h.asType(.float32), weight: norm2.weight?.asType(.float32),
+                                                         bias: norm2.bias?.asType(.float32), eps: eps).asType(dtype)
         h = h + attn2(crossNormed, context: context, cos: nil, sin: nil)
         let fed = ffn((normed(h) * (1 + row(4)) + row(3)).asType(dtype))
         return (h.asType(.float32) + fed.asType(.float32) * row(5)).asType(dtype)
@@ -290,7 +290,7 @@ public final class NFKMLXWanTransformerNet: Module {
         let shift = outMod[0].reshaped([1, inner]), scale = outMod[1].reshaped([1, inner])
         if NFKReferenceRounding.isReduced(hidden) {
             // The reference normalizes in float32 and rounds the modulated result once.
-            hidden = (MLXFast.layerNorm(hidden.asType(.float32), weight: nil, bias: nil, eps: config.eps)
+            hidden = (NFKReferenceRounding.layerNorm(hidden.asType(.float32), weight: nil, bias: nil, eps: config.eps)
                 * (1.0 + scale) + shift).asType(hidden.dtype)
         } else {
             hidden = normOut(hidden) * (1.0 + scale) + shift

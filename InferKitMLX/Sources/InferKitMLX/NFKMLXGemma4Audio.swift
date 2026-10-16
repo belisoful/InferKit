@@ -277,7 +277,7 @@ final class NFKGemma4AudioAttention: Module {
             let headMask = mask.expandedDimensions(axis: 1)          // [B, 1, blocks, chunk, context]
             scores = MLX.where(headMask .> 0, scores, MLXArray(Float(-1e9)))
         }
-        let weights = softmax(scores, axis: -1, precise: true)
+        let weights = NFKReferenceRounding.softmaxProbabilities(scores)
         let values = blockedValues.transposed(0, 3, 1, 2, 4)         // [B, heads, blocks, context, hd]
         var output = matmul(weights, values)                        // [B, heads, blocks, chunk, hd]
         output = output.transposed(0, 2, 3, 1, 4).reshaped([batch, blocks * chunkSize, headCount * width])

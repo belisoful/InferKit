@@ -1543,8 +1543,9 @@ is why the wait has a bound rather than hanging the calling thread.
 ## Text → image and image → image
 
 `NFKMLXBackend` runs a bundled Stable Diffusion release (Swift; Apple Silicon, macOS and iOS). No
-image input runs text-to-image; a `CGImage` under `NFKInputImage` runs image-to-image. Three releases
-are bundled: `.stableDiffusion15`, `.stableDiffusion21Base`, and `.sdxlTurbo`. The release's files
+image input runs text-to-image; a `CGImage` under `NFKInputImage` runs image-to-image. Five releases
+are bundled: `.stableDiffusion15`, `.stableDiffusion21Base`, `.sdxlTurbo`, `.sdxlBase`, and
+`.lcmDreamshaperV7` (a four-step latent consistency distillation of SD 1.5). The release's files
 download from Hugging Face on first use; Stable Diffusion 2.1 base is a gated repository, so it needs
 an access token: set `NFKHFHub.defaultAccessToken` before the first download (the backend makes its own
 hub), or `HF_TOKEN` in the environment.
@@ -1607,6 +1608,41 @@ let image = try backend.runInference(for: request).output(forKey: NFKOutputImage
 `scale` weights the image attention against the text attention, and 0 leaves the text-to-image result
 unchanged. From Objective-C, `imageAdapterBackendWithModel:directoryURL:adapterURL:scale:error:` takes the
 release by name.
+
+### Few-step adapters: LCM-LoRA and SDXL-Lightning (`NFKMLXSDLoRA`)
+
+A released LoRA merges into the UNet's weights, so the adapted model runs at the base model's cost. The
+reader takes the kohya layout over diffusers module names (`lora_unet_…`, `lora_down` / `lora_up` /
+`alpha`) that the LCM-LoRA and SDXL-Lightning releases publish, and the PEFT layout diffusers writes
+(`unet.…lora_A` / `lora_B`), on linear and convolution targets alike; a file written against the
+original model's block names is refused, and so is one that also adapts the text towers. The
+configuration names the sampler the adapter was distilled for: `.lcm` steps `NFKLCMScheduler` (four
+steps, guidance 1), `.ddimTrailing` counts DDIM down from the end of the training range with no
+guidance (SDXL-Lightning, SDXL-Turbo). A request's `NFKParameterSteps` and `NFKParameterGuidanceScale`
+override the adapter's defaults. The compiled mirror of this snippet is `testTextToImageAdapter` in
+`InferKitMLX/Examples/MLXModelGalleryExamples.swift`.
+
+```swift
+// LCM-LoRA on Stable Diffusion 1.5: latent-consistency/lcm-lora-sdv1-5
+let lcm = try NFKMLXTextToImage.backend(configuration: .stableDiffusion15.withSampler(.lcm),
+                                        directoryURL: sd15Directory,
+                                        adapterURL: lcmLoRAURL)        // pytorch_lora_weights.safetensors
+
+// SDXL-Lightning on SDXL base 1.0: ByteDance/SDXL-Lightning's sdxl_lightning_4step_lora.safetensors
+let lightning = try NFKMLXTextToImage.backend(configuration: .sdxlLightning,
+                                              directoryURL: sdxlBaseDirectory,
+                                              adapterURL: lightningLoRAURL)
+let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "a watercolor lighthouse at dawn"],
+                                  parameters: [NFKParameterSeed: 42])  // 4 steps, no guidance
+let image = try lightning.runInference(for: request).output(forKey: NFKOutputImage)
+```
+
+From Objective-C, `backendWithModel:directoryURL:adapterURL:adapterScale:sampler:error:` takes the
+release by name and the sampler as `NFKMLXSDSamplerLCM` or `NFKMLXSDSamplerDDIMTrailing`, and
+`backendWithModel:adapterRepo:adapterWeightsPath:adapterRevision:adapterScale:sampler:cacheDirectoryURL:error:`
+downloads both. A whole LCM distillation needs no adapter: `NFKMLXBackend(model: .lcmDreamshaperV7)`
+conditions on its guidance scale through the time embedding and runs four steps without
+classifier-free guidance.
 
 ### FLUX.2 [klein] text-to-image, editing and inpainting
 
@@ -2990,20 +3026,28 @@ initializes, whichever device the work names.
 
 ### Half-precision arithmetic
 
-Some operations in a bfloat16 or float16 forward give a result that depends on how they are computed: the
-exponentials of a flash attention (the diffusion UNets and transformers, the Wan autoencoder, SAM, SAM 2,
-SAM 3, and MiniMax Music 3), the softmax of an eager, math, or upcast attention and of a mixture-of-experts
-router, the sum that renormalizes a router's kept weights, a half-precision layer norm, and SiLU.
-`NFKMLXHalfPrecision.arithmetic` selects how they are computed. A float32 model computes the same in either
-mode. A forward reads the setting as it starts, so set it before the inference it applies to.
+Some operations give a result that depends on how they are computed: the exponentials of a flash attention
+(the diffusion UNets and transformers, the Wan autoencoder, SAM, SAM 2, SAM 3, and MiniMax Music 3), the
+softmax of an eager, math, upcast, or sink attention and of a mixture-of-experts router, the sum that
+renormalizes a router's kept weights, a half-precision forward's layer norms (over its half-precision input,
+and over the float32 input of Wan's `FP32LayerNorm` and SAM 3's norms under autocast), and the float32
+exponentials a reference forms with `torch.exp` (a diffusion model's timestep frequencies and a state-space
+layer's decay rates). `NFKMLXHalfPrecision.arithmetic` selects how they are computed. A forward reads the
+setting as it starts, so set it before the inference it applies to.
+
+GELU and SiLU at a half precision compute PyTorch's arithmetic on the GPU in either mode, and take MLX
+operations, which round each multiply-add, on the CPU stream. Each kernel matches PyTorch over every float16
+and bfloat16 input the GPU keeps normal and runs faster than the MLX operations it replaces: GELU over
+2 × 4,096 × 5,120 values in 1.1 ms against 30.4 ms, SiLU over 2 × 128 × 128 × 640 values in 0.9 ms against
+2.3 ms.
 
 ```objc
 NFKMLXHalfPrecision.arithmetic = NFKMLXArithmeticReference;   // PyTorch's arithmetic, as parity is measured
 NFKMLXHalfPrecision.arithmetic = NFKMLXArithmeticFast;        // MLX's own kernels (default)
 ```
 
-`NFKMLXArithmeticFast`, the default, computes MLX's `exp`, `softmax`, and `sum`, `MLXFast.layerNorm` in
-float32 rounded once, and SiLU as `x · sigmoid(x)`.
+`NFKMLXArithmeticFast`, the default, computes MLX's `exp`, `softmax`, and `sum`, and `MLXFast.layerNorm` in
+float32 rounded once.
 
 - Pro: every forward runs at MLX's own speed.
 - Con: 24% of float32 exponentials differ from PyTorch's by one unit, MLX's softmax sums apart from
@@ -3011,23 +3055,20 @@ float32 rounded once, and SiLU as `x · sigmoid(x)`.
   layer norm rounds 1 float16 output in 4,000 to 5,300, and 1 bfloat16 output in 30,000 to 55,000, apart
   from PyTorch's. A forward sits farther from the reference's: in Stable Diffusion 1.5's UNet at float16,
   MLX's layer norm moves a transformer block by up to 9% of the spread its reference shows from summation
-  order, and MLX's exponential by up to 1.8%.
+  order, and MLX's exponential by up to 1.8%. A float32 layer norm sums its moments apart from PyTorch's.
 
 `NFKMLXArithmeticReference` computes PyTorch's CPU arithmetic: Sleef's `expf`, the softmax, and the layer
-norm in Metal kernels that sum in PyTorch's order, the router's kept-weight sum in PyTorch's order, and SiLU
-as PyTorch's `x / (1 + exp(−x))`.
+norm in Metal kernels that sum in PyTorch's order (a float32 input read in 4-wide vectors and normalized as
+`(x − mean) · rstd`), and the router's kept-weight sum in PyTorch's order.
 
 - Pro: each exponential, softmax, and layer-norm output equals PyTorch's: 0 of 1,048,576 exponentials, 0
-  of 13.7 million layer-norm outputs over rows 7 to 4,096 wide at float16 and bfloat16, and every softmax
-  row from 1 to 4,097 values. SiLU equals PyTorch's over every float16 and bfloat16 input the GPU keeps
-  normal. Every half-precision parity figure is measured in this mode.
-- Con: a diffusion denoiser's forward takes 1.01 to 1.13 times its fast time, and an encoder up to 2.5
-  times. The softmax kernel takes up to twice MLX's time over long rows. On the CPU stream the exponential
-  and SiLU take MLX operations, which leave 1.1% of exponentials one unit from PyTorch's, and the softmax
-  and the layer norm take MLX's own.
-
-A layer norm the reference computes on a float32 input (Wan's `FP32LayerNorm`, SAM 3's under autocast)
-keeps MLX's kernel in both modes.
+  of 13.7 million layer-norm outputs over rows 7 to 4,096 wide at float16 and bfloat16, the float32 layer
+  norm over rows 7 to 5,120 wide with and without the affine, and every softmax row from 1 to 4,097 values.
+  Every half-precision parity figure is measured in this mode.
+- Con: a diffusion denoiser's forward takes 0.97 to 1.18 times its fast time, and an encoder up to 2.27
+  times. The softmax kernel takes up to twice MLX's time over long rows, and the float32 layer norm 4.4 to 4.9
+  times. On the CPU stream the exponential takes MLX operations, which leave 1.1% of exponentials one unit
+  from PyTorch's, and the softmax and the layer norm take MLX's own.
 
 The overall change in one whole forward of each network, measured on an M1 Max at the network's released
 width and input with random weights at its half precision (`NFKMLXHalfPrecisionArithmeticTimingTests`,
@@ -3037,29 +3078,31 @@ alternating.
 
 | Network | Measured as | Reference | Fast | Reference ÷ fast |
 | --- | --- | --- | --- | --- |
-| SD 1.5 UNet | released, float16, 64×64 latent at batch 2 | 893 ms | 811 ms | 1.10 |
-| SDXL UNet | released, float16, 128×128 latent at batch 2 | 4,485 ms | 4,002 ms | 1.12 |
-| SD 3.5 Medium transformer | released, bfloat16, 1024×1024 | 4,915 ms | 4,354 ms | 1.13 |
-| FLUX.1 schnell transformer | 3 of 19 double and 6 of 38 single blocks, 1024×1024 | 2,632 ms | 2,530 ms | 1.04 |
-| FLUX.2 klein 4B transformer | 3 of 5 double and 12 of 20 single blocks, 1024×1024 | 4,175 ms | 4,052 ms | 1.03 |
-| Qwen-Image 2.1 transformer | 12 of 32 layers, 1024×1024 | 5,125 ms | 4,997 ms | 1.03 |
-| Z-Image transformer | 10 of 30 layers and both refiners, 1024×1024 | 4,413 ms | 4,301 ms | 1.03 |
-| Wan 2.1 T2V 1.3B transformer | released, 480×832, 17 frames | 10,189 ms | 9,072 ms | 1.12 |
-| Wan 2.2 Animate 14B, extract pass | 6 of 40 layers, 480×832, one reference frame | 1,165 ms | 1,134 ms | 1.03 |
-| Wan 2.2 Animate 14B, generation pass | 6 of 40 layers, 480×832, a two-latent-frame chunk | 2,484 ms | 2,457 ms | 1.01 |
-| LTX-2.3 transformer | 5 of 48 layers, 512×768, 49 frames | 3,968 ms | 3,842 ms | 1.03 |
-| SD 1.5 autoencoder decode | released, float16, 512×512 | 497 ms | 497 ms | 1.00 |
-| FLUX autoencoder decode | released, bfloat16, 1024×1024; the rounds overlap (18.0–22.8 s against 13.5–23.8 s), so the ratio is not resolved | 22,629 ms | 15,994 ms | — |
-| SD 1.5 CLIP text encoder | released, float16, 2×77 tokens | 50.2 ms | 20.5 ms | 2.46 |
-| SigLIP 2 so400m vision tower | released, 384×384 | 236 ms | 177 ms | 1.33 |
-| Gemma 3 vision tower | released, 896×896 | 2,119 ms | 1,504 ms | 1.41 |
-| Whisper large-v3 encoder | released, float16, 30 s | 524 ms | 481 ms | 1.09 |
-| Whisper large-v3 decode step | released, float16, a 100-token prefix | 186 ms | 108 ms | 1.72 |
-| SAM ViT-B, an image and one click | released, 1024×1024 | 255 ms | 234 ms | 1.09 |
-| SAM ViT-B mask decoder, one click | released | 52.2 ms | 22.8 ms | 2.29 |
-| SAM 2 Hiera-tiny grounding | released, 1024×1024 | 247 ms | 199 ms | 1.24 |
-| SAM 3 grounding | released, 1008×1008 | 2,367 ms | 1,803 ms | 1.31 |
-| MiniMax Music 3 depth decoder, one frame | released, 7 steps at batch 2 | 117 ms | 90.0 ms | 1.30 |
+| SD 1.5 UNet | released, float16, 64×64 latent at batch 2 | 844 ms | 794 ms | 1.06 |
+| SDXL UNet | released, float16, 128×128 latent at batch 2; the rounds (4,184–17,208 ms against 3,806–13,106 ms) put the ratio anywhere from 0.32 to 4.52, so it is not resolved | 11,872 ms | 5,339 ms | — |
+| SD 3.5 Medium transformer | released, bfloat16, 1024×1024 | 4,804 ms | 4,365 ms | 1.10 |
+| FLUX.1 schnell transformer | 3 of 19 double and 6 of 38 single blocks, 1024×1024 | 2,773 ms | 2,636 ms | 1.05 |
+| FLUX.2 klein 4B transformer | 3 of 5 double and 12 of 20 single blocks, 1024×1024 | 4,408 ms | 4,180 ms | 1.05 |
+| Qwen-Image 2.1 transformer | 12 of 32 layers, 1024×1024 | 5,264 ms | 5,058 ms | 1.04 |
+| Z-Image transformer | 10 of 30 layers and both refiners, 1024×1024 | 4,835 ms | 4,983 ms | 0.97 |
+| Wan 2.1 T2V 1.3B transformer | released, 480×832, 17 frames | 11,733 ms | 9,926 ms | 1.18 |
+| Wan 2.2 Animate 14B, extract pass | 6 of 40 layers, 480×832, one reference frame | 1,212 ms | 1,146 ms | 1.06 |
+| Wan 2.2 Animate 14B, generation pass | 6 of 40 layers, 480×832, a two-latent-frame chunk; the rounds (2,968–5,223 ms against 2,625–3,669 ms) put the ratio anywhere from 0.81 to 1.99, so it is not resolved | 3,209 ms | 2,847 ms | — |
+| LTX-2.3 transformer | 5 of 48 layers, 512×768, 49 frames | 4,020 ms | 3,907 ms | 1.03 |
+| SD 1.5 autoencoder decode | released, float16, 512×512 | 540 ms | 489 ms | 1.10 |
+| FLUX autoencoder decode | released, bfloat16, 1024×1024; the decode stops on the GPU's command-buffer timeout on this machine (a 24 GB peak), so the ratio is not resolved | — | — | — |
+| SD 1.5 CLIP text encoder | released, float16, 2×77 tokens | 47.6 ms | 21.0 ms | 2.27 |
+| SigLIP 2 so400m vision tower | released, 384×384 | 223 ms | 170 ms | 1.31 |
+| Gemma 3 vision tower | released, 896×896 | 2,166 ms | 1,525 ms | 1.42 |
+| Whisper large-v3 encoder | released, float16, 30 s | 560 ms | 512 ms | 1.09 |
+| Whisper large-v3 decode step | released, float16, a 100-token prefix | 194 ms | 111 ms | 1.74 |
+| SAM ViT-B, an image and one click | released, 1024×1024 | 258 ms | 234 ms | 1.10 |
+| SAM ViT-B mask decoder, one click | released | 53.6 ms | 24.0 ms | 2.23 |
+| SAM 2 Hiera-tiny grounding | released, 1024×1024 | 192 ms | 141 ms | 1.36 |
+| SAM 3 grounding | released, 1008×1008 | 2,490 ms | 1,841 ms | 1.35 |
+| MiniMax Music 3 depth decoder, one frame | released, 7 steps at batch 2 | 142 ms | 110 ms | 1.29 |
+| Float32 layer norm alone (Wan's) | 7,800 tokens of 1,536, no affine | 3.5 ms | 0.8 ms | 4.38 |
+| Float32 layer norm alone (Wan 14B's) | 7,800 tokens of 5,120, no affine | 6.8 ms | 1.4 ms | 4.86 |
 
 ## Text → video
 
@@ -4138,6 +4181,8 @@ let sd3Control  = NFKMLXSD3ControlNetPipeline(transformer: sd3DiT, controlnet: s
 let fluxControl = NFKMLXFluxControlNetPipeline(transformer: fluxDiT, controlnet: fluxControlNet, vae: fluxVAE)  // .unionPro (with controlnetMode:) / .single steer FLUX.1 [dev]
 let ipAdapter   = try NFKMLXTextToImage.imageAdapterBackend(configuration: .stableDiffusion15, directoryURL: sd15Dir,
                                                             adapterURL: adapterURL)  // a CLIP image embedding under NFKMLXInputImageEmbedding steers SD 1.5
+let lcmLoRA     = try NFKMLXTextToImage.backend(configuration: .stableDiffusion15.withSampler(.lcm), directoryURL: sd15Dir,
+                                                adapterURL: lcmLoRAURL)   // a released LoRA merged into the UNet (NFKMLXSDLoRA); .sdxlLightning on SDXL base for ByteDance's four-step adapter
 
 // Audio
 // Translation (text → text; every translator loads a release directory)

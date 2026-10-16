@@ -256,7 +256,7 @@ final class NFKZImageTimestepEmbedder: Module {
 
     func callAsFunction(_ t: MLXArray) -> MLXArray {
         let half = frequencySize / 2
-        let freqs = exp(-log(10000.0) * MLXArray(0 ..< half).asType(.float32) / Float(half))
+        let freqs = NFKReferenceRounding.exponential(-log(10000.0) * MLXArray(0 ..< half).asType(.float32) / Float(half))
         let args = t.reshaped([-1, 1]).asType(.float32) * freqs.reshaped([1, -1])
         let first = mlp[0] as! Linear
         let emb = concatenated([cos(args), sin(args)], axis: -1).asType(first.weight.dtype)  // [B, 256]

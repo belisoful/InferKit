@@ -69,9 +69,10 @@ and text-to-video diffusion, speech recognition and synthesis, audio codecs, and
 implemented in MLXNN and validated numerically against its reference implementation on the released
 weights:
 
-- **`NFKMLXBackend`** — a bundled Stable Diffusion release: SD 1.5, SD 2.1 base, or SDXL-Turbo. A
-  request with no image runs text-to-image; a request with a `CGImage` under `NFKInputImage` runs
-  image-to-image, with `NFKParameterStrength` controlling how much of the source survives. Every part
+- **`NFKMLXBackend`** — a bundled Stable Diffusion release: SD 1.5, SD 2.1 base, SDXL-Turbo, SDXL base, or
+  LCM Dreamshaper v7. A request with no image runs text-to-image; a request with a `CGImage` under
+  `NFKInputImage` runs image-to-image, with `NFKParameterStrength` controlling how much of the source
+  survives. Every part
   of the run is this package's own — the CLIP text tower, the UNet, the DDIM sampler, and the
   autoencoder — each measured against its reference implementation, so text-to-image builds for iOS
   as the rest of the package does.
@@ -400,10 +401,15 @@ models.
   FFT spectral branch (via MLXFFT), run through the matting backend (plate + mask → inpainted image).
 - **`NFKMLXTextToImage`** — Stable Diffusion text-to-image, on the diffusion backend: a CLIP text
   tower encodes the prompt, the UNet denoises over the DDIM loop with classifier-free guidance, the
-  autoencoder decodes. Three releases ship as configurations — Stable Diffusion 1.5, Stable Diffusion
-  2.1, and SDXL-Turbo — and `NFKMLXBackend` is that model behind a release name. Each is measured end
-  to end against the diffusers pipeline it comes from, sampling with DDIM at the release's own
-  timestep spacing on both sides.
+  autoencoder decodes. The releases ship as configurations — Stable Diffusion 1.5, Stable Diffusion
+  2.1, SDXL base, SDXL-Turbo, and the LCM Dreamshaper distillation — and `NFKMLXBackend` is that model
+  behind a release name. Each is measured end to end against the diffusers pipeline it comes from: the
+  base releases sample with DDIM at the release's own timestep spacing on both sides, and LCM Dreamshaper
+  with the latent consistency sampler (`NFKLCMScheduler`) from the reference's own per-step draws. A
+  released LoRA merges into the UNet through `NFKMLXSDLoRA` (the kohya and PEFT key layouts, linear and
+  convolution targets), and `withSampler(.lcm)` or `.ddimTrailing` gives the adapter the sampler it was
+  distilled for: LCM-LoRA on SD 1.5 under `NFKLCMScheduler`, SDXL-Lightning on SDXL base under trailing
+  DDIM, each measured against diffusers with the adapter fused.
 - **`NFKMLXStableDiffusionInpaint`** — a latent-diffusion inpainter (VAE + UNet in MLXNN) on the
   diffusion backend: VAE-encode the plate, denoise a 9-channel input over the DDIM loop, VAE-decode.
 - **`NFKMLXMarigold`** / **`NFKMLXSDUpscaler`** — image-conditioned latent-diffusion models on the

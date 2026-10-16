@@ -105,7 +105,7 @@ func sd3AffineFreeLayerNorm(_ x: MLXArray, eps: Float = 1e-6) -> MLXArray {
 func sd3TimestepEmbedding(_ timesteps: MLXArray, dimensions: Int, maxPeriod: Float = 10000) -> MLXArray {
     let half = dimensions / 2
     let exponent = -log(maxPeriod) * MLXArray(0 ..< half).asType(.float32) / Float(half)
-    let emb = exp(exponent)
+    let emb = NFKReferenceRounding.exponential(exponent)
     let args = timesteps.reshaped([-1, 1]).asType(.float32) * emb.reshaped([1, -1])
     return concatenated([cos(args), sin(args)], axis: -1)                  // flip_sin_to_cos → [cos, sin]
 }

@@ -460,6 +460,8 @@ The figures have three limits:
 
 - ``NFKMLXBackend``
 - ``NFKMLXTextToImage``
+- ``NFKMLXSDSampler``
+- ``NFKMLXSDLoRA``
 - ``NFKMLXSDPipeline``
 - ``NFKMLXStableDiffusionModels``
 - ``NFKMLXSDTextEncoder``

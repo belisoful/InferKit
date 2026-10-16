@@ -877,7 +877,7 @@ memory model:
 | Gemma 3n | `precision`. |
 | Gemma 4, Granite 4.0-H, Qwen3-VL, Qwen3.8-Flash-Next, DeepSeek V4 | `residency` (`automatic`, `resident`, `paged`) on a mixture. A dense release declares none. |
 | FLUX.1, FLUX.2, Stable Diffusion 3, SANA, Z-Image, Qwen-Image, Wan, LTX-Video, MiniMax Music 3 | `residency` (`automatic`, `resident`, `staged`). |
-| Stable Diffusion 1.5, 2.1, SDXL-Turbo | `precision`, set on the backend's `precision` property. |
+| Stable Diffusion 1.5, 2.1, SDXL base 1.0, SDXL-Turbo, LCM Dreamshaper v7, and the LCM-LoRA and SDXL-Lightning adapters merged into their bases | `precision`, set on the backend's `precision` property. |
 | Whisper | `precision`. |
 
 `residency` defaults to `automatic`, `precision` to the precision the factory loads at without it,

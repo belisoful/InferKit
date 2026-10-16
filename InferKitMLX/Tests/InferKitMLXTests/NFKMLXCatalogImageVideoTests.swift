@@ -100,6 +100,37 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
             assertPorts(NFKMLXCatalogImage.stableDiffusionName(model), inputs: backend.supportedInputKeys,
                         parameters: backend.supportedParameterKeys, outputs: backend.supportedOutputKeys)
         }
+        for adapter in NFKMLXCatalogImage.stableDiffusionAdapters {
+            let backend = NFKMLXBackend(model: adapter.base)
+            assertPorts(adapter.name, inputs: backend.supportedInputKeys,
+                        parameters: backend.supportedParameterKeys, outputs: backend.supportedOutputKeys)
+        }
+    }
+
+    func testEachStableDiffusionAdapterListsItsBaseReleaseAndItsFileAtItsTrainedSchedule() throws {
+        let adapters = NFKMLXCatalogImage.stableDiffusionAdapters
+        XCTAssertEqual(adapters.map(\.name), ["lcm-lora-sdv1-5", "sdxl-lightning-4step-lora"])
+        for adapter in adapters {
+            let descriptor = try XCTUnwrap(entry(adapter.name)).descriptor()
+            let base = try XCTUnwrap(entry(NFKMLXCatalogImage.stableDiffusionName(adapter.base))).descriptor()
+            let source = try XCTUnwrap(descriptor.defaultVariant?.source)
+            let baseSource = try XCTUnwrap(base.defaultVariant?.source)
+            XCTAssertEqual(source.repository, baseSource.repository, adapter.name)
+            XCTAssertEqual(source.files.filter { !$0.overridesSource }.map(\.path), baseSource.files.map(\.path),
+                           adapter.name)
+            let adapterFiles = source.files.filter(\.overridesSource)
+            XCTAssertEqual(adapterFiles.map(\.path), [adapter.weightsPath], adapter.name)
+            XCTAssertEqual(adapterFiles.first?.repository, adapter.repository, adapter.name)
+            XCTAssertEqual(adapterFiles.first?.role, NFKModelFileRoleWeights, adapter.name)
+            XCTAssertEqual(adapterFiles.first?.isOptional, false, adapter.name)
+            XCTAssertEqual(descriptor.option(withKey: NFKParameterSteps)?.defaultValue as? Int, 4, adapter.name)
+            XCTAssertEqual(adapter.configuration.sampler, adapter.sampler, adapter.name)
+        }
+        let lcm = try XCTUnwrap(entry("lcm-lora-sdv1-5")).descriptor()
+        XCTAssertEqual(lcm.option(withKey: NFKParameterGuidanceScale)?.defaultValue as? Double, 1)
+        let lightning = try XCTUnwrap(entry("sdxl-lightning-4step-lora")).descriptor()
+        XCTAssertEqual(lightning.option(withKey: NFKParameterGuidanceScale)?.defaultValue as? Double, 0)
+        XCTAssertEqual(lightning.option(withKey: NFKParameterWidth)?.defaultValue as? Int, 1024)
     }
 
     func testTheConceptSegmentersDeclareTheirBackendsKeys() {
@@ -158,7 +189,8 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
         let expected = ["sam-vit-b", "sam-vit-l", "sam-vit-h", "swinir-classical-x4", "nafnet-reds",
                         "yolov8x", "sam2.1-hiera-large", "sam2-hiera-tiny-video", "flux.1-dev", "sd3.5-large",
                         "florence-2-base", "trocr-small-printed", "vjepa2-vitg-fpc32-384-diving48",
-                        "stable-diffusion-v1-5", "sdxl-turbo"]
+                        "stable-diffusion-v1-5", "sdxl-turbo", "stable-diffusion-xl-base-1.0", "lcm-dreamshaper-v7",
+                        "lcm-lora-sdv1-5", "sdxl-lightning-4step-lora"]
         for name in expected {
             XCTAssertTrue(names.contains(name), name)
         }

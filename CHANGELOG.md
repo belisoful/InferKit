@@ -1257,16 +1257,73 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   safetensors headers and the cache geometry from each release's `config.json`. The regenerated table
   and `Docs/model-catalog.json` carry them.
 
+#### Released Stable Diffusion LoRAs merge into the UNet; LCM-LoRA, SDXL-Lightning, and LCM Dreamshaper
+
+- `NFKMLXSDLoRA` reads a released Stable Diffusion adapter in the kohya layout over diffusers module names
+  (`lora_unet_…`, `lora_down` / `lora_up` / `alpha`) or the PEFT layout diffusers writes (`unet.…lora_A` /
+  `lora_B`), on linear and convolution targets, and merges it into `NFKMLXSDUNet` at a caller's scale. The
+  product forms in float32 and takes the base weight's type, as diffusers' `fuse_lora` does. A key that
+  names no layer of the UNet is refused before any weight changes, and a file that also adapts the text
+  towers is refused unless the caller asks for its UNet half alone.
+- `NFKMLXSDSampler` (`@objc`: DDIM, DDIM trailing, LCM) and
+  `NFKMLXSDTextToImageConfiguration.withSampler(_:steps:guidanceScale:)` give an adapter the sampler it
+  was distilled for, with the step count and guidance it is trained at; a request's `NFKParameterSteps`
+  and `NFKParameterGuidanceScale` still override them.
+- `NFKMLXTextToImage.backend(configuration:directoryURL:adapterURL:adapterScale:precision:)` and the
+  Objective-C `backendWithModel:directoryURL:adapterURL:adapterScale:sampler:error:` build the adapted
+  model;
+  `backendWithModel:adapterRepo:adapterWeightsPath:adapterRevision:adapterScale:sampler:cacheDirectoryURL:error:`
+  and its completion-handler peer download the release and the adapter first.
+- `NFKLCMScheduler` steps the reference's schedule: the training range divided into
+  `originalInferenceSteps` (50) distillation steps, an inference schedule taking every `50 / n`-th from the
+  top (4 steps visit 999, 759, 499, 259), each step's signal ratio after it the next step's, and the final
+  step returning the clean estimate. A `noise` hook substitutes a caller's draws for the seeded stream, and
+  `NFKDiffusionScheduler.seeded(_:)` hands a request's `NFKParameterSeed` to a sampler that draws.
+- `NFKMLXSDUNetConfiguration.timeConditionProjectionDimensions` adds the reference's `time_cond_proj_dim`:
+  a latent consistency model's guidance embedding, projected by `time_embedding.cond_proj` into the time
+  embedding's input. `NFKMLXSDUNet.guidanceEmbedding(scale:channels:)` forms it, the UNet forward takes it
+  as `guidanceEmbedding:`, and `NFKMLXTextToImage` runs one pass with it and no classifier-free guidance,
+  as the reference pipeline does.
+- Configurations `.sdxl` (SDXL base 1.0 at its own schedule), `.sdxlLightning` (the base under trailing
+  DDIM, four steps, no guidance), and `.latentConsistency15` (LCM Dreamshaper v7: SD 1.5 geometry with the
+  256-wide guidance projection under the LCM sampler, guidance 8). `NFKMLXStableDiffusionModel` gains
+  `.sdxlBase` (the half-precision files) and `.lcmDreamshaperV7`. A bundled release's download carries the
+  UNet and autoencoder `config.json`, which `upcast_attention` and `force_upcast` are read from.
+- Measured end to end against diffusers with the adapter fused, from the reference's own initial latent
+  and, under LCM, its own per-step draws: LCM-LoRA on SD 1.5 image cosine 0.99999858 (mean abs 0.00089),
+  SDXL-Lightning four-step on SDXL base 0.99999917 (mean abs 0.00056), LCM Dreamshaper v7 0.99999278
+  (mean abs 0.00098).
+- The catalog lists SDXL base 1.0 (`stable-diffusion-xl-base-1.0`) and LCM Dreamshaper v7
+  (`lcm-dreamshaper-v7`, MIT), and each adapter merged into its base under a registry name of its own:
+  `lcm-lora-sdv1-5` (Stable Diffusion 1.5 with LCM-LoRA, 4 steps at guidance 1) and
+  `sdxl-lightning-4step-lora` (SDXL base 1.0 with the four-step SDXL-Lightning adapter, 4 steps without
+  guidance). An adapter's source is its base release's files and the adapter file from its own
+  repository. Its factory reads the adapter from the release directory where the directory holds it,
+  else from the default Hugging Face cache, downloading it when absent. Each takes the precision load
+  option, and `Tools/catalog/measure.py` sizes all four.
+
 #### Half-precision forwards compute MLX's arithmetic, or PyTorch's
 
-- `NFKMLXHalfPrecision.arithmetic` (`@objc`, `NFKMLXArithmetic`) selects the arithmetic of a bfloat16 or
-  float16 forward's flash-attention exponentials, its softmax and router sums, its layer norms, and SiLU.
-- `NFKMLXArithmeticFast`, the default, computes MLX's `exp`, `softmax`, `sum`, `MLXFast.layerNorm`, and
-  `x · sigmoid(x)`.
-- `NFKMLXArithmeticReference` computes PyTorch's CPU arithmetic: Sleef's `expf`, the softmax, the layer norm,
-  and SiLU in Metal kernels that sum in PyTorch's order, and a router's kept-weight sum in PyTorch's order.
-  Each output equals PyTorch's. A whole half-precision forward in this mode takes 1.01 to 1.13 times the time
-  of the fast mode in a diffusion denoiser, and up to 2.5 times in an encoder.
+- `NFKMLXHalfPrecision.arithmetic` (`@objc`, `NFKMLXArithmetic`) selects the arithmetic of a forward's
+  flash-attention exponentials, its softmax and router sums, a half-precision forward's layer norms, and the
+  float32 exponentials a reference forms with `torch.exp`.
+- `NFKMLXArithmeticFast`, the default, computes MLX's `exp`, `softmax`, `sum`, and `MLXFast.layerNorm`.
+- `NFKMLXArithmeticReference` computes PyTorch's CPU arithmetic: Sleef's `expf`, the softmax, and the layer
+  norm in Metal kernels that sum in PyTorch's order, and a router's kept-weight sum in PyTorch's order. Each
+  output equals PyTorch's. A whole half-precision forward in this mode takes 0.97 to 1.18 times the time of
+  the fast mode in a diffusion denoiser, and up to 2.27 times in an encoder.
+- The reference arithmetic computes a layer norm over a float32 input inside a half-precision forward (Wan's
+  `FP32LayerNorm`, Wan Animate's, and SAM 3's under autocast) as PyTorch does: read in 4-wide vectors and
+  normalized as `(x − mean) · rstd`. The kernel takes 4.4 to 4.9 times `MLXFast`'s time.
+- It also computes PyTorch's exponential for the diffusion models' timestep frequencies (SD 1.5, 2.1, and
+  SDXL, SD3, FLUX, FLUX.2, SANA, Wan, Wan Animate, LTX-Video, LTX-2, Z-Image, Qwen-Image), the state-space
+  decay rates of the Mamba-2 and gated-delta layers, and Wan Animate's attention, and PyTorch's softmax for
+  DeepSeek V4's sink attention and hyper-connections and Gemma 3n's and Gemma 4's audio attention.
+- GELU and SiLU at a half precision take PyTorch's kernels on the GPU in either mode, and MLX operations on
+  the CPU stream. Each kernel matches every float16 and bfloat16 input the GPU keeps normal and runs faster
+  than the MLX operations it replaces: GELU in 1.1 ms against 30.4 ms over 2 × 4,096 × 5,120 values, SiLU in
+  0.9 ms against 2.3 ms over 2 × 128 × 128 × 640.
+- Qwen-Image's timestep exponent forms as diffusers forms it, `(−log P · i) / half`.
 - A half-precision flash attention attends its queries in blocks whose float32 scores fit in 1 GiB, so a long
   sequence (Wan's video tokens, FLUX at high resolution) never holds the whole score matrix.
 - Gemma 4's experts sum as transformers' default `grouped_mm` does, in float32 in top-k order and rounded
@@ -1305,14 +1362,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 #### The exact GELU computes torch's error function at a half precision
 
-- `NFKReferenceRounding.gelu` forms the exact GELU of a half-precision input in float32 with the error
-  function torch's CPU kernels compute, and rounds once. MLX's own, faithfully rounded error function
-  rounded 277 of all finite float16 inputs apart from torch.
+- `NFKReferenceRounding.gelu` forms the exact GELU of a half-precision input in float32 in one Metal kernel
+  (`torchGELU`), with the error function torch's vectorized CPU kernels compute: the Abramowitz–Stegun 7.1.26
+  polynomial with its multiply-adds fused, and Sleef's exponential. It rounds once. MLX's own, faithfully
+  rounded error function rounded 277 of all finite float16 inputs apart from torch.
 - Every exact GELU at a half precision takes it: the Stable Diffusion UNets' feed-forward, CLIP's OpenCLIP
   towers, SAM 2, Qwen2.5-VL and Qwen3-VL, Phi-4's audio and vision projections, Granite Speech, Sa2VA,
   Wan Animate, Whisper, Voxtral, and DeepSeek's vision aligner. A float32 input is unchanged.
-- Over every finite input whose magnitude is at least twice the least normal float32, torch's polynomial
-  leaves no bf16 input and 1 float16 input apart from torch's GELU, where MLXNN's GELU leaves 133 and 277.
+- Over every finite input whose magnitude is at least twice the least normal float32, the kernel leaves no
+  bf16 or float16 input apart from torch's GELU, where MLXNN's GELU leaves 133 and 277.
 - Sa2VA-Qwen3-VL-4B-SAM3 at bfloat16 answers `Sure, [SEG].`, as the release's own code does at bfloat16. Its
   float32 reference scores ` the`, ` it`, and ` ` within 0.075 of each other at the third step, under one
   bfloat16 spacing (0.125), and MLXNN's GELU had broken that tie toward the float32 answer. The Qwen-VL

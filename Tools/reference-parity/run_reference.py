@@ -844,23 +844,66 @@ def run_sd_text_to_image(image, checkpoint):
 
     IK_SD_STEPS sets the step count and IK_SD_SIZE the latent side. Runs under the diffusers virtual
     environment, like the other `sd_*` modes.
+
+    IK_SD_LORA names a released LoRA (`pytorch_lora_weights.safetensors`, kohya or PEFT layout) to merge
+    into the UNet at IK_SD_LORA_SCALE (1), through `load_lora_weights` + `fuse_lora`, which is the merge
+    `NFKMLXSDLoRA` performs. IK_SD_SAMPLER=lcm swaps the sampler to `LCMScheduler` (the release's own
+    `original_inference_steps`), IK_SD_SPACING overrides the release's `timestep_spacing` (`trailing`
+    for the Lightning adapters on the SDXL base release), and under LCM the record also carries `noises`, the per-step draws the
+    sampler re-noised with, so the port can run from the reference's randomness end to end. A UNet
+    with `time_cond_proj_dim` (an LCM distillation) conditions on the guidance scale and runs no
+    classifier-free guidance, which the pipeline decides on its own.
     """
     import json
     import os
-    from diffusers import DDIMScheduler, DiffusionPipeline
+    from diffusers import DDIMScheduler, DiffusionPipeline, LCMScheduler
 
     with open(os.path.join(checkpoint, "model_index.json")) as handle:
         index = json.load(handle)
     extra = {} if index["_class_name"].startswith("StableDiffusionXL") else {
         "safety_checker": None, "requires_safety_checker": False}
+    # A release directory fetched without its feature extractor (the LCM Dreamshaper copy) still names
+    # it in model_index.json; nothing here reads it.
+    if "feature_extractor" in index and not os.path.isdir(os.path.join(checkpoint, "feature_extractor")):
+        extra["feature_extractor"] = None
     variant = None if os.path.exists(
         os.path.join(checkpoint, "unet", "diffusion_pytorch_model.safetensors")) else "fp16"
     pipeline = DiffusionPipeline.from_pretrained(checkpoint, torch_dtype=torch.float32,
                                                  variant=variant, **extra)
     # DDIM is the sampler InferKitMLX implements. A release whose own scheduler counts its schedule
     # down from the end of the training range keeps that spacing through `from_config`.
-    pipeline.scheduler = DDIMScheduler.from_config(pipeline.scheduler.config)
+    # IK_SD_SPACING overrides the release's `timestep_spacing`: the SDXL base release samples leading,
+    # and the Lightning adapters merged into it are trained for trailing.
+    sampler = os.environ.get("IK_SD_SAMPLER", "ddim")
+    scheduler_config = dict(pipeline.scheduler.config)
+    if os.environ.get("IK_SD_SPACING"):
+        scheduler_config["timestep_spacing"] = os.environ["IK_SD_SPACING"]
+    if sampler == "lcm":
+        pipeline.scheduler = LCMScheduler.from_config(scheduler_config)
+    else:
+        pipeline.scheduler = DDIMScheduler.from_config(scheduler_config)
     pipeline.set_progress_bar_config(disable=True)
+
+    lora = os.environ.get("IK_SD_LORA")
+    lora_scale = float(os.environ.get("IK_SD_LORA_SCALE", "1"))
+    if lora:
+        pipeline.load_lora_weights(os.path.dirname(lora), weight_name=os.path.basename(lora),
+                                   adapter_name="adapter")
+        pipeline.fuse_lora(lora_scale=lora_scale, adapter_names=["adapter"])
+        pipeline.unload_lora_weights()
+
+    # The LCM sampler re-noises every non-final step with a fresh draw; the record carries the draws so
+    # the port reproduces the run.
+    noises = []
+    if sampler == "lcm":
+        import diffusers.schedulers.scheduling_lcm as lcm_module
+        original_randn = lcm_module.randn_tensor
+
+        def recording_randn(shape, **kwargs):
+            drawn = original_randn(shape, **kwargs)
+            noises.append(drawn[0].permute(1, 2, 0).contiguous().clone())
+            return drawn
+        lcm_module.randn_tensor = recording_randn
 
     steps = int(os.environ.get("IK_SD_STEPS", "4"))
     side = int(os.environ.get("IK_SD_SIZE", "32"))
@@ -886,9 +929,15 @@ def run_sd_text_to_image(image, checkpoint):
                           output_type="np", callback_on_step_end=capture)
     # The conditioning and the first guided prediction, so a divergence separates the text tower from
     # the sampler from the UNet without another run.
+    # settings[4] is 1 under the LCM sampler and settings[5] the LoRA scale, so the record names the
+    # recipe it ran.
     extra = {"latent": latent[0].permute(1, 2, 0).contiguous(),
              "latents": torch.stack(trace),
-             "settings": torch.tensor([steps, side, guidance, 1 if negative is None else 0], dtype=torch.float32)}
+             "settings": torch.tensor([steps, side, guidance, 1 if negative is None else 0,
+                                       1 if sampler == "lcm" else 0, lora_scale if lora else 0],
+                                      dtype=torch.float32)}
+    if noises:
+        extra["noises"] = torch.stack(noises)
     two_towers = hasattr(pipeline, "text_encoder_2")
     with torch.no_grad():
         if two_towers:
@@ -907,7 +956,11 @@ def run_sd_text_to_image(image, checkpoint):
         pipeline.scheduler.set_timesteps(steps)
         first = pipeline.scheduler.timesteps[0]
         kwargs = {} if added is None else {"added_cond_kwargs": added}
-        if guidance > 1:
+        conditions_on_guidance = pipeline.unet.config.time_cond_proj_dim is not None
+        if conditions_on_guidance:
+            kwargs["timestep_cond"] = pipeline.get_guidance_scale_embedding(
+                torch.tensor([guidance - 1]), embedding_dim=pipeline.unet.config.time_cond_proj_dim)
+        if guidance > 1 and not conditions_on_guidance:
             both = torch.cat([unconditional, conditional])
             if added is not None:
                 kwargs["added_cond_kwargs"] = {"text_embeds": torch.cat([unpooled, pooled]),

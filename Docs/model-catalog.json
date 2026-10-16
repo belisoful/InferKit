@@ -17861,6 +17861,599 @@
       ]
     },
     {
+      "displayName" : "LCM Dreamshaper v7",
+      "engine" : "mlx",
+      "family" : "stable-diffusion",
+      "id" : "lcm-dreamshaper-v7",
+      "inputModalities" : [
+        "text",
+        "image",
+        "mask"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to draw.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "Not read: the model runs no classifier-free guidance.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "An image to start from. Its presence runs image-to-image.",
+          "key" : "image",
+          "required" : false,
+          "title" : "Source image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "With a source image, white regenerates the region and black keeps it.",
+          "key" : "mask",
+          "required" : false,
+          "title" : "Mask",
+          "valueType" : "mask"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "MIT",
+        "name" : "MIT License",
+        "note" : "Distilled from Dreamshaper v7, a Stable Diffusion 1.5 fine-tune under the CreativeML Open RAIL-M License.",
+        "restrictsCommercialUse" : false,
+        "url" : "https://huggingface.co/SimianLuo/LCM_Dreamshaper_v7"
+      },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
+      "options" : [
+        {
+          "default" : 512,
+          "help" : "The image width in pixels, rounded down to a whole latent cell.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 512,
+          "help" : "The image height in pixels, rounded down to a whole latent cell.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 4,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 8,
+          "help" : "The guidance scale the model conditions on through its time embedding. It runs no classifier-free guidance.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "default" : 1,
+          "help" : "How much of the source image the sampler regenerates. 1 starts from full noise.",
+          "key" : "strength",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Strength"
+        },
+        {
+          "help" : "The seed of the initial noise. A run without one uses a fixed seed.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 4265268908,
+                "residentBytes" : 4265268908
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4265268908,
+                "residentBytes" : 4265268908
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "key" : "precision",
+          "kind" : "choice",
+          "property" : "precision",
+          "stage" : "load",
+          "title" : "Precision"
+        }
+      ],
+      "outputModalities" : [
+        "image"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated image.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Image",
+          "valueType" : "image"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "lcm-dreamshaper-v7",
+      "requirements" : {
+        "minimumMemoryBytes" : 10070866123,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident"
+      ],
+      "standIn" : false,
+      "summary" : "A latent consistency model distilled from a Stable Diffusion 1.5 fine-tune, drawing 512-pixel images in four steps.",
+      "tasks" : [
+        "text-to-image",
+        "image-to-image"
+      ],
+      "variants" : [
+        {
+          "displayName" : "LCM Dreamshaper v7",
+          "downloadBytes" : 4266991628,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 2132634454,
+                  "checkpoint" : 4265268908,
+                  "float32" : 4265268908
+                },
+                "id" : "model",
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 10070866123,
+          "parameterCount" : 1066317227,
+          "peakBytes" : 4265268908,
+          "precision" : "float32",
+          "registryName" : "lcm-dreamshaper-v7",
+          "residentBytes" : 4265268908,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 1734,
+                "optional" : false,
+                "path" : "unet/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 651,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1059962,
+                "optional" : false,
+                "path" : "tokenizer/vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "tokenizer/merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 765,
+                "optional" : true,
+                "path" : "tokenizer/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 133,
+                "optional" : true,
+                "path" : "tokenizer/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 3438495328,
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "7be468469c513f8614a73423aa009581295fbd8c903703450632b2275c0145a9"
+              },
+              {
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 334643268,
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "6bb865b3478d73053007b8a76f114010e26f1a1d2ea02dc0261464caa4289c2d"
+              },
+              {
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 492265168,
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors",
+                "role" : "weights",
+                "sha256" : "66262104f5099c84ad0e6ec156acae57b2292caebd4d7b8699327fa745145b76"
+              },
+              {
+                "optional" : true,
+                "path" : "text_encoder/model.fp16.safetensors",
+                "role" : "weights"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "a85df6a8bd976cdd08b4fd8f3b73f229c9e54df5",
+            "repository" : "SimianLuo/LCM_Dreamshaper_v7",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "Stable Diffusion 1.5 with LCM-LoRA",
+      "engine" : "mlx",
+      "family" : "stable-diffusion",
+      "id" : "lcm-lora-sdv1-5",
+      "inputModalities" : [
+        "text",
+        "image",
+        "mask"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to draw.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "An image to start from. Its presence runs image-to-image.",
+          "key" : "image",
+          "required" : false,
+          "title" : "Source image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "With a source image, white regenerates the region and black keeps it.",
+          "key" : "mask",
+          "required" : false,
+          "title" : "Mask",
+          "valueType" : "mask"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "name" : "CreativeML Open RAIL-M License",
+        "note" : "Use restrictions apply. The adapter is under the CreativeML Open RAIL++-M License.",
+        "restrictsCommercialUse" : false,
+        "url" : "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5"
+      },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
+      "options" : [
+        {
+          "default" : 512,
+          "help" : "The image width in pixels, rounded down to a whole latent cell.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 512,
+          "help" : "The image height in pixels, rounded down to a whole latent cell.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 4,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 1,
+          "help" : "The classifier-free guidance weight. 0 runs without guidance.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "default" : 1,
+          "help" : "How much of the source image the sampler regenerates. 1 starts from full noise.",
+          "key" : "strength",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Strength"
+        },
+        {
+          "help" : "The seed of the initial noise. A run without one uses a fixed seed.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 4399446848,
+                "residentBytes" : 4399446848
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4533951852,
+                "residentBytes" : 4533951852
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "key" : "precision",
+          "kind" : "choice",
+          "property" : "precision",
+          "stage" : "load",
+          "title" : "Precision"
+        }
+      ],
+      "outputModalities" : [
+        "image"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated image.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Image",
+          "valueType" : "image"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "lcm-lora-sdv1-5",
+      "requirements" : {
+        "minimumMemoryBytes" : 10228722523,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident"
+      ],
+      "standIn" : false,
+      "summary" : "Stable Diffusion 1.5 with the LCM-LoRA adapter merged in, drawing 512-pixel images in four steps.",
+      "tasks" : [
+        "text-to-image",
+        "image-to-image"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Stable Diffusion 1.5 with LCM-LoRA",
+          "downloadBytes" : 4401285395,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 2266976234,
+                  "checkpoint" : 4399446848,
+                  "float32" : 4533951852
+                },
+                "id" : "model",
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 10228722523,
+          "parameterCount" : 1133487886,
+          "peakBytes" : 4399446848,
+          "precision" : "float32",
+          "registryName" : "lcm-lora-sdv1-5",
+          "residentBytes" : 4399446848,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 743,
+                "optional" : false,
+                "path" : "unet/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 547,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1059962,
+                "optional" : false,
+                "path" : "tokenizer/vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "tokenizer/merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 806,
+                "optional" : true,
+                "path" : "tokenizer/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 472,
+                "optional" : true,
+                "path" : "tokenizer/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 3438167540,
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "19da7aaa4b880e59d56843f1fcb4dd9b599c28a1d9d9af7c1143057c8ffae9f1"
+              },
+              {
+                "bytes" : 1719125304,
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "c83908253f9a64d08c25fc90874c9c8aef9a329ce1ca5fb909d73b0c83d1ea21"
+              },
+              {
+                "bytes" : 334643276,
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "a2b5134f4dbc140d9c11f11cba3233099e00af40f262f136c691fb7d38d2194c"
+              },
+              {
+                "bytes" : 167335342,
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "4fbcf0ebe55a0984f5a5e00d8c4521d52359af7229bb4d81890039d2aa16dd7c"
+              },
+              {
+                "bytes" : 492265874,
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors",
+                "role" : "weights",
+                "sha256" : "d008943c017f0092921106440254dbbe00b6a285f7883ec8ba160c3faad88334"
+              },
+              {
+                "bytes" : 246144864,
+                "optional" : true,
+                "path" : "text_encoder/model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "77795e2023adcf39bc29a884661950380bd093cf0750a966d473d1718dc9ef4e"
+              },
+              {
+                "bytes" : 134621556,
+                "optional" : false,
+                "path" : "pytorch_lora_weights.safetensors",
+                "repository" : "latent-consistency/lcm-lora-sdv1-5",
+                "role" : "weights",
+                "sha256" : "8f90d840e075ff588a58e22c6586e2ae9a6f7922996ee6649a7f01072333afe4"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+            "repository" : "stable-diffusion-v1-5/stable-diffusion-v1-5",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
       "displayName" : "LTX-Video 0.9.0",
       "engine" : "mlx",
       "family" : "ltx-video",
@@ -43345,6 +43938,347 @@
       ]
     },
     {
+      "displayName" : "SDXL-Lightning 4-step",
+      "engine" : "mlx",
+      "family" : "stable-diffusion",
+      "id" : "sdxl-lightning-4step-lora",
+      "inputModalities" : [
+        "text",
+        "image",
+        "mask"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to draw.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "An image to start from. Its presence runs image-to-image.",
+          "key" : "image",
+          "required" : false,
+          "title" : "Source image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "With a source image, white regenerates the region and black keeps it.",
+          "key" : "mask",
+          "required" : false,
+          "title" : "Mask",
+          "valueType" : "mask"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "name" : "CreativeML Open RAIL++-M License",
+        "note" : "Use restrictions apply. The base release and the adapter share the license.",
+        "restrictsCommercialUse" : false,
+        "url" : "https://huggingface.co/ByteDance/SDXL-Lightning/blob/main/LICENSE.md"
+      },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
+      "options" : [
+        {
+          "default" : 1024,
+          "help" : "The image width in pixels, rounded down to a whole latent cell.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 1024,
+          "help" : "The image height in pixels, rounded down to a whole latent cell.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 4,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 0,
+          "help" : "The classifier-free guidance weight. 0 runs without guidance.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "default" : 1,
+          "help" : "How much of the source image the sampler regenerates. 1 starts from full noise.",
+          "key" : "strength",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Strength"
+        },
+        {
+          "help" : "The seed of the initial noise. A run without one uses a fixed seed.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 7331180030,
+                "residentBytes" : 7331180030
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 14662360060,
+                "residentBytes" : 14662360060
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "key" : "precision",
+          "kind" : "choice",
+          "property" : "precision",
+          "stage" : "load",
+          "title" : "Precision"
+        }
+      ],
+      "outputModalities" : [
+        "image"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated image.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Image",
+          "valueType" : "image"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "sdxl-lightning-4step-lora",
+      "requirements" : {
+        "minimumMemoryBytes" : 13677820384,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident"
+      ],
+      "standIn" : false,
+      "summary" : "SDXL base 1.0 with ByteDance's four-step SDXL-Lightning adapter merged in, drawing 1024-pixel images in four steps.",
+      "tasks" : [
+        "text-to-image",
+        "image-to-image"
+      ],
+      "variants" : [
+        {
+          "displayName" : "SDXL-Lightning 4-step",
+          "downloadBytes" : 7335039900,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 7331180030,
+                  "checkpoint" : 7331180030,
+                  "float32" : 14662360060
+                },
+                "id" : "model",
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 13677820384,
+          "parameterCount" : 3665590015,
+          "peakBytes" : 7331180030,
+          "precision" : "float16",
+          "registryName" : "sdxl-lightning-4step-lora",
+          "residentBytes" : 7331180030,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 1680,
+                "optional" : false,
+                "path" : "unet/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 642,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1059962,
+                "optional" : false,
+                "path" : "tokenizer/vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "tokenizer/merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 737,
+                "optional" : true,
+                "path" : "tokenizer/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 472,
+                "optional" : true,
+                "path" : "tokenizer/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 1059962,
+                "optional" : false,
+                "path" : "tokenizer_2/vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "tokenizer_2/merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 725,
+                "optional" : true,
+                "path" : "tokenizer_2/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 460,
+                "optional" : true,
+                "path" : "tokenizer_2/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 5135149760,
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "83e012a805b84c7ca28e5646747c90a243c65c8ba4f070e2d7ddc9d74661e139"
+              },
+              {
+                "bytes" : 10270077736,
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "357650fbfb3c7b4d94c1f5fd7664da819ad1ff5a839430484b4ec422d03f710a"
+              },
+              {
+                "bytes" : 167335342,
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "bcb60880a46b63dea58e9bc591abe15f8350bde47b405f9c38f4be70c6161e68"
+              },
+              {
+                "bytes" : 334643268,
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "1598f3d24932bcfe6634e8b618ea1e30ab1d57f5aad13a6d2de446d2199f2341"
+              },
+              {
+                "bytes" : 246144152,
+                "optional" : true,
+                "path" : "text_encoder/model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "660c6f5b1abae9dc498ac2d21e1347d2abdb0cf6c0c0c8576cd796491d9a6cdd"
+              },
+              {
+                "bytes" : 492265168,
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors",
+                "role" : "weights",
+                "sha256" : "5c3d6454dd2d23414b56aa1b5858a72487a656937847b6fea8d0606d7a42cdbc"
+              },
+              {
+                "bytes" : 1389382176,
+                "optional" : true,
+                "path" : "text_encoder_2/model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "ec310df2af79c318e24d20511b601a591ca8cd4f1fce1d8dff822a356bcdb1f4"
+              },
+              {
+                "bytes" : 2778702264,
+                "optional" : true,
+                "path" : "text_encoder_2/model.safetensors",
+                "role" : "weights",
+                "sha256" : "3a6032f63d37ae02bbc74ccd6a27440578cd71701f96532229d0154f55a8d3ff"
+              },
+              {
+                "bytes" : 393854592,
+                "optional" : false,
+                "path" : "sdxl_lightning_4step_lora.safetensors",
+                "repository" : "ByteDance/SDXL-Lightning",
+                "role" : "weights",
+                "sha256" : "bf56cf2657efb15e465d81402ed481d1e11c4677e4bcce1bc11fe71ad8506b79"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "462165984030d82259a11f4367a4eed129e94a7b",
+            "repository" : "stabilityai/stable-diffusion-xl-base-1.0",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
       "displayName" : "SDXL-Turbo",
       "engine" : "mlx",
       "family" : "stable-diffusion",
@@ -43525,7 +44459,7 @@
       "variants" : [
         {
           "displayName" : "SDXL-Turbo",
-          "downloadBytes" : 13878860203,
+          "downloadBytes" : 13878862586,
           "id" : "default",
           "isDefault" : true,
           "memoryFacts" : {
@@ -43551,6 +44485,18 @@
           "residentBytes" : 13875351468,
           "source" : {
             "files" : [
+              {
+                "bytes" : 1776,
+                "optional" : false,
+                "path" : "unet/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 607,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
               {
                 "bytes" : 1059962,
                 "optional" : false,
@@ -47251,6 +48197,16 @@
             "files" : [
               {
                 "optional" : false,
+                "path" : "unet/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : false,
                 "path" : "tokenizer/vocab.json",
                 "role" : "tokenizer"
               },
@@ -47500,7 +48456,7 @@
       "variants" : [
         {
           "displayName" : "Stable Diffusion 1.5",
-          "downloadBytes" : 4266662549,
+          "downloadBytes" : 4266663839,
           "id" : "default",
           "isDefault" : true,
           "memoryFacts" : {
@@ -47526,6 +48482,18 @@
           "residentBytes" : 4264941844,
           "source" : {
             "files" : [
+              {
+                "bytes" : 743,
+                "optional" : false,
+                "path" : "unet/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 547,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
               {
                 "bytes" : 1059962,
                 "optional" : false,
@@ -47597,6 +48565,348 @@
             "layout" : "directory",
             "measuredRevision" : "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
             "repository" : "stable-diffusion-v1-5/stable-diffusion-v1-5",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "SDXL base 1.0",
+      "engine" : "mlx",
+      "family" : "stable-diffusion",
+      "id" : "stable-diffusion-xl-base-1.0",
+      "inputModalities" : [
+        "text",
+        "image",
+        "mask"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to draw.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "An image to start from. Its presence runs image-to-image.",
+          "key" : "image",
+          "required" : false,
+          "title" : "Source image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "With a source image, white regenerates the region and black keeps it.",
+          "key" : "mask",
+          "required" : false,
+          "title" : "Mask",
+          "valueType" : "mask"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "name" : "CreativeML Open RAIL++-M License",
+        "note" : "Use restrictions apply.",
+        "restrictsCommercialUse" : false,
+        "url" : "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md"
+      },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
+      "options" : [
+        {
+          "default" : 1024,
+          "help" : "The image width in pixels, rounded down to a whole latent cell.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 1024,
+          "help" : "The image height in pixels, rounded down to a whole latent cell.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 50,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 5,
+          "help" : "The classifier-free guidance weight. 0 runs without guidance.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "default" : 1,
+          "help" : "How much of the source image the sampler regenerates. 1 starts from full noise.",
+          "key" : "strength",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Strength"
+        },
+        {
+          "help" : "The seed of the initial noise. A run without one uses a fixed seed.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 6937675734,
+                "residentBytes" : 6937675734
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 13875351468,
+                "residentBytes" : 13875351468
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "key" : "precision",
+          "kind" : "choice",
+          "property" : "precision",
+          "stage" : "load",
+          "title" : "Precision"
+        }
+      ],
+      "outputModalities" : [
+        "image"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated image.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Image",
+          "valueType" : "image"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 25 in place of 50: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 25
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "stable-diffusion-xl-base-1.0",
+      "requirements" : {
+        "minimumMemoryBytes" : 13214874153,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident"
+      ],
+      "standIn" : false,
+      "summary" : "A latent-diffusion generator of 1024-pixel images from a prompt.",
+      "tasks" : [
+        "text-to-image",
+        "image-to-image"
+      ],
+      "variants" : [
+        {
+          "displayName" : "SDXL base 1.0",
+          "downloadBytes" : 6941185308,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 6937675734,
+                  "checkpoint" : 6937675734,
+                  "float32" : 13875351468
+                },
+                "id" : "model",
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 13214874153,
+          "parameterCount" : 3468837867,
+          "peakBytes" : 6937675734,
+          "precision" : "float16",
+          "registryName" : "stable-diffusion-xl-base-1.0",
+          "residentBytes" : 6937675734,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 1680,
+                "optional" : false,
+                "path" : "unet/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 642,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1059962,
+                "optional" : false,
+                "path" : "tokenizer/vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "tokenizer/merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 737,
+                "optional" : true,
+                "path" : "tokenizer/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 472,
+                "optional" : true,
+                "path" : "tokenizer/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 1059962,
+                "optional" : false,
+                "path" : "tokenizer_2/vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "tokenizer_2/merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 725,
+                "optional" : true,
+                "path" : "tokenizer_2/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 460,
+                "optional" : true,
+                "path" : "tokenizer_2/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 5135149760,
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "83e012a805b84c7ca28e5646747c90a243c65c8ba4f070e2d7ddc9d74661e139"
+              },
+              {
+                "bytes" : 10270077736,
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "357650fbfb3c7b4d94c1f5fd7664da819ad1ff5a839430484b4ec422d03f710a"
+              },
+              {
+                "bytes" : 167335342,
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "bcb60880a46b63dea58e9bc591abe15f8350bde47b405f9c38f4be70c6161e68"
+              },
+              {
+                "bytes" : 334643268,
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "1598f3d24932bcfe6634e8b618ea1e30ab1d57f5aad13a6d2de446d2199f2341"
+              },
+              {
+                "bytes" : 246144152,
+                "optional" : true,
+                "path" : "text_encoder/model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "660c6f5b1abae9dc498ac2d21e1347d2abdb0cf6c0c0c8576cd796491d9a6cdd"
+              },
+              {
+                "bytes" : 492265168,
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors",
+                "role" : "weights",
+                "sha256" : "5c3d6454dd2d23414b56aa1b5858a72487a656937847b6fea8d0606d7a42cdbc"
+              },
+              {
+                "bytes" : 1389382176,
+                "optional" : true,
+                "path" : "text_encoder_2/model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "ec310df2af79c318e24d20511b601a591ca8cd4f1fce1d8dff822a356bcdb1f4"
+              },
+              {
+                "bytes" : 2778702264,
+                "optional" : true,
+                "path" : "text_encoder_2/model.safetensors",
+                "role" : "weights",
+                "sha256" : "3a6032f63d37ae02bbc74ccd6a27440578cd71701f96532229d0154f55a8d3ff"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "462165984030d82259a11f4367a4eed129e94a7b",
+            "repository" : "stabilityai/stable-diffusion-xl-base-1.0",
             "requiresConversion" : false
           }
         }

@@ -775,7 +775,7 @@ final class NFKQwen4ExpLinearAttention: Module {
 
         // `A_log` is stored as a log so the rate stays positive; the reference keeps the decay as a
         // LOG rate, formed in float32, and exponentiates it inside the recurrence.
-        let decay = exp(-exp(decayLog.asType(.float32))
+        let decay = exp(-NFKReferenceRounding.exponential(decayLog.asType(.float32))
                         * softplus(decayProjection(x).asType(.float32) + stepBias.asType(.float32)))
         let write = NFKReferenceRounding.sigmoid(writeProjection(x)).asType(.float32)
         let read = Self.recurrence(queries: queries, keys: keys, values: values, decay: decay, write: write)

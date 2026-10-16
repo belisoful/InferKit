@@ -298,6 +298,8 @@ final class NFKMLXModelBuilderTests: XCTestCase {
         XCTAssertEqual(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: "whisper-base"), [NFKModelLoadOptionPrecision])
         XCTAssertEqual(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: "stable-diffusion-v1-5"),
                        [NFKModelLoadOptionPrecision])
+        XCTAssertEqual(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: "lcm-lora-sdv1-5"),
+                       [NFKModelLoadOptionPrecision])
         XCTAssertTrue(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: "gemma-3-1b-it")
             .isSuperset(of: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision]))
         XCTAssertTrue(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: "deepseek-v4.1-flash")

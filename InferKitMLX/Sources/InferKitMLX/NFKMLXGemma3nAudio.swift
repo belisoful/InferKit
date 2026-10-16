@@ -359,7 +359,7 @@ final class NFKGemma3nAudioAttention: Module {
             .&& validBlocks.reshaped([batch, 1, blocks, 1, contextSize])
         logits = MLX.where(admitted, logits, MLXArray(Float(-3.4028235e38)))
 
-        let probabilities = softmax(logits.asType(.float32), axis: -1).asType(values.dtype)
+        let probabilities = NFKReferenceRounding.softmaxProbabilities(logits.asType(.float32)).asType(values.dtype)
         // [B, N, U, W, C] against [B, U, C, N, H] → [B, U, W, N, H]
         let attended = matmul(probabilities.transposed(0, 2, 1, 3, 4),
                               valueBlocks.transposed(0, 1, 3, 2, 4))

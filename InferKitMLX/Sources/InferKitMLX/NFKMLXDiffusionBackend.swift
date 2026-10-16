@@ -252,6 +252,8 @@ public final class NFKMLXDiffusionBackend: NSObject, NFKInferenceBackend {
         }
 
         let context = try encode(request, image, mask)
+        // A sampler that draws its own noise draws it from the request's seed, as the initial latent does.
+        let scheduler = configuration.seed.map { scheduler.seeded($0) } ?? scheduler
         let schedule = scheduler.steps(configuration.steps)
         guard !schedule.isEmpty else { throw NFKMLXError.noOutput }
         let noise = gaussianNoise(height: context.height, width: context.width,

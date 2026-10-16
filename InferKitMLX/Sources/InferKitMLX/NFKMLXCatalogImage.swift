@@ -83,6 +83,11 @@ enum NFKMLXCatalogImage {
                 try NFKMLXTextToImage.backend(model: model, directoryURL: $0)
             }
         }
+        for adapter in stableDiffusionAdapters {
+            NFKMLXGenerationBackend.registerDirectoryModel(adapter.name) {
+                try adapter.backend(directoryURL: $0, precision: .checkpoint)
+            }
+        }
         NFKMLXGenerationBackend.registerDirectoryModel(fluxDevName) {
             try NFKMLXFlux.backend(directoryURL: $0, schedule: .flux)
         }
@@ -1574,21 +1579,97 @@ enum NFKMLXCatalogImage {
     }
 
     /// The Stable Diffusion text-to-image releases, each under its own registry name.
-    static let stableDiffusionReleases: [NFKMLXStableDiffusionModel] = [.stableDiffusion15, .stableDiffusion21Base, .sdxlTurbo]
+    static let stableDiffusionReleases: [NFKMLXStableDiffusionModel] = [.stableDiffusion15, .stableDiffusion21Base,
+                                                                        .sdxlTurbo, .sdxlBase, .lcmDreamshaperV7]
 
+    /// A release's registry name: its repository's name.
     static func stableDiffusionName(_ model: NFKMLXStableDiffusionModel) -> String {
         switch model {
         case .stableDiffusion15: return "stable-diffusion-v1-5"
         case .stableDiffusion21Base: return "stable-diffusion-2-1-base"
         case .sdxlTurbo: return "sdxl-turbo"
+        case .sdxlBase: return "stable-diffusion-xl-base-1.0"
+        case .lcmDreamshaperV7: return "lcm-dreamshaper-v7"
         }
     }
 
+    /// A released Stable Diffusion LoRA merged into the base release it was trained on, under its own
+    /// registry name. The registry directory is the base release's; the adapter file comes from its own
+    /// repository.
+    struct StableDiffusionAdapter {
+        let name: String
+        let displayName: String
+        let summary: String
+        let base: NFKMLXStableDiffusionModel
+        let repository: String
+        let weightsPath: String
+        let sampler: NFKMLXSDSampler
+        /// The license of the merged weights: the base release's, noting the adapter's.
+        let license: NFKModelLicense
+
+        /// The base release's configuration on the adapter's sampler, at the steps and guidance the
+        /// adapter is trained for.
+        var configuration: NFKMLXSDTextToImageConfiguration {
+            NFKMLXStableDiffusionRelease(base).configuration.withSampler(sampler)
+        }
+
+        /// The adapter file: the copy in `directoryURL` where the directory holds one, else the copy in the
+        /// default Hugging Face cache, downloaded when absent.
+        func adapterURL(directoryURL: URL) throws -> URL {
+            let local = directoryURL.appendingPathComponent(weightsPath)
+            if FileManager.default.fileExists(atPath: local.path) {
+                return local
+            }
+            return try NFKMLXDownload.weightsURL(repo: repository, weightsPath: weightsPath, revision: nil,
+                                                 cacheDirectoryURL: nil)
+        }
+
+        /// The base release in `directoryURL` with the adapter merged in at its trained strength.
+        func backend(directoryURL: URL, precision: NFKMLXWeightPrecision) throws -> any NFKInferenceBackend {
+            try NFKMLXTextToImage.backend(configuration: configuration, directoryURL: directoryURL,
+                                          adapterURL: adapterURL(directoryURL: directoryURL), adapterScale: 1,
+                                          precision: precision)
+        }
+    }
+
+    /// The released adapters at reference parity on their base releases.
+    static let stableDiffusionAdapters: [StableDiffusionAdapter] = [
+        StableDiffusionAdapter(name: "lcm-lora-sdv1-5", displayName: "Stable Diffusion 1.5 with LCM-LoRA",
+                               summary: "Stable Diffusion 1.5 with the LCM-LoRA adapter merged in, drawing 512-pixel images in four steps.",
+                               base: .stableDiffusion15, repository: "latent-consistency/lcm-lora-sdv1-5",
+                               weightsPath: "pytorch_lora_weights.safetensors", sampler: .lcm,
+                               license: .license(nil, name: "CreativeML Open RAIL-M License",
+                                                 url: "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5",
+                                                 note: "Use restrictions apply. The adapter is under the CreativeML Open RAIL++-M License.")),
+        StableDiffusionAdapter(name: "sdxl-lightning-4step-lora", displayName: "SDXL-Lightning 4-step",
+                               summary: "SDXL base 1.0 with ByteDance's four-step SDXL-Lightning adapter merged in, drawing 1024-pixel images in four steps.",
+                               base: .sdxlBase, repository: "ByteDance/SDXL-Lightning",
+                               weightsPath: "sdxl_lightning_4step_lora.safetensors", sampler: .ddimTrailing,
+                               license: openRAILPlusPlus(url: "https://huggingface.co/ByteDance/SDXL-Lightning/blob/main/LICENSE.md",
+                                                         note: "Use restrictions apply. The base release and the adapter share the license.")),
+    ]
+
+    /// The CreativeML Open RAIL++-M License published at `url`.
+    static func openRAILPlusPlus(url: String, note: String = "Use restrictions apply.") -> NFKModelLicense {
+        .license(nil, name: "CreativeML Open RAIL++-M License", url: url, note: note)
+    }
+
+    /// The files a release's download fetches: the vocabularies and network configurations, then each
+    /// weight file's candidates.
+    static func stableDiffusionFiles(_ release: NFKMLXStableDiffusionRelease) -> [NFKModelFile] {
+        let weights = release.weightFiles.flatMap { alternatives in
+            alternatives.map { file($0, optional: alternatives.count > 1) }
+        }
+        return release.vocabularyFiles.map { file($0.path, optional: !$0.required) } + weights
+    }
+
     static var stableDiffusionEntries: [NFKMLXCatalogEntry] {
+        stableDiffusionReleaseEntries + stableDiffusionAdapterEntries
+    }
+
+    private static var stableDiffusionReleaseEntries: [NFKMLXCatalogEntry] {
         stableDiffusionReleases.map { sdModel in
             let release = NFKMLXStableDiffusionRelease(sdModel)
-            let configuration = release.configuration
-            let side = configuration.sampleSize * configuration.latentStride
             let details: (displayName: String, summary: String, license: NFKModelLicense)
             switch sdModel {
             case .stableDiffusion15:
@@ -1598,41 +1679,72 @@ enum NFKMLXCatalogImage {
                                     note: "Use restrictions apply."))
             case .stableDiffusion21Base:
                 details = ("Stable Diffusion 2.1 base", "A latent-diffusion generator of 512-pixel images from a prompt.",
-                           .license(nil, name: "CreativeML Open RAIL++-M License",
-                                    url: "https://huggingface.co/stabilityai/stable-diffusion-2-1-base",
-                                    note: "Use restrictions apply."))
+                           openRAILPlusPlus(url: "https://huggingface.co/stabilityai/stable-diffusion-2-1-base"))
             case .sdxlTurbo:
                 details = ("SDXL-Turbo", "A distilled latent-diffusion generator of 512-pixel images in one step.",
                            stabilityCommunity)
+            case .sdxlBase:
+                details = ("SDXL base 1.0", "A latent-diffusion generator of 1024-pixel images from a prompt.",
+                           openRAILPlusPlus(url: "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md"))
+            case .lcmDreamshaperV7:
+                details = ("LCM Dreamshaper v7",
+                           "A latent consistency model distilled from a Stable Diffusion 1.5 fine-tune, drawing 512-pixel images in four steps.",
+                           .mit(url: "https://huggingface.co/SimianLuo/LCM_Dreamshaper_v7",
+                                note: "Distilled from Dreamshaper v7, a Stable Diffusion 1.5 fine-tune under the CreativeML Open RAIL-M License."))
             }
-            let weights = release.weightFiles.flatMap { alternatives in
-                alternatives.map { file($0, optional: alternatives.count > 1) }
-            }
-            let vocabulary = release.vocabularyFiles.map { file($0.path, optional: !$0.required) }
             var source = NFKModelSource.hub(release.repository, layout: NFKModelSourceLayoutDirectory,
-                                            files: vocabulary + weights)
+                                            files: stableDiffusionFiles(release))
             if sdModel == .stableDiffusion21Base {
                 source = source.noting("The publisher no longer serves \(release.repository) publicly. A local copy of the release builds under this registry name.",
                                        publiclyServed: false)
             }
-            return model(stableDiffusionName(sdModel), details.displayName, family: "stable-diffusion",
-                         summary: details.summary, tasks: [NFKModelTaskTextToImage, NFKModelTaskImageToImage],
-                         inputs: [promptInput, negativePromptInput,
-                                  .input(NFKInputImage, title: "Source image",
-                                         help: "An image to start from. Its presence runs image-to-image."),
-                                  .input(NFKInputMask, title: "Mask",
-                                         help: "With a source image, white regenerates the region and black keeps it.")],
-                         outputs: [generatedImageOutput],
-                         parameters: [widthOption(side, help: "The image width in pixels, rounded down to a whole latent cell."),
-                                      heightOption(side, help: "The image height in pixels, rounded down to a whole latent cell."),
-                                      stepsOption(configuration.steps),
-                                      guidanceOption(Double(configuration.guidanceScale),
-                                                     help: "The classifier-free guidance weight. 0 runs without guidance."),
-                                      strengthOption(1, help: "How much of the source image the sampler regenerates. 1 starts from full noise."),
-                                      .option(NFKParameterSeed, title: "Seed",
-                                              help: "The seed of the initial noise. A run without one uses a fixed seed.")],
-                         license: details.license, source: source)
+            return stableDiffusionEntry(stableDiffusionName(sdModel), details.displayName, summary: details.summary,
+                                        configuration: release.configuration, license: details.license,
+                                        source: source)
         }
+    }
+
+    private static var stableDiffusionAdapterEntries: [NFKMLXCatalogEntry] {
+        stableDiffusionAdapters.map { adapter in
+            let release = NFKMLXStableDiffusionRelease(adapter.base)
+            let adapterFile = NFKModelFile.file(adapter.weightsPath, role: NFKModelFileRoleWeights,
+                                                repository: adapter.repository)
+            return stableDiffusionEntry(adapter.name, adapter.displayName, summary: adapter.summary,
+                                        configuration: adapter.configuration, license: adapter.license,
+                                        source: .hub(release.repository, layout: NFKModelSourceLayoutDirectory,
+                                                     files: stableDiffusionFiles(release) + [adapterFile]))
+        }
+    }
+
+    /// A Stable Diffusion entry at `configuration`'s size, steps, and guidance.
+    private static func stableDiffusionEntry(_ name: String, _ displayName: String, summary: String,
+                                             configuration: NFKMLXSDTextToImageConfiguration,
+                                             license: NFKModelLicense, source: NFKModelSource) -> NFKMLXCatalogEntry {
+        let side = configuration.sampleSize * configuration.latentStride
+        let conditionsOnGuidance = configuration.unet.timeConditionProjectionDimensions != nil
+        let guidanceHelp = conditionsOnGuidance
+            ? "The guidance scale the model conditions on through its time embedding. It runs no classifier-free guidance."
+            : "The classifier-free guidance weight. 0 runs without guidance."
+        let negativePrompt = conditionsOnGuidance
+            ? NFKModelPort.input(NFKInputNegativePrompt, title: "Negative prompt",
+                                 help: "Not read: the model runs no classifier-free guidance.")
+            : negativePromptInput
+        return model(name, displayName, family: "stable-diffusion", summary: summary,
+                     tasks: [NFKModelTaskTextToImage, NFKModelTaskImageToImage],
+                     inputs: [promptInput, negativePrompt,
+                              .input(NFKInputImage, title: "Source image",
+                                     help: "An image to start from. Its presence runs image-to-image."),
+                              .input(NFKInputMask, title: "Mask",
+                                     help: "With a source image, white regenerates the region and black keeps it.")],
+                     outputs: [generatedImageOutput],
+                     parameters: [widthOption(side, help: "The image width in pixels, rounded down to a whole latent cell."),
+                                  heightOption(side, help: "The image height in pixels, rounded down to a whole latent cell."),
+                                  stepsOption(configuration.steps),
+                                  guidanceOption(Double(configuration.guidanceScale), help: guidanceHelp),
+                                  strengthOption(1, help: "How much of the source image the sampler regenerates. 1 starts from full noise."),
+                                  .option(NFKParameterSeed, title: "Seed",
+                                          help: "The seed of the initial noise. A run without one uses a fixed seed.")],
+                     license: license, source: source)
     }
 
     /// The text-to-image generator options, at `steps` and `guidance`.

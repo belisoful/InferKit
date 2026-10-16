@@ -185,8 +185,8 @@ final class NFKQwenImageTimeTextEmbed: Module {
     static func projection(_ timestep: MLXArray, dimensions: Int = 256, maxPeriod: Float = 10_000,
                            timeFactor: Float = 1000) -> MLXArray {
         let half = dimensions / 2
-        let exponents = MLXArray((0 ..< half).map { Float($0) / Float(half) })
-        let frequencies = exp(-log(maxPeriod) * exponents)
+        let exponents = -log(maxPeriod) * MLXArray(0 ..< half).asType(.float32) / Float(half)
+        let frequencies = NFKReferenceRounding.exponential(exponents)
         let arguments = (timeFactor * timestep).reshaped([-1, 1]) * frequencies.reshaped([1, -1])
         return concatenated([cos(arguments), sin(arguments)], axis: -1)
     }

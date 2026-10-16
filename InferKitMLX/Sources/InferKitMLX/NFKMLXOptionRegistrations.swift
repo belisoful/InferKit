@@ -20,7 +20,8 @@ import InferKit
 ///   quantization of 8 or 4 bits at group size 64, a draft model and its bits, and the context length and
 ///   cache settings as generation defaults;
 /// - Gemma 3 and TranslateGemma: residency, precision, a draft model and its bits;
-/// - Gemma 3n, Qwen3.5, Whisper, and Stable Diffusion: precision;
+/// - Gemma 3n, Qwen3.5, Whisper, and Stable Diffusion (each release, and each released adapter merged into
+///   its base): precision;
 /// - Gemma 4, Qwen4-Exp, Granite 4.0-H, and MADLAD-400: residency and precision;
 /// - Qwen3-VL: residency, precision, and a runtime weight quantization of the decoder;
 /// - DeepSeek V4: residency, and each other value whose key names an ``NFKMLXDeepSeekLoadOptions``
@@ -223,6 +224,11 @@ enum NFKMLXOptionRegistrations {
                                     consumes: [NFKModelLoadOptionPrecision]) { url, _, options in
                 try NFKMLXTextToImage.backend(configuration: NFKMLXStableDiffusionRelease(model).configuration,
                                               directoryURL: url, precision: options.precision ?? .checkpoint)
+            }
+        }
+        for adapter in NFKMLXCatalogImage.stableDiffusionAdapters {
+            registerDirectoryModels([adapter.name], consumes: [NFKModelLoadOptionPrecision]) { url, _, options in
+                try adapter.backend(directoryURL: url, precision: options.precision ?? .checkpoint)
             }
         }
         let residency: Set<String> = [NFKModelLoadOptionResidency]

@@ -208,10 +208,10 @@ enum NFKSAM3Autocast {
         layer(x.asType(layer.weight.dtype))
     }
 
-    /// A layer norm in float32, returned in float32.
+    /// A layer norm in float32, returned in float32, in the arithmetic ``NFKMLXHalfPrecision/arithmetic`` selects.
     static func layerNorm(_ norm: LayerNorm, _ x: MLXArray) -> MLXArray {
-        MLXFast.layerNorm(x.asType(.float32), weight: norm.weight?.asType(.float32), bias: norm.bias?.asType(.float32),
-                          eps: norm.eps)
+        NFKReferenceRounding.layerNorm(x.asType(.float32), weight: norm.weight?.asType(.float32),
+                                       bias: norm.bias?.asType(.float32), eps: norm.eps)
     }
 
     /// The detectron2 `LayerNorm2d` over channels-last `x`: the mean and the centering in `x`'s type,

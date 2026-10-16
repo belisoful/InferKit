@@ -334,7 +334,7 @@ final class NFKMLXMamba2Mixer: Module {
             dt = softplus(dtRaw.asType(.float32) + dtBias.asType(.float32).reshaped([1, 1, heads]))
         }
         dt = clip(dt, min: config.timeStepLowerLimit, max: config.timeStepUpperLimit)
-        let a = -exp(aLog.asType(.float32))                               // [heads]
+        let a = -NFKReferenceRounding.exponential(aLog.asType(.float32))  // [heads]
 
         let xHeads = xPart.reshaped([batch, length, heads, headDim]).asType(.float32)
         // B and C carry one value per group; each group spans heads/groups heads.

@@ -49,7 +49,7 @@ public struct NFKMLXLTXTransformerConfiguration: Sendable {
 func ltxTimestepEmbedding(_ timesteps: MLXArray, channels: Int = 256) -> MLXArray {
     let half = channels / 2
     let exponent = -log(10000.0) * MLXArray(0 ..< half).asType(.float32) / Float(half)
-    let emb = timesteps.reshaped([-1, 1]).asType(.float32) * exp(exponent).reshaped([1, -1])
+    let emb = timesteps.reshaped([-1, 1]).asType(.float32) * NFKReferenceRounding.exponential(exponent).reshaped([1, -1])
     return concatenated([cos(emb), sin(emb)], axis: -1)                   // flip_sin_to_cos: cos first
 }
 
