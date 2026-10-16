@@ -287,6 +287,22 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   Download failures are in the new `NFKDownloadErrorDomain`; a checksum mismatch, which was
   `kNFKError_InferenceBackendFailure`, is now `NFKDownloadErrorChecksumMismatch`.
 - The access token goes only to the hub's own host.
+- Every repository, revision, path, repository-listing entry, and URL file name names a place inside
+  the cache. One that is empty or absolute, holds an empty, `.`, or `..` component, or holds a
+  backslash or a NUL character is refused with `NFKDownloadErrorUnsafePath` before the hub reads,
+  writes, or removes anything, and every write and removal checks that its location lies inside the
+  cache folder.
+- A downloaded file whose size differs from its listed size fails with `NFKDownloadErrorSizeMismatch`
+  and is not kept. A URL source's listed size takes precedence over the server's HEAD answer.
+- A removal keeps a file that a link in another snapshot resolves to, and the target of a removed link
+  when that target is a file of another snapshot, so the other snapshot stays complete.
+- A catalog file that names its own repository, revision, or URL downloads from there and caches in
+  that repository's or URL's snapshot. A model's plan, status, and removal cover every repository its
+  files come from, and removing an adapter keeps the base-repository files another complete model
+  uses.
+- `trimCacheToSizeLimitWithError:` and the eviction after each download skip a snapshot an unfinished
+  `NFKDownload` writes into, including between its files, and `removeCachedRepo:revision:error:`
+  refuses one with `NFKDownloadErrorInUse`.
 
 #### A catalog of the models a process can run
 

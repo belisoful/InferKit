@@ -4,7 +4,8 @@
 //
 //  Download plans and observable downloads against the in-process hub at http://hub.test: sizes and
 //  digests from the listing, globs, cache detection, progress, cancellation, the cache size limit,
-//  resumption, gated repositories, and catalog model sources.
+//  resumption, gated repositories, catalog model sources and the files they read from other
+//  repositories, listed sizes, unsafe names, and eviction while a download runs.
 //
 
 #import <XCTest/XCTest.h>
@@ -12,6 +13,27 @@
 #import "NFKStubHubProtocol.h"
 
 static NSString * const NFKTestRepo = @"org/model";
+
+/*! A hub that holds the fetch of one file until the test opens the gate, so a download stays
+	between its files. */
+@interface NFKGatedHub : NFKHFHub
+@property (nonatomic, copy) NSString *gatedFileName;
+@property (nonatomic, strong) dispatch_semaphore_t arrived;
+@property (nonatomic, strong) dispatch_semaphore_t gate;
+@end
+
+@implementation NFKGatedHub
+
+- (BOOL)fetchURL:(NSURL *)remoteURL toFileURL:(NSURL *)destinationURL error:(NSError **)outError
+{
+	if ([remoteURL.lastPathComponent isEqualToString:self.gatedFileName]) {
+		dispatch_semaphore_signal(self.arrived);
+		dispatch_semaphore_wait(self.gate, dispatch_time(DISPATCH_TIME_NOW, 20 * (int64_t)NSEC_PER_SEC));
+	}
+	return [super fetchURL:remoteURL toFileURL:destinationURL error:outError];
+}
+
+@end
 
 @interface NFKDownloadTests : XCTestCase
 @property (nonatomic, strong) NSURL *cacheDir;
@@ -51,6 +73,7 @@ static NSString * const NFKTestRepo = @"org/model";
 - (void)tearDown
 {
 	[NSFileManager.defaultManager removeItemAtURL:self.cacheDir error:NULL];
+	[NSFileManager.defaultManager removeItemAtURL:[NSURL fileURLWithPath:[self.cacheDir.path stringByAppendingString:@"-outside"]] error:NULL];
 	NFKHFHub.defaultAccessToken = self.savedDefaultToken;
 	[NFKStubHubProtocol reset];
 	[super tearDown];
@@ -525,6 +548,236 @@ static NSString * const NFKTestRepo = @"org/model";
 		[done fulfill];
 	}];
 	[self waitForExpectations:@[ done ] timeout:10];
+}
+
+#pragma mark Listed sizes
+
+- (void)testAFileWhoseSizeDiffersFromTheListingFailsAndIsNotKept
+{
+	NSDictionary<NSString *, NFKStubHubResponse *> *responses = [self serveTheModel];
+	responses[@"config.json"].body = [@"<html><body>Sign in to this network</body></html>" dataUsingEncoding:NSUTF8StringEncoding];
+
+	NFKDownload *download = nil;
+	NSError *error = nil;
+	[self runDownloadOfPlan:[self planPaths:@[ @"config.json" ]] download:&download error:&error];
+	XCTAssertEqual(download.state, NFKDownloadStateFailed);
+	XCTAssertEqualObjects(error.domain, NFKDownloadErrorDomain);
+	XCTAssertEqual(error.code, NFKDownloadErrorSizeMismatch, @"%@", error);
+	NSURL *localURL = [self.hub localURLForRepo:NFKTestRepo revision:nil path:@"config.json"];
+	XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:localURL.path]);
+	XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:[localURL URLByAppendingPathExtension:@"download"].path]);
+	XCTAssertEqual([self.hub downloadStatusForRepo:NFKTestRepo revision:nil paths:@[ @"config.json" ]].presence, NFKDownloadPresenceAbsent);
+}
+
+- (void)testAURLFileWhoseSizeDiffersFromItsListedSizeFails
+{
+	[NFKStubHubProtocol setResponse:[NFKStubHubResponse responseWithStatus:200 body:self.weights] forPath:@"/files/model.bin"];
+	NSURL *URL = [NSURL URLWithString:@"http://hub.test/files/model.bin"];
+	NFKModelFile *file = [[NFKModelFile alloc] initWithPath:@"model.bin" byteCount:@(self.weights.length + 1) sha256:nil
+													   role:NFKModelFileRoleWeights optional:NO extensions:nil];
+	NFKModelSource *source = [[NFKModelSource alloc] initWithKind:NFKModelSourceKindURL repository:nil revision:nil URL:URL
+														   layout:NFKModelSourceLayoutFile files:@[ file ] requiresConversion:NO extensions:nil];
+	XCTestExpectation *done = [self expectationWithDescription:@"download"];
+	__block NSError *finalError = nil;
+	[self.hub downloadModelSource:source progressHandler:nil completionHandler:^(NSURL *localURL, NSError *error) {
+		finalError = error;
+		[done fulfill];
+	}];
+	[self waitForExpectations:@[ done ] timeout:10];
+	XCTAssertEqual(finalError.code, NFKDownloadErrorSizeMismatch, @"%@", finalError);
+	XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:[self.hub localURLForURL:URL fileName:@"model.bin"].path]);
+}
+
+#pragma mark Unsafe names
+
+- (void)testAListingThatNamesAFileOutsideTheSnapshotIsRefused
+{
+	NSURL *outside = [NSURL fileURLWithPath:[self.cacheDir.path stringByAppendingString:@"-outside"]];
+	NSString *hostile = [NSString stringWithFormat:@"../../../../%@/planted.bin", outside.lastPathComponent];
+	[NFKStubHubProtocol serveRepo:NFKTestRepo revision:@"main" files:@{ @"config.json": self.config, hostile: self.weights }
+						 lfsPaths:[NSSet set]];
+
+	NSError *error = nil;
+	XCTAssertNil([self.hub planDownloadOfRepo:NFKTestRepo revision:nil paths:nil error:&error]);
+	XCTAssertEqualObjects(error.domain, NFKDownloadErrorDomain);
+	XCTAssertEqual(error.code, NFKDownloadErrorUnsafePath, @"%@", error);
+
+	XCTestExpectation *done = [self expectationWithDescription:@"download"];
+	__block NSError *finalError = nil;
+	[self.hub downloadRepo:NFKTestRepo revision:nil paths:nil progressHandler:nil completionHandler:^(NSURL *localURL, NSError *downloadError) {
+		finalError = downloadError;
+		[done fulfill];
+	}];
+	[self waitForExpectations:@[ done ] timeout:10];
+	XCTAssertEqual(finalError.code, NFKDownloadErrorUnsafePath, @"%@", finalError);
+	XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:outside.path], @"nothing is written outside the cache");
+	XCTAssertEqual([NFKStubHubProtocol requestsForPath:@"/org/model/resolve/main/config.json"].count, (NSUInteger)0);
+}
+
+- (void)testAURLSourceWhoseFileNameLeavesItsFolderIsRefused
+{
+	[NFKStubHubProtocol setResponse:[NFKStubHubResponse responseWithStatus:200 body:self.weights] forPath:@"/files/model.bin"];
+	NSURL *URL = [NSURL URLWithString:@"http://hub.test/files/model.bin"];
+	NSURL *hostFolder = [[self.cacheDir URLByAppendingPathComponent:@"@url"] URLByAppendingPathComponent:@"hub.test"];
+	NSURL *neighbor = [[hostFolder URLByAppendingPathComponent:@"0000000000000000"] URLByAppendingPathComponent:@"keep.bin"];
+	[NSFileManager.defaultManager createDirectoryAtURL:neighbor.URLByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:NULL];
+	XCTAssertTrue([self.config writeToURL:neighbor atomically:YES]);
+
+	NFKModelFile *file = [[NFKModelFile alloc] initWithPath:@".." byteCount:nil sha256:nil
+													   role:NFKModelFileRoleWeights optional:NO extensions:nil];
+	NFKModelSource *source = [[NFKModelSource alloc] initWithKind:NFKModelSourceKindURL repository:nil revision:nil URL:URL
+														   layout:NFKModelSourceLayoutFile files:@[ file ] requiresConversion:NO extensions:nil];
+	NSError *error = nil;
+	XCTAssertNil([self.hub planDownloadOfModelSource:source error:&error]);
+	XCTAssertEqual(error.code, NFKDownloadErrorUnsafePath, @"%@", error);
+
+	XCTestExpectation *done = [self expectationWithDescription:@"download"];
+	__block NSError *finalError = nil;
+	[self.hub downloadModelSource:source progressHandler:nil completionHandler:^(NSURL *localURL, NSError *downloadError) {
+		finalError = downloadError;
+		[done fulfill];
+	}];
+	[self waitForExpectations:@[ done ] timeout:10];
+	XCTAssertEqual(finalError.code, NFKDownloadErrorUnsafePath, @"%@", finalError);
+	XCTAssertEqual(NFKStubHubProtocol.requests.count, (NSUInteger)0, @"the refusal comes before any request");
+	XCTAssertEqualObjects([NSData dataWithContentsOfURL:neighbor], self.config, @"the host folder's other downloads stay");
+}
+
+#pragma mark Eviction
+
+- (void)testATrimLeavesTheSnapshotOfADownloadBetweenItsFiles
+{
+	[self serveTheModel];
+	NFKGatedHub *hub = [NFKGatedHub hubWithCacheDirectoryURL:self.cacheDir];
+	hub.endpointURL = NFKStubHubProtocol.endpointURL;
+	hub.session = [NFKStubHubProtocol session];
+	hub.accessToken = @"";
+	hub.excludesCacheFromBackup = NO;
+	hub.gatedFileName = @"model.safetensors";
+	hub.arrived = dispatch_semaphore_create(0);
+	hub.gate = dispatch_semaphore_create(0);
+	NSError *error = nil;
+	NFKDownloadPlan *plan = [hub planDownloadOfRepo:NFKTestRepo revision:nil paths:@[ @"config.json", @"model.safetensors" ] error:&error];
+	XCTAssertNotNil(plan, @"%@", error);
+	XCTAssertEqualObjects(plan.files.firstObject.path, @"config.json");
+
+	NFKDownload *download = [hub downloadWithPlan:plan progressHandler:nil completionHandler:nil];
+	long arrived = dispatch_semaphore_wait(hub.arrived, dispatch_time(DISPATCH_TIME_NOW, 10 * (int64_t)NSEC_PER_SEC));
+	XCTAssertEqual(arrived, 0L, @"the download reaches its second file");
+	NSURL *configURL = [hub localURLForRepo:NFKTestRepo revision:nil path:@"config.json"];
+	XCTAssertTrue([NSFileManager.defaultManager fileExistsAtPath:configURL.path]);
+
+	NFKHFHub *other = [NFKHFHub hubWithCacheDirectoryURL:self.cacheDir];
+	other.cacheSizeLimit = 0;
+	error = nil;
+	XCTAssertTrue([other trimCacheToSizeLimitWithError:&error], @"%@", error);
+	XCTAssertTrue([NSFileManager.defaultManager fileExistsAtPath:configURL.path], @"the running download's snapshot is not evicted");
+	error = nil;
+	XCTAssertFalse([other removeCachedRepo:NFKTestRepo revision:nil error:&error]);
+	XCTAssertEqual(error.code, NFKDownloadErrorInUse, @"%@", error);
+
+	dispatch_semaphore_signal(hub.gate);
+	XCTAssertTrue([download waitUntilFinishedWithTimeout:20]);
+	XCTAssertEqual(download.state, NFKDownloadStateCompleted, @"%@", download.error);
+	XCTAssertTrue([NSFileManager.defaultManager fileExistsAtPath:configURL.path]);
+}
+
+#pragma mark Files from other repositories
+
+/*! org/model's config.json, org/adapter's adapter.safetensors at revision v2, and a file at a URL. */
+- (NFKModelSource *)sourceSpanningRepositoriesWithAdapter:(NSData *)adapter vocabulary:(NSData *)vocabulary
+{
+	NFKModelFile *config = [NFKModelFile fileWithPath:@"config.json" role:NFKModelFileRoleConfig];
+	NFKModelFile *adapterFile = [[NFKModelFile alloc] initWithPath:@"adapter.safetensors" byteCount:nil sha256:nil
+															  role:NFKModelFileRoleWeights optional:NO repository:@"org/adapter"
+														  revision:@"v2" URL:nil extensions:nil];
+	NFKModelFile *vocabularyFile = [[NFKModelFile alloc] initWithPath:@"vocab.txt" byteCount:@(vocabulary.length) sha256:nil
+																 role:NFKModelFileRoleTokenizer optional:NO repository:nil revision:nil
+																  URL:[NSURL URLWithString:@"http://hub.test/files/vocab.txt"] extensions:nil];
+	return [[NFKModelSource alloc] initWithKind:NFKModelSourceKindHuggingFace repository:NFKTestRepo revision:nil URL:nil
+										 layout:NFKModelSourceLayoutDirectory files:@[ config, adapterFile, vocabularyFile ]
+							 requiresConversion:NO extensions:nil];
+}
+
+- (void)testASourceSpanningRepositoriesFetchesEachFileFromItsOwnRepository
+{
+	[self serveTheModel];
+	NSData *adapter = [NSMutableData dataWithLength:8192];
+	NSData *vocabulary = [@"a\nb\nc\n" dataUsingEncoding:NSUTF8StringEncoding];
+	[NFKStubHubProtocol serveRepo:@"org/adapter" revision:@"v2" files:@{ @"adapter.safetensors": adapter }
+						 lfsPaths:[NSSet setWithObject:@"adapter.safetensors"]];
+	[NFKStubHubProtocol setResponse:[NFKStubHubResponse responseWithStatus:200 body:vocabulary] forPath:@"/files/vocab.txt"];
+	NFKModelSource *source = [self sourceSpanningRepositoriesWithAdapter:adapter vocabulary:vocabulary];
+
+	NSError *error = nil;
+	NFKDownloadPlan *plan = [self.hub planDownloadOfModelSource:source error:&error];
+	XCTAssertNotNil(plan, @"%@", error);
+	XCTAssertEqual(plan.files.count, (NSUInteger)3);
+	XCTAssertEqual(plan.totalByteCount, (long long)(self.config.length + adapter.length + vocabulary.length),
+		@"the plan counts every repository's files");
+	NFKDownloadPlanFile *adapterPlan = [plan fileAtPath:@"adapter.safetensors"];
+	XCTAssertEqualObjects(adapterPlan.remoteURL.path, @"/org/adapter/resolve/v2/adapter.safetensors");
+	XCTAssertEqualObjects(adapterPlan.localURL.path, [self.hub localURLForRepo:@"org/adapter" revision:@"v2" path:@"adapter.safetensors"].path);
+	XCTAssertEqualObjects(adapterPlan.sha256, [NFKStubHubProtocol sha256OfData:adapter], @"the adapter repository's listing gives its digest");
+	XCTAssertEqual([self.hub downloadStatusForModelSource:source].presence, NFKDownloadPresenceAbsent);
+
+	NFKDownload *download = nil;
+	[self runDownloadOfPlan:plan download:&download error:&error];
+	XCTAssertEqual(download.state, NFKDownloadStateCompleted, @"%@", error);
+	XCTAssertEqual([NFKStubHubProtocol requestsForPath:@"/org/model/resolve/main/config.json"].count, (NSUInteger)1);
+	XCTAssertEqual([NFKStubHubProtocol requestsForPath:@"/org/adapter/resolve/v2/adapter.safetensors"].count, (NSUInteger)1);
+	NSArray<NSURLRequest *> *vocabularyRequests = [NFKStubHubProtocol requestsForPath:@"/files/vocab.txt"];
+	XCTAssertEqual([vocabularyRequests filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"HTTPMethod == 'GET'"]].count,
+				   (NSUInteger)1);
+	XCTAssertEqual([NFKStubHubProtocol requestsForPath:@"/org/model/resolve/main/adapter.safetensors"].count, (NSUInteger)0,
+		@"the adapter is not asked of the source's repository");
+	XCTAssertEqualObjects([NSData dataWithContentsOfURL:adapterPlan.localURL], adapter);
+	XCTAssertEqualObjects([NSData dataWithContentsOfURL:[self.hub localURLForURL:[NSURL URLWithString:@"http://hub.test/files/vocab.txt"]
+																		 fileName:@"vocab.txt"]], vocabulary);
+	XCTAssertEqual([self.hub downloadStatusForModelSource:source].presence, NFKDownloadPresenceComplete);
+
+	XCTAssertTrue([self.hub removeCachedRepo:@"org/adapter" revision:@"v2" error:&error], @"%@", error);
+	NFKDownloadStatus *status = [self.hub downloadStatusForModelSource:source];
+	XCTAssertEqual(status.presence, NFKDownloadPresencePartial, @"complete only while every repository's files are");
+	XCTAssertEqualObjects(status.missingPaths, @[ @"adapter.safetensors" ]);
+
+	NFKRemovalPlan *removal = [self.hub removalPlanForModelSource:source error:&error];
+	XCTAssertNotNil(removal, @"%@", error);
+	XCTAssertNotNil([self.hub removeFilesInPlan:removal error:&error], @"%@", error);
+	XCTAssertEqual([self.hub downloadStatusForModelSource:source].presence, NFKDownloadPresenceAbsent);
+	XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:[self.cacheDir URLByAppendingPathComponent:@"org"].path]);
+	XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:[self.cacheDir URLByAppendingPathComponent:@"@url"].path]);
+}
+
+- (void)testAnUnsafeOverrideRepositoryOrRevisionIsRefusedBeforeAnyRequest
+{
+	[self serveTheModel];
+	NSString *outside = [@"../" stringByAppendingString:[[self.cacheDir.path stringByAppendingString:@"-outside"] lastPathComponent]];
+	NFKModelFile *config = [NFKModelFile fileWithPath:@"config.json" role:NFKModelFileRoleConfig];
+	NSArray<NFKModelFile *> *hostileFiles = @[
+		[[NFKModelFile alloc] initWithPath:@"planted.bin" byteCount:nil sha256:nil role:nil optional:NO
+								repository:outside revision:nil URL:nil extensions:nil],
+		[[NFKModelFile alloc] initWithPath:@"planted.bin" byteCount:nil sha256:nil role:nil optional:NO
+								repository:nil revision:@"../../../escape" URL:nil extensions:nil],
+		[[NFKModelFile alloc] initWithPath:@".." byteCount:nil sha256:nil role:nil optional:NO
+								repository:nil revision:nil URL:[NSURL URLWithString:@"http://hub.test/files/x.bin"] extensions:nil] ];
+	for (NFKModelFile *hostile in hostileFiles) {
+		[NFKStubHubProtocol reset];
+		[self serveTheModel];
+		NFKModelSource *source = [[NFKModelSource alloc] initWithKind:NFKModelSourceKindHuggingFace repository:NFKTestRepo revision:nil
+																  URL:nil layout:NFKModelSourceLayoutDirectory
+																files:@[ config, hostile ] requiresConversion:NO extensions:nil];
+		NSError *error = nil;
+		XCTAssertNil([self.hub planDownloadOfModelSource:source error:&error], @"%@", hostile.dictionaryRepresentation);
+		XCTAssertEqualObjects(error.domain, NFKDownloadErrorDomain);
+		XCTAssertEqual(error.code, NFKDownloadErrorUnsafePath, @"%@", error);
+		XCTAssertEqual(NFKStubHubProtocol.requests.count, (NSUInteger)0, @"the refusal comes before any request");
+		XCTAssertNotEqual([self.hub downloadStatusForModelSource:source].presence, NFKDownloadPresenceComplete);
+		error = nil;
+		XCTAssertNil([self.hub removalPlanForModelSource:source error:&error]);
+		XCTAssertEqual(error.code, NFKDownloadErrorUnsafePath, @"%@", error);
+	}
+	XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:[self.cacheDir.path stringByAppendingString:@"-outside"]]);
 }
 
 @end

@@ -56,6 +56,12 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 				  backup, because everything in it can be downloaded again.
 				Each policy has a process-wide class default that a new hub starts from, so hubs a
 				companion package creates internally follow it too.
+
+				Every repository, revision, path, and file name names a place inside the cache. One
+				that is empty or absolute, holds an empty, ".", or ".." component, or holds a
+				backslash or a NUL character is refused with NFKDownloadErrorUnsafePath before the hub
+				reads, writes, or removes anything; the URL methods return nil for it. Each write and
+				removal also checks that its location lies inside cacheDirectoryURL.
 */
 @interface NFKHFHub : NSObject
 
@@ -178,7 +184,9 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 	@abstract   Evicts least recently used snapshots until the cache fits cacheSizeLimit; YES on
 				success.
 	@discussion A download calls it after each fetch; a caller calls it after lowering the limit.
-				A negative limit evicts nothing. Introduced in InferKit 0.4.0.
+				A negative limit evicts nothing. A snapshot that an unfinished NFKDownload in this
+				process writes into is not evicted, including between its files. Introduced in
+				InferKit 0.4.0.
 */
 - (BOOL)trimCacheToSizeLimitWithError:(NSError * _Nullable *)outError;
 
@@ -218,7 +226,8 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 	@method     removeCachedRepo:revision:error:
 	@abstract   Removes one cached snapshot and any folder it leaves empty; YES on success, including
 				when nothing was cached.
-	@discussion A nil revision is "main". Introduced in InferKit 0.4.0.
+	@discussion Refuses with NFKDownloadErrorInUse while an NFKDownload in this process writes into
+				the snapshot. A nil revision is "main". Introduced in InferKit 0.4.0.
 */
 - (BOOL)removeCachedRepo:(NSString *)repo revision:(nullable NSString *)revision error:(NSError * _Nullable *)outError;
 
@@ -232,12 +241,14 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 */
 + (NSURL *)defaultCacheDirectoryURL;
 
-/*! The remote resolve URL for a file: <endpoint>/<repo>/resolve/<revision>/<path>. */
+/*! The remote resolve URL for a file: <endpoint>/<repo>/resolve/<revision>/<path>. nil for an unsafe
+	repository, revision, or path. */
 - (nullable NSURL *)remoteURLForRepo:(NSString *)repo
 						  revision:(nullable NSString *)revision
 							  path:(NSString *)path;
 
-/*! The local cache URL for a file: <cache>/<repo>/<revision>/<path>. nil without a cache folder. */
+/*! The local cache URL for a file: <cache>/<repo>/<revision>/<path>. nil without a cache folder, or
+	for an unsafe repository, revision, or path. */
 - (nullable NSURL *)localURLForRepo:(NSString *)repo
 						 revision:(nullable NSString *)revision
 							 path:(NSString *)path;
@@ -251,7 +262,8 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 	@discussion Skips the download when the file is cached and its checksum matches (or no
 				checksum is given). Verifies expectedSHA256 (lowercase hex) when provided and
 				fails without caching on a mismatch. Returns nil with an error when no cache
-				folder is set or the download fails.
+				folder is set, a name is unsafe (NFKDownloadErrorUnsafePath), or the download
+				fails.
 */
 - (nullable NSURL *)downloadRepo:(NSString *)repo
 					  revision:(nullable NSString *)revision
@@ -319,11 +331,18 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 				The access token goes only to endpointURL's host. A gated or private repository
 				without an accepted token fails with NFKDownloadErrorAuthenticationRequired.
 
+				A file whose size differs from the listed size fails with
+				NFKDownloadErrorSizeMismatch, and one whose contents differ from the listed SHA-256
+				with NFKDownloadErrorChecksumMismatch; neither is kept. A listing that names a file
+				outside its snapshot is refused with NFKDownloadErrorUnsafePath.
+
 				A removal deletes downloaded files only, all of them or none: it moves the files out
 				of the snapshot first and deletes them once every move succeeded. It removes a
 				snapshot or folder it leaves empty, keeps a pin (.inferkit-keep), and refuses with
 				NFKDownloadErrorInUse while an NFKDownload in this process downloads into the
-				snapshot. Introduced in InferKit 0.4.0.
+				snapshot. It keeps a file that a link elsewhere in the cache resolves to, and the
+				target of a removed link when that target is a file of another snapshot.
+				Introduced in InferKit 0.4.0.
 */
 @interface NFKHFHub (NFKDownloads)
 
@@ -354,7 +373,8 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 	@abstract   What a download of one URL would fetch; nil with an error when the HEAD request
 				fails.
 	@discussion A server that refuses HEAD leaves the size unknown and the plan stands. Blocks on the
-				network.
+				network. A URL whose host or last path component is unsafe is refused with
+				NFKDownloadErrorUnsafePath before any request.
 */
 - (nullable NFKDownloadPlan *)planDownloadOfURL:(NSURL *)URL
 										 sha256:(nullable NSString *)expectedSHA256
@@ -373,7 +393,12 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 	@discussion A Hugging Face source that lists files plans those files: a required one the
 				repository lacks fails with NFKDownloadErrorNotFound, an optional one is left out. A
 				source that lists none plans the whole repository. A listed size or SHA-256 fills
-				in what the listing lacks. Blocks on the network.
+				in what the listing lacks. For a URL source the listed size takes precedence over
+				the HEAD answer, and its file name must be a safe relative path. A file that names
+				its own repository, revision, or URL is planned from that repository's listing or
+				that URL and caches in that repository's or URL's snapshot; the plan's localURL stays
+				the source's own snapshot, and its totals count every file. Every repository,
+				revision, and URL is checked before the first request. Blocks on the network.
 */
 - (nullable NFKDownloadPlan *)planDownloadOfModelSource:(NFKModelSource *)source
 												  error:(NSError * _Nullable *)outError NS_SWIFT_NAME(planDownload(source:));
@@ -392,9 +417,9 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 				download fails with NFKDownloadErrorExceedsCacheSizeLimit when the plan's total is
 				larger than a non-negative cacheSizeLimit, and with
 				NFKDownloadErrorInsufficientStorage when the remaining bytes exceed the volume's free
-				space. Each file with a SHA-256 is verified. The completion handler runs on a
-				background queue after the last progress report, with the download's localURL or its
-				error.
+				space. Each file is checked against its listed size and, when it has one, its SHA-256.
+				The completion handler runs on a background queue after the last progress report,
+				with the download's localURL or its error.
 */
 - (NFKDownload *)downloadWithPlan:(NFKDownloadPlan *)plan
 				  progressHandler:(nullable NFKDownloadProgressHandler)progressHandler
@@ -422,7 +447,8 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 				   completionHandler:(nullable void (^ NS_SWIFT_SENDABLE)(NSURL * _Nullable localURL, NSError * _Nullable error))completionHandler NS_SWIFT_NAME(download(source:progressHandler:completionHandler:));
 
 /*! The cache location of a URL download, <cache>/@url/<host>/<digest>/<file name>; nil without a
-	cache folder. fileName overrides the URL's last path component. */
+	cache folder, or when the host, fileName, or the URL's last path component is unsafe. fileName
+	overrides the URL's last path component. */
 - (nullable NSURL *)localURLForURL:(NSURL *)URL fileName:(nullable NSString *)fileName;
 
 #pragma mark Status
@@ -443,7 +469,9 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 - (NFKDownloadStatus *)downloadStatusForURL:(NSURL *)URL NS_SWIFT_NAME(downloadStatus(url:));
 
 /*! Whether a catalog model source's files are in the cache. Optional files count toward byteCount
-	and not toward completeness. A source of kind system or none is complete with no bytes. */
+	and not toward completeness. A file that names its own repository, revision, or URL is read in
+	that place's snapshot, so the source is complete only when every place holds its files. A source
+	of kind system or none is complete with no bytes. */
 - (NFKDownloadStatus *)downloadStatusForModelSource:(NFKModelSource *)source NS_SWIFT_NAME(downloadStatus(source:));
 
 /*!
@@ -493,7 +521,7 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 /*!
 	@method     removalPlanForRepo:revision:paths:error:
 	@abstract   The cached files a removal of a repository's download deletes and keeps; nil with an
-				error without a cache folder.
+				error without a cache folder or for an unsafe repository or revision.
 	@discussion paths names the files, each a path or a glob matched against the cache; nil names every
 				file in the snapshot. Reads the cache only.
 */
@@ -506,8 +534,10 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 - (nullable NFKRemovalPlan *)removalPlanForURL:(NSURL *)URL error:(NSError * _Nullable *)outError NS_SWIFT_NAME(removalPlan(url:));
 
 /*! The cached files a removal of a catalog model source's download deletes and keeps. A source that
-	lists files names those; one that lists none names the whole snapshot. A source of kind system or
-	none yields an empty plan. */
+	lists files names those; one that lists none names the whole snapshot. A file that names its own
+	repository, revision, or URL is removed from that place's snapshot, and another catalog variant
+	whose download is complete keeps the files it uses there. A source of kind system or none yields
+	an empty plan. */
 - (nullable NFKRemovalPlan *)removalPlanForModelSource:(NFKModelSource *)source
 												 error:(NSError * _Nullable *)outError NS_SWIFT_NAME(removalPlan(source:));
 

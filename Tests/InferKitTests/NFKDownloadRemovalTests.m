@@ -3,8 +3,9 @@
 //  InferKitTests
 //
 //  Download status and removal on a temporary cache: complete, partial, and absent; the files a
-//  removal plan names; files another complete model uses and shared link targets kept; the bytes
-//  freed; a pin kept; and a removal refused while a download writes into the snapshot.
+//  removal plan names; files another complete model uses, shared link targets, and files of other
+//  snapshots kept; the bytes freed; a pin kept; a removal refused while a download writes into the
+//  snapshot; sources spanning repositories; and unsafe names refused.
 //
 
 #import <XCTest/XCTest.h>
@@ -357,6 +358,187 @@
 	XCTAssertEqual(plan.removedFiles.count, (NSUInteger)0);
 	XCTAssertEqual(plan.freedByteCount, 0LL);
 	XCTAssertNotNil([self.hub removeFilesInPlan:plan error:NULL]);
+}
+
+#pragma mark Files other snapshots use
+
+- (void)testRemovingASnapshotKeepsAFileOfAnotherSnapshotItsLinkResolvesTo
+{
+	NSURL *shared = [self place:16384 inRepo:@"org/two" path:@"model.bin"];
+	XCTAssertTrue([self.hub recordCompleteDownloadOfRepo:@"org/two" revision:nil paths:@[ @"model.bin" ] error:NULL]);
+	[self linkInRepo:@"org/one" path:@"model.bin" to:shared];
+
+	NFKRemovalPlan *plan = [self.hub removalPlanForRepo:@"org/one" revision:nil paths:nil error:NULL];
+	XCTAssertEqual(plan.keptFiles.count, (NSUInteger)1);
+	XCTAssertEqualObjects(plan.keptFiles.firstObject.path, @"org/two/main/model.bin");
+	XCTAssertEqualObjects(plan.keptFiles.firstObject.reason, @"a file of another cached snapshot");
+	XCTAssertFalse([[self pathsOf:plan.removedFiles] containsObject:@"org/two/main/model.bin"]);
+	NSError *error = nil;
+	NFKRemovalPlan *removal = [self.hub removeFilesInPlan:plan error:&error];
+	XCTAssertNotNil(removal, @"%@", error);
+
+	XCTAssertEqual([NSData dataWithContentsOfURL:shared].length, (NSUInteger)16384);
+	NFKDownloadStatus *status = [self.hub downloadStatusForRepo:@"org/two" revision:nil paths:nil];
+	XCTAssertEqual(status.presence, NFKDownloadPresenceComplete, @"the other snapshot's record still matches its files");
+	XCTAssertEqual([self.hub downloadStatusForRepo:@"org/one" revision:nil paths:nil].presence, NFKDownloadPresenceAbsent);
+}
+
+- (void)testRemovingASnapshotKeepsItsFileWhileAnotherSnapshotLinksToIt
+{
+	NSURL *original = [self place:16384 inRepo:@"org/one" path:@"model.bin"];
+	NSURL *link = [self linkInRepo:@"org/two" path:@"model.bin" to:original];
+	XCTAssertTrue([self.hub recordCompleteDownloadOfRepo:@"org/two" revision:nil paths:@[ @"model.bin" ] error:NULL]);
+
+	NFKRemovalPlan *plan = [self.hub removalPlanForRepo:@"org/one" revision:nil paths:nil error:NULL];
+	XCTAssertEqual(plan.removedFiles.count, (NSUInteger)0);
+	XCTAssertEqual(plan.keptFiles.count, (NSUInteger)1);
+	XCTAssertTrue([plan.keptFiles.firstObject.reason containsString:@"linked from 1 other"], @"%@", plan.keptFiles.firstObject.reason);
+	XCTAssertEqual(plan.freedByteCount, 0LL);
+	XCTAssertNotNil([self.hub removeFilesInPlan:plan error:NULL]);
+
+	XCTAssertEqual([NSData dataWithContentsOfURL:link].length, (NSUInteger)16384, @"the link still resolves");
+	XCTAssertEqual([self.hub downloadStatusForRepo:@"org/two" revision:nil paths:nil].presence, NFKDownloadPresenceComplete);
+}
+
+#pragma mark Unsafe names
+
+/*! A repository whose snapshot, <cache>/<repo>/main, is the outside folder's main/, holding victim.bin. */
+- (NSString *)hostileRepoWithVictim
+{
+	NSURL *victim = [[self.outsideDir URLByAppendingPathComponent:@"main"] URLByAppendingPathComponent:@"victim.bin"];
+	[NSFileManager.defaultManager createDirectoryAtURL:victim.URLByDeletingLastPathComponent withIntermediateDirectories:YES attributes:nil error:NULL];
+	XCTAssertTrue([[self bytes:4096] writeToURL:victim atomically:YES]);
+	return [@"../" stringByAppendingString:self.outsideDir.lastPathComponent];
+}
+
+- (void)assertTheVictimIsUntouched
+{
+	NSString *folder = [[self.outsideDir URLByAppendingPathComponent:@"main"] path];
+	NSArray<NSString *> *contents = [NSFileManager.defaultManager contentsOfDirectoryAtPath:folder error:NULL];
+	XCTAssertEqualObjects(contents, @[ @"victim.bin" ], @"nothing was written into or removed from the outside folder");
+	XCTAssertEqualObjects([NSData dataWithContentsOfURL:[NSURL fileURLWithPath:[folder stringByAppendingPathComponent:@"victim.bin"]]],
+						  [self bytes:4096]);
+}
+
+- (void)testAnUnsafeRepositoryReadsAbsentAndItsRemovalIsRefused
+{
+	NSString *repo = [self hostileRepoWithVictim];
+	NFKDownloadStatus *status = [self.hub downloadStatusForRepo:repo revision:nil paths:nil];
+	XCTAssertEqual(status.presence, NFKDownloadPresenceAbsent, @"the status does not read outside the cache");
+	XCTAssertEqual(status.byteCount, 0LL);
+	NFKModelSource *source = [self sourceForRepo:repo paths:@[ @"victim.bin" ] optional:@[]];
+	XCTAssertEqual([self.hub downloadStatusForModelSource:source].presence, NFKDownloadPresenceAbsent);
+
+	NSError *error = nil;
+	XCTAssertNil([self.hub removalPlanForRepo:repo revision:nil paths:nil error:&error]);
+	XCTAssertEqualObjects(error.domain, NFKDownloadErrorDomain);
+	XCTAssertEqual(error.code, NFKDownloadErrorUnsafePath, @"%@", error);
+	error = nil;
+	XCTAssertNil([self.hub removalPlanForModelSource:source error:&error]);
+	XCTAssertEqual(error.code, NFKDownloadErrorUnsafePath, @"%@", error);
+	[self assertTheVictimIsUntouched];
+}
+
+- (void)testAnUnsafeRepositoryOrPathIsNotRecorded
+{
+	NSString *repo = [self hostileRepoWithVictim];
+	NSError *error = nil;
+	XCTAssertFalse([self.hub recordCompleteDownloadOfRepo:repo revision:nil paths:@[ @"victim.bin" ] error:&error]);
+	XCTAssertEqual(error.code, NFKDownloadErrorUnsafePath, @"%@", error);
+	error = nil;
+	XCTAssertFalse([self.hub recordCompleteDownloadOfRepo:@"org/model" revision:nil paths:@[ @"../escape.bin" ] error:&error]);
+	XCTAssertEqual(error.code, NFKDownloadErrorUnsafePath, @"%@", error);
+	[self assertTheVictimIsUntouched];
+	XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:[self.cacheDir URLByAppendingPathComponent:@"org"].path]);
+}
+
+- (void)testAURLWhoseFileNameLeavesItsFolderIsRefused
+{
+	NSURL *URL = [NSURL URLWithString:@"https://example.com/models/.."];
+	XCTAssertNil([self.hub localURLForURL:URL fileName:nil]);
+	XCTAssertNil([self.hub localURLForURL:[NSURL URLWithString:@"https://example.com/models/model.bin"] fileName:@".."]);
+	XCTAssertEqual([self.hub downloadStatusForURL:URL].presence, NFKDownloadPresenceAbsent);
+}
+
+#pragma mark Sources spanning repositories
+
+/*! org/controlnet's controlnet.bin with org/base's vae.bin read from org/base. */
+- (NFKModelSource *)controlNetSource
+{
+	NFKModelFile *controlNet = [NFKModelFile fileWithPath:@"controlnet.bin" role:NFKModelFileRoleWeights];
+	NFKModelFile *vae = [[NFKModelFile alloc] initWithPath:@"vae.bin" byteCount:nil sha256:nil role:NFKModelFileRoleWeights
+												  optional:NO repository:@"org/base" revision:nil URL:nil extensions:nil];
+	return [[NFKModelSource alloc] initWithKind:NFKModelSourceKindHuggingFace repository:@"org/controlnet" revision:nil URL:nil
+										 layout:NFKModelSourceLayoutDirectory files:@[ controlNet, vae ] requiresConversion:NO extensions:nil];
+}
+
+- (void)testASourceSpanningRepositoriesIsCompleteOnlyWhenEveryRepositoryIs
+{
+	NFKModelSource *source = [self controlNetSource];
+	XCTAssertEqual([self.hub downloadStatusForModelSource:source].presence, NFKDownloadPresenceAbsent);
+	[self place:4096 inRepo:@"org/controlnet" path:@"controlnet.bin"];
+	NFKDownloadStatus *status = [self.hub downloadStatusForModelSource:source];
+	XCTAssertEqual(status.presence, NFKDownloadPresencePartial, @"the base repository's file is missing");
+	XCTAssertEqualObjects(status.missingPaths, @[ @"vae.bin" ]);
+	XCTAssertTrue([self.hub isCachedRepo:@"org/controlnet" revision:nil path:@"controlnet.bin"]);
+	XCTAssertFalse([self.hub isCachedRepo:@"org/controlnet" revision:nil path:@"vae.bin"]);
+
+	[self place:8192 inRepo:@"org/base" path:@"vae.bin"];
+	status = [self.hub downloadStatusForModelSource:source];
+	XCTAssertEqual(status.presence, NFKDownloadPresenceComplete);
+	XCTAssertGreaterThanOrEqual(status.byteCount, 4096LL + 8192LL, @"bytes count every repository");
+}
+
+- (void)testRemovingASourceSpanningRepositoriesKeepsTheBaseFilesAnotherModelUses
+{
+	[self place:4096 inRepo:@"org/controlnet" path:@"controlnet.bin"];
+	NSURL *vae = [self place:8192 inRepo:@"org/base" path:@"vae.bin"];
+	NSURL *unet = [self place:16384 inRepo:@"org/base" path:@"unet.bin"];
+	NFKModelSource *base = [self sourceForRepo:@"org/base" paths:@[ @"vae.bin", @"unet.bin" ] optional:@[]];
+	[self addModel:@"base-model" source:base];
+	NFKModelSource *source = [self controlNetSource];
+	[self addModel:@"controlnet-model" source:source];
+
+	NFKRemovalPlan *plan = [self.hub removalPlanForModelSource:source error:NULL];
+	XCTAssertEqualObjects([self pathsOf:plan.removedFiles], @[ @"org/controlnet/main/controlnet.bin" ]);
+	XCTAssertEqualObjects([self pathsOf:plan.keptFiles], @[ @"org/base/main/vae.bin" ]);
+	XCTAssertTrue([plan.keptFiles.firstObject.reason containsString:@"base-model"], @"%@", plan.keptFiles.firstObject.reason);
+	long long before = [self.hub cacheSize];
+	NSError *error = nil;
+	NFKRemovalPlan *removal = [self.hub removeFilesInPlan:plan error:&error];
+	XCTAssertNotNil(removal, @"%@", error);
+	XCTAssertEqual(before - [self.hub cacheSize], removal.freedByteCount);
+	XCTAssertEqual([NSData dataWithContentsOfURL:vae].length, (NSUInteger)8192);
+	XCTAssertEqual([NSData dataWithContentsOfURL:unet].length, (NSUInteger)16384);
+	XCTAssertEqual([self.hub downloadStatusForModelSource:base].presence, NFKDownloadPresenceComplete);
+	XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:[self.cacheDir URLByAppendingPathComponent:@"org/controlnet"].path]);
+
+	[self place:4096 inRepo:@"org/controlnet" path:@"controlnet.bin"];
+	plan = [self.hub removalPlanForModelSource:base error:NULL];
+	XCTAssertEqualObjects([self pathsOf:plan.removedFiles], @[ @"org/base/main/unet.bin" ]);
+	XCTAssertEqualObjects([self pathsOf:plan.keptFiles], @[ @"org/base/main/vae.bin" ],
+		@"the base model's removal keeps the file the complete control net reads from its repository");
+}
+
+- (void)testAnUnsafeOverrideRepositoryIsRefusedAndReadsNothingOutsideTheCache
+{
+	NSString *repo = [self hostileRepoWithVictim];
+	[self place:4096 inRepo:@"org/model" path:@"model.bin"];
+	NFKModelFile *own = [NFKModelFile fileWithPath:@"model.bin" role:NFKModelFileRoleWeights];
+	NFKModelFile *hostile = [[NFKModelFile alloc] initWithPath:@"victim.bin" byteCount:nil sha256:nil role:nil optional:NO
+													repository:repo revision:nil URL:nil extensions:nil];
+	NFKModelSource *source = [[NFKModelSource alloc] initWithKind:NFKModelSourceKindHuggingFace repository:@"org/model" revision:nil
+															  URL:nil layout:NFKModelSourceLayoutDirectory files:@[ own, hostile ]
+											   requiresConversion:NO extensions:nil];
+	NFKDownloadStatus *status = [self.hub downloadStatusForModelSource:source];
+	XCTAssertEqual(status.presence, NFKDownloadPresencePartial, @"the outside file does not count as present");
+	XCTAssertEqualObjects(status.missingPaths, @[ @"victim.bin" ]);
+
+	NSError *error = nil;
+	XCTAssertNil([self.hub removalPlanForModelSource:source error:&error]);
+	XCTAssertEqual(error.code, NFKDownloadErrorUnsafePath, @"%@", error);
+	[self assertTheVictimIsUntouched];
+	XCTAssertTrue([self.hub isCachedRepo:@"org/model" revision:nil path:@"model.bin"]);
 }
 
 @end

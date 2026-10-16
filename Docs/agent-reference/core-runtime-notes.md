@@ -464,13 +464,55 @@ added 2026-10-15, InferKit 0.4.0). The transfer is `NFKHFHubTransfer` (private).
   `NotFound`. The Hugging Face API answers 401 for a repository that does not exist when no token is
   sent, so that message names all three causes. A checksum mismatch moved from
   `kNFKError_InferenceBackendFailure` to `NFKDownloadErrorChecksumMismatch` (pre-1.0). A missing cache
-  folder stays `kNFKError_InferenceNotReady`.
+  folder stays `kNFKError_InferenceNotReady`. An unsafe name is `UnsafePath`; a file whose size differs
+  from its listed size is `SizeMismatch`.
+- Unsafe names: every repository, revision, path, listing entry, recorded path, URL host, and URL file
+  name passes `NFKHFHubUnsafePathError` before it becomes a cache location. Refused: empty, a leading
+  `/`, an empty, `.`, or `..` component, a backslash, a NUL; a host or final file name also may not
+  hold `/`. The URL builders (`localURLForRepo:…`, `remoteURLForRepo:…`, `localURLForURL:fileName:`)
+  return nil; every other entry point fails with `NFKDownloadErrorUnsafePath` before any request or
+  file access, and a status reads absent. A listing with one unsafe file entry refuses the whole plan:
+  the server is broken or hostile. A revision may hold `/` (`refs/pr/1` nests folders).
+- Containment is the second guard: `requireURL:insideCacheURL:error:` runs before every write, trash
+  move, and removal (`fetchFileFromURL:…`, `removeSnapshotAtURL:…`, `moveURLs:toTrashInCacheURL:…`,
+  the completion record, pin, unpin, adopt). It applies `.` and `..` lexically and accepts a path
+  strictly under any of three forms of the root: as given, `URLByResolvingSymlinksInPath` (which
+  drops a leading `/private`), and `realpath` (which keeps it). `NSDirectoryEnumerator` over a
+  `/var/folders/…` root hands back `/private/var/folders/…` URLs, so a trim needs the `realpath` form
+  (probed 2026-10-16). It does not resolve links inside the cache: a repository folder linked to
+  another volume is a supported layout, so a link someone placed inside the cache is trusted.
+- `NSURL.lastPathComponent` percent-decodes and then splits, so `a%2F..%2Fx.bin` reads `x.bin`; a final
+  `..` segment reads `..` and is refused.
 - Plans: `<endpoint>/api/models/<repo>/tree/<revision>?recursive=1`, the revision percent-encoded as
   one segment (`refs/pr/1` → `refs%2Fpr%2F1`), following `Link: <…>; rel="next"` pages. A Large File
   Storage entry's `lfs.oid` is the content SHA-256 and `lfs.size` the size; a plain entry's `oid` is a
   Git blob ID and is not reported as a SHA-256. Globs are `fnmatch` without `FNM_PATHNAME`, as
   huggingface_hub's `allow_patterns` are. A plan marks a file cached when it exists at the listed size;
   it never hashes, because hashing gigabytes at plan time stalls a user interface.
+- Listed size: `fetchFileFromURL:…` compares the finished `.download` file with the plan's byte count
+  before it moves the file into place, after any transport, an overridden `fetchURL:toFileURL:error:`
+  included. The transfer's own check compares with the response's `Content-Length`, so a 200 captive
+  page with an honest length passes it and fails this one. A URL plan keeps a listed size over the
+  HEAD answer; HEAD fills in only an unknown size. The LFS SHA-256 check follows the size check.
+- Per-file places: an `NFKModelFile` with `repository`, `revision`, or `URL` comes from there
+  (`repository` read at its own `revision` or "main"; `revision` alone is the source's repository at
+  that revision; `URL` is a download URL named by `path`). `partsOfModelSource:` groups a source's
+  files by place (repository + normalized revision, or one part per URL file), in first-file order. A
+  source of one part that is its own repository takes the single-repository path unchanged. Otherwise
+  `planParts:…` checks every part (`refusalOfPart:`: repository, revision, each path, the URL's host
+  and file name) before the first request, lists each repository once, HEADs each URL, and joins the
+  files; each `NFKDownloadPlanFile` carries its own `snapshotURL` (internal), which `runPlan:` registers
+  in the in-use registry and fetches into. The plan's `localURL` and `snapshotURL` stay the source's.
+  An optional URL file the server answers 404 is left out. No completion record is written: every
+  part is a listed-file plan.
+- Status of such a source reads each part in its own snapshot and joins present and missing paths:
+  complete only when no required file of any part is missing. Removal makes one `NFKRemovalPlan` per
+  part, joined under the internal `parts`; `removeFilesInPlan:` refuses when any part's snapshot is in
+  use, plans each part again, and moves every file of every part into one trash folder, all or none.
+  Claims run over every catalog variant's parts, so a base model's complete download keeps the files
+  an adapter's removal names in the base repository, and a complete adapter keeps them through the
+  base model's removal. A URL target claims by its cached file name; a URL source's removal names that
+  file, so the source is the same download as itself.
 - Admission: a plan whose total exceeds a non-negative `cacheSizeLimit` is refused before any
   transfer (the limit could never hold it), and so is one whose remaining bytes exceed the volume's
   `NSURLVolumeAvailableCapacityForImportantUsageKey` (`NSURLVolumeAvailableCapacityKey` on tvOS, which
@@ -500,8 +542,13 @@ added 2026-10-15, InferKit 0.4.0). The transfer is `NFKHFHubTransfer` (private).
   sharing between snapshots exists only as links someone placed (the InferKitMLX release-store tests
   link a cache to the validation store; a user may link a Python cache). A symbolic link is removed and
   frees nothing; its target inside the cache goes with it unless another link in the cache resolves to
-  it (kept, "linked from N other cached file(s)"), and a target outside the cache is always kept. A hard
-  link with other names is removed and frees nothing.
+  it (kept, "linked from N other cached file(s)") or it is a file of another snapshot (kept, "a file of
+  another cached snapshot"), and a target outside the cache is always kept. A regular file that a link
+  outside the removal resolves to is kept the same way, so the other snapshot's completion record keeps
+  matching its files. Another snapshot is recognized by a bookkeeping file (`.inferkit-owned`,
+  `.inferkit-complete`, `.inferkit-keep`) in a folder between the target and the cache root; a file in
+  an unmarked folder reads as a blob and goes with its last link. A hard link with other names is
+  removed and frees nothing.
 - All or none: the planned files and, when no model file is left, the `.inferkit-owned` and
   `.inferkit-complete` markers move into `<cache>/.inferkit-removing-<UUID>`; a failed move puts every
   moved file back. Only then is the folder deleted; one a crash left behind is deleted by the next
@@ -510,7 +557,12 @@ added 2026-10-15, InferKit 0.4.0). The transfer is `NFKHFHubTransfer` (private).
 - `removeFilesInPlan:` plans again under the snapshot-registry lock and removes the intersection of the
   two plans, so a file that became shared meanwhile is kept. While the lock is held no download can
   register a snapshot, and a snapshot an unfinished `NFKDownload` registered refuses the removal with
-  `NFKDownloadErrorInUse`. A download that only cache-hits registers nothing.
+  `NFKDownloadErrorInUse`. A download that only cache-hits registers nothing. `removeCachedRepo:…`
+  refuses the same way.
+- Eviction honors the registry too: `evictableSnapshotsInDirectoryAtURL:` leaves out a registered
+  snapshot, and the trim checks and removes each snapshot under the registry lock, so a multi-file
+  `NFKDownload` keeps its snapshot between files, when no `.download` file marks it. A fetch registers
+  its snapshot before it creates the folder.
 - Tests: `NFKDownloadTests` and `NFKDownloadRemovalTests` against `NFKStubHubProtocol` (an
   `NSURLProtocol` at `http://hub.test` with Range, a stall after the first chunk, and a drop part-way),
   never the network. A cancellation test polls `currentProgress`: the throttled handler may never

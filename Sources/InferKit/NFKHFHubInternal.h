@@ -15,12 +15,31 @@ extern NSString * const NFKHFHubCompleteMarkerName;
 extern NSArray<NSString *> *NFKHFHubBookkeepingNames(void);
 /*! The marker of a pinned snapshot. */
 extern NSString * const NFKHFHubPinMarkerName;
+/*! An NFKDownloadErrorUnsafePath error naming kind when string cannot name a place inside the folder
+	it is appended to: it is empty or absolute, holds an empty, ".", or ".." component, a backslash,
+	or a NUL character, or, without separators, a /. nil when string is safe. */
+extern NSError * _Nullable NFKHFHubUnsafePathError(NSString * _Nullable string, NSString *kind, BOOL allowsSeparators);
 
 @interface NFKHFHub ()
 
 - (NSString *)normalizedRevision:(nullable NSString *)revision;
 - (NSURL *)URL:(NSURL *)base byAppendingPathString:(NSString *)pathString;
 - (nullable NSURL *)snapshotURLForRepo:(NSString *)repo revision:(nullable NSString *)revision;
+/*! The snapshot folder, or nil with the refusal of an unsafe repository or revision, or with
+	kNFKError_InferenceNotReady without a cache folder. */
+- (nullable NSURL *)snapshotURLForRepo:(nullable NSString *)repo
+							  revision:(nullable NSString *)revision
+								 error:(NSError * _Nullable *)outError;
+/*! The NFKDownloadErrorUnsafePath refusal of the first unsafe name, or nil. A nil or empty revision
+	is "main"; a nil path is not checked. */
+- (nullable NSError *)refusalForRepo:(nullable NSString *)repo
+							revision:(nullable NSString *)revision
+								path:(nullable NSString *)path;
+/*! YES when url, with its "." and ".." components applied, lies strictly inside the cache folder as
+	given or with its links resolved. Reads nothing from disk. */
+- (BOOL)isURL:(NSURL *)url insideCacheURL:(NSURL *)cacheDirectoryURL;
+/*! isURL:insideCacheURL:, failing with NFKDownloadErrorUnsafePath. Guards every write and removal. */
+- (BOOL)requireURL:(NSURL *)url insideCacheURL:(NSURL *)cacheDirectoryURL error:(NSError * _Nullable *)outError;
 - (void)markSnapshotUsedAtURL:(NSURL *)snapshotURL;
 - (void)excludeCacheFromBackupIfNeeded;
 - (void)performWithCacheAccess:(void (NS_NOESCAPE ^)(NSURL *cacheDirectoryURL))body;

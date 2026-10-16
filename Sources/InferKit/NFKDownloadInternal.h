@@ -55,6 +55,12 @@ typedef void (^NFKDownloadCompletionHandler)(NSURL * _Nullable localURL, NSError
 
 @end
 
+@interface NFKDownloadPlanFile ()
+/*! The snapshot folder the file caches in, which is its own repository's or URL's; nil for the
+	plan's snapshotURL. */
+@property (nonatomic, copy, nullable) NSURL *snapshotURL;
+@end
+
 @interface NFKDownloadPlan ()
 /*! The snapshot folder of the plan's files; nil without files. */
 @property (nonatomic, copy, nullable) NSURL *snapshotURL;
@@ -91,6 +97,9 @@ typedef void (^NFKDownloadCompletionHandler)(NSURL * _Nullable localURL, NSError
 @property (nonatomic, copy, nullable) NSArray<NSString *> *targetPaths;
 /*! The snapshot's bookkeeping files the removal deletes with the last content file. */
 @property (nonatomic, copy) NSArray<NSURL *> *bookkeepingURLs;
+/*! The plan of each snapshot a catalog source's files span, when they span more than one; nil for a
+	plan of one snapshot. The plan's own lists are the union of the parts'. */
+@property (nonatomic, copy, nullable) NSArray<NFKRemovalPlan *> *parts;
 @end
 
 NS_ASSUME_NONNULL_END
