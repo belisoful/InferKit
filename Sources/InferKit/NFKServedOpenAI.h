@@ -18,6 +18,9 @@ FOUNDATION_EXPORT NSString * _Nullable NFKServedSuffix(NSString * _Nullable text
 	event's data goes out as JSON. */
 FOUNDATION_EXPORT void (^NFKServedEventWriter(NFKHTTPResponse *response))(NSString *name, NSDictionary<NSString *, id> *data);
 
+/*! The token count a result's usage dictionary holds under key, or 0 when it holds no number there. */
+FOUNDATION_EXPORT NSInteger NFKServedUsageCount(id _Nullable usage, NSString *key);
+
 /*! The bytes and media type of a data URL, or nil for anything else. */
 FOUNDATION_EXPORT NSData * _Nullable NFKServedDataURLBytes(id _Nullable url, NSString * _Nullable * _Nullable outMediaType);
 

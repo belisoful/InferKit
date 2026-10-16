@@ -64,6 +64,11 @@ FOUNDATION_EXPORT NSDictionary<NSString *, id> *NFKMCPCallResult(NFKToolResult *
 
 @end
 
+/*! Starts a tools/call without holding the calling thread, calls completion once with the result, and
+	returns the block that cancels the call; nil for a tool it does not start. */
+typedef dispatch_block_t _Nullable (^NFKServedMCPToolStarter)(NFKInferenceTool *tool, NSDictionary<NSString *, id> *arguments,
+															 void (^completion)(NFKToolResult *result));
+
 /*!
 	@class      NFKServedMCP
 	@abstract   The Model Context Protocol endpoint, answered from the server's side.
@@ -80,18 +85,28 @@ FOUNDATION_EXPORT NSDictionary<NSString *, id> *NFKMCPCallResult(NFKToolResult *
 				session ends it. GET without a session is 405.
 
 				An Origin header naming another host is refused with 403, which keeps a web page from
-				reaching a local server through DNS rebinding. A tools/call runs off the connection's
-				queue and answers when the tool finishes.
+				reaching a local server through DNS rebinding, and a POST whose Content-Type names a type
+				other than JSON is refused with 415; a POST without one is read. A null params, or a
+				null field in it, is an absent one. A message whose envelope or params are of the wrong type is a
+				JSON-RPC error (-32600 or -32602); when it is the request's only message the reply is
+				400. A tools/call runs off the connection's queue and answers when the tool finishes; a
+				call the toolStarter starts holds no thread while it waits, and the calls of a batch
+				run at once. A tool that raises answers -32603.
 */
 @interface NFKServedMCP : NSObject
 
 - (instancetype)init NS_UNAVAILABLE;
 
+/*! Serves one request. toolStarter, when set, is offered each tools/call first: it starts the call
+	without holding the calling thread, calls completion once with the tool's result, and returns a
+	cancel block that the endpoint runs when the client leaves; it returns nil for a tool it does not
+	start, which then runs on the endpoint's worker. */
 + (void)serveRequest:(NFKHTTPRequest *)request
 			response:(NFKHTTPResponse *)response
 			   tools:(NSArray<NFKInferenceTool *> *)tools
 		instructions:(nullable NSString *)instructions
-			sessions:(NFKServedMCPSessionStore *)sessions;
+			sessions:(NFKServedMCPSessionStore *)sessions
+		 toolStarter:(nullable NFKServedMCPToolStarter)toolStarter;
 
 @end
 

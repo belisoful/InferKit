@@ -5,6 +5,7 @@
 
 #import "NFKServedMCP.h"
 #import "NFKServerObservationPrivate.h"
+#import "NFKServedRequestChecks.h"
 #import <InferKit/NFKInferKit.h>
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKAudioAsset.h>
@@ -14,6 +15,7 @@ static NSInteger const NFKJSONRPCParseError		= -32700;
 static NSInteger const NFKJSONRPCInvalidRequest	= -32600;
 static NSInteger const NFKJSONRPCMethodNotFound	= -32601;
 static NSInteger const NFKJSONRPCInvalidParams	= -32602;
+static NSInteger const NFKJSONRPCInternalError	= -32603;
 
 NSArray<NSString *> *NFKMCPProtocolVersions(void)
 {
@@ -543,6 +545,113 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 
 #pragma mark - Endpoint
 
+/*! The replies of one POST in message order, some given at once and some filled when a started tool call
+	finishes, and the cancel blocks of those calls, which run when the client leaves. */
+@interface NFKServedMCPExchange : NSObject
+- (instancetype)initWithResponse:(NFKHTTPResponse *)response;
+/*! Appends a reply; malformed marks one that refuses a message of the wrong type. */
+- (void)addReply:(NSDictionary *)reply malformed:(BOOL)malformed;
+/*! Appends a slot that fillSlot:reply: fills once, and returns its index. */
+- (NSUInteger)reserveSlot;
+- (void)fillSlot:(NSUInteger)slot reply:(NSDictionary *)reply;
+- (void)addCancel:(dispatch_block_t)cancel;
+/*! Calls handler on a global queue once every slot is filled. */
+- (void)finishWithHandler:(void (^)(NSArray<NSDictionary *> *replies, BOOL malformed))handler;
+@end
+
+@interface NFKServedMCPExchange ()
+@property (nonatomic, strong) NSMutableArray *replies;
+@property (nonatomic, strong) NSMutableArray<dispatch_block_t> *cancels;
+@property (nonatomic, strong) dispatch_group_t group;
+@property (nonatomic, assign) BOOL malformed;
+/*! Whether the client left, after which a call that starts is cancelled at once. */
+@property (nonatomic, assign) BOOL clientLeft;
+@end
+
+@implementation NFKServedMCPExchange
+
+- (instancetype)initWithResponse:(NFKHTTPResponse *)response
+{
+	self = [super init];
+	if (self != nil) {
+		_replies = [NSMutableArray array];
+		_cancels = [NSMutableArray array];
+		_group = dispatch_group_create();
+		__weak NFKServedMCPExchange *weakSelf = self;
+		response.disconnectHandler = ^{
+			[weakSelf cancelCalls];
+		};
+	}
+	return self;
+}
+
+- (void)addReply:(NSDictionary *)reply malformed:(BOOL)malformed
+{
+	@synchronized (self) {
+		[self.replies addObject:reply];
+		self.malformed = self.malformed || malformed;
+	}
+}
+
+- (NSUInteger)reserveSlot
+{
+	dispatch_group_enter(self.group);
+	@synchronized (self) {
+		[self.replies addObject:NSNull.null];
+		return self.replies.count - 1;
+	}
+}
+
+- (void)fillSlot:(NSUInteger)slot reply:(NSDictionary *)reply
+{
+	@synchronized (self) {
+		if (self.replies[slot] != NSNull.null) {
+			return;
+		}
+		self.replies[slot] = reply;
+	}
+	dispatch_group_leave(self.group);
+}
+
+- (void)addCancel:(dispatch_block_t)cancel
+{
+	BOOL cancelNow = NO;
+	@synchronized (self) {
+		[self.cancels addObject:cancel];
+		cancelNow = self.clientLeft;
+	}
+	if (cancelNow) {
+		cancel();
+	}
+}
+
+- (void)cancelCalls
+{
+	NSArray<dispatch_block_t> *cancels = nil;
+	@synchronized (self) {
+		self.clientLeft = YES;
+		cancels = [self.cancels copy];
+	}
+	for (dispatch_block_t cancel in cancels) {
+		cancel();
+	}
+}
+
+- (void)finishWithHandler:(void (^)(NSArray<NSDictionary *> *replies, BOOL malformed))handler
+{
+	dispatch_group_notify(self.group, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		NSArray<NSDictionary *> *replies = nil;
+		BOOL malformed = NO;
+		@synchronized (self) {
+			replies = [self.replies copy];
+			malformed = self.malformed;
+		}
+		handler(replies, malformed);
+	});
+}
+
+@end
+
 @implementation NFKServedMCP
 
 + (void)serveRequest:(NFKHTTPRequest *)request
@@ -550,8 +659,9 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 			   tools:(NSArray<NFKInferenceTool *> *)tools
 		instructions:(nullable NSString *)instructions
 			sessions:(NFKServedMCPSessionStore *)sessions
+		 toolStarter:(nullable NFKServedMCPToolStarter)toolStarter
 {
-	if (![self originIsAllowedFor:request]) {
+	if (!NFKServedOriginIsAllowed(request)) {
 		[response sendStatus:403 JSONObject:[self errorWithIdentifier:nil code:NFKJSONRPCInvalidRequest
 															  message:@"the Origin header names another host"] headers:nil];
 		return;
@@ -569,6 +679,11 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 	}
 	if (![request.method isEqualToString:@"POST"]) {
 		[response sendStatus:405 headers:@{ @"Allow": @"GET, POST, DELETE" } body:nil];
+		return;
+	}
+	if (!NFKServedContentTypeAcceptsJSON([request valueForHeader:@"content-type"])) {
+		[response sendStatus:415 JSONObject:[self errorWithIdentifier:nil code:NFKJSONRPCInvalidRequest
+															  message:@"the body is JSON-RPC; send it with Content-Type: application/json"] headers:nil];
 		return;
 	}
 	id body = request.body.length > 0 ? [NSJSONSerialization JSONObjectWithData:request.body options:0 error:NULL] : nil;
@@ -592,18 +707,14 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 	}
 	[sessions beginRequestInSession:session];
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
-		NSMutableArray *replies = [NSMutableArray array];
+		NFKServedMCPExchange *exchange = [[NFKServedMCPExchange alloc] initWithResponse:response];
 		NSString *issued = nil;
 		for (id message in messages) {
 			if ([self isResponse:message]) {
 				[sessions receivedResponseWithIdentifier:message[@"id"] inSession:session];
 				continue;
 			}
-			NSDictionary *reply = [self replyTo:message tools:tools instructions:instructions];
-			if (reply == nil) {
-				continue;
-			}
-			[replies addObject:reply];
+			NSDictionary *reply = [self answer:message tools:tools instructions:instructions toolStarter:toolStarter exchange:exchange];
 			NSDictionary *result = reply[@"result"];
 			if (issued == nil && [message[@"method"] isEqual:@"initialize"] && [result isKindOfClass:NSDictionary.class]) {
 				NSDictionary *params = [message[@"params"] isKindOfClass:NSDictionary.class] ? message[@"params"] : @{};
@@ -611,13 +722,15 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 				issued = [sessions issueSessionForRequest:request clientInfo:clientInfo protocolVersion:result[@"protocolVersion"]];
 			}
 		}
-		[sessions endRequestInSession:session];
 		NSDictionary *headers = issued != nil ? @{ @"Mcp-Session-Id": issued } : nil;
-		if (replies.count == 0) {
-			[response sendStatus:202 headers:headers body:nil];
-			return;
-		}
-		[response sendStatus:200 JSONObject:batch ? replies : replies.firstObject headers:headers];
+		[exchange finishWithHandler:^(NSArray<NSDictionary *> *replies, BOOL malformed) {
+			[sessions endRequestInSession:session];
+			if (replies.count == 0) {
+				[response sendStatus:202 headers:headers body:nil];
+				return;
+			}
+			[response sendStatus:!batch && malformed ? 400 : 200 JSONObject:batch ? replies : replies.firstObject headers:headers];
+		}];
 	});
 }
 
@@ -664,33 +777,116 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 		&& (message[@"result"] != nil || message[@"error"] != nil);
 }
 
-// A browser sends Origin; a page on another host that resolves to this machine names its own.
-+ (BOOL)originIsAllowedFor:(NFKHTTPRequest *)request
-{
-	NSString *origin = [request valueForHeader:@"origin"];
-	if (origin.length == 0 || [origin isEqualToString:@"null"]) {
-		return origin.length == 0;
-	}
-	NSString *host = [NSURL URLWithString:origin].host.lowercaseString;
-	if ([@[ @"localhost", @"127.0.0.1", @"::1" ] containsObject:host ?: @""]) {
-		return YES;
-	}
-	NSString *served = [[[request valueForHeader:@"host"] ?: @"" componentsSeparatedByString:@":"].firstObject lowercaseString];
-	return host.length > 0 && [host isEqualToString:served];
-}
-
-/*! The reply to one message, or nil for a notification or a response, which take none. */
-+ (nullable NSDictionary *)replyTo:(id)message tools:(NSArray<NFKInferenceTool *> *)tools instructions:(nullable NSString *)instructions
+/*! The refusal of a message whose envelope is not JSON-RPC 2.0: not an object, another jsonrpc, an id
+	that is not a string, a number, or null, or a method that is not a string. nil for a well-formed one. */
++ (nullable NSDictionary *)envelopeErrorOf:(id)message
 {
 	if (![message isKindOfClass:NSDictionary.class] || ![message[@"jsonrpc"] isEqual:@"2.0"]) {
 		return [self errorWithIdentifier:nil code:NFKJSONRPCInvalidRequest message:@"not a JSON-RPC 2.0 message"];
 	}
 	id identifier = message[@"id"];
-	NSString *method = [message[@"method"] isKindOfClass:NSString.class] ? message[@"method"] : nil;
-	if (identifier == nil || method == nil) {
+	if (identifier != nil && !NFKServedValueIsOfType(identifier, @"string|number|null")) {
+		return [self errorWithIdentifier:nil code:NFKJSONRPCInvalidRequest message:@"id must be a string, a number, or null"];
+	}
+	NSError *typeError = NFKServedFieldTypeError(message, @{ @"method": @"string" }, nil);
+	return typeError != nil ? [self errorWithIdentifier:identifier code:NFKJSONRPCInvalidRequest message:typeError.localizedDescription] : nil;
+}
+
+/*! The refusal of a request's params whose fields are of the wrong type for its method, or nil. */
++ (nullable NSError *)paramsTypeErrorOf:(id)params method:(NSString *)method
+{
+	NSDictionary<NSString *, NSDictionary<NSString *, NSString *> *> *fields = @{
+		@"initialize": @{ @"protocolVersion": @"string", @"capabilities": @"object", @"clientInfo": @"object" },
+		@"tools/call": @{ @"name": @"string", @"arguments": @"object" } };
+	return NFKServedFieldTypeError(params, fields[method] ?: @{}, @"params");
+}
+
+/*! Answers one message into exchange: a reply now, a slot a started tool call fills later, or nothing for
+	a notification. Returns the reply it gave now, which initialize's session reads. */
++ (nullable NSDictionary *)answer:(id)message
+							tools:(NSArray<NFKInferenceTool *> *)tools
+					 instructions:(nullable NSString *)instructions
+					  toolStarter:(nullable NFKServedMCPToolStarter)toolStarter
+						 exchange:(NFKServedMCPExchange *)exchange
+{
+	NSDictionary *refusal = [self envelopeErrorOf:message];
+	if (refusal != nil) {
+		[exchange addReply:refusal malformed:YES];
+		return refusal;
+	}
+	id identifier = message[@"id"];
+	NSString *method = message[@"method"];
+	if (identifier != nil && method == nil) {
+		NSDictionary *reply = [self errorWithIdentifier:identifier code:NFKJSONRPCInvalidRequest message:@"a request names its method"];
+		[exchange addReply:reply malformed:YES];
+		return reply;
+	}
+	if (identifier == nil) {
 		return nil;
 	}
-	NSDictionary *params = [message[@"params"] isKindOfClass:NSDictionary.class] ? message[@"params"] : @{};
+	id params = message[@"params"];
+	NSError *typeError = [self paramsTypeErrorOf:params method:method];
+	if (typeError != nil) {
+		NSDictionary *reply = [self errorWithIdentifier:identifier code:NFKJSONRPCInvalidParams message:typeError.localizedDescription];
+		[exchange addReply:reply malformed:YES];
+		return reply;
+	}
+	params = [params isKindOfClass:NSDictionary.class] ? NFKServedWithoutNulls(params) : @{};
+	NFKInferenceTool *tool = [method isEqualToString:@"tools/call"] ? [self toolNamed:params[@"name"] in:tools] : nil;
+	if (tool != nil && toolStarter != nil) {
+		NSUInteger slot = [exchange reserveSlot];
+		__block BOOL completed = NO;
+		dispatch_block_t cancel = nil;
+		@try {
+			cancel = toolStarter(tool, params[@"arguments"] ?: @{}, ^(NFKToolResult *result) {
+				completed = YES;
+				[exchange fillSlot:slot reply:[self callReplyWithIdentifier:identifier result:result]];
+			});
+		} @catch (NSException *exception) {
+			[exchange fillSlot:slot reply:[self errorWithIdentifier:identifier code:NFKJSONRPCInternalError
+														   message:NFKServedExceptionError(exception).localizedDescription]];
+			return nil;
+		}
+		if (cancel != nil) {
+			[exchange addCancel:cancel];
+			return nil;
+		}
+		if (completed) {
+			return nil;
+		}
+		[exchange fillSlot:slot reply:[self replyTo:message params:params tools:tools instructions:instructions]];
+		return nil;
+	}
+	NSDictionary *reply = [self replyTo:message params:params tools:tools instructions:instructions];
+	[exchange addReply:reply malformed:NO];
+	return reply;
+}
+
++ (nullable NFKInferenceTool *)toolNamed:(nullable NSString *)name in:(NSArray<NFKInferenceTool *> *)tools
+{
+	for (NFKInferenceTool *candidate in tools) {
+		if ([candidate.name isEqualToString:name]) {
+			return candidate;
+		}
+	}
+	return nil;
+}
+
+/*! A tools/call reply for a result, or -32603 when the result cannot be written as MCP content. */
++ (NSDictionary *)callReplyWithIdentifier:(id)identifier result:(NFKToolResult *)result
+{
+	@try {
+		return [self resultWithIdentifier:identifier result:NFKMCPCallResult(result)];
+	} @catch (NSException *exception) {
+		return [self errorWithIdentifier:identifier code:NFKJSONRPCInternalError message:NFKServedExceptionError(exception).localizedDescription];
+	}
+}
+
+/*! The reply to a well-formed request, run on the calling thread; a tool that raises answers -32603. */
++ (NSDictionary *)replyTo:(NSDictionary *)message params:(NSDictionary *)params tools:(NSArray<NFKInferenceTool *> *)tools instructions:(nullable NSString *)instructions
+{
+	id identifier = message[@"id"];
+	NSString *method = message[@"method"];
 	if ([method isEqualToString:@"initialize"]) {
 		return [self resultWithIdentifier:identifier result:[self initializeResult:params instructions:instructions]];
 	}
@@ -705,24 +901,20 @@ static BOOL NFKMCPSameKeyName(NSString * _Nullable left, NSString * _Nullable ri
 		return [self resultWithIdentifier:identifier result:@{ @"tools": listed }];
 	}
 	if ([method isEqualToString:@"tools/call"]) {
-		NSString *name = [params[@"name"] isKindOfClass:NSString.class] ? params[@"name"] : nil;
-		NFKInferenceTool *tool = nil;
-		for (NFKInferenceTool *candidate in tools) {
-			if ([candidate.name isEqualToString:name]) {
-				tool = candidate;
-				break;
-			}
-		}
+		NSString *name = params[@"name"];
+		NFKInferenceTool *tool = [self toolNamed:name in:tools];
 		if (tool == nil) {
 			return [self errorWithIdentifier:identifier code:NFKJSONRPCInvalidParams
 									 message:[NSString stringWithFormat:@"no tool named %@", name ?: @"(none)"]];
 		}
-		NSDictionary *arguments = [params[@"arguments"] isKindOfClass:NSDictionary.class] ? params[@"arguments"] : @{};
-		return [self resultWithIdentifier:identifier result:NFKMCPCallResult([tool invokeWithArguments:arguments])];
+		@try {
+			return [self callReplyWithIdentifier:identifier result:[tool invokeWithArguments:params[@"arguments"] ?: @{}]];
+		} @catch (NSException *exception) {
+			return [self errorWithIdentifier:identifier code:NFKJSONRPCInternalError message:NFKServedExceptionError(exception).localizedDescription];
+		}
 	}
 	return [self errorWithIdentifier:identifier code:NFKJSONRPCMethodNotFound message:[@"no method " stringByAppendingString:method]];
 }
-
 // The client's version when the server speaks it, otherwise the newest the server speaks, which a
 // client that cannot speak it disconnects from.
 + (NSDictionary *)initializeResult:(NSDictionary *)params instructions:(nullable NSString *)instructions
