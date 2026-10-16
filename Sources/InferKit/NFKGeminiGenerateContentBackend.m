@@ -18,6 +18,7 @@
 #import "NFKRemoteMediaSupport.h"
 #import "NFKToolMessageSupport.h"
 #import "NFKRemoteTransportPrivate.h"
+#import "NFKJobGuard.h"
 
 /*! The contract keys this backend translates or has no field for; every other parameter goes into
 	generationConfig, or the request's top level for the names in NFKGenerateContentTopLevelParameters. */
@@ -310,28 +311,30 @@ static const NSUInteger NFKGenerateContentHopLimit = 64;
 			[job reportProgress:-1.0 partialResult:[NFKInferenceResult resultWithOutputs:@{ NFKOutputText: [self textOfParts:state.parts] }]];
 		}
 	} completionHandler:^(NSHTTPURLResponse * _Nullable response, NSData * _Nullable errorBody, NSError * _Nullable streamError) {
-		if (finished || job.status == NFKInferenceJobStatusCancelled) {
-			return;
-		}
-		finished = YES;
-		NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
-		if (failure == nil && state.failure != nil) {
-			failure = [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:state.failure];
-		}
-		NSDictionary *reply = [self replyOfState:state];
-		if (failure == nil && [self replyAsksToContinue:reply]) {
-			NSURLRequest *next = [self request:urlRequest continuingReply:reply state:state error:&failure];
-			if (next != nil) {
-				[self streamHop:next state:state job:job request:request];
+		NFKJobRunGuarded(job, ^{
+			if (finished || job.status == NFKInferenceJobStatusCancelled) {
 				return;
 			}
-		}
-		NFKInferenceResult *result = failure == nil ? [self resultFromReply:reply request:request error:&failure] : nil;
-		if (result != nil) {
-			[job finishWithResult:result];
-		} else {
-			[job finishWithError:failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the stream failed"]];
-		}
+			finished = YES;
+			NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
+			if (failure == nil && state.failure != nil) {
+				failure = [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:state.failure];
+			}
+			NSDictionary *reply = [self replyOfState:state];
+			if (failure == nil && [self replyAsksToContinue:reply]) {
+				NSURLRequest *next = [self request:urlRequest continuingReply:reply state:state error:&failure];
+				if (next != nil) {
+					[self streamHop:next state:state job:job request:request];
+					return;
+				}
+			}
+			NFKInferenceResult *result = failure == nil ? [self resultFromReply:reply request:request error:&failure] : nil;
+			if (result != nil) {
+				[job finishWithResult:result];
+			} else {
+				[job finishWithError:failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the stream failed"]];
+			}
+		});
 	}];
 	job.cancellationHandler = cancel;
 	// A cancel that arrived while the previous hop handed over called that hop's finished handler.

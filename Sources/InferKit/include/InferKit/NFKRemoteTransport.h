@@ -74,16 +74,16 @@ typedef void (^ NS_SWIFT_SENDABLE NFKRemoteStreamCompletion)(NSHTTPURLResponse *
 	@discussion The shape of server-sent events and of newline-delimited JSON alike. lineHandler runs
 				once per complete line, without its newline, on the session's delegate queue; a
 				success status streams, while any other status is collected whole and handed to the
-				completion as errorBody, since a provider explains a rejected request in a JSON body
-				rather than a stream. A connection failure arrives as kNFKError_RemoteUnreachable. The
+				completion as errorBody, since a provider explains a rejected request in a JSON body.
+				A connection failure arrives as kNFKError_RemoteUnreachable. The
 				returned block cancels the request; a cancelled request completes with
 				NSURLErrorCancelled. The session's configuration is reused, so a caller's proxy or
 				headers carry over, and so does the pin of a session from
 				sessionWithPinnedCertificateSHA256:. A lineHandler that raises an Objective-C exception
 				ends the stream: no further line arrives, and the completion receives
-				kNFKError_InferenceBackendFailure naming the exception. A completion that raises is
-				called once more with that error and no response, so a job it finishes fails instead of
-				waiting.
+				kNFKError_InferenceBackendFailure naming the exception. The completion runs exactly
+				once. An exception it raises is caught and logged as a fault, so a completion that
+				finishes a job guards its own work and ends the job on its own error path.
 */
 + (void (^ NS_SWIFT_SENDABLE)(void))streamRequest:(NSURLRequest *)request
 						session:(NSURLSession *)session

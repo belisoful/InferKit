@@ -230,17 +230,19 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 			[job reportProgress:-1.0 partialResult:[NFKInferenceResult resultWithOutputs:@{ NFKOutputAudio: [state.audio copy] }]];
 		}
 	} completionHandler:^(NSHTTPURLResponse * _Nullable response, NSData * _Nullable errorBody, NSError * _Nullable streamError) {
-		if (state.finished || job.status == NFKInferenceJobStatusCancelled) {
-			return;
-		}
-		state.finished = YES;
-		NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
-		NFKInferenceResult *result = failure == nil ? [self resultForAudio:state.audio format:format error:&failure] : nil;
-		if (result != nil) {
-			[job finishWithResult:result];
-		} else {
-			[job finishWithError:failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the speech call failed"]];
-		}
+		NFKJobRunGuarded(job, ^{
+			if (state.finished || job.status == NFKInferenceJobStatusCancelled) {
+				return;
+			}
+			state.finished = YES;
+			NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
+			NFKInferenceResult *result = failure == nil ? [self resultForAudio:state.audio format:format error:&failure] : nil;
+			if (result != nil) {
+				[job finishWithResult:result];
+			} else {
+				[job finishWithError:failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the speech call failed"]];
+			}
+		});
 	}];
 	job.cancellationHandler = cancel;
 	return job;

@@ -10,6 +10,7 @@
 #import <InferKit/NFKModelCatalog.h>
 #import <InferKit/NFKModelMemory.h>
 #import "NFKInferenceWireCoding.h"
+#import "NFKJobGuard.h"
 
 @interface NFKRemoteInferKitBackend ()
 @property (nonatomic, copy, nullable) NSSet<NSString *> *preparedInputKeys;
@@ -284,14 +285,16 @@
 				?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the served run failed"]];
 		}
 	} completionHandler:^(NSHTTPURLResponse * _Nullable response, NSData * _Nullable errorBody, NSError * _Nullable streamError) {
-		[self recordLoadFromResponse:response];
-		if (finished || job.status == NFKInferenceJobStatusCancelled) {
-			return;
-		}
-		finished = YES;
-		NSError *failure = streamError ?: [self errorForResponse:response data:errorBody];
-		[job finishWithError:failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure
-																   reason:@"the server closed the stream without a result"]];
+		NFKJobRunGuarded(job, ^{
+			[self recordLoadFromResponse:response];
+			if (finished || job.status == NFKInferenceJobStatusCancelled) {
+				return;
+			}
+			finished = YES;
+			NSError *failure = streamError ?: [self errorForResponse:response data:errorBody];
+			[job finishWithError:failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure
+																	   reason:@"the server closed the stream without a result"]];
+		});
 	}];
 	job.cancellationHandler = cancel;
 	return job;

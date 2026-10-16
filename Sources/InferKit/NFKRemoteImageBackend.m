@@ -191,17 +191,19 @@ static NSInteger NFKImageGreatestCommonDivisor(NSInteger a, NSInteger b)
 			CVPixelBufferRelease(partial);
 		}
 	} completionHandler:^(NSHTTPURLResponse * _Nullable response, NSData * _Nullable errorBody, NSError * _Nullable streamError) {
-		if (finished || job.status == NFKInferenceJobStatusCancelled) {
-			return;
-		}
-		finished = YES;
-		NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
-		NFKInferenceResult *result = failure == nil ? [self resultFromBody:@{ @"data": completed } error:&failure] : nil;
-		if (result != nil) {
-			[job finishWithResult:result];
-		} else {
-			[job finishWithError:failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the image call failed"]];
-		}
+		NFKJobRunGuarded(job, ^{
+			if (finished || job.status == NFKInferenceJobStatusCancelled) {
+				return;
+			}
+			finished = YES;
+			NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
+			NFKInferenceResult *result = failure == nil ? [self resultFromBody:@{ @"data": completed } error:&failure] : nil;
+			if (result != nil) {
+				[job finishWithResult:result];
+			} else {
+				[job finishWithError:failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the image call failed"]];
+			}
+		});
 	}];
 	job.cancellationHandler = cancel;
 	return job;

@@ -17,6 +17,7 @@
 #import <InferKit/NFKRemoteFileStore.h>
 #import "NFK_ARC.h"
 #import "NFKAnthropicBackendPrivate.h"
+#import "NFKJobGuard.h"
 
 /*! The tool a schema is asked for through: the API has no response format, so the reply is
 	forced into a tool whose input schema is the caller's. */
@@ -258,16 +259,18 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 			[job reportProgress:-1.0 partialResult:[NFKInferenceResult resultWithOutputs:partial]];
 		}
 	} completionHandler:^(NSHTTPURLResponse * _Nullable response, NSData * _Nullable errorBody, NSError * _Nullable streamError) {
-		if (state.finished || job.status == NFKInferenceJobStatusCancelled) {
-			return;
-		}
-		state.finished = YES;
-		NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
-		if (failure != nil) {
-			[job finishWithError:failure];
-			return;
-		}
-		[self finishJob:job fromStreamState:state expectsStructured:expectsStructured];
+		NFKJobRunGuarded(job, ^{
+			if (state.finished || job.status == NFKInferenceJobStatusCancelled) {
+				return;
+			}
+			state.finished = YES;
+			NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
+			if (failure != nil) {
+				[job finishWithError:failure];
+				return;
+			}
+			[self finishJob:job fromStreamState:state expectsStructured:expectsStructured];
+		});
 	}];
 	job.cancellationHandler = cancel;
 	return job;

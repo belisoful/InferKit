@@ -3,8 +3,9 @@
 //  InferKitTests
 //
 //  The core's job backends fail a job with an error when work on their own queues raises: a run
-//  NFKInferenceSubmit queues, a remote stream's line and completion handlers, and a served job backend
-//  that raises on its queue, answered 500 by a server that keeps serving.
+//  NFKInferenceSubmit queues, a remote stream's line handler, a remote backend's stream completion, and
+//  a served job backend that raises on its queue, answered 500 by a server that keeps serving. A
+//  stream's completion runs once even when it raises.
 //
 
 #import <XCTest/XCTest.h>
@@ -48,6 +49,30 @@
 	NFKJobGuardRaisingBackend *inner = [[NFKJobGuardRaisingBackend alloc] init];
 	inner.raises = self.raises;
 	return NFKInferenceSubmit(inner, request, NULL);
+}
+
+@end
+
+@interface NFKRemoteBackend (NFKJobGuardTests)
+- (void)finishJob:(NFKInferenceJob *)job
+   fromStreamState:(id)state
+ expectsStructured:(BOOL)expectsStructured
+	   audioFormat:(nullable NSString *)audioFormat;
+@end
+
+/*! A remote backend whose finishing of a stream that closed without [DONE], which its stream completion
+	runs, raises. */
+@interface NFKJobGuardFinishRaisingBackend : NFKRemoteBackend
+@end
+
+@implementation NFKJobGuardFinishRaisingBackend
+
+- (void)finishJob:(NFKInferenceJob *)job
+   fromStreamState:(id)state
+ expectsStructured:(BOOL)expectsStructured
+	   audioFormat:(nullable NSString *)audioFormat
+{
+	[NSException raise:NSInvalidArgumentException format:@"finishing the stream raises"];
 }
 
 @end
@@ -124,25 +149,74 @@
 	XCTAssertTrue([reported.localizedDescription containsString:NSRangeException], @"%@", reported);
 }
 
-- (void)testAStreamWhoseCompletionRaisesIsCalledAgainWithTheError
+- (void)testAStreamWhoseCompletionRaisesRunsItOnce
 {
 	NFKInferenceServer *server = [self streamingServer];
-	XCTestExpectation *retried = [self expectationWithDescription:@"the completion runs again"];
+	XCTestExpectation *called = [self expectationWithDescription:@"the completion runs"];
+	XCTestExpectation *again = [self expectationWithDescription:@"the completion runs a second time"];
+	again.inverted = YES;
 	__block NSUInteger calls = 0;
-	__block NSError *second = nil;
 	[NFKRemoteTransport streamRequest:[self linesRequestOn:server] session:NSURLSession.sharedSession lineHandler:^(NSString *line) {
 	} completionHandler:^(NSHTTPURLResponse *response, NSData *errorBody, NSError *error) {
 		calls += 1;
 		if (calls == 1) {
+			[called fulfill];
 			[NSException raise:NSGenericException format:@"the completion raises"];
 		}
-		second = error;
-		[retried fulfill];
+		[again fulfill];
 	}];
-	[self waitForExpectations:@[ retried ] timeout:10];
-	XCTAssertEqual(calls, 2u);
-	XCTAssertEqual(second.code, kNFKError_InferenceBackendFailure);
-	XCTAssertTrue([second.localizedDescription containsString:NSGenericException], @"%@", second);
+	[self waitForExpectations:@[ called ] timeout:10];
+	[self waitForExpectations:@[ again ] timeout:2];
+	XCTAssertEqual(calls, 1u, @"a completion is called once, raising or not");
+
+	XCTestExpectation *next = [self expectationWithDescription:@"the next stream completes"];
+	__block NSUInteger lines = 0;
+	[NFKRemoteTransport streamRequest:[self linesRequestOn:server] session:NSURLSession.sharedSession lineHandler:^(NSString *line) {
+		lines += line.length > 0 ? 1 : 0;
+	} completionHandler:^(NSHTTPURLResponse *response, NSData *errorBody, NSError *error) {
+		[next fulfill];
+	}];
+	[self waitForExpectations:@[ next ] timeout:10];
+	XCTAssertEqual(lines, 3u, @"the process keeps serving");
+}
+
+- (void)testARemoteJobWhoseStreamCompletionRaisesFailsOnce
+{
+	NFKInferenceServer *server = [[NFKInferenceServer alloc] init];
+	server.port = 0;
+	server.loopbackOnly = YES;
+	server.advertisesService = NO;
+	NSError *error = nil;
+	XCTAssertTrue([server addRouteForPathPrefix:@"/raw" handler:^(NFKServerRouteRequest *request, NFKServerRouteResponse *response) {
+		[response beginStreamWithStatus:200 headers:@{ @"Content-Type": @"text/event-stream" }];
+		[response sendEventData:@"{\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}"];
+		[response endStream];
+	} error:&error], @"%@", error);
+	XCTAssertTrue([server startWithError:&error], @"%@", error);
+	[self addTeardownBlock:^{
+		[server stop];
+	}];
+	NSURL *endpoint = [NSURL URLWithString:[NSString stringWithFormat:@"http://localhost:%u/raw/chat/completions", (unsigned)server.listeningPort]];
+	NFKJobGuardFinishRaisingBackend *backend = [NFKJobGuardFinishRaisingBackend backendWithEndpointURL:endpoint];
+	backend.modelName = @"served";
+	XCTestExpectation *finished = [self expectationWithDescription:@"the job finishes"];
+	XCTestExpectation *again = [self expectationWithDescription:@"the job finishes a second time"];
+	again.inverted = YES;
+	__block NSUInteger completions = 0;
+	NFKInferenceJob *job = [backend submitInferenceJobForRequest:[self request]];
+	job.completionHandler = ^(NFKInferenceJob *done) {
+		completions += 1;
+		if (completions == 1) {
+			[finished fulfill];
+		} else {
+			[again fulfill];
+		}
+	};
+	[self waitForExpectations:@[ finished ] timeout:10];
+	[self waitForExpectations:@[ again ] timeout:2];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusFailed, @"the backend's own guard ends its job");
+	XCTAssertTrue([job.error.localizedDescription containsString:NSInvalidArgumentException], @"%@", job.error);
+	XCTAssertEqual(completions, 1u);
 }
 
 - (void)testAServedJobBackendThatRaisesOnItsQueueAnswers500

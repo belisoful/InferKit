@@ -191,16 +191,18 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 			[job reportProgress:-1.0 partialResult:[NFKInferenceResult resultWithOutputs:@{ NFKOutputText: [state.text copy] }]];
 		}
 	} completionHandler:^(NSHTTPURLResponse * _Nullable response, NSData * _Nullable errorBody, NSError * _Nullable streamError) {
-		if (state.finished || job.status == NFKInferenceJobStatusCancelled) {
-			return;
-		}
-		state.finished = YES;
-		NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
-		if (failure != nil) {
-			[job finishWithError:failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the transcription call failed"]];
-			return;
-		}
-		[job finishWithResult:[self resultFromStreamState:state]];
+		NFKJobRunGuarded(job, ^{
+			if (state.finished || job.status == NFKInferenceJobStatusCancelled) {
+				return;
+			}
+			state.finished = YES;
+			NSError *failure = streamError ?: [NFKRemoteTransport errorForResponse:response data:errorBody];
+			if (failure != nil) {
+				[job finishWithError:failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the transcription call failed"]];
+				return;
+			}
+			[job finishWithResult:[self resultFromStreamState:state]];
+		});
 	}];
 	job.cancellationHandler = cancel;
 	return job;

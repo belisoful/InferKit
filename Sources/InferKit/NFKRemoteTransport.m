@@ -9,6 +9,7 @@
 #import "NFKRemoteTransportPrivate.h"
 #import <objc/runtime.h>
 #import "NFKJobGuard.h"
+#import <os/log.h>
 
 NSString * const NFKAnthropicAPIVersion = @"2023-06-01";
 NSString * const NFKRemoteErrorStatusCodeKey = @"NFKRemoteErrorStatusCode";
@@ -148,10 +149,20 @@ NSError * _Nullable NFKRemotePinPreflightError(NSURLSession *session, NSURL * _N
 
 #pragma mark - Line stream
 
+static os_log_t NFKRemoteTransportLog(void)
+{
+	static os_log_t log;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		log = os_log_create("com.inferkit", "transport");
+	});
+	return log;
+}
+
 /*! Splits a streamed body into lines as the bytes arrive; collects a failing status's body whole. A line
 	handler that raises ends the stream, and the completion handler receives the exception as its
-	error; a completion handler that raises is called once more with that error, so the job it
-	finishes fails instead of waiting. */
+	error. The completion handler runs once; an exception it raises is logged as a fault and goes no
+	further, and the caller's own guard ends its job. */
 @interface NFKRemoteLineStream : NSObject <NSURLSessionDataDelegate>
 @property (nonatomic, copy) void (^lineHandler)(NSString *line);
 @property (nonatomic, copy) NFKRemoteStreamCompletion completionHandler;
@@ -238,11 +249,8 @@ didReceiveResponse:(NSURLResponse *)response
 	@try {
 		self.completionHandler(self.response, errorBody, reported);
 	} @catch (NSException *exception) {
-		@try {
-			self.completionHandler(nil, nil, NFKJobExceptionError(exception));
-		} @catch (NSException *repeated) {
-			// The handler raised on its error path too; the process keeps running.
-		}
+		os_log_fault(NFKRemoteTransportLog(), "a stream's completion handler raised %{public}@: %{public}@",
+					 exception.name, exception.reason ?: @"no reason given");
 	}
 	[session finishTasksAndInvalidate];
 }

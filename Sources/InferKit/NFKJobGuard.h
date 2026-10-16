@@ -3,7 +3,7 @@
 //  InferKit
 //
 //  What the core's job backends use where they run work on a queue of their own: an exception the work
-//  raises fails the job with an error instead of ending the process. Private to the core.
+//  raises fails the job with an error, and the process keeps running. Private to the core.
 //
 
 #import <Foundation/Foundation.h>
