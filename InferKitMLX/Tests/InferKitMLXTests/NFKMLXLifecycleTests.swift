@@ -94,6 +94,20 @@ private final class NFKMLXGatedTestBackend: NSObject, NFKInferenceBackend {
         waitAtGate()
         return 3
     }
+
+    @objc func scaled(_ value: Int, by factor: Int) -> Int {
+        value * factor
+    }
+
+    @objc func label(_ prefix: String) -> String {
+        "\(prefix) \(backendIdentifier)"
+    }
+}
+
+/// Messages only the gated backend implements, sent to the wrapper.
+@objc private protocol NFKMLXGatedMessages {
+    func scaled(_ value: Int, by factor: Int) -> Int
+    func label(_ prefix: String) -> String
 }
 
 /// The token count, sent as an Objective-C message: the Swift 6.4 compiler crashes generating a call
@@ -418,18 +432,34 @@ final class NFKMLXLifecycleTests: XCTestCase {
         XCTAssertTrue(backend.responds(to: selector), "the wrapper answers for the held class")
 
         let returned = DispatchSemaphore(value: 0)
+        let workerMayEnd = DispatchSemaphore(value: 0)
+        let loadedOnReturn = NFKMLXLockedValue<Bool>()
         DispatchQueue.global(qos: .userInitiated).async {
-            autoreleasepool {
-                _ = backend.perform(selector)
-            }
+            _ = backend.perform(selector)
+            loadedOnReturn.set(backend.isLoaded)
             returned.signal()
+            _ = workerMayEnd.wait(timeout: .now() + 30)
         }
         XCTAssertEqual(entered.wait(timeout: .now() + 30), .success, "the forwarded message reached the held backend")
         backend.unload()
         XCTAssertTrue(backend.isLoaded, "the forwarded message in flight keeps the model")
         gate.signal()
         XCTAssertEqual(returned.wait(timeout: .now() + 30), .success, "the forwarded message returned")
-        XCTAssertFalse(backend.isLoaded, "the unload freed the model after the message returned")
+        XCTAssertEqual(loadedOnReturn.value, false, "the model was freed when the message returned")
+        XCTAssertFalse(backend.isLoaded, "the model is freed while the worker's block still runs")
+        workerMayEnd.signal()
+    }
+
+    func testAForwardedMessageCarriesItsArgumentsAndResultAndLoadsAnUnloadedModel() throws {
+        let backend = try NFKMLXReloadableBackend {
+            NFKMLXGatedTestBackend(entered: DispatchSemaphore(value: 0), gate: DispatchSemaphore(value: 0))
+        }
+        backend.unload()
+        XCTAssertFalse(backend.isLoaded)
+        let messages = unsafeBitCast(backend, to: NFKMLXGatedMessages.self)
+        XCTAssertEqual(messages.scaled(6, by: 7), 42)
+        XCTAssertEqual(messages.label("from"), "from lifecycle-test-gated-weightless")
+        XCTAssertTrue(backend.isLoaded, "the forwarded message built the model")
     }
 
     func testAnUnloadDuringATokenCountFreesTheModelAfterTheCount() throws {
@@ -561,7 +591,10 @@ final class NFKMLXLifecycleTests: XCTestCase {
         let shard = folder.appendingPathComponent("transformer/model.safetensors")
         try writePlaceholder(folder.appendingPathComponent("config.json"))
         try writePlaceholder(shard)
-        NFKMLXModelRegistry.register(name: Self.localFileName) { _ in NFKMLXWeightlessTestBackend() }
+        NFKMLXModelRegistry.register(name: Self.localFileName) { _ in
+            _ = try Data(contentsOf: shard)
+            return NFKMLXWeightlessTestBackend()
+        }
         let backend = try NFKMLXModelRegistry.backend(named: Self.localFileName, weightsURL: folder)
         backend.unload?()
         try FileManager.default.removeItem(at: shard)
@@ -574,5 +607,63 @@ final class NFKMLXLifecycleTests: XCTestCase {
             XCTAssertTrue(path.hasSuffix("transformer/model.safetensors"), path)
         }
         XCTAssertEqual(backend.isLoaded, false)
+    }
+
+    /// A safetensors file with an empty header, which `NFKMLXSafetensors.entries(inFile:)` reads.
+    private func writeEmptySafetensors(_ url: URL) throws {
+        let header = Data(#"{"__metadata__":{}}"#.utf8)
+        var length = UInt64(header.count).littleEndian
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try (Data(bytes: &length, count: 8) + header).write(to: url)
+    }
+
+    func testASiblingRemovedFromTheFolderLeavesTheReloadWorkingAndTheOpenedFileIsRequired() throws {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let weights = folder.appendingPathComponent("model.safetensors")
+        let sibling = folder.appendingPathComponent("other-variant/model.safetensors")
+        let partial = folder.appendingPathComponent("other-variant/model-2.safetensors.download")
+        try writeEmptySafetensors(weights)
+        try writePlaceholder(sibling)
+        try writePlaceholder(partial)
+        NFKMLXModelRegistry.register(name: Self.localFileName) { _ in
+            _ = try NFKMLXSafetensors.entries(inFile: weights)
+            return NFKMLXWeightlessTestBackend()
+        }
+        let backend = try NFKMLXModelRegistry.backend(named: Self.localFileName, weightsURL: folder)
+        backend.unload?()
+        try FileManager.default.removeItem(at: sibling)
+        try FileManager.default.removeItem(at: partial)
+        XCTAssertEqual(try backend.runInference(for: textRequest).text, "ran",
+                       "another variant's file and a partial transfer are not the model's files")
+
+        backend.unload?()
+        try FileManager.default.removeItem(at: weights)
+        XCTAssertThrowsError(try backend.runInference(for: textRequest)) {
+            assertModelFilesRemoved($0, path: weights.path)
+        }
+    }
+
+    func testAListedFileRemovedFailsTheReloadAndAnUnlistedOneDoesNot() throws {
+        let folder = try temporaryFolder()
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let weights = folder.appendingPathComponent("model.safetensors")
+        let sibling = folder.appendingPathComponent("variant-b/model.safetensors")
+        for url in [folder.appendingPathComponent("config.json"), weights, sibling] {
+            try writePlaceholder(url)
+        }
+        NFKMLXModelRegistry.register(name: Self.localFileName) { _ in NFKMLXWeightlessTestBackend() }
+        let backend = try NFKMLXModelRegistry.backend(named: Self.localFileName, weightsURL: folder, loadOptions: nil,
+                                                      listing: ["config.json", "model.safetensors", "tokenizer.json"])
+        backend.unload?()
+        try FileManager.default.removeItem(at: sibling)
+        XCTAssertEqual(try backend.runInference(for: textRequest).text, "ran",
+                       "an unlisted file and a listed file absent at the build are not required")
+
+        backend.unload?()
+        try FileManager.default.removeItem(at: weights)
+        XCTAssertThrowsError(try backend.runInference(for: textRequest)) {
+            assertModelFilesRemoved($0, path: weights.path)
+        }
     }
 }

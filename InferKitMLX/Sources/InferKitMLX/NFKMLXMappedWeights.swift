@@ -36,6 +36,7 @@ public enum NFKMLXSafetensors {
     /// kilobytes, which is the whole point: a caller that means to map the file needs the layout
     /// without paying for the contents.
     public static func entries(inFile url: URL) throws -> [String: NFKMLXSafetensorsEntry] {
+        NFKMLXFileReads.note(url)
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         guard let prefix = try handle.read(upToCount: 8), prefix.count == 8 else {
@@ -87,6 +88,7 @@ public final class NFKMLXMappedFile: @unchecked Sendable {
     public let url: URL
 
     public init(url: URL) throws {
+        NFKMLXFileReads.note(url)
         self.url = url
         let descriptor = open(url.path, O_RDONLY)
         guard descriptor >= 0 else {

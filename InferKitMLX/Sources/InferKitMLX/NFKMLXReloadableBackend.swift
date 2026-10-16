@@ -31,8 +31,9 @@ import MLX
 /// The identifier and the declared keys are those of the first backend built, and they hold while the
 /// model is unloaded. An Objective-C message the wrapper does not implement goes to the backend it holds,
 /// which is built first when the model is unloaded. A forwarded message counts as a run in flight until
-/// the autorelease pool around it drains, so an unload during it frees the model after it returns. A
-/// Swift cast of the wrapper to the model's class fails; cast ``wrappedBackend`` instead.
+/// it returns, so an unload during it frees the model when it returns. An object the message returns that
+/// holds part of the model keeps that part after an unload. A Swift cast of the wrapper to the model's
+/// class fails; cast ``wrappedBackend`` instead.
 ///
 /// A build after an unload reads local files only. When the files the model was built from are gone,
 /// the run fails with ``NFKMLXReloadError/modelFilesRemoved`` and makes no network request.
@@ -62,6 +63,7 @@ public final class NFKMLXReloadableBackend: NSObject, NFKInferenceBackend {
         parameterKeys = backend.supportedParameterKeys ?? []
         outputKeys = backend.supportedOutputKeys ?? []
         super.init()
+        _ = Self.forwardingInstalled
         lifecycle.enableReload(build, measurement: measurement)
         if let loadOptions {
             lifecycle.setLoadOptions(loadOptions)
@@ -259,26 +261,114 @@ public final class NFKMLXReloadableBackend: NSObject, NFKInferenceBackend {
         return super.responds(to: aSelector) || class_respondsToSelector(backendClass, aSelector)
     }
 
-    /// The held backend, built first when the model is unloaded, for a message only it implements.
-    ///
-    /// @discussion The runtime sends the message after this method returns, so the run it counts ends
-    /// when the current autorelease pool drains, which follows the message's return.
-    public override func forwardingTarget(for aSelector: Selector!) -> Any? {
-        guard let aSelector, class_respondsToSelector(backendClass, aSelector) else {
+    /// Gives the class the two methods of the runtime's full forwarding path. Swift cannot declare
+    /// `methodSignatureForSelector:` or `forwardInvocation:`, so they are added as block implementations.
+    private static let forwardingInstalled: Void = {
+        typealias Signature = @convention(block) (NFKMLXReloadableBackend, Selector) -> AnyObject?
+        typealias Forward = @convention(block) (NFKMLXReloadableBackend, AnyObject) -> Void
+        let signature: Signature = { wrapper, selector in wrapper.forwardedSignature(for: selector) }
+        let forward: Forward = { wrapper, invocation in wrapper.forward(invocation) }
+        install(imp_implementationWithBlock(signature), for: NFKMLXInvocation.signatureSelector)
+        install(imp_implementationWithBlock(forward), for: NFKMLXInvocation.forwardSelector)
+    }()
+
+    private static func install(_ implementation: IMP, for selector: Selector) {
+        let types = class_getInstanceMethod(NSObject.self, selector).flatMap(method_getTypeEncoding)
+        class_replaceMethod(NFKMLXReloadableBackend.self, selector, implementation, types)
+    }
+
+    /// The signature of a message the wrapper or `NSObject` implements, from `NSObject`, and otherwise of the
+    /// held class's method; nil when neither implements it.
+    private func forwardedSignature(for selector: Selector) -> AnyObject? {
+        if class_getInstanceMethod(NFKMLXReloadableBackend.self, selector) != nil {
+            return NFKMLXInvocation.objectSignature(of: self, for: selector)
+        }
+        guard let method = class_getInstanceMethod(backendClass, selector),
+              let types = method_getTypeEncoding(method) else {
             return nil
         }
-        let lifecycle = self.lifecycle
+        return NFKMLXInvocation.signature(types: types)
+    }
+
+    /// Sends a message only the held class implements to the held backend, built first when the model is
+    /// unloaded, as a run in flight from before the message to its return. A backend that cannot be built
+    /// raises `NSInvalidArgumentException` with the reason.
+    private func forward(_ invocation: AnyObject) {
+        let selector = NFKMLXInvocation.selector(of: invocation)
+        if let failure = invokeAsRun(invocation, selector: selector) {
+            NFKMLXInvocation.raise("\(identifier) cannot answer \(NSStringFromSelector(selector)): \(failure)")
+        }
+    }
+
+    /// Invokes `invocation` on the held backend inside a run, and returns why it could not, or nil.
+    private func invokeAsRun(_ invocation: AnyObject, selector: Selector) -> String? {
         do {
             try lifecycle.begin()
         } catch {
+            return error.localizedDescription
+        }
+        defer { lifecycle.end() }
+        guard let backend = try? lifecycle.loadedState(), backend.responds(to: selector) else {
+            return "the built backend does not implement it"
+        }
+        NFKMLXInvocation.invoke(invocation, on: backend)
+        return nil
+    }
+}
+
+/// The `NSInvocation` and `NSMethodSignature` calls the wrapper's forwarding makes. Both classes are
+/// unavailable in Swift, so each method is called through its implementation.
+private enum NFKMLXInvocation {
+    static let signatureSelector = NSSelectorFromString("methodSignatureForSelector:")
+    static let forwardSelector = NSSelectorFromString("forwardInvocation:")
+
+    /// The invocation's selector.
+    static func selector(of invocation: AnyObject) -> Selector {
+        typealias Getter = @convention(c) (AnyObject, Selector) -> Selector
+        let selector = NSSelectorFromString("selector")
+        return unsafeBitCast(implementation(of: selector, in: invocation), to: Getter.self)(invocation, selector)
+    }
+
+    /// Sends the invocation's message to `target`, which leaves the result in the invocation.
+    static func invoke(_ invocation: AnyObject, on target: AnyObject) {
+        typealias Invoke = @convention(c) (AnyObject, Selector, AnyObject) -> Void
+        let selector = NSSelectorFromString("invokeWithTarget:")
+        unsafeBitCast(implementation(of: selector, in: invocation), to: Invoke.self)(invocation, selector, target)
+    }
+
+    /// `+[NSMethodSignature signatureWithObjCTypes:]`.
+    static func signature(types: UnsafePointer<CChar>) -> AnyObject? {
+        typealias Make = @convention(c) (AnyClass, Selector, UnsafePointer<CChar>) -> AnyObject?
+        guard let signatureClass = NSClassFromString("NSMethodSignature") else {
             return nil
         }
-        guard let backend = try? lifecycle.loadedState() else {
-            lifecycle.end()
+        let selector = NSSelectorFromString("signatureWithObjCTypes:")
+        guard let method = class_getClassMethod(signatureClass, selector) else {
             return nil
         }
-        _ = Unmanaged.passRetained(NFKMLXForwardedRun { lifecycle.end() }).autorelease()
-        return backend
+        return unsafeBitCast(method_getImplementation(method), to: Make.self)(signatureClass, selector, types)
+    }
+
+    /// `NSObject`'s own `methodSignatureForSelector:` for `object`.
+    static func objectSignature(of object: AnyObject, for selector: Selector) -> AnyObject? {
+        typealias Lookup = @convention(c) (AnyObject, Selector, Selector) -> AnyObject?
+        guard let method = class_getInstanceMethod(NSObject.self, signatureSelector) else {
+            return nil
+        }
+        return unsafeBitCast(method_getImplementation(method), to: Lookup.self)(object, signatureSelector, selector)
+    }
+
+    /// Raises `NSInvalidArgumentException` with `reason`.
+    static func raise(_ reason: String) -> Never {
+        NSException(name: .invalidArgumentException, reason: reason, userInfo: nil).raise()
+        fatalError(reason)
+    }
+
+    private static func implementation(of selector: Selector, in object: AnyObject) -> IMP {
+        guard let method = class_getInstanceMethod(object_getClass(object), selector) else {
+            raise("\(type(of: object)) does not implement \(NSStringFromSelector(selector))")
+        }
+        return method_getImplementation(method)
     }
 }
 
@@ -287,18 +377,4 @@ public final class NFKMLXReloadableBackend: NSObject, NFKInferenceBackend {
 @objc private protocol NFKMLXTokenCounting {
     @objc(tokenCountForRequest:error:)
     func tokenCount(for request: NFKInferenceRequest) throws -> NSNumber
-}
-
-/// Ends the run a forwarded message counts, when the autorelease pool holding it drains.
-private final class NFKMLXForwardedRun: NSObject {
-    private let end: () -> Void
-
-    init(end: @escaping () -> Void) {
-        self.end = end
-        super.init()
-    }
-
-    deinit {
-        end()
-    }
 }

@@ -194,6 +194,7 @@ public enum NFKMLXWeights {
     /// nothing that identifies it) routes through `NFKMLXTorchFormat` and reports PyTorch layout,
     /// so every model accepts one wherever it accepts a converted safetensors.
     public static func loadCheckpoint(url: URL) throws -> Checkpoint {
+        NFKMLXFileReads.note(url)
         if NFKMLXTorchFormat.isTorchCheckpoint(try leadingBytes(of: url)) {
             let contents = try NFKMLXTorchFormat.read(url: url)
             return Checkpoint(arrays: try NFKMLXTorchFormat.arrays(from: contents),

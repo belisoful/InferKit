@@ -1301,8 +1301,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   files again through an `NFKDownload` lets the same backend load on its next run.
 - An unload during a load frees the model when the run that asked for the load ends.
 - `NFKMLXReloadableBackend` implements `tokenCountForRequest:error:` as a run in flight. Any other
-  message it forwards to the held backend counts as a run until the autorelease pool around the
-  message drains, so an unload during the message frees the model after it returns.
+  message it forwards to the held backend counts as a run until the message returns, so an unload
+  during the message frees the model when it returns.
+- The files a reload requires are the model's own: the source, the files the first build opened, and a
+  catalog variant's listed files. Another variant's file in a shared snapshot, or a partial transfer,
+  that goes away leaves the reload working. A reload build error that reports a missing file under the
+  source becomes `NFKMLXReloadErrorModelFilesRemoved` naming that file.
 
 #### Every model describes itself in the catalog
 

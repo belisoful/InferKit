@@ -122,8 +122,10 @@ public final class NFKMLXModelRegistry: NSObject {
 
     /// Builds the backend registered under `name` with `loadOptions`, running `configure` on each backend
     /// the factory builds, the first and every one after an unload. A build without load options passes
-    /// the factory empty ones, and its backend reports none.
+    /// the factory empty ones, and its backend reports none. `listed` names the model's files under a
+    /// folder `weightsURL`, which a load after an unload requires (`NFKMLXReload.reloadable`).
     static func backend(named name: String, weightsURL: URL?, loadOptions: NFKMLXLoadOptions?,
+                        listing listed: [String] = [],
                         configure: @escaping (any NFKInferenceBackend) throws -> Void = { _ in })
         throws -> any NFKInferenceBackend {
         guard let factory = lock.withLock({ registrations[name]?.factory }) else {
@@ -142,6 +144,6 @@ public final class NFKMLXModelRegistry: NSObject {
             NFKMLXReload.reportLoadOptions(of: backend, loadOptions)
             return backend
         }
-        return try NFKMLXReload.reloadable(loadOptions: loadOptions, reading: weightsURL, build)
+        return try NFKMLXReload.reloadable(loadOptions: loadOptions, reading: weightsURL, listing: listed, build)
     }
 }

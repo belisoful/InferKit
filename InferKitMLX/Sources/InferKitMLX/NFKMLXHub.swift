@@ -125,13 +125,15 @@ public final class NFKMLXHub: NSObject {
             DispatchQueue.global(qos: .userInitiated).async { completionHandler(nil, error) }
             return download
         }
+        let listed = source.localFilePaths
         return hub(cacheDirectoryURL: cacheDirectoryURL).download(source: source, progressHandler: progressHandler) { url, error in
             if let error {
                 completionHandler(nil, error)
                 return
             }
             do {
-                completionHandler(try NFKMLXModelRegistry.backend(named: registryName, weightsURL: url), nil)
+                completionHandler(try NFKMLXModelRegistry.backend(named: registryName, weightsURL: url, loadOptions: nil,
+                                                                  listing: listed), nil)
             } catch {
                 completionHandler(nil, error)
             }
@@ -194,15 +196,26 @@ extension NFKHFHub {
     /// The local URL of `path` in `repo`, downloaded when it is not cached. Inside a load after an unload
     /// (`NFKMLXReload.reloading(_:)`) the file comes from the cache only: a file missing from it throws
     /// `NFKMLXReloadError.modelFilesRemoved`, and no request is made. Every download helper in the package
-    /// fetches through this method.
+    /// fetches through this method, which notes the file in a recording build's record (`NFKMLXFileReads`).
     func fetchFile(repo: String, revision: String?, path: String) throws -> URL {
         guard NFKMLXReload.isReloading else {
-            return try downloadRepo(repo, revision: revision, path: path, sha256: nil)
+            let local = try downloadRepo(repo, revision: revision, path: path, sha256: nil)
+            NFKMLXFileReads.note(local)
+            return local
         }
         guard isCachedRepo(repo, revision: revision, path: path),
               let local = localURL(forRepo: repo, revision: revision, path: path) else {
             throw NFKMLXReload.modelFilesRemovedError(path: path, source: repo)
         }
         return local
+    }
+}
+
+extension NFKModelSource {
+
+    /// The paths of the files the source holds itself, relative to its folder: every listed file but one
+    /// fetched from another repository or URL.
+    var localFilePaths: [String] {
+        files.filter { !$0.overridesSource }.map(\.path)
     }
 }
