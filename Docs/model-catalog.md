@@ -442,8 +442,8 @@ resident, alone when staged or paged, never without a budget. A refusal is
 
 The figure after "against a" is the budget the planner was given, which an estimate passes as
 `NFKModelMemoryBudget.byteCount`: 27.2 GiB is the budget of a 32 GiB working set. The resident sentence
-names `or paged` and `or streamed` only where the stages have experts or layers. The last row is `+verifyEachStageLoads:plan:budget:names:error:`, which checks each stage of a
-staged plan alone.
+names `or paged` and `or streamed` only where the stages have experts or layers. The last row is
+`+verifyEachStageLoads:plan:budget:names:error:`, which checks each stage of a staged plan alone.
 
 ### Constraints
 

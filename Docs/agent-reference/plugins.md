@@ -682,8 +682,9 @@ backends.
 - Every `struct_size` check compares with the structure's size at ABI 1.0 (`NFKCStructSizes.h`:
   `offsetof` of the last 1.0 field plus its size), never with `sizeof`, so a library built against a
   later minor still reads a 1.0 writer. A field a later minor appends is read only under
-  `NFKCStructCovers`. The C API reads `nfk_buffer` and `nfk_payload` the same way. `SURFACE` buffers are locked read-only for the life of
-  the wrapping data; `FILE` buffers are read from the path or the descriptor.
+  `NFKCStructCovers`. The C API reads `nfk_buffer` and `nfk_payload` the same way. `SURFACE` buffers
+  are locked read-only for the life of the wrapping data; `FILE` buffers are read from the path or the
+  descriptor.
 - `run` is limited to `maximumConcurrentRuns` per backend by `NFKPluginRunSlots` (`NFKPluginWire.h`):
   a run waiting for a slot is a block in a FIFO and holds no thread, and the run that ends starts the
   next. A synchronous `runInferenceForRequest:error:` blocks only its caller while it waits.

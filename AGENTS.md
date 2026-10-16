@@ -202,8 +202,8 @@ Generation tests skip where the model is unavailable. Notes: `Docs/agent-referen
   because every remaining use is either a local (ARC releases it at scope end) or is immediately
   reassigned. An error helper taking `NSError **` returns `BOOL` (always `NO`) rather than `void`,
   which is what the analyzer's Cocoa convention expects; callers ignore the result.
-- Backward compatibility — the toolkit is pre-1.0. Until 1.0, prefer the
-  correct design over source compatibility. Once shipped, point releases stay backward compatible.
+- Backward compatibility — the toolkit is pre-1.0. Until 1.0, prefer the correct design over source
+  compatibility. From 1.0 on, point releases stay backward compatible.
 - Document the introducing version on new public methods and classes.
 - Backends are the extension seam. A consumer brings a heavier runtime (MLX, a C/Rust engine) by
   adopting `NFKInferenceBackend`. The core ships only backends with zero third-party dependencies and
