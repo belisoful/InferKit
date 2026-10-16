@@ -660,7 +660,12 @@ static int sample_attached_bytes(const sample_json *entry, const nfk_plugin_payl
 	if (index < 0 || request->buffers == NULL || index >= request->buffer_count) {
 		return 0;
 	}
-	const nfk_plugin_buffer *buffer = &request->buffers[(size_t)index];
+	/* The array strides by its first element's struct_size, which a later minor version lengthens. */
+	size_t stride = request->buffers[0].struct_size;
+	if (!SAMPLE_HAS_FIELD(&request->buffers[0], nfk_plugin_buffer, reserved)) {
+		return 0;
+	}
+	const nfk_plugin_buffer *buffer = (const nfk_plugin_buffer *)((const uint8_t *)request->buffers + stride * (size_t)index);
 	if (buffer->kind != NFK_PLUGIN_BUFFER_BYTES || buffer->bytes == NULL) {
 		return 0;
 	}

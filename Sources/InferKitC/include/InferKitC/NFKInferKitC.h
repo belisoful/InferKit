@@ -28,8 +28,11 @@ extern "C" {
 				Rules:
 				- A request's @c nfk_payload structure, its JSON, and its @c buffers array are read during
 				  the call that takes them. The memory each buffer points to stays valid until
-				  @c nfk_backend_run returns, or until the completion of @c nfk_backend_submit fires.
-				  InferKit wraps that memory without copying.
+				  @c nfk_backend_run returns, until the completion of @c nfk_backend_submit fires, or
+				  until @c nfk_job_free returns when it comes first. InferKit wraps that memory without
+				  copying.
+				- A structure's @c struct_size is at least its size at version 1.0. A field a later minor
+				  version appends is read only when the writer's @c struct_size covers it.
 				- Everything InferKit returns is freed with its own @c *_free function. Each @c *_free
 				  function accepts NULL.
 				- A function with an @c out_error parameter sets @c *out_error to an error the caller frees
@@ -191,10 +194,14 @@ nfk_job *nfk_backend_submit(nfk_backend *backend, const nfk_payload *request, nf
 	this call. Introduced in InferKit 0.4.0. */
 void nfk_job_cancel(nfk_job *job);
 
-/*! Frees a job. A run that has not ended is cancelled, and its completion never fires. After it returns
-	no callback runs: it waits for a callback in progress on another thread. Called from inside one of
-	the job's own callbacks, it returns at once and that callback is the job's last. Introduced in
-	InferKit 0.4.0. */
+/*! Frees a job. A run that has not completed is cancelled, and its completion never fires. nfk_job_free
+	then waits until the run no longer reads the request's buffers, so the caller may free them once it
+	returns: at once for a run that already returned, and when the backend stops for a run it is still
+	in. A backend that does not check for cancellation holds it until the run ends, and InferKit logs a
+	fault every 10 seconds of that wait. After it returns no callback runs: it waits for a callback in
+	progress on another thread. Called from inside the job's progress callback, it waits the same way
+	and that callback is the job's last. Called from inside the completion, it returns at once. It is
+	not called on a thread the backend's run waits for. Introduced in InferKit 0.4.0. */
 void nfk_job_free(nfk_job *job);
 
 /*! A result's tagged JSON, {"outputs": {…}}, valid until nfk_result_free. Introduced in InferKit 0.4.0. */

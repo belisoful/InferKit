@@ -3,7 +3,8 @@
 //  inferkit-plugin-host
 //
 //  The process that serves one plugin bundle: inferkit-plugin-host --bundle <path> [--team-id <team>]
-//  [--allow-ad-hoc]. NFKPluginHostMain is the whole program.
+//  [--requirement <requirement>] [--allow-ad-hoc [--allow-unsigned]]. NFKPluginHostMain is the whole
+//  program.
 //
 
 #import <TargetConditionals.h>

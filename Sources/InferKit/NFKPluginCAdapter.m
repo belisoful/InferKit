@@ -4,6 +4,7 @@
 //
 
 #import "NFKPluginCAdapter.h"
+#import "NFKCStructSizes.h"
 #import "NFKPluginLoaderPrivate.h"
 #import "NFKPluginManifestPrivate.h"
 #import "NFKPluginWire.h"
@@ -51,18 +52,19 @@ static id _Nullable NFKPluginCParseJSON(NSString * _Nullable string)
 }
 
 /*! The buffer at index of a payload, striding by the first buffer's struct_size so a plugin built
-	against a later minor version, whose buffers are longer, reads correctly. NULL when out of range. */
+	against a later minor version, whose buffers are longer, reads correctly. NULL when out of range, and
+	for a buffer shorter than plugin ABI 1.0's or a stride that would misalign the next element. */
 static const nfk_plugin_buffer *NFKPluginCBufferAtIndex(const nfk_plugin_payload *payload, NSInteger index)
 {
 	if (index < 0 || (uint32_t)index >= payload->buffer_count || payload->buffers == NULL) {
 		return NULL;
 	}
 	uint32_t stride = payload->buffers[0].struct_size;
-	if (stride < sizeof(nfk_plugin_buffer)) {
+	if (stride < NFKCBufferSize1_0 || stride % _Alignof(nfk_plugin_buffer) != 0) {
 		return NULL;
 	}
 	const nfk_plugin_buffer *buffer = (const nfk_plugin_buffer *)((const uint8_t *)payload->buffers + (size_t)stride * (size_t)index);
-	return buffer->struct_size >= sizeof(nfk_plugin_buffer) ? buffer : NULL;
+	return buffer->struct_size >= NFKCBufferSize1_0 ? buffer : NULL;
 }
 
 #pragma mark - Adapter interface
@@ -731,10 +733,10 @@ static const char *NFKPluginCHostOutputDirectory(void *context, nfk_plugin_run *
 								 [NSString stringWithFormat:@"the plugin %@ implements plugin ABI %u.%u, and this library implements %d.%d", name,
 								  table->abi_version >> 16, table->abi_version & 0xFFFF, NFK_PLUGIN_ABI_VERSION_MAJOR, NFK_PLUGIN_ABI_VERSION_MINOR]);
 	}
-	if (table->struct_size < sizeof(nfk_plugin)) {
+	if (table->struct_size < NFKCPluginTableSize1_0) {
 		return NFKPluginSetError(error, NFKPluginErrorIncompatible,
 								 [NSString stringWithFormat:@"the plugin %@'s function table is %u bytes, shorter than plugin ABI %d.0's %zu",
-								  name, table->struct_size, NFK_PLUGIN_ABI_VERSION_MAJOR, sizeof(nfk_plugin)]);
+								  name, table->struct_size, NFK_PLUGIN_ABI_VERSION_MAJOR, NFKCPluginTableSize1_0]);
 	}
 	BOOL complete = table->describe != NULL && table->create_backend != NULL && table->run != NULL && table->destroy_backend != NULL
 		&& table->free_payload != NULL && table->free_string != NULL && table->shutdown != NULL;
@@ -967,7 +969,7 @@ static const char *NFKPluginCHostOutputDirectory(void *context, nfk_plugin_run *
 											owner:(nullable id)owner
 											error:(NSError **)error
 {
-	if (payload->struct_size < sizeof(nfk_plugin_payload) || payload->json == NULL) {
+	if (payload->struct_size < NFKCPayloadSize1_0 || payload->json == NULL) {
 		NFKPluginSetError(error, NFKPluginErrorProtocolViolation, @"a payload is shorter than plugin ABI 1.0's or carries no JSON");
 		return nil;
 	}

@@ -117,6 +117,20 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - A run waiting for one of a backend's run slots holds no thread, in the plugin process and in a C
   plugin loaded in process: 64 runs queued on one slot run in order on a handful of threads.
 - `NFKPluginABI.h` states that an array of buffers strides by its first element's `struct_size`.
+- The plugin's executable, `entry.executable` or else `CFBundleExecutable`, is a relative path with no
+  "." or ".." component whose file, with symbolic links resolved, lies in the bundle's `Contents/MacOS`.
+  Any other is `NFKPluginErrorManifestMismatch` when the manifest is read, and again immediately before
+  `dlopen`, the bundle's load, or a launch, so nothing outside the bundle loads or runs.
+- A load that fails before its code enters the process, such as a library `dlopen` refuses, is not
+  remembered, so loading the bundle again after it is fixed succeeds. A failure after the code entered
+  the process still answers the same error, since that code stays.
+- A `teamIdentifier` that is not ten uppercase letters and digits refuses every signer with
+  `NFKPluginErrorTeamMismatch`, and is never placed in a code requirement.
+- A file a plugin's result names by path is checked with its symbolic links resolved, so a link inside
+  the run's directory cannot name a file outside it.
+- Every `struct_size` a C plugin writes is compared with the structure's size at plugin ABI 1.0, so a
+  plugin built against a later minor version loads, and an array of buffers whose stride would misalign
+  an element is refused. The sample C plugin strides a request's buffers by `struct_size`.
 
 #### A plugin's process is supervised, and its models run as backends
 
@@ -148,6 +162,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `peakByteCount` follow the plugin's replies and events, and releasing the backend releases the
   plugin's.
 - `NFKPluginProcess.tools` calls the plugin's tools in its process.
+- A process that exits during hello or describe fails the start at once with
+  `NFKPluginErrorProcessExited`, its signal or status, and the end of its standard error.
+- A frame that carries more descriptors than its header counts, or descriptors that arrive inside a
+  frame, ends the channel with `NFKPluginErrorProtocolViolation`, and every descriptor it received is
+  closed, so a plugin cannot pile up descriptors in the app.
+- The plugin host is checked under the policy pinned to the team that signed the app, since the app's
+  team signs the host. An app that names no team, and a policy that accepts ad hoc signatures, pin none.
+- `NFKSubprocess` marks its standard-stream pipes close-on-exec as soon as it creates them, so a process
+  another thread spawns during the launch inherits no end.
 
 #### Sample plugins of every kind, and the C headers held to C99 and C++11
 
@@ -190,7 +213,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   memory and files as open descriptors, with the temporary-file fallback kept.
 - `setTrusted:forPluginIdentifier:` runs a plugin in the app's process from its next load, and the
   `NFKPluginInProcessWarning…` texts say what that costs. A trusted plugin whose manifest does not allow
-  it, and every `executable` plugin, is `NFKPluginErrorNotTrusted`.
+  it, and every `executable` plugin, is `NFKPluginErrorNotTrusted`, for its backends and its tools
+  alike.
 - `hostExecutableURL` finds `inferkit-plugin-host` in the main bundle's `Contents/Helpers`, among its
   auxiliary executables, beside its executable, or beside the image that contains InferKit.
 - A backend `NFKInferenceServer` unloads is freed by the unload. The idle unload, a lazy build, and a run
@@ -231,6 +255,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   a time on a queue of its own at user-initiated quality of service. Its completion fires exactly once,
   and a cancelled run's completion waits until the backend no longer holds the request's buffers. After
   `nfk_job_free` returns no callback runs. No Objective-C exception reaches the caller.
+- `nfk_job_free` on a job whose completion has not fired cancels the run and returns once the run no
+  longer reads the request's buffers, so a caller frees them right after it: at once for a run that
+  returned, and when the backend stops for one in progress. From inside the job's progress callback it
+  waits the same way; from inside the completion it returns at once. A backend that ignores the
+  cancellation holds it until its run ends, and InferKit logs a fault every 10 seconds of that wait.
+- A partial result reaches the job's queue as copies, and the job keeps no partial, so nothing the job
+  holds keeps a wrapper over the caller's memory. `NFKInferenceSubmit` drains the run's autorelease pool
+  when the run ends, so a wrapper the backend autoreleased is released then.
+- A request's `struct_size` is compared with `nfk_payload`'s and `nfk_buffer`'s sizes at version 1.0, so
+  a program built against a later minor version runs. A result keeps the owner of the files its JSON
+  names and none of the result's values, so an echoed request surface is released, with its read-only
+  lock, when the run returns.
 - `nfk_backend_copy_description` adds `residentBytes` and `peakBytes`, and `nfk_plugins_add_directory`
   reports the first bundle it skipped while it counts the others.
 - `nfk_backend_prepare` loads a model ahead of its first run. `nfk_error_copy_details_json` returns an

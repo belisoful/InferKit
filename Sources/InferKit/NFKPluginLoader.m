@@ -225,7 +225,8 @@ BOOL NFKPluginCheckBundleOwnership(NSURL *bundleURL, NSError **error)
 }
 
 /*! The loads that failed after code entered the process, by resolved bundle path. Such code stays, so a
-	second attempt answers the same error. */
+	second attempt answers the same error. A load that fails before its code enters the process, such as a
+	library dlopen refuses, is not kept, so a retry after the bundle is fixed loads it. */
 + (NSMutableDictionary<NSString *, NSError *> *)failedLoads
 {
 	static NSMutableDictionary<NSString *, NSError *> *failures = nil;
@@ -286,13 +287,12 @@ BOOL NFKPluginCheckBundleOwnership(NSURL *bundleURL, NSError **error)
 		NFKPluginHostContext *context = [[NFKPluginHostContext alloc] initWithPluginIdentifier:manifest.identifier options:options ?: @{}
 																			  runsInHostProcess:runsInHostProcess logHandler:logHandler];
 		NSError *loadError = nil;
+		BOOL codeLoaded = NO;
 		id<NFKPlugin> plugin = [manifest.entryKind isEqualToString:NFKPluginEntryKindObjC]
-			? [self objectiveCPluginWithManifest:manifest policy:checks context:context error:&loadError]
-			: [self CPluginWithManifest:manifest policy:checks context:context error:&loadError];
+			? [self objectiveCPluginWithManifest:manifest policy:checks context:context codeLoaded:&codeLoaded error:&loadError]
+			: [self CPluginWithManifest:manifest policy:checks context:context codeLoaded:&codeLoaded error:&loadError];
 		if (plugin == nil) {
 			[context removeTemporaryDirectory];
-			BOOL codeLoaded = loadError.code != NFKPluginErrorManifestMismatch && loadError.code != NFKPluginErrorSignatureInvalid
-				&& loadError.code != NFKPluginErrorTeamMismatch;
 			if (codeLoaded) {
 				self.failedLoads[bundlePath] = loadError;
 			}
@@ -323,11 +323,15 @@ BOOL NFKPluginCheckBundleOwnership(NSURL *bundleURL, NSError **error)
 
 #pragma mark Objective-C
 
+/*! Sets *codeLoaded once the bundle's code has entered the process, so a failure after that point is
+	remembered. */
 + (nullable id<NFKPlugin>)objectiveCPluginWithManifest:(NFKPluginManifest *)manifest
 												 policy:(NFKPluginSignaturePolicy *)policy
 												context:(NFKPluginHostContext *)context
+											 codeLoaded:(BOOL *)codeLoaded
 												  error:(NSError **)error
 {
+	*codeLoaded = NO;
 	if (manifest.executablePath != nil && ![manifest.executablePath isEqualToString:manifest.bundleExecutableName ?: @""]) {
 		NFKPluginSetError(error, NFKPluginErrorManifestMismatch,
 						  [NSString stringWithFormat:@"an \"objc\" plugin's code is its bundle's executable, and %@ names %@",
@@ -336,8 +340,10 @@ BOOL NFKPluginCheckBundleOwnership(NSURL *bundleURL, NSError **error)
 	}
 	NSBundle *bundle = [NSBundle bundleWithURL:manifest.bundleURL];
 	NSError *bundleError = nil;
-	// Verified immediately before the load, so the window an edit could use is as short as it can be.
-	if (![policy validateCodeAtURL:manifest.bundleURL error:error]) {
+	// Checked and verified immediately before the load, so the window an edit could use is as short as it
+	// can be. NSBundle loads the file CFBundleExecutable names, which the check resolved.
+	NSURL *executable = [manifest containedExecutableURLWithError:error];
+	if (executable == nil || ![policy validateCodeAtURL:manifest.bundleURL error:error]) {
 		return nil;
 	}
 	if (bundle == nil || ![bundle loadAndReturnError:&bundleError]) {
@@ -346,7 +352,8 @@ BOOL NFKPluginCheckBundleOwnership(NSURL *bundleURL, NSError **error)
 						   bundleError.localizedDescription ?: @"its bundle could not be opened"]);
 		return nil;
 	}
-	const char *image = NFKPluginLoadedImageName(manifest.executableURL);
+	*codeLoaded = YES;
+	const char *image = NFKPluginLoadedImageName(executable);
 	if (image == NULL) {
 		NFKPluginSetError(error, NFKPluginErrorLoadFailed, [NSString stringWithFormat:@"the plugin %@'s code is not among the loaded images", manifest.identifier]);
 		return nil;
@@ -408,13 +415,17 @@ BOOL NFKPluginCheckBundleOwnership(NSURL *bundleURL, NSError **error)
 
 #pragma mark C
 
+/*! Sets *codeLoaded once the library has entered the process, so a failure after that point is
+	remembered. */
 + (nullable id<NFKPlugin>)CPluginWithManifest:(NFKPluginManifest *)manifest
 										policy:(NFKPluginSignaturePolicy *)policy
 									   context:(NFKPluginHostContext *)context
+									codeLoaded:(BOOL *)codeLoaded
 										 error:(NSError **)error
 {
-	NSURL *library = manifest.executableURL;
-	if (![policy validateCodeAtURL:manifest.bundleURL error:error]) {
+	*codeLoaded = NO;
+	NSURL *library = [manifest containedExecutableURLWithError:error];
+	if (library == nil || ![policy validateCodeAtURL:manifest.bundleURL error:error]) {
 		return nil;
 	}
 	// An in-process plugin is never closed: code the process has called cannot be unloaded safely.
@@ -425,6 +436,7 @@ BOOL NFKPluginCheckBundleOwnership(NSURL *bundleURL, NSError **error)
 						  [NSString stringWithFormat:@"the plugin %@'s library did not load: %s", manifest.identifier, reason != NULL ? reason : "unknown reason"]);
 		return nil;
 	}
+	*codeLoaded = YES;
 	const char *image = NFKPluginLoadedImageName(library);
 	if (image != NULL && ![self checkSingleRuntimeInImage:image manifest:manifest error:error]) {
 		return nil;

@@ -35,6 +35,23 @@ static NSString *NFKPluginHexString(NSData *data)
 	return hex;
 }
 
+/*! Whether team is an Apple team identifier: ten uppercase ASCII letters and digits. Only such a value
+	is placed in a requirement's text, since a quote or a parenthesis there would change the requirement. */
+static BOOL NFKPluginIsTeamIdentifier(NSString *team)
+{
+	if (team.length != 10) {
+		return NO;
+	}
+	for (NSUInteger index = 0; index < team.length; index++) {
+		unichar character = [team characterAtIndex:index];
+		BOOL allowed = (character >= 'A' && character <= 'Z') || (character >= '0' && character <= '9');
+		if (!allowed) {
+			return NO;
+		}
+	}
+	return YES;
+}
+
 /*! Checks one piece of code against a requirement, or against its signature alone when requirement is
 	NULL. */
 typedef OSStatus (^NFKPluginCodeCheck)(SecRequirementRef _Nullable requirement, CFErrorRef _Nullable * _Nonnull error);
@@ -214,6 +231,11 @@ typedef OSStatus (^NFKPluginCodeCheck)(SecRequirementRef _Nullable requirement, 
 	requirement. */
 - (BOOL)validateCodeNamed:(NSString *)name information:(NSDictionary *)information error:(NSError **)error check:(NFKPluginCodeCheck)check
 {
+	if (self.teamIdentifier.length > 0 && !NFKPluginIsTeamIdentifier(self.teamIdentifier)) {
+		return NFKPluginSetError(error, NFKPluginErrorTeamMismatch,
+								 [NSString stringWithFormat:@"the policy's team identifier \"%@\" is not ten uppercase letters and digits, so no signer matches it",
+								  self.teamIdentifier]);
+	}
 	BOOL signerRestricted = self.teamIdentifier.length > 0 || self.requirementString.length > 0;
 	if (information[(__bridge NSString *)kSecCodeInfoIdentifier] == nil) {
 		if (!self.requiresValidSignature && !signerRestricted) {

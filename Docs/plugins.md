@@ -106,7 +106,7 @@ Upscaler.inferkitplugin/
 | `compatibility.protocol` | no | The plugin protocol version, `"1.0"` by default. |
 | `compatibility.minimumOS`, `compatibility.architectures` | no | The macOS version and the architectures the plugin runs on. |
 | `entry.kind` | yes | `objc`, `c-abi`, or `executable`. |
-| `entry.executable` | no | The file in `Contents/MacOS`. `CFBundleExecutable` by default. |
+| `entry.executable` | no | The file in `Contents/MacOS`. `CFBundleExecutable` by default. Either name is a relative path with no `.` or `..` component, and the file it names, with symbolic links resolved, lies in the bundle's `Contents/MacOS`; otherwise the bundle is refused with `NFKPluginErrorManifestMismatch` before any code loads or launches. |
 | `entry.principalClass` | no | An `objc` plugin's principal class. `NSPrincipalClass` by default. |
 | `entry.symbol` | no | A `c-abi` plugin's entry function. `nfk_plugin_entry` by default. |
 | `entry.arguments` | no | An `executable` plugin's arguments. |
@@ -221,7 +221,10 @@ NFK_PLUGIN_EXPORT nfk_plugin_status nfk_plugin_entry(uint32_t host_abi_version, 
 - `run` reports progress with `host->report_progress`, polls `host->is_cancelled`, and writes result files
   to `host->output_directory`. `cancel`, `unload`, `describe_backend`, and `call_tool` are optional.
 - A later minor version of the ABI only appends fields. A reader uses a field only when its offset plus
-  its size is at most `struct_size`.
+  its size is at most `struct_size`. InferKit accepts any `struct_size` at least the structure's size at
+  ABI 1.0, so a plugin built against a later minor version loads.
+- An array of buffers strides by its first element's `struct_size`. A plugin reads a request's buffer
+  `i` at `(const uint8_t *)buffers + i * buffers[0].struct_size`.
 
 Build it:
 
@@ -244,7 +247,9 @@ descriptor 3 (`INFERKIT_PLUGIN_CHANNEL_FD=3`) and speaks the plugin protocol ove
    until descriptor 3 reads end of file.
 2. Each frame is a 12-byte header (the magic `0x504B464E` "NFKP", the JSON length, the descriptor count,
    and the flags, little-endian) and a UTF-8 JSON object with a `"type"`. Descriptors travel with the
-   frame's first byte as `SCM_RIGHTS`.
+   frame's first byte as `SCM_RIGHTS`, exactly as many as the header counts. A frame that carries more
+   or fewer ends the channel with `NFKPluginErrorProtocolViolation`, and the app closes every descriptor
+   it received.
 3. The app sends `hello`, `describe`, `build`, `prepare`, `run`, `unload`, `release`, `status`,
    `callTool`, `ping`, and `shutdown`, each with an integer `id`, and the program answers each with
    `{"type": "reply", "id": n}` carrying `"result"` or `"error"`. During a run the program sends
@@ -269,7 +274,7 @@ An app chooses which signatures it accepts with `NFKPluginSignaturePolicy`:
 | --- | --- |
 | `+defaultPolicy` | a valid signature that is not ad hoc |
 | `+developmentPolicy` | a valid signature, ad hoc included, for building plugins on the developer's machine |
-| `teamIdentifier` set | a signature by that team, proved by the certificate chain (`NFKPluginErrorTeamMismatch` otherwise) |
+| `teamIdentifier` set | a signature by that team, proved by the certificate chain (`NFKPluginErrorTeamMismatch` otherwise). A team identifier is ten uppercase letters and digits; another value refuses every signer. |
 | `requirementString` set | a signature that also satisfies that code requirement |
 
 The registry checks the signature when a plugin first launches or loads, and caches a success by the
@@ -409,7 +414,8 @@ what that means:
 
 - The registry keeps trust in memory. The app persists the choice and sets it again at launch.
 - A trusted plugin runs in the app's process only when its manifest sets `allowsInProcess`. An
-  `executable` plugin never does. Either is refused with `NFKPluginErrorNotTrusted`.
+  `executable` plugin never does. Either is refused with `NFKPluginErrorNotTrusted`, its backends and
+  its tools alike.
 - The plugin sees the same protocol, manifest, and options either way. `NFKPluginBackend.isolation`
   says where it runs.
 - Code in the app's process stays until the app quits. A reload to another version of such a plugin
@@ -437,7 +443,9 @@ An app that serves `objc` or `c-abi` plugins in their own processes embeds `infe
 The registry finds the host in `Contents/Helpers`, then among the main bundle's auxiliary executables,
 then beside the main executable, then beside the image that contains InferKit.
 `NFKPluginRegistry.hostExecutableURL` names another. The registry checks the host's signature under its
-policy without the policy's team or requirement, since the app's team signs the host.
+policy pinned to the app's own team, since the app's team signs the host, and without the policy's
+requirement, which names the plugins' signer. An app that names no team, and a policy that accepts ad hoc
+signatures, pin no team on the host.
 
 `inferkit-plugin-host.entitlements` carries `com.apple.security.cs.disable-library-validation`, so the
 hardened host loads plugin code another team signed.
@@ -507,7 +515,7 @@ Every plugin error is in `NFKPluginErrorDomain`:
 | `LoadFailed` | the code does not load, or the bundle breaks the ownership rule |
 | `DuplicateRuntime` | an `objc` plugin carries its own copy of InferKit |
 | `LaunchFailed`, `HandshakeFailed`, `TimedOut` | the process does not start, greet, or answer in time |
-| `ProcessExited`, `Stopped` | the process ended before the operation finished |
+| `ProcessExited`, `Stopped` | the process ended before the operation finished, during its hello included, with its exit status or signal and the end of its standard error |
 | `UnknownModel`, `UnknownTool`, `UnknownPlugin` | nothing is listed under the identifier |
 | `IdentifierInUse` | the catalog already lists one of the plugin's catalog identifiers, another bundle holds its plugin identifier, or another plugin declares one of its tools |
 | `NotTrusted` | the plugin cannot run in the app's process |

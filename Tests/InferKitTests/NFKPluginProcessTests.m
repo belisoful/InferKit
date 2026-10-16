@@ -12,6 +12,7 @@
 
 #if TARGET_OS_OSX
 
+#import "NFKPluginFixtures.h"
 #import "NFKPluginTestPeer.h"
 
 @interface NFKPluginProcessTests : XCTestCase
@@ -455,6 +456,30 @@
 	XCTAssertEqual(process.state, NFKPluginProcessStateNotRunning);
 }
 
+- (void)testAPluginThatCrashesDuringHelloReportsItsExitPromptly
+{
+	self.harness.configure = ^(NFKPluginTestPeer *peer) {
+		peer.handlers = @{ NFKPluginMessageHello: ^(NFKPluginTestPeer *crashing, NSDictionary *message, NSArray *descriptors) {
+			[crashing crashWithSignal:SIGSEGV standardError:@"segmentation fault while greeting"];
+		} };
+	};
+	NFKPluginProcess *process = [self processWithIdleExit:300];
+	process.verificationTimeout = 20;
+	process.handshakeTimeout = 20;
+	NSDate *started = [NSDate date];
+	NSError *error = nil;
+	XCTAssertFalse([process startWithError:&error]);
+	XCTAssertLessThan(-started.timeIntervalSinceNow, 5, @"the exit ends the hello, not its timeout. %@", self.diagnostics);
+	XCTAssertEqualObjects(error.domain, NFKPluginErrorDomain);
+	XCTAssertEqual(error.code, NFKPluginErrorProcessExited, @"%@", error);
+	XCTAssertTrue([error.localizedDescription containsString:@"signal 11"], @"%@", error);
+	XCTAssertEqualObjects(error.userInfo[NSLocalizedFailureReasonErrorKey], @"segmentation fault while greeting");
+	XCTAssertEqual(process.state, NFKPluginProcessStateFailed);
+	XCTAssertEqual(process.failureError.code, NFKPluginErrorProcessExited);
+	XCTAssertEqual(process.terminationReason, NFKSubprocessTerminationReasonSignal);
+	XCTAssertEqual(process.terminationStatus, SIGSEGV);
+}
+
 - (void)testAHelloThatOutlastsTheHandshakeTimeoutFailsWithTimedOut
 {
 	self.harness.configure = ^(NFKPluginTestPeer *peer) {
@@ -472,6 +497,63 @@
 	XCTAssertEqual(error.code, NFKPluginErrorTimedOut);
 	XCTAssertTrue([error.localizedDescription containsString:@"hello"], @"%@", error);
 	XCTAssertEqual(process.state, NFKPluginProcessStateFailed);
+}
+
+#pragma mark Code checks
+
+- (void)testAnExecutableThatResolvesOutsideTheBundleIsNeverLaunched
+{
+	NSError *error = nil;
+	NSURL *fixture = [NFKPluginFixtures bundleURLForKind:NFKPluginEntryKindExecutable version:@"1.0.0" error:&error];
+	XCTAssertNotNil(fixture, @"%@", error);
+	NSURL *folder = fixture != nil ? [NFKPluginFixtures folderWithCopiesOfBundles:@[ fixture ] error:&error] : nil;
+	XCTAssertNotNil(folder, @"%@", error);
+	if (folder == nil) {
+		return;
+	}
+	NSURL *copy = [folder URLByAppendingPathComponent:fixture.lastPathComponent isDirectory:YES];
+	NFKPluginManifest *manifest = [NFKPluginManifest manifestWithBundleURL:copy error:&error];
+	XCTAssertNotNil(manifest, @"%@", error);
+	NSURL *executable = [NFKPluginFixtures executableURLOfBundleAtURL:copy];
+	XCTAssertTrue([NSFileManager.defaultManager removeItemAtURL:executable error:&error], @"%@", error);
+	XCTAssertTrue([NSFileManager.defaultManager createSymbolicLinkAtURL:executable withDestinationURL:[NSURL fileURLWithPath:@"/usr/bin/true"]
+														 error:&error], @"%@", error);
+
+	NFKPluginProcess *process = [[NFKPluginProcess alloc] initWithManifest:manifest hostExecutableURL:nil];
+	NFKPluginSignaturePolicy *policy = NFKPluginSignaturePolicy.developmentPolicy;
+	policy.requiresValidSignature = NO;
+	process.signaturePolicy = policy;
+	XCTAssertFalse([process startWithError:&error], @"the bundle changed after its manifest was read");
+	XCTAssertEqualObjects(error.domain, NFKPluginErrorDomain);
+	XCTAssertEqual(error.code, NFKPluginErrorManifestMismatch, @"%@", error);
+	XCTAssertTrue([error.localizedDescription containsString:@"outside"], @"%@", error);
+	XCTAssertEqual(process.terminationReason, NFKSubprocessTerminationReasonNone, @"nothing was launched");
+	XCTAssertEqual(process.state, NFKPluginProcessStateFailed);
+	[NSFileManager.defaultManager removeItemAtURL:folder error:NULL];
+}
+
+- (void)testThePluginHostIsCheckedAgainstTheAppsOwnTeam
+{
+	NFKPluginProcess *process = [self processWithIdleExit:300];
+	NFKPluginSignaturePolicy *policy = NFKPluginSignaturePolicy.defaultPolicy;
+	policy.teamIdentifier = @"PLUGIN1234";
+	policy.requirementString = @"identifier \"com.example.echo\"";
+	process.signaturePolicy = policy;
+	NFKPluginSignaturePolicy *host = [process hostSignaturePolicyForAppTeamIdentifier:@"APPTEAM123"];
+	XCTAssertEqualObjects(host.teamIdentifier, @"APPTEAM123", @"the app's team signs the host");
+	XCTAssertNil(host.requirementString, @"the requirement names the plugin's signer");
+	XCTAssertTrue(host.requiresValidSignature);
+	XCTAssertFalse(host.allowsAdHocSignature);
+	XCTAssertNil([process hostSignaturePolicyForAppTeamIdentifier:nil].teamIdentifier, @"an app that names no team pins none");
+
+	NSError *error = nil;
+	XCTAssertFalse([host validateCodeAtURL:[NSURL fileURLWithPath:@"/usr/bin/true"] error:&error], @"Apple's own code names no team");
+	XCTAssertEqualObjects(error.domain, NFKPluginErrorDomain);
+	XCTAssertEqual(error.code, NFKPluginErrorTeamMismatch, @"%@", error);
+
+	process.signaturePolicy = NFKPluginSignaturePolicy.developmentPolicy;
+	XCTAssertNil([process hostSignaturePolicyForAppTeamIdentifier:@"APPTEAM123"].teamIdentifier,
+				 @"the development policy accepts an ad hoc host, which names no team");
 }
 
 #pragma mark Idle exit

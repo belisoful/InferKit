@@ -33,14 +33,21 @@ static NSString * const NFKCAPIHugeModel = @"c-api.huge";
 
 static const NSTimeInterval NFKCAPIDeadline = 30.0;
 
+/*! A request whose run reads a 4096-byte data buffer 400 ms after it starts. */
+static const char *NFKCAPISlowDataRequest =
+	"{\"inputs\": {\"data\": {\"$nfk\": \"buffer\", \"index\": 0, \"as\": \"data\", \"length\": 4096}}, "
+	"\"parameters\": {\"sleepMilliseconds\": 400, \"signalStart\": true}}";
+
 static atomic_int NFKCAPIEchoRunsEnded;
+static atomic_ullong NFKCAPIEchoLastDataSum;
 static dispatch_semaphore_t NFKCAPIEchoRunStarted;
 
 #pragma mark - Backends
 
 /*! Echoes what it is given in a form a test checks: a prompt as "<mode>:<prompt>[:<suffix>]", a float
 	array inverted to 1 - x, a 32BGRA image with each color byte inverted, and a data value's address,
-	length, and byte sum. sleepMilliseconds holds the run before it reads the data. valueObjects adds one
+	length, and byte sum, and with echoData the data itself under "echo". sleepMilliseconds holds the run
+	before it reads the data. valueObjects adds one
 	output of each InferKit value class; fail ends the run with an error that carries a cause. */
 @interface NFKCAPIEchoBackend : NSObject <NFKInferenceBackend>
 @property (nonatomic, copy) NSString *mode;
@@ -76,7 +83,7 @@ static dispatch_semaphore_t NFKCAPIEchoRunStarted;
 
 - (NSSet<NSString *> *)supportedParameterKeys
 {
-	return [NSSet setWithObjects:@"suffix", @"sleepMilliseconds", @"signalStart", @"valueObjects", @"fail", nil];
+	return [NSSet setWithObjects:@"suffix", @"sleepMilliseconds", @"signalStart", @"valueObjects", @"fail", @"echoData", nil];
 }
 
 - (BOOL)prepareWithError:(NSError **)error
@@ -119,7 +126,7 @@ static dispatch_semaphore_t NFKCAPIEchoRunStarted;
 
 - (NSSet<NSString *> *)supportedOutputKeys
 {
-	return [NSSet setWithObjects:NFKOutputText, NFKOutputImage, @"values", @"dataAddress", @"dataLength", @"dataSum", @"regionLabel", nil];
+	return [NSSet setWithObjects:NFKOutputText, NFKOutputImage, @"values", @"dataAddress", @"dataLength", @"dataSum", @"regionLabel", @"echo", nil];
 }
 
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request error:(NSError **)error
@@ -172,6 +179,10 @@ static dispatch_semaphore_t NFKCAPIEchoRunStarted;
 		outputs[@"dataAddress"] = @((unsigned long long)(uintptr_t)bytes);
 		outputs[@"dataLength"] = @(data.length);
 		outputs[@"dataSum"] = @(sum);
+		atomic_store(&NFKCAPIEchoLastDataSum, sum);
+		if ([[request parameterForKey:@"echoData"] boolValue]) {
+			outputs[@"echo"] = data;
+		}
 	}
 	id image = [request inputForKey:NFKInputImage];
 	if (image != nil) {
@@ -310,6 +321,8 @@ static dispatch_semaphore_t NFKCAPIEchoRunStarted;
 @property (nonatomic) int endedRunsAtCompletion;
 @property (nonatomic) pthread_t submittingThread;
 @property (nonatomic, nullable) nfk_job *jobToFreeInCompletion;
+@property (nonatomic, nullable) nfk_job *jobToFreeInProgress;
+@property (nonatomic) int endedRunsAtFree;
 @end
 
 @implementation NFKCAPICallbackLog
@@ -364,7 +377,15 @@ static void NFKCAPITestProgress(void *context, double fraction, const nfk_result
 	if (partial != NULL) {
 		log.lastPartialJSON = @(nfk_result_json(partial));
 	}
+	nfk_job *job = log.jobToFreeInProgress;
+	log.jobToFreeInProgress = NULL;
 	[log.lock unlock];
+	if (job != NULL) {
+		nfk_job_free(job);
+		[log.lock lock];
+		log.endedRunsAtFree = atomic_load(&NFKCAPIEchoRunsEnded);
+		[log.lock unlock];
+	}
 	[log leaveCallback];
 	dispatch_semaphore_signal(log.progressed);
 }
@@ -699,6 +720,58 @@ static void NFKCAPITestCompletion(void *context, nfk_result *result, nfk_error *
 	nfk_backend_free(backend);
 }
 
+- (void)testStructuresAtTheOneZeroSizeAndLongerOnesAreRead
+{
+	nfk_backend *backend = [self backendFor:NFKCAPIEchoModel options:NULL];
+	uint8_t decoy[16];
+	uint8_t data[64];
+	memset(decoy, 9, sizeof decoy);
+	memset(data, 2, sizeof data);
+	const char *json = "{\"inputs\": {\"data\": {\"$nfk\": \"buffer\", \"index\": 1, \"as\": \"data\", \"length\": 64}}}";
+	// A writer built against a later minor version: each buffer 16 bytes longer, the payload too.
+	const size_t longer = 16;
+	struct { nfk_payload payload; uint8_t later[16]; } longPayload;
+	memset(&longPayload, 0, sizeof longPayload);
+	_Alignas(nfk_buffer) uint8_t longBuffers[2 * (sizeof(nfk_buffer) + 16)];
+	memset(longBuffers, 0, sizeof longBuffers);
+	const void *sources[2] = { decoy, data };
+	const uint64_t lengths[2] = { sizeof decoy, sizeof data };
+	for (NSUInteger index = 0; index < 2; index++) {
+		nfk_buffer buffer = [self bytesBuffer:sources[index] length:lengths[index]];
+		buffer.struct_size = (uint32_t)(sizeof(nfk_buffer) + longer);
+		memcpy(longBuffers + index * (sizeof(nfk_buffer) + longer), &buffer, sizeof buffer);
+	}
+	longPayload.payload.struct_size = (uint32_t)(sizeof(nfk_payload) + longer);
+	longPayload.payload.json = json;
+	longPayload.payload.buffers = (const nfk_buffer *)longBuffers;
+	longPayload.payload.buffer_count = 2;
+	// A writer built against 1.0 that sizes each structure through its last 1.0 field.
+	nfk_buffer shortBuffers[2] = { [self bytesBuffer:decoy length:sizeof decoy], [self bytesBuffer:data length:sizeof data] };
+	shortBuffers[0].struct_size = (uint32_t)(offsetof(nfk_buffer, reserved) + sizeof(uint32_t));
+	shortBuffers[1].struct_size = shortBuffers[0].struct_size;
+	nfk_payload shortPayload = [self payloadWithJSON:json buffers:shortBuffers count:2];
+	shortPayload.struct_size = (uint32_t)(offsetof(nfk_payload, buffers) + sizeof(const nfk_buffer *));
+
+	const nfk_payload *requests[2] = { &shortPayload, &longPayload.payload };
+	for (NSUInteger index = 0; index < 2; index++) {
+		nfk_error *error = NULL;
+		nfk_result *result = nfk_backend_run(backend, requests[index], &error);
+		XCTAssert(result != NULL, @"request %lu: %s", (unsigned long)index, nfk_error_message(error));
+		XCTAssertEqualObjects([self outputsOfResult:result][@"dataSum"], @(2 * 64), @"request %lu strides to buffer 1", (unsigned long)index);
+		nfk_result_free(result);
+		nfk_error_free(error);
+	}
+
+	nfk_payload tooShort = shortPayload;
+	tooShort.struct_size -= 1;
+	nfk_error *error = NULL;
+	XCTAssert(nfk_backend_run(backend, &tooShort, &error) == NULL, @"a payload shorter than 1.0's is refused");
+	XCTAssertEqual(nfk_error_code(error), (int64_t)kNFKError_InferenceMissingInput);
+	XCTAssertTrue(strstr(nfk_error_message(error) ?: "", "1.0") != NULL, @"%s", nfk_error_message(error));
+	nfk_error_free(error);
+	nfk_backend_free(backend);
+}
+
 - (void)testABytesBufferIsWrappedWithoutACopy
 {
 	nfk_backend *backend = [self backendFor:NFKCAPIEchoModel options:NULL];
@@ -774,6 +847,38 @@ static void NFKCAPITestCompletion(void *context, nfk_result *result, nfk_error *
 	if (result != NULL) {
 		[self assertResult:result invertsImage:source.bytes side:side bytesPerRow:bytesPerRow];
 	}
+	nfk_result_free(result);
+	nfk_backend_free(backend);
+	CFRelease(surface);
+}
+
+- (void)testAResultHoldsNoWrapperOverARequestSurfaceItEchoes
+{
+	NSDictionary *properties = @{ (id)kIOSurfaceWidth: @16, (id)kIOSurfaceHeight: @16, (id)kIOSurfaceBytesPerElement: @4,
+								  (id)kIOSurfacePixelFormat: @(kCVPixelFormatType_32BGRA) };
+	IOSurfaceRef surface = IOSurfaceCreate((__bridge CFDictionaryRef)properties);
+	XCTAssert(surface != NULL);
+	if (surface == NULL) {
+		return;
+	}
+	CFIndex baseline = CFGetRetainCount(surface);
+	nfk_buffer buffer;
+	memset(&buffer, 0, sizeof buffer);
+	buffer.struct_size = (uint32_t)sizeof buffer;
+	buffer.kind = NFK_BUFFER_SURFACE;
+	buffer.surface = surface;
+	buffer.length = 1024;
+	buffer.descriptor = -1;
+	nfk_backend *backend = [self backendFor:NFKCAPIEchoModel options:NULL];
+	nfk_payload request = [self payloadWithJSON:"{\"inputs\": {\"data\": {\"$nfk\": \"buffer\", \"index\": 0, \"as\": \"data\", \"length\": 1024}}, "
+										"\"parameters\": {\"echoData\": true}}"
+										buffers:&buffer count:1];
+	nfk_error *error = NULL;
+	nfk_result *result = nfk_backend_run(backend, &request, &error);
+	XCTAssert(result != NULL, @"%s", nfk_error_message(error));
+	NSDictionary *echo = [self outputsOfResult:result][@"echo"];
+	XCTAssertEqualObjects(echo[@"$nfk"], @"buffer", @"the echoed data comes back as a copy in a buffer");
+	XCTAssertEqual(CFGetRetainCount(surface), baseline, @"nothing the result keeps retains the surface or its read-only lock");
 	nfk_result_free(result);
 	nfk_backend_free(backend);
 	CFRelease(surface);
@@ -1061,6 +1166,78 @@ static void NFKCAPITestCompletion(void *context, nfk_result *result, nfk_error *
 	nfk_job_free(job);
 	XCTAssertEqual(log.errorCode, (int64_t)NSUserCancelledError);
 	XCTAssertEqual(log.endedRunsAtCompletion, ended + 1, @"the completion waited for the run that reads the buffer");
+	nfk_backend_free(backend);
+}
+
+/*! A malloc'd buffer of 4096 bytes of 1, whose sum is 4096, and the nfk_buffer over it. The caller frees it. */
+- (uint8_t *)newSlowDataBuffer:(nfk_buffer *)outBuffer
+{
+	uint8_t *bytes = malloc(4096);
+	memset(bytes, 1, 4096);
+	*outBuffer = [self bytesBuffer:bytes length:4096];
+	return bytes;
+}
+
+- (void)testFreeingAJobWaitsUntilTheRunNoLongerReadsItsBuffers
+{
+	nfk_backend *backend = [self backendFor:NFKCAPIEchoModel options:NULL];
+	NFKCAPICallbackLog *log = [[NFKCAPICallbackLog alloc] init];
+	nfk_buffer buffer;
+	uint8_t *bytes = [self newSlowDataBuffer:&buffer];
+	nfk_payload request = [self payloadWithJSON:NFKCAPISlowDataRequest buffers:&buffer count:1];
+	int ended = atomic_load(&NFKCAPIEchoRunsEnded);
+	atomic_store(&NFKCAPIEchoLastDataSum, 0);
+	nfk_job *job = nfk_backend_submit(backend, &request, NULL, NFKCAPITestCompletion, (__bridge void *)log);
+	XCTAssertTrue([self wait:NFKCAPIEchoRunStarted seconds:NFKCAPIDeadline]);
+	nfk_job_free(job);
+	XCTAssertEqual(atomic_load(&NFKCAPIEchoRunsEnded), ended + 1, @"the backend read the buffer before nfk_job_free returned");
+	XCTAssertEqual(atomic_load(&NFKCAPIEchoLastDataSum), 4096ull, @"it read the caller's bytes, not freed memory");
+	memset(bytes, 0xFF, 4096);
+	free(bytes);
+	XCTAssertFalse([self wait:log.completed seconds:0.3], @"a freed job's completion never fires");
+	nfk_backend_free(backend);
+}
+
+- (void)testFreeingACancelledJobBeforeItsCompletionWaitsForTheRun
+{
+	nfk_backend *backend = [self backendFor:NFKCAPIEchoModel options:NULL];
+	NFKCAPICallbackLog *log = [[NFKCAPICallbackLog alloc] init];
+	nfk_buffer buffer;
+	uint8_t *bytes = [self newSlowDataBuffer:&buffer];
+	nfk_payload request = [self payloadWithJSON:NFKCAPISlowDataRequest buffers:&buffer count:1];
+	int ended = atomic_load(&NFKCAPIEchoRunsEnded);
+	atomic_store(&NFKCAPIEchoLastDataSum, 0);
+	nfk_job *job = nfk_backend_submit(backend, &request, NULL, NFKCAPITestCompletion, (__bridge void *)log);
+	XCTAssertTrue([self wait:NFKCAPIEchoRunStarted seconds:NFKCAPIDeadline]);
+	nfk_job_cancel(job);
+	nfk_job_free(job);
+	XCTAssertEqual(atomic_load(&NFKCAPIEchoRunsEnded), ended + 1, @"the backend, which reads after the cancel, finished first");
+	XCTAssertEqual(atomic_load(&NFKCAPIEchoLastDataSum), 4096ull);
+	memset(bytes, 0xFF, 4096);
+	free(bytes);
+	XCTAssertEqual(log.completionCount, 0);
+	nfk_backend_free(backend);
+}
+
+- (void)testFreeingAJobInsideItsProgressCallbackWaitsForTheRun
+{
+	nfk_backend *backend = [self backendFor:NFKCAPIEchoModel options:NULL];
+	NFKCAPICallbackLog *log = [[NFKCAPICallbackLog alloc] init];
+	nfk_buffer buffer;
+	uint8_t *bytes = [self newSlowDataBuffer:&buffer];
+	nfk_payload request = [self payloadWithJSON:NFKCAPISlowDataRequest buffers:&buffer count:1];
+	int ended = atomic_load(&NFKCAPIEchoRunsEnded);
+	[log.lock lock];
+	nfk_job *job = nfk_backend_submit(backend, &request, NFKCAPITestProgress, NFKCAPITestCompletion, (__bridge void *)log);
+	log.jobToFreeInProgress = job;
+	[log.lock unlock];
+	XCTAssertTrue([self wait:log.progressed seconds:NFKCAPIDeadline], @"the run reports its start, and the callback frees the job");
+	XCTAssertTrue([self wait:NFKCAPIEchoRunStarted seconds:NFKCAPIDeadline]);
+	XCTAssertEqual(log.endedRunsAtFree, ended + 1, @"nfk_job_free inside the callback returned after the run");
+	memset(bytes, 0xFF, 4096);
+	free(bytes);
+	XCTAssertFalse([self wait:log.completed seconds:0.3], @"the callback that freed the job was its last");
+	XCTAssertEqual(log.progressCount, 1);
 	nfk_backend_free(backend);
 }
 

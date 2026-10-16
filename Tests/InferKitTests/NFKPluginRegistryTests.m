@@ -765,6 +765,34 @@ static BOOL NFKRegistryTestImageIsLoaded(NSURL *url)
 	XCTAssertEqualObjects(result.outputs[NFKPluginFixtureValuesKey], (@[ @0.75, @0.0 ]), @"%@", error);
 }
 
+- (void)testATrustedPluginThatCannotRunInProcessRefusesItsToolsAsItsBackends
+{
+	NFKPluginRegistry *registry = [self registry];
+	NSError *error = nil;
+	NFKPluginManifest *manifest = [registry addPluginAtURL:[self fixtureOfKind:NFKPluginEntryKindExecutable version:@"1.0.0"] error:&error];
+	XCTAssertNotNil(manifest, @"%@", error);
+	[registry setTrusted:YES forPluginIdentifier:manifest.identifier];
+	NFKInferenceTool *echo = nil;
+	for (NFKInferenceTool *tool in registry.tools) {
+		if ([tool.name isEqualToString:NFKPluginFixtureEchoTool]) {
+			echo = tool;
+		}
+	}
+	XCTAssertNotNil(echo);
+	XCTAssertNil([echo resultForArguments:@{ @"text": @"hi" } error:&error], @"the tool runs nowhere, as the backends do");
+	[self assertError:error domain:NFKPluginErrorDomain code:NFKPluginErrorNotTrusted];
+
+	[registry setTrusted:NO forPluginIdentifier:manifest.identifier];
+	for (NFKInferenceTool *tool in registry.tools) {
+		if ([tool.name isEqualToString:NFKPluginFixtureEchoTool]) {
+			echo = tool;
+		}
+	}
+	NFKToolResult *result = [echo resultForArguments:@{ @"text": @"hi" } error:&error];
+	XCTAssertNotNil(result, @"an untrusted plugin's tool runs in its process: %@", error);
+	XCTAssertFalse(result.isError, @"%@", result.text);
+}
+
 - (void)testATamperedBundleAndATeamPinAreRefused
 {
 	NSURL *fixture = [self fixtureOfKind:NFKPluginEntryKindCABI version:@"1.0.0"];

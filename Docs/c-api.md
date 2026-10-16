@@ -200,7 +200,7 @@ fn main() {
 | the JSON, buffers, and buffer array of a result | the result | `nfk_result_free` |
 | the domain and message of an error | the error | `nfk_error_free` |
 | a request's `nfk_payload`, its JSON, and its `buffers` array | the caller | the caller; read during the call |
-| the memory a request's buffer points to | the caller | the caller, after `nfk_backend_run` returns or the completion fires |
+| the memory a request's buffer points to | the caller | the caller, after `nfk_backend_run` returns, the completion fires, or `nfk_job_free` returns |
 
 - Every `*_free` function accepts NULL. A reader given NULL answers NULL or 0.
 - A handle passed to a function of another type, such as an error to `nfk_result_free`, is ignored.
@@ -209,6 +209,13 @@ fn main() {
 - InferKit wraps a request's bytes and surfaces without copying them. A cancelled run's completion
   fires once the backend no longer holds those wrappers, so the caller frees the memory in the
   completion or after it.
+- `nfk_job_free` before the completion returns once the run no longer reads the request's buffers, so
+  the caller frees the memory after it returns:
+
+  ```c
+  nfk_job_free(job);   /* cancels the run and waits for it to let go of the buffers */
+  free(pixels);        /* safe: nothing reads the buffer any more */
+  ```
 - A job holds its backend. `nfk_backend_free` on a backend with a job in flight frees it when the job's
   run ends.
 
@@ -223,8 +230,15 @@ fn main() {
 - The completion fires exactly once, after every progress callback. `nfk_job_free` before the
   completion cancels the run, and the completion then never fires.
 - After `nfk_job_free` returns, no callback runs: it waits for a callback in progress on another thread.
-  Called from inside one of the job's own callbacks, it returns at once, and that callback is the last.
-  A program does not call `nfk_job_free` on a thread a callback waits for.
+- `nfk_job_free` on a run that has not completed also waits until the run no longer reads the request's
+  buffers:
+  - a run that already returned → it returns at once;
+  - a run the backend stops at the cancellation → it returns when the backend stops;
+  - a backend that does not check for cancellation → it returns when the run ends, and InferKit logs a
+    fault every 10 seconds of the wait.
+- Called from inside the job's progress callback, `nfk_job_free` waits the same way, and that callback
+  is the last. Called from inside its completion, it returns at once.
+- A program does not call `nfk_job_free` on a thread a callback or the backend's run waits for.
 - `nfk_job_cancel` never calls the completion itself.
 
 ## Requests
@@ -276,7 +290,10 @@ An `nfk_buffer` holds its bytes in one of three ways:
 | `NFK_BUFFER_FILE` | `path`, or `descriptor` with `path` NULL | the path mapped; the descriptor's file read into memory |
 
 `struct_size` is `sizeof(nfk_buffer)` and `descriptor` is -1 when unused. An array of buffers strides
-by its first element's `struct_size`.
+by its first element's `struct_size`. InferKit accepts any `struct_size` at least the 1.0 size of the
+structure (48 bytes for `nfk_buffer`, 24 for `nfk_payload` on a 64-bit target), so a program built
+against a later minor version runs on this library. A field a later minor version appends is read only
+when the writer's `struct_size` covers it.
 
 ### Inline values
 

@@ -389,6 +389,39 @@
 	XCTAssertTrue([error.localizedDescription containsString:@"outside"], @"%@", error);
 }
 
+- (void)testAFileReferenceIsCheckedWithItsLinksResolved
+{
+	NSFileManager *files = NSFileManager.defaultManager;
+	NSURL *outputs = [self.directory URLByAppendingPathComponent:@"outputs" isDirectory:YES];
+	XCTAssertTrue([files createDirectoryAtURL:outputs withIntermediateDirectories:YES attributes:nil error:NULL]);
+	NSURL *secret = [self.directory URLByAppendingPathComponent:@"secret.txt"];
+	XCTAssertTrue([@"outside" writeToURL:secret atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
+	NSURL *answer = [outputs URLByAppendingPathComponent:@"answer.txt"];
+	XCTAssertTrue([@"inside" writeToURL:answer atomically:YES encoding:NSUTF8StringEncoding error:NULL]);
+	NSError *error = nil;
+	XCTAssertTrue([files createSymbolicLinkAtURL:[outputs URLByAppendingPathComponent:@"escape.txt"] withDestinationURL:secret error:&error], @"%@", error);
+	XCTAssertTrue([files createSymbolicLinkAtURL:[outputs URLByAppendingPathComponent:@"folder"] withDestinationURL:self.directory error:&error], @"%@", error);
+	XCTAssertTrue([files createSymbolicLinkAtURL:[outputs URLByAppendingPathComponent:@"alias.txt"] withDestinationURL:answer error:&error], @"%@", error);
+	NFKPluginAttachmentReader *fenced = [[NFKPluginAttachmentReader alloc] initWithDescriptors:@[]];
+	fenced.allowedFileDirectoryURL = outputs;
+
+	for (NSString *name in @[ @"escape.txt", @"folder/secret.txt" ]) {
+		NSString *path = [outputs URLByAppendingPathComponent:name].path;
+		XCTAssertNil([fenced fileURLForPath:path error:&error], @"%@ names a file outside the directory through a link", name);
+		XCTAssertEqualObjects(error.domain, NFKPluginErrorDomain);
+		XCTAssertEqual(error.code, NFKPluginErrorProtocolViolation);
+		XCTAssertTrue([error.localizedDescription containsString:@"outside"], @"%@", error);
+	}
+	XCTAssertNil([fenced fileURLForPath:[outputs URLByAppendingPathComponent:@"missing.txt"].path error:&error], @"a missing file is refused");
+	XCTAssertNil([fenced fileURLForPath:@"answer.txt" error:&error], @"a relative path is refused");
+
+	NSURL *aliased = [fenced fileURLForPath:[outputs URLByAppendingPathComponent:@"alias.txt"].path error:&error];
+	XCTAssertNotNil(aliased, @"a link that stays inside is accepted: %@", error);
+	XCTAssertEqualObjects(aliased.lastPathComponent, @"answer.txt", @"the reference names the file the link resolves to");
+	XCTAssertTrue([aliased.path hasPrefix:outputs.path], @"%@ keeps the directory's own spelling", aliased);
+	XCTAssertEqualObjects([NSString stringWithContentsOfURL:aliased encoding:NSUTF8StringEncoding error:NULL], @"inside");
+}
+
 - (void)testAnIOSurfaceBufferFallsBackToSharedMemory
 {
 	NSDictionary *attributes = @{ (id)kCVPixelBufferIOSurfacePropertiesKey: @{} };

@@ -227,6 +227,16 @@ static void *NFKSubprocessQueueKey = &NFKSubprocessQueueKey;
 		}
 		return [self failLaunchWithCode:code reason:@"the pipes could not be created" error:error];
 	}
+	// macOS has no pipe2, so close-on-exec follows each pipe at once, before the spawn, to keep a process
+	// another thread spawns from inheriting an end. The child's copies are dup2 targets, which do not keep
+	// the flag; an end that already has its target's number keeps none, since dup2 onto itself changes no flag.
+	int ends[6] = { input[0], input[1], output[0], output[1], errorOutput[0], errorOutput[1] };
+	int streams[6] = { STDIN_FILENO, -1, -1, STDOUT_FILENO, -1, STDERR_FILENO };
+	for (int index = 0; index < 6; index++) {
+		if (ends[index] != streams[index]) {
+			fcntl(ends[index], F_SETFD, FD_CLOEXEC);
+		}
+	}
 	pid_t processIdentifier = 0;
 	NSArray<NSNumber *> *inherited = nil;
 	NSArray<NSNumber *> *targets = nil;

@@ -149,6 +149,19 @@
 	[self assertError:error code:NFKPluginErrorTeamMismatch];
 }
 
+- (void)testATeamIdentifierThatIsNotOneRefusesEverySigner
+{
+	NSArray<NSString *> *malformed = @[ @"ABCDE1234", @"abcde12345", @"ABCDE12345X", @"ABCDE\" or \"1", @"ABCDE)(123" ];
+	for (NSString *team in malformed) {
+		NFKPluginSignaturePolicy *policy = NFKPluginSignaturePolicy.developmentPolicy;
+		policy.teamIdentifier = team;
+		NSError *error = nil;
+		XCTAssertFalse([policy validateCodeAtURL:[self objectiveCFixture] error:&error], @"%@", team);
+		[self assertError:error code:NFKPluginErrorTeamMismatch];
+		XCTAssertTrue([error.localizedDescription containsString:@"ten uppercase letters and digits"], @"%@: %@", team, error);
+	}
+}
+
 - (void)testARequirementDecidesWhichSignerIsAllowed
 {
 	NSURL *fixture = [self objectiveCFixture];

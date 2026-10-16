@@ -53,7 +53,9 @@ extern NFKPluginEntryKind const NFKPluginEntryKindExecutable;
 @property (class, nonatomic, readonly) NSInteger schemaVersion;
 
 /*! Reads Contents/Resources/inferkit-plugin.json from a bundle and checks it against the bundle's
-	Info.plist: the identifier and the short version must match. Loads no code. */
+	Info.plist: the identifier and the short version must match, and the executable, entry.executable or
+	else CFBundleExecutable, must be a file whose path with symbolic links resolved lies in the bundle's
+	Contents/MacOS. A mismatch is NFKPluginErrorManifestMismatch. Loads no code. */
 + (nullable instancetype)manifestWithBundleURL:(NSURL *)bundleURL error:(NSError **)error;
 
 /*! Reads a manifest from its JSON form. bundleURL is nil. */

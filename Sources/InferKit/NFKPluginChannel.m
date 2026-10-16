@@ -301,10 +301,19 @@ static void NFKPluginChannelHoldUntilReceived(int transport, int handed)
 			NFKPluginChannelPOSIXError(outError, NFKPluginErrorProtocolViolation, errno, @"the channel could not be read");
 			return -1;
 		}
-		[self collectDescriptorsOfMessage:&message];
+		NSUInteger collected = [self collectDescriptorsOfMessage:&message];
 		if ((message.msg_flags & MSG_CTRUNC) != 0) {
 			NFKPluginChannelPOSIXError(outError, NFKPluginErrorProtocolViolation, 0,
 									   [NSString stringWithFormat:@"a frame carried more than %u descriptors", NFKPluginFrameMaximumDescriptors]);
+			return -1;
+		}
+		// One read returns at most one send's descriptors, starting at that send's first byte, and a
+		// sender attaches them only to a frame's first byte. Descriptors that arrive while part of a frame
+		// is pending, or while an earlier frame's are still queued, belong to no frame.
+		BOOL midFrame = self.pending.length > 0 || self.descriptors.count > collected;
+		if (collected > 0 && midFrame) {
+			NFKPluginChannelPOSIXError(outError, NFKPluginErrorProtocolViolation, 0,
+									   [NSString stringWithFormat:@"%lu descriptors arrived inside a frame", (unsigned long)collected]);
 			return -1;
 		}
 		[self.pending appendBytes:self.chunk length:(NSUInteger)count];
@@ -312,8 +321,11 @@ static void NFKPluginChannelHoldUntilReceived(int transport, int handed)
 	}
 }
 
-- (void)collectDescriptorsOfMessage:(struct msghdr *)message
+/*! Queues the descriptors a read received, each owned by an NFKPluginDescriptor that closes it unless it
+	is taken, and returns their number. */
+- (NSUInteger)collectDescriptorsOfMessage:(struct msghdr *)message
 {
+	NSUInteger collected = 0;
 	for (struct cmsghdr *header = CMSG_FIRSTHDR(message); header != NULL; header = CMSG_NXTHDR(message, header)) {
 		if (header->cmsg_level != SOL_SOCKET || header->cmsg_type != SCM_RIGHTS) {
 			continue;
@@ -323,8 +335,10 @@ static void NFKPluginChannelHoldUntilReceived(int transport, int handed)
 		for (size_t index = 0; index < count; index++) {
 			fcntl(slots[index], F_SETFD, FD_CLOEXEC);
 			[self.descriptors addObject:[[NFKPluginDescriptor alloc] initWithDescriptor:slots[index]]];
+			collected += 1;
 		}
 	}
+	return collected;
 }
 
 /*! The next complete frame's message with its descriptors, or nil: with outError nil while the frame is
@@ -357,11 +371,13 @@ static void NFKPluginChannelHoldUntilReceived(int transport, int handed)
 	if (available < NFKPluginFrameHeaderLength + length) {
 		return nil;
 	}
-	// The kernel delivers a frame's descriptors with its first byte, which has been read, so a frame
-	// whose descriptors are not queued now never receives them.
-	if (self.descriptors.count < count) {
+	// The kernel delivers a frame's descriptors with its first byte, which has been read, so the queue
+	// holds this frame's descriptors and no other's. Fewer never grow, and more belong to no frame; the
+	// reader closes them when the channel ends.
+	if (self.descriptors.count != count) {
 		NFKPluginChannelPOSIXError(outError, NFKPluginErrorProtocolViolation, 0,
 								   [NSString stringWithFormat:@"a frame declared %u descriptors and %lu arrived", count, (unsigned long)self.descriptors.count]);
+		[self.descriptors removeAllObjects];
 		return nil;
 	}
 	NSData *JSON = [self.pending subdataWithRange:NSMakeRange(NFKPluginFrameHeaderLength, length)];
