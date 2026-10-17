@@ -875,6 +875,15 @@ final class MLXModelGalleryExamples: XCTestCase {
                                           parameters: [NFKParameterSeed: 42, NFKParameterSteps: 1,
                                                        NFKParameterWidth: 64, NFKParameterHeight: 64])
         XCTAssertNotNil(try lcm.runInference(for: request).output(forKey: NFKOutputImage))
+
+        // Hyper-SD's unified adapter: ByteDance/Hyper-SD's Hyper-SD15-1step-lora.safetensors under the
+        // trajectory consistency sampler, one to eight steps.
+        if let hyperLoRA = validationPath("IK_VAL_HYPER_SD15_1STEP_LORA") {
+            let hyper = try NFKMLXTextToImage.backend(configuration: .stableDiffusion15.withSampler(.tcd),
+                                                      directoryURL: URL(fileURLWithPath: sd15Directory),
+                                                      adapterURL: URL(fileURLWithPath: hyperLoRA))
+            XCTAssertNotNil(try hyper.runInference(for: request).output(forKey: NFKOutputImage))
+        }
     }
 
     func testFlux2TextToImage() throws {

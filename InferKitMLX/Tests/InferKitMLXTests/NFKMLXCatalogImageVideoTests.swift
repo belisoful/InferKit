@@ -149,7 +149,10 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
 
     func testEachStableDiffusionAdapterListsItsBaseReleaseAndItsFileAtItsTrainedSchedule() throws {
         let adapters = NFKMLXCatalogImage.stableDiffusionAdapters
-        XCTAssertEqual(adapters.map(\.name), ["lcm-lora-sdv1-5", "sdxl-lightning-4step-lora"])
+        XCTAssertEqual(adapters.map(\.name), ["lcm-lora-sdv1-5", "sdxl-lightning-4step-lora", "hyper-sd15-4steps-lora",
+                                              "hyper-sdxl-4steps-lora", "hyper-sd15-8steps-cfg-lora",
+                                              "hyper-sdxl-8steps-cfg-lora", "hyper-sd15-1step-lora",
+                                              "hyper-sdxl-1step-lora"])
         for adapter in adapters {
             let descriptor = try XCTUnwrap(entry(adapter.name)).descriptor()
             let base = try XCTUnwrap(entry(NFKMLXCatalogImage.stableDiffusionName(adapter.base))).descriptor()
@@ -163,14 +166,28 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
             XCTAssertEqual(adapterFiles.first?.repository, adapter.repository, adapter.name)
             XCTAssertEqual(adapterFiles.first?.role, NFKModelFileRoleWeights, adapter.name)
             XCTAssertEqual(adapterFiles.first?.isOptional, false, adapter.name)
-            XCTAssertEqual(descriptor.option(withKey: NFKParameterSteps)?.defaultValue as? Int, 4, adapter.name)
+            XCTAssertEqual(descriptor.option(withKey: NFKParameterSteps)?.defaultValue as? Int,
+                           adapter.configuration.steps, adapter.name)
             XCTAssertEqual(adapter.configuration.sampler, adapter.sampler, adapter.name)
         }
         let lcm = try XCTUnwrap(entry("lcm-lora-sdv1-5")).descriptor()
+        XCTAssertEqual(lcm.option(withKey: NFKParameterSteps)?.defaultValue as? Int, 4)
         XCTAssertEqual(lcm.option(withKey: NFKParameterGuidanceScale)?.defaultValue as? Double, 1)
         let lightning = try XCTUnwrap(entry("sdxl-lightning-4step-lora")).descriptor()
+        XCTAssertEqual(lightning.option(withKey: NFKParameterSteps)?.defaultValue as? Int, 4)
         XCTAssertEqual(lightning.option(withKey: NFKParameterGuidanceScale)?.defaultValue as? Double, 0)
         XCTAssertEqual(lightning.option(withKey: NFKParameterWidth)?.defaultValue as? Int, 1024)
+        let hyperFour = try XCTUnwrap(entry("hyper-sdxl-4steps-lora")).descriptor()
+        XCTAssertEqual(hyperFour.option(withKey: NFKParameterSteps)?.defaultValue as? Int, 4)
+        XCTAssertEqual(hyperFour.option(withKey: NFKParameterGuidanceScale)?.defaultValue as? Double, 0)
+        let hyperCFG = try XCTUnwrap(entry("hyper-sd15-8steps-cfg-lora")).descriptor()
+        XCTAssertEqual(hyperCFG.option(withKey: NFKParameterSteps)?.defaultValue as? Int, 8)
+        XCTAssertEqual(hyperCFG.option(withKey: NFKParameterGuidanceScale)?.defaultValue as? Double, 5)
+        let unified = try XCTUnwrap(entry("hyper-sd15-1step-lora")).descriptor()
+        XCTAssertEqual(unified.option(withKey: NFKParameterSteps)?.defaultValue as? Int, 1)
+        XCTAssertEqual(unified.option(withKey: NFKParameterGuidanceScale)?.defaultValue as? Double, 0)
+        XCTAssertEqual(NFKMLXCatalogImage.hyperSDAdapters.count, 6)
+        XCTAssertTrue(NFKMLXCatalogImage.hyperSDAdapters.allSatisfy { $0.repository == "ByteDance/Hyper-SD" })
     }
 
     func testTheConceptSegmentersDeclareTheirBackendsKeys() {
@@ -230,7 +247,9 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
                         "yolov8x", "sam2.1-hiera-large", "sam2-hiera-tiny-video", "flux.1-dev", "sd3.5-large", "sd3.5-large-turbo",
                         "florence-2-base", "trocr-small-printed", "vjepa2-vitg-fpc32-384-diving48",
                         "stable-diffusion-v1-5", "sdxl-turbo", "stable-diffusion-xl-base-1.0", "lcm-dreamshaper-v7",
-                        "lcm-lora-sdv1-5", "sdxl-lightning-4step-lora"]
+                        "lcm-lora-sdv1-5", "sdxl-lightning-4step-lora", "hyper-sd15-4steps-lora",
+                        "hyper-sdxl-4steps-lora", "hyper-sd15-8steps-cfg-lora", "hyper-sdxl-8steps-cfg-lora",
+                        "hyper-sd15-1step-lora", "hyper-sdxl-1step-lora"]
         for name in expected {
             XCTAssertTrue(names.contains(name), name)
         }

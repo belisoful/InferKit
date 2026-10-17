@@ -413,9 +413,11 @@ models.
   base releases sample with DDIM at the release's own timestep spacing on both sides, and LCM Dreamshaper
   with the latent consistency sampler (`NFKLCMScheduler`) from the reference's own per-step draws. A
   released LoRA merges into the UNet through `NFKMLXSDLoRA` (the kohya and PEFT key layouts, linear and
-  convolution targets), and `withSampler(.lcm)` or `.ddimTrailing` gives the adapter the sampler it was
-  distilled for: LCM-LoRA on SD 1.5 under `NFKLCMScheduler`, SDXL-Lightning on SDXL base under trailing
-  DDIM, each measured against diffusers with the adapter fused.
+  convolution targets), and `withSampler(.lcm)`, `.ddimTrailing`, or `.tcd` gives the adapter the
+  sampler it was distilled for: LCM-LoRA on SD 1.5 under `NFKLCMScheduler`, SDXL-Lightning and the
+  Hyper-SD N-step and CFG-preserved adapters under trailing DDIM, and the Hyper-SD unified adapters
+  under the trajectory consistency sampler (`NFKTCDScheduler`), each measured against diffusers with
+  the adapter fused.
 - **`NFKMLXStableDiffusionInpaint`** — a latent-diffusion inpainter (VAE + UNet in MLXNN) on the
   diffusion backend: VAE-encode the plate, denoise a 9-channel input over the DDIM loop, VAE-decode.
 - **`NFKMLXMarigold`** / **`NFKMLXSDUpscaler`** — image-conditioned latent-diffusion models on the
@@ -946,27 +948,23 @@ models.
   embeddings. Forty-one models ship a recipe, and [model parity](model-parity.md) ("Training objectives
   and the checkpoint path") lists each recipe's measured objective. The Whisper objective is not
   measured against a reference. A fine-tuned file loads through the model's ordinary factory.
-- **`NFKMLXDiffusionBackend`** — a bring-your-own MLX diffusion model, for the iterative-sampler shape
-  the single-forward backends cannot express. Supply `encode`, `denoise`, `decode`, and a scheduler;
-  the backend runs the denoise loop with per-step progress and cancellation. No source latent runs
-  text-to-image, a source latent runs image-to-image (`NFKParameterStrength`), and a source latent
-  plus a mask runs inpainting. Reference pipelines register by name (upscale, depth, inpaint,
-  **controlnet**); `NFKDDIMScheduler` and `NFKLCMScheduler` (few-step) ship, and `NFKDiffusionScheduler`
-  is the seam for other samplers. ControlNet and LCM need no full SD reimplementation — LCM is a
-  scheduler swap, ControlNet is a `denoise` closure over a control map (`NFKInputControl` →
-  `conditioning["control"]`); the UNet is supplied by your `denoise` or a dynamically linked SD engine.
-
-The image backends share `NFKMLXImageBridge`, which converts a `CGImage` or an `MTLTexture`
-to and from `MLXArray` in either direction, preserving alpha — so a Metal render pipeline hands
-textures straight in and gets textures back.
-
-### Dynamic backend discovery (optional engines)
-
-`NFKDynamicBackend` (core) activates a heavier engine only when its classes are linked into your
-build, with no build dependency on it. Your engine's adapter conforms to `NFKDynamicBackendProvider`
-and InferKit resolves it by name at runtime (`NSClassFromString`) — absent when unlinked, with no link
-error. Built-in capabilities light up when you link a companion:
-
+- **`NFKMLXDiffusionBackend`** — a bring-your-own MLX diffusion model, for the iterative-sampler
+  shape the single-forward backends cannot express. Supply `encode`, `denoise`, `decode`, and a
+  scheduler; the backend runs the denoise loop with per-step progress and cancellation. No source
+  latent runs text-to-image, a source latent runs image-to-image (`NFKParameterStrength`), and a
+  source latent plus a mask runs inpainting. Reference pipelines register by name (upscale, depth,
+  inpaint, **controlnet**); `NFKDDIMScheduler`, `NFKLCMScheduler`, and `NFKTCDScheduler` (few-step)
+  ship, and `NFKDiffusionScheduler` is the seam for other samplers. ControlNet and LCM need no full
+  SD reimplementation — LCM is a scheduler swap, ControlNet is a `denoise` closure over a control
+  map (`NFKInputControl` → `conditioning["control"]`); the UNet is supplied by your `denoise` or a
+  dynamically linked SD engine.  The image backends share `NFKMLXImageBridge`, which converts a
+  `CGImage` or an `MTLTexture` to and from `MLXArray` in either direction, preserving alpha — so a
+  Metal render pipeline hands textures straight in and gets textures back.  ### Dynamic backend
+  discovery (optional engines)  `NFKDynamicBackend` (core) activates a heavier engine only when its
+  classes are linked into your build, with no build dependency on it. Your engine's adapter conforms
+  to `NFKDynamicBackendProvider` and InferKit resolves it by name at runtime (`NSClassFromString`) —
+  absent when unlinked, with no link error. Built-in capabilities light up when you link a
+  companion:
 - **`stable-diffusion`** — linking **InferKitMLX** ships `NFKStableDiffusionProvider`, so
   `NFKDynamicBackend.stableDiffusionBackend()` returns the bundled SD backend.
 - **`transcription`** — InferKitMLX ships `NFKMLXWhisperProvider` (a native whisper.cpp can override),

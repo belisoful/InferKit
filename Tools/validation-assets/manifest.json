@@ -558,6 +558,72 @@
       "note": "SDXL-Lightning four-step adapter (ByteDance/SDXL-Lightning, openrail++): 788 kohya-layout targets over the SDXL UNet, float16. Merged into the SDXL_BASE release by NFKMLXSDLoRA and sampled with DDIM at trailing spacing over 4 steps with no guidance (NFKMLXSDTextToImageConfiguration.sdxlLightning). Measured end to end against diffusers with the adapter fused and DDIM trailing on both sides (sd_text_to_image with IK_SD_LORA, IK_SD_SPACING=trailing, IK_SD_STEPS=4, IK_SD_GUIDANCE=0 -> IK_PARITY_SDXL_LIGHTNING_T2I). The two- and eight-step adapters share the layout."
     },
     {
+      "key": "HYPER_SD15_4STEP_LORA",
+      "file": "hyper-sd/Hyper-SD15-4steps-lora.safetensors",
+      "bytes": 269127064,
+      "url": "https://huggingface.co/ByteDance/Hyper-SD/resolve/bc08d970a87c74c71209491d64e3525845698863/Hyper-SD15-4steps-lora.safetensors",
+      "sha256": "c5dd058616461ed5053e2b14eec4dbe3fa0eea3b13688642f6d6c80ea2ba5958",
+      "config": [
+        "IK_VAL_HYPER_SD15_4STEP_LORA"
+      ],
+      "note": "Hyper-SD's four-step adapter for Stable Diffusion 1.5 (ByteDance/Hyper-SD, ByteDance's OpenRAIL-M-style license): 278 kohya-layout targets (lora_unet_*.lora_down / lora_up / alpha, rank 64) over the UNet, no text-tower keys. NFKMLXSDLoRA merges it into NFKMLXSDUNet; the run samples DDIM counted down from the end of the training range (IK_SD_SPACING=trailing) over 4 steps at guidance 0. Measured end to end against diffusers with the adapter fused (run_reference.py sd_text_to_image, IK_SD_LORA, IK_SD_SPACING=trailing, IK_SD_STEPS=4, IK_SD_GUIDANCE=0, on the SD15 release -> IK_PARITY_HYPER_SD15_4STEP_T2I)."
+    },
+    {
+      "key": "HYPER_SDXL_4STEP_LORA",
+      "file": "hyper-sd/Hyper-SDXL-4steps-lora.safetensors",
+      "bytes": 787359648,
+      "url": "https://huggingface.co/ByteDance/Hyper-SD/resolve/bc08d970a87c74c71209491d64e3525845698863/Hyper-SDXL-4steps-lora.safetensors",
+      "sha256": "12f81a27d00a751a40d68fd15597091896c5a90f3bd632fb6c475607cbdad76e",
+      "config": [
+        "IK_VAL_HYPER_SDXL_4STEP_LORA"
+      ],
+      "note": "Hyper-SD's four-step adapter for SDXL base 1.0: 788 kohya-layout targets (rank 64) over the UNet, no text-tower keys. The run samples DDIM trailing over 4 steps at guidance 0 on the sdxl-base release (IK_SD_LORA, IK_SD_SPACING=trailing, IK_SD_STEPS=4, IK_SD_GUIDANCE=0 -> IK_PARITY_HYPER_SDXL_4STEP_T2I)."
+    },
+    {
+      "key": "HYPER_SD15_1STEP_LORA",
+      "file": "hyper-sd/Hyper-SD15-1step-lora.safetensors",
+      "bytes": 269127096,
+      "url": "https://huggingface.co/ByteDance/Hyper-SD/resolve/bc08d970a87c74c71209491d64e3525845698863/Hyper-SD15-1step-lora.safetensors",
+      "sha256": "a04fd9a535c1e56d38f7590ee72a13fd5ca0409853b4fff021e5a9482cf1ca3b",
+      "config": [
+        "IK_VAL_HYPER_SD15_1STEP_LORA"
+      ],
+      "note": "Hyper-SD's unified adapter for Stable Diffusion 1.5, trained for the trajectory consistency sampler at eta 1 over one to eight steps. NFKTCDScheduler samples it; the record carries the reference's per-step draws (run_reference.py sd_text_to_image, IK_SD_LORA, IK_SD_SAMPLER=tcd, IK_SD_ETA=1.0, IK_SD_STEPS=1, IK_SD_GUIDANCE=0, on the SD15 release -> IK_PARITY_HYPER_SD15_UNIFIED_T2I)."
+    },
+    {
+      "key": "HYPER_SDXL_1STEP_LORA",
+      "file": "hyper-sd/Hyper-SDXL-1step-lora.safetensors",
+      "bytes": 787359648,
+      "url": "https://huggingface.co/ByteDance/Hyper-SD/resolve/bc08d970a87c74c71209491d64e3525845698863/Hyper-SDXL-1step-lora.safetensors",
+      "sha256": "c912df184c5116792d2c604d26c6bc2aa916685f4a793755255cda1c43a3c78a",
+      "config": [
+        "IK_VAL_HYPER_SDXL_1STEP_LORA"
+      ],
+      "note": "Hyper-SD's unified adapter for SDXL base 1.0 under the trajectory consistency sampler at eta 1 (IK_SD_LORA, IK_SD_SAMPLER=tcd, IK_SD_ETA=1.0, IK_SD_STEPS=1, IK_SD_GUIDANCE=0, on the sdxl-base release -> IK_PARITY_HYPER_SDXL_UNIFIED_T2I)."
+    },
+    {
+      "key": "HYPER_SD15_8STEP_CFG_LORA",
+      "file": "hyper-sd/Hyper-SD15-8steps-CFG-lora.safetensors",
+      "bytes": 269127064,
+      "url": "https://huggingface.co/ByteDance/Hyper-SD/resolve/bc08d970a87c74c71209491d64e3525845698863/Hyper-SD15-8steps-CFG-lora.safetensors",
+      "sha256": "f6123d5b950d5250ab6c33600e27f4dcf71b3099ebf888685e01e9e8117ce482",
+      "config": [
+        "IK_VAL_HYPER_SD15_8STEP_CFG_LORA"
+      ],
+      "note": "Hyper-SD's CFG-preserved eight-step adapter for Stable Diffusion 1.5, which keeps classifier-free guidance at scales 5 to 8. DDIM trailing over 8 steps at guidance 5 (IK_SD_LORA, IK_SD_SPACING=trailing, IK_SD_STEPS=8, IK_SD_GUIDANCE=5, on the SD15 release -> IK_PARITY_HYPER_SD15_8STEP_CFG_T2I)."
+    },
+    {
+      "key": "HYPER_SDXL_8STEP_CFG_LORA",
+      "file": "hyper-sd/Hyper-SDXL-8steps-CFG-lora.safetensors",
+      "bytes": 787359648,
+      "url": "https://huggingface.co/ByteDance/Hyper-SD/resolve/bc08d970a87c74c71209491d64e3525845698863/Hyper-SDXL-8steps-CFG-lora.safetensors",
+      "sha256": "55b51334c85061afff5eff7c550b61963c8b8607a5868bbe4f26db49374719b1",
+      "config": [
+        "IK_VAL_HYPER_SDXL_8STEP_CFG_LORA"
+      ],
+      "note": "Hyper-SD's CFG-preserved eight-step adapter for SDXL base 1.0, guidance 5 to 8. DDIM trailing over 8 steps at guidance 5 (IK_SD_LORA, IK_SD_SPACING=trailing, IK_SD_STEPS=8, IK_SD_GUIDANCE=5, on the sdxl-base release -> IK_PARITY_HYPER_SDXL_8STEP_CFG_T2I)."
+    },
+    {
       "key": "WHISPER_BASE",
       "file": "whisper-base.safetensors",
       "raw": "whisper_base.pt",

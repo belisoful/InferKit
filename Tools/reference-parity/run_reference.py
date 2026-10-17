@@ -848,15 +848,17 @@ def run_sd_text_to_image(image, checkpoint):
     IK_SD_LORA names a released LoRA (`pytorch_lora_weights.safetensors`, kohya or PEFT layout) to merge
     into the UNet at IK_SD_LORA_SCALE (1), through `load_lora_weights` + `fuse_lora`, which is the merge
     `NFKMLXSDLoRA` performs. IK_SD_SAMPLER=lcm swaps the sampler to `LCMScheduler` (the release's own
-    `original_inference_steps`), IK_SD_SPACING overrides the release's `timestep_spacing` (`trailing`
-    for the Lightning adapters on the SDXL base release), and under LCM the record also carries `noises`, the per-step draws the
+    `original_inference_steps`); IK_SD_SAMPLER=tcd to `TCDScheduler` at IK_SD_ETA (1.0, the Hyper-SD
+    unified adapters' recipe); IK_SD_SPACING overrides the release's `timestep_spacing` (`trailing`
+    for the Lightning and Hyper-SD N-step adapters on the base releases), and under LCM and TCD the
+    record also carries `noises`, the per-step draws the
     sampler re-noised with, so the port can run from the reference's randomness end to end. A UNet
     with `time_cond_proj_dim` (an LCM distillation) conditions on the guidance scale and runs no
     classifier-free guidance, which the pipeline decides on its own.
     """
     import json
     import os
-    from diffusers import DDIMScheduler, DiffusionPipeline, LCMScheduler
+    from diffusers import DDIMScheduler, DiffusionPipeline, LCMScheduler, TCDScheduler
 
     with open(os.path.join(checkpoint, "model_index.json")) as handle:
         index = json.load(handle)
@@ -878,11 +880,21 @@ def run_sd_text_to_image(image, checkpoint):
     scheduler_config = dict(pipeline.scheduler.config)
     if os.environ.get("IK_SD_SPACING"):
         scheduler_config["timestep_spacing"] = os.environ["IK_SD_SPACING"]
+        # A release whose stored config lacks `timestep_spacing` (SD 1.5's PNDM config) lists it in
+        # `_use_default_values`, and `from_config` then takes the class default over the value here.
+        # Dropping the key from that list makes the override hold; without it an SD 1.5 "trailing"
+        # run sampled leading with its offset (751, 501, 251, 1) while the port ran 999, 749, 499, 249.
+        scheduler_config["_use_default_values"] = [
+            key for key in scheduler_config.get("_use_default_values", []) if key != "timestep_spacing"]
     if sampler == "lcm":
         pipeline.scheduler = LCMScheduler.from_config(scheduler_config)
+    elif sampler == "tcd":
+        pipeline.scheduler = TCDScheduler.from_config(scheduler_config)
     else:
         pipeline.scheduler = DDIMScheduler.from_config(scheduler_config)
     pipeline.set_progress_bar_config(disable=True)
+    # TCD's `eta` reaches the scheduler through the pipeline's extra step arguments; DDIM takes none here.
+    step_kwargs = {"eta": float(os.environ.get("IK_SD_ETA", "1.0"))} if sampler == "tcd" else {}
 
     lora = os.environ.get("IK_SD_LORA")
     lora_scale = float(os.environ.get("IK_SD_LORA_SCALE", "1"))
@@ -892,18 +904,20 @@ def run_sd_text_to_image(image, checkpoint):
         pipeline.fuse_lora(lora_scale=lora_scale, adapter_names=["adapter"])
         pipeline.unload_lora_weights()
 
-    # The LCM sampler re-noises every non-final step with a fresh draw; the record carries the draws so
-    # the port reproduces the run.
+    # The consistency samplers re-noise every non-final step with a fresh draw; the record carries the
+    # draws so the port reproduces the run.
     noises = []
-    if sampler == "lcm":
+    if sampler in ("lcm", "tcd"):
         import diffusers.schedulers.scheduling_lcm as lcm_module
-        original_randn = lcm_module.randn_tensor
+        import diffusers.schedulers.scheduling_tcd as tcd_module
+        sampler_module = lcm_module if sampler == "lcm" else tcd_module
+        original_randn = sampler_module.randn_tensor
 
         def recording_randn(shape, **kwargs):
             drawn = original_randn(shape, **kwargs)
             noises.append(drawn[0].permute(1, 2, 0).contiguous().clone())
             return drawn
-        lcm_module.randn_tensor = recording_randn
+        sampler_module.randn_tensor = recording_randn
 
     steps = int(os.environ.get("IK_SD_STEPS", "4"))
     side = int(os.environ.get("IK_SD_SIZE", "32"))
@@ -926,15 +940,15 @@ def run_sd_text_to_image(image, checkpoint):
     with torch.no_grad():
         result = pipeline(prompt=SD_PROMPTS[0], negative_prompt=negative, num_inference_steps=steps,
                           guidance_scale=guidance, latents=latent, height=side * 8, width=side * 8,
-                          output_type="np", callback_on_step_end=capture)
+                          output_type="np", callback_on_step_end=capture, **step_kwargs)
     # The conditioning and the first guided prediction, so a divergence separates the text tower from
     # the sampler from the UNet without another run.
-    # settings[4] is 1 under the LCM sampler and settings[5] the LoRA scale, so the record names the
-    # recipe it ran.
+    # settings[4] is 1 under the LCM sampler, 2 under TCD, and settings[5] the LoRA scale, so the record
+    # names the recipe it ran.
     extra = {"latent": latent[0].permute(1, 2, 0).contiguous(),
              "latents": torch.stack(trace),
              "settings": torch.tensor([steps, side, guidance, 1 if negative is None else 0,
-                                       1 if sampler == "lcm" else 0, lora_scale if lora else 0],
+                                       {"lcm": 1, "tcd": 2}.get(sampler, 0), lora_scale if lora else 0],
                                       dtype=torch.float32)}
     if noises:
         extra["noises"] = torch.stack(noises)

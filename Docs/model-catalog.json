@@ -16988,6 +16988,1956 @@
       ]
     },
     {
+      "displayName" : "Hyper-SD 1.5 unified",
+      "engine" : "mlx",
+      "family" : "stable-diffusion",
+      "id" : "hyper-sd15-1step-lora",
+      "inputModalities" : [
+        "text",
+        "image",
+        "mask"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to draw.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "An image to start from. Its presence runs image-to-image.",
+          "key" : "image",
+          "required" : false,
+          "title" : "Source image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "With a source image, white regenerates the region and black keeps it.",
+          "key" : "mask",
+          "required" : false,
+          "title" : "Mask",
+          "valueType" : "mask"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "name" : "CreativeML Open RAIL-M License",
+        "note" : "Use restrictions apply. The adapter is under ByteDance's Hyper-SD license, an OpenRAIL-M-style license with use restrictions (https://huggingface.co/ByteDance/Hyper-SD/blob/main/LICENSE.md).",
+        "restrictsCommercialUse" : false,
+        "url" : "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5"
+      },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
+      "options" : [
+        {
+          "default" : 512,
+          "help" : "The image width in pixels, rounded down to a whole latent cell.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 512,
+          "help" : "The image height in pixels, rounded down to a whole latent cell.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 1,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 0,
+          "help" : "The classifier-free guidance weight. 0 runs without guidance.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "default" : 1,
+          "help" : "How much of the source image the sampler regenerates. 1 starts from full noise.",
+          "key" : "strength",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Strength"
+        },
+        {
+          "help" : "The seed of the initial noise. A run without one uses a fixed seed.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 4533951852,
+                "residentBytes" : 4533951852
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4533951852,
+                "residentBytes" : 4533951852
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "key" : "precision",
+          "kind" : "choice",
+          "property" : "precision",
+          "stage" : "load",
+          "title" : "Precision"
+        }
+      ],
+      "outputModalities" : [
+        "image"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated image.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Image",
+          "valueType" : "image"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "hyper-sd15-1step-lora",
+      "requirements" : {
+        "minimumMemoryBytes" : 10386963704,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident"
+      ],
+      "standIn" : false,
+      "summary" : "Stable Diffusion 1.5 with ByteDance's unified Hyper-SD adapter merged in, drawing 512-pixel images in one to eight steps through the trajectory consistency sampler.",
+      "tasks" : [
+        "text-to-image",
+        "image-to-image"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Hyper-SD 1.5 unified",
+          "downloadBytes" : 4535790935,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 2266976234,
+                  "checkpoint" : 4533951852,
+                  "float32" : 4533951852
+                },
+                "id" : "model",
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 10386963704,
+          "parameterCount" : 1133487886,
+          "peakBytes" : 4533951852,
+          "precision" : "float32",
+          "registryName" : "hyper-sd15-1step-lora",
+          "residentBytes" : 4533951852,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 743,
+                "optional" : false,
+                "path" : "unet/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 547,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1059962,
+                "optional" : false,
+                "path" : "tokenizer/vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "tokenizer/merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 806,
+                "optional" : true,
+                "path" : "tokenizer/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 472,
+                "optional" : true,
+                "path" : "tokenizer/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 3438167540,
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "19da7aaa4b880e59d56843f1fcb4dd9b599c28a1d9d9af7c1143057c8ffae9f1"
+              },
+              {
+                "bytes" : 1719125304,
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "c83908253f9a64d08c25fc90874c9c8aef9a329ce1ca5fb909d73b0c83d1ea21"
+              },
+              {
+                "bytes" : 334643276,
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "a2b5134f4dbc140d9c11f11cba3233099e00af40f262f136c691fb7d38d2194c"
+              },
+              {
+                "bytes" : 167335342,
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "4fbcf0ebe55a0984f5a5e00d8c4521d52359af7229bb4d81890039d2aa16dd7c"
+              },
+              {
+                "bytes" : 492265874,
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors",
+                "role" : "weights",
+                "sha256" : "d008943c017f0092921106440254dbbe00b6a285f7883ec8ba160c3faad88334"
+              },
+              {
+                "bytes" : 246144864,
+                "optional" : true,
+                "path" : "text_encoder/model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "77795e2023adcf39bc29a884661950380bd093cf0750a966d473d1718dc9ef4e"
+              },
+              {
+                "bytes" : 269127096,
+                "optional" : false,
+                "path" : "Hyper-SD15-1step-lora.safetensors",
+                "repository" : "ByteDance/Hyper-SD",
+                "role" : "weights",
+                "sha256" : "a04fd9a535c1e56d38f7590ee72a13fd5ca0409853b4fff021e5a9482cf1ca3b"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+            "repository" : "stable-diffusion-v1-5/stable-diffusion-v1-5",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "Hyper-SD 1.5 4-step",
+      "engine" : "mlx",
+      "family" : "stable-diffusion",
+      "id" : "hyper-sd15-4steps-lora",
+      "inputModalities" : [
+        "text",
+        "image",
+        "mask"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to draw.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "An image to start from. Its presence runs image-to-image.",
+          "key" : "image",
+          "required" : false,
+          "title" : "Source image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "With a source image, white regenerates the region and black keeps it.",
+          "key" : "mask",
+          "required" : false,
+          "title" : "Mask",
+          "valueType" : "mask"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "name" : "CreativeML Open RAIL-M License",
+        "note" : "Use restrictions apply. The adapter is under ByteDance's Hyper-SD license, an OpenRAIL-M-style license with use restrictions (https://huggingface.co/ByteDance/Hyper-SD/blob/main/LICENSE.md).",
+        "restrictsCommercialUse" : false,
+        "url" : "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5"
+      },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
+      "options" : [
+        {
+          "default" : 512,
+          "help" : "The image width in pixels, rounded down to a whole latent cell.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 512,
+          "help" : "The image height in pixels, rounded down to a whole latent cell.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 4,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 0,
+          "help" : "The classifier-free guidance weight. 0 runs without guidance.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "default" : 1,
+          "help" : "How much of the source image the sampler regenerates. 1 starts from full noise.",
+          "key" : "strength",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Strength"
+        },
+        {
+          "help" : "The seed of the initial noise. A run without one uses a fixed seed.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 4533951852,
+                "residentBytes" : 4533951852
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4533951852,
+                "residentBytes" : 4533951852
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "key" : "precision",
+          "kind" : "choice",
+          "property" : "precision",
+          "stage" : "load",
+          "title" : "Precision"
+        }
+      ],
+      "outputModalities" : [
+        "image"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated image.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Image",
+          "valueType" : "image"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "hyper-sd15-4steps-lora",
+      "requirements" : {
+        "minimumMemoryBytes" : 10386963704,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident"
+      ],
+      "standIn" : false,
+      "summary" : "Stable Diffusion 1.5 with ByteDance's four-step Hyper-SD adapter merged in, drawing 512-pixel images in four steps.",
+      "tasks" : [
+        "text-to-image",
+        "image-to-image"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Hyper-SD 1.5 4-step",
+          "downloadBytes" : 4535790903,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 2266976234,
+                  "checkpoint" : 4533951852,
+                  "float32" : 4533951852
+                },
+                "id" : "model",
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 10386963704,
+          "parameterCount" : 1133487886,
+          "peakBytes" : 4533951852,
+          "precision" : "float32",
+          "registryName" : "hyper-sd15-4steps-lora",
+          "residentBytes" : 4533951852,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 743,
+                "optional" : false,
+                "path" : "unet/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 547,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1059962,
+                "optional" : false,
+                "path" : "tokenizer/vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "tokenizer/merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 806,
+                "optional" : true,
+                "path" : "tokenizer/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 472,
+                "optional" : true,
+                "path" : "tokenizer/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 3438167540,
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "19da7aaa4b880e59d56843f1fcb4dd9b599c28a1d9d9af7c1143057c8ffae9f1"
+              },
+              {
+                "bytes" : 1719125304,
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "c83908253f9a64d08c25fc90874c9c8aef9a329ce1ca5fb909d73b0c83d1ea21"
+              },
+              {
+                "bytes" : 334643276,
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "a2b5134f4dbc140d9c11f11cba3233099e00af40f262f136c691fb7d38d2194c"
+              },
+              {
+                "bytes" : 167335342,
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "4fbcf0ebe55a0984f5a5e00d8c4521d52359af7229bb4d81890039d2aa16dd7c"
+              },
+              {
+                "bytes" : 492265874,
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors",
+                "role" : "weights",
+                "sha256" : "d008943c017f0092921106440254dbbe00b6a285f7883ec8ba160c3faad88334"
+              },
+              {
+                "bytes" : 246144864,
+                "optional" : true,
+                "path" : "text_encoder/model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "77795e2023adcf39bc29a884661950380bd093cf0750a966d473d1718dc9ef4e"
+              },
+              {
+                "bytes" : 269127064,
+                "optional" : false,
+                "path" : "Hyper-SD15-4steps-lora.safetensors",
+                "repository" : "ByteDance/Hyper-SD",
+                "role" : "weights",
+                "sha256" : "c5dd058616461ed5053e2b14eec4dbe3fa0eea3b13688642f6d6c80ea2ba5958"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+            "repository" : "stable-diffusion-v1-5/stable-diffusion-v1-5",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "Hyper-SD 1.5 8-step CFG",
+      "engine" : "mlx",
+      "family" : "stable-diffusion",
+      "id" : "hyper-sd15-8steps-cfg-lora",
+      "inputModalities" : [
+        "text",
+        "image",
+        "mask"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to draw.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "An image to start from. Its presence runs image-to-image.",
+          "key" : "image",
+          "required" : false,
+          "title" : "Source image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "With a source image, white regenerates the region and black keeps it.",
+          "key" : "mask",
+          "required" : false,
+          "title" : "Mask",
+          "valueType" : "mask"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "name" : "CreativeML Open RAIL-M License",
+        "note" : "Use restrictions apply. The adapter is under ByteDance's Hyper-SD license, an OpenRAIL-M-style license with use restrictions (https://huggingface.co/ByteDance/Hyper-SD/blob/main/LICENSE.md).",
+        "restrictsCommercialUse" : false,
+        "url" : "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5"
+      },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
+      "options" : [
+        {
+          "default" : 512,
+          "help" : "The image width in pixels, rounded down to a whole latent cell.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 512,
+          "help" : "The image height in pixels, rounded down to a whole latent cell.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 8,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 5,
+          "help" : "The classifier-free guidance weight. 0 runs without guidance.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "default" : 1,
+          "help" : "How much of the source image the sampler regenerates. 1 starts from full noise.",
+          "key" : "strength",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Strength"
+        },
+        {
+          "help" : "The seed of the initial noise. A run without one uses a fixed seed.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 4533951852,
+                "residentBytes" : 4533951852
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4533951852,
+                "residentBytes" : 4533951852
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "key" : "precision",
+          "kind" : "choice",
+          "property" : "precision",
+          "stage" : "load",
+          "title" : "Precision"
+        }
+      ],
+      "outputModalities" : [
+        "image"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated image.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Image",
+          "valueType" : "image"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 4 in place of 8: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 4
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "hyper-sd15-8steps-cfg-lora",
+      "requirements" : {
+        "minimumMemoryBytes" : 10386963704,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident"
+      ],
+      "standIn" : false,
+      "summary" : "Stable Diffusion 1.5 with ByteDance's CFG-preserved eight-step Hyper-SD adapter merged in, which keeps classifier-free guidance at 5 to 8.",
+      "tasks" : [
+        "text-to-image",
+        "image-to-image"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Hyper-SD 1.5 8-step CFG",
+          "downloadBytes" : 4535790903,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 2266976234,
+                  "checkpoint" : 4533951852,
+                  "float32" : 4533951852
+                },
+                "id" : "model",
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 10386963704,
+          "parameterCount" : 1133487886,
+          "peakBytes" : 4533951852,
+          "precision" : "float32",
+          "registryName" : "hyper-sd15-8steps-cfg-lora",
+          "residentBytes" : 4533951852,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 743,
+                "optional" : false,
+                "path" : "unet/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 547,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1059962,
+                "optional" : false,
+                "path" : "tokenizer/vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "tokenizer/merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 806,
+                "optional" : true,
+                "path" : "tokenizer/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 472,
+                "optional" : true,
+                "path" : "tokenizer/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 3438167540,
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "19da7aaa4b880e59d56843f1fcb4dd9b599c28a1d9d9af7c1143057c8ffae9f1"
+              },
+              {
+                "bytes" : 1719125304,
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "c83908253f9a64d08c25fc90874c9c8aef9a329ce1ca5fb909d73b0c83d1ea21"
+              },
+              {
+                "bytes" : 334643276,
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "a2b5134f4dbc140d9c11f11cba3233099e00af40f262f136c691fb7d38d2194c"
+              },
+              {
+                "bytes" : 167335342,
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "4fbcf0ebe55a0984f5a5e00d8c4521d52359af7229bb4d81890039d2aa16dd7c"
+              },
+              {
+                "bytes" : 492265874,
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors",
+                "role" : "weights",
+                "sha256" : "d008943c017f0092921106440254dbbe00b6a285f7883ec8ba160c3faad88334"
+              },
+              {
+                "bytes" : 246144864,
+                "optional" : true,
+                "path" : "text_encoder/model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "77795e2023adcf39bc29a884661950380bd093cf0750a966d473d1718dc9ef4e"
+              },
+              {
+                "bytes" : 269127064,
+                "optional" : false,
+                "path" : "Hyper-SD15-8steps-CFG-lora.safetensors",
+                "repository" : "ByteDance/Hyper-SD",
+                "role" : "weights",
+                "sha256" : "f6123d5b950d5250ab6c33600e27f4dcf71b3099ebf888685e01e9e8117ce482"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "451f4fe16113bff5a5d2269ed5ad43b0592e9a14",
+            "repository" : "stable-diffusion-v1-5/stable-diffusion-v1-5",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "Hyper-SDXL unified",
+      "engine" : "mlx",
+      "family" : "stable-diffusion",
+      "id" : "hyper-sdxl-1step-lora",
+      "inputModalities" : [
+        "text",
+        "image",
+        "mask"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to draw.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "An image to start from. Its presence runs image-to-image.",
+          "key" : "image",
+          "required" : false,
+          "title" : "Source image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "With a source image, white regenerates the region and black keeps it.",
+          "key" : "mask",
+          "required" : false,
+          "title" : "Mask",
+          "valueType" : "mask"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "name" : "CreativeML Open RAIL++-M License",
+        "note" : "Use restrictions apply. The adapter is under ByteDance's Hyper-SD license, an OpenRAIL-M-style license with use restrictions (https://huggingface.co/ByteDance/Hyper-SD/blob/main/LICENSE.md).",
+        "restrictsCommercialUse" : false,
+        "url" : "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md"
+      },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
+      "options" : [
+        {
+          "default" : 1024,
+          "help" : "The image width in pixels, rounded down to a whole latent cell.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 1024,
+          "help" : "The image height in pixels, rounded down to a whole latent cell.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 1,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 0,
+          "help" : "The classifier-free guidance weight. 0 runs without guidance.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "default" : 1,
+          "help" : "How much of the source image the sampler regenerates. 1 starts from full noise.",
+          "key" : "strength",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Strength"
+        },
+        {
+          "help" : "The seed of the initial noise. A run without one uses a fixed seed.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 7724684326,
+                "residentBytes" : 7724684326
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 14662360060,
+                "residentBytes" : 14662360060
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "key" : "precision",
+          "kind" : "choice",
+          "property" : "precision",
+          "stage" : "load",
+          "title" : "Precision"
+        }
+      ],
+      "outputModalities" : [
+        "image"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated image.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Image",
+          "valueType" : "image"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "hyper-sdxl-1step-lora",
+      "requirements" : {
+        "minimumMemoryBytes" : 14140766615,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident"
+      ],
+      "standIn" : false,
+      "summary" : "SDXL base 1.0 with ByteDance's unified Hyper-SD adapter merged in, drawing 1024-pixel images in one to eight steps through the trajectory consistency sampler.",
+      "tasks" : [
+        "text-to-image",
+        "image-to-image"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Hyper-SDXL unified",
+          "downloadBytes" : 7728544956,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 7331180030,
+                  "checkpoint" : 7724684326,
+                  "float32" : 14662360060
+                },
+                "id" : "model",
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 14140766615,
+          "parameterCount" : 3665590015,
+          "peakBytes" : 7724684326,
+          "precision" : "float16",
+          "registryName" : "hyper-sdxl-1step-lora",
+          "residentBytes" : 7724684326,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 1680,
+                "optional" : false,
+                "path" : "unet/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 642,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1059962,
+                "optional" : false,
+                "path" : "tokenizer/vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "tokenizer/merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 737,
+                "optional" : true,
+                "path" : "tokenizer/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 472,
+                "optional" : true,
+                "path" : "tokenizer/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 1059962,
+                "optional" : false,
+                "path" : "tokenizer_2/vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "tokenizer_2/merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 725,
+                "optional" : true,
+                "path" : "tokenizer_2/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 460,
+                "optional" : true,
+                "path" : "tokenizer_2/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 5135149760,
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "83e012a805b84c7ca28e5646747c90a243c65c8ba4f070e2d7ddc9d74661e139"
+              },
+              {
+                "bytes" : 10270077736,
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "357650fbfb3c7b4d94c1f5fd7664da819ad1ff5a839430484b4ec422d03f710a"
+              },
+              {
+                "bytes" : 167335342,
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "bcb60880a46b63dea58e9bc591abe15f8350bde47b405f9c38f4be70c6161e68"
+              },
+              {
+                "bytes" : 334643268,
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "1598f3d24932bcfe6634e8b618ea1e30ab1d57f5aad13a6d2de446d2199f2341"
+              },
+              {
+                "bytes" : 246144152,
+                "optional" : true,
+                "path" : "text_encoder/model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "660c6f5b1abae9dc498ac2d21e1347d2abdb0cf6c0c0c8576cd796491d9a6cdd"
+              },
+              {
+                "bytes" : 492265168,
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors",
+                "role" : "weights",
+                "sha256" : "5c3d6454dd2d23414b56aa1b5858a72487a656937847b6fea8d0606d7a42cdbc"
+              },
+              {
+                "bytes" : 1389382176,
+                "optional" : true,
+                "path" : "text_encoder_2/model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "ec310df2af79c318e24d20511b601a591ca8cd4f1fce1d8dff822a356bcdb1f4"
+              },
+              {
+                "bytes" : 2778702264,
+                "optional" : true,
+                "path" : "text_encoder_2/model.safetensors",
+                "role" : "weights",
+                "sha256" : "3a6032f63d37ae02bbc74ccd6a27440578cd71701f96532229d0154f55a8d3ff"
+              },
+              {
+                "bytes" : 787359648,
+                "optional" : false,
+                "path" : "Hyper-SDXL-1step-lora.safetensors",
+                "repository" : "ByteDance/Hyper-SD",
+                "role" : "weights",
+                "sha256" : "c912df184c5116792d2c604d26c6bc2aa916685f4a793755255cda1c43a3c78a"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "462165984030d82259a11f4367a4eed129e94a7b",
+            "repository" : "stabilityai/stable-diffusion-xl-base-1.0",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "Hyper-SDXL 4-step",
+      "engine" : "mlx",
+      "family" : "stable-diffusion",
+      "id" : "hyper-sdxl-4steps-lora",
+      "inputModalities" : [
+        "text",
+        "image",
+        "mask"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to draw.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "An image to start from. Its presence runs image-to-image.",
+          "key" : "image",
+          "required" : false,
+          "title" : "Source image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "With a source image, white regenerates the region and black keeps it.",
+          "key" : "mask",
+          "required" : false,
+          "title" : "Mask",
+          "valueType" : "mask"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "name" : "CreativeML Open RAIL++-M License",
+        "note" : "Use restrictions apply. The adapter is under ByteDance's Hyper-SD license, an OpenRAIL-M-style license with use restrictions (https://huggingface.co/ByteDance/Hyper-SD/blob/main/LICENSE.md).",
+        "restrictsCommercialUse" : false,
+        "url" : "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md"
+      },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
+      "options" : [
+        {
+          "default" : 1024,
+          "help" : "The image width in pixels, rounded down to a whole latent cell.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 1024,
+          "help" : "The image height in pixels, rounded down to a whole latent cell.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 4,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 0,
+          "help" : "The classifier-free guidance weight. 0 runs without guidance.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "default" : 1,
+          "help" : "How much of the source image the sampler regenerates. 1 starts from full noise.",
+          "key" : "strength",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Strength"
+        },
+        {
+          "help" : "The seed of the initial noise. A run without one uses a fixed seed.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 7724684326,
+                "residentBytes" : 7724684326
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 14662360060,
+                "residentBytes" : 14662360060
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "key" : "precision",
+          "kind" : "choice",
+          "property" : "precision",
+          "stage" : "load",
+          "title" : "Precision"
+        }
+      ],
+      "outputModalities" : [
+        "image"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated image.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Image",
+          "valueType" : "image"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "hyper-sdxl-4steps-lora",
+      "requirements" : {
+        "minimumMemoryBytes" : 14140766615,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident"
+      ],
+      "standIn" : false,
+      "summary" : "SDXL base 1.0 with ByteDance's four-step Hyper-SD adapter merged in, drawing 1024-pixel images in four steps.",
+      "tasks" : [
+        "text-to-image",
+        "image-to-image"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Hyper-SDXL 4-step",
+          "downloadBytes" : 7728544956,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 7331180030,
+                  "checkpoint" : 7724684326,
+                  "float32" : 14662360060
+                },
+                "id" : "model",
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 14140766615,
+          "parameterCount" : 3665590015,
+          "peakBytes" : 7724684326,
+          "precision" : "float16",
+          "registryName" : "hyper-sdxl-4steps-lora",
+          "residentBytes" : 7724684326,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 1680,
+                "optional" : false,
+                "path" : "unet/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 642,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1059962,
+                "optional" : false,
+                "path" : "tokenizer/vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "tokenizer/merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 737,
+                "optional" : true,
+                "path" : "tokenizer/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 472,
+                "optional" : true,
+                "path" : "tokenizer/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 1059962,
+                "optional" : false,
+                "path" : "tokenizer_2/vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "tokenizer_2/merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 725,
+                "optional" : true,
+                "path" : "tokenizer_2/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 460,
+                "optional" : true,
+                "path" : "tokenizer_2/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 5135149760,
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "83e012a805b84c7ca28e5646747c90a243c65c8ba4f070e2d7ddc9d74661e139"
+              },
+              {
+                "bytes" : 10270077736,
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "357650fbfb3c7b4d94c1f5fd7664da819ad1ff5a839430484b4ec422d03f710a"
+              },
+              {
+                "bytes" : 167335342,
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "bcb60880a46b63dea58e9bc591abe15f8350bde47b405f9c38f4be70c6161e68"
+              },
+              {
+                "bytes" : 334643268,
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "1598f3d24932bcfe6634e8b618ea1e30ab1d57f5aad13a6d2de446d2199f2341"
+              },
+              {
+                "bytes" : 246144152,
+                "optional" : true,
+                "path" : "text_encoder/model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "660c6f5b1abae9dc498ac2d21e1347d2abdb0cf6c0c0c8576cd796491d9a6cdd"
+              },
+              {
+                "bytes" : 492265168,
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors",
+                "role" : "weights",
+                "sha256" : "5c3d6454dd2d23414b56aa1b5858a72487a656937847b6fea8d0606d7a42cdbc"
+              },
+              {
+                "bytes" : 1389382176,
+                "optional" : true,
+                "path" : "text_encoder_2/model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "ec310df2af79c318e24d20511b601a591ca8cd4f1fce1d8dff822a356bcdb1f4"
+              },
+              {
+                "bytes" : 2778702264,
+                "optional" : true,
+                "path" : "text_encoder_2/model.safetensors",
+                "role" : "weights",
+                "sha256" : "3a6032f63d37ae02bbc74ccd6a27440578cd71701f96532229d0154f55a8d3ff"
+              },
+              {
+                "bytes" : 787359648,
+                "optional" : false,
+                "path" : "Hyper-SDXL-4steps-lora.safetensors",
+                "repository" : "ByteDance/Hyper-SD",
+                "role" : "weights",
+                "sha256" : "12f81a27d00a751a40d68fd15597091896c5a90f3bd632fb6c475607cbdad76e"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "462165984030d82259a11f4367a4eed129e94a7b",
+            "repository" : "stabilityai/stable-diffusion-xl-base-1.0",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "Hyper-SDXL 8-step CFG",
+      "engine" : "mlx",
+      "family" : "stable-diffusion",
+      "id" : "hyper-sdxl-8steps-cfg-lora",
+      "inputModalities" : [
+        "text",
+        "image",
+        "mask"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to draw.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "An image to start from. Its presence runs image-to-image.",
+          "key" : "image",
+          "required" : false,
+          "title" : "Source image",
+          "valueType" : "image"
+        },
+        {
+          "help" : "With a source image, white regenerates the region and black keeps it.",
+          "key" : "mask",
+          "required" : false,
+          "title" : "Mask",
+          "valueType" : "mask"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "name" : "CreativeML Open RAIL++-M License",
+        "note" : "Use restrictions apply. The adapter is under ByteDance's Hyper-SD license, an OpenRAIL-M-style license with use restrictions (https://huggingface.co/ByteDance/Hyper-SD/blob/main/LICENSE.md).",
+        "restrictsCommercialUse" : false,
+        "url" : "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md"
+      },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
+      "options" : [
+        {
+          "default" : 1024,
+          "help" : "The image width in pixels, rounded down to a whole latent cell.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 1024,
+          "help" : "The image height in pixels, rounded down to a whole latent cell.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 8,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 5,
+          "help" : "The classifier-free guidance weight. 0 runs without guidance.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "default" : 1,
+          "help" : "How much of the source image the sampler regenerates. 1 starts from full noise.",
+          "key" : "strength",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Strength"
+        },
+        {
+          "help" : "The seed of the initial noise. A run without one uses a fixed seed.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 7724684326,
+                "residentBytes" : 7724684326
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 14662360060,
+                "residentBytes" : 14662360060
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "key" : "precision",
+          "kind" : "choice",
+          "property" : "precision",
+          "stage" : "load",
+          "title" : "Precision"
+        }
+      ],
+      "outputModalities" : [
+        "image"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated image.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Image",
+          "valueType" : "image"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 4 in place of 8: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 4
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "hyper-sdxl-8steps-cfg-lora",
+      "requirements" : {
+        "minimumMemoryBytes" : 14140766615,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident"
+      ],
+      "standIn" : false,
+      "summary" : "SDXL base 1.0 with ByteDance's CFG-preserved eight-step Hyper-SD adapter merged in, which keeps classifier-free guidance at 5 to 8.",
+      "tasks" : [
+        "text-to-image",
+        "image-to-image"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Hyper-SDXL 8-step CFG",
+          "downloadBytes" : 7728544956,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 7331180030,
+                  "checkpoint" : 7724684326,
+                  "float32" : 14662360060
+                },
+                "id" : "model",
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 14140766615,
+          "parameterCount" : 3665590015,
+          "peakBytes" : 7724684326,
+          "precision" : "float16",
+          "registryName" : "hyper-sdxl-8steps-cfg-lora",
+          "residentBytes" : 7724684326,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 1680,
+                "optional" : false,
+                "path" : "unet/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 642,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1059962,
+                "optional" : false,
+                "path" : "tokenizer/vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "tokenizer/merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 737,
+                "optional" : true,
+                "path" : "tokenizer/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 472,
+                "optional" : true,
+                "path" : "tokenizer/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 1059962,
+                "optional" : false,
+                "path" : "tokenizer_2/vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "tokenizer_2/merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 725,
+                "optional" : true,
+                "path" : "tokenizer_2/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 460,
+                "optional" : true,
+                "path" : "tokenizer_2/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 5135149760,
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "83e012a805b84c7ca28e5646747c90a243c65c8ba4f070e2d7ddc9d74661e139"
+              },
+              {
+                "bytes" : 10270077736,
+                "optional" : true,
+                "path" : "unet/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "357650fbfb3c7b4d94c1f5fd7664da819ad1ff5a839430484b4ec422d03f710a"
+              },
+              {
+                "bytes" : 167335342,
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "bcb60880a46b63dea58e9bc591abe15f8350bde47b405f9c38f4be70c6161e68"
+              },
+              {
+                "bytes" : 334643268,
+                "optional" : true,
+                "path" : "vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "1598f3d24932bcfe6634e8b618ea1e30ab1d57f5aad13a6d2de446d2199f2341"
+              },
+              {
+                "bytes" : 246144152,
+                "optional" : true,
+                "path" : "text_encoder/model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "660c6f5b1abae9dc498ac2d21e1347d2abdb0cf6c0c0c8576cd796491d9a6cdd"
+              },
+              {
+                "bytes" : 492265168,
+                "optional" : true,
+                "path" : "text_encoder/model.safetensors",
+                "role" : "weights",
+                "sha256" : "5c3d6454dd2d23414b56aa1b5858a72487a656937847b6fea8d0606d7a42cdbc"
+              },
+              {
+                "bytes" : 1389382176,
+                "optional" : true,
+                "path" : "text_encoder_2/model.fp16.safetensors",
+                "role" : "weights",
+                "sha256" : "ec310df2af79c318e24d20511b601a591ca8cd4f1fce1d8dff822a356bcdb1f4"
+              },
+              {
+                "bytes" : 2778702264,
+                "optional" : true,
+                "path" : "text_encoder_2/model.safetensors",
+                "role" : "weights",
+                "sha256" : "3a6032f63d37ae02bbc74ccd6a27440578cd71701f96532229d0154f55a8d3ff"
+              },
+              {
+                "bytes" : 787359648,
+                "optional" : false,
+                "path" : "Hyper-SDXL-8steps-CFG-lora.safetensors",
+                "repository" : "ByteDance/Hyper-SD",
+                "role" : "weights",
+                "sha256" : "55b51334c85061afff5eff7c550b61963c8b8607a5868bbe4f26db49374719b1"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "462165984030d82259a11f4367a4eed129e94a7b",
+            "repository" : "stabilityai/stable-diffusion-xl-base-1.0",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
       "displayName" : "IS-Net (DIS general use)",
       "engine" : "mlx",
       "family" : "isnet",

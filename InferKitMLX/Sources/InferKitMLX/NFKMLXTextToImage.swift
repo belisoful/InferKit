@@ -22,6 +22,8 @@ import MLXNN
 ///   distillations trained that way (SDXL-Turbo, SDXL-Lightning).
 /// - `lcm`: the latent consistency sampler, for an LCM-distilled UNet or an LCM-LoRA merged into a base
 ///   UNet.
+/// - `tcd`: the trajectory consistency sampler, for the Hyper-SD unified adapters, which run at one to
+///   eight steps from one file.
 ///
 /// Introduced in InferKit 0.4.0.
 @objc(NFKMLXSDSampler)
@@ -29,6 +31,7 @@ public enum NFKMLXSDSampler: Int, Sendable {
     @objc(NFKMLXSDSamplerDDIM) case ddim
     @objc(NFKMLXSDSamplerDDIMTrailing) case ddimTrailing
     @objc(NFKMLXSDSamplerLCM) case lcm
+    @objc(NFKMLXSDSamplerTCD) case tcd
 }
 
 /// The geometry and schedule of a text-to-image release.
@@ -55,19 +58,25 @@ public struct NFKMLXSDTextToImageConfiguration: Sendable {
     /// consistency sampler for an LCM-distilled UNet or a base UNet with an LCM-LoRA merged in.
     /// Introduced in InferKit 0.4.0.
     public var sampler: NFKMLXSDSampler = .ddim
-    /// The LCM distillation's step count, which spaces the latent consistency schedule (the reference's
-    /// `original_inference_steps`). Introduced in InferKit 0.4.0.
+    /// The distillation's step count, which spaces the latent and trajectory consistency schedules (the
+    /// reference's `original_inference_steps`). Introduced in InferKit 0.4.0.
     public var latentConsistencyOriginalSteps: Int = 50
+    /// The trajectory consistency sampler's stochastic parameter (the reference's `eta`), `0...1`. 1,
+    /// the Hyper-SD recipe, re-noises every non-final step from the clean estimate; lower values keep
+    /// more detail over several steps. Introduced in InferKit 0.4.0.
+    public var trajectoryConsistencyEta: Float = 1
 
     public var latentChannels: Int { vae.latentChannels }
 
     /// This configuration run with a distilled few-step adapter merged into its UNet: `.lcm` steps the
-    /// latent consistency sampler, `.ddimTrailing` counts DDIM down from the end of the training range
-    /// (SDXL-Lightning, SDXL-Turbo), and `.ddim` keeps the release's own schedule. When the sampler
-    /// changes, `steps` and `guidanceScale` default to what the adapters are trained for: 4 steps,
-    /// guidance 1 under LCM, none under the trailing sampler; a configuration already on the sampler
-    /// keeps its own values (`.latentConsistency15` keeps guidance 8). A request's `NFKParameterSteps`
-    /// and `NFKParameterGuidanceScale` override them per run. Introduced in InferKit 0.4.0.
+    /// latent consistency sampler, `.tcd` the trajectory consistency sampler (the Hyper-SD unified
+    /// adapters), `.ddimTrailing` counts DDIM down from the end of the training range (SDXL-Lightning,
+    /// SDXL-Turbo, the Hyper-SD N-step adapters), and `.ddim` keeps the release's own schedule. When the
+    /// sampler changes, `steps` and `guidanceScale` default to what the adapters are trained for: 4
+    /// steps and guidance 1 under LCM, 4 steps and none under the trailing sampler, 1 step and none
+    /// under TCD; a configuration already on the sampler keeps its own values (`.latentConsistency15`
+    /// keeps guidance 8). A request's `NFKParameterSteps` and `NFKParameterGuidanceScale` override them
+    /// per run. Introduced in InferKit 0.4.0.
     public func withSampler(_ sampler: NFKMLXSDSampler, steps: Int? = nil, guidanceScale: Float? = nil) -> Self {
         var c = self
         if sampler != self.sampler {
@@ -82,6 +91,9 @@ public struct NFKMLXSDTextToImageConfiguration: Sendable {
             case .lcm:
                 c.steps = 4
                 c.guidanceScale = 1
+            case .tcd:
+                c.steps = 1
+                c.guidanceScale = 0
             }
         }
         if let steps { c.steps = steps }
@@ -97,6 +109,10 @@ public struct NFKMLXSDTextToImageConfiguration: Sendable {
         case .lcm:
             return NFKLCMScheduler(predictionType: predictionType,
                                    originalInferenceSteps: latentConsistencyOriginalSteps)
+        case .tcd:
+            return NFKTCDScheduler(predictionType: predictionType,
+                                   originalInferenceSteps: latentConsistencyOriginalSteps,
+                                   eta: trajectoryConsistencyEta)
         }
     }
     public var scaleFactor: Float { vae.scaleFactor }
@@ -401,17 +417,22 @@ final class NFKMLXSDTextToImageModel {
         try NFKMLXSDLoRA.merge(adapterURL: url, into: pipeline.unet, scale: scale)
     }
 
-    /// The draws the latent consistency sampler re-noises with, in place of its seeded stream, for
-    /// reproducing a run made by another implementation. See ``NFKLCMScheduler/noise``.
-    var latentConsistencyNoise: (@Sendable (NFKDiffusionTimestep) -> MLXArray?)?
+    /// The draws a consistency sampler re-noises with, in place of its seeded stream, for reproducing a
+    /// run made by another implementation. See ``NFKLCMScheduler/noise`` and ``NFKTCDScheduler/noise``.
+    var samplerNoise: (@Sendable (NFKDiffusionTimestep) -> MLXArray?)?
 
-    /// The configuration's scheduler, carrying ``latentConsistencyNoise`` where the sampler takes it.
+    /// The configuration's scheduler, carrying ``samplerNoise`` where the sampler draws noise.
     func makeScheduler() -> any NFKDiffusionScheduler {
-        guard var lcm = configuration.makeScheduler() as? NFKLCMScheduler else {
-            return configuration.makeScheduler()
+        switch configuration.makeScheduler() {
+        case var lcm as NFKLCMScheduler:
+            lcm.noise = samplerNoise
+            return lcm
+        case var tcd as NFKTCDScheduler:
+            tcd.noise = samplerNoise
+            return tcd
+        case let other:
+            return other
         }
-        lcm.noise = latentConsistencyNoise
-        return lcm
     }
 
     /// Whether the UNet conditions on its guidance scale through a projection, as an LCM-distilled model

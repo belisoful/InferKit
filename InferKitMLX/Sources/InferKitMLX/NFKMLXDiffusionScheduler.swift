@@ -137,6 +137,17 @@ public struct NFKDDIMScheduler: NFKDiffusionScheduler {
     /// The cumulative signal ratio at a training step, for a sampler that shares this beta schedule.
     func alphaBar(at train: Int) -> Float { bar(train) }
 
+    /// The training step whose signal ratio is `value`, as ``alphaBar(at:)`` returned it; the ratios fall
+    /// strictly with the step, so the match is unique. A value from elsewhere maps to the nearest step.
+    func train(withAlphaBar value: Float) -> Int {
+        if let exact = alphaBars.firstIndex(of: value) { return exact }
+        var nearest = 0
+        for (train, bar) in alphaBars.enumerated() where abs(bar - value) < abs(alphaBars[nearest] - value) {
+            nearest = train
+        }
+        return nearest
+    }
+
     public func steps(_ count: Int) -> [NFKDiffusionTimestep] {
         let n = max(count, 1)
         // The reference walks a fixed stride through the training schedule rather than dividing the
@@ -317,5 +328,137 @@ public struct NFKLCMScheduler: NFKDiffusionScheduler {
                                                     seed: seed &+ UInt64(timestep.train) &+ 1))
             .reshaped(latent.shape).asType(denoised.dtype)
         return denoised * sqrtf(timestep.alphaBarPrev) + freshNoise * sqrtf(1 - timestep.alphaBarPrev)
+    }
+}
+
+/// The trajectory consistency sampler (diffusers' `TCDScheduler`), for a UNet distilled by
+/// trajectory consistency distillation: the Hyper-SD unified adapters, which run at one to eight
+/// steps from one file.
+///
+/// The schedule is the latent consistency sampler's: `count` of the `originalInferenceSteps`
+/// distillation steps, highest noise first. Each step forms the clean estimate from the prediction,
+/// then re-noises it to the training step `floor((1 − eta) · next)`, where `next` is the following
+/// step's training step and 0 after the last; at `eta` 1 that is training step 0, whose signal ratio
+/// is just under 1. A non-final step then moves from that level to the next step's with fresh
+/// noise, `sqrt(alphaBarNext / alphaBarS) · estimate + sqrt(1 − alphaBarNext / alphaBarS) · noise`;
+/// the final step returns the estimate. At `eta` 0 the sampler is deterministic.
+///
+/// The fresh noise comes from the same seeded stream the latent consistency sampler draws from, keyed
+/// by the run's seed and the step; ``noise`` substitutes a caller's own draws, which is how a parity
+/// run reproduces the reference's.
+///
+/// Introduced in InferKit 0.4.0.
+public struct NFKTCDScheduler: NFKDiffusionScheduler {
+
+    public let trainingSteps: Int
+    public let predictionType: NFKDiffusionPredictionType
+    /// How many evenly spaced training steps the model was distilled over (the reference's
+    /// `original_inference_steps`, 50 for the released adapters).
+    public let originalInferenceSteps: Int
+    /// The stochastic parameter (the reference's `eta`, the paper's gamma), `0...1`. 1 re-noises every
+    /// non-final step from the clean estimate, the setting the Hyper-SD unified adapters publish; lower
+    /// values keep more of each step's own noise.
+    public let eta: Float
+    private var seed: UInt64
+    private let ddim: NFKDDIMScheduler
+
+    /// The noise a non-final step re-noises with, in place of the seeded stream. See
+    /// ``NFKLCMScheduler/noise``.
+    public var noise: (@Sendable (NFKDiffusionTimestep) -> MLXArray?)?
+
+    /// - Parameters:
+    ///   - trainingSteps: The training schedule length (SD uses 1000).
+    ///   - betaStart: The scaled-linear beta schedule's start endpoint (SD default).
+    ///   - betaEnd: The scaled-linear beta schedule's end endpoint (SD default).
+    ///   - predictionType: What the distilled model predicts each step.
+    ///   - originalInferenceSteps: The distillation's step count, which spaces the schedule.
+    ///   - eta: The stochastic parameter, `0...1`.
+    ///   - seed: Seeds the per-step noise stream. The backend replaces it with the request's seed
+    ///     through ``seeded(_:)``.
+    public init(trainingSteps: Int = 1000,
+                betaStart: Float = 0.00085,
+                betaEnd: Float = 0.012,
+                predictionType: NFKDiffusionPredictionType = .epsilon,
+                originalInferenceSteps: Int = 50,
+                eta: Float = 1,
+                seed: UInt64 = 0) {
+        self.trainingSteps = max(trainingSteps, 1)
+        self.predictionType = predictionType
+        self.originalInferenceSteps = min(max(originalInferenceSteps, 1), self.trainingSteps)
+        self.eta = min(max(eta, 0), 1)
+        self.seed = seed
+        ddim = NFKDDIMScheduler(trainingSteps: trainingSteps, betaStart: betaStart, betaEnd: betaEnd,
+                                predictionType: predictionType)
+    }
+
+    public func seeded(_ seed: UInt64) -> any NFKDiffusionScheduler {
+        var copy = self
+        copy.seed = seed
+        return copy
+    }
+
+    /// The training steps an inference schedule of `count` steps visits, highest noise first.
+    func trainingSchedule(_ count: Int) -> [Int] {
+        let n = min(max(count, 1), originalInferenceSteps)
+        let stride = trainingSteps / originalInferenceSteps
+        let origin = (1 ... originalInferenceSteps).map { $0 * stride - 1 }.reversed().map { $0 }
+        return (0 ..< n).map { i in
+            origin[Int((Float(i) * Float(originalInferenceSteps) / Float(n)).rounded(.down))]
+        }
+    }
+
+    /// The reference's `prev_timestep`: the next step's training step, and 0 after the last, whose
+    /// signal ratio is the schedule's first (not 1).
+    public func steps(_ count: Int) -> [NFKDiffusionTimestep] {
+        let trains = trainingSchedule(count)
+        return trains.indices.map { i in
+            let next = i + 1 < trains.count ? trains[i + 1] : 0
+            return NFKDiffusionTimestep(index: i, train: trains[i], alphaBar: ddim.alphaBar(at: trains[i]),
+                                        alphaBarPrev: ddim.alphaBar(at: next))
+        }
+    }
+
+    public func initialLatent(noise: MLXArray, first: NFKDiffusionTimestep) -> MLXArray { noise }
+
+    public func addNoise(clean: MLXArray, noise: MLXArray, timestep: NFKDiffusionTimestep) -> MLXArray {
+        ddim.addNoise(clean: clean, noise: noise, timestep: timestep)
+    }
+
+    /// The training step a step re-noises its clean estimate to, `floor((1 − eta) · next)`. The next
+    /// step's training step is recovered from the signal ratio the schedule recorded for it.
+    func transitionTrain(for timestep: NFKDiffusionTimestep) -> Int {
+        let next = ddim.train(withAlphaBar: timestep.alphaBarPrev)
+        return Int((Double(1 - eta) * Double(next)).rounded(.down))
+    }
+
+    public func step(prediction: MLXArray, timestep: NFKDiffusionTimestep, latent: MLXArray) -> MLXArray {
+        let sqrtBar = sqrtf(timestep.alphaBar)
+        let sqrtComplement = sqrtf(1 - timestep.alphaBar)
+        let cleanLatent: MLXArray
+        let epsilon: MLXArray
+        switch predictionType {
+        case .epsilon:
+            cleanLatent = (latent - prediction * sqrtComplement) / sqrtBar
+            epsilon = prediction
+        case .sample:
+            cleanLatent = prediction
+            epsilon = (latent - prediction * sqrtBar) / sqrtComplement
+        case .vPrediction:
+            cleanLatent = latent * sqrtBar - prediction * sqrtComplement
+            epsilon = prediction * sqrtBar + latent * sqrtComplement
+        }
+        let alphaBarS = ddim.alphaBar(at: transitionTrain(for: timestep))
+        let estimate = cleanLatent * sqrtf(alphaBarS) + epsilon * sqrtf(1 - alphaBarS)
+        // No distillation step sits at training step 0, so a next step of 0 marks the final step.
+        if eta == 0 || ddim.train(withAlphaBar: timestep.alphaBarPrev) == 0 {
+            return estimate
+        }
+        let ratio = timestep.alphaBarPrev / alphaBarS
+        let spatial = Array(latent.shape.suffix(3))
+        let freshNoise = (noise?(timestep)
+            ?? NFKMLXDiffusionBackend.gaussianNoise(height: spatial[0], width: spatial[1], channels: spatial[2],
+                                                    seed: seed &+ UInt64(timestep.train) &+ 1))
+            .reshaped(latent.shape).asType(estimate.dtype)
+        return estimate * sqrtf(ratio) + freshNoise * sqrtf(1 - ratio)
     }
 }

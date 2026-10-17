@@ -16,51 +16,56 @@ The diffusion backend seam and schedulers, the SD networks and pipelines, IP-Ada
   mechanism lifted out for reuse: it tiles one axis into overlapping windows and keeps continuity
   Inside the sampler — each window's overlap is held to the previous window's finished latent,
   re-noised to the current step's level through `scheduler.addNoise` (the same primitive the inpaint
-  path uses, so it is scheduler-agnostic rather than flow-specific), locked to it after the loop, and
-  the windows stitched at the hop stride. It is a static helper over the shared-conditioning case
-  (text-to-long-image, an extendable texture); a per-window `condition` encoder like the music path's
-  keeps its own specialized loop. `windowStarts` pulls the final window back to end exactly at the
-  total. Tested by single-window equivalence to the plain loop and that the overlap hold changes the
-  result (`NFKMLXDiffusionWindowedTests`).
-  `NFKDiffusionLatentPreview` gives the progress callback something to show. A full decode per
-  step costs more than the sampling, so the preview is a 1×1 convolution over the channel axis —
-  twelve weights and three biases for a four-channel latent — reported as the job's `partialResult`,
-  the same mechanism a streaming text backend uses. `previewEverySteps` thins it. `.passthrough` suits
-  a latent already in image space; `.stableDiffusion` and `.stableDiffusionXL` are the published
-  latent-RGB factors, and what is measured about them is how closely they track a real decode: against
-  the released SD 1.5 autoencoder, on a latent encoded from a real photograph, the shipped map
-  reproduces the decode's structure at a mean-removed correlation of **0.93**.
-  Raw cosine is the wrong measure here and the first version of that test used it — two nearly
-  constant grey images score 0.98, so cosine cannot tell a preview showing the picture from a flat
-  rectangle of the right brightness. It also fed the map a latent at the autoencoder's scale rather
-  than the sampler's; the pipeline divides by `scaleFactor` before the autoencoder, so the two differ
-  by 5.5× and the earlier numbers were artifacts of that. `fitted(latentChannels:decode:sample:)`
-  derives a map from any decoder by least squares, which is the route for a model with no published
-  factors — though a map fitted on noise scores 0.917 where the shipped coefficients score 0.931, so
-  fit on latents encoded from real images. A preview is a progress indicator, so a mismatched map
-  returns nil rather than failing the run it is only reporting on. `NFKDiffusionScheduler`
-  is the sampler seam. `NFKDDIMScheduler` is at reference parity against diffusers' own
-  `DDIMScheduler` (worst per-step latent cosine 0.9999999999999941, add-noise 0.9999999999999983,
-  and the schedule it visits matches exactly). Reaching it corrected two things the sampler had wrong:
-  it divided the training range evenly (999, 949, … 49) where the reference walks a fixed stride and
-  adds **`steps_offset`** (951, 901, … 1), and its final step denoised against a signal ratio of 1
-  where the released configurations set **`set_alpha_to_one: false`** and use the ratio at training
-  step 0, which deliberately leaves a little noise. Both are now init parameters defaulting to the
-  released Stable Diffusion values. The four `diffusion-*` reference stand-ins pass `setsAlphaToOne:
-  true`, because an oracle that drives the loop to an exact target only lands on it when the last step
-  denoises fully. `NFKDDIMScheduler` (epsilon/v/sample prediction types) and `NFKLCMScheduler`
-  (few-step latent-consistency: consistency boundary `c_out·x₀ + c_skip·latent`, then fresh step-keyed
-  deterministic noise from the same SplitMix64 stream) ship. Noise is a deterministic SplitMix64 +
-  Box–Muller stream, so a run is repeatable without the MLX random state.
-  Reference pipelines register by name via `NFKMLXReferenceModels`: `registerDiffusionUpscaler`
-  (2× upscale), `registerDiffusionDepth` (Marigold-style depth), `registerDiffusionInpainter`,
-  `registerControlNet` (`diffusion-controlnet`: a control map under the core key `NFKInputControl` →
-  `context.conditioning["control"]`, the slot a real ControlNet `denoise` reads to inject residuals).
-  To stay CI-runnable without real weights, their `denoise` is an oracle epsilon that drives the loop to
-  a target derived from the input; a real integration swaps the oracle for a trained UNet forward.
-  ControlNet/LCM need no full SD reimplementation: LCM is a scheduler swap, ControlNet is a `denoise`
-  closure over `conditioning["control"]`; the UNet is brought by the consumer's `denoise` or a
-  dynamically linked SD engine.
+  path uses, so it is scheduler-agnostic rather than flow-specific), locked to it after the loop,
+  and the windows stitched at the hop stride. It is a static helper over the shared-conditioning
+  case (text-to-long-image, an extendable texture); a per-window `condition` encoder like the music
+  path's keeps its own specialized loop. `windowStarts` pulls the final window back to end exactly
+  at the total. Tested by single-window equivalence to the plain loop and that the overlap hold
+  changes the result (`NFKMLXDiffusionWindowedTests`). `NFKDiffusionLatentPreview` gives the
+  progress callback something to show. A full decode per step costs more than the sampling, so the
+  preview is a 1×1 convolution over the channel axis — twelve weights and three biases for a
+  four-channel latent — reported as the job's `partialResult`, the same mechanism a streaming text
+  backend uses. `previewEverySteps` thins it. `.passthrough` suits a latent already in image space;
+  `.stableDiffusion` and `.stableDiffusionXL` are the published latent-RGB factors, and what is
+  measured about them is how closely they track a real decode: against the released SD 1.5
+  autoencoder, on a latent encoded from a real photograph, the shipped map reproduces the decode's
+  structure at a mean-removed correlation of **0.93**. Raw cosine is the wrong measure here and the
+  first version of that test used it — two nearly constant grey images score 0.98, so cosine cannot
+  tell a preview showing the picture from a flat rectangle of the right brightness. It also fed the
+  map a latent at the autoencoder's scale rather than the sampler's; the pipeline divides by
+  `scaleFactor` before the autoencoder, so the two differ by 5.5× and the earlier numbers were
+  artifacts of that. `fitted(latentChannels:decode:sample:)` derives a map from any decoder by least
+  squares, which is the route for a model with no published factors — though a map fitted on noise
+  scores 0.917 where the shipped coefficients score 0.931, so fit on latents encoded from real
+  images. A preview is a progress indicator, so a mismatched map returns nil rather than failing the
+  run it is only reporting on. `NFKDiffusionScheduler` is the sampler seam. `NFKDDIMScheduler` is at
+  reference parity against diffusers' own `DDIMScheduler` (worst per-step latent cosine
+  0.9999999999999941, add-noise 0.9999999999999983, and the schedule it visits matches exactly).
+  Reaching it corrected two things the sampler had wrong: it divided the training range evenly (999,
+  949, … 49) where the reference walks a fixed stride and adds **`steps_offset`** (951, 901, … 1),
+  and its final step denoised against a signal ratio of 1 where the released configurations set
+  **`set_alpha_to_one: false`** and use the ratio at training step 0, which deliberately leaves a
+  little noise. Both are now init parameters defaulting to the released Stable Diffusion values. The
+  four `diffusion-*` reference stand-ins pass `setsAlphaToOne: true`, because an oracle that drives
+  the loop to an exact target only lands on it when the last step denoises fully. `NFKDDIMScheduler`
+  (epsilon/v/sample prediction types), `NFKLCMScheduler` (few-step latent-consistency: consistency
+  boundary `c_out·x₀ + c_skip·latent`, then fresh step-keyed deterministic noise from the same
+  SplitMix64 stream), and `NFKTCDScheduler` (trajectory consistency, diffusers' `TCDScheduler`: the
+  LCM schedule, but the "previous" timestep after the last step is 0, not −1, so the final step's
+  signal ratio is training step 0's; each step re-noises the clean estimate to `floor((1 − eta) ·
+  next)` and, when not final, carries it to the next level with fresh noise; eta 1 is the Hyper-SD
+  recipe, eta 0 deterministic; `NFKDDIMScheduler.train(withAlphaBar:)` recovers the next training
+  step from the ratio the schedule recorded) ship. Noise is a deterministic SplitMix64 + Box–Muller
+  stream, so a run is repeatable without the MLX random state. Reference pipelines register by name
+  via `NFKMLXReferenceModels`: `registerDiffusionUpscaler` (2× upscale), `registerDiffusionDepth`
+  (Marigold-style depth), `registerDiffusionInpainter`, `registerControlNet`
+  (`diffusion-controlnet`: a control map under the core key `NFKInputControl` →
+  `context.conditioning["control"]`, the slot a real ControlNet `denoise` reads to inject
+  residuals). To stay CI-runnable without real weights, their `denoise` is an oracle epsilon that
+  drives the loop to a target derived from the input; a real integration swaps the oracle for a
+  trained UNet forward. ControlNet/LCM need no full SD reimplementation: LCM is a scheduler swap,
+  ControlNet is a `denoise` closure over `conditioning["control"]`; the UNet is brought by the
+  consumer's `denoise` or a dynamically linked SD engine.
 - `NFKMLXSDUNet` / `NFKMLXSDAutoencoder` (`NFKMLXStableDiffusionModels.swift`) — the real
   `UNet2DConditionModel` and `AutoencoderKL` in `MLXNN`, in the diffusers layout. One implementation
   serves every latent-diffusion model here, sharing one structure and differing only in the scalars a
@@ -161,42 +166,66 @@ The diffusion backend seam and schedulers, the SD networks and pipelines, IP-Ada
   SD 2.1 0.9999999999841, SDXL primary 0.9999999999986, SDXL secondary 0.9999999999257 (pooled
   0.9999999999820).
 - `NFKMLXSDLoRA` — released Stable Diffusion adapters merged into `NFKMLXSDUNet`: the LCM-LoRA and
-  SDXL-Lightning distillations, and fine-tunes published in the same layouts. Two key layouts: kohya over
-  diffusers module names (`lora_unet_<path with underscores>`, `.lora_down.weight` / `.lora_up.weight` /
-  a scalar `.alpha`) and PEFT (`unet.<path>`, `.lora_A.weight` / `.lora_B.weight`, no alpha tensor, so the
-  strength is 1; an alpha in the file's metadata is not read). A kohya file over the original model's
-  block names (`lora_unet_input_blocks_…`) is not translated and is refused. The underscore spelling is
-  ambiguous against module names that also carry underscores (`to_out_0`, `ff_net_0_proj`,
-  `time_emb_proj`), so the reader never splits a key: it spells every linear and convolution of the UNet
-  the kohya way (`diffusersPath`, the inverse of `remapUNetKey`, then dots to underscores) and looks the
-  file's targets up. A convolution target stores `lora_down` as `[rank, in, kH, kW]` and `lora_up` as
-  `[out, rank, 1, 1]`; the delta is `up · down` over the rank axis, reshaped to `[out, in, kH, kW]` and
-  transposed to the module's `[out, kH, kW, in]`. A 1×1 kernel on a linear target (`proj_in` under
-  `use_linear_projection`) reshapes to the matrix. The strength is `scale · alpha / rank`; the product
-  forms in float32 and takes the weight's type, which is diffusers' `fuse_lora`. A file that also carries
-  text-tower keys (`lora_te…`, `text_encoder…`) is refused unless the caller passes
-  `ignoringTextEncoderKeys: true`, and the report then counts the keys left alone; a UNet key that names
-  no layer is refused before any weight changes. The LCM-LoRA for SD 1.5 adapts 278 targets (attention,
-  feed-forward, projections, resnet convolutions, time projections), the SDXL adapters 788.
-  `NFKMLXSDSampler` / `withSampler` give an adapter the sampler it was distilled for: `.lcm` runs
-  `NFKLCMScheduler` at 4 steps, guidance 1; `.ddimTrailing` counts DDIM down from the end of the training
-  range at 4 steps, no guidance (SDXL-Lightning, SDXL-Turbo). A configuration already on the requested
-  sampler keeps its own steps and guidance, so `.latentConsistency15` keeps guidance 8 through the
-  Objective-C factory. The backend seeds the sampler from the request (`NFKDiffusionScheduler.seeded`),
-  so `NFKParameterSeed` changes the LCM re-noising draws along with the initial latent. Hyper-SD's SD
-  adapters publish the same kohya layout; they are queued in `porting-candidates.md` and unmeasured.
-  Parity, with the adapter fused in diffusers through `load_lora_weights` + `fuse_lora` (the diffusers
-  venv carries `peft` for it), from the reference's own initial latent: LCM-LoRA on SD 1.5
-  (`IK_PARITY_SD15_LCM_LORA_T2I`) image cosine 0.99999858, mean abs 0.00089; context 0.9999999999984,
-  first prediction 0.9999999999997, per-step latents ≥ 0.99999999596. SDXL-Lightning four-step on SDXL
-  base (`IK_PARITY_SDXL_LIGHTNING_T2I`, DDIM trailing both sides through `IK_SD_SPACING`) image cosine
-  0.99999917, mean abs 0.00056; context 0.9999999999969, first prediction 0.9999999999995, per-step
-  latents ≥ 0.9999999998. Two reference facts carry the LCM path: `LCMScheduler` spaces its schedule over
-  `original_inference_steps` (50) as `floor(i · 50 / n)` into `19, 39, …, 999` reversed (4 steps: 999,
-  759, 499, 259), each step's previous ratio is the next step's, and the last step returns `denoised`
-  without re-noising whatever `set_alpha_to_one` says; and the sampler re-noises every other step with a
-  fresh draw, so the record carries the draws (`noises`, a `randn_tensor` hook in the oracle) and the
-  port takes them through `NFKLCMScheduler.noise`.
+  SDXL-Lightning distillations, and fine-tunes published in the same layouts. Two key layouts: kohya
+  over diffusers module names (`lora_unet_<path with underscores>`, `.lora_down.weight` /
+  `.lora_up.weight` / a scalar `.alpha`) and PEFT (`unet.<path>`, `.lora_A.weight` /
+  `.lora_B.weight`, no alpha tensor, so the strength is 1; an alpha in the file's metadata is not
+  read). A kohya file over the original model's block names (`lora_unet_input_blocks_…`) is not
+  translated and is refused. The underscore spelling is ambiguous against module names that also
+  carry underscores (`to_out_0`, `ff_net_0_proj`, `time_emb_proj`), so the reader never splits a
+  key: it spells every linear and convolution of the UNet the kohya way (`diffusersPath`, the
+  inverse of `remapUNetKey`, then dots to underscores) and looks the file's targets up. A
+  convolution target stores `lora_down` as `[rank, in, kH, kW]` and `lora_up` as `[out, rank, 1,
+  1]`; the delta is `up · down` over the rank axis, reshaped to `[out, in, kH, kW]` and transposed
+  to the module's `[out, kH, kW, in]`. A 1×1 kernel on a linear target (`proj_in` under
+  `use_linear_projection`) reshapes to the matrix. The strength is `scale · alpha / rank`; the
+  product forms in float32 and takes the weight's type, which is diffusers' `fuse_lora`. A file that
+  also carries text-tower keys (`lora_te…`, `text_encoder…`) is refused unless the caller passes
+  `ignoringTextEncoderKeys: true`, and the report then counts the keys left alone; a UNet key that
+  names no layer is refused before any weight changes. The LCM-LoRA for SD 1.5 adapts 278 targets
+  (attention, feed-forward, projections, resnet convolutions, time projections), the SDXL adapters
+  788. `NFKMLXSDSampler` / `withSampler` give an adapter the sampler it was distilled for: `.lcm`
+  runs `NFKLCMScheduler` at 4 steps, guidance 1; `.ddimTrailing` counts DDIM down from the end of
+  the training range at 4 steps, no guidance (SDXL-Lightning, SDXL-Turbo). A configuration already
+  on the requested sampler keeps its own steps and guidance, so `.latentConsistency15` keeps
+  guidance 8 through the Objective-C factory. The backend seeds the sampler from the request
+  (`NFKDiffusionScheduler.seeded`), so `NFKParameterSeed` changes the LCM re-noising draws along
+  with the initial latent. Hyper-SD's SD adapters (ByteDance/Hyper-SD, UNet-only kohya files, rank
+  64, no text-tower keys; the SD 1.5 files adapt 278 targets, the SDXL files 788, downsampler
+  convolutions included) merge through the same reader: the N-step files run `.ddimTrailing` at
+  guidance 0, the CFG-preserved 8- and 12-step files `.ddimTrailing` at 8 or 12 steps with guidance
+  5 to 8, and the unified `1step` files `.tcd` (`NFKTCDScheduler`, eta 1, one to eight steps). Their
+  SD half is under ByteDance's own OpenRAIL-M-style license (LICENSE.md, "other SD-related models");
+  the FLUX half carries FLUX.1 [dev] non-commercial terms and the SD3 half the Stability Community
+  license, and neither is taken. Catalog names `hyper-sd15-4steps-lora`, `hyper-sdxl-4steps-lora`,
+  `hyper-sd15-8steps-cfg-lora`, `hyper-sdxl-8steps-cfg-lora`, `hyper-sd15-1step-lora`,
+  `hyper-sdxl-1step-lora` (`NFKMLXCatalogImage.hyperSDAdapters`; `StableDiffusionAdapter` carries
+  the trained steps and guidance where they differ from the sampler's defaults). Parity, with the
+  adapter fused in diffusers (records `IK_PARITY_HYPER_{SD15,SDXL}_{4STEP,8STEP_CFG,UNIFIED}_T2I`,
+  the unified records at 2 steps so the re-noising step and the final-step rule both run): SD 1.5
+  4-step image cosine 0.99999862 (mean abs 0.00073), SDXL 4-step 0.99999953 (0.00035), SD 1.5 8-step
+  CFG 0.99999558 (0.00117), SDXL 8-step CFG 0.99999947 (0.00038), SD 1.5 unified 0.99999725
+  (0.00097), SDXL unified 0.99999938 (0.00053); every context ≥ 0.9999999999969, every first
+  prediction ≥ 0.9999999999934, every per-step latent ≥ 0.9999896575. Five of the six image figures
+  sit within 1e-9 of their picture's own 8-bit floor; the SD 1.5 8-step CFG figure sits 3e-6 below
+  its floor (0.99999859) because its eight guided steps compound a 1e-12 step-0 difference to 1e-5
+  by step 7 (the run's own final latent decodes at 0.9999970 against the reference picture), a
+  trajectory seam to explore, not a decode or merge one. The first SD 1.5 trailing records sampled
+  leading with offset (751, 501, 251, 1) because diffusers' `from_config` drops an overridden
+  `timestep_spacing` the stored SD 1.5 config lists in `_use_default_values`; the oracle strips the
+  key, and the records were re-made. Parity, with the adapter fused in diffusers through
+  `load_lora_weights` + `fuse_lora` (the diffusers venv carries `peft` for it), from the reference's
+  own initial latent: LCM-LoRA on SD 1.5 (`IK_PARITY_SD15_LCM_LORA_T2I`) image cosine 0.99999858,
+  mean abs 0.00089; context 0.9999999999984, first prediction 0.9999999999997, per-step latents ≥
+  0.99999999596. SDXL-Lightning four-step on SDXL base (`IK_PARITY_SDXL_LIGHTNING_T2I`, DDIM
+  trailing both sides through `IK_SD_SPACING`) image cosine 0.99999917, mean abs 0.00056; context
+  0.9999999999969, first prediction 0.9999999999995, per-step latents ≥ 0.9999999998. Two reference
+  facts carry the LCM path: `LCMScheduler` spaces its schedule over `original_inference_steps` (50)
+  as `floor(i · 50 / n)` into `19, 39, …, 999` reversed (4 steps: 999, 759, 499, 259), each step's
+  previous ratio is the next step's, and the last step returns `denoised` without re-noising
+  whatever `set_alpha_to_one` says; and the sampler re-noises every other step with a fresh draw, so
+  the record carries the draws (`noises`, a `randn_tensor` hook in the oracle) and the port takes
+  them through `NFKLCMScheduler.noise`.
 - `NFKMLXSDTextToImageConfiguration.latentConsistency15` — LCM Dreamshaper v7, a whole latent
   consistency model (release `.lcmDreamshaperV7`): SD 1.5 geometry plus `time_cond_proj_dim` 256
   (`NFKMLXSDUNetConfiguration.timeConditionProjectionDimensions`, `time_embedding.cond_proj`, a

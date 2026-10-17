@@ -233,6 +233,68 @@ final class NFKMLXSDLoRATests: XCTestCase {
         XCTAssertTrue(allClose(next, expected, atol: 1e-6).item(Bool.self))
     }
 
+    // MARK: The trajectory consistency schedule
+
+    // diffusers' TCDScheduler shares the latent consistency schedule, but its "previous" timestep after
+    // the last step is 0, not -1: the final step's signal ratio is training step 0's, just under 1.
+    func testTCDScheduleMatchesTheReference() throws {
+        try requireMLXRuntime()
+        let scheduler = NFKTCDScheduler()
+        let ddim = NFKDDIMScheduler()
+        XCTAssertEqual(scheduler.steps(4).map(\.train), [999, 759, 499, 259])
+        XCTAssertEqual(scheduler.steps(1).map(\.train), [999])
+        let four = scheduler.steps(4)
+        XCTAssertEqual(four[0].alphaBarPrev, four[1].alphaBar)
+        XCTAssertEqual(four[3].alphaBarPrev, ddim.alphaBar(at: 0))
+        XCTAssertEqual(scheduler.steps(1)[0].alphaBarPrev, ddim.alphaBar(at: 0))
+        XCTAssertEqual(scheduler.transitionTrain(for: four[0]), 0, "eta 1 re-noises from the clean estimate")
+        XCTAssertEqual(NFKTCDScheduler(eta: 0.3).transitionTrain(for: four[0]), Int((0.7 * 759.0).rounded(.down)))
+        XCTAssertEqual(NFKTCDScheduler(eta: 0).transitionTrain(for: four[0]), 759)
+        XCTAssertEqual(ddim.train(withAlphaBar: ddim.alphaBar(at: 759)), 759)
+    }
+
+    // One step at eta 1 on the caller's draw: the estimate re-noised to training step 0, then carried to
+    // the next step's level with the draw. The final step returns the estimate alone, and eta 0 never
+    // draws.
+    func testTCDStepMatchesTheReference() throws {
+        try requireMLXRuntime()
+        let ddim = NFKDDIMScheduler()
+        var scheduler = NFKTCDScheduler()
+        let steps = scheduler.steps(2)
+        let latent = MLXRandom.normal([1, 4, 4, 4], key: MLXRandom.key(21))
+        let prediction = MLXRandom.normal([1, 4, 4, 4], key: MLXRandom.key(22))
+        let draw = MLXRandom.normal([4, 4, 4], key: MLXRandom.key(23))
+        let box = NFKMLXArrayBox(draw)
+        scheduler.noise = { _ in box.array }
+
+        let step = steps[0]
+        let clean = (latent - prediction * sqrtf(1 - step.alphaBar)) / sqrtf(step.alphaBar)
+        let alphaBarS = ddim.alphaBar(at: 0)
+        let estimate = clean * sqrtf(alphaBarS) + prediction * sqrtf(1 - alphaBarS)
+        let ratio = step.alphaBarPrev / alphaBarS
+        let expected = estimate * sqrtf(ratio) + draw.reshaped([1, 4, 4, 4]) * sqrtf(1 - ratio)
+        let next = scheduler.step(prediction: prediction, timestep: step, latent: latent)
+        eval(next, expected)
+        XCTAssertTrue(allClose(next, expected, atol: 1e-6).item(Bool.self))
+
+        let final = steps[1]
+        let finalClean = (latent - prediction * sqrtf(1 - final.alphaBar)) / sqrtf(final.alphaBar)
+        let finalExpected = finalClean * sqrtf(alphaBarS) + prediction * sqrtf(1 - alphaBarS)
+        let last = scheduler.step(prediction: prediction, timestep: final, latent: latent)
+        eval(last, finalExpected)
+        XCTAssertTrue(allClose(last, finalExpected, atol: 1e-6).item(Bool.self))
+
+        let deterministic = NFKTCDScheduler(eta: 0)
+        let a = deterministic.seeded(1).step(prediction: prediction, timestep: step, latent: latent)
+        let b = deterministic.seeded(2).step(prediction: prediction, timestep: step, latent: latent)
+        eval(a, b)
+        XCTAssertTrue(arrayEqual(a, b).item(Bool.self), "eta 0 draws no noise")
+        let seededA = NFKTCDScheduler().seeded(1).step(prediction: prediction, timestep: step, latent: latent)
+        let seededB = NFKTCDScheduler().seeded(2).step(prediction: prediction, timestep: step, latent: latent)
+        eval(seededA, seededB)
+        XCTAssertFalse(arrayEqual(seededA, seededB).item(Bool.self), "the request's seed changes the draw")
+    }
+
     // MARK: The guidance projection
 
     // diffusers' `get_guidance_scale_embedding` at guidance 8 (w = 7) over 256 channels: sines first,
@@ -300,6 +362,14 @@ final class NFKMLXSDLoRATests: XCTestCase {
                        "asking for the sampler a configuration already runs keeps its own guidance")
         XCTAssertEqual(NFKMLXStableDiffusionRelease(.lcmDreamshaperV7).configuration.withSampler(.lcm).guidanceScale, 8)
 
+        let unified = NFKMLXSDTextToImageConfiguration.sdxl.withSampler(.tcd)
+        XCTAssertEqual(unified.sampler, .tcd)
+        XCTAssertEqual(unified.steps, 1)
+        XCTAssertEqual(unified.guidanceScale, 0)
+        XCTAssertEqual(unified.trajectoryConsistencyEta, 1)
+        XCTAssertTrue(unified.makeScheduler() is NFKTCDScheduler)
+        XCTAssertEqual((unified.makeScheduler() as? NFKTCDScheduler)?.eta, 1)
+
         let overridden = NFKMLXSDTextToImageConfiguration.sdxl.withSampler(.ddimTrailing, steps: 8, guidanceScale: 0)
         XCTAssertEqual(overridden.steps, 8)
         XCTAssertEqual(NFKMLXSDTextToImageConfiguration.sdxl.steps, 50, "the base release keeps its own schedule")
@@ -319,7 +389,8 @@ final class NFKMLXSDLoRATests: XCTestCase {
         try requireMLXRuntime()
         var lcm = NFKMLXSDTextToImageConfiguration.tiny.withSampler(.lcm, steps: 2, guidanceScale: 8)
         lcm.unet.timeConditionProjectionDimensions = 8
-        for configuration in [NFKMLXSDTextToImageConfiguration.tiny.withSampler(.ddimTrailing, steps: 2), lcm] {
+        for configuration in [NFKMLXSDTextToImageConfiguration.tiny.withSampler(.ddimTrailing, steps: 2), lcm,
+                              NFKMLXSDTextToImageConfiguration.tiny.withSampler(.tcd, steps: 2)] {
             let backend = NFKMLXTextToImage.backend(configuration: configuration)
             let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "a tiny test"], parameters: [:])
             let result = try backend.runInference(for: request)

@@ -12730,9 +12730,9 @@ final class NFKMLXReferenceParityTests: XCTestCase {
             print("VALIDATION PARITY \(name)-text-to-image: adapter merged into \(report.mergedLayers) layers at scale \(scale)")
         }
         if let noises = arrays["noises"] {                       // [steps - 1, side, side, 4]
-            XCTAssertEqual(configuration.sampler, .lcm, "only the LCM sampler draws noise per step")
+            XCTAssertTrue([.lcm, .tcd].contains(configuration.sampler), "only the consistency samplers draw noise per step")
             let draws = NFKMLXArrayBox(noises)
-            model.latentConsistencyNoise = { step in
+            model.samplerNoise = { step in
                 step.index < draws.array.dim(0) ? draws.array[step.index] : nil
             }
         }
@@ -12848,6 +12848,46 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         try verifyTextToImage("sdxl-lightning", .sdxlLightning,
                               record: "IK_PARITY_SDXL_LIGHTNING_T2I", directory: "IK_VAL_SDXL_BASE_DIR",
                               adapter: "IK_VAL_SDXL_LIGHTNING_4STEP_LORA")
+    }
+
+    // Hyper-SD's N-step adapters are trained for DDIM counted down from the end of the training range
+    // with no guidance, as SDXL-Lightning is; the CFG-preserved ones keep classifier-free guidance.
+    func testHyperSD15FourStepTextToImageMatchesTheReference() throws {
+        try verifyTextToImage("hyper-sd15-4step", .stableDiffusion15.withSampler(.ddimTrailing),
+                              record: "IK_PARITY_HYPER_SD15_4STEP_T2I", directory: "IK_VAL_SD15_DIR",
+                              adapter: "IK_VAL_HYPER_SD15_4STEP_LORA")
+    }
+
+    func testHyperSDXLFourStepTextToImageMatchesTheReference() throws {
+        try verifyTextToImage("hyper-sdxl-4step", .sdxl.withSampler(.ddimTrailing),
+                              record: "IK_PARITY_HYPER_SDXL_4STEP_T2I", directory: "IK_VAL_SDXL_BASE_DIR",
+                              adapter: "IK_VAL_HYPER_SDXL_4STEP_LORA")
+    }
+
+    func testHyperSD15EightStepCFGTextToImageMatchesTheReference() throws {
+        try verifyTextToImage("hyper-sd15-8step-cfg", .stableDiffusion15.withSampler(.ddimTrailing, steps: 8, guidanceScale: 5),
+                              record: "IK_PARITY_HYPER_SD15_8STEP_CFG_T2I", directory: "IK_VAL_SD15_DIR",
+                              adapter: "IK_VAL_HYPER_SD15_8STEP_CFG_LORA")
+    }
+
+    func testHyperSDXLEightStepCFGTextToImageMatchesTheReference() throws {
+        try verifyTextToImage("hyper-sdxl-8step-cfg", .sdxl.withSampler(.ddimTrailing, steps: 8, guidanceScale: 5),
+                              record: "IK_PARITY_HYPER_SDXL_8STEP_CFG_T2I", directory: "IK_VAL_SDXL_BASE_DIR",
+                              adapter: "IK_VAL_HYPER_SDXL_8STEP_CFG_LORA")
+    }
+
+    // The unified adapters run the trajectory consistency sampler at eta 1, from the reference's own
+    // initial latent and per-step draws; the record's step count is what the run used (1, or more).
+    func testHyperSD15UnifiedTextToImageMatchesTheReference() throws {
+        try verifyTextToImage("hyper-sd15-unified", .stableDiffusion15.withSampler(.tcd),
+                              record: "IK_PARITY_HYPER_SD15_UNIFIED_T2I", directory: "IK_VAL_SD15_DIR",
+                              adapter: "IK_VAL_HYPER_SD15_1STEP_LORA")
+    }
+
+    func testHyperSDXLUnifiedTextToImageMatchesTheReference() throws {
+        try verifyTextToImage("hyper-sdxl-unified", .sdxl.withSampler(.tcd),
+                              record: "IK_PARITY_HYPER_SDXL_UNIFIED_T2I", directory: "IK_VAL_SDXL_BASE_DIR",
+                              adapter: "IK_VAL_HYPER_SDXL_1STEP_LORA")
     }
 
     // A whole latent consistency model: the SD 1.5 geometry with the guidance projection, conditioned on

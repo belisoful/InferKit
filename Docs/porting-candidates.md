@@ -203,13 +203,14 @@ claims; the tables below carry the verified facts.
 | **Wan 2.7** | Alibaba | — | Not released as open weights. The newest open Wan is 2.2 (checked 2026-09-26) |
 | **LCM and SDXL-Lightning** — SHIPPED (`NFKMLXSDLoRA`, `NFKMLXSDTextToImageConfiguration.withSampler`) | Latent Consistency / ByteDance | MIT (LCM Dreamshaper full UNet), openrail++ (LCM-LoRA, Lightning) | Adapters over the shipped SD 1.5 and SDXL bodies, merged into `NFKMLXSDUNet` from the kohya and PEFT key layouts. Measured end to end against diffusers with the adapter fused: LCM-LoRA on SD 1.5 image cosine 0.99999858, SDXL-Lightning four-step on SDXL base 0.99999917, and the whole LCM Dreamshaper v7 distillation 0.99999278 (`.latentConsistency15`, the guidance projection) |
 | **SD 3.5 Large Turbo** — SHIPPED (`sd3.5-large-turbo`, `NFKMLXSD3Generator`) | Stability AI | Stability Community, gated | Shares the Large geometry, autoencoder, and text encoders byte for byte. The released transformer is measured on a four-block cut against diffusers at float32 (velocity 0.99999999999950), and the same pass records Large (0.99999999999951). The registry and catalog run it at 4 steps and a guidance of 0 |
-| **Hyper-SD** — QUEUED last | ByteDance | Unlisted on the card; the license file carries FLUX.1 [dev] non-commercial terms for the FLUX adapters | Adapters over SD 1.5, SDXL, and FLUX.1 through the same LoRA reader. The SD half is listed only after its license is confirmed; the FLUX half is lowest priority on license grounds |
+| **Hyper-SD** — SHIPPED (`NFKMLXSDLoRA`, `NFKTCDScheduler`, six catalog adapters) | ByteDance | ByteDance's own OpenRAIL-M-style license for the SD adapters (use restrictions); the FLUX adapters carry FLUX.1 [dev] non-commercial terms and are not taken | The SD 1.5 and SDXL adapters merge through the LoRA reader: the 4-step files under trailing DDIM without guidance, the CFG-preserved 8-step files at guidance 5, and the unified files under the trajectory consistency sampler. Measured end to end against diffusers with the adapter fused: SD 1.5 4-step image cosine 0.99999862, SDXL 4-step 0.99999953, SD 1.5 8-step CFG 0.99999558, SDXL 8-step CFG 0.99999947, SD 1.5 unified 0.99999725, SDXL unified 0.99999938 |
 
 Notes:
 
 - The three rows were ordered on 2026-10-15: the LoRA reader first because it serves every distillation
   and community adapter at once, SD 3.5 Large Turbo second as a measurement over shipped code, Hyper-SD
-  last under the restrictive-license rule.
+  last under the restrictive-license rule. All three shipped by 2026-10-17; the Hyper-SD SD half's
+  license was read from the release's LICENSE.md before it was listed.
 - The survey expected RF-DETR detection sizes above large and a keypoint head. Neither is published on
   Hugging Face; the xlarge and xxlarge releases are segmentation checkpoints, and those ship.
 - Wan 2.7 was announced as API-only. Its audio output would be a new stage, so it moves to Tier B if

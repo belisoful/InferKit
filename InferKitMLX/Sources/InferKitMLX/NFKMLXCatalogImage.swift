@@ -1636,11 +1636,15 @@ enum NFKMLXCatalogImage {
         let sampler: NFKMLXSDSampler
         /// The license of the merged weights: the base release's, noting the adapter's.
         let license: NFKModelLicense
+        /// The steps and guidance the adapter is trained for, where they differ from the sampler's defaults
+        /// (`withSampler`: 4 steps at guidance 1 under LCM, 4 at 0 under trailing DDIM, 1 at 0 under TCD).
+        var steps: Int?
+        var guidance: Float?
 
         /// The base release's configuration on the adapter's sampler, at the steps and guidance the
         /// adapter is trained for.
         var configuration: NFKMLXSDTextToImageConfiguration {
-            NFKMLXStableDiffusionRelease(base).configuration.withSampler(sampler)
+            NFKMLXStableDiffusionRelease(base).configuration.withSampler(sampler, steps: steps, guidanceScale: guidance)
         }
 
         /// The adapter file: the copy in `directoryURL` where the directory holds one, else the copy in the
@@ -1677,7 +1681,59 @@ enum NFKMLXCatalogImage {
                                weightsPath: "sdxl_lightning_4step_lora.safetensors", sampler: .ddimTrailing,
                                license: openRAILPlusPlus(url: "https://huggingface.co/ByteDance/SDXL-Lightning/blob/main/LICENSE.md",
                                                          note: "Use restrictions apply. The base release and the adapter share the license.")),
+    ] + hyperSDAdapters
+
+    /// The Hyper-SD adapters over Stable Diffusion 1.5 and SDXL base 1.0 (ByteDance/Hyper-SD): the N-step
+    /// files run trailing DDIM without guidance, the CFG-preserved files keep classifier-free guidance at 5
+    /// to 8, and the unified files run the trajectory consistency sampler at one to eight steps.
+    static let hyperSDAdapters: [StableDiffusionAdapter] = [
+        StableDiffusionAdapter(name: "hyper-sd15-4steps-lora", displayName: "Hyper-SD 1.5 4-step",
+                               summary: "Stable Diffusion 1.5 with ByteDance's four-step Hyper-SD adapter merged in, drawing 512-pixel images in four steps.",
+                               base: .stableDiffusion15, repository: hyperSDRepository,
+                               weightsPath: "Hyper-SD15-4steps-lora.safetensors", sampler: .ddimTrailing,
+                               license: hyperSD15License),
+        StableDiffusionAdapter(name: "hyper-sdxl-4steps-lora", displayName: "Hyper-SDXL 4-step",
+                               summary: "SDXL base 1.0 with ByteDance's four-step Hyper-SD adapter merged in, drawing 1024-pixel images in four steps.",
+                               base: .sdxlBase, repository: hyperSDRepository,
+                               weightsPath: "Hyper-SDXL-4steps-lora.safetensors", sampler: .ddimTrailing,
+                               license: hyperSDXLLicense),
+        StableDiffusionAdapter(name: "hyper-sd15-8steps-cfg-lora", displayName: "Hyper-SD 1.5 8-step CFG",
+                               summary: "Stable Diffusion 1.5 with ByteDance's CFG-preserved eight-step Hyper-SD adapter merged in, which keeps classifier-free guidance at 5 to 8.",
+                               base: .stableDiffusion15, repository: hyperSDRepository,
+                               weightsPath: "Hyper-SD15-8steps-CFG-lora.safetensors", sampler: .ddimTrailing,
+                               license: hyperSD15License, steps: 8, guidance: 5),
+        StableDiffusionAdapter(name: "hyper-sdxl-8steps-cfg-lora", displayName: "Hyper-SDXL 8-step CFG",
+                               summary: "SDXL base 1.0 with ByteDance's CFG-preserved eight-step Hyper-SD adapter merged in, which keeps classifier-free guidance at 5 to 8.",
+                               base: .sdxlBase, repository: hyperSDRepository,
+                               weightsPath: "Hyper-SDXL-8steps-CFG-lora.safetensors", sampler: .ddimTrailing,
+                               license: hyperSDXLLicense, steps: 8, guidance: 5),
+        StableDiffusionAdapter(name: "hyper-sd15-1step-lora", displayName: "Hyper-SD 1.5 unified",
+                               summary: "Stable Diffusion 1.5 with ByteDance's unified Hyper-SD adapter merged in, drawing 512-pixel images in one to eight steps through the trajectory consistency sampler.",
+                               base: .stableDiffusion15, repository: hyperSDRepository,
+                               weightsPath: "Hyper-SD15-1step-lora.safetensors", sampler: .tcd,
+                               license: hyperSD15License),
+        StableDiffusionAdapter(name: "hyper-sdxl-1step-lora", displayName: "Hyper-SDXL unified",
+                               summary: "SDXL base 1.0 with ByteDance's unified Hyper-SD adapter merged in, drawing 1024-pixel images in one to eight steps through the trajectory consistency sampler.",
+                               base: .sdxlBase, repository: hyperSDRepository,
+                               weightsPath: "Hyper-SDXL-1step-lora.safetensors", sampler: .tcd,
+                               license: hyperSDXLLicense),
     ]
+
+    static let hyperSDRepository = "ByteDance/Hyper-SD"
+
+    /// The Stable Diffusion 1.5 license, noting the adapter's: ByteDance publishes the SD adapters under its
+    /// own OpenRAIL-M-style license (LICENSE.md, "other SD-related models"), with use restrictions.
+    static var hyperSD15License: NFKModelLicense {
+        .license(nil, name: "CreativeML Open RAIL-M License",
+                 url: "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5",
+                 note: "Use restrictions apply. The adapter is under ByteDance's Hyper-SD license, an OpenRAIL-M-style license with use restrictions (https://huggingface.co/ByteDance/Hyper-SD/blob/main/LICENSE.md).")
+    }
+
+    /// The SDXL base 1.0 license, noting the adapter's.
+    static var hyperSDXLLicense: NFKModelLicense {
+        openRAILPlusPlus(url: "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md",
+                         note: "Use restrictions apply. The adapter is under ByteDance's Hyper-SD license, an OpenRAIL-M-style license with use restrictions (https://huggingface.co/ByteDance/Hyper-SD/blob/main/LICENSE.md).")
+    }
 
     /// The CreativeML Open RAIL++-M License published at `url`.
     static func openRAILPlusPlus(url: String, note: String = "Use restrictions apply.") -> NFKModelLicense {

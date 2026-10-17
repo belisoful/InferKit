@@ -219,8 +219,8 @@
 	XCTAssertEqualObjects(diffusion.backendIdentifier, @"mlx-stable-diffusion");
 	XCTAssertFalse(diffusion.isReady, @"nothing is loaded until the first run");
 
-	// A released LoRA (LCM-LoRA, SDXL-Lightning) merges into the release's UNet, and the sampler names
-	// what the adapter was distilled for. The same absent directory pins the entry point and its error.
+	// A released LoRA (LCM-LoRA, SDXL-Lightning, Hyper-SD) merges into the release's UNet, and the sampler
+	// names what the adapter was distilled for. The same absent directory pins the entry point and its error.
 	NSURL *adapter = [NSURL fileURLWithPath:@"/nonexistent/lcm-lora-sdv1-5/pytorch_lora_weights.safetensors"];
 	error = nil;
 	id<NFKInferenceBackend> distilled = [NFKMLXTextToImage backendWithModel:NFKMLXStableDiffusionModelStableDiffusion15
@@ -230,6 +230,15 @@
 																   sampler:NFKMLXSDSamplerLCM
 																	 error:&error];
 	XCTAssertNil(distilled);
+	XCTAssertNotNil(error);
+	error = nil;
+	id<NFKInferenceBackend> unified = [NFKMLXTextToImage backendWithModel:NFKMLXStableDiffusionModelSdxlBase
+															directoryURL:absent
+															  adapterURL:adapter
+															adapterScale:1
+																 sampler:NFKMLXSDSamplerTCD
+																   error:&error];
+	XCTAssertNil(unified);
 	XCTAssertNotNil(error);
 	NFKMLXBackend *dreamshaper = [[NFKMLXBackend alloc] initWithModel:NFKMLXStableDiffusionModelLcmDreamshaperV7];
 	XCTAssertFalse(dreamshaper.isReady, @"a whole LCM distillation is a bundled release, with no adapter");

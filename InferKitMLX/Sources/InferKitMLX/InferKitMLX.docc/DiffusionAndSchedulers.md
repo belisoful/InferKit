@@ -42,6 +42,9 @@ Five ship, and swapping them changes the sampler without touching `denoise`:
   `set_alpha_to_one` included.
 - ``NFKLCMScheduler`` — few-step latent consistency: a consistency boundary `c_out·x₀ + c_skip·latent`,
   then fresh step-keyed deterministic noise.
+- ``NFKTCDScheduler`` — trajectory consistency (the Hyper-SD unified adapters): the clean estimate
+  re-noised to `floor((1 − eta) · next)`, then carried to the next step's level with fresh noise; one to
+  eight steps from one adapter.
 - ``NFKMLXFlowMatchScheduler`` — the rectified-flow Euler sampler LTX, Wan, Z-Image, SANA, Flux, and
   SD3 use: a sigma ramp with resolution-dependent shifting and an optional terminal stretch, one
   Euler update per step. ``NFKMLXFlowMatchConfiguration`` carries each release's shift.
@@ -102,6 +105,7 @@ loop to a target derived from the input; a real integration swaps the oracle for
 - ``NFKDiffusionScheduler``
 - ``NFKDDIMScheduler``
 - ``NFKLCMScheduler``
+- ``NFKTCDScheduler``
 - ``NFKMLXFlowMatchScheduler``
 - ``NFKMLXFlowMatchConfiguration``
 - ``NFKMLXDPMSolverScheduler``

@@ -1609,18 +1609,20 @@ let image = try backend.runInference(for: request).output(forKey: NFKOutputImage
 unchanged. From Objective-C, `imageAdapterBackendWithModel:directoryURL:adapterURL:scale:error:` takes the
 release by name.
 
-### Few-step adapters: LCM-LoRA and SDXL-Lightning (`NFKMLXSDLoRA`)
+### Few-step adapters: LCM-LoRA, SDXL-Lightning, and Hyper-SD (`NFKMLXSDLoRA`)
 
-A released LoRA merges into the UNet's weights, so the adapted model runs at the base model's cost. The
-reader takes the kohya layout over diffusers module names (`lora_unet_…`, `lora_down` / `lora_up` /
-`alpha`) that the LCM-LoRA and SDXL-Lightning releases publish, and the PEFT layout diffusers writes
-(`unet.…lora_A` / `lora_B`), on linear and convolution targets alike; a file written against the
-original model's block names is refused, and so is one that also adapts the text towers. The
-configuration names the sampler the adapter was distilled for: `.lcm` steps `NFKLCMScheduler` (four
-steps, guidance 1), `.ddimTrailing` counts DDIM down from the end of the training range with no
-guidance (SDXL-Lightning, SDXL-Turbo). A request's `NFKParameterSteps` and `NFKParameterGuidanceScale`
-override the adapter's defaults. The compiled mirror of this snippet is `testTextToImageAdapter` in
-`InferKitMLX/Examples/MLXModelGalleryExamples.swift`.
+A released LoRA merges into the UNet's weights, so the adapted model runs at the base model's cost.
+The reader takes the kohya layout over diffusers module names (`lora_unet_…`, `lora_down` /
+`lora_up` / `alpha`) that the LCM-LoRA, SDXL-Lightning, and Hyper-SD releases publish, and the PEFT
+layout diffusers writes (`unet.…lora_A` / `lora_B`), on linear and convolution targets alike; a file
+written against the original model's block names is refused, and so is one that also adapts the text
+towers. The configuration names the sampler the adapter was distilled for: `.lcm` steps
+`NFKLCMScheduler` (four steps, guidance 1), `.ddimTrailing` counts DDIM down from the end of the
+training range with no guidance (SDXL-Lightning, SDXL-Turbo, the Hyper-SD N-step adapters; the
+CFG-preserved Hyper-SD adapters keep guidance 5 to 8), and `.tcd` steps `NFKTCDScheduler` (one step,
+no guidance; the Hyper-SD unified adapters run one to eight). A request's `NFKParameterSteps` and
+`NFKParameterGuidanceScale` override the adapter's defaults. The compiled mirror of this snippet is
+`testTextToImageAdapter` in `InferKitMLX/Examples/MLXModelGalleryExamples.swift`.
 
 ```swift
 // LCM-LoRA on Stable Diffusion 1.5: latent-consistency/lcm-lora-sdv1-5
@@ -1635,10 +1637,16 @@ let lightning = try NFKMLXTextToImage.backend(configuration: .sdxlLightning,
 let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "a watercolor lighthouse at dawn"],
                                   parameters: [NFKParameterSeed: 42])  // 4 steps, no guidance
 let image = try lightning.runInference(for: request).output(forKey: NFKOutputImage)
+
+// Hyper-SD's unified adapter on SDXL base 1.0: ByteDance/Hyper-SD Hyper-SDXL-1step-lora.safetensors
+let hyper = try NFKMLXTextToImage.backend(configuration: .sdxl.withSampler(.tcd, steps: 4),
+                                          directoryURL: sdxlBaseDirectory,
+                                          adapterURL: hyperUnifiedLoRAURL)  // one to eight steps
 ```
 
 From Objective-C, `backendWithModel:directoryURL:adapterURL:adapterScale:sampler:error:` takes the
-release by name and the sampler as `NFKMLXSDSamplerLCM` or `NFKMLXSDSamplerDDIMTrailing`, and
+release by name and the sampler as `NFKMLXSDSamplerLCM`, `NFKMLXSDSamplerDDIMTrailing`, or
+`NFKMLXSDSamplerTCD`, and
 `backendWithModel:adapterRepo:adapterWeightsPath:adapterRevision:adapterScale:sampler:cacheDirectoryURL:error:`
 downloads both. A whole LCM distillation needs no adapter: `NFKMLXBackend(model: .lcmDreamshaperV7)`
 conditions on its guidance scale through the time embedding and runs four steps without
