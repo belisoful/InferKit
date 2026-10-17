@@ -61,7 +61,7 @@ final class NFKMLXLayerStreamingTests: XCTestCase {
     /// A load of `directory` holding only its first layer, every other layer streamed.
     private func streamedNet(_ directory: URL, precision: NFKMLXWeightPrecision) throws -> NFKMLXGemma3Net {
         let footprint = try NFKMLXGemma3.decoderFootprint(directory: directory, precision: precision, includesVision: false)
-        let budget = NFKMLXResidencyBudget.reserve + footprint.streamedMinimumBytes + footprint.layerBytes[0]
+        let budget = NFKMLXResidencyBudget.leastBudget(holding: footprint.streamedMinimumBytes + footprint.layerBytes[0])
         return try NFKMLXGemma3Language.network(directoryURL: directory, precision: precision, residency: .streamed,
                                                 budget: budget)
     }
@@ -231,7 +231,7 @@ final class NFKMLXLayerStreamingTests: XCTestCase {
         let footprint = try NFKMLXGemma3.decoderFootprint(directory: directory, precision: .checkpoint, includesVision: true)
         let half = footprint.layerBytes.prefix(footprint.layerBytes.count / 2).reduce(0, +)
         let parts = try NFKMLXGemma3.load(directory: directory, precision: .checkpoint, decoder: true, residency: .streamed,
-                                          budget: NFKMLXResidencyBudget.reserve + footprint.streamedMinimumBytes + half)
+                                          budget: NFKMLXResidencyBudget.leastBudget(holding: footprint.streamedMinimumBytes + half))
         let decoder = try XCTUnwrap(parts.decoder)
         let model = NFKMLXGemma3Model(decoder: decoder, vision: parts.vision, projector: parts.projector,
                                       tokenizer: parts.tokenizer, tokens: parts.tokens,
@@ -280,7 +280,8 @@ final class NFKMLXLayerStreamingTests: XCTestCase {
     /// block 1), every other block but each stack's block 0 streamed.
     private func streamedT5(_ directory: URL, half: Bool, holding count: Int) throws -> NFKMLXT5Seq2SeqNet {
         let stage = try NFKMLXMADLAD.footprint(directory: directory, half: half).stage
-        let budget = NFKMLXResidencyBudget.reserve + stage.streamedMinimumBytes + stage.layerBytes.prefix(count).reduce(0, +)
+        let budget = NFKMLXResidencyBudget.leastBudget(holding: stage.streamedMinimumBytes
+            + stage.layerBytes.prefix(count).reduce(0, +))
         return try NFKMLXMADLAD.network(directoryURL: directory, configuration: nil, half: half, residency: .streamed,
                                         budget: budget)
     }
@@ -409,8 +410,8 @@ final class NFKMLXLayerStreamingTests: XCTestCase {
 
         let footprint = try NFKMLXMADLAD.footprint(directory: directory, half: false)
         let decoderHalf = (footprint.decoderBlocks - 1) / 2
-        let budget = NFKMLXResidencyBudget.reserve + footprint.stage.streamedMinimumBytes
-            + footprint.stage.layerBytes.prefix(decoderHalf).reduce(0, +)
+        let budget = NFKMLXResidencyBudget.leastBudget(holding: footprint.stage.streamedMinimumBytes
+            + footprint.stage.layerBytes.prefix(decoderHalf).reduce(0, +))
         let net = try NFKMLXMADLAD.network(directoryURL: directory, configuration: nil, half: false, residency: .streamed,
                                            budget: budget)
         let encoderStream = try XCTUnwrap(net.encoderStream), decoderStream = try XCTUnwrap(net.decoderStream)

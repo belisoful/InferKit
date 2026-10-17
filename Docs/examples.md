@@ -5531,6 +5531,17 @@ The options split by stage. The load options reach the builder, and the request 
 defaults the returned `NFKDefaultedBackend` fills into each request that leaves them out. A model with
 presets is also reached as `model@preset`, such as `example.chat@fast`.
 
+The build checks the estimate against the catalog's `memoryBudget`, this machine's by default. An app
+that plans for a known machine sets that machine's budget. Every budget keeps a reserve beside the
+weights: 4 GiB from a budget of 8 GiB, and half the budget below it.
+
+```objc
+NFKModelCatalog *catalog = [[NFKModelCatalog alloc] init];
+catalog.memoryBudget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:(NSInteger)48 << 30];  // a known host
+NSInteger reserveBytes = catalog.memoryBudget.reserveByteCount;  // 4 GiB from a budget of 8 GiB, half below it
+catalog.memoryBudget = nil;                                      // this machine's budget again
+```
+
 ### Plugins
 
 A plugin lists its models in the catalog from its manifest, without loading code. `NFKPluginRegistry`

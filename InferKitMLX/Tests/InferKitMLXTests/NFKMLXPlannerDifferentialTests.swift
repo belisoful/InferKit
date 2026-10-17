@@ -3,9 +3,10 @@
 //  InferKitMLXTests
 //
 //  The residency planner moved to the core (NFKModelResidencyPlan), and NFKMLXResidencyBudget calls
-//  through to it. These tests hold the Swift planner as it was before the move and compare it with the
-//  core planner, and with the call-through, over a grid of footprints, residencies, and budgets: the
-//  plans are equal, and a refusal is the same sentence.
+//  through to it. These tests hold the Swift planner as it was before the move, with the reserve scaled
+//  to the budget as the core's is, and compare it with the core planner, and with the call-through, over
+//  a grid of footprints, residencies, and budgets: the plans are equal, and a refusal is the same
+//  sentence.
 //
 
 import XCTest
@@ -13,7 +14,8 @@ import InferKit
 @testable import InferKitMLX
 
 /// The Swift planner as it stood before it moved to the core, kept as the reference the differential
-/// tests compare against.
+/// tests compare against. Its reserve is 4 GiB from a budget of 8 GiB and half the budget, rounded up,
+/// below it.
 private enum NFKMLXLegacyPlanner {
 
     struct Plan: Equatable {
@@ -47,20 +49,28 @@ private enum NFKMLXLegacyPlanner {
         let sentence: String
     }
 
-    static let reserve = 4 << 30
+    static let maximumReserve = 4 << 30
     static let workingSetFraction = 0.85
     static let defaultExpertCacheBytes = 4 << 30
 
+    static func reserve(_ budget: Int) -> Int {
+        budget > 0 ? min(maximumReserve, budget - budget / 2) : 0
+    }
+
+    static func leastBudget(holding bytes: Int) -> Int {
+        max(bytes + min(bytes, maximumReserve), 1)
+    }
+
     static func leastWorkingSet(holding bytes: Int64) -> Int64 {
-        Int64((Double(bytes + Int64(reserve)) / workingSetFraction).rounded(.up))
+        Int64((Double(leastBudget(holding: Int(bytes))) / workingSetFraction).rounded(.up))
     }
 
     static func holds(_ bytes: Int, budget: Int) -> Bool {
-        budget > 0 && bytes + reserve <= budget
+        budget > 0 && bytes + reserve(budget) <= budget
     }
 
     static func admits(_ bytes: Int, budget: Int) -> Bool {
-        budget <= 0 || bytes + reserve <= budget
+        budget <= 0 || bytes + reserve(budget) <= budget
     }
 
     static func plan(_ stages: [NFKMLXStageFootprint], residency: NFKMLXResidency, budget: Int) throws -> Plan {
@@ -72,10 +82,10 @@ private enum NFKMLXLegacyPlanner {
             guard admits(largestUnpaged, budget: budget) else {
                 throw Refusal(sentence:
                     "the largest stage needs \(gib(largestUnpaged)) with its routed experts paged, plus "
-                    + "a \(gib(reserve)) reserve, against a \(gib(budget)) budget")
+                    + "a \(gib(reserve(budget))) reserve, against a \(gib(budget)) budget")
             }
             let largestPageable = stages.map(\.pageableBytes).max() ?? 0
-            let headroom = budget > 0 ? (budget - reserve - largestUnpaged) / 2 : defaultExpertCacheBytes
+            let headroom = budget > 0 ? (budget - reserve(budget) - largestUnpaged) / 2 : defaultExpertCacheBytes
             return Plan(holdsStagesResident: false, pagesExperts: true,
                         expertCacheBytes: max(0, min(largestPageable, headroom)))
         }
@@ -88,9 +98,9 @@ private enum NFKMLXLegacyPlanner {
                 guard admits(minimum, budget: budget) else {
                     throw Refusal(sentence:
                         "stage \(index) needs \(gib(minimum)) streamed, two layers in flight, plus a "
-                        + "\(gib(reserve)) reserve, against a \(gib(budget)) budget")
+                        + "\(gib(reserve(budget))) reserve, against a \(gib(budget)) budget")
                 }
-                plan.streamedStages[index] = budget > 0 ? budget - reserve - minimum : 0
+                plan.streamedStages[index] = budget > 0 ? budget - reserve(budget) - minimum : 0
             }
             return plan
         }
@@ -99,7 +109,7 @@ private enum NFKMLXLegacyPlanner {
         case .resident:
             guard admits(total, budget: budget) else {
                 throw Refusal(sentence:
-                    "the stages need \(gib(total)) together plus a \(gib(reserve)) reserve, against a "
+                    "the stages need \(gib(total)) together plus a \(gib(reserve(budget))) reserve, against a "
                     + "\(gib(budget)) budget; hold them staged"
                     + (pageable ? " or paged" : "") + (streamable.isEmpty ? "" : " or streamed"))
             }
@@ -149,7 +159,7 @@ private enum NFKMLXLegacyPlanner {
             guard admits(bytes, budget: budget) else {
                 let name = index < names.count ? names[index] : "stage \(index)"
                 throw Refusal(sentence:
-                    "\(name) alone needs \(gib(bytes)) plus a \(gib(reserve)) reserve, against a "
+                    "\(name) alone needs \(gib(bytes)) plus a \(gib(reserve(budget))) reserve, against a "
                     + "\(gib(budget)) budget")
             }
         }
@@ -369,7 +379,11 @@ final class NFKMLXPlannerDifferentialTests: XCTestCase {
 
     // The budget arithmetic the planner rests on is the legacy arithmetic.
     func testTheBudgetArithmeticMatchesTheLegacyArithmetic() {
-        XCTAssertEqual(NFKMLXResidencyBudget.reserve, NFKMLXLegacyPlanner.reserve)
+        XCTAssertEqual(NFKMLXResidencyBudget.maximumReserve, NFKMLXLegacyPlanner.maximumReserve)
+        for budget in Self.budgets {
+            XCTAssertEqual(NFKMLXResidencyBudget.reserve(forBudget: budget), NFKMLXLegacyPlanner.reserve(budget),
+                           "\(budget)")
+        }
         XCTAssertEqual(NFKMLXResidencyBudget.workingSetFraction, NFKMLXLegacyPlanner.workingSetFraction)
         XCTAssertEqual(NFKMLXResidencyBudget.defaultExpertCacheBytes, NFKMLXLegacyPlanner.defaultExpertCacheBytes)
         let byteCounts = [0, 1, Self.mib, Self.gib, 3 * Self.gib + 1, 17 * Self.gib, 18 * Self.gib,
@@ -377,6 +391,8 @@ final class NFKMLXPlannerDifferentialTests: XCTestCase {
         for bytes in byteCounts {
             XCTAssertEqual(NFKMLXResidencyBudget.leastWorkingSet(holding: Int64(bytes)),
                            NFKMLXLegacyPlanner.leastWorkingSet(holding: Int64(bytes)), "\(bytes)")
+            XCTAssertEqual(NFKMLXResidencyBudget.leastBudget(holding: bytes),
+                           NFKMLXLegacyPlanner.leastBudget(holding: bytes), "\(bytes)")
             XCTAssertEqual(NFKMLXResidencyBudget.gib(bytes), NFKMLXLegacyPlanner.gib(bytes), "\(bytes)")
             for budget in Self.budgets {
                 XCTAssertEqual(NFKMLXResidencyBudget.holds(bytes, budget: budget),

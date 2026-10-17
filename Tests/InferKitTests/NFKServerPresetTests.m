@@ -72,6 +72,8 @@ static NSString * const NFKPresetTestEngine = @"preset-test-engine";
 	self.builder = [[NFKPresetTestBuilder alloc] init];
 	[NFKModelCatalog registerBackendBuilder:self.builder forEngine:NFKPresetTestEngine];
 	self.catalog = [[NFKModelCatalog alloc] init];
+	// A 64 GiB working set, so no build or estimate depends on the memory of the machine that runs the tests.
+	self.catalog.memoryBudget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:(NSInteger)64 << 30];
 	NSError *error = nil;
 	XCTAssertTrue([self.catalog addDescriptorsFromManifestData:[self manifest] error:&error], @"%@", error);
 	self.server = [[NFKInferenceServer alloc] init];

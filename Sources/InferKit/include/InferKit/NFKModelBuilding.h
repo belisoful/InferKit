@@ -22,8 +22,9 @@ NS_ASSUME_NONNULL_BEGIN
 				2. The options resolve against the descriptor (NFKModelCatalogErrorInvalidOptions).
 				3. The model and the chosen choices are checked against this machine
 				   (NFKModelCatalogErrorUnavailable).
-				4. The memory estimate is checked against this machine's budget
-				   (NFKModelCatalogErrorDoesNotFit), unless NFKModelLoadOptionIgnoreMemoryBudget is YES.
+				4. The memory estimate is checked against the catalog's memoryBudget, this machine's by
+				   default (NFKModelCatalogErrorDoesNotFit), unless NFKModelLoadOptionIgnoreMemoryBudget
+				   is YES.
 				   The error carries the estimate under NFKModelMemoryEstimateKey. Where another
 				   combination fits, the one nearest the requested options is under
 				   NFKModelMemoryFittingOptionsKey with its estimate under NFKModelMemoryFittingEstimateKey,
@@ -165,6 +166,18 @@ typedef NSURL * _Nullable (^NFKModelLocator)(NFKModelDescriptor *descriptor,
 /*! The locator the build uses when no location is given. A download store sets its own. Setting nil
 	restores hubCacheLocator. */
 @property (nonatomic, copy, null_resettable) NFKModelLocator locator;
+
+/*!
+	@property   memoryBudget
+	@abstract   The budget the build checks a model's memory estimate against (step 4).
+	@discussion The default is +[NFKModelMemoryBudget currentBudget], read at each build. An app sets a
+				budget to plan for a known machine, and a test sets one so its builds do not depend on the
+				machine that runs it. Setting nil restores the default. The budget governs the fit check
+				and the refusal's sentences; an engine places the backend it builds against its own
+				reading of the machine. NFKInferenceServer's estimate route reports the budget of its
+				modelCatalog. Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, strong, null_resettable) NFKModelMemoryBudget *memoryBudget;
 
 /*! The request a build makes, after steps 1 to 5. Returns nil with UnknownModel, InvalidOptions,
 	Unavailable, or DoesNotFit. */

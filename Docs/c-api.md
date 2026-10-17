@@ -391,7 +391,7 @@ if (backend == NULL) {
 | `NFKModelCatalogErrorDomain` | 5 `UnknownModel` | `nfk_backend_create` names no model the catalog lists, or NULL |
 | `NFKModelCatalogErrorDomain` | 4 `InvalidOptions` | an option the model does not take or cannot use, or options that are not a JSON object |
 | `NFKModelCatalogErrorDomain` | 7 `Unavailable` | the machine does not meet the model's requirements |
-| `NFKModelCatalogErrorDomain` | 8 `DoesNotFit` | the model's memory estimate exceeds the machine's budget; the message names options that fit |
+| `NFKModelCatalogErrorDomain` | 8 `DoesNotFit` | the model's memory estimate exceeds the shared catalog's `memoryBudget` (the machine's by default); the message names options that fit |
 | `NFKModelCatalogErrorDomain` | 6 `NoBuilder` | nothing builds the model's engine in this process |
 | `NFKInferenceErrorDomain` | 2 `MissingInput` | a request that is not JSON, not an object, lacks `inputs`, or names a buffer it does not pass |
 | `NFKInferenceErrorDomain` | 4 `Unsupported` | a value InferKit cannot decode, such as a malformed buffer entry |

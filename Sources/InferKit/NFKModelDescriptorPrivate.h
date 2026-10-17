@@ -161,6 +161,9 @@ NSString *NFKModelOptionValueText(id _Nullable value);
 	any other way. */
 - (nullable NSString *)providerClassNameForDescriptorIdentifier:(NSString *)identifier;
 
+/*! The memory budget an app set, or nil for this machine's. */
+@property (atomic, strong, nullable) NFKModelMemoryBudget *storedMemoryBudget;
+
 /*! The locator an app set, or nil for the default. */
 @property (atomic, copy, nullable) NSURL * _Nullable (^storedLocator)(NFKModelDescriptor *descriptor,
 																	   NFKModelVariant * _Nullable variant,

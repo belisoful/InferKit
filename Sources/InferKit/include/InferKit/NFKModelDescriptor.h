@@ -557,11 +557,12 @@ NS_ASSUME_NONNULL_BEGIN
 	@abstract   The least memory, in bytes, the model runs in: InferKit's residency budget for it.
 	@discussion The figure is the smallest recommended Metal working set
 				(NFKHardwareProfile.recommendedWorkingSetSize) whose residency budget holds the model's
-				largest resident stage. The budget is the fraction of the working set the residency
-				planner plans against, less the reserve the planner keeps for activations. So the
-				figure is the bytes the largest resident stage holds plus the reserve, divided by that
-				fraction. A model that stages, pages, or streams counts only what one stage holds at
-				once. The MLX companion supplies the figures for its models.
+				largest resident stage beside the budget's reserve for activations
+				(+[NFKModelMemoryBudget leastWorkingSetHoldingByteCount:]). The reserve is 4 GiB from a
+				budget of 8 GiB and half the budget below it, so a stage of 4 GiB or more needs its bytes
+				plus 4 GiB, and a smaller stage needs twice its bytes, each divided by the planned
+				fraction of the working set. A model that stages, pages, or streams counts only what one
+				stage holds at once. The MLX companion supplies the figures for its models.
 */
 @property (nonatomic, readonly, copy, nullable) NSNumber *minimumMemoryByteCount;
 /*! The NFKModelFeature* strings a machine has to have. A string the core does not know is never met.

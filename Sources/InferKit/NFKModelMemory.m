@@ -26,7 +26,7 @@ NSString * const NFKModelMemoryFittingOptionsKey = @"NFKModelMemoryFittingOption
 NSString * const NFKModelMemoryFittingEstimateKey = @"NFKModelMemoryFittingEstimate";
 
 static const double NFKModelWorkingSetFraction = 0.85;
-static const NSInteger NFKModelReserveByteCount = (NSInteger)4 << 30;
+static const NSInteger NFKModelMaximumReserveByteCount = (NSInteger)4 << 30;
 static const NSInteger NFKModelDefaultExpertCacheByteCount = (NSInteger)4 << 30;
 static const NSInteger NFKModelDefaultQuantizationGroupSize = 64;
 static const NSUInteger NFKModelMaximumCombinationCount = 4096;
@@ -39,14 +39,32 @@ static NSString *NFKModelGiB(NSInteger bytes)
 	return [NSString stringWithFormat:@"%.1f GiB", (double)bytes / 1073741824.0];
 }
 
+static NSInteger NFKModelReserveByteCount(NSInteger budget)
+{
+	if (budget <= 0) {
+		return 0;
+	}
+	return MIN(NFKModelMaximumReserveByteCount, budget - budget / 2);
+}
+
+static NSString *NFKModelReserveGiB(NSInteger budget)
+{
+	return NFKModelGiB(NFKModelReserveByteCount(budget));
+}
+
 static BOOL NFKModelBudgetHolds(NSInteger bytes, NSInteger budget)
 {
-	return budget > 0 && bytes + NFKModelReserveByteCount <= budget;
+	return budget > 0 && bytes + NFKModelReserveByteCount(budget) <= budget;
 }
 
 static BOOL NFKModelBudgetAdmits(NSInteger bytes, NSInteger budget)
 {
-	return budget <= 0 || bytes + NFKModelReserveByteCount <= budget;
+	return budget <= 0 || bytes + NFKModelReserveByteCount(budget) <= budget;
+}
+
+static NSInteger NFKModelBudgetOfWorkingSet(NSInteger workingSet)
+{
+	return workingSet > 0 ? (NSInteger)((double)workingSet * NFKModelWorkingSetFraction) : 0;
 }
 
 static NSError *NFKModelDoesNotFitError(NSString *reason, NFKModelMemoryEstimate * _Nullable estimate)
@@ -144,9 +162,14 @@ static BOOL NFKModelIsWholeNumberInRange(NSNumber *number, NSInteger minimum, NS
 	return NFKModelWorkingSetFraction;
 }
 
-+ (NSInteger)reserveByteCount
++ (NSInteger)maximumReserveByteCount
 {
-	return NFKModelReserveByteCount;
+	return NFKModelMaximumReserveByteCount;
+}
+
++ (NSInteger)reserveByteCountForBudgetByteCount:(NSInteger)budgetByteCount
+{
+	return NFKModelReserveByteCount(budgetByteCount);
 }
 
 + (instancetype)currentBudget
@@ -169,7 +192,7 @@ static BOOL NFKModelIsWholeNumberInRange(NSNumber *number, NSInteger minimum, NS
 	self = [super init];
 	if (self != nil) {
 		_workingSetByteCount = MAX(workingSetByteCount, 0);
-		_byteCount = _workingSetByteCount > 0 ? (NSInteger)((double)_workingSetByteCount * NFKModelWorkingSetFraction) : 0;
+		_byteCount = NFKModelBudgetOfWorkingSet(_workingSetByteCount);
 	}
 	return self;
 }
@@ -177,6 +200,11 @@ static BOOL NFKModelIsWholeNumberInRange(NSNumber *number, NSInteger minimum, NS
 - (BOOL)isKnown
 {
 	return self.byteCount > 0;
+}
+
+- (NSInteger)reserveByteCount
+{
+	return NFKModelReserveByteCount(self.byteCount);
 }
 
 - (BOOL)holdsByteCount:(NSInteger)bytes
@@ -189,9 +217,28 @@ static BOOL NFKModelIsWholeNumberInRange(NSNumber *number, NSInteger minimum, NS
 	return NFKModelBudgetAdmits(bytes, self.byteCount);
 }
 
++ (NSInteger)leastBudgetByteCountHoldingByteCount:(NSInteger)bytes
+{
+	NSInteger held = MIN(MAX(bytes, 0), NSIntegerMax - NFKModelMaximumReserveByteCount);
+	return MAX(held + MIN(held, NFKModelMaximumReserveByteCount), 1);
+}
+
 + (NSInteger)leastWorkingSetHoldingByteCount:(NSInteger)bytes
 {
-	return (NSInteger)ceil((double)(bytes + NFKModelReserveByteCount) / NFKModelWorkingSetFraction);
+	NSInteger budget = [self leastBudgetByteCountHoldingByteCount:bytes];
+	if ((double)budget / NFKModelWorkingSetFraction >= (double)NSIntegerMax) {
+		return NSIntegerMax;
+	}
+	// The division rounds in floating point, so the working set steps to the least one whose budget,
+	// truncated as the initializer truncates it, reaches the bytes.
+	NSInteger workingSet = (NSInteger)ceil((double)budget / NFKModelWorkingSetFraction);
+	while (NFKModelBudgetOfWorkingSet(workingSet) < budget) {
+		workingSet += 1;
+	}
+	while (workingSet > 1 && NFKModelBudgetOfWorkingSet(workingSet - 1) >= budget) {
+		workingSet -= 1;
+	}
+	return workingSet;
 }
 
 + (NSString *)formattedByteCount:(NSInteger)bytes
@@ -221,7 +268,7 @@ static BOOL NFKModelIsWholeNumberInRange(NSNumber *number, NSInteger minimum, NS
 - (NSDictionary<NSString *, id> *)dictionaryRepresentation
 {
 	return @{ @"workingSetBytes": @(self.workingSetByteCount), @"budgetBytes": @(self.byteCount),
-			  @"reserveBytes": @(NFKModelReserveByteCount), @"workingSetFraction": @(NFKModelWorkingSetFraction) };
+			  @"reserveBytes": @(self.reserveByteCount), @"workingSetFraction": @(NFKModelWorkingSetFraction) };
 }
 
 - (id)copyWithZone:(nullable NSZone *)zone
@@ -866,13 +913,13 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 			}
 		}
 	}
-	NSString *reserve = NFKModelGiB(NFKModelReserveByteCount);
+	NSString *reserve = NFKModelReserveGiB(budget);
 	NFKModelResidencyPlan *(^paged)(void) = ^NFKModelResidencyPlan *(void) {
 		if (!NFKModelBudgetAdmits(largestUnpaged, budget)) {
 			found = [NSString stringWithFormat:@"the largest stage needs %@ with its routed experts paged, plus a %@ reserve, against a %@ budget",
 						NFKModelGiB(largestUnpaged), reserve, NFKModelGiB(budget)];
 		}
-		NSInteger headroom = budget > 0 ? (budget - NFKModelReserveByteCount - largestUnpaged) / 2
+		NSInteger headroom = budget > 0 ? (budget - NFKModelReserveByteCount(budget) - largestUnpaged) / 2
 			: NFKModelDefaultExpertCacheByteCount;
 		return [[NFKModelResidencyPlan alloc] initHoldingResident:NO pagesExperts:YES
 											 expertCacheByteCount:MAX(0, MIN(largestPageable, headroom))];
@@ -886,7 +933,7 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 				found = [NSString stringWithFormat:@"stage %ld needs %@ streamed, two layers in flight, plus a %@ reserve, against a %@ budget",
 							(long)index.integerValue, NFKModelGiB(minimum), reserve, NFKModelGiB(budget)];
 			}
-			rooms[index] = @(budget > 0 ? MAX(0, budget - NFKModelReserveByteCount - minimum) : 0);
+			rooms[index] = @(budget > 0 ? MAX(0, budget - NFKModelReserveByteCount(budget) - minimum) : 0);
 		}
 		plan.streamedStageByteCounts = rooms;
 		return plan;
@@ -960,7 +1007,7 @@ static NSArray<NSString *> *NFKModelMemoryModelFields(void)
 		if (!NFKModelBudgetAdmits(bytes, budget)) {
 			NSString *name = index < names.count ? names[index] : [NSString stringWithFormat:@"stage %lu", (unsigned long)index];
 			NSString *reason = [NSString stringWithFormat:@"%@ alone needs %@ plus a %@ reserve, against a %@ budget",
-								name, NFKModelGiB(bytes), NFKModelGiB(NFKModelReserveByteCount), NFKModelGiB(budget)];
+								name, NFKModelGiB(bytes), NFKModelReserveGiB(budget), NFKModelGiB(budget)];
 			if (error != NULL) {
 				*error = NFKModelDoesNotFitError(reason, nil);
 			}
@@ -1617,7 +1664,7 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 	NSInteger peak = resident + overhead;
 	BOOL fits = budget == nil || (refusal == nil && [budget admitsByteCount:peak]);
 	NSString *reason = fits ? nil : [NSString stringWithFormat:@"The model needs %@ plus a %@ reserve, against a %@ budget.",
-									 NFKModelGiB(peak), NFKModelGiB(NFKModelReserveByteCount), NFKModelGiB(budgetBytes)];
+									 NFKModelGiB(peak), NFKModelReserveGiB(budgetBytes), NFKModelGiB(budgetBytes)];
 	return [[NFKModelMemoryEstimate alloc] initWithResidentByteCount:resident peakByteCount:peak requestedResidency:requested
 														   residency:plan.residency components:components
 													 stageByteCounts:stageBytes resolvedOptions:resolved budget:budget
@@ -1968,7 +2015,7 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 	double perUnit = [self bytesPerUnitOfLinearOption:option options:options catalog:catalog];
 	NSInteger largest = maximum;
 	if (budget.isKnown && perUnit > 0) {
-		double room = (double)(budget.byteCount - NFKModelReserveByteCount - zero.peakByteCount);
+		double room = (double)(budget.byteCount - budget.reserveByteCount - zero.peakByteCount);
 		largest = room < 0 ? -1 : (NSInteger)floor(room / perUnit);
 	} else if (budget.isKnown && !zero.fits) {
 		largest = -1;
@@ -2107,7 +2154,7 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 		}
 		NSString *reason = [NSString stringWithFormat:@"%@ needs at least %@ plus a %@ reserve, against a %@ budget.",
 							[self titleOfValue:value option:option], NFKModelGiB(smallest.peak),
-							NFKModelGiB(NFKModelReserveByteCount), NFKModelGiB(budget.byteCount)];
+							NFKModelGiB(budget.reserveByteCount), NFKModelGiB(budget.byteCount)];
 		[choices addObject:[[NFKModelChoiceConstraint alloc] initWithValue:value status:NFKModelChoiceStatusRuledOut
 																	reason:reason peakByteCount:smallest != nil ? @(smallest.peak) : nil]];
 	}
@@ -2139,7 +2186,7 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 	if (isResidency) {
 		compared = [self fullyResidentPeakOf:technique budget:budget catalog:catalog];
 		reason = [NSString stringWithFormat:@"The model needs %@ fully resident plus a %@ reserve, against a %@ budget. %@, it needs %@.",
-				  NFKModelGiB(compared), NFKModelGiB(NFKModelReserveByteCount), NFKModelGiB(budget.byteCount),
+				  NFKModelGiB(compared), NFKModelGiB(budget.reserveByteCount), NFKModelGiB(budget.byteCount),
 				  [self titleOfValue:required option:option], NFKModelGiB(technique.peak)];
 	} else {
 		id defaultValue = defaults[option.key] ?: @"";
@@ -2148,11 +2195,11 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 		if ([[defaultValue description] isEqualToString:[required description]]) {
 			reason = [NSString stringWithFormat:@"Only %@ fits: it needs %@ plus a %@ reserve, against a %@ budget.",
 					  [self titleOfValue:required option:option], NFKModelGiB(technique.peak),
-					  NFKModelGiB(NFKModelReserveByteCount), NFKModelGiB(budget.byteCount)];
+					  NFKModelGiB(budget.reserveByteCount), NFKModelGiB(budget.byteCount)];
 		} else {
 			reason = [NSString stringWithFormat:@"With %@, the model needs %@ plus a %@ reserve, against a %@ budget. With %@, it needs %@.",
 					  [self titleOfValue:defaultValue option:option], NFKModelGiB(compared),
-					  NFKModelGiB(NFKModelReserveByteCount), NFKModelGiB(budget.byteCount),
+					  NFKModelGiB(budget.reserveByteCount), NFKModelGiB(budget.byteCount),
 					  [self titleOfValue:required option:option], NFKModelGiB(technique.peak)];
 		}
 	}
@@ -2263,7 +2310,7 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 	if (nearest == nil) {
 		NFKModelMemoryCombination *smallest = [self smallestOf:matching fittingOnly:NO];
 		NSString *reason = [NSString stringWithFormat:@"No combination of options fits: the smallest needs %@ plus a %@ reserve, against a %@ budget.",
-							NFKModelGiB(smallest.peak), NFKModelGiB(NFKModelReserveByteCount), NFKModelGiB(budget.byteCount)];
+							NFKModelGiB(smallest.peak), NFKModelGiB(budget.reserveByteCount), NFKModelGiB(budget.byteCount)];
 		return [[NFKModelMemoryConstraints alloc] initWithBudget:budget anyCombinationFits:NO reason:reason
 											   optionConstraints:constraints fittingOptions:nil fittingEstimate:nil
 													  exhaustive:exhaustive];

@@ -372,6 +372,17 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(NFKModelToolName(NFKModelPresetModelName("example.chat", "fast")), "example_chat__fast")
     }
 
+    // The budget a catalog builds against, pinned to a known host and restored with nil (the property is
+    // null_resettable, so Swift reads it as an implicitly unwrapped optional).
+    func testExamplePinningTheBudgetACatalogBuildsAgainstFromSwift() {
+        let catalog = NFKModelCatalog()
+        catalog.memoryBudget = NFKModelMemoryBudget(workingSetByteCount: 48 << 30)
+        XCTAssertEqual(catalog.memoryBudget.reserveByteCount, NFKModelMemoryBudget.maximumReserveByteCount)
+        XCTAssertEqual(NFKModelMemoryBudget.reserveByteCount(forBudgetByteCount: 6 << 30), 3 << 30)
+        catalog.memoryBudget = nil
+        XCTAssertEqual(catalog.memoryBudget, NFKModelMemoryBudget.current())
+    }
+
     #if os(macOS)
     // Plugins from Swift (Docs/examples.md: Model catalog — Plugins): a folder with one executable plugin
     // whose program never runs, listed in a registry of its own catalog.
@@ -400,7 +411,9 @@ final class InferKitSwiftExamples: XCTestCase {
         try "#!/bin/sh\nexit 0\n".write(to: program, atomically: true, encoding: .utf8)
         try files.setAttributes([.posixPermissions: 0o755], ofItemAtPath: program.path)
 
-        let registry = NFKPluginRegistry(catalog: NFKModelCatalog())
+        let catalog = NFKModelCatalog()
+        catalog.memoryBudget = NFKModelMemoryBudget(workingSetByteCount: 64 << 30)  // not this machine's
+        let registry = NFKPluginRegistry(catalog: catalog)
         var errors: NSArray?
         let added = registry.addPlugins(inDirectory: folder, errors: &errors)
         XCTAssertEqual(added.map(\.identifier), ["com.example.swift-echo"])
@@ -599,6 +612,7 @@ final class InferKitSwiftExamples: XCTestCase {
         NFKModelCatalog.registerBackendBuilder(PassthroughBuilder(), forEngine: "swift-example-engine")
         defer { NFKModelCatalog.registerBackendBuilder(nil, forEngine: "swift-example-engine") }
 
+        catalog.memoryBudget = NFKModelMemoryBudget(workingSetByteCount: 64 << 30)  // the host the server plans for
         let server = NFKInferenceServer()
         server.port = 0
         server.loopbackOnly = true

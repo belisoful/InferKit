@@ -410,10 +410,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   choice's figure, and `automatic` takes none, because its memory depends on the machine.
   `descriptorByDerivingMemoryFiguresInCatalog:` looks the drafts up in a given catalog, which a provider
   uses inside `+modelDescriptors` while the shared catalog loads it.
-- `NFKModelMemoryBudget` (0.85 of the recommended working set, a 4 GiB reserve) and the residency planner
+- `NFKModelMemoryBudget` (0.85 of the recommended working set) and the residency planner
   (`NFKModelStageFootprint`, `NFKModelResidencyPlan`, with `NFKModelResidencyAutomatic`) move to the core,
   with the MLX planner's arithmetic and refusal sentences. A refusal names the budget it compares
   against, 0.85 of the working set, as "against a 27.2 GiB budget".
+- The reserve a budget keeps beside the weights scales with it: 4 GiB (`maximumReserveByteCount`) from a
+  budget of 8 GiB, and half the budget below it (`reserveByteCount`,
+  `+reserveByteCountForBudgetByteCount:`), so a machine whose budget is 4 GiB or less, such as a 6 to
+  8 GB iPhone or iPad, fits a model of up to half its budget. Each refusal names the reserve of its
+  budget, as "plus a 1.7 GiB reserve, against a 3.4 GiB budget".
+  `+leastBudgetByteCountHoldingByteCount:` gives the least budget that holds a byte count, and
+  `minimumMemoryBytes` follows the rule, so a variant whose largest stage is under 4 GiB states a
+  smaller figure.
 - `NFKModelOptions.h`: `problemsWithOptions:stage:` and `resolvedOptions:stage:error:` check option values,
   convert strings such as `"8192"` and `"true"`, and fill defaults. `NFKModelCatalogError` gains
   `InvalidOptions`, `UnknownModel`, `NoBuilder`, `Unavailable`, and `DoesNotFit`.
@@ -421,8 +429,10 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   a model's identifier and options. It refuses options that do not resolve, a model this machine cannot
   run, and a combination that does not fit the memory budget unless `NFKModelLoadOptionIgnoreMemoryBudget`
   is YES. The refusal names the nearest combination that fits (`NFKModelMemoryFittingOptionsKey`,
-  `NFKModelMemoryFittingEstimateKey`), or the smallest need when nothing fits. A provider class, an engine's `NFKModelBackendBuilding` builder, or the descriptor's provider
-  class builds it, and `NFKDefaultedBackend` fills the request defaults. `NFKAppleModelDescriptors`
+  `NFKModelMemoryFittingEstimateKey`), or the smallest need when nothing fits. The catalog's
+  `memoryBudget` is the budget it checks against: this machine's, or one an app sets for a known host.
+  A provider class, an engine's `NFKModelBackendBuilding` builder, or the descriptor's provider class
+  builds it, and `NFKDefaultedBackend` fills the request defaults. `NFKAppleModelDescriptors`
   builds its engines through it.
 - `NFKModelPreset.h`: a descriptor's `presets` are named load options and request defaults, reached as
   `model@preset`; `NFKModelNameSplitAtPreset` and `NFKModelToolName` map the names.
@@ -1268,7 +1278,7 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   carries `NFKModelInfoResidency` where the backend knows it: paged experts, streamed layers, or the
   stages a generator holds.
 - `NFKMLXResidencyBudget` calls through to the core's `NFKModelResidencyPlan` and `NFKModelMemoryBudget`,
-  with the same plans and refusal sentences.
+  with the same plans and refusal sentences, and takes the core's reserve for each budget.
 
 #### The language backends count tokens
 

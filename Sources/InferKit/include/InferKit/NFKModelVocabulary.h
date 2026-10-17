@@ -302,8 +302,8 @@ extern NSString * const NFKModelLoadOptionDraftModel;
 extern NSString * const NFKModelLoadOptionDraftBits;
 /*! The Core ML compute units, an MLComputeUnits value. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelLoadOptionComputeUnits;
-/*! YES builds the backend even where the memory estimate does not fit the machine's budget. An app sets
-	it only when its user asks. Introduced in InferKit 0.4.0. */
+/*! YES builds the backend even where the memory estimate does not fit the catalog's memoryBudget. An
+	app sets it only when its user asks. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelLoadOptionIgnoreMemoryBudget;
 
 #pragma mark Key types

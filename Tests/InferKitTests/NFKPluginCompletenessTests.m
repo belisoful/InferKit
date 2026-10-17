@@ -54,10 +54,12 @@ static NSString *NFKCompletenessResolvedPath(const char *path)
 {
 	[super setUp];
 	self.temporaryURLs = [NSMutableArray array];
+	NFKModelCatalog.sharedCatalog.memoryBudget = [self generousBudget];
 }
 
 - (void)tearDown
 {
+	NFKModelCatalog.sharedCatalog.memoryBudget = nil;
 	for (NSURL *url in self.temporaryURLs) {
 		[NSFileManager.defaultManager removeItemAtURL:url error:NULL];
 	}
@@ -65,6 +67,12 @@ static NSString *NFKCompletenessResolvedPath(const char *path)
 }
 
 #pragma mark Helpers
+
+/*! A 64 GiB working set's budget, so no build depends on the memory of the machine that runs the tests. */
+- (NFKModelMemoryBudget *)generousBudget
+{
+	return [NFKModelMemoryBudget budgetWithWorkingSetByteCount:(NSInteger)64 << 30];
+}
 
 - (NSArray<NFKPluginEntryKind> *)kinds
 {
@@ -101,7 +109,9 @@ static NSString *NFKCompletenessResolvedPath(const char *path)
 	the tests, listing the bundle when one is given. */
 - (NFKPluginRegistry *)registryListing:(nullable NSURL *)bundle
 {
-	NFKPluginRegistry *registry = [[NFKPluginRegistry alloc] initWithCatalog:[[NFKModelCatalog alloc] init]];
+	NFKModelCatalog *catalog = [[NFKModelCatalog alloc] init];
+	catalog.memoryBudget = [self generousBudget];
+	NFKPluginRegistry *registry = [[NFKPluginRegistry alloc] initWithCatalog:catalog];
 	registry.signaturePolicy = NFKPluginSignaturePolicy.developmentPolicy;
 	NSURL *host = [NFKPluginFixtures hostExecutableURL];
 	if (host != nil) {

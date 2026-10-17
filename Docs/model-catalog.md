@@ -279,10 +279,14 @@ comes from its variant's source.
 
 `minimumMemoryBytes` is InferKit's residency budget for the model. It is the smallest recommended
 Metal working set (`NFKHardwareProfile.recommendedWorkingSetSize`) whose budget admits the model at its
-default options. `NFKModelMemoryBudget` budgets 0.85 of the working set and keeps a 4 GiB reserve inside
-that budget. The figure is therefore the peak bytes at the defaults plus the reserve, divided by 0.85
-(`+[NFKModelMemoryBudget leastWorkingSetHoldingByteCount:]`). A model that stages, pages, or streams
-counts only what one stage holds at once.
+default options. `NFKModelMemoryBudget` budgets 0.85 of the working set and keeps a
+[reserve](#the-budget) inside that budget: 4 GiB from a budget of 8 GiB, half the budget below it. The
+figure is therefore (`+[NFKModelMemoryBudget leastWorkingSetHoldingByteCount:]`):
+
+- a peak of 4 GiB or more → the peak plus 4 GiB, divided by 0.85.
+- a smaller peak → twice the peak, divided by 0.85.
+
+A model that stages, pages, or streams counts only what one stage holds at once.
 
 `-[NFKModelRequirements problemForHardwareProfile:]` names the first requirement a machine does not
 meet, or returns nil. The checks run in this order, and `unmetReason` replaces the sentence:
@@ -393,11 +397,11 @@ The residency then decides what the model holds once loaded:
 | `automatic` | Whichever of the above the [residency planner](#the-residency-planner) picks. |
 
 The peak adds `loadOverheadBytes`. The estimate fits when the budget admits the peak: the peak plus the
-4 GiB reserve is at most the budget, or the machine reports no budget.
+budget's reserve is at most the budget, or the machine reports no budget.
 `minimumWorkingSetByteCount` is the least working set that admits the peak. A variant without facts
 estimates its `residentBytes` and `peakBytes` as one stage, and a variant with neither estimates 0 with
 basis `"unknown"`. An estimate that does not fit says why:
-`The model needs 9.4 GiB plus a 4.0 GiB reserve, against a 6.8 GiB budget.`
+`The model needs 9.4 GiB plus a 3.4 GiB reserve, against a 6.8 GiB budget.`
 
 An estimate's dictionary holds `residentBytes`, `peakBytes`, `minimumWorkingSetBytes`,
 `requestedResidency`, `residency`, `components` (`weights`, `keyValueCache`, `draft` (the draft's weights and cache), `expertCache`,
@@ -407,12 +411,23 @@ An estimate's dictionary holds `residentBytes`, `peakBytes`, `minimumWorkingSetB
 ### The budget
 
 `NFKModelMemoryBudget` is the memory a machine plans against: 0.85 of the recommended Metal working set,
-rounded down, with a 4 GiB reserve for activations and request buffers inside it. A machine that reports
-no working set has a budget of 0, which admits every stage (`admitsByteCount:`) and holds none
-(`holdsByteCount:`, the test for keeping stages resident or taking a wider precision).
-`+currentBudget` reads this machine, `+budgetForHardwareProfile:` a profile, and
-`+budgetWithWorkingSetByteCount:` a working set. Its dictionary holds `workingSetBytes`, `budgetBytes`,
-`reserveBytes`, and `workingSetFraction`.
+rounded down, with a reserve for activations and request buffers inside it. The reserve scales with
+the budget (`reserveByteCount`, `+reserveByteCountForBudgetByteCount:`):
+
+| Budget | Reserve |
+|---|---|
+| 8 GiB or more (a working set of 9.4 GiB or more) | 4 GiB (`maximumReserveByteCount`) |
+| 6 GiB | 3 GiB |
+| 4 GiB | 2 GiB |
+| 2 GiB | 1 GiB |
+
+Below 8 GiB the reserve is half the budget, rounded up, so a model that needs no memory fits every
+budget a machine reports. A machine that reports no working set has a budget of 0, which admits every
+stage (`admitsByteCount:`) and holds none (`holdsByteCount:`, the test for keeping stages resident or
+taking a wider precision). `+currentBudget` reads this machine, `+budgetForHardwareProfile:` a profile,
+and `+budgetWithWorkingSetByteCount:` a working set. `+leastBudgetByteCountHoldingByteCount:` is the
+least budget that holds a byte count beside its own reserve. Its dictionary holds `workingSetBytes`,
+`budgetBytes`, `reserveBytes` (that budget's reserve), and `workingSetFraction`.
 
 ### The residency planner
 
@@ -441,8 +456,10 @@ resident, alone when staged or paged, never without a budget. A refusal is
 | A staged stage alone | `transformer alone needs 30.0 GiB plus a 4.0 GiB reserve, against a 24.0 GiB budget` |
 
 The figure after "against a" is the budget the planner was given, which an estimate passes as
-`NFKModelMemoryBudget.byteCount`: 27.2 GiB is the budget of a 32 GiB working set. The resident sentence
-names `or paged` and `or streamed` only where the stages have experts or layers. The last row is
+`NFKModelMemoryBudget.byteCount`: 27.2 GiB is the budget of a 32 GiB working set. The reserve is that
+budget's, so at a 6.0 GiB budget the resident sentence reads
+`the stages need 5.0 GiB together plus a 3.0 GiB reserve, against a 6.0 GiB budget; hold them staged`.
+The resident sentence names `or paged` and `or streamed` only where the stages have experts or layers. The last row is
 `+verifyEachStageLoads:plan:budget:names:error:`, which checks each stage of a staged plan alone.
 
 ### Constraints
@@ -477,12 +494,12 @@ maximum. Each reason is a sentence from a fixed template, and its numbers ride b
 | Constraint | Sentence |
 |---|---|
 | A required residency | `The model needs 41.0 GiB fully resident plus a 4.0 GiB reserve, against a 27.2 GiB budget. Paged, it needs 16.1 GiB.` |
-| A required choice that is not the default | `With None, the model needs 9.4 GiB plus a 4.0 GiB reserve, against a 6.8 GiB budget. With 4-bit, it needs 2.6 GiB.` |
-| A required choice that is the default | `Only Checkpoint fits: it needs 1.9 GiB plus a 4.0 GiB reserve, against a 6.8 GiB budget.` |
+| A required choice that is not the default | `With None, the model needs 9.4 GiB plus a 3.4 GiB reserve, against a 6.8 GiB budget. With 4-bit, it needs 2.6 GiB.` |
+| A required choice that is the default | `Only Checkpoint fits: it needs 1.9 GiB plus a 3.4 GiB reserve, against a 6.8 GiB budget.` |
 | A ruled-out choice | `Resident needs at least 41.0 GiB plus a 4.0 GiB reserve, against a 27.2 GiB budget.` |
 | A choice the machine cannot take | `Turbo is unavailable here. This needs Apple silicon.` |
-| A maximum | `Context length fits up to 9728 against a 6.8 GiB budget.` |
-| No combination | `No combination of options fits: the smallest needs 9.0 GiB plus a 4.0 GiB reserve, against a 3.4 GiB budget.` |
+| A maximum | `Context length fits up to 16384 against a 6.8 GiB budget.` |
+| No combination | `No combination of options fits: the smallest needs 9.0 GiB plus a 1.7 GiB reserve, against a 3.4 GiB budget.` |
 
 `fittingOptions` is the fitting combination that changes the fewest options from their defaults, with
 each linear option at its default or the largest value that fits, and `fittingEstimate` its estimate.
@@ -591,15 +608,16 @@ model's identifier, or `model@preset`, and the option values an app collected:
    `NFKModelOptionProblemsKey`).
 3. The model's requirements and the chosen choices' are checked against this machine
    (`NFKModelCatalogErrorUnavailable`).
-4. The estimate is checked against this machine's budget (`NFKModelCatalogErrorDoesNotFit`, the
-   estimate under `NFKModelMemoryEstimateKey`). `ignoreMemoryBudget` YES skips the refusal; an app sets
-   it only when its user asks. The refusal carries the way out:
+4. The estimate is checked against the catalog's `memoryBudget` (`NFKModelCatalogErrorDoesNotFit`, the
+   estimate under `NFKModelMemoryEstimateKey`). The budget is `+[NFKModelMemoryBudget currentBudget]`
+   until an app sets one, such as a known host's, and setting nil restores it. `ignoreMemoryBudget` YES
+   skips the refusal; an app sets it only when its user asks. The refusal carries the way out:
    - another combination fits → the one nearest the requested options is under
      `NFKModelMemoryFittingOptionsKey`, its estimate under `NFKModelMemoryFittingEstimateKey`, and the
      description names the options it changes and its peak:
      `The model needs 41.0 GiB plus a 4.0 GiB reserve, against a 27.2 GiB budget. Choosing residency paged fits: it holds 16.1 GiB.`
    - nothing fits → the description adds the smallest combination's need:
-     `… against a 6.8 GiB budget. No combination of options fits: the smallest needs 9.0 GiB plus a 4.0 GiB reserve, against a 6.8 GiB budget.`
+     `… against a 6.8 GiB budget. No combination of options fits: the smallest needs 9.0 GiB plus a 3.4 GiB reserve, against a 6.8 GiB budget.`
 5. The variant's files are located: the given URL, else the catalog's `locator`. The default locator,
    `hubCacheLocator`, finds a Hugging Face source in `NFKHFHub`'s default cache: the snapshot directory
    of a directory layout, the first weights file of a file layout. A download store sets its own.
@@ -844,7 +862,7 @@ a generated table the descriptors read when they are built.
 | `parameterCount` | The elements of the safetensors tensors the download holds, read from each file's header. A variant with a weight file in another format (a pickle, a GGUF, an archive), or a header the repository refuses, has none. A packed format counts its stored elements. |
 | `memoryFacts` | Each stage's tensor bytes at the checkpoint's types, at float32, and at bfloat16, with the figures the model's loader acts on. [Memory facts and load options](#memory-facts-and-load-options) lists them. |
 | `residentBytes`, `peakBytes` | The [estimate](#the-estimate) at the default options: the weights at the precision the loader holds them in, and a decoder's key-value cache at its default context length. A variant without memory facts takes the tensor bytes at the loader's precision. The load overhead is not measured, so the peak is the resident figure. |
-| `minimumMemoryBytes` | The least working set whose residency budget admits the peak: the peak plus the 4 GiB reserve, divided by 0.85. A staged model counts its largest stage. |
+| `minimumMemoryBytes` | The least working set whose residency budget admits the peak beside that budget's reserve: the peak plus 4 GiB from a peak of 4 GiB, twice the peak below it, divided by 0.85. A staged model counts its largest stage. |
 | `precision` | The floating type that holds the most stored tensor bytes, where the entry states none. |
 
 A measured variant can carry these extension fields:

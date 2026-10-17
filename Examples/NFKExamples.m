@@ -132,6 +132,20 @@
 
 @implementation NFKExamples
 
+// The shared catalog builds against a 64 GiB working set, so no example depends on the memory of the
+// machine that runs it.
+- (void)setUp
+{
+	[super setUp];
+	NFKModelCatalog.sharedCatalog.memoryBudget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:(NSInteger)64 << 30];
+}
+
+- (void)tearDown
+{
+	NFKModelCatalog.sharedCatalog.memoryBudget = nil;
+	[super tearDown];
+}
+
 #pragma mark The shared contract (Docs/examples.md: The shared contract)
 
 - (void)testExampleTheSharedContractWithPassthrough
@@ -814,10 +828,6 @@
 	[self addTeardownBlock:^{
 		[NFKModelCatalog registerBackendBuilder:nil forEngine:@"example-engine"];
 	}];
-	NFKModelDescriptor *chat = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"example.chat"];
-	if (![chat estimatedMemoryForOptions:nil memoryBudget:[NFKModelMemoryBudget currentBudget] error:NULL].fits) {
-		XCTSkip(@"this machine's memory budget does not hold the example model");
-	}
 
 	NFKInferenceServer *server = [[NFKInferenceServer alloc] init];
 	server.port = 0;
@@ -1666,11 +1676,6 @@
 
 	NSError *error = nil;
 	NSDictionary *options = @{ NFKModelLoadOptionQuantizationBits: @"4", NFKParameterTemperature: @0.2 };
-	NFKModelDescriptor *chat = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"example.chat"];
-	if (![chat estimatedMemoryForOptions:@{ NFKModelLoadOptionQuantizationBits: @4 }
-							memoryBudget:[NFKModelMemoryBudget currentBudget] error:NULL].fits) {
-		XCTSkip(@"this machine's memory budget does not hold the example model");
-	}
 	id<NFKInferenceBackend> backend = [NFKModelCatalog.sharedCatalog backendForModelIdentifier:@"example.chat"
 																					   options:options error:&error];
 	XCTAssertNotNil(backend, @"%@", error);
@@ -1678,6 +1683,19 @@
 	XCTAssertEqualObjects(((NFKDefaultedBackend *)backend).requestDefaults[NFKParameterTemperature], @0.2);
 	NSDictionary *loaded = NFKInferenceLoadOptionValues(backend);
 	XCTAssertEqualObjects(loaded[NFKModelLoadOptionContextLength], @8192);
+}
+
+- (void)testExamplePinningTheBudgetACatalogBuildsAgainst
+{
+	NFKModelCatalog *catalog = [[NFKModelCatalog alloc] init];
+	catalog.memoryBudget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:(NSInteger)48 << 30];  // a known host
+	NSInteger reserveBytes = catalog.memoryBudget.reserveByteCount;  // 4 GiB from a budget of 8 GiB, half below it
+	catalog.memoryBudget = nil;                                      // this machine's budget again
+
+	XCTAssertEqual(reserveBytes, (NSInteger)4 << 30);
+	XCTAssertEqualObjects(catalog.memoryBudget, [NFKModelMemoryBudget currentBudget]);
+	NFKModelMemoryBudget *phone = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:(NSInteger)6 << 30];
+	XCTAssertEqual(phone.reserveByteCount, phone.byteCount - phone.byteCount / 2);
 }
 
 #if TARGET_OS_OSX

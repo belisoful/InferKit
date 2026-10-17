@@ -130,11 +130,19 @@ for target in arm64-apple-macos11.0:macosx arm64-apple-ios14.0:iphoneos arm64-ap
 done
 ```
 
+`-Wblock-capture-autoreleasing` is the second warning only the runner reported (2026-10-17): a block in
+`NFKPluginServiceTests.m` wrote through an `NSArray **` out-parameter it captured, and the local
+`swift build --build-tests` printed nothing for it. The same syntax-only compile reports it locally
+(`xcrun clang -fsyntax-only -fobjc-arc -fmodules -Wblock-capture-autoreleasing`, with `-F` at the
+platform's `Developer/Library/Frameworks` for a test file). A block fills a `__block` local, and the
+method assigns the out-parameter after the block has run. A sweep of every `.m` under `Sources/`,
+`Tests/`, and `Examples/` found that one instance.
+
 1. `swift build` + `swift test` on the host — **0 warnings**, all tests green. Grep the log for
-   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 1609 tests
-   (2026-10-17): the Objective-C `- (void)test` methods under `Tests/` (1496) and in
-   `Examples/NFKExamples.m` (59, the `InferKitExamples` target), plus the `func test` methods in
-   `SwiftExamples/` (54).
+   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 1617 tests
+   (2026-10-17): the Objective-C `- (void)test` methods under `Tests/` (1502) and in
+   `Examples/NFKExamples.m` (60, the `InferKitExamples` target), plus the `func test` methods in
+   `SwiftExamples/` (55).
 2. `xcodebuild build` for a `generic/platform=iOS` destination (cross-platform compile), and for tvOS
    through the SDK: `-workspace InferKit.xcworkspace -scheme InferKit -sdk appletvos -arch arm64`.
    A tvOS destination does not resolve here and that is not the same as tvOS being unbuildable.

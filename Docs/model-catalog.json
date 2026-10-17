@@ -59,7 +59,7 @@
       ],
       "registryName" : "adain",
       "requirements" : {
-        "minimumMemoryBytes" : 5069400888,
+        "minimumMemoryBytes" : 32996372,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -93,7 +93,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5069400888,
+          "minimumMemoryBytes" : 32996372,
           "peakBytes" : 14023458,
           "registryName" : "adain",
           "residentBytes" : 14023458,
@@ -172,7 +172,7 @@
       ],
       "registryName" : "allin1",
       "requirements" : {
-        "minimumMemoryBytes" : 5054550432,
+        "minimumMemoryBytes" : 3295462,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -206,7 +206,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5054550432,
+          "minimumMemoryBytes" : 3295462,
           "peakBytes" : 1400571,
           "registryName" : "allin1",
           "residentBytes" : 1400571,
@@ -273,7 +273,7 @@
       ],
       "registryName" : "apollo",
       "requirements" : {
-        "minimumMemoryBytes" : 5131187225,
+        "minimumMemoryBytes" : 156569048,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -307,7 +307,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5131187225,
+          "minimumMemoryBytes" : 156569048,
           "peakBytes" : 66541845,
           "registryName" : "apollo",
           "residentBytes" : 66541845,
@@ -517,7 +517,7 @@
       ],
       "registryName" : "audio-tagger-panns",
       "requirements" : {
-        "minimumMemoryBytes" : 5438112679,
+        "minimumMemoryBytes" : 770419956,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -551,7 +551,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5438112679,
+          "minimumMemoryBytes" : 770419956,
           "peakBytes" : 327428481,
           "registryName" : "audio-tagger-panns",
           "residentBytes" : 327428481,
@@ -698,7 +698,7 @@
       ],
       "registryName" : "basic-pitch",
       "requirements" : {
-        "minimumMemoryBytes" : 5053173812,
+        "minimumMemoryBytes" : 542222,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -732,7 +732,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5053173812,
+          "minimumMemoryBytes" : 542222,
           "peakBytes" : 230444,
           "registryName" : "basic-pitch",
           "residentBytes" : 230444,
@@ -796,7 +796,7 @@
       ],
       "registryName" : "bigvgan-v2-24khz",
       "requirements" : {
-        "minimumMemoryBytes" : 5582418385,
+        "minimumMemoryBytes" : 1059031368,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -830,7 +830,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5582418385,
+          "minimumMemoryBytes" : 1059031368,
           "peakBytes" : 450088331,
           "registryName" : "bigvgan-v2-24khz",
           "residentBytes" : 450088331,
@@ -916,7 +916,7 @@
       ],
       "registryName" : "birefnet",
       "requirements" : {
-        "minimumMemoryBytes" : 6093834429,
+        "minimumMemoryBytes" : 2081863455,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -952,7 +952,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6093834429,
+          "minimumMemoryBytes" : 2081863455,
           "parameterCount" : 220700285,
           "peakBytes" : 884791968,
           "precision" : "float16",
@@ -1019,7 +1019,7 @@
       ],
       "registryName" : "bisenet",
       "requirements" : {
-        "minimumMemoryBytes" : 5116242896,
+        "minimumMemoryBytes" : 126680389,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -1053,7 +1053,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5116242896,
+          "minimumMemoryBytes" : 126680389,
           "peakBytes" : 53839165,
           "registryName" : "bisenet",
           "residentBytes" : 53839165,
@@ -1117,7 +1117,7 @@
       ],
       "registryName" : "bisenet-v2",
       "requirements" : {
-        "minimumMemoryBytes" : 5077710839,
+        "minimumMemoryBytes" : 49616276,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -1151,7 +1151,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5077710839,
+          "minimumMemoryBytes" : 49616276,
           "peakBytes" : 21086917,
           "registryName" : "bisenet-v2",
           "residentBytes" : 21086917,
@@ -1388,7 +1388,7 @@
       ],
       "registryName" : "chatterbox",
       "requirements" : {
-        "minimumMemoryBytes" : 8807588730,
+        "minimumMemoryBytes" : 7509372057,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -1424,7 +1424,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 8807588730,
+          "minimumMemoryBytes" : 7509372057,
           "parameterCount" : 797870659,
           "peakBytes" : 3191483124,
           "precision" : "float32",
@@ -1528,7 +1528,7 @@
       ],
       "registryName" : "chronos-bolt-base",
       "requirements" : {
-        "minimumMemoryBytes" : 6018987069,
+        "minimumMemoryBytes" : 1932168735,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -1565,7 +1565,7 @@
             ],
             "vocabularySize" : 2
           },
-          "minimumMemoryBytes" : 6018987069,
+          "minimumMemoryBytes" : 1932168735,
           "parameterCount" : 205292928,
           "peakBytes" : 821171712,
           "precision" : "float32",
@@ -1714,7 +1714,7 @@
       ],
       "registryName" : "clip-vit-b-16",
       "requirements" : {
-        "minimumMemoryBytes" : 5465652205,
+        "minimumMemoryBytes" : 825499008,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -1748,7 +1748,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5465652205,
+          "minimumMemoryBytes" : 825499008,
           "peakBytes" : 350837078,
           "registryName" : "clip-vit-b-16",
           "residentBytes" : 350837078,
@@ -1820,7 +1820,7 @@
       ],
       "registryName" : "clip-vit-b-32",
       "requirements" : {
-        "minimumMemoryBytes" : 5469345669,
+        "minimumMemoryBytes" : 832885935,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -1854,7 +1854,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5469345669,
+          "minimumMemoryBytes" : 832885935,
           "peakBytes" : 353976522,
           "registryName" : "clip-vit-b-32",
           "residentBytes" : 353976522,
@@ -1926,7 +1926,7 @@
       ],
       "registryName" : "clip-vit-l-14",
       "requirements" : {
-        "minimumMemoryBytes" : 6150276977,
+        "minimumMemoryBytes" : 2194748551,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -1960,7 +1960,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6150276977,
+          "minimumMemoryBytes" : 2194748551,
           "peakBytes" : 932768134,
           "registryName" : "clip-vit-l-14",
           "residentBytes" : 932768134,
@@ -2032,7 +2032,7 @@
       ],
       "registryName" : "clip-vit-l-14-336",
       "requirements" : {
-        "minimumMemoryBytes" : 6151830560,
+        "minimumMemoryBytes" : 2197855718,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -2066,7 +2066,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6151830560,
+          "minimumMemoryBytes" : 2197855718,
           "peakBytes" : 934088680,
           "registryName" : "clip-vit-l-14-336",
           "residentBytes" : 934088680,
@@ -2130,7 +2130,7 @@
       ],
       "registryName" : "cmgan",
       "requirements" : {
-        "minimumMemoryBytes" : 5061712173,
+        "minimumMemoryBytes" : 17618944,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -2164,7 +2164,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5061712173,
+          "minimumMemoryBytes" : 17618944,
           "peakBytes" : 7488051,
           "registryName" : "cmgan",
           "residentBytes" : 7488051,
@@ -2227,7 +2227,7 @@
       ],
       "registryName" : "codeformer",
       "requirements" : {
-        "minimumMemoryBytes" : 5496006111,
+        "minimumMemoryBytes" : 886206819,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -2261,7 +2261,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5496006111,
+          "minimumMemoryBytes" : 886206819,
           "peakBytes" : 376637898,
           "registryName" : "codeformer",
           "residentBytes" : 376637898,
@@ -2325,7 +2325,7 @@
       ],
       "registryName" : "codeformer-photo",
       "requirements" : {
-        "minimumMemoryBytes" : 5496006111,
+        "minimumMemoryBytes" : 886206819,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -2360,7 +2360,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5496006111,
+          "minimumMemoryBytes" : 886206819,
           "peakBytes" : 376637898,
           "registryName" : "codeformer-photo",
           "residentBytes" : 376637898,
@@ -2585,7 +2585,7 @@
       ],
       "registryName" : "colorizer-eccv16",
       "requirements" : {
-        "minimumMemoryBytes" : 5204639366,
+        "minimumMemoryBytes" : 303473330,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -2619,7 +2619,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5204639366,
+          "minimumMemoryBytes" : 303473330,
           "peakBytes" : 128976165,
           "registryName" : "colorizer-eccv16",
           "residentBytes" : 128976165,
@@ -2698,7 +2698,7 @@
       ],
       "registryName" : "colorizer-siggraph17",
       "requirements" : {
-        "minimumMemoryBytes" : 5213829085,
+        "minimumMemoryBytes" : 321852768,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -2732,7 +2732,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5213829085,
+          "minimumMemoryBytes" : 321852768,
           "peakBytes" : 136787426,
           "registryName" : "colorizer-siggraph17",
           "residentBytes" : 136787426,
@@ -2804,7 +2804,7 @@
       ],
       "registryName" : "conv-tasnet",
       "requirements" : {
-        "minimumMemoryBytes" : 5076896396,
+        "minimumMemoryBytes" : 47987389,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -2838,7 +2838,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5076896396,
+          "minimumMemoryBytes" : 47987389,
           "peakBytes" : 20394640,
           "registryName" : "conv-tasnet",
           "residentBytes" : 20394640,
@@ -2902,7 +2902,7 @@
       ],
       "registryName" : "cosmos-tokenizer-ci16x16",
       "requirements" : {
-        "minimumMemoryBytes" : 5245136292,
+        "minimumMemoryBytes" : 384467182,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -2936,7 +2936,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5245136292,
+          "minimumMemoryBytes" : 384467182,
           "peakBytes" : 163398552,
           "registryName" : "cosmos-tokenizer-ci16x16",
           "residentBytes" : 163398552,
@@ -3001,7 +3001,7 @@
       ],
       "registryName" : "cosmos-tokenizer-ci8x8",
       "requirements" : {
-        "minimumMemoryBytes" : 5234022852,
+        "minimumMemoryBytes" : 362240302,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -3035,7 +3035,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5234022852,
+          "minimumMemoryBytes" : 362240302,
           "peakBytes" : 153952128,
           "registryName" : "cosmos-tokenizer-ci8x8",
           "residentBytes" : 153952128,
@@ -3116,7 +3116,7 @@
       ],
       "registryName" : "cosmos-tokenizer-cv4x8x8",
       "requirements" : {
-        "minimumMemoryBytes" : 5225987020,
+        "minimumMemoryBytes" : 346168638,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -3150,7 +3150,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5225987020,
+          "minimumMemoryBytes" : 346168638,
           "peakBytes" : 147121671,
           "registryName" : "cosmos-tokenizer-cv4x8x8",
           "residentBytes" : 147121671,
@@ -3231,7 +3231,7 @@
       ],
       "registryName" : "cosmos-tokenizer-cv8x16x16",
       "requirements" : {
-        "minimumMemoryBytes" : 5314959279,
+        "minimumMemoryBytes" : 524113156,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -3265,7 +3265,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5314959279,
+          "minimumMemoryBytes" : 524113156,
           "peakBytes" : 222748091,
           "registryName" : "cosmos-tokenizer-cv8x16x16",
           "residentBytes" : 222748091,
@@ -3346,7 +3346,7 @@
       ],
       "registryName" : "cosmos-tokenizer-cv8x8x8",
       "requirements" : {
-        "minimumMemoryBytes" : 5302599515,
+        "minimumMemoryBytes" : 499393626,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -3380,7 +3380,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5302599515,
+          "minimumMemoryBytes" : 499393626,
           "peakBytes" : 212242291,
           "registryName" : "cosmos-tokenizer-cv8x8x8",
           "residentBytes" : 212242291,
@@ -3445,7 +3445,7 @@
       ],
       "registryName" : "cosmos-tokenizer-di16x16",
       "requirements" : {
-        "minimumMemoryBytes" : 5251240657,
+        "minimumMemoryBytes" : 396675911,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -3479,7 +3479,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5251240657,
+          "minimumMemoryBytes" : 396675911,
           "peakBytes" : 168587262,
           "registryName" : "cosmos-tokenizer-di16x16",
           "residentBytes" : 168587262,
@@ -3544,7 +3544,7 @@
       ],
       "registryName" : "cosmos-tokenizer-di8x8",
       "requirements" : {
-        "minimumMemoryBytes" : 5240141963,
+        "minimumMemoryBytes" : 374478523,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -3578,7 +3578,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5240141963,
+          "minimumMemoryBytes" : 374478523,
           "peakBytes" : 159153372,
           "registryName" : "cosmos-tokenizer-di8x8",
           "residentBytes" : 159153372,
@@ -3659,7 +3659,7 @@
       ],
       "registryName" : "cosmos-tokenizer-dv4x8x8",
       "requirements" : {
-        "minimumMemoryBytes" : 5301247489,
+        "minimumMemoryBytes" : 496689575,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -3693,7 +3693,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5301247489,
+          "minimumMemoryBytes" : 496689575,
           "peakBytes" : 211093069,
           "registryName" : "cosmos-tokenizer-dv4x8x8",
           "residentBytes" : 211093069,
@@ -3774,7 +3774,7 @@
       ],
       "registryName" : "cosmos-tokenizer-dv8x16x16",
       "requirements" : {
-        "minimumMemoryBytes" : 5315926820,
+        "minimumMemoryBytes" : 526048238,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -3808,7 +3808,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5315926820,
+          "minimumMemoryBytes" : 526048238,
           "peakBytes" : 223570501,
           "registryName" : "cosmos-tokenizer-dv8x16x16",
           "residentBytes" : 223570501,
@@ -3889,7 +3889,7 @@
       ],
       "registryName" : "cosmos-tokenizer-dv8x8x8",
       "requirements" : {
-        "minimumMemoryBytes" : 5303575103,
+        "minimumMemoryBytes" : 501344803,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -3923,7 +3923,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5303575103,
+          "minimumMemoryBytes" : 501344803,
           "peakBytes" : 213071541,
           "registryName" : "cosmos-tokenizer-dv8x8x8",
           "residentBytes" : 213071541,
@@ -3989,7 +3989,7 @@
       ],
       "registryName" : "dac",
       "requirements" : {
-        "minimumMemoryBytes" : 5413746569,
+        "minimumMemoryBytes" : 721687735,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -4023,7 +4023,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5413746569,
+          "minimumMemoryBytes" : 721687735,
           "peakBytes" : 306717287,
           "registryName" : "dac",
           "residentBytes" : 306717287,
@@ -4086,7 +4086,7 @@
       ],
       "registryName" : "ddcolor",
       "requirements" : {
-        "minimumMemoryBytes" : 6125785124,
+        "minimumMemoryBytes" : 2145764845,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -4120,7 +4120,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6125785124,
+          "minimumMemoryBytes" : 2145764845,
           "peakBytes" : 911950059,
           "registryName" : "ddcolor",
           "residentBytes" : 911950059,
@@ -4185,7 +4185,7 @@
       ],
       "registryName" : "ddcolor-artistic",
       "requirements" : {
-        "minimumMemoryBytes" : 6125785124,
+        "minimumMemoryBytes" : 2145764845,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -4219,7 +4219,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6125785124,
+          "minimumMemoryBytes" : 2145764845,
           "peakBytes" : 911950059,
           "registryName" : "ddcolor-artistic",
           "residentBytes" : 911950059,
@@ -4284,7 +4284,7 @@
       ],
       "registryName" : "ddcolor-paper",
       "requirements" : {
-        "minimumMemoryBytes" : 6125785124,
+        "minimumMemoryBytes" : 2145764845,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -4318,7 +4318,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6125785124,
+          "minimumMemoryBytes" : 2145764845,
           "peakBytes" : 911950059,
           "registryName" : "ddcolor-paper",
           "residentBytes" : 911950059,
@@ -4383,7 +4383,7 @@
       ],
       "registryName" : "deepfilternet3",
       "requirements" : {
-        "minimumMemoryBytes" : 5062298239,
+        "minimumMemoryBytes" : 18791076,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -4417,7 +4417,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5062298239,
+          "minimumMemoryBytes" : 18791076,
           "peakBytes" : 7986207,
           "registryName" : "deepfilternet3",
           "residentBytes" : 7986207,
@@ -4481,7 +4481,7 @@
       ],
       "registryName" : "deeplabv3",
       "requirements" : {
-        "minimumMemoryBytes" : 5250916998,
+        "minimumMemoryBytes" : 396028593,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -4515,7 +4515,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5250916998,
+          "minimumMemoryBytes" : 396028593,
           "peakBytes" : 168312152,
           "registryName" : "deeplabv3",
           "residentBytes" : 168312152,
@@ -5606,7 +5606,7 @@
       ],
       "registryName" : "demucs",
       "requirements" : {
-        "minimumMemoryBytes" : 6303183663,
+        "minimumMemoryBytes" : 2500561923,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -5640,7 +5640,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6303183663,
+          "minimumMemoryBytes" : 2500561923,
           "peakBytes" : 1062738817,
           "registryName" : "demucs",
           "residentBytes" : 1062738817,
@@ -5704,7 +5704,7 @@
       ],
       "registryName" : "denoiser",
       "requirements" : {
-        "minimumMemoryBytes" : 5141700813,
+        "minimumMemoryBytes" : 177596224,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -5738,7 +5738,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5141700813,
+          "minimumMemoryBytes" : 177596224,
           "peakBytes" : 75478395,
           "registryName" : "denoiser",
           "residentBytes" : 75478395,
@@ -5801,7 +5801,7 @@
       ],
       "registryName" : "depth-anything-3-base",
       "requirements" : {
-        "minimumMemoryBytes" : 5689921991,
+        "minimumMemoryBytes" : 1274038579,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -5837,7 +5837,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5689921991,
+          "minimumMemoryBytes" : 1274038579,
           "parameterCount" : 135366599,
           "peakBytes" : 541466396,
           "precision" : "float32",
@@ -5912,7 +5912,7 @@
       ],
       "registryName" : "depth-anything-3-base-estimator",
       "requirements" : {
-        "minimumMemoryBytes" : 5689921991,
+        "minimumMemoryBytes" : 1274038579,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -5948,7 +5948,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5689921991,
+          "minimumMemoryBytes" : 1274038579,
           "parameterCount" : 135366599,
           "peakBytes" : 541466396,
           "precision" : "float32",
@@ -6016,7 +6016,7 @@
       ],
       "registryName" : "depth-anything-3-large",
       "requirements" : {
-        "minimumMemoryBytes" : 6986746311,
+        "minimumMemoryBytes" : 3867687219,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -6052,7 +6052,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6986746311,
+          "minimumMemoryBytes" : 3867687219,
           "parameterCount" : 410941767,
           "peakBytes" : 1643767068,
           "precision" : "float32",
@@ -6128,7 +6128,7 @@
       ],
       "registryName" : "depth-anything-3-large-estimator",
       "requirements" : {
-        "minimumMemoryBytes" : 6986746311,
+        "minimumMemoryBytes" : 3867687219,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -6164,7 +6164,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6986746311,
+          "minimumMemoryBytes" : 3867687219,
           "parameterCount" : 410941767,
           "peakBytes" : 1643767068,
           "precision" : "float32",
@@ -6231,7 +6231,7 @@
       ],
       "registryName" : "depth-anything-3-small",
       "requirements" : {
-        "minimumMemoryBytes" : 5214311939,
+        "minimumMemoryBytes" : 322818476,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -6267,7 +6267,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5214311939,
+          "minimumMemoryBytes" : 322818476,
           "parameterCount" : 34299463,
           "peakBytes" : 137197852,
           "precision" : "float32",
@@ -6342,7 +6342,7 @@
       ],
       "registryName" : "depth-anything-3-small-estimator",
       "requirements" : {
-        "minimumMemoryBytes" : 5214311939,
+        "minimumMemoryBytes" : 322818476,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -6378,7 +6378,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5214311939,
+          "minimumMemoryBytes" : 322818476,
           "parameterCount" : 34299463,
           "peakBytes" : 137197852,
           "precision" : "float32",
@@ -6446,7 +6446,7 @@
       ],
       "registryName" : "depth-anything-v2-base",
       "requirements" : {
-        "minimumMemoryBytes" : 5511680605,
+        "minimumMemoryBytes" : 917555808,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -6480,7 +6480,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5511680605,
+          "minimumMemoryBytes" : 917555808,
           "peakBytes" : 389961218,
           "registryName" : "depth-anything-v2-base",
           "residentBytes" : 389961218,
@@ -6547,7 +6547,7 @@
       ],
       "registryName" : "depth-anything-v2-large",
       "requirements" : {
-        "minimumMemoryBytes" : 6631014864,
+        "minimumMemoryBytes" : 3156224325,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -6581,7 +6581,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6631014864,
+          "minimumMemoryBytes" : 3156224325,
           "peakBytes" : 1341395338,
           "registryName" : "depth-anything-v2-large",
           "residentBytes" : 1341395338,
@@ -6647,7 +6647,7 @@
       ],
       "registryName" : "depth-anything-v2-small",
       "requirements" : {
-        "minimumMemoryBytes" : 5169630271,
+        "minimumMemoryBytes" : 233455139,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -6681,7 +6681,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5169630271,
+          "minimumMemoryBytes" : 233455139,
           "peakBytes" : 99218434,
           "registryName" : "depth-anything-v2-small",
           "residentBytes" : 99218434,
@@ -7226,7 +7226,7 @@
       ],
       "registryName" : "embeddinggemma-300m",
       "requirements" : {
-        "minimumMemoryBytes" : 6500385779,
+        "minimumMemoryBytes" : 2894966156,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -7261,7 +7261,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6500385779,
+          "minimumMemoryBytes" : 2894966156,
           "peakBytes" : 1230360616,
           "registryName" : "embeddinggemma-300m",
           "residentBytes" : 1230360616,
@@ -7438,7 +7438,7 @@
       ],
       "registryName" : "fastspeech2-voice",
       "requirements" : {
-        "minimumMemoryBytes" : 5449339399,
+        "minimumMemoryBytes" : 792873396,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -7472,7 +7472,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5449339399,
+          "minimumMemoryBytes" : 792873396,
           "peakBytes" : 336971193,
           "registryName" : "fastspeech2-voice",
           "residentBytes" : 336971193,
@@ -7588,7 +7588,7 @@
       ],
       "registryName" : "florence-2-base",
       "requirements" : {
-        "minimumMemoryBytes" : 6142633078,
+        "minimumMemoryBytes" : 2179460753,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -7627,7 +7627,7 @@
             ],
             "vocabularySize" : 51289
           },
-          "minimumMemoryBytes" : 6142633078,
+          "minimumMemoryBytes" : 2179460753,
           "parameterCount" : 231567705,
           "peakBytes" : 926270820,
           "precision" : "float16",
@@ -7745,7 +7745,7 @@
       ],
       "registryName" : "florence-2-base-ft",
       "requirements" : {
-        "minimumMemoryBytes" : 6142633078,
+        "minimumMemoryBytes" : 2179460753,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -7784,7 +7784,7 @@
             ],
             "vocabularySize" : 51289
           },
-          "minimumMemoryBytes" : 6142633078,
+          "minimumMemoryBytes" : 2179460753,
           "parameterCount" : 231567705,
           "peakBytes" : 926270820,
           "precision" : "float16",
@@ -7902,7 +7902,7 @@
       ],
       "registryName" : "florence-2-large",
       "requirements" : {
-        "minimumMemoryBytes" : 8708062688,
+        "minimumMemoryBytes" : 7310319972,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -7941,7 +7941,7 @@
             ],
             "vocabularySize" : 51289
           },
-          "minimumMemoryBytes" : 8708062688,
+          "minimumMemoryBytes" : 7310319972,
           "parameterCount" : 776721497,
           "peakBytes" : 3106885988,
           "precision" : "float16",
@@ -8059,7 +8059,7 @@
       ],
       "registryName" : "florence-2-large-ft",
       "requirements" : {
-        "minimumMemoryBytes" : 8678455836,
+        "minimumMemoryBytes" : 7251106269,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -8098,7 +8098,7 @@
             ],
             "vocabularySize" : 51289
           },
-          "minimumMemoryBytes" : 8678455836,
+          "minimumMemoryBytes" : 7251106269,
           "parameterCount" : 770430041,
           "peakBytes" : 3081720164,
           "precision" : "float16",
@@ -10691,7 +10691,7 @@
       ],
       "registryName" : "frcrn",
       "requirements" : {
-        "minimumMemoryBytes" : 5242377703,
+        "minimumMemoryBytes" : 378950003,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -10725,7 +10725,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5242377703,
+          "minimumMemoryBytes" : 378950003,
           "peakBytes" : 161053751,
           "registryName" : "frcrn",
           "residentBytes" : 161053751,
@@ -11197,7 +11197,7 @@
       ],
       "registryName" : "gemma-3-1b-it",
       "requirements" : {
-        "minimumMemoryBytes" : 7405621770,
+        "minimumMemoryBytes" : 4705438137,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -11233,7 +11233,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 7405621770,
+          "minimumMemoryBytes" : 4705438137,
           "peakBytes" : 1999811208,
           "registryName" : "gemma-3-1b-it",
           "residentBytes" : 1999811208,
@@ -11466,7 +11466,7 @@
       ],
       "registryName" : "gemma-3-270m-it",
       "requirements" : {
-        "minimumMemoryBytes" : 5683753356,
+        "minimumMemoryBytes" : 1261701309,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -11502,7 +11502,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5683753356,
+          "minimumMemoryBytes" : 1261701309,
           "peakBytes" : 536223056,
           "registryName" : "gemma-3-270m-it",
           "residentBytes" : 536223056,
@@ -14902,7 +14902,7 @@
       ],
       "registryName" : "granite-4.0-h",
       "requirements" : {
-        "minimumMemoryBytes" : 8491816509,
+        "minimumMemoryBytes" : 6877827615,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -14939,7 +14939,7 @@
             ],
             "vocabularySize" : 100352
           },
-          "minimumMemoryBytes" : 8491816509,
+          "minimumMemoryBytes" : 6877827615,
           "parameterCount" : 1461538368,
           "peakBytes" : 2923076736,
           "precision" : "bfloat16",
@@ -15609,7 +15609,7 @@
       ],
       "registryName" : "gtcrn",
       "requirements" : {
-        "minimumMemoryBytes" : 5053584842,
+        "minimumMemoryBytes" : 1364280,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -15643,7 +15643,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5053584842,
+          "minimumMemoryBytes" : 1364280,
           "peakBytes" : 579819,
           "registryName" : "gtcrn",
           "residentBytes" : 579819,
@@ -15719,7 +15719,7 @@
       ],
       "registryName" : "gte-reranker-modernbert-base",
       "requirements" : {
-        "minimumMemoryBytes" : 5756929210,
+        "minimumMemoryBytes" : 1408053017,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -15756,7 +15756,7 @@
             ],
             "vocabularySize" : 50368
           },
-          "minimumMemoryBytes" : 5756929210,
+          "minimumMemoryBytes" : 1408053017,
           "parameterCount" : 149605633,
           "peakBytes" : 598422532,
           "precision" : "float32",
@@ -15834,7 +15834,7 @@
       ],
       "registryName" : "hat-l-x4",
       "requirements" : {
-        "minimumMemoryBytes" : 5247931082,
+        "minimumMemoryBytes" : 390056760,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -15868,7 +15868,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5247931082,
+          "minimumMemoryBytes" : 390056760,
           "peakBytes" : 165774123,
           "registryName" : "hat-l-x4",
           "residentBytes" : 165774123,
@@ -16051,7 +16051,7 @@
       ],
       "registryName" : "hft-transformer",
       "requirements" : {
-        "minimumMemoryBytes" : 5077067724,
+        "minimumMemoryBytes" : 48330045,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -16085,7 +16085,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5077067724,
+          "minimumMemoryBytes" : 48330045,
           "peakBytes" : 20540269,
           "registryName" : "hft-transformer",
           "residentBytes" : 20540269,
@@ -16170,7 +16170,7 @@
       ],
       "registryName" : "htdemucs",
       "requirements" : {
-        "minimumMemoryBytes" : 5151893185,
+        "minimumMemoryBytes" : 197980968,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -16204,7 +16204,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5151893185,
+          "minimumMemoryBytes" : 197980968,
           "peakBytes" : 84141911,
           "registryName" : "htdemucs",
           "residentBytes" : 84141911,
@@ -16302,7 +16302,7 @@
       ],
       "registryName" : "htdemucs-6s",
       "requirements" : {
-        "minimumMemoryBytes" : 5117604263,
+        "minimumMemoryBytes" : 129403123,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -16336,7 +16336,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5117604263,
+          "minimumMemoryBytes" : 129403123,
           "peakBytes" : 54996327,
           "registryName" : "htdemucs-6s",
           "residentBytes" : 54996327,
@@ -16407,7 +16407,7 @@
       ],
       "registryName" : "hubert-base-ls960",
       "requirements" : {
-        "minimumMemoryBytes" : 5497102412,
+        "minimumMemoryBytes" : 888399422,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -16442,7 +16442,7 @@
             ],
             "vocabularySize" : 32
           },
-          "minimumMemoryBytes" : 5497102412,
+          "minimumMemoryBytes" : 888399422,
           "peakBytes" : 377569754,
           "registryName" : "hubert-base-ls960",
           "residentBytes" : 377569754,
@@ -16527,7 +16527,7 @@
       ],
       "registryName" : "hubert-large-ll60k",
       "requirements" : {
-        "minimumMemoryBytes" : 6537514548,
+        "minimumMemoryBytes" : 2969223692,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -16562,7 +16562,7 @@
             ],
             "vocabularySize" : 32
           },
-          "minimumMemoryBytes" : 6537514548,
+          "minimumMemoryBytes" : 2969223692,
           "peakBytes" : 1261920069,
           "registryName" : "hubert-large-ll60k",
           "residentBytes" : 1261920069,
@@ -16647,7 +16647,7 @@
       ],
       "registryName" : "hubert-large-ls960-ft",
       "requirements" : {
-        "minimumMemoryBytes" : 6537676300,
+        "minimumMemoryBytes" : 2969547198,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -16683,7 +16683,7 @@
             ],
             "vocabularySize" : 32
           },
-          "minimumMemoryBytes" : 6537676300,
+          "minimumMemoryBytes" : 2969547198,
           "peakBytes" : 1262057559,
           "registryName" : "hubert-large-ls960-ft",
           "residentBytes" : 1262057559,
@@ -16780,7 +16780,7 @@
       ],
       "registryName" : "hubert-xlarge-ll60k",
       "requirements" : {
-        "minimumMemoryBytes" : 9582674152,
+        "minimumMemoryBytes" : 9059542902,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -16815,7 +16815,7 @@
             ],
             "vocabularySize" : 32
           },
-          "minimumMemoryBytes" : 9582674152,
+          "minimumMemoryBytes" : 9059542902,
           "peakBytes" : 3850305733,
           "registryName" : "hubert-xlarge-ll60k",
           "residentBytes" : 3850305733,
@@ -16900,7 +16900,7 @@
       ],
       "registryName" : "hubert-xlarge-ls960-ft",
       "requirements" : {
-        "minimumMemoryBytes" : 9582495172,
+        "minimumMemoryBytes" : 9059184942,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -16938,7 +16938,7 @@
             ],
             "vocabularySize" : 32
           },
-          "minimumMemoryBytes" : 9582495172,
+          "minimumMemoryBytes" : 9059184942,
           "parameterCount" : 962538400,
           "peakBytes" : 3850153600,
           "precision" : "float32",
@@ -17046,7 +17046,7 @@
       ],
       "registryName" : "isnet",
       "requirements" : {
-        "minimumMemoryBytes" : 5260643169,
+        "minimumMemoryBytes" : 415480935,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -17080,7 +17080,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5260643169,
+          "minimumMemoryBytes" : 415480935,
           "peakBytes" : 176579397,
           "registryName" : "isnet",
           "residentBytes" : 176579397,
@@ -17162,7 +17162,7 @@
       ],
       "registryName" : "kokoro-82m",
       "requirements" : {
-        "minimumMemoryBytes" : 5437858262,
+        "minimumMemoryBytes" : 769911120,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -17196,7 +17196,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5437858262,
+          "minimumMemoryBytes" : 769911120,
           "peakBytes" : 327212226,
           "registryName" : "kokoro-82m",
           "residentBytes" : 327212226,
@@ -17282,7 +17282,7 @@
       ],
       "registryName" : "lama-inpaint",
       "requirements" : {
-        "minimumMemoryBytes" : 5501642372,
+        "minimumMemoryBytes" : 897479342,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -17316,7 +17316,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5501642372,
+          "minimumMemoryBytes" : 897479342,
           "peakBytes" : 381428720,
           "registryName" : "lama-inpaint",
           "residentBytes" : 381428720,
@@ -17427,7 +17427,7 @@
       ],
       "registryName" : "laya",
       "requirements" : {
-        "minimumMemoryBytes" : 7035461902,
+        "minimumMemoryBytes" : 3965118400,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -17464,7 +17464,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 7035461902,
+          "minimumMemoryBytes" : 3965118400,
           "parameterCount" : 421293830,
           "peakBytes" : 1685175320,
           "precision" : "float16",
@@ -17600,7 +17600,7 @@
       ],
       "registryName" : "laya-multilingual",
       "requirements" : {
-        "minimumMemoryBytes" : 6567768575,
+        "minimumMemoryBytes" : 3029731746,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -17637,7 +17637,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6567768575,
+          "minimumMemoryBytes" : 3029731746,
           "parameterCount" : 321908998,
           "peakBytes" : 1287635992,
           "precision" : "float16",
@@ -17774,7 +17774,7 @@
       ],
       "registryName" : "laya-typed-decisions",
       "requirements" : {
-        "minimumMemoryBytes" : 7035461902,
+        "minimumMemoryBytes" : 3965118400,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -17811,7 +17811,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 7035461902,
+          "minimumMemoryBytes" : 3965118400,
           "parameterCount" : 421293830,
           "peakBytes" : 1685175320,
           "precision" : "float16",
@@ -18023,7 +18023,7 @@
       ],
       "registryName" : "lcm-dreamshaper-v7",
       "requirements" : {
-        "minimumMemoryBytes" : 10070866123,
+        "minimumMemoryBytes" : 10035926843,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -18060,7 +18060,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 10070866123,
+          "minimumMemoryBytes" : 10035926843,
           "parameterCount" : 1066317227,
           "peakBytes" : 4265268908,
           "precision" : "float32",
@@ -18849,7 +18849,7 @@
       ],
       "registryName" : "m2m100",
       "requirements" : {
-        "minimumMemoryBytes" : 7330310876,
+        "minimumMemoryBytes" : 4554816349,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -18884,7 +18884,7 @@
             ],
             "vocabularySize" : 128112
           },
-          "minimumMemoryBytes" : 7330310876,
+          "minimumMemoryBytes" : 4554816349,
           "peakBytes" : 1935796948,
           "registryName" : "m2m100",
           "residentBytes" : 1935796948,
@@ -19831,7 +19831,7 @@
       ],
       "registryName" : "metricgan-plus",
       "requirements" : {
-        "minimumMemoryBytes" : 5061827432,
+        "minimumMemoryBytes" : 17849462,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -19865,7 +19865,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5061827432,
+          "minimumMemoryBytes" : 17849462,
           "peakBytes" : 7586021,
           "registryName" : "metricgan-plus",
           "residentBytes" : 7586021,
@@ -19930,7 +19930,7 @@
       ],
       "registryName" : "mimi",
       "requirements" : {
-        "minimumMemoryBytes" : 5505379845,
+        "minimumMemoryBytes" : 904954288,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -19966,7 +19966,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5505379845,
+          "minimumMemoryBytes" : 904954288,
           "parameterCount" : 96151393,
           "peakBytes" : 384605572,
           "precision" : "float32",
@@ -21764,7 +21764,7 @@
       ],
       "registryName" : "mossformer2-se",
       "requirements" : {
-        "minimumMemoryBytes" : 5313552136,
+        "minimumMemoryBytes" : 521298869,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -21798,7 +21798,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5313552136,
+          "minimumMemoryBytes" : 521298869,
           "peakBytes" : 221552019,
           "registryName" : "mossformer2-se",
           "residentBytes" : 221552019,
@@ -21863,7 +21863,7 @@
       ],
       "registryName" : "mossformer2-sr",
       "requirements" : {
-        "minimumMemoryBytes" : 5312564704,
+        "minimumMemoryBytes" : 519324005,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -21897,7 +21897,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5312564704,
+          "minimumMemoryBytes" : 519324005,
           "peakBytes" : 220712702,
           "registryName" : "mossformer2-sr",
           "residentBytes" : 220712702,
@@ -21969,7 +21969,7 @@
       ],
       "registryName" : "mpsenet",
       "requirements" : {
-        "minimumMemoryBytes" : 5063653353,
+        "minimumMemoryBytes" : 21501304,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -22003,7 +22003,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5063653353,
+          "minimumMemoryBytes" : 21501304,
           "peakBytes" : 9138054,
           "registryName" : "mpsenet",
           "residentBytes" : 9138054,
@@ -22086,7 +22086,7 @@
       ],
       "registryName" : "muscriptor",
       "requirements" : {
-        "minimumMemoryBytes" : 6497778551,
+        "minimumMemoryBytes" : 2889751699,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -22121,7 +22121,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6497778551,
+          "minimumMemoryBytes" : 2889751699,
           "peakBytes" : 1228144472,
           "registryName" : "muscriptor",
           "residentBytes" : 1228144472,
@@ -22326,7 +22326,7 @@
       ],
       "registryName" : "muscriptor-small",
       "requirements" : {
-        "minimumMemoryBytes" : 5537477525,
+        "minimumMemoryBytes" : 969149648,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -22361,7 +22361,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5537477525,
+          "minimumMemoryBytes" : 969149648,
           "peakBytes" : 411888600,
           "registryName" : "muscriptor-small",
           "residentBytes" : 411888600,
@@ -22427,7 +22427,7 @@
       ],
       "registryName" : "nafnet",
       "requirements" : {
-        "minimumMemoryBytes" : 5190387220,
+        "minimumMemoryBytes" : 274969038,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -22461,7 +22461,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5190387220,
+          "minimumMemoryBytes" : 274969038,
           "peakBytes" : 116861841,
           "registryName" : "nafnet",
           "residentBytes" : 116861841,
@@ -22528,7 +22528,7 @@
       ],
       "registryName" : "nafnet-gopro",
       "requirements" : {
-        "minimumMemoryBytes" : 5133692256,
+        "minimumMemoryBytes" : 161579109,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -22562,7 +22562,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5133692256,
+          "minimumMemoryBytes" : 161579109,
           "peakBytes" : 68671121,
           "registryName" : "nafnet-gopro",
           "residentBytes" : 68671121,
@@ -22629,7 +22629,7 @@
       ],
       "registryName" : "nafnet-gopro-width64",
       "requirements" : {
-        "minimumMemoryBytes" : 5372642656,
+        "minimumMemoryBytes" : 639479909,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -22663,7 +22663,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5372642656,
+          "minimumMemoryBytes" : 639479909,
           "peakBytes" : 271778961,
           "registryName" : "nafnet-gopro-width64",
           "residentBytes" : 271778961,
@@ -22730,7 +22730,7 @@
       ],
       "registryName" : "nafnet-reds",
       "requirements" : {
-        "minimumMemoryBytes" : 5372616453,
+        "minimumMemoryBytes" : 639427504,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -22764,7 +22764,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5372616453,
+          "minimumMemoryBytes" : 639427504,
           "peakBytes" : 271756689,
           "registryName" : "nafnet-reds",
           "residentBytes" : 271756689,
@@ -22831,7 +22831,7 @@
       ],
       "registryName" : "nafnet-sidd-width64",
       "requirements" : {
-        "minimumMemoryBytes" : 5598967362,
+        "minimumMemoryBytes" : 1092129320,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -22865,7 +22865,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5598967362,
+          "minimumMemoryBytes" : 1092129320,
           "peakBytes" : 464154961,
           "registryName" : "nafnet-sidd-width64",
           "residentBytes" : 464154961,
@@ -23301,7 +23301,7 @@
       ],
       "registryName" : "nllb-200",
       "requirements" : {
-        "minimumMemoryBytes" : 7947559086,
+        "minimumMemoryBytes" : 5789312770,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -23336,7 +23336,7 @@
             ],
             "vocabularySize" : 256206
           },
-          "minimumMemoryBytes" : 7947559086,
+          "minimumMemoryBytes" : 5789312770,
           "peakBytes" : 2460457927,
           "registryName" : "nllb-200",
           "residentBytes" : 2460457927,
@@ -24796,7 +24796,7 @@
       ],
       "registryName" : "open-jev-deberta-v3-large",
       "requirements" : {
-        "minimumMemoryBytes" : 7110125935,
+        "minimumMemoryBytes" : 4114446466,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -24834,7 +24834,7 @@
             ],
             "vocabularySize" : 128100
           },
-          "minimumMemoryBytes" : 7110125935,
+          "minimumMemoryBytes" : 4114446466,
           "parameterCount" : 437159937,
           "peakBytes" : 1748639748,
           "precision" : "float32",
@@ -24988,7 +24988,7 @@
       ],
       "registryName" : "opus-mt",
       "requirements" : {
-        "minimumMemoryBytes" : 5392876096,
+        "minimumMemoryBytes" : 679946789,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -25031,7 +25031,7 @@
             ],
             "vocabularySize" : 58101
           },
-          "minimumMemoryBytes" : 5403406477,
+          "minimumMemoryBytes" : 701007551,
           "peakBytes" : 297928209,
           "registryName" : "opus-mt",
           "residentBytes" : 297928209,
@@ -25113,7 +25113,7 @@
             ],
             "vocabularySize" : 60716
           },
-          "minimumMemoryBytes" : 5409719395,
+          "minimumMemoryBytes" : 713633386,
           "peakBytes" : 303294189,
           "registryName" : "opus-mt",
           "residentBytes" : 303294189,
@@ -25203,7 +25203,7 @@
             ],
             "vocabularySize" : 65001
           },
-          "minimumMemoryBytes" : 5420063889,
+          "minimumMemoryBytes" : 734322375,
           "peakBytes" : 312087009,
           "registryName" : "opus-mt",
           "residentBytes" : 312087009,
@@ -25285,7 +25285,7 @@
             ],
             "vocabularySize" : 65001
           },
-          "minimumMemoryBytes" : 5420063889,
+          "minimumMemoryBytes" : 734322375,
           "peakBytes" : 312087009,
           "registryName" : "opus-mt",
           "residentBytes" : 312087009,
@@ -25367,7 +25367,7 @@
             ],
             "vocabularySize" : 62834
           },
-          "minimumMemoryBytes" : 5414832496,
+          "minimumMemoryBytes" : 723859589,
           "peakBytes" : 307640325,
           "registryName" : "opus-mt",
           "residentBytes" : 307640325,
@@ -25449,7 +25449,7 @@
             ],
             "vocabularySize" : 53739
           },
-          "minimumMemoryBytes" : 5392876096,
+          "minimumMemoryBytes" : 679946789,
           "peakBytes" : 288977385,
           "registryName" : "opus-mt",
           "residentBytes" : 288977385,
@@ -25531,7 +25531,7 @@
             ],
             "vocabularySize" : 62307
           },
-          "minimumMemoryBytes" : 5413560256,
+          "minimumMemoryBytes" : 721315109,
           "peakBytes" : 306558921,
           "registryName" : "opus-mt",
           "residentBytes" : 306558921,
@@ -25613,7 +25613,7 @@
             ],
             "vocabularySize" : 61127
           },
-          "minimumMemoryBytes" : 5410711597,
+          "minimumMemoryBytes" : 715617791,
           "peakBytes" : 304137561,
           "registryName" : "opus-mt",
           "residentBytes" : 304137561,
@@ -25695,7 +25695,7 @@
             ],
             "vocabularySize" : 65001
           },
-          "minimumMemoryBytes" : 5420063889,
+          "minimumMemoryBytes" : 734322375,
           "peakBytes" : 312087009,
           "registryName" : "opus-mt",
           "residentBytes" : 312087009,
@@ -25811,7 +25811,7 @@
       ],
       "registryName" : "parakeet-tdt",
       "requirements" : {
-        "minimumMemoryBytes" : 7961400019,
+        "minimumMemoryBytes" : 5816994636,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -25845,7 +25845,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 7961400019,
+          "minimumMemoryBytes" : 5816994636,
           "peakBytes" : 2472222720,
           "registryName" : "parakeet-tdt",
           "residentBytes" : 2472222720,
@@ -25885,7 +25885,7 @@
             ],
             "vocabularySize" : 8193
           },
-          "minimumMemoryBytes" : 8005058560,
+          "minimumMemoryBytes" : 5904311718,
           "peakBytes" : 2509332480,
           "registryName" : "parakeet-tdt",
           "residentBytes" : 2509332480,
@@ -26351,7 +26351,7 @@
       ],
       "registryName" : "pose-simplebaseline",
       "requirements" : {
-        "minimumMemoryBytes" : 5221659512,
+        "minimumMemoryBytes" : 337513622,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -26385,7 +26385,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5221659512,
+          "minimumMemoryBytes" : 337513622,
           "peakBytes" : 143443289,
           "registryName" : "pose-simplebaseline",
           "residentBytes" : 143443289,
@@ -27934,7 +27934,7 @@
       ],
       "registryName" : "qwen3-0.6b",
       "requirements" : {
-        "minimumMemoryBytes" : 9695318739,
+        "minimumMemoryBytes" : 9284832076,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -27974,7 +27974,7 @@
             ],
             "vocabularySize" : 151936
           },
-          "minimumMemoryBytes" : 9695318739,
+          "minimumMemoryBytes" : 9284832076,
           "parameterCount" : 751632384,
           "peakBytes" : 3946053632,
           "precision" : "bfloat16",
@@ -31646,7 +31646,7 @@
       ],
       "registryName" : "qwen3-embedding-0.6b",
       "requirements" : {
-        "minimumMemoryBytes" : 7856556876,
+        "minimumMemoryBytes" : 5607308349,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -31683,7 +31683,7 @@
             ],
             "vocabularySize" : 151669
           },
-          "minimumMemoryBytes" : 7856556876,
+          "minimumMemoryBytes" : 5607308349,
           "parameterCount" : 595776512,
           "peakBytes" : 2383106048,
           "precision" : "bfloat16",
@@ -33764,7 +33764,7 @@
       ],
       "registryName" : "raft",
       "requirements" : {
-        "minimumMemoryBytes" : 5149346722,
+        "minimumMemoryBytes" : 192888040,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -33798,7 +33798,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5149346722,
+          "minimumMemoryBytes" : 192888040,
           "peakBytes" : 81977417,
           "registryName" : "raft",
           "residentBytes" : 81977417,
@@ -33862,7 +33862,7 @@
       ],
       "registryName" : "real-esrgan-anime-video-x4v3",
       "requirements" : {
-        "minimumMemoryBytes" : 5055848598,
+        "minimumMemoryBytes" : 5891793,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -33896,7 +33896,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5055848598,
+          "minimumMemoryBytes" : 5891793,
           "peakBytes" : 2504012,
           "registryName" : "real-esrgan-anime-video-x4v3",
           "residentBytes" : 2504012,
@@ -33959,7 +33959,7 @@
       ],
       "registryName" : "real-esrgan-general-x4v3",
       "requirements" : {
-        "minimumMemoryBytes" : 5058649891,
+        "minimumMemoryBytes" : 11494379,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -33993,7 +33993,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5058649891,
+          "minimumMemoryBytes" : 11494379,
           "peakBytes" : 4885111,
           "registryName" : "real-esrgan-general-x4v3",
           "residentBytes" : 4885111,
@@ -34056,7 +34056,7 @@
       ],
       "registryName" : "real-esrgan-x2",
       "requirements" : {
-        "minimumMemoryBytes" : 5131798849,
+        "minimumMemoryBytes" : 157792295,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -34090,7 +34090,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5131798849,
+          "minimumMemoryBytes" : 157792295,
           "peakBytes" : 67061725,
           "registryName" : "real-esrgan-x2",
           "residentBytes" : 67061725,
@@ -34154,7 +34154,7 @@
       ],
       "registryName" : "real-esrgan-x4",
       "requirements" : {
-        "minimumMemoryBytes" : 5131774453,
+        "minimumMemoryBytes" : 157743504,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -34188,7 +34188,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5131774453,
+          "minimumMemoryBytes" : 157743504,
           "peakBytes" : 67040989,
           "registryName" : "real-esrgan-x4",
           "residentBytes" : 67040989,
@@ -34252,7 +34252,7 @@
       ],
       "registryName" : "real-esrgan-x4-anime",
       "requirements" : {
-        "minimumMemoryBytes" : 5074007171,
+        "minimumMemoryBytes" : 42208939,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -34286,7 +34286,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5074007171,
+          "minimumMemoryBytes" : 42208939,
           "peakBytes" : 17938799,
           "registryName" : "real-esrgan-x4-anime",
           "residentBytes" : 17938799,
@@ -34350,7 +34350,7 @@
       ],
       "registryName" : "real-hat-gan-x4",
       "requirements" : {
-        "minimumMemoryBytes" : 5253228604,
+        "minimumMemoryBytes" : 400651805,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -34384,7 +34384,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5253228604,
+          "minimumMemoryBytes" : 400651805,
           "peakBytes" : 170277017,
           "registryName" : "real-hat-gan-x4",
           "residentBytes" : 170277017,
@@ -34449,7 +34449,7 @@
       ],
       "registryName" : "resemble-enhance",
       "requirements" : {
-        "minimumMemoryBytes" : 5891933563,
+        "minimumMemoryBytes" : 1678061723,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -34483,7 +34483,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5891933563,
+          "minimumMemoryBytes" : 1678061723,
           "peakBytes" : 713176232,
           "registryName" : "resemble-enhance",
           "residentBytes" : 713176232,
@@ -34548,7 +34548,7 @@
       ],
       "registryName" : "retinaface-mobile025",
       "requirements" : {
-        "minimumMemoryBytes" : 5055008272,
+        "minimumMemoryBytes" : 4211142,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -34582,7 +34582,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5055008272,
+          "minimumMemoryBytes" : 4211142,
           "peakBytes" : 1789735,
           "registryName" : "retinaface-mobile025",
           "residentBytes" : 1789735,
@@ -34646,7 +34646,7 @@
       ],
       "registryName" : "rf-detr",
       "requirements" : {
-        "minimumMemoryBytes" : 5204312255,
+        "minimumMemoryBytes" : 302819106,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -34682,7 +34682,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5204312255,
+          "minimumMemoryBytes" : 302819106,
           "parameterCount" : 32174530,
           "peakBytes" : 128698120,
           "precision" : "float32",
@@ -34749,7 +34749,7 @@
       ],
       "registryName" : "rf-detr-large",
       "requirements" : {
-        "minimumMemoryBytes" : 5212588433,
+        "minimumMemoryBytes" : 319371464,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -34785,7 +34785,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5212588433,
+          "minimumMemoryBytes" : 319371464,
           "parameterCount" : 33933218,
           "peakBytes" : 135732872,
           "precision" : "float32",
@@ -34852,7 +34852,7 @@
       ],
       "registryName" : "rf-detr-medium",
       "requirements" : {
-        "minimumMemoryBytes" : 5211431916,
+        "minimumMemoryBytes" : 317058429,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -34888,7 +34888,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5211431916,
+          "minimumMemoryBytes" : 317058429,
           "parameterCount" : 33687458,
           "peakBytes" : 134749832,
           "precision" : "float32",
@@ -34955,7 +34955,7 @@
       ],
       "registryName" : "rf-detr-nano",
       "requirements" : {
-        "minimumMemoryBytes" : 5196278222,
+        "minimumMemoryBytes" : 286751040,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -34991,7 +34991,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5196278222,
+          "minimumMemoryBytes" : 286751040,
           "parameterCount" : 30467298,
           "peakBytes" : 121869192,
           "precision" : "float32",
@@ -35066,7 +35066,7 @@
       ],
       "registryName" : "rf-detr-seg",
       "requirements" : {
-        "minimumMemoryBytes" : 5210914349,
+        "minimumMemoryBytes" : 316023295,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -35103,7 +35103,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5210914349,
+          "minimumMemoryBytes" : 316023295,
           "parameterCount" : 33577475,
           "peakBytes" : 134309900,
           "precision" : "float32",
@@ -35178,7 +35178,7 @@
       ],
       "registryName" : "rf-detr-seg-large",
       "requirements" : {
-        "minimumMemoryBytes" : 5223311977,
+        "minimumMemoryBytes" : 340818551,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -35215,7 +35215,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5223311977,
+          "minimumMemoryBytes" : 340818551,
           "parameterCount" : 36211971,
           "peakBytes" : 144847884,
           "precision" : "float32",
@@ -35290,7 +35290,7 @@
       ],
       "registryName" : "rf-detr-seg-medium",
       "requirements" : {
-        "minimumMemoryBytes" : 5220875685,
+        "minimumMemoryBytes" : 335945968,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -35327,7 +35327,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5220875685,
+          "minimumMemoryBytes" : 335945968,
           "parameterCount" : 35694259,
           "peakBytes" : 142777036,
           "precision" : "float32",
@@ -35402,7 +35402,7 @@
       ],
       "registryName" : "rf-detr-seg-preview",
       "requirements" : {
-        "minimumMemoryBytes" : 5213625313,
+        "minimumMemoryBytes" : 321445224,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -35439,7 +35439,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5213625313,
+          "minimumMemoryBytes" : 321445224,
           "parameterCount" : 34153555,
           "peakBytes" : 136614220,
           "precision" : "float32",
@@ -35514,7 +35514,7 @@
       ],
       "registryName" : "rf-detr-seg-small",
       "requirements" : {
-        "minimumMemoryBytes" : 5211543205,
+        "minimumMemoryBytes" : 317281008,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -35551,7 +35551,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5211543205,
+          "minimumMemoryBytes" : 317281008,
           "parameterCount" : 33711107,
           "peakBytes" : 134844428,
           "precision" : "float32",
@@ -35626,7 +35626,7 @@
       ],
       "registryName" : "rf-detr-seg-xlarge",
       "requirements" : {
-        "minimumMemoryBytes" : 5232260984,
+        "minimumMemoryBytes" : 358716565,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -35663,7 +35663,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5232260984,
+          "minimumMemoryBytes" : 358716565,
           "parameterCount" : 38113635,
           "peakBytes" : 152454540,
           "precision" : "float32",
@@ -35738,7 +35738,7 @@
       ],
       "registryName" : "rf-detr-seg-xxlarge",
       "requirements" : {
-        "minimumMemoryBytes" : 5234776410,
+        "minimumMemoryBytes" : 363747417,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -35775,7 +35775,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5234776410,
+          "minimumMemoryBytes" : 363747417,
           "parameterCount" : 38648163,
           "peakBytes" : 154592652,
           "precision" : "float32",
@@ -35842,7 +35842,7 @@
       ],
       "registryName" : "rf-detr-small",
       "requirements" : {
-        "minimumMemoryBytes" : 5204014090,
+        "minimumMemoryBytes" : 302222777,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -35878,7 +35878,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5204014090,
+          "minimumMemoryBytes" : 302222777,
           "parameterCount" : 32111170,
           "peakBytes" : 128444680,
           "precision" : "float32",
@@ -35953,7 +35953,7 @@
       ],
       "registryName" : "rife",
       "requirements" : {
-        "minimumMemoryBytes" : 5067240133,
+        "minimumMemoryBytes" : 28674864,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -35987,7 +35987,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5067240133,
+          "minimumMemoryBytes" : 28674864,
           "peakBytes" : 12186817,
           "registryName" : "rife",
           "residentBytes" : 12186817,
@@ -36061,7 +36061,7 @@
       ],
       "registryName" : "rife-clip",
       "requirements" : {
-        "minimumMemoryBytes" : 5067240133,
+        "minimumMemoryBytes" : 28674864,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -36095,7 +36095,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5067240133,
+          "minimumMemoryBytes" : 28674864,
           "peakBytes" : 12186817,
           "registryName" : "rife-clip",
           "residentBytes" : 12186817,
@@ -36270,7 +36270,7 @@
       ],
       "registryName" : "robust-video-matting",
       "requirements" : {
-        "minimumMemoryBytes" : 5070805903,
+        "minimumMemoryBytes" : 35806403,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -36304,7 +36304,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5070805903,
+          "minimumMemoryBytes" : 35806403,
           "peakBytes" : 15217721,
           "registryName" : "robust-video-matting",
           "residentBytes" : 15217721,
@@ -36376,7 +36376,7 @@
       ],
       "registryName" : "robust-video-matting-clip",
       "requirements" : {
-        "minimumMemoryBytes" : 5070805903,
+        "minimumMemoryBytes" : 35806403,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -36410,7 +36410,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5070805903,
+          "minimumMemoryBytes" : 35806403,
           "peakBytes" : 15217721,
           "registryName" : "robust-video-matting-clip",
           "residentBytes" : 15217721,
@@ -36491,7 +36491,7 @@
       ],
       "registryName" : "robust-video-matting-resnet50",
       "requirements" : {
-        "minimumMemoryBytes" : 5179850790,
+        "minimumMemoryBytes" : 253896177,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -36525,7 +36525,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5179850790,
+          "minimumMemoryBytes" : 253896177,
           "peakBytes" : 107905875,
           "registryName" : "robust-video-matting-resnet50",
           "residentBytes" : 107905875,
@@ -36597,7 +36597,7 @@
       ],
       "registryName" : "robust-video-matting-resnet50-clip",
       "requirements" : {
-        "minimumMemoryBytes" : 5179850790,
+        "minimumMemoryBytes" : 253896177,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -36631,7 +36631,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5179850790,
+          "minimumMemoryBytes" : 253896177,
           "peakBytes" : 107905875,
           "registryName" : "robust-video-matting-resnet50-clip",
           "residentBytes" : 107905875,
@@ -36695,7 +36695,7 @@
       ],
       "registryName" : "rtdetr",
       "requirements" : {
-        "minimumMemoryBytes" : 5255347200,
+        "minimumMemoryBytes" : 404888998,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -36731,7 +36731,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5255347200,
+          "minimumMemoryBytes" : 404888998,
           "parameterCount" : 43019414,
           "peakBytes" : 172077824,
           "precision" : "float32",
@@ -36798,7 +36798,7 @@
       ],
       "registryName" : "rtdetr-r101vd",
       "requirements" : {
-        "minimumMemoryBytes" : 5414308744,
+        "minimumMemoryBytes" : 722812085,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -36834,7 +36834,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5414308744,
+          "minimumMemoryBytes" : 722812085,
           "parameterCount" : 76798742,
           "peakBytes" : 307195136,
           "precision" : "float32",
@@ -36901,7 +36901,7 @@
       ],
       "registryName" : "rtdetr-r18vd",
       "requirements" : {
-        "minimumMemoryBytes" : 5148007511,
+        "minimumMemoryBytes" : 190209619,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -36937,7 +36937,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5148007511,
+          "minimumMemoryBytes" : 190209619,
           "parameterCount" : 20209726,
           "peakBytes" : 80839088,
           "precision" : "float32",
@@ -37004,7 +37004,7 @@
       ],
       "registryName" : "rtdetr-r34vd",
       "requirements" : {
-        "minimumMemoryBytes" : 5201017525,
+        "minimumMemoryBytes" : 296229648,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -37040,7 +37040,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5201017525,
+          "minimumMemoryBytes" : 296229648,
           "parameterCount" : 31474354,
           "peakBytes" : 125897600,
           "precision" : "float32",
@@ -37107,7 +37107,7 @@
       ],
       "registryName" : "rtdetr-v2-r101vd",
       "requirements" : {
-        "minimumMemoryBytes" : 5414309083,
+        "minimumMemoryBytes" : 722812763,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -37143,7 +37143,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5414309083,
+          "minimumMemoryBytes" : 722812763,
           "parameterCount" : 76798814,
           "peakBytes" : 307195424,
           "precision" : "float32",
@@ -37210,7 +37210,7 @@
       ],
       "registryName" : "rtdetr-v2-r18vd",
       "requirements" : {
-        "minimumMemoryBytes" : 5148007680,
+        "minimumMemoryBytes" : 190209958,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -37246,7 +37246,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5148007680,
+          "minimumMemoryBytes" : 190209958,
           "parameterCount" : 20209762,
           "peakBytes" : 80839232,
           "precision" : "float32",
@@ -37313,7 +37313,7 @@
       ],
       "registryName" : "rtdetr-v2-r34vd",
       "requirements" : {
-        "minimumMemoryBytes" : 5201017751,
+        "minimumMemoryBytes" : 296230099,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -37349,7 +37349,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5201017751,
+          "minimumMemoryBytes" : 296230099,
           "parameterCount" : 31474402,
           "peakBytes" : 125897792,
           "precision" : "float32",
@@ -37416,7 +37416,7 @@
       ],
       "registryName" : "rtdetr-v2-r50vd",
       "requirements" : {
-        "minimumMemoryBytes" : 5255347539,
+        "minimumMemoryBytes" : 404889676,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -37452,7 +37452,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5255347539,
+          "minimumMemoryBytes" : 404889676,
           "parameterCount" : 43019486,
           "peakBytes" : 172078112,
           "precision" : "float32",
@@ -37540,7 +37540,7 @@
       ],
       "registryName" : "sa2va-1b",
       "requirements" : {
-        "minimumMemoryBytes" : 7790939676,
+        "minimumMemoryBytes" : 5476073949,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -37578,7 +37578,7 @@
             ],
             "vocabularySize" : 151679
           },
-          "minimumMemoryBytes" : 7790939676,
+          "minimumMemoryBytes" : 5476073949,
           "parameterCount" : 1163665714,
           "peakBytes" : 2327331428,
           "precision" : "float32",
@@ -39055,7 +39055,7 @@
       ],
       "registryName" : "sam-vit-b",
       "requirements" : {
-        "minimumMemoryBytes" : 5494129035,
+        "minimumMemoryBytes" : 882452666,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -39089,7 +39089,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5494129035,
+          "minimumMemoryBytes" : 882452666,
           "peakBytes" : 375042383,
           "registryName" : "sam-vit-b",
           "residentBytes" : 375042383,
@@ -39175,7 +39175,7 @@
       ],
       "registryName" : "sam-vit-h",
       "requirements" : {
-        "minimumMemoryBytes" : 8070021383,
+        "minimumMemoryBytes" : 6034237363,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -39209,7 +39209,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 8070021383,
+          "minimumMemoryBytes" : 6034237363,
           "peakBytes" : 2564550879,
           "registryName" : "sam-vit-h",
           "residentBytes" : 2564550879,
@@ -39295,7 +39295,7 @@
       ],
       "registryName" : "sam-vit-l",
       "requirements" : {
-        "minimumMemoryBytes" : 6522931651,
+        "minimumMemoryBytes" : 2940057899,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -39329,7 +39329,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6522931651,
+          "minimumMemoryBytes" : 2940057899,
           "peakBytes" : 1249524607,
           "registryName" : "sam-vit-l",
           "residentBytes" : 1249524607,
@@ -39415,7 +39415,7 @@
       ],
       "registryName" : "sam2",
       "requirements" : {
-        "minimumMemoryBytes" : 5236442073,
+        "minimumMemoryBytes" : 367078744,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -39449,7 +39449,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5236442073,
+          "minimumMemoryBytes" : 367078744,
           "peakBytes" : 156008466,
           "registryName" : "sam2",
           "residentBytes" : 156008466,
@@ -39537,7 +39537,7 @@
       ],
       "registryName" : "sam2-hiera-base-plus",
       "requirements" : {
-        "minimumMemoryBytes" : 5433483052,
+        "minimumMemoryBytes" : 761160702,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -39571,7 +39571,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5433483052,
+          "minimumMemoryBytes" : 761160702,
           "peakBytes" : 323493298,
           "registryName" : "sam2-hiera-base-plus",
           "residentBytes" : 323493298,
@@ -39658,7 +39658,7 @@
       ],
       "registryName" : "sam2-hiera-base-plus-video",
       "requirements" : {
-        "minimumMemoryBytes" : 5433483052,
+        "minimumMemoryBytes" : 761160702,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -39692,7 +39692,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5433483052,
+          "minimumMemoryBytes" : 761160702,
           "peakBytes" : 323493298,
           "registryName" : "sam2-hiera-base-plus-video",
           "residentBytes" : 323493298,
@@ -39780,7 +39780,7 @@
       ],
       "registryName" : "sam2-hiera-large",
       "requirements" : {
-        "minimumMemoryBytes" : 6109317368,
+        "minimumMemoryBytes" : 2112829332,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -39814,7 +39814,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6109317368,
+          "minimumMemoryBytes" : 2112829332,
           "peakBytes" : 897952466,
           "registryName" : "sam2-hiera-large",
           "residentBytes" : 897952466,
@@ -39901,7 +39901,7 @@
       ],
       "registryName" : "sam2-hiera-large-video",
       "requirements" : {
-        "minimumMemoryBytes" : 6109317368,
+        "minimumMemoryBytes" : 2112829332,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -39935,7 +39935,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6109317368,
+          "minimumMemoryBytes" : 2112829332,
           "peakBytes" : 897952466,
           "registryName" : "sam2-hiera-large-video",
           "residentBytes" : 897952466,
@@ -40023,7 +40023,7 @@
       ],
       "registryName" : "sam2-hiera-small",
       "requirements" : {
-        "minimumMemoryBytes" : 5269737584,
+        "minimumMemoryBytes" : 433669765,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -40057,7 +40057,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5269737584,
+          "minimumMemoryBytes" : 433669765,
           "peakBytes" : 184309650,
           "registryName" : "sam2-hiera-small",
           "residentBytes" : 184309650,
@@ -40144,7 +40144,7 @@
       ],
       "registryName" : "sam2-hiera-small-video",
       "requirements" : {
-        "minimumMemoryBytes" : 5269737584,
+        "minimumMemoryBytes" : 433669765,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -40178,7 +40178,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5269737584,
+          "minimumMemoryBytes" : 433669765,
           "peakBytes" : 184309650,
           "registryName" : "sam2-hiera-small-video",
           "residentBytes" : 184309650,
@@ -40266,7 +40266,7 @@
       ],
       "registryName" : "sam2-hiera-tiny",
       "requirements" : {
-        "minimumMemoryBytes" : 5236321584,
+        "minimumMemoryBytes" : 366837765,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -40300,7 +40300,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5236321584,
+          "minimumMemoryBytes" : 366837765,
           "peakBytes" : 155906050,
           "registryName" : "sam2-hiera-tiny",
           "residentBytes" : 155906050,
@@ -40387,7 +40387,7 @@
       ],
       "registryName" : "sam2-hiera-tiny-video",
       "requirements" : {
-        "minimumMemoryBytes" : 5236321584,
+        "minimumMemoryBytes" : 366837765,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -40421,7 +40421,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5236321584,
+          "minimumMemoryBytes" : 366837765,
           "peakBytes" : 155906050,
           "registryName" : "sam2-hiera-tiny-video",
           "residentBytes" : 155906050,
@@ -40508,7 +40508,7 @@
       ],
       "registryName" : "sam2-video",
       "requirements" : {
-        "minimumMemoryBytes" : 5236442073,
+        "minimumMemoryBytes" : 367078744,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -40542,7 +40542,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5236442073,
+          "minimumMemoryBytes" : 367078744,
           "peakBytes" : 156008466,
           "registryName" : "sam2-video",
           "residentBytes" : 156008466,
@@ -40630,7 +40630,7 @@
       ],
       "registryName" : "sam2.1-hiera-base-plus",
       "requirements" : {
-        "minimumMemoryBytes" : 5433616586,
+        "minimumMemoryBytes" : 761427770,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -40664,7 +40664,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5433616586,
+          "minimumMemoryBytes" : 761427770,
           "peakBytes" : 323606802,
           "registryName" : "sam2.1-hiera-base-plus",
           "residentBytes" : 323606802,
@@ -40751,7 +40751,7 @@
       ],
       "registryName" : "sam2.1-hiera-base-plus-video",
       "requirements" : {
-        "minimumMemoryBytes" : 5433616586,
+        "minimumMemoryBytes" : 761427770,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -40785,7 +40785,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5433616586,
+          "minimumMemoryBytes" : 761427770,
           "peakBytes" : 323606802,
           "registryName" : "sam2.1-hiera-base-plus-video",
           "residentBytes" : 323606802,
@@ -40873,7 +40873,7 @@
       ],
       "registryName" : "sam2.1-hiera-large",
       "requirements" : {
-        "minimumMemoryBytes" : 6109471656,
+        "minimumMemoryBytes" : 2113137909,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -40907,7 +40907,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6109471656,
+          "minimumMemoryBytes" : 2113137909,
           "peakBytes" : 898083611,
           "registryName" : "sam2.1-hiera-large",
           "residentBytes" : 898083611,
@@ -40994,7 +40994,7 @@
       ],
       "registryName" : "sam2.1-hiera-large-video",
       "requirements" : {
-        "minimumMemoryBytes" : 6109471656,
+        "minimumMemoryBytes" : 2113137909,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -41028,7 +41028,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6109471656,
+          "minimumMemoryBytes" : 2113137909,
           "peakBytes" : 898083611,
           "registryName" : "sam2.1-hiera-large-video",
           "residentBytes" : 898083611,
@@ -41116,7 +41116,7 @@
       ],
       "registryName" : "sam2.1-hiera-small",
       "requirements" : {
-        "minimumMemoryBytes" : 5269863037,
+        "minimumMemoryBytes" : 433920671,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -41150,7 +41150,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5269863037,
+          "minimumMemoryBytes" : 433920671,
           "peakBytes" : 184416285,
           "registryName" : "sam2.1-hiera-small",
           "residentBytes" : 184416285,
@@ -41237,7 +41237,7 @@
       ],
       "registryName" : "sam2.1-hiera-small-video",
       "requirements" : {
-        "minimumMemoryBytes" : 5269863037,
+        "minimumMemoryBytes" : 433920671,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -41271,7 +41271,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5269863037,
+          "minimumMemoryBytes" : 433920671,
           "peakBytes" : 184416285,
           "registryName" : "sam2.1-hiera-small-video",
           "residentBytes" : 184416285,
@@ -41372,7 +41372,7 @@
       ],
       "registryName" : "sam3",
       "requirements" : {
-        "minimumMemoryBytes" : 9099889186,
+        "minimumMemoryBytes" : 8093972970,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -41408,7 +41408,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 9099889186,
+          "minimumMemoryBytes" : 8093972970,
           "peakBytes" : 3439938512,
           "registryName" : "sam3",
           "residentBytes" : 3439938512,
@@ -41538,7 +41538,7 @@
       ],
       "registryName" : "sam3.1",
       "requirements" : {
-        "minimumMemoryBytes" : 9173791780,
+        "minimumMemoryBytes" : 8241778158,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -41573,7 +41573,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 9173791780,
+          "minimumMemoryBytes" : 8241778158,
           "peakBytes" : 3502755717,
           "registryName" : "sam3.1",
           "residentBytes" : 3502755717,
@@ -42290,7 +42290,7 @@
       ],
       "registryName" : "sd-inpaint",
       "requirements" : {
-        "minimumMemoryBytes" : 10071049616,
+        "minimumMemoryBytes" : 10036293829,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -42324,7 +42324,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 10071049616,
+          "minimumMemoryBytes" : 10036293829,
           "peakBytes" : 4265424877,
           "registryName" : "sd-inpaint",
           "residentBytes" : 4265424877,
@@ -42447,7 +42447,7 @@
       ],
       "registryName" : "sd-x4-upscaler",
       "requirements" : {
-        "minimumMemoryBytes" : 7541015393,
+        "minimumMemoryBytes" : 4976225384,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -42483,7 +42483,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 7541015393,
+          "minimumMemoryBytes" : 4976225384,
           "parameterCount" : 528723947,
           "peakBytes" : 2114895788,
           "precision" : "float32",
@@ -44982,7 +44982,7 @@
       ],
       "registryName" : "segformer-b0",
       "requirements" : {
-        "minimumMemoryBytes" : 5070658298,
+        "minimumMemoryBytes" : 35511193,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -45016,7 +45016,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5070658298,
+          "minimumMemoryBytes" : 35511193,
           "peakBytes" : 15092257,
           "registryName" : "segformer-b0",
           "residentBytes" : 15092257,
@@ -45082,7 +45082,7 @@
       ],
       "registryName" : "sgmse",
       "requirements" : {
-        "minimumMemoryBytes" : 6597381105,
+        "minimumMemoryBytes" : 3088956808,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -45116,7 +45116,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6597381105,
+          "minimumMemoryBytes" : 3088956808,
           "peakBytes" : 1312806643,
           "registryName" : "sgmse",
           "residentBytes" : 1312806643,
@@ -45182,7 +45182,7 @@
       ],
       "registryName" : "siglip2-base-patch16-224",
       "requirements" : {
-        "minimumMemoryBytes" : 6818493149,
+        "minimumMemoryBytes" : 3531180895,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -45219,7 +45219,7 @@
             ],
             "vocabularySize" : 256000
           },
-          "minimumMemoryBytes" : 6818493149,
+          "minimumMemoryBytes" : 3531180895,
           "parameterCount" : 375187970,
           "peakBytes" : 1500751880,
           "precision" : "float32",
@@ -45287,7 +45287,7 @@
       ],
       "registryName" : "siglip2-base-patch16-256",
       "requirements" : {
-        "minimumMemoryBytes" : 6818709996,
+        "minimumMemoryBytes" : 3531614589,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -45324,7 +45324,7 @@
             ],
             "vocabularySize" : 256000
           },
-          "minimumMemoryBytes" : 6818709996,
+          "minimumMemoryBytes" : 3531614589,
           "parameterCount" : 375234050,
           "peakBytes" : 1500936200,
           "precision" : "float32",
@@ -45392,7 +45392,7 @@
       ],
       "registryName" : "siglip2-base-patch16-384",
       "requirements" : {
-        "minimumMemoryBytes" : 6819866513,
+        "minimumMemoryBytes" : 3533927624,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -45429,7 +45429,7 @@
             ],
             "vocabularySize" : 256000
           },
-          "minimumMemoryBytes" : 6819866513,
+          "minimumMemoryBytes" : 3533927624,
           "parameterCount" : 375479810,
           "peakBytes" : 1501919240,
           "precision" : "float32",
@@ -45497,7 +45497,7 @@
       ],
       "registryName" : "siglip2-base-patch16-512",
       "requirements" : {
-        "minimumMemoryBytes" : 6821485638,
+        "minimumMemoryBytes" : 3537165873,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -45534,7 +45534,7 @@
             ],
             "vocabularySize" : 256000
           },
-          "minimumMemoryBytes" : 6821485638,
+          "minimumMemoryBytes" : 3537165873,
           "parameterCount" : 375823874,
           "peakBytes" : 1503295496,
           "precision" : "float32",
@@ -45602,7 +45602,7 @@
       ],
       "registryName" : "siglip2-base-patch32-256",
       "requirements" : {
-        "minimumMemoryBytes" : 6826343012,
+        "minimumMemoryBytes" : 3546880622,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -45639,7 +45639,7 @@
             ],
             "vocabularySize" : 256000
           },
-          "minimumMemoryBytes" : 6826343012,
+          "minimumMemoryBytes" : 3546880622,
           "parameterCount" : 376856066,
           "peakBytes" : 1507424264,
           "precision" : "float32",
@@ -45915,7 +45915,7 @@
       ],
       "registryName" : "siglip2-large-patch16-256",
       "requirements" : {
-        "minimumMemoryBytes" : 9201264048,
+        "minimumMemoryBytes" : 8296722692,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -45952,7 +45952,7 @@
             ],
             "vocabularySize" : 256000
           },
-          "minimumMemoryBytes" : 9201264048,
+          "minimumMemoryBytes" : 8296722692,
           "parameterCount" : 881526786,
           "peakBytes" : 3526107144,
           "precision" : "float32",
@@ -46020,7 +46020,7 @@
       ],
       "registryName" : "siglip2-large-patch16-384",
       "requirements" : {
-        "minimumMemoryBytes" : 9202806071,
+        "minimumMemoryBytes" : 8299806739,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -46057,7 +46057,7 @@
             ],
             "vocabularySize" : 256000
           },
-          "minimumMemoryBytes" : 9202806071,
+          "minimumMemoryBytes" : 8299806739,
           "parameterCount" : 881854466,
           "peakBytes" : 3527417864,
           "precision" : "float32",
@@ -46125,7 +46125,7 @@
       ],
       "registryName" : "siglip2-large-patch16-512",
       "requirements" : {
-        "minimumMemoryBytes" : 9204964904,
+        "minimumMemoryBytes" : 8304124405,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -46162,7 +46162,7 @@
             ],
             "vocabularySize" : 256000
           },
-          "minimumMemoryBytes" : 9204964904,
+          "minimumMemoryBytes" : 8304124405,
           "parameterCount" : 882313218,
           "peakBytes" : 3529252872,
           "precision" : "float32",
@@ -46829,7 +46829,7 @@
       ],
       "registryName" : "silero-vad",
       "requirements" : {
-        "minimumMemoryBytes" : 5055576262,
+        "minimumMemoryBytes" : 5347120,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -46863,7 +46863,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5055576262,
+          "minimumMemoryBytes" : 5347120,
           "peakBytes" : 2272526,
           "registryName" : "silero-vad",
           "residentBytes" : 2272526,
@@ -46979,7 +46979,7 @@
       ],
       "registryName" : "small100",
       "requirements" : {
-        "minimumMemoryBytes" : 6618716763,
+        "minimumMemoryBytes" : 3131628123,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -47016,7 +47016,7 @@
             ],
             "vocabularySize" : 128112
           },
-          "minimumMemoryBytes" : 6618716763,
+          "minimumMemoryBytes" : 3131628123,
           "parameterCount" : 332735488,
           "peakBytes" : 1330941952,
           "precision" : "float32",
@@ -47452,7 +47452,7 @@
       ],
       "registryName" : "smollm2-135m-instruct-gguf",
       "requirements" : {
-        "minimumMemoryBytes" : 5176966400,
+        "minimumMemoryBytes" : 248127398,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -47486,7 +47486,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5176966400,
+          "minimumMemoryBytes" : 248127398,
           "peakBytes" : 105454144,
           "registryName" : "smollm2-135m-instruct-gguf",
           "residentBytes" : 105454144,
@@ -47722,7 +47722,7 @@
       ],
       "registryName" : "smolvlm2-256m",
       "requirements" : {
-        "minimumMemoryBytes" : 6259890598,
+        "minimumMemoryBytes" : 2413975793,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -47759,7 +47759,7 @@
             ],
             "vocabularySize" : 49280
           },
-          "minimumMemoryBytes" : 6259890598,
+          "minimumMemoryBytes" : 2413975793,
           "parameterCount" : 256484928,
           "peakBytes" : 1025939712,
           "precision" : "float32",
@@ -47871,7 +47871,7 @@
       ],
       "registryName" : "smolvlm2-500m",
       "requirements" : {
-        "minimumMemoryBytes" : 7441054720,
+        "minimumMemoryBytes" : 4776304038,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -47908,7 +47908,7 @@
             ],
             "vocabularySize" : 49280
           },
-          "minimumMemoryBytes" : 7441054720,
+          "minimumMemoryBytes" : 4776304038,
           "parameterCount" : 507482304,
           "peakBytes" : 2029929216,
           "precision" : "float32",
@@ -47998,7 +47998,7 @@
       ],
       "registryName" : "snac",
       "requirements" : {
-        "minimumMemoryBytes" : 5146418295,
+        "minimumMemoryBytes" : 187031186,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -48032,7 +48032,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5146418295,
+          "minimumMemoryBytes" : 187031186,
           "peakBytes" : 79488254,
           "registryName" : "snac",
           "residentBytes" : 79488254,
@@ -48097,7 +48097,7 @@
       ],
       "registryName" : "snac-32khz",
       "requirements" : {
-        "minimumMemoryBytes" : 5309736586,
+        "minimumMemoryBytes" : 513667770,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -48131,7 +48131,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5309736586,
+          "minimumMemoryBytes" : 513667770,
           "peakBytes" : 218308802,
           "registryName" : "snac-32khz",
           "residentBytes" : 218308802,
@@ -48196,7 +48196,7 @@
       ],
       "registryName" : "snac-44khz",
       "requirements" : {
-        "minimumMemoryBytes" : 5309736586,
+        "minimumMemoryBytes" : 513667770,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -48230,7 +48230,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5309736586,
+          "minimumMemoryBytes" : 513667770,
           "peakBytes" : 218308802,
           "registryName" : "snac-44khz",
           "residentBytes" : 218308802,
@@ -48766,7 +48766,7 @@
       ],
       "registryName" : "stable-diffusion-v1-5",
       "requirements" : {
-        "minimumMemoryBytes" : 10070481342,
+        "minimumMemoryBytes" : 10035157280,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -48803,7 +48803,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 10070481342,
+          "minimumMemoryBytes" : 10035157280,
           "parameterCount" : 1066235384,
           "peakBytes" : 4264941844,
           "precision" : "float32",
@@ -49359,7 +49359,7 @@
       ],
       "registryName" : "swinir-classical-x2",
       "requirements" : {
-        "minimumMemoryBytes" : 5122337924,
+        "minimumMemoryBytes" : 138870445,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -49393,7 +49393,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5122337924,
+          "minimumMemoryBytes" : 138870445,
           "peakBytes" : 59019939,
           "registryName" : "swinir-classical-x2",
           "residentBytes" : 59019939,
@@ -49457,7 +49457,7 @@
       ],
       "registryName" : "swinir-classical-x3",
       "requirements" : {
-        "minimumMemoryBytes" : 5123206816,
+        "minimumMemoryBytes" : 140608229,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -49491,7 +49491,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5123206816,
+          "minimumMemoryBytes" : 140608229,
           "peakBytes" : 59758497,
           "registryName" : "swinir-classical-x3",
           "residentBytes" : 59758497,
@@ -49555,7 +49555,7 @@
       ],
       "registryName" : "swinir-classical-x4",
       "requirements" : {
-        "minimumMemoryBytes" : 5123033877,
+        "minimumMemoryBytes" : 140262351,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -49589,7 +49589,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5123033877,
+          "minimumMemoryBytes" : 140262351,
           "peakBytes" : 59611499,
           "registryName" : "swinir-classical-x4",
           "residentBytes" : 59611499,
@@ -49653,7 +49653,7 @@
       ],
       "registryName" : "swinir-classical-x8",
       "requirements" : {
-        "minimumMemoryBytes" : 5123729759,
+        "minimumMemoryBytes" : 141654116,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -49687,7 +49687,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5123729759,
+          "minimumMemoryBytes" : 141654116,
           "peakBytes" : 60202999,
           "registryName" : "swinir-classical-x8",
           "residentBytes" : 60202999,
@@ -49751,7 +49751,7 @@
       ],
       "registryName" : "swinir-lightweight-x2",
       "requirements" : {
-        "minimumMemoryBytes" : 5073076806,
+        "minimumMemoryBytes" : 40348210,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -49785,7 +49785,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5073076806,
+          "minimumMemoryBytes" : 40348210,
           "peakBytes" : 17147989,
           "registryName" : "swinir-lightweight-x2",
           "residentBytes" : 17147989,
@@ -49849,7 +49849,7 @@
       ],
       "registryName" : "swinir-lightweight-x3",
       "requirements" : {
-        "minimumMemoryBytes" : 5073114980,
+        "minimumMemoryBytes" : 40424558,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -49883,7 +49883,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5073114980,
+          "minimumMemoryBytes" : 40424558,
           "peakBytes" : 17180437,
           "registryName" : "swinir-lightweight-x3",
           "residentBytes" : 17180437,
@@ -49947,7 +49947,7 @@
       ],
       "registryName" : "swinir-lightweight-x4",
       "requirements" : {
-        "minimumMemoryBytes" : 5073168515,
+        "minimumMemoryBytes" : 40531626,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -49981,7 +49981,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5073168515,
+          "minimumMemoryBytes" : 40531626,
           "peakBytes" : 17225941,
           "registryName" : "swinir-lightweight-x4",
           "residentBytes" : 17225941,
@@ -50045,7 +50045,7 @@
       ],
       "registryName" : "swinir-real-x4-l",
       "requirements" : {
-        "minimumMemoryBytes" : 5220519100,
+        "minimumMemoryBytes" : 335232798,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -50079,7 +50079,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5220519100,
+          "minimumMemoryBytes" : 335232798,
           "peakBytes" : 142473939,
           "registryName" : "swinir-real-x4-l",
           "residentBytes" : 142473939,
@@ -50143,7 +50143,7 @@
       ],
       "registryName" : "swinir-real-x4-m",
       "requirements" : {
-        "minimumMemoryBytes" : 5131879009,
+        "minimumMemoryBytes" : 157952615,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -50177,7 +50177,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5131879009,
+          "minimumMemoryBytes" : 157952615,
           "peakBytes" : 67129861,
           "registryName" : "swinir-real-x4-m",
           "residentBytes" : 67129861,
@@ -50315,7 +50315,7 @@
       ],
       "registryName" : "table-transformer-detection",
       "requirements" : {
-        "minimumMemoryBytes" : 5188519817,
+        "minimumMemoryBytes" : 271234231,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -50351,7 +50351,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5188519817,
+          "minimumMemoryBytes" : 271234231,
           "parameterCount" : 28818634,
           "peakBytes" : 115274548,
           "precision" : "float32",
@@ -50430,7 +50430,7 @@
       ],
       "registryName" : "table-transformer-structure-recognition",
       "requirements" : {
-        "minimumMemoryBytes" : 5188657172,
+        "minimumMemoryBytes" : 271508942,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -50466,7 +50466,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5188657172,
+          "minimumMemoryBytes" : 271508942,
           "parameterCount" : 28847822,
           "peakBytes" : 115391300,
           "precision" : "float32",
@@ -50545,7 +50545,7 @@
       ],
       "registryName" : "table-transformer-structure-recognition-v1.1-all",
       "requirements" : {
-        "minimumMemoryBytes" : 5188657144,
+        "minimumMemoryBytes" : 271508885,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -50581,7 +50581,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5188657144,
+          "minimumMemoryBytes" : 271508885,
           "parameterCount" : 28847819,
           "peakBytes" : 115391276,
           "precision" : "float32",
@@ -50660,7 +50660,7 @@
       ],
       "registryName" : "table-transformer-structure-recognition-v1.1-fin",
       "requirements" : {
-        "minimumMemoryBytes" : 5188657144,
+        "minimumMemoryBytes" : 271508885,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -50696,7 +50696,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5188657144,
+          "minimumMemoryBytes" : 271508885,
           "parameterCount" : 28847819,
           "peakBytes" : 115391276,
           "precision" : "float32",
@@ -50775,7 +50775,7 @@
       ],
       "registryName" : "table-transformer-structure-recognition-v1.1-pub",
       "requirements" : {
-        "minimumMemoryBytes" : 5188657144,
+        "minimumMemoryBytes" : 271508885,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -50811,7 +50811,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5188657144,
+          "minimumMemoryBytes" : 271508885,
           "parameterCount" : 28847819,
           "peakBytes" : 115391276,
           "precision" : "float32",
@@ -50890,7 +50890,7 @@
       ],
       "registryName" : "taesd",
       "requirements" : {
-        "minimumMemoryBytes" : 5064408880,
+        "minimumMemoryBytes" : 23012358,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -50926,7 +50926,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5064408880,
+          "minimumMemoryBytes" : 23012358,
           "parameterCount" : 2445063,
           "peakBytes" : 9780252,
           "precision" : "float32",
@@ -51060,7 +51060,7 @@
       ],
       "registryName" : "timesfm-2.5-200m",
       "requirements" : {
-        "minimumMemoryBytes" : 6141322843,
+        "minimumMemoryBytes" : 2176840283,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -51096,7 +51096,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6141322843,
+          "minimumMemoryBytes" : 2176840283,
           "parameterCount" : 231289280,
           "peakBytes" : 925157120,
           "precision" : "float32",
@@ -51763,7 +51763,7 @@
       ],
       "registryName" : "trocr-base-handwritten",
       "requirements" : {
-        "minimumMemoryBytes" : 6621520113,
+        "minimumMemoryBytes" : 3137234824,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -51799,7 +51799,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6621520113,
+          "minimumMemoryBytes" : 3137234824,
           "parameterCount" : 333331200,
           "peakBytes" : 1333324800,
           "precision" : "float32",
@@ -51912,7 +51912,7 @@
       ],
       "registryName" : "trocr-base-printed",
       "requirements" : {
-        "minimumMemoryBytes" : 6621520113,
+        "minimumMemoryBytes" : 3137234824,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -51948,7 +51948,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6621520113,
+          "minimumMemoryBytes" : 3137234824,
           "parameterCount" : 333331200,
           "peakBytes" : 1333324800,
           "precision" : "float32",
@@ -52061,7 +52061,7 @@
       ],
       "registryName" : "trocr-base-stage1",
       "requirements" : {
-        "minimumMemoryBytes" : 6861251770,
+        "minimumMemoryBytes" : 3616698137,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -52097,7 +52097,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6861251770,
+          "minimumMemoryBytes" : 3616698137,
           "parameterCount" : 384274177,
           "peakBytes" : 1537096708,
           "precision" : "float32",
@@ -52205,7 +52205,7 @@
       ],
       "registryName" : "trocr-base-str",
       "requirements" : {
-        "minimumMemoryBytes" : 6624483917,
+        "minimumMemoryBytes" : 3143162431,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -52239,7 +52239,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6624483917,
+          "minimumMemoryBytes" : 3143162431,
           "peakBytes" : 1335844033,
           "registryName" : "trocr-base-str",
           "residentBytes" : 1335844033,
@@ -52344,7 +52344,7 @@
       ],
       "registryName" : "trocr-large-handwritten",
       "requirements" : {
-        "minimumMemoryBytes" : 7675203178,
+        "minimumMemoryBytes" : 5244600953,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -52378,7 +52378,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 7675203178,
+          "minimumMemoryBytes" : 5244600953,
           "peakBytes" : 2228955405,
           "registryName" : "trocr-large-handwritten",
           "residentBytes" : 2228955405,
@@ -52488,7 +52488,7 @@
       ],
       "registryName" : "trocr-large-printed",
       "requirements" : {
-        "minimumMemoryBytes" : 7914642979,
+        "minimumMemoryBytes" : 5723480556,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -52524,7 +52524,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 7914642979,
+          "minimumMemoryBytes" : 5723480556,
           "parameterCount" : 608119809,
           "peakBytes" : 2432479236,
           "precision" : "float32",
@@ -52637,7 +52637,7 @@
       ],
       "registryName" : "trocr-large-stage1",
       "requirements" : {
-        "minimumMemoryBytes" : 7914642979,
+        "minimumMemoryBytes" : 5723480556,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -52673,7 +52673,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 7914642979,
+          "minimumMemoryBytes" : 5723480556,
           "parameterCount" : 608119809,
           "peakBytes" : 2432479236,
           "precision" : "float32",
@@ -52781,7 +52781,7 @@
       ],
       "registryName" : "trocr-large-str",
       "requirements" : {
-        "minimumMemoryBytes" : 7680095258,
+        "minimumMemoryBytes" : 5254385113,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -52815,7 +52815,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 7680095258,
+          "minimumMemoryBytes" : 5254385113,
           "peakBytes" : 2233113673,
           "registryName" : "trocr-large-str",
           "residentBytes" : 2233113673,
@@ -52920,7 +52920,7 @@
       ],
       "registryName" : "trocr-small-handwritten",
       "requirements" : {
-        "minimumMemoryBytes" : 5342235691,
+        "minimumMemoryBytes" : 578665979,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -52954,7 +52954,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5342235691,
+          "minimumMemoryBytes" : 578665979,
           "peakBytes" : 245933041,
           "registryName" : "trocr-small-handwritten",
           "residentBytes" : 245933041,
@@ -53064,7 +53064,7 @@
       ],
       "registryName" : "trocr-small-printed",
       "requirements" : {
-        "minimumMemoryBytes" : 5342073676,
+        "minimumMemoryBytes" : 578341949,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -53100,7 +53100,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5342073676,
+          "minimumMemoryBytes" : 578341949,
           "parameterCount" : 61448832,
           "peakBytes" : 245795328,
           "precision" : "float32",
@@ -53208,7 +53208,7 @@
       ],
       "registryName" : "trocr-small-stage1",
       "requirements" : {
-        "minimumMemoryBytes" : 5342235691,
+        "minimumMemoryBytes" : 578665979,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -53242,7 +53242,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5342235691,
+          "minimumMemoryBytes" : 578665979,
           "peakBytes" : 245933041,
           "registryName" : "trocr-small-stage1",
           "residentBytes" : 245933041,
@@ -53364,7 +53364,7 @@
       ],
       "registryName" : "u2net",
       "requirements" : {
-        "minimumMemoryBytes" : 5260303804,
+        "minimumMemoryBytes" : 414802205,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -53398,7 +53398,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5260303804,
+          "minimumMemoryBytes" : 414802205,
           "peakBytes" : 176290937,
           "registryName" : "u2net",
           "residentBytes" : 176290937,
@@ -53555,7 +53555,7 @@
       ],
       "registryName" : "vad-marblenet",
       "requirements" : {
-        "minimumMemoryBytes" : 5053493008,
+        "minimumMemoryBytes" : 1180612,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -53589,7 +53589,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5053493008,
+          "minimumMemoryBytes" : 1180612,
           "peakBytes" : 501760,
           "registryName" : "vad-marblenet",
           "residentBytes" : 501760,
@@ -53654,7 +53654,7 @@
       ],
       "registryName" : "video-super-resolution",
       "requirements" : {
-        "minimumMemoryBytes" : 5082584079,
+        "minimumMemoryBytes" : 59362756,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -53688,7 +53688,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5082584079,
+          "minimumMemoryBytes" : 59362756,
           "peakBytes" : 25229171,
           "registryName" : "video-super-resolution",
           "residentBytes" : 25229171,
@@ -53759,7 +53759,7 @@
       ],
       "registryName" : "video-super-resolution-clip",
       "requirements" : {
-        "minimumMemoryBytes" : 5082584079,
+        "minimumMemoryBytes" : 59362756,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -53793,7 +53793,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5082584079,
+          "minimumMemoryBytes" : 59362756,
           "peakBytes" : 25229171,
           "registryName" : "video-super-resolution-clip",
           "residentBytes" : 25229171,
@@ -54978,7 +54978,7 @@
       ],
       "registryName" : "vitpose-base",
       "requirements" : {
-        "minimumMemoryBytes" : 5476411130,
+        "minimumMemoryBytes" : 847016857,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -55014,7 +55014,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5476411130,
+          "minimumMemoryBytes" : 847016857,
           "parameterCount" : 89995539,
           "peakBytes" : 359982164,
           "precision" : "float32",
@@ -55081,7 +55081,7 @@
       ],
       "registryName" : "vitpose-base-simple",
       "requirements" : {
-        "minimumMemoryBytes" : 5457196052,
+        "minimumMemoryBytes" : 808586702,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -55117,7 +55117,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5457196052,
+          "minimumMemoryBytes" : 808586702,
           "parameterCount" : 85912337,
           "peakBytes" : 343649348,
           "precision" : "float32",
@@ -55332,7 +55332,7 @@
       ],
       "registryName" : "vjepa2-vitg-fpc64-256",
       "requirements" : {
-        "minimumMemoryBytes" : 9921398062,
+        "minimumMemoryBytes" : 9736990720,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -55368,7 +55368,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 9921398062,
+          "minimumMemoryBytes" : 9736990720,
           "parameterCount" : 1034555264,
           "peakBytes" : 4138221056,
           "precision" : "float32",
@@ -55463,7 +55463,7 @@
       ],
       "registryName" : "vjepa2-vitg-fpc64-384",
       "requirements" : {
-        "minimumMemoryBytes" : 9921398062,
+        "minimumMemoryBytes" : 9736990720,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -55499,7 +55499,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 9921398062,
+          "minimumMemoryBytes" : 9736990720,
           "parameterCount" : 1034555264,
           "peakBytes" : 4138221056,
           "precision" : "float32",
@@ -55726,7 +55726,7 @@
       ],
       "registryName" : "vjepa2-vith-fpc64-256",
       "requirements" : {
-        "minimumMemoryBytes" : 8130224490,
+        "minimumMemoryBytes" : 6154643577,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -55762,7 +55762,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 8130224490,
+          "minimumMemoryBytes" : 6154643577,
           "parameterCount" : 653930880,
           "peakBytes" : 2615723520,
           "precision" : "float32",
@@ -55857,7 +55857,7 @@
       ],
       "registryName" : "vjepa2-vitl-fpc16-256-ssv2",
       "requirements" : {
-        "minimumMemoryBytes" : 6819895633,
+        "minimumMemoryBytes" : 3533985864,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -55894,7 +55894,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6819895633,
+          "minimumMemoryBytes" : 3533985864,
           "parameterCount" : 375485998,
           "peakBytes" : 1501943992,
           "precision" : "float32",
@@ -55989,7 +55989,7 @@
       ],
       "registryName" : "vjepa2-vitl-fpc32-256-diving48",
       "requirements" : {
-        "minimumMemoryBytes" : 6819287869,
+        "minimumMemoryBytes" : 3532770335,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -56026,7 +56026,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6819287869,
+          "minimumMemoryBytes" : 3532770335,
           "parameterCount" : 375356848,
           "peakBytes" : 1501427392,
           "precision" : "float32",
@@ -56121,7 +56121,7 @@
       ],
       "registryName" : "vjepa2-vitl-fpc64-256",
       "requirements" : {
-        "minimumMemoryBytes" : 6586885422,
+        "minimumMemoryBytes" : 3067965440,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -56157,7 +56157,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6586885422,
+          "minimumMemoryBytes" : 3067965440,
           "parameterCount" : 325971328,
           "peakBytes" : 1303885312,
           "precision" : "float32",
@@ -56237,7 +56237,7 @@
       ],
       "registryName" : "voicerestore",
       "requirements" : {
-        "minimumMemoryBytes" : 6999413056,
+        "minimumMemoryBytes" : 3893020709,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -56271,7 +56271,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6999413056,
+          "minimumMemoryBytes" : 3893020709,
           "peakBytes" : 1654533801,
           "registryName" : "voicerestore",
           "residentBytes" : 1654533801,
@@ -56499,7 +56499,7 @@
       ],
       "registryName" : "w2v-bert-2.0",
       "requirements" : {
-        "minimumMemoryBytes" : 7784635031,
+        "minimumMemoryBytes" : 5463464659,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -56535,7 +56535,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 7784635031,
+          "minimumMemoryBytes" : 5463464659,
           "parameterCount" : 580493120,
           "peakBytes" : 2321972480,
           "precision" : "float32",
@@ -57543,7 +57543,7 @@
       ],
       "registryName" : "wav2vec2-base",
       "requirements" : {
-        "minimumMemoryBytes" : 5500276133,
+        "minimumMemoryBytes" : 894746864,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -57578,7 +57578,7 @@
             ],
             "vocabularySize" : 32
           },
-          "minimumMemoryBytes" : 5500276133,
+          "minimumMemoryBytes" : 894746864,
           "peakBytes" : 380267417,
           "registryName" : "wav2vec2-base",
           "residentBytes" : 380267417,
@@ -57663,7 +57663,7 @@
       ],
       "registryName" : "wav2vec2-base-960h",
       "requirements" : {
-        "minimumMemoryBytes" : 5497117064,
+        "minimumMemoryBytes" : 888428725,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -57701,7 +57701,7 @@
             ],
             "vocabularySize" : 32
           },
-          "minimumMemoryBytes" : 5497117064,
+          "minimumMemoryBytes" : 888428725,
           "parameterCount" : 94395552,
           "peakBytes" : 377582208,
           "precision" : "float32",
@@ -57800,7 +57800,7 @@
       ],
       "registryName" : "wav2vec2-large-960h",
       "requirements" : {
-        "minimumMemoryBytes" : 6537619392,
+        "minimumMemoryBytes" : 2969433382,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -57836,7 +57836,7 @@
             ],
             "vocabularySize" : 32
           },
-          "minimumMemoryBytes" : 6537619392,
+          "minimumMemoryBytes" : 2969433382,
           "peakBytes" : 1262009187,
           "registryName" : "wav2vec2-large-960h",
           "residentBytes" : 1262009187,
@@ -57933,7 +57933,7 @@
       ],
       "registryName" : "wav2vec2-large-960h-lv60-self",
       "requirements" : {
-        "minimumMemoryBytes" : 6537673579,
+        "minimumMemoryBytes" : 2969541756,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -57969,7 +57969,7 @@
             ],
             "vocabularySize" : 32
           },
-          "minimumMemoryBytes" : 6537673579,
+          "minimumMemoryBytes" : 2969541756,
           "peakBytes" : 1262055246,
           "registryName" : "wav2vec2-large-960h-lv60-self",
           "residentBytes" : 1262055246,
@@ -58066,7 +58066,7 @@
       ],
       "registryName" : "wav2vec2-large-lv60",
       "requirements" : {
-        "minimumMemoryBytes" : 6546711120,
+        "minimumMemoryBytes" : 2987616838,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -58101,7 +58101,7 @@
             ],
             "vocabularySize" : 32
           },
-          "minimumMemoryBytes" : 6546711120,
+          "minimumMemoryBytes" : 2987616838,
           "peakBytes" : 1269737156,
           "registryName" : "wav2vec2-large-lv60",
           "residentBytes" : 1269737156,
@@ -58186,7 +58186,7 @@
       ],
       "registryName" : "wav2vec2-large-xlsr-53",
       "requirements" : {
-        "minimumMemoryBytes" : 6546711120,
+        "minimumMemoryBytes" : 2987616838,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -58221,7 +58221,7 @@
             ],
             "vocabularySize" : 32
           },
-          "minimumMemoryBytes" : 6546711120,
+          "minimumMemoryBytes" : 2987616838,
           "peakBytes" : 1269737156,
           "registryName" : "wav2vec2-large-xlsr-53",
           "residentBytes" : 1269737156,
@@ -58306,7 +58306,7 @@
       ],
       "registryName" : "wav2vec2-xls-r-1b",
       "requirements" : {
-        "minimumMemoryBytes" : 9596892316,
+        "minimumMemoryBytes" : 9087979229,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -58340,7 +58340,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 9596892316,
+          "minimumMemoryBytes" : 9087979229,
           "peakBytes" : 3862391172,
           "registryName" : "wav2vec2-xls-r-1b",
           "residentBytes" : 3862391172,
@@ -58544,7 +58544,7 @@
       ],
       "registryName" : "wav2vec2-xls-r-300m",
       "requirements" : {
-        "minimumMemoryBytes" : 6546711120,
+        "minimumMemoryBytes" : 2987616838,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -58578,7 +58578,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6546711120,
+          "minimumMemoryBytes" : 2987616838,
           "peakBytes" : 1269737156,
           "registryName" : "wav2vec2-xls-r-300m",
           "residentBytes" : 1269737156,
@@ -58703,7 +58703,7 @@
       ],
       "registryName" : "whisper-base",
       "requirements" : {
-        "minimumMemoryBytes" : 5223800122,
+        "minimumMemoryBytes" : 341794840,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -58737,7 +58737,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5223800122,
+          "minimumMemoryBytes" : 341794840,
           "peakBytes" : 145262807,
           "precision" : "float16",
           "registryName" : "whisper-base",
@@ -58849,7 +58849,7 @@
       ],
       "registryName" : "whisper-large-v1",
       "requirements" : {
-        "minimumMemoryBytes" : 8684667386,
+        "minimumMemoryBytes" : 7263529370,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -58883,7 +58883,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 8684667386,
+          "minimumMemoryBytes" : 7263529370,
           "peakBytes" : 3086999982,
           "precision" : "float16",
           "registryName" : "whisper-large-v1",
@@ -58995,7 +58995,7 @@
       ],
       "registryName" : "whisper-large-v2",
       "requirements" : {
-        "minimumMemoryBytes" : 8684667386,
+        "minimumMemoryBytes" : 7263529370,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -59029,7 +59029,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 8684667386,
+          "minimumMemoryBytes" : 7263529370,
           "peakBytes" : 3086999982,
           "precision" : "float16",
           "registryName" : "whisper-large-v2",
@@ -59141,7 +59141,7 @@
       ],
       "registryName" : "whisper-large-v3",
       "requirements" : {
-        "minimumMemoryBytes" : 8685104602,
+        "minimumMemoryBytes" : 7264403800,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -59175,7 +59175,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 8685104602,
+          "minimumMemoryBytes" : 7264403800,
           "peakBytes" : 3087371615,
           "precision" : "float16",
           "registryName" : "whisper-large-v3",
@@ -59287,7 +59287,7 @@
       ],
       "registryName" : "whisper-large-v3-turbo",
       "requirements" : {
-        "minimumMemoryBytes" : 6956363451,
+        "minimumMemoryBytes" : 3806921499,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -59321,7 +59321,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6956363451,
+          "minimumMemoryBytes" : 3806921499,
           "peakBytes" : 1617941637,
           "precision" : "float16",
           "registryName" : "whisper-large-v3-turbo",
@@ -59433,7 +59433,7 @@
       ],
       "registryName" : "whisper-medium",
       "requirements" : {
-        "minimumMemoryBytes" : 6850559806,
+        "minimumMemoryBytes" : 3595314210,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -59467,7 +59467,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 6850559806,
+          "minimumMemoryBytes" : 3595314210,
           "peakBytes" : 1528008539,
           "precision" : "float16",
           "registryName" : "whisper-medium",
@@ -59579,7 +59579,7 @@
       ],
       "registryName" : "whisper-small",
       "requirements" : {
-        "minimumMemoryBytes" : 5621864136,
+        "minimumMemoryBytes" : 1137922869,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -59613,7 +59613,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5621864136,
+          "minimumMemoryBytes" : 1137922869,
           "peakBytes" : 483617219,
           "precision" : "float16",
           "registryName" : "whisper-small",
@@ -59725,7 +59725,7 @@
       ],
       "registryName" : "whisper-tiny",
       "requirements" : {
-        "minimumMemoryBytes" : 5141811035,
+        "minimumMemoryBytes" : 177816666,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -59759,7 +59759,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5141811035,
+          "minimumMemoryBytes" : 177816666,
           "peakBytes" : 75572083,
           "precision" : "float16",
           "registryName" : "whisper-tiny",
@@ -59824,7 +59824,7 @@
       ],
       "registryName" : "yolo",
       "requirements" : {
-        "minimumMemoryBytes" : 5060608344,
+        "minimumMemoryBytes" : 15411285,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -59858,7 +59858,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5060608344,
+          "minimumMemoryBytes" : 15411285,
           "peakBytes" : 6549796,
           "registryName" : "yolo",
           "residentBytes" : 6549796,
@@ -59923,7 +59923,7 @@
       ],
       "registryName" : "yolo11l",
       "requirements" : {
-        "minimumMemoryBytes" : 5113358399,
+        "minimumMemoryBytes" : 120911396,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -59957,7 +59957,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5113358399,
+          "minimumMemoryBytes" : 120911396,
           "peakBytes" : 51387343,
           "registryName" : "yolo11l",
           "residentBytes" : 51387343,
@@ -60021,7 +60021,7 @@
       ],
       "registryName" : "yolo11m",
       "requirements" : {
-        "minimumMemoryBytes" : 5100766372,
+        "minimumMemoryBytes" : 95727342,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -60055,7 +60055,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5100766372,
+          "minimumMemoryBytes" : 95727342,
           "peakBytes" : 40684120,
           "registryName" : "yolo11m",
           "residentBytes" : 40684120,
@@ -60119,7 +60119,7 @@
       ],
       "registryName" : "yolo11n",
       "requirements" : {
-        "minimumMemoryBytes" : 5059507130,
+        "minimumMemoryBytes" : 13208857,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -60153,7 +60153,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5059507130,
+          "minimumMemoryBytes" : 13208857,
           "peakBytes" : 5613764,
           "registryName" : "yolo11n",
           "residentBytes" : 5613764,
@@ -60217,7 +60217,7 @@
       ],
       "registryName" : "yolo11s",
       "requirements" : {
-        "minimumMemoryBytes" : 5075624739,
+        "minimumMemoryBytes" : 45444076,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -60251,7 +60251,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5075624739,
+          "minimumMemoryBytes" : 45444076,
           "peakBytes" : 19313732,
           "registryName" : "yolo11s",
           "residentBytes" : 19313732,
@@ -60315,7 +60315,7 @@
       ],
       "registryName" : "yolo11x",
       "requirements" : {
-        "minimumMemoryBytes" : 5187768865,
+        "minimumMemoryBytes" : 269732328,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -60349,7 +60349,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5187768865,
+          "minimumMemoryBytes" : 269732328,
           "peakBytes" : 114636239,
           "registryName" : "yolo11x",
           "residentBytes" : 114636239,
@@ -60413,7 +60413,7 @@
       ],
       "registryName" : "yolo12l",
       "requirements" : {
-        "minimumMemoryBytes" : 5116078097,
+        "minimumMemoryBytes" : 126350791,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -60447,7 +60447,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5116078097,
+          "minimumMemoryBytes" : 126350791,
           "peakBytes" : 53699086,
           "registryName" : "yolo12l",
           "residentBytes" : 53699086,
@@ -60511,7 +60511,7 @@
       ],
       "registryName" : "yolo12m",
       "requirements" : {
-        "minimumMemoryBytes" : 5101026178,
+        "minimumMemoryBytes" : 96246953,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -60545,7 +60545,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5101026178,
+          "minimumMemoryBytes" : 96246953,
           "peakBytes" : 40904955,
           "registryName" : "yolo12m",
           "residentBytes" : 40904955,
@@ -60609,7 +60609,7 @@
       ],
       "registryName" : "yolo12n",
       "requirements" : {
-        "minimumMemoryBytes" : 5059485129,
+        "minimumMemoryBytes" : 13164855,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -60643,7 +60643,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5059485129,
+          "minimumMemoryBytes" : 13164855,
           "peakBytes" : 5595063,
           "registryName" : "yolo12n",
           "residentBytes" : 5595063,
@@ -60707,7 +60707,7 @@
       ],
       "registryName" : "yolo12s",
       "requirements" : {
-        "minimumMemoryBytes" : 5075263237,
+        "minimumMemoryBytes" : 44721071,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -60741,7 +60741,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5075263237,
+          "minimumMemoryBytes" : 44721071,
           "peakBytes" : 19006455,
           "registryName" : "yolo12s",
           "residentBytes" : 19006455,
@@ -60805,7 +60805,7 @@
       ],
       "registryName" : "yolo12x",
       "requirements" : {
-        "minimumMemoryBytes" : 5193282276,
+        "minimumMemoryBytes" : 280759149,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -60839,7 +60839,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5193282276,
+          "minimumMemoryBytes" : 280759149,
           "peakBytes" : 119322638,
           "registryName" : "yolo12x",
           "residentBytes" : 119322638,
@@ -60903,7 +60903,7 @@
       ],
       "registryName" : "yolo26l",
       "requirements" : {
-        "minimumMemoryBytes" : 5115504082,
+        "minimumMemoryBytes" : 125202760,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -60937,7 +60937,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5115504082,
+          "minimumMemoryBytes" : 125202760,
           "peakBytes" : 53211173,
           "registryName" : "yolo26l",
           "residentBytes" : 53211173,
@@ -61001,7 +61001,7 @@
       ],
       "registryName" : "yolo26m",
       "requirements" : {
-        "minimumMemoryBytes" : 5104968237,
+        "minimumMemoryBytes" : 104131071,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -61035,7 +61035,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5104968237,
+          "minimumMemoryBytes" : 104131071,
           "peakBytes" : 44255705,
           "registryName" : "yolo26m",
           "residentBytes" : 44255705,
@@ -61099,7 +61099,7 @@
       ],
       "registryName" : "yolo26n",
       "requirements" : {
-        "minimumMemoryBytes" : 5059425588,
+        "minimumMemoryBytes" : 13045772,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -61133,7 +61133,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5059425588,
+          "minimumMemoryBytes" : 13045772,
           "peakBytes" : 5544453,
           "registryName" : "yolo26n",
           "residentBytes" : 5544453,
@@ -61197,7 +61197,7 @@
       ],
       "registryName" : "yolo26s",
       "requirements" : {
-        "minimumMemoryBytes" : 5076929437,
+        "minimumMemoryBytes" : 48053471,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -61231,7 +61231,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5076929437,
+          "minimumMemoryBytes" : 48053471,
           "peakBytes" : 20422725,
           "registryName" : "yolo26s",
           "residentBytes" : 20422725,
@@ -61295,7 +61295,7 @@
       ],
       "registryName" : "yolo26x",
       "requirements" : {
-        "minimumMemoryBytes" : 5192511366,
+        "minimumMemoryBytes" : 279217330,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -61329,7 +61329,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5192511366,
+          "minimumMemoryBytes" : 279217330,
           "peakBytes" : 118667365,
           "registryName" : "yolo26x",
           "residentBytes" : 118667365,
@@ -61393,7 +61393,7 @@
       ],
       "registryName" : "yolov10b",
       "requirements" : {
-        "minimumMemoryBytes" : 5101937599,
+        "minimumMemoryBytes" : 98069796,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -61427,7 +61427,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5101937599,
+          "minimumMemoryBytes" : 98069796,
           "peakBytes" : 41679663,
           "registryName" : "yolov10b",
           "residentBytes" : 41679663,
@@ -61491,7 +61491,7 @@
       ],
       "registryName" : "yolov10l",
       "requirements" : {
-        "minimumMemoryBytes" : 5114579443,
+        "minimumMemoryBytes" : 123353483,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -61525,7 +61525,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5114579443,
+          "minimumMemoryBytes" : 123353483,
           "peakBytes" : 52425230,
           "registryName" : "yolov10l",
           "residentBytes" : 52425230,
@@ -61589,7 +61589,7 @@
       ],
       "registryName" : "yolov10m",
       "requirements" : {
-        "minimumMemoryBytes" : 5092483486,
+        "minimumMemoryBytes" : 79161570,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -61623,7 +61623,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5092483486,
+          "minimumMemoryBytes" : 79161570,
           "peakBytes" : 33643667,
           "registryName" : "yolov10m",
           "residentBytes" : 33643667,
@@ -61687,7 +61687,7 @@
       ],
       "registryName" : "yolov10n",
       "requirements" : {
-        "minimumMemoryBytes" : 5059797270,
+        "minimumMemoryBytes" : 13789137,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -61721,7 +61721,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5059797270,
+          "minimumMemoryBytes" : 13789137,
           "peakBytes" : 5860383,
           "registryName" : "yolov10n",
           "residentBytes" : 5860383,
@@ -61785,7 +61785,7 @@
       ],
       "registryName" : "yolov10s",
       "requirements" : {
-        "minimumMemoryBytes" : 5072459303,
+        "minimumMemoryBytes" : 39113203,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -61819,7 +61819,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5072459303,
+          "minimumMemoryBytes" : 39113203,
           "peakBytes" : 16623111,
           "registryName" : "yolov10s",
           "residentBytes" : 16623111,
@@ -61883,7 +61883,7 @@
       ],
       "registryName" : "yolov10x",
       "requirements" : {
-        "minimumMemoryBytes" : 5128662530,
+        "minimumMemoryBytes" : 151519657,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -61917,7 +61917,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5128662530,
+          "minimumMemoryBytes" : 151519657,
           "peakBytes" : 64395854,
           "registryName" : "yolov10x",
           "residentBytes" : 64395854,
@@ -61981,7 +61981,7 @@
       ],
       "registryName" : "yolov8l",
       "requirements" : {
-        "minimumMemoryBytes" : 5156188391,
+        "minimumMemoryBytes" : 206571379,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -62015,7 +62015,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5156188391,
+          "minimumMemoryBytes" : 206571379,
           "peakBytes" : 87792836,
           "registryName" : "yolov8l",
           "residentBytes" : 87792836,
@@ -62080,7 +62080,7 @@
       ],
       "registryName" : "yolov8m",
       "requirements" : {
-        "minimumMemoryBytes" : 5114240212,
+        "minimumMemoryBytes" : 122675022,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -62114,7 +62114,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5114240212,
+          "minimumMemoryBytes" : 122675022,
           "peakBytes" : 52136884,
           "registryName" : "yolov8m",
           "residentBytes" : 52136884,
@@ -62179,7 +62179,7 @@
       ],
       "registryName" : "yolov8s",
       "requirements" : {
-        "minimumMemoryBytes" : 5079477728,
+        "minimumMemoryBytes" : 53150052,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -62213,7 +62213,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5079477728,
+          "minimumMemoryBytes" : 53150052,
           "peakBytes" : 22588772,
           "registryName" : "yolov8s",
           "residentBytes" : 22588772,
@@ -62278,7 +62278,7 @@
       ],
       "registryName" : "yolov8x",
       "requirements" : {
-        "minimumMemoryBytes" : 5213950575,
+        "minimumMemoryBytes" : 322095746,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -62312,7 +62312,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5213950575,
+          "minimumMemoryBytes" : 322095746,
           "peakBytes" : 136890692,
           "registryName" : "yolov8x",
           "residentBytes" : 136890692,
@@ -62377,7 +62377,7 @@
       ],
       "registryName" : "yolov9c",
       "requirements" : {
-        "minimumMemoryBytes" : 5113837808,
+        "minimumMemoryBytes" : 121870212,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -62411,7 +62411,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5113837808,
+          "minimumMemoryBytes" : 121870212,
           "peakBytes" : 51794840,
           "registryName" : "yolov9c",
           "residentBytes" : 51794840,
@@ -62475,7 +62475,7 @@
       ],
       "registryName" : "yolov9e",
       "requirements" : {
-        "minimumMemoryBytes" : 5191162746,
+        "minimumMemoryBytes" : 276520090,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -62509,7 +62509,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5191162746,
+          "minimumMemoryBytes" : 276520090,
           "peakBytes" : 117521038,
           "registryName" : "yolov9e",
           "residentBytes" : 117521038,
@@ -62573,7 +62573,7 @@
       ],
       "registryName" : "yolov9m",
       "requirements" : {
-        "minimumMemoryBytes" : 5101130339,
+        "minimumMemoryBytes" : 96455276,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -62607,7 +62607,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5101130339,
+          "minimumMemoryBytes" : 96455276,
           "peakBytes" : 40993492,
           "registryName" : "yolov9m",
           "residentBytes" : 40993492,
@@ -62671,7 +62671,7 @@
       ],
       "registryName" : "yolov9s",
       "requirements" : {
-        "minimumMemoryBytes" : 5071007712,
+        "minimumMemoryBytes" : 36210022,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -62705,7 +62705,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5071007712,
+          "minimumMemoryBytes" : 36210022,
           "peakBytes" : 15389259,
           "registryName" : "yolov9s",
           "residentBytes" : 15389259,
@@ -62769,7 +62769,7 @@
       ],
       "registryName" : "yolov9t",
       "requirements" : {
-        "minimumMemoryBytes" : 5058749529,
+        "minimumMemoryBytes" : 11693655,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -62803,7 +62803,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5058749529,
+          "minimumMemoryBytes" : 11693655,
           "peakBytes" : 4969803,
           "registryName" : "yolov9t",
           "residentBytes" : 4969803,
@@ -63450,7 +63450,7 @@
       ],
       "registryName" : "zero-dce",
       "requirements" : {
-        "minimumMemoryBytes" : 5053279192,
+        "minimumMemoryBytes" : 752982,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -63484,7 +63484,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5053279192,
+          "minimumMemoryBytes" : 752982,
           "peakBytes" : 320017,
           "registryName" : "zero-dce",
           "residentBytes" : 320017,
@@ -63548,7 +63548,7 @@
       ],
       "registryName" : "zero-dce-plus",
       "requirements" : {
-        "minimumMemoryBytes" : 5052964343,
+        "minimumMemoryBytes" : 123283,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -63582,7 +63582,7 @@
               }
             ]
           },
-          "minimumMemoryBytes" : 5052964343,
+          "minimumMemoryBytes" : 123283,
           "peakBytes" : 52395,
           "registryName" : "zero-dce-plus",
           "residentBytes" : 52395,

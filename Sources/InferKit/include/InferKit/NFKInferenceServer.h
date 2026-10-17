@@ -181,8 +181,9 @@ NS_SWIFT_SENDABLE
 				  from as a manifest (NFKModelCatalog's JSON form): modelCatalog's descriptors and the
 				  descriptors of the models hosted from another catalog.
 				- The estimate route, POST /inferkit/estimate, which takes {model, options} and answers
-				  the model's memory estimate under those load options against this machine's budget,
-				  with the constraints the budget leaves of each option (NFKModelMemory.h). model is a
+				  the model's memory estimate under those load options against modelCatalog's
+				  memoryBudget, this machine's by default, with the constraints the budget leaves of
+				  each option (NFKModelMemory.h). model is a
 				  catalog identifier, identifier@preset, or a model the server hosts from the catalog,
 				  whose options the given ones override. With reportsHostDetails NO the reply carries the
 				  estimate alone, computed without a budget, and leaves out the budget and the

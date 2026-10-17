@@ -139,9 +139,10 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 - (void)testTheBudgetIsEightyFivePercentOfTheWorkingSetBesideAFourGiBReserve
 {
 	XCTAssertEqual(NFKModelMemoryBudget.workingSetFraction, 0.85);
-	XCTAssertEqual(NFKModelMemoryBudget.reserveByteCount, 4 * NFKTestGiB);
+	XCTAssertEqual(NFKModelMemoryBudget.maximumReserveByteCount, 4 * NFKTestGiB);
 	NFKModelMemoryBudget *budget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:32 * NFKTestGiB];
 	XCTAssertEqual(budget.byteCount, 29205777612);
+	XCTAssertEqual(budget.reserveByteCount, 4 * NFKTestGiB);
 	XCTAssertTrue(budget.isKnown);
 	XCTAssertTrue([budget holdsByteCount:29205777612 - 4 * NFKTestGiB]);
 	XCTAssertFalse([budget holdsByteCount:29205777612 - 4 * NFKTestGiB + 1]);
@@ -153,14 +154,88 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 	NFKModelMemoryBudget *budget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:0];
 	XCTAssertFalse(budget.isKnown);
 	XCTAssertEqual(budget.byteCount, 0);
+	XCTAssertEqual(budget.reserveByteCount, 0);
 	XCTAssertTrue([budget admitsByteCount:1000 * NFKTestGiB]);
 	XCTAssertFalse([budget holdsByteCount:1]);
 }
 
+- (void)testTheReserveIsHalfOfABudgetBelowEightGiBAndFourGiBFromIt
+{
+	NSArray<NSArray<NSNumber *> *> *rows = @[
+		// The budget's bytes, and the reserve it keeps.
+		@[ @(2 * NFKTestGiB), @(1 * NFKTestGiB) ],
+		@[ @(4 * NFKTestGiB), @(2 * NFKTestGiB) ],
+		@[ @(6 * NFKTestGiB), @(3 * NFKTestGiB) ],
+		@[ @(8 * NFKTestGiB), @(4 * NFKTestGiB) ],
+		@[ @(8 * NFKTestGiB - 1), @(4 * NFKTestGiB) ],
+		@[ @(64 * NFKTestGiB), @(4 * NFKTestGiB) ],
+		@[ @3, @2 ],
+		@[ @1, @1 ],
+		@[ @0, @0 ],
+		@[ @(-1), @0 ],
+	];
+	for (NSArray<NSNumber *> *row in rows) {
+		NSInteger budget = row[0].integerValue, reserve = row[1].integerValue;
+		XCTAssertEqual([NFKModelMemoryBudget reserveByteCountForBudgetByteCount:budget], reserve, @"%@", row);
+		if (budget <= 0) {
+			continue;
+		}
+		NSArray *fitting = @[ [NFKModelStageFootprint footprintWithByteCount:budget - reserve] ];
+		NSArray *over = @[ [NFKModelStageFootprint footprintWithByteCount:budget - reserve + 1] ];
+		NFKModelResidencyPlan *held = [NFKModelResidencyPlan planForStages:fitting residency:NFKModelResidencyAutomatic
+																	budget:budget error:NULL];
+		NFKModelResidencyPlan *staged = [NFKModelResidencyPlan planForStages:over residency:NFKModelResidencyAutomatic
+																	  budget:budget error:NULL];
+		XCTAssertEqualObjects(held.residency, NFKModelResidencyResident, @"%@", row);
+		XCTAssertEqualObjects(staged.residency, NFKModelResidencyStaged, @"%@", row);
+	}
+}
+
+- (void)testABudgetKeepsTheReserveOfItsByteCount
+{
+	NFKModelMemoryBudget *small = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:6 * NFKTestGiB];
+	XCTAssertEqual(small.byteCount, 5476083302);
+	XCTAssertEqual(small.reserveByteCount, 2738041651, @"half the budget");
+	XCTAssertTrue([small holdsByteCount:2738041651]);
+	XCTAssertFalse([small holdsByteCount:2738041652]);
+	XCTAssertFalse([small admitsByteCount:2738041652]);
+	XCTAssertEqualObjects(small.dictionaryRepresentation[@"reserveBytes"], @2738041651);
+
+	NFKModelMemoryBudget *tiny = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:2];
+	XCTAssertEqual(tiny.byteCount, 1);
+	XCTAssertTrue([tiny holdsByteCount:0], @"a model that needs nothing fits every budget a machine reports");
+	XCTAssertFalse([tiny holdsByteCount:1]);
+}
+
 - (void)testTheLeastWorkingSetAddsTheReserveAndDividesByTheFraction
 {
-	XCTAssertEqual([NFKModelMemoryBudget leastWorkingSetHoldingByteCount:0], 5052902702);
+	XCTAssertEqual([NFKModelMemoryBudget leastWorkingSetHoldingByteCount:0], 2, @"the least working set with a budget");
+	XCTAssertEqual([NFKModelMemoryBudget leastWorkingSetHoldingByteCount:2 * NFKTestGiB], 5052902702,
+				   @"twice the bytes, divided by the fraction");
 	XCTAssertEqual([NFKModelMemoryBudget leastWorkingSetHoldingByteCount:4 * NFKTestGiB], 10105805403);
+	XCTAssertEqual([NFKModelMemoryBudget leastWorkingSetHoldingByteCount:10 * NFKTestGiB], 17685159455,
+				   @"the bytes and 4 GiB, divided by the fraction");
+	XCTAssertEqual([NFKModelMemoryBudget leastBudgetByteCountHoldingByteCount:0], 1);
+	XCTAssertEqual([NFKModelMemoryBudget leastBudgetByteCountHoldingByteCount:-5], 1);
+	XCTAssertEqual([NFKModelMemoryBudget leastBudgetByteCountHoldingByteCount:3 * NFKTestGiB], 6 * NFKTestGiB);
+	XCTAssertEqual([NFKModelMemoryBudget leastBudgetByteCountHoldingByteCount:10 * NFKTestGiB], 14 * NFKTestGiB);
+}
+
+- (void)testTheLeastWorkingSetIsTheLeastWhoseBudgetHoldsTheBytes
+{
+	NSArray<NSNumber *> *byteCounts = @[ @0, @1, @2000, @((NSInteger)1 << 20), @(NFKTestGiB), @(3 * NFKTestGiB + 1),
+										 @(4 * NFKTestGiB - 1), @(4 * NFKTestGiB), @(4 * NFKTestGiB + 1),
+										 @(17 * NFKTestGiB), @(27 * NFKTestGiB + 123457), @(512 * NFKTestGiB) ];
+	for (NSNumber *count in byteCounts) {
+		NSInteger bytes = count.integerValue;
+		NSInteger workingSet = [NFKModelMemoryBudget leastWorkingSetHoldingByteCount:bytes];
+		XCTAssertTrue([[NFKModelMemoryBudget budgetWithWorkingSetByteCount:workingSet] holdsByteCount:bytes], @"%@", count);
+		XCTAssertFalse([[NFKModelMemoryBudget budgetWithWorkingSetByteCount:workingSet - 1] holdsByteCount:bytes], @"%@", count);
+		NSInteger budget = [NFKModelMemoryBudget leastBudgetByteCountHoldingByteCount:bytes];
+		XCTAssertLessThanOrEqual(bytes + [NFKModelMemoryBudget reserveByteCountForBudgetByteCount:budget], budget, @"%@", count);
+		XCTAssertGreaterThan(bytes + [NFKModelMemoryBudget reserveByteCountForBudgetByteCount:budget - 1], budget - 1,
+							 @"%@", count);
+	}
 }
 
 - (void)testABudgetRoundTripsThroughItsDictionary
@@ -237,7 +312,8 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 	NFKModelMemoryEstimate *estimate = [[self decoderWithOverhead:0] estimatedMemoryForOptions:@{} memoryBudget:budget
 																						 error:NULL];
 	XCTAssertFalse(estimate.fits);
-	XCTAssertEqualObjects(estimate.reason, @"The model needs 2.6 GiB plus a 4.0 GiB reserve, against a 3.4 GiB budget.");
+	XCTAssertEqualObjects(estimate.reason, @"The model needs 2.6 GiB plus a 1.7 GiB reserve, against a 3.4 GiB budget.",
+						  @"a budget below 8 GiB keeps half of itself");
 }
 
 - (void)testAnEstimateRefusesOptionsThatDoNotResolve
@@ -383,10 +459,11 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 																	   NFKModelLoadOptionQuantizationBits: @0,
 																	   NFKModelLoadOptionCacheBits: @0 }
 											  memoryBudget:budget];
-	// (7,301,444,403 − 4 GiB − 2,001,000,000) / 100,000 = 10,054, rounded down to a step of 512 from 512.
+	// (7,301,444,403 − its 3,650,722,202 reserve − 2,001,000,000) / 100,000 = 16,497, rounded down to a
+	// step of 512 from 512.
 	NFKModelOptionConstraint *context = [constraints constraintForOptionKey:NFKModelLoadOptionContextLength];
-	XCTAssertEqualObjects(context.maximumValue, @9728);
-	XCTAssertEqualObjects(context.reason, @"Context length fits up to 9728 against a 6.8 GiB budget.");
+	XCTAssertEqualObjects(context.maximumValue, @16384);
+	XCTAssertEqualObjects(context.reason, @"Context length fits up to 16384 against a 6.8 GiB budget.");
 	XCTAssertEqualObjects(constraints.fittingOptions[NFKModelLoadOptionContextLength], @8192);
 }
 
@@ -402,7 +479,7 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 	XCTAssertEqual([precision constraintForChoiceValue:NFKModelPrecisionCheckpoint].status, NFKModelChoiceStatusRequired);
 	XCTAssertEqual([precision constraintForChoiceValue:NFKModelPrecisionFloat32].status, NFKModelChoiceStatusRuledOut);
 	XCTAssertEqualObjects(precision.requiredValue, NFKModelPrecisionCheckpoint);
-	XCTAssertEqualObjects(precision.reason, @"Only Checkpoint fits: it needs 1.9 GiB plus a 4.0 GiB reserve, against a 6.8 GiB budget.");
+	XCTAssertEqualObjects(precision.reason, @"Only Checkpoint fits: it needs 1.9 GiB plus a 3.4 GiB reserve, against a 6.8 GiB budget.");
 
 	// Quantized, float32 fits as well, so no precision is required.
 	NFKModelMemoryConstraints *free = [[self decoderWithOverhead:0] constraintsForMemoryBudget:budget];
@@ -784,6 +861,32 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 												error:&error]);
 	XCTAssertEqualObjects(error.localizedDescription,
 						  @"the stages need 30.0 GiB together plus a 4.0 GiB reserve, against a 24.0 GiB budget; hold them staged or streamed");
+}
+
+- (void)testARefusalAtASmallBudgetNamesThatBudgetsReserve
+{
+	NSInteger budget = 6 * NFKTestGiB;
+	NFKModelStageFootprint *stage = [NFKModelStageFootprint footprintWithByteCount:5 * NFKTestGiB];
+	NSError *error = nil;
+	XCTAssertNil([NFKModelResidencyPlan planForStages:@[ stage ] residency:NFKModelResidencyResident budget:budget
+												error:&error]);
+	XCTAssertEqualObjects(error.localizedDescription,
+						  @"the stages need 5.0 GiB together plus a 3.0 GiB reserve, against a 6.0 GiB budget; hold them staged");
+	NSArray *stages = @[ [NFKModelStageFootprint footprintWithByteCount:NFKTestGiB], stage ];
+	NFKModelResidencyPlan *plan = [NFKModelResidencyPlan planForStages:stages residency:NFKModelResidencyStaged
+																budget:budget error:NULL];
+	NSArray<NSString *> *names = @[ @"encoder", @"decoder" ];
+	XCTAssertFalse([NFKModelResidencyPlan verifyEachStageLoads:stages plan:plan budget:budget names:names error:&error]);
+	XCTAssertEqualObjects(error.localizedDescription, @"decoder alone needs 5.0 GiB plus a 3.0 GiB reserve, against a 6.0 GiB budget");
+
+	NFKModelStageFootprint *moe = [[NFKModelStageFootprint alloc] initWithByteCount:8 * NFKTestGiB
+																  pageableByteCount:7 * NFKTestGiB
+																   widenedByteCount:nil layerByteCounts:nil];
+	NFKModelResidencyPlan *paged = [NFKModelResidencyPlan planForStages:@[ moe ] residency:NFKModelResidencyAutomatic
+																 budget:budget error:NULL];
+	XCTAssertTrue(paged.pagesExperts);
+	XCTAssertEqual(paged.expertCacheByteCount, (6 * NFKTestGiB - 3 * NFKTestGiB - NFKTestGiB) / 2,
+				   @"half of what the budget leaves beside its reserve and the unpaged gigabyte");
 }
 
 - (void)testAPlannerRefusalPrintsTheBudgetAndNotTheWorkingSet

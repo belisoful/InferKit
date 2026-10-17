@@ -23,15 +23,34 @@ those key their skips on it; the hosted CI runner is a guest
 ## The residency budget lives in the core
 
 `NFKModelMemoryBudget` (core, `NFKModelMemory.h`, 2026-10-15) is the budget every placement plans
-against: 0.85 of `recommendedWorkingSetSize`, rounded down, with a 4 GiB reserve inside it. It is the
+against: 0.85 of `recommendedWorkingSetSize`, rounded down, with a reserve inside it. It is the
 same rule `NFKMLXResidencyBudget` has applied since Music 3, now a core type, so a descriptor's memory
 estimate, its constraints, and the catalog's build entry need no companion. The residency planner moved
 with it (`NFKModelStageFootprint`, `NFKModelResidencyPlan`) with the Swift planner's arithmetic and
 refusal sentences; `NFKMLXResidencyBudget` keeps its Swift API and calls through to the core
 (`NFKMLXPlannerDifferentialTests` compares the two).
 
-- `+leastWorkingSetHoldingByteCount:` is the catalog's `minimumMemoryBytes`: (bytes + reserve) / 0.85,
-  rounded up.
+- The reserve scales with the budget (2026-10-17): reserve(budget) = min(4 GiB, budget / 2), the half
+  rounded up (`+reserveByteCountForBudgetByteCount:`, the instance's `reserveByteCount`,
+  `maximumReserveByteCount` = 4 GiB). A budget of 8 GiB or more (a working set of about 9.4 GiB or
+  more) keeps 4 GiB, so every plan and sentence there is unchanged. A fixed 4 GiB reserve refused every
+  model, a 0-byte one included, on a budget at or below 4 GiB: the hosted CI runner (a 4.0 GiB budget,
+  52 core tests refused with `NFKModelCatalogErrorDoesNotFit`) and 6 to 8 GB iPhones and iPads. Under
+  the scaled rule a model that needs no memory fits every budget a machine reports.
+- The refusal sentences print the reserve of the budget they name: at a 6.8 GiB budget "plus a 3.4 GiB
+  reserve", at 3.4 GiB "plus a 1.7 GiB reserve".
+- `+leastBudgetByteCountHoldingByteCount:` is the inverse: bytes + min(bytes, 4 GiB), at least 1.
+  `+leastWorkingSetHoldingByteCount:` is the catalog's `minimumMemoryBytes`: the least working set whose
+  truncated budget reaches that, which is (bytes + 4 GiB) / 0.85 from 4 GiB and 2 × bytes / 0.85 below
+  it, rounded up. The method steps the ceiling by one where floating-point rounding would leave the
+  budget a byte short, so the figure round-trips through `+budgetWithWorkingSetByteCount:`. The scaled
+  rule lowered 537 of the 735 `minimumMemoryBytes` figures in `Docs/model-catalog.json` (every stage
+  under 4 GiB); the figures above 4 GiB did not move.
+- `NFKModelCatalog.memoryBudget` (null_resettable, `NFKModelBuilding.h`) is the budget the build entry
+  checks against, `+currentBudget` by default; `NFKInferenceServer`'s estimate route reports its
+  `modelCatalog`'s. Tests that build catalog models for other reasons pin a 64 GiB working set on their
+  catalogs (and on the shared catalog, restored in `tearDown`), so no core test depends on the memory
+  of the machine that runs it.
 - A budget of 0 (no Metal device, or an OS that does not publish the working set) admits every load
   and holds nothing resident.
 - `NFKHardwareProfile` writes a snapshot (`dictionaryRepresentation`) and reads one back

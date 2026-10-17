@@ -463,10 +463,11 @@ public final class NFKMLXMusicBackend: NSObject, NFKInferenceBackend {
         return total
     }
 
-    /// Whether the stages stay loaded between runs. The reserve covers activations, the CFG pair's
-    /// key-value cache at the full position budget (~3 GB at bf16), and the sampler's scratch. The
-    /// budget is the working set Metal recommends, NOT live free memory — a resident backend's own
-    /// weights would count against "free" on the next check and evict themselves.
+    /// Whether the stages stay loaded between runs. The reserve, 4 GiB from a budget of 8 GiB, covers
+    /// activations, the CFG pair's key-value cache at the full position budget (~3 GB at bf16), and the
+    /// sampler's scratch; a smaller budget keeps half of itself. The budget is the working set Metal
+    /// recommends, NOT live free memory — a resident backend's own weights would count against "free" on
+    /// the next check and evict themselves.
     static func keepsStagesResident(weightBytes: Int, workingSetBudget: Int) -> Bool {
         NFKMLXResidencyBudget.holds(weightBytes, budget: workingSetBudget)
     }

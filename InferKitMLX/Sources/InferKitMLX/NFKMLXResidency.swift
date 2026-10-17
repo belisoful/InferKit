@@ -179,16 +179,23 @@ struct NFKMLXResidencyPlan: Equatable {
 /// `NFKMLXError.unsupportedConfiguration` carrying the core planner's sentence. The budget is 0.85 of the
 /// working set Metal recommends, not live free memory: a resident model's own weights would count
 /// against free memory on the next check and evict themselves. Every placement keeps a reserve for
-/// activations. A budget of 0 is a machine that reports none, and the two questions asked of it get
-/// different answers. Whether to HOLD stages resident, or take the larger of two precisions, is answered
-/// no, because staging always runs and holding everything may not; that is Music 3's rule, "an
-/// unreadable budget stages rather than gambling". Whether a single stage may LOAD at all is answered
-/// yes, as `NFKMLXReleaseWeights.verifyFits` answers it, because refusing would leave such a machine
-/// unable to run anything.
+/// activations: 4 GiB from a budget of 8 GiB, and half the budget below it. A budget of 0 is a machine
+/// that reports none, and the two questions asked of it get different answers. Whether to HOLD stages
+/// resident, or take the larger of two precisions, is answered no, because staging always runs and
+/// holding everything may not; that is Music 3's rule, "an unreadable budget stages rather than
+/// gambling". Whether a single stage may LOAD at all is answered yes, as `NFKMLXReleaseWeights.verifyFits`
+/// answers it, because refusing would leave such a machine unable to run anything.
 enum NFKMLXResidencyBudget {
-    /// The reserve a placement keeps beside its weights: activations, and Music 3's key-value cache for
-    /// its guidance pair at the full position budget (about 3 GB at bfloat16).
-    static let reserve = NFKModelMemoryBudget.reserveByteCount
+    /// The most a placement keeps beside its weights, the reserve of every budget of 8 GiB or more:
+    /// activations, and Music 3's key-value cache for its guidance pair at the full position budget
+    /// (about 3 GB at bfloat16).
+    static let maximumReserve = NFKModelMemoryBudget.maximumReserveByteCount
+
+    /// The reserve a placement keeps beside its weights against `budget`: the core's
+    /// `reserveByteCountForBudgetByteCount:`, half the budget below 8 GiB and ``maximumReserve`` from it.
+    static func reserve(forBudget budget: Int) -> Int {
+        NFKModelMemoryBudget.reserveByteCount(forBudgetByteCount: budget)
+    }
 
     /// The share of Metal's recommended working set a placement plans against.
     static let workingSetFraction = NFKModelMemoryBudget.workingSetFraction
@@ -198,22 +205,28 @@ enum NFKMLXResidencyBudget {
         NFKModelMemoryBudget.current().byteCount
     }
 
-    /// The least recommended working set whose budget holds `bytes` of weights beside the reserve: the
-    /// bytes plus the reserve, divided by the planned share. The catalog's `minimumMemoryBytes`.
+    /// The least budget that holds `bytes` of weights beside its own reserve: the core's
+    /// `leastBudgetByteCountHoldingByteCount:`.
+    static func leastBudget(holding bytes: Int) -> Int {
+        NFKModelMemoryBudget.leastBudgetByteCountHoldingByteCount(bytes)
+    }
+
+    /// The least recommended working set whose budget holds `bytes` of weights beside that budget's
+    /// reserve: the core's `leastWorkingSetHoldingByteCount:`. The catalog's `minimumMemoryBytes`.
     static func leastWorkingSet(holding bytes: Int64) -> Int64 {
         Int64(NFKModelMemoryBudget.leastWorkingSetHoldingByteCount(Int(bytes)))
     }
 
-    /// Whether `bytes` of weights are known to fit `budget` beside the reserve: the test for holding
+    /// Whether `bytes` of weights are known to fit `budget` beside its reserve: the test for holding
     /// stages resident or choosing a larger precision. False on a machine that reports no budget.
     static func holds(_ bytes: Int, budget: Int) -> Bool {
-        budget > 0 && bytes + reserve <= budget
+        budget > 0 && bytes + reserve(forBudget: budget) <= budget
     }
 
     /// Whether `bytes` of weights may load at all: the test for refusing a stage outright. True on a
     /// machine that reports no budget.
     static func admits(_ bytes: Int, budget: Int) -> Bool {
-        budget <= 0 || bytes + reserve <= budget
+        budget <= 0 || bytes + reserve(forBudget: budget) <= budget
     }
 
     /// Whether stages totalling `bytes` stay resident under `residency`: `.automatic` where they are

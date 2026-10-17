@@ -12,7 +12,7 @@ import XCTest
 final class NFKMLXDeepSeekResidencyTests: XCTestCase {
 
     private let flash = NFKMLXDeepSeekConfiguration.v41Flash
-    private let reserve = NFKMLXResidencyBudget.reserve
+    private let reserve = NFKMLXResidencyBudget.maximumReserve
     private let gib = 1 << 30
 
     private func paging(_ residency: NFKMLXResidency, _ budget: Int) throws -> NFKMLXDeepSeekPaging {

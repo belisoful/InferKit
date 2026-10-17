@@ -72,10 +72,13 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 /*!
 	@class      NFKModelMemoryBudget
 	@abstract   The memory a machine plans a model against, and the rule it plans by.
-	@discussion The budget is workingSetFraction (0.85) of the working set Metal recommends, and every
-				placement keeps reserveByteCount (4 GiB) beside its weights for activations and request
-				buffers. A budget of 0 is a machine that reports no working set, and the two questions
-				asked of it get different answers:
+	@discussion The budget is workingSetFraction (0.85) of the working set Metal recommends. Every
+				placement keeps a reserve beside its weights for activations and request buffers:
+				- a budget of 8 GiB or more → maximumReserveByteCount (4 GiB).
+				- a smaller budget → half the budget, rounded up.
+				A working set of 9.4 GiB or more gives a budget of 8 GiB or more. Bytes fit when they and the
+				reserve together are at most the budget. A budget of 0 is a machine that reports no
+				working set, and the two questions asked of it get different answers:
 				- holdsByteCount: (whether to hold stages resident, or take a wider precision) → NO.
 				- admitsByteCount: (whether a stage may load at all) → YES.
 				Introduced in InferKit 0.4.0.
@@ -84,8 +87,14 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 
 /*! The share of the recommended working set a placement plans against: 0.85. */
 @property (class, nonatomic, readonly) double workingSetFraction;
-/*! The bytes every placement keeps beside its weights: 4 GiB. */
-@property (class, nonatomic, readonly) NSInteger reserveByteCount;
+/*! The most a placement keeps beside its weights: 4 GiB, the reserve of every budget of 8 GiB or more.
+	Introduced in InferKit 0.4.0. */
+@property (class, nonatomic, readonly) NSInteger maximumReserveByteCount;
+
+/*! The reserve a budget of budgetByteCount bytes keeps: half the budget, rounded up, and at most
+	maximumReserveByteCount. 0 for a budget of 0 or less. The residency planner, which takes a budget as a
+	byte count, plans by this rule. Introduced in InferKit 0.4.0. */
++ (NSInteger)reserveByteCountForBudgetByteCount:(NSInteger)budgetByteCount;
 
 /*! The budget of this machine's recommended working set. */
 + (instancetype)currentBudget;
@@ -100,15 +109,23 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 @property (nonatomic, readonly) NSInteger byteCount;
 /*! YES when the machine reports a working set. */
 @property (nonatomic, readonly, getter=isKnown) BOOL known;
+/*! The bytes this budget keeps beside the weights: +reserveByteCountForBudgetByteCount: of byteCount. 0
+	where the machine reports no working set. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly) NSInteger reserveByteCount;
 
 /*! YES when bytes are known to fit beside the reserve. NO on a machine that reports no budget. */
 - (BOOL)holdsByteCount:(NSInteger)bytes;
 /*! YES when bytes may load at all: they fit beside the reserve, or the machine reports no budget. */
 - (BOOL)admitsByteCount:(NSInteger)bytes;
 
-/*! The least recommended working set whose budget holds bytes beside the reserve: the bytes plus the
-	reserve, divided by workingSetFraction, rounded up. The figure a variant's minimumMemoryBytes
-	states. */
+/*! The least budget, in bytes, that holds bytes beside its own reserve: the bytes plus the lesser of the
+	bytes and maximumReserveByteCount, and at least 1. Introduced in InferKit 0.4.0. */
++ (NSInteger)leastBudgetByteCountHoldingByteCount:(NSInteger)bytes;
+
+/*! The least recommended working set whose budget holds bytes beside that budget's reserve: the least
+	working set whose byteCount reaches leastBudgetByteCountHoldingByteCount:. Bytes of 4 GiB or more
+	need (bytes + 4 GiB) / 0.85, and fewer bytes need twice the bytes / 0.85, each rounded up. The figure a
+	variant's minimumMemoryBytes states. */
 + (NSInteger)leastWorkingSetHoldingByteCount:(NSInteger)bytes;
 
 /*! A byte count as the planner's sentences write it: "27.2 GiB", one decimal place. */
@@ -117,7 +134,8 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 /*! Reads a budget from its dictionary. Returns nil and sets error when workingSetBytes is missing or is
 	not a number. */
 + (nullable instancetype)budgetWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error;
-/*! The budget as a dictionary: workingSetBytes, budgetBytes, reserveBytes, and workingSetFraction. */
+/*! The budget as a dictionary: workingSetBytes, budgetBytes, reserveBytes (this budget's reserve), and
+	workingSetFraction. */
 - (NSDictionary<NSString *, id> *)dictionaryRepresentation;
 
 - (instancetype)init NS_UNAVAILABLE;
@@ -424,8 +442,9 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 				- no budget → no stage widens.
 
 				A refusal is an NFKModelCatalogErrorDomain error with code NFKModelCatalogErrorDoesNotFit.
-				The budget is a byte count, 0 for a machine that reports none. Introduced in
-				InferKit 0.4.0.
+				The budget is a byte count, 0 for a machine that reports none, and its reserve is
+				+[NFKModelMemoryBudget reserveByteCountForBudgetByteCount:]. Each refusal names the
+				reserve of that budget. Introduced in InferKit 0.4.0.
 */
 @interface NFKModelResidencyPlan : NSObject <NSCopying>
 

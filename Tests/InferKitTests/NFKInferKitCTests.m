@@ -429,6 +429,8 @@ static void NFKCAPITestCompletion(void *context, nfk_result *result, nfk_error *
 	self.builder = [[NFKCAPITestBuilder alloc] init];
 	[NFKModelCatalog registerBackendBuilder:self.builder forEngine:NFKCAPITestEngine];
 	NFKModelCatalog *catalog = NFKModelCatalog.sharedCatalog;
+	// A 64 GiB working set, so no build depends on the memory of the machine that runs the tests.
+	catalog.memoryBudget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:(NSInteger)64 << 30];
 	[catalog addDescriptor:[self echoDescriptor]];
 	[catalog addDescriptor:[self descriptorWithIdentifier:NFKCAPIStreamingModel options:nil requirements:nil]];
 	NFKModelRequirements *unmeetable = [[NFKModelRequirements alloc] initWithMinimumOSVersions:nil requiresAppleSilicon:NO
@@ -454,6 +456,7 @@ static void NFKCAPITestCompletion(void *context, nfk_result *result, nfk_error *
 	[catalog removeDescriptorWithIdentifier:NFKCAPIStreamingModel];
 	[catalog removeDescriptorWithIdentifier:NFKCAPIUnavailableModel];
 	[catalog removeDescriptorWithIdentifier:NFKCAPIHugeModel];
+	catalog.memoryBudget = nil;
 	[NFKModelCatalog registerBackendBuilder:nil forEngine:NFKCAPITestEngine];
 }
 
@@ -1070,9 +1073,6 @@ static void NFKCAPITestCompletion(void *context, nfk_result *result, nfk_error *
 
 - (void)testARefusalThatDoesNotFitCarriesItsEstimate
 {
-	if (!NFKModelMemoryBudget.currentBudget.isKnown) {
-		XCTSkip(@"this machine reports no Metal working set, so every load is admitted");
-	}
 	nfk_error *error = NULL;
 	XCTAssert(nfk_backend_create(NFKCAPIHugeModel.UTF8String, NULL, &error) == NULL);
 	XCTAssertEqual(nfk_error_code(error), (int64_t)NFKModelCatalogErrorDoesNotFit);

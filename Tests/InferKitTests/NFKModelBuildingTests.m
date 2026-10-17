@@ -7,6 +7,7 @@
 #import <InferKit/InferKit.h>
 
 static NSString * const NFKBuildTestEngine = @"build-test-engine";
+static const NSInteger NFKBuildTestGiB = (NSInteger)1 << 30;
 
 /*! A backend with two settable properties and one read-only one, which records the requests it runs. */
 @interface NFKBuildTestBackend : NSObject <NFKInferenceBackend>
@@ -108,18 +109,28 @@ static NSString * const NFKBuildTestEngine = @"build-test-engine";
 
 @implementation NFKModelBuildingTests
 
+// Each catalog builds against a 64 GiB working set, a 54.4 GiB budget, so no build depends on the memory of
+// the machine that runs the tests.
 - (void)setUp
 {
 	self.builder = [[NFKBuildTestBuilder alloc] init];
 	[NFKModelCatalog registerBackendBuilder:self.builder forEngine:NFKBuildTestEngine];
 	self.catalog = [[NFKModelCatalog alloc] init];
+	self.catalog.memoryBudget = [self generousBudget];
+	NFKModelCatalog.sharedCatalog.memoryBudget = [self generousBudget];
 	[self.catalog addDescriptor:[self modelWithIdentifier:@"build.model" engine:NFKBuildTestEngine provider:nil
 											 requirements:nil variant:nil]];
 }
 
 - (void)tearDown
 {
+	NFKModelCatalog.sharedCatalog.memoryBudget = nil;
 	[NFKModelCatalog registerBackendBuilder:nil forEngine:NFKBuildTestEngine];
+}
+
+- (NFKModelMemoryBudget *)generousBudget
+{
+	return [NFKModelMemoryBudget budgetWithWorkingSetByteCount:64 * NFKBuildTestGiB];
 }
 
 - (NFKModelOption *)loadOption:(NSString *)key kind:(NSString *)kind property:(nullable NSString *)property
@@ -314,9 +325,6 @@ static NSString * const NFKBuildTestEngine = @"build-test-engine";
 
 - (void)testAModelThatDoesNotFitIsRefusedUnlessTheUserOverrides
 {
-	if (!NFKModelMemoryBudget.currentBudget.isKnown) {
-		XCTSkip(@"this machine reports no Metal working set, so every load is admitted");
-	}
 	NFKModelVariant *huge = [[NFKModelVariant alloc] initWithIdentifier:@"huge" displayName:nil isDefault:YES
 														   registryName:nil source:nil downloadByteCount:nil
 													  residentByteCount:@((NSInteger)1 << 50) peakByteCount:nil
@@ -329,10 +337,10 @@ static NSString * const NFKBuildTestEngine = @"build-test-engine";
 	XCTAssertEqual(error.code, NFKModelCatalogErrorDoesNotFit);
 	NFKModelMemoryEstimate *estimate = error.userInfo[NFKModelMemoryEstimateKey];
 	XCTAssertEqual(estimate.peakByteCount, (NSInteger)1 << 50);
-	NSString *budget = [NFKModelMemoryBudget formattedByteCount:estimate.budget.byteCount];
-	NSString *expected = [NSString stringWithFormat:@"The model needs 1048576.0 GiB plus a 4.0 GiB reserve, against a %@ budget. "
+	XCTAssertEqualObjects(estimate.budget, [self generousBudget]);
+	NSString *expected = @"The model needs 1048576.0 GiB plus a 4.0 GiB reserve, against a 54.4 GiB budget. "
 						  "No combination of options fits: the smallest needs 1048576.0 GiB plus a 4.0 GiB reserve, "
-						  "against a %@ budget.", budget, budget];
+						  "against a 54.4 GiB budget.";
 	XCTAssertEqualObjects(error.localizedDescription, expected, @"nothing fits, so the smallest need is named");
 	XCTAssertNil(error.userInfo[NFKModelMemoryFittingOptionsKey]);
 	XCTAssertNil(error.userInfo[NFKModelMemoryFittingEstimateKey]);
@@ -384,10 +392,6 @@ static NSString * const NFKBuildTestEngine = @"build-test-engine";
 
 - (void)testARefusalNamesTheNearestCombinationThatFits
 {
-	NFKModelMemoryBudget *current = [NFKModelMemoryBudget currentBudget];
-	if (current.byteCount < 8 * ((NSInteger)1 << 30)) {
-		XCTSkip(@"a paged load of the test model needs a budget of 8 GiB or more");
-	}
 	[self.catalog addDescriptor:[self pageableModel]];
 	NSError *error = nil;
 	XCTAssertNil([self.catalog backendForModelIdentifier:@"pageable.model" options:nil error:&error]);
@@ -403,6 +407,44 @@ static NSString * const NFKBuildTestEngine = @"build-test-engine";
 	XCTAssertEqualObjects(error.localizedDescription, expected);
 
 	XCTAssertNotNil([self.catalog backendForModelIdentifier:@"pageable.model" options:fitting error:&error], @"%@", error);
+}
+
+- (void)testTheCatalogBuildsAgainstTheBudgetItIsGiven
+{
+	NFKModelVariant *twoGiB = [[NFKModelVariant alloc] initWithIdentifier:@"2g" displayName:nil isDefault:YES
+															 registryName:nil source:nil downloadByteCount:nil
+														residentByteCount:@(2 * NFKBuildTestGiB) peakByteCount:nil
+														   parameterCount:nil precision:nil minimumMemoryByteCount:nil
+															   extensions:nil];
+	[self.catalog addDescriptor:[self modelWithIdentifier:@"small.model" engine:NFKBuildTestEngine provider:nil
+											 requirements:nil variant:twoGiB]];
+
+	self.catalog.memoryBudget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:4 * NFKBuildTestGiB];
+	NSError *error = nil;
+	XCTAssertNil([self.catalog backendForModelIdentifier:@"small.model" options:nil error:&error]);
+	XCTAssertEqual(error.code, NFKModelCatalogErrorDoesNotFit);
+	XCTAssertEqualObjects(error.localizedDescription,
+						  @"The model needs 2.0 GiB plus a 1.7 GiB reserve, against a 3.4 GiB budget. No combination of "
+						  "options fits: the smallest needs 2.0 GiB plus a 1.7 GiB reserve, against a 3.4 GiB budget.",
+						  @"a budget below 8 GiB keeps half of itself");
+
+	self.catalog.memoryBudget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:8 * NFKBuildTestGiB];
+	XCTAssertNotNil([self.catalog backendForModelIdentifier:@"small.model" options:nil error:&error], @"%@", error);
+	XCTAssertEqualObjects(self.builder.lastRequest.memoryEstimate.budget, self.catalog.memoryBudget);
+	XCTAssertTrue(self.builder.lastRequest.memoryEstimate.fits, @"2 GiB beside a 3.4 GiB reserve fits a 6.8 GiB budget");
+
+	self.catalog.memoryBudget = nil;
+	XCTAssertEqualObjects(self.catalog.memoryBudget, [NFKModelMemoryBudget currentBudget], @"nil restores this machine's");
+}
+
+- (void)testAModelThatNeedsNoMemoryBuildsUnderEveryBudget
+{
+	for (NSNumber *workingSet in @[ @2, @(NFKBuildTestGiB), @(4 * NFKBuildTestGiB), @(64 * NFKBuildTestGiB) ]) {
+		self.catalog.memoryBudget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:workingSet.integerValue];
+		NSError *error = nil;
+		XCTAssertNotNil([self.catalog backendForModelIdentifier:@"build.model" options:nil error:&error],
+						@"%@: %@", workingSet, error);
+	}
 }
 
 - (void)testAPresetResolvesAsModelAtPreset

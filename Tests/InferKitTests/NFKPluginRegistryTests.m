@@ -76,10 +76,13 @@ static BOOL NFKRegistryTestImageIsLoaded(NSURL *url)
 }
 
 /*! A registry over an empty catalog that accepts the fixtures' ad hoc signatures and launches the host
-	built beside the tests. */
+	built beside the tests. The catalog plans against a 64 GiB working set, so no build depends on the
+	memory of the machine that runs the tests. */
 - (NFKPluginRegistry *)registry
 {
-	NFKPluginRegistry *registry = [[NFKPluginRegistry alloc] initWithCatalog:[[NFKModelCatalog alloc] init]];
+	NFKModelCatalog *catalog = [[NFKModelCatalog alloc] init];
+	catalog.memoryBudget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:(NSInteger)64 << 30];
+	NFKPluginRegistry *registry = [[NFKPluginRegistry alloc] initWithCatalog:catalog];
 	registry.signaturePolicy = NFKPluginSignaturePolicy.developmentPolicy;
 	NSURL *host = [NFKPluginFixtures hostExecutableURL];
 	if (host != nil) {
@@ -327,10 +330,6 @@ static BOOL NFKRegistryTestImageIsLoaded(NSURL *url)
 	NSError *error = nil;
 	XCTAssertNotNil([registry addPluginAtURL:bundle error:&error], @"listing reads the manifest and checks no signature: %@", error);
 	NSString *invert = [self catalogIdentifierOfKind:NFKPluginEntryKindObjC model:NFKPluginFixtureInvertModel];
-	NFKModelDescriptor *descriptor = [registry.catalog descriptorWithIdentifier:invert];
-	if ([descriptor estimatedMemoryForOptions:nil memoryBudget:[NFKModelMemoryBudget currentBudget] error:NULL].fits) {
-		XCTSkip(@"this machine's memory budget is unknown, so nothing is refused");
-	}
 	XCTAssertNil([registry.catalog backendForModelIdentifier:invert options:nil error:&error]);
 	[self assertError:error domain:NFKModelCatalogErrorDomain code:NFKModelCatalogErrorDoesNotFit];
 

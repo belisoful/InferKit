@@ -248,10 +248,11 @@ InferKit 0.4.0. The consumer reference is `Docs/model-catalog.md`. The decisions
   a `valueType` through the second. Every other shared string (`image`, `audio`, `messages`, …) has
   one type on both sides.
 - **Minimum memory is the residency budget.** `minimumMemoryBytes` is the smallest recommended Metal
-  working set whose budget admits the model at its default options: (peak bytes + the reserve) / the
-  budgeted fraction of the working set. `NFKModelMemoryBudget` (core) holds the fraction (0.85) and the
-  reserve (4 GiB); the MLX provider computes its figures through `NFKMLXResidencyBudget`, which reads
-  the two numbers from the core and calls through to its planner (see "Load options, memory, and the
+  working set whose budget admits the model at its default options beside that budget's reserve.
+  `NFKModelMemoryBudget` (core) holds the fraction (0.85) and the reserve rule (4 GiB from a budget of
+  8 GiB, half the budget below it; `hardware-and-model-sizing.md`); the MLX provider computes its
+  figures through `NFKMLXResidencyBudget`, which reads the rule from the core and calls through to its
+  planner (see "Load options, memory, and the
   build entry" below). A variant's `peakBytes` is the most it holds at once while loading or
   running at its default options, which can exceed `residentBytes`.
 - **Writing is deterministic.** `manifestDataWithError:` writes pretty-printed, sorted-key JSON with
@@ -326,11 +327,12 @@ options and the build"). The decisions behind them:
   drafts; InferKitMLX passes one holding its own raw descriptors.
 - **The planner is ported, not redesigned.** `NFKModelResidencyPlan +placementForStages:…refusal:`
   (private) is the Swift `plan(_:residency:budget:)` line for line: the same budget rules
-  (`holds` = budget > 0 and bytes + reserve ≤ budget; `admits` = budget ≤ 0 or bytes + reserve ≤
-  budget), the same expert-cache headroom, the same streamed rooms, the same widening, and the same
-  refusal sentences, whose GiB figures are `%.1f` of bytes / 2^30. A sentence ends "against a N GiB
-  budget": the figure is the planner's `budget` argument, which a caller passes as
-  `NFKModelMemoryBudget.byteCount` (0.85 of the working set), so the word names what it prints. The
+  (`holds` = budget > 0 and bytes + reserve(budget) ≤ budget; `admits` = budget ≤ 0 or bytes +
+  reserve(budget) ≤ budget, the reserve scaled to the budget since 2026-10-17), the same expert-cache
+  headroom, the same streamed rooms, the same widening, and the same refusal sentences, whose GiB
+  figures are `%.1f` of bytes / 2^30. A sentence ends "against a N GiB budget": the figure is the
+  planner's `budget` argument, which a caller passes as `NFKModelMemoryBudget.byteCount` (0.85 of the
+  working set), so the word names what it prints, and the reserve it names is that budget's. The
   Swift reference in `NFKMLXPlannerDifferentialTests` says the same. The public `planForStages:` returns
   the refusal as `NFKModelCatalogErrorDoesNotFit`; the estimate keeps the refused plan's figure and
   reports fits NO. `NFKMLXResidencyBudget` calls through to it. `NFKMLXPlannerDifferentialTests` keeps

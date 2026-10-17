@@ -77,16 +77,17 @@ NFKModelMemoryEstimate *estimate = [chat estimatedMemoryForOptions:@{ NFKModelLo
                                                              error:&error];
 ```
 
-``NFKModelMemoryBudget`` plans against 0.85 of the recommended Metal working set with a 4 GiB reserve,
-and ``NFKModelResidencyPlan`` decides whether the stages stay resident, take turns, page their routed
-experts, or stream their layers. ``NFKModelDescriptor/constraintsForHardwareProfile:`` runs the estimate
+``NFKModelMemoryBudget`` plans against 0.85 of the recommended Metal working set with a reserve beside
+the weights: 4 GiB from a budget of 8 GiB, and half the budget below it. ``NFKModelResidencyPlan``
+decides whether the stages stay resident, take turns, page their routed experts, or stream their layers. ``NFKModelDescriptor/constraintsForHardwareProfile:`` runs the estimate
 over every combination and states, for each option, which choices fit, which one is required, and the
 longest context that fits, each with a sentence and its numbers.
 
 ### Building a backend
 
 ``NFKModelCatalog/backendForModelIdentifier:options:error:`` resolves the options
-(``NFKModelDescriptor/resolvedOptions:stage:error:``), checks the machine and the memory estimate, finds
+(``NFKModelDescriptor/resolvedOptions:stage:error:``), checks the machine, checks the memory estimate
+against the catalog's ``NFKModelCatalog/memoryBudget`` (this machine's unless an app sets one), finds
 the variant's files, and asks a builder for the backend: the descriptor's provider class, else the
 ``NFKModelBackendBuilding`` registered for its engine. Request options become defaults an
 ``NFKDefaultedBackend`` fills into each request. A combination that does not fit is refused with

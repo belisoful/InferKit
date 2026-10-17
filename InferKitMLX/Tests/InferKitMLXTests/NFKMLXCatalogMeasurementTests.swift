@@ -27,7 +27,7 @@ final class NFKMLXCatalogMeasurementTests: XCTestCase {
 
     func testTheLeastWorkingSetUsesTheResidencyBudgetsReserveAndShare() {
         let bytes: Int64 = 10 << 30
-        let expected = (Double(bytes) + Double(NFKMLXResidencyBudget.reserve)) / NFKMLXResidencyBudget.workingSetFraction
+        let expected = (Double(bytes) + Double(NFKMLXResidencyBudget.maximumReserve)) / NFKMLXResidencyBudget.workingSetFraction
         XCTAssertEqual(NFKMLXResidencyBudget.leastWorkingSet(holding: bytes), Int64(expected.rounded(.up)))
     }
 

@@ -381,14 +381,13 @@ static NSInteger NFKServiceTestThreadCount(void)
 - (nullable NSDictionary *)replyTo:(NSNumber *)identifier descriptors:(NSArray<NFKPluginDescriptor *> * _Nullable * _Nullable)outDescriptors
 {
 	__block NSDictionary *reply = nil;
+	__block NSArray<NFKPluginDescriptor *> *replyDescriptors = nil;
 	[self waitUntil:^BOOL {
 		@synchronized (self) {
 			[self.messages enumerateObjectsUsingBlock:^(NSDictionary *message, NSUInteger index, BOOL *stop) {
 				if ([message[@"type"] isEqual:@"reply"] && [message[@"id"] isEqual:identifier]) {
 					reply = message;
-					if (outDescriptors != NULL) {
-						*outDescriptors = self.messageDescriptors[index];
-					}
+					replyDescriptors = self.messageDescriptors[index];
 					*stop = YES;
 				}
 			}];
@@ -397,6 +396,9 @@ static NSInteger NFKServiceTestThreadCount(void)
 	} timeout:10];
 	@synchronized (self) {
 		XCTAssertNotNil(reply, @"a reply to %@; closed: %d with %@; received: %@", identifier, self.channelClosed, self.closeError, self.messages);
+	}
+	if (outDescriptors != NULL && reply != nil) {
+		*outDescriptors = replyDescriptors;
 	}
 	return reply;
 }

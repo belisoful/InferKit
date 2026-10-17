@@ -42,7 +42,7 @@ final class NFKMLXExpertPagingTests: XCTestCase {
         let paged = try NFKMLXResidencyBudget.plan([large], residency: .automatic, budget: budget)
         XCTAssertTrue(paged.pagesExperts)
         XCTAssertFalse(paged.holdsStagesResident)
-        XCTAssertEqual(paged.expertCacheBytes, (budget - NFKMLXResidencyBudget.reserve - 5 * gib) / 2,
+        XCTAssertEqual(paged.expertCacheBytes, (budget - NFKMLXResidencyBudget.maximumReserve - 5 * gib) / 2,
                        "half of what the unpaged weights and the reserve leave")
 
         let dense = NFKMLXStageFootprint(bytes: 60 * gib)
@@ -63,7 +63,7 @@ final class NFKMLXExpertPagingTests: XCTestCase {
         let plan = try NFKMLXResidencyBudget.plan([encoder, large], residency: .automatic, budget: budget)
         XCTAssertTrue(plan.pagesExperts)
         XCTAssertFalse(plan.holdsStagesResident)
-        XCTAssertEqual(plan.expertCacheBytes, (budget - NFKMLXResidencyBudget.reserve - 10 * gib) / 2,
+        XCTAssertEqual(plan.expertCacheBytes, (budget - NFKMLXResidencyBudget.maximumReserve - 10 * gib) / 2,
                        "the largest unpaged stage, the encoder, bounds the cache")
     }
 

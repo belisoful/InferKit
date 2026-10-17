@@ -453,15 +453,20 @@ Staging:
 
 The budget:
 
-- `NFKMLXResidencyBudget` plans against 0.85 of Metal's recommended working set with a 4 GiB reserve,
-  never live free memory, which a resident model's own weights would count against.
+- `NFKMLXResidencyBudget` plans against 0.85 of Metal's recommended working set with the core's reserve,
+  never live free memory, which a resident model's own weights would count against. The reserve is 4 GiB
+  (`maximumReserve`) from a budget of 8 GiB and half the budget below it (`reserve(forBudget:)`, since
+  2026-10-17); `holds` and `admits` read it per budget. A test that builds a budget from a footprint
+  uses `leastBudget(holding:)`, the least budget that holds those bytes beside its own reserve, which
+  equals `maximumReserve` plus the bytes from 4 GiB of bytes up; the layer-streaming tests' tiny
+  releases need the scaled form, since 4 GiB plus a few kilobytes is a budget below 8 GiB.
 - The planner is the core's (`NFKModelResidencyPlan`, `NFKModelMemoryBudget`, 2026-10-15).
   `NFKMLXResidencyBudget` keeps its Swift API and calls through: `NFKMLXStageFootprint.core` converts a
   footprint, `NFKMLXResidencyPlan` reads the core plan it holds, and a refusal arrives as
   `NFKMLXError.unsupportedConfiguration` with the core's sentence. `NFKMLXPlannerDifferentialTests`
-  keeps the Swift planner's last body as its reference and compares it with the core planner and the
-  call-through over 18 footprint sets × 5 residencies × 34 budgets: equal plans, held layers, and stage
-  checks, and identical refusal sentences.
+  keeps the Swift planner's last body, with the reserve scaled as the core's is, as its reference and
+  compares it with the core planner and the call-through over 18 footprint sets × 5 residencies × 34
+  budgets: equal plans, held layers, and stage checks, and identical refusal sentences.
 - A machine that reports no budget gets two answers. It is not held resident, and no larger precision
   is chosen for it (`holds`), because staging always runs and holding everything may not: Music 3's
   "an unreadable budget stages rather than gambling". A single stage is not refused there (`admits`),

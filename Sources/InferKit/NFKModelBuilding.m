@@ -362,6 +362,16 @@ static NSSet<NSString *> *NFKDefaultedForwardedSelectors(void)
 	self.storedLocator = locator;
 }
 
+- (NFKModelMemoryBudget *)memoryBudget
+{
+	return self.storedMemoryBudget ?: [NFKModelMemoryBudget currentBudget];
+}
+
+- (void)setMemoryBudget:(nullable NFKModelMemoryBudget *)memoryBudget
+{
+	self.storedMemoryBudget = memoryBudget;
+}
+
 // The descriptor a name reaches, and the preset when the name is model@preset.
 - (nullable NFKModelDescriptor *)descriptorForName:(NSString *)name preset:(NFKModelPreset * _Nullable * _Nonnull)preset
 {
@@ -430,8 +440,7 @@ static NSSet<NSString *> *NFKDefaultedForwardedSelectors(void)
 	}];
 	NFKModelVariant *variant = [descriptor variantWithIdentifier:[loadOptions[NFKModelLoadOptionVariant] description] ?: @""]
 		?: descriptor.defaultVariant;
-	NFKModelMemoryEstimate *estimate = [descriptor estimateForResolvedOptions:loadOptions
-																 memoryBudget:[NFKModelMemoryBudget budgetForHardwareProfile:profile]
+	NFKModelMemoryEstimate *estimate = [descriptor estimateForResolvedOptions:loadOptions memoryBudget:self.memoryBudget
 																	  catalog:self];
 	BOOL ignoresBudget = [given[NFKModelLoadOptionIgnoreMemoryBudget] respondsToSelector:@selector(boolValue)]
 		&& [given[NFKModelLoadOptionIgnoreMemoryBudget] boolValue];
@@ -464,7 +473,7 @@ static NSSet<NSString *> *NFKDefaultedForwardedSelectors(void)
 					loadOptions:(NSDictionary<NSString *, id> *)loadOptions
 						profile:(NFKHardwareProfile *)profile
 {
-	NFKModelMemoryBudget *budget = estimate.budget ?: [NFKModelMemoryBudget budgetForHardwareProfile:profile];
+	NFKModelMemoryBudget *budget = estimate.budget ?: self.memoryBudget;
 	NFKModelMemoryConstraints *constraints = [descriptor constraintsForOptions:nil memoryBudget:budget
 																	   profile:profile catalog:self
 																	 preferred:loadOptions];

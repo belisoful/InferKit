@@ -3520,7 +3520,7 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	// The budget and the constraints, whose reasons quote it, describe the machine, so they follow
 	// reportsHostDetails as the status route's host object does.
 	BOOL describesMachine = self.reportsHostDetails;
-	NFKModelMemoryBudget *budget = describesMachine ? [NFKModelMemoryBudget currentBudget] : nil;
+	NFKModelMemoryBudget *budget = describesMachine ? self.modelCatalog.memoryBudget : nil;
 	NFKModelMemoryEstimate *estimate = descriptor != nil
 		? [descriptor estimatedMemoryForOptions:options memoryBudget:budget error:&error] : nil;
 	if (estimate == nil) {
