@@ -291,9 +291,10 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
     GPU each matches torch over every float16 and bfloat16 input the GPU keeps normal and runs faster than the
     MLX operations it replaced, which the CPU stream takes: GELU over 2 × 4,096 × 5,120 values in 1.1 ms against
     30.4 ms, SiLU over 2 × 128 × 128 × 640 values in 0.9 ms against 2.3 ms.
-  - Overall, a whole half-precision forward in `.reference` takes 0.97 to 1.18 times the time of the fast
-    mode in a diffusion denoiser and up to 2.27 times in an encoder (`NFKMLXHalfPrecisionArithmeticTimingTests`,
-    `IK_ARITHMETIC_TIMING=1`; the table is in `Docs/examples.md`).
+  - Overall, a whole half-precision forward in `.reference` takes 0.97 to 1.30 times the time of the fast mode
+    in a diffusion denoiser (SDXL's UNet, at 1.30, under the standing limits) and up to 2.27 times in an
+    encoder (`NFKMLXHalfPrecisionArithmeticTimingTests`, `IK_ARITHMETIC_TIMING=1`; the table is in
+    `Docs/examples.md`).
   Measured, and kept out of the switch:
   - Sigmoid and swish, over every float16 and bf16 input: Sleef's exponential and MLX's leave the same
     count of rounded outputs apart from torch's.

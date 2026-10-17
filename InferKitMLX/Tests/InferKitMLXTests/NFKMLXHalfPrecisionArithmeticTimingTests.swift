@@ -45,6 +45,16 @@ final class NFKMLXHalfPrecisionArithmeticTimingTests: XCTestCase {
                           "builds released-width networks and times them; set IK_ARITHMETIC_TIMING to \"1\" to run")
     }
 
+    /// Applies `NFKMLXGPU.applyStandingLimits()` for the rest of the test and restores MLX's limits after it.
+    private func applyStandingLimits() {
+        let (cacheLimit, memoryLimit) = (NFKMLXGPU.cacheLimit, NFKMLXGPU.memoryLimit)
+        NFKMLXGPU.applyStandingLimits()
+        addTeardownBlock {
+            NFKMLXGPU.setCacheLimit(cacheLimit)
+            NFKMLXGPU.setMemoryLimit(memoryLimit)
+        }
+    }
+
     /// Casts every parameter of `module` to `dtype`, evaluates them, and names their size.
     private func castWeights(_ module: Module, to dtype: DType) -> String {
         module.update(parameters: module.parameters().mapValues { $0.asType(dtype) })
@@ -116,10 +126,12 @@ final class NFKMLXHalfPrecisionArithmeticTimingTests: XCTestCase {
     }
 
     // SDXL's UNet, released geometry, float16; a 128x128 latent (1024 px) at batch 2 for classifier-free
-    // guidance over 77 tokens of both CLIP towers, the pooled embedding, and the size descriptor.
+    // guidance over 77 tokens of both CLIP towers, the pooled embedding, and the size descriptor, under the
+    // standing limits. Under MLX's default limits single rounds ran 2 to 6 times the others' time.
     func testSDXLUNetForwardTimeInEachArithmetic() throws {
         try requireMLXRuntime()
         try requireOptIn()
+        applyStandingLimits()
         MLXRandom.seed(0)
         let unet = NFKMLXSDUNet(configuration: .sdxl)
         let weights = castWeights(unet, to: .float16)
@@ -151,12 +163,7 @@ final class NFKMLXHalfPrecisionArithmeticTimingTests: XCTestCase {
     func testFluxAutoencoderDecodeTimeInEachArithmetic() throws {
         try requireMLXRuntime()
         try requireOptIn()
-        let (cacheLimit, memoryLimit) = (NFKMLXGPU.cacheLimit, NFKMLXGPU.memoryLimit)
-        NFKMLXGPU.applyStandingLimits()
-        defer {
-            NFKMLXGPU.setCacheLimit(cacheLimit)
-            NFKMLXGPU.setMemoryLimit(memoryLimit)
-        }
+        applyStandingLimits()
         MLXRandom.seed(0)
         let vae = NFKMLXSDAutoencoder(configuration: .flux)
         let weights = castWeights(vae, to: .bfloat16)

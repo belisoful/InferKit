@@ -3065,10 +3065,10 @@ norm in Metal kernels that sum in PyTorch's order (a float32 input read in 4-wid
   of 13.7 million layer-norm outputs over rows 7 to 4,096 wide at float16 and bfloat16, the float32 layer
   norm over rows 7 to 5,120 wide with and without the affine, and every softmax row from 1 to 4,097 values.
   Every half-precision parity figure is measured in this mode.
-- Con: a diffusion denoiser's forward takes 0.97 to 1.18 times its fast time, and an encoder up to 2.27
-  times. The softmax kernel takes up to twice MLX's time over long rows, and the float32 layer norm 4.4 to 4.9
-  times. On the CPU stream the exponential takes MLX operations, which leave 1.1% of exponentials one unit
-  from PyTorch's, and the softmax and the layer norm take MLX's own.
+- Con: a diffusion denoiser's forward takes 0.97 to 1.30 times its fast time (SDXL's UNet, at 1.30, under the
+  standing limits), and an encoder up to 2.27 times. The softmax kernel takes up to twice MLX's time over long
+  rows, and the float32 layer norm 4.4 to 4.9 times. On the CPU stream the exponential takes MLX operations,
+  which leave 1.1% of exponentials one unit from PyTorch's, and the softmax and the layer norm take MLX's own.
 
 The overall change in one whole forward of each network, measured on an M1 Max at the network's released
 width and input with random weights at its half precision (`NFKMLXHalfPrecisionArithmeticTimingTests`,
@@ -3079,7 +3079,7 @@ alternating.
 | Network | Measured as | Reference | Fast | Reference ÷ fast |
 | --- | --- | --- | --- | --- |
 | SD 1.5 UNet | released, float16, 64×64 latent at batch 2 | 844 ms | 794 ms | 1.06 |
-| SDXL UNet | released, float16, 128×128 latent at batch 2; the rounds (4,184–17,208 ms against 3,806–13,106 ms) put the ratio anywhere from 0.32 to 4.52, so it is not resolved | 11,872 ms | 5,339 ms | — |
+| SDXL UNet | released, float16, 128×128 latent at batch 2, under `NFKMLXGPU.applyStandingLimits()`; under MLX's default limits single rounds ran 2 to 6 times the others' time, so the ratio was not resolved there | 6,110 ms | 4,687 ms | 1.30 |
 | SD 3.5 Medium transformer | released, bfloat16, 1024×1024 | 4,804 ms | 4,365 ms | 1.10 |
 | FLUX.1 schnell transformer | 3 of 19 double and 6 of 38 single blocks, 1024×1024 | 2,773 ms | 2,636 ms | 1.05 |
 | FLUX.2 klein 4B transformer | 3 of 5 double and 12 of 20 single blocks, 1024×1024 | 4,408 ms | 4,180 ms | 1.05 |
@@ -3087,7 +3087,7 @@ alternating.
 | Z-Image transformer | 10 of 30 layers and both refiners, 1024×1024 | 4,835 ms | 4,983 ms | 0.97 |
 | Wan 2.1 T2V 1.3B transformer | released, 480×832, 17 frames | 11,733 ms | 9,926 ms | 1.18 |
 | Wan 2.2 Animate 14B, extract pass | 6 of 40 layers, 480×832, one reference frame | 1,212 ms | 1,146 ms | 1.06 |
-| Wan 2.2 Animate 14B, generation pass | 6 of 40 layers, 480×832, a two-latent-frame chunk; the rounds (2,968–5,223 ms against 2,625–3,669 ms) put the ratio anywhere from 0.81 to 1.99, so it is not resolved | 3,209 ms | 2,847 ms | — |
+| Wan 2.2 Animate 14B, generation pass | 6 of 40 layers, 480×832, a two-latent-frame chunk | 2,654 ms | 2,526 ms | 1.05 |
 | LTX-2.3 transformer | 5 of 48 layers, 512×768, 49 frames | 4,020 ms | 3,907 ms | 1.03 |
 | SD 1.5 autoencoder decode | released, float16, 512×512 | 488 ms | 473 ms | 1.03 |
 | FLUX autoencoder decode | released, bfloat16, 1024×1024, under `NFKMLXGPU.applyStandingLimits()` | 4,034 ms | 3,282 ms | 1.22 |

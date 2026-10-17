@@ -1498,8 +1498,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKMLXArithmeticFast`, the default, computes MLX's `exp`, `softmax`, `sum`, and `MLXFast.layerNorm`.
 - `NFKMLXArithmeticReference` computes PyTorch's CPU arithmetic: Sleef's `expf`, the softmax, and the layer
   norm in Metal kernels that sum in PyTorch's order, and a router's kept-weight sum in PyTorch's order. Each
-  output equals PyTorch's. A whole half-precision forward in this mode takes 0.97 to 1.18 times the time of
-  the fast mode in a diffusion denoiser, and up to 2.27 times in an encoder.
+  output equals PyTorch's. A whole half-precision forward in this mode takes 0.97 to 1.30 times the time of
+  the fast mode in a diffusion denoiser (SDXL's UNet, at 1.30, under `NFKMLXGPU.applyStandingLimits()`), and
+  up to 2.27 times in an encoder.
 - The reference arithmetic computes a layer norm over a float32 input inside a half-precision forward (Wan's
   `FP32LayerNorm`, Wan Animate's, and SAM 3's under autocast) as PyTorch does: read in 4-wide vectors and
   normalized as `(x − mean) · rstd`. The kernel takes 4.4 to 4.9 times `MLXFast`'s time.
