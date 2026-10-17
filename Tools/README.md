@@ -66,8 +66,8 @@ released-weight suite), waits until it is granted, runs, and releases as the fir
 when the run ends; `lmc.py run --test <name> -- <command>` does all four. Requests for the same
 test set from the same working tree combine into one run whose outcome satisfies every requester;
 `full-check` always queues last; a holder whose process is gone is reaped, and the sessions riding
-on a stopped run are told to re-request. State lives in `~/.claude/inferkit-lmc/`, and the legacy
-`~/.claude/inferkit-test-slot-mlx` file is written and honored alongside it. `test_lmc.py` runs
+on a stopped run are told to re-request. State lives in the directory `INFERKIT_LMC_DIR` names, and
+a legacy slot file is written and honored alongside it. `test_lmc.py` runs
 the tool's own tests. The rule that binds sessions to it is in
 `Docs/agent-reference/build-and-verification.md`.
 

@@ -278,8 +278,7 @@ a weight-free test; the model math matched wherever the ids matched.
 
 ## Measuring the sizes
 
-How the four by-configuration releases were measured (2026-10-02); the assets came through the IO
-Coordinator and every run through the Testing Coordinator.
+How the four by-configuration releases were measured (2026-10-02).
 
 - `facebook/m2m100_1.2B` (24 + 24 at 1024, ~5 GB float32): `run_reference.py m2m100 --checkpoint` on
   its directory unchanged, under `IK_VAL_M2M100_1_2B` / `IK_PARITY_M2M100_1_2B`; the port at float32.

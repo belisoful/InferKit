@@ -35,9 +35,9 @@ earliest request.
 Liveness. A request records its session's process id (`CLAUDE_PID`, or `--pid`). A holder whose
 process is gone is reaped as `stopped`; a queued request whose session is gone is dropped. `run`
 also records the child it spawned. Another process reaps the run as `stopped` when that child is
-gone; `run` itself waits on the child and releases with the command's exit status. The legacy
-advisory file `~/.claude/inferkit-test-slot-mlx` is written while the lock is held and honored while
-its holder is alive, so scripts that still read it stay coordinated.
+gone; `run` itself waits on the child and releases with the command's exit status. A legacy
+advisory slot file (`INFERKIT_LMC_LEGACY_SLOT` names its path) is written while the lock is held and
+honored while its holder is alive, so scripts that still read it stay coordinated.
 
 Exit codes for `wait`, `acquire`, and a `run` that did not run its command:
     0  granted: this session holds the lock; run, then release
@@ -48,7 +48,7 @@ Exit codes for `wait`, `acquire`, and a `run` that did not run its command:
    14  cancelled: the request was withdrawn or its session died
 `run` exits with its command's own status once the command has run.
 
-State lives in `~/.claude/inferkit-lmc/` (`INFERKIT_LMC_DIR` overrides it). `state.json` is the
+State lives in the per-user state directory (`INFERKIT_LMC_DIR` overrides it). `state.json` is the
 queue; `history.log` is one line per event; `logs/` holds the output of every `run`.
 """
 

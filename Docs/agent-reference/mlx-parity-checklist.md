@@ -86,7 +86,7 @@ parity"). This checklist adds the listings that half touches:
   `IK_PARITY_*` key, the file under the validation root or its absolute path outside it,
   the oracle environment, and the `run_reference.py` command that regenerates it), and its mode in
   that environment's `modes`. A record is an oracle output, so `fetch.py` does not provision it; the
-  key reaches `~/.inferkit-validation.json` through the IO Coordinator.
+  key is registered in `~/.inferkit-validation.json` by hand.
 
 ## Every optional behavior needs a measured case that exercises it
 

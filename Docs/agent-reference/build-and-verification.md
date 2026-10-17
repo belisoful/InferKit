@@ -315,9 +315,7 @@ suite. The shared layers:
 - the core value types and backend protocol: `NFKInferenceRequest`, `NFKInferenceResult`,
   `NFKInferenceBackend.h`, and `NFKTensorConversion.h`
 
-The Testing Manager owns this list and the selector
-(`~/.claude/inferkit-lmc/coordinator/commitcheck/cc_select.py`). A file joins the list when a change
-to it has broken a test the selector would have skipped.
+A file joins the list when a change to it has broken a test the selector would have skipped.
 
 The selected tests run under the Full Check's own harness: heavy tests one per process, Wan's
 end-to-end test under its wider swap watchdog, and every `NFKMLXReferenceParityTests` and
@@ -370,10 +368,11 @@ Tools/lmc/lmc.py status                                      # holder, queue, ou
 - `run --quiet-seconds 180` waits, after the grant, for `memory_pressure` free ≥ 70% and no process
   named `xctest`, `swift-test`, or `swift-build` (`pgrep -x`, never command text) for that long,
   which is the quiet gate the full suite ran behind before the tool existed.
-- The tool writes the legacy `~/.claude/inferkit-test-slot-mlx` while the lock is held and treats
-  a live holder of that file as holding the lock, so a script that still reads the file stays
-  coordinated through the transition. State and per-run logs are in `~/.claude/inferkit-lmc/`;
-  `history` tails the event log. `Tools/lmc/test_lmc.py` is the tool's test suite.
+- The tool writes a legacy slot file while the lock is held (`INFERKIT_LMC_LEGACY_SLOT` names its
+  path) and treats a live holder of that file as holding the lock, so a script that still reads the
+  file stays coordinated through the transition. State and per-run logs are in the tool's state
+  directory (`INFERKIT_LMC_DIR` names it); `history` tails the event log. `Tools/lmc/test_lmc.py` is
+  the tool's test suite.
 - A hung test holds the lock for every session. `NFKMLXTranslationTests.testDetectionNamesEnglish`
   (`NLLanguageRecognizer.dominantLanguage`) never returned in one `swift test` process on 2026-09-24
   and held the lock for 30 minutes at about 25% CPU. A run whose log stops advancing for several
