@@ -32,8 +32,8 @@ refusal sentences; `NFKMLXResidencyBudget` keeps its Swift API and calls through
 
 - The reserve scales with the budget (2026-10-17): reserve(budget) = min(4 GiB, budget / 2), the half
   rounded up (`+reserveByteCountForBudgetByteCount:`, the instance's `reserveByteCount`,
-  `maximumReserveByteCount` = 4 GiB). A budget of 8 GiB or more (a working set of about 9.4 GiB or
-  more) keeps 4 GiB, so every plan and sentence there is unchanged. A fixed 4 GiB reserve refused every
+  `maximumReserveByteCount` = 4 GiB). A budget of 8 GiB or more (a working set of more than 9.41
+  GiB) keeps 4 GiB, so every plan and sentence there is unchanged. A fixed 4 GiB reserve refused every
   model, a 0-byte one included, on a budget at or below 4 GiB: the hosted CI runner (a 4.0 GiB budget,
   52 core tests refused with `NFKModelCatalogErrorDoesNotFit`) and 6 to 8 GB iPhones and iPads. Under
   the scaled rule a model that needs no memory fits every budget a machine reports.

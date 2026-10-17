@@ -3517,8 +3517,9 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	NSDictionary<NSString *, id> *given = body[@"options"];
 	NSMutableDictionary<NSString *, id> *options = [baseOptions mutableCopy];
 	[options addEntriesFromDictionary:given ?: @{}];
-	// The budget and the constraints, whose reasons quote it, describe the machine, so they follow
-	// reportsHostDetails as the status route's host object does.
+	// The budget and the constraints, whose reasons quote it, describe the catalog's budget, the host's own
+	// unless memoryBudget pins another, so they follow reportsHostDetails as the status route's host
+	// object does.
 	BOOL describesMachine = self.reportsHostDetails;
 	NFKModelMemoryBudget *budget = describesMachine ? self.modelCatalog.memoryBudget : nil;
 	NFKModelMemoryEstimate *estimate = descriptor != nil

@@ -416,7 +416,7 @@ the budget (`reserveByteCount`, `+reserveByteCountForBudgetByteCount:`):
 
 | Budget | Reserve |
 |---|---|
-| 8 GiB or more (a working set of 9.4 GiB or more) | 4 GiB (`maximumReserveByteCount`) |
+| 8 GiB or more (a working set of more than 9.41 GiB) | 4 GiB (`maximumReserveByteCount`) |
 | 6 GiB | 3 GiB |
 | 4 GiB | 2 GiB |
 | 2 GiB | 1 GiB |

@@ -551,6 +551,9 @@ final class NFKMLXMusic3Tests: XCTestCase {
         XCTAssertFalse(NFKMLXMusicBackend.keepsStagesResident(weightBytes: 1 << 30,
                                                               workingSetBudget: 0),
                        "an unreadable budget stages rather than gambling")
+        XCTAssertFalse(NFKMLXMusicBackend.keepsStagesResident(weightBytes: 1 << 30,
+                                                              workingSetBudget: 4 << 30),
+                       "the CFG cache needs the full reserve on a budget whose scaled reserve is 2 GiB")
     }
 
     // The chained pipeline on the real release: prompt + lyrics in, a stereo 44.1 kHz WAV out. Each

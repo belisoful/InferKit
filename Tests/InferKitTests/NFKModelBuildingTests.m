@@ -447,8 +447,9 @@ static const NSInteger NFKBuildTestGiB = (NSInteger)1 << 30;
 	}
 }
 
-// A hosted runner's budget reads 4.0 GiB. A shipped model built through the shared catalog's own builder
-// fits there, and on the smaller budget of a 4 GiB device.
+// A hosted runner's budget reads 4.0 GiB. A shipped model that declares no memory builds through the shared
+// catalog's own builder there, and on the smaller budget of a 4 GiB device; the fixed 4 GiB reserve
+// refused it on both.
 - (void)testAShippedModelBuildsOnASmallDevicesBudget
 {
 	NFKModelCatalog *catalog = NFKModelCatalog.sharedCatalog;

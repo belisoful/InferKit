@@ -76,7 +76,7 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 				placement keeps a reserve beside its weights for activations and request buffers:
 				- a budget of 8 GiB or more → maximumReserveByteCount (4 GiB).
 				- a smaller budget → half the budget, rounded up.
-				A working set of 9.4 GiB or more gives a budget of 8 GiB or more. Bytes fit when they and the
+				A working set of more than 9.41 GiB gives a budget of 8 GiB or more. Bytes fit when they and the
 				reserve together are at most the budget. A budget of 0 is a machine that reports no
 				working set, and the two questions asked of it get different answers:
 				- holdsByteCount: (whether to hold stages resident, or take a wider precision) → NO.

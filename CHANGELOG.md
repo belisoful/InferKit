@@ -416,8 +416,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   against, 0.85 of the working set, as "against a 27.2 GiB budget".
 - The reserve a budget keeps beside the weights scales with it: 4 GiB (`maximumReserveByteCount`) from a
   budget of 8 GiB, and half the budget below it (`reserveByteCount`,
-  `+reserveByteCountForBudgetByteCount:`), so a machine whose budget is 4 GiB or less, such as a 6 to
-  8 GB iPhone or iPad, fits a model of up to half its budget. Each refusal names the reserve of its
+  `+reserveByteCountForBudgetByteCount:`), so a machine whose budget is under 8 GiB, such as a 6 to 8 GB
+  iPhone or iPad, fits a model of up to half its budget. Each refusal names the reserve of its
   budget, as "plus a 1.7 GiB reserve, against a 3.4 GiB budget".
   `+leastBudgetByteCountHoldingByteCount:` gives the least budget that holds a byte count, and
   `minimumMemoryBytes` follows the rule, so a variant whose largest stage is under 4 GiB states a
