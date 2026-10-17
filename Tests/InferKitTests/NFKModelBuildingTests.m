@@ -447,6 +447,21 @@ static const NSInteger NFKBuildTestGiB = (NSInteger)1 << 30;
 	}
 }
 
+// A hosted runner's budget reads 4.0 GiB. A shipped model built through the shared catalog's own builder
+// fits there, and on the smaller budget of a 4 GiB device.
+- (void)testAShippedModelBuildsOnASmallDevicesBudget
+{
+	NFKModelCatalog *catalog = NFKModelCatalog.sharedCatalog;
+	XCTAssertNotNil([catalog descriptorWithIdentifier:@"vision-feature-print"]);
+	for (NSNumber *workingSet in @[ @(5053000000), @(4 * NFKBuildTestGiB) ]) {
+		catalog.memoryBudget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:workingSet.integerValue];
+		XCTAssertLessThan(catalog.memoryBudget.byteCount, 8 * NFKBuildTestGiB);
+		NSError *error = nil;
+		id<NFKInferenceBackend> backend = [catalog backendForModelIdentifier:@"vision-feature-print" options:nil error:&error];
+		XCTAssertNotNil(backend, @"a %@-byte working set: %@", workingSet, error);
+	}
+}
+
 - (void)testAPresetResolvesAsModelAtPreset
 {
 	NSError *error = nil;
