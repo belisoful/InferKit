@@ -2,9 +2,10 @@
 //  NFKSubprocessTests.m
 //  InferKitTests
 //
-//  Launching and supervising a program: line framing, a write larger than the pipe, and the restart
-//  policy's limit. The programs are /bin/sh and cat, which ship with macOS. The stdio MCP client's
-//  tests cover the stop escalation, the environment, and the working directory.
+//  Launching and supervising a program: line framing, a write larger than the pipe, the restart policy's
+//  limit, and the reaping of many short-lived children started at once. The programs are /bin/sh, cat,
+//  and codesign, which ship with macOS. The stdio MCP client's tests cover the stop escalation, the
+//  environment, and the working directory.
 //
 
 #import <XCTest/XCTest.h>
@@ -75,6 +76,59 @@
 	XCTAssertFalse([process writeData:line error:&error]);
 	XCTAssertEqualObjects(error.domain, NFKSubprocessErrorDomain);
 	XCTAssertEqual(error.code, NFKSubprocessErrorNotRunning);
+}
+
+- (void)testEveryShortLivedChildIsReapedWhenManyStartAtOnce
+{
+	// The kernel can report a child's exit before waitpid sees it. Before the subprocess retried the reap,
+	// about 1 short codesign run in 800, started on several threads at once, stayed Running for good: 600
+	// runs here catch that about half the time. With the retry, no run may stay.
+	NSInteger threads = 6;
+	NSInteger runsPerThread = 100;
+	NSURL *folder = [[NSURL fileURLWithPath:NSTemporaryDirectory()] URLByAppendingPathComponent:
+					 [NSString stringWithFormat:@"subprocess-reap-%@", NSUUID.UUID.UUIDString] isDirectory:YES];
+	XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:nil error:NULL]);
+	[self addTeardownBlock:^{
+		[NSFileManager.defaultManager removeItemAtURL:folder error:NULL];
+	}];
+	__block NSInteger stuck = 0;
+	__block NSInteger failed = 0;
+	dispatch_group_t group = dispatch_group_create();
+	for (NSInteger thread = 0; thread < threads; thread++) {
+		NSString *program = [folder URLByAppendingPathComponent:[NSString stringWithFormat:@"ls-%ld", (long)thread]].path;
+		XCTAssertTrue([NSFileManager.defaultManager copyItemAtPath:@"/bin/ls" toPath:program error:NULL]);
+		dispatch_group_async(group, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+			for (NSInteger run = 0; run < runsPerThread; run++) {
+				@autoreleasepool {
+					NSArray<NSString *> *arguments = run % 2 == 0 ? @[ @"--force", @"--sign", @"-", program ] : @[ @"--verify", program ];
+					NFKSubprocess *process = [[NFKSubprocess alloc] initWithCommand:@"/usr/bin/codesign" arguments:arguments];
+					dispatch_semaphore_t ended = dispatch_semaphore_create(0);
+					process.stateHandler = ^(NFKSubprocess *subprocess, NFKSubprocessState state) {
+						if (state == NFKSubprocessStateExited || state == NFKSubprocessStateFailedToLaunch) {
+							dispatch_semaphore_signal(ended);
+						}
+					};
+					if (![process startWithError:NULL]) {
+						@synchronized (self) {
+							failed += 1;
+						}
+						continue;
+					}
+					if (dispatch_semaphore_wait(ended, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC)) != 0) {
+						@synchronized (self) {
+							stuck += 1;
+						}
+						[process stop];
+					}
+				}
+			}
+		});
+	}
+	XCTAssertEqual(dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW, 600 * NSEC_PER_SEC)), 0, @"the runs end");
+	@synchronized (self) {
+		XCTAssertEqual(failed, 0);
+		XCTAssertEqual(stuck, 0, @"every exited child is reaped and reported");
+	}
 }
 
 - (void)testACrashingSubprocessRestartsUpToItsLimit

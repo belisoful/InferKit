@@ -1046,6 +1046,16 @@ machine's remote clients reach a model this process hosts. Files:
     after the source starts, for a child that exited before it registered. `Exited` is entered after
     both pipes reach EOF, or 0.5 s after the exit when a grandchild holds them, so every line precedes
     the state.
+  - The exit event can arrive before `waitpid` reports the child, and no second event follows. Measured
+    on macOS 26 (2026-10-17) with `codesign` children started on six threads at once: `waitid` with
+    `WNOWAIT` found no exited child 6 to 14 ms after the event in 8 of 16,000 runs, and each of those
+    children stayed a zombie (`ps` state `Z`) with its subprocess Running for good. A plain C program
+    spawning `/usr/bin/true` and `codesign` the same way showed none in 4,800 runs, so the window depends
+    on timing the probe did not reproduce. The event handler therefore retries the reap after 1 ms,
+    doubling up to 100 ms, until it succeeds: 12,000 runs then left none Running, and 8 of them were
+    reaped on a retry. This was the cause of the fixtures' `codesign` timeouts (a sign that had printed
+    its output, and a verify with no child, each "timed out" after 300 s) and of a plugin host reported
+    alive 10 s after it answered shutdown.
   - Writes block under a lock and poll `POLLOUT` in 100 ms slices, up to `writeTimeout` (30 s; a value
     that is not positive takes 30). `closeStandardInput` sets a flag before it takes the lock, so a
     writer the child is not reading never holds it up for long. The blocking `stop` waits at most both
@@ -1060,7 +1070,7 @@ machine's remote clients reach a model this process hosts. Files:
     before `Exited` is reported.
   - Lifetime: the dispatch sources retain the subprocess, so a running one outlives its owner until its
     process exits.
-  - Tests: `NFKSubprocessTests` (3), `NFKMCPStdioTests` (13), and `NFKMCPClientDisconnectTests` (1).
+  - Tests: `NFKSubprocessTests` (4, one starting 600 short `codesign` runs on six threads), `NFKMCPStdioTests` (13), and `NFKMCPClientDisconnectTests` (1).
     The fake server is a POSIX shell script the test writes to a temporary directory and runs as
     `/bin/sh <script> <mode>`. `/bin/sh`, `/usr/bin/sed`, `/bin/sleep`, and `/bin/pwd` ship with
     macOS, while `python3` is a Command Line Tools stub and a helper executable has no SwiftPM

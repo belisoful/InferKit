@@ -25,6 +25,10 @@ NSString * const NFKSubprocessErrorDomain = @"NFKSubprocessErrorDomain";
 	inherited the pipes can hold them open after the child exits. */
 static const NSTimeInterval NFKSubprocessDrainGrace = 0.5;
 
+/*! The first and the longest wait between reap attempts after the exit event finds no exited child. */
+static const NSTimeInterval NFKSubprocessReapRetryFirst = 0.001;
+static const NSTimeInterval NFKSubprocessReapRetryLongest = 0.1;
+
 /*! How often a blocked write wakes to see whether standard input is closing, in milliseconds. */
 static const int NFKSubprocessWritePollMilliseconds = 100;
 
@@ -681,13 +685,29 @@ static void *NFKSubprocessQueueKey = &NFKSubprocessQueueKey;
 {
 	dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_PROC, (uintptr_t)run.processIdentifier, DISPATCH_PROC_EXIT, self.eventQueue);
 	dispatch_source_set_event_handler(source, ^{
-		[self reapRun:run];
+		[self reapRun:run retryingAfter:NFKSubprocessReapRetryFirst];
 	});
 	run.exitSource = source;
 	dispatch_resume(source);
 	// A process that exited before the source was registered is reaped here.
 	dispatch_async(self.eventQueue, ^{
 		[self reapRun:run];
+	});
+}
+
+/*! Reaps after the exit event, which the kernel can deliver before waitpid reports the child: measured on
+	macOS 26 with codesign children started on six threads at once, waitid found no exited child 6 to 14 ms
+	after the event in 8 of 16,000 runs, no second event followed, and each child stayed a zombie with its
+	subprocess Running for good. Until the child is reaped, this tries again after delay, doubling up to
+	NFKSubprocessReapRetryLongest; with it, 12,000 runs left none, 8 of them reaped on a retry. */
+- (void)reapRun:(NFKSubprocessRun *)run retryingAfter:(NSTimeInterval)delay
+{
+	[self reapRun:run];
+	if (run.exited) {
+		return;
+	}
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), self.eventQueue, ^{
+		[self reapRun:run retryingAfter:MIN(delay * 2, NFKSubprocessReapRetryLongest)];
 	});
 }
 

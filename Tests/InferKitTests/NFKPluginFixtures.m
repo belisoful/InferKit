@@ -462,6 +462,26 @@ static NSString *NFKPluginFixturesArchitecture(void)
 }
 
 /*! The processes below pid, one "pid ppid state elapsed command" line each, or an empty string. */
+/*! What a tool that has not ended is doing: its own ps row ("Z" in its state is a child that exited and
+	was never reaped), the processes below it, and a two-second sample of it. */
++ (NSString *)diagnosisOfStalledProcess:(pid_t)pid
+{
+	NSString *identifier = [NSString stringWithFormat:@"%d", pid];
+	NSString *row = [self outputOfProgram:@"/bin/ps" arguments:@[ @"-o", @"pid=,ppid=,stat=,etime=,command=", @"-p", identifier ]
+							  environment:@{} error:NULL] ?: @"";
+	NSString *below = [self descendantsOfProcess:pid];
+	NSString *report = [NSTemporaryDirectory() stringByAppendingPathComponent:
+						[NSString stringWithFormat:@"inferkit-fixture-tool-%@.sample.txt", NSUUID.UUID.UUIDString]];
+	NSError *sampleError = nil;
+	NSString *stacks = [self outputOfProgram:@"/usr/bin/sample" arguments:@[ identifier, @"2", @"-mayDie", @"-file", report ]
+								 environment:@{} error:&sampleError] != nil
+		? [NSString stringWithContentsOfFile:report encoding:NSUTF8StringEncoding error:NULL] : sampleError.localizedDescription;
+	[NSFileManager.defaultManager removeItemAtPath:report error:NULL];
+	NSString *trimmed = [row stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+	return [NSString stringWithFormat:@"the process then: %@; below it: %@\nits stacks:\n%@", trimmed.length > 0 ? trimmed : @"(not listed)",
+			below.length > 0 ? below : @"(none)", stacks ?: @"(no sample)"];
+}
+
 + (NSString *)descendantsOfProcess:(pid_t)pid
 {
 	NSString *table = [self outputOfProgram:@"/bin/ps" arguments:@[ @"-A", @"-o", @"pid=,ppid=,stat=,etime=,command=" ]
@@ -519,7 +539,7 @@ static NSString *NFKPluginFixturesArchitecture(void)
 	BOOL finished = dispatch_semaphore_wait(ended, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(NFKPluginFixturesToolTimeout * NSEC_PER_SEC))) == 0;
 	NSString *stalled = nil;
 	if (!finished) {
-		stalled = [self descendantsOfProcess:process.processIdentifier];
+		stalled = [self diagnosisOfStalledProcess:process.processIdentifier];
 		[process stop];
 	}
 	NSString *output;
@@ -531,7 +551,7 @@ static NSString *NFKPluginFixturesArchitecture(void)
 	if (!succeeded) {
 		NSString *command = [[@[ path ] arrayByAddingObjectsFromArray:arguments] componentsJoinedByString:@" "];
 		NSString *outcome = finished ? [NSString stringWithFormat:@"ended with status %d", process.terminationStatus]
-			: [NSString stringWithFormat:@"timed out; its processes then: %@", stalled.length > 0 ? stalled : @"(none below it)"];
+			: [NSString stringWithFormat:@"timed out; %@", stalled];
 		NFKPluginFixturesSetError(error, [NSString stringWithFormat:@"%@ %@:\n%@", command, outcome, output]);
 		return nil;
 	}

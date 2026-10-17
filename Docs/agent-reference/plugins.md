@@ -285,6 +285,9 @@ callers slows descriptor-heavy tests.
   return from main) found no wait without a bound, and `NFKSubprocess` reports an exit within
   `NFKSubprocessDrainGrace` (0.5 s) of the reap, so the host had not exited. On that failure the test now
   samples every thread of the host for a second and reports it with `ps` and the end of standard error.
+  The likely cause, found on 2026-10-17, is `NFKSubprocess` missing the reap: an exit event delivered
+  before `waitpid` reports the child left it a zombie and the subprocess Running. The handler now retries
+  the reap (`Docs/agent-reference/remote-providers.md`, `NFKSubprocess`).
 
 ## Attachments
 
@@ -1135,12 +1138,16 @@ Sign the bundle after the manifest and `Info.plist` are in place. The signature 
   finds the finished cache. Builds in two processes use separate staging directories, named by UUID, and
   the first `rename` wins. No two builds share a path.
 - `+runProgram:arguments:error:` closes the tool's standard input, sets `CODESIGN_ALLOCATE` to the
-  toolchain's `codesign_allocate` (found once with `xcrun --find`), and on its 300-second timeout lists
-  the processes below the tool in the error. On 2026-10-15 a full core run timed out in `codesign --force
-  --sign -` of the duplicate-runtime fixture after it printed "replacing existing signature", the point
-  where codesign runs `codesign_allocate`; through `/usr/bin/codesign_allocate` that is an xcrun shim
-  resolving the toolchain on each call. The same test passed alone. The cause was not observed, and the
-  listing records it if it recurs.
+  toolchain's `codesign_allocate` (found once with `xcrun --find`), and on its 300-second timeout reports
+  the tool's own `ps` row, the processes below it, and a two-second `sample` of it.
+- The fixture `codesign` timeouts (2026-10-15, a sign after it printed "replacing existing signature";
+  2026-10-16, a verify with no process below it, in one full-suite run with a cold cache) were codesign
+  runs that had finished: in the unified log every codesign process of that window ends within 0.2 s of
+  its first line, none spans the 300 s, and a probe
+  reproduced the stall as a zombie child, never reaped, of an `NFKSubprocess` whose exit event arrived
+  before `waitpid` reported the child. The cause and the fix are in `NFKSubprocess`
+  (`Docs/agent-reference/remote-providers.md`). Nothing writes a published fixture: the verify reads
+  the cache directory after the staging directory's `rename`, and builds never share a path.
 
 ## Completeness test
 

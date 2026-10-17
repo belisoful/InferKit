@@ -499,6 +499,10 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   to `maximumRestarts` times in a row. `stateHandler` reports starting, running, exited (with the
   exit status or signal), and a failed launch (with its reason). An `NFKMCPClient`'s
   `serverProcess` is one.
+- `NFKSubprocess` reaps a child whose exit event arrives before `waitpid` reports it. It retries the
+  reap until it succeeds, where it used to leave the child a zombie and the subprocess Running for
+  good: measured as 8 short `codesign` runs in 16,000 started on six threads at once, and the cause of
+  the test fixtures' 300-second `codesign` timeouts.
 
 #### A backend frees its model and keeps its configuration
 
