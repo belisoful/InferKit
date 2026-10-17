@@ -264,13 +264,15 @@ public final class NFKMLXReloadableBackend: NSObject, NFKInferenceBackend {
 
     /// Gives the class the two methods of the runtime's full forwarding path. Swift cannot declare
     /// `methodSignatureForSelector:` or `forwardInvocation:`, so they are added as block implementations.
+    /// `forwardInvocation:` is the support target's, which raises the exception ``forward(_:)`` returns
+    /// once every Swift frame of the forward has returned.
     private static let forwardingInstalled: Void = {
         typealias Signature = @convention(block) (NFKMLXReloadableBackend, Selector) -> AnyObject?
-        typealias Forward = @convention(block) (NFKMLXReloadableBackend, AnyObject) -> Void
         let signature: Signature = { wrapper, selector in wrapper.forwardedSignature(for: selector) }
-        let forward: Forward = { wrapper, invocation in wrapper.forward(invocation) }
         install(imp_implementationWithBlock(signature), for: NFKMLXInvocation.signatureSelector)
-        install(imp_implementationWithBlock(forward), for: NFKMLXInvocation.forwardSelector)
+        install(NFKMLXForwardInvocationImplementation { receiver, invocation in
+            (receiver as AnyObject as? NFKMLXReloadableBackend)?.forward(invocation as AnyObject)
+        }, for: NFKMLXInvocation.forwardSelector)
     }()
 
     private static func install(_ implementation: IMP, for selector: Selector) {
@@ -292,39 +294,51 @@ public final class NFKMLXReloadableBackend: NSObject, NFKInferenceBackend {
     }
 
     /// Sends a message only the held class implements to the held backend, built first when the model is
-    /// unloaded, as a run in flight from before the message to its return. The run also ends when the
-    /// message raises an Objective-C exception, which then continues to the sender. A backend that cannot
-    /// be built raises `NSInvalidArgumentException` with the reason.
-    private func forward(_ invocation: AnyObject) {
+    /// unloaded, as a run in flight from before the message to its return, and returns the exception the
+    /// sender receives, or nil. An exception the message raises is caught in Objective-C and returned
+    /// after the run ends, so no Swift frame holds the backend while it unwinds. A backend that cannot be
+    /// built gives `NSInvalidArgumentException` with the build error's reason.
+    private func forward(_ invocation: AnyObject) -> NSException? {
         let selector = NFKMLXInvocation.selector(of: invocation)
-        if let failure = invokeAsRun(invocation, selector: selector) {
-            NFKMLXInvocation.raise("\(identifier) cannot answer \(NSStringFromSelector(selector)): \(failure)")
+        switch invokeAsRun(invocation, selector: selector) {
+        case .answered:
+            return nil
+        case .raised(let exception):
+            return exception
+        case .refused(let reason):
+            return NSException(name: .invalidArgumentException,
+                               reason: "\(identifier) cannot answer \(NSStringFromSelector(selector)): \(reason)",
+                               userInfo: nil)
         }
     }
 
-    /// Invokes `invocation` on the held backend inside a run, and returns why it could not, or nil. The
-    /// run ends in an Objective-C `@finally`, since a Swift `defer` does not run while an Objective-C
-    /// exception unwinds.
-    private func invokeAsRun(_ invocation: AnyObject, selector: Selector) -> String? {
-        let lifecycle = self.lifecycle
+    private enum ForwardOutcome {
+        case answered
+        case raised(NSException)
+        case refused(String)
+    }
+
+    /// Invokes `invocation` on the held backend inside a run, which ends before this returns.
+    private func invokeAsRun(_ invocation: AnyObject, selector: Selector) -> ForwardOutcome {
         do {
             try lifecycle.begin()
         } catch {
-            return error.localizedDescription
+            return .refused(error.localizedDescription)
         }
+        defer { lifecycle.end() }
         let backend: any NFKInferenceBackend
         do {
             backend = try lifecycle.loadedState()
         } catch {
-            lifecycle.end()
-            return error.localizedDescription
+            return .refused(error.localizedDescription)
         }
         guard backend.responds(to: selector) else {
-            lifecycle.end()
-            return "the built backend does not implement it"
+            return .refused("the built backend does not implement it")
         }
-        NFKMLXPerformWithCleanup({ NFKMLXInvocation.invoke(invocation, on: backend) }, { lifecycle.end() })
-        return nil
+        if let exception = NFKMLXInvokeCatching(invocation, backend) {
+            return .raised(exception)
+        }
+        return .answered
     }
 }
 
@@ -339,13 +353,6 @@ private enum NFKMLXInvocation {
         typealias Getter = @convention(c) (AnyObject, Selector) -> Selector
         let selector = NSSelectorFromString("selector")
         return unsafeBitCast(implementation(of: selector, in: invocation), to: Getter.self)(invocation, selector)
-    }
-
-    /// Sends the invocation's message to `target`, which leaves the result in the invocation.
-    static func invoke(_ invocation: AnyObject, on target: AnyObject) {
-        typealias Invoke = @convention(c) (AnyObject, Selector, AnyObject) -> Void
-        let selector = NSSelectorFromString("invokeWithTarget:")
-        unsafeBitCast(implementation(of: selector, in: invocation), to: Invoke.self)(invocation, selector, target)
     }
 
     /// `+[NSMethodSignature signatureWithObjCTypes:]`.

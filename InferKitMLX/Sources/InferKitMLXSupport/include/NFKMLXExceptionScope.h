@@ -13,17 +13,31 @@
 NS_ASSUME_NONNULL_BEGIN
 
 /*!
-	@function   NFKMLXPerformWithCleanup
-	@abstract   Runs body, then cleanup, also when body raises an Objective-C exception.
-	@discussion The exception continues to the caller once cleanup has run. Introduced in InferKit 0.4.0.
-*/
-void NFKMLXPerformWithCleanup(NS_NOESCAPE void (^body)(void), NS_NOESCAPE void (^cleanup)(void));
-
-/*!
 	@function   NFKMLXCatchException
 	@abstract   Runs body and returns the Objective-C exception it raised, or nil when it raised none.
-	@discussion For tests that drive a path raising an exception from Swift. Introduced in InferKit 0.4.0.
+	@discussion A frame of body between the raise and this function runs no cleanup, so a Swift body
+				that holds strong references across the raise leaks them. Introduced in InferKit 0.4.0.
 */
 NSException * _Nullable NFKMLXCatchException(NS_NOESCAPE void (^body)(void));
+
+/*!
+	@function   NFKMLXInvokeCatching
+	@abstract   Sends invocation (an NSInvocation) to target and returns the Objective-C exception the
+				message raised, or nil when it raised none.
+	@discussion No Swift frame lies between the catch and the message. The invocation's target is
+				restored afterward. Introduced in InferKit 0.4.0.
+*/
+NSException * _Nullable NFKMLXInvokeCatching(id invocation, id target);
+
+/*!
+	@function   NFKMLXForwardInvocationImplementation
+	@abstract   An implementation of forwardInvocation: that calls handler and raises the exception it
+				returns.
+	@discussion The raise happens in this implementation after handler has returned, so no frame of
+				handler is on the stack and every reference handler took is already released. The
+				implementation holds the receiver and the invocation unretained. Introduced in
+				InferKit 0.4.0.
+*/
+IMP NFKMLXForwardInvocationImplementation(NSException * _Nullable (^handler)(id receiver, id invocation));
 
 NS_ASSUME_NONNULL_END

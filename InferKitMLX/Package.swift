@@ -54,9 +54,15 @@ let package = Package(
                 "InferKitMLX",
             ]
         ),
+        // An Objective-C backend for the forwarding tests, whose raise runs no Swift frame.
+        .target(
+            name: "InferKitMLXTestSupport",
+            dependencies: [.product(name: "InferKit", package: "InferKit")],
+            path: "Tests/InferKitMLXTestSupport"
+        ),
         .testTarget(
             name: "InferKitMLXTests",
-            dependencies: ["InferKitMLX", "InferKitMLXSupport"]
+            dependencies: ["InferKitMLX", "InferKitMLXSupport", "InferKitMLXTestSupport"]
         ),
         // Compiled + run by CI so the MLX snippets in Docs/examples.md cannot silently drift.
         .testTarget(

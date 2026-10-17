@@ -11,6 +11,7 @@ import XCTest
 import CoreGraphics
 import InferKit
 import InferKitMLXSupport
+import InferKitMLXTestSupport
 import MLX
 @testable import InferKitMLX
 
@@ -94,10 +95,6 @@ private final class NFKMLXGatedTestBackend: NSObject, NFKInferenceBackend {
     func tokenCount(for request: NFKInferenceRequest) throws -> NSNumber {
         waitAtGate()
         return 3
-    }
-
-    @objc func raiseAnException() {
-        NSException(name: .genericException, reason: "the held backend raised", userInfo: nil).raise()
     }
 
     @objc func scaled(_ value: Int, by factor: Int) -> Int {
@@ -455,18 +452,26 @@ final class NFKMLXLifecycleTests: XCTestCase {
         workerMayEnd.signal()
     }
 
-    func testAForwardedMessageThatRaisesEndsItsRunAndAnUnloadFreesTheModel() throws {
+    func testAForwardedMessageThatRaisesEndsItsRunAndAnUnloadDeallocatesTheBackend() throws {
+        weak var held: NFKMLXRaisingTestBackend?
         let backend = try NFKMLXReloadableBackend {
-            NFKMLXGatedTestBackend(entered: DispatchSemaphore(value: 0), gate: DispatchSemaphore(value: 0))
+            let raising = NFKMLXRaisingTestBackend()
+            held = raising
+            return raising
         }
+        XCTAssertNotNil(held)
         let inFlight = NFKMLXActivity.inFlightCount
-        let exception = NFKMLXCatchException {
-            _ = backend.perform(NSSelectorFromString("raiseAnException"))
+        autoreleasepool {
+            let exception = NFKMLXCatchException {
+                _ = backend.perform(NSSelectorFromString("raiseAnException"))
+            }
+            XCTAssertEqual(exception?.reason, "the held backend raised", "the exception reaches the sender")
         }
-        XCTAssertEqual(exception?.reason, "the held backend raised", "the exception reaches the sender")
-        XCTAssertEqual(NFKMLXActivity.inFlightCount, inFlight, "the forwarded run ended during the unwind")
+        XCTAssertEqual(NFKMLXActivity.inFlightCount, inFlight, "the forwarded run ended before the raise")
         backend.unload()
-        XCTAssertFalse(backend.isLoaded, "no run is left counted, so the unload frees the model")
+        autoreleasepool {}
+        XCTAssertFalse(backend.isLoaded)
+        XCTAssertNil(held, "no frame kept the backend across the raise, so the unload deallocated it")
     }
 
     func testAForwardedMessageCarriesItsArgumentsAndResultAndLoadsAnUnloadedModel() throws {

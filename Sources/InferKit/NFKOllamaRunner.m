@@ -8,6 +8,7 @@
 #import <InferKit/NFKInferenceResult.h>
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKJobGuard.h"
 #import "NFKLocalRunnerSupport.h"
 #import "NFKRemoteTransportPrivate.h"
 
@@ -133,38 +134,42 @@ static const NSTimeInterval NFKOllamaPullTimeout = 3600.0;
 	__block BOOL finished = NO;
 
 	[self streamRequest:request lineHandler:^(NSDictionary<NSString *, id> *line) {
-		if (finished) {
-			return;
-		}
-		NSString *failure = line[@"error"];
-		if ([failure isKindOfClass:NSString.class]) {
-			finished = YES;
-			[job finishWithError:[NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:failure]];
-			return;
-		}
-		NSString *status = [line[@"status"] isKindOfClass:NSString.class] ? line[@"status"] : @"";
-		if ([status isEqualToString:@"success"]) {
-			finished = YES;
-			[job finishWithResult:[NFKInferenceResult resultWithOutputs:@{ NFKOutputText: identifier }]];
-			return;
-		}
-		NSNumber *total = line[@"total"];
-		NSNumber *completed = line[@"completed"];
-		double progress = -1.0;
-		if ([total isKindOfClass:NSNumber.class] && [completed isKindOfClass:NSNumber.class] && total.doubleValue > 0) {
-			progress = completed.doubleValue / total.doubleValue;
-		}
-		[job reportProgress:progress partialResult:[NFKInferenceResult resultWithOutputs:@{ NFKOutputText: status }]];
+		NFKJobRunGuarded(job, ^{
+			if (finished) {
+				return;
+			}
+			NSString *failure = line[@"error"];
+			if ([failure isKindOfClass:NSString.class]) {
+				finished = YES;
+				[job finishWithError:[NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:failure]];
+				return;
+			}
+			NSString *status = [line[@"status"] isKindOfClass:NSString.class] ? line[@"status"] : @"";
+			if ([status isEqualToString:@"success"]) {
+				finished = YES;
+				[job finishWithResult:[NFKInferenceResult resultWithOutputs:@{ NFKOutputText: identifier }]];
+				return;
+			}
+			NSNumber *total = line[@"total"];
+			NSNumber *completed = line[@"completed"];
+			double progress = -1.0;
+			if ([total isKindOfClass:NSNumber.class] && [completed isKindOfClass:NSNumber.class] && total.doubleValue > 0) {
+				progress = completed.doubleValue / total.doubleValue;
+			}
+			[job reportProgress:progress partialResult:[NFKInferenceResult resultWithOutputs:@{ NFKOutputText: status }]];
+		});
 	} completionHandler:^(NSError * _Nullable error) {
-		if (finished) {
-			return;
-		}
-		finished = YES;
-		if (job.status == NFKInferenceJobStatusCancelled) {
-			return;
-		}
-		[job finishWithError:error ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure
-																 reason:@"the pull ended without reporting success"]];
+		NFKJobRunGuarded(job, ^{
+			if (finished) {
+				return;
+			}
+			finished = YES;
+			if (job.status == NFKInferenceJobStatusCancelled) {
+				return;
+			}
+			[job finishWithError:error ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure
+																	 reason:@"the pull ended without reporting success"]];
+		});
 	} cancellation:^(void (^cancel)(void)) {
 		job.cancellationHandler = cancel;
 	}];
@@ -241,7 +246,8 @@ static const NSTimeInterval NFKOllamaPullTimeout = 3600.0;
 	return [NFKRemoteTransport sendRequest:request session:self.session response:outResponse error:outError];
 }
 
-// Each line of the pull is one JSON object; a failing status arrives whole and becomes the error.
+// Each line of the pull is one JSON object; a failing status arrives whole and becomes the error. The
+// error is formed before the pull's own guarded handler runs, so an exception forming it becomes the error.
 - (void)streamRequest:(NSURLRequest *)request
 		  lineHandler:(void (^)(NSDictionary<NSString *, id> *))lineHandler
 	completionHandler:(void (^)(NSError * _Nullable))completionHandler
@@ -253,7 +259,15 @@ static const NSTimeInterval NFKOllamaPullTimeout = 3600.0;
 			lineHandler(object);
 		}
 	} completionHandler:^(NSHTTPURLResponse * _Nullable response, NSData * _Nullable errorBody, NSError * _Nullable error) {
-		completionHandler(error ?: [NFKRemoteTransport errorForResponse:response data:errorBody]);
+		NSError *failure = error;
+		if (failure == nil) {
+			@try {
+				failure = [NFKRemoteTransport errorForResponse:response data:errorBody];
+			} @catch (NSException *exception) {
+				failure = NFKJobExceptionError(exception);
+			}
+		}
+		completionHandler(failure);
 	}];
 	cancellation(cancel);
 }

@@ -811,11 +811,20 @@ The core protocol's optional `unload`, `isLoaded`, `residentByteCount`, and `pea
   `-[NSInvocation invokeWithTarget:]` on the held backend, and ends the run when that returns. Both
   `NSInvocation` calls go through the method implementations, cast to `@convention(c)` types. A probe
   forwarding integer, object, error-pointer, and `CGRect` messages 100,000 times leaked nothing. A
-  backend that cannot be built raises `NSInvalidArgumentException` with the build error's reason. The
-  run ends in an Objective-C `@finally` (`NFKMLXPerformWithCleanup`), because a Swift `defer` does not
-  run while an Objective-C exception unwinds: a forwarded method that raises would otherwise leave the
-  run and `NFKMLXActivity` counted, so the model never unloads and no cache release runs again in the
-  process. The exception continues to the sender after the run ends. The helper lives in the package's
+  backend that cannot be built raises `NSInvalidArgumentException` with the build error's reason. A
+  Swift frame an Objective-C exception unwinds runs no cleanup: its `defer` blocks skip, and every
+  strong reference it holds stays retained. A raise through the forward would leave the run and
+  `NFKMLXActivity` counted, so the model never unloads and no cache release runs again in the process,
+  and would keep the held backend and its weights alive past an unload. So no Swift frame of the forward
+  is on the stack during a raise: `NFKMLXInvokeCatching` sends the message from Objective-C and catches
+  what it raises, restoring the invocation's target so a leaked invocation does not keep the backend;
+  `forward(_:)` ends the run and returns the exception; and `forwardInvocation:` is the support
+  target's implementation (`NFKMLXForwardInvocationImplementation`, receiver and invocation held
+  unretained), which raises the exception after the Swift handler has returned. A Swift `@objc` method
+  that raises still leaks its own receiver, since its thunk retains it: measured in a probe, a Swift
+  class raising from an `@objc` method stayed alive after its last reference went, and the same class
+  raising from an Objective-C method deallocated. The test therefore raises from an Objective-C backend
+  (`InferKitMLXTestSupport`, a target only the tests depend on). The helpers live in the package's
   Objective-C target `InferKitMLXSupport` (`Sources/InferKitMLXSupport`, compiled under ARC, which its
   source checks), which `InferKitMLX` imports with `internal import`, so its module stays out of the
   public interface and of a binary consumer's imports; `Tools/xcframework/build-mlx.sh` sweeps its
@@ -863,7 +872,7 @@ The core protocol's optional `unload`, `isLoaded`, `residentByteCount`, and `pea
   removed from the folder leave the reload working while the removed file the build opened fails it,
   a listed file removed fails the reload while an unlisted one does not, a forwarded message that
   raises reaches the sender through `NFKMLXCatchException` with the activity count back where it was
-  and an unload freeing the model, a release fetched inside `NFKMLXBuildHolds.keeping` refuses removal
+  and an unload deallocating the held backend (a weak reference reads nil), a release fetched inside `NFKMLXBuildHolds.keeping` refuses removal
   (`NFKDownloadErrorInUse`) until the scope returns, and one fetched outside a scope is released when
   the fetch returns.
 - Holds across a build (2026-10-16). `NFKHFHub.holdRelease(repo:revision:)` hands its hold to the

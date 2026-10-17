@@ -826,8 +826,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   or a reply that JSON cannot carry, answers 500 and leaves the server serving. The core's job
   backends fail the job with `kNFKError_InferenceBackendFailure` when work on their own queues raises:
   every stream `NFKRemoteTransport` reads, the queued work of the remote, Core ML language, async
-  generation, balanced, and speech recognition backends, a plugin's reply, and the run
-  `NFKInferenceSubmit` queues. A third-party backend's own queues are its own to guard.
+  generation, balanced, and speech recognition backends, Ollama's model pull, a plugin's reply, and the
+  run `NFKInferenceSubmit` queues. A third-party backend's own queues are its own to guard.
 - `/mcp` runs a hosted model's tool (`addToolForModelName:outputModality:purpose:error:`) as a run in
   the model's queue that holds no thread while it waits, so a hundred concurrent `tools/call` requests
   all answer, and so does a model tool another server added. The calls in a batch run at once, and a
@@ -1346,7 +1346,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   that goes away leaves the reload working. A reload build error that reports a missing file under the
   source becomes `NFKMLXReloadErrorModelFilesRemoved` naming that file.
 - A forwarded message that raises an Objective-C exception ends its run before the exception reaches
-  the sender, so the model still unloads and the cache release still runs.
+  the sender, and no frame of the wrapper keeps the held backend, so an unload still frees the model
+  and the cache release still runs.
 - A download factory keeps the release's snapshot held until its build returns, so a trim another
   download runs cannot delete the files between the fetch and the read. A load after an unload holds
   the same way.
