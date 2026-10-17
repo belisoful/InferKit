@@ -12772,6 +12772,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
             }
         }
 
+        let theirs = reference.reshaped([-1]).asArray(Float.self).map(Double.init)
         if let trace = arrays["latents"] {
             // Per-step latents isolate a whole-picture mismatch to the step that first diverged.
             let scheduler = model.makeScheduler()
@@ -12786,17 +12787,36 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                                         trace[index].reshaped([-1]).asArray(Float.self).map(Double.init))
                 print("VALIDATION PARITY \(name)-text-to-image: latent after step \(index) (training step \(step.train)) cosine \(similarity)")
             }
+            // The decode seam on its own, in float: the reference's final latent through this
+            // autoencoder, and this run's final latent, each against the reference picture before the
+            // image bridge rounds to eight bits.
+            for (label, source) in [("reference final latent", trace[trace.dim(0) - 1]), ("own final latent", current)] {
+                let decoded = model.decode(source)
+                eval(decoded)
+                let mine = decoded.reshaped([-1]).asArray(Float.self).map(Double.init)
+                XCTAssertEqual(mine.count, theirs.count, "the reference's picture size")
+                let similarity = cosine(mine, theirs)
+                let difference = zip(mine, theirs).map { abs($0 - $1) }.reduce(0, +) / Double(mine.count)
+                print("VALIDATION PARITY \(name)-text-to-image: \(label) decoded in float: cosine \(similarity), mean |difference| \(difference)")
+            }
         }
 
         let result = try model.makeBackend().runInference(for: request)
         let value = try XCTUnwrap(result.output(forKey: NFKOutputImage))
         let ours = rgbValues(value as! CGImage)
-        let theirs = reference.reshaped([-1]).asArray(Float.self).map(Double.init)
 
         XCTAssertEqual(ours.count, theirs.count, "the reference's picture size")
         let similarity = cosine(ours, theirs)
         let difference = zip(ours, theirs).map { abs($0 - $1) }.reduce(0, +) / Double(ours.count)
         print("VALIDATION PARITY \(name)-text-to-image: image cosine \(similarity), mean |difference| \(difference)")
+        // The public path hands back an eight-bit picture, so its figure cannot exceed the reference
+        // picture's own eight-bit rounding. That floor depends on the picture: a dark one with no
+        // saturated pixels loses more cosine to the same rounding than a bright one.
+        let quantized = theirs.map { ($0 * 255).rounded() / 255 }
+        let eightBitFloor = cosine(quantized, theirs)
+        let floorDifference = zip(quantized, theirs).map { abs($0 - $1) }.reduce(0, +) / Double(theirs.count)
+        print("VALIDATION PARITY \(name)-text-to-image: reference picture's own 8-bit floor: cosine \(eightBitFloor), mean |difference| \(floorDifference)")
+        print("VALIDATION PARITY \(name)-text-to-image: image cosine against the 8-bit reference \(cosine(ours, quantized))")
         XCTAssertGreaterThan(similarity, 0.99, "the generated picture matches the reference pipeline")
     }
 

@@ -209,11 +209,25 @@ The diffusion backend seam and schedulers, the SD networks and pipelines, IP-Ada
   runs one pass with the embedding. The release ships float32 only (`SimianLuo/LCM_Dreamshaper_v7`, MIT).
   Parity (`IK_PARITY_LCM_DREAMSHAPER_T2I`, 4 steps, guidance 8) image cosine 0.99999278, mean abs
   0.00098; context 0.9999999999986, first prediction 0.9999999999998, per-step latents ≥ 0.99999999978.
-  The image figure sits below the other SD end-to-end figures while the latents are at 1e-10; the seam is
-  open. Customization: offline. The model is a consistency distillation of SD 1.5, and its objective
-  needs the teacher UNet and the ODE solver of the distillation; the SD 1.5 LoRA recipe does not
-  describe it. SDXL base 1.0 (`.sdxl`, release `.sdxlBase`) joins as the base the Lightning adapters
-  merge into; the Turbo directory does not stand in for it. Its download takes the half-precision files
+  The image figure sits below the other SD end-to-end figures because the test reads the public path's
+  picture back through `CGImage`, which rounds to eight bits; the reference picture rounded to eight bits
+  against itself measures cosine 0.9999927803, mean abs 0.00098, the end-to-end figures exactly. This
+  picture is dark (RMS 0.297, no saturated pixel), so the same
+  rounding noise is a larger share of its signal than of the brighter, partly saturated SD 1.5, SD 2.1,
+  LCM-LoRA, and Lightning pictures (their own floors: 0.99999894, 0.99999862, 0.99999858, 0.99999917).
+  The uniform-rounding model predicts the floor from the picture alone: `1 − cos ≈ (1/255)² / (24 ·
+  mean(x²))`. `verifyTextToImage` prints each record's floor, the image cosine against the eight-bit
+  reference, and the decode seam in float (the reference's final latent and the run's own final latent
+  through `NFKMLXSDAutoencoder`, against the reference picture before rounding). For LCM Dreamshaper the
+  reference's final latent decodes to the reference picture at 0.999999999997 (mean abs 3.2e-7), the
+  run's own final latent at 0.99999999968 (mean abs 2.3e-6), and the public path's picture matches the
+  8-bit reference at 0.99999995. The other four records measure the same way: each image figure sits
+  within 6e-8 of its own floor, and the reference final latent of each record that carries one
+  (LCM-LoRA, SD 2.1, Lightning; the SD 1.5 record has no per-step trace) decodes at ≥ 0.99999999999.
+  Customization: offline. The model is a consistency distillation of SD 1.5, and its objective needs
+  the teacher UNet and the ODE solver of the distillation; the SD 1.5 LoRA recipe does not describe it.
+  SDXL base 1.0 (`.sdxl`, release `.sdxlBase`) joins as the base the Lightning adapters merge into;
+  the Turbo directory does not stand in for it. Its download takes the half-precision files
   and the two network `config.json`s, which `upcast_attention` and `force_upcast` are read from; a VAE
   config without `force_upcast` upcasts, the reference's default.
 - `NFKMLXSDPromptTokenizer` — the release's `tokenizer/` directory driving the core's `NFKTokenizer`
