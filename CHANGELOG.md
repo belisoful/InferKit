@@ -1212,6 +1212,21 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### The SD-family autoencoder decodes step by step when the GPU cannot hold the decode whole
+
+- Before each decode, `NFKMLXSDAutoencoder` estimates the one-graph peak beyond its weights: 1.4 GB plus
+  50.4 bytes per element of the widest map at the output size, for each image. The SD, FLUX.1, FLUX.2,
+  and FLUX.2 small decoders peaked at 46 to 70 bytes per element, measured at 512 × 512 to 1024 × 1024 in
+  float16, bfloat16, and float32. When the estimate exceeds the smaller of Metal's recommended working set
+  and MLX's memory limit, less the active memory, the decode evaluates each intermediate of 256 MiB or
+  more before the next step reads it. Both paths give the same bits. FLUX.1's decoder at 1024 × 1024 in
+  bfloat16, under `NFKMLXGPU.applyStandingLimits()`:
+  - one graph → 3.32 s, 13.5 GB.
+  - step by step → 3.93 s, 8.4 GB.
+- The group norm forms its statistics as before and normalizes in its input's own layout, so no
+  transposed copy of the input outlives the statistics. Every output bit is unchanged. Under MLX's
+  default limits that FLUX.1 decode peaked at 14.06 GB before both changes and peaks at 8.42 GB staged.
+
 #### A release stays cached while it loads
 
 - A release download holds its snapshot (`NFKHFHubSnapshotHold`) while it fetches every file, so a

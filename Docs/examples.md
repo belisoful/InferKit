@@ -3089,8 +3089,8 @@ alternating.
 | Wan 2.2 Animate 14B, extract pass | 6 of 40 layers, 480×832, one reference frame | 1,212 ms | 1,146 ms | 1.06 |
 | Wan 2.2 Animate 14B, generation pass | 6 of 40 layers, 480×832, a two-latent-frame chunk; the rounds (2,968–5,223 ms against 2,625–3,669 ms) put the ratio anywhere from 0.81 to 1.99, so it is not resolved | 3,209 ms | 2,847 ms | — |
 | LTX-2.3 transformer | 5 of 48 layers, 512×768, 49 frames | 4,020 ms | 3,907 ms | 1.03 |
-| SD 1.5 autoencoder decode | released, float16, 512×512 | 540 ms | 489 ms | 1.10 |
-| FLUX autoencoder decode | released, bfloat16, 1024×1024; the decode stops on the GPU's command-buffer timeout on this machine (a 24 GB peak), so the ratio is not resolved | — | — | — |
+| SD 1.5 autoencoder decode | released, float16, 512×512 | 488 ms | 473 ms | 1.03 |
+| FLUX autoencoder decode | released, bfloat16, 1024×1024, under `NFKMLXGPU.applyStandingLimits()` | 4,034 ms | 3,282 ms | 1.22 |
 | SD 1.5 CLIP text encoder | released, float16, 2×77 tokens | 47.6 ms | 21.0 ms | 2.27 |
 | SigLIP 2 so400m vision tower | released, 384×384 | 223 ms | 170 ms | 1.31 |
 | Gemma 3 vision tower | released, 896×896 | 2,166 ms | 1,525 ms | 1.42 |

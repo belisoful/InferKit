@@ -145,10 +145,18 @@ final class NFKMLXHalfPrecisionArithmeticTimingTests: XCTestCase {
         }
     }
 
-    // FLUX.1's autoencoder, released geometry, bfloat16; the decode of a 128x128 latent to 1024 px.
+    // FLUX.1's autoencoder, released geometry, bfloat16; the decode of a 128x128 latent to 1024 px, under the
+    // standing limits. Under MLX's default limits its rounds grow the buffer cache to 25 GB on a 32 GB Mac,
+    // where the decode has ended in a GPU command-buffer timeout.
     func testFluxAutoencoderDecodeTimeInEachArithmetic() throws {
         try requireMLXRuntime()
         try requireOptIn()
+        let (cacheLimit, memoryLimit) = (NFKMLXGPU.cacheLimit, NFKMLXGPU.memoryLimit)
+        NFKMLXGPU.applyStandingLimits()
+        defer {
+            NFKMLXGPU.setCacheLimit(cacheLimit)
+            NFKMLXGPU.setMemoryLimit(memoryLimit)
+        }
         MLXRandom.seed(0)
         let vae = NFKMLXSDAutoencoder(configuration: .flux)
         let weights = castWeights(vae, to: .bfloat16)

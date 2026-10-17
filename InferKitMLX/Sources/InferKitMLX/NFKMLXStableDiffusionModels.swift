@@ -225,23 +225,22 @@ final class NFKSDGroupNorm: Module {
         return normalized(x.asType(.float32)).asType(x.dtype)
     }
 
+    /// The statistics form over each group's values in one contiguous row; the normalization and the affine
+    /// apply in `x`'s own layout, so no transposed copy of the whole tensor outlives the statistics.
     private func normalized(_ x: MLXArray) -> MLXArray {
         let shape = x.shape                                     // [batch, height, width, channel]
         let channels = shape[3]
         let perGroup = channels / groups
         // The reference groups consecutive channels and normalizes each group over its channels and
         // the whole spatial extent.
-        let grouped = x.reshaped([shape[0], shape[1] * shape[2], groups, perGroup])
-            .transposed(0, 2, 1, 3)
-            .reshaped([shape[0], groups, shape[1] * shape[2] * perGroup])
+        let spatial = x.reshaped([shape[0], shape[1] * shape[2], groups, perGroup])
+        let grouped = spatial.transposed(0, 2, 1, 3).reshaped([shape[0], groups, shape[1] * shape[2] * perGroup])
         let mean = grouped.mean(axis: 2, keepDims: true)
         let centered = grouped - mean
         let variance = (centered * centered).mean(axis: 2, keepDims: true)
-        let normalized = (centered * rsqrt(variance + eps))
-            .reshaped([shape[0], groups, shape[1] * shape[2], perGroup])
-            .transposed(0, 2, 1, 3)
-            .reshaped(shape)
-        return normalized * weight.asType(x.dtype) + bias.asType(x.dtype)
+        let normalized = (spatial - mean.reshaped([shape[0], 1, groups, 1]))
+            * rsqrt(variance + eps).reshaped([shape[0], 1, groups, 1])
+        return normalized.reshaped(shape) * weight.asType(x.dtype) + bias.asType(x.dtype)
     }
 }
 
@@ -299,6 +298,50 @@ final class NFKSDTimestepEmbedding: Module {
     }
 }
 
+/// Whether an autoencoder's decode runs as one graph or evaluates each large intermediate before the next step
+/// reads it. The two give the same bits.
+///
+/// Measured under ``NFKMLXGPU/applyStandingLimits()`` for FLUX.1's decoder at 1024 × 1024 in bfloat16:
+/// - one graph → 3.32 s, 13.5 GB beyond the weights.
+/// - step by step → 3.93 s, 8.4 GB.
+enum NFKSDDecodeStaging {
+    /// The size from which a staged decode evaluates an intermediate: 256 MiB.
+    static let stagedEvaluationBytes = 1 << 28
+
+    /// The evaluation size in force for the decode in progress, or nil when it runs as one graph.
+    @TaskLocal static var evaluationBytes: Int?
+
+    /// `x`, evaluated first when the decode in progress is staged and `x` holds at least the evaluation size.
+    static func evaluated(_ x: MLXArray) -> MLXArray {
+        if let evaluationBytes, x.nbytes >= evaluationBytes {
+            eval(x)
+        }
+        return x
+    }
+
+    /// The one-graph decode's peak beyond its weights, in bytes: 1.4 GB plus 50.4 bytes per element of the
+    /// widest map the decode holds at the output size, for each image.
+    ///
+    /// @discussion Measured under the standing limits for the SD, FLUX.1, FLUX.2, and FLUX.2 small decoders at
+    /// 512 × 512 to 1024 × 1024, in float16, bfloat16, and float32, the peak runs 46 to 70 bytes per element of
+    /// that map. The estimate sits 0.06 to 2.5 GB above each measured peak.
+    static func estimatedWholeGraphPeak(images: Int, outputPixels: Int, widestOutputChannels: Int) -> Int {
+        images * (1_400_000_000 + outputPixels * widestOutputChannels * 504 / 10)
+    }
+
+    /// The memory a decode can take before MLX frees its cache or Metal starts evicting: the smaller of
+    /// Metal's recommended working set and MLX's memory limit, less the memory already active.
+    static var budget: Int {
+        min(NFKMLXGPU.recommendedWorkingSetSize, NFKMLXGPU.memoryLimit) - NFKMLXGPU.activeMemory
+    }
+
+    /// The evaluation size for a decode whose one-graph peak is `estimatedPeak` against `budget`: nil while
+    /// the peak fits, ``stagedEvaluationBytes`` past it.
+    static func evaluationBytes(estimatedPeak: Int, budget: Int) -> Int? {
+        estimatedPeak <= budget ? nil : stagedEvaluationBytes
+    }
+}
+
 /// `ResnetBlock2D`: two normalized convolutions with the timestep embedding added between them, over a
 /// residual that projects when the width changes.
 final class NFKSDResnetBlock: Module {
@@ -327,12 +370,13 @@ final class NFKSDResnetBlock: Module {
     }
 
     func callAsFunction(_ x: MLXArray, time: MLXArray?) -> MLXArray {
-        var h = conv1(NFKReferenceRounding.silu(norm1(x)))
+        let staged = NFKSDDecodeStaging.evaluated
+        var h = staged(conv1(staged(NFKReferenceRounding.silu(norm1(x)))))
         if let timeProjection, let time {
             h = h + timeProjection(NFKReferenceRounding.silu(time)).reshaped([time.shape[0], 1, 1, -1])
         }
-        h = conv2(NFKReferenceRounding.silu(norm2(h)))
-        return (shortcut.map { $0(x) } ?? x) + h
+        h = staged(conv2(staged(NFKReferenceRounding.silu(norm2(h)))))
+        return (shortcut.map { staged($0(x)) } ?? x) + h
     }
 }
 
@@ -553,7 +597,7 @@ final class NFKSDUpsample: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        conv(NFKMLXResample.upsampleNearest(x, scale: 2))
+        conv(NFKSDDecodeStaging.evaluated(NFKMLXResample.upsampleNearest(x, scale: 2)))
     }
 }
 
@@ -985,10 +1029,17 @@ final class NFKSDVAEDecoder: Module {
     @ModuleInfo(key: "conv_norm_out") var normOut: NFKSDGroupNorm
     @ModuleInfo(key: "conv_out") var convOut: Conv2d
 
+    /// The output's size over the latent's.
+    let outputScale: Int
+    /// The widest map the decode holds at the output size, in channels.
+    let widestOutputChannels: Int
+
     init(_ c: NFKMLXSDVAEConfiguration) {
         let widths = c.decoderBlockChannels ?? c.blockChannels
         let levels = widths.count
         let reversed = widths.reversed().map { $0 }
+        self.outputScale = 1 << (levels - 1)
+        self.widestOutputChannels = reversed.suffix(2).max() ?? reversed[0]
         self._convIn.wrappedValue = NFKConv2d(inputChannels: c.latentChannels,
                                               outputChannels: reversed[0], kernelSize: 3, padding: 1)
         self._midBlock.wrappedValue = NFKSDVAEMidBlock(channels: reversed[0],
@@ -1004,10 +1055,23 @@ final class NFKSDVAEDecoder: Module {
                                                kernelSize: 3, padding: 1)
     }
 
+    /// The decode of `x`, staged when its estimated one-graph peak exceeds ``NFKSDDecodeStaging/budget``.
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        var h = midBlock(convIn(x))
-        for block in upBlocks { h = block(h) }
-        return convOut(NFKReferenceRounding.silu(normOut(h)))
+        let peak = NFKSDDecodeStaging.estimatedWholeGraphPeak(
+            images: x.shape[0], outputPixels: x.shape[1] * x.shape[2] * outputScale * outputScale,
+            widestOutputChannels: widestOutputChannels)
+        return decoded(x, evaluationBytes: NFKSDDecodeStaging.evaluationBytes(estimatedPeak: peak,
+                                                                               budget: NFKSDDecodeStaging.budget))
+    }
+
+    /// The decode of `x`, evaluating each intermediate of at least `evaluationBytes` before the next step reads
+    /// it, or as one graph when `evaluationBytes` is nil.
+    func decoded(_ x: MLXArray, evaluationBytes: Int?) -> MLXArray {
+        NFKSDDecodeStaging.$evaluationBytes.withValue(evaluationBytes) {
+            var h = midBlock(convIn(x))
+            for block in upBlocks { h = NFKSDDecodeStaging.evaluated(block(h)) }
+            return convOut(NFKSDDecodeStaging.evaluated(NFKReferenceRounding.silu(normOut(h))))
+        }
     }
 }
 

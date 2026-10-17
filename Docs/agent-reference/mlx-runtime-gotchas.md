@@ -795,6 +795,13 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   24.4 GB. Once working memory sits below the trim point, the trim point is the footprint. A cache cap
   (`NFKMLXGPU.applyStandingLimits()`) is what makes a release show: with both, the peak was 17.8 GB and
   the footprint between clips 6.4 GB. `Memory.peakMemory` never shows this; read `phys_footprint`.
+- **A 1024 × 1024 autoencoder decode under MLX's default limits grows the cache to 25 GB (2026-10-15).**
+  FLUX.1's decoder in bfloat16, decoded three times on a 32 GB M1 Max: 8.3 and 12.6 s with the cache
+  kept (25.28 GB of cache), 3.9 s with the cache cleared at each staging point. The timing class's
+  rounds at that size ended in a GPU command-buffer timeout. Under `NFKMLXGPU.applyStandingLimits()`
+  the decode takes 3.32 s and 13.5 GB as one graph, 3.93 s and 8.4 GB staged. Evaluating intermediates
+  step by step lowers the peak but leaves the cache growth, so the cache cap is the fix and staging
+  (`NFKSDDecodeStaging`) applies only when the estimated one-graph peak exceeds the GPU memory left.
 - **A Swift `[String: _]` merges canonically equivalent keys.** `é` and `e`+U+0301, `ड़` and `ड`+`़`, two
   orders of the same Arabic marks: one Dictionary key, where SentencePiece, `tokenizers`, and every HF
   tokenizer see distinct byte strings, and a vocabulary carries both. A bridged `NSDictionary as?
