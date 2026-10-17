@@ -662,14 +662,17 @@ models.
 - **`NFKMLXWanPipeline`** — Wan text-to-video: the Wan DiT (`NFKMLXWanTransformerNet`), the streaming
   3-D causal VAE with its per-convolution feature cache (`NFKMLXWanVideoVAENet`, the 2.1 and 2.2 paths),
   a umT5 prompt, and the released UniPC sampler (`NFKMLXUniPCScheduler`).
-- **`NFKMLXSD3Pipeline`** — Stable Diffusion 3 / 3.5 text-to-image: the MMDiT dual-stream joint-attention
-  transformer (`NFKMLXSD3TransformerNet`, at reference parity against diffusers; the SD3.5 RMS q/k norm
-  and MMDiT-X dual attention exercised), the SD3 autoencoder (`NFKMLXSDAutoencoder`, quant convolutions
-  kept), a CLIP-L + CLIP-G + T5-XXL text context, and the rectified-flow sampler with classifier-free
-  guidance. Presets `.sd3Medium` / `.sd35Medium` / `.sd35Large`; the released sizes held to the module
-  by shape (SD3.5-large 1227, SD3.5-medium 909 tensors, 0 missing / mismatched / unaccounted), and the
-  released SD3.5-medium transformer and VAE at reference parity against diffusers at float32 (velocity
-  0.99999999999971).
+- **`NFKMLXSD3Pipeline`** — Stable Diffusion 3 / 3.5 text-to-image: the MMDiT dual-stream
+  joint-attention transformer (`NFKMLXSD3TransformerNet`, at reference parity against diffusers; the
+  SD3.5 RMS q/k norm and MMDiT-X dual attention exercised), the SD3 autoencoder
+  (`NFKMLXSDAutoencoder`, quant convolutions kept), a CLIP-L + CLIP-G + T5-XXL text context, and the
+  rectified-flow sampler with classifier-free guidance. Presets `.sd3Medium` / `.sd35Medium` /
+  `.sd35Large`; the released sizes held to the module by shape (SD3.5-large 1227, SD3.5-medium 909
+  tensors, 0 missing / mismatched / unaccounted), and the released SD3.5-medium transformer and VAE
+  at reference parity against diffusers at float32 (velocity 0.99999999999971); the released
+  SD3.5-large and SD3.5-large-turbo transformers on four-block cuts (velocity 0.99999999999951 and
+  0.99999999999950). The registry names `sd3`, `sd3-medium`, `sd3.5-large`, and `sd3.5-large-turbo`,
+  the last at 4 steps and a guidance of 0.
 - **`NFKMLXFluxPipeline`** — FLUX.1 text-to-image: the double- and single-stream transformer
   (`NFKMLXFluxTransformerNet`, at reference parity against diffusers; axial rotary, guidance embedding),
   the FLUX autoencoder (`NFKMLXSDAutoencoder`, `.flux`), a CLIP-L pooled + T5-XXL text context, and the

@@ -96,7 +96,10 @@ enum NFKMLXCatalogImage {
         }
         for release in sd3AdditionalReleases {
             NFKMLXGenerationBackend.registerDirectoryModel(release.name) {
-                try NFKMLXSD3Generator.backend(directoryURL: $0)
+                let generator = try NFKMLXSD3Generator.generator(directoryURL: $0)
+                generator.steps = release.steps
+                generator.guidance = Float(release.guidance)
+                return generator.inferenceBackend()
             }
         }
         NFKMLXGenerationBackend.registerDirectoryModel(sana1600MName) { try NFKMLXSANAGenerator.backend(directoryURL: $0) }
@@ -1782,12 +1785,16 @@ enum NFKMLXCatalogImage {
          seedOption(0), stepsOption(steps), guidanceOption(guidance, help: guidanceHelp)]
     }
 
-    /// A release of a generator that reads its geometry from the release directory.
+    /// A release of a generator that reads its geometry from the release directory. `steps` and
+    /// `guidance` are the defaults its publisher runs it at; a distillation carries its own.
     struct GeneratorRelease {
         let name: String
         let repository: String
         let displayName: String
         let license: NFKModelLicense
+        var steps = 28
+        var guidance: Double = 7
+        var summary: String?
     }
 
     /// The Stable Diffusion 3 releases other than SD3.5 Medium, which `sd3` builds.
@@ -1800,7 +1807,14 @@ enum NFKMLXCatalogImage {
                                            note: "Gated: accept the terms on Hugging Face. Non-commercial research use only.")),
         GeneratorRelease(name: "sd3.5-large", repository: "stabilityai/stable-diffusion-3.5-large",
                          displayName: "Stable Diffusion 3.5 Large", license: gatedStabilityCommunity),
+        GeneratorRelease(name: sd35LargeTurboName, repository: "stabilityai/stable-diffusion-3.5-large-turbo",
+                         displayName: "Stable Diffusion 3.5 Large Turbo", license: gatedStabilityCommunity,
+                         steps: 4, guidance: 0,
+                         summary: "A multimodal diffusion transformer distilled to draw an image from a prompt in four steps without guidance."),
     ]
+
+    /// The registry name of SD3.5 Large Turbo, which runs at four steps and a guidance of 0.
+    static let sd35LargeTurboName = "sd3.5-large-turbo"
 
     /// The Stability AI Community License on a repository whose terms are accepted on Hugging Face first.
     static var gatedStabilityCommunity: NFKModelLicense {
@@ -1815,11 +1829,13 @@ enum NFKMLXCatalogImage {
             + sd3AdditionalReleases
         return releases.map { release in
             model(release.name, release.displayName, family: "stable-diffusion-3",
-                  summary: "A multimodal diffusion transformer that draws an image from a prompt.",
+                  summary: release.summary ?? "A multimodal diffusion transformer that draws an image from a prompt.",
                   tasks: [NFKModelTaskTextToImage],
                   inputs: [promptInput, negativePromptInput], outputs: [generatedImageOutput],
-                  parameters: generatorOptions(side: 1024, multiple: 16, steps: 28, guidance: 7,
-                                               guidanceHelp: "The classifier-free guidance weight. Above 1 the image guides against the negative prompt."),
+                  parameters: generatorOptions(side: 1024, multiple: 16, steps: release.steps, guidance: release.guidance,
+                                               guidanceHelp: release.guidance > 1
+                                                   ? "The classifier-free guidance weight. Above 1 the image guides against the negative prompt."
+                                                   : "The classifier-free guidance weight. The distillation runs at 0; above 1 the image guides against the negative prompt."),
                   license: release.license,
                   source: hubRelease(release.repository, components: NFKMLXSD3Generator.releaseComponents),
                   residencies: stagedResidencies)

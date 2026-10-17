@@ -1418,6 +1418,23 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   safetensors headers and the cache geometry from each release's `config.json`. The regenerated table
   and `Docs/model-catalog.json` carry them.
 
+#### SD3.5 Large Turbo
+
+- `sd3.5-large-turbo` joins the registry and the catalog:
+  `stabilityai/stable-diffusion-3.5-large-turbo`, the four-step distillation of SD3.5 Large, built
+  by `NFKMLXSD3Generator` from its release directory as the other SD3 releases are. The release
+  shares Large's geometry (`.sd35Large`), autoencoder, and text encoders, and runs without
+  classifier-free guidance; the registry and the catalog's option defaults set 4 steps and a
+  guidance of 0, where the other releases keep 28 and 7. A caller building from a directory sets
+  `steps` and `guidance` itself.
+- The released SD3.5-large and SD3.5-large-turbo transformers are at reference parity against
+  diffusers at float32 on four-block cuts (the first three blocks and the final `context_pre_only`
+  block): velocity 0.99999999999951 and 0.99999999999950, every recorded seam 0.9999999999994 or
+  better.
+- `NFKMLXFlowMatchScheduler` at `.sd3` over four steps lands on the sigmas 1, 0.8576, 0.6021,
+  0.0089, as diffusers' scheduler does over its own ramp under the static shift of 3.0 (assertion,
+  under `swift test`).
+
 #### Released Stable Diffusion LoRAs merge into the UNet; LCM-LoRA, SDXL-Lightning, and LCM Dreamshaper
 
 - `NFKMLXSDLoRA` reads a released Stable Diffusion adapter in the kohya layout over diffusers module names

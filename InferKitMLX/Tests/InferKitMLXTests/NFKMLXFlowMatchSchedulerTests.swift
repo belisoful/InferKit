@@ -143,6 +143,20 @@ final class NFKMLXFlowMatchSchedulerTests: XCTestCase {
         XCTAssertEqual(scheduler.timesteps[19], 8.929, accuracy: 1e-2)
     }
 
+    // SD3.5 Large Turbo runs the same scheduler for four steps. The reference's own ramp runs from its
+    // shifted maximum to its shifted minimum (`sigma_min` = 3 · 0.001 / 1.002) and shifts the four
+    // values again, so the last step lands near 0.0089, as the 20-step schedule's does.
+    func testTheFourStepSD3ScheduleMatchesTheReference() {
+        var scheduler = NFKMLXFlowMatchScheduler(.sd3)
+        scheduler.setTimesteps(4, sequenceLength: 4096)
+        let referenceSigmas: [Float] = [1.0000000, 0.8576923, 0.6021505, 0.0089286, 0.0]
+        XCTAssertEqual(scheduler.sigmas.count, referenceSigmas.count)
+        for (mine, theirs) in zip(scheduler.sigmas, referenceSigmas) {
+            XCTAssertEqual(mine, theirs, accuracy: 1e-5)
+        }
+        XCTAssertEqual(scheduler.timesteps[3], 8.929, accuracy: 1e-2)
+    }
+
     func testTheTerminalSigmaIsTheConfiguredValue() {
         var scheduler = NFKMLXFlowMatchScheduler(.ltxVideo)
         scheduler.setTimesteps(30, sequenceLength: 4096)

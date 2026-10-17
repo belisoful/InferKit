@@ -5536,7 +5536,7 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
-            "measuredRevision" : "5254448103b6254fc646dacbca1cbbf20e9216c1",
+            "measuredRevision" : "314113f8a7dadb388215396ba5fbee2c610a04d6",
             "repository" : "deepseek-ai/DeepSeek-V4.1-Flash",
             "requiresConversion" : false
           }
@@ -43932,6 +43932,335 @@
             "layout" : "directory",
             "measuredRevision" : "ceddf0a7fdf2064ea28e2213e3b84e4afa170a0f",
             "repository" : "stabilityai/stable-diffusion-3.5-large",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "Stable Diffusion 3.5 Large Turbo",
+      "engine" : "mlx",
+      "family" : "stable-diffusion-3",
+      "id" : "sd3.5-large-turbo",
+      "inputModalities" : [
+        "text"
+      ],
+      "inputs" : [
+        {
+          "help" : "What to draw.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What to steer away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : true,
+        "name" : "Stability AI Community License",
+        "note" : "Gated: accept the terms on Hugging Face. Free below US$1M in annual revenue; above it, Stability AI's enterprise license applies.",
+        "restrictsCommercialUse" : true,
+        "url" : "https://stability.ai/community-license-agreement"
+      },
+      "memoryModel" : {
+        "residency" : "residency"
+      },
+      "options" : [
+        {
+          "default" : 1024,
+          "help" : "The image width in pixels, a multiple of 16.",
+          "key" : "width",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Width"
+        },
+        {
+          "default" : 1024,
+          "help" : "The image height in pixels, a multiple of 16.",
+          "key" : "height",
+          "kind" : "integer",
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Height"
+        },
+        {
+          "default" : 0,
+          "help" : "The seed of the initial noise.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "default" : 4,
+          "help" : "The denoising steps the sampler runs.",
+          "key" : "steps",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 0,
+          "help" : "The classifier-free guidance weight. The distillation runs at 0; above 1 the image guides against the negative prompt.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Guidance"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 27621726622,
+                "residentBytes" : 27621726622
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 16460372198,
+                "residentBytes" : 16460372198
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        }
+      ],
+      "outputModalities" : [
+        "image"
+      ],
+      "outputs" : [
+        {
+          "help" : "The generated image.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Image",
+          "valueType" : "image"
+        }
+      ],
+      "registryName" : "sd3.5-large-turbo",
+      "requirements" : {
+        "minimumMemoryBytes" : 24418046464,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged"
+      ],
+      "standIn" : false,
+      "summary" : "A multimodal diffusion transformer distilled to draw an image from a prompt in four steps without guidance.",
+      "tasks" : [
+        "text-to-image"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Stable Diffusion 3.5 Large Turbo",
+          "downloadBytes" : 27625840854,
+          "id" : "default",
+          "isDefault" : true,
+          "measurementNote" : "tensor headers unread: text_encoder/model.safetensors (HTTP 401), text_encoder_2/model.safetensors (HTTP 401), vae/diffusion_pytorch_model.safetensors (HTTP 401) and 4 more",
+          "memoryFacts" : {
+            "basis" : "stored-dtype",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 11161354424
+                },
+                "id" : "text_encoder",
+                "title" : "text_encoder, text_encoder_2, text_encoder_3"
+              },
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 16460372198
+                },
+                "id" : "transformer",
+                "title" : "transformer, vae"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 24418046464,
+          "peakBytes" : 16460372198,
+          "registryName" : "sd3.5-large-turbo",
+          "residentBytes" : 16460372198,
+          "residentEstimate" : "stored-dtype",
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 706,
+                "optional" : false,
+                "path" : "model_index.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 141,
+                "optional" : false,
+                "path" : "scheduler/scheduler_config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 574,
+                "optional" : false,
+                "path" : "text_encoder/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 247323896,
+                "optional" : false,
+                "path" : "text_encoder/model.safetensors",
+                "role" : "weights",
+                "sha256" : "****************************************************************"
+              },
+              {
+                "bytes" : 570,
+                "optional" : false,
+                "path" : "text_encoder_2/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1389382176,
+                "optional" : false,
+                "path" : "text_encoder_2/model.safetensors",
+                "role" : "weights",
+                "sha256" : "****************************************************************"
+              },
+              {
+                "bytes" : 740,
+                "optional" : false,
+                "path" : "text_encoder_3/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : true,
+                "path" : "text_encoder_3/model.safetensors",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 19885,
+                "optional" : true,
+                "path" : "text_encoder_3/model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 1059962,
+                "optional" : false,
+                "path" : "tokenizer/vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "tokenizer/merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 705,
+                "optional" : true,
+                "path" : "tokenizer/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 588,
+                "optional" : true,
+                "path" : "tokenizer/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 1059962,
+                "optional" : false,
+                "path" : "tokenizer_2/vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 524619,
+                "optional" : false,
+                "path" : "tokenizer_2/merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 856,
+                "optional" : true,
+                "path" : "tokenizer_2/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 576,
+                "optional" : true,
+                "path" : "tokenizer_2/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 791656,
+                "optional" : false,
+                "path" : "tokenizer_3/spiece.model",
+                "role" : "tokenizer",
+                "sha256" : "****************************************************************"
+              },
+              {
+                "bytes" : 397,
+                "optional" : false,
+                "path" : "transformer/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : true,
+                "path" : "transformer/diffusion_pytorch_model.safetensors",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 126867,
+                "optional" : true,
+                "path" : "transformer/diffusion_pytorch_model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 809,
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 167666902,
+                "optional" : false,
+                "path" : "vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights",
+                "sha256" : "****************************************************************"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "ec07796fc06b096cc56de9762974a28f4c632eda",
+            "repository" : "stabilityai/stable-diffusion-3.5-large-turbo",
             "requiresConversion" : false
           }
         }

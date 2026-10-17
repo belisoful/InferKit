@@ -24,9 +24,10 @@ extension NFKMLXSD3Generator {
     ///
     /// @discussion The backend reads `NFKInputPrompt` (required) and `NFKInputNegativePrompt`, and returns
     /// an RGB `CGImage` under `NFKOutputImage`. The release directory or repository selects SD3 Medium,
-    /// SD3.5 Medium, or SD3.5 Large. Parameters: `NFKParameterWidth` and `NFKParameterHeight` (1024, positive
-    /// multiples of 16), `NFKParameterSeed` (0), `NFKParameterSteps` and `NFKParameterGuidanceScale` (the
-    /// generator's ``steps`` and ``guidance``). A request's steps and guidance apply to that request only.
+    /// SD3.5 Medium, SD3.5 Large, or SD3.5 Large Turbo. Parameters: `NFKParameterWidth` and
+    /// `NFKParameterHeight` (1024, positive multiples of 16), `NFKParameterSeed` (0), `NFKParameterSteps` and
+    /// `NFKParameterGuidanceScale` (the generator's ``steps`` and ``guidance``). A request's steps and
+    /// guidance apply to that request only.
     /// Introduced in InferKit 0.4.0.
     @objc(inferenceBackend)
     public func inferenceBackend() -> any NFKInferenceBackend {

@@ -88,7 +88,9 @@ final class NFKSD3TextStage {
 /// @discussion The release layout is `text_encoder/` (CLIP-L with its projection), `text_encoder_2/`
 /// (OpenCLIP bigG), `text_encoder_3/` (T5-XXL, optional), their `tokenizer/`, `tokenizer_2/` and
 /// `tokenizer_3/`, `transformer/`, `vae/`, and `scheduler/`. The factories read SD3 Medium and SD3.5
-/// Medium and Large; the MMDiT-X dual-attention layers and the query-key norm are read from the config.
+/// Medium, Large, and Large Turbo; the MMDiT-X dual-attention layers and the query-key norm are read
+/// from the config. Large Turbo shares Large's geometry and is distilled to four steps without
+/// guidance: set ``steps`` to 4 and ``guidance`` to 0, as the registry does for `sd3.5-large-turbo`.
 /// ``image(forPrompt:negativePrompt:width:height:seed:)`` encodes the prompt through the three towers,
 /// denoises over the release's flow schedule, and decodes. The glue is measured against diffusers'
 /// `StableDiffusion3Pipeline`.
@@ -116,10 +118,11 @@ public final class NFKMLXSD3Generator: NSObject {
     private let segmenter: NFKMLXSentencePieceSegmenter?
     private let t5Length: Int
 
-    /// The denoising steps, 28 by the reference's default.
+    /// The denoising steps, 28 by the reference's default. SD3.5 Large Turbo is distilled to 4.
     @objc public var steps: Int = 28
     /// The classifier-free guidance scale, 7 by the reference's default. Above 1 the image guides
-    /// against the negative prompt, or against an empty one where none is given.
+    /// against the negative prompt, or against an empty one where none is given. SD3.5 Large Turbo
+    /// runs at 0.
     @objc public var guidance: Float = 7
 
     /// Whether the text towers and the transformer stay loaded together between images.
@@ -266,9 +269,10 @@ public final class NFKMLXSD3Generator: NSObject {
     /// Downloads the release (``releaseRepo`` when `repo` is nil) and assembles the model, holding it
     /// as `residency` says.
     ///
-    /// @discussion SD3.5 Medium is about 20 GB with T5-XXL. A file already in the cache is not fetched
-    /// again. The call blocks on the network, so run it off the main and render threads. The weights are
-    /// under the Stability AI Community License.
+    /// @discussion SD3.5 Medium is about 20 GB with T5-XXL; SD3.5 Large and Large Turbo
+    /// (`stabilityai/stable-diffusion-3.5-large`, `stabilityai/stable-diffusion-3.5-large-turbo`) about
+    /// 28 GB each. A file already in the cache is not fetched again. The call blocks on the network, so
+    /// run it off the main and render threads. The weights are under the Stability AI Community License.
     @objc(generatorWithRepo:revision:cacheDirectoryURL:residency:error:)
     public static func generator(repo: String?, revision: String?, cacheDirectoryURL: URL?,
                                  residency: NFKMLXResidency) throws -> NFKMLXSD3Generator {

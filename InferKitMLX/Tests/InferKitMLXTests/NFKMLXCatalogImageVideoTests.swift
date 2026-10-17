@@ -99,7 +99,7 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
         XCTAssertEqual(Set(entry.outputs.map(\.key)), outputs, "\(name) outputs", file: file, line: line)
     }
 
-    func testTheImageGeneratorsDeclareTheirBackendsKeys() {
+    func testTheImageGeneratorsDeclareTheirBackendsKeys() throws {
         for name in [NFKMLXFlux.modelName, NFKMLXCatalogImage.fluxDevName] {
             assertPorts(name, inputs: NFKMLXFlux.backendInputKeys, parameters: NFKMLXFlux.backendParameterKeys,
                         outputs: [NFKOutputImage])
@@ -112,6 +112,12 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
             assertPorts(name, inputs: NFKMLXSD3Generator.backendInputKeys,
                         parameters: NFKMLXSD3Generator.backendParameterKeys, outputs: [NFKOutputImage])
         }
+        let large = try XCTUnwrap(entry("sd3.5-large")).descriptor()
+        XCTAssertEqual(large.option(withKey: NFKParameterSteps)?.defaultValue as? Int, 28)
+        XCTAssertEqual(large.option(withKey: NFKParameterGuidanceScale)?.defaultValue as? Double, 7)
+        let turbo = try XCTUnwrap(entry(NFKMLXCatalogImage.sd35LargeTurboName)).descriptor()
+        XCTAssertEqual(turbo.option(withKey: NFKParameterSteps)?.defaultValue as? Int, 4)
+        XCTAssertEqual(turbo.option(withKey: NFKParameterGuidanceScale)?.defaultValue as? Double, 0)
         assertPorts(NFKMLXFluxControlNetGenerator.modelName, inputs: NFKMLXFluxControlNetGenerator.backendInputKeys,
                     parameters: NFKMLXFluxControlNetGenerator.backendParameterKeys, outputs: [NFKOutputImage])
         assertPorts(NFKMLXSD3ControlNetGenerator.modelName, inputs: NFKMLXSD3ControlNetGenerator.backendInputKeys,
@@ -221,7 +227,7 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
     func testEveryReleasedSizeHasItsOwnName() {
         let names = Set(entries.map(\.identifier))
         let expected = ["sam-vit-b", "sam-vit-l", "sam-vit-h", "swinir-classical-x4", "nafnet-reds",
-                        "yolov8x", "sam2.1-hiera-large", "sam2-hiera-tiny-video", "flux.1-dev", "sd3.5-large",
+                        "yolov8x", "sam2.1-hiera-large", "sam2-hiera-tiny-video", "flux.1-dev", "sd3.5-large", "sd3.5-large-turbo",
                         "florence-2-base", "trocr-small-printed", "vjepa2-vitg-fpc32-384-diving48",
                         "stable-diffusion-v1-5", "sdxl-turbo", "stable-diffusion-xl-base-1.0", "lcm-dreamshaper-v7",
                         "lcm-lora-sdv1-5", "sdxl-lightning-4step-lora"]

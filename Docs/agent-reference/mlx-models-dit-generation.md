@@ -503,6 +503,20 @@ arithmetic as before.
   three releases also share their text encoders, each already at parity elsewhere: CLIP-G is byte-identical
   to SDXL-Turbo's second tower, CLIP-L is SDXL's first tower with its projection, and all 219 T5-XXL
   tensors equal the LTX-Video T5's rounded to fp16. `IK_VAL_SD35_MEDIUM`, `IK_PARITY_SD35_MEDIUM`.
+  The released SD3.5-large and SD3.5-large-turbo transformers are measured the same way on
+  four-block cuts (`truncate.py <repo> <out> 4 --diffusers-transformer`: the first three blocks and
+  the final `context_pre_only` block; the cut carries no VAE), `NFKMLXSD35ReleaseTests` reading
+  `IK_VAL_SD35_LARGE` / `IK_PARITY_SD35_LARGE` and `IK_VAL_SD35_LARGE_TURBO` /
+  `IK_PARITY_SD35_LARGE_TURBO`: Large patch 0.99999999999983, block 0 image / text 0.99999999999985
+  / 0.99999999999954, block 2 image / text 0.99999999999983 / 0.99999999999941, velocity
+  0.99999999999951; Large Turbo patch 0.99999999999981, block 0 image / text 0.99999999999984 /
+  0.99999999999953, block 2 image / text 0.99999999999981 / 0.99999999999945, velocity
+  0.99999999999950. Large Turbo is Large's geometry with distilled weights:
+  `transformer/config.json` is identical between the two releases, so the catalog row
+  (`sd3.5-large-turbo`, `NFKMLXCatalogImage.sd3AdditionalReleases`) is what differs: 4 steps and a
+  guidance of 0, which the registry sets on the generator; the scheduler's four-step sigmas over
+  its own ramp under the static shift are 1, 0.8576, 0.6021, 0.0089
+  (`NFKMLXFlowMatchSchedulerTests`).
 - `NFKMLXFluxTransformerNet` — the FLUX.1 transformer (`FluxTransformer2DModel`, Black Forest Labs), the
   seventh DiT family. Two block kinds. The double-stream blocks (`transformer_blocks`) are MMDiT
   joint-attention blocks like SD3's, but concatenate `[text, image]` (text first, the opposite of SD3)
