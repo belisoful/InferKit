@@ -233,8 +233,13 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 		XCTAssertFalse([[NFKModelMemoryBudget budgetWithWorkingSetByteCount:workingSet - 1] holdsByteCount:bytes], @"%@", count);
 		NSInteger budget = [NFKModelMemoryBudget leastBudgetByteCountHoldingByteCount:bytes];
 		XCTAssertLessThanOrEqual(bytes + [NFKModelMemoryBudget reserveByteCountForBudgetByteCount:budget], budget, @"%@", count);
-		XCTAssertGreaterThan(bytes + [NFKModelMemoryBudget reserveByteCountForBudgetByteCount:budget - 1], budget - 1,
-							 @"%@", count);
+		// A budget of 0 is a machine that reports no working set, which holds nothing.
+		if (budget - 1 > 0) {
+			XCTAssertGreaterThan(bytes + [NFKModelMemoryBudget reserveByteCountForBudgetByteCount:budget - 1], budget - 1,
+								 @"%@", count);
+		} else {
+			XCTAssertEqual(budget, 1, @"the least budget that holds nothing is the least that is known: %@", count);
+		}
 	}
 }
 
@@ -393,8 +398,9 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 	NSDictionary *fixed = @{ NFKModelLoadOptionDraftModel: @"test.draft", NFKModelLoadOptionPrecision: NFKModelPrecisionCheckpoint,
 							 NFKModelLoadOptionQuantizationBits: @0, NFKModelLoadOptionCacheBits: @0 };
 	NFKModelMemoryConstraints *constraints = [decoder constraintsForOptions:fixed memoryBudget:budget];
-	// (7,301,444,403 − 4 GiB − 2,201,000,000) / 110,000 = 7,322, rounded down to a step of 512 from 512.
-	XCTAssertEqualObjects([constraints constraintForOptionKey:NFKModelLoadOptionContextLength].maximumValue, @7168);
+	// The 7,301,444,403-byte budget keeps half of itself, 3,650,722,202 bytes:
+	// (7,301,444,403 − 3,650,722,202 − 2,201,000,000) / 110,000 = 13,179, rounded down to a step of 512 from 512.
+	XCTAssertEqualObjects([constraints constraintForOptionKey:NFKModelLoadOptionContextLength].maximumValue, @12800);
 }
 
 // The decoder with a draft-model option and no choices: its drafts are the compatible descriptors.
