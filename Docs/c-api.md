@@ -271,7 +271,7 @@ A buffer entry names its index in `buffers`, what its bytes are, and their lengt
 | `float32Array`, `float64Array` | `count` | an array of numbers, copied from little-endian words |
 | `pixelBuffer` | `format`, `width`, `height`, `planes [{offset, bytesPerRow, rows}]` | a pixel buffer over the bytes, not copied |
 | `multiArray` | `dataType`, `shape` | a multi-array over the bytes in row-major order, not copied |
-| `pcm` | `sampleRate`, `formatID`, `formatFlags`, `bytesPerPacket`, `framesPerPacket`, `bytesPerFrame`, `channelsPerFrame`, `bitsPerChannel`, `frameLength`, `buffers [{offset, length}]` | an audio buffer over the bytes, not copied |
+| `pcm` | `sampleRate`, `formatID`, `formatFlags`, `bytesPerPacket`, `framesPerPacket`, `bytesPerFrame`, `channelsPerFrame`, `bitsPerChannel`, `frameLength`, `buffers [{offset, length}]` | an audio buffer over the bytes, not copied (copied before macOS 12, iOS 15, and tvOS 15) |
 | `cgImage`, `image` | | an image decoded from PNG bytes |
 
 - `length` is required, and is at most the buffer's length.

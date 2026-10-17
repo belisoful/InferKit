@@ -1033,8 +1033,28 @@ static unsigned long long NFKWireShapeByteCount(NSArray *shape, NSInteger elemen
 	return (__bridge_transfer id)buffer;
 }
 
-/*! A PCM buffer over an attachment's samples without a copy. Every field is checked against the format
-	and the attachment's length before AVAudioPCMBuffer sees a pointer. */
+/*! A PCM buffer holding a copy of a checked buffer list's samples, for systems without the no-copy
+	initializer. */
+static AVAudioPCMBuffer * _Nullable NFKWirePCMBufferCopyingList(AVAudioFormat *format, const AudioBufferList *list,
+																 AVAudioFrameCount frames)
+{
+	AVAudioPCMBuffer *buffer = [[AVAudioPCMBuffer alloc] initWithPCMFormat:format frameCapacity:frames];
+	if (buffer == nil || buffer.audioBufferList->mNumberBuffers != list->mNumberBuffers) {
+		return nil;
+	}
+	AudioBufferList *copy = buffer.mutableAudioBufferList;
+	for (UInt32 index = 0; index < list->mNumberBuffers; index++) {
+		if (list->mBuffers[index].mDataByteSize > copy->mBuffers[index].mDataByteSize) {
+			return nil;
+		}
+		memcpy(copy->mBuffers[index].mData, list->mBuffers[index].mData, list->mBuffers[index].mDataByteSize);
+	}
+	return buffer;
+}
+
+/*! A PCM buffer over an attachment's samples, without a copy on macOS 12, iOS 15, tvOS 15, and later.
+	Every field is checked against the format and the attachment's length before AVAudioPCMBuffer sees a
+	pointer. */
 - (nullable id)PCMBufferWrappingData:(NSData *)data entry:(NSDictionary *)entry key:(NSString *)key error:(NSError * _Nullable *)outError
 {
 	AudioStreamBasicDescription description = {0};
@@ -1072,10 +1092,15 @@ static unsigned long long NFKWireShapeByteCount(NSArray *shape, NSInteger elemen
 		list->mBuffers[index].mDataByteSize = (UInt32)length;
 		list->mBuffers[index].mData = (uint8_t *)data.bytes + offset;
 	}
-	AVAudioPCMBuffer *buffer = [[AVAudioPCMBuffer alloc] initWithPCMFormat:format bufferListNoCopy:list deallocator:^(const AudioBufferList *bufferList) {
-		(void)listStorage;
-		(void)data;
-	}];
+	AVAudioPCMBuffer *buffer = nil;
+	if (@available(macOS 12.0, iOS 15.0, tvOS 15.0, *)) {
+		buffer = [[AVAudioPCMBuffer alloc] initWithPCMFormat:format bufferListNoCopy:list deallocator:^(const AudioBufferList *bufferList) {
+			(void)listStorage;
+			(void)data;
+		}];
+	} else {
+		buffer = NFKWirePCMBufferCopyingList(format, list, (AVAudioFrameCount)frames);
+	}
 	if (buffer == nil || buffer.frameCapacity < frames) {
 		return [self failForKey:key reason:@"a malformed PCM attachment" error:outError];
 	}

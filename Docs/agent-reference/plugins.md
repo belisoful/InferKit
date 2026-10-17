@@ -305,7 +305,7 @@ against literal dictionaries, and the existing server tests keep their expectati
 | `float32Array`, `float64Array` | `count` | an `NSArray` of `NSNumber` (copied) |
 | `multiArray` | `dataType`, `shape` | `MLMultiArray` over the region, no copy |
 | `pixelBuffer` | `format`, `width`, `height`, `planes [{offset, bytesPerRow, rows}]` | `CVPixelBuffer` over the region, no copy |
-| `pcm` | the stream description, `frameLength`, `buffers [{offset, length}]` | `AVAudioPCMBuffer` over the region, no copy |
+| `pcm` | the stream description, `frameLength`, `buffers [{offset, length}]` | `AVAudioPCMBuffer` over the region, no copy (copied before macOS 12, iOS 15, and tvOS 15) |
 | `cgImage`, `image` | | PNG bytes; a `CGImage`, or a 32BGRA pixel buffer for a texture |
 
 - A pixel buffer keeps each plane's row padding; planes and PCM buffers start at 64-byte offsets. An
@@ -331,6 +331,8 @@ against literal dictionaries, and the existing server tests keep their expectati
   addresses). The decoder keeps its list in an `NSMutableData` the deallocator block holds and frees nothing
   by hand. Every PCM field is checked before AVFoundation sees a pointer: frame count, bytes per frame,
   the buffer count for the layout, each buffer's length and alignment within the sliced attachment.
+- The no-copy initializer is macOS 12, iOS 15, and tvOS 15, above the package's floors. Before them the
+  decoder allocates a buffer of the frame count and copies each checked buffer into it.
 
 ## Descriptor ownership
 

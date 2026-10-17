@@ -112,6 +112,24 @@ The runner's SDK annotates `VNDetectBarcodesRequest.supportedSymbologies`,
 classifier as macOS 12, so every use sits under `@available`; the zero-warning gate rejects an
 unguarded call.
 
+A local build cannot see these warnings. Xcode 27's SDKs set a minimum deployment target of macOS 12,
+iOS 15, and tvOS 15, and the build raises the package's floors (macOS 11, iOS 14, tvOS 14) to them
+(`-target arm64-apple-macos12.0` in the local build description). An API introduced at those versions
+compiles without a warning on this machine and warns on the runner, whose Xcode 26.6 builds at the
+package's own floors. `AVAudioPCMBuffer`'s `initWithPCMFormat:bufferListNoCopy:deallocator:` (macOS 12,
+iOS 15, tvOS 15) reached `main` this way in 6ec86c5 and turned every push red until it was guarded.
+A changed core file is checked at the package's floors with a syntax-only compile, which reports at any
+deployment target the command names (measured 2026-10-17, Xcode 27.0):
+
+```bash
+for target in arm64-apple-macos11.0:macosx arm64-apple-ios14.0:iphoneos arm64-apple-tvos14.0:appletvos; do
+  sdk=${target#*:}
+  xcrun --sdk "$sdk" clang -fsyntax-only -fobjc-arc -fmodules -target "${target%%:*}" \
+    -isysroot "$(xcrun --sdk "$sdk" --show-sdk-path)" -I Sources/InferKit/include -I Sources/InferKitC/include \
+    -I Sources/InferKit -Wunguarded-availability-new Sources/InferKit/<File>.m
+done
+```
+
 1. `swift build` + `swift test` on the host — **0 warnings**, all tests green. Grep the log for
    `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 1609 tests
    (2026-10-17): the Objective-C `- (void)test` methods under `Tests/` (1496) and in
