@@ -1070,7 +1070,8 @@ machine's remote clients reach a model this process hosts. Files:
     before `Exited` is reported.
   - Lifetime: the dispatch sources retain the subprocess, so a running one outlives its owner until its
     process exits.
-  - Tests: `NFKSubprocessTests` (4, one starting 600 short `codesign` runs on six threads), `NFKMCPStdioTests` (13), and `NFKMCPClientDisconnectTests` (1).
+  - Tests: `NFKSubprocessTests` (4, one starting 600 short `codesign` runs on six threads),
+    `NFKMCPStdioTests` (13), and `NFKMCPClientDisconnectTests` (1).
     The fake server is a POSIX shell script the test writes to a temporary directory and runs as
     `/bin/sh <script> <mode>`. `/bin/sh`, `/usr/bin/sed`, `/bin/sleep`, and `/bin/pwd` ship with
     macOS, while `python3` is a Command Line Tools stub and a helper executable has no SwiftPM

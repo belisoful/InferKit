@@ -461,7 +461,6 @@ static NSString *NFKPluginFixturesArchitecture(void)
 						   error:error];
 }
 
-/*! The processes below pid, one "pid ppid state elapsed command" line each, or an empty string. */
 /*! What a tool that has not ended is doing: its own ps row ("Z" in its state is a child that exited and
 	was never reaped), the processes below it, and a two-second sample of it. */
 + (NSString *)diagnosisOfStalledProcess:(pid_t)pid
@@ -482,6 +481,7 @@ static NSString *NFKPluginFixturesArchitecture(void)
 			below.length > 0 ? below : @"(none)", stacks ?: @"(no sample)"];
 }
 
+/*! The processes below pid, one "pid ppid state elapsed command" line each, or an empty string. */
 + (NSString *)descendantsOfProcess:(pid_t)pid
 {
 	NSString *table = [self outputOfProgram:@"/bin/ps" arguments:@[ @"-A", @"-o", @"pid=,ppid=,stat=,etime=,command=" ]

@@ -857,24 +857,24 @@ The core protocol's optional `unload`, `isLoaded`, `residentByteCount`, and `pea
   `resetPeakAllocatedByteCount`), so a server measures a provider build that measures nothing itself.
 - Tests: `NFKMLXLifecycleTests` (24), on seeded 8 MiB weights behind test registry factories with a
   placeholder URL: a closure backend and a URL-less registry build stay loaded, unload frees within 10%
-  (plus 1 MiB) of the measured bytes and a run reloads to identical output, prepare reloads, a
-  generation backend reloads, an unload during a gated run frees at its end, a plain backend is wrapped
-  and built twice with `wrappedBackend` reaching its class while loaded, the wrapper over a direct build,
-  and the server's figures and unload. Twelve more run without weights or MLX: an unload during a gated
-  load frees when the run ends, a double unload leaves the next load resident, an unload during a gated
+  (plus 1 MiB) of the measured bytes and a run reloads to identical output, prepare reloads, a generation
+  backend reloads, an unload during a gated run frees at its end, a plain backend is wrapped and built
+  twice with `wrappedBackend` reaching its class while loaded, the wrapper over a direct build, and the
+  server's figures and unload. Twelve more run without weights or MLX: an unload during a gated load
+  frees when the run ends, a double unload leaves the next load resident, an unload during a gated
   forwarded message sent from a global-queue block with no autorelease pool frees when the message
   returns while the block still runs, a forwarded message carries its arguments and result and loads an
   unloaded model, an unload during a gated token count frees after it returns, a wrapper over a class
   without a token count neither claims nor answers one, a fetch inside `reloading` makes no request, a
-  release removed from a failing-transport hub's cache fails the reload with the error and no request
-  and loads again once reseeded, a removed weights file and a removed file the build read inside a
-  release folder fail the reload naming the file, a sibling variant's file and a `*.download` partial
-  removed from the folder leave the reload working while the removed file the build opened fails it,
-  a listed file removed fails the reload while an unlisted one does not, a forwarded message that
-  raises reaches the sender through `NFKMLXCatchException` with the activity count back where it was
-  and an unload deallocating the held backend (a weak reference reads nil), a release fetched inside `NFKMLXBuildHolds.keeping` refuses removal
-  (`NFKDownloadErrorInUse`) until the scope returns, and one fetched outside a scope is released when
-  the fetch returns.
+  release removed from a failing-transport hub's cache fails the reload with the error and no request and
+  loads again once reseeded, a removed weights file and a removed file the build read inside a release
+  folder fail the reload naming the file, a sibling variant's file and a `*.download` partial removed
+  from the folder leave the reload working while the removed file the build opened fails it, a listed
+  file removed fails the reload while an unlisted one does not, a forwarded message that raises reaches
+  the sender through `NFKMLXCatchException` with the activity count back where it was and an unload
+  deallocating the held backend (a weak reference reads nil), a release fetched inside
+  `NFKMLXBuildHolds.keeping` refuses removal (`NFKDownloadErrorInUse`) until the scope returns, and one
+  fetched outside a scope is released when the fetch returns.
 - Holds across a build (2026-10-16). `NFKHFHub.holdRelease(repo:revision:)` hands its hold to the
   `NFKMLXBuildHolds` scope open on the calling task, which ends it when the build returns; with no scope
   open it returns the hold, and the helper ends it when the fetch returns. Scopes open at every public
