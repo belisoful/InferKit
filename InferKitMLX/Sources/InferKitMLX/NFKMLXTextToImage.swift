@@ -614,16 +614,25 @@ final class NFKMLXSDTextToImageModel {
     func denoise(_ latent: MLXArray, _ timestep: NFKDiffusionTimestep,
                  _ context: NFKDiffusionContext, _ guidanceScale: Float) -> MLXArray {
         let prediction = branchPredictions(latent, timestep, context, guidanceScale)
-        guard prediction.dim(0) == 2 else {
+        guard runsClassifierFreeGuidance(context, guidanceScale) else {
             return prediction.reshaped(latent.shape).asType(latent.dtype)
         }
         let guided = NFKReferenceRounding.guided(prediction[0], prediction[1], scale: guidanceScale)
         return guided.reshaped(latent.shape).asType(latent.dtype)
     }
 
+    /// Whether a step runs the unconditional and conditional predictions as a pair and combines them:
+    /// above a guidance of 1, on a UNet that does not condition on its guidance scale, with an
+    /// unconditional context to run. The same predicate decides the batch ``branchPredictions`` builds.
+    func runsClassifierFreeGuidance(_ context: NFKDiffusionContext, _ guidanceScale: Float) -> Bool {
+        guidanceScale > 1 && !conditionsOnGuidance && context.conditioning["context"] != nil
+            && context.conditioning["uncontext"] != nil
+    }
+
     /// The UNet's predictions for one step before the guidance combination: `[1, height, width,
     /// channels]` for a run without classifier-free guidance, `[2, …]` with the unconditional prediction
-    /// first, as the reference batches them. A parity test compares each branch on its own.
+    /// first, as the reference batches them. A parity test compares each branch on its own. The latent
+    /// is one image, reshaped to a batch of one here, so the only second row is the guidance pair.
     func branchPredictions(_ latent: MLXArray, _ timestep: NFKDiffusionTimestep,
                            _ context: NFKDiffusionContext, _ guidanceScale: Float) -> MLXArray {
         guard let conditional = context.conditioning["context"] else { return latent.reshaped([1] + latent.shape) }
@@ -634,7 +643,7 @@ final class NFKMLXSDTextToImageModel {
             .asType(NFKReferenceRounding.parameterType(of: pipeline.unet))
         let step = MLXArray([Int32(timestep.train)])
 
-        guard guidanceScale > 1, !conditionsOnGuidance,
+        guard runsClassifierFreeGuidance(context, guidanceScale),
               let unconditional = context.conditioning["uncontext"] else {
             let image = context.conditioning["ipTokens"].map {
                 NFKSDImageConditioning(tokens: $0, scale: imageAdapterScale)

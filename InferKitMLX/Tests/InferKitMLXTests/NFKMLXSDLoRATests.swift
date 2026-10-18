@@ -327,6 +327,39 @@ final class NFKMLXSDLoRATests: XCTestCase {
         XCTAssertNotEqual(try picture(seed: 1, eta: 0), try picture(seed: 1, eta: nil))
     }
 
+    // Classifier-free guidance runs in exactly the cases it did when `denoise` read the batch size:
+    // guidance above 1, a UNet without the guidance projection, and both contexts present. The
+    // predicate and the batch the UNet runs agree case by case.
+    func testClassifierFreeGuidanceRunsInExactlyTheCasesItDid() throws {
+        try requireMLXRuntime()
+        let model = NFKMLXSDTextToImageModel(configuration: .tiny.withSampler(.ddimTrailing, steps: 2))
+        let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "a tiny test", NFKInputNegativePrompt: ""],
+                                          parameters: [NFKParameterGuidanceScale: 7])
+        let paired = try model.encode(request: request, image: nil)
+        XCTAssertNotNil(paired.conditioning["uncontext"])
+        var single = paired
+        single.conditioning["uncontext"] = nil
+        var empty = paired
+        empty.conditioning["context"] = nil
+        let latent = MLXRandom.normal([paired.height, paired.width, model.configuration.latentChannels], key: MLXRandom.key(41))
+        let step = model.makeScheduler().steps(2)[0]
+
+        for (context, guidance, expected) in [(paired, Float(7), true), (paired, 1, false), (paired, 0, false),
+                                              (single, 7, false), (empty, 7, false)] {
+            XCTAssertEqual(model.runsClassifierFreeGuidance(context, guidance), expected, "guidance \(guidance)")
+            let rows = model.branchPredictions(latent, step, context, guidance).dim(0)
+            XCTAssertEqual(rows, expected ? 2 : 1, "guidance \(guidance)")
+            XCTAssertEqual(model.denoise(latent, step, context, guidance).shape, latent.shape)
+        }
+
+        var distilled = NFKMLXSDTextToImageConfiguration.tiny.withSampler(.lcm, steps: 2, guidanceScale: 8)
+        distilled.unet.timeConditionProjectionDimensions = 8
+        let lcm = NFKMLXSDTextToImageModel(configuration: distilled)
+        let lcmContext = try lcm.encode(request: request, image: nil)
+        XCTAssertFalse(lcm.runsClassifierFreeGuidance(lcmContext, 8), "a UNet conditioned on its guidance runs one pass")
+        XCTAssertEqual(lcm.branchPredictions(latent, step, lcmContext, 8).dim(0), 1)
+    }
+
     // MARK: The guidance projection
 
     // diffusers' `get_guidance_scale_embedding` at guidance 8 (w = 7) over 256 channels: sines first,
