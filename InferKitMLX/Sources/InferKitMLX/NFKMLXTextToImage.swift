@@ -63,7 +63,8 @@ public struct NFKMLXSDTextToImageConfiguration: Sendable {
     public var latentConsistencyOriginalSteps: Int = 50
     /// The trajectory consistency sampler's stochastic parameter (the reference's `eta`), `0...1`. 1,
     /// the Hyper-SD recipe, re-noises every non-final step from the clean estimate; lower values keep
-    /// more detail over several steps. Introduced in InferKit 0.4.0.
+    /// more of each step's own noise, and 0 is deterministic. A request overrides it through
+    /// `NFKMLXTextToImageParameterKey.trajectoryConsistencyEta`. Introduced in InferKit 0.4.0.
     public var trajectoryConsistencyEta: Float = 1
 
     public var latentChannels: Int { vae.latentChannels }
@@ -76,7 +77,8 @@ public struct NFKMLXSDTextToImageConfiguration: Sendable {
     /// steps and guidance 1 under LCM, 4 steps and none under the trailing sampler, 1 step and none
     /// under TCD; a configuration already on the sampler keeps its own values (`.latentConsistency15`
     /// keeps guidance 8). A request's `NFKParameterSteps` and `NFKParameterGuidanceScale` override them
-    /// per run. Introduced in InferKit 0.4.0.
+    /// per run, and `NFKMLXTextToImageParameterKey.trajectoryConsistencyEta` overrides the TCD `eta`.
+    /// Introduced in InferKit 0.4.0.
     public func withSampler(_ sampler: NFKMLXSDSampler, steps: Int? = nil, guidanceScale: Float? = nil) -> Self {
         var c = self
         if sampler != self.sampler {
@@ -423,6 +425,22 @@ final class NFKMLXSDTextToImageModel {
 
     /// The configuration's scheduler, carrying ``samplerNoise`` where the sampler draws noise.
     func makeScheduler() -> any NFKDiffusionScheduler {
+        makeScheduler(configuration)
+    }
+
+    /// The scheduler a request asks for, or nil where the request changes nothing: under the trajectory
+    /// consistency sampler, `NFKMLXTextToImageParameterKey.trajectoryConsistencyEta` sets `eta` for that
+    /// request alone.
+    func scheduler(for request: NFKInferenceRequest) -> (any NFKDiffusionScheduler)? {
+        guard configuration.sampler == .tcd,
+              let eta = (request.parameter(forKey: NFKMLXTextToImageParameterKey.trajectoryConsistencyEta) as? NSNumber)
+        else { return nil }
+        var adjusted = configuration
+        adjusted.trajectoryConsistencyEta = eta.floatValue
+        return makeScheduler(adjusted)
+    }
+
+    private func makeScheduler(_ configuration: NFKMLXSDTextToImageConfiguration) -> any NFKDiffusionScheduler {
         switch configuration.makeScheduler() {
         case var lcm as NFKLCMScheduler:
             lcm.noise = samplerNoise
@@ -505,7 +523,9 @@ final class NFKMLXSDTextToImageModel {
             configuration: backendConfiguration,
             scheduler: makeScheduler(),
             encodedInputKeys: NFKMLXTextToImage.encodedInputKeys(readsImageEmbedding: imageAdapter != nil),
-            encodedParameterKeys: NFKMLXTextToImage.encodedParameterKeys,
+            encodedParameterKeys: NFKMLXTextToImage.encodedParameterKeys
+                .union(configuration.sampler == .tcd ? [NFKMLXTextToImageParameterKey.trajectoryConsistencyEta] : []),
+            schedulerForRequest: { request in holder.model.scheduler(for: request) },
             encode: { request, image, _ in try holder.model.encode(request: request, image: image) },
             denoise: { latent, timestep, context, guidance in
                 holder.model.denoise(latent, timestep, context, guidance)

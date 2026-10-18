@@ -23,6 +23,19 @@ public final class NFKMLXTextToImageInputKey: NSObject {
     @objc public static let imageEmbedding = NFKMLXInputImageEmbedding
 }
 
+/// The request-parameter keys the Stable Diffusion backends read beyond the core's, so an Objective-C
+/// caller sets them the way it sets `NFKParameterGuidanceScale`.
+///
+/// Introduced in InferKit 0.4.0.
+@objc(NFKMLXTextToImageParameterKey)
+public final class NFKMLXTextToImageParameterKey: NSObject {
+    /// The trajectory consistency sampler's `eta`, an `NSNumber` in `0...1`, read by a backend whose
+    /// configuration samples with `NFKMLXSDSamplerTCD` (the Hyper-SD unified adapters). It overrides
+    /// `NFKMLXSDTextToImageConfiguration.trajectoryConsistencyEta` for that request; other samplers do
+    /// not read it. Introduced in InferKit 0.4.0.
+    @objc public static let trajectoryConsistencyEta = "NFKMLXParameterTrajectoryConsistencyEta"
+}
+
 extension NFKMLXTextToImage {
 
     /// Downloads the named release and builds a text-to-image backend from it, as

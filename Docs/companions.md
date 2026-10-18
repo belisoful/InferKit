@@ -957,14 +957,19 @@ models.
   ship, and `NFKDiffusionScheduler` is the seam for other samplers. ControlNet and LCM need no full
   SD reimplementation — LCM is a scheduler swap, ControlNet is a `denoise` closure over a control
   map (`NFKInputControl` → `conditioning["control"]`); the UNet is supplied by your `denoise` or a
-  dynamically linked SD engine.  The image backends share `NFKMLXImageBridge`, which converts a
-  `CGImage` or an `MTLTexture` to and from `MLXArray` in either direction, preserving alpha — so a
-  Metal render pipeline hands textures straight in and gets textures back.  ### Dynamic backend
-  discovery (optional engines)  `NFKDynamicBackend` (core) activates a heavier engine only when its
-  classes are linked into your build, with no build dependency on it. Your engine's adapter conforms
-  to `NFKDynamicBackendProvider` and InferKit resolves it by name at runtime (`NSClassFromString`) —
-  absent when unlinked, with no link error. Built-in capabilities light up when you link a
-  companion:
+  dynamically linked SD engine.
+
+The image backends share `NFKMLXImageBridge`, which converts a `CGImage` or an `MTLTexture` to and
+from `MLXArray` in either direction, preserving alpha — so a Metal render pipeline hands textures
+straight in and gets textures back.
+
+### Dynamic backend discovery (optional engines)
+
+`NFKDynamicBackend` (core) activates a heavier engine only when its classes are linked into your
+build, with no build dependency on it. Your engine's adapter conforms to `NFKDynamicBackendProvider`
+and InferKit resolves it by name at runtime (`NSClassFromString`) — absent when unlinked, with no
+link error. Built-in capabilities light up when you link a companion:
+
 - **`stable-diffusion`** — linking **InferKitMLX** ships `NFKStableDiffusionProvider`, so
   `NFKDynamicBackend.stableDiffusionBackend()` returns the bundled SD backend.
 - **`transcription`** — InferKitMLX ships `NFKMLXWhisperProvider` (a native whisper.cpp can override),

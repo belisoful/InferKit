@@ -267,7 +267,7 @@ The diffusion pipelines are covered in <doc:DiffusionAndSchedulers>.
 
 | Pipeline | Networks | Task |
 | --- | --- | --- |
-| ``NFKMLXBackend`` / ``NFKMLXTextToImage`` | SD UNet + VAE + CLIP towers; ``NFKMLXSDLoRA`` for a released adapter | Stable Diffusion 1.5, 2.1, SDXL, SDXL-Turbo; LCM-LoRA, SDXL-Lightning, LCM Dreamshaper |
+| ``NFKMLXBackend`` / ``NFKMLXTextToImage`` | SD UNet + VAE + CLIP towers; ``NFKMLXSDLoRA`` for a released adapter | Stable Diffusion 1.5, 2.1, SDXL, SDXL-Turbo; LCM-LoRA, SDXL-Lightning, Hyper-SD, LCM Dreamshaper |
 | ``NFKMLXZImageGenerator`` / ``NFKMLXZImagePipeline`` | ``NFKMLXZImageTransformerNet`` + the Flux VAE + Qwen3 | Z-Image text-to-image from a release, staged where it does not fit whole; image-to-image through the pipeline |
 | ``NFKMLXSANAPipeline`` | ``NFKMLXSANATransformerNet`` + ``NFKMLXDCAutoencoderNet`` + Gemma 2 | SANA text-to-image |
 | ``NFKMLXLTXVideoGenerator`` / ``NFKMLXLTXPipeline`` | ``NFKMLXLTXTransformer`` + ``NFKMLXLTXVideoVAE`` + T5-XXL | LTX-Video text-to-video |

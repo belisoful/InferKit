@@ -194,10 +194,12 @@ The diffusion backend seam and schedulers, the SD networks and pipelines, IP-Ada
   64, no text-tower keys; the SD 1.5 files adapt 278 targets, the SDXL files 788, downsampler
   convolutions included) merge through the same reader: the N-step files run `.ddimTrailing` at
   guidance 0, the CFG-preserved 8- and 12-step files `.ddimTrailing` at 8 or 12 steps with guidance
-  5 to 8, and the unified `1step` files `.tcd` (`NFKTCDScheduler`, eta 1, one to eight steps). Their
-  SD half is under ByteDance's own OpenRAIL-M-style license (LICENSE.md, "other SD-related models");
-  the FLUX half carries FLUX.1 [dev] non-commercial terms and the SD3 half the Stability Community
-  license, and neither is taken. Catalog names `hyper-sd15-4steps-lora`, `hyper-sdxl-4steps-lora`,
+  5 to 8, and the unified `1step` files `.tcd` (`NFKTCDScheduler`, eta 1, one to eight steps;
+  `NFKMLXTextToImageParameterKey.trajectoryConsistencyEta` sets eta per request, through the
+  backend's `schedulerForRequest` seam). Their SD half is under the CreativeML Open RAIL++-M License
+  (LICENSE.md, "other SD-related models", Copyright (c) 2024 Bytedance Inc.); the FLUX half carries
+  FLUX.1 [dev] non-commercial terms and the SD3 half the Stability Community license, and neither is
+  taken. Catalog names `hyper-sd15-4steps-lora`, `hyper-sdxl-4steps-lora`,
   `hyper-sd15-8steps-cfg-lora`, `hyper-sdxl-8steps-cfg-lora`, `hyper-sd15-1step-lora`,
   `hyper-sdxl-1step-lora` (`NFKMLXCatalogImage.hyperSDAdapters`; `StableDiffusionAdapter` carries
   the trained steps and guidance where they differ from the sampler's defaults). Parity, with the
@@ -210,10 +212,10 @@ The diffusion backend seam and schedulers, the SD networks and pipelines, IP-Ada
   sit within 1e-9 of their picture's own 8-bit floor; the SD 1.5 8-step CFG figure sits 3e-6 below
   its floor (0.99999859) because its eight guided steps compound a 1e-12 step-0 difference to 1e-5
   by step 7 (the run's own final latent decodes at 0.9999970 against the reference picture), a
-  trajectory seam to explore, not a decode or merge one. The first SD 1.5 trailing records sampled
-  leading with offset (751, 501, 251, 1) because diffusers' `from_config` drops an overridden
-  `timestep_spacing` the stored SD 1.5 config lists in `_use_default_values`; the oracle strips the
-  key, and the records were re-made. Parity, with the adapter fused in diffusers through
+  trajectory seam to explore; the decode and the merge measure clean. The first SD 1.5 trailing
+  records sampled leading with offset (751, 501, 251, 1) because diffusers' `from_config` drops an
+  overridden `timestep_spacing` the stored SD 1.5 config lists in `_use_default_values`; the oracle
+  strips the key, and the records were re-made. Parity, with the adapter fused in diffusers through
   `load_lora_weights` + `fuse_lora` (the diffusers venv carries `peft` for it), from the reference's
   own initial latent: LCM-LoRA on SD 1.5 (`IK_PARITY_SD15_LCM_LORA_T2I`) image cosine 0.99999858,
   mean abs 0.00089; context 0.9999999999984, first prediction 0.9999999999997, per-step latents ≥

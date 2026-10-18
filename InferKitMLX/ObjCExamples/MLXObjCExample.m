@@ -240,6 +240,8 @@
 																   error:&error];
 	XCTAssertNil(unified);
 	XCTAssertNotNil(error);
+	// A TCD run takes its eta from the request under this key, the way guidance comes from NFKParameterGuidanceScale.
+	XCTAssertEqualObjects(NFKMLXTextToImageParameterKey.trajectoryConsistencyEta, @"NFKMLXParameterTrajectoryConsistencyEta");
 	NFKMLXBackend *dreamshaper = [[NFKMLXBackend alloc] initWithModel:NFKMLXStableDiffusionModelLcmDreamshaperV7];
 	XCTAssertFalse(dreamshaper.isReady, @"a whole LCM distillation is a bundled release, with no adapter");
 }

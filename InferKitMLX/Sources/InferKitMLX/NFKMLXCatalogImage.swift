@@ -1721,18 +1721,19 @@ enum NFKMLXCatalogImage {
 
     static let hyperSDRepository = "ByteDance/Hyper-SD"
 
-    /// The Stable Diffusion 1.5 license, noting the adapter's: ByteDance publishes the SD adapters under its
-    /// own OpenRAIL-M-style license (LICENSE.md, "other SD-related models"), with use restrictions.
+    /// The Stable Diffusion 1.5 license, noting the adapter's: ByteDance publishes the SD adapters under the
+    /// CreativeML Open RAIL++-M License (LICENSE.md, "other SD-related models", Copyright (c) 2024
+    /// Bytedance Inc.), with use restrictions.
     static var hyperSD15License: NFKModelLicense {
         .license(nil, name: "CreativeML Open RAIL-M License",
                  url: "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5",
-                 note: "Use restrictions apply. The adapter is under ByteDance's Hyper-SD license, an OpenRAIL-M-style license with use restrictions (https://huggingface.co/ByteDance/Hyper-SD/blob/main/LICENSE.md).")
+                 note: "Use restrictions apply. The adapter is under ByteDance's CreativeML Open RAIL++-M License (https://huggingface.co/ByteDance/Hyper-SD/blob/bc08d970a87c74c71209491d64e3525845698863/LICENSE.md).")
     }
 
     /// The SDXL base 1.0 license, noting the adapter's.
     static var hyperSDXLLicense: NFKModelLicense {
         openRAILPlusPlus(url: "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md",
-                         note: "Use restrictions apply. The adapter is under ByteDance's Hyper-SD license, an OpenRAIL-M-style license with use restrictions (https://huggingface.co/ByteDance/Hyper-SD/blob/main/LICENSE.md).")
+                         note: "Use restrictions apply. The adapter is under ByteDance's CreativeML Open RAIL++-M License (https://huggingface.co/ByteDance/Hyper-SD/blob/bc08d970a87c74c71209491d64e3525845698863/LICENSE.md).")
     }
 
     /// The CreativeML Open RAIL++-M License published at `url`.

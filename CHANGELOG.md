@@ -1436,13 +1436,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   deterministic. The sampler takes the request's seed and a caller's own draws as `NFKLCMScheduler`
   does. `NFKMLXSDSampler.tcd` (`NFKMLXSDSamplerTCD`) and `withSampler(.tcd)` run it at 1 step
   without guidance; `NFKMLXSDTextToImageConfiguration.trajectoryConsistencyEta` sets `eta`.
+  `NFKMLXTextToImageParameterKey.trajectoryConsistencyEta` (`@objc`) sets it per request, which an
+  `NFKMLXDiffusionBackend` reaches through its `schedulerForRequest` seam.
 - ByteDance's Hyper-SD adapters over Stable Diffusion 1.5 and SDXL base 1.0 merge through
   `NFKMLXSDLoRA` and join the catalog under `hyper-sd15-4steps-lora`, `hyper-sdxl-4steps-lora`
   (trailing DDIM, 4 steps, no guidance), `hyper-sd15-8steps-cfg-lora`, `hyper-sdxl-8steps-cfg-lora`
   (trailing DDIM, 8 steps, guidance 5; the adapters keep classifier-free guidance at 5 to 8), and
   `hyper-sd15-1step-lora`, `hyper-sdxl-1step-lora` (the unified adapters under the trajectory
-  consistency sampler, one to eight steps). The SD adapters are under ByteDance's own
-  OpenRAIL-M-style license; the FLUX and SD3 halves of the release are not taken.
+  consistency sampler, one to eight steps). The SD adapters are under ByteDance's
+  CreativeML Open RAIL++-M License; the FLUX and SD3 halves of the release are not taken.
 - Each adapter is measured end to end against diffusers with the adapter fused, from the reference's
   own initial latent (and, under TCD, its per-step draws): image cosine SD 1.5 4-step 0.99999862,
   SDXL 4-step 0.99999953, SD 1.5 8-step CFG 0.99999558, SDXL 8-step CFG 0.99999947, SD 1.5 unified

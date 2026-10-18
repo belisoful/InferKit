@@ -848,7 +848,7 @@ def run_sd_text_to_image(image, checkpoint):
     IK_SD_LORA names a released LoRA (`pytorch_lora_weights.safetensors`, kohya or PEFT layout) to merge
     into the UNet at IK_SD_LORA_SCALE (1), through `load_lora_weights` + `fuse_lora`, which is the merge
     `NFKMLXSDLoRA` performs. IK_SD_SAMPLER=lcm swaps the sampler to `LCMScheduler` (the release's own
-    `original_inference_steps`); IK_SD_SAMPLER=tcd to `TCDScheduler` at IK_SD_ETA (1.0, the Hyper-SD
+    `original_inference_steps`); IK_SD_SAMPLER=tcd swaps it to `TCDScheduler` at IK_SD_ETA (1.0, the Hyper-SD
     unified adapters' recipe); IK_SD_SPACING overrides the release's `timestep_spacing` (`trailing`
     for the Lightning and Hyper-SD N-step adapters on the base releases), and under LCM and TCD the
     record also carries `noises`, the per-step draws the

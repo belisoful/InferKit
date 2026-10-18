@@ -136,6 +136,7 @@ public final class NFKMLXDiffusionBackend: NSObject, NFKInferenceBackend {
     private let ready: Bool
     private let configuration: NFKDiffusionConfiguration
     private let scheduler: any NFKDiffusionScheduler
+    private let schedulerForRequest: ((NFKInferenceRequest) -> (any NFKDiffusionScheduler)?)?
     private let encode: Encode
     private let denoise: Denoise
     private let decode: Decode
@@ -151,6 +152,9 @@ public final class NFKMLXDiffusionBackend: NSObject, NFKInferenceBackend {
     ///     as the prompt of a text-to-image model. They join `supportedInputKeys`.
     ///   - encodedParameterKeys: The request parameters `encode` reads beyond the sampling keys the
     ///     loop itself reads, such as an output size. They join `supportedParameterKeys`.
+    ///   - schedulerForRequest: A sampler built for one request from its parameters, such as a
+    ///     consistency sampler at a requested `eta`; nil, or a nil return, runs `scheduler`.
+    ///     Introduced in InferKit 0.4.0.
     ///   - encode: Maps the request and its bridged image and mask to the diffusion context.
     ///   - denoise: The model forward for one step.
     ///   - decode: Maps the final latent to an image tensor; the identity by default.
@@ -160,6 +164,7 @@ public final class NFKMLXDiffusionBackend: NSObject, NFKInferenceBackend {
                 scheduler: any NFKDiffusionScheduler = NFKDDIMScheduler(),
                 encodedInputKeys: Set<String> = [],
                 encodedParameterKeys: Set<String> = [],
+                schedulerForRequest: ((NFKInferenceRequest) -> (any NFKDiffusionScheduler)?)? = nil,
                 encode: @escaping Encode,
                 denoise: @escaping Denoise,
                 decode: @escaping Decode = { $0 }) {
@@ -167,6 +172,7 @@ public final class NFKMLXDiffusionBackend: NSObject, NFKInferenceBackend {
         self.ready = isReady
         self.configuration = configuration
         self.scheduler = scheduler
+        self.schedulerForRequest = schedulerForRequest
         self.encodedInputKeys = encodedInputKeys
         self.encodedParameterKeys = encodedParameterKeys
         self.encode = encode
@@ -217,7 +223,7 @@ public final class NFKMLXDiffusionBackend: NSObject, NFKInferenceBackend {
     public func submitInferenceJob(for request: NFKInferenceRequest) -> NFKInferenceJob {
         let job = NFKInferenceJob()
         let configuration = self.configuration
-        let scheduler = self.scheduler
+        let scheduler = schedulerForRequest?(request) ?? self.scheduler
         let encode = self.encode
         let denoise = self.denoise
         let decode = self.decode

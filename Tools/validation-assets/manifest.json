@@ -566,7 +566,7 @@
       "config": [
         "IK_VAL_HYPER_SD15_4STEP_LORA"
       ],
-      "note": "Hyper-SD's four-step adapter for Stable Diffusion 1.5 (ByteDance/Hyper-SD, ByteDance's OpenRAIL-M-style license): 278 kohya-layout targets (lora_unet_*.lora_down / lora_up / alpha, rank 64) over the UNet, no text-tower keys. NFKMLXSDLoRA merges it into NFKMLXSDUNet; the run samples DDIM counted down from the end of the training range (IK_SD_SPACING=trailing) over 4 steps at guidance 0. Measured end to end against diffusers with the adapter fused (run_reference.py sd_text_to_image, IK_SD_LORA, IK_SD_SPACING=trailing, IK_SD_STEPS=4, IK_SD_GUIDANCE=0, on the SD15 release -> IK_PARITY_HYPER_SD15_4STEP_T2I)."
+      "note": "Hyper-SD's four-step adapter for Stable Diffusion 1.5 (ByteDance/Hyper-SD, ByteDance's CreativeML Open RAIL++-M License): 278 kohya-layout targets (lora_unet_*.lora_down / lora_up / alpha, rank 64) over the UNet, no text-tower keys. NFKMLXSDLoRA merges it into NFKMLXSDUNet; the run samples DDIM counted down from the end of the training range (IK_SD_SPACING=trailing) over 4 steps at guidance 0. Measured end to end against diffusers with the adapter fused (run_reference.py sd_text_to_image, IK_SD_LORA, IK_SD_SPACING=trailing, IK_SD_STEPS=4, IK_SD_GUIDANCE=0, on the SD15 release -> IK_PARITY_HYPER_SD15_4STEP_T2I)."
     },
     {
       "key": "HYPER_SDXL_4STEP_LORA",

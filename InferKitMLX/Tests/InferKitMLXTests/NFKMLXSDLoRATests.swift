@@ -7,6 +7,7 @@
 //  measured in NFKMLXReferenceParityTests.
 //
 
+import CoreGraphics
 import XCTest
 import InferKit
 import MLX
@@ -293,6 +294,37 @@ final class NFKMLXSDLoRATests: XCTestCase {
         let seededB = NFKTCDScheduler().seeded(2).step(prediction: prediction, timestep: step, latent: latent)
         eval(seededA, seededB)
         XCTAssertFalse(arrayEqual(seededA, seededB).item(Bool.self), "the request's seed changes the draw")
+    }
+
+    // The ObjC-reachable request key: a TCD run takes its `eta` from the request, other samplers ignore
+    // the key, and the backend lists it only where it reads it.
+    func testTheTrajectoryConsistencyEtaRequestKeyReachesTheSampler() throws {
+        try requireMLXRuntime()
+        let key = NFKMLXTextToImageParameterKey.trajectoryConsistencyEta
+        let unified = NFKMLXSDTextToImageModel(configuration: .tiny.withSampler(.tcd, steps: 2))
+        XCTAssertTrue(unified.makeBackend().supportedParameterKeys.contains(key))
+        let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "a tiny test"], parameters: [key: 0.3])
+        XCTAssertEqual((unified.scheduler(for: request) as? NFKTCDScheduler)?.eta, 0.3)
+        XCTAssertEqual((unified.makeScheduler() as? NFKTCDScheduler)?.eta, 1)
+        XCTAssertNil(unified.scheduler(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "a tiny test"], parameters: [:])),
+                     "a request without the key runs the configuration's eta")
+        let lcm = NFKMLXSDTextToImageModel(configuration: .tiny.withSampler(.lcm, steps: 2))
+        XCTAssertNil(lcm.scheduler(for: request), "only the trajectory consistency sampler reads the key")
+        XCTAssertFalse(lcm.makeBackend().supportedParameterKeys.contains(key))
+
+        // The key reaches the run: one seed draws one picture at eta 0 (no re-noising) and another at the
+        // configuration's eta 1 (the seeded re-noising), and eta 0 repeats itself.
+        let backend = unified.makeBackend()
+        func picture(seed: Int, eta: Float?) throws -> [UInt8] {
+            var parameters: [String: Any] = [NFKParameterSeed: seed]
+            if let eta { parameters[key] = eta }
+            let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "a tiny test"],
+                                                                           parameters: parameters))
+            let image = try XCTUnwrap(result.output(forKey: NFKOutputImage)) as! CGImage
+            return NFKMLXImageBridge.rgbaBytes(from: image, colorSpace: CGColorSpaceCreateDeviceRGB()).bytes
+        }
+        XCTAssertEqual(try picture(seed: 1, eta: 0), try picture(seed: 1, eta: 0))
+        XCTAssertNotEqual(try picture(seed: 1, eta: 0), try picture(seed: 1, eta: nil))
     }
 
     // MARK: The guidance projection

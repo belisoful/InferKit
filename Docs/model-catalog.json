@@ -17031,7 +17031,7 @@
       "license" : {
         "gated" : false,
         "name" : "CreativeML Open RAIL-M License",
-        "note" : "Use restrictions apply. The adapter is under ByteDance's Hyper-SD license, an OpenRAIL-M-style license with use restrictions (https://huggingface.co/ByteDance/Hyper-SD/blob/main/LICENSE.md).",
+        "note" : "Use restrictions apply. The adapter is under ByteDance's CreativeML Open RAIL++-M License (https://huggingface.co/ByteDance/Hyper-SD/blob/bc08d970a87c74c71209491d64e3525845698863/LICENSE.md).",
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5"
       },
@@ -17334,7 +17334,7 @@
       "license" : {
         "gated" : false,
         "name" : "CreativeML Open RAIL-M License",
-        "note" : "Use restrictions apply. The adapter is under ByteDance's Hyper-SD license, an OpenRAIL-M-style license with use restrictions (https://huggingface.co/ByteDance/Hyper-SD/blob/main/LICENSE.md).",
+        "note" : "Use restrictions apply. The adapter is under ByteDance's CreativeML Open RAIL++-M License (https://huggingface.co/ByteDance/Hyper-SD/blob/bc08d970a87c74c71209491d64e3525845698863/LICENSE.md).",
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5"
       },
@@ -17637,7 +17637,7 @@
       "license" : {
         "gated" : false,
         "name" : "CreativeML Open RAIL-M License",
-        "note" : "Use restrictions apply. The adapter is under ByteDance's Hyper-SD license, an OpenRAIL-M-style license with use restrictions (https://huggingface.co/ByteDance/Hyper-SD/blob/main/LICENSE.md).",
+        "note" : "Use restrictions apply. The adapter is under ByteDance's CreativeML Open RAIL++-M License (https://huggingface.co/ByteDance/Hyper-SD/blob/bc08d970a87c74c71209491d64e3525845698863/LICENSE.md).",
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5"
       },
@@ -17949,7 +17949,7 @@
       "license" : {
         "gated" : false,
         "name" : "CreativeML Open RAIL++-M License",
-        "note" : "Use restrictions apply. The adapter is under ByteDance's Hyper-SD license, an OpenRAIL-M-style license with use restrictions (https://huggingface.co/ByteDance/Hyper-SD/blob/main/LICENSE.md).",
+        "note" : "Use restrictions apply. The adapter is under ByteDance's CreativeML Open RAIL++-M License (https://huggingface.co/ByteDance/Hyper-SD/blob/bc08d970a87c74c71209491d64e3525845698863/LICENSE.md).",
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md"
       },
@@ -18290,7 +18290,7 @@
       "license" : {
         "gated" : false,
         "name" : "CreativeML Open RAIL++-M License",
-        "note" : "Use restrictions apply. The adapter is under ByteDance's Hyper-SD license, an OpenRAIL-M-style license with use restrictions (https://huggingface.co/ByteDance/Hyper-SD/blob/main/LICENSE.md).",
+        "note" : "Use restrictions apply. The adapter is under ByteDance's CreativeML Open RAIL++-M License (https://huggingface.co/ByteDance/Hyper-SD/blob/bc08d970a87c74c71209491d64e3525845698863/LICENSE.md).",
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md"
       },
@@ -18631,7 +18631,7 @@
       "license" : {
         "gated" : false,
         "name" : "CreativeML Open RAIL++-M License",
-        "note" : "Use restrictions apply. The adapter is under ByteDance's Hyper-SD license, an OpenRAIL-M-style license with use restrictions (https://huggingface.co/ByteDance/Hyper-SD/blob/main/LICENSE.md).",
+        "note" : "Use restrictions apply. The adapter is under ByteDance's CreativeML Open RAIL++-M License (https://huggingface.co/ByteDance/Hyper-SD/blob/bc08d970a87c74c71209491d64e3525845698863/LICENSE.md).",
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/LICENSE.md"
       },

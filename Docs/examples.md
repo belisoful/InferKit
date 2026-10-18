@@ -1638,15 +1638,16 @@ let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "a watercolor lightho
                                   parameters: [NFKParameterSeed: 42])  // 4 steps, no guidance
 let image = try lightning.runInference(for: request).output(forKey: NFKOutputImage)
 
-// Hyper-SD's unified adapter on SDXL base 1.0: ByteDance/Hyper-SD Hyper-SDXL-1step-lora.safetensors
-let hyper = try NFKMLXTextToImage.backend(configuration: .sdxl.withSampler(.tcd, steps: 4),
-                                          directoryURL: sdxlBaseDirectory,
-                                          adapterURL: hyperUnifiedLoRAURL)  // one to eight steps
+// Hyper-SD's unified adapter on Stable Diffusion 1.5: ByteDance/Hyper-SD Hyper-SD15-1step-lora.safetensors
+let hyper = try NFKMLXTextToImage.backend(configuration: .stableDiffusion15.withSampler(.tcd),
+                                          directoryURL: sd15Directory,
+                                          adapterURL: hyperUnifiedLoRAURL)   // 1 step; NFKParameterSteps runs up to 8
 ```
 
 From Objective-C, `backendWithModel:directoryURL:adapterURL:adapterScale:sampler:error:` takes the
 release by name and the sampler as `NFKMLXSDSamplerLCM`, `NFKMLXSDSamplerDDIMTrailing`, or
-`NFKMLXSDSamplerTCD`, and
+`NFKMLXSDSamplerTCD` (whose `eta` a request sets under
+`NFKMLXTextToImageParameterKey.trajectoryConsistencyEta`), and
 `backendWithModel:adapterRepo:adapterWeightsPath:adapterRevision:adapterScale:sampler:cacheDirectoryURL:error:`
 downloads both. A whole LCM distillation needs no adapter: `NFKMLXBackend(model: .lcmDreamshaperV7)`
 conditions on its guidance scale through the time embedding and runs four steps without
