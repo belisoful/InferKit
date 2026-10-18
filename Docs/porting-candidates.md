@@ -15,7 +15,7 @@ per modality that is already scoped; the entries here are the wider field the ro
 
 - [How to read this](#how-to-read-this)
 - [The architectural lens](#the-architectural-lens)
-- [Tier 1 — clean near-term wins](#tier-1--clean-near-term-wins)
+- [Tier 1 — clean near-term wins (SHIPPED)](#tier-1--clean-near-term-wins-shipped)
 - [Tier 2 — strong, mostly permissive](#tier-2--strong-mostly-permissive)
 - [Tier 3 — strategic frontier, high cost](#tier-3--strategic-frontier-high-cost)
 - [Updates to shipped families (Tiers A–C)](#updates-to-shipped-families-tiers-ac)
@@ -63,10 +63,10 @@ territory that is genuinely new:
   from the convolutional DAC and SNAC.
 - **JEPA video encoders, point tracking, and 3D-asset diffusion.** Tasks with no covered analog.
 
-## Tier 1 — clean near-term wins
+## Tier 1 — clean near-term wins (SHIPPED)
 
 Novel enough to be worth porting, permissively licensed, backed by a runnable reference, and tractable
-in size.
+in size. Every row has shipped.
 
 | Model | Vendor | Task | Architecture | License | Reference | Effort |
 |-------|--------|------|--------------|---------|-----------|--------|
@@ -204,6 +204,7 @@ claims; the tables below carry the verified facts.
 | **LCM and SDXL-Lightning** — SHIPPED (`NFKMLXSDLoRA`, `NFKMLXSDTextToImageConfiguration.withSampler`) | Latent Consistency / ByteDance | MIT (LCM Dreamshaper full UNet), openrail++ (LCM-LoRA, Lightning) | Adapters over the shipped SD 1.5 and SDXL bodies, merged into `NFKMLXSDUNet` from the kohya and PEFT key layouts. Measured end to end against diffusers with the adapter fused: LCM-LoRA on SD 1.5 image cosine 0.99999858, SDXL-Lightning four-step on SDXL base 0.99999917, and the whole LCM Dreamshaper v7 distillation 0.99999278 (`.latentConsistency15`, the guidance projection) |
 | **SD 3.5 Large Turbo** — SHIPPED (`sd3.5-large-turbo`, `NFKMLXSD3Generator`) | Stability AI | Stability Community, gated | Shares the Large geometry, autoencoder, and text encoders byte for byte. The released transformer is measured on a four-block cut against diffusers at float32 (velocity 0.99999999999950), and the same pass records Large (0.99999999999951). The registry and catalog run it at 4 steps and a guidance of 0 |
 | **Hyper-SD** — SHIPPED (`NFKMLXSDLoRA`, `NFKTCDScheduler`, six catalog adapters) | ByteDance | The SD adapters are under ByteDance's CreativeML Open RAIL++-M License (use restrictions); the FLUX adapters carry FLUX.1 [dev] non-commercial terms and are not taken | The SD 1.5 and SDXL adapters merge through the LoRA reader: the 4-step files under trailing DDIM without guidance, the CFG-preserved 8-step files at guidance 5, and the unified files under the trajectory consistency sampler. Measured end to end against diffusers with the adapter fused: SD 1.5 4-step image cosine 0.99999862, SDXL 4-step 0.99999953, SD 1.5 8-step CFG 0.99999558, SDXL 8-step CFG 0.99999947, SD 1.5 unified 0.99999725, SDXL unified 0.99999938 |
+| **Qwen-Image 2.1 Turbo** — QUEUED | Alibaba Qwen | Qwen Research License (non-commercial), not gated | `Qwen/Qwen-Image-2.1-Turbo` is a full-weight distillation of the shipped `QwenImage21Transformer2DModel`: the transformer config matches the base exactly, and the autoencoder (bf16 here, float32 in the base) and the Qwen3-VL 8B text encoder are the base's. It samples eight fixed sigmas from `model_index.json` (`sample_sigmas`, 1.0 → 0.414568) at a static shift of 1.0 with no terminal stretch and CFG 1. `NFKMLXFlowMatchConfiguration` has no field for a fixed sigma list, so the work is that field, a `.qwenImage21Turbo` preset, a released-weight parity run (transformer 14.2 GB bf16), and a release row. The oracle needs diffusers with PR #14950 (fixed sampling sigmas) |
 
 Notes:
 
@@ -224,6 +225,8 @@ Notes:
 | **Qwen3.8-Flash-Next** — SHIPPED (`NFKMLXQwen4Exp`) | Alibaba Qwen | other | The `qwen4_exp` architecture at reference parity on a tiny oracle; the 180B release is held structurally |
 | **FLUX.2 [dev]** — PARTIAL (`NFKMLXFlux2`) | Black Forest Labs | FLUX Non-Commercial, gated | [klein] 4B runs end to end at released-weight parity. [dev] needs Mistral-Small 3 as its text encoder and a 60 GB bf16 transformer, which exceeds a 32 GB machine |
 | **LTX-2.5** — PARTIAL (`NFKMLXLTX2TransformerNet`) | Lightricks | other, gated | The audio-video transformer is at reference parity, with a structural check on the ungated LTX-2.3. The video and audio autoencoders, the Gemma 4 text front end, the vocoder, and the pipeline are not built |
+| **FLUX 3 Image Klein** — QUEUED | Black Forest Labs | `flux-kommunity-license` (commercial use of outputs only under US$5M annual revenue), gated | `black-forest-labs/flux-3-image-klein` (distilled, 16 steps, no guidance) and `-base` (50 steps, CFG 3.5). The transformer `Flux3Transformer2DModel` is new: 5 per-mode blocks with separate modulated self-attention over the image, the reference images, and the text, then 28 joint single blocks; 3072 wide, SwiGLU ratio 3, a four-axis rotary (32/32/32/32, `image_rope_scale` 0.5), and in the distilled release a flow-map head that takes the next step's `target_timestep`. 5.55B parameters, 11.1 GB bf16. The text encoder is Qwen3-VL 4B read at 8 stacked layers (4, 8, …, 32; 20480 wide) through the shipped `NFKMLXQwen3VL`. The autoencoder is byte-identical to FLUX.2's (`AutoencoderKLFlux2`, shipped). The schedule is a fixed shift `αs/(1+(α−1)s)` with α 6.93. The card asks for the prompt upsampler `flux-3-image-klein-pup`, an Apache-2.0 Qwen3.5-9B fine-tune. Reference: black-forest-labs/flux-3-image-klein and diffusers PR #15046 (modular pipeline only, git main after v0.41.0) |
+| **Nemotron 3.5 Super VL** — NICE TO HAVE (MoE layers QUEUED) | NVIDIA | OpenMDW 1.1, not gated | `nvidia/NVIDIA-Nemotron-3.5-Super-VL-120B-A12B-BF16`, 124.45B parameters, 248.9 GB bf16, which exceeds a 32 GB machine at any useful precision. The language model is `nemotron_h` with 88 blocks: 40 Mamba-2, 40 MoE, 8 attention. The MoE is a latent MoE (`moe_latent_size` 1024) with 512 routed experts, top-22, one shared expert, ReLU-squared, and `routed_scaling_factor` 5.0. The image tower is C-RADIO ViT-H with an InternVL-style projector. Reference: transformers `nemotron_h_omni` (5.18+). The near-term piece is the MoE layer in `NFKMLXNemotronH`: `layerKinds(fromPattern:)` already parses `E`, but the layer builds a dense `NFKNemotronMLP` for it, so an MoE checkpoint loads into the wrong network. The whole release can then be held structurally, as DeepSeek V4.1 Flash is. `NVIDIA-Nemotron-3.5-Bolt-74B-A9B` and its 24GB variant are smaller siblings whose configs are not yet checked |
 
 Notes:
 
@@ -232,15 +235,28 @@ Notes:
   Pro, including the Pro 0813 draft stack, were brought to the same release-code parity alongside it.
 - FLUX.2 [dev] and LTX-2.5 are gated with automatic approval. Accepting each license is a user action,
   and it releases the headers the structural checks still lack.
+- The FLUX 3 Image Klein and Nemotron 3.5 Super VL rows, and the Qwen-Image 2.1 Turbo row in Tier A,
+  were checked on 2026-10-16 against the Hugging Face detail endpoint. The FLUX 3 Klein repos are gated
+  with automatic approval and the license is not yet accepted. The ungated `unsloth/flux-3-image-klein`
+  and `unsloth/flux-3-image-klein-base` mirrors match the BFL files by LFS sha256, so they serve
+  structural checks until then. No other FLUX 3 member (full Image, Video, Dev) has open weights.
 
 ### Adjacent new families
 
-The survey also named two families new to the toolkit that sit next to shipped surfaces:
+The survey also named two families new to the toolkit that sit next to shipped surfaces. Krea 2 was
+added on 2026-10-16:
 
 | Model | Vendor | License | Status |
 |-------|--------|---------|--------|
 | **Qwen3-VL-Embedding / Reranker 2B** — SHIPPED (`NFKMLXQwen3VLEmbedder`, `NFKMLXQwen3VLReranker`) | Alibaba Qwen | Apache-2.0 | Text and image retrieval at reference parity, on the embeddings and rerank surfaces |
 | **Qwen-Image 2.1** — SHIPPED (`NFKMLXQwenImagePipeline`) | Alibaba Qwen | Qwen Research License (non-commercial) | End to end: the transformer, the Wan 2.2-derived autoencoder, and the Qwen3-VL 8B text encoder |
+| **Krea 2 (Raw, Turbo)** — QUEUED, lowest priority on license grounds | Krea | Krea 2 Community License: commercial use only under US$1M company-wide annual revenue, an enterprise license above it, and required content filtering for deployers. Gated with automatic approval | `krea/Krea-2-Raw` (52 steps, CFG 3.5) and `krea/Krea-2-Turbo` (distilled, 8 steps, CFG 0), released 2026-06-22. The transformer `Krea2Transformer2DModel` is new: a single-stream DiT over one `[text, image]` sequence, 28 blocks, 6144 wide (48 heads of 128), grouped-query attention with 12 KV heads, a sigmoid output gate on attention, q/k RMS norms, SwiGLU 16384, a three-axis rotary (32/48/48, θ 1000), and a shared timestep projection plus a per-block six-way scale-shift table. Text runs through a fusion stage: Qwen3-VL 4B hidden states at 12 layers (2, 5, …, 35) pass two blocks that attend across the layer axis per token, a linear projector collapses the axis, and two refiner blocks attend across tokens. About 13B parameters, 26.3 GB bf16. The text encoder is `Qwen3VLModel` at the 4B geometry, read by the shipped `NFKMLXQwen3VL`. The autoencoder is `AutoencoderKLQwenImage` at the Wan 2.1 geometry the shipped `.wan21` configuration runs (16 latent channels); its file is not byte-identical to Qwen-Image's. The sampler is flow matching with dynamic shifting over the 256…6400 sequence range (base 0.5, max 1.15). Reference: diffusers `Krea2Pipeline` (PR #14045, git main since 2026-06-22) and krea-ai/krea-2 (Apache-2.0 code). The bf16 transformer leaves little room on 32 GB beside the text encoder, so a float32 comparison needs a truncated cut. Krea 2 LoRAs are numerous on the Hub, which makes the LoRA reader relevant once the transformer ships |
+
+Notes:
+
+- The Krea 2 repos are gated and the license is not yet accepted. The ungated `Jinstudio/Krea-2-Raw`
+  and `Jinstudio/Krea-2-Turbo` mirrors match every Krea safetensors file by LFS sha256, and the row's
+  configuration facts come from them. Raw and Turbo share the text encoder and autoencoder files.
 
 ### Tier C — no action
 
@@ -253,6 +269,18 @@ Checked on 2026-09-21 and left alone:
 - **Wan 2.6.** Closed.
 - **SAM 3 / 3.1.** Public weights under Meta's custom SAM License. The recorded decision to skip on
   license terms stands.
+
+Checked on 2026-10-16 and left alone:
+
+- **Krea 3.** API and app only. The `krea` organization holds Krea 2 releases and no Krea 3 repository.
+  Krea 2 is listed under [Adjacent new families](#adjacent-new-families).
+- **Meta Muse Wonder.** API only.
+- **Microsoft MAI-Base-2.** A 2.8T mixture-of-experts base model with no public weights.
+- **Ultramarine 1 Flash** (Paper Instruments). A post-training of `zai-org/GLM-5.3-Flash`, API only
+  until its announced weight release.
+- **Meta Muse Spark Open.** Open weights (`meta-models/Muse-Spark-Open-816B-A42B`, Muse Model License,
+  gated with manual approval) at 822B parameters and 1.6 TB bf16. Its dense sibling
+  `meta-models/Muse-Glimmer-30B` (Apache-2.0, 29.8B) is the member that fits a 32 GB machine.
 
 ## Text-to-speech candidates
 
