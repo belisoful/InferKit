@@ -211,23 +211,34 @@ The diffusion backend seam and schedulers, the SD networks and pipelines, IP-Ada
   prediction ≥ 0.9999999999934, every per-step latent ≥ 0.9999896575. Five of the six image figures
   sit within 1e-9 of their picture's own 8-bit floor; the SD 1.5 8-step CFG figure sits 3e-6 below
   its floor (0.99999859) because its eight guided steps compound a 1e-12 step-0 difference to 1e-5
-  by step 7 (the run's own final latent decodes at 0.9999970 against the reference picture), a
-  trajectory seam to explore; the decode and the merge measure clean. The first SD 1.5 trailing
-  records sampled leading with offset (751, 501, 251, 1) because diffusers' `from_config` drops an
-  overridden `timestep_spacing` the stored SD 1.5 config lists in `_use_default_values`; the oracle
-  strips the key, and the records were re-made. Parity, with the adapter fused in diffusers through
-  `load_lora_weights` + `fuse_lora` (the diffusers venv carries `peft` for it), from the reference's
-  own initial latent: LCM-LoRA on SD 1.5 (`IK_PARITY_SD15_LCM_LORA_T2I`) image cosine 0.99999858,
-  mean abs 0.00089; context 0.9999999999984, first prediction 0.9999999999997, per-step latents ≥
-  0.99999999596. SDXL-Lightning four-step on SDXL base (`IK_PARITY_SDXL_LIGHTNING_T2I`, DDIM
-  trailing both sides through `IK_SD_SPACING`) image cosine 0.99999917, mean abs 0.00056; context
-  0.9999999999969, first prediction 0.9999999999995, per-step latents ≥ 0.9999999998. Two reference
-  facts carry the LCM path: `LCMScheduler` spaces its schedule over `original_inference_steps` (50)
-  as `floor(i · 50 / n)` into `19, 39, …, 999` reversed (4 steps: 999, 759, 499, 259), each step's
-  previous ratio is the next step's, and the last step returns `denoised` without re-noising
-  whatever `set_alpha_to_one` says; and the sampler re-noises every other step with a fresh draw, so
-  the record carries the draws (`noises`, a `randn_tensor` hook in the oracle) and the port takes
-  them through `NFKLCMScheduler.noise`.
+  by step 7, and that compounding is the trajectory's own: two reference runs differing by a 1e-6
+  unit-noise jitter on the initial latent (`IK_SD_LATENT_JITTER`) end ×3478 apart in relative
+  distance (3.5e-3; picture 1 − cos 1.8e-6), ×2.8 after step 0, ×21 at step 2, ×144 at step 3, where
+  the SDXL 8-step CFG run at the same recipe grows ×60 (picture 1 − cos 6.7e-9). Teacher-forced,
+  each step's prediction from the reference's own latent after step k − 1 matches the reference's at
+  every branch ≥ 0.9999999999972 and every guided prediction ≥ 0.9999999998993 at all eight steps
+  (the SDXL run: ≥ 0.9999999999977 and ≥ 0.9999999999250), so no single step, branch, decode, or
+  merge carries the gap; the SD 1.5 UNet at 256 px under guidance 5 amplifies float32 noise the same
+  way on both sides. The records carry `branches` [steps, 1 or 2, side, side, C] (a UNet forward
+  hook) and `guided_predictions` (a `scheduler.step` wrapper), the helper prints the teacher-forced
+  lines when they are present, and `IK_DIAG_<key without IK_>` in the test process's environment
+  names a record ahead of `~/.inferkit-validation.json` for that process (the JSON otherwise wins
+  over the environment). The first SD 1.5 trailing records sampled leading with offset (751, 501,
+  251, 1) because diffusers' `from_config` drops an overridden `timestep_spacing` the stored SD 1.5
+  config lists in `_use_default_values`; the oracle strips the key, and the records were re-made.
+  Parity, with the adapter fused in diffusers through `load_lora_weights` + `fuse_lora` (the
+  diffusers venv carries `peft` for it), from the reference's own initial latent: LCM-LoRA on SD 1.5
+  (`IK_PARITY_SD15_LCM_LORA_T2I`) image cosine 0.99999858, mean abs 0.00089; context
+  0.9999999999984, first prediction 0.9999999999997, per-step latents ≥ 0.99999999596.
+  SDXL-Lightning four-step on SDXL base (`IK_PARITY_SDXL_LIGHTNING_T2I`, DDIM trailing both sides
+  through `IK_SD_SPACING`) image cosine 0.99999917, mean abs 0.00056; context 0.9999999999969, first
+  prediction 0.9999999999995, per-step latents ≥ 0.9999999998. Two reference facts carry the LCM
+  path: `LCMScheduler` spaces its schedule over `original_inference_steps` (50) as `floor(i · 50 /
+  n)` into `19, 39, …, 999` reversed (4 steps: 999, 759, 499, 259), each step's previous ratio is
+  the next step's, and the last step returns `denoised` without re-noising whatever
+  `set_alpha_to_one` says; and the sampler re-noises every other step with a fresh draw, so the
+  record carries the draws (`noises`, a `randn_tensor` hook in the oracle) and the port takes them
+  through `NFKLCMScheduler.noise`.
 - `NFKMLXSDTextToImageConfiguration.latentConsistency15` — LCM Dreamshaper v7, a whole latent
   consistency model (release `.lcmDreamshaperV7`): SD 1.5 geometry plus `time_cond_proj_dim` 256
   (`NFKMLXSDUNetConfiguration.timeConditionProjectionDimensions`, `time_embedding.cond_proj`, a

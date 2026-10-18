@@ -613,7 +613,20 @@ final class NFKMLXSDTextToImageModel {
     /// one batch of two, which makes classifier-free guidance one forward pass.
     func denoise(_ latent: MLXArray, _ timestep: NFKDiffusionTimestep,
                  _ context: NFKDiffusionContext, _ guidanceScale: Float) -> MLXArray {
-        guard let conditional = context.conditioning["context"] else { return latent }
+        let prediction = branchPredictions(latent, timestep, context, guidanceScale)
+        guard prediction.dim(0) == 2 else {
+            return prediction.reshaped(latent.shape).asType(latent.dtype)
+        }
+        let guided = NFKReferenceRounding.guided(prediction[0], prediction[1], scale: guidanceScale)
+        return guided.reshaped(latent.shape).asType(latent.dtype)
+    }
+
+    /// The UNet's predictions for one step before the guidance combination: `[1, height, width,
+    /// channels]` for a run without classifier-free guidance, `[2, …]` with the unconditional prediction
+    /// first, as the reference batches them. A parity test compares each branch on its own.
+    func branchPredictions(_ latent: MLXArray, _ timestep: NFKDiffusionTimestep,
+                           _ context: NFKDiffusionContext, _ guidanceScale: Float) -> MLXArray {
+        guard let conditional = context.conditioning["context"] else { return latent.reshaped([1] + latent.shape) }
         let channels = latent.shape[latent.ndim - 1]
         // The UNet runs at its own type, as a diffusers pipeline casts the latents to it; the prediction
         // returns to the sampler's type.
@@ -630,7 +643,6 @@ final class NFKMLXSDTextToImageModel {
                                  added: added(context, key: "pooled", batch: 1),
                                  imageConditioning: image,
                                  guidanceEmbedding: guidanceEmbedding(guidanceScale, batch: 1))
-                .reshaped(latent.shape).asType(latent.dtype)
         }
         // The reference orders the batch unconditional first, and reads the pair back the same way. The
         // adapter's image tokens ride the same order: zero-image for the unconditional row, the
@@ -640,12 +652,10 @@ final class NFKMLXSDTextToImageModel {
                 NFKSDImageConditioning(tokens: concatenated([$0, tokens], axis: 0), scale: imageAdapterScale)
             }
         }
-        let prediction = pipeline.unet(concatenated([batched, batched], axis: 0), timestep: step,
-                                       context: concatenated([unconditional, conditional], axis: 0),
-                                       added: added(context, key: "unpooled", other: "pooled", batch: 2),
-                                       imageConditioning: image)
-        let guided = NFKReferenceRounding.guided(prediction[0], prediction[1], scale: guidanceScale)
-        return guided.reshaped(latent.shape).asType(latent.dtype)
+        return pipeline.unet(concatenated([batched, batched], axis: 0), timestep: step,
+                             context: concatenated([unconditional, conditional], axis: 0),
+                             added: added(context, key: "unpooled", other: "pooled", batch: 2),
+                             imageConditioning: image)
     }
 
     /// The per-request reference-image embedding for the IP-Adapter, `[1, embedDim]`, read from the

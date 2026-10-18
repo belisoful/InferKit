@@ -1449,6 +1449,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   own initial latent (and, under TCD, its per-step draws): image cosine SD 1.5 4-step 0.99999862,
   SDXL 4-step 0.99999953, SD 1.5 8-step CFG 0.99999558, SDXL 8-step CFG 0.99999947, SD 1.5 unified
   0.99999725, SDXL unified 0.99999938.
+- The SD 1.5 8-step CFG figure's 3e-6 gap to its picture's floor is the trajectory's own
+  sensitivity: two reference runs whose initial latents differ by 1e-6 unit noise end ×3478 apart on
+  SD 1.5 and ×60 on SDXL at the same recipe, and each step's prediction from the reference's own
+  latent matches at every branch ≥ 0.9999999999972 at all eight steps. `run_reference.py
+  sd_text_to_image` records every step's branch and guided predictions and takes
+  `IK_SD_LATENT_JITTER`; the parity helper prints the teacher-forced per-step comparison and reads
+  `IK_DIAG_<key>` ahead of the stored record key.
 
 #### SD3.5 Large Turbo
 

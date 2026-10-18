@@ -12713,7 +12713,10 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                                    record: String, directory key: String,
                                    adapter adapterKey: String? = nil) throws {
         try requireMLXRuntime()
-        guard let path = config[record] else { throw XCTSkip("set \(record)") }
+        // `IK_DIAG_<key>` in this process's environment names a record for this run alone, ahead of the
+        // stored key, so a diagnostic record runs without touching the shared configuration.
+        let diagnostic = ProcessInfo.processInfo.environment["IK_DIAG_" + record.dropFirst("IK_".count)]
+        guard let path = diagnostic ?? config[record] else { throw XCTSkip("set \(record)") }
         let arrays = try loadArrays(url: URL(fileURLWithPath: path))
         let latent = try XCTUnwrap(arrays["latent"])             // [side, side, 4]
         let settings = try XCTUnwrap(arrays["settings"]).asArray(Float.self)
@@ -12786,6 +12789,31 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                 let similarity = cosine(current.reshaped([-1]).asArray(Float.self).map(Double.init),
                                         trace[index].reshaped([-1]).asArray(Float.self).map(Double.init))
                 print("VALIDATION PARITY \(name)-text-to-image: latent after step \(index) (training step \(step.train)) cosine \(similarity)")
+            }
+            // Each step on the reference's own latents (teacher-forced): the branch predictions and the
+            // guided prediction at step k from the reference's latent after step k − 1. A step that
+            // matches here while the free-running latents drift puts the drift in the accumulation, not
+            // in any one step.
+            if let guided = arrays["guided_predictions"] {
+                let branches = arrays["branches"]
+                for (index, step) in schedule.enumerated() {
+                    let input = index == 0 ? latent : trace[index - 1]
+                    let mine = model.denoise(input, step, context, guidance)
+                    eval(mine)
+                    let similarity = cosine(mine.reshaped([-1]).asArray(Float.self).map(Double.init),
+                                            guided[index].reshaped([-1]).asArray(Float.self).map(Double.init))
+                    var line = "VALIDATION PARITY \(name)-text-to-image: teacher-forced step \(index): guided prediction cosine \(similarity)"
+                    if let branches, branches.dim(1) == 2 {
+                        let ours = model.branchPredictions(input, step, context, guidance)
+                        eval(ours)
+                        let pair = (0 ..< 2).map { branch in
+                            cosine(ours[branch].reshaped([-1]).asArray(Float.self).map(Double.init),
+                                   branches[index][branch].reshaped([-1]).asArray(Float.self).map(Double.init))
+                        }
+                        line += ", unconditional \(pair[0]), conditional \(pair[1])"
+                    }
+                    print(line)
+                }
             }
             // The decode seam on its own, in float: the reference's final latent through this
             // autoencoder, and this run's final latent, each against the reference picture before the

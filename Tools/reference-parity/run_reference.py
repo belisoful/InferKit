@@ -928,19 +928,42 @@ def run_sd_text_to_image(image, checkpoint):
     generator = np.random.default_rng(11)
     channels = pipeline.unet.config.in_channels
     latent = torch.from_numpy(generator.standard_normal((1, channels, side, side)).astype(np.float32))
+    # IK_SD_LATENT_JITTER perturbs the initial latent by that much unit noise (a second draw), so two
+    # records of the same run measure how far the reference's own trajectory moves for a known input
+    # difference. The record stores the perturbed latent, so the port runs the same input.
+    jitter = float(os.environ.get("IK_SD_LATENT_JITTER", "0"))
+    if jitter:
+        latent = latent + jitter * torch.from_numpy(generator.standard_normal(latent.shape).astype(np.float32))
 
     # The latent after each step, so a whole-picture mismatch says WHICH step diverged rather than
-    # only that something did.
+    # only that something did; the UNet's branch predictions and the guided prediction at each step,
+    # so a per-step comparison on the reference's own latents separates one step's error from the
+    # accumulation over the trajectory.
     trace = []
+    branches = []
+    guided_predictions = []
 
     def capture(pipe, index, timestep, kwargs):
         trace.append(kwargs["latents"][0].permute(1, 2, 0).contiguous().clone())
         return kwargs
 
+    def record_branches(module, inputs, output):
+        sample = output[0] if isinstance(output, tuple) else output.sample
+        branches.append(sample.detach().permute(0, 2, 3, 1).contiguous().clone())
+    branch_hook = pipeline.unet.register_forward_hook(record_branches)
+    original_step = pipeline.scheduler.step
+
+    def recording_step(model_output, *args, **kwargs):
+        guided_predictions.append(model_output[0].detach().permute(1, 2, 0).contiguous().clone())
+        return original_step(model_output, *args, **kwargs)
+    pipeline.scheduler.step = recording_step
+
     with torch.no_grad():
         result = pipeline(prompt=SD_PROMPTS[0], negative_prompt=negative, num_inference_steps=steps,
                           guidance_scale=guidance, latents=latent, height=side * 8, width=side * 8,
                           output_type="np", callback_on_step_end=capture, **step_kwargs)
+    branch_hook.remove()
+    pipeline.scheduler.step = original_step
     # The conditioning and the first guided prediction, so a divergence separates the text tower from
     # the sampler from the UNet without another run.
     # settings[4] is 1 under the LCM sampler, 2 under TCD, and settings[5] the LoRA scale, so the record
@@ -952,6 +975,9 @@ def run_sd_text_to_image(image, checkpoint):
                                       dtype=torch.float32)}
     if noises:
         extra["noises"] = torch.stack(noises)
+    if len(branches) == steps and len(guided_predictions) == steps:
+        extra["branches"] = torch.stack(branches)                 # [steps, 1 or 2, side, side, C]
+        extra["guided_predictions"] = torch.stack(guided_predictions)
     two_towers = hasattr(pipeline, "text_encoder_2")
     with torch.no_grad():
         if two_towers:
