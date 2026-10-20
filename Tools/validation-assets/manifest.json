@@ -2030,9 +2030,9 @@
       ],
       "config": {
         "IK_VAL_MLX_QWEN3_06B_4BIT": "",
-        "IK_PARITY_MLX_QWEN3_06B_4BIT": "record.safetensors"
+        "IK_PARITY_MLX_QWEN3_06B_4BIT": "records/mlx-qwen3-0.6b-4bit.safetensors"
       },
-      "note": "Qwen3-0.6B as mlx_lm publishes it, affine 4-bit in groups of 64 with bf16 scales, the embedding packed and tied as the head, 335 MB in one file. Held to transformers on the same weights dequantized (run_reference.py mlx_quantized_release -> record.safetensors)."
+      "note": "Qwen3-0.6B as mlx_lm publishes it, affine 4-bit in groups of 64 with bf16 scales, the embedding packed and tied as the head, 335 MB in one file. Held to transformers on the same weights dequantized (run_reference.py mlx_quantized_release -> records/mlx-qwen3-0.6b-4bit.safetensors)."
     },
     {
       "key": "MLX_LLAMA32_1B_INSTRUCT_4BIT",
@@ -2048,9 +2048,9 @@
       ],
       "config": {
         "IK_VAL_MLX_LLAMA32_1B_4BIT": "",
-        "IK_PARITY_MLX_LLAMA32_1B_4BIT": "record.safetensors"
+        "IK_PARITY_MLX_LLAMA32_1B_4BIT": "records/mlx-llama-3.2-1b-instruct-4bit.safetensors"
       },
-      "note": "Llama-3.2-1B-Instruct as mlx_lm publishes it, affine 4-bit in groups of 64, tied, 695 MB. Its tokenizer is Llama 3's pattern with ignore_merges, and its rotary is llama3-scaled. Held to transformers on the same weights dequantized (run_reference.py mlx_quantized_release -> record.safetensors)."
+      "note": "Llama-3.2-1B-Instruct as mlx_lm publishes it, affine 4-bit in groups of 64, tied, 695 MB. Its tokenizer is Llama 3's pattern with ignore_merges, and its rotary is llama3-scaled. Held to transformers on the same weights dequantized (run_reference.py mlx_quantized_release -> records/mlx-llama-3.2-1b-instruct-4bit.safetensors)."
     },
     {
       "key": "QWEN3_EMBEDDING_0_6B",
