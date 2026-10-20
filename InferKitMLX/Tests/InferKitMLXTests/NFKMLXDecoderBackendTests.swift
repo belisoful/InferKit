@@ -31,6 +31,7 @@ final class NFKMLXDecoderBackendTests: XCTestCase {
         try "#version: 0.2\nh e\nl l\nhe ll\nhell o\n".write(
             to: directory.appendingPathComponent("merges.txt"), atomically: true, encoding: .utf8)
         let tokenizerConfig: [String: Any] = [
+            "tokenizer_class": "Qwen2Tokenizer",
             "eos_token": "<|im_end|>",
             "added_tokens_decoder": ["10": ["content": "<|im_start|>", "special": true],
                                      "11": ["content": "<|im_end|>", "special": true]],
@@ -79,6 +80,7 @@ final class NFKMLXDecoderBackendTests: XCTestCase {
     /// tag, the call's JSON, and the closing tag. A scripted forward then writes a real call.
     private func writeToolRelease() throws {
         let tokenizerConfig: [String: Any] = [
+            "tokenizer_class": "Qwen2Tokenizer",
             "eos_token": "<|im_end|>",
             "added_tokens_decoder": ["10": ["content": "<|im_start|>", "special": true],
                                      "11": ["content": "<|im_end|>", "special": true],

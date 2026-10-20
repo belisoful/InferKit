@@ -217,6 +217,17 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
         greedy.maxTokens = 4
         XCTAssertEqual(net.generate(prompt: tokens, options: greedy), Array(continuation.prefix(4)),
                        "and the first greedy tokens are")
+
+        // The same packed network with every float parameter widened to float32 (the scales, biases, and
+        // norms mlx_lm stored at bfloat16): a loading mistake survives the widening, and the
+        // half-precision arithmetic does not.
+        let widened = net.parameters().flattened().map { name, value in
+            (name, value.dtype == .bfloat16 || value.dtype == .float16 ? value.asType(.float32) : value)
+        }
+        net.update(parameters: ModuleParameters.unflattened(widened))
+        let wide = net(MLXArray(tokens.map(Int32.init)).reshaped([1, tokens.count]))[0].asType(.float32)
+        print("VALIDATION PARITY \(label)-float32: logit cosine \(cosine(wide.reshaped([-1]).asArray(Float.self), reference)) "
+              + "with the stored scales, biases, and norms widened to float32")
     }
 
     func testMLXCommunityQwen3FourBitMatchesItsDequantizedReference() throws {

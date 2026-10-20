@@ -181,6 +181,8 @@ final class NFKMLXModelInfoTests: XCTestCase {
         let directory = try releaseDirectory(config: ["model_type": "qwen3_5", "text_config": ["max_position_embeddings": 262144]])
         try JSONSerialization.data(withJSONObject: ["a": 0, "b": 1]).write(to: directory.appendingPathComponent("vocab.json"))
         try "#version: 0.2\n".write(to: directory.appendingPathComponent("merges.txt"), atomically: true, encoding: .utf8)
+        try JSONSerialization.data(withJSONObject: ["tokenizer_class": "Qwen2Tokenizer"])
+            .write(to: directory.appendingPathComponent("tokenizer_config.json"))
         let projection = Linear(4, 8)
         let backend = try NFKMLXDecoderBackend.release(directoryURL: directory, identifier: "projection",
                                                        modules: [projection]) { projection($0) }
