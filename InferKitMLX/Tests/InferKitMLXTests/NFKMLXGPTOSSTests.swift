@@ -116,7 +116,10 @@ final class NFKMLXGPTOSSTests: XCTestCase {
     func testTheReleaseTokenizerAgreesWithTokenizers() throws {
         guard let directory = config["IK_VAL_GPT_OSS"] else { throw XCTSkip("set IK_VAL_GPT_OSS") }
         let tokenizer = try XCTUnwrap(NFKMLXLanguage.releaseTokenizer(inDirectory: URL(fileURLWithPath: directory)))
-        XCTAssertEqual(NFKMLXLanguage.pretokenizationName(inDirectory: URL(fileURLWithPath: directory)), "o200k")
+        let tokenizerJSON = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(contentsOf: URL(fileURLWithPath: directory).appendingPathComponent("tokenizer.json"))) as? [String: Any])
+        XCTAssertEqual(try NFKMLXLanguage.tokenizerScheme(tokenizerJSON: tokenizerJSON, tokenizerConfiguration: nil),
+                       .byteLevel(pretokenization: "o200k", composes: false, ignoresMerges: true))
         XCTAssertEqual(tokenizer.eosTokenId, 200002, "<|return|> ends a reply")
         for (text, expected) in Self.tokenizerCases {
             XCTAssertEqual(tokenizer.encode(text).map(\.intValue), expected, text)

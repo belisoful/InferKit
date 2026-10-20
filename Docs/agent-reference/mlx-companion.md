@@ -1034,6 +1034,35 @@ entry through the MLX builder with a placeholder location, `NFKMLXBackend.precis
 sizes, DeepSeek's key-value coding, and the declared-versus-consumed check), and
 `NFKMLXPlannerDifferentialTests` (3).
 
+## Release tokenizers
+
+`NFKMLXLanguage.readTokenizer(inDirectory:)` builds the tokenizer of a release directory, and
+`releaseTokenizer(inDirectory:)` is its optional form. `tokenizerScheme(tokenizerJSON:tokenizerConfiguration:)`
+decides what the files state, from parsed JSON, so the resolver judges a repository before downloading it.
+The reader accepts only what it reproduces token for token:
+
+- A `Split` followed by a `ByteLevel` that does not split again → byte-level BPE under the named pattern
+  the regex equals byte for byte (`qwen2`, `qwen35`, `o200k`, `llama3`, `nemotron`). `Isolated` and
+  `Removed` with `invert` cut identically, because every pattern matches every character.
+- A lone `ByteLevel` with its own regex, no prefix space → `gpt2` (Granite Speech).
+- A normalizer that is none, NFC, or an empty sequence → NFC where stated. `ignore_merges` passes through.
+- Mistral's Metaspace form (`▁` prepended to the first segment only, no split, byte fallback, the
+  Replace/ByteFallback/Fuse/Strip decoder) → `NFKMLXMetaspaceTokenizer` over `NFKMLXMistralTokenizer`
+  (Mixtral). A run that follows an added token takes no `▁`: `<s>[INST]` encodes `[` bare, as
+  `tokenizers` does.
+- No `tokenizer.json` → read only when `tokenizer_config.json` names `Qwen2Tokenizer`, whose pattern
+  and NFC normalization the class fixes.
+- Anything else (another regex, Digits before the GPT-2 regex, BPE dropout, subword affixes, byte
+  fallback outside Metaspace, a Unigram model, Llama 2's legacy Prepend normalizer) →
+  `NFKMLXError.unsupportedConfiguration` naming the part.
+
+The special tokens are the union of `tokenizer.json`'s `added_tokens`, `tokenizer_config.json`'s
+`added_tokens_decoder`, and `added_tokens.json`. `NFKMLXReleaseTokenizerTests` holds every shipped family
+(Qwen3, Qwen3.5, gpt-oss, Mistral-Small 3, Pixtral, Granite 4.0, Nemotron-H, Granite Speech, Phi-4
+multimodal, Mixtral, and Llama 3.2) to the `tokenizers` library's ids on nine strings that separate the
+schemes: digit runs, contractions, whitespace runs, decomposed accents, case changes, code, and added
+tokens written literally.
+
 ## Swift and Objective-C gotchas
 
 Swift↔ObjC gotchas seen here: an `MLXArray` is not `Sendable`, so a backend hands its networks to the

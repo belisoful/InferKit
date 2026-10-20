@@ -34,13 +34,27 @@ static NSString * const kNFKO200kBPEPattern =
 	@"|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?"
 	@"|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
 
+// Llama 3 pre-tokenization, from the released tokenizer.json: Qwen2's, with digits in runs of at most
+// THREE. Mistral's Tekken releases (Mistral-Small 3, Pixtral) and Granite 4.0 ship the same pattern.
+static NSString * const kNFKLlama3BPEPattern =
+	@"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
+
+// Nemotron-H pre-tokenization, from the released tokenizer.json: o200k's case-pattern words without
+// the trailing contraction, and single digits.
+static NSString * const kNFKNemotronBPEPattern =
+	@"[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]*[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]+"
+	@"|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*"
+	@"|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
+
 @implementation NFKByteLevelBPETokenizer
 {
 	NSDictionary<NSString *, NSNumber *> *_encoder;			// token string -> id
 	NSDictionary<NSNumber *, NSString *> *_decoder;			// id -> token string
 	NSDictionary<NSString *, NSNumber *> *_ranks;			// "first\nsecond" -> merge rank
 	NSDictionary<NSString *, NSNumber *> *_specialTokens;	// literal -> id
-	NSString *_pretokenization;								// "gpt2" (nil), "qwen2", "qwen35", or "o200k"
+	NSString *_pretokenization;								// "gpt2" (nil), "qwen2", "qwen35", "o200k", "llama3", or "nemotron"
+	BOOL _composesText;										// NFC before splitting
+	BOOL _ignoresMerges;									// a pretoken in the vocabulary is one token
 	NSRegularExpression *_pattern;
 	unichar _byteToUnicode[256];
 	NSDictionary<NSNumber *, NSNumber *> *_unicodeToByte;	// unichar value -> byte
@@ -70,18 +84,45 @@ static NSString * const kNFKO200kBPEPattern =
 									  bos:(NSInteger)bosTokenId
 									error:(NSError * _Nullable *)outError
 {
+	return [self initWithVocabURL:vocabURL
+						mergesURL:mergesURL
+					specialTokens:specialTokens
+				  pretokenization:pretokenization
+					normalization:nil
+					ignoresMerges:NO
+							  eos:eosTokenId
+							  bos:bosTokenId
+							error:outError];
+}
+
+- (nullable instancetype)initWithVocabURL:(NSURL *)vocabURL
+								mergesURL:(NSURL *)mergesURL
+							specialTokens:(nullable NSDictionary<NSString *, NSNumber *> *)specialTokens
+						  pretokenization:(nullable NSString *)pretokenization
+							normalization:(nullable NSString *)normalization
+							ignoresMerges:(BOOL)ignoresMerges
+									  eos:(NSInteger)eosTokenId
+									  bos:(NSInteger)bosTokenId
+									error:(NSError * _Nullable *)outError
+{
 	self = [super initWithEOS:eosTokenId bos:bosTokenId];
 	if (self == nil) {
 		return nil;
 	}
-	if (pretokenization != nil
-		&& ![pretokenization isEqualToString:@"gpt2"] && ![pretokenization isEqualToString:@"qwen2"]
-		&& ![pretokenization isEqualToString:@"qwen35"] && ![pretokenization isEqualToString:@"o200k"]) {
+	NSArray<NSString *> *pretokenizations = @[@"gpt2", @"qwen2", @"qwen35", @"o200k", @"llama3", @"nemotron"];
+	if (pretokenization != nil && ![pretokenizations containsObject:pretokenization]) {
 		[NFKTokenizer setError:outError code:kNFKError_InferenceUnsupported
 						reason:[NSString stringWithFormat:@"unknown pretokenization \"%@\"", pretokenization]];
 		return nil;
 	}
+	if (normalization != nil && ![normalization isEqualToString:@"nfc"]) {
+		[NFKTokenizer setError:outError code:kNFKError_InferenceUnsupported
+						reason:[NSString stringWithFormat:@"unknown normalization \"%@\"", normalization]];
+		return nil;
+	}
 	_pretokenization = [pretokenization copy];
+	_composesText = [normalization isEqualToString:@"nfc"] || [pretokenization isEqualToString:@"qwen35"];
+	_ignoresMerges = ignoresMerges;
 
 	if (![self loadEncoderFromURL:vocabURL error:outError]) {
 		return nil;
@@ -191,12 +232,18 @@ static NSString * const kNFKO200kBPEPattern =
 	if ([_pretokenization isEqualToString:@"o200k"]) {
 		return kNFKO200kBPEPattern;
 	}
+	if ([_pretokenization isEqualToString:@"llama3"]) {
+		return kNFKLlama3BPEPattern;
+	}
+	if ([_pretokenization isEqualToString:@"nemotron"]) {
+		return kNFKNemotronBPEPattern;
+	}
 	return kNFKBPEPattern;
 }
 
 - (NSString *)normalizedText:(NSString *)text
 {
-	if ([_pretokenization isEqualToString:@"qwen35"]) {
+	if (_composesText) {
 		return text.precomposedStringWithCanonicalMapping;
 	}
 	return text;
@@ -238,6 +285,11 @@ static NSString * const kNFKO200kBPEPattern =
 		[_pattern matchesInString:text options:0 range:NSMakeRange(0, text.length)];
 	for (NSTextCheckingResult *match in matches) {
 		NSString *piece = [self byteStringForPiece:[text substringWithRange:match.range]];
+		NSNumber *whole = _ignoresMerges ? _encoder[piece] : nil;
+		if (whole != nil) {
+			[ids addObject:whole];
+			continue;
+		}
 		for (NSString *token in [self mergedTokensForWord:piece]) {
 			NSNumber *tokenId = _encoder[token];
 			if (tokenId != nil) {

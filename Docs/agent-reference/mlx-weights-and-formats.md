@@ -48,6 +48,29 @@ Runtime quantization, the release reader, the native GGUF and PyTorch checkpoint
   bucket. Clearing without the eval frees nothing. Shipped callers: the drafted Gemma 3 factory
   (`NFKMLXGemma3.model(directoryURL:draftDirectoryURL:…)`) evaluates and clears;
   `NFKMLXMusic3.quantizeRelease` evaluates through `NFKMLXWeights.save`, drops the module, and clears.
+- mlx_lm quantized releases (`mlx-community/*-4bit`, `-8bit`, mixed recipes) load through the language
+  loader, single-file or sharded. `config.json` states the quantization (`quantization`, or a
+  `quantization_config` with no `quant_method`); `NFKMLXQuantization.releaseQuantization(configJSON:)`
+  reads it, returns MXFP4 for gpt-oss's `quant_method: mxfp4`, and refuses every other `quant_method`
+  (GPTQ, AWQ, bitsandbytes, FP8, compressed tensors) by name. Which layers are packed, and at what
+  geometry, comes from the tensors, as mlx_lm decides it on load:
+  - a layer whose `scales` the release carries is packed; the group size is the input width over the
+    scales' last dimension, and the bits are the words' last dimension × 32 over the input width
+    (`releaseLayerQuantization`), so a per-layer override (gpt-oss's 8-bit attention beside MXFP4
+    experts, an 8-bit router) needs no reading of the config;
+  - `biases` present → affine; absent with byte scales → MXFP4 (4 bits / 32), MXFP8 (8 / 32), or NVFP4
+    (4 / 16);
+  - `matchStructure(toRelease:on:)` shapes a freshly built module from the header alone, before any
+    weight is read, and the load runs at `.checkpoint` precision whatever the request, so the scales
+    keep the dtype mlx_lm stored;
+  - mlx_lm's stacked `switch_mlp` is the module's `experts`, and an older Mixtral's per-expert
+    `w1`/`w2`/`w3` `weight`/`scales`/`biases` stack into it; a paged load pages the packed experts;
+  - mlx_lm's gpt-oss layout stores the expert gate and up projections apart where the module holds
+    them fused, and is refused.
+  `NFKMLXReleaseQuantizationTests` round-trips dense, sharded, stacked-mixture (resident and paged),
+  and per-expert releases exactly, and holds `mlx-community/Qwen3-0.6B-4bit` and
+  `Llama-3.2-1B-Instruct-4bit` to transformers on the same weights dequantized
+  (`run_reference.py mlx_quantized_release`).
 - `NFKMLXReleaseWeights` — one reader for a downloaded release's weights, single-file or sharded
   (`model.safetensors.index.json`, each shard read once), with a remap closure whose nil skips a
   tensor. The dense, hybrid, and Gemma loaders all read through it; before it each had its own copy,

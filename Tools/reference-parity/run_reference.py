@@ -3629,6 +3629,100 @@ def run_qwen3(image, checkpoint):
     return logits.contiguous()
 
 
+def run_mlx_quantized_release(image, checkpoint):
+    """A decoder mlx_lm released affine-quantized, run by transformers on its weights dequantized.
+
+    `--checkpoint` is the release DIRECTORY (`mlx-community/Qwen3-0.6B-4bit`, `…/Llama-3.2-1B-Instruct-4bit`).
+    Each layer the release stores packed (`weight` as uint32 words, with `scales` and `biases`) is
+    unpacked here from MLX's documented affine layout: `32 / bits` values per little-endian word, low
+    bits first, each group of `group_size` inputs mapped back as `q * scale + bias`. Which layers are
+    packed, and at what width, is read from the tensors, as the loader under test reads it. The
+    dequantized float32 network is the meaning of the release; a loader that packs a layer it should
+    not, misreads a width, or drops the tied head moves the logits far past the float32 noise.
+
+    The record carries the token ids (the release's own tokenizer on the prompt), the float32 logits as
+    `output`, the greedy continuation, and `bf16.output`: the same network run in bfloat16, whose
+    distance from `output` is the floor a half-precision run of these weights meets.
+    """
+    import numpy as np
+    import torch
+    from safetensors.torch import load_file
+    from transformers import AutoConfig, AutoModelForCausalLM, AutoTokenizer
+
+    with open(os.path.join(checkpoint, "config.json")) as handle:
+        config_json = json.load(handle)
+    for key in ("quantization", "quantization_config"):
+        config_json.pop(key, None)
+    config = AutoConfig.for_model(**config_json)
+    single = os.path.join(checkpoint, "model.safetensors")
+    files = [single] if os.path.exists(single) else sorted(
+        os.path.join(checkpoint, name)
+        for name in set(json.load(open(os.path.join(checkpoint, "model.safetensors.index.json")))["weight_map"].values()))
+    stored = {}
+    for name in files:
+        stored.update(load_file(name))
+
+    # The input width a packed layer was quantized over is the model's own; the words and scales alone
+    # cannot tell 4 bits in groups of 64 from 2 bits in groups of 32.
+    widths = {key: tuple(value.shape) for key, value in
+              AutoModelForCausalLM.from_config(config, torch_dtype=torch.float32).state_dict().items()}
+
+    def dequantized(base):
+        words = stored[base + ".weight"].view(torch.int32).numpy().view(np.uint32)
+        scales = stored[base + ".scales"].float().numpy()
+        biases = stored[base + ".biases"].float().numpy()
+        inputs = widths[base + ".weight"][-1]
+        bits = words.shape[-1] * 32 // inputs
+        if bits not in (2, 4, 8) or words.shape[-1] * 32 != bits * inputs:
+            raise SystemExit(f"{base}: {words.shape[-1]} words over {inputs} inputs is not a width unpacked here")
+        per_word = 32 // bits
+        shifts = (np.arange(per_word, dtype=np.uint32) * bits)[None, None, :]
+        values = (words[..., None] >> shifts) & np.uint32((1 << bits) - 1)
+        values = values.reshape(*words.shape[:-1], inputs).astype(np.float32)
+        groups = scales.shape[-1]
+        grouped = values.reshape(*values.shape[:-1], groups, inputs // groups)
+        weight = grouped * scales[..., None] + biases[..., None]
+        return torch.from_numpy(weight.reshape(values.shape).astype(np.float32)), bits, inputs // groups
+
+    state = {}
+    packed = {}
+    for key in stored:
+        if key.endswith(".scales"):
+            base = key[: -len(".scales")]
+            state[base + ".weight"], bits, group = dequantized(base)
+            packed[base] = (bits, group)
+    for key, value in stored.items():
+        base, _, part = key.rpartition(".")
+        if base in packed and part in ("weight", "scales", "biases"):
+            continue
+        state[key] = value.float()
+    print(f"{len(packed)} packed layers: " + ", ".join(sorted({f"{b} bits / {g}" for b, g in packed.values()})))
+
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    ids = tokenizer("The capital of France is", return_tensors="pt").input_ids
+
+    def build(dtype):
+        model = AutoModelForCausalLM.from_config(config, torch_dtype=torch.float32).eval()
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        tied = config.tie_word_embeddings and set(missing) <= {"lm_head.weight"}
+        if (missing and not tied) or unexpected:
+            raise SystemExit(f"the dequantized state does not cover the model: missing {missing}, unexpected {unexpected}")
+        model.tie_weights()
+        return model.to(dtype)
+
+    model = build(torch.float32)
+    with torch.no_grad():
+        logits = model(ids).logits[0]
+        generated = model.generate(ids, max_new_tokens=16, do_sample=False, pad_token_id=tokenizer.eos_token_id)
+        half = build(torch.bfloat16)(ids).logits[0].float()
+    globals()["_extra"] = {
+        "tokens": ids[0].to(torch.int32).contiguous(),
+        "continuation": generated[0, ids.shape[1]:].to(torch.int32).contiguous(),
+        "bf16.output": half.contiguous(),
+    }
+    return logits.contiguous()
+
+
 # The query/document pair the Qwen3-Embedding record is measured on. The Swift side declares the same
 # strings, so the tokenizer-agreement check reproduces the reference's ids from the text.
 _EMBED_TASK = "Given a web search query, retrieve relevant passages that answer the query"
@@ -22777,6 +22871,7 @@ def run_ltx_pipeline(image, checkpoint):
     return extra["final_latents"].clone()
 
 
+CHECKPOINT_MODELS["mlx_quantized_release"] = run_mlx_quantized_release
 CHECKPOINT_MODELS["ltx_pipeline"] = run_ltx_pipeline
 
 

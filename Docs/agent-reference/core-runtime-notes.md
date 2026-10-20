@@ -28,10 +28,13 @@ that type-checks and returns nil on a mismatch (no crashing cast). Image / mask 
 `tokenizer.type` and returns the subclass named there. The concrete subclasses are private; the
 factory is the public entry, so a new type needs no header change.
 
-- `bpe-bytelevel` → `NFKByteLevelBPETokenizer`, the GPT-2 / Qwen / o200k scheme. The
-  pre-tokenization pattern is selectable (`"pretokenizer": "gpt2"` (default), `"qwen2"`, or `"o200k"`
-  — OpenAI's o200k_base / o200k_harmony, which gpt-oss ships: digits in runs of at most three and words
-  split wherever their case pattern turns over — in the manifest spec), and
+- `bpe-bytelevel` → `NFKByteLevelBPETokenizer`, the GPT-2 / Qwen / o200k / Llama 3 scheme. The
+  pre-tokenization pattern is selectable (`"pretokenizer": "gpt2"` (default), `"qwen2"`, `"qwen35"`,
+  `"o200k"` — OpenAI's o200k_base / o200k_harmony, which gpt-oss ships: digits in runs of at most three
+  and words split wherever their case pattern turns over —, `"llama3"` — Qwen2's pattern with digits in
+  runs of at most three, which Llama 3, Mistral's Tekken (Mistral-Small 3, Pixtral, FLUX.2's text
+  encoder), and Granite 4.0 ship —, or `"nemotron"` — o200k's case-pattern words without the
+  contraction, and single digits — in the manifest spec), and
   the choice is load-bearing: a merge cannot cross a pretoken boundary, so a Qwen vocabulary encoded
   under the GPT-2 pattern produces different, valid-looking ids for the same text ("-pop" is one
   Qwen2 pretoken because a letter run may absorb one leading punctuation character; digits split
@@ -40,8 +43,16 @@ factory is the public entry, so a new type needs no header change.
   default; the Qwen3 text path (`NFKMLXLanguage.backend(directoryURL:)`) now names `qwen2` too.
   `"qwen35"` is Qwen3.5's: Qwen2's pattern with combining marks (`\p{M}`) inside letter runs and out of
   punctuation runs, and each segment NFC-normalized first, as the release's `tokenizer.json` declares.
-  `NFKMLXLanguage.pretokenizationName` selects it from a `[\p{L}\p{M}]+` in the `Split` regex. An
-  unknown pretokenization name is refused rather than silently defaulted.
+  `"normalizer": "nfc"` composes each segment for any pattern (Qwen2 and Qwen3 declare NFC too), and
+  `"ignoreMerges": true` takes a pretoken the vocabulary holds whole as that one token before any merge
+  (`ignore_merges` in gpt-oss's, Llama 3's, Tekken's, and Nemotron's `tokenizer.json`). An unknown
+  pretokenization or normalization name is refused rather than silently defaulted.
+  `NFKMLXLanguage.tokenizerScheme(tokenizerJSON:tokenizerConfiguration:)` reads a release's
+  `tokenizer.json` into these settings strictly: the `Split` regex must be one of the named patterns
+  byte for byte, and any other pre-tokenizer, normalizer, or model option is refused by name
+  (`mlx-companion.md`, "Release tokenizers"). Until 2026-10-20 the reader matched fragments of the
+  regex, so Tekken and Granite 4.0 read as `qwen2` and Nemotron as `o200k`: each split multi-digit
+  numbers differently from its release.
 - `clip` → `NFKCLIPTokenizer`, which the CLIP image-text model and every Stable Diffusion text encoder
   take. It **subclasses** the byte-level tokenizer through four hooks — `normalizedText:`,
   `pretokenizationPattern`, `symbolsForWord:`, `finalizedText:` — because CLIP shares byte-level BPE

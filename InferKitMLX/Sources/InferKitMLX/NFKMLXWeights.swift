@@ -116,6 +116,131 @@ public enum NFKMLXQuantization {
         try quantize(module: module, bits: quantization.bits, groupSize: quantization.groupSize,
                      includeEmbeddings: embeddingsPacked)
     }
+
+    /// Shapes a freshly built module to a release that stores some of its layers packed (an mlx_lm
+    /// quantized release): each `Linear`, `Embedding`, or expert linear whose `scales` the release
+    /// carries becomes its quantized form at the geometry ``releaseLayerQuantization(of:packed:scales:hasBiases:inputSize:)``
+    /// reads from those tensors, and every other layer stays as built.
+    ///
+    /// @discussion `entries` is keyed by the module's own parameter names. Which layers are packed is
+    /// read from the tensors present, as mlx_lm decides it on load: a release's per-layer overrides
+    /// (an 8-bit router beside 4-bit experts) need no reading of the config.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` for a packed tensor on a layer kind with no
+    ///   packed form here, or a geometry no MLX quantization mode has.
+    static func matchStructure(toRelease entries: [String: NFKMLXSafetensorsEntry], on module: Module) throws {
+        let replacements = try module.leafModules().flattened().compactMap { path, layer -> (String, Module)? in
+            guard let scales = entries[path + ".scales"], let packed = entries[path + ".weight"],
+                  !(layer is Quantized) else { return nil }
+            let inputSize: Int
+            if let linear = layer as? Linear {
+                inputSize = linear.weight.dim(1)
+            } else if let embedding = layer as? Embedding {
+                inputSize = embedding.weight.dim(1)
+            } else if let experts = layer as? NFKLMSwitchLinear {
+                inputSize = experts.inputSize
+            } else {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "\(path) is stored packed, but the module's \(type(of: layer)) has no packed form")
+            }
+            let quantization = try releaseLayerQuantization(of: path, packed: packed, scales: scales,
+                                                            hasBiases: entries[path + ".biases"] != nil,
+                                                            inputSize: inputSize)
+            if let experts = layer as? NFKLMSwitchLinear {
+                let packedExperts = NFKLMQuantizedSwitchLinear(
+                    packed: MLXArray.zeros(packed.shape, dtype: .uint32),
+                    scales: MLXArray.zeros(scales.shape, dtype: .float16),
+                    biases: quantization.mode == .affine ? MLXArray.zeros(scales.shape, dtype: .float16) : nil,
+                    groupSize: quantization.groupSize, bits: quantization.bits, mode: quantization.mode)
+                // The placeholders take the release's shapes, so the strict apply that follows cannot
+                // catch a release whose experts differ from the configuration; this does.
+                guard Array(packed.shape.dropLast()) == [experts.expertCount, experts.outputSize] else {
+                    throw NFKMLXError.unsupportedConfiguration(
+                        "\(path) stores \(packed.shape.dropLast()) experts × outputs where the configuration "
+                        + "builds [\(experts.expertCount), \(experts.outputSize)]")
+                }
+                return (path, packedExperts)
+            }
+            return quantizeSingle(layer: layer, groupSize: quantization.groupSize, bits: quantization.bits,
+                                  mode: quantization.mode).map { (path, $0) }
+        }
+        try NFKMLXModuleReplacement.place(replacements, in: module)
+    }
+
+    /// The quantization one packed layer of a release is stored under, read from its tensors: the
+    /// group size is the input width over the scales' last dimension, the bits are the packed words'
+    /// last dimension times 32 over the input width, and the mode is affine where the layer carries
+    /// `biases`, else the microscaled mode those widths and byte scales describe (MXFP4, MXFP8, NVFP4).
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` for widths that do not divide, or a
+    ///   combination no MLX mode stores.
+    static func releaseLayerQuantization(of path: String, packed: NFKMLXSafetensorsEntry,
+                                         scales: NFKMLXSafetensorsEntry, hasBiases: Bool,
+                                         inputSize: Int) throws -> NFKMLXWeights.Quantization {
+        guard packed.dtype == "U32", let words = packed.shape.last, let groups = scales.shape.last,
+              groups > 0, inputSize % groups == 0, (words * 32) % inputSize == 0 else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "\(path)'s packed tensors (\(packed.dtype) \(packed.shape), scales \(scales.shape)) do not "
+                + "divide its \(inputSize) inputs")
+        }
+        let groupSize = inputSize / groups
+        let bits = words * 32 / inputSize
+        if hasBiases {
+            guard [2, 3, 4, 5, 6, 8].contains(bits), [32, 64, 128].contains(groupSize) else {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "\(path) is stored at \(bits) bits in groups of \(groupSize), which MLX's affine mode does not take")
+            }
+            return NFKMLXWeights.Quantization(bits: bits, groupSize: groupSize, mode: .affine)
+        }
+        switch (scales.dtype, bits, groupSize) {
+        case ("U8", 4, 32): return NFKMLXWeights.Quantization(bits: 4, groupSize: 32, mode: .mxfp4)
+        case ("U8", 8, 32): return NFKMLXWeights.Quantization(bits: 8, groupSize: 32, mode: .mxfp8)
+        case ("U8", 4, 16): return NFKMLXWeights.Quantization(bits: 4, groupSize: 16, mode: .nvfp4)
+        default:
+            throw NFKMLXError.unsupportedConfiguration(
+                "\(path) is stored at \(bits) bits in groups of \(groupSize) with \(scales.dtype) scales and no "
+                + "biases, which no MLX quantization mode stores")
+        }
+    }
+
+    /// What a release's `config.json` states about its quantization: nil for a release stored in
+    /// floats, the default geometry for an mlx_lm quantized release (`quantization`, or a
+    /// `quantization_config` with no `quant_method`), and MXFP4 for a release whose
+    /// `quantization_config.quant_method` is `mxfp4` (gpt-oss as released).
+    ///
+    /// @discussion An mlx_lm release may override the default per layer; the loader reads each layer's
+    /// geometry from its tensors, so the default here is what the release states, not a promise
+    /// about every layer. Introduced in InferKit 0.4.0.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` for any other `quant_method` (GPTQ, AWQ,
+    ///   bitsandbytes, FP8, compressed tensors), whose packing this package does not read, and for an
+    ///   mlx_lm mode MLX does not name.
+    static func releaseQuantization(configJSON json: [String: Any]) throws -> NFKMLXWeights.Quantization? {
+        let stated = (json["quantization"] as? [String: Any]) ?? (json["quantization_config"] as? [String: Any])
+        guard let stated else {
+            if let text = json["text_config"] as? [String: Any] {
+                return try releaseQuantization(configJSON: text)
+            }
+            return nil
+        }
+        if let method = stated["quant_method"] as? String {
+            guard method == "mxfp4" else {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "the release is quantized with \(method), whose packing this package does not read")
+            }
+            return NFKMLXLanguage.mxfp4Quantization
+        }
+        guard let bits = (stated["bits"] as? NSNumber)?.intValue,
+              let groupSize = (stated["group_size"] as? NSNumber)?.intValue else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "the release's quantization block names neither a quant_method nor mlx_lm's bits and group_size")
+        }
+        let modeName = (stated["mode"] as? String) ?? "affine"
+        guard let mode = QuantizationMode(rawValue: modeName) else {
+            throw NFKMLXError.unsupportedConfiguration("the release is quantized in mode \(modeName), which MLX does not name")
+        }
+        return NFKMLXWeights.Quantization(bits: bits, groupSize: groupSize, mode: mode)
+    }
 }
 
 public enum NFKMLXWeights {

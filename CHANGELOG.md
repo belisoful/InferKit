@@ -108,6 +108,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   Demucs) as it finds a Hugging Face snapshot, and locates a source only when every file it requires is
   present. `+[NFKModelCatalog hubCacheLocatorForCacheDirectoryURL:]` locates in a host's own cache.
 
+#### Byte-level BPE: the Llama 3 and Nemotron patterns, NFC, and `ignore_merges`
+
+- `NFKByteLevelBPETokenizer` takes two more pre-tokenizations: `llama3` (Qwen2's pattern with digits in
+  runs of at most three, which Llama 3, Mistral's Tekken, and Granite 4.0 ship) and `nemotron`
+  (o200k's case-pattern words without the contraction, and single digits).
+- The manifest's tokenizer spec takes `"normalizer": "nfc"`, which composes each segment under any
+  pattern, and `"ignoreMerges": true`, which takes a pretoken the vocabulary holds whole as one token.
+
 #### Breaking: `NFKInferKit.version` is `NFKInferKit.releaseVersion`
 
 - The class property `version` overrode `+[NSObject version]`, the integer class version archiving
@@ -1433,6 +1441,29 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKMLXT5Configuration.gatedFeedForward` and `.base` read the original T5's ReLU feed-forward, which a
   `config.json` without `feed_forward_proj` names, as transformers reads it.
 - The weights are under the Stability AI Community License: free below USD 1 million in annual revenue.
+
+#### Release tokenizers are read strictly
+
+- `NFKMLXLanguage.readTokenizer(inDirectory:)` builds a release's tokenizer only when this package
+  reproduces its scheme, and throws naming the part it does not. The pre-tokenization is the one the
+  release's `Split` regex equals byte for byte.
+- Mistral-Small 3, Pixtral, FLUX.2's Mistral text encoder, and Granite 4.0 encode under Llama 3's
+  pattern, and Nemotron-H under its own. Each read as another pattern before and split multi-digit
+  numbers differently from its release. Granite Speech encodes under GPT-2's pattern, as its
+  `tokenizer.json` states.
+- Mixtral encodes through Mistral's Metaspace tokenizer. Its text path read the vocabulary as
+  byte-level BPE before and dropped most of the text.
+- The Metaspace tokenizer leaves the `▁` off a run that follows an added token, as `tokenizers` does,
+  so a Mixtral or Codestral-Mamba prompt that writes `<s>[INST]` encodes `[` bare.
+
+#### mlx_lm quantized releases load
+
+- The language loader reads a release mlx_lm published quantized (`mlx-community/*-4bit` and the
+  like), single-file or sharded, dense or a mixture, and pages its packed experts where the plan pages.
+  Each layer's bits, group size, and mode come from its tensors, so per-layer overrides load as stored.
+- `NFKMLXQuantization.releaseQuantization(configJSON:)` names what a `config.json` states, and refuses
+  GPTQ, AWQ, bitsandbytes, FP8, and compressed-tensors releases by name. mlx_lm's gpt-oss layout, which
+  stores the expert gate and up projections apart, is refused.
 
 #### The SD-family autoencoder decodes step by step when the GPU cannot hold the decode whole
 

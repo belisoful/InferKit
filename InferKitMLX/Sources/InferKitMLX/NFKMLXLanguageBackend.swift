@@ -1085,10 +1085,13 @@ public final class NFKMLXLanguage: NSObject {
     }
 
     /// The module key a release's tensor name maps to: Mixtral's `block_sparse_moe` spelling becomes
-    /// the `mlp` layout Qwen3-MoE and this module share, gpt-oss's `router` is the module's `gate` and
-    /// its fused expert tensors gain the `.weight` the module's layers carry, and every other name
-    /// passes through.
+    /// the `mlp` layout Qwen3-MoE and this module share, mlx_lm's stacked `switch_mlp` is the module's
+    /// `experts`, gpt-oss's `router` is the module's `gate` and its fused expert tensors gain the
+    /// `.weight` the module's layers carry, and every other name passes through.
     static func moduleKey(forRelease key: String) -> String {
+        if key.contains(".switch_mlp.") {
+            return moduleKey(forRelease: key.replacingOccurrences(of: ".switch_mlp.", with: ".experts."))
+        }
         if key.contains(".mlp.router.") {
             return key.replacingOccurrences(of: ".mlp.router.", with: ".mlp.gate.")
         }
@@ -1103,11 +1106,12 @@ public final class NFKMLXLanguage: NSObject {
             return String(key.dropLast("_scales".count)) + ".scales"
         }
         guard key.contains(".block_sparse_moe.") else { return key }
+        // A quantized release carries `scales` and `biases` beside each expert's `weight`.
         return key.replacingOccurrences(of: ".block_sparse_moe.gate.", with: ".mlp.gate.")
             .replacingOccurrences(of: ".block_sparse_moe.experts.", with: ".mlp.experts.")
-            .replacingOccurrences(of: ".w1.weight", with: ".gate_proj.weight")
-            .replacingOccurrences(of: ".w3.weight", with: ".up_proj.weight")
-            .replacingOccurrences(of: ".w2.weight", with: ".down_proj.weight")
+            .replacingOccurrences(of: ".w1.", with: ".gate_proj.")
+            .replacingOccurrences(of: ".w3.", with: ".up_proj.")
+            .replacingOccurrences(of: ".w2.", with: ".down_proj.")
     }
 
     /// A release's tensors in the module's names and layouts: gpt-oss stores its fused expert
@@ -1155,7 +1159,7 @@ public final class NFKMLXLanguage: NSObject {
     }
 
     private static let expertPattern = try! NSRegularExpression(
-        pattern: #"^(.*\.experts)\.(\d+)\.(gate_proj|up_proj|down_proj)\.weight$"#)
+        pattern: #"^(.*\.experts)\.(\d+)\.(gate_proj|up_proj|down_proj)\.(weight|scales|biases)$"#)
 
     /// Whether a release key holds one expert's projection, which ``stackingExperts(_:)`` stacks.
     static func isPerExpert(_ key: String) -> Bool {
@@ -1163,8 +1167,9 @@ public final class NFKMLXLanguage: NSObject {
         return expertPattern.firstMatch(in: name, range: NSRange(name.startIndex..., in: name)) != nil
     }
 
-    /// Stacks a release's per-expert tensors (`…experts.N.gate_proj.weight`) into the module's one
-    /// `[experts, out, in]` tensor per projection, leaving every other pair as it is.
+    /// Stacks a release's per-expert tensors (`…experts.N.gate_proj.weight`, and a quantized release's
+    /// `scales` and `biases`) into the module's one `[experts, out, in]` tensor per projection and part,
+    /// leaving every other pair as it is.
     static func stackingExperts(_ mapped: [(String, MLXArray)]) -> [(String, MLXArray)] {
         var groups = [String: [(index: Int, value: MLXArray)]]()
         var rest = [(String, MLXArray)]()
@@ -1173,11 +1178,12 @@ public final class NFKMLXLanguage: NSObject {
             guard let match = expertPattern.firstMatch(in: name, range: range),
                   let prefix = Range(match.range(at: 1), in: name),
                   let index = Range(match.range(at: 2), in: name).flatMap({ Int(name[$0]) }),
-                  let projection = Range(match.range(at: 3), in: name) else {
+                  let projection = Range(match.range(at: 3), in: name),
+                  let part = Range(match.range(at: 4), in: name) else {
                 rest.append((name, value))
                 continue
             }
-            groups["\(name[prefix]).\(name[projection]).weight", default: []].append((index, value))
+            groups["\(name[prefix]).\(name[projection]).\(name[part])", default: []].append((index, value))
         }
         for (key, entries) in groups {
             rest.append((key, stacked(entries.sorted { $0.index < $1.index }.map(\.value))))
@@ -1202,8 +1208,10 @@ public final class NFKMLXLanguage: NSObject {
         if let match = expertPattern.firstMatch(in: name, range: range),
            let prefix = Range(match.range(at: 1), in: name),
            let index = Range(match.range(at: 2), in: name).flatMap({ Int(name[$0]) }),
-           let projection = Range(match.range(at: 3), in: name) {
-            return [NFKMLXExpertSlice(group: "\(name[prefix]).\(name[projection])", part: "weight", expert: index)]
+           let projection = Range(match.range(at: 3), in: name),
+           let part = Range(match.range(at: 4), in: name) {
+            return [NFKMLXExpertSlice(group: "\(name[prefix]).\(name[projection])", part: String(name[part]),
+                                      expert: index)]
         }
         guard entry.shape.count >= 3, let match = stackedExpertPattern.firstMatch(in: name, range: range),
               let prefix = Range(match.range(at: 1), in: name),
@@ -1220,6 +1228,23 @@ public final class NFKMLXLanguage: NSObject {
             }
         }
         return [slice]
+    }
+
+    /// The packing of each expert projection the module already holds quantized, keyed by its group
+    /// (`model.layers.N.mlp.experts.gate_proj`): what ``NFKMLXQuantization/matchStructure(toRelease:on:)``
+    /// read from an mlx_lm release, which a paged load keeps for the experts it reads from the store.
+    static func quantizedExpertGroups(in net: NFKMLXLanguageNet) -> [String: NFKMLXWeights.Quantization] {
+        var groups = [String: NFKMLXWeights.Quantization]()
+        for (index, block) in net.model.layers.enumerated() {
+            guard let mixture = block.feedForward as? NFKLMMixtureFeedForward,
+                  let glu = mixture.experts as? NFKLMSwitchGLU else { continue }
+            for (name, layer) in [("gate_proj", glu.gate), ("up_proj", glu.up), ("down_proj", glu.down)] {
+                guard let packed = layer as? NFKLMQuantizedSwitchLinear else { continue }
+                groups["model.layers.\(index).mlp.experts.\(name)"] = NFKMLXWeights.Quantization(
+                    bits: packed.bits, groupSize: packed.groupSize, mode: packed.mode)
+            }
+        }
+        return groups
     }
 
     /// Replaces every mixture projection with a paged one reading from `store`, and returns what
@@ -1268,6 +1293,11 @@ public final class NFKMLXLanguage: NSObject {
         let files = try NFKMLXReleaseWeights.files(inDirectory: directory)
         var recorded: NFKMLXWeights.Quantization?
         var stored = precision
+        let releaseEntries = try packedReleaseEntries(inDirectory: directory, net: net)
+        if let releaseEntries {
+            try NFKMLXQuantization.matchStructure(toRelease: releaseEntries, on: net)
+            stored = .checkpoint
+        }
         let kept: [(String, MLXArray)]
         if files.count == 1 {
             let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: files[0], reading: {
@@ -1284,7 +1314,7 @@ public final class NFKMLXLanguage: NSObject {
                 return (key, keeps ? value : value.asType(.float32))
             }
         } else {
-            kept = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: {
+            kept = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: stored, remap: {
                 (tied && $0.hasPrefix("lm_head.")) || inventory.isExpert($0) ? nil : $0
             })
         }
@@ -1301,7 +1331,9 @@ public final class NFKMLXLanguage: NSObject {
             }
         }
         let store = NFKMLXExpertStore(cacheByteBudget: cacheByteBudget)
+        let releaseGroups = quantizedExpertGroups(in: net)
         let layers = try installPagedExperts(into: net, store: store, quantization: { group in
+            if let release = releaseGroups[group] { return release }
             guard let mxfp4 = packedGroups[group] else { return nil }
             return mxfp4 ? mxfp4Quantization : recorded
         }, inputMajor: inputMajorGroups.contains)
@@ -1366,13 +1398,19 @@ public final class NFKMLXLanguage: NSObject {
     /// 0.6B ships that way, so a loader that only reads `model.safetensors` covers the smallest model
     /// and nothing else. Introduced in InferKit 0.4.0.
     public static func loadWeights(into net: NFKMLXLanguageNet, fromDirectory directory: URL,
-                                   precision: NFKMLXWeightPrecision = .float32) throws {
+                                   precision requested: NFKMLXWeightPrecision = .float32) throws {
+        // An mlx_lm quantized release loads as stored: its packed words are integers whatever the
+        // request, and its scales keep the precision mlx_lm computed them at.
+        let releaseEntries = try packedReleaseEntries(inDirectory: directory, net: net)
+        let precision = releaseEntries == nil ? requested : .checkpoint
         // Refuse a release whose weights alone exceed the memory budget, before materializing any,
         // so "the process died" becomes an error naming the shortfall.
         try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: precision)
+        if let releaseEntries {
+            try NFKMLXQuantization.matchStructure(toRelease: releaseEntries, on: net)
+        }
         // A single-file release routes through the checkpoint reader, which is where a quantized
-        // save's metadata lives; only a sharded release takes the merge path (a quantized module
-        // saves as one file, so a quantized sharded release does not arise).
+        // save's metadata lives; a sharded release takes the merge path, quantized (mlx_lm) or not.
         let files = try NFKMLXReleaseWeights.files(inDirectory: directory)
         if files.count == 1 {
             try loadWeights(into: net, from: files[0], precision: precision)
@@ -1391,6 +1429,60 @@ public final class NFKMLXLanguage: NSObject {
         let prepared = releaseWeights(merged)
         try installPackedExperts(into: net, from: prepared)
         try NFKMLXWeights.apply(prepared, to: net, verifyShapes: true)
+    }
+
+    /// The release's tensors under the module's parameter names, header only, where its `config.json`
+    /// states an mlx_lm quantization (`quantization`, or a `quantization_config` with no
+    /// `quant_method`); nil for any other release. A release's per-expert tensors are filed under the
+    /// stacked name the module holds, at the stacked shape.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` for a quantization this package does not read
+    ///   (``NFKMLXQuantization/releaseQuantization(configJSON:)``), or for mlx_lm's gpt-oss layout,
+    ///   which stores the gate and up projections apart where this module holds them fused.
+    static func packedReleaseEntries(inDirectory directory: URL, net: NFKMLXLanguageNet) throws
+        -> [String: NFKMLXSafetensorsEntry]? {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent("config.json")),
+              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              try NFKMLXQuantization.releaseQuantization(configJSON: json) != nil,
+              isMLXQuantization(json) else { return nil }
+        var entries = [String: NFKMLXSafetensorsEntry]()
+        var perExpert = [String: (entry: NFKMLXSafetensorsEntry, experts: Int)]()
+        for file in try NFKMLXReleaseWeights.files(inDirectory: directory) {
+            for (key, entry) in try NFKMLXSafetensors.entries(inFile: file) {
+                let name = moduleKey(forRelease: key)
+                let range = NSRange(name.startIndex..., in: name)
+                if let match = expertPattern.firstMatch(in: name, range: range),
+                   let prefix = Range(match.range(at: 1), in: name),
+                   let index = Range(match.range(at: 2), in: name).flatMap({ Int(name[$0]) }),
+                   let projection = Range(match.range(at: 3), in: name),
+                   let part = Range(match.range(at: 4), in: name) {
+                    let stacked = "\(name[prefix]).\(name[projection]).\(name[part])"
+                    perExpert[stacked] = (entry, max(perExpert[stacked]?.experts ?? 0, index + 1))
+                } else {
+                    entries[name] = entry
+                }
+            }
+        }
+        for (name, stacked) in perExpert {
+            entries[name] = NFKMLXSafetensorsEntry(dtype: stacked.entry.dtype, shape: [stacked.experts] + stacked.entry.shape,
+                                                   start: 0, end: 0)
+        }
+        let fused = net.model.layers.contains { ($0.feedForward as? NFKLMMixtureFeedForward)?.experts is NFKLMFusedSwitchGLU }
+        if fused, entries.keys.contains(where: { $0.hasSuffix(".mlp.experts.gate_proj.weight") }) {
+            throw NFKMLXError.unsupportedConfiguration(
+                "\(directory.lastPathComponent) stores gpt-oss's expert gate and up projections apart (mlx_lm's "
+                + "layout); this loader reads them fused, as the release ships them")
+        }
+        return entries
+    }
+
+    /// Whether a `config.json` states mlx_lm's quantization rather than a transformers `quant_method`.
+    static func isMLXQuantization(_ json: [String: Any]) -> Bool {
+        let configuration = (json["quantization"] == nil && json["quantization_config"] == nil)
+            ? (json["text_config"] as? [String: Any]) ?? json : json
+        if configuration["quantization"] is [String: Any] { return true }
+        guard let stated = configuration["quantization_config"] as? [String: Any] else { return false }
+        return stated["quant_method"] == nil
     }
 
     /// Whether a release stores its experts MXFP4 (`quantization_config.quant_method`), in which case
@@ -1517,21 +1609,23 @@ public final class NFKMLXLanguage: NSObject {
                               residency: NFKMLXResidency = .automatic) throws -> (NFKMLXLanguageNet, NFKTokenizer?) {
         let configuration = try self.configuration(
             fromHuggingFace: directoryURL.appendingPathComponent("config.json"))
-        // Qwen ships a byte-level BPE vocabulary trained on its OWN pre-tokenization splits — a
-        // letter run absorbing one leading punctuation character, digits split singly — so the
-        // pattern is named: the GPT-2 default encodes the same text to different, valid-looking ids.
-        // The special tokens live in tokenizer_config.json rather than vocab.json; without them a
-        // chat template's markers would encode as ordinary text.
-        let tokenizer = releaseTokenizer(inDirectory: directoryURL)
+        let tokenizer: NFKTokenizer?
+        var tokenizerRefusal: Error?
+        do {
+            tokenizer = try readTokenizer(inDirectory: directoryURL)
+        } catch {
+            tokenizer = nil
+            tokenizerRefusal = error
+        }
         let net = makeNet(configuration)
-        let packed = storesExpertsMXFP4(configURL: directoryURL.appendingPathComponent("config.json"))
+        let packed = try storesExpertsMXFP4(configURL: directoryURL.appendingPathComponent("config.json"))
+            || packedReleaseEntries(inDirectory: directoryURL, net: net) != nil
         try loadWeights(into: net, fromDirectory: directoryURL,
                         precision: precision ?? (packed ? .checkpoint : .float32), residency: residency)
         // Checked after the load, whose memory check refuses a release the machine cannot hold before
         // reading any weight: that refusal is the one a caller can act on, so it comes first.
-        if requiringTokenizer && tokenizer == nil {
-            throw NFKMLXError.unsupportedConfiguration(
-                "\(directoryURL.lastPathComponent) has no readable tokenizer (tokenizer.json, or vocab.json and merges.txt)")
+        if requiringTokenizer, let tokenizerRefusal {
+            throw tokenizerRefusal
         }
         return (net, tokenizer)
     }
@@ -1555,17 +1649,44 @@ public final class NFKMLXLanguage: NSObject {
                              inventory: inventory, cacheByteBudget: plan.expertCacheBytes)
     }
 
+    /// The tokenizer a release directory describes, built without loading the weights, or nil where
+    /// ``readTokenizer(inDirectory:)`` refuses it.
+    static func releaseTokenizer(inDirectory directory: URL) -> NFKTokenizer? {
+        try? readTokenizer(inDirectory: directory)
+    }
+
     /// The tokenizer a release directory describes, built without loading the weights.
     ///
-    /// @discussion The vocabulary is Qwen's byte-level BPE over its own `qwen2` pre-tokenization
-    /// splits; the GPT-2 default would encode the same text to different, valid-looking ids. The
-    /// special tokens live in `tokenizer_config.json` rather than `vocab.json`, so a chat template's
-    /// or an embedder's markers resolve rather than encoding as ordinary text.
-    static func releaseTokenizer(inDirectory directory: URL) -> NFKTokenizer? {
-        let (specials, endToken) = specialTokens(inDirectory: directory)
-        var manifest: [String: Any] = ["tokenizer": ["type": "bpe-bytelevel",
-                                                     "pretokenizer": pretokenizationName(inDirectory: directory),
-                                                     "specialTokens": specials]]
+    /// @discussion The scheme comes from ``tokenizerScheme(tokenizerJSON:tokenizerConfiguration:)``, so a
+    /// tokenizer this reader would encode differently from the release is refused rather than built. A
+    /// byte-level vocabulary is encoded under its own named pre-tokenization; another pattern encodes
+    /// the same text to different, valid-looking ids. The special tokens live in `tokenizer_config.json`
+    /// and `tokenizer.json`'s `added_tokens` rather than `vocab.json`, so a chat template's or an
+    /// embedder's markers resolve rather than encoding as ordinary text.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` naming the part of the tokenizer this reader
+    ///   does not reproduce, or the files it found missing.
+    static func readTokenizer(inDirectory directory: URL) throws -> NFKTokenizer {
+        func object(_ name: String) -> [String: Any]? {
+            guard let data = try? Data(contentsOf: directory.appendingPathComponent(name)) else { return nil }
+            return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+        }
+        let tokenizerJSON = object("tokenizer.json")
+        let configuration = object("tokenizer_config.json")
+        let scheme = try tokenizerScheme(tokenizerJSON: tokenizerJSON, tokenizerConfiguration: configuration)
+        let (specials, endToken) = specialTokens(inDirectory: directory, tokenizerJSON: tokenizerJSON)
+        guard case .byteLevel(let pretokenization, let composes, let ignoresMerges) = scheme else {
+            guard let tokenizerJSON, let tokenizer = NFKMLXMetaspaceTokenizer(tokenizerJSON: tokenizerJSON,
+                                                                               endToken: endToken) else {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "\(directory.lastPathComponent)'s tokenizer.json has no BPE vocabulary and merges")
+            }
+            return tokenizer
+        }
+        var spec: [String: Any] = ["type": "bpe-bytelevel", "pretokenizer": pretokenization,
+                                   "specialTokens": specials, "ignoreMerges": ignoresMerges]
+        if composes { spec["normalizer"] = "nfc" }
+        var manifest: [String: Any] = ["tokenizer": spec]
         if let endToken { manifest["eosTokenId"] = endToken }
         // A release that ships only tokenizer.json (gpt-oss), or a vocab.json without the matching
         // merges.txt (Granite Speech), has its vocabulary and merges extracted from tokenizer.json into
@@ -1573,44 +1694,170 @@ public final class NFKMLXLanguage: NSObject {
         var files = directory
         let hasVocab = FileManager.default.fileExists(atPath: directory.appendingPathComponent("vocab.json").path)
         let hasMerges = FileManager.default.fileExists(atPath: directory.appendingPathComponent("merges.txt").path)
-        if !(hasVocab && hasMerges) {
-            guard let extracted = byteLevelFiles(fromTokenizerJSON: directory.appendingPathComponent("tokenizer.json")) else {
-                return nil
+        if tokenizerJSON != nil || !(hasVocab && hasMerges) {
+            guard let tokenizerJSON, let extracted = byteLevelFiles(fromTokenizerJSON: tokenizerJSON) else {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "\(directory.lastPathComponent) has no readable tokenizer (tokenizer.json, or vocab.json and "
+                    + "merges.txt)")
             }
             files = extracted
         }
-        return try? NFKTokenizer(forManifest: manifest, directory: files)
+        return try NFKTokenizer(forManifest: manifest, directory: files)
     }
 
-    /// The pre-tokenization a release's tokenizer.json declares, read from its `Split` regex: the
-    /// o200k pattern (gpt-oss) matches words by their case pattern, spelled with the `\p{Lu}\p{Lt}…`
-    /// classes no other family uses; Qwen3.5's letter runs take combining marks (`[\p{L}\p{M}]+`);
-    /// everything else here is Qwen2's, the previous default.
-    static func pretokenizationName(inDirectory directory: URL) -> String {
-        guard let data = try? Data(contentsOf: directory.appendingPathComponent("tokenizer.json")),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let preTokenizer = json["pre_tokenizer"] as? [String: Any] else { return "qwen2" }
-        // A `Sequence` of pre-tokenizers or a single `Split`; the regex is the one that names the family.
-        let steps = (preTokenizer["pretokenizers"] as? [[String: Any]]) ?? [preTokenizer]
-        for step in steps where step["type"] as? String == "Split" {
-            if let pattern = step["pattern"] as? [String: Any], let regex = pattern["Regex"] as? String,
-               regex.contains("\\p{Lu}\\p{Lt}") {
-                return "o200k"
+    /// How a release's tokenizer encodes text, as far as this package reproduces it.
+    enum TokenizerScheme: Equatable {
+        /// Byte-level BPE under a named pre-tokenization (`NFKByteLevelBPETokenizer`'s names), composing
+        /// each segment to NFC first where `composes`, and taking a pretoken the vocabulary holds whole
+        /// as one token where `ignoresMerges`.
+        case byteLevel(pretokenization: String, composes: Bool, ignoresMerges: Bool)
+        /// Mistral's SentencePiece-style BPE: spaces become `▁`, one `▁` leads the text, and a
+        /// character the vocabulary lacks falls back to its UTF-8 bytes (Mixtral, Codestral-Mamba).
+        case metaspace
+    }
+
+    /// The `Split` patterns this package reproduces, keyed by their exact text in `tokenizer.json`.
+    static let pretokenizationPatterns: [String: String] = [
+        #"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"#: "qwen2",
+        #"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"#: "qwen35",
+        #"[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+"#: "o200k",
+        #"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"#: "llama3",
+        #"[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+"#: "nemotron",
+    ]
+
+    /// The scheme a release's parsed `tokenizer.json` and `tokenizer_config.json` describe, read strictly:
+    /// every field that changes the ids must hold a value this package reproduces.
+    ///
+    /// @discussion Two schemes are read. A byte-level BPE takes a `Split` whose regex is one of
+    /// ``pretokenizationPatterns`` byte for byte followed by a `ByteLevel` that does not split again, or
+    /// a lone `ByteLevel` with its own GPT-2 regex; its normalizer is none or NFC, and its model has no
+    /// byte fallback, dropout, or affixes. The Metaspace scheme is Mistral's exact form: `▁` prepended
+    /// to the first segment only, no split, and a byte-fallback model with `<unk>`. A release with no
+    /// `tokenizer.json` is read only when `tokenizer_config.json` names Qwen2's tokenizer class, whose
+    /// pattern and NFC normalization are fixed by the class.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` naming the first field outside that set.
+    static func tokenizerScheme(tokenizerJSON: [String: Any]?, tokenizerConfiguration: [String: Any]?)
+        throws -> TokenizerScheme {
+        guard let tokenizerJSON else {
+            let tokenizerClass = tokenizerConfiguration?["tokenizer_class"] as? String
+            guard tokenizerClass == "Qwen2Tokenizer" || tokenizerClass == "Qwen2TokenizerFast" else {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "the release has no tokenizer.json, and its tokenizer class (\(tokenizerClass ?? "none")) "
+                    + "does not fix the pre-tokenization")
             }
-            if let pattern = step["pattern"] as? [String: Any], let regex = pattern["Regex"] as? String,
-               regex.contains("[\\p{L}\\p{M}]+") {
-                return "qwen35"
-            }
+            return .byteLevel(pretokenization: "qwen2", composes: true, ignoresMerges: false)
         }
-        return "qwen2"
+        guard let model = tokenizerJSON["model"] as? [String: Any], model["type"] as? String == "BPE" else {
+            let type = ((tokenizerJSON["model"] as? [String: Any])?["type"] as? String) ?? "none"
+            throw NFKMLXError.unsupportedConfiguration("the tokenizer model is \(type), not the BPE this reader encodes")
+        }
+        func present(_ value: Any?) -> Bool { value != nil && !(value is NSNull) }
+        func text(_ value: Any?) -> String? { value as? String }
+        func flag(_ value: Any?) -> Bool { (value as? NSNumber)?.boolValue ?? false }
+        if present(model["dropout"]) {
+            throw NFKMLXError.unsupportedConfiguration("the tokenizer applies BPE dropout")
+        }
+        if !(text(model["continuing_subword_prefix"]) ?? "").isEmpty || !(text(model["end_of_word_suffix"]) ?? "").isEmpty {
+            throw NFKMLXError.unsupportedConfiguration("the tokenizer's BPE marks subwords with an affix")
+        }
+        let preTokenizer = tokenizerJSON["pre_tokenizer"] as? [String: Any]
+        if preTokenizer?["type"] as? String == "Metaspace" {
+            return try metaspaceScheme(tokenizerJSON, model: model, preTokenizer: preTokenizer ?? [:])
+        }
+        if flag(model["byte_fallback"]) {
+            throw NFKMLXError.unsupportedConfiguration(
+                "the tokenizer falls back to bytes under a \(preTokenizer?["type"] as? String ?? "missing") "
+                + "pre-tokenizer, which is not Mistral's Metaspace form")
+        }
+        let composes = try composesToNFC(tokenizerJSON["normalizer"])
+        guard (tokenizerJSON["decoder"] as? [String: Any])?["type"] as? String == "ByteLevel" else {
+            throw NFKMLXError.unsupportedConfiguration("the tokenizer's decoder is not ByteLevel")
+        }
+        let pretokenization = try byteLevelPretokenization(preTokenizer)
+        return .byteLevel(pretokenization: pretokenization, composes: composes,
+                          ignoresMerges: flag(model["ignore_merges"]))
+    }
+
+    /// The named pre-tokenization a byte-level `pre_tokenizer` states.
+    private static func byteLevelPretokenization(_ preTokenizer: [String: Any]?) throws -> String {
+        guard let preTokenizer else {
+            throw NFKMLXError.unsupportedConfiguration("the tokenizer has no pre-tokenizer")
+        }
+        func byteLevel(_ step: [String: Any], splits: Bool) -> Bool {
+            step["type"] as? String == "ByteLevel" && !((step["add_prefix_space"] as? NSNumber)?.boolValue ?? false)
+                && ((step["use_regex"] as? NSNumber)?.boolValue ?? true) == splits
+        }
+        if byteLevel(preTokenizer, splits: true) {
+            return "gpt2"
+        }
+        let steps = (preTokenizer["type"] as? String == "Sequence") ? (preTokenizer["pretokenizers"] as? [[String: Any]]) ?? [] : [preTokenizer]
+        guard steps.count == 2, steps[0]["type"] as? String == "Split", byteLevel(steps[1], splits: false) else {
+            let types = steps.map { $0["type"] as? String ?? "?" }.joined(separator: ", ")
+            throw NFKMLXError.unsupportedConfiguration(
+                "the tokenizer's pre-tokenizer (\(types)) is not a Split followed by a ByteLevel")
+        }
+        let split = steps[0]
+        let behavior = split["behavior"] as? String
+        let inverted = (split["invert"] as? NSNumber)?.boolValue ?? false
+        // Each pattern matches every character, so keeping the matches (Isolated) and removing what
+        // lies between them (Removed, inverted) cut the text identically.
+        guard (behavior == "Isolated" && !inverted) || (behavior == "Removed" && inverted) else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "the tokenizer's Split behaves as \(behavior ?? "?")\(inverted ? ", inverted" : ""), which this "
+                + "reader does not reproduce")
+        }
+        guard let regex = (split["pattern"] as? [String: Any])?["Regex"] as? String,
+              let name = pretokenizationPatterns[regex] else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "the tokenizer's Split pattern is not one of the pre-tokenizations this reader reproduces "
+                + "(qwen2, qwen35, o200k, llama3, nemotron)")
+        }
+        return name
+    }
+
+    /// Whether a `normalizer` composes to NFC; nil and an empty sequence change nothing.
+    private static func composesToNFC(_ normalizer: Any?) throws -> Bool {
+        guard let normalizer = normalizer as? [String: Any] else { return false }
+        let steps = normalizer["type"] as? String == "Sequence"
+            ? (normalizer["normalizers"] as? [[String: Any]]) ?? [] : [normalizer]
+        let types = steps.compactMap { $0["type"] as? String }
+        guard types.count == steps.count, types.allSatisfy({ $0 == "NFC" }) else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "the tokenizer normalizes with \(types.joined(separator: ", ")), which this reader does not reproduce")
+        }
+        return !types.isEmpty
+    }
+
+    /// The Metaspace scheme, accepted in Mistral's exact form only.
+    private static func metaspaceScheme(_ tokenizerJSON: [String: Any], model: [String: Any],
+                                        preTokenizer: [String: Any]) throws -> TokenizerScheme {
+        let decoder = tokenizerJSON["decoder"] as? [String: Any]
+        let decoderSteps = ((decoder?["decoders"] as? [[String: Any]]) ?? []).compactMap { $0["type"] as? String }
+        guard preTokenizer["replacement"] as? String == "\u{2581}",
+              preTokenizer["prepend_scheme"] as? String == "first",
+              !((preTokenizer["split"] as? NSNumber)?.boolValue ?? true),
+              tokenizerJSON["normalizer"] == nil || tokenizerJSON["normalizer"] is NSNull,
+              (model["byte_fallback"] as? NSNumber)?.boolValue == true,
+              decoderSteps == ["Replace", "ByteFallback", "Fuse", "Strip"] else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "the tokenizer's Metaspace form is not Mistral's (a leading ▁ on the first segment, no split, "
+                + "byte fallback)")
+        }
+        return .metaspace
     }
 
     /// Writes a tokenizer.json's byte-level BPE vocabulary and merges as the `vocab.json` and
     /// `merges.txt` pair the core reader takes, into a scratch directory, and returns it.
     static func byteLevelFiles(fromTokenizerJSON url: URL) -> URL? {
         guard let data = try? Data(contentsOf: url),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let model = json["model"] as? [String: Any],
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return byteLevelFiles(fromTokenizerJSON: json)
+    }
+
+    /// ``byteLevelFiles(fromTokenizerJSON:)-(URL)`` over an already parsed tokenizer.json.
+    static func byteLevelFiles(fromTokenizerJSON json: [String: Any]) -> URL? {
+        guard let model = json["model"] as? [String: Any],
               let vocabulary = model["vocab"] as? [String: Int],
               let merges = model["merges"] as? [Any] else { return nil }
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -1633,9 +1880,15 @@ public final class NFKMLXLanguage: NSObject {
     }
 
     /// The special-token literals a release declares (`added_tokens_decoder` in
-    /// `tokenizer_config.json`, or `added_tokens.json`) and the id of its `eos_token`.
-    static func specialTokens(inDirectory directory: URL) -> ([String: Int], Int?) {
+    /// `tokenizer_config.json`, `added_tokens.json`, or `added_tokens` in `tokenizer.json`) and the id of
+    /// its `eos_token`.
+    static func specialTokens(inDirectory directory: URL, tokenizerJSON: [String: Any]? = nil) -> ([String: Int], Int?) {
         var literals = [String: Int]()
+        for entry in (tokenizerJSON?["added_tokens"] as? [[String: Any]]) ?? [] {
+            if let content = entry["content"] as? String, let id = (entry["id"] as? NSNumber)?.intValue {
+                literals[content] = id
+            }
+        }
         var endToken: Int?
         if let data = try? Data(contentsOf: directory.appendingPathComponent("tokenizer_config.json")),
            let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {

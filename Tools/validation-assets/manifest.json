@@ -2014,6 +2014,45 @@
       "note": "The smallest Qwen3 dense decoder, 1.4 GB. Its checkpoint ships lm_head.weight even though tie_word_embeddings is true; the two tensors are byte-identical, so the loader drops the duplicate rather than building a projection the tied model does not have."
     },
     {
+      "key": "MLX_QWEN3_0_6B_4BIT",
+      "repo": "mlx-community/Qwen3-0.6B-4bit",
+      "revision": "73e3e38d981303bc594367cd910ea6eb48349da8",
+      "directory": "mlx-qwen3-0.6b-4bit",
+      "files": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "vocab.json",
+        "merges.txt",
+        "tokenizer_config.json",
+        "added_tokens.json",
+        "special_tokens_map.json"
+      ],
+      "config": {
+        "IK_VAL_MLX_QWEN3_06B_4BIT": "",
+        "IK_PARITY_MLX_QWEN3_06B_4BIT": "record.safetensors"
+      },
+      "note": "Qwen3-0.6B as mlx_lm publishes it, affine 4-bit in groups of 64 with bf16 scales, the embedding packed and tied as the head, 335 MB in one file. Held to transformers on the same weights dequantized (run_reference.py mlx_quantized_release -> record.safetensors)."
+    },
+    {
+      "key": "MLX_LLAMA32_1B_INSTRUCT_4BIT",
+      "repo": "mlx-community/Llama-3.2-1B-Instruct-4bit",
+      "revision": "08231374eeacb049a0eade7922910865b8fce912",
+      "directory": "mlx-llama-3.2-1b-instruct-4bit",
+      "files": [
+        "config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json"
+      ],
+      "config": {
+        "IK_VAL_MLX_LLAMA32_1B_4BIT": "",
+        "IK_PARITY_MLX_LLAMA32_1B_4BIT": "record.safetensors"
+      },
+      "note": "Llama-3.2-1B-Instruct as mlx_lm publishes it, affine 4-bit in groups of 64, tied, 695 MB. Its tokenizer is Llama 3's pattern with ignore_merges, and its rotary is llama3-scaled. Held to transformers on the same weights dequantized (run_reference.py mlx_quantized_release -> record.safetensors)."
+    },
+    {
       "key": "QWEN3_EMBEDDING_0_6B",
       "repo": "Qwen/Qwen3-Embedding-0.6B",
       "directory": "qwen3-embedding-0.6B",
@@ -4910,6 +4949,7 @@
       "rebuild": "python3 -m venv ~/.inferkit-validation/llmvenv && ~/.inferkit-validation/llmvenv/bin/python3 -m pip install 'transformers>=4.51' torch safetensors Pillow torchvision num2words gguf accelerate 'silero-vad' 'torchaudio==2.8.0' 'descript-audio-codec' 'snac' scikit-image einops && ~/.inferkit-validation/llmvenv/bin/python3 -m pip install --no-deps sentence-transformers",
       "modes": [
         "qwen3",
+        "mlx_quantized_release",
         "flux2_text_mistral",
         "qwen3_embedding",
         "embeddinggemma",

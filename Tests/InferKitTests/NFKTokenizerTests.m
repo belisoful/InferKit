@@ -221,6 +221,13 @@
 	NSArray *expectedQwen2 = @[@3, @6];
 	XCTAssertEqualObjects([qwen35 encode:@"é"], expectedQwen35);
 	XCTAssertEqualObjects([qwen2 encode:@"é"], expectedQwen2);
+
+	NFKTokenizer *composedQwen2 = [NFKTokenizer tokenizerForManifest:@{ @"tokenizer": @{
+		@"type": @"bpe-bytelevel", @"vocab": @"qwen35-vocab.json", @"merges": @"qwen35-merges.txt",
+		@"pretokenizer": @"qwen2", @"normalizer": @"nfc",
+	} } directory:_directory error:&error];
+	XCTAssertNotNil(composedQwen2, @"%@", error);
+	XCTAssertEqualObjects([composedQwen2 encode:@"é"], expectedQwen35, @"the NFC normalizer composes under any pattern");
 }
 
 - (void)testAnUnknownPretokenizationIsRejected
@@ -228,10 +235,77 @@
 	NSError *error = nil;
 	NFKTokenizer *tokenizer = [NFKTokenizer tokenizerForManifest:@{ @"tokenizer": @{
 		@"type": @"bpe-bytelevel", @"vocab": @"vocab.json", @"merges": @"merges.txt",
-		@"pretokenizer": @"llama3",
+		@"pretokenizer": @"llama2",
 	} } directory:_directory error:&error];
 	XCTAssertNil(tokenizer);
 	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceUnsupported);
+}
+
+- (void)testAnUnknownNormalizationIsRejected
+{
+	NSError *error = nil;
+	NFKTokenizer *tokenizer = [NFKTokenizer tokenizerForManifest:@{ @"tokenizer": @{
+		@"type": @"bpe-bytelevel", @"vocab": @"vocab.json", @"merges": @"merges.txt",
+		@"normalizer": @"nfkc",
+	} } directory:_directory error:&error];
+	XCTAssertNil(tokenizer);
+	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceUnsupported);
+}
+
+- (NFKTokenizer *)digitTokenizerWithSpec:(NSDictionary *)extra
+{
+	NSDictionary<NSString *, NSNumber *> *vocab = @{
+		@"1": @0, @"2": @1, @"3": @2, @"4": @3, @"12": @4, @"123": @5, @"1234": @6,
+		@"a": @7, @"B": @8, @"aB": @9, @"'": @10, @"s": @11, @"'s": @12, @"aB's": @13, @"34": @14,
+	};
+	NSData *vocabData = [NSJSONSerialization dataWithJSONObject:vocab options:0 error:NULL];
+	[vocabData writeToURL:[_directory URLByAppendingPathComponent:@"digit-vocab.json"] atomically:YES];
+	NSString *merges = @"#version: 0.2\n1 2\n12 3\n123 4\na B\n' s\n";
+	[merges writeToURL:[_directory URLByAppendingPathComponent:@"digit-merges.txt"]
+			atomically:YES
+			  encoding:NSUTF8StringEncoding
+				 error:NULL];
+	NSMutableDictionary *spec = [@{ @"type": @"bpe-bytelevel", @"vocab": @"digit-vocab.json",
+									@"merges": @"digit-merges.txt" } mutableCopy];
+	[spec addEntriesFromDictionary:extra];
+	NSError *error = nil;
+	NFKTokenizer *tokenizer = [NFKTokenizer tokenizerForManifest:@{ @"tokenizer": spec } directory:_directory error:&error];
+	XCTAssertNotNil(tokenizer, @"%@", error);
+	return tokenizer;
+}
+
+// Llama 3 (and Mistral's Tekken, and Granite 4.0) is Qwen2's pattern with digits in runs of at most
+// three, so "1234" is "123" + "4" where Qwen2 takes four single digits.
+- (void)testTheLlama3PretokenizationSplitsDigitsInThrees
+{
+	NFKTokenizer *llama3 = [self digitTokenizerWithSpec:@{ @"pretokenizer": @"llama3" }];
+	NFKTokenizer *qwen2 = [self digitTokenizerWithSpec:@{ @"pretokenizer": @"qwen2" }];
+	NSArray *expectedLlama3 = @[@5, @3, @9];
+	NSArray *expectedQwen2 = @[@0, @1, @2, @3, @9];
+	XCTAssertEqualObjects([llama3 encode:@"1234aB"], expectedLlama3);
+	XCTAssertEqualObjects([qwen2 encode:@"1234aB"], expectedQwen2);
+}
+
+// Nemotron-H splits words by case pattern as o200k does, but takes single digits where o200k keeps
+// runs of three.
+- (void)testTheNemotronPretokenizationSplitsDigitsSingly
+{
+	NFKTokenizer *nemotron = [self digitTokenizerWithSpec:@{ @"pretokenizer": @"nemotron" }];
+	NFKTokenizer *o200k = [self digitTokenizerWithSpec:@{ @"pretokenizer": @"o200k" }];
+	NSArray *expectedNemotron = @[@0, @1, @2, @3, @7, @8, @12];
+	NSArray *expectedO200k = @[@5, @3, @7, @8, @12];
+	XCTAssertEqualObjects([nemotron encode:@"1234aB's"], expectedNemotron);
+	XCTAssertEqualObjects([o200k encode:@"1234aB's"], expectedO200k);
+}
+
+// With ignore_merges a pretoken the vocabulary holds whole is that token, though no merge reaches it.
+- (void)testIgnoringMergesTakesAWholePretokenFromTheVocabulary
+{
+	NFKTokenizer *ignoring = [self digitTokenizerWithSpec:@{ @"pretokenizer": @"gpt2", @"ignoreMerges": @YES }];
+	NFKTokenizer *merging = [self digitTokenizerWithSpec:@{ @"pretokenizer": @"gpt2" }];
+	XCTAssertEqualObjects([ignoring encode:@"34"], @[@14]);
+	NSArray *expectedMerged = @[@2, @3];
+	XCTAssertEqualObjects([merging encode:@"34"], expectedMerged);
 }
 
 @end

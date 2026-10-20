@@ -46,10 +46,14 @@
 		NSString *vocabName = [spec[@"vocab"] isKindOfClass:NSString.class] ? spec[@"vocab"] : @"vocab.json";
 		NSString *mergesName = [spec[@"merges"] isKindOfClass:NSString.class] ? spec[@"merges"] : @"merges.txt";
 		NSString *pretokenization = [spec[@"pretokenizer"] isKindOfClass:NSString.class] ? spec[@"pretokenizer"] : nil;
+		NSString *normalization = [spec[@"normalizer"] isKindOfClass:NSString.class] ? spec[@"normalizer"] : nil;
+		BOOL ignoresMerges = [spec[@"ignoreMerges"] isKindOfClass:NSNumber.class] && [spec[@"ignoreMerges"] boolValue];
 		return [[NFKByteLevelBPETokenizer alloc] initWithVocabURL:[directory URLByAppendingPathComponent:vocabName]
 													   mergesURL:[directory URLByAppendingPathComponent:mergesName]
 												   specialTokens:specialTokens
 												 pretokenization:pretokenization
+												   normalization:normalization
+												   ignoresMerges:ignoresMerges
 															 eos:eos
 															 bos:bos
 														   error:outError];

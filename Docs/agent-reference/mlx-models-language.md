@@ -297,8 +297,8 @@ attention and feed-forward.
   `NFKByteLevelBPETokenizer` gained the `o200k` pre-tokenization (words split by their case pattern —
   lower-led or one-capital-led, each optionally led by one non-letter and followed by a
   case-insensitive contraction; digits in runs of at most three; a punctuation run absorbing trailing
-  newlines or slashes), `releaseTokenizer(inDirectory:)` picks it by the `\p{Lu}\p{Lt}` classes in the
-  release's `Split` regex and extracts the vocabulary and merges when no `vocab.json` exists
+  newlines or slashes), `releaseTokenizer(inDirectory:)` picks it by the release's exact `Split` regex
+  (with `ignore_merges`, which the release sets) and extracts the vocabulary and merges when no `vocab.json` exists
   (`byteLevelFiles(fromTokenizerJSON:)`, the extraction ModernBERT's loader now shares). Token-exact
   against the `tokenizers` library over seven strings (`testTheReleaseTokenizerAgreesWithTokenizers`),
   the harmony markers included; eos is `<|return|>`. The released 20B is held to the module by shape
@@ -1273,7 +1273,7 @@ attention and feed-forward.
   (the embedding seam localizes it, the same lesson as the Mamba and SigLIP2 ports). The released
   `config.json` writes `time_step_limit` with a bare `Infinity`, which `configuration(fromDirectory:)`
   sanitizes to a finite value before `JSONSerialization` parses it, as the Mamba loader does. The
-  tokenizer is Granite's byte-level BPE (the GPT-2 family), read from the release's `tokenizer.json`
+  tokenizer is Granite's byte-level BPE under Llama 3's pre-tokenization, read from the release's `tokenizer.json`
   through the shared release-tokenizer reader (`NFKMLXLanguage.releaseTokenizer`), token-exact against the
   `tokenizers` fast library; the release ships no `bos_token`, so the backend prepends none, matching the
   reference's raw-id generation. `NFKMLXGraniteHybrid.backend(directoryURL:)` (`@objc
@@ -1327,7 +1327,7 @@ attention and feed-forward.
   multi-token-prediction tensors, as transformers does; the module tree mirrors the checkpoint with a
   real `model` submodule (a dotted `@ModuleInfo` key would flatten to the right name yet never route the
   weight — the Mamba/SigLIP2 lesson). The tokenizer is Nemotron's byte-level BPE (Split + ByteLevel
-  pre-tokenizer), read from the release's `tokenizer.json` through the shared release-tokenizer reader
+  pre-tokenizer, the core's `nemotron` pattern, `ignore_merges`), read from the release's `tokenizer.json` through the shared release-tokenizer reader
   (`NFKMLXLanguage.releaseTokenizer`), token-exact against the `tokenizers` fast library (end-of-sequence
   id 12); the release sets `add_bos_token` false, so the backend prepends none, matching the reference's
   raw-id generation. `NFKMLXNemotronH.backend(directoryURL:)` (`@objc nemotronBackendWithDirectoryURL:error:`)

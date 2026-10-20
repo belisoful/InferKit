@@ -14,6 +14,7 @@
 //
 
 import Foundation
+import InferKit
 
 /// Reads a Mistral-family `tokenizer.json` and encodes/decodes with it.
 final class NFKMLXMistralTokenizer {
@@ -37,10 +38,14 @@ final class NFKMLXMistralTokenizer {
         self.init(tokenizerJSON: directoryURL.appendingPathComponent("tokenizer.json"))
     }
 
-    init?(tokenizerJSON url: URL) {
+    convenience init?(tokenizerJSON url: URL) {
         guard let data = try? Data(contentsOf: url),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let model = json["model"] as? [String: Any],
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        self.init(tokenizerJSON: json)
+    }
+
+    init?(tokenizerJSON json: [String: Any]) {
+        guard let model = json["model"] as? [String: Any],
               let vocabulary = model["vocab"] as? [String: Int],
               let merges = model["merges"] as? [Any] else { return nil }
         self.vocabulary = vocabulary
@@ -73,17 +78,16 @@ final class NFKMLXMistralTokenizer {
 
     /// The token ids for `text`, with no start or end marker added (the backend prepends `<s>`). An
     /// added token written literally encodes to its id. The metaspace pre-tokenizer's `prepend_scheme:
-    /// "first"` puts one leading `▁` before the first plain run.
+    /// "first"` puts one leading `▁` before a plain run that opens the text, and none before a run that
+    /// follows an added token: `<s>[INST]` encodes `[` bare.
     func encode(_ text: String) -> [Int] {
         var ids = [Int]()
-        var seenText = false
-        for segment in segments(of: text) {
+        for (index, segment) in segments(of: text).enumerated() {
             switch segment {
             case .special(let id):
                 ids.append(id)
             case .text(let plain):
-                ids += encodePlain(plain, prependMetaspace: !seenText)
-                seenText = true
+                ids += encodePlain(plain, prependMetaspace: index == 0)
             }
         }
         return ids
@@ -106,6 +110,17 @@ final class NFKMLXMistralTokenizer {
         var text = String(decoding: bytes, as: UTF8.self)
         if text.hasPrefix(" ") { text.removeFirst() }
         return text
+    }
+
+    /// The bytes one id spells: a `<0xHH>` piece is its byte, and any other piece is its text with `▁`
+    /// as a space. A piece in no table spells nothing.
+    func bytes(forId id: Int) -> Data? {
+        guard let piece = pieces[id] else { return nil }
+        if piece.count == 6, piece.hasPrefix("<0x"), piece.hasSuffix(">"),
+           let byte = UInt8(piece.dropFirst(3).dropLast(), radix: 16) {
+            return Data([byte])
+        }
+        return Data(piece.replacingOccurrences(of: Self.metaspace, with: " ").utf8)
     }
 
     private enum Segment {
@@ -175,5 +190,39 @@ final class NFKMLXMistralTokenizer {
             symbols[bestIndex] += symbols[bestIndex + 1]
             symbols.remove(at: bestIndex + 1)
         }
+    }
+}
+
+/// A Mistral-family `tokenizer.json` as the core's `NFKTokenizer`, which is how the language loader
+/// hands a Metaspace release (Mixtral) to the backends that take one.
+final class NFKMLXMetaspaceTokenizer: NFKTokenizer {
+    private let reader: NFKMLXMistralTokenizer
+    private let endId: Int
+    private let startId: Int
+
+    /// - Parameters:
+    ///   - tokenizerJSON: the parsed `tokenizer.json`.
+    ///   - endToken: the release's end id, or nil to take the `</s>` the file declares.
+    init?(tokenizerJSON: [String: Any], endToken: Int?) {
+        guard let reader = NFKMLXMistralTokenizer(tokenizerJSON: tokenizerJSON) else { return nil }
+        self.reader = reader
+        endId = endToken ?? reader.id(forToken: "</s>") ?? -1
+        startId = reader.id(forToken: "<s>") ?? -1
+        super.init()
+    }
+
+    override var eosTokenId: Int { endId }
+    override var bosTokenId: Int { startId }
+
+    override func encode(_ text: String) -> [NSNumber] {
+        reader.encode(text).map { NSNumber(value: $0) }
+    }
+
+    override func decode(_ tokenIds: [NSNumber]) -> String {
+        reader.decode(tokenIds.map(\.intValue))
+    }
+
+    override func bytes(forTokenId tokenId: Int) -> Data? {
+        reader.bytes(forId: tokenId)
     }
 }
