@@ -51,10 +51,17 @@ chmod 0755 "$DEST"
 cp "$STAGE/inferkit-background-probe" "$STAGE/mlx.metallib" "$DEST/"
 MODEL_ARGS=""
 if [ -n "$RELEASE" ]; then
+    # The developer resolves the release's links (a Hugging Face snapshot links into its blob store), so
+    # the copy holds only what the developer can read. Root then copies it without following links.
+    COPY="$(as_user mktemp -d)"
+    as_user cp -RL "$RELEASE" "$COPY/release"
+    if [ -n "$(find "$COPY/release" -type l -print -quit)" ]; then
+        echo "$RELEASE still holds symbolic links after they were resolved" >&2
+        exit 1
+    fi
     rm -rf "$DEST/release"
-    # -L copies the files a link names, so the root-owned copy holds no link back into the developer's
-    # tree, and a Hugging Face snapshot's links into its blob store resolve.
-    cp -RL "$RELEASE" "$DEST/release"
+    cp -R "$COPY/release" "$DEST/release"
+    as_user rm -rf "$COPY"
     MODEL_ARGS="<string>--model</string><string>$DEST/release</string>"
 fi
 chown -R root:wheel "$DEST"

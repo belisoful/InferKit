@@ -220,6 +220,9 @@ typedef OSStatus (^NFKPluginCodeCheck)(SecRequirementRef _Nullable requirement, 
 	The team identifier in signing information is the signer's own claim. */
 + (nullable NSString *)reasonCodeDoesNotProveTeam:(NSString *)team code:(SecStaticCodeRef)code
 {
+	if (!NFKPluginIsTeamIdentifier(team)) {
+		return @"a team identifier is ten uppercase letters and digits";
+	}
 	NSString *text = [NSString stringWithFormat:@"anchor apple generic and certificate leaf[subject.OU] = \"%@\"", team];
 	SecRequirementRef requirement = NULL;
 	CFErrorRef failure = NULL;

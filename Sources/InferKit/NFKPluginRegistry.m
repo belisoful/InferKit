@@ -77,8 +77,12 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 							failureError:(nullable NSError *)failureError
 					   processIdentifier:(pid_t)processIdentifier
 							  launchDate:(nullable NSDate *)launchDate NS_DESIGNATED_INITIALIZER;
-/*! This status as it reads in processState: a failure only in Failed, a process only while it runs. */
-- (NFKPluginStatus *)statusWithProcessState:(NFKPluginProcessState)processState;
+/*! This status in processState, with the failure and the process the event carried: a failure only in
+	Failed, a process only while it runs. */
+- (NFKPluginStatus *)statusWithProcessState:(NFKPluginProcessState)processState
+							   failureError:(nullable NSError *)failureError
+						  processIdentifier:(pid_t)processIdentifier
+								 launchDate:(nullable NSDate *)launchDate;
 @end
 
 @implementation NFKPluginStatus
@@ -105,15 +109,18 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 }
 
 - (NFKPluginStatus *)statusWithProcessState:(NFKPluginProcessState)processState
+							   failureError:(nullable NSError *)failureError
+						  processIdentifier:(pid_t)processIdentifier
+								 launchDate:(nullable NSDate *)launchDate
 {
 	BOOL running = processState == NFKPluginProcessStateReady || processState == NFKPluginProcessStateRestarting;
 	return [[NFKPluginStatus alloc] initWithPluginIdentifier:self.pluginIdentifier
 													 version:self.version
 												   isolation:self.isolation
 												processState:processState
-												failureError:processState == NFKPluginProcessStateFailed ? self.failureError : nil
-										   processIdentifier:running ? self.processIdentifier : 0
-												  launchDate:running ? self.launchDate : nil];
+												failureError:processState == NFKPluginProcessStateFailed ? failureError : nil
+										   processIdentifier:running ? processIdentifier : 0
+												  launchDate:running ? launchDate : nil];
 }
 
 - (NSString *)description
@@ -972,8 +979,13 @@ static const NSTimeInterval NFKPluginRegistryDefaultVerificationTimeout = 120;
 				if (registry == nil) {
 					return;
 				}
+				NSError *failure = changed.failureError;
+				pid_t processIdentifier = changed.processIdentifier;
+				NSDate *launchDate = changed.launchDate;
 				dispatch_async(registry.statusQueue, ^{
-					[registry reportStatus:[[registry statusForPluginIdentifier:identifier] statusWithProcessState:state]];
+					[registry reportStatus:[[registry statusForPluginIdentifier:identifier]
+											   statusWithProcessState:state failureError:failure
+												   processIdentifier:processIdentifier launchDate:launchDate]];
 				});
 			};
 			entry.process = process;

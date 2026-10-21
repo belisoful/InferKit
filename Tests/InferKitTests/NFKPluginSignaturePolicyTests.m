@@ -14,6 +14,11 @@
 
 #import "NFKPluginFixtures.h"
 #import <mach/mach.h>
+#import <Security/Security.h>
+
+@interface NFKPluginSignaturePolicy (NFKTeamProof)
++ (nullable NSString *)reasonCodeDoesNotProveTeam:(NSString *)team code:(SecStaticCodeRef)code;
+@end
 
 @interface NFKPluginSignaturePolicyTests : XCTestCase
 @property (nonatomic, strong) NSMutableArray<NSURL *> *temporaryURLs;
@@ -245,6 +250,19 @@
 	pinned.teamIdentifier = @"ABCDE12345";
 	XCTAssertFalse([pinned validateProcessWithAuditToken:token error:&error]);
 	[self assertError:error code:NFKPluginErrorTeamMismatch];
+}
+
+// A team the signer claims enters a requirement's text only as ten uppercase letters and digits, so a
+// claimed team that carries requirement syntax is refused before any requirement is built from it.
+- (void)testAClaimedTeamWithRequirementSyntaxIsNotProven
+{
+	SecStaticCodeRef code = NULL;
+	XCTAssertEqual(SecStaticCodeCreateWithPath((__bridge CFURLRef)NSBundle.mainBundle.executableURL, kSecCSDefaultFlags, &code),
+				   errSecSuccess);
+	NSString *injected = [NFKPluginSignaturePolicy reasonCodeDoesNotProveTeam:@"X\" or always or info[a] = \"b" code:code];
+	XCTAssertTrue([injected containsString:@"ten uppercase letters and digits"], @"%@", injected);
+	XCTAssertNotNil([NFKPluginSignaturePolicy reasonCodeDoesNotProveTeam:@"abcde12345" code:code]);
+	CFRelease(code);
 }
 
 @end
