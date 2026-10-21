@@ -179,6 +179,10 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 
 @implementation NFKPluginRegistry
 
+@synthesize handshakeTimeout = _handshakeTimeout;
+@synthesize verificationTimeout = _verificationTimeout;
+@synthesize buildTimeout = _buildTimeout;
+
 + (NFKPluginRegistry *)sharedRegistry
 {
 	static NFKPluginRegistry *shared = nil;
@@ -230,6 +234,9 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 		_signaturePoliciesByPlugin = [NSMutableDictionary dictionary];
 		_inProcessLoadErrors = [NSMutableDictionary dictionary];
 		_storedSignaturePolicy = [NFKPluginSignaturePolicy defaultPolicy];
+		_handshakeTimeout = 30;
+		_verificationTimeout = 120;
+		_buildTimeout = 300;
 		NSHashTable<NFKPluginRegistry *> *live = [NFKPluginRegistry liveRegistries];
 		@synchronized (live) {
 			[live addObject:self];
@@ -286,6 +293,63 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 {
 	@synchronized (self.lock) {
 		return self.storedSharedMemoryPrefix;
+	}
+}
+
+- (NSTimeInterval)handshakeTimeout
+{
+	@synchronized (self.lock) {
+		return _handshakeTimeout;
+	}
+}
+
+- (void)setHandshakeTimeout:(NSTimeInterval)handshakeTimeout
+{
+	NSArray<NFKPluginProcess *> *processes = nil;
+	@synchronized (self.lock) {
+		_handshakeTimeout = handshakeTimeout;
+		processes = [self processes];
+	}
+	for (NFKPluginProcess *process in processes) {
+		process.handshakeTimeout = handshakeTimeout;
+	}
+}
+
+- (NSTimeInterval)verificationTimeout
+{
+	@synchronized (self.lock) {
+		return _verificationTimeout;
+	}
+}
+
+- (void)setVerificationTimeout:(NSTimeInterval)verificationTimeout
+{
+	NSArray<NFKPluginProcess *> *processes = nil;
+	@synchronized (self.lock) {
+		_verificationTimeout = verificationTimeout;
+		processes = [self processes];
+	}
+	for (NFKPluginProcess *process in processes) {
+		process.verificationTimeout = verificationTimeout;
+	}
+}
+
+- (NSTimeInterval)buildTimeout
+{
+	@synchronized (self.lock) {
+		return _buildTimeout;
+	}
+}
+
+- (void)setBuildTimeout:(NSTimeInterval)buildTimeout
+{
+	NSArray<NFKPluginProcess *> *processes = nil;
+	@synchronized (self.lock) {
+		_buildTimeout = buildTimeout;
+		processes = [self processes];
+	}
+	for (NFKPluginProcess *process in processes) {
+		process.buildTimeout = buildTimeout;
 	}
 }
 
@@ -854,6 +918,9 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 			process.signaturePolicy = self.signaturePoliciesByPlugin[identifier] ?: self.storedSignaturePolicy;
 			process.sharedMemoryPrefix = self.storedSharedMemoryPrefix;
 			process.pluginOptions = self.optionValuesByPlugin[identifier] ?: @{};
+			process.handshakeTimeout = self.handshakeTimeout;
+			process.verificationTimeout = self.verificationTimeout;
+			process.buildTimeout = self.buildTimeout;
 			__weak NFKPluginRegistry *weakSelf = self;
 			process.registryStateHandler = ^(NFKPluginProcess *changed, NFKPluginProcessState state) {
 				[weakSelf reportStatusOfPluginIdentifier:identifier];

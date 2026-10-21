@@ -134,6 +134,18 @@ API_UNAVAILABLE(ios, tvos, watchos)
 	when the registry first makes it. */
 @property (atomic, copy, nullable) NSURL *hostExecutableURL;
 
+/*! The handshakeTimeout each plugin process the registry makes takes, from the process's next start.
+	Defaults to 30 seconds. Introduced in InferKit 0.4.0. */
+@property (atomic, assign) NSTimeInterval handshakeTimeout;
+
+/*! The verificationTimeout each plugin process the registry makes takes. Defaults to 120 seconds.
+	Introduced in InferKit 0.4.0. */
+@property (atomic, assign) NSTimeInterval verificationTimeout;
+
+/*! The buildTimeout each plugin process the registry makes takes. Defaults to 300 seconds. Introduced in
+	InferKit 0.4.0. */
+@property (atomic, assign) NSTimeInterval buildTimeout;
+
 /*! The app group prefix of a sandboxed app, such as "TEAMID.group.example/", or nil for an unsandboxed
 	app, the default. Every plugin process takes it as its sharedMemoryPrefix, from its next start. */
 @property (atomic, copy, nullable) NSString *sharedMemoryPrefix;

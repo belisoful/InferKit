@@ -1037,6 +1037,26 @@ static BOOL NFKRegistryTestImageIsLoaded(NSURL *url)
 	}
 }
 
+// The registry's timeouts reach the processes it makes, and a change reaches those already made.
+- (void)testTheRegistrysTimeoutsReachItsProcesses
+{
+	NFKPluginRegistry *registry = [self registry];
+	XCTAssertEqual(registry.handshakeTimeout, 30);
+	registry.handshakeTimeout = 45;
+	registry.buildTimeout = 600;
+	NSError *error = nil;
+	NFKPluginManifest *manifest = [registry addPluginAtURL:[self fixtureOfKind:NFKPluginEntryKindCABI version:@"1.0.0"] error:&error];
+	XCTAssertNotNil(manifest, @"%@", error);
+	NFKPluginBackend *backend = [registry backendForModelIdentifier:[self catalogIdentifierOfKind:NFKPluginEntryKindCABI
+																								model:NFKPluginFixtureInvertModel]
+															options:nil error:&error];
+	XCTAssertEqual(backend.process.handshakeTimeout, 45);
+	XCTAssertEqual(backend.process.buildTimeout, 600);
+	XCTAssertEqual(backend.process.verificationTimeout, 120);
+	registry.verificationTimeout = 240;
+	XCTAssertEqual(backend.process.verificationTimeout, 240);
+}
+
 // The signing team reads from the bundle alone: the fixtures are signed ad hoc and name none.
 - (void)testTheSigningTeamReadsWithoutLoading
 {

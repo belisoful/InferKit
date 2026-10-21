@@ -765,7 +765,7 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 		_manifest = [manifest copy];
 		_hostExecutableURL = [hostExecutableURL copy];
 		_signaturePolicy = [NFKPluginSignaturePolicy defaultPolicy];
-		_handshakeTimeout = 10;
+		_handshakeTimeout = 30;
 		_verificationTimeout = 120;
 		_idleExitInterval = manifest.idleExitInterval;
 		_restartDrainTimeout = 120;

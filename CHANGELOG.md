@@ -45,6 +45,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKModelTaskAudioGeneration` (`audio-generation`) names making sound effects and other audio from a
   description, beside `NFKModelTaskMusicGeneration`. Stable Audio Open lists both.
 
+#### Plugin launches allow for a loaded Mac
+
+- A plugin's hello may take 30 seconds, up from 10. The first launch of new plugin code waits on the
+  system's assessment of it, which on a loaded Mac took longer than 10 seconds.
+- `NFKPluginRegistry` sets `handshakeTimeout`, `verificationTimeout`, and `buildTimeout` for the processes
+  it makes, and a change reaches the processes already made.
+
 #### Plugin options reach every plugin, defaults included
 
 - A plugin's context carries the manifest's `default` for each plugin option the app left unset. Before,

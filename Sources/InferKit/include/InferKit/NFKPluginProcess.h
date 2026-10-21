@@ -85,7 +85,8 @@ API_UNAVAILABLE(ios, tvos, watchos)
 /*! The signatures the process's code must carry. Defaults to +[NFKPluginSignaturePolicy defaultPolicy]. */
 @property (atomic, copy) NFKPluginSignaturePolicy *signaturePolicy;
 
-/*! How long the hello exchange may take, in seconds. Defaults to 10. For an "objc" or "c-abi" plugin
+/*! How long the hello exchange may take, in seconds. Defaults to 30, which leaves room for the system's
+	first assessment of new code on a loaded Mac. For an "objc" or "c-abi" plugin
 	the clock starts once the plugin host has verified the bundle. A hello that does not answer in time
 	fails the start with NFKPluginErrorTimedOut. */
 @property (atomic, assign) NSTimeInterval handshakeTimeout;
