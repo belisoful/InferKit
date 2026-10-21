@@ -182,10 +182,10 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
 
     /// A release mlx_lm published 4-bit, loaded through the release loader with its tokenizer and held to
     /// two references. At the stored precision it computes what mlx_lm computes (`mlx_lm_logits.py`), held
-    /// closer to mlx_lm than mlx_lm's own run is to the float32 network: the release's scales and norms are
-    /// bfloat16, and on Qwen3-0.6B mlx_lm's run sits at cosine 0.99752 from float32 (0.95991 at position 0)
-    /// where torch's bfloat16 run of the same weights sits at 0.99989, so the float32 reference alone
-    /// cannot judge it. Widened to float32, it computes the
+    /// to mlx_lm's own order floor: the widest distance between mlx_lm's run and mlx_lm's runs in other
+    /// summation orders (`orders.*`). The release's scales and norms are bfloat16, and on Qwen3-0.6B mlx_lm's
+    /// run sits at cosine 0.99752 from float32 (0.95991 at position 0) where torch's bfloat16 run of the same
+    /// weights sits at 0.99989, so the float32 reference alone cannot judge it. Widened to float32, it computes the
     /// dequantized network transformers runs (`run_reference.py mlx_quantized_release`), which is where a
     /// misread layer shows.
     private func assertReleaseMatchesItsReferences(release releaseKey: String, record recordKey: String,
@@ -214,19 +214,25 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
         let logits = net(input)[0].asType(.float32)
         let mine = logits.reshaped([-1]).asArray(Float.self)
         let againstRuntime = cosine(mine, runtimeLogits)
-        // mlx_lm's own distance from the float32 network is the floor a run at the stored precision meets: a
-        // run held closer to mlx_lm than mlx_lm is to float32 computes as mlx_lm does, to its precision.
-        let runtimeFloor = cosine(runtimeLogits, reference)
+        let orders = runtime.keys.filter { $0.hasPrefix("orders.") && $0.hasSuffix(".output") }.sorted()
+        XCTAssertFalse(orders.isEmpty, "the mlx_lm record carries its runs in other summation orders")
+        let orderCosines = try orders.map { key in
+            (key, cosine(try XCTUnwrap(runtime[key]).reshaped([-1]).asArray(Float.self), runtimeLogits))
+        }
+        let orderFloor = orderCosines.map(\.1).min() ?? 1
         let vocabulary = logits.dim(1)
         let positions = (0 ..< tokens.count).map { position in
             String(format: "%.6f", cosine(Array(mine[(position * vocabulary) ..< ((position + 1) * vocabulary)]),
                                           Array(runtimeLogits[(position * vocabulary) ..< ((position + 1) * vocabulary)])))
         }
+        let floors = orderCosines.map { "\($0.0.dropFirst("orders.".count).dropLast(".output".count)) \($0.1)" }
         print("VALIDATION PARITY \(label): logit cosine \(againstRuntime) against mlx_lm at the stored precision "
-              + "(per position \(positions.joined(separator: " "))), whose own run reaches \(runtimeFloor) against the "
-              + "dequantized float32 reference; \(cosine(mine, reference)) against that reference, whose bf16 run in "
-              + "transformers reaches \(cosine(half, reference))")
-        XCTAssertGreaterThan(againstRuntime, runtimeFloor, "the release computes what mlx_lm computes from it, to mlx_lm's own precision")
+              + "(per position \(positions.joined(separator: " "))), whose own runs in other orders reach "
+              + "\(floors.joined(separator: ", ")); mlx_lm reaches \(cosine(runtimeLogits, reference)) against the "
+              + "dequantized float32 reference, this release \(cosine(mine, reference)), and transformers' bf16 run "
+              + "\(cosine(half, reference))")
+        XCTAssertGreaterThanOrEqual(againstRuntime, orderFloor,
+                                    "the release computes what mlx_lm computes from it, within mlx_lm's own order floor")
         for position in 0 ..< tokens.count {
             let row = Array(mine[(position * vocabulary) ..< ((position + 1) * vocabulary)])
             let theirs = Array(runtimeLogits[(position * vocabulary) ..< ((position + 1) * vocabulary)])

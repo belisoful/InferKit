@@ -13,6 +13,13 @@ Run under the `mlxlm` interpreter of Tools/validation-assets/manifest.json:
 The prompt's token ids are read from the `mlx_quantized_release` record, so both references see the
 same input. The record carries those `tokens`, the logits for every position as `output` (float32), and
 the greedy `continuation` of 16 tokens, each step fed through mlx_lm's own prompt cache.
+
+Two runs of mlx_lm's own arithmetic in other summation orders measure its order floor at the stored
+precision, recorded as `orders.<name>.output`:
+
+- `incremental`: the prompt fed one token at a time through the prompt cache, as generation runs it (the
+  matrix-vector quantized kernels and the single-query attention).
+- `cpu`: the whole-prompt forward on the CPU stream.
 """
 
 import argparse
@@ -35,6 +42,13 @@ def main():
     model, _ = load(args.checkpoint)
 
     logits = model(tokens[None])[0].astype(mx.float32)
+    incremental_cache = make_prompt_cache(model)
+    incremental = mx.stack([model(tokens[None, position:position + 1], cache=incremental_cache)[0, -1]
+                            for position in range(tokens.size)]).astype(mx.float32)
+    with mx.stream(mx.cpu):
+        on_cpu = model(tokens[None])[0].astype(mx.float32)
+    mx.eval(logits, incremental, on_cpu)
+
     cache = make_prompt_cache(model)
     step = model(tokens[None], cache=cache)[:, -1, :]
     continuation = []
@@ -47,6 +61,8 @@ def main():
         "tokens": tokens,
         "output": logits,
         "continuation": mx.array(continuation, dtype=mx.int32),
+        "orders.incremental.output": incremental,
+        "orders.cpu.output": on_cpu,
     })
     print(f"wrote {args.output}: {tokens.size} tokens, logits {tuple(logits.shape)}, continuation {continuation[:6]}")
     return 0
