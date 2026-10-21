@@ -7226,7 +7226,7 @@
       ],
       "registryName" : "embeddinggemma-300m",
       "requirements" : {
-        "minimumMemoryBytes" : 2894966156,
+        "minimumMemoryBytes" : 2894886551,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -7247,25 +7247,28 @@
           "downloadBytes" : 1263745624,
           "id" : "embeddinggemma-300m",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: 2_Dense/model.safetensors (HTTP 401), 3_Dense/model.safetensors (HTTP 401), model.safetensors (HTTP 401)",
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 1230360616
+                  "bfloat16" : 615163392,
+                  "checkpoint" : 1230326784,
+                  "float32" : 1230326784
                 },
                 "id" : "model",
                 "title" : "model"
               }
-            ]
+            ],
+            "vocabularySize" : 262144
           },
-          "minimumMemoryBytes" : 2894966156,
-          "peakBytes" : 1230360616,
+          "minimumMemoryBytes" : 2894886551,
+          "parameterCount" : 307581696,
+          "peakBytes" : 1230326784,
+          "precision" : "float32",
           "registryName" : "embeddinggemma-300m",
-          "residentBytes" : 1230360616,
-          "residentEstimate" : "stored-dtype",
+          "residentBytes" : 1230326784,
           "source" : {
             "files" : [
               {
@@ -7273,28 +7276,28 @@
                 "optional" : false,
                 "path" : "2_Dense/model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "c327f2acb00149676ade24a75e11eb6ebbd367f9ee050267ba56829d2979f702"
               },
               {
                 "bytes" : 9437272,
                 "optional" : false,
                 "path" : "3_Dense/model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "ffb6cc5162e11e2ce6bc2367e121ee3bbbc4e82e1ee26826bd7573d4948d81b8"
               },
               {
                 "bytes" : 33385008,
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "sha256" : "6852f8d561078cc0cebe70ca03c5bfdd0d60a45f9d2e0e1e4cc05b68e9ec329e"
               },
               {
                 "bytes" : 1211486072,
                 "optional" : true,
                 "path" : "model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "cbf5a78393b6a033e0b8a63a57549964f7ed5c6fbeb4ba0694214f36123f2fd2"
               },
               {
                 "optional" : true,
@@ -8342,7 +8345,7 @@
           "downloadBytes" : 40347887237,
           "id" : "default",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: vae/diffusion_pytorch_model.safetensors (HTTP 401), text_encoder/model.safetensors (HTTP 401), text_encoder_2/model-00001-of-00002.safetensors (HTTP 401) and 4 more",
+          "measurementNote" : "tensor headers unread: vae/diffusion_pytorch_model.safetensors (HTTP 403), text_encoder/model.safetensors (HTTP 403), text_encoder_2/model-00001-of-00002.safetensors (HTTP 403) and 4 more",
           "memoryFacts" : {
             "basis" : "stored-dtype",
             "loadOverheadBytes" : 0,
@@ -8630,7 +8633,7 @@
           "downloadBytes" : 33743932933,
           "id" : "default",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: vae/diffusion_pytorch_model.safetensors (HTTP 401), text_encoder/model.safetensors (HTTP 401), text_encoder_2/model-00001-of-00002.safetensors (HTTP 401) and 4 more",
+          "measurementNote" : "tensor headers unread: vae/diffusion_pytorch_model.safetensors (HTTP 403), text_encoder/model.safetensors (HTTP 403), text_encoder_2/model-00001-of-00002.safetensors (HTTP 403) and 4 more",
           "memoryFacts" : {
             "basis" : "stored-dtype",
             "loadOverheadBytes" : 0,
@@ -8886,7 +8889,7 @@
           "downloadBytes" : 33723472428,
           "id" : "default",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: vae/diffusion_pytorch_model.safetensors (HTTP 401), text_encoder/model.safetensors (HTTP 401), text_encoder_2/model-00001-of-00002.safetensors (HTTP 401) and 4 more",
+          "measurementNote" : "tensor headers unread: vae/diffusion_pytorch_model.safetensors (HTTP 403), text_encoder/model.safetensors (HTTP 403), text_encoder_2/model-00001-of-00002.safetensors (HTTP 403) and 4 more",
           "memoryFacts" : {
             "basis" : "stored-dtype",
             "loadOverheadBytes" : 0,
@@ -9464,16 +9467,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 34706828582,
-                "residentBytes" : 34706828582
+                "peakBytes" : 34706725966,
+                "residentBytes" : 34706725966
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 18325311758,
-                "residentBytes" : 18325311758
+                "peakBytes" : 18325255246,
+                "residentBytes" : 18325255246
               },
               "title" : "Staged",
               "value" : "staged"
@@ -9513,7 +9516,7 @@
       ],
       "registryName" : "flux.2-klein-9b",
       "requirements" : {
-        "minimumMemoryBytes" : 26612093005,
+        "minimumMemoryBytes" : 26612026520,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -9537,14 +9540,15 @@
           "downloadBytes" : 34722770516,
           "id" : "default",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: vae/diffusion_pytorch_model.safetensors (HTTP 401), text_encoder/model-00001-of-00004.safetensors (HTTP 401), text_encoder/model-00002-of-00004.safetensors (HTTP 401) and 4 more",
           "memoryFacts" : {
             "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 16381516824
+                  "bfloat16" : 16381470720,
+                  "checkpoint" : 16381470720,
+                  "float32" : 32762941440
                 },
                 "id" : "text_encoder",
                 "title" : "text_encoder",
@@ -9552,17 +9556,21 @@
               },
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 18325311758
+                  "bfloat16" : 18325255246,
+                  "checkpoint" : 18325255246,
+                  "float32" : 36650510484
                 },
                 "id" : "transformer",
                 "title" : "transformer, vae"
               }
             ]
           },
-          "minimumMemoryBytes" : 26612093005,
-          "peakBytes" : 18325311758,
+          "minimumMemoryBytes" : 26612026520,
+          "parameterCount" : 17353362980,
+          "peakBytes" : 18325255246,
+          "precision" : "bfloat16",
           "registryName" : "flux.2-klein-9b",
-          "residentBytes" : 18325311758,
+          "residentBytes" : 18325255246,
           "source" : {
             "files" : [
               {
@@ -9593,7 +9601,7 @@
                 "optional" : false,
                 "path" : "vae/diffusion_pytorch_model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "ca70d2202afe6415bdbcb8793ba8cd99fd159cfe6192381504d6c4d3036e0f04"
               },
               {
                 "bytes" : 1538,
@@ -9617,7 +9625,7 @@
                 "optional" : false,
                 "path" : "tokenizer/tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "sha256" : "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
               },
               {
                 "bytes" : 5404,
@@ -9792,16 +9800,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 34706828582,
-                "residentBytes" : 34706828582
+                "peakBytes" : 34706725966,
+                "residentBytes" : 34706725966
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 18325311758,
-                "residentBytes" : 18325311758
+                "peakBytes" : 18325255246,
+                "residentBytes" : 18325255246
               },
               "title" : "Staged",
               "value" : "staged"
@@ -9841,7 +9849,7 @@
       ],
       "registryName" : "flux.2-klein-9b-kv",
       "requirements" : {
-        "minimumMemoryBytes" : 26612093005,
+        "minimumMemoryBytes" : 26612026520,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -9865,14 +9873,15 @@
           "downloadBytes" : 34722770442,
           "id" : "default",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: vae/diffusion_pytorch_model.safetensors (HTTP 401), text_encoder/model-00001-of-00004.safetensors (HTTP 401), text_encoder/model-00002-of-00004.safetensors (HTTP 401) and 4 more",
           "memoryFacts" : {
             "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 16381516824
+                  "bfloat16" : 16381470720,
+                  "checkpoint" : 16381470720,
+                  "float32" : 32762941440
                 },
                 "id" : "text_encoder",
                 "title" : "text_encoder",
@@ -9880,17 +9889,21 @@
               },
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 18325311758
+                  "bfloat16" : 18325255246,
+                  "checkpoint" : 18325255246,
+                  "float32" : 36650510484
                 },
                 "id" : "transformer",
                 "title" : "transformer, vae"
               }
             ]
           },
-          "minimumMemoryBytes" : 26612093005,
-          "peakBytes" : 18325311758,
+          "minimumMemoryBytes" : 26612026520,
+          "parameterCount" : 17353362980,
+          "peakBytes" : 18325255246,
+          "precision" : "bfloat16",
           "registryName" : "flux.2-klein-9b-kv",
-          "residentBytes" : 18325311758,
+          "residentBytes" : 18325255246,
           "source" : {
             "files" : [
               {
@@ -9921,7 +9934,7 @@
                 "optional" : false,
                 "path" : "vae/diffusion_pytorch_model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "ca70d2202afe6415bdbcb8793ba8cd99fd159cfe6192381504d6c4d3036e0f04"
               },
               {
                 "bytes" : 1538,
@@ -9945,7 +9958,7 @@
                 "optional" : false,
                 "path" : "tokenizer/tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "sha256" : "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
               },
               {
                 "bytes" : 5404,
@@ -10454,16 +10467,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 34706828582,
-                "residentBytes" : 34706828582
+                "peakBytes" : 34706725966,
+                "residentBytes" : 34706725966
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 18325311758,
-                "residentBytes" : 18325311758
+                "peakBytes" : 18325255246,
+                "residentBytes" : 18325255246
               },
               "title" : "Staged",
               "value" : "staged"
@@ -10503,7 +10516,7 @@
       ],
       "registryName" : "flux.2-klein-base-9b",
       "requirements" : {
-        "minimumMemoryBytes" : 26612093005,
+        "minimumMemoryBytes" : 26612026520,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -10527,14 +10540,15 @@
           "downloadBytes" : 34722770482,
           "id" : "default",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: vae/diffusion_pytorch_model.safetensors (HTTP 401), text_encoder/model-00001-of-00004.safetensors (HTTP 401), text_encoder/model-00002-of-00004.safetensors (HTTP 401) and 4 more",
           "memoryFacts" : {
             "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 16381516824
+                  "bfloat16" : 16381470720,
+                  "checkpoint" : 16381470720,
+                  "float32" : 32762941440
                 },
                 "id" : "text_encoder",
                 "title" : "text_encoder",
@@ -10542,17 +10556,21 @@
               },
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 18325311758
+                  "bfloat16" : 18325255246,
+                  "checkpoint" : 18325255246,
+                  "float32" : 36650510484
                 },
                 "id" : "transformer",
                 "title" : "transformer, vae"
               }
             ]
           },
-          "minimumMemoryBytes" : 26612093005,
-          "peakBytes" : 18325311758,
+          "minimumMemoryBytes" : 26612026520,
+          "parameterCount" : 17353362980,
+          "peakBytes" : 18325255246,
+          "precision" : "bfloat16",
           "registryName" : "flux.2-klein-base-9b",
-          "residentBytes" : 18325311758,
+          "residentBytes" : 18325255246,
           "source" : {
             "files" : [
               {
@@ -10583,7 +10601,7 @@
                 "optional" : false,
                 "path" : "vae/diffusion_pytorch_model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "ca70d2202afe6415bdbcb8793ba8cd99fd159cfe6192381504d6c4d3036e0f04"
               },
               {
                 "bytes" : 1538,
@@ -10607,7 +10625,7 @@
                 "optional" : false,
                 "path" : "tokenizer/tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "sha256" : "aeb13307a71acd8fe81861d94ad54ab689df773318809eed3cbe794b4492dae4"
               },
               {
                 "bytes" : 5404,
@@ -10855,16 +10873,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 24374793024,
-                "residentBytes" : 24374793024
+                "peakBytes" : 24374650080,
+                "residentBytes" : 24374650080
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 24374793024,
-                "residentBytes" : 24374793024
+                "peakBytes" : 3752942816,
+                "residentBytes" : 3752942816
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -10882,24 +10900,24 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 24374793024,
-                "residentBytes" : 24374793024
+                "peakBytes" : 24374650080,
+                "residentBytes" : 24374650080
               },
               "title" : "As published",
               "value" : "checkpoint"
             },
             {
               "memory" : {
-                "peakBytes" : 24374793024,
-                "residentBytes" : 24374793024
+                "peakBytes" : 48749300160,
+                "residentBytes" : 48749300160
               },
               "title" : "Float32",
               "value" : "float32"
             }
           ],
-          "default" : "float32",
+          "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -10926,9 +10944,20 @@
           "valueType" : "json"
         }
       ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
       "registryName" : "gemma-3-12b-it",
       "requirements" : {
-        "minimumMemoryBytes" : 33729129789,
+        "minimumMemoryBytes" : 33728961619,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -10951,25 +10980,33 @@
           "downloadBytes" : 24409444112,
           "id" : "gemma-3-12b-it",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: model-00001-of-00005.safetensors (HTTP 401), model-00002-of-00005.safetensors (HTTP 401), model-00003-of-00005.safetensors (HTTP 401) and 2 more",
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 24374793024
+                  "bfloat16" : 24374650080,
+                  "checkpoint" : 24374650080,
+                  "float32" : 48749300160
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 448297984,
+                  "checkpoint" : 448297984,
+                  "float32" : 896595968
+                },
+                "layerCount" : 48,
                 "title" : "decoder"
               }
             ]
           },
-          "minimumMemoryBytes" : 33729129789,
-          "peakBytes" : 24374793024,
+          "minimumMemoryBytes" : 33728961619,
+          "parameterCount" : 12187325040,
+          "peakBytes" : 24374650080,
+          "precision" : "bfloat16",
           "registryName" : "gemma-3-12b-it",
-          "residentBytes" : 24374793024,
-          "residentEstimate" : "stored-dtype",
+          "residentBytes" : 24374650080,
           "source" : {
             "files" : [
               {
@@ -10983,7 +11020,7 @@
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "sha256" : "4667f2089529e8e7657cfb6d1c19910ae71ff5f28aa7ab2ff2763330affad795"
               },
               {
                 "optional" : true,
@@ -11124,16 +11161,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 1999811208,
-                "residentBytes" : 1999811208
+                "peakBytes" : 1999771904,
+                "residentBytes" : 1999771904
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 1999811208,
-                "residentBytes" : 1999811208
+                "peakBytes" : 711350528,
+                "residentBytes" : 711350528
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -11151,24 +11188,24 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 1999811208,
-                "residentBytes" : 1999811208
+                "peakBytes" : 1999771904,
+                "residentBytes" : 1999771904
               },
               "title" : "As published",
               "value" : "checkpoint"
             },
             {
               "memory" : {
-                "peakBytes" : 1999811208,
-                "residentBytes" : 1999811208
+                "peakBytes" : 3999543808,
+                "residentBytes" : 3999543808
               },
               "title" : "Float32",
               "value" : "float32"
             }
           ],
-          "default" : "float32",
+          "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -11195,9 +11232,20 @@
           "valueType" : "json"
         }
       ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
       "registryName" : "gemma-3-1b-it",
       "requirements" : {
-        "minimumMemoryBytes" : 4705438137,
+        "minimumMemoryBytes" : 4705345657,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -11219,25 +11267,34 @@
           "downloadBytes" : 2034353674,
           "id" : "gemma-3-1b-it",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: model.safetensors (HTTP 401)",
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 1999811208
+                  "bfloat16" : 1999771904,
+                  "checkpoint" : 1999771904,
+                  "float32" : 3999543808
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 53684224,
+                  "checkpoint" : 53684224,
+                  "float32" : 107368448
+                },
+                "layerCount" : 26,
                 "title" : "decoder"
               }
-            ]
+            ],
+            "vocabularySize" : 262144
           },
-          "minimumMemoryBytes" : 4705438137,
-          "peakBytes" : 1999811208,
+          "minimumMemoryBytes" : 4705345657,
+          "parameterCount" : 999885952,
+          "peakBytes" : 1999771904,
+          "precision" : "bfloat16",
           "registryName" : "gemma-3-1b-it",
-          "residentBytes" : 1999811208,
-          "residentEstimate" : "stored-dtype",
+          "residentBytes" : 1999771904,
           "source" : {
             "files" : [
               {
@@ -11251,7 +11308,7 @@
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "sha256" : "4667f2089529e8e7657cfb6d1c19910ae71ff5f28aa7ab2ff2763330affad795"
               },
               {
                 "optional" : true,
@@ -11274,7 +11331,7 @@
                 "optional" : true,
                 "path" : "model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "3d4ef8d71c14db7e448a09ebe891cfb6bf32c57a9b44499ae0d1c098e48516b6"
               }
             ],
             "kind" : "huggingface",
@@ -11393,16 +11450,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 536223056,
-                "residentBytes" : 536223056
+                "peakBytes" : 536196352,
+                "residentBytes" : 536196352
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 536223056,
-                "residentBytes" : 536223056
+                "peakBytes" : 357840128,
+                "residentBytes" : 357840128
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -11420,24 +11477,24 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 536223056,
-                "residentBytes" : 536223056
+                "peakBytes" : 536196352,
+                "residentBytes" : 536196352
               },
               "title" : "As published",
               "value" : "checkpoint"
             },
             {
               "memory" : {
-                "peakBytes" : 536223056,
-                "residentBytes" : 536223056
+                "peakBytes" : 1072392704,
+                "residentBytes" : 1072392704
               },
               "title" : "Float32",
               "value" : "float32"
             }
           ],
-          "default" : "float32",
+          "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -11464,9 +11521,20 @@
           "valueType" : "json"
         }
       ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
       "registryName" : "gemma-3-270m-it",
       "requirements" : {
-        "minimumMemoryBytes" : 1261701309,
+        "minimumMemoryBytes" : 1261638476,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -11488,25 +11556,34 @@
           "downloadBytes" : 570765885,
           "id" : "gemma-3-270m-it",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: model.safetensors (HTTP 401)",
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 536223056
+                  "bfloat16" : 536196352,
+                  "checkpoint" : 536196352,
+                  "float32" : 1072392704
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 11147264,
+                  "checkpoint" : 11147264,
+                  "float32" : 22294528
+                },
+                "layerCount" : 18,
                 "title" : "decoder"
               }
-            ]
+            ],
+            "vocabularySize" : 262144
           },
-          "minimumMemoryBytes" : 1261701309,
-          "peakBytes" : 536223056,
+          "minimumMemoryBytes" : 1261638476,
+          "parameterCount" : 268098176,
+          "peakBytes" : 536196352,
+          "precision" : "bfloat16",
           "registryName" : "gemma-3-270m-it",
-          "residentBytes" : 536223056,
-          "residentEstimate" : "stored-dtype",
+          "residentBytes" : 536196352,
           "source" : {
             "files" : [
               {
@@ -11520,7 +11597,7 @@
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "sha256" : "7d4046bf0505a327dd5a0abbb427ecd4fc82f99c2ceaa170bc61ecde12809b0c"
               },
               {
                 "bytes" : 1532,
@@ -11544,7 +11621,7 @@
                 "optional" : true,
                 "path" : "model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "700b710a9a99c295ed546647aa81cacf9f81f4c573ea2be613a0e2517a44afab"
               }
             ],
             "kind" : "huggingface",
@@ -11663,16 +11740,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 54864980440,
-                "residentBytes" : 54864980440
+                "peakBytes" : 54864813280,
+                "residentBytes" : 54864813280
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 54864980440,
-                "residentBytes" : 54864980440
+                "peakBytes" : 5316986080,
+                "residentBytes" : 5316986080
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -11690,24 +11767,24 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 54864980440,
-                "residentBytes" : 54864980440
+                "peakBytes" : 54864813280,
+                "residentBytes" : 54864813280
               },
               "title" : "As published",
               "value" : "checkpoint"
             },
             {
               "memory" : {
-                "peakBytes" : 54864980440,
-                "residentBytes" : 54864980440
+                "peakBytes" : 109729626560,
+                "residentBytes" : 109729626560
               },
               "title" : "Float32",
               "value" : "float32"
             }
           ],
-          "default" : "float32",
+          "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -11734,9 +11811,20 @@
           "valueType" : "json"
         }
       ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
       "registryName" : "gemma-3-27b-it",
       "requirements" : {
-        "minimumMemoryBytes" : 69599938513,
+        "minimumMemoryBytes" : 69599741855,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -11759,25 +11847,33 @@
           "downloadBytes" : 54899649630,
           "id" : "gemma-3-27b-it",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: model-00001-of-00012.safetensors (HTTP 401), model-00002-of-00012.safetensors (HTTP 401), model-00003-of-00012.safetensors (HTTP 401) and 9 more",
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 54864980440
+                  "bfloat16" : 54864813280,
+                  "checkpoint" : 54864813280,
+                  "float32" : 109729626560
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 825797120,
+                  "checkpoint" : 825797120,
+                  "float32" : 1651594240
+                },
+                "layerCount" : 62,
                 "title" : "decoder"
               }
             ]
           },
-          "minimumMemoryBytes" : 69599938513,
-          "peakBytes" : 54864980440,
+          "minimumMemoryBytes" : 69599741855,
+          "parameterCount" : 27432406640,
+          "peakBytes" : 54864813280,
+          "precision" : "bfloat16",
           "registryName" : "gemma-3-27b-it",
-          "residentBytes" : 54864980440,
-          "residentEstimate" : "stored-dtype",
+          "residentBytes" : 54864813280,
           "source" : {
             "files" : [
               {
@@ -11791,7 +11887,7 @@
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "sha256" : "4667f2089529e8e7657cfb6d1c19910ae71ff5f28aa7ab2ff2763330affad795"
               },
               {
                 "optional" : true,
@@ -11932,16 +12028,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 8600277880,
-                "residentBytes" : 8600277880
+                "peakBytes" : 8600158944,
+                "residentBytes" : 8600158944
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 8600277880,
-                "residentBytes" : 8600277880
+                "peakBytes" : 2559673056,
+                "residentBytes" : 2559673056
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -11959,24 +12055,24 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 8600277880,
-                "residentBytes" : 8600277880
+                "peakBytes" : 8600158944,
+                "residentBytes" : 8600158944
               },
               "title" : "As published",
               "value" : "checkpoint"
             },
             {
               "memory" : {
-                "peakBytes" : 8600277880,
-                "residentBytes" : 8600277880
+                "peakBytes" : 17200317888,
+                "residentBytes" : 17200317888
               },
               "title" : "Float32",
               "value" : "float32"
             }
           ],
-          "default" : "float32",
+          "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -12003,9 +12099,20 @@
           "valueType" : "json"
         }
       ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
       "registryName" : "gemma-3-4b-it",
       "requirements" : {
-        "minimumMemoryBytes" : 15170876678,
+        "minimumMemoryBytes" : 15170736753,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -12028,25 +12135,33 @@
           "downloadBytes" : 8634910860,
           "id" : "gemma-3-4b-it",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: model-00001-of-00002.safetensors (HTTP 401), model-00002-of-00002.safetensors (HTTP 401)",
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 8600277880
+                  "bfloat16" : 8600158944,
+                  "checkpoint" : 8600158944,
+                  "float32" : 17200317888
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 188765184,
+                  "checkpoint" : 188765184,
+                  "float32" : 377530368
+                },
+                "layerCount" : 34,
                 "title" : "decoder"
               }
             ]
           },
-          "minimumMemoryBytes" : 15170876678,
-          "peakBytes" : 8600277880,
+          "minimumMemoryBytes" : 15170736753,
+          "parameterCount" : 4300079472,
+          "peakBytes" : 8600158944,
+          "precision" : "bfloat16",
           "registryName" : "gemma-3-4b-it",
-          "residentBytes" : 8600277880,
-          "residentEstimate" : "stored-dtype",
+          "residentBytes" : 8600158944,
           "source" : {
             "files" : [
               {
@@ -12060,7 +12175,7 @@
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "sha256" : "4667f2089529e8e7657cfb6d1c19910ae71ff5f28aa7ab2ff2763330affad795"
               },
               {
                 "optional" : true,
@@ -12187,16 +12302,16 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 10879085840,
-                "residentBytes" : 10879085840
+                "peakBytes" : 10878876544,
+                "residentBytes" : 10878876544
               },
               "title" : "As published",
               "value" : "checkpoint"
             },
             {
               "memory" : {
-                "peakBytes" : 10879085840,
-                "residentBytes" : 10879085840
+                "peakBytes" : 21757753088,
+                "residentBytes" : 21757753088
               },
               "title" : "Float32",
               "value" : "float32"
@@ -12204,7 +12319,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -12244,7 +12359,7 @@
       ],
       "registryName" : "gemma-3n-e2b-it",
       "requirements" : {
-        "minimumMemoryBytes" : 17851827219,
+        "minimumMemoryBytes" : 17851580989,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -12267,24 +12382,28 @@
           "downloadBytes" : 10912691991,
           "id" : "gemma-3n-e2b-it",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: model-00001-of-00003.safetensors (HTTP 401), model-00002-of-00003.safetensors (HTTP 401), model-00003-of-00003.safetensors (HTTP 401)",
           "memoryFacts" : {
             "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 10879085840
+                  "bfloat16" : 10878876544,
+                  "checkpoint" : 10878876544,
+                  "float32" : 21757753088
                 },
                 "id" : "decoder",
                 "title" : "decoder"
               }
-            ]
+            ],
+            "vocabularySize" : 262400
           },
-          "minimumMemoryBytes" : 17851827219,
-          "peakBytes" : 10879085840,
+          "minimumMemoryBytes" : 17851580989,
+          "parameterCount" : 5439438272,
+          "peakBytes" : 10878876544,
+          "precision" : "bfloat16",
           "registryName" : "gemma-3n-e2b-it",
-          "residentBytes" : 10879085840,
+          "residentBytes" : 10878876544,
           "source" : {
             "files" : [
               {
@@ -12298,7 +12417,7 @@
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "sha256" : "c4c19736bf24d1c6805cf49340e31bd02c70fb7857a2cb31065c90c2b5719c4e"
               },
               {
                 "bytes" : 159338,
@@ -12414,16 +12533,16 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 15700181712,
-                "residentBytes" : 15700181712
+                "peakBytes" : 15699956384,
+                "residentBytes" : 15699956384
               },
               "title" : "As published",
               "value" : "checkpoint"
             },
             {
               "memory" : {
-                "peakBytes" : 15700181712,
-                "residentBytes" : 15700181712
+                "peakBytes" : 31399912768,
+                "residentBytes" : 31399912768
               },
               "title" : "Float32",
               "value" : "float32"
@@ -12431,7 +12550,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -12471,7 +12590,7 @@
       ],
       "registryName" : "gemma-3n-e4b-it",
       "requirements" : {
-        "minimumMemoryBytes" : 23523704716,
+        "minimumMemoryBytes" : 23523439624,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -12494,24 +12613,28 @@
           "downloadBytes" : 15733800230,
           "id" : "gemma-3n-e4b-it",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: model-00001-of-00004.safetensors (HTTP 401), model-00002-of-00004.safetensors (HTTP 401), model-00003-of-00004.safetensors (HTTP 401) and 1 more",
           "memoryFacts" : {
             "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 15700181712
+                  "bfloat16" : 15699956384,
+                  "checkpoint" : 15699956384,
+                  "float32" : 31399912768
                 },
                 "id" : "decoder",
                 "title" : "decoder"
               }
-            ]
+            ],
+            "vocabularySize" : 262400
           },
-          "minimumMemoryBytes" : 23523704716,
-          "peakBytes" : 15700181712,
+          "minimumMemoryBytes" : 23523439624,
+          "parameterCount" : 7849978192,
+          "peakBytes" : 15699956384,
+          "precision" : "bfloat16",
           "registryName" : "gemma-3n-e4b-it",
-          "residentBytes" : 15700181712,
+          "residentBytes" : 15699956384,
           "source" : {
             "files" : [
               {
@@ -12525,7 +12648,7 @@
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "sha256" : "c4c19736bf24d1c6805cf49340e31bd02c70fb7857a2cb31065c90c2b5719c4e"
               },
               {
                 "bytes" : 171423,
@@ -17219,7 +17342,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -17522,7 +17645,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -17825,7 +17948,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -18137,7 +18260,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -18478,7 +18601,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -18819,7 +18942,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -20043,7 +20166,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -20332,7 +20455,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -21313,7 +21436,7 @@
           ],
           "default" : "bfloat16",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -21563,7 +21686,7 @@
           ],
           "default" : "bfloat16",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -22722,7 +22845,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -23492,7 +23615,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -24323,7 +24446,7 @@
       ],
       "registryName" : "muscriptor",
       "requirements" : {
-        "minimumMemoryBytes" : 2889751699,
+        "minimumMemoryBytes" : 2889699088,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -24344,24 +24467,27 @@
           "downloadBytes" : 1228144472,
           "id" : "medium",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: model.safetensors (HTTP 401)",
           "memoryFacts" : {
             "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 1228144472
+                  "bfloat16" : 614061056,
+                  "checkpoint" : 1228122112,
+                  "float32" : 1228122112
                 },
                 "id" : "model",
                 "title" : "model"
               }
             ]
           },
-          "minimumMemoryBytes" : 2889751699,
-          "peakBytes" : 1228144472,
+          "minimumMemoryBytes" : 2889699088,
+          "parameterCount" : 307030528,
+          "peakBytes" : 1228122112,
+          "precision" : "float32",
           "registryName" : "muscriptor",
-          "residentBytes" : 1228144472,
+          "residentBytes" : 1228122112,
           "source" : {
             "files" : [
               {
@@ -24369,7 +24495,7 @@
                 "optional" : false,
                 "path" : "model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "ac80adbdf85d87231735fd948af7013441c0afced316c4e9067fd5d8a7fb97ec"
               }
             ],
             "kind" : "huggingface",
@@ -24464,7 +24590,7 @@
           "downloadBytes" : 5465642136,
           "id" : "large",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: model.safetensors (HTTP 401)",
+          "measurementNote" : "tensor headers unread: model.safetensors (HTTP 403)",
           "memoryFacts" : {
             "basis" : "measured",
             "loadOverheadBytes" : 0,
@@ -24584,7 +24710,7 @@
           "downloadBytes" : 411888600,
           "id" : "small",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: model.safetensors (HTTP 401)",
+          "measurementNote" : "tensor headers unread: model.safetensors (HTTP 403)",
           "memoryFacts" : {
             "basis" : "measured",
             "loadOverheadBytes" : 0,
@@ -29348,7 +29474,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -30093,7 +30219,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -30836,7 +30962,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -31663,7 +31789,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -32536,7 +32662,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -33284,7 +33410,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -34135,7 +34261,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -44381,7 +44507,7 @@
       ],
       "registryName" : "sam3",
       "requirements" : {
-        "minimumMemoryBytes" : 8093972970,
+        "minimumMemoryBytes" : 8093386918,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -44403,24 +44529,27 @@
           "downloadBytes" : 3441352689,
           "id" : "default",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: model.safetensors (HTTP 401)",
           "memoryFacts" : {
             "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 3439938512
+                  "bfloat16" : 1719844720,
+                  "checkpoint" : 3439689440,
+                  "float32" : 3439689440
                 },
                 "id" : "model",
                 "title" : "model"
               }
             ]
           },
-          "minimumMemoryBytes" : 8093972970,
-          "peakBytes" : 3439938512,
+          "minimumMemoryBytes" : 8093386918,
+          "parameterCount" : 859922360,
+          "peakBytes" : 3439689440,
+          "precision" : "float32",
           "registryName" : "sam3",
-          "residentBytes" : 3439938512,
+          "residentBytes" : 3439689440,
           "source" : {
             "files" : [
               {
@@ -44458,7 +44587,7 @@
                 "optional" : false,
                 "path" : "model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "6d06f0a5f84e435071fe6603e61d0b4cc7b40e0d39d487cfd4d67d8cc11cc14a"
               }
             ],
             "kind" : "huggingface",
@@ -44624,7 +44753,7 @@
                 "optional" : false,
                 "path" : "sam3.1_multiplex.pt",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "0567debeec80ba4ac6369540c6c248025283cb3ff2b92827509e57e2b3541cb6"
               }
             ],
             "kind" : "huggingface",
@@ -45558,7 +45687,11 @@
         "url" : "https://stability.ai/community-license-agreement"
       },
       "memoryModel" : {
-        "residency" : "residency"
+        "residency" : "residency",
+        "stagePrecisions" : {
+          "text_encoder" : "loaded",
+          "transformer" : "loaded"
+        }
       },
       "options" : [
         {
@@ -45616,16 +45749,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 16268454998,
-                "residentBytes" : 16268454998
+                "peakBytes" : 18072468492,
+                "residentBytes" : 18072468492
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 11161354424,
-                "residentBytes" : 11161354424
+                "peakBytes" : 12797861888,
+                "residentBytes" : 12797861888
               },
               "title" : "Staged",
               "value" : "staged"
@@ -45665,7 +45798,7 @@
       ],
       "registryName" : "sd3",
       "requirements" : {
-        "minimumMemoryBytes" : 18183907906,
+        "minimumMemoryBytes" : 20109210805,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -45687,32 +45820,38 @@
           "downloadBytes" : 16272442490,
           "id" : "default",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: text_encoder/model.safetensors (HTTP 401), text_encoder_2/model.safetensors (HTTP 401), vae/diffusion_pytorch_model.safetensors (HTTP 401) and 3 more",
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 11161354424
+                  "bfloat16" : 11161241600,
+                  "checkpoint" : 11161241600,
+                  "float32" : 22322483200,
+                  "loaded" : 12797861888
                 },
                 "id" : "text_encoder",
                 "title" : "text_encoder, text_encoder_2, text_encoder_3"
               },
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 5107100574
+                  "bfloat16" : 5106967238,
+                  "checkpoint" : 5106967238,
+                  "float32" : 10213934476,
+                  "loaded" : 5274606604
                 },
                 "id" : "transformer",
                 "title" : "transformer, vae"
               }
             ]
           },
-          "minimumMemoryBytes" : 18183907906,
-          "peakBytes" : 11161354424,
+          "minimumMemoryBytes" : 20109210805,
+          "parameterCount" : 8134104419,
+          "peakBytes" : 12797861888,
+          "precision" : "float16",
           "registryName" : "sd3",
-          "residentBytes" : 11161354424,
-          "residentEstimate" : "stored-dtype",
+          "residentBytes" : 12797861888,
           "source" : {
             "files" : [
               {
@@ -45738,7 +45877,7 @@
                 "optional" : false,
                 "path" : "text_encoder/model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "71e183d11db0c6b6282a4d9e0abb74125edc8692393e89ed8ee5571005f35cb1"
               },
               {
                 "bytes" : 570,
@@ -45751,7 +45890,7 @@
                 "optional" : false,
                 "path" : "text_encoder_2/model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "ec310df2af79c318e24d20511b601a591ca8cd4f1fce1d8dff822a356bcdb1f4"
               },
               {
                 "bytes" : 740,
@@ -45823,7 +45962,7 @@
                 "optional" : false,
                 "path" : "tokenizer_3/spiece.model",
                 "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "sha256" : "d60acb128cf7b7f2536e8f38a5b18a05535c9e14c7a355904270e15b0945ea86"
               },
               {
                 "bytes" : 524,
@@ -45836,7 +45975,7 @@
                 "optional" : true,
                 "path" : "transformer/diffusion_pytorch_model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "f81eb93a348be218af757dd095cbda45090380d9bbda91049442e0e40bb4cc95"
               },
               {
                 "optional" : true,
@@ -45854,7 +45993,7 @@
                 "optional" : false,
                 "path" : "vae/diffusion_pytorch_model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "8f53304a79335b55e13ec50f63e5157fee4deb2f30d5fae0654e2b2653c109dc"
               }
             ],
             "kind" : "huggingface",
@@ -45907,7 +46046,11 @@
         "url" : "https://stability.ai/community-license-agreement"
       },
       "memoryModel" : {
-        "residency" : "residency"
+        "residency" : "residency",
+        "stagePrecisions" : {
+          "text_encoder" : "loaded",
+          "transformer" : "loaded"
+        }
       },
       "options" : [
         {
@@ -45972,16 +46115,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 36235802526,
-                "residentBytes" : 36235802526
+                "peakBytes" : 38039778060,
+                "residentBytes" : 38039778060
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 25074448102,
-                "residentBytes" : 25074448102
+                "peakBytes" : 25241916172,
+                "residentBytes" : 25241916172
               },
               "title" : "Staged",
               "value" : "staged"
@@ -46021,7 +46164,7 @@
       ],
       "registryName" : "sd3-controlnet",
       "requirements" : {
-        "minimumMemoryBytes" : 34552253410,
+        "minimumMemoryBytes" : 34749274669,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -46043,35 +46186,38 @@
           "downloadBytes" : 36239952400,
           "id" : "default",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: text_encoder/model.safetensors (HTTP 401), text_encoder_2/model.safetensors (HTTP 401), vae/diffusion_pytorch_model.safetensors (HTTP 401) and 4 more",
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 11161354424
+                  "bfloat16" : 11161241600,
+                  "checkpoint" : 11161241600,
+                  "float32" : 22322483200,
+                  "loaded" : 12797861888
                 },
                 "id" : "text_encoder",
                 "title" : "text_encoder, text_encoder_2, text_encoder_3"
               },
               {
                 "bytesByPrecision" : {
-                  "bfloat16" : 20767410150,
-                  "checkpoint" : 25074448102,
-                  "float32" : 25074448102
+                  "bfloat16" : 20767238854,
+                  "checkpoint" : 25074276806,
+                  "float32" : 41534477708,
+                  "loaded" : 25241916172
                 },
                 "id" : "transformer",
                 "title" : "transformer, vae, root"
               }
             ]
           },
-          "minimumMemoryBytes" : 34552253410,
-          "peakBytes" : 25074448102,
-          "precision" : "float32",
+          "minimumMemoryBytes" : 34749274669,
+          "parameterCount" : 15964240227,
+          "peakBytes" : 25241916172,
+          "precision" : "bfloat16",
           "registryName" : "sd3-controlnet",
-          "residentBytes" : 25074448102,
-          "residentEstimate" : "stored-dtype",
+          "residentBytes" : 25241916172,
           "source" : {
             "files" : [
               {
@@ -46119,7 +46265,7 @@
                 "path" : "text_encoder/model.safetensors",
                 "repository" : "stabilityai/stable-diffusion-3.5-large",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "71e183d11db0c6b6282a4d9e0abb74125edc8692393e89ed8ee5571005f35cb1"
               },
               {
                 "bytes" : 570,
@@ -46134,7 +46280,7 @@
                 "path" : "text_encoder_2/model.safetensors",
                 "repository" : "stabilityai/stable-diffusion-3.5-large",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "ec310df2af79c318e24d20511b601a591ca8cd4f1fce1d8dff822a356bcdb1f4"
               },
               {
                 "bytes" : 740,
@@ -46218,7 +46364,7 @@
                 "path" : "tokenizer_3/spiece.model",
                 "repository" : "stabilityai/stable-diffusion-3.5-large",
                 "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "sha256" : "d60acb128cf7b7f2536e8f38a5b18a05535c9e14c7a355904270e15b0945ea86"
               },
               {
                 "bytes" : 397,
@@ -46253,7 +46399,7 @@
                 "path" : "vae/diffusion_pytorch_model.safetensors",
                 "repository" : "stabilityai/stable-diffusion-3.5-large",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "8f53304a79335b55e13ec50f63e5157fee4deb2f30d5fae0654e2b2653c109dc"
               }
             ],
             "kind" : "huggingface",
@@ -46298,7 +46444,11 @@
         "url" : "https://huggingface.co/stabilityai/stable-diffusion-3-medium-diffusers/blob/main/LICENSE"
       },
       "memoryModel" : {
-        "residency" : "residency"
+        "residency" : "residency",
+        "stagePrecisions" : {
+          "text_encoder" : "loaded",
+          "transformer" : "loaded"
+        }
       },
       "options" : [
         {
@@ -46356,16 +46506,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 15499002486,
-                "residentBytes" : 15499002486
+                "peakBytes" : 17303042828,
+                "residentBytes" : 17303042828
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 11161354424,
-                "residentBytes" : 11161354424
+                "peakBytes" : 12797861888,
+                "residentBytes" : 12797861888
               },
               "title" : "Staged",
               "value" : "staged"
@@ -46405,7 +46555,7 @@
       ],
       "registryName" : "sd3-medium",
       "requirements" : {
-        "minimumMemoryBytes" : 18183907906,
+        "minimumMemoryBytes" : 20109210805,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -46427,32 +46577,38 @@
           "downloadBytes" : 15502989756,
           "id" : "default",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: text_encoder/model.safetensors (HTTP 401), text_encoder_2/model.safetensors (HTTP 401), vae/diffusion_pytorch_model.safetensors (HTTP 401) and 3 more",
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 11161354424
+                  "bfloat16" : 11161241600,
+                  "checkpoint" : 11161241600,
+                  "float32" : 22322483200,
+                  "loaded" : 12797861888
                 },
                 "id" : "text_encoder",
                 "title" : "text_encoder, text_encoder_2, text_encoder_3"
               },
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 4337648062
+                  "bfloat16" : 4337541574,
+                  "checkpoint" : 4337541574,
+                  "float32" : 8675083148,
+                  "loaded" : 4505180940
                 },
                 "id" : "transformer",
                 "title" : "transformer, vae"
               }
             ]
           },
-          "minimumMemoryBytes" : 18183907906,
-          "peakBytes" : 11161354424,
+          "minimumMemoryBytes" : 20109210805,
+          "parameterCount" : 7749391587,
+          "peakBytes" : 12797861888,
+          "precision" : "float16",
           "registryName" : "sd3-medium",
-          "residentBytes" : 11161354424,
-          "residentEstimate" : "stored-dtype",
+          "residentBytes" : 12797861888,
           "source" : {
             "files" : [
               {
@@ -46478,7 +46634,7 @@
                 "optional" : false,
                 "path" : "text_encoder/model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "71e183d11db0c6b6282a4d9e0abb74125edc8692393e89ed8ee5571005f35cb1"
               },
               {
                 "bytes" : 570,
@@ -46491,7 +46647,7 @@
                 "optional" : false,
                 "path" : "text_encoder_2/model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "ec310df2af79c318e24d20511b601a591ca8cd4f1fce1d8dff822a356bcdb1f4"
               },
               {
                 "bytes" : 740,
@@ -46563,7 +46719,7 @@
                 "optional" : false,
                 "path" : "tokenizer_3/spiece.model",
                 "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "sha256" : "d60acb128cf7b7f2536e8f38a5b18a05535c9e14c7a355904270e15b0945ea86"
               },
               {
                 "bytes" : 372,
@@ -46576,7 +46732,7 @@
                 "optional" : true,
                 "path" : "transformer/diffusion_pytorch_model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "8b0e357dd04755fbfb067c63f4a883ac1de2942dd4a3240069874a17022e5418"
               },
               {
                 "optional" : true,
@@ -46594,7 +46750,7 @@
                 "optional" : false,
                 "path" : "vae/diffusion_pytorch_model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "f9b67a279283625caee39d61eacb5324243848477b4eb535355eaaa8423d4e09"
               }
             ],
             "kind" : "huggingface",
@@ -46639,7 +46795,11 @@
         "url" : "https://stability.ai/community-license-agreement"
       },
       "memoryModel" : {
-        "residency" : "residency"
+        "residency" : "residency",
+        "stagePrecisions" : {
+          "text_encoder" : "loaded",
+          "transformer" : "loaded"
+        }
       },
       "options" : [
         {
@@ -46697,16 +46857,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 27621726622,
-                "residentBytes" : 27621726622
+                "peakBytes" : 29425702156,
+                "residentBytes" : 29425702156
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 16460372198,
-                "residentBytes" : 16460372198
+                "peakBytes" : 16627840268,
+                "residentBytes" : 16627840268
               },
               "title" : "Staged",
               "value" : "staged"
@@ -46746,7 +46906,7 @@
       ],
       "registryName" : "sd3.5-large",
       "requirements" : {
-        "minimumMemoryBytes" : 24418046464,
+        "minimumMemoryBytes" : 24615067723,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -46768,32 +46928,38 @@
           "downloadBytes" : 27625840854,
           "id" : "default",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: text_encoder/model.safetensors (HTTP 401), text_encoder_2/model.safetensors (HTTP 401), vae/diffusion_pytorch_model.safetensors (HTTP 401) and 4 more",
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 11161354424
+                  "bfloat16" : 11161241600,
+                  "checkpoint" : 11161241600,
+                  "float32" : 22322483200,
+                  "loaded" : 12797861888
                 },
                 "id" : "text_encoder",
                 "title" : "text_encoder, text_encoder_2, text_encoder_3"
               },
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 16460372198
+                  "bfloat16" : 16460200902,
+                  "checkpoint" : 16460200902,
+                  "float32" : 32920401804,
+                  "loaded" : 16627840268
                 },
                 "id" : "transformer",
                 "title" : "transformer, vae"
               }
             ]
           },
-          "minimumMemoryBytes" : 24418046464,
-          "peakBytes" : 16460372198,
+          "minimumMemoryBytes" : 24615067723,
+          "parameterCount" : 13810721251,
+          "peakBytes" : 16627840268,
+          "precision" : "bfloat16",
           "registryName" : "sd3.5-large",
-          "residentBytes" : 16460372198,
-          "residentEstimate" : "stored-dtype",
+          "residentBytes" : 16627840268,
           "source" : {
             "files" : [
               {
@@ -46819,7 +46985,7 @@
                 "optional" : false,
                 "path" : "text_encoder/model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "71e183d11db0c6b6282a4d9e0abb74125edc8692393e89ed8ee5571005f35cb1"
               },
               {
                 "bytes" : 570,
@@ -46832,7 +46998,7 @@
                 "optional" : false,
                 "path" : "text_encoder_2/model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "ec310df2af79c318e24d20511b601a591ca8cd4f1fce1d8dff822a356bcdb1f4"
               },
               {
                 "bytes" : 740,
@@ -46904,7 +47070,7 @@
                 "optional" : false,
                 "path" : "tokenizer_3/spiece.model",
                 "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "sha256" : "d60acb128cf7b7f2536e8f38a5b18a05535c9e14c7a355904270e15b0945ea86"
               },
               {
                 "bytes" : 397,
@@ -46934,7 +47100,7 @@
                 "optional" : false,
                 "path" : "vae/diffusion_pytorch_model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "8f53304a79335b55e13ec50f63e5157fee4deb2f30d5fae0654e2b2653c109dc"
               }
             ],
             "kind" : "huggingface",
@@ -46979,7 +47145,11 @@
         "url" : "https://stability.ai/community-license-agreement"
       },
       "memoryModel" : {
-        "residency" : "residency"
+        "residency" : "residency",
+        "stagePrecisions" : {
+          "text_encoder" : "loaded",
+          "transformer" : "loaded"
+        }
       },
       "options" : [
         {
@@ -47037,16 +47207,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 27621726622,
-                "residentBytes" : 27621726622
+                "peakBytes" : 29425702156,
+                "residentBytes" : 29425702156
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 16460372198,
-                "residentBytes" : 16460372198
+                "peakBytes" : 16627840268,
+                "residentBytes" : 16627840268
               },
               "title" : "Staged",
               "value" : "staged"
@@ -47075,7 +47245,7 @@
       ],
       "registryName" : "sd3.5-large-turbo",
       "requirements" : {
-        "minimumMemoryBytes" : 24418046464,
+        "minimumMemoryBytes" : 24615067723,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -47097,32 +47267,38 @@
           "downloadBytes" : 27625840854,
           "id" : "default",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: text_encoder/model.safetensors (HTTP 401), text_encoder_2/model.safetensors (HTTP 401), vae/diffusion_pytorch_model.safetensors (HTTP 401) and 4 more",
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 11161354424
+                  "bfloat16" : 11161241600,
+                  "checkpoint" : 11161241600,
+                  "float32" : 22322483200,
+                  "loaded" : 12797861888
                 },
                 "id" : "text_encoder",
                 "title" : "text_encoder, text_encoder_2, text_encoder_3"
               },
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 16460372198
+                  "bfloat16" : 16460200902,
+                  "checkpoint" : 16460200902,
+                  "float32" : 32920401804,
+                  "loaded" : 16627840268
                 },
                 "id" : "transformer",
                 "title" : "transformer, vae"
               }
             ]
           },
-          "minimumMemoryBytes" : 24418046464,
-          "peakBytes" : 16460372198,
+          "minimumMemoryBytes" : 24615067723,
+          "parameterCount" : 13810721251,
+          "peakBytes" : 16627840268,
+          "precision" : "bfloat16",
           "registryName" : "sd3.5-large-turbo",
-          "residentBytes" : 16460372198,
-          "residentEstimate" : "stored-dtype",
+          "residentBytes" : 16627840268,
           "source" : {
             "files" : [
               {
@@ -47148,7 +47324,7 @@
                 "optional" : false,
                 "path" : "text_encoder/model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "71e183d11db0c6b6282a4d9e0abb74125edc8692393e89ed8ee5571005f35cb1"
               },
               {
                 "bytes" : 570,
@@ -47161,7 +47337,7 @@
                 "optional" : false,
                 "path" : "text_encoder_2/model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "ec310df2af79c318e24d20511b601a591ca8cd4f1fce1d8dff822a356bcdb1f4"
               },
               {
                 "bytes" : 740,
@@ -47233,7 +47409,7 @@
                 "optional" : false,
                 "path" : "tokenizer_3/spiece.model",
                 "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "sha256" : "d60acb128cf7b7f2536e8f38a5b18a05535c9e14c7a355904270e15b0945ea86"
               },
               {
                 "bytes" : 397,
@@ -47263,7 +47439,7 @@
                 "optional" : false,
                 "path" : "vae/diffusion_pytorch_model.safetensors",
                 "role" : "weights",
-                "sha256" : "****************************************************************"
+                "sha256" : "8f53304a79335b55e13ec50f63e5157fee4deb2f30d5fae0654e2b2653c109dc"
               }
             ],
             "kind" : "huggingface",
@@ -47404,7 +47580,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -47745,7 +47921,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -48174,8 +48350,37 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/google/siglip2-base-patch16-224"
       },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 1500751880,
+                "residentBytes" : 1500751880
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 750375940,
+                "residentBytes" : 750375940
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        }
       ],
       "outputModalities" : [
         "embedding"
@@ -48279,8 +48484,37 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/google/siglip2-base-patch16-256"
       },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 1500936200,
+                "residentBytes" : 1500936200
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 750468100,
+                "residentBytes" : 750468100
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        }
       ],
       "outputModalities" : [
         "embedding"
@@ -48384,8 +48618,37 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/google/siglip2-base-patch16-384"
       },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 1501919240,
+                "residentBytes" : 1501919240
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 750959620,
+                "residentBytes" : 750959620
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        }
       ],
       "outputModalities" : [
         "embedding"
@@ -48489,8 +48752,37 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/google/siglip2-base-patch16-512"
       },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 1503295496,
+                "residentBytes" : 1503295496
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 751647748,
+                "residentBytes" : 751647748
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        }
       ],
       "outputModalities" : [
         "embedding"
@@ -48594,8 +48886,37 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/google/siglip2-base-patch32-256"
       },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 1507424264,
+                "residentBytes" : 1507424264
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 753712132,
+                "residentBytes" : 753712132
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        }
       ],
       "outputModalities" : [
         "embedding"
@@ -48699,8 +49020,37 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/google/siglip2-giant-opt-patch16-256"
       },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 7485575624,
+                "residentBytes" : 7485575624
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 3742787812,
+                "residentBytes" : 3742787812
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        }
       ],
       "outputModalities" : [
         "embedding"
@@ -48803,8 +49153,37 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/google/siglip2-giant-opt-patch16-384"
       },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 7487541704,
+                "residentBytes" : 7487541704
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 3743770852,
+                "residentBytes" : 3743770852
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        }
       ],
       "outputModalities" : [
         "embedding"
@@ -48907,8 +49286,37 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/google/siglip2-large-patch16-256"
       },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 3526107144,
+                "residentBytes" : 3526107144
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1763053572,
+                "residentBytes" : 1763053572
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        }
       ],
       "outputModalities" : [
         "embedding"
@@ -49012,8 +49420,37 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/google/siglip2-large-patch16-384"
       },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 3527417864,
+                "residentBytes" : 3527417864
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1763708932,
+                "residentBytes" : 1763708932
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        }
       ],
       "outputModalities" : [
         "embedding"
@@ -49117,8 +49554,37 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/google/siglip2-large-patch16-512"
       },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 3529252872,
+                "residentBytes" : 3529252872
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1764626436,
+                "residentBytes" : 1764626436
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        }
       ],
       "outputModalities" : [
         "embedding"
@@ -49296,8 +49762,37 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/google/siglip2-so400m-patch14-224"
       },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 4541854408,
+                "residentBytes" : 4541854408
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2270927204,
+                "residentBytes" : 2270927204
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        }
       ],
       "outputModalities" : [
         "embedding"
@@ -49401,8 +49896,37 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/google/siglip2-so400m-patch14-384"
       },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 4544033992,
+                "residentBytes" : 4544033992
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2272016996,
+                "residentBytes" : 2272016996
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        }
       ],
       "outputModalities" : [
         "embedding"
@@ -49506,8 +50030,37 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/google/siglip2-so400m-patch16-256"
       },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 4542683848,
+                "residentBytes" : 4542683848
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2271341924,
+                "residentBytes" : 2271341924
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        }
       ],
       "outputModalities" : [
         "embedding"
@@ -49611,8 +50164,37 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/google/siglip2-so400m-patch16-384"
       },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 4544158408,
+                "residentBytes" : 4544158408
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2272079204,
+                "residentBytes" : 2272079204
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        }
       ],
       "outputModalities" : [
         "embedding"
@@ -49716,8 +50298,37 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/google/siglip2-so400m-patch16-512"
       },
+      "memoryModel" : {
+        "precision" : "precision"
+      },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 4546222792,
+                "residentBytes" : 4546222792
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2273111396,
+                "residentBytes" : 2273111396
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        }
       ],
       "outputModalities" : [
         "embedding"
@@ -51394,7 +52005,11 @@
         "url" : "https://stability.ai/community-license-agreement"
       },
       "memoryModel" : {
-        "residency" : "residency"
+        "residency" : "residency",
+        "stagePrecisions" : {
+          "projection_model" : "float32",
+          "transformer" : "float32"
+        }
       },
       "options" : [
         {
@@ -51458,16 +52073,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 5292306952,
+                "residentBytes" : 5292306952
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 4852206600,
+                "residentBytes" : 4852206600
               },
               "title" : "Staged",
               "value" : "staged"
@@ -51507,6 +52122,7 @@
       ],
       "registryName" : "stable-audio-open-1.0",
       "requirements" : {
+        "minimumMemoryBytes" : 10761381055,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -51526,89 +52142,140 @@
       "variants" : [
         {
           "displayName" : "Stable Audio Open 1.0",
+          "downloadBytes" : 5295661222,
           "id" : "1.0",
           "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 220050176,
+                  "checkpoint" : 440100352,
+                  "float32" : 440100352
+                },
+                "id" : "projection_model",
+                "title" : "projection_model, text_encoder"
+              },
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 2426103300,
+                  "checkpoint" : 4852206600,
+                  "float32" : 4852206600
+                },
+                "id" : "transformer",
+                "title" : "transformer, vae"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 10761381055,
+          "parameterCount" : 1323076738,
+          "peakBytes" : 4852206600,
+          "precision" : "float32",
           "registryName" : "stable-audio-open-1.0",
+          "residentBytes" : 4852206600,
           "source" : {
             "files" : [
               {
+                "bytes" : 498,
                 "optional" : false,
                 "path" : "model_index.json",
                 "role" : "other"
               },
               {
+                "bytes" : 411,
                 "optional" : false,
                 "path" : "scheduler/scheduler_config.json",
                 "role" : "config"
               },
               {
+                "bytes" : 1497,
                 "optional" : false,
                 "path" : "text_encoder/config.json",
                 "role" : "config"
               },
               {
+                "bytes" : 438525864,
                 "optional" : false,
                 "path" : "text_encoder/model.safetensors",
-                "role" : "weights"
+                "role" : "weights",
+                "sha256" : "095878c81d21f17d235e1b4aa20e9595289177e2658ef4dcec69fa5aa3b07ca2"
               },
               {
+                "bytes" : 791656,
                 "optional" : false,
                 "path" : "tokenizer/spiece.model",
-                "role" : "other"
+                "role" : "other",
+                "sha256" : "d60acb128cf7b7f2536e8f38a5b18a05535c9e14c7a355904270e15b0945ea86"
               },
               {
+                "bytes" : 20768,
                 "optional" : false,
                 "path" : "tokenizer/tokenizer_config.json",
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 181,
                 "optional" : false,
                 "path" : "projection_model/config.json",
                 "role" : "config"
               },
               {
+                "bytes" : 1586944,
                 "optional" : false,
                 "path" : "projection_model/diffusion_pytorch_model.safetensors",
-                "role" : "weights"
+                "role" : "weights",
+                "sha256" : "032102e2b0e4b9b9e19c648dc476345157b97906752a7b4b7a0133900f340926"
               },
               {
+                "bytes" : 391,
                 "optional" : false,
                 "path" : "transformer/config.json",
                 "role" : "config"
               },
               {
+                "bytes" : 350,
                 "optional" : false,
                 "path" : "vae/config.json",
                 "role" : "config"
               },
               {
+                "bytes" : 624490240,
                 "optional" : false,
                 "path" : "vae/diffusion_pytorch_model.safetensors",
-                "role" : "weights"
+                "role" : "weights",
+                "sha256" : "2131cdb52020b2473707465449d8bdb4f6cca61c93150a947baca02bc58ffd7b"
               },
               {
+                "bytes" : 2201,
                 "optional" : true,
                 "path" : "tokenizer/special_tokens_map.json",
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 2422169,
                 "optional" : true,
                 "path" : "tokenizer/tokenizer.json",
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 11852,
                 "optional" : true,
                 "path" : "LICENSE.md",
                 "role" : "other"
               },
               {
+                "bytes" : 4227806200,
                 "optional" : false,
                 "path" : "transformer/diffusion_pytorch_model.safetensors",
-                "role" : "weights"
+                "role" : "weights",
+                "sha256" : "65ae9715febfeb2dc9f33aa506c2bda69fd2ddf8ebc483fb2df090df4ca506fd"
               }
             ],
             "kind" : "huggingface",
             "layout" : "directory",
+            "measuredRevision" : "f21265c1e2710b3bd2386596943f0007f55f802e",
             "repository" : "stabilityai/stable-audio-open-1.0",
             "requiresConversion" : false
           }
@@ -51744,7 +52411,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -52011,7 +52678,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -52315,7 +52982,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -54591,21 +55258,21 @@
             },
             {
               "memory" : {
-                "peakBytes" : 8600277880,
-                "residentBytes" : 8600277880
+                "peakBytes" : 8600158944,
+                "residentBytes" : 8600158944
               },
               "memoryByVariant" : {
                 "translategemma-4b-it" : {
-                  "peakBytes" : 8600277880,
-                  "residentBytes" : 8600277880
+                  "peakBytes" : 8600158944,
+                  "residentBytes" : 8600158944
                 },
                 "translategemma-12b-it" : {
-                  "peakBytes" : 24374793024,
-                  "residentBytes" : 24374793024
+                  "peakBytes" : 24374650080,
+                  "residentBytes" : 24374650080
                 },
                 "translategemma-27b-it" : {
-                  "peakBytes" : 54864980440,
-                  "residentBytes" : 54864980440
+                  "peakBytes" : 54864813280,
+                  "residentBytes" : 54864813280
                 }
               },
               "title" : "Resident",
@@ -54613,21 +55280,21 @@
             },
             {
               "memory" : {
-                "peakBytes" : 8600277880,
-                "residentBytes" : 8600277880
+                "peakBytes" : 2559673056,
+                "residentBytes" : 2559673056
               },
               "memoryByVariant" : {
                 "translategemma-4b-it" : {
-                  "peakBytes" : 8600277880,
-                  "residentBytes" : 8600277880
+                  "peakBytes" : 2559673056,
+                  "residentBytes" : 2559673056
                 },
                 "translategemma-12b-it" : {
-                  "peakBytes" : 24374793024,
-                  "residentBytes" : 24374793024
+                  "peakBytes" : 3752942816,
+                  "residentBytes" : 3752942816
                 },
                 "translategemma-27b-it" : {
-                  "peakBytes" : 54864980440,
-                  "residentBytes" : 54864980440
+                  "peakBytes" : 5316986080,
+                  "residentBytes" : 5316986080
                 }
               },
               "title" : "Streamed",
@@ -54646,21 +55313,21 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 8600277880,
-                "residentBytes" : 8600277880
+                "peakBytes" : 8600158944,
+                "residentBytes" : 8600158944
               },
               "memoryByVariant" : {
                 "translategemma-4b-it" : {
-                  "peakBytes" : 8600277880,
-                  "residentBytes" : 8600277880
+                  "peakBytes" : 8600158944,
+                  "residentBytes" : 8600158944
                 },
                 "translategemma-12b-it" : {
-                  "peakBytes" : 24374793024,
-                  "residentBytes" : 24374793024
+                  "peakBytes" : 24374650080,
+                  "residentBytes" : 24374650080
                 },
                 "translategemma-27b-it" : {
-                  "peakBytes" : 54864980440,
-                  "residentBytes" : 54864980440
+                  "peakBytes" : 54864813280,
+                  "residentBytes" : 54864813280
                 }
               },
               "title" : "As published",
@@ -54668,21 +55335,21 @@
             },
             {
               "memory" : {
-                "peakBytes" : 8600277880,
-                "residentBytes" : 8600277880
+                "peakBytes" : 17200317888,
+                "residentBytes" : 17200317888
               },
               "memoryByVariant" : {
                 "translategemma-4b-it" : {
-                  "peakBytes" : 8600277880,
-                  "residentBytes" : 8600277880
+                  "peakBytes" : 17200317888,
+                  "residentBytes" : 17200317888
                 },
                 "translategemma-12b-it" : {
-                  "peakBytes" : 24374793024,
-                  "residentBytes" : 24374793024
+                  "peakBytes" : 48749300160,
+                  "residentBytes" : 48749300160
                 },
                 "translategemma-27b-it" : {
-                  "peakBytes" : 54864980440,
-                  "residentBytes" : 54864980440
+                  "peakBytes" : 109729626560,
+                  "residentBytes" : 109729626560
                 }
               },
               "title" : "Float32",
@@ -54691,7 +55358,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -54723,7 +55390,7 @@
       ],
       "registryName" : "translategemma",
       "requirements" : {
-        "minimumMemoryBytes" : 15170876678,
+        "minimumMemoryBytes" : 15170736753,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -54745,24 +55412,34 @@
           "downloadBytes" : 8634928912,
           "id" : "translategemma-4b-it",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: model-00001-of-00002.safetensors (HTTP 401), model-00002-of-00002.safetensors (HTTP 401)",
           "memoryFacts" : {
             "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 8600277880
+                  "bfloat16" : 8600158944,
+                  "checkpoint" : 8600158944,
+                  "float32" : 17200317888
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 188765184,
+                  "checkpoint" : 188765184,
+                  "float32" : 377530368
+                },
+                "layerCount" : 34,
                 "title" : "decoder"
               }
-            ]
+            ],
+            "vocabularySize" : 262208
           },
-          "minimumMemoryBytes" : 15170876678,
-          "peakBytes" : 8600277880,
+          "minimumMemoryBytes" : 15170736753,
+          "parameterCount" : 4300079472,
+          "peakBytes" : 8600158944,
+          "precision" : "bfloat16",
           "registryName" : "translategemma",
-          "residentBytes" : 8600277880,
+          "residentBytes" : 8600158944,
           "source" : {
             "files" : [
               {
@@ -54776,7 +55453,7 @@
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "sha256" : "7d4046bf0505a327dd5a0abbb427ecd4fc82f99c2ceaa170bc61ecde12809b0c"
               },
               {
                 "bytes" : 1155415,
@@ -54832,24 +55509,34 @@
           "downloadBytes" : 24409462474,
           "id" : "translategemma-12b-it",
           "isDefault" : false,
-          "measurementNote" : "tensor headers unread: model-00001-of-00005.safetensors (HTTP 401), model-00002-of-00005.safetensors (HTTP 401), model-00003-of-00005.safetensors (HTTP 401) and 2 more",
           "memoryFacts" : {
             "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 24374793024
+                  "bfloat16" : 24374650080,
+                  "checkpoint" : 24374650080,
+                  "float32" : 48749300160
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 448297984,
+                  "checkpoint" : 448297984,
+                  "float32" : 896595968
+                },
+                "layerCount" : 48,
                 "title" : "decoder"
               }
-            ]
+            ],
+            "vocabularySize" : 262208
           },
-          "minimumMemoryBytes" : 33729129789,
-          "peakBytes" : 24374793024,
+          "minimumMemoryBytes" : 33728961619,
+          "parameterCount" : 12187325040,
+          "peakBytes" : 24374650080,
+          "precision" : "bfloat16",
           "registryName" : "translategemma",
-          "residentBytes" : 24374793024,
+          "residentBytes" : 24374650080,
           "source" : {
             "files" : [
               {
@@ -54863,7 +55550,7 @@
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "sha256" : "7d4046bf0505a327dd5a0abbb427ecd4fc82f99c2ceaa170bc61ecde12809b0c"
               },
               {
                 "bytes" : 1155415,
@@ -54919,24 +55606,34 @@
           "downloadBytes" : 54899668309,
           "id" : "translategemma-27b-it",
           "isDefault" : false,
-          "measurementNote" : "tensor headers unread: model-00001-of-00012.safetensors (HTTP 401), model-00002-of-00012.safetensors (HTTP 401), model-00003-of-00012.safetensors (HTTP 401) and 9 more",
           "memoryFacts" : {
             "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 54864980440
+                  "bfloat16" : 54864813280,
+                  "checkpoint" : 54864813280,
+                  "float32" : 109729626560
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 825797120,
+                  "checkpoint" : 825797120,
+                  "float32" : 1651594240
+                },
+                "layerCount" : 62,
                 "title" : "decoder"
               }
-            ]
+            ],
+            "vocabularySize" : 262208
           },
-          "minimumMemoryBytes" : 69599938513,
-          "peakBytes" : 54864980440,
+          "minimumMemoryBytes" : 69599741855,
+          "parameterCount" : 27432406640,
+          "peakBytes" : 54864813280,
+          "precision" : "bfloat16",
           "registryName" : "translategemma",
-          "residentBytes" : 54864980440,
+          "residentBytes" : 54864813280,
           "source" : {
             "files" : [
               {
@@ -54950,7 +55647,7 @@
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "sha256" : "7d4046bf0505a327dd5a0abbb427ecd4fc82f99c2ceaa170bc61ecde12809b0c"
               },
               {
                 "bytes" : 1155415,
@@ -59892,10 +60589,10 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "precision" : "precision",
         "residency" : "residency",
         "stagePrecisions" : {
-          "text_encoder" : "bfloat16",
-          "transformer" : "loaded"
+          "text_encoder" : "bfloat16"
         }
       },
       "options" : [
@@ -59995,6 +60692,33 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 11361820672,
+                "residentBytes" : 11361820672
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11361820672,
+                "residentBytes" : 11361820672
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the transformer loads at. As published keeps its own weights; another choice converts them as it loads. The other stages load as their parity records were measured.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
         }
       ],
       "outputModalities" : [
@@ -60060,7 +60784,7 @@
               },
               {
                 "bytesByPrecision" : {
-                  "bfloat16" : 3091778662,
+                  "bfloat16" : 3345563724,
                   "checkpoint" : 6183557324,
                   "float32" : 6183557324,
                   "loaded" : 6183557324
@@ -60199,10 +60923,10 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
+        "precision" : "precision",
         "residency" : "residency",
         "stagePrecisions" : {
-          "text_encoder" : "bfloat16",
-          "transformer" : "loaded"
+          "text_encoder" : "bfloat16"
         }
       },
       "options" : [
@@ -60302,6 +61026,33 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 57661536460,
+                "residentBytes" : 57661536460
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 29084553292,
+                "residentBytes" : 29084553292
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the transformer loads at. As published keeps its own weights; another choice converts them as it loads. The other stages load as their parity records were measured.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
         }
       ],
       "outputModalities" : [
@@ -60367,7 +61118,7 @@
               },
               {
                 "bytesByPrecision" : {
-                  "bfloat16" : 28830768230,
+                  "bfloat16" : 29084553292,
                   "checkpoint" : 57661536460,
                   "float32" : 57661536460,
                   "loaded" : 57661536460
@@ -60674,7 +61425,7 @@
               },
               {
                 "bytesByPrecision" : {
-                  "bfloat16" : 11408952760,
+                  "bfloat16" : 12818330096,
                   "checkpoint" : 22817905520,
                   "float32" : 22817905520,
                   "loaded" : 22817905520
@@ -61950,7 +62701,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -62096,7 +62847,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -62242,7 +62993,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -62388,7 +63139,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -62534,7 +63285,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -62680,7 +63431,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -62826,7 +63577,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -62972,7 +63723,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
