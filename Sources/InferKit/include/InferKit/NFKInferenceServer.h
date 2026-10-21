@@ -18,6 +18,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @class NFKModelCatalog;
+@class NFKModelMemoryBudget;
 @class NFKModelPreset;
 @class NFKBackendTool;
 
@@ -82,6 +83,13 @@ typedef NS_ERROR_ENUM(NFKInferenceServerErrorDomain, NFKInferenceServerError) {
 
 /*! The name apiKey reads and writes among the server's keys. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKInferenceServerDefaultAPIKeyName;
+
+/*! In the userInfo of a build admission refused: the hosted models that held memory, each a dictionary of
+	"model" (its name), "bytes" (what it holds), and "reason", why admission could not release it:
+	"pinned", "running", "queued", "grace", "permanent" (hosted with a ready backend), "loading", or
+	"available" when it could go but releasing every such model frees too little. Introduced in InferKit
+	0.4.0. */
+extern NSString * const NFKInferenceServerAdmissionModelsKey;
 
 /*!
 	@protocol   NFKServingRuntimeStatus
@@ -797,6 +805,34 @@ NS_SWIFT_SENDABLE
 /*! The cached routed experts relief keeps in each model, in bytes. Defaults to 0. Introduced in InferKit
 	0.4.0. */
 @property (atomic, assign) NSInteger expertCacheReliefFloor;
+
+/*!
+	@property   admitsModelsByMemory
+	@abstract   Whether a build first makes room for the model beside the models already resident.
+	@discussion Defaults to YES. Before a hosted model builds, the server adds the build's estimated peak (a
+				catalog model's estimate, or the peak its last load measured) to what the other hosted models
+				hold (their measured resident bytes, and what admission reserved for builds under way), and
+				holds the sum to admissionMemoryBudget. When it does not fit, the server tries, in order:
+				- a catalog model whose residency is automatic loads in the residency the planner chooses
+				  for the room left, such as staged or paged;
+				- the caches go, as relieveMemoryByteCount:completionHandler: releases them;
+				- idle models go, least recently used first, reported with
+				  NFKServerModelEventReasonAdmission, when releasing them frees enough.
+				A build that still does not fit waits up to admissionWaitInterval for a model to become
+				releasable, then fails with NFKModelCatalogErrorDoesNotFit in NFKModelCatalogErrorDomain,
+				its userInfo naming the models considered under NFKInferenceServerAdmissionModelsKey. A
+				build whose peak is unknown, or a budget the machine does not report, is admitted.
+				Introduced in InferKit 0.4.0.
+*/
+@property (atomic, assign) BOOL admitsModelsByMemory;
+
+/*! The budget admission holds the hosted models to, or nil for +[NFKModelMemoryBudget currentBudget].
+	Introduced in InferKit 0.4.0. */
+@property (atomic, copy, nullable) NFKModelMemoryBudget *admissionMemoryBudget;
+
+/*! How long a build that does not fit waits for a model to become releasable, in seconds. Defaults to 0,
+	which refuses at once. Introduced in InferKit 0.4.0. */
+@property (atomic, assign) NSTimeInterval admissionWaitInterval;
 
 /*! Stops hosting the model. Its queued runs fail; its running ones finish. The server calls the backend's
 	unload, when it implements one, so its memory is freed once the running runs end. Replacing a model

@@ -157,6 +157,7 @@ static const void *const NFKPluginPublicInterface[] = {
 	(const void *)&NFKInferenceServerServiceType,
 	(const void *)&NFKInferenceServerErrorDomain,
 	(const void *)&NFKInferenceServerDefaultAPIKeyName,
+	(const void *)&NFKInferenceServerAdmissionModelsKey,
 	(const void *)&NFKMultiArrayFromInterleaved,
 	(const void *)&NFKInterleavedFromMultiArray,
 	(const void *)&NFKModelCatalogErrorDomain,

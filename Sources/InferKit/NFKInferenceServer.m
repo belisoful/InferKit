@@ -36,6 +36,7 @@ const uint16_t NFKInferenceServerDefaultPort = 11480;
 NSString * const NFKInferenceServerServiceType = @"_inferkit._tcp";
 NSString * const NFKInferenceServerErrorDomain = @"NFKInferenceServerErrorDomain";
 NSString * const NFKInferenceServerDefaultAPIKeyName = @"default";
+NSString * const NFKInferenceServerAdmissionModelsKey = @"NFKInferenceServerAdmissionModels";
 
 static NSString * const NFKServedBasePath = @"/v1";
 
@@ -362,6 +363,13 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 															 NSTimeInterval loadSeconds, NSError * _Nullable error);
 /*! Why the build in progress started. */
 @property (nonatomic, assign) NFKServerModelEventReason buildReason;
+/*! Admits a build before it starts: nil to go ahead, or the error that refuses it. Called off the model's
+	lock, on the build's queue. */
+@property (nonatomic, copy, nullable) NSError * _Nullable (^admissionHandler)(NFKServedModel *model);
+/*! The residency admission planned for the build in progress, or nil to build as the options say. */
+@property (atomic, copy, nullable) NSString *admittedResidency;
+/*! The bytes admission reserved for the build in progress; 0 when none is under way. */
+@property (atomic, assign) NSInteger admittedBytes;
 @property (nonatomic, strong, nullable) id<NFKInferenceBackend> backend;
 /*! Builds the backend; nil for a model hosted with a ready backend, which is never unloaded. */
 @property (nonatomic, copy, nullable) NFKServedBackendProvider provider;
@@ -578,13 +586,20 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 - (void)build
 {
 	NFKServedBackendProvider provider = nil;
+	NSError * _Nullable (^admission)(NFKServedModel *model) = nil;
 	@synchronized (self) {
 		provider = self.provider;
+		admission = self.admissionHandler;
 	}
 	// A global queue drains no autorelease pool per block, so a backend the provider autoreleases would
 	// outlive its unload until the worker thread exits; a backend that holds a process keeps it running.
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
 		@autoreleasepool {
+			NSError *refusal = admission != nil ? admission(self) : nil;
+			if (refusal != nil) {
+				[self buildEndedWithBackend:nil residentBytes:nil peakBytes:nil error:refusal];
+				return;
+			}
 			NFKServedLoadMeter *meter = [NFKServedLoadMeter meterStartingNow];
 			NSError *error = nil;
 			id<NFKInferenceBackend> backend = nil;
@@ -610,6 +625,8 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 						error:(nullable NSError *)error
 {
 	NSDictionary<NSString *, id> *description = backend != nil ? [NFKServedModel descriptionOfBackend:backend] : nil;
+	self.admittedBytes = 0;
+	self.admittedResidency = nil;
 	NSError *failure = nil;
 	if (backend == nil) {
 		failure = error ?: NFKServedError(NFKInferenceErrorDomain, kNFKError_InferenceBackendFailure,
@@ -712,6 +729,39 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 {
 	return self.provider != nil && !self.removed && self.residency == NFKServerModelResidencyResident
 		&& self.running.count == 0 && self.pending.count == 0;
+}
+
+/*! Why admission cannot release the model now: "permanent" for a ready backend, "running", "queued", or
+	"grace"; nil when it can, or when the model holds no backend. Pinning is the server's to judge. */
+- (nullable NSString *)admissionIneligibilityWithGrace:(NSTimeInterval)grace at:(NSTimeInterval)now
+{
+	@synchronized (self) {
+		if (self.removed || self.residency != NFKServerModelResidencyResident) {
+			return nil;
+		}
+		if (self.provider == nil) {
+			return @"permanent";
+		}
+		if (self.running.count > 0) {
+			return @"running";
+		}
+		if (self.pending.count > 0) {
+			return @"queued";
+		}
+		return now - self.loadedAt < grace ? @"grace" : nil;
+	}
+}
+
+/*! The bytes the model holds now for admission's accounting: its last measured resident bytes while
+	resident, what admission reserved while it builds, else 0. */
+- (NSInteger)admissionHeldBytes
+{
+	@synchronized (self) {
+		if (self.residency == NFKServerModelResidencyResident) {
+			return MAX(self.residentBytes.integerValue, 0);
+		}
+		return self.residency == NFKServerModelResidencyLoading ? self.admittedBytes : 0;
+	}
 }
 
 /*! Whether a run holds a slot or a backend is being built, which a runtime's cache release must not
@@ -1322,6 +1372,8 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 @property (nonatomic, copy) NSTimeInterval (^uptimeProvider)(void);
 /*! Guards the unloading state below and the per-model idle intervals. */
 @property (nonatomic, strong) NSObject *residencyLock;
+/*! Serializes admission decisions, so two builds cannot each count the room the other takes. */
+@property (nonatomic, strong) NSObject *admissionLock;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *idleUnloadIntervals;
 @property (nonatomic, strong) NSMutableSet<NSString *> *pinnedNames;
 @property (nonatomic, assign) double heldPressure;
@@ -1409,6 +1461,8 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 			return NFKServedNow();
 		};
 		_residencyLock = [[NSObject alloc] init];
+		_admissionLock = [[NSObject alloc] init];
+		_admitsModelsByMemory = YES;
 		_idleUnloadIntervals = [NSMutableDictionary dictionary];
 		_pinnedNames = [NSMutableSet set];
 		_memoryPressureOnset = 0.6;
@@ -2092,6 +2146,9 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	model.unloadHandler = ^{
 		[weakSelf releaseRuntimeCachesWhenIdle];
 	};
+	model.admissionHandler = ^NSError * _Nullable (NFKServedModel *admitted) {
+		return [weakSelf admitModel:admitted];
+	};
 	model.runObserver = ^(NFKServedRun *run, NFKServerRunState state, NSError *error) {
 		[weakSelf reportRun:run ofModelNamed:modelName state:state error:error];
 	};
@@ -2232,8 +2289,14 @@ static NSDictionary<NSString *, id> *NFKServedOptionsAtStage(NFKModelDescriptor 
 	model.givenOptions = buildOptions;
 	model.hostedLoadOptions = loadOptions;
 	model.loadKey = [descriptor canonicalLoadOptionsKey:loadOptions];
+	__weak NFKServedModel *weakModel = model;
 	model.provider = ^id<NFKInferenceBackend>(NSError **buildError) {
-		return [catalog backendForModelIdentifier:buildIdentifier options:buildOptions error:buildError];
+		NSString *residency = weakModel.admittedResidency;
+		NSMutableDictionary<NSString *, id> *options = [buildOptions mutableCopy];
+		if (residency != nil) {
+			options[NFKModelLoadOptionResidency] = residency;
+		}
+		return [catalog backendForModelIdentifier:buildIdentifier options:options error:buildError];
 	};
 	model.residency = NFKServerModelResidencyNotLoaded;
 	return model;
@@ -2723,6 +2786,155 @@ static NSDictionary<NSString *, id> *NFKServedOptionsAtStage(NFKModelDescriptor 
 			}
 		}
 	});
+}
+
+#pragma mark Admission
+
+/*! Admits model's build, making room as admitsModelsByMemory describes: nil to build, or the refusal. Runs
+	on the build's queue; waits up to admissionWaitInterval. */
+- (nullable NSError *)admitModel:(NFKServedModel *)model
+{
+	if (!self.admitsModelsByMemory) {
+		return nil;
+	}
+	NFKModelMemoryBudget *budget = self.admissionMemoryBudget ?: [NFKModelMemoryBudget currentBudget];
+	NFKModelMemoryEstimate *estimate = [self admissionEstimateForModel:model budget:nil];
+	NSInteger needed = estimate != nil ? estimate.peakByteCount : MAX(model.peakBytes.integerValue, model.residentBytes.integerValue);
+	if (!budget.isKnown || needed <= 0) {
+		return nil;
+	}
+	NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:MAX(self.admissionWaitInterval, 0)];
+	while (YES) {
+		NSError *refusal = nil;
+		@synchronized (self.admissionLock) {
+			refusal = [self admitModel:model needing:needed estimate:estimate budget:budget];
+		}
+		NSTimeInterval left = deadline.timeIntervalSinceNow;
+		if (refusal == nil || left <= 0) {
+			return refusal;
+		}
+		[NSThread sleepForTimeInterval:MIN(0.25, left)];
+	}
+}
+
+/*! One admission attempt. Runs on the admission lock. */
+- (nullable NSError *)admitModel:(NFKServedModel *)model
+						 needing:(NSInteger)needed
+						estimate:(nullable NFKModelMemoryEstimate *)estimate
+						  budget:(NFKModelMemoryBudget *)budget
+{
+	NSInteger held = [self admissionHeldBytesBeside:model];
+	if ([budget holdsByteCount:needed + held]) {
+		model.admittedBytes = needed;
+		return nil;
+	}
+	NFKModelMemoryEstimate *planned = [self admissionEstimateForModel:model inRoomBeside:held budget:budget estimate:estimate];
+	if (planned != nil) {
+		model.admittedResidency = planned.residency;
+		model.admittedBytes = planned.peakByteCount;
+		return nil;
+	}
+	NSInteger shortfall = needed + held + budget.reserveByteCount - budget.byteCount;
+	NSArray<NSDictionary<NSString *, id> *> *considered = [self admissionModelsBeside:model];
+	NSInteger releasable = 0;
+	for (NSDictionary<NSString *, id> *entry in considered) {
+		if ([entry[@"reason"] isEqualToString:@"available"]) {
+			releasable += [entry[@"bytes"] integerValue];
+		}
+	}
+	if (releasable >= shortfall) {
+		NFKMemoryRelief *caches = [[NFKMemoryRelief alloc] initWithRequestedByteCount:shortfall];
+		[self relieveCachesInto:caches];
+		NFKMemoryRelief *models = [[NFKMemoryRelief alloc] initWithRequestedByteCount:shortfall];
+		[self releaseIdleModelsInto:models reason:NFKServerModelEventReasonAdmission];
+		held = [self admissionHeldBytesBeside:model];
+		if ([budget holdsByteCount:needed + held]) {
+			model.admittedBytes = needed;
+			return nil;
+		}
+		considered = [self admissionModelsBeside:model];
+	}
+	return [self admissionRefusalForModel:model needing:needed held:held budget:budget considered:considered];
+}
+
+/*! A catalog model's estimate for its hosted load options, judged against budget, or nil for any other
+	model or an estimate the descriptor cannot make. */
+- (nullable NFKModelMemoryEstimate *)admissionEstimateForModel:(NFKServedModel *)model budget:(nullable NFKModelMemoryBudget *)budget
+{
+	if (model.descriptor == nil) {
+		return nil;
+	}
+	return [model.descriptor estimatedMemoryForOptions:model.hostedLoadOptions memoryBudget:budget error:NULL];
+}
+
+/*! The estimate of a residency the planner chooses for the room held leaves in budget, when the model's
+	residency is automatic and that plan stages, pages, or streams the model and fits; else nil. */
+- (nullable NFKModelMemoryEstimate *)admissionEstimateForModel:(NFKServedModel *)model
+												  inRoomBeside:(NSInteger)held
+														budget:(NFKModelMemoryBudget *)budget
+													  estimate:(nullable NFKModelMemoryEstimate *)estimate
+{
+	NSInteger room = budget.byteCount - held;
+	BOOL chooses = [model.descriptor optionWithKey:NFKModelLoadOptionResidency] != nil
+		&& [estimate.requestedResidency isEqualToString:NFKModelResidencyAutomatic];
+	if (estimate == nil || room <= 0 || !chooses) {
+		return nil;
+	}
+	NFKModelMemoryBudget *left = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:(NSInteger)floor(room / NFKModelMemoryBudget.workingSetFraction)];
+	NFKModelMemoryEstimate *planned = [self admissionEstimateForModel:model budget:left];
+	BOOL smaller = planned.fits && ![planned.residency isEqualToString:NFKModelResidencyResident];
+	return smaller ? planned : nil;
+}
+
+/*! What the hosted models other than model hold for admission's accounting. */
+- (NSInteger)admissionHeldBytesBeside:(NFKServedModel *)model
+{
+	NSInteger held = 0;
+	for (NFKServedModel *other in [self hostedModels]) {
+		if (other != model) {
+			held += [other admissionHeldBytes];
+		}
+	}
+	return held;
+}
+
+/*! Each other hosted model that holds memory, with its bytes and why admission can or cannot release it. */
+- (NSArray<NSDictionary<NSString *, id> *> *)admissionModelsBeside:(NFKServedModel *)model
+{
+	NSTimeInterval now = [self now];
+	NSTimeInterval grace = MAX(self.unloadGracePeriod, 0.0);
+	NSMutableArray<NSDictionary<NSString *, id> *> *considered = [NSMutableArray array];
+	for (NFKServedModel *other in [self hostedModels]) {
+		NSInteger bytes = [other admissionHeldBytes];
+		if (other == model || bytes <= 0) {
+			continue;
+		}
+		NSString *reason = [other currentResidency] == NFKServerModelResidencyLoading ? @"loading"
+			: ([self isPinnedModelNamed:other.name] ? @"pinned" : [other admissionIneligibilityWithGrace:grace at:now]);
+		[considered addObject:@{ @"model": other.name, @"bytes": @(bytes), @"reason": reason ?: @"available" }];
+	}
+	return considered;
+}
+
+- (NSError *)admissionRefusalForModel:(NFKServedModel *)model
+							  needing:(NSInteger)needed
+								 held:(NSInteger)held
+							   budget:(NFKModelMemoryBudget *)budget
+						   considered:(NSArray<NSDictionary<NSString *, id> *> *)considered
+{
+	NSMutableArray<NSString *> *phrases = [NSMutableArray array];
+	for (NSDictionary<NSString *, id> *entry in considered) {
+		[phrases addObject:[NSString stringWithFormat:@"%@ (%@, %@)", entry[@"model"], entry[@"reason"],
+							[NFKModelMemoryBudget formattedByteCount:[entry[@"bytes"] integerValue]]]];
+	}
+	NSString *description = [NSString stringWithFormat:@"The model \"%@\" needs %@ beside the %@ the hosted models hold, "
+							 @"against a %@ budget with a %@ reserve. Considered: %@.",
+							 model.name, [NFKModelMemoryBudget formattedByteCount:needed],
+							 [NFKModelMemoryBudget formattedByteCount:held], [NFKModelMemoryBudget formattedByteCount:budget.byteCount],
+							 [NFKModelMemoryBudget formattedByteCount:budget.reserveByteCount],
+							 phrases.count > 0 ? [phrases componentsJoinedByString:@", "] : @"no other model holds memory"];
+	return [NSError errorWithDomain:NFKModelCatalogErrorDomain code:NFKModelCatalogErrorDoesNotFit
+						   userInfo:@{ NSLocalizedDescriptionKey: description, NFKInferenceServerAdmissionModelsKey: considered }];
 }
 
 #pragma mark Relief

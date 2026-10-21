@@ -561,6 +561,108 @@
 	XCTAssertEqualObjects([server unloadIdleModels], (@[ @"cached" ]), @"with the caches empty the model goes");
 }
 
+#pragma mark Admission
+
+/*! A budget of 10,000 bytes, whose reserve leaves 5,000 for the models. */
+- (NFKModelMemoryBudget *)admissionBudget
+{
+	NFKModelMemoryBudget *budget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:11765];
+	XCTAssertEqual(budget.byteCount, 10000);
+	XCTAssertEqual(budget.reserveByteCount, 5000);
+	return budget;
+}
+
+- (nullable NSError *)loadReturningError:(NSString *)modelName on:(NFKInferenceServer *)server
+{
+	__block NSError *failure = nil;
+	XCTestExpectation *ended = [self expectationWithDescription:modelName];
+	[server loadModelNamed:modelName completionHandler:^(NSError *error) {
+		failure = error;
+		[ended fulfill];
+	}];
+	[self waitForExpectations:@[ ended ] timeout:10];
+	return failure;
+}
+
+/*! Hosts "held" and "next", each holding 3,000 bytes, and leaves "held" resident with "next" measured and
+	unloaded, so the next build of "next" needs 3,000 bytes beside the 3,000 "held" holds. */
+- (NFKInferenceServer *)serverHoldingAModelBesideAMeasuredOne
+{
+	NFKInferenceServer *server = [self server];
+	server.admissionMemoryBudget = [self admissionBudget];
+	[server addBackendProvider:[self providerReturning:[self reliefBackendHolding:3000 conversations:0 experts:0]]
+				  forModelName:@"next"];
+	[self load:@"next" on:server];
+	XCTAssertTrue([server unloadModelNamed:@"next"]);
+	[self waitUntil:^BOOL {
+		return [server residencyForModelName:@"next"] == NFKServerModelResidencyNotLoaded;
+	} description:@"the first build of next is unloaded"];
+	[server addBackendProvider:[self providerReturning:[self reliefBackendHolding:3000 conversations:0 experts:0]]
+				  forModelName:@"held"];
+	[self load:@"held" on:server];
+	return server;
+}
+
+- (void)testABuildThatDoesNotFitReleasesAnIdleModelFirst
+{
+	NFKInferenceServer *server = [self serverHoldingAModelBesideAMeasuredOne];
+	self.now += 5;
+	XCTAssertNil([self loadReturningError:@"next" on:server]);
+	XCTAssertEqual([server residencyForModelName:@"next"], NFKServerModelResidencyResident);
+	XCTAssertEqual([server residencyForModelName:@"held"], NFKServerModelResidencyNotLoaded, @"held made room");
+}
+
+- (void)testABuildThatCannotMakeRoomNamesWhatItConsidered
+{
+	NFKInferenceServer *server = [self serverHoldingAModelBesideAMeasuredOne];
+	[server setPinned:YES forModelName:@"held"];
+	NSError *refusal = [self loadReturningError:@"next" on:server];
+	XCTAssertEqualObjects(refusal.domain, NFKModelCatalogErrorDomain);
+	XCTAssertEqual(refusal.code, NFKModelCatalogErrorDoesNotFit);
+	XCTAssertEqualObjects(refusal.userInfo[NFKInferenceServerAdmissionModelsKey],
+						  (@[ @{ @"model": @"held", @"bytes": @3000, @"reason": @"pinned" } ]));
+	XCTAssertTrue([refusal.localizedDescription containsString:@"held (pinned"], @"%@", refusal);
+	XCTAssertEqual([server residencyForModelName:@"held"], NFKServerModelResidencyResident);
+
+	[server setPinned:NO forModelName:@"held"];
+	server.admitsModelsByMemory = NO;
+	XCTAssertNil([self loadReturningError:@"next" on:server], @"without admission the build goes ahead");
+	XCTAssertEqual([server residencyForModelName:@"held"], NFKServerModelResidencyResident);
+}
+
+- (void)testABuildWaitsForARunningModelToBecomeReleasable
+{
+	NFKInferenceServer *server = [self startedServer:[self server]];
+	server.admissionMemoryBudget = [self admissionBudget];
+	server.admissionWaitInterval = 10;
+	[server addBackendProvider:[self providerReturning:[self reliefBackendHolding:3000 conversations:0 experts:0]]
+				  forModelName:@"next"];
+	[self load:@"next" on:server];
+	XCTAssertTrue([server unloadModelNamed:@"next"]);
+	[self waitUntil:^BOOL {
+		return [server residencyForModelName:@"next"] == NFKServerModelResidencyNotLoaded;
+	} description:@"the first build of next is unloaded"];
+	NFKReliefTestBackend *busy = [self reliefBackendHolding:3000 conversations:0 experts:0];
+	busy.gate = dispatch_semaphore_create(0);
+	[server addBackendProvider:[self providerReturning:busy] forModelName:@"busy"];
+	XCTestExpectation *ran = [self expectationWithDescription:@"the run ends"];
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		[self run:@"busy" on:server error:NULL];
+		[ran fulfill];
+	});
+	[self waitUntil:^BOOL {
+		return busy.running == 1;
+	} description:@"the run holds its slot"];
+
+	dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+		dispatch_semaphore_signal(busy.gate);
+	});
+	XCTAssertNil([self loadReturningError:@"next" on:server], @"the build waits for the run, then makes room");
+	[self waitForExpectations:@[ ran ] timeout:10];
+	XCTAssertEqual([server residencyForModelName:@"busy"], NFKServerModelResidencyNotLoaded);
+	XCTAssertEqual([server residencyForModelName:@"next"], NFKServerModelResidencyResident);
+}
+
 - (void)testAFallingPressureTakesEffectAfterTheHysteresis
 {
 	NFKInferenceServer *server = [self server];

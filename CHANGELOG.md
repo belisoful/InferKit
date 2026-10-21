@@ -40,6 +40,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### Admission makes room for a build
+
+- `NFKInferenceServer` admits each hosted model's build against `admissionMemoryBudget` beside what the
+  other hosted models hold (`admitsModelsByMemory`, on by default). A build that does not fit takes the
+  staged or paged residency that fits where its catalog residency is automatic, else the server releases
+  the caches and then idle models, least recently used first, reported with
+  `NFKServerModelEventReasonAdmission`. A build that still does not fit fails with
+  `NFKModelCatalogErrorDoesNotFit`, its userInfo naming each model it considered and why under
+  `NFKInferenceServerAdmissionModelsKey`, or waits up to `admissionWaitInterval` for one to become
+  releasable.
+
 #### Memory relief before a model is released
 
 - `-[NFKInferenceServer relieveMemoryByteCount:completionHandler:]` frees memory in steps and stops once

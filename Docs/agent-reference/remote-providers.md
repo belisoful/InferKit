@@ -1564,6 +1564,21 @@ keeping them in memory, and unloads idle ones.
   hysteresis then spaces the next attempt. A backend with a run in progress returns 0 from (b) at once
   (a try-lock on its generation lock). `NFKMLXReloadableBackend` implements both backend methods
   itself, so an unloaded model answers 0 and is never rebuilt by a relief call.
+- Admission (`admitsModelsByMemory`, on by default) runs on the build's queue before the provider, under
+  `admissionLock`, so two builds cannot each count the room the other takes. The need is a catalog
+  model's estimated peak for its hosted load options, else the peak the model's last load measured; a
+  first build of a provider model has none and is admitted. The held bytes are the other models'
+  measured resident bytes plus what admission reserved for builds still under way (`admittedBytes`).
+  The accounting leaves the caches out, which keeps it independent of what else the process holds (an
+  MLX test process's allocation counts earlier tests' buffers), so the cache steps run before an
+  eviction for the memory they free and the decision rests on the resident bytes. The order: fit as it
+  is; a catalog model with a declared residency option at `automatic` takes the residency the planner
+  chooses for a budget of the room left (`admittedResidency`, which the catalog provider passes as
+  `NFKModelLoadOptionResidency`); the cache steps; then idle models, least recently used first, with
+  reason `NFKServerModelEventReasonAdmission`, only when the releasable models together cover the
+  shortfall. The refusal is `NFKModelCatalogErrorDoesNotFit` with `NFKInferenceServerAdmissionModelsKey`
+  listing each model that holds memory and its reason. `admissionWaitInterval` retries every 0.25 s
+  until it passes.
 - Status: each model's `residency` object (`state`, `unloadable`, `last_used` in seconds since 1970,
   `idle_timeout_seconds` when finite, `load_seconds`, `load_error`, `loads`, `unloads`, `resident_bytes`,
   `peak_bytes`) in both the status route and the `/models` entry; `NFKServerModelStatus` reads it. A
