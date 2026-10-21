@@ -718,18 +718,21 @@ reads what the loader reads:
 
 - mlx_lm's quantized releases (`mlx-community/*-4bit` and the like), single-file or sharded, and a
   single-file InferKit quantized save. The loader reads them as stored, so the descriptor's memory
-  figures are the stored bytes, and it offers no precision or weight quantization option.
+  figures are the stored bytes, and it offers no precision or weight quantization option. Its
+  `parameterCount` counts each packed layer's words as the weights they pack at the layer's width, and
+  the scales and biases of the packing as none.
 - gpt-oss's MXFP4 experts, the one family whose MXFP4 words the loader places.
 - The tokenizers the release reader reproduces: byte-level BPE under the Qwen2, Qwen3.5, o200k, Llama 3,
   Nemotron, GPT-2, and SmolLM pre-tokenizations, with NFC and `ignore_merges` where stated, and Mistral's
   Metaspace BPE with byte fallback.
 
 It refuses every other quantization method, MXFP4 on another family, packed or 8-bit float weights no
-configuration or save describes, an
-InferKit save split across files, mlx_lm's gpt-oss layout (the expert gate and up projections stored
-apart), a tokenizer the reader does not reproduce, a safetensors header whose shape or offsets are
-outside what a release holds, and weights outside `model.safetensors` or a
-`model.safetensors.index.json`.
+configuration or save describes, an InferKit save split across files, and mlx_lm's gpt-oss layout (the
+expert gate and up projections stored apart). It refuses a configuration that states what the loader
+does not read: an MLP bias, an activation other than SiLU, no rotary base, or a sliding window narrower
+than the context outside gpt-oss. It refuses a tokenizer the reader does not reproduce, a safetensors
+header whose shape or offsets are outside what a release holds, and weights outside `model.safetensors`
+or a `model.safetensors.index.json`.
 
 ## Vocabulary
 

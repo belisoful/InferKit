@@ -107,15 +107,26 @@ loads. Their entries list the `model_type` values their loader reads (`qwen3`, `
 The judgment refuses what the loader reads wrongly with no error:
 
 - `NFKMLXLanguage.configuration(fromJSON:)` throws → `UnsupportedConfiguration`.
+- A field the reader does not read, stated at a value the output depends on → `UnsupportedConfiguration`
+  (`verifyUnreadFields`). `NFKMLXWeights.apply` refuses missing parameters and ignores extra ones, so
+  each of these loads with no error and runs wrong:
+  - `mlp_bias` true: the MLP biases are dropped;
+  - `hidden_act` other than `silu`;
+  - no `rope_theta` at the root or under `rope_parameters`: the reader takes 10^6, transformers 10^4;
+  - a numeric `sliding_window` narrower than `max_position_embeddings`, unless `use_sliding_window` is
+    false or the model is gpt-oss, whose alternating windows the reader builds. Qwen releases state a
+    window with `use_sliding_window` false, which transformers ignores.
 - A quantization `NFKMLXQuantization.releaseQuantization(configJSON:)` refuses (a `quant_method` other
   than `mxfp4`, an mlx_lm block without `bits` and `group_size`, a mode MLX does not name) →
-  `UnsupportedQuantization`. So are MXFP4 on a family whose experts the module does not fuse (the loader
-  places MXFP4 words only in gpt-oss's routed experts), a tensor in a dtype outside the floats and the
-  `I64` and `BOOL` buffers (`U32`, `U8`, `I8`, `I32`, `F8_E4M3`, `F8_E5M2`) when no configuration or save
-  describes the packing, an InferKit save
-  (`inferkit.quantization` metadata) split across files, and mlx_lm's gpt-oss layout: a configuration
-  whose experts the module fuses (`clampedSwiGLU`) with an mlx_lm quantization and a separate expert
-  `gate_proj`, the case `NFKMLXLanguage.packedReleaseEntries(inDirectory:net:)` refuses at load.
+  `UnsupportedQuantization`. So are:
+  - MXFP4 on a family whose experts the module does not fuse; the loader places MXFP4 words only in
+    gpt-oss's routed experts;
+  - a tensor in a dtype outside the floats and the `I64` and `BOOL` buffers (`U32`, `U8`, `I8`, `I32`,
+    `F8_E4M3`, `F8_E5M2`) when no configuration or save describes the packing;
+  - an InferKit save (`inferkit.quantization` metadata) split across files;
+  - mlx_lm's gpt-oss layout: a configuration whose experts the module fuses (`clampedSwiGLU`) with an
+    mlx_lm quantization and a separate expert `gate_proj`, the case
+    `NFKMLXLanguage.packedReleaseEntries(inDirectory:net:)` refuses at load.
 - The tokenizer → `UnsupportedTokenizer` when `tokenizer.json` or `tokenizer_config.json` is not listed,
   or `NFKMLXLanguage.tokenizerScheme(tokenizerJSON:tokenizerConfiguration:)`, the loader's own reader,
   refuses the pair.
@@ -127,7 +138,9 @@ The judgment refuses what the loader reads wrongly with no error:
 
 `mlx-community/Qwen3-0.6B-4bit` and `mlx-community/Llama-3.2-1B-Instruct-4bit` resolve from their own
 files in the validation store (`NFKMLXRepositoryMatchingTests`), with stored bytes equal to the
-`total_size` mlx_lm wrote in their weight index.
+`total_size` mlx_lm wrote in their weight index. A small Llama 3 decoder (llama3 rotary scaling, tied
+embeddings) resolves through `NFKModelResolver`'s family route on Mistral Small 3's loader against a
+stubbed hub (`testALlamaRepositoryResolvesThroughTheFamilyRoute`).
 
 The measurement ports `Tools/catalog/measure.py`'s hub path to Swift: download bytes over the template's
 files plus the shards, safetensors tensor bytes by dtype from the headers, parameters, the repeated
@@ -139,7 +152,10 @@ profile are keyed by family, so the resolved descriptor gets the same load optio
 A repository the loader reads as stored whatever the request (an mlx_lm quantized release, an InferKit
 quantized save) is measured under the `.stored` plan, and its entry's `load` is the family profile without
 the precision and weight quantization options: the loader packs no layer the release already packs, and
-a float32 figure would describe a load that never happens.
+a float32 figure would describe a load that never happens. Its parameter count reads each packed layer's
+`U32` words at the layer's width (mlx_lm's per-layer override in `config.json`, else its default, else
+the save's recorded width) and counts the packing's `scales` and `biases` as none, so a 4-bit release
+reports the parameters of its float original. It records no quantizable elements.
 `testLiveMeasurementMatchesTheRecordedMeasurement` (gated on `INFERKIT_LIVE_HUB=1`) measures
 `Qwen/Qwen3-0.6B` at its measured commit and compares every figure with the recorded row.
 

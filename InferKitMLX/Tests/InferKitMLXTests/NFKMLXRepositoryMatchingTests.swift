@@ -3,15 +3,67 @@
 //  InferKitMLXTests
 //
 //  Whether the language loader reads a repository, judged from files placed in a hub cache so no request
-//  leaves the process: a small Qwen3 decoder measured into a descriptor, each refusal and its code, the
+//  leaves the process: a small Qwen3 decoder measured into a descriptor, a small Llama decoder resolved
+//  through NFKModelResolver against a stubbed hub, each refusal and its code, the
 //  catalog's model types, the mlx-community releases in the validation store judged from their own files,
 //  and, gated behind INFERKIT_LIVE_HUB, the runtime measurement of a shipped release against the figures
 //  Tools/catalog/measure.py recorded for it. Nothing here reaches MLX.
 //
 
+import CryptoKit
 import XCTest
 import InferKit
 @testable import InferKitMLX
+
+/// Answers a hub's requests from files served in memory, as the hub at `http://hub.test` would.
+private final class NFKMLXStubHub: URLProtocol {
+    private static let lock = NSLock()
+    nonisolated(unsafe) private static var responses = [String: (data: Data, headers: [String: String])]()
+
+    static let endpointURL = URL(string: "http://hub.test")!
+
+    static var session: URLSession {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [NFKMLXStubHub.self]
+        return URLSession(configuration: configuration)
+    }
+
+    static func reset() {
+        lock.withLock { responses = [:] }
+    }
+
+    /// Serves `files` at `commit`, its tree listing, and its revision information naming `commit`.
+    static func serve(_ repository: String, commit: String, files: [String: Data], card: [String: Any]) {
+        var listing = [[String: Any]]()
+        lock.withLock {
+            for (path, data) in files.sorted(by: { $0.key < $1.key }) {
+                let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+                listing.append(["type": "file", "path": path, "size": data.count, "oid": String(sha.prefix(40))])
+                responses["/\(repository)/resolve/\(commit)/\(path)"] = (data, ["ETag": "\"\(sha)\""])
+            }
+            let tree = try! JSONSerialization.data(withJSONObject: listing)
+            responses["/api/models/\(repository)/tree/\(commit)"] = (tree, [:])
+            let information = try! JSONSerialization.data(withJSONObject: [
+                "id": repository, "sha": commit, "gated": false, "cardData": card] as [String: Any])
+            responses["/api/models/\(repository)/revision/main"] = (information, [:])
+        }
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == endpointURL.host }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        let url = request.url!
+        let served = Self.lock.withLock { Self.responses[url.path] }
+        let response = HTTPURLResponse(url: url, statusCode: served == nil ? 404 : 200, httpVersion: "HTTP/1.1",
+                                       headerFields: served?.headers ?? [:])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: served?.data ?? Data())
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    override func stopLoading() {}
+}
 
 final class NFKMLXRepositoryMatchingTests: XCTestCase {
 
@@ -31,6 +83,7 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
     }
 
     override func tearDown() {
+        NFKMLXStubHub.reset()
         try? FileManager.default.removeItem(at: cache)
         super.tearDown()
     }
@@ -44,6 +97,26 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
          "vocab_size": 256, "max_position_embeddings": 512, "tie_word_embeddings": true, "rope_theta": 1_000_000,
          "rms_norm_eps": 1e-6, "torch_dtype": "bfloat16"]
     }
+
+    /// A two-layer Llama 3 decoder of ``configuration``'s geometry: a llama3-scaled rotary, tied embeddings,
+    /// and no query and key norms.
+    private static var llamaConfiguration: [String: Any] {
+        ["model_type": "llama", "architectures": ["LlamaForCausalLM"], "hidden_size": 64, "num_hidden_layers": 2,
+         "num_attention_heads": 2, "num_key_value_heads": 1, "head_dim": 32, "intermediate_size": 128,
+         "vocab_size": 256, "max_position_embeddings": 131_072, "tie_word_embeddings": true, "rope_theta": 500_000,
+         "rope_scaling": ["rope_type": "llama3", "factor": 32, "low_freq_factor": 1, "high_freq_factor": 4,
+                          "original_max_position_embeddings": 8192],
+         "rms_norm_eps": 1e-5, "hidden_act": "silu", "mlp_bias": false, "attention_bias": false,
+         "torch_dtype": "bfloat16"]
+    }
+
+    /// The tensors of ``llamaConfiguration`` in bfloat16.
+    private static var llamaTensors: [(String, [Int])] {
+        tensors.filter { !$0.0.hasSuffix("q_norm.weight") && !$0.0.hasSuffix("k_norm.weight") }
+    }
+
+    private static let llamaRepository = "org/llama-tiny"
+    private static let mistralTemplate = "mistral-small-24b-instruct-2501"
 
     /// The tensors of ``configuration`` in bfloat16, by name and shape.
     private static var tensors: [(String, [Int])] {
@@ -147,27 +220,42 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
     }
 
     /// The repository's files placed in the hub cache at ``commit``, and the repository a resolver reads.
-    private func repository(configuration: [String: Any] = configuration, tokenizer: [String: Any]? = tokenizer(),
-                            weights: [String: Data]? = nil, extra: [String: Data] = [:]) throws -> NFKModelRepository {
-        var files: [String: Data] = ["config.json": Self.json(configuration),
-                                     "tokenizer_config.json": Self.json(["tokenizer_class": "Qwen2Tokenizer"])]
-        files["tokenizer.json"] = tokenizer.map(Self.json)
-        files.merge(weights ?? ["model.safetensors": Self.safetensors(Self.tensors)]) { $1 }
+    /// A repository's files: its configuration, tokenizer, and weights.
+    private static func files(configuration: [String: Any], tokenizer: [String: Any]?, weights: [String: Data]?,
+                              extra: [String: Data] = [:]) -> [String: Data] {
+        var files: [String: Data] = ["config.json": json(configuration),
+                                     "tokenizer_config.json": json(["tokenizer_class": "Qwen2Tokenizer"])]
+        files["tokenizer.json"] = tokenizer.map(json)
+        files.merge(weights ?? ["model.safetensors": safetensors(tensors)]) { $1 }
         files.merge(extra) { $1 }
+        return files
+    }
+
+    private func repository(configuration: [String: Any] = configuration, tokenizer: [String: Any]? = tokenizer(),
+                            weights: [String: Data]? = nil, extra: [String: Data] = [:],
+                            name: String = repository) throws -> NFKModelRepository {
+        let files = Self.files(configuration: configuration, tokenizer: tokenizer, weights: weights, extra: extra)
         let hub = NFKHFHub(cacheDirectoryURL: cache)
         var listed = [NFKDownloadPlanFile]()
         for (path, data) in files.sorted(by: { $0.key < $1.key }) {
-            let local = try XCTUnwrap(hub.localURL(forRepo: Self.repository, revision: Self.commit, path: path))
+            let local = try XCTUnwrap(hub.localURL(forRepo: name, revision: Self.commit, path: path))
             try FileManager.default.createDirectory(at: local.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
             try data.write(to: local)
-            let remote = try XCTUnwrap(hub.remoteURL(forRepo: Self.repository, revision: Self.commit, path: path))
+            let remote = try XCTUnwrap(hub.remoteURL(forRepo: name, revision: Self.commit, path: path))
             listed.append(NFKDownloadPlanFile(path: path, remoteURL: remote, localURL: local,
                                               byteCount: Int64(data.count), sha256: nil, cached: true, optional: false))
         }
         let license = NFKModelLicense(identifier: "apache-2.0", name: "apache-2.0", url: nil)
-        return NFKModelRepository(repository: Self.repository, revision: Self.commit, requestedRevision: nil,
+        return NFKModelRepository(repository: name, revision: Self.commit, requestedRevision: nil,
                                   configuration: configuration, files: listed, license: license, hub: hub)
+    }
+
+    /// The Llama fixture's repository, judged directly.
+    private func llamaRepository(configuration: [String: Any] = llamaConfiguration) throws -> NFKModelRepository {
+        try repository(configuration: configuration, tokenizer: Self.tokenizer(pattern: Self.llama3Pattern,
+                                                                              model: ["ignore_merges": true]),
+                       weights: ["model.safetensors": Self.safetensors(Self.llamaTensors)], name: Self.llamaRepository)
     }
 
     private func template(_ identifier: String = "qwen3-0.6b") throws -> NFKModelDescriptor {
@@ -262,6 +350,8 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
         let variant = try XCTUnwrap(descriptor.defaultVariant)
         let stage = try XCTUnwrap(variant.memoryFacts?.stages.first)
         XCTAssertEqual(stage.byteCountByPrecision[NFKModelPrecisionCheckpoint]?.int64Value, Self.storedBytes(packed))
+        XCTAssertEqual(variant.parameterCount, 90_560, "the packed words count as the weights they pack")
+        XCTAssertEqual(stage.quantizableElementCount, 0)
         let keys = Set(descriptor.loadOptions.map(\.key))
         XCTAssertFalse(keys.contains(NFKModelLoadOptionPrecision), "the loader reads an mlx_lm release as stored")
         XCTAssertFalse(keys.contains(NFKModelLoadOptionQuantizationBits), "the release's layers are packed already")
@@ -289,6 +379,19 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
                        Self.storedBytes(packed))
     }
 
+    func testAPerLayerWidthCountsThatLayersParameters() throws {
+        var configuration = Self.configuration
+        configuration["quantization"] = ["group_size": 64, "bits": 4,
+                                         "model.embed_tokens": ["group_size": 64, "bits": 8]]
+        let packed = Self.packedTensors.map { name, dtype, shape -> (String, String, [Int]) in
+            name == "model.embed_tokens.weight" ? (name, dtype, [shape[0], shape[1] * 2]) : (name, dtype, shape)
+        }
+        let read = try repository(configuration: configuration,
+                                  weights: ["model.safetensors": Self.safetensors(typed: packed)])
+        let variant = try XCTUnwrap(try NFKMLXModelDescriptors.descriptor(for: read, matching: try template()).defaultVariant)
+        XCTAssertEqual(variant.parameterCount, 90_560)
+    }
+
     func testAnInferKitQuantizedSaveIsMeasuredAsStored() throws {
         let packed = Self.packedTensors
         let read = try repository(weights: [
@@ -310,6 +413,87 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
             XCTAssertNoThrow(try NFKMLXModelDescriptors.descriptor(for: try repository(tokenizer: tokenizer),
                                                                    matching: try template()), name)
         }
+    }
+
+    func testALlamaRepositoryBuildsOnMistralSmall3sLoader() throws {
+        let mistral = try template(Self.mistralTemplate)
+        let descriptor = try NFKMLXModelDescriptors.descriptor(for: try llamaRepository(), matching: mistral)
+        XCTAssertEqual(descriptor.identifier, Self.llamaRepository)
+        XCTAssertEqual(descriptor.registryName, mistral.registryName)
+        XCTAssertEqual(descriptor.defaultVariant?.registryName, mistral.registryName)
+        XCTAssertEqual(descriptor.defaultVariant?.parameterCount, 90_432, "the Qwen3 fixture without its query and key norms")
+    }
+
+    func testALlamaRepositoryResolvesThroughTheFamilyRoute() throws {
+        let files = Self.files(configuration: Self.llamaConfiguration,
+                               tokenizer: Self.tokenizer(pattern: Self.llama3Pattern, model: ["ignore_merges": true]),
+                               weights: ["model.safetensors": Self.safetensors(Self.llamaTensors)])
+        NFKMLXStubHub.serve(Self.llamaRepository, commit: Self.commit, files: files, card: ["license": "llama3.2"])
+        let hub = NFKHFHub(cacheDirectoryURL: cache)
+        hub.endpointURL = NFKMLXStubHub.endpointURL
+        hub.session = NFKMLXStubHub.session
+        hub.accessToken = ""
+        hub.excludesCacheFromBackup = false
+        let resolver = NFKModelResolver(catalog: NFKModelCatalog.shared, hub: hub)
+        resolver.memoryBudget = NFKModelMemoryBudget(workingSetByteCount: 16 << 30)
+
+        let unverified = try resolver.resolution(forRepository: Self.llamaRepository, revision: nil)
+        XCTAssertFalse(unverified.isResolved)
+        XCTAssertEqual(unverified.reasons.last.map { $0 as NSError }?.code,
+                       NFKModelResolutionError.Code.unverifiedRouteNotAllowed.rawValue)
+
+        resolver.allowsUnverifiedRoutes = true
+        let resolution = try resolver.resolution(forRepository: Self.llamaRepository, revision: nil)
+        XCTAssertTrue(resolution.isResolved, "\(resolution.reasons)")
+        XCTAssertEqual(resolution.route, .family)
+        XCTAssertEqual(resolution.verification, .configCompatible)
+        XCTAssertEqual(resolution.revision, Self.commit)
+        XCTAssertEqual(resolution.descriptor?.registryName, try template(Self.mistralTemplate).registryName)
+        XCTAssertEqual(resolution.descriptor?.license?.identifier, "llama3.2")
+    }
+
+    func testFieldsTheReaderDoesNotReadAreRefused() throws {
+        var biased = Self.llamaConfiguration
+        biased["mlp_bias"] = true
+        var gelu = Self.llamaConfiguration
+        gelu["hidden_act"] = "gelu"
+        var unstatedBase = Self.llamaConfiguration
+        unstatedBase["rope_theta"] = nil
+        var windowed = Self.llamaConfiguration
+        windowed["sliding_window"] = 4096
+        var qwenWindowed = Self.configuration
+        qwenWindowed["sliding_window"] = 128
+        qwenWindowed["use_sliding_window"] = true
+        for configuration in [biased, gelu, unstatedBase, windowed] {
+            try assertRefusal(.unsupportedConfiguration, try llamaRepository(configuration: configuration),
+                              template: Self.mistralTemplate)
+        }
+        try assertRefusal(.unsupportedConfiguration, try repository(configuration: qwenWindowed))
+    }
+
+    func testFieldsStatedAtTheReadersValuesAreRead() throws {
+        var nestedBase = Self.llamaConfiguration
+        nestedBase["rope_theta"] = nil
+        nestedBase["rope_parameters"] = ["rope_theta": 500_000, "rope_type": "default"]
+        var unusedWindow = Self.configuration
+        unusedWindow["sliding_window"] = 4096
+        unusedWindow["use_sliding_window"] = false
+        var contextWideWindow = Self.llamaConfiguration
+        contextWideWindow["sliding_window"] = 131_072
+        XCTAssertNoThrow(try NFKMLXModelDescriptors.descriptor(for: try llamaRepository(configuration: nestedBase),
+                                                               matching: try template(Self.mistralTemplate)))
+        XCTAssertNoThrow(try NFKMLXModelDescriptors.descriptor(for: try llamaRepository(configuration: contextWideWindow),
+                                                               matching: try template(Self.mistralTemplate)))
+        XCTAssertNoThrow(try NFKMLXModelDescriptors.descriptor(for: try repository(configuration: unusedWindow),
+                                                               matching: try template()))
+    }
+
+    func testANullQuantizationKeyStatesNothing() {
+        let nested: [String: Any] = ["quantization": NSNull(),
+                                     "text_config": ["quantization": ["bits": 4, "group_size": 64]]]
+        XCTAssertTrue(NFKMLXLanguage.isMLXQuantization(nested))
+        XCTAssertFalse(NFKMLXLanguage.isMLXQuantization(["quantization": NSNull()]))
+        XCTAssertTrue(NFKMLXLanguage.isMLXQuantization(["quantization_config": ["bits": 4, "quant_method": NSNull()]]))
     }
 
     func testTheMeasurementCountsWhatMeasurePyCounts() throws {
@@ -474,14 +658,18 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
     /// The release directory a validation key names, placed in the hub cache at ``commit`` by symbolic links,
     /// and the repository a resolver reads.
     private func storedRelease(_ key: String, repository name: String) throws -> NFKModelRepository {
-        guard let path = NFKMLXValidationConfig.environment[key] else {
+        var isDirectory: ObjCBool = false
+        guard let path = NFKMLXValidationConfig.environment[key],
+              FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
             throw XCTSkip("set \(key) to the mlx-community release directory")
         }
         let directory = URL(fileURLWithPath: path)
         let hub = NFKHFHub(cacheDirectoryURL: cache)
         var listed = [NFKDownloadPlanFile]()
+        // Only the release's own files: `hf download --local-dir` leaves a `.cache` directory beside them.
         for file in try FileManager.default.contentsOfDirectory(atPath: path).sorted() where file != "REVISION" {
             let source = directory.appendingPathComponent(file)
+            guard try source.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { continue }
             let local = try XCTUnwrap(hub.localURL(forRepo: name, revision: Self.commit, path: file))
             try FileManager.default.createDirectory(at: local.deletingLastPathComponent(),
                                                     withIntermediateDirectories: true)
@@ -501,6 +689,9 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
     /// `total_size` mlx_lm wrote in its weight index.
     private func assertStoredReleaseResolves(_ key: String, repository name: String, template identifier: String) throws {
         let read = try storedRelease(key, repository: name)
+        guard read.file(atPath: "model.safetensors.index.json") != nil else {
+            throw XCTSkip("\(name) in the validation store has no model.safetensors.index.json to hold its bytes to")
+        }
         let descriptor = try NFKMLXModelDescriptors.descriptor(for: read, matching: try template(identifier))
         let index = try XCTUnwrap(try read.jsonObjectOfFile(atPath: "model.safetensors.index.json") as? [String: Any])
         let total = try XCTUnwrap((index["metadata"] as? [String: Any])?["total_size"] as? NSNumber)

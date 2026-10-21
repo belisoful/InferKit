@@ -20,8 +20,9 @@ extension NFKMLXModelDescriptors {
     /// holds the repository's `model_type`. The dense and mixture decoders ``NFKMLXLanguage`` loads judge
     /// a repository; another descriptor refuses with `NFKModelResolutionErrorUnsupportedArchitecture`.
     /// The judgment refuses what the loader would read wrongly with no error:
-    /// - a configuration ``NFKMLXLanguage/configuration(fromJSON:)`` rejects
-    ///   (`NFKModelResolutionErrorUnsupportedConfiguration`);
+    /// - a configuration ``NFKMLXLanguage/configuration(fromJSON:)`` rejects, or one stating what it does
+    ///   not read: an MLP bias, an activation other than SiLU, no rotary base, or a sliding window
+    ///   narrower than the context (`NFKModelResolutionErrorUnsupportedConfiguration`);
     /// - a quantization `NFKMLXQuantization.releaseQuantization(configJSON:)` refuses, MXFP4 on a
     ///   family whose experts the loader does not fuse, packed or 8-bit float weights no configuration or
     ///   save describes, an InferKit quantized save split across files, and mlx_lm's gpt-oss layout,
@@ -81,6 +82,7 @@ struct NFKMLXRepositoryJudgment {
                 "the \(template.identifier) loader rejects the configuration of \(repository.repository): "
                 + error.localizedDescription)
         }
+        try Self.verifyUnreadFields(of: configuration, repository: repository.repository)
         let quantization = try Self.verifyQuantization(of: configuration, repository: repository.repository)
         try Self.verifyTokenizer(of: repository)
         weightFiles = try Self.weightFiles(of: repository)
@@ -90,8 +92,9 @@ struct NFKMLXRepositoryJudgment {
                                            repository: repository.repository)
         loadsAsStored = quantization == .mlx || saved
         let tensors = try Self.tensors(of: headers, repository: repository.repository)
+        let packedBits = loadsAsStored ? Self.packedBits(of: configuration, headers: headers) : nil
         measurement = try Self.measurement(of: repository, template: template, weightFiles: weightFiles,
-                                           tensors: tensors)
+                                           tensors: tensors, packedBits: packedBits)
     }
 
     /// The descriptor of the repository, read through the template's loader.
@@ -180,6 +183,35 @@ extension NFKMLXRepositoryJudgment {
             throw refusal(.unsupportedQuantization, "\(repository): " + error.localizedDescription)
         }
         return NFKMLXLanguage.isMLXQuantization(configuration) ? .mlx : .method
+    }
+
+    /// Refuses a configuration that states, with a value the output depends on, a field
+    /// ``NFKMLXLanguage/configuration(fromJSON:)`` does not read: an MLP bias (`mlp_bias`), an activation
+    /// other than SiLU (`hidden_act`), an unstated rotary base, which the reader takes as 10^6 where
+    /// transformers takes 10^4, and a sliding window narrower than the context outside gpt-oss, whose
+    /// alternating windows the reader builds.
+    static func verifyUnreadFields(of configuration: [String: Any], repository: String) throws {
+        if (configuration["mlp_bias"] as? NSNumber)?.boolValue == true {
+            throw refusal(.unsupportedConfiguration,
+                "\(repository) adds biases to its MLP projections (mlp_bias), which the loader does not build")
+        }
+        if let activation = configuration["hidden_act"], !(activation is NSNull), activation as? String != "silu" {
+            throw refusal(.unsupportedConfiguration,
+                "\(repository) activates its MLP with \(activation), where the loader applies SiLU")
+        }
+        let parameters = configuration["rope_parameters"] as? [String: Any]
+        if !(configuration["rope_theta"] is NSNumber) && !(parameters?["rope_theta"] is NSNumber) {
+            throw refusal(.unsupportedConfiguration,
+                "\(repository) states no rope_theta, whose default the loader and transformers set differently")
+        }
+        guard configuration["model_type"] as? String != "gpt_oss",
+              let window = (configuration["sliding_window"] as? NSNumber)?.intValue else { return }
+        let windowed = (configuration["use_sliding_window"] as? NSNumber)?.boolValue ?? true
+        let positions = (configuration["max_position_embeddings"] as? NSNumber)?.intValue ?? Int.max
+        if windowed && window < positions {
+            throw refusal(.unsupportedConfiguration,
+                "\(repository) attends within a sliding window of \(window) tokens, which the loader does not apply")
+        }
     }
 
     /// Refuses packed weights the loader would take as floats or would not place, and returns whether
@@ -320,19 +352,57 @@ extension NFKMLXRepositoryJudgment {
         return result
     }
 
+    /// The width of each packed layer of a release the loader reads as stored, by the layer's path:
+    /// mlx_lm's per-layer override in `config.json`, else its default, else an InferKit save's recorded
+    /// width.
+    static func packedBits(of configuration: [String: Any], headers: [[String: Any]]) -> (String) -> Int? {
+        let nested = configuration["text_config"] as? [String: Any]
+        let stated = (configuration["quantization"] as? [String: Any])
+            ?? (configuration["quantization_config"] as? [String: Any])
+            ?? (nested?["quantization"] as? [String: Any]) ?? (nested?["quantization_config"] as? [String: Any])
+        let saved = headers.lazy.compactMap { ($0["__metadata__"] as? [String: Any])?["inferkit.quantization"] as? String }
+            .first.flatMap { $0.split(separator: ":").first.flatMap { Int($0) } }
+        let defaultBits = (stated?["bits"] as? NSNumber)?.intValue ?? saved
+        return { layer in ((stated?[layer] as? [String: Any])?["bits"] as? NSNumber)?.intValue ?? defaultBits }
+    }
+
+    /// The parameters the tensors hold. A packed layer's `U32` words count as the elements they pack at
+    /// its width, and its `scales` and `biases` describe the packing, so they count as none.
+    private static func parameterCount(of tensors: [NFKMLXHeaderTensor], packedBits: ((String) -> Int?)?) -> Int64 {
+        guard let packedBits else {
+            return tensors.reduce(0) { $0 + $1.elements }
+        }
+        let packedLayers = Set(tensors.compactMap { tensor -> String? in
+            guard tensor.dtype == "U32", tensor.name.hasSuffix(".weight") else { return nil }
+            return String(tensor.name.dropLast(".weight".count))
+        })
+        return tensors.reduce(0) { total, tensor in
+            let layer = tensor.name.split(separator: ".").dropLast().joined(separator: ".")
+            guard packedLayers.contains(layer) else { return total + tensor.elements }
+            guard tensor.name.hasSuffix(".weight") else {
+                let describesPacking = tensor.name.hasSuffix(".scales") || tensor.name.hasSuffix(".biases")
+                return describesPacking ? total : total + tensor.elements
+            }
+            guard let bits = packedBits(layer), bits > 0 else { return total + tensor.elements }
+            return total + tensor.elements * 32 / Int64(bits)
+        }
+    }
+
     /// The repository measured as `Tools/catalog/measure.py` measures a release: the bytes the download
     /// transfers, the tensor bytes by dtype, the parameters, the repeated layers, the routed experts, the
-    /// elements a weight quantization packs, and the geometry the key-value cache follows.
+    /// elements a weight quantization packs, and the geometry the key-value cache follows. A release the
+    /// loader reads as stored (`packedBits` non-nil) counts its packed layers' parameters unpacked and
+    /// records no quantizable elements, since its layers are packed already.
     static func measurement(of repository: NFKModelRepository, template: NFKMLXCatalogEntry, weightFiles: [String],
-                            tensors: [NFKMLXHeaderTensor]) throws -> NFKMLXMeasuredVariant {
+                            tensors: [NFKMLXHeaderTensor],
+                            packedBits: ((String) -> Int?)? = nil) throws -> NFKMLXMeasuredVariant {
         var tensorBytes = [String: Int64]()
-        var elements: Int64 = 0
         var structure = NFKMLXTensorStructure()
         for tensor in tensors {
             tensorBytes[tensor.dtype, default: 0] += tensor.bytes
-            elements += tensor.elements
             structure.add(name: tensor.name, dtype: tensor.dtype, shape: tensor.shape, bytes: tensor.bytes)
         }
+        let elements = parameterCount(of: tensors, packedBits: packedBits)
         let variant = variantIdentifier(repository.repository)
         var measurement = NFKMLXMeasuredVariant(
             model: repository.repository, variant: variant, status: .measured, note: nil, commit: repository.revision,
@@ -344,7 +414,7 @@ extension NFKMLXRepositoryJudgment {
         if !structure.expertBytes.isEmpty {
             measurement.expertBytes = ["": structure.expertBytes]
         }
-        if structure.quantizableElements > 0 {
+        if structure.quantizableElements > 0 && packedBits == nil {
             measurement.quantizableElements = ["": structure.quantizableElements]
         }
         measurement.geometry = NFKMLXMeasuredGeometry(configuration: repository.configuration)

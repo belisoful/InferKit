@@ -1525,11 +1525,12 @@ public final class NFKMLXLanguage: NSObject {
 
     /// Whether a `config.json` states mlx_lm's quantization rather than a transformers `quant_method`.
     static func isMLXQuantization(_ json: [String: Any]) -> Bool {
-        let configuration = (json["quantization"] == nil && json["quantization_config"] == nil)
+        // A key written as null states nothing, as `releaseQuantization(configJSON:)` reads it.
+        let configuration = (!(json["quantization"] is [String: Any]) && !(json["quantization_config"] is [String: Any]))
             ? (json["text_config"] as? [String: Any]) ?? json : json
         if configuration["quantization"] is [String: Any] { return true }
         guard let stated = configuration["quantization_config"] as? [String: Any] else { return false }
-        return stated["quant_method"] == nil
+        return !(stated["quant_method"] is String)
     }
 
     /// Whether a release stores its experts MXFP4 (`quantization_config.quant_method`), in which case

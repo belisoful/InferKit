@@ -1474,13 +1474,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   options, memory model, and memory facts.
 - The judgment reads what the loader reads, through the loader's own predicates: mlx_lm's quantized
   releases and single-file InferKit saves (measured at their stored bytes, with no precision or weight
-  quantization option), gpt-oss's MXFP4 experts, and every tokenizer the release reader reproduces.
-  `mlx-community/Qwen3-0.6B-4bit` and `mlx-community/Llama-3.2-1B-Instruct-4bit` resolve.
-- It refuses what the loader would read wrongly with no error, or would refuse at load: a configuration the
-  loader rejects, another quantization method, MXFP4 outside gpt-oss's experts, packed or 8-bit float
-  weights no configuration describes, an InferKit
-  save split across files, mlx_lm's gpt-oss layout, a tokenizer the reader does not reproduce, a
-  safetensors header whose shape or offsets are outside what a release holds, and weights outside
+  quantization option, and with the parameters of their float original), gpt-oss's MXFP4 experts, and
+  every tokenizer the release reader reproduces. `mlx-community/Qwen3-0.6B-4bit` and
+  `mlx-community/Llama-3.2-1B-Instruct-4bit` resolve.
+- It refuses what the loader would read wrongly with no error, or would refuse at load: a configuration
+  the loader rejects or that states what the loader does not read (an MLP bias, an activation other than
+  SiLU, no rotary base, a sliding window narrower than the context), another quantization method, MXFP4
+  outside gpt-oss's experts, packed or 8-bit float weights no configuration describes, an InferKit save
+  split across files, mlx_lm's gpt-oss layout, a tokenizer the reader does not reproduce, a safetensors
+  header whose shape or offsets are outside what a release holds, and weights outside
   `model.safetensors` or a `model.safetensors.index.json`.
 
 #### Stable Audio Open 1.0
