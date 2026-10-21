@@ -625,8 +625,6 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 						error:(nullable NSError *)error
 {
 	NSDictionary<NSString *, id> *description = backend != nil ? [NFKServedModel descriptionOfBackend:backend] : nil;
-	self.admittedBytes = 0;
-	self.admittedResidency = nil;
 	NSError *failure = nil;
 	if (backend == nil) {
 		failure = error ?: NFKServedError(NFKInferenceErrorDomain, kNFKError_InferenceBackendFailure,
@@ -639,6 +637,9 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	NFKServerModelEventReason reason = NFKServerModelEventReasonRequest;
 	NSTimeInterval loadSeconds = 0;
 	@synchronized (self) {
+		// Cleared with the residency change, so admission never reads the build as holding nothing.
+		self.admittedBytes = 0;
+		self.admittedResidency = nil;
 		handlers = [self.loadHandlers copy];
 		[self.loadHandlers removeAllObjects];
 		reportsBuild = !self.removed;
@@ -752,9 +753,9 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	}
 }
 
-/*! The bytes the model holds now for admission's accounting: its last measured resident bytes while
-	resident, what admission reserved while it builds, else 0. */
-- (NSInteger)admissionHeldBytes
+/*! The bytes the model holds now for admission's and relief's accounting: its last measured resident
+	bytes while resident, what admission reserved while it builds, else 0. */
+- (NSInteger)heldByteCount
 {
 	@synchronized (self) {
 		if (self.residency == NFKServerModelResidencyResident) {
@@ -766,6 +767,22 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 
 /*! Whether a run holds a slot or a backend is being built, which a runtime's cache release must not
 	overlap. */
+/*! The peak its last load measured, or its resident bytes where that is larger; 0 before a load. */
+- (NSInteger)measuredPeakByteCount
+{
+	@synchronized (self) {
+		return MAX(MAX(self.peakBytes.integerValue, self.residentBytes.integerValue), 0);
+	}
+}
+
+/*! Whether the model was removed. */
+- (BOOL)isRemovedNow
+{
+	@synchronized (self) {
+		return self.removed;
+	}
+}
+
 - (BOOL)isBusy
 {
 	@synchronized (self) {
@@ -2730,7 +2747,7 @@ static NSDictionary<NSString *, id> *NFKServedOptionsAtStage(NFKModelDescriptor 
 				return [@([left lastUse]) compare:@([right lastUse])];
 			}];
 			// The caches go before a model: what the least recently used model holds is the bytes to free.
-			NSInteger wanted = spaced ? leastRecentFirst.firstObject.residentBytes.integerValue : 0;
+			NSInteger wanted = spaced ? [leastRecentFirst.firstObject heldByteCount] : 0;
 			if (wanted > 0) {
 				NFKMemoryRelief *relief = [[NFKMemoryRelief alloc] initWithRequestedByteCount:wanted];
 				[self relieveCachesInto:relief];
@@ -2799,12 +2816,15 @@ static NSDictionary<NSString *, id> *NFKServedOptionsAtStage(NFKModelDescriptor 
 	}
 	NFKModelMemoryBudget *budget = self.admissionMemoryBudget ?: [NFKModelMemoryBudget currentBudget];
 	NFKModelMemoryEstimate *estimate = [self admissionEstimateForModel:model budget:nil];
-	NSInteger needed = estimate != nil ? estimate.peakByteCount : MAX(model.peakBytes.integerValue, model.residentBytes.integerValue);
+	NSInteger needed = estimate != nil ? estimate.peakByteCount : [model measuredPeakByteCount];
 	if (!budget.isKnown || needed <= 0) {
 		return nil;
 	}
 	NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:MAX(self.admissionWaitInterval, 0)];
 	while (YES) {
+		if ([model isRemovedNow]) {
+			return [model notServedError];
+		}
 		NSError *refusal = nil;
 		@synchronized (self.admissionLock) {
 			refusal = [self admitModel:model needing:needed estimate:estimate budget:budget];
@@ -2817,21 +2837,15 @@ static NSDictionary<NSString *, id> *NFKServedOptionsAtStage(NFKModelDescriptor 
 	}
 }
 
-/*! One admission attempt. Runs on the admission lock. */
+/*! One admission attempt: admits the build where it fits, else releases idle models when that frees
+	enough, then the runtimes' caches, and tries again. Runs on the admission lock. */
 - (nullable NSError *)admitModel:(NFKServedModel *)model
 						 needing:(NSInteger)needed
 						estimate:(nullable NFKModelMemoryEstimate *)estimate
 						  budget:(NFKModelMemoryBudget *)budget
 {
-	NSInteger held = [self admissionHeldBytesBeside:model];
-	if ([budget holdsByteCount:needed + held]) {
-		model.admittedBytes = needed;
-		return nil;
-	}
-	NFKModelMemoryEstimate *planned = [self admissionEstimateForModel:model inRoomBeside:held budget:budget estimate:estimate];
-	if (planned != nil) {
-		model.admittedResidency = planned.residency;
-		model.admittedBytes = planned.peakByteCount;
+	NSInteger held = [self heldByteCountBeside:model];
+	if ([self admitModel:model beside:held needing:needed estimate:estimate budget:budget]) {
 		return nil;
 	}
 	NSInteger shortfall = needed + held + budget.reserveByteCount - budget.byteCount;
@@ -2842,19 +2856,48 @@ static NSDictionary<NSString *, id> *NFKServedOptionsAtStage(NFKModelDescriptor 
 			releasable += [entry[@"bytes"] integerValue];
 		}
 	}
-	if (releasable >= shortfall) {
-		NFKMemoryRelief *caches = [[NFKMemoryRelief alloc] initWithRequestedByteCount:shortfall];
-		[self relieveCachesInto:caches];
+	if (releasable >= shortfall && ![model isRemovedNow]) {
 		NFKMemoryRelief *models = [[NFKMemoryRelief alloc] initWithRequestedByteCount:shortfall];
 		[self releaseIdleModelsInto:models reason:NFKServerModelEventReasonAdmission];
-		held = [self admissionHeldBytesBeside:model];
-		if ([budget holdsByteCount:needed + held]) {
-			model.admittedBytes = needed;
+		// A runtime such as MLX keeps the released weights in its cache until it returns it. The build
+		// being admitted has not started, so it is no reason to wait.
+		if (![self anyModelBusyBeside:model]) {
+			[NFKInferenceServer releaseRuntimeCachesNow];
+		}
+		held = [self heldByteCountBeside:model];
+		if ([self admitModel:model beside:held needing:needed estimate:estimate budget:budget]) {
 			return nil;
 		}
 		considered = [self admissionModelsBeside:model];
 	}
 	return [self admissionRefusalForModel:model needing:needed held:held budget:budget considered:considered];
+}
+
+/*! Admits model beside held bytes where it fits in budget with its reserve: a catalog model whose residency
+	is automatic at the residency planned for the room left, recorded for its build, and any other at
+	needed. Runs on the admission lock. */
+- (BOOL)admitModel:(NFKServedModel *)model
+			beside:(NSInteger)held
+		   needing:(NSInteger)needed
+		  estimate:(nullable NFKModelMemoryEstimate *)estimate
+			budget:(NFKModelMemoryBudget *)budget
+{
+	BOOL chooses = estimate != nil && [model.descriptor optionWithKey:NFKModelLoadOptionResidency] != nil
+		&& [estimate.requestedResidency isEqualToString:NFKModelResidencyAutomatic];
+	if (!chooses) {
+		if (![budget holdsByteCount:needed + held]) {
+			return NO;
+		}
+		model.admittedBytes = needed;
+		return YES;
+	}
+	NFKModelMemoryEstimate *planned = [self admissionEstimateForModel:model inRoomBeside:held budget:budget];
+	if (planned == nil) {
+		return NO;
+	}
+	model.admittedResidency = planned.residency;
+	model.admittedBytes = planned.peakByteCount;
+	return YES;
 }
 
 /*! A catalog model's estimate for its hosted load options, judged against budget, or nil for any other
@@ -2867,32 +2910,41 @@ static NSDictionary<NSString *, id> *NFKServedOptionsAtStage(NFKModelDescriptor 
 	return [model.descriptor estimatedMemoryForOptions:model.hostedLoadOptions memoryBudget:budget error:NULL];
 }
 
-/*! The estimate of a residency the planner chooses for the room held leaves in budget, when the model's
-	residency is automatic and that plan stages, pages, or streams the model and fits; else nil. */
+/*! The estimate of the residency the planner chooses for the room budget leaves beside held bytes, its
+	reserve kept, or nil when no residency fits there. The planner's budget is the least that holds the
+	room, so its peak is held to budget again. */
 - (nullable NFKModelMemoryEstimate *)admissionEstimateForModel:(NFKServedModel *)model
 												  inRoomBeside:(NSInteger)held
 														budget:(NFKModelMemoryBudget *)budget
-													  estimate:(nullable NFKModelMemoryEstimate *)estimate
 {
-	NSInteger room = budget.byteCount - held;
-	BOOL chooses = [model.descriptor optionWithKey:NFKModelLoadOptionResidency] != nil
-		&& [estimate.requestedResidency isEqualToString:NFKModelResidencyAutomatic];
-	if (estimate == nil || room <= 0 || !chooses) {
+	NSInteger room = budget.byteCount - budget.reserveByteCount - held;
+	if (room <= 0) {
 		return nil;
 	}
-	NFKModelMemoryBudget *left = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:(NSInteger)floor(room / NFKModelMemoryBudget.workingSetFraction)];
+	NFKModelMemoryBudget *left = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:
+								  [NFKModelMemoryBudget leastWorkingSetHoldingByteCount:room]];
 	NFKModelMemoryEstimate *planned = [self admissionEstimateForModel:model budget:left];
-	BOOL smaller = planned.fits && ![planned.residency isEqualToString:NFKModelResidencyResident];
-	return smaller ? planned : nil;
+	return planned.fits && [budget holdsByteCount:planned.peakByteCount + held] ? planned : nil;
+}
+
+/*! Whether a hosted model other than model has a run in flight or a backend being built. */
+- (BOOL)anyModelBusyBeside:(nullable NFKServedModel *)model
+{
+	for (NFKServedModel *other in [self hostedModels]) {
+		if (other != model && [other isBusy]) {
+			return YES;
+		}
+	}
+	return NO;
 }
 
 /*! What the hosted models other than model hold for admission's accounting. */
-- (NSInteger)admissionHeldBytesBeside:(NFKServedModel *)model
+- (NSInteger)heldByteCountBeside:(NFKServedModel *)model
 {
 	NSInteger held = 0;
 	for (NFKServedModel *other in [self hostedModels]) {
 		if (other != model) {
-			held += [other admissionHeldBytes];
+			held += [other heldByteCount];
 		}
 	}
 	return held;
@@ -2905,7 +2957,7 @@ static NSDictionary<NSString *, id> *NFKServedOptionsAtStage(NFKModelDescriptor 
 	NSTimeInterval grace = MAX(self.unloadGracePeriod, 0.0);
 	NSMutableArray<NSDictionary<NSString *, id> *> *considered = [NSMutableArray array];
 	for (NFKServedModel *other in [self hostedModels]) {
-		NSInteger bytes = [other admissionHeldBytes];
+		NSInteger bytes = [other heldByteCount];
 		if (other == model || bytes <= 0) {
 			continue;
 		}
@@ -2958,19 +3010,25 @@ static NSDictionary<NSString *, id> *NFKServedOptionsAtStage(NFKModelDescriptor 
 	});
 }
 
-/*! The first three steps of the relief ladder: the runtimes' caches while nothing runs, then each idle
-	model's conversation caches, then its cached experts down to expertCacheReliefFloor. Stops once relief
-	is satisfied. A model with a run in flight, queued, or a build under way keeps its caches. */
+/*! The first three steps of the relief ladder: each idle model's conversation caches, then its cached
+	experts down to expertCacheReliefFloor, stopping once relief is satisfied, then the runtimes' caches while
+	nothing runs. The runtimes go last because MLX keeps what the earlier steps free in its cache until it
+	returns it, and they count only the cache they held before those steps. A model with a run in flight,
+	queued, or a build under way keeps its caches. */
 - (void)relieveCachesInto:(NFKMemoryRelief *)relief
 {
 	NSArray<NFKServedModel *> *models = [self hostedModels];
-	BOOL anyBusy = NO;
-	for (NFKServedModel *model in models) {
-		anyBusy = anyBusy || [model isBusy];
-	}
+	BOOL anyBusy = [self anyModelBusyBeside:nil];
+	NSInteger cachedBefore = anyBusy ? 0 : [NFKInferenceServer runtimeCachedByteCount];
+	[self releaseModelCachesOf:models into:relief];
 	if (!anyBusy) {
-		relief.runtimeCacheByteCount += [NFKInferenceServer releaseRuntimeCachesNow];
+		relief.runtimeCacheByteCount += MIN([NFKInferenceServer releaseRuntimeCachesNow], cachedBefore);
 	}
+}
+
+/*! The conversation and expert steps of the relief ladder, stopping once relief is satisfied. */
+- (void)releaseModelCachesOf:(NSArray<NFKServedModel *> *)models into:(NFKMemoryRelief *)relief
+{
 	for (NFKServedModel *model in models) {
 		if ([relief isSatisfied]) {
 			return;
@@ -3016,7 +3074,7 @@ static NSDictionary<NSString *, id> *NFKServedOptionsAtStage(NFKModelDescriptor 
 				if (![model isUnloadable] || [self isPinnedModelNamed:model.name]) {
 					continue;
 				}
-				NSInteger bytes = model.residentBytes.integerValue;
+				NSInteger bytes = [model heldByteCount];
 				id<NFKInferenceBackend> taken = [model takeBackendIfUnusedFor:0 grace:grace at:now reason:reason];
 				if (taken != nil) {
 					[released addObject:taken];
@@ -3035,6 +3093,18 @@ static NSDictionary<NSString *, id> *NFKServedOptionsAtStage(NFKModelDescriptor 
 		[model finishUnload];
 	}
 	relief.releasedModelNames = names;
+}
+
+/*! The bytes the registered runtimes that report one say they hold cached. */
++ (NSInteger)runtimeCachedByteCount
+{
+	NSInteger cached = 0;
+	for (Class<NFKServingRuntimeStatus> runtime in [NFKInferenceServer runtimeStatusClasses]) {
+		if ([(Class)runtime respondsToSelector:@selector(cachedByteCount)]) {
+			cached += MAX([runtime cachedByteCount], 0);
+		}
+	}
+	return cached;
 }
 
 /*! Asks each registered runtime to return its cache now, and returns the bytes the runtimes' reports say

@@ -143,7 +143,8 @@ NS_ASSUME_NONNULL_BEGIN
 	@method     releaseExpertCacheByteCount:keepingByteCount:
 	@abstract   Releases up to byteCount of the routed experts the backend keeps cached, keeping at least
 				keptByteCount cached, and returns the bytes freed.
-	@discussion The cache's budget is unchanged, so later runs fill it again. NFKInferenceServer calls it to
+	@discussion The cache's budget is unchanged, so later runs fill it again. A run in progress keeps
+				running, and pays only for reading the evicted experts again. NFKInferenceServer calls it to
 				relieve memory before it releases a model. Introduced in InferKit 0.4.0.
 */
 - (NSInteger)releaseExpertCacheByteCount:(NSInteger)byteCount keepingByteCount:(NSInteger)keptByteCount;

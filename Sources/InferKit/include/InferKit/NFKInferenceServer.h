@@ -159,6 +159,36 @@ NS_SWIFT_SENDABLE
 @end
 
 /*!
+	@class      NFKMemoryRelief
+	@abstract   What -[NFKInferenceServer relieveMemoryByteCount:completionHandler:] freed, step by step.
+	@discussion The steps run in order, and the cache steps stop once they have freed the requested bytes:
+				- conversationCacheByteCount: the conversation caches of models with no run in flight;
+				- expertCacheByteCount: the cached routed experts of models with no run in flight, down to
+				  expertCacheReliefFloor each;
+				- runtimeCacheByteCount: the runtimes' cached memory, released last because a runtime such
+				  as MLX keeps the caches the steps above free until it returns its own, and only while no
+				  hosted model has a run in flight or a backend being built. It counts the cache the
+				  runtimes held before the steps above, so no byte is counted twice;
+				- modelByteCount: the resident bytes of the idle models it released, least recently used
+				  first, never a pinned model, one with a run in flight or queued, or one within
+				  unloadGracePeriod of its build. Taken only when the cache steps fell short.
+				Introduced in InferKit 0.4.0.
+*/
+NS_SWIFT_SENDABLE
+@interface NFKMemoryRelief : NSObject
+@property (nonatomic, readonly) NSInteger requestedByteCount;
+@property (nonatomic, readonly) NSInteger runtimeCacheByteCount;
+@property (nonatomic, readonly) NSInteger conversationCacheByteCount;
+@property (nonatomic, readonly) NSInteger expertCacheByteCount;
+@property (nonatomic, readonly) NSInteger modelByteCount;
+/*! The names of the models released, in the order they were released. */
+@property (nonatomic, readonly, copy) NSArray<NSString *> *releasedModelNames;
+/*! The bytes every step freed together. */
+@property (nonatomic, readonly) NSInteger byteCount;
+- (instancetype)init NS_UNAVAILABLE;
+@end
+
+/*!
 	@class      NFKInferenceServer
 	@abstract   Serves the models this process hosts to clients on this machine and on the network.
 	@discussion A server hosts backends by model name and answers HTTP on two surfaces under /v1:
@@ -429,8 +459,8 @@ NS_SWIFT_SENDABLE
 				Observation. The delegate (NFKInferenceServerDelegate) learns, on delegateQueue and in
 				order, when a run starts and ends (its model, route, client, key name, wait, duration,
 				and outcome), when a model loads, fails to load, or unloads and why (a request, the
-				host, idleness, pressure, or removal), when a client's connection passes its first key
-				check, and when an MCP session starts or ends.
+				host, idleness, pressure, relief, admission, or removal), when a client's connection
+				passes its first key check, and when an MCP session starts or ends.
 
 				The keys, requiresAPIKey, loopbackExemptScopes, allowedOrigins, reportsHostDetails,
 				storageDirectoryURL, the app routes, and the hosted models take effect on the next
@@ -442,34 +472,6 @@ NS_SWIFT_SENDABLE
 				object.
 				Introduced in InferKit 0.4.0.
 */
-/*!
-	@class      NFKMemoryRelief
-	@abstract   What -[NFKInferenceServer relieveMemoryByteCount:completionHandler:] freed, step by step.
-	@discussion The steps run in order and stop once they have freed the requested bytes:
-				- runtimeCacheByteCount: the runtimes' cached memory, released only while no hosted model
-				  has a run in flight or a backend being built;
-				- conversationCacheByteCount: the conversation caches of models with no run in flight;
-				- expertCacheByteCount: the cached routed experts of models with no run in flight, down to
-				  expertCacheReliefFloor each;
-				- modelByteCount: the resident bytes of the idle models it released, least recently used
-				  first, never a pinned model, one with a run in flight or queued, or one within
-				  unloadGracePeriod of its build.
-				Introduced in InferKit 0.4.0.
-*/
-NS_SWIFT_SENDABLE
-@interface NFKMemoryRelief : NSObject
-@property (nonatomic, readonly) NSInteger requestedByteCount;
-@property (nonatomic, readonly) NSInteger runtimeCacheByteCount;
-@property (nonatomic, readonly) NSInteger conversationCacheByteCount;
-@property (nonatomic, readonly) NSInteger expertCacheByteCount;
-@property (nonatomic, readonly) NSInteger modelByteCount;
-/*! The names of the models released, in the order they were released. */
-@property (nonatomic, readonly, copy) NSArray<NSString *> *releasedModelNames;
-/*! The bytes every step freed together. */
-@property (nonatomic, readonly) NSInteger byteCount;
-- (instancetype)init NS_UNAVAILABLE;
-@end
-
 @interface NFKInferenceServer : NSObject
 
 /*! The port to listen on. Defaults to NFKInferenceServerDefaultPort; 0 lets the system choose. */
@@ -809,19 +811,22 @@ NS_SWIFT_SENDABLE
 /*!
 	@property   admitsModelsByMemory
 	@abstract   Whether a build first makes room for the model beside the models already resident.
-	@discussion Defaults to YES. Before a hosted model builds, the server adds the build's estimated peak (a
-				catalog model's estimate, or the peak its last load measured) to what the other hosted models
-				hold (their measured resident bytes, and what admission reserved for builds under way), and
-				holds the sum to admissionMemoryBudget. When it does not fit, the server tries, in order:
+	@discussion Defaults to YES. Before a hosted model builds, the server holds the build beside what the
+				other hosted models hold (their measured resident bytes, and what admission reserved for
+				builds under way) to admissionMemoryBudget, its reserve included:
 				- a catalog model whose residency is automatic loads in the residency the planner chooses
-				  for the room left, such as staged or paged;
-				- the caches go, as relieveMemoryByteCount:completionHandler: releases them;
-				- idle models go, least recently used first, reported with
-				  NFKServerModelEventReasonAdmission, when releasing them frees enough.
+				  for the room the budget leaves: resident where that fits, else staged, paged, or streamed;
+				- any other model is admitted where its estimated peak fits (a catalog model's estimate, or
+				  the peak its last load measured).
+				When the build does not fit, idle models go, least recently used first, reported with
+				NFKServerModelEventReasonAdmission, when releasing them frees enough, and the runtimes'
+				caches are released after them. Admission counts measured resident bytes, which the
+				conversation and expert caches do not change, so it leaves those caches in place.
 				A build that still does not fit waits up to admissionWaitInterval for a model to become
 				releasable, then fails with NFKModelCatalogErrorDoesNotFit in NFKModelCatalogErrorDomain,
 				its userInfo naming the models considered under NFKInferenceServerAdmissionModelsKey. A
-				build whose peak is unknown, or a budget the machine does not report, is admitted.
+				build whose model is removed while it waits ends there. A build whose peak is unknown, or a
+				budget the machine does not report, is admitted.
 				Introduced in InferKit 0.4.0.
 */
 @property (atomic, assign) BOOL admitsModelsByMemory;

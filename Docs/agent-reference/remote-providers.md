@@ -1553,15 +1553,19 @@ keeping them in memory, and unloads idle ones.
   buffers in-flight work still reads (`mlx-runtime-gotchas.md`). `NFKMLXGPU` implements it as
   `synchronize()` then `clearCache()`, and does nothing without the Metal library. Without it an
   unloaded MLX model's buffers stay in MLX's cache and the footprint does not fall.
-- Relief (`relieveMemoryByteCount:completionHandler:`, on the residency queue) climbs four steps and
-  stops once it has freed the bytes asked: (a) the runtimes' caches, only while no model is busy,
-  measured by the optional `+cachedByteCount`; (b) each idle model's conversation caches, through the
-  backend's optional `releaseIdleConversationCaches`; (c) each idle model's cached experts, through
+- Relief (`relieveMemoryByteCount:completionHandler:`, on the residency queue) climbs four steps:
+  (a) each idle model's conversation caches, through the backend's optional
+  `releaseIdleConversationCaches`; (b) each idle model's cached experts, through
   `releaseExpertCacheByteCount:keepingByteCount:`, down to `expertCacheReliefFloor`, budget unchanged;
-  (d) idle models, least recently used first, never pinned, busy, or within grace, each reported with
-  `NFKServerModelEventReasonRelief`. The pressure branch of `unloadIdleModels` runs (a) to (c) for the
-  resident bytes of the model it would release, and keeps the model when they freed that much; the
-  hysteresis then spaces the next attempt. A backend with a run in progress returns 0 from (b) at once
+  (c) the runtimes' caches, only while no model is busy; (d) idle models, least recently used first,
+  never pinned, busy, or within grace, each reported with `NFKServerModelEventReasonRelief`. (a) and (b)
+  stop once they have freed the bytes asked, (c) always runs, and (d) runs only when (a) to (c) fell
+  short. (c) runs after (a) and (b) because MLX parks the arrays they free in its buffer cache until
+  `clearCache()`. It counts at most the `+cachedByteCount` the runtimes reported before (a), so a parked
+  byte is counted once. The pressure branch of `unloadIdleModels` runs (a) to (c) for the held bytes of
+  the model it would release, and keeps the model when they freed that much; the hysteresis then spaces
+  the next attempt. Every read of a model's resident bytes goes through `heldByteCount`, under the model's
+  lock, since a build writes them under it. A backend with a run in progress returns 0 from (b) at once
   (a try-lock on its generation lock). `NFKMLXReloadableBackend` implements both backend methods
   itself, so an unloaded model answers 0 and is never rebuilt by a relief call.
 - Admission (`admitsModelsByMemory`, on by default) runs on the build's queue before the provider, under
@@ -1570,15 +1574,23 @@ keeping them in memory, and unloads idle ones.
   first build of a provider model has none and is admitted. The held bytes are the other models'
   measured resident bytes plus what admission reserved for builds still under way (`admittedBytes`).
   The accounting leaves the caches out, which keeps it independent of what else the process holds (an
-  MLX test process's allocation counts earlier tests' buffers), so the cache steps run before an
-  eviction for the memory they free and the decision rests on the resident bytes. The order: fit as it
-  is; a catalog model with a declared residency option at `automatic` takes the residency the planner
-  chooses for a budget of the room left (`admittedResidency`, which the catalog provider passes as
-  `NFKModelLoadOptionResidency`); the cache steps; then idle models, least recently used first, with
-  reason `NFKServerModelEventReasonAdmission`, only when the releasable models together cover the
-  shortfall. The refusal is `NFKModelCatalogErrorDoesNotFit` with `NFKInferenceServerAdmissionModelsKey`
-  listing each model that holds memory and its reason. `admissionWaitInterval` retries every 0.25 s
-  until it passes.
+  MLX test process's allocation counts earlier tests' buffers), so admission skips the conversation and
+  expert steps, whose release no count would see. The fit:
+  - a catalog model with a declared residency option at `automatic` takes the residency the planner
+    chooses for the room the budget leaves, `byteCount − reserveByteCount − held`, every time, resident
+    included (`admittedResidency`, which the catalog provider passes as `NFKModelLoadOptionResidency`).
+    An estimate without a budget is staged, so admitting such a model on that peak and building it at
+    `automatic` would let the catalog resolve it against the whole machine. The planner's budget is the
+    least that holds the room, and the planned peak is held to the real budget again;
+  - any other model fits when its peak plus the held bytes fits the budget with its reserve.
+  When it does not fit, idle models go, least recently used first, with reason
+  `NFKServerModelEventReasonAdmission`, only when the releasable models together cover the shortfall;
+  then the runtimes' caches go unless another model is busy (the model being admitted has not begun to
+  build); then the fit is tried again. The refusal is `NFKModelCatalogErrorDoesNotFit` with
+  `NFKInferenceServerAdmissionModelsKey` listing each model that holds memory and its reason.
+  `admissionWaitInterval` retries every 0.25 s until it passes, and a model removed meanwhile ends the
+  wait with its not-served error. A build clears `admittedBytes` in the same lock that makes it resident,
+  so another admission never reads it as holding nothing.
 - Status: each model's `residency` object (`state`, `unloadable`, `last_used` in seconds since 1970,
   `idle_timeout_seconds` when finite, `load_seconds`, `load_error`, `loads`, `unloads`, `resident_bytes`,
   `peak_bytes`) in both the status route and the `/models` entry; `NFKServerModelStatus` reads it. A

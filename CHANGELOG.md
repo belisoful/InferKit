@@ -42,26 +42,28 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 #### Admission makes room for a build
 
-- `NFKInferenceServer` admits each hosted model's build against `admissionMemoryBudget` beside what the
-  other hosted models hold (`admitsModelsByMemory`, on by default). A build that does not fit takes the
-  staged or paged residency that fits where its catalog residency is automatic, else the server releases
-  the caches and then idle models, least recently used first, reported with
-  `NFKServerModelEventReasonAdmission`. A build that still does not fit fails with
+- `NFKInferenceServer` admits each hosted model's build against `admissionMemoryBudget` and its reserve,
+  beside what the other hosted models hold (`admitsModelsByMemory`, on by default). A catalog model whose
+  residency is automatic builds at the residency planned for the room left: resident where it fits, else
+  staged, paged, or streamed. A build that does not fit releases idle models, least recently used first,
+  reported with `NFKServerModelEventReasonAdmission`, and then the runtimes' caches. A build that still
+  does not fit waits up to `admissionWaitInterval` for a model to become releasable, then fails with
   `NFKModelCatalogErrorDoesNotFit`, its userInfo naming each model it considered and why under
-  `NFKInferenceServerAdmissionModelsKey`, or waits up to `admissionWaitInterval` for one to become
-  releasable.
+  `NFKInferenceServerAdmissionModelsKey`.
 
 #### Memory relief before a model is released
 
 - `-[NFKInferenceServer relieveMemoryByteCount:completionHandler:]` frees memory in steps and stops once
-  it has freed the bytes asked: the runtimes' cached memory while nothing runs, idle models' conversation
-  caches, their cached routed experts down to `expertCacheReliefFloor`, and only then idle models, least
-  recently used first. `NFKMemoryRelief` reports what each step freed, and a released model's event
+  it has freed the bytes asked: idle models' conversation caches, their cached routed experts down to
+  `expertCacheReliefFloor`, the runtimes' cached memory while nothing runs, and only then idle models,
+  least recently used first. The runtimes go after the model caches because MLX holds what those free
+  until it returns its cache. `NFKMemoryRelief` reports what each step freed, and a released model's event
   carries `NFKServerModelEventReasonRelief`. Memory-pressure unloading climbs the cache steps first and
   keeps a model when they free its bytes.
 - `NFKInferenceBackend` gains the optional `releaseIdleConversationCaches` and
-  `releaseExpertCacheByteCount:keepingByteCount:`, which the MLX language, Gemma 3, Gemma 4, and DeepSeek
-  V4 backends implement, and `NFKServingRuntimeStatus` the optional `+cachedByteCount`.
+  `releaseExpertCacheByteCount:keepingByteCount:`. The MLX language and DeepSeek V4 backends implement
+  both, Gemma 3 the conversation release, and Gemma 4 the expert release. `NFKServingRuntimeStatus` gains
+  the optional `+cachedByteCount`.
   `NFKServerModelEventReasonAdmission` names a release that makes room for another model's build.
 
 #### The audio-generation task

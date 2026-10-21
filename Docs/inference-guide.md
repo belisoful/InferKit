@@ -946,17 +946,19 @@ Two options unload a model that sits unused, each independent of the other:
 A model just built is kept for `unloadGracePeriod`, a model with a run in flight or queued is never
 unloaded, a model pinned with `setPinned:forModelName:` is never unloaded by either option, and under
 pressure the least recently used model goes first. Before a model goes for pressure, the server releases
-what costs nothing to rebuild: the runtimes' cached memory, idle models' conversation caches, and their
-cached routed experts. `relieveMemoryByteCount:completionHandler:` climbs the same steps on request and
-releases idle models only after them, reporting what each step freed in an `NFKMemoryRelief`.
+what costs nothing to rebuild: idle models' conversation caches, their cached routed experts, and then the
+runtimes' cached memory, which on MLX is where the first two land until the runtime returns it.
+`relieveMemoryByteCount:completionHandler:` climbs the same steps on request and releases idle models only
+after them, reporting what each step freed in an `NFKMemoryRelief`.
 
 Before a hosted model builds, the server makes room for it (`admitsModelsByMemory`, on by default). It
-adds the build's estimated peak to what the other models hold and holds the sum to
-`admissionMemoryBudget`, this machine's budget by default. A build that does not fit loads staged or paged
-where the catalog model's residency is automatic and that fits, else the caches go, else idle models go,
-least recently used first. A build that still does not fit fails with `NFKModelCatalogErrorDoesNotFit`,
-naming each model it considered and why it stayed (pinned, running, queued, or within its grace period),
-or first waits up to `admissionWaitInterval` for one to become releasable. Each model's entry in the
+holds the build beside what the other models hold to `admissionMemoryBudget`, this machine's budget by
+default, its reserve included. A catalog model whose residency is automatic loads at the residency
+planned for the room left: resident where it fits, else staged, paged, or streamed. A build that does not
+fit releases idle models, least recently used first, and then the runtimes' caches. A build that still does
+not fit waits up to `admissionWaitInterval` for a model to become releasable, then fails with
+`NFKModelCatalogErrorDoesNotFit`, naming each model it considered and why it stayed (pinned, running,
+queued, or within its grace period). Each model's entry in the
 status route reports its `residency`: whether it is loaded, when it was last used, its idle timeout at
 the current pressure, and `resident_bytes` and `peak_bytes` from its last load
 (`NFKServerModelStatus.residentBytes` and `peakBytes`). A backend that measures its own load gives

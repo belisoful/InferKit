@@ -46,8 +46,50 @@
 @end
 
 /*! A backend that reports its resident bytes and releases conversation and expert caches it holds. */
+static NSInteger NFKReliefRuntimeCached = 0;
+
+/*! A runtime that, as MLX does, keeps what a backend releases in its cache until it returns its cache. */
+@interface NFKReliefTestRuntime : NSObject <NFKServingRuntimeStatus>
++ (void)setCachedByteCount:(NSInteger)bytes;
+@end
+
+@implementation NFKReliefTestRuntime
+
++ (NSString *)runtimeStatusName
+{
+	return @"relief-test-runtime";
+}
+
++ (NSDictionary<NSString *, id> *)runtimeStatus
+{
+	return @{};
+}
+
++ (NSInteger)cachedByteCount
+{
+	@synchronized (self) {
+		return NFKReliefRuntimeCached;
+	}
+}
+
++ (void)setCachedByteCount:(NSInteger)bytes
+{
+	@synchronized (self) {
+		NFKReliefRuntimeCached = bytes;
+	}
+}
+
++ (void)releaseCachedMemory
+{
+	[self setCachedByteCount:0];
+}
+
+@end
+
 @interface NFKReliefTestBackend : NFKResidencyTestBackend
 @property (atomic, assign) NSInteger residentBytesHeld;
+/*! Whether the conversation caches it releases go into NFKReliefTestRuntime's cache. */
+@property (atomic, assign) BOOL parksReleasedCaches;
 @property (atomic, assign) NSInteger conversationBytes;
 @property (atomic, assign) NSInteger expertBytes;
 @end
@@ -63,6 +105,9 @@
 {
 	NSInteger held = self.conversationBytes;
 	self.conversationBytes = 0;
+	if (self.parksReleasedCaches) {
+		[NFKReliefTestRuntime setCachedByteCount:[NFKReliefTestRuntime cachedByteCount] + held];
+	}
 	return held;
 }
 
@@ -71,6 +116,26 @@
 	NSInteger freed = MAX(MIN(byteCount, self.expertBytes - keptByteCount), 0);
 	self.expertBytes -= freed;
 	return freed;
+}
+
+@end
+
+static NSString * const NFKAdmissionTestEngine = @"admission-test-engine";
+
+/*! The engine's builder, which records the residency a build asks for and builds a backend holding what
+	that residency holds of a model with two 3,500-byte stages. */
+@interface NFKAdmissionTestBuilder : NSObject <NFKModelBackendBuilding>
+@property (atomic, copy, nullable) NSString *residency;
+@end
+
+@implementation NFKAdmissionTestBuilder
+
+- (nullable id<NFKInferenceBackend>)backendForBuildRequest:(NFKModelBuildRequest *)request error:(NSError **)error
+{
+	self.residency = request.loadOptions[NFKModelLoadOptionResidency];
+	NFKReliefTestBackend *backend = [[NFKReliefTestBackend alloc] init];
+	backend.residentBytesHeld = [self.residency isEqualToString:NFKModelResidencyStaged] ? 3500 : 7000;
+	return backend;
 }
 
 @end
@@ -522,6 +587,26 @@
 	XCTAssertEqual([server residencyForModelName:@"newer"], NFKServerModelResidencyNotLoaded);
 }
 
+- (void)testTheRuntimesCacheGoesLastAndCountsOnlyWhatItHeldBefore
+{
+	[NFKInferenceServer registerRuntimeStatusClassName:@"NFKReliefTestRuntime"];
+	[self addTeardownBlock:^{
+		[NFKReliefTestRuntime setCachedByteCount:0];
+	}];
+	NFKInferenceServer *server = [self server];
+	NFKReliefTestBackend *backend = [self reliefBackendHolding:1000 conversations:150 experts:0];
+	backend.parksReleasedCaches = YES;
+	[server addBackendProvider:[self providerReturning:backend] forModelName:@"cached"];
+	[self load:@"cached" on:server];
+	[NFKReliefTestRuntime setCachedByteCount:500];
+
+	NFKMemoryRelief *relief = [self relieve:600 on:server];
+	XCTAssertEqual(relief.conversationCacheByteCount, 150, @"%@", relief);
+	XCTAssertEqual(relief.runtimeCacheByteCount, 500, @"the conversation bytes the runtime held are counted once");
+	XCTAssertEqual([NFKReliefTestRuntime cachedByteCount], 0, @"the released conversation caches reached the system");
+	XCTAssertEqualObjects(relief.releasedModelNames, @[]);
+}
+
 - (void)testReliefKeepsPinnedModelsAndModelsWithinTheirGracePeriod
 {
 	NFKInferenceServer *server = [self server];
@@ -628,6 +713,56 @@
 	server.admitsModelsByMemory = NO;
 	XCTAssertNil([self loadReturningError:@"next" on:server], @"without admission the build goes ahead");
 	XCTAssertEqual([server residencyForModelName:@"held"], NFKServerModelResidencyResident);
+}
+
+/*! A server holding a pinned model of heldBytes beside the catalog model "staged", whose two stages hold
+	3,500 bytes each and whose residency is automatic, built by builder. */
+- (NFKInferenceServer *)serverHolding:(NSInteger)heldBytes besideAStagedModelBuiltBy:(NFKAdmissionTestBuilder *)builder
+{
+	[NFKModelCatalog registerBackendBuilder:builder forEngine:NFKAdmissionTestEngine];
+	[self addTeardownBlock:^{
+		[NFKModelCatalog registerBackendBuilder:nil forEngine:NFKAdmissionTestEngine];
+	}];
+	NSString *json = @"{ \"schemaVersion\": 1, \"kind\": \"inferkit.model-catalog\", \"models\": [ {"
+		"\"id\": \"staged.model\", \"family\": \"test\", \"engine\": \"admission-test-engine\","
+		"\"tasks\": [\"text-generation\"], \"residencies\": [\"resident\", \"staged\"],"
+		"\"options\": [{ \"key\": \"residency\", \"kind\": \"choice\", \"stage\": \"load\", \"default\": \"automatic\","
+		"  \"choices\": [{ \"value\": \"automatic\" }, { \"value\": \"resident\" }, { \"value\": \"staged\" }] }],"
+		"\"memoryModel\": { \"residency\": \"residency\" },"
+		"\"variants\": [{ \"id\": \"default\", \"isDefault\": true, \"precision\": \"float16\","
+		"  \"memoryFacts\": { \"stages\": [{ \"id\": \"encoder\", \"bytesByPrecision\": { \"checkpoint\": 3500 } },"
+		"    { \"id\": \"decoder\", \"bytesByPrecision\": { \"checkpoint\": 3500 } }], \"basis\": \"measured\" } }] } ] }";
+	NFKModelCatalog *catalog = [[NFKModelCatalog alloc] init];
+	catalog.memoryBudget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:(NSInteger)64 << 30];
+	NSError *error = nil;
+	XCTAssertTrue([catalog addDescriptorsFromManifestData:[json dataUsingEncoding:NSUTF8StringEncoding] error:&error],
+				  @"%@", error);
+	NFKInferenceServer *server = [self server];
+	server.admissionMemoryBudget = [self admissionBudget];
+	[server addBackendProvider:[self providerReturning:[self reliefBackendHolding:heldBytes conversations:0 experts:0]]
+				  forModelName:@"held"];
+	[server setPinned:YES forModelName:@"held"];
+	[self load:@"held" on:server];
+	XCTAssertTrue([server addModelWithIdentifier:@"staged.model" options:nil catalog:catalog forModelName:@"staged"
+										   error:&error], @"%@", error);
+	return server;
+}
+
+- (void)testAnAutomaticModelIsAdmittedStagedWhereOnlyStagedFitsBesideTheReserve
+{
+	NFKAdmissionTestBuilder *builder = [[NFKAdmissionTestBuilder alloc] init];
+	NFKInferenceServer *server = [self serverHolding:1000 besideAStagedModelBuiltBy:builder];
+	XCTAssertNil([self loadReturningError:@"staged" on:server], @"3,500 fits in the 4,000 the reserve leaves");
+	XCTAssertEqualObjects(builder.residency, NFKModelResidencyStaged, @"the build is told the residency admitted");
+}
+
+- (void)testAPlannedResidencyIsHeldToTheBudgetsOwnReserve
+{
+	NFKAdmissionTestBuilder *builder = [[NFKAdmissionTestBuilder alloc] init];
+	NFKInferenceServer *server = [self serverHolding:3000 besideAStagedModelBuiltBy:builder];
+	NSError *refusal = [self loadReturningError:@"staged" on:server];
+	XCTAssertEqual(refusal.code, NFKModelCatalogErrorDoesNotFit, @"3,500 exceeds the 2,000 the reserve leaves: %@", refusal);
+	XCTAssertNil(builder.residency, @"nothing was built");
 }
 
 - (void)testABuildWaitsForARunningModelToBecomeReleasable
