@@ -12,6 +12,7 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @class NFKModelBuildRequest;
+@class NFKModelRepository;
 
 /*! The error domain for reading model descriptors and catalog manifests. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelCatalogErrorDomain;
@@ -75,6 +76,20 @@ extern NSString * const NFKModelCatalogManifestKind;
 	in InferKit 0.4.0. */
 + (nullable id<NFKInferenceBackend>)backendForBuildRequest:(NFKModelBuildRequest *)request error:(NSError **)error;
 
+/*!
+	@method     descriptorForRepository:matchingDescriptor:error:
+	@abstract   A descriptor for a repository whose configuration names a model type one of the class's
+				descriptors lists, or nil with the reason its loader does not read the repository.
+	@discussion A resolver (NFKModelResolver.h) asks the class that supplied descriptor, one whose
+				modelTypes holds repository.modelType. The returned descriptor builds the repository's model
+				through descriptor's loader, with one variant whose source is the repository at
+				repository.revision and whose memory facts come from the repository's own files. The
+				error is in NFKModelResolutionErrorDomain. Introduced in InferKit 0.4.0.
+*/
++ (nullable NFKModelDescriptor *)descriptorForRepository:(NFKModelRepository *)repository
+									  matchingDescriptor:(NFKModelDescriptor *)descriptor
+												   error:(NSError **)error;
+
 @end
 
 /*!
@@ -100,7 +115,7 @@ extern NSString * const NFKModelCatalogManifestKind;
 /*! The catalog of every linked provider's descriptors. */
 @property (class, nonatomic, readonly) NFKModelCatalog *sharedCatalog;
 
-/*! The manifest schema version this release reads and writes: 1. */
+/*! The manifest schema version this release writes: 2. It reads 1 and 2; version 2 adds a descriptor's modelTypes. */
 @property (class, nonatomic, readonly) NSInteger schemaVersion;
 
 /*! The provider class names the shared catalog loads from, in load order. */

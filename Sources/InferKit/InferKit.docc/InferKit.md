@@ -200,6 +200,7 @@ prefers ``NFKInferenceJob`` for anything interactive. See <doc:TheInferenceContr
 - ``NFKModelCatalog``
 - ``NFKModelDescriptor``
 - ``NFKModelDescriptorProvider``
+- ``NFKModelResolver``
 - ``NFKAppleModelDescriptors``
 
 ### The C interface

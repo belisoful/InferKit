@@ -712,6 +712,15 @@ expectedByteCount:(long long)expectedByteCount
 	NSMutableURLRequest *request = [self requestForURL:URL];
 	request.HTTPMethod = method;
 	[request setValue:@"application/json" forHTTPHeaderField:@"Accept"];
+	return [self bodyOfRequest:request response:outResponse error:outError];
+}
+
+/*! Sends the request on session, cancelled with the current download, and returns the body whatever the
+	status. */
+- (nullable NSData *)bodyOfRequest:(NSURLRequest *)request
+						  response:(NSHTTPURLResponse * _Nullable * _Nullable)outResponse
+							 error:(NSError * _Nullable *)outError
+{
 	__block NSData *body = nil;
 	__block NSURLResponse *answer = nil;
 	__block NSError *failure = nil;
@@ -744,6 +753,142 @@ expectedByteCount:(long long)expectedByteCount
 		*outResponse = [self HTTPResponseForResponse:answer];
 	}
 	return body ?: [NSData data];
+}
+
+static const unsigned long long NFKSafetensorsHeaderLimit = 100000000ULL;
+
+- (nullable NSDictionary<NSString *, id> *)safetensorsHeaderOfRepo:(NSString *)repo
+														  revision:(nullable NSString *)revision
+															  path:(NSString *)path
+															 error:(NSError * _Nullable *)outError
+{
+	NSString *subject = [NSString stringWithFormat:@"%@ in %@", path, repo];
+	if ([self isCachedRepo:repo revision:revision path:path]) {
+		return [self safetensorsHeaderOfFileAtURL:[self localURLForRepo:repo revision:revision path:path]
+										  subject:subject error:outError];
+	}
+	NSURL *remoteURL = [self remoteURLForRepo:repo revision:revision path:path];
+	if (remoteURL == nil) {
+		NSString *reason = [NSString stringWithFormat:@"%@ at %@ is not a safe location", subject, revision ?: @"main"];
+		[self propagateError:[NFKDownload errorWithCode:NFKDownloadErrorUnsafePath reason:reason] to:outError];
+		return nil;
+	}
+	NSData *lengthBytes = [self bytesOfURL:remoteURL offset:0 length:8 subject:subject error:outError];
+	if (lengthBytes == nil) {
+		return nil;
+	}
+	unsigned long long headerLength = 0;
+	if (![self readSafetensorsHeaderLength:&headerLength from:lengthBytes subject:subject error:outError]) {
+		return nil;
+	}
+	NSData *headerBytes = [self bytesOfURL:remoteURL offset:8 length:headerLength subject:subject error:outError];
+	if (headerBytes == nil) {
+		return nil;
+	}
+	return [self safetensorsHeaderFromData:headerBytes subject:subject error:outError];
+}
+
+- (nullable NSDictionary<NSString *, id> *)safetensorsHeaderOfFileAtURL:(NSURL *)url
+																subject:(NSString *)subject
+																  error:(NSError * _Nullable *)outError
+{
+	NSError *readError = nil;
+	NSFileHandle *handle = [NSFileHandle fileHandleForReadingFromURL:url error:&readError];
+	if (handle == nil) {
+		[self propagateError:readError to:outError];
+		return nil;
+	}
+	NSData *lengthBytes = [handle readDataUpToLength:8 error:&readError];
+	unsigned long long headerLength = 0;
+	if (lengthBytes == nil) {
+		[handle closeAndReturnError:NULL];
+		[self propagateError:readError to:outError];
+		return nil;
+	}
+	if (![self readSafetensorsHeaderLength:&headerLength from:lengthBytes subject:subject error:outError]) {
+		[handle closeAndReturnError:NULL];
+		return nil;
+	}
+	NSData *headerBytes = [handle readDataUpToLength:(NSUInteger)headerLength error:&readError];
+	[handle closeAndReturnError:NULL];
+	if (headerBytes == nil) {
+		[self propagateError:readError to:outError];
+		return nil;
+	}
+	return [self safetensorsHeaderFromData:headerBytes subject:subject error:outError];
+}
+
+/*! The bytes [offset, offset + length) of a remote file, by an HTTP range request. A partial answer (206)
+	starts at offset, and one that runs past the range's end is cut to it. A server that ignores the range
+	answers 200 with the whole file, which this reads whole and cuts; a whole file shorter than the range's
+	end is refused. */
+- (nullable NSData *)bytesOfURL:(NSURL *)URL
+						 offset:(unsigned long long)offset
+						 length:(unsigned long long)length
+						subject:(NSString *)subject
+						  error:(NSError * _Nullable *)outError
+{
+	NSMutableURLRequest *request = [self requestForURL:URL];
+	BOOL hadToken = [request valueForHTTPHeaderField:@"Authorization"] != nil;
+	[request setValue:[NSString stringWithFormat:@"bytes=%llu-%llu", offset, offset + length - 1]
+   forHTTPHeaderField:@"Range"];
+	NSHTTPURLResponse *response = nil;
+	NSData *body = [self bodyOfRequest:request response:&response error:outError];
+	if (body == nil) {
+		return nil;
+	}
+	NSInteger status = response != nil ? response.statusCode : 200;
+	if (status < 200 || status >= 300) {
+		[self propagateError:[NFKHFHubTransfer errorForHTTPStatus:status subject:subject hadToken:hadToken] to:outError];
+		return nil;
+	}
+	if (status == 200 && body.length >= offset + length) {
+		body = [body subdataWithRange:NSMakeRange((NSUInteger)offset, (NSUInteger)length)];
+	} else if (status == 206 && body.length > length) {
+		body = [body subdataWithRange:NSMakeRange(0, (NSUInteger)length)];
+	}
+	if (body.length != length) {
+		NSString *reason = [NSString stringWithFormat:@"%@ ended before byte %llu", subject, offset + length];
+		[self propagateError:[NFKDownload errorWithCode:NFKDownloadErrorUnsupportedSource reason:reason] to:outError];
+		return nil;
+	}
+	return body;
+}
+
+- (BOOL)readSafetensorsHeaderLength:(unsigned long long *)headerLength
+							   from:(NSData *)bytes
+							subject:(NSString *)subject
+							  error:(NSError * _Nullable *)outError
+{
+	if (bytes.length < 8) {
+		NSString *reason = [NSString stringWithFormat:@"%@ is shorter than a safetensors header", subject];
+		return [self propagateError:[NFKDownload errorWithCode:NFKDownloadErrorUnsupportedSource reason:reason] to:outError];
+	}
+	unsigned long long length = 0;
+	const uint8_t *raw = bytes.bytes;
+	for (int index = 7; index >= 0; index--) {
+		length = (length << 8) | raw[index];
+	}
+	if (length == 0 || length > NFKSafetensorsHeaderLimit) {
+		NSString *reason = [NSString stringWithFormat:@"%@ states a header of %llu bytes, outside the safetensors limit",
+							subject, length];
+		return [self propagateError:[NFKDownload errorWithCode:NFKDownloadErrorUnsupportedSource reason:reason] to:outError];
+	}
+	*headerLength = length;
+	return YES;
+}
+
+- (nullable NSDictionary<NSString *, id> *)safetensorsHeaderFromData:(NSData *)data
+															 subject:(NSString *)subject
+															   error:(NSError * _Nullable *)outError
+{
+	id header = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+	if (![header isKindOfClass:NSDictionary.class]) {
+		NSString *reason = [NSString stringWithFormat:@"%@ has no safetensors JSON header", subject];
+		[self propagateError:[NFKDownload errorWithCode:NFKDownloadErrorUnsupportedSource reason:reason] to:outError];
+		return nil;
+	}
+	return header;
 }
 
 /*! The response as HTTP. A response of another scheme, such as a file URL's, reads as status 200 with

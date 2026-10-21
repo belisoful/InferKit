@@ -1,0 +1,346 @@
+//
+//  NFKMLXRepositoryMatchingTests.swift
+//  InferKitMLXTests
+//
+//  Whether the language loader reads a repository, judged from files placed in a hub cache so no request
+//  leaves the process: a small Qwen3 decoder measured into a descriptor, each refusal and its code, the
+//  catalog's model types, and, gated behind INFERKIT_LIVE_HUB, the runtime measurement of a shipped
+//  release against the figures Tools/catalog/measure.py recorded for it. Nothing here reaches MLX.
+//
+
+import XCTest
+import InferKit
+@testable import InferKitMLX
+
+final class NFKMLXRepositoryMatchingTests: XCTestCase {
+
+    private static let repository = "org/qwen3-tiny"
+    private static let commit = "0123456789abcdef0123456789abcdef01234567"
+    private static let qwen2Pattern =
+        #"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"#
+    private static let llama3Pattern =
+        #"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"#
+
+    private var cache: URL!
+
+    override func setUp() {
+        super.setUp()
+        cache = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NFKMLXRepositoryMatchingTests-\(UUID().uuidString)")
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: cache)
+        super.tearDown()
+    }
+
+    // MARK: Fixtures
+
+    /// A two-layer Qwen3 decoder's configuration: 64 wide, two query heads and one key-value head of 32.
+    private static var configuration: [String: Any] {
+        ["model_type": "qwen3", "architectures": ["Qwen3ForCausalLM"], "hidden_size": 64, "num_hidden_layers": 2,
+         "num_attention_heads": 2, "num_key_value_heads": 1, "head_dim": 32, "intermediate_size": 128,
+         "vocab_size": 256, "max_position_embeddings": 512, "tie_word_embeddings": true, "rope_theta": 1_000_000,
+         "rms_norm_eps": 1e-6, "torch_dtype": "bfloat16"]
+    }
+
+    /// The tensors of ``configuration`` in bfloat16, by name and shape.
+    private static var tensors: [(String, [Int])] {
+        var tensors: [(String, [Int])] = [("model.embed_tokens.weight", [256, 64]), ("model.norm.weight", [64])]
+        for layer in 0..<2 {
+            let prefix = "model.layers.\(layer)."
+            tensors += [
+                (prefix + "self_attn.q_proj.weight", [64, 64]), (prefix + "self_attn.k_proj.weight", [32, 64]),
+                (prefix + "self_attn.v_proj.weight", [32, 64]), (prefix + "self_attn.o_proj.weight", [64, 64]),
+                (prefix + "self_attn.q_norm.weight", [32]), (prefix + "self_attn.k_norm.weight", [32]),
+                (prefix + "mlp.gate_proj.weight", [128, 64]), (prefix + "mlp.up_proj.weight", [128, 64]),
+                (prefix + "mlp.down_proj.weight", [64, 128]), (prefix + "input_layernorm.weight", [64]),
+                (prefix + "post_attention_layernorm.weight", [64]),
+            ]
+        }
+        return tensors
+    }
+
+    /// A safetensors file of `tensors` in `dtype`, zero-filled.
+    private static func safetensors(_ tensors: [(String, [Int])], dtype: String = "BF16", elementBytes: Int = 2,
+                                    metadata: [String: String]? = nil) -> Data {
+        var header = [String: Any]()
+        var offset = 0
+        for (name, shape) in tensors {
+            let bytes = shape.reduce(1, *) * elementBytes
+            header[name] = ["dtype": dtype, "shape": shape, "data_offsets": [offset, offset + bytes]]
+            offset += bytes
+        }
+        header["__metadata__"] = metadata
+        let json = try! JSONSerialization.data(withJSONObject: header)
+        var length = UInt64(json.count).littleEndian
+        var data = Data(bytes: &length, count: 8)
+        data.append(json)
+        data.append(Data(count: offset))
+        return data
+    }
+
+    private static func tokenizer(pattern: String = qwen2Pattern, model: [String: Any] = [:],
+                                  preTokenizer: [String: Any]? = nil) -> [String: Any] {
+        let split: [String: Any] = ["type": "Split", "pattern": ["Regex": pattern], "behavior": "Isolated",
+                                    "invert": false]
+        let byteLevel: [String: Any] = ["type": "ByteLevel", "add_prefix_space": false, "trim_offsets": false,
+                                        "use_regex": false]
+        return ["model": ["type": "BPE", "vocab": [String: Int](), "merges": [String]()].merging(model) { $1 },
+                "pre_tokenizer": preTokenizer ?? ["type": "Sequence", "pretokenizers": [split, byteLevel]],
+                "decoder": ["type": "ByteLevel"]]
+    }
+
+    private static func json(_ object: Any) -> Data {
+        try! JSONSerialization.data(withJSONObject: object)
+    }
+
+    /// The repository's files placed in the hub cache at ``commit``, and the repository a resolver reads.
+    private func repository(configuration: [String: Any] = configuration, tokenizer: [String: Any]? = tokenizer(),
+                            weights: [String: Data]? = nil, extra: [String: Data] = [:]) throws -> NFKModelRepository {
+        var files: [String: Data] = ["config.json": Self.json(configuration),
+                                     "tokenizer_config.json": Self.json(["tokenizer_class": "Qwen2Tokenizer"])]
+        files["tokenizer.json"] = tokenizer.map(Self.json)
+        files.merge(weights ?? ["model.safetensors": Self.safetensors(Self.tensors)]) { $1 }
+        files.merge(extra) { $1 }
+        let hub = NFKHFHub(cacheDirectoryURL: cache)
+        var listed = [NFKDownloadPlanFile]()
+        for (path, data) in files.sorted(by: { $0.key < $1.key }) {
+            let local = try XCTUnwrap(hub.localURL(forRepo: Self.repository, revision: Self.commit, path: path))
+            try FileManager.default.createDirectory(at: local.deletingLastPathComponent(),
+                                                    withIntermediateDirectories: true)
+            try data.write(to: local)
+            let remote = try XCTUnwrap(hub.remoteURL(forRepo: Self.repository, revision: Self.commit, path: path))
+            listed.append(NFKDownloadPlanFile(path: path, remoteURL: remote, localURL: local,
+                                              byteCount: Int64(data.count), sha256: nil, cached: true, optional: false))
+        }
+        let license = NFKModelLicense(identifier: "apache-2.0", name: "apache-2.0", url: nil)
+        return NFKModelRepository(repository: Self.repository, revision: Self.commit, requestedRevision: nil,
+                                  configuration: configuration, files: listed, license: license, hub: hub)
+    }
+
+    private func template(_ identifier: String = "qwen3-0.6b") throws -> NFKModelDescriptor {
+        try XCTUnwrap(NFKModelCatalog.shared.descriptor(withIdentifier: identifier))
+    }
+
+    private func assertRefusal(_ code: NFKModelResolutionError.Code, file: StaticString = #filePath, line: UInt = #line,
+                               _ repository: @autoclosure () throws -> NFKModelRepository,
+                               template identifier: String = "qwen3-0.6b") throws {
+        let read = try repository()
+        let matching = try template(identifier)
+        XCTAssertThrowsError(try NFKMLXModelDescriptors.descriptor(for: read, matching: matching),
+                             file: file, line: line) { error in
+            let error = error as NSError
+            XCTAssertEqual(error.domain, NFKModelResolutionErrorDomain, file: file, line: line)
+            XCTAssertEqual(error.code, code.rawValue, "\(error.localizedDescription)", file: file, line: line)
+        }
+    }
+
+    // MARK: The descriptor
+
+    func testAQwen3RepositoryBuildsADescriptorOnTheShippedLoader() throws {
+        let read = try repository()
+        let descriptor = try NFKMLXModelDescriptors.descriptor(for: read, matching: try template())
+        XCTAssertEqual(descriptor.identifier, Self.repository)
+        XCTAssertEqual(descriptor.registryName, "qwen3-0.6b")
+        XCTAssertEqual(descriptor.family, "qwen3")
+        XCTAssertEqual(descriptor.engine, NFKModelEngineMLX)
+        XCTAssertEqual(descriptor.modelTypes, [])
+        XCTAssertEqual(descriptor.license?.identifier, "apache-2.0")
+        let variant = try XCTUnwrap(descriptor.defaultVariant)
+        XCTAssertEqual(variant.identifier, "qwen3-tiny")
+        XCTAssertEqual(variant.registryName, "qwen3-0.6b")
+        XCTAssertEqual(variant.source?.repository, Self.repository)
+        XCTAssertEqual(variant.source?.revision, Self.commit)
+        XCTAssertEqual(variant.parameterCount, 90_560)
+        XCTAssertEqual(variant.precision, NFKModelPrecisionBFloat16)
+        let listed = ["config.json", "tokenizer.json", "tokenizer_config.json", "model.safetensors"]
+            .map { read.file(atPath: $0)!.byteCount }.reduce(0, +)
+        XCTAssertEqual(variant.downloadByteCount?.int64Value, listed)
+        XCTAssertEqual(Set(variant.source?.files.map(\.path) ?? []),
+                       ["config.json", "tokenizer.json", "tokenizer_config.json", "model.safetensors", "vocab.json",
+                        "merges.txt", "added_tokens.json", "chat_template.jinja"])
+        XCTAssertEqual(variant.source?.files.first { $0.path == "model.safetensors" }?.byteCount?.int64Value,
+                       read.file(atPath: "model.safetensors")?.byteCount)
+        let facts = try XCTUnwrap(variant.memoryFacts)
+        XCTAssertEqual(facts.basis, NFKModelMemoryBasisMeasured)
+        let stage = try XCTUnwrap(facts.stages.first)
+        XCTAssertEqual(stage.byteCountByPrecision[NFKModelPrecisionCheckpoint], 181_120)
+        XCTAssertEqual(stage.byteCountByPrecision[NFKModelPrecisionFloat32], 362_240)
+        XCTAssertEqual(stage.quantizableElementCount, 73_728)
+        XCTAssertEqual(facts.vocabularySize, 256)
+        XCTAssertNotNil(facts.keyValueByteCountPerToken)
+        XCTAssertEqual(descriptor.loadOptions.map(\.key), try template().loadOptions.map(\.key))
+        XCTAssertNoThrow(try descriptor.estimatedMemory(forOptions: nil))
+    }
+
+    func testTheDescriptorRoundTripsThroughItsDictionary() throws {
+        let descriptor = try NFKMLXModelDescriptors.descriptor(for: try repository(), matching: try template())
+        let data = try JSONSerialization.data(withJSONObject: descriptor.dictionaryRepresentation())
+        let object = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(try NFKModelDescriptor(dictionary: object), descriptor)
+    }
+
+    func testAShardedRepositoryReadsEveryShardItsIndexNames() throws {
+        let tensors = Self.tensors
+        let first = Array(tensors.prefix(10)), second = Array(tensors.dropFirst(10))
+        var weightMap = [String: String]()
+        first.forEach { weightMap[$0.0] = "model-00001-of-00002.safetensors" }
+        second.forEach { weightMap[$0.0] = "model-00002-of-00002.safetensors" }
+        let read = try repository(weights: [
+            "model.safetensors.index.json": Self.json(["metadata": ["total_size": 181_120], "weight_map": weightMap]),
+            "model-00001-of-00002.safetensors": Self.safetensors(first),
+            "model-00002-of-00002.safetensors": Self.safetensors(second),
+        ])
+        let variant = try XCTUnwrap(try NFKMLXModelDescriptors.descriptor(for: read, matching: try template()).defaultVariant)
+        XCTAssertEqual(variant.parameterCount, 90_560)
+        XCTAssertEqual(variant.memoryFacts?.stages.first?.byteCountByPrecision[NFKModelPrecisionCheckpoint], 181_120)
+        let paths = Set(variant.source?.files.map(\.path) ?? [])
+        XCTAssertTrue(paths.contains("model.safetensors.index.json"))
+        XCTAssertFalse(paths.contains("model.safetensors"))
+    }
+
+    func testTheMeasurementCountsWhatMeasurePyCounts() throws {
+        var structure = NFKMLXTensorStructure()
+        for (name, shape) in Self.tensors {
+            structure.add(name: name, dtype: "BF16", shape: shape.map(Int64.init), bytes: Int64(shape.reduce(1, *) * 2))
+        }
+        structure.add(name: "model.layers.0.mlp.experts.3.up_proj.weight", dtype: "BF16", shape: [8, 64], bytes: 1024)
+        XCTAssertEqual(structure.quantizableElements, 73_728 + 512)
+        XCTAssertEqual(structure.expertBytes, ["BF16": 1024])
+        let layers = try XCTUnwrap(structure.layers())
+        XCTAssertEqual(layers.count, 2)
+        XCTAssertEqual(layers.largestBytes, ["BF16": 37_056 * 2 + 1024])
+    }
+
+    func testTheGeometryReadsANestedDecoderConfiguration() throws {
+        let geometry = try XCTUnwrap(NFKMLXMeasuredGeometry(configuration: [
+            "hidden_size": 8, "text_config": ["hidden_size": 64, "num_key_value_heads": 4, "use_cache": true]]))
+        XCTAssertEqual(geometry.hiddenSize, 64)
+        XCTAssertEqual(geometry.keyValueHeads, 4)
+        XCTAssertNil(NFKMLXMeasuredGeometry(configuration: ["use_cache": true]))
+    }
+
+    // MARK: Refusals
+
+    func testAnMLXQuantizationIsRefused() throws {
+        var configuration = Self.configuration
+        configuration["quantization"] = ["group_size": 64, "bits": 4]
+        try assertRefusal(.unsupportedQuantization, try repository(configuration: configuration))
+    }
+
+    func testAnotherQuantizationMethodIsRefused() throws {
+        var configuration = Self.configuration
+        configuration["quantization_config"] = ["quant_method": "gptq", "bits": 4]
+        try assertRefusal(.unsupportedQuantization, try repository(configuration: configuration))
+    }
+
+    func testPackedWeightsTheConfigurationDoesNotDescribeAreRefused() throws {
+        let packed = Self.safetensors([("model.layers.0.mlp.up_proj.weight", [128, 8])], dtype: "U32", elementBytes: 4)
+        try assertRefusal(.unsupportedQuantization, try repository(weights: ["model.safetensors": packed]))
+    }
+
+    func testASentencePieceTokenizerIsRefused() throws {
+        let metaspace: [String: Any] = ["type": "Metaspace", "replacement": "▁", "prepend_scheme": "first"]
+        try assertRefusal(.unsupportedTokenizer,
+                          try repository(tokenizer: Self.tokenizer(model: ["byte_fallback": true], preTokenizer: metaspace)))
+    }
+
+    func testAPreTokenizationPatternTheTokenizerDoesNotImplementIsRefused() throws {
+        try assertRefusal(.unsupportedTokenizer, try repository(tokenizer: Self.tokenizer(pattern: Self.llama3Pattern)))
+    }
+
+    func testIgnoredMergesAreRefused() throws {
+        try assertRefusal(.unsupportedTokenizer, try repository(tokenizer: Self.tokenizer(model: ["ignore_merges": true])))
+    }
+
+    func testAMissingTokenizerIsRefused() throws {
+        try assertRefusal(.unsupportedTokenizer, try repository(tokenizer: nil))
+    }
+
+    func testAHybridConfigurationIsRefused() throws {
+        var configuration = Self.configuration
+        configuration["layer_types"] = ["linear_attention", "full_attention"]
+        try assertRefusal(.unsupportedConfiguration, try repository(configuration: configuration))
+    }
+
+    func testAHeaderShapeWhoseProductOverflowsIsRefused() throws {
+        let header: [String: Any] = ["model.layers.0.mlp.up_proj.weight": [
+            "dtype": "BF16", "shape": [4_294_967_296, 4_294_967_296], "data_offsets": [0, 2]]]
+        let json = try JSONSerialization.data(withJSONObject: header)
+        var length = UInt64(json.count).littleEndian
+        var file = Data(bytes: &length, count: 8)
+        file.append(json)
+        file.append(Data(count: 2))
+        try assertRefusal(.unsupportedWeightFormat, try repository(weights: ["model.safetensors": file]))
+    }
+
+    func testNegativeHeaderOffsetsAreRefused() throws {
+        let header: [String: Any] = ["model.norm.weight": ["dtype": "BF16", "shape": [64], "data_offsets": [128, 0]]]
+        let json = try JSONSerialization.data(withJSONObject: header)
+        var length = UInt64(json.count).littleEndian
+        var file = Data(bytes: &length, count: 8)
+        file.append(json)
+        try assertRefusal(.unsupportedWeightFormat, try repository(weights: ["model.safetensors": file]))
+    }
+
+    func testWeightsOutsideTheFilesTheLoaderReadsAreRefused() throws {
+        try assertRefusal(.unsupportedWeightFormat,
+                          try repository(weights: ["weights/model.safetensors": Self.safetensors(Self.tensors)]))
+    }
+
+    func testAModelWhoseLoaderReadsNoOtherRepositoryRefuses() throws {
+        try assertRefusal(.unsupportedArchitecture, try repository(), template: "whisper-base")
+    }
+
+    // MARK: Catalog
+
+    func testTheLanguageReleasesListTheModelTypesTheirLoaderReads() throws {
+        let catalog = NFKModelCatalog.shared
+        let expected = ["qwen3-0.6b": "qwen3", "qwen3-30b-a3b": "qwen3_moe", "qwen1.5-moe-a2.7b": "qwen2_moe",
+                        "mixtral-8x7b-instruct": "mixtral", "gpt-oss-20b": "gpt_oss",
+                        "mistral-small-24b-instruct-2501": "mistral"]
+        for (identifier, modelType) in expected {
+            XCTAssertEqual(catalog.descriptor(withIdentifier: identifier)?.modelTypes, [modelType], identifier)
+        }
+        for descriptor in NFKMLXModelDescriptors.modelDescriptors() where !descriptor.modelTypes.isEmpty {
+            let entry = try XCTUnwrap(NFKMLXModelDescriptors.entries.first { $0.identifier == descriptor.identifier })
+            XCTAssertTrue(NFKMLXCatalogLanguage.readsReleases(of: entry),
+                          "\(descriptor.identifier) lists model types its loader does not judge")
+        }
+    }
+
+    // MARK: Live (network-gated)
+
+    // Set INFERKIT_LIVE_HUB=1 to measure Qwen/Qwen3-0.6B at its measured commit over the network, reading
+    // only its listing, its JSON files, and its safetensors header, and compare the figures with the row
+    // Tools/catalog/measure.py recorded for it.
+    func testLiveMeasurementMatchesTheRecordedMeasurement() throws {
+        guard ProcessInfo.processInfo.environment["INFERKIT_LIVE_HUB"] == "1" else {
+            throw XCTSkip("set INFERKIT_LIVE_HUB=1 to measure a repository over the network")
+        }
+        let recorded = try XCTUnwrap(NFKMLXCatalogMeasurements.variant(model: "qwen3-0.6b", variant: "qwen3-0.6b"))
+        let commit = try XCTUnwrap(recorded.commit)
+        let repositoryName = "Qwen/Qwen3-0.6B"
+        let hub = NFKHFHub(cacheDirectoryURL: cache)
+        let plan = try hub.planDownload(ofRepo: repositoryName, revision: commit, paths: nil)
+        let listing = NFKModelRepository(repository: repositoryName, revision: commit, requestedRevision: nil,
+                                         configuration: [:], files: plan.files, license: nil, hub: hub)
+        let configuration = try XCTUnwrap(try listing.jsonObjectOfFile(atPath: "config.json") as? [String: Any])
+        let read = NFKModelRepository(repository: repositoryName, revision: commit, requestedRevision: nil,
+                                      configuration: configuration, files: plan.files, license: nil, hub: hub)
+        let template = try XCTUnwrap(NFKMLXModelDescriptors.entries.first { $0.identifier == "qwen3-0.6b" })
+        let measured = try NFKMLXRepositoryJudgment(repository: read, template: template).measurement
+        XCTAssertEqual(measured.downloadBytes, recorded.downloadBytes)
+        XCTAssertEqual(measured.parameterCount, recorded.parameterCount)
+        XCTAssertEqual(measured.tensorBytes, recorded.tensorBytes)
+        XCTAssertEqual(measured.quantizableElements, recorded.quantizableElements)
+        XCTAssertEqual(measured.layers[""]?.count, recorded.layers[""]?.count)
+        XCTAssertEqual(measured.layers[""]?.largestBytes, recorded.layers[""]?.largestBytes)
+        XCTAssertEqual(measured.geometry?.layerCount, recorded.geometry?.layerCount)
+        XCTAssertEqual(measured.geometry?.keyValueHeads, recorded.geometry?.keyValueHeads)
+        XCTAssertEqual(measured.geometry?.headDimension, recorded.geometry?.headDimension)
+        XCTAssertEqual(measured.geometry?.maximumPositions, recorded.geometry?.maximumPositions)
+        XCTAssertEqual(measured.geometry?.vocabularySize, recorded.geometry?.vocabularySize)
+    }
+}

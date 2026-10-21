@@ -1698,6 +1698,34 @@
 	XCTAssertEqual(phone.reserveByteCount, phone.byteCount - phone.byteCount / 2);
 }
 
+// Docs/examples.md: Model catalog — Resolving a Hugging Face repository. A shipped variant's repository
+// resolves with no network request, so the example runs offline.
+- (void)testExampleResolvingAHuggingFaceRepository
+{
+	NSString *json = @"{ \"schemaVersion\": 2, \"kind\": \"inferkit.model-catalog\", \"models\": [ {"
+		"\"id\": \"example.chat-1b\", \"family\": \"example\", \"engine\": \"example-engine\","
+		"\"modelTypes\": [\"example\"], \"variants\": [{ \"id\": \"1b\", \"isDefault\": true,"
+		"\"residentBytes\": 2000000000, \"source\": { \"kind\": \"huggingface\", \"repository\": \"example/chat-1b\","
+		"\"layout\": \"directory\" } }] } ] }";
+	NFKModelCatalog *catalog = [[NFKModelCatalog alloc] init];
+	NSError *error = nil;
+	XCTAssertTrue([catalog addDescriptorsFromManifestData:[json dataUsingEncoding:NSUTF8StringEncoding] error:&error],
+				  @"%@", error);
+
+	NFKModelResolver *resolver = [[NFKModelResolver alloc] initWithCatalog:catalog hub:nil];
+	resolver.allowsUnverifiedRoutes = YES;                         // a shipped loader may read another repository
+	NFKModelResolution *resolution = [resolver resolutionForRepository:@"example/chat-1b" revision:nil error:&error];
+	NSString *verification = resolution.verification;              // measured, or configCompatible
+	NSDictionary *saved = resolution.descriptor.dictionaryRepresentation;   // restores with no network request
+	NFKModelDescriptor *restored = [NFKModelDescriptor descriptorWithDictionary:saved error:&error];
+
+	XCTAssertEqual(resolution.route, NFKModelRouteCatalog, @"%@", error);
+	XCTAssertEqualObjects(verification, NFKModelVerificationMeasured);
+	XCTAssertEqualObjects(restored.identifier, @"example.chat-1b");
+	XCTAssertEqualObjects(restored.modelTypes, @[ @"example" ]);
+	XCTAssertEqual(resolution.memoryEstimate.residentByteCount, 2000000000);
+}
+
 #if TARGET_OS_OSX
 // Docs/examples.md: Model catalog — Plugins. The folder holds one executable plugin whose program never
 // runs: listing reads its manifest, and the backend starts nothing until it prepares or runs.

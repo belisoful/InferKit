@@ -259,13 +259,19 @@ extension NFKMLXCatalogEntry {
     /// variant with memory facts takes its resident bytes and least working set from the estimate
     /// `NFKMLXModelDescriptors` derives; a variant without them takes the measured figures here.
     func measured() -> NFKMLXCatalogEntry {
+        measured { NFKMLXCatalogMeasurements.variant(model: identifier, variant: $0.identifier) }
+    }
+
+    /// The entry measured as ``measured()`` describes, with each variant's measurement from `measurement`.
+    func measured(by measurement: (NFKModelVariant) -> NFKMLXMeasuredVariant?) -> NFKMLXCatalogEntry {
         let plan = NFKMLXLoadPlan.plan(for: self)
         let profile = NFKMLXLoadProfile.profile(for: self)
         var entry = self
         var stagePrecisions = [String: String]()
         var maximumContextLength: Int?
         entry.variants = variants.map { variant in
-            let (measuredVariant, precisions) = measured(variant, plan: plan, profile: profile)
+            let (measuredVariant, precisions) = measured(variant, measurement: measurement(variant), plan: plan,
+                                                         profile: profile)
             stagePrecisions.merge(precisions) { first, _ in first }
             if let length = measuredVariant.memoryFacts?.maximumContextLength?.intValue {
                 maximumContextLength = min(maximumContextLength ?? length, length)
@@ -295,12 +301,11 @@ extension NFKMLXCatalogEntry {
         return entry
     }
 
-    private func measured(_ variant: NFKModelVariant, plan: NFKMLXLoadPlan,
+    private func measured(_ variant: NFKModelVariant, measurement: NFKMLXMeasuredVariant?, plan: NFKMLXLoadPlan,
                           profile: NFKMLXLoadProfile?) -> (NFKModelVariant, [String: String]) {
         guard let source = variant.source else {
             return (variant, [:])
         }
-        let measurement = NFKMLXCatalogMeasurements.variant(model: identifier, variant: variant.identifier)
         var sourceExtensions = source.extensions
         if let commit = measurement?.commit, commit != source.revision {
             sourceExtensions["measuredRevision"] = commit

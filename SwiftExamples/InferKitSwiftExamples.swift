@@ -328,7 +328,7 @@ final class InferKitSwiftExamples: XCTestCase {
 
         let described = NFKModelDescriptor(identifier: "app.echo", derivedFrom: NFKPassthroughBackend())
         XCTAssertEqual(described.engine, NFKModelEnginePlugin)
-        XCTAssertEqual(NFKModelCatalog.schemaVersion, 1)
+        XCTAssertEqual(NFKModelCatalog.schemaVersion, 2)
         XCTAssertTrue(NFKModelCatalog.providerClassNames.contains("NFKMLXModelDescriptors"))
         _ = NFKModelCatalog.shared
     }
@@ -381,6 +381,29 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(NFKModelMemoryBudget.reserveByteCount(forBudgetByteCount: 6 << 30), 3 << 30)
         catalog.memoryBudget = nil
         XCTAssertEqual(catalog.memoryBudget, NFKModelMemoryBudget.current())
+    }
+
+    // Resolving a Hugging Face repository from Swift (Docs/examples.md: Model catalog — Resolving a Hugging
+    // Face repository): the route is NFKModelResolution.Route, and the synchronous form throws. A shipped
+    // variant's repository resolves with no network request.
+    func testExampleResolvingAHuggingFaceRepositoryFromSwift() throws {
+        let manifest = """
+            { "schemaVersion": 2, "kind": "inferkit.model-catalog", "models": [ {
+              "id": "example.chat-1b", "family": "example", "engine": "example-engine", "modelTypes": ["example"],
+              "variants": [{ "id": "1b", "isDefault": true, "residentBytes": 2000000000,
+                             "source": { "kind": "huggingface", "repository": "example/chat-1b", "layout": "directory" } }]
+            } ] }
+            """
+        let catalog = NFKModelCatalog()
+        try catalog.addDescriptors(fromManifestData: Data(manifest.utf8))
+        let resolver = NFKModelResolver(catalog: catalog, hub: nil)
+        resolver.allowsUnverifiedRoutes = true
+        let resolution = try resolver.resolution(forRepository: "example/chat-1b", revision: nil)
+        XCTAssertEqual(resolution.route, .catalog)
+        XCTAssertEqual(resolution.route.name, "catalog")
+        XCTAssertEqual(resolution.verification, .measured)
+        let restored = try NFKModelDescriptor(dictionary: try XCTUnwrap(resolution.descriptor).dictionaryRepresentation())
+        XCTAssertEqual(restored.modelTypes, ["example"])
     }
 
     #if os(macOS)

@@ -1423,7 +1423,7 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 {
 	return @[ @"id", @"displayName", @"family", @"summary", @"engine", @"registryName", @"providerClass", @"tasks",
 			  @"inputModalities", @"outputModalities", @"inputs", @"outputs", @"options", @"variants",
-			  @"license", @"requirements", @"residencies", @"memoryModel", @"presets", @"standIn",
+			  @"license", @"requirements", @"residencies", @"memoryModel", @"presets", @"modelTypes", @"standIn",
 			  @"introducedVersion" ];
 }
 
@@ -1452,6 +1452,7 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 					   residencies:(nullable NSArray<NSString *> *)residencies
 					   memoryModel:(nullable NFKModelMemoryModel *)memoryModel
 						   presets:(nullable NSArray<NFKModelPreset *> *)presets
+						modelTypes:(nullable NSArray<NSString *> *)modelTypes
 						   standIn:(BOOL)standIn
 				 introducedVersion:(nullable NSString *)introducedVersion
 						extensions:(nullable NSDictionary<NSString *, id> *)extensions
@@ -1477,12 +1478,44 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 		_residencies = [residencies copy] ?: @[];
 		_memoryModel = [memoryModel copy];
 		_presets = [presets copy] ?: @[];
+		_modelTypes = [modelTypes copy] ?: @[];
 		_standIn = standIn;
 		_introducedVersion = [introducedVersion copy];
 		_extensions = NFKModelExtensionsWithout(extensions, NFKModelDescriptorFields());
 		_derivedVariantOption = [self makeDerivedVariantOption];
 	}
 	return self;
+}
+
+- (instancetype)initWithIdentifier:(NSString *)identifier
+					   displayName:(nullable NSString *)displayName
+							family:(NSString *)family
+						   summary:(nullable NSString *)summary
+							engine:(NSString *)engine
+					  registryName:(nullable NSString *)registryName
+				 providerClassName:(nullable NSString *)providerClassName
+							 tasks:(nullable NSArray<NSString *> *)tasks
+				   inputModalities:(nullable NSArray<NSString *> *)inputModalities
+				  outputModalities:(nullable NSArray<NSString *> *)outputModalities
+							inputs:(nullable NSArray<NFKModelPort *> *)inputs
+						   outputs:(nullable NSArray<NFKModelPort *> *)outputs
+						   options:(nullable NSArray<NFKModelOption *> *)options
+						  variants:(nullable NSArray<NFKModelVariant *> *)variants
+						   license:(nullable NFKModelLicense *)license
+					  requirements:(nullable NFKModelRequirements *)requirements
+					   residencies:(nullable NSArray<NSString *> *)residencies
+					   memoryModel:(nullable NFKModelMemoryModel *)memoryModel
+						   presets:(nullable NSArray<NFKModelPreset *> *)presets
+						   standIn:(BOOL)standIn
+				 introducedVersion:(nullable NSString *)introducedVersion
+						extensions:(nullable NSDictionary<NSString *, id> *)extensions
+{
+	return [self initWithIdentifier:identifier displayName:displayName family:family summary:summary engine:engine
+					   registryName:registryName providerClassName:providerClassName tasks:tasks
+					inputModalities:inputModalities outputModalities:outputModalities inputs:inputs outputs:outputs
+							options:options variants:variants license:license requirements:requirements
+						residencies:residencies memoryModel:memoryModel presets:presets modelTypes:nil
+							standIn:standIn introducedVersion:introducedVersion extensions:extensions];
 }
 
 - (instancetype)initWithIdentifier:(NSString *)identifier
@@ -1510,7 +1543,7 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 					   registryName:registryName providerClassName:providerClassName tasks:tasks
 					inputModalities:inputModalities outputModalities:outputModalities inputs:inputs outputs:outputs
 							options:options variants:variants license:license requirements:requirements
-						residencies:residencies memoryModel:nil presets:nil standIn:standIn
+						residencies:residencies memoryModel:nil presets:nil modelTypes:nil standIn:standIn
 				  introducedVersion:introducedVersion extensions:extensions];
 }
 
@@ -1640,6 +1673,7 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 	NSString *identifier = nil, *displayName = nil, *family = nil, *summary = nil, *engine = nil;
 	NSString *registryName = nil, *providerClassName = nil, *introducedVersion = nil;
 	NSArray<NSString *> *tasks = nil, *inputModalities = nil, *outputModalities = nil, *residencies = nil;
+	NSArray<NSString *> *modelTypes = nil;
 	NSArray *inputs = nil, *outputs = nil, *options = nil, *variants = nil, *presets = nil;
 	id license = nil, requirements = nil, memoryModel = nil;
 	BOOL standIn = NO;
@@ -1687,6 +1721,7 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 		|| ![reader readStringArray:@"residencies" into:&residencies error:error]
 		|| ![reader readObject:@"memoryModel" withReader:memoryModelReader into:&memoryModel error:error]
 		|| ![reader readObjects:@"presets" withReader:presetReader into:&presets error:error]
+		|| ![reader readStringArray:@"modelTypes" into:&modelTypes error:error]
 		|| ![reader readBoolean:@"standIn" into:&standIn error:error]
 		|| ![reader readString:@"introducedVersion" required:NO into:&introducedVersion error:error]
 		|| ![reader requireUniqueElements:inputs ofField:@"inputs" keyPath:@"key" name:@"key" error:error]
@@ -1701,7 +1736,7 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 									  tasks:tasks inputModalities:inputModalities outputModalities:outputModalities
 									 inputs:inputs outputs:outputs options:options variants:variants
 									license:license requirements:requirements residencies:residencies
-								memoryModel:memoryModel presets:presets standIn:standIn
+								memoryModel:memoryModel presets:presets modelTypes:modelTypes standIn:standIn
 						  introducedVersion:introducedVersion
 								 extensions:[reader extensionsWithoutFields:NFKModelDescriptorFields()]];
 }
@@ -1754,6 +1789,9 @@ static NSArray<NSString *> *NFKModelDescriptorFields(void)
 	dictionary[@"memoryModel"] = self.memoryModel.dictionaryRepresentation;
 	if (self.presets.count > 0) {
 		dictionary[@"presets"] = NFKModelDictionariesOf(self.presets);
+	}
+	if (self.modelTypes.count > 0) {
+		dictionary[@"modelTypes"] = self.modelTypes;
 	}
 	dictionary[@"standIn"] = @(self.isStandIn);
 	dictionary[@"introducedVersion"] = self.introducedVersion;

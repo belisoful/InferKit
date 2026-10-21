@@ -24,6 +24,7 @@ show the API in use.
 - [Memory](#memory)
 - [Presets](#presets)
 - [Load options and the build](#load-options-and-the-build)
+- [Resolving a repository](#resolving-a-repository)
 - [Vocabulary](#vocabulary)
 - [Errors](#errors)
 - [The MLX catalog's measurements](#the-mlx-catalogs-measurements)
@@ -63,7 +64,7 @@ lists them as `outputs` in a model's description, and `NFKRemoteInferKitBackend`
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "kind": "inferkit.model-catalog",
   "models": [ … ]
 }
@@ -71,7 +72,7 @@ lists them as `outputs` in a model's description, and `NFKRemoteInferKitBackend`
 
 | Field | Type | Meaning |
 |---|---|---|
-| `schemaVersion` | integer | The schema the manifest follows. This release reads and writes 1 (`NFKModelCatalog.schemaVersion`). A newer version is refused. |
+| `schemaVersion` | integer | The schema the manifest follows. This release writes 2 (`NFKModelCatalog.schemaVersion`) and reads 1 and 2. Version 2 adds a model's `modelTypes`. A newer version is refused. |
 | `kind` | string | Always `"inferkit.model-catalog"` (`NFKModelCatalogManifestKind`). A missing or different kind is refused. |
 | `models` | array of [model](#model) | The descriptors. |
 
@@ -119,11 +120,13 @@ lists them as `outputs` in a model's description, and `NFKRemoteInferKitBackend`
 | `residencies` | array of string | no | How the model can hold its weights: [residencies](#residencies). |
 | `memoryModel` | [memory model](#memory-model) | no | Which options change the model's memory. |
 | `presets` | array of [preset](#presets) | no | Named sets of load options and request defaults. |
+| `modelTypes` | array of string | no | The `model_type` values of the Hugging Face `config.json` files the model's loader reads, such as `"qwen3"`. A [resolver](#resolving-a-repository) matches a repository against them. Empty when absent. |
 | `standIn` | boolean | no | True for a reference or test stand-in a user interface hides. False when absent. |
 | `introducedVersion` | string | no | The InferKit version that introduced the model, such as `"0.4.0"`. |
 
 A writer always writes `id`, `displayName`, `family`, `engine`, the arrays (empty when there is
-nothing in them), `requirements`, and `standIn`. It writes `presets` only when there are some.
+nothing in them), `requirements`, and `standIn`. It writes `presets` and `modelTypes` only when there
+are some.
 
 A descriptor with more than one variant derives a load option under `variant`
 (`NFKModelLoadOptionVariant`): a choice of its variants' identifiers, the default variant by default.
@@ -645,6 +648,67 @@ included, so they compare equal to the options an app would build with. A backen
 load held the weights reports it in `modelInfo` under `NFKModelInfoResidency`.
 
 `NFKAppleModelDescriptors` builds its engines through `+backendNamed:`.
+
+## Resolving a repository
+
+`NFKModelResolver` (`NFKModelResolver.h`) answers how InferKit runs a Hugging Face repository before
+any weights download. It reads the repository's commit, model card, file listing, `config.json`, and
+safetensors headers, and tries two routes in order:
+
+| Route | `NFKModelRoute` | Verification | When it applies |
+|---|---|---|---|
+| A shipped variant | `NFKModelRouteCatalog` | `measured` | A variant's `source.repository` is the repository, at any revision when none is named, else at the variant's revision or `measuredRevision`. A repository named at the variant's revision resolves with no network request. |
+| A shipped loader | `NFKModelRouteFamily` | `configCompatible` | A model's `modelTypes` holds the configuration's `model_type`, and the class that supplied the model (`+descriptorForRepository:matchingDescriptor:error:` on `NFKModelDescriptorProvider`) builds a descriptor for the repository. |
+
+- The second route resolves only when `allowsUnverifiedRoutes` is YES. Otherwise it is a refusal with
+  `NFKModelResolutionErrorUnverifiedRouteNotAllowed`, which names the route and the shipped model whose
+  loader reads the repository.
+- `NFKModelResolution` carries the route, the verification, the descriptor, the variant, the download
+  size, the memory estimate at the default options against the resolver's `memoryBudget` (the
+  catalog's, this machine's by default), and `reasons`: one `NSError` per route passed over, in
+  `NFKModelResolutionErrorDomain`, with `NFKModelResolutionRouteKey` and
+  `NFKModelResolutionDescriptorKey` in its `userInfo`. `dictionaryRepresentation` and
+  `resolutionWithDictionary:error:` carry a resolution as JSON values.
+- A failure to read the repository fails the call with the hub's `NFKDownloadErrorDomain` error or the
+  URL system's: a transport failure, a revision the hub does not have, or a file a judgment reads that
+  the hub does not serve. A refused read is the gated refusal. Every other outcome is a resolution.
+- Without an accepted access token, the Hugging Face hub answers a private repository and a missing one
+  alike, with HTTP 401 and no `X-Error-Code`. A misspelled name therefore resolves to the gated refusal,
+  whose description names both causes. A gated repository serves its metadata and listing, and refuses
+  its files with `X-Error-Code: GatedRepo`.
+- A loader judges a repository by its family, so the resolver asks each provider class once per family,
+  whatever the number of shipped sizes.
+- A resolved descriptor's identifier is the repository name, and its one variant reads the repository
+  at the resolved commit. It carries a `resolution` extension (`NFKModelResolutionExtensionKey`) with
+  `verification`, `repository`, `revision`, and `basedOn`. Its dictionary restores it with no network
+  request, so an app saves it and adds it to a catalog at launch.
+
+The refusals:
+
+| Code | Meaning |
+|---|---|
+| `NFKModelResolutionErrorUnverifiedRouteNotAllowed` | A route applies whose output no reference measured, and `allowsUnverifiedRoutes` is NO. |
+| `NFKModelResolutionErrorCustomCode` | `config.json` names code the repository ships (`auto_map`). |
+| `NFKModelResolutionErrorUnsupportedWeightFormat` | No safetensors weights, or none in the files the loader reads. |
+| `NFKModelResolutionErrorGated` | The hub withholds the repository without an accepted access token: a gated repository's files, or a private or missing repository's metadata. |
+| `NFKModelResolutionErrorNoConfiguration` | No readable `config.json`. |
+| `NFKModelResolutionErrorUnsupportedArchitecture` | No shipped model reads the configuration's model type. |
+| `NFKModelResolutionErrorUnsupportedConfiguration` | The loader reads the model type and refuses this configuration. |
+| `NFKModelResolutionErrorUnsupportedTokenizer` | The loader does not read the tokenizer as the release defines it. |
+| `NFKModelResolutionErrorUnsupportedQuantization` | The loader does not read the quantized weights. |
+
+InferKitMLX judges repositories for the dense and mixture decoders `NFKMLXLanguage` loads: the Qwen3,
+Qwen3-MoE, Qwen1.5-MoE, Mixtral, gpt-oss, and Mistral releases. It measures the repository as
+`Tools/catalog/measure.py` measures a shipped release, so the resolved descriptor carries the same load
+options, memory model, and memory facts. It refuses a quantization other than gpt-oss's MXFP4 experts
+and a single-file InferKit save, a tokenizer that is not byte-level BPE with a pre-tokenization pattern
+the core tokenizer implements exactly, a safetensors header whose shape or offsets are outside what a
+release holds, and weights outside `model.safetensors` or a `model.safetensors.index.json`.
+
+The Mixtral, gpt-oss, and Mistral releases list their model type, and their repositories are refused at
+the tokenizer today: Mixtral's is a Metaspace BPE with byte fallback, gpt-oss's declares
+`ignore_merges`, and Mistral's Tekken declares Llama 3's pattern. Of the six families, a Qwen3, Qwen3-MoE,
+or Qwen1.5-MoE repository is the one that resolves.
 
 ## Vocabulary
 

@@ -42,7 +42,7 @@ NFKModelDescriptor *described =
 
 ### The schema
 
-The manifest is `{"schemaVersion": 1, "kind": "inferkit.model-catalog", "models": [...]}`. Every
+The manifest is `{"schemaVersion": 2, "kind": "inferkit.model-catalog", "models": [...]}`. Every
 object keeps the fields this release does not read in its `extensions` and writes them back, so a
 manifest from a newer writer passes through an older reader unchanged. Tasks, value types, engines,
 and the other vocabularies are plain strings (`NFKModelVocabulary.h`), so a plugin extends a set by
@@ -106,6 +106,14 @@ other is a model of its own. A suggested preset that sets only request defaults 
 `model@preset` without being added. The server's catalog route serves the manifest, and its estimate
 route answers ``NFKModelMemoryEstimate`` and ``NFKModelMemoryConstraints`` for its own machine.
 
+### Resolving a repository
+
+``NFKModelResolver`` reads a Hugging Face repository's metadata, with no weights downloaded, and answers
+with an ``NFKModelResolution``: a shipped variant that reads it, or a shipped loader that reads its
+configuration (``NFKModelDescriptor/modelTypes``), which resolves only when
+``NFKModelResolver/allowsUnverifiedRoutes`` is YES. Each route passed over leaves a reason in
+`NFKModelResolutionErrorDomain`. The resolved descriptor builds through the catalog as any other.
+
 ## Topics
 
 ### The catalog
@@ -114,6 +122,14 @@ route answers ``NFKModelMemoryEstimate`` and ``NFKModelMemoryConstraints`` for i
 - ``NFKModelDescriptorProvider``
 - ``NFKModelCatalogError``
 - ``NFKAppleModelDescriptors``
+
+### Resolving a repository
+
+- ``NFKModelResolver``
+- ``NFKModelResolution``
+- ``NFKModelRepository``
+- ``NFKModelRoute``
+- ``NFKModelResolutionError``
 
 ### Options and building
 

@@ -5551,6 +5551,38 @@ NSInteger reserveBytes = catalog.memoryBudget.reserveByteCount;  // 4 GiB from a
 catalog.memoryBudget = nil;                                      // this machine's budget again
 ```
 
+### Resolving a Hugging Face repository
+
+`NFKModelResolver` answers how InferKit runs a repository before any weights download: a shipped
+variant (`measured`), or a shipped loader that reads the repository's configuration
+(`configCompatible`), which resolves only when the app allows it. A repository no route reads comes back
+with one reason per route, each an `NFKModelResolutionErrorDomain` code an interface shows as it is.
+The [model catalog reference](model-catalog.md#resolving-a-repository) lists the routes and the codes.
+
+```objc
+NFKModelResolver *resolver = [[NFKModelResolver alloc] init];   // the shared catalog, the default hub cache
+resolver.allowsUnverifiedRoutes = YES;                          // a shipped loader may read another repository
+[resolver resolveRepository:@"org/qwen3-fine-tune" revision:nil
+          completionHandler:^(NFKModelResolution *resolution, NSError *error) {
+    if (resolution == nil) {
+        return;                                                 // the hub's error: offline, or no such repository
+    }
+    if (!resolution.isResolved) {
+        for (NSError *reason in resolution.reasons) {
+            // reason.code is an NFKModelResolutionError; reason.localizedDescription says why
+        }
+        return;
+    }
+    NFKModelVerification verification = resolution.verification;  // measured, or configCompatible
+    BOOL fits = resolution.memoryEstimate.fits;                     // against this machine's budget
+    NSDictionary *saved = resolution.descriptor.dictionaryRepresentation;  // restores with no network request
+    [NFKModelCatalog.sharedCatalog addDescriptor:resolution.descriptor];
+}];
+```
+
+The resolved descriptor builds as any other, through
+`backendForModelIdentifier:options:error:` with the repository name as its identifier.
+
 ### Plugins
 
 A plugin lists its models in the catalog from its manifest, without loading code. `NFKPluginRegistry`

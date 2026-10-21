@@ -134,7 +134,7 @@ static NSMutableSet<NSString *> *NFKStubHubDroppedPaths;
 	@synchronized (NFKStubHubProtocol.class) {
 		[NFKStubHubRequests addObject:self.request];
 		script = NFKStubHubResponses[path];
-		if (script.dropsAfterByteCount >= 0 && ![NFKStubHubDroppedPaths containsObject:path]) {
+		if (script != nil && script.dropsAfterByteCount >= 0 && ![NFKStubHubDroppedPaths containsObject:path]) {
 			[NFKStubHubDroppedPaths addObject:path];
 			drops = YES;
 		}

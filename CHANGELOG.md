@@ -442,6 +442,29 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKHardwareProfile` gains `isAppleSilicon`, `operatingSystemName`, `operatingSystemVersion`, and a
   snapshot (`dictionaryRepresentation`, `+profileWithDictionary:`).
 
+#### Resolving a Hugging Face repository before it downloads
+
+- `NFKModelResolver.h`: `NFKModelResolver` reads a repository's commit, model card, file listing,
+  `config.json`, and safetensors headers, with no weights downloaded, and answers with an
+  `NFKModelResolution`: the route that runs it, its verification, the descriptor, the download size, the
+  memory estimate against a budget, and one reason per route passed over.
+  - `NFKModelRouteCatalog` → a shipped variant reads the repository. Verification `measured`. A
+    repository named at the variant's revision resolves with no network request.
+  - `NFKModelRouteFamily` → a shipped model's loader reads the repository's configuration. Verification
+    `configCompatible`. It resolves only when `allowsUnverifiedRoutes` is YES.
+- A refusal is an `NSError` in `NFKModelResolutionErrorDomain` with the route and the shipped model it
+  concerns in its `userInfo`. A failure to read the repository (a transport failure, a revision or a file
+  the hub does not serve) fails the call with the hub's error. A refused read is the gated refusal, which
+  also covers a misspelled name: without a token, the hub answers a missing repository and a private one
+  alike. The resolution and the resolved descriptor carry themselves as JSON values, so an app saves a
+  resolved model and adds it to a catalog at launch with no network request.
+- `NFKModelDescriptorProvider` gains the optional `+descriptorForRepository:matchingDescriptor:error:`,
+  which the class that supplied a matching descriptor answers.
+- A descriptor gains `modelTypes` (JSON `"modelTypes"`): the `config.json` `model_type` values its loader
+  reads. The manifest's `schemaVersion` is 2; a reader takes 1 and 2.
+- `-[NFKHFHub safetensorsHeaderOfRepo:revision:path:error:]` reads a safetensors file's header by two
+  range requests, or from the cache, without its tensors.
+
 #### Serving catalog models under presets and aliases
 
 - `-[NFKInferenceServer addModelWithIdentifier:options:catalog:forModelName:error:]` hosts a catalog model
@@ -1225,6 +1248,20 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### The language loader judges repositories it was not measured on
+
+- `NFKMLXModelDescriptors` answers the resolver for the dense and mixture decoders `NFKMLXLanguage` loads.
+  The Qwen3, Qwen3-MoE, Qwen1.5-MoE, Mixtral, gpt-oss, and Mistral releases list their `model_type`. A
+  repository of one of those types is measured as `Tools/catalog/measure.py` measures a shipped release,
+  and its descriptor takes the family's load options, memory model, and memory facts.
+- The judgment refuses what the loader would read wrongly with no error: a configuration the loader
+  rejects, a quantization other than gpt-oss's MXFP4 experts and a single-file InferKit save, a tokenizer
+  that is not byte-level BPE or whose pre-tokenization pattern the core tokenizer does not implement
+  exactly, a safetensors header whose shape or offsets are outside what a release holds, and weights
+  outside `model.safetensors` or a `model.safetensors.index.json`.
+- A Qwen3, Qwen3-MoE, or Qwen1.5-MoE repository resolves today. A Mixtral, gpt-oss, or Mistral repository
+  is refused at the tokenizer: a Metaspace BPE with byte fallback, `ignore_merges`, and Llama 3's pattern.
 
 #### The SD-family autoencoder decodes step by step when the GPU cannot hold the decode whole
 

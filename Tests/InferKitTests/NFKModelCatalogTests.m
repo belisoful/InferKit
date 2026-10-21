@@ -184,7 +184,7 @@ static NSString * const NFKCatalogTestProviderIdentifier = @"test.catalog-provid
 	XCTAssertEqualObjects([reread manifestDataWithError:NULL], first);
 
 	NSDictionary *manifest = [NSJSONSerialization JSONObjectWithData:first options:0 error:NULL];
-	XCTAssertEqualObjects(manifest[@"schemaVersion"], @1);
+	XCTAssertEqualObjects(manifest[@"schemaVersion"], @2);
 	XCTAssertEqualObjects(manifest[@"kind"], NFKModelCatalogManifestKind);
 	XCTAssertEqualObjects([manifest[@"models"] valueForKey:@"id"], (@[ @"a", @"b" ]));
 	XCTAssertEqualObjects(manifest[@"models"][0][@"x-order"], @1);
@@ -207,6 +207,47 @@ static NSString * const NFKCatalogTestProviderIdentifier = @"test.catalog-provid
 	XCTAssertFalse([catalog addDescriptorsFromManifestData:data error:&error]);
 	XCTAssertEqualObjects(error.domain, NFKModelCatalogErrorDomain);
 	XCTAssertEqual(error.code, NFKModelCatalogErrorUnsupportedSchemaVersion);
+}
+
+- (void)testASchemaVersionOneManifestIsRead
+{
+	NFKModelCatalog *catalog = [[NFKModelCatalog alloc] init];
+	NSDictionary *model = @{ @"id": @"m", @"family": @"f", @"engine": NFKModelEngineMLX };
+	NSData *data = [self manifestWithHeader:@{ @"schemaVersion": @1, @"kind": NFKModelCatalogManifestKind }
+									 models:@[ model ]];
+	NSError *error = nil;
+	XCTAssertTrue([catalog addDescriptorsFromManifestData:data error:&error], @"%@", error);
+	XCTAssertEqualObjects([catalog descriptorWithIdentifier:@"m"].modelTypes, @[]);
+}
+
+- (void)testModelTypesRoundTripThroughAManifest
+{
+	NFKModelCatalog *catalog = [[NFKModelCatalog alloc] init];
+	NSDictionary *model = @{ @"id": @"m", @"family": @"f", @"engine": NFKModelEngineMLX,
+							 @"modelTypes": @[ @"qwen3", @"qwen3_moe" ] };
+	NSData *data = [self manifestWithHeader:@{ @"schemaVersion": @2, @"kind": NFKModelCatalogManifestKind }
+									 models:@[ model ]];
+	NSError *error = nil;
+	XCTAssertTrue([catalog addDescriptorsFromManifestData:data error:&error], @"%@", error);
+	NFKModelDescriptor *descriptor = [catalog descriptorWithIdentifier:@"m"];
+	XCTAssertEqualObjects(descriptor.modelTypes, (@[ @"qwen3", @"qwen3_moe" ]));
+	XCTAssertNil(descriptor.extensions[@"modelTypes"]);
+	XCTAssertEqualObjects(descriptor.dictionaryRepresentation[@"modelTypes"], (@[ @"qwen3", @"qwen3_moe" ]));
+}
+
+- (void)testMalformedModelTypesAreRefused
+{
+	NSDictionary *model = @{ @"id": @"m", @"family": @"f", @"engine": NFKModelEngineMLX, @"modelTypes": @"qwen3" };
+	NSError *error = nil;
+	XCTAssertNil([NFKModelDescriptor descriptorWithDictionary:model error:&error]);
+	XCTAssertEqual(error.code, NFKModelCatalogErrorMalformedDescriptor);
+}
+
+- (void)testADescriptorWithoutModelTypesWritesNone
+{
+	NFKModelDescriptor *descriptor = [self descriptorWithIdentifier:@"m" family:@"f" tasks:@[] standIn:NO];
+	XCTAssertEqualObjects(descriptor.modelTypes, @[]);
+	XCTAssertNil(descriptor.dictionaryRepresentation[@"modelTypes"]);
 }
 
 - (void)testAMissingOrDifferentKindIsRefused

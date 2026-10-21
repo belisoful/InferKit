@@ -60,7 +60,7 @@ public final class NFKMLXModelDescriptors: NSObject, NFKModelDescriptorProvider 
 
     /// The descriptor with the least of its variants' `minimumMemoryBytes` as its requirement, where it
     /// states none.
-    private static func withLeastVariantMemory(_ descriptor: NFKModelDescriptor) -> NFKModelDescriptor {
+    static func withLeastVariantMemory(_ descriptor: NFKModelDescriptor) -> NFKModelDescriptor {
         guard descriptor.requirements.minimumMemoryByteCount == nil,
               let least = descriptor.variants.compactMap({ $0.minimumMemoryByteCount?.int64Value }).min() else {
             return descriptor
@@ -98,6 +98,8 @@ struct NFKMLXCatalogEntry {
     var minimumMemoryByteCount: Int64? = nil
     var residencies: [String] = [NFKModelResidencyResident]
     var standIn = false
+    /// The `model_type` values of the configurations the entry's loader reads.
+    var modelTypes: [String] = []
     var introducedVersion: String? = "0.4.0"
     /// The load profile in place of the family's, from ``NFKMLXLoadProfile/familyProfiles``.
     /// ``NFKMLXLoadProfile/plain`` declares no load options.
@@ -136,6 +138,9 @@ struct NFKMLXCatalogEntry {
         dictionary["memoryModel"] = memoryModel?.dictionaryRepresentation()
         if !presets.isEmpty {
             dictionary["presets"] = presets.map { $0.dictionaryRepresentation() }
+        }
+        if !modelTypes.isEmpty {
+            dictionary["modelTypes"] = modelTypes
         }
         return dictionary
     }

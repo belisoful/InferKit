@@ -9,7 +9,7 @@
 NSString * const NFKModelCatalogErrorDomain = @"NFKModelCatalogErrorDomain";
 NSString * const NFKModelCatalogManifestKind = @"inferkit.model-catalog";
 
-static const NSInteger NFKModelCatalogSchemaVersion = 1;
+static const NSInteger NFKModelCatalogSchemaVersion = 2;
 
 @interface NFKModelCatalog ()
 // identifier -> descriptor. Guarded by @synchronized on itself, as is providerNames.

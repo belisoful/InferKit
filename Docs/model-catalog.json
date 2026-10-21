@@ -14131,6 +14131,9 @@
         "quantizationBits" : "quantizationBits",
         "residency" : "residency"
       },
+      "modelTypes" : [
+        "gpt_oss"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -22291,6 +22294,9 @@
         "precision" : "precision",
         "quantizationBits" : "quantizationBits"
       },
+      "modelTypes" : [
+        "mistral"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -22938,6 +22944,9 @@
         "quantizationBits" : "quantizationBits",
         "residency" : "residency"
       },
+      "modelTypes" : [
+        "mixtral"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -28702,6 +28711,9 @@
         "quantizationBits" : "quantizationBits",
         "residency" : "residency"
       },
+      "modelTypes" : [
+        "qwen2_moe"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -29386,6 +29398,9 @@
         "precision" : "precision",
         "quantizationBits" : "quantizationBits"
       },
+      "modelTypes" : [
+        "qwen3"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -30037,6 +30052,9 @@
         "precision" : "precision",
         "quantizationBits" : "quantizationBits"
       },
+      "modelTypes" : [
+        "qwen3"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -30740,6 +30758,9 @@
         "precision" : "precision",
         "quantizationBits" : "quantizationBits"
       },
+      "modelTypes" : [
+        "qwen3"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -31458,6 +31479,9 @@
         "quantizationBits" : "quantizationBits",
         "residency" : "residency"
       },
+      "modelTypes" : [
+        "qwen3_moe"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -32145,6 +32169,9 @@
         "precision" : "precision",
         "quantizationBits" : "quantizationBits"
       },
+      "modelTypes" : [
+        "qwen3"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -32872,6 +32899,9 @@
         "precision" : "precision",
         "quantizationBits" : "quantizationBits"
       },
+      "modelTypes" : [
+        "qwen3"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -65554,5 +65584,5 @@
       ]
     }
   ],
-  "schemaVersion" : 1
+  "schemaVersion" : 2
 }

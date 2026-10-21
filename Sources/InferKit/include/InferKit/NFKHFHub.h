@@ -377,6 +377,27 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 								 response:(NSHTTPURLResponse * _Nullable * _Nullable)outResponse
 									error:(NSError * _Nullable *)outError;
 
+/*!
+	@method     safetensorsHeaderOfRepo:revision:path:error:
+	@abstract   The JSON header of a safetensors file in a repository, read without its tensors.
+	@discussion Two HTTP range requests read the header: the first 8 bytes give its length, and the
+				second reads it. The result maps each tensor name to {"dtype", "shape", "data_offsets"},
+				and "__metadata__" to the file's string metadata when it has any. A file in the local
+				cache is read from disk with no request. Blocks on the network. A nil revision is
+				"main".
+
+				Fails with NFKDownloadErrorAuthenticationRequired for a gated or private repository
+				without an accepted token, NFKDownloadErrorNotFound for a missing file,
+				NFKDownloadErrorHTTPStatus for another refusal, and NFKDownloadErrorUnsupportedSource
+				when the bytes are not a safetensors header or the header is longer than 100,000,000
+				bytes, the format's limit. A server that ignores the range request sends the whole file,
+				which is read and discarded but for the header. Introduced in InferKit 0.4.0.
+*/
+- (nullable NSDictionary<NSString *, id> *)safetensorsHeaderOfRepo:(NSString *)repo
+														  revision:(nullable NSString *)revision
+															  path:(NSString *)path
+															 error:(NSError * _Nullable *)outError;
+
 @end
 
 /*!

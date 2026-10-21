@@ -510,7 +510,7 @@ other model.
 
 ```c
 char *catalog = nfk_catalog_copy_json(&error);
-/* {"kind": "inferkit.model-catalog", "models": [ … ], "schemaVersion": 1} */
+/* {"kind": "inferkit.model-catalog", "models": [ … ], "schemaVersion": 2} */
 nfk_string_free(catalog);
 ```
 

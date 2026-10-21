@@ -347,7 +347,7 @@ the "Model gallery" section of `Docs/examples.md`). Exhaustive per-model forward
   `documentation-docc.md`, `mlx-parity-checklist.md`.
 - Core: `core-runtime-notes.md`, `apple-framework-backends.md`, `remote-providers.md`,
   `remote-provider-capabilities.md`, `coreml-compute-plan.md`,
-  `hardware-and-model-sizing.md`, `plugins.md`.
+  `hardware-and-model-sizing.md`, `model-resolver.md`, `plugins.md`.
 - InferKitMLX: `mlx-companion.md`, `mlx-runtime-gotchas.md`, `mlx-weights-and-formats.md`,
   `mlx-training.md`, `mlx-customization-ledger.md`, and the model classes
   `mlx-models-diffusion.md`, `mlx-models-dit-generation.md`,

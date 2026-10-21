@@ -220,9 +220,9 @@ InferKit 0.4.0. The consumer reference is `Docs/model-catalog.md`. The decisions
 - **One schema for the core, the companions, and plugins.** A descriptor's dictionary is the entry a
   plugin manifest carries, so the shared catalog, a companion's provider, and a plugin's JSON file
   describe a model in one shape and an app reads all three the same way. The manifest envelope is
-  `{"schemaVersion": 1, "kind": "inferkit.model-catalog", "models": [...]}`. A newer
-  `schemaVersion` is refused (`NFKModelCatalogErrorUnsupportedSchemaVersion`); a missing or different
-  `kind` is malformed.
+  `{"schemaVersion": 2, "kind": "inferkit.model-catalog", "models": [...]}`. Version 2 adds a
+  descriptor's `modelTypes`, and a reader takes 1 and 2. A newer `schemaVersion` is refused
+  (`NFKModelCatalogErrorUnsupportedSchemaVersion`); a missing or different `kind` is malformed.
 - **Unknown fields are preserved.** Every object keeps the fields it does not read in `extensions`
   and writes them back beside its own, so a manifest from a newer writer passes through an older
   reader unchanged. A later field (an option's `availability`, a choice's memory figures) rides in
