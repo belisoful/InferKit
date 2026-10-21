@@ -742,7 +742,11 @@ Memory facts, load options, and presets (`NFKMLXCatalogOptions.swift`, 2026-10-1
   some converted directories and some not states its `checkpoint`, `float32`, and `bfloat16` figures with
   the converted directories at that precision and the others at the precision the plan gives them, so
   Wan's `transformer` stage at `bfloat16` counts the transformer at bfloat16 and the VAE at float32. A
-  stage holding none, or only converted ones, states its figures as every other stage does.
+  stage holding none, or only converted ones, states its figures as every other stage does. A
+  directory's figure converts every floating tensor, so Wan's `bfloat16` figure counts the parameters
+  diffusers keeps float32 (`NFKMLXWanRelease.keepsFloat32`) at bfloat16, about 55 MB short on the 14B.
+  The loaded size counts them at float32, as the generator's residency plan does (`transformerBytes`);
+  that figure is the right one.
 - `NFKMLXKeyValueRule` gives the 16-bit cache per position: `.dense` is
   `NFKMLXModelSizing.keyValueBytesPerToken(of:precision: .checkpoint)` (the tests compare it on the
   released configurations), `.slidingWindow` bounds Gemma 3's sliding layers to the window (pattern by

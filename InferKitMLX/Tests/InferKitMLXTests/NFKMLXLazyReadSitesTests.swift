@@ -57,6 +57,7 @@ final class NFKMLXLazyReadSitesTests: XCTestCase {
         "NFKMLXSa2VALLaVA.swift": (1, "a probe for a saved fine-tune's layout"),
         "NFKMLXSa2VAQwen.swift": (1, "a probe for a saved fine-tune's layout"),
         "NFKMLXSegFormer.swift": (1, "key and value joined into one projection"),
+        "NFKMLXSigLIP2.swift": (1, "the bfloat16 cast converts each group as it is read"),
         "NFKMLXSileroVAD.swift": (1, "the 8 kHz branch is dropped"),
         "NFKMLXSmolVLM.swift": (1, "a probe for lm_head.weight"),
         "NFKMLXStableDiffusionModels.swift": (1, "a stored text context read as data"),

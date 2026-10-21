@@ -97,9 +97,9 @@ public struct NFKMLXLoadOptions: @unchecked Sendable {
             return nil
         case NFKModelPrecisionBFloat16? where offersBFloat16:
             return .bfloat16
-        default:
+        case let name?:
             throw NFKMLXError.unsupportedConfiguration(
-                "\(model) loads as published\(offersBFloat16 ? " or at bfloat16" : ""); precision \(precisionName ?? "") "
+                "\(model) loads as published\(offersBFloat16 ? " or at bfloat16" : ""); precision \(name) "
                 + "has no parity check for it")
         }
     }
