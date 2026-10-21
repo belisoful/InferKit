@@ -309,6 +309,21 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
                   + "high \(scaling.highFrequencyFactor), original \(scaling.originalMaxPositionEmbeddings); "
                   + "mlx_lm's table recomputed here differs at \(recomputedApart) of \(b.count)")
             print("SEAMS \(label) rope table: \(apart.isEmpty ? "exact" : apart.joined(separator: "; "))")
+            let ulps = zip(a, b).map { abs(Int64($0.bitPattern) - Int64($1.bitPattern)) }.max() ?? 0
+            print("SEAMS \(label) rope table: at most \(ulps) float32 steps from mlx_lm's")
+            // mlx_lm's own table through the same rotary: what every rope seam computes once the tables agree.
+            let attention = net.model.layers[0].attention
+            let length = tokens.dim(1)
+            let queries = try seam("layers.0.q_proj").reshaped([1, length, attention.heads, attention.headDimensions])
+                .transposed(0, 2, 1, 3)
+            let keys = try seam("layers.0.k_proj").reshaped([1, length, attention.keyValueHeads, attention.headDimensions])
+                .transposed(0, 2, 1, 3)
+            func rotated(_ x: MLXArray) -> MLXArray {
+                MLXFast.RoPE(x, dimensions: rotary.dimensions, traditional: false, base: nil, scale: 1, offset: 0, freqs: theirs)
+            }
+            print("SEAMS \(label) layer 0 with mlx_lm's table: "
+                  + compared("q_rope", rotated(queries), try seam("layers.0.q_rope")) + ", "
+                  + compared("k_rope", rotated(keys), try seam("layers.0.k_rope")))
             XCTAssertEqual(apart.count, 0, "\(label)'s rotary periods are mlx_lm's")
         }
         var chained = net.model.embedTokens(tokens)
