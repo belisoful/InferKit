@@ -300,6 +300,14 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
             let a = ours.asArray(Float.self), b = theirs.asArray(Float.self)
             let apart = zip(a, b).enumerated().filter { $0.element.0 != $0.element.1 }
                 .map { "\($0.offset): \($0.element.0) vs \($0.element.1)" }
+            let rotary = net.model.layers[0].attention.rope
+            let scaling = try XCTUnwrap(net.configuration.ropeScaling)
+            let recomputed = NFKLMRotary.mlxLlama3Periods(dimensions: rotary.dimensions, base: rotary.base, scaling: scaling)
+            let recomputedApart = zip(recomputed.asArray(Float.self), b).filter { $0 != $1 }.count
+            print("SEAMS \(label) rope path: placement \(rotary.placement), kind \(scaling.kind), base \(rotary.base), "
+                  + "dimensions \(rotary.dimensions), factor \(scaling.factor), low \(scaling.lowFrequencyFactor), "
+                  + "high \(scaling.highFrequencyFactor), original \(scaling.originalMaxPositionEmbeddings); "
+                  + "mlx_lm's table recomputed here differs at \(recomputedApart) of \(b.count)")
             print("SEAMS \(label) rope table: \(apart.isEmpty ? "exact" : apart.joined(separator: "; "))")
             XCTAssertEqual(apart.count, 0, "\(label)'s rotary periods are mlx_lm's")
         }
