@@ -172,9 +172,25 @@ static BOOL NFKModelIsWholeNumberInRange(NSNumber *number, NSInteger minimum, NS
 	return NFKModelReserveByteCount(budgetByteCount);
 }
 
+// The thread-dictionary key of the budget a withCurrentBudget:perform: scope sets.
+static NSString * const NFKModelScopedBudgetKey = @"NFKModelScopedBudget";
+
 + (instancetype)currentBudget
 {
-	return [self budgetForHardwareProfile:NFKHardwareProfile.currentProfile];
+	NFKModelMemoryBudget *scoped = NSThread.currentThread.threadDictionary[NFKModelScopedBudgetKey];
+	return scoped ?: [self budgetForHardwareProfile:NFKHardwareProfile.currentProfile];
+}
+
++ (void)withCurrentBudget:(NFKModelMemoryBudget *)budget perform:(NS_NOESCAPE void (^)(void))block
+{
+	NSMutableDictionary *dictionary = NSThread.currentThread.threadDictionary;
+	id outer = dictionary[NFKModelScopedBudgetKey];
+	dictionary[NFKModelScopedBudgetKey] = budget;
+	@try {
+		block();
+	} @finally {
+		dictionary[NFKModelScopedBudgetKey] = outer;
+	}
 }
 
 + (instancetype)budgetForHardwareProfile:(NFKHardwareProfile *)profile

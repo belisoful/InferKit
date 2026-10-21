@@ -954,14 +954,15 @@ after them, reporting what each step freed in an `NFKMemoryRelief`.
 Before a hosted model builds, the server makes room for it (`admitsModelsByMemory`, on by default). It
 holds the build beside what the other models hold to `admissionMemoryBudget`, this machine's budget by
 default, its reserve included. A catalog model whose residency is automatic loads at the residency
-planned for the room left: resident where it fits, else staged, paged, or streamed. A build that does not
-fit releases idle models, least recently used first, and then the runtimes' caches. A build that still does
-not fit waits up to `admissionWaitInterval` for a model to become releasable, then fails with
+planned for the room left: resident where it fits, else staged, paged, or streamed. The build runs with
+that room as `+[NFKModelMemoryBudget currentBudget]`, so the engine sizes its placement to it. A build that
+does not fit releases idle models, least recently used first, and then the runtimes' caches. A build that
+still does not fit waits up to `admissionWaitInterval` for a model to become releasable, then fails with
 `NFKModelCatalogErrorDoesNotFit`, naming each model it considered and why it stayed (pinned, running,
-queued, or within its grace period). Each model's entry in the
-status route reports its `residency`: whether it is loaded, when it was last used, its idle timeout at
-the current pressure, and `resident_bytes` and `peak_bytes` from its last load
-(`NFKServerModelStatus.residentBytes` and `peakBytes`). A backend that measures its own load gives
+queued, or within its grace period). Each model's entry in the status route reports its `residency`:
+whether it is loaded, when it was last used, its idle timeout at the current pressure, and
+`resident_bytes` and `peak_bytes` from its last load (`NFKServerModelStatus.residentBytes` and
+`peakBytes`). A backend that measures its own load gives
 those figures; for any other, the server reads each linked runtime's allocated memory around the build.
 An unload calls the backend's `unload` before the server releases it, and then the server asks MLX to
 return its buffer cache to the system.

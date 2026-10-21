@@ -45,10 +45,11 @@
 
 @end
 
-/*! A backend that reports its resident bytes and releases conversation and expert caches it holds. */
 static NSInteger NFKReliefRuntimeCached = 0;
 
-/*! A runtime that, as MLX does, keeps what a backend releases in its cache until it returns its cache. */
+/*! A runtime that, as MLX does, keeps what a backend releases in its cache until it returns its cache. A
+	test registers it for the rest of the process, since registration has no undo; it holds nothing outside
+	the test that sets its cache. */
 @interface NFKReliefTestRuntime : NSObject <NFKServingRuntimeStatus>
 + (void)setCachedByteCount:(NSInteger)bytes;
 @end
@@ -86,6 +87,7 @@ static NSInteger NFKReliefRuntimeCached = 0;
 
 @end
 
+/*! A backend that reports its resident bytes and releases conversation and expert caches it holds. */
 @interface NFKReliefTestBackend : NFKResidencyTestBackend
 @property (atomic, assign) NSInteger residentBytesHeld;
 /*! Whether the conversation caches it releases go into NFKReliefTestRuntime's cache. */
@@ -122,10 +124,11 @@ static NSInteger NFKReliefRuntimeCached = 0;
 
 static NSString * const NFKAdmissionTestEngine = @"admission-test-engine";
 
-/*! The engine's builder, which records the residency a build asks for and builds a backend holding what
-	that residency holds of a model with two 3,500-byte stages. */
+/*! The engine's builder, which records the residency a build asks for and the budget it builds under, and
+	builds a backend holding what that residency holds of a model with two 3,500-byte stages. */
 @interface NFKAdmissionTestBuilder : NSObject <NFKModelBackendBuilding>
 @property (atomic, copy, nullable) NSString *residency;
+@property (atomic, strong, nullable) NFKModelMemoryBudget *budget;
 @end
 
 @implementation NFKAdmissionTestBuilder
@@ -133,6 +136,7 @@ static NSString * const NFKAdmissionTestEngine = @"admission-test-engine";
 - (nullable id<NFKInferenceBackend>)backendForBuildRequest:(NFKModelBuildRequest *)request error:(NSError **)error
 {
 	self.residency = request.loadOptions[NFKModelLoadOptionResidency];
+	self.budget = [NFKModelMemoryBudget currentBudget];
 	NFKReliefTestBackend *backend = [[NFKReliefTestBackend alloc] init];
 	backend.residentBytesHeld = [self.residency isEqualToString:NFKModelResidencyStaged] ? 3500 : 7000;
 	return backend;
@@ -748,12 +752,17 @@ static NSString * const NFKAdmissionTestEngine = @"admission-test-engine";
 	return server;
 }
 
-- (void)testAnAutomaticModelIsAdmittedStagedWhereOnlyStagedFitsBesideTheReserve
+// The catalog's own budget holds the model resident; the admission budget leaves room for one stage, and
+// the build plans in that room.
+- (void)testAnAutomaticModelBuildsStagedInTheRoomAdmissionLeftAndNotTheCatalogsBudget
 {
 	NFKAdmissionTestBuilder *builder = [[NFKAdmissionTestBuilder alloc] init];
 	NFKInferenceServer *server = [self serverHolding:1000 besideAStagedModelBuiltBy:builder];
 	XCTAssertNil([self loadReturningError:@"staged" on:server], @"3,500 fits in the 4,000 the reserve leaves");
 	XCTAssertEqualObjects(builder.residency, NFKModelResidencyStaged, @"the build is told the residency admitted");
+	NFKModelMemoryBudget *room = builder.budget;
+	XCTAssertGreaterThanOrEqual(room.byteCount - room.reserveByteCount, 4000, @"%@", room);
+	XCTAssertLessThan(room.byteCount, 10000, @"the build plans in the room, not the whole budget: %@", room);
 }
 
 - (void)testAPlannedResidencyIsHeldToTheBudgetsOwnReserve
@@ -763,6 +772,98 @@ static NSString * const NFKAdmissionTestEngine = @"admission-test-engine";
 	NSError *refusal = [self loadReturningError:@"staged" on:server];
 	XCTAssertEqual(refusal.code, NFKModelCatalogErrorDoesNotFit, @"3,500 exceeds the 2,000 the reserve leaves: %@", refusal);
 	XCTAssertNil(builder.residency, @"nothing was built");
+}
+
+// A build under way holds what admission reserved for it, so a second build beside it is refused while the
+// first has not yet measured its resident bytes.
+- (void)testABuildUnderWayCountsWhatAdmissionReservedForIt
+{
+	NFKInferenceServer *server = [self server];
+	server.admissionMemoryBudget = [self admissionBudget];
+	dispatch_semaphore_t gate = dispatch_semaphore_create(0);
+	__block BOOL gated = NO;
+	XCTestExpectation *building = [self expectationWithDescription:@"the second build of held waits in its provider"];
+	NFKReliefTestBackend *backend = [self reliefBackendHolding:3000 conversations:0 experts:0];
+	[server addBackendProvider:^id<NFKInferenceBackend>(NSError **error) {
+		if (gated) {
+			[building fulfill];
+			dispatch_semaphore_wait(gate, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));
+		}
+		return backend;
+	} forModelName:@"held"];
+	[server addBackendProvider:[self providerReturning:[self reliefBackendHolding:3000 conversations:0 experts:0]]
+				  forModelName:@"next"];
+	for (NSString *name in @[ @"held", @"next" ]) {
+		[self load:name on:server];
+		XCTAssertTrue([server unloadModelNamed:name]);
+		[self waitUntil:^BOOL {
+			return [server residencyForModelName:name] == NFKServerModelResidencyNotLoaded;
+		} description:[name stringByAppendingString:@" is measured and unloaded"]];
+	}
+	gated = YES;
+	XCTestExpectation *built = [self expectationWithDescription:@"held is built"];
+	[server loadModelNamed:@"held" completionHandler:^(NSError *error) {
+		[built fulfill];
+	}];
+	[self waitForExpectations:@[ building ] timeout:10];
+
+	NSError *refusal = [self loadReturningError:@"next" on:server];
+	XCTAssertEqual(refusal.code, NFKModelCatalogErrorDoesNotFit, @"%@", refusal);
+	XCTAssertEqualObjects(refusal.userInfo[NFKInferenceServerAdmissionModelsKey],
+						  (@[ @{ @"model": @"held", @"bytes": @3000, @"reason": @"loading" } ]));
+	dispatch_semaphore_signal(gate);
+	[self waitForExpectations:@[ built ] timeout:10];
+}
+
+// A model removed while its build waits for room ends the wait at once and releases nothing for it.
+- (void)testRemovingAModelEndsItsAdmissionWithoutReleasingAnother
+{
+	NFKInferenceServer *server = [self startedServer:[self server]];
+	server.admissionMemoryBudget = [self admissionBudget];
+	server.admissionWaitInterval = 30;
+	[server addBackendProvider:[self providerReturning:[self reliefBackendHolding:3000 conversations:0 experts:0]]
+				  forModelName:@"next"];
+	[self load:@"next" on:server];
+	XCTAssertTrue([server unloadModelNamed:@"next"]);
+	[self waitUntil:^BOOL {
+		return [server residencyForModelName:@"next"] == NFKServerModelResidencyNotLoaded;
+	} description:@"the first build of next is unloaded"];
+	NFKReliefTestBackend *busy = [self reliefBackendHolding:3000 conversations:0 experts:0];
+	busy.gate = dispatch_semaphore_create(0);
+	[server addBackendProvider:[self providerReturning:busy] forModelName:@"busy"];
+	XCTestExpectation *ran = [self expectationWithDescription:@"the run ends"];
+	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		[self run:@"busy" on:server error:NULL];
+		[ran fulfill];
+	});
+	[self waitUntil:^BOOL {
+		return busy.running == 1;
+	} description:@"the run holds its slot"];
+
+	__block NSError *failure = nil;
+	XCTestExpectation *ended = [self expectationWithDescription:@"the load of next ends"];
+	[server loadModelNamed:@"next" completionHandler:^(NSError *error) {
+		failure = error;
+		[ended fulfill];
+	}];
+	[self waitUntil:^BOOL {
+		return [server residencyForModelName:@"next"] == NFKServerModelResidencyLoading;
+	} description:@"next waits for room"];
+	[server removeBackendForModelName:@"next"];
+	[self waitForExpectations:@[ ended ] timeout:10];
+	XCTAssertEqualObjects(failure.domain, NFKInferenceServerErrorDomain, @"%@", failure);
+	XCTAssertEqual(failure.code, NFKInferenceServerErrorModelNotFound);
+
+	NSInteger builds = self.builds;
+	dispatch_semaphore_signal(busy.gate);
+	[self waitForExpectations:@[ ran ] timeout:10];
+	// A waiting admission retries every 0.25 s, so one still running would release busy within this second.
+	NSDate *settled = [NSDate dateWithTimeIntervalSinceNow:1];
+	while (settled.timeIntervalSinceNow > 0) {
+		XCTAssertEqual([server residencyForModelName:@"busy"], NFKServerModelResidencyResident, @"nothing made room for next");
+		XCTAssertEqual(self.builds, builds, @"next was not built");
+		[NSThread sleepForTimeInterval:0.05];
+	}
 }
 
 - (void)testABuildWaitsForARunningModelToBecomeReleasable

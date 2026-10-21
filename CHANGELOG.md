@@ -45,11 +45,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKInferenceServer` admits each hosted model's build against `admissionMemoryBudget` and its reserve,
   beside what the other hosted models hold (`admitsModelsByMemory`, on by default). A catalog model whose
   residency is automatic builds at the residency planned for the room left: resident where it fits, else
-  staged, paged, or streamed. A build that does not fit releases idle models, least recently used first,
-  reported with `NFKServerModelEventReasonAdmission`, and then the runtimes' caches. A build that still
-  does not fit waits up to `admissionWaitInterval` for a model to become releasable, then fails with
-  `NFKModelCatalogErrorDoesNotFit`, its userInfo naming each model it considered and why under
-  `NFKInferenceServerAdmissionModelsKey`.
+  staged, paged, or streamed. An admitted build runs with that room as
+  `+[NFKModelMemoryBudget currentBudget]`, set on its thread by the new
+  `+[NFKModelMemoryBudget withCurrentBudget:perform:]`, so the catalog and an engine that sizes its
+  placement from the current budget plan in it. A build that does not fit releases idle models, least
+  recently used first, reported with `NFKServerModelEventReasonAdmission`, and then the runtimes' caches.
+  A build that still does not fit waits up to `admissionWaitInterval` for a model to become releasable,
+  then fails with `NFKModelCatalogErrorDoesNotFit`, its userInfo naming each model it considered and why
+  under `NFKInferenceServerAdmissionModelsKey`.
 
 #### Memory relief before a model is released
 

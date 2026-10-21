@@ -1578,18 +1578,27 @@ keeping them in memory, and unloads idle ones.
   expert steps, whose release no count would see. The fit:
   - a catalog model with a declared residency option at `automatic` takes the residency the planner
     chooses for the room the budget leaves, `byteCount − reserveByteCount − held`, every time, resident
-    included (`admittedResidency`, which the catalog provider passes as `NFKModelLoadOptionResidency`).
-    An estimate without a budget is staged, so admitting such a model on that peak and building it at
-    `automatic` would let the catalog resolve it against the whole machine. The planner's budget is the
-    least that holds the room, and the planned peak is held to the real budget again;
+    included (`admittedResidency`, which the catalog provider passes as `NFKModelLoadOptionResidency`
+    with `NFKModelLoadOptionIgnoreMemoryBudget`, since admission judged it against its own budget). An
+    estimate without a budget is staged, so admitting such a model on that peak and building it at
+    `automatic` would let the catalog resolve it against the whole machine. The room budget is the least
+    that holds the room, and the planned peak is held to the real budget again;
   - any other model fits when its peak plus the held bytes fits the budget with its reserve.
+  The build runs inside `+[NFKModelMemoryBudget withCurrentBudget:perform:]` with the room budget
+  (`admittedBudget`), a thread-dictionary scope `currentBudget` answers on the build's thread. A catalog
+  whose budget is the default and every MLX planner (`NFKMLXResidencyBudget.current()`: expert paging's
+  cache, streamed layers, widened stages) then size the placement to the room admission measured. Work
+  the build hands to another thread reads that thread's budget.
   When it does not fit, idle models go, least recently used first, with reason
   `NFKServerModelEventReasonAdmission`, only when the releasable models together cover the shortfall;
   then the runtimes' caches go unless another model is busy (the model being admitted has not begun to
   build); then the fit is tried again. The refusal is `NFKModelCatalogErrorDoesNotFit` with
   `NFKInferenceServerAdmissionModelsKey` listing each model that holds memory and its reason.
   `admissionWaitInterval` retries every 0.25 s until it passes, and a model removed meanwhile ends the
-  wait with its not-served error. A build clears `admittedBytes` in the same lock that makes it resident,
+  wait with its not-served error. The runtime-cache release re-checks that no model is busy just before
+  it, in relief after the model caches and in admission after the eviction. A run start takes no lock
+  the release holds, so the check and the release are as close as `releaseRuntimeCachesWhenIdle`'s; MLX's
+  `clearCache()` frees only buffers no array holds, so a run that starts in between loses no live data. A build clears `admittedBytes` in the same lock that makes it resident,
   so another admission never reads it as holding nothing.
 - Status: each model's `residency` object (`state`, `unloadable`, `last_used` in seconds since 1970,
   `idle_timeout_seconds` when finite, `load_seconds`, `load_error`, `loads`, `unloads`, `resident_bytes`,
