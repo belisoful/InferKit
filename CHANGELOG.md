@@ -1351,6 +1351,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Expert-cache bytes in a backend's status
+
+- The language, Gemma 4, and DeepSeek V4 backends report `expert_cache_bytes` and
+  `expert_cache_byte_budget` in `backendStatus` where their model pages its routed experts, so a server's
+  status attributes the expert cache to its model. `NFKMLXDeepSeekBackend.expertStore` reaches DeepSeek's
+  store from Objective-C.
+
 #### The reference arithmetic computes torch's softplus, half-precision softmax, and window pooling
 
 - `NFKMLXArithmeticReference` takes four more Metal kernels, each equal to PyTorch's output on every case

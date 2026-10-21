@@ -97,6 +97,11 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
         }
     }
 
+    /// The expert cache now, where the model pages its experts: `expert_cache_bytes` and
+    /// `expert_cache_byte_budget`; empty where it holds them resident. `NFKInferenceServer` serves it under
+    /// the model's "status". Introduced in InferKit 0.4.0.
+    @objc public var backendStatus: [String: Any] { expertStore?.statusFigures ?? [:] }
+
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
         [NFKParameterTemperature, NFKParameterMaxTokens, NFKParameterSeed, NFKParameterTools,

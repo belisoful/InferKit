@@ -234,6 +234,12 @@ public final class NFKMLXExpertStore: NSObject, @unchecked Sendable {
         }
     }
 
+    /// The cache figures a backend that pages its experts adds to its `backendStatus`: `expert_cache_bytes`
+    /// (``cachedBytes``) and `expert_cache_byte_budget` (``cacheByteBudget``).
+    var statusFigures: [String: Any] {
+        locked { ["expert_cache_bytes": cachedBytesHeld, "expert_cache_byte_budget": budget] }
+    }
+
     /// Drops every materialized expert, keeping the sources.
     @objc public func clearCache() {
         locked {

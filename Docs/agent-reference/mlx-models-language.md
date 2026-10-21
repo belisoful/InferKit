@@ -381,7 +381,9 @@ attention and feed-forward.
   snapshot refreshed under the generation lock after each run, reset, or budget change and read
   under a lock of its own (the language backend's `statusLock`, the keeper's on the others),
   because the counting getters take the generation lock and a status poll would otherwise wait out
-  a run.
+  a run. A backend whose model pages its experts (the language backend, Gemma 4, DeepSeek V4) adds
+  `expert_cache_bytes` and `expert_cache_byte_budget`, read live from its `NFKMLXExpertStore` under the
+  store's own lock (`statusFigures`). DeepSeek's store is reachable as the backend's `expertStore`.
   `Tools/reference-parity/run_reference.py` must stay parseable by Python 3.9: the LLM oracle
   environment is 3.9, and a backslash inside an f-string expression (legal from 3.12, written for
   the music oracle) had made every mode there unrunnable — found the first time the qwen3_moe mode

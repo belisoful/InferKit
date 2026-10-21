@@ -253,6 +253,12 @@ final class NFKMLXExpertPagingTests: XCTestCase {
         try writeRelease(released, to: directory)
         let paged = try assertPagedMatchesResident(directory, geometry: .tinyMixture, precision: .float32)
         XCTAssertEqual(paged.expertStore?.expertCount, 2 * 3 * 8, "two layers, three projections, eight experts")
+
+        let store = try XCTUnwrap(paged.expertStore)
+        let status = NFKMLXLanguageBackend(net: paged, tokenizer: nil, identifier: "paged",
+                                           options: NFKMLXGenerationOptions()).backendStatus
+        XCTAssertEqual(status["expert_cache_bytes"] as? Int, store.cachedBytes, "the status reports the expert cache")
+        XCTAssertEqual(status["expert_cache_byte_budget"] as? Int, store.cacheByteBudget)
     }
 
     private func gptOSSGeometry() -> NFKMLXLanguageConfiguration {

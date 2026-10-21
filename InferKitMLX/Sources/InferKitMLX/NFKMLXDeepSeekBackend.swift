@@ -283,10 +283,22 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
         conversations.refresh()
     }
 
+    /// The store the routed experts are paged through, or nil where the model holds them resident. Its
+    /// cache budget can change between requests. Introduced in InferKit 0.4.0.
+    @objc public var expertStore: NFKMLXExpertStore? { holder.net.expertStore?.experts }
+
     /// The conversation caches as of the last run or change: `conversation_caches`,
-    /// `conversation_cache_bytes`, and `conversation_cache_byte_budget`. `NFKInferenceServer` serves it
-    /// under the model's "status". It never waits on a run in progress. Introduced in InferKit 0.4.0.
-    @objc public var backendStatus: [String: Any] { conversations.status }
+    /// `conversation_cache_bytes`, and `conversation_cache_byte_budget`; and, where the model pages its
+    /// experts, the expert cache now: `expert_cache_bytes` and `expert_cache_byte_budget`.
+    /// `NFKInferenceServer` serves it under the model's "status". It never waits on a run in progress.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var backendStatus: [String: Any] {
+        var status = conversations.status
+        if let store = expertStore {
+            status.merge(store.statusFigures) { $1 }
+        }
+        return status
+    }
 
     /// The request inputs the backend reads.
     ///

@@ -564,11 +564,18 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
 
     /// The prompt caches as of the last run or change: `conversation_caches`,
     /// `conversation_cache_bytes`, `conversation_cache_byte_budget`, and `prompt_cache_length`, the
-    /// positions the unnamed retained cache holds. `NFKInferenceServer` serves it under the model's
-    /// "status". It never waits on a run in progress. Introduced in InferKit 0.4.0.
+    /// positions the unnamed retained cache holds; and, where the loaded model pages its experts, the
+    /// expert cache now: `expert_cache_bytes` and `expert_cache_byte_budget`. `NFKInferenceServer` serves
+    /// it under the model's "status". It never waits on a run in progress. Introduced in InferKit 0.4.0.
     @objc public var backendStatus: [String: Any] {
-        statusLock.lock(); defer { statusLock.unlock() }
-        return cacheStatus
+        var status: [String: Any] = {
+            statusLock.lock(); defer { statusLock.unlock() }
+            return cacheStatus
+        }()
+        if let store = expertStore {
+            status.merge(store.statusFigures) { $1 }
+        }
+        return status
     }
 
     /// Records the cache figures ``backendStatus`` reports. Runs under `generationLock`.
