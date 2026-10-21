@@ -85,6 +85,8 @@
 /*! A backend that streams: it reports each partial text, then finishes with the last. */
 @interface NFKServedStreamingBackend : NFKServedTestBackend
 @property (nonatomic, copy) NSArray<NSString *> *partials;
+/*! When set, the job reports nothing until the test signals it. */
+@property (nonatomic, strong, nullable) dispatch_semaphore_t startGate;
 @end
 
 @implementation NFKServedStreamingBackend
@@ -94,7 +96,11 @@
 	self.lastRequest = request;
 	NFKInferenceJob *job = [[NFKInferenceJob alloc] init];
 	NSArray<NSString *> *partials = self.partials;
+	dispatch_semaphore_t gate = self.startGate;
 	dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+		if (gate != nil) {
+			dispatch_semaphore_wait(gate, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));
+		}
 		for (NSString *text in partials) {
 			[job reportProgress:0.5 partialResult:[NFKInferenceResult resultWithOutputs:@{ NFKOutputText: text }]];
 			[NSThread sleepForTimeInterval:0.02];
@@ -676,6 +682,8 @@
 {
 	NFKServedStreamingBackend *backend = [[NFKServedStreamingBackend alloc] init];
 	backend.partials = @[ @"a", @"ab", @"abc" ];
+	// The client's job starts at submit, so the backend holds its first partial until the handlers are set.
+	backend.startGate = dispatch_semaphore_create(0);
 	NFKInferenceServer *server = [self startedServerHosting:@{ @"streamer": backend }];
 	NFKRemoteInferKitBackend *client = [NFKRemoteInferKitBackend backendWithBaseURL:server.localBaseURL];
 	NSMutableArray<NSString *> *seen = [NSMutableArray array];
@@ -691,6 +699,7 @@
 	job.completionHandler = ^(NFKInferenceJob *finished) {
 		[done fulfill];
 	};
+	dispatch_semaphore_signal(backend.startGate);
 	[self waitForExpectations:@[ done ] timeout:10];
 	XCTAssertEqualObjects(job.result.text, @"abc", @"%@", job.error);
 	XCTAssertEqualObjects(seen, (@[ @"a", @"ab", @"abc" ]));

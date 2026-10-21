@@ -231,8 +231,9 @@ final class MLXModelSnippetExamples: XCTestCase {
             .write(to: releaseDirectory.appendingPathComponent("vocab.json"))
         try "#version: 0.2\nh e\nl l\nhe ll\nhell o\n".write(
             to: releaseDirectory.appendingPathComponent("merges.txt"), atomically: true, encoding: .utf8)
+        // A release with no tokenizer.json names its tokenizer class, which fixes the pre-tokenization.
         try JSONSerialization.data(withJSONObject: [
-            "eos_token": "<|im_end|>",
+            "tokenizer_class": "Qwen2Tokenizer", "eos_token": "<|im_end|>",
             "added_tokens_decoder": ["10": ["content": "<|im_start|>"], "11": ["content": "<|im_end|>"]],
         ]).write(to: releaseDirectory.appendingPathComponent("tokenizer_config.json"))
         try ("{% for m in messages %}<|im_start|>{{ m.content }}<|im_end|>{% endfor %}"

@@ -1285,10 +1285,13 @@
 }
 
 /// Writes config.json, a byte-level BPE vocabulary, and random weights in the release layout. The
-/// loader checks every shape against the config, so a wrong entry here fails at load, not later.
+/// loader checks every shape against the config, so a wrong entry here fails at load, not later. With no
+/// tokenizer.json, tokenizer_config.json names the tokenizer class, which fixes the pre-tokenization.
 - (void)writeTinyReleaseTo:(NSURL *)release
 {
 	[[self tinyConfigJSON] writeToURL:[release URLByAppendingPathComponent:@"config.json"] atomically:YES];
+	[[NSJSONSerialization dataWithJSONObject:@{ @"tokenizer_class": @"Qwen2Tokenizer" } options:0 error:NULL]
+		writeToURL:[release URLByAppendingPathComponent:@"tokenizer_config.json"] atomically:YES];
 	NSDictionary *vocab = @{ @"h": @0, @"e": @1, @"l": @2, @"o": @3, @"he": @4, @"ll": @5, @"hello": @6, @"\u0120": @7 };
 	[[NSJSONSerialization dataWithJSONObject:vocab options:0 error:NULL]
 		writeToURL:[release URLByAppendingPathComponent:@"vocab.json"] atomically:YES];
