@@ -359,10 +359,12 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     private let generationLock = NSLock()
     private let modelInfoCache = NFKMLXModelInfoCache()
     private let releaseURL: URL?
+    /// The release's own template, which a message request renders through when it chooses none.
+    private let releaseTemplate: NFKMLXChatTemplate?
 
     init(net: NFKMLXLanguageNet, tokenizer: NFKTokenizer?, identifier: String,
          options: NFKMLXGenerationOptions = NFKMLXGenerationOptions(),
-         draft: NFKMLXLanguageNet? = nil, releaseURL: URL? = nil) {
+         draft: NFKMLXLanguageNet? = nil, releaseURL: URL? = nil, releaseTemplate: NFKMLXChatTemplate? = nil) {
         self.lifecycle = NFKMLXLifecycle(NFKLMHolder(net, tokenizer, draft: draft))
         self.hasTokenizer = tokenizer != nil
         self.countingTokenizer = tokenizer
@@ -371,6 +373,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         self.identifier = identifier
         self.defaults = options
         self.releaseURL = releaseURL
+        self.releaseTemplate = releaseTemplate ?? releaseURL.flatMap(NFKMLXLanguage.releaseChatTemplate(inDirectory:))
         super.init()
         lifecycle.setFreeHandler { [weak self] in
             self?.dropCaches()
@@ -645,6 +648,12 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
                 throw NFKMLXError.unsupportedConfiguration("NFKParameterJSONSchema is a JSON Schema object")
             }
             options.jsonSchema = try NFKMLXJSONSchema(json: dictionary)
+        }
+        // An instruct release answers the turns it was trained on, so a message list takes the release's
+        // template unless the request or the caller chose one; a raw prompt is read verbatim either way.
+        if case .none = options.chatTemplate, request.messages != nil, let releaseTemplate,
+           request.parameter(forKey: NFKMLXGenerationParameterKey.chatTemplate) == nil {
+            options.chatTemplate = releaseTemplate
         }
         options.chatTemplate = NFKMLXToolCalling.template(options.chatTemplate, for: request, releaseDirectoryURL: releaseURL)
         if let stops = NFKMLXToolCalling.toolStops(for: request, chosen: options.stopTokens, endOfSequence: tokenizer.eosTokenId,
@@ -1587,6 +1596,21 @@ public final class NFKMLXLanguage: NSObject {
         NFKMLXReleaseChatTemplate(inDirectory: directoryURL)
     }
 
+    /// The release's template with the begin and end markers its `tokenizer_config.json` names, which a
+    /// template such as Llama 3's writes through `bos_token`; nil where the release ships none.
+    static func releaseChatTemplate(inDirectory directoryURL: URL) -> NFKMLXChatTemplate? {
+        guard let template = NFKMLXReleaseChatTemplate(inDirectory: directoryURL) else { return nil }
+        var markers = (bos: "", eos: "")
+        if let data = try? Data(contentsOf: directoryURL.appendingPathComponent("tokenizer_config.json")),
+           let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            func marker(_ key: String) -> String {
+                (json[key] as? String) ?? ((json[key] as? [String: Any])?["content"] as? String) ?? ""
+            }
+            markers = (marker("bos_token"), marker("eos_token"))
+        }
+        return .jinja(template: template, bosToken: markers.bos, eosToken: markers.eos)
+    }
+
     /// The network and tokenizer a release directory describes.
     /// The network and tokenizer of a release a backend will read text through: a directory whose
     /// tokenizer cannot be read is refused.
@@ -1729,8 +1753,9 @@ public final class NFKMLXLanguage: NSObject {
     /// every field that changes the ids must hold a value this package reproduces.
     ///
     /// @discussion Two schemes are read. A byte-level BPE takes a `Split` whose regex is one of
-    /// ``pretokenizationPatterns`` byte for byte followed by a `ByteLevel` that does not split again, or
-    /// a lone `ByteLevel` with its own GPT-2 regex; its normalizer is none or NFC, and its model has no
+    /// ``pretokenizationPatterns`` byte for byte followed by a `ByteLevel` that does not split again, a
+    /// lone `ByteLevel` with its own GPT-2 regex, or SmolLM's individual `Digits` before that `ByteLevel`;
+    /// its normalizer is none or NFC, and its model has no
     /// byte fallback, dropout, or affixes. The Metaspace scheme is Mistral's exact form: `▁` prepended
     /// to the first segment only, no split, and a byte-fallback model with `<unk>`. A release with no
     /// `tokenizer.json` is read only when `tokenizer_config.json` names Qwen2's tokenizer class, whose
@@ -1792,6 +1817,10 @@ public final class NFKMLXLanguage: NSObject {
             return "gpt2"
         }
         let steps = (preTokenizer["type"] as? String == "Sequence") ? (preTokenizer["pretokenizers"] as? [[String: Any]]) ?? [] : [preTokenizer]
+        if steps.count == 2, steps[0]["type"] as? String == "Digits",
+           (steps[0]["individual_digits"] as? NSNumber)?.boolValue == true, byteLevel(steps[1], splits: true) {
+            return "smollm"
+        }
         guard steps.count == 2, steps[0]["type"] as? String == "Split", byteLevel(steps[1], splits: false) else {
             let types = steps.map { $0["type"] as? String ?? "?" }.joined(separator: ", ")
             throw NFKMLXError.unsupportedConfiguration(

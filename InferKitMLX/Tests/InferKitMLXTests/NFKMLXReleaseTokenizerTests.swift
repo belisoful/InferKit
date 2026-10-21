@@ -152,6 +152,17 @@ final class NFKMLXReleaseTokenizerTests: XCTestCase {
             [6, 15339, 6, 320, 14957, 8, 611, 2398, 33529, 24849, 3996],
             [45147, 80597, 524, 82, 29],
         ]),
+        ("IK_VAL_SMOLVLM2_256M", "smollm", [
+            [788, 216, 34, 32, 34, 36, 28, 216, 33, 34, 35, 36, 37, 13855, 1708, 1885, 33, 28, 34, 41, 41, 30, 41, 41, 30],
+            [57, 3060, 422, 2154, 23, 68, 392, 3543, 637, 99, 637, 3256],
+            [216, 2899, 5600, 198, 198, 397, 725, 5110, 197, 29416, 2738],
+            [3546, 46494, 37366, 1841, 412, 2756, 5422, 2756, 17097, 241, 115, 40993, 179, 120, 248, 11100, 224, 10391, 251, 10391, 134, 11100, 226, 15107, 244, 218],
+            [85, 151, 219, 48304, 253, 151, 226],
+            [51, 14548, 10802, 21268, 9206, 14837, 45918, 11633, 72, 85, 52],
+            [1604, 275, 24, 104, 727, 472, 1003, 1792, 828, 34, 216, 907, 5222, 198],
+            [23, 28120, 23, 365, 6693, 25, 2272, 1537, 31, 1141, 31, 2153, 30, 9047],
+            [44, 99, 46, 19556, 9617, 99, 46],
+        ]),
     ]
 
     func testEveryShippedFamilyEncodesAsTokenizersDoes() throws {
@@ -178,6 +189,57 @@ final class NFKMLXReleaseTokenizerTests: XCTestCase {
         try XCTSkipIf(checked.isEmpty, "set any of " + Self.releases.map(\.key).joined(separator: ", "))
         print("VALIDATION structure release-tokenizers: \(checked.count) of \(Self.releases.count) families "
               + "encode \(Self.cases.count) cases as tokenizers does")
+    }
+
+    // MARK: GGUF
+
+    // SmolLM2's GGUF names its pre-tokenization `smollm` and carries its chat template: the digits split
+    // singly behind a space of their own, as the release's tokenizer.json splits them, and the template
+    // comes with the begin and end markers the file's ids name.
+    func testAGGUFReadsItsPretokenizationAndTemplate() throws {
+        guard let path = config["IK_VAL_GGUF"] else { throw XCTSkip("set IK_VAL_GGUF") }
+        let gguf = try NFKMLXGGUF.gguf(contentsOf: URL(fileURLWithPath: path))
+        let tokenizer = try XCTUnwrap(NFKMLXLanguage.ggufTokenizer(gguf))
+        let pieces = tokenizer.encode("In 2024").map { id in
+            String(decoding: tokenizer.bytes(forTokenId: id.intValue) ?? Data(), as: UTF8.self)
+        }
+        XCTAssertEqual(pieces, ["In", " ", "2", "0", "2", "4"])
+        guard case .jinja(let template, let bos, let eos)? = NFKMLXLanguage.ggufChatTemplate(gguf) else {
+            return XCTFail("the GGUF carries its chat template")
+        }
+        XCTAssertTrue(template.contains("<|im_start|>"))
+        XCTAssertEqual(bos, "<|im_start|>")
+        XCTAssertEqual(eos, "<|im_end|>")
+    }
+
+    // MARK: Release templates
+
+    private func requireMLXRuntime() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+    }
+
+    // A message list renders through the release's own template unless the request names one; a raw
+    // prompt is read verbatim.
+    func testAMessageRequestTakesTheReleasesTemplate() throws {
+        try requireMLXRuntime()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        let vocabulary: [String: Int] = ["h": 0, "e": 1, "l": 2, "o": 3, "he": 4, "ll": 5, "hello": 6, "<": 7, ">": 8]
+        try JSONSerialization.data(withJSONObject: vocabulary).write(to: directory.appendingPathComponent("vocab.json"))
+        try "#version: 0.2\nh e\nl l\nhe ll\nhell o\n".write(
+            to: directory.appendingPathComponent("merges.txt"), atomically: true, encoding: .utf8)
+        let tokenizer = try NFKTokenizer(forManifest: ["tokenizer": ["type": "bpe-bytelevel"]], directory: directory)
+        let backend = NFKMLXLanguageBackend(net: NFKMLXLanguage.makeNet(.tiny), tokenizer: tokenizer, identifier: "tiny",
+                                            releaseTemplate: .jinja(template: "<{% for m in messages %}{{ m.content }}{% endfor %}>"))
+        let messages: [[String: Any]] = [["role": "user", "content": "hello"]]
+        XCTAssertEqual(try backend.tokenCount(for: NFKInferenceRequest(inputs: [NFKInputMessages: messages])).intValue, 3,
+                       "<, hello, >")
+        let chosen = NFKInferenceRequest(inputs: [NFKInputMessages: messages],
+                                         parameters: [NFKMLXGenerationParameterKey.chatTemplate: "none"])
+        XCTAssertEqual(try backend.tokenCount(for: chosen).intValue, 1, "a request that names no template gets none")
+        XCTAssertEqual(try backend.tokenCount(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "hello"])).intValue, 1)
     }
 
     // MARK: Refusals
@@ -222,10 +284,10 @@ final class NFKMLXReleaseTokenizerTests: XCTestCase {
             ("a ByteLevel that adds a prefix space",
              ["model": ["type": "BPE"], "decoder": ["type": "ByteLevel"],
               "pre_tokenizer": ["type": "ByteLevel", "add_prefix_space": true, "use_regex": true]], nil),
-            ("Digits before the GPT-2 regex",
+            ("Digits in runs before the GPT-2 regex",
              ["model": ["type": "BPE"], "decoder": ["type": "ByteLevel"],
               "pre_tokenizer": ["type": "Sequence", "pretokenizers": [
-                ["type": "Digits", "individual_digits": true],
+                ["type": "Digits", "individual_digits": false],
                 ["type": "ByteLevel", "add_prefix_space": false, "use_regex": true]]]], nil),
             ("a Metaspace that splits on spaces",
              ["model": ["type": "BPE", "byte_fallback": true], "pre_tokenizer": [

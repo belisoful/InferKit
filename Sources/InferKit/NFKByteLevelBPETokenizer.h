@@ -19,7 +19,8 @@ NS_ASSUME_NONNULL_BEGIN
 				character, splits text with a pre-tokenization pattern, and applies the
 				ranked merges from merges.txt. Every byte has a base token, so any text round-trips.
 				The pre-tokenization is named: "gpt2" (the default), "qwen2", "qwen35", "o200k",
-				"llama3", or "nemotron", each the Split pattern its family's tokenizer.json states. Qwen2's
+				"llama3", or "nemotron", each the Split pattern its family's tokenizer.json states, or
+				"smollm", which isolates each digit and splits the runs between by the GPT-2 pattern. Qwen2's
 				differs from GPT-2's where the token stream shows it: a letter run may absorb one
 				leading punctuation character ("-pop" is one pretoken), digits split singly, a
 				punctuation run absorbs trailing newlines, and whitespace runs ending in a newline hold
@@ -45,7 +46,8 @@ NS_ASSUME_NONNULL_BEGIN
 									error:(NSError * _Nullable *)outError;
 
 /*!
-	@param pretokenization "gpt2", "qwen2", "qwen35", "o200k", "llama3", "nemotron", or nil for "gpt2".
+	@param pretokenization "gpt2", "qwen2", "qwen35", "o200k", "llama3", "nemotron", "smollm", or nil for
+						   "gpt2".
 	@param normalization   "nfc" to compose each segment before splitting, or nil for none. "qwen35"
 						   composes whatever this says.
 	@param ignoresMerges   YES to emit a pretoken the vocabulary holds whole as that one token, before

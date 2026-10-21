@@ -113,6 +113,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKByteLevelBPETokenizer` takes two more pre-tokenizations: `llama3` (Qwen2's pattern with digits in
   runs of at most three, which Llama 3, Mistral's Tekken, and Granite 4.0 ship) and `nemotron`
   (o200k's case-pattern words without the contraction, and single digits).
+- A `smollm` pre-tokenization isolates each digit, then splits each run between digits by the GPT-2
+  pattern.
 - The manifest's tokenizer spec takes `"normalizer": "nfc"`, which composes each segment under any
   pattern, and `"ignoreMerges": true`, which takes a pretoken the vocabulary holds whole as one token.
 
@@ -1455,6 +1457,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   byte-level BPE before and dropped most of the text.
 - The Metaspace tokenizer leaves the `▁` off a run that follows an added token, as `tokenizers` does,
   so a Mixtral or Codestral-Mamba prompt that writes `<s>[INST]` encodes `[` bare.
+- SmolLM2 and SmolVLM2 encode under their own pre-tokenization, which isolates each digit before the
+  GPT-2 pattern. A GGUF's `tokenizer.ggml.pre` is read by name, and a name the core does not reproduce
+  builds no tokenizer.
+
+#### Message requests take the release's chat template
+
+- The language backend renders a message list through the release's own chat template, with the begin
+  and end markers its tokenizer names, unless the request or the options choose a template. A GGUF
+  supplies its `tokenizer.chat_template`. Before, a hosted Qwen3, Llama, Mistral, Mixtral, gpt-oss, or
+  GGUF release answered a chat on the messages joined as plain text, and SmolLM2's GGUF ended its reply
+  at once.
 
 #### mlx_lm quantized releases load
 

@@ -1045,6 +1045,8 @@ The reader accepts only what it reproduces token for token:
   the regex equals byte for byte (`qwen2`, `qwen35`, `o200k`, `llama3`, `nemotron`). `Isolated` and
   `Removed` with `invert` cut identically, because every pattern matches every character.
 - A lone `ByteLevel` with its own regex, no prefix space → `gpt2` (Granite Speech).
+- Individual `Digits` before that `ByteLevel` → `smollm` (SmolLM2, SmolVLM2): each digit is a pretoken,
+  and each run between digits splits by the GPT-2 pattern on its own.
 - A normalizer that is none, NFC, or an empty sequence → NFC where stated. `ignore_merges` passes through.
 - Mistral's Metaspace form (`▁` prepended to the first segment only, no split, byte fallback, the
   Replace/ByteFallback/Fuse/Strip decoder) → `NFKMLXMetaspaceTokenizer` over `NFKMLXMistralTokenizer`
@@ -1055,6 +1057,17 @@ The reader accepts only what it reproduces token for token:
 - Anything else (another regex, Digits before the GPT-2 regex, BPE dropout, subword affixes, byte
   fallback outside Metaspace, a Unigram model, Llama 2's legacy Prepend normalizer) →
   `NFKMLXError.unsupportedConfiguration` naming the part.
+
+A GGUF names its pre-tokenization in `tokenizer.ggml.pre`, mapped strictly by
+`NFKMLXLanguage.ggufPretokenizations` (`qwen2` with NFC, `llama-bpe` / `llama3` with `ignore_merges`,
+`smollm`, `gpt-2`); any other name builds no tokenizer.
+
+`NFKMLXLanguageBackend` renders a message request through the release's own template
+(`releaseChatTemplate(inDirectory:)`, with `bos_token` and `eos_token` from `tokenizer_config.json`, or a
+GGUF's `tokenizer.chat_template` with the markers its ids name) unless the options or the request choose
+one; `NFKMLXGenerationParameterKey.chatTemplate` = `none` keeps the plain join. A raw prompt is read
+verbatim. Until 2026-10-20 the backend took the release's template for tool requests only, so a hosted
+instruct model answered a chat as one plain line, and a GGUF's never.
 
 The special tokens are the union of `tokenizer.json`'s `added_tokens`, `tokenizer_config.json`'s
 `added_tokens_decoder`, and `added_tokens.json`. `NFKMLXReleaseTokenizerTests` holds every shipped family

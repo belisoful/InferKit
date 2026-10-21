@@ -298,6 +298,31 @@
 	XCTAssertEqualObjects([o200k encode:@"1234aB's"], expectedO200k);
 }
 
+// SmolLM isolates each digit before the GPT-2 pattern runs, so a space before a number stays its own
+// pretoken where GPT-2 joins it to the digits.
+- (void)testTheSmolLMPretokenizationIsolatesDigits
+{
+	NSDictionary<NSString *, NSNumber *> *vocab = @{ @"a": @0, @"Ġ": @1, @"1": @2, @"2": @3, @"Ġ1": @4, @"12": @5, @"Ġ12": @6 };
+	NSData *vocabData = [NSJSONSerialization dataWithJSONObject:vocab options:0 error:NULL];
+	[vocabData writeToURL:[_directory URLByAppendingPathComponent:@"smollm-vocab.json"] atomically:YES];
+	[@"#version: 0.2\nĠ 1\nĠ1 2\n1 2\n" writeToURL:[_directory URLByAppendingPathComponent:@"smollm-merges.txt"]
+									  atomically:YES
+										encoding:NSUTF8StringEncoding
+										   error:NULL];
+	NSError *error = nil;
+	NFKTokenizer *smollm = [NFKTokenizer tokenizerForManifest:@{ @"tokenizer": @{
+		@"type": @"bpe-bytelevel", @"vocab": @"smollm-vocab.json", @"merges": @"smollm-merges.txt", @"pretokenizer": @"smollm",
+	} } directory:_directory error:&error];
+	XCTAssertNotNil(smollm, @"%@", error);
+	NFKTokenizer *gpt2 = [NFKTokenizer tokenizerForManifest:@{ @"tokenizer": @{
+		@"type": @"bpe-bytelevel", @"vocab": @"smollm-vocab.json", @"merges": @"smollm-merges.txt",
+	} } directory:_directory error:&error];
+	NSArray *expectedSmolLM = @[@0, @1, @2, @3];
+	NSArray *expectedGPT2 = @[@0, @6];
+	XCTAssertEqualObjects([smollm encode:@"a 12"], expectedSmolLM);
+	XCTAssertEqualObjects([gpt2 encode:@"a 12"], expectedGPT2);
+}
+
 // With ignore_merges a pretoken the vocabulary holds whole is that token, though no merge reaches it.
 - (void)testIgnoringMergesTakesAWholePretokenFromTheVocabulary
 {

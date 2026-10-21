@@ -21,13 +21,16 @@ extension NFKMLXLanguage {
     /// hyperparameters in its metadata, the (possibly quantized) weights in its tensors, and the
     /// tokenizer's vocabulary and merges in its metadata arrays. Only the dense decoder families this
     /// network implements are accepted (`llama`, `qwen2`, `qwen3`); another architecture throws rather
-    /// than loading under the wrong structure. Run inference off the render thread.
+    /// than loading under the wrong structure. A message request renders through the file's own
+    /// `tokenizer.chat_template` unless the request or `options` choose a template. Run inference off
+    /// the render thread.
     public static func backend(ggufURL: URL,
                                options: NFKMLXGenerationOptions = NFKMLXGenerationOptions())
         throws -> any NFKInferenceBackend {
-        let (net, tokenizer) = try loadedGGUF(at: ggufURL)
+        let gguf = try NFKMLXGGUF.gguf(contentsOf: ggufURL)
+        let (net, tokenizer) = try loadedGGUF(gguf)
         return NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: modelName,
-                                     options: options, releaseURL: ggufURL)
+                                     options: options, releaseURL: ggufURL, releaseTemplate: ggufChatTemplate(gguf))
     }
 
     /// The Objective-C entry: builds a backend from a GGUF file. Generation options are set per request
@@ -39,7 +42,11 @@ extension NFKMLXLanguage {
 
     /// The network and tokenizer a GGUF file describes.
     static func loadedGGUF(at url: URL) throws -> (NFKMLXLanguageNet, NFKTokenizer?) {
-        let gguf = try NFKMLXGGUF.gguf(contentsOf: url)
+        try loadedGGUF(NFKMLXGGUF.gguf(contentsOf: url))
+    }
+
+    /// The network and tokenizer an opened GGUF describes.
+    static func loadedGGUF(_ gguf: NFKMLXGGUF) throws -> (NFKMLXLanguageNet, NFKTokenizer?) {
         let configuration = try self.configuration(fromGGUF: gguf)
         let net = makeNet(configuration)
         try loadWeights(into: net, fromGGUF: gguf)
@@ -172,6 +179,31 @@ extension NFKMLXLanguage {
     /// written to the `vocab.json`/`merges.txt` the core reader takes, the same route the ModernBERT
     /// tokenizer uses. The pre-tokenization pattern is the release's own (`qwen2` for a Qwen vocabulary,
     /// `gpt2` otherwise), because a merge cannot cross a pre-token boundary.
+    /// The `tokenizer.ggml.pre` names whose splitting the core reproduces, each as the release's own
+    /// `tokenizer.json` states it: Qwen2's pattern with NFC, Llama 3's with `ignore_merges`, SmolLM's
+    /// isolated digits, and GPT-2's. Any other name builds no tokenizer, since a near pattern encodes the
+    /// same text to different, valid-looking ids.
+    static let ggufPretokenizations: [String: (name: String, composes: Bool, ignoresMerges: Bool)] = [
+        "qwen2": ("qwen2", true, false),
+        "llama-bpe": ("llama3", false, true),
+        "llama3": ("llama3", false, true),
+        "smollm": ("smollm", false, false),
+        "gpt-2": ("gpt2", false, false),
+    ]
+
+    /// The file's `tokenizer.chat_template`, with the begin and end markers its token ids name; nil
+    /// where it carries none.
+    static func ggufChatTemplate(_ gguf: NFKMLXGGUF) -> NFKMLXChatTemplate? {
+        guard let template = gguf.metadataString(forKey: "tokenizer.chat_template") else { return nil }
+        let tokens = gguf.metadataStringArray(forKey: "tokenizer.ggml.tokens") ?? []
+        func marker(_ key: String) -> String {
+            let id = gguf.metadataInteger(forKey: key, defaultValue: -1)
+            return tokens.indices.contains(id) ? tokens[id] : ""
+        }
+        return .jinja(template: template, bosToken: marker("tokenizer.ggml.bos_token_id"),
+                      eosToken: marker("tokenizer.ggml.eos_token_id"))
+    }
+
     static func ggufTokenizer(_ gguf: NFKMLXGGUF) -> NFKTokenizer? {
         guard let tokens = gguf.metadataStringArray(forKey: "tokenizer.ggml.tokens"),
               let merges = gguf.metadataStringArray(forKey: "tokenizer.ggml.merges") else { return nil }
@@ -199,10 +231,13 @@ extension NFKMLXLanguage {
         guard (try? mergesText.write(to: scratch.appendingPathComponent("merges.txt"),
                                      atomically: true, encoding: .utf8)) != nil else { return nil }
 
-        let pre = gguf.metadataString(forKey: "tokenizer.ggml.pre") ?? ""
-        let pattern = pre.contains("qwen") ? "qwen2" : "gpt2"
-        var manifest: [String: Any] = ["tokenizer": ["type": "bpe-bytelevel", "pretokenizer": pattern,
-                                                     "specialTokens": specials]]
+        guard let pre = ggufPretokenizations[gguf.metadataString(forKey: "tokenizer.ggml.pre") ?? "gpt-2"] else {
+            return nil
+        }
+        var spec: [String: Any] = ["type": "bpe-bytelevel", "pretokenizer": pre.name, "specialTokens": specials,
+                                   "ignoreMerges": pre.ignoresMerges]
+        if pre.composes { spec["normalizer"] = "nfc" }
+        var manifest: [String: Any] = ["tokenizer": spec]
         let eos = gguf.metadataInteger(forKey: "tokenizer.ggml.eos_token_id", defaultValue: -1)
         if eos >= 0 { manifest["eosTokenId"] = eos }
         return try? NFKTokenizer(forManifest: manifest, directory: scratch)

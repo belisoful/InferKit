@@ -52,7 +52,7 @@ static NSString * const kNFKNemotronBPEPattern =
 	NSDictionary<NSNumber *, NSString *> *_decoder;			// id -> token string
 	NSDictionary<NSString *, NSNumber *> *_ranks;			// "first\nsecond" -> merge rank
 	NSDictionary<NSString *, NSNumber *> *_specialTokens;	// literal -> id
-	NSString *_pretokenization;								// "gpt2" (nil), "qwen2", "qwen35", "o200k", "llama3", or "nemotron"
+	NSString *_pretokenization;								// "gpt2" (nil), "qwen2", "qwen35", "o200k", "llama3", "nemotron", or "smollm"
 	BOOL _composesText;										// NFC before splitting
 	BOOL _ignoresMerges;									// a pretoken in the vocabulary is one token
 	NSRegularExpression *_pattern;
@@ -109,7 +109,7 @@ static NSString * const kNFKNemotronBPEPattern =
 	if (self == nil) {
 		return nil;
 	}
-	NSArray<NSString *> *pretokenizations = @[@"gpt2", @"qwen2", @"qwen35", @"o200k", @"llama3", @"nemotron"];
+	NSArray<NSString *> *pretokenizations = @[@"gpt2", @"qwen2", @"qwen35", @"o200k", @"llama3", @"nemotron", @"smollm"];
 	if (pretokenization != nil && ![pretokenizations containsObject:pretokenization]) {
 		[NFKTokenizer setError:outError code:kNFKError_InferenceUnsupported
 						reason:[NSString stringWithFormat:@"unknown pretokenization \"%@\"", pretokenization]];
@@ -280,6 +280,39 @@ static NSString * const kNFKNemotronBPEPattern =
 }
 
 - (void)encodeSegment:(NSString *)text into:(NSMutableArray<NSNumber *> *)ids
+{
+	if ([_pretokenization isEqualToString:@"smollm"]) {
+		[self encodeIsolatingDigits:text into:ids];
+		return;
+	}
+	[self encodeRun:text into:ids];
+}
+
+// SmolLM's pre-tokenization isolates each digit, then splits each run between digits by the GPT-2
+// pattern on its own: a whitespace run ending before a digit ends at the run's end, where the single
+// pattern would hand its last space to the digit.
+- (void)encodeIsolatingDigits:(NSString *)text into:(NSMutableArray<NSNumber *> *)ids
+{
+	static NSRegularExpression *digit;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		digit = [NSRegularExpression regularExpressionWithPattern:@"\\p{N}" options:0 error:NULL];
+	});
+	__block NSUInteger cursor = 0;
+	[digit enumerateMatchesInString:text options:0 range:NSMakeRange(0, text.length)
+						 usingBlock:^(NSTextCheckingResult *match, NSMatchingFlags flags, BOOL *stop) {
+		if (match.range.location > cursor) {
+			[self encodeRun:[text substringWithRange:NSMakeRange(cursor, match.range.location - cursor)] into:ids];
+		}
+		[self encodeRun:[text substringWithRange:match.range] into:ids];
+		cursor = NSMaxRange(match.range);
+	}];
+	if (cursor < text.length) {
+		[self encodeRun:[text substringFromIndex:cursor] into:ids];
+	}
+}
+
+- (void)encodeRun:(NSString *)text into:(NSMutableArray<NSNumber *> *)ids
 {
 	NSArray<NSTextCheckingResult *> *matches =
 		[_pattern matchesInString:text options:0 range:NSMakeRange(0, text.length)];
