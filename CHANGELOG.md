@@ -1277,8 +1277,10 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   transformer (`NFKMLXStableAudioDiTNet`) over the latents of the Oobleck waveform autoencoder
   (`NFKMLXOobleckAutoencoderNet`), sampled by the cosine-schedule DPM-Solver++ SDE
   (`NFKMLXCosineDPMSolverScheduler`) with classifier-free guidance against zeroed conditioning or a
-  negative prompt. An initial clip under `NFKInputAudio` starts the generation from its latents, and
-  `NFKMLXStableAudioParameterKey.startSeconds` sets where the clip starts within the model's timing.
+  negative prompt. An initial clip under `NFKInputAudio`, mono or stereo, starts the generation from its
+  latents, and `NFKMLXStableAudioParameterKey.startSeconds` sets where the clip starts within the model's
+  47.55-second window. A span that ends past the window, a step count outside `1...1000`, and an initial
+  clip with another channel count are refused.
 - Every network, the sampler, and the pipeline end to end are at reference parity against diffusers'
   `StableAudioPipeline` on the released weights: the transformer 0.9999999999899 or better at three noise
   levels, and teacher-forced from the reference's own noise, the waveform 0.9999999958 or better.

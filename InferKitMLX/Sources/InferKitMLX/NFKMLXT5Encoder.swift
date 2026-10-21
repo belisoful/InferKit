@@ -335,12 +335,13 @@ public final class NFKMLXT5Encoder: NSObject {
 
     /// The encoder geometry a Hugging Face `config.json` describes: T5 (`t5`) or umT5 (`umt5`), whose
     /// every layer carries its own relative-position bias. `feed_forward_proj` is `gated-gelu` (v1.1) or
-    /// `relu` (the original T5), and transformers reads a config without one as `relu`.
+    /// `relu` (the original T5). Where a config states none, transformers' `T5Config` reads `relu` and its
+    /// `UMT5Config` and `MT5Config` read `gated-gelu`.
     static func configuration(fromHuggingFace url: URL) throws -> NFKMLXT5Configuration {
         guard let json = try JSONSerialization.jsonObject(with: try Data(contentsOf: url)) as? [String: Any] else {
             throw NFKMLXError.unsupportedConfiguration("\(url.lastPathComponent) is not an object")
         }
-        let feedForward = json["feed_forward_proj"] as? String ?? "relu"
+        let feedForward = json["feed_forward_proj"] as? String ?? (json["model_type"] as? String == "t5" ? "relu" : "gated-gelu")
         guard feedForward == "gated-gelu" || feedForward == "relu" else {
             throw NFKMLXError.unsupportedConfiguration("T5 feed_forward_proj \(feedForward)")
         }

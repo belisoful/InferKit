@@ -274,7 +274,10 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     `int(start·44100) ..< int(end·44100)` after the decode. Without a negative prompt the unconditional
     branch is zeros of the conditioning's shape; with one it is that prompt's masked states and the same
     seconds tokens. An initial clip is zero-padded to the window, encoded, sampled from the posterior,
-    and added to the scaled noise.
+    and added to the scaled noise; a mono clip is repeated to stereo, and any count but one or two
+    channels is refused, as the reference refuses it. A span that ends past the window, where the
+    reference would return an empty clip, and a step count outside `1...1000` are refused before any
+    stage loads.
   Reference parity on tiny random configurations (`run_reference.py stable_audio_tiny`): transformer
   0.99999999999997, autoencoder mean 0.9999999999999999, standard deviation 0.9999999999999986, decode
   0.9999999999999848, projection 0.9999999999999848 or better, t5 ReLU 0.999999999999998, the sampler's

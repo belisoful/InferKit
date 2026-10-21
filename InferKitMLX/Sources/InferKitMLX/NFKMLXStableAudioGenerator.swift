@@ -124,26 +124,33 @@ public final class NFKMLXStableAudioPipeline {
     }
 
     /// The waveform `[samples, audioChannels]` the latents decode to over `start ..< end` seconds, cropped
-    /// as the pipeline crops it (`int(seconds · sampling_rate)`).
+    /// as the pipeline crops it (`int(seconds · sampling_rate)`). A span past the decoded window is empty, as
+    /// the reference's slice is.
     public func waveform(_ latents: MLXArray, start: Double, end: Double) -> MLXArray {
         let decoded = autoencoder.decode(latents)[0]
         let rate = Double(autoencoder.configuration.samplingRate)
-        let first = Int(start * rate), last = min(Int(end * rate), decoded.dim(0))
+        let last = min(max(Int(end * rate), 0), decoded.dim(0))
+        let first = min(max(Int(start * rate), 0), last)
         return decoded[first ..< last]
     }
 
     /// The latents an initial waveform `[samples, channels]` contributes: zero-padded or cropped to the
     /// window, a mono clip repeated to stereo or a stereo clip averaged to mono, encoded, and sampled from
     /// the posterior with `noise`, as `prepare_latents` does.
-    public func encodedLatents(_ waveform: MLXArray, noise: MLXArray) -> MLXArray {
+    ///
+    /// - Throws: `NFKMLXError.unsupportedInput` for a waveform that is not `[samples, channels]` with one or
+    ///   two channels, which the reference refuses too.
+    public func encodedLatents(_ waveform: MLXArray, noise: MLXArray) throws -> MLXArray {
         let channels = autoencoder.configuration.audioChannels
         let windowSamples = transformer.configuration.sampleSize * autoencoder.configuration.hopLength
+        guard waveform.ndim == 2, (1 ... 2).contains(waveform.dim(1)) else { throw NFKMLXError.unsupportedInput }
         var audio = waveform
         if audio.dim(1) == 1 && channels == 2 {
             audio = concatenated([audio, audio], axis: 1)
         } else if audio.dim(1) == 2 && channels == 1 {
             audio = audio.mean(axis: 1, keepDims: true)
         }
+        guard audio.dim(1) == channels else { throw NFKMLXError.unsupportedInput }
         audio = audio[0 ..< min(audio.dim(0), windowSamples)]
         if audio.dim(0) < windowSamples {
             audio = padded(audio, widths: [.init((0, windowSamples - audio.dim(0))), .init((0, 0))])
@@ -158,7 +165,7 @@ public final class NFKMLXStableAudioPipeline {
 /// Introduced in InferKit 0.4.0.
 @objc(NFKMLXStableAudioParameterKey)
 public final class NFKMLXStableAudioParameterKey: NSObject {
-    /// Where the clip starts within the model's timing, in seconds (`NSNumber`, default 0): the start
+    /// Where the clip starts within the model's window, in seconds (`NSNumber`, default 0): the start
     /// seconds conditioner reads it, and the waveform is cropped from it. `NFKParameterDurationSeconds`
     /// runs from here. Introduced in InferKit 0.4.0.
     @objc public static let startSeconds = "NFKMLXParameterStableAudioStartSeconds"
@@ -352,15 +359,30 @@ public final class NFKMLXStableAudioGenerator: NSObject {
 
     // MARK: Generation
 
-    /// Checks a span against the conditioners' range and the latent window, as `check_inputs` does.
+    /// The most sampling steps a clip takes, the sampler's 1000 training timesteps.
+    @objc public static let maximumSteps = 1000
+
+    /// Checks a span against the conditioners' range and the latent window, as `check_inputs` does, and the
+    /// step count. The pipeline crops the decoded window at the span's own seconds, so a span that ends
+    /// past the window is refused: the reference would return an empty clip.
+    static func validate(start: Double, end: Double, steps: Int, conditionerRange: ClosedRange<Double>,
+                         window: Double) throws {
+        guard end >= start, conditionerRange.contains(start), conditionerRange.contains(end) else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "a clip runs from start to end seconds within \(conditionerRange.lowerBound)...\(conditionerRange.upperBound)")
+        }
+        guard end <= window else {
+            throw NFKMLXError.unsupportedConfiguration("a clip ends within the model's \(window)-second window")
+        }
+        guard (1 ... maximumSteps).contains(steps) else {
+            throw NFKMLXError.unsupportedConfiguration("a clip takes 1 to \(maximumSteps) steps")
+        }
+    }
+
     func validate(start: Double, end: Double) throws {
-        let low = Double(projectionConfiguration.minValue), high = Double(projectionConfiguration.maxValue)
-        guard end >= start, (low ... high).contains(start), (low ... high).contains(end) else {
-            throw NFKMLXError.unsupportedConfiguration("a clip runs from start to end seconds within \(low)...\(high)")
-        }
-        guard end - start <= maximumDuration else {
-            throw NFKMLXError.unsupportedConfiguration("a clip is at most \(maximumDuration) seconds")
-        }
+        try Self.validate(start: start, end: end, steps: steps,
+                          conditionerRange: Double(projectionConfiguration.minValue) ... Double(projectionConfiguration.maxValue),
+                          window: maximumDuration)
     }
 
     /// Generates a clip for `prompt`, `[samples, channelCount]` at ``sampleRate`` in `-1...1` (unclipped,
@@ -368,15 +390,15 @@ public final class NFKMLXStableAudioGenerator: NSObject {
     ///
     /// @discussion `endSeconds` nil is ``maximumDuration``, the reference's default. Above a ``guidance``
     /// of 1 the clip guides against `negativePrompt`, or against zeroed conditioning where none is given.
-    /// `initialAudio` `[samples, channels]` at ``sampleRate`` starts the clip from that waveform's latents
-    /// rather than from noise alone. `progress` receives the fraction done and returns false to stop,
-    /// which returns nil.
+    /// `initialAudio` `[samples, channels]` at ``sampleRate``, with one or two channels, adds that
+    /// waveform's latents to the initial noise. A span that ends past ``maximumDuration``, or a step count
+    /// outside `1 ... maximumSteps`, throws.
+    /// `progress` receives the fraction done and returns false to stop, which returns nil.
     public func audio(forPrompt prompt: String, negativePrompt: String? = nil, startSeconds: Double = 0,
                       endSeconds: Double? = nil, initialAudio: MLXArray? = nil, seed: UInt64 = 0,
                       progress: (Double) -> Bool = { _ in true }) throws -> MLXArray? {
         let end = endSeconds ?? maximumDuration
         try validate(start: startSeconds, end: end)
-        guard steps > 0 else { throw NFKMLXError.unsupportedConfiguration("a clip takes at least one step") }
         let guides = guidance > 1
         let tokens = self.prompt(prompt)
         let negativeTokens = guides ? negativePrompt.map { self.prompt($0) } : nil
@@ -393,8 +415,8 @@ public final class NFKMLXStableAudioGenerator: NSObject {
             return try staging.use(pipelineStage) { pipeline -> MLXArray? in
                 let keys = MLXRandom.split(key: MLXRandom.key(seed), into: steps + 2)
                 let initial = MLXRandom.normal(pipeline.latentShape, key: keys[0])
-                let encoded = initialAudio.map {
-                    pipeline.encodedLatents($0, noise: MLXRandom.normal(pipeline.latentShape, key: keys[1]))
+                let encoded = try initialAudio.map {
+                    try pipeline.encodedLatents($0, noise: MLXRandom.normal(pipeline.latentShape, key: keys[1]))
                 }
                 guard let latents = pipeline.latents(
                     context: conditioning[0], global: conditioning[1],
@@ -430,7 +452,7 @@ public final class NFKMLXStableAudioGenerator: NSObject {
                 return (stage.encoder(tokens.tokens, mask: mask) * mask.expandedDimensions(axis: -1).asType(.float32))[0]
             }
             let latents = try staging.with(pipelineStage) { pipeline -> MLXArray in
-                pipeline.encodedLatents(waveform, noise: MLXRandom.normal(pipeline.latentShape, key: MLXRandom.key(seed)))[0]
+                try pipeline.encodedLatents(waveform, noise: MLXRandom.normal(pipeline.latentShape, key: MLXRandom.key(seed)))[0]
             }
             return NFKMLXStableAudioExample(latents: latents, validFrames: validFrames, text: text,
                                             startSeconds: startSeconds,
@@ -457,6 +479,9 @@ private extension MLXArray {
 
 extension NFKMLXStableAudioGenerator {
 
+    /// The shortest clip a request asks for, the catalog's duration minimum.
+    static let minimumRequestDuration = 0.5
+
     /// The request inputs the backend reads.
     static let backendInputKeys: Set<String> = [NFKInputPrompt, NFKInputNegativePrompt, NFKInputAudio]
 
@@ -471,8 +496,8 @@ extension NFKMLXStableAudioGenerator {
     /// @discussion The backend reads `NFKInputPrompt` (required), `NFKInputNegativePrompt`, and
     /// `NFKInputAudio` (a 16-bit PCM WAV `NFKAudioAsset` or `Data` at the model's sample rate, the clip to
     /// start from), and returns a stereo 44.1 kHz `NFKAudioAsset` under `NFKOutputAudio`. Parameters:
-    /// `NFKParameterDurationSeconds` (10, at most ``maximumDuration``), the start under
-    /// `NFKMLXStableAudioParameterKey.startSeconds` (0), `NFKParameterSeed` (0), `NFKParameterSteps` and
+    /// `NFKParameterDurationSeconds` (10, from 0.5 seconds, the clip ending within ``maximumDuration``), the start
+    /// under `NFKMLXStableAudioParameterKey.startSeconds` (0), `NFKParameterSeed` (0), `NFKParameterSteps` and
     /// `NFKParameterGuidanceScale` (the generator's ``steps`` and ``guidance``). A request's steps and
     /// guidance apply to that request only. Introduced in InferKit 0.4.0.
     @objc(inferenceBackend)
@@ -485,7 +510,9 @@ extension NFKMLXStableAudioGenerator {
             func parameter(_ key: String) -> NSNumber? { NFKMLXGenerationBackend.number(request, key) }
             let start = parameter(NFKMLXStableAudioParameterKey.startSeconds)?.doubleValue ?? 0
             let duration = parameter(NFKParameterDurationSeconds)?.doubleValue ?? 10
-            guard duration > 0 else { throw NFKMLXError.unsupportedInput }
+            guard duration >= Self.minimumRequestDuration else {
+                throw NFKMLXError.unsupportedConfiguration("a clip runs at least \(Self.minimumRequestDuration) seconds")
+            }
             let initialAudio = try Self.initialAudio(request, sampleRate: sampleRate)
             let (savedSteps, savedGuidance) = (steps, guidance)
             defer { (steps, guidance) = (savedSteps, savedGuidance) }

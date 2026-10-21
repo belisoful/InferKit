@@ -135,18 +135,71 @@ final class NFKMLXStableAudioTests: XCTestCase {
         XCTAssertGreaterThan(posterior.standardDeviation.min().item(Float.self), 1e-4 - 1e-7)
     }
 
-    // A T5 config without `feed_forward_proj` is the original T5's ReLU feed-forward, as transformers
-    // reads it, and `gated-gelu` is the v1.1 form.
-    func testAT5ConfigWithoutAFeedForwardKindReadsAsReLU() throws {
+    // A config without `feed_forward_proj` reads as transformers' class for its `model_type` does: `T5Config`
+    // as the original T5's ReLU feed-forward, `UMT5Config` and `MT5Config` as the gated one. A stated kind wins.
+    func testAT5ConfigWithoutAFeedForwardKindReadsAsItsModelTypeDefaults() throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("t5-config-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let plain = directory.appendingPathComponent("plain.json"), gated = directory.appendingPathComponent("gated.json")
-        try Data(#"{"d_model": 768, "num_layers": 12, "num_heads": 12, "d_ff": 3072}"#.utf8).write(to: plain)
-        try Data(#"{"d_model": 768, "feed_forward_proj": "gated-gelu"}"#.utf8).write(to: gated)
-        XCTAssertFalse(try NFKMLXT5Encoder.configuration(fromHuggingFace: plain).gatedFeedForward)
-        XCTAssertTrue(try NFKMLXT5Encoder.configuration(fromHuggingFace: gated).gatedFeedForward)
-        try Data(#"{"feed_forward_proj": "gated-silu"}"#.utf8).write(to: plain)
-        XCTAssertThrowsError(try NFKMLXT5Encoder.configuration(fromHuggingFace: plain))
+        func gated(_ json: String) throws -> Bool {
+            let url = directory.appendingPathComponent("\(UUID().uuidString).json")
+            try Data(json.utf8).write(to: url)
+            return try NFKMLXT5Encoder.configuration(fromHuggingFace: url).gatedFeedForward
+        }
+        XCTAssertFalse(try gated(#"{"model_type": "t5", "d_model": 768, "num_layers": 12, "d_ff": 3072}"#))
+        XCTAssertTrue(try gated(#"{"model_type": "umt5", "d_model": 768}"#))
+        XCTAssertTrue(try gated(#"{"model_type": "mt5", "d_model": 768}"#))
+        XCTAssertTrue(try gated(#"{"model_type": "t5", "feed_forward_proj": "gated-gelu"}"#))
+        XCTAssertFalse(try gated(#"{"model_type": "umt5", "feed_forward_proj": "relu"}"#))
+        XCTAssertThrowsError(try gated(#"{"feed_forward_proj": "gated-silu"}"#))
+    }
+
+    // A span ends within the window, starts and ends within the conditioners' range, and takes 1 to 1000 steps;
+    // the crop of a span past the decoded window is empty rather than a trap.
+    func testASpanPastTheWindowOrAnOutOfRangeStepCountIsRefused() throws {
+        func check(_ start: Double, _ end: Double, steps: Int = 100) throws {
+            try NFKMLXStableAudioGenerator.validate(start: start, end: end, steps: steps, conditionerRange: 0 ... 512,
+                                                    window: 47.55)
+        }
+        XCTAssertNoThrow(try check(0, 47.55))
+        XCTAssertNoThrow(try check(46, 47))
+        XCTAssertThrowsError(try check(48, 49), "a span past the window")
+        XCTAssertThrowsError(try check(40, 48), "a span that ends past the window")
+        XCTAssertThrowsError(try check(5, 4), "an end before the start")
+        XCTAssertThrowsError(try check(-1, 4), "a start below the conditioners' range")
+        XCTAssertThrowsError(try check(0, 4, steps: 0))
+        XCTAssertThrowsError(try check(0, 4, steps: NFKMLXStableAudioGenerator.maximumSteps + 1))
+        XCTAssertThrowsError(try check(0, 4, steps: Int.max))
+    }
+
+    func testTheCropOfASpanPastTheDecodedWindowIsEmpty() throws {
+        try requireMLXRuntime()
+        let pipeline = NFKMLXStableAudioPipeline(transformer: NFKMLXStableAudioDiTNet(.tiny),
+                                                 autoencoder: NFKMLXOobleckAutoencoderNet(.tiny))
+        let latents = MLXRandom.normal(pipeline.latentShape, key: MLXRandom.key(61))
+        let clip = pipeline.waveform(latents, start: 48, end: 49)
+        eval(clip)
+        XCTAssertEqual(clip.dim(0), 0)
+    }
+
+    // An initial clip with one channel is repeated to the model's stereo and one with two is read as it is,
+    // as `prepare_latents` does; any other channel count is refused before it reaches the encoder.
+    func testAnInitialClipWithOneOrTwoChannelsEncodesAndOthersAreRefused() throws {
+        try requireMLXRuntime()
+        let pipeline = NFKMLXStableAudioPipeline(transformer: NFKMLXStableAudioDiTNet(.tiny),
+                                                 autoencoder: NFKMLXOobleckAutoencoderNet(.tiny))
+        let noise = MLXRandom.normal(pipeline.latentShape, key: MLXRandom.key(63))
+        let mono = MLXRandom.normal([40, 1], key: MLXRandom.key(64))
+        let fromMono = try pipeline.encodedLatents(mono, noise: noise)
+        let repeated = try pipeline.encodedLatents(concatenated([mono, mono], axis: 1), noise: noise)
+        eval(fromMono, repeated)
+        XCTAssertEqual(fromMono.shape, pipeline.latentShape)
+        XCTAssertEqual(values(fromMono), values(repeated), "a mono clip encodes as itself in both channels")
+        let stereo = try pipeline.encodedLatents(MLXRandom.normal([40, 2], key: MLXRandom.key(65)), noise: noise)
+        eval(stereo)
+        XCTAssertEqual(stereo.shape, pipeline.latentShape)
+        XCTAssertThrowsError(try pipeline.encodedLatents(MLXRandom.normal([40, 4], key: MLXRandom.key(66)), noise: noise))
+        XCTAssertThrowsError(try pipeline.encodedLatents(MLXRandom.normal([40, 6], key: MLXRandom.key(67)), noise: noise))
+        XCTAssertThrowsError(try pipeline.encodedLatents(MLXRandom.normal([40], key: MLXRandom.key(68)), noise: noise))
     }
 
     // The release states `sample_size` as 1024.0; an integer field stated as a float still reads, so a
@@ -452,6 +505,7 @@ final class NFKMLXStableAudioTests: XCTestCase {
 
     // The release tokenizer's ids for every prompt in the record, token for token.
     func testTheReleaseTokenizationMatchesTheReference() throws {
+        try requireMLXRuntime()
         let directory = try releaseDirectory()
         let arrays = try record("IK_PARITY_STABLE_AUDIO_COMPONENTS", mode: "stable_audio_components")
         let length = try NFKMLXStableAudioGenerator.tokenizerLength(
@@ -587,7 +641,7 @@ final class NFKMLXStableAudioTests: XCTestCase {
             var encoded: MLXArray?
             if let audio = arrays["\(p)initial_audio"] {
                 let noise = try XCTUnwrap(arrays["\(p)posterior_noise"]).transposed(1, 0).expandedDimensions(axis: 0)
-                encoded = pipeline.encodedLatents(audio.transposed(1, 0), noise: noise)
+                encoded = try pipeline.encodedLatents(audio.transposed(1, 0), noise: noise)
                 let scale = NFKMLXCosineDPMSolverScheduler(steps: 8, configuration: pipeline.schedulerConfiguration).inputScale
                 let firstInput = (encoded! + initial * pipeline.initialNoiseScale) * scale
                 let reference = try XCTUnwrap(arrays["\(p)first_input"])[0].transposed(1, 0)

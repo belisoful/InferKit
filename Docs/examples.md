@@ -4256,7 +4256,7 @@ let stagedMusic = try NFKMLXMusic3.backend(directoryURL: quantizedDirectory, res
 // directory (stabilityai/stable-audio-open-1.0, ~5.3 GB, gated, Stability AI Community License).
 let stableAudio = try NFKMLXStableAudioGenerator.backend(directoryURL: releaseDirectory)  // "stable-audio-open-1.0"
 // NFKParameterDurationSeconds sets the clip's length and NFKMLXStableAudioParameterKey.startSeconds
-// where it starts within the model's timing; NFKInputNegativePrompt steers away and NFKInputAudio
+// where it starts within the model's 47.55 s window; NFKInputNegativePrompt steers away and NFKInputAudio
 // starts from a 44.1 kHz WAV. The generator writes a clip directly:
 let audioGenerator = try NFKMLXStableAudioGenerator.generator(directoryURL: releaseDirectory)
 try audioGenerator.writeAudio(forPrompt: "Rain on a tin roof, distant thunder", negativePrompt: nil,
