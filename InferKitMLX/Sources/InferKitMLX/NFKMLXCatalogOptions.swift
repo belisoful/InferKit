@@ -96,6 +96,9 @@ struct NFKMLXLoadProfile {
     var precisions: [String] = []
     /// The precision the registered factory loads at without the option.
     var defaultPrecision = NFKModelPrecisionCheckpoint
+    /// The stage the precision option governs, or nil where it governs every stage. The other stages keep
+    /// the precision their load plan gives them.
+    var precisionStage: String? = nil
     /// The backend property the precision option sets by key-value coding, or nil for a factory
     /// argument.
     var precisionProperty: String? = nil
@@ -145,9 +148,12 @@ struct NFKMLXLoadProfile {
     }
 
     /// A generator whose stages load one after another: the residency from its entry, each stage's
-    /// precision from its load plan, and the stages that widen.
-    static func diffusionPipeline(widenedStages: [String: String] = [:]) -> NFKMLXLoadProfile {
-        NFKMLXLoadProfile(widenedStages: widenedStages, halvesSteps: true)
+    /// precision from its load plan, and the stages that widen. `precisions` offers a choice for
+    /// `precisionStage` alone.
+    static func diffusionPipeline(widenedStages: [String: String] = [:], precisions: [String] = [],
+                                  precisionStage: String? = nil) -> NFKMLXLoadProfile {
+        NFKMLXLoadProfile(precisions: precisions, defaultPrecision: NFKModelPrecisionCheckpoint,
+                          precisionStage: precisionStage, widenedStages: widenedStages, halvesSteps: true)
     }
 
     /// A model of one stage whose precision is a choice.
@@ -265,7 +271,8 @@ extension NFKMLXLoadProfile {
             declaration.options += Self.draftOptions(drafts)
         }
         declaration.consumes = declaration.options.map(\.key)
-        let fixedPrecisions = precision ? [:] : stagePrecisions.filter { $0.value != NFKModelPrecisionCheckpoint }
+        let fixedPrecisions = precision && precisionStage == nil ? [:]
+            : stagePrecisions.filter { $0.value != NFKModelPrecisionCheckpoint && $0.key != precisionStage }
         if residency || precision || quantizes || context || drafting || !fixedPrecisions.isEmpty {
             declaration.memory = NFKModelMemoryModel(
                 precisionOptionKey: precision ? NFKModelLoadOptionPrecision : nil,
@@ -313,8 +320,10 @@ extension NFKMLXLoadProfile {
     private func precisionOption() -> NFKModelOption {
         let titles = [NFKModelPrecisionCheckpoint: "As published", NFKModelPrecisionFloat32: "Float32",
                       NFKModelPrecisionFloat16: "Float16", NFKModelPrecisionBFloat16: "BFloat16"]
+        let help = precisionStage.map { "The precision the \($0) loads at. As published keeps its own weights; another choice converts them as it loads. The other stages load as their parity records were measured." }
+            ?? "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load."
         return Self.loadOption(NFKModelLoadOptionPrecision, kind: NFKModelOptionKindChoice, title: "Precision",
-                               help: "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+                               help: help,
                                defaultValue: defaultPrecision,
                                choices: precisions.map { (value: $0 as Any, title: titles[$0] ?? $0) },
                                property: precisionProperty)

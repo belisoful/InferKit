@@ -146,6 +146,9 @@ struct NFKMLXLoadPlan {
     /// The directories each stage loads, in the order the stages run. Empty for a model that holds its
     /// weights together.
     var stages: [[String]] = []
+    /// The directories a precision option converts. A stage's figure at a precision holds these at it and
+    /// the stage's other directories as the plan holds them. Empty where every directory converts.
+    var castDirectories: Set<String> = []
 
     static let stored = NFKMLXLoadPlan(precision: .stored)
     static let float32 = NFKMLXLoadPlan(precision: .float32)
@@ -215,8 +218,13 @@ extension NFKMLXLoadPlan {
         "qwen-image": staged(["text_encoder": .stored], denoiser: [:], controlNet: nil, vae: .float32),
         "ltx-video": staged(["text_encoder": .float32], denoiser: ["transformer": .float32], controlNet: nil,
                             vae: .stored),
-        // umT5 widens to float32 only where the budget holds it, so the plan counts it at bfloat16.
-        "wan": staged(["text_encoder": .bfloat16], denoiser: [:], controlNet: nil, vae: .float32),
+        // umT5 widens to float32 only where the budget holds it, so the plan counts it at bfloat16. The
+        // precision option converts the transformer alone.
+        "wan": {
+            var plan = staged(["text_encoder": .bfloat16], denoiser: [:], controlNet: nil, vae: .float32)
+            plan.castDirectories = ["transformer"]
+            return plan
+        }(),
         "minimax-music": NFKMLXLoadPlan(precision: .stored, directories: ["transformer": .float32],
                                         stages: [["language_model", "rvq_depth_decoder"],
                                                  ["condition_encoder", "transformer"], ["vocoder"]]),
@@ -418,7 +426,8 @@ struct NFKMLXVariantFacts {
             let loads = split.directories.map { directory in
                 (directory, converted ? NFKMLXLoadPrecision.stored : plan.precision(ofDirectory: directory) ?? .stored)
             }
-            let bytes = Self.bytesByPrecision(loads, tensors: measurement.tensorBytes, opaque: measurement.opaqueBytes)
+            let bytes = Self.bytesByPrecision(loads, tensors: measurement.tensorBytes, opaque: measurement.opaqueBytes,
+                                              converting: plan.castDirectories)
             let floating = Set(loads.filter { measurement.tensorBytes[$0.0]?.isEmpty == false }.map(\.1))
             let precision = floating.count > 1 ? Self.loadedPrecision : Self.name(of: floating.first ?? .stored)
             precisions[split.identifier] = precision
@@ -463,16 +472,23 @@ struct NFKMLXVariantFacts {
 
     /// The bytes of directories at the checkpoint's types, at float32, and at bfloat16, and, where the
     /// directories load at different precisions, as they load. Opaque bytes count as stored at every
-    /// precision. A stage of opaque bytes alone states only the checkpoint's.
+    /// precision. A stage of opaque bytes alone states only the checkpoint's. Where `converting` names
+    /// some of a stage's directories and not all, the figures at the three precisions hold the others as
+    /// they load.
     static func bytesByPrecision(_ loads: [(String, NFKMLXLoadPrecision)], tensors: [String: [String: Int64]],
-                                 opaque: [String: Int64]) -> [String: NSNumber] {
+                                 opaque: [String: Int64], converting: Set<String> = []) -> [String: NSNumber] {
         let opaqueBytes = loads.reduce(Int64(0)) { $0 + (opaque[$1.0] ?? 0) }
         let held = loads.filter { tensors[$0.0]?.isEmpty == false }
         guard !held.isEmpty || opaqueBytes > 0 else {
             return [:]
         }
+        let mixed = held.contains { converting.contains($0.0) } && !held.allSatisfy { converting.contains($0.0) }
+        let converts = !mixed
         func total(_ precision: (NFKMLXLoadPrecision) -> NFKMLXLoadPrecision) -> NSNumber {
-            NSNumber(value: held.reduce(opaqueBytes) { $0 + NFKMLXLoadPlan.bytes(tensors[$1.0] ?? [:], at: precision($1.1)) })
+            NSNumber(value: held.reduce(opaqueBytes) { sum, load in
+                let held = converts || converting.contains(load.0) ? precision(load.1) : load.1
+                return sum + NFKMLXLoadPlan.bytes(tensors[load.0] ?? [:], at: held)
+            })
         }
         var bytes = [NFKModelPrecisionCheckpoint: total { _ in .stored }]
         guard !held.isEmpty else {

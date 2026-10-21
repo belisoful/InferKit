@@ -44,6 +44,25 @@ final class NFKMLXCatalogMemoryTests: XCTestCase {
         }
     }
 
+    // Wan's precision option converts its transformer alone: the transformer stage's figure at each precision
+    // holds the transformer at it and the VAE at the float32 the plan gives it, while the text encoder's
+    // stage, which holds no converted directory, keeps every figure as before.
+    func testAPrecisionOptionThatConvertsOneDirectoryHoldsTheStagesOthersAsPlanned() throws {
+        var plan = NFKMLXLoadPlan(precision: .stored, directories: ["text_encoder": .bfloat16, "vae": .float32],
+                                  stages: [["text_encoder"], ["transformer", "vae"]])
+        plan.castDirectories = ["transformer"]
+        let row = measurement(tensorBytes: ["text_encoder": ["F32": 4000], "transformer": ["F32": 2000],
+                                            "vae": ["F32": 300]])
+        let facts = try XCTUnwrap(NFKMLXVariantFacts(row, plan: plan, converted: false, recipe: NFKMLXFactsRecipe(),
+                                                     estimatesStoredBytes: false))
+        let text = facts.facts.stages[0].byteCountByPrecision, second = facts.facts.stages[1].byteCountByPrecision
+        XCTAssertEqual(second[NFKModelPrecisionBFloat16]?.intValue, 1000 + 300)
+        XCTAssertEqual(second[NFKModelPrecisionCheckpoint]?.intValue, 2000 + 300)
+        XCTAssertEqual(second[NFKModelPrecisionFloat32]?.intValue, 2000 + 300)
+        XCTAssertEqual(text[NFKModelPrecisionFloat32]?.intValue, 4000)
+        XCTAssertEqual(text[NFKModelPrecisionBFloat16]?.intValue, 2000)
+    }
+
     func testAStageThatMixesPrecisionsStatesItsLoadedBytes() throws {
         let plan = NFKMLXLoadPlan(precision: .stored, directories: ["text_encoder": .float32, "transformer": .bfloat16],
                                   stages: [["text_encoder"], ["transformer", "vae"]])

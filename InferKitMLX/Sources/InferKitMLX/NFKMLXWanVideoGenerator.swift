@@ -51,9 +51,32 @@ enum NFKMLXWanRelease {
     /// `Conv3d` weight is stored `[out, in, t, h, w]` and loads as MLX's `[out, t, h, w, in]`.
     static func loadTransformer(into net: NFKMLXWanTransformerNet, fromDirectory directory: URL,
                                 precision: NFKMLXWeightPrecision) throws {
-        let arrays = try NFKMLXReleaseWeights.materializedArrays(
-            inDirectory: directory, precision: precision,
-            transform: { ($0, $1.ndim == 5 ? $1.transposed(0, 2, 3, 4, 1) : $1) })
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision,
+                                                                 transform: adaptedTransformer)
+        try NFKMLXWeights.apply(arrays, to: net, verifyShapes: true)
+    }
+
+    /// A release transformer tensor in the module's layout: the patchify `Conv3d` weight moves from
+    /// `[out, in, t, h, w]` to `[out, t, h, w, in]`, and every other tensor loads as stored.
+    static func adaptedTransformer(key: String, value: MLXArray) -> (String, MLXArray) {
+        (key, value.ndim == 5 ? value.transposed(0, 2, 3, 4, 1) : value)
+    }
+
+    /// Whether a transformer key names a parameter diffusers keeps float32 under a half-precision load
+    /// (`WanTransformer3DModel._keep_in_fp32_modules`): one whose dotted path has a `time_embedder`,
+    /// `scale_shift_table`, `norm1`, `norm2`, or `norm3` component.
+    static func keepsFloat32(_ key: String) -> Bool {
+        key.split(separator: ".").contains { float32Modules.contains(String($0)) }
+    }
+
+    private static let float32Modules: Set<String> = ["time_embedder", "scale_shift_table", "norm1", "norm2", "norm3"]
+
+    /// Loads a release's `transformer/` weights with every floating tensor converted to `dtype` as it is
+    /// read, so the stored float32 never sits whole beside the converted copy.
+    static func loadTransformer(into net: NFKMLXWanTransformerNet, fromDirectory directory: URL,
+                                converting dtype: DType) throws {
+        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: dtype)
+            .map { ($0, $1.ndim == 5 ? $1.transposed(0, 2, 3, 4, 1) : $1) }
         try NFKMLXWeights.apply(arrays, to: net, verifyShapes: true)
     }
 
@@ -244,6 +267,13 @@ public final class NFKMLXWanVideoGenerator: NSObject {
     /// holds it as ``NFKMLXResidency/staged`` does.
     @objc(generatorWithDirectoryURL:residency:error:)
     public static func generator(directoryURL: URL, residency: NFKMLXResidency) throws -> NFKMLXWanVideoGenerator {
+        try generator(directoryURL: directoryURL, residency: residency, transformerType: nil)
+    }
+
+    /// Assembles the model as ``generator(directoryURL:residency:)`` does, with the transformer's floating
+    /// weights converted to `transformerType` as they load, or held as stored where it is nil.
+    static func generator(directoryURL: URL, residency: NFKMLXResidency,
+                          transformerType: DType?) throws -> NFKMLXWanVideoGenerator {
         let textDirectory = directoryURL.appendingPathComponent("text_encoder")
         let transformerDirectory = directoryURL.appendingPathComponent("transformer")
         let vaeDirectory = directoryURL.appendingPathComponent("vae")
@@ -262,7 +292,7 @@ public final class NFKMLXWanVideoGenerator: NSObject {
         let plan = try NFKMLXResidencyBudget.plan(
             [NFKMLXStageFootprint(bytes: try NFKMLXStageWeights.bytes(inDirectory: textDirectory, holding: .bfloat16),
                                   widenedBytes: try NFKMLXStageWeights.bytes(inDirectory: textDirectory, holding: .float32)),
-             NFKMLXStageFootprint(bytes: try NFKMLXStageWeights.bytes(inDirectory: transformerDirectory, precision: .checkpoint)
+             NFKMLXStageFootprint(bytes: try transformerBytes(transformerDirectory, holding: transformerType)
                                      + NFKMLXStageWeights.bytes(inDirectory: vaeDirectory, precision: .float32))],
             residency: residency, budget: NFKMLXResidencyBudget.current())
         let textInFloat32 = plan.widens(0)
@@ -278,8 +308,13 @@ public final class NFKMLXWanVideoGenerator: NSObject {
             },
             loadPipeline: {
                 let transformer = NFKMLXWanTransformerNet(transformerConfiguration)
-                try NFKMLXWanRelease.loadTransformer(into: transformer, fromDirectory: transformerDirectory,
-                                                     precision: .checkpoint)
+                if let transformerType {
+                    try NFKMLXWanRelease.loadTransformer(into: transformer, fromDirectory: transformerDirectory,
+                                                         converting: transformerType)
+                } else {
+                    try NFKMLXWanRelease.loadTransformer(into: transformer, fromDirectory: transformerDirectory,
+                                                         precision: .checkpoint)
+                }
                 let autoencoder = NFKMLXWanVideoVAENet(vae.configuration)
                 try NFKMLXWanRelease.loadVAE(into: autoencoder, fromDirectory: vaeDirectory)
                 return NFKMLXWanPipeline(transformer: transformer, vae: autoencoder, latentsMean: vae.mean,
@@ -290,6 +325,14 @@ public final class NFKMLXWanVideoGenerator: NSObject {
             try generator.loadResident()
         }
         return generator
+    }
+
+    /// The bytes the transformer holds: as stored, or converted to `dtype`.
+    private static func transformerBytes(_ directory: URL, holding dtype: DType?) throws -> Int {
+        guard let dtype else {
+            return try NFKMLXStageWeights.bytes(inDirectory: directory, precision: .checkpoint)
+        }
+        return try NFKMLXStageWeights.bytes(inDirectory: directory, holding: dtype)
     }
 
     /// The component folders a download fetches.
