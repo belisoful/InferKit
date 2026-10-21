@@ -35456,8 +35456,10 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
-        "precision" : "precision",
-        "residency" : "residency"
+        "residency" : "residency",
+        "stagePrecisions" : {
+          "decoder" : "float32"
+        }
       },
       "options" : [
         {
@@ -35500,33 +35502,6 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Residency"
-        },
-        {
-          "choices" : [
-            {
-              "memory" : {
-                "peakBytes" : 62141508064,
-                "residentBytes" : 62141508064
-              },
-              "title" : "As published",
-              "value" : "checkpoint"
-            },
-            {
-              "memory" : {
-                "peakBytes" : 124283016128,
-                "residentBytes" : 124283016128
-              },
-              "title" : "Float32",
-              "value" : "float32"
-            }
-          ],
-          "default" : "float32",
-          "group" : "Loading",
-          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
-          "key" : "precision",
-          "kind" : "choice",
-          "stage" : "load",
-          "title" : "Precision"
         }
       ],
       "outputModalities" : [
