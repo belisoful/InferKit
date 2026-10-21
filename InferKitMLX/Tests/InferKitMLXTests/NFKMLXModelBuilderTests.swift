@@ -241,7 +241,7 @@ final class NFKMLXModelBuilderTests: XCTestCase {
     // model information says so beside the bytes it measured.
     func testAMeasuredBuildReportsItsResidency() throws {
         NFKMLXModelDescriptors.registerBackendBuilder()
-        NFKMLXModelRegistry.register(name: Self.plainName) { _ in
+        NFKMLXModelRegistry.register(name: Self.plainName, consumes: [NFKModelLoadOptionPrecision]) { _, _ in
             NFKMLXGenerationBackend(identifier: Self.plainName, inputKeys: [NFKInputPrompt], parameterKeys: [],
                                     outputKeys: [NFKOutputText]) { _, _ in NFKInferenceResult(outputs: [:]) }
         }

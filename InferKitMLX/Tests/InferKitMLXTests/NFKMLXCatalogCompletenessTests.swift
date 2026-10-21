@@ -56,8 +56,13 @@ final class NFKMLXCatalogCompletenessTests: XCTestCase {
             for variant in descriptor.variants {
                 guard let source = variant.source, source.layout != NFKModelSourceLayoutNone,
                       [NFKModelSourceKindHuggingFace, NFKModelSourceKindURL].contains(source.kind) else { continue }
-                let options: [String: Any] = [NFKModelLoadOptionVariant: variant.identifier,
-                                              NFKModelLoadOptionIgnoreMemoryBudget: true]
+                // A descriptor with one variant declares no variant option; its default is the variant built.
+                let choosesVariant = descriptor.option(withKey: NFKModelLoadOptionVariant) != nil
+                guard choosesVariant || variant.identifier == descriptor.defaultVariant?.identifier else { continue }
+                var options: [String: Any] = [NFKModelLoadOptionIgnoreMemoryBudget: true]
+                if choosesVariant {
+                    options[NFKModelLoadOptionVariant] = variant.identifier
+                }
                 XCTAssertThrowsError(try catalog.backend(forModelIdentifier: descriptor.identifier, options: options),
                                      "\(descriptor.identifier)/\(variant.identifier)") { error in
                     let code = (error as NSError).code
