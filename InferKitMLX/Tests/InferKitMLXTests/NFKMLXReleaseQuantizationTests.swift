@@ -180,66 +180,78 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
         return dot / (left.squareRoot() * right.squareRoot())
     }
 
-    /// A release mlx_lm published 4-bit, loaded through the release loader with its tokenizer and held
-    /// to transformers on the same weights dequantized (Tools/reference-parity `mlx_quantized_release`).
-    private func assertReleaseMatchesItsDequantizedReference(release releaseKey: String, record recordKey: String,
-                                                             label: String) throws {
+    /// A release mlx_lm published 4-bit, loaded through the release loader with its tokenizer and held to
+    /// two references. At the stored precision it computes what mlx_lm computes (`mlx_lm_logits.py`): the
+    /// release's scales and norms are bfloat16, and a half-precision run of Qwen3-0.6B moves its logits
+    /// 0.0027 from float32 (cosine 0.99727) where torch's bfloat16 run of the same weights moves them
+    /// 0.0001, so the float32 reference alone cannot judge it. Widened to float32, it computes the
+    /// dequantized network transformers runs (`run_reference.py mlx_quantized_release`), which is where a
+    /// misread layer shows.
+    private func assertReleaseMatchesItsReferences(release releaseKey: String, record recordKey: String,
+                                                   runtimeRecord runtimeKey: String, label: String) throws {
         try requireMLXRuntime()
-        guard let directory = config[releaseKey], let path = config[recordKey] else {
-            throw XCTSkip("set \(releaseKey) and \(recordKey) (run_reference.py mlx_quantized_release)")
+        guard let directory = config[releaseKey], let path = config[recordKey], let runtimePath = config[runtimeKey] else {
+            throw XCTSkip("set \(releaseKey), \(recordKey) (run_reference.py mlx_quantized_release), and \(runtimeKey) "
+                          + "(mlx_lm_logits.py)")
         }
         let record = try MLX.loadArrays(url: URL(fileURLWithPath: path))
+        let runtime = try MLX.loadArrays(url: URL(fileURLWithPath: runtimePath))
         let tokens = try XCTUnwrap(record["tokens"]).asArray(Int32.self).map(Int.init)
+        XCTAssertEqual(try XCTUnwrap(runtime["tokens"]).asArray(Int32.self).map(Int.init), tokens,
+                       "both references read the same prompt")
         let reference = try XCTUnwrap(record["output"]).reshaped([-1]).asArray(Float.self)
         let half = try XCTUnwrap(record["bf16.output"]).reshaped([-1]).asArray(Float.self)
-        let continuation = try XCTUnwrap(record["continuation"]).asArray(Int32.self).map(Int.init)
+        let runtimeLogits = try XCTUnwrap(runtime["output"]).reshaped([-1]).asArray(Float.self)
+        let runtimeContinuation = try XCTUnwrap(runtime["continuation"]).asArray(Int32.self).map(Int.init)
 
         let (net, tokenizer) = try NFKMLXLanguage.loadedReleaseWithTokenizer(at: URL(fileURLWithPath: directory))
         let encoded = tokenizer.encode("The capital of France is").map(\.intValue)
         XCTAssertEqual(Array(tokens.suffix(encoded.count)), encoded, "the release tokenizer reads the prompt as the reference's")
         XCTAssertLessThanOrEqual(tokens.count - encoded.count, 1, "the reference adds at most its begin marker")
 
-        let logits = net(MLXArray(tokens.map(Int32.init)).reshaped([1, tokens.count]))[0].asType(.float32)
+        let input = MLXArray(tokens.map(Int32.init)).reshaped([1, tokens.count])
+        let logits = net(input)[0].asType(.float32)
         let mine = logits.reshaped([-1]).asArray(Float.self)
-        let similarity = cosine(mine, reference)
-        let floor = cosine(half, reference)
-        print("VALIDATION PARITY \(label): logit cosine \(similarity) against the dequantized float32 reference "
-              + "(its own bf16 run reaches \(floor))")
-        XCTAssertGreaterThan(similarity, 0.999, "the packed layers compute the dequantized network")
-
+        let againstRuntime = cosine(mine, runtimeLogits)
+        print("VALIDATION PARITY \(label): logit cosine \(againstRuntime) against mlx_lm at the stored precision; "
+              + "\(cosine(mine, reference)) against the dequantized float32 reference, whose own bf16 run reaches "
+              + "\(cosine(half, reference))")
+        XCTAssertGreaterThan(againstRuntime, 0.9999, "the release computes what mlx_lm computes from it")
         let vocabulary = logits.dim(1)
-        let lastRow = Array(mine.suffix(vocabulary)), lastReference = Array(reference.suffix(vocabulary))
-        XCTAssertEqual(lastRow.indices.max { lastRow[$0] < lastRow[$1] },
-                       lastReference.indices.max { lastReference[$0] < lastReference[$1] },
-                       "the next token is the reference's")
+        for position in 0 ..< tokens.count {
+            let row = Array(mine[(position * vocabulary) ..< ((position + 1) * vocabulary)])
+            let theirs = Array(runtimeLogits[(position * vocabulary) ..< ((position + 1) * vocabulary)])
+            XCTAssertEqual(row.indices.max { row[$0] < row[$1] }, theirs.indices.max { theirs[$0] < theirs[$1] },
+                           "position \(position) predicts mlx_lm's token")
+        }
         var greedy = NFKMLXGenerationOptions()
         greedy.temperature = 0
-        greedy.maxTokens = 4
-        XCTAssertEqual(net.generate(prompt: tokens, options: greedy), Array(continuation.prefix(4)),
-                       "and the first greedy tokens are")
+        greedy.maxTokens = 8
+        XCTAssertEqual(net.generate(prompt: tokens, options: greedy), Array(runtimeContinuation.prefix(8)),
+                       "and generates mlx_lm's greedy tokens")
 
-        // The same packed network with every float parameter widened to float32 (the scales, biases, and
-        // norms mlx_lm stored at bfloat16): a loading mistake survives the widening, and the
-        // half-precision arithmetic does not.
+        // Every float parameter widened to float32 (the scales, biases, and norms mlx_lm stored at
+        // bfloat16) leaves the packed words as read: a loading mistake survives the widening.
         let widened = net.parameters().flattened().map { name, value in
             (name, value.dtype == .bfloat16 || value.dtype == .float16 ? value.asType(.float32) : value)
         }
         net.update(parameters: ModuleParameters.unflattened(widened))
-        let wide = net(MLXArray(tokens.map(Int32.init)).reshaped([1, tokens.count]))[0].asType(.float32)
-        print("VALIDATION PARITY \(label)-float32: logit cosine \(cosine(wide.reshaped([-1]).asArray(Float.self), reference)) "
-              + "with the stored scales, biases, and norms widened to float32")
+        let wide = cosine(net(input)[0].asType(.float32).reshaped([-1]).asArray(Float.self), reference)
+        print("VALIDATION PARITY \(label)-float32: logit cosine \(wide) with the stored scales, biases, and norms "
+              + "widened to float32")
+        XCTAssertGreaterThan(wide, 0.999999, "every packed layer reads as the dequantized network")
     }
 
-    func testMLXCommunityQwen3FourBitMatchesItsDequantizedReference() throws {
-        try assertReleaseMatchesItsDequantizedReference(release: "IK_VAL_MLX_QWEN3_06B_4BIT",
-                                                        record: "IK_PARITY_MLX_QWEN3_06B_4BIT",
-                                                        label: "mlx-qwen3-0.6b-4bit")
+    func testMLXCommunityQwen3FourBitMatchesItsReferences() throws {
+        try assertReleaseMatchesItsReferences(release: "IK_VAL_MLX_QWEN3_06B_4BIT", record: "IK_PARITY_MLX_QWEN3_06B_4BIT",
+                                              runtimeRecord: "IK_PARITY_MLX_QWEN3_06B_4BIT_MLXLM",
+                                              label: "mlx-qwen3-0.6b-4bit")
     }
 
-    func testMLXCommunityLlama32FourBitMatchesItsDequantizedReference() throws {
-        try assertReleaseMatchesItsDequantizedReference(release: "IK_VAL_MLX_LLAMA32_1B_4BIT",
-                                                        record: "IK_PARITY_MLX_LLAMA32_1B_4BIT",
-                                                        label: "mlx-llama-3.2-1b-4bit")
+    func testMLXCommunityLlama32FourBitMatchesItsReferences() throws {
+        try assertReleaseMatchesItsReferences(release: "IK_VAL_MLX_LLAMA32_1B_4BIT", record: "IK_PARITY_MLX_LLAMA32_1B_4BIT",
+                                              runtimeRecord: "IK_PARITY_MLX_LLAMA32_1B_4BIT_MLXLM",
+                                              label: "mlx-llama-3.2-1b-4bit")
     }
 
     // MARK: What a config states

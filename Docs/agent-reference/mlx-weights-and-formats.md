@@ -68,9 +68,15 @@ Runtime quantization, the release reader, the native GGUF and PyTorch checkpoint
   - mlx_lm's gpt-oss layout stores the expert gate and up projections apart where the module holds
     them fused, and is refused.
   `NFKMLXReleaseQuantizationTests` round-trips dense, sharded, stacked-mixture (resident and paged),
-  and per-expert releases exactly, and holds `mlx-community/Qwen3-0.6B-4bit` and
-  `Llama-3.2-1B-Instruct-4bit` to transformers on the same weights dequantized
-  (`run_reference.py mlx_quantized_release`).
+  and per-expert releases exactly. It holds `mlx-community/Qwen3-0.6B-4bit` and
+  `Llama-3.2-1B-Instruct-4bit` to two references: mlx_lm itself at the stored precision
+  (`Tools/reference-parity/mlx_lm_logits.py`, the `mlxlm` interpreter), and, with the stored floats
+  widened to float32, transformers on the same weights dequantized (`run_reference.py
+  mlx_quantized_release`). Widened, both match to about 1e-11, so every packed layer reads exactly. As
+  stored, Qwen3-0.6B's bfloat16 scales and norms move its logits to cosine 0.99727 from float32 where
+  torch's bfloat16 run of the same weights reaches 0.99989. Llama 3.2 reads near float32 as stored
+  (0.9999988), because its `llama3` rotary table is float32 and promotes the activations after the first
+  rotation.
 - `NFKMLXReleaseWeights` — one reader for a downloaded release's weights, single-file or sharded
   (`model.safetensors.index.json`, each shard read once), with a remap closure whose nil skips a
   tensor. The dense, hybrid, and Gemma loaders all read through it; before it each had its own copy,
