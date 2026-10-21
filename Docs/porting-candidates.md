@@ -16,7 +16,7 @@ per modality that is already scoped; the entries here are the wider field the ro
 - [How to read this](#how-to-read-this)
 - [The architectural lens](#the-architectural-lens)
 - [Tier 1 — clean near-term wins (SHIPPED)](#tier-1--clean-near-term-wins-shipped)
-- [Tier 2 — strong, mostly permissive](#tier-2--strong-mostly-permissive)
+- [Tier 2 — strong, mostly permissive (SHIPPED)](#tier-2--strong-mostly-permissive-shipped)
 - [Tier 3 — strategic frontier, high cost](#tier-3--strategic-frontier-high-cost)
 - [Updates to shipped families (Tiers A–C)](#updates-to-shipped-families-tiers-ac)
 - [Text-to-speech candidates](#text-to-speech-candidates)
@@ -90,7 +90,10 @@ Notes:
 - **Flux.1 [schnell]** completes a generation family InferKit half-owns: the Flux VAE is already ported,
   and schnell is the Apache-2.0 member of the Flux family.
 
-## Tier 2 — strong, mostly permissive
+## Tier 2 — strong, mostly permissive (SHIPPED)
+
+Strong models, most of them permissively licensed. The two Stability AI releases carry the Stability AI
+Community License. Every row has shipped.
 
 | Model | Vendor | Task | Architecture | License | Reference | Effort |
 |-------|--------|------|--------------|---------|-----------|--------|
@@ -140,8 +143,15 @@ Notes:
   factorized into spatial and temporal kernels and its resampling blocks add a strided convolution to
   an average pool. The code is Apache-2.0 and the weights use the commercially usable NVIDIA Open
   Model License.
-- **SD 3.5** and **Stable Audio Open** carry the Stability Community License, which is free below $1M
-  annual revenue and not fully permissive above it. Flag the revenue gate before committing.
+- **Stable Audio Open 1.0 is now shipped at reference parity** (`NFKMLXStableAudioGenerator`):
+  t5-base and two seconds conditioners condition a 1.05B-parameter latent diffusion transformer over
+  the Oobleck waveform autoencoder, sampled by the cosine-schedule DPM-Solver++ SDE. On the released
+  weights the transformer reads 0.9999999999899 or better, and the waveform, teacher-forced from the
+  reference's own noise, reads 0.9999999958 or better. The transformer fine-tunes with
+  stable-audio-tools' own LoRA recipe.
+- **SD 3.5** and **Stable Audio Open** carry the Stability AI Community License, which is free below
+  USD 1M annual revenue and not fully permissive above it. Both catalog entries record it, and
+  `Docs/companions.md` states its terms.
 
 ## Tier 3 — strategic frontier, high cost
 
