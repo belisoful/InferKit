@@ -323,8 +323,7 @@ static BOOL NFKModelSourceDownloadsFiles(NFKModelSource * _Nullable source)
 		return NO;
 	}
 	BOOL fromHub = [source.kind isEqualToString:NFKModelSourceKindHuggingFace] && source.repository.length > 0;
-	// A URL source without a file list names a page a person reads, which no download fetches.
-	BOOL fromURL = [source.kind isEqualToString:NFKModelSourceKindURL] && source.URL != nil && source.files.count > 0;
+	BOOL fromURL = [source.kind isEqualToString:NFKModelSourceKindURL] && source.URL != nil;
 	return fromHub || fromURL;
 }
 
@@ -341,6 +340,19 @@ static BOOL NFKModelSourceListsNoRequiredFile(NFKModelSource *source)
 		}
 	}
 	return YES;
+}
+
+// A source that lists its files downloads through NFKHFHub. A URL source without a file list names a page
+// whose files a person fetches, so the reason names the page.
+static NSString *NFKModelNotDownloadedReason(NFKModelDescriptor *descriptor, NFKModelSource *source)
+{
+	NSString *name = descriptor.displayName ?: descriptor.identifier;
+	if ([source.kind isEqualToString:NFKModelSourceKindURL] && source.files.count == 0) {
+		return [NSString stringWithFormat:@"%@'s files are not located. Fetch them from %@ and pass their location.",
+				name, source.URL.absoluteString];
+	}
+	return [NSString stringWithFormat:@"%@'s files are not downloaded. Download them with "
+			@"-[NFKHFHub downloadModelSource:progressHandler:completionHandler:], or pass their location.", name];
 }
 
 + (NFKModelLocator)hubCacheLocator
@@ -508,10 +520,7 @@ static BOOL NFKModelSourceListsNoRequiredFile(NFKModelSource *source)
 	BOOL pluginKeepsFiles = [descriptor.engine isEqualToString:NFKModelEnginePlugin];
 	if (located == nil && NFKModelSourceDownloadsFiles(variant.source) && !pluginKeepsFiles) {
 		if (error != NULL) {
-			*error = NFKModelBuildError(NFKModelCatalogErrorNotDownloaded,
-										[NSString stringWithFormat:@"%@'s files are not downloaded. Download them with "
-										 @"-[NFKHFHub downloadModelSource:progressHandler:completionHandler:], or pass "
-										 @"their location.", descriptor.displayName ?: descriptor.identifier]);
+			*error = NFKModelBuildError(NFKModelCatalogErrorNotDownloaded, NFKModelNotDownloadedReason(descriptor, variant.source));
 		}
 		return nil;
 	}

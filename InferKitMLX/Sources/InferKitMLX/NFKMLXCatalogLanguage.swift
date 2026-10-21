@@ -185,8 +185,10 @@ extension NFKMLXCatalogLanguage {
     fileprivate static var gemma3Releases: [NFKMLXLanguageRelease] {
         [("270m", "270M", false), ("1b", "1B", false), ("4b", "4B", true), ("12b", "12B", true), ("27b", "27B", true)]
             .map { size, title, vision in
+                // The gated releases are not measured. Their shards are bfloat16.
                 NFKMLXLanguageRelease(name: "gemma-3-\(size)-it", displayName: "Gemma 3 \(title) IT",
-                                      repository: "google/gemma-3-\(size)-it", family: "gemma3", readsImages: vision)
+                                      repository: "google/gemma-3-\(size)-it", family: "gemma3", readsImages: vision,
+                                      storedPrecision: NFKModelPrecisionBFloat16)
             }
     }
 

@@ -628,7 +628,12 @@ model's identifier, or `model@preset`, and the option values an app collected:
    (`downloadStatusForModelSource:` reports it complete). A host that downloads into its own cache sets
    `hubCacheLocatorForCacheDirectoryURL:`, and a download store sets its own. A variant whose source
    downloads files the locator does not find is refused (`NFKModelCatalogErrorNotDownloaded`); a build
-   never runs a model on weights it did not read.
+   never runs a model on weights it did not read. Three cases differ:
+   - a whole-repository source, with no file list, is located by its snapshot's `config.json` when no
+     whole download recorded it;
+   - a URL source with no file list names a page whose files a person fetches, and its refusal names
+     the page;
+   - a plugin's model is never refused, since the plugin keeps its own weights.
 6. A builder builds the backend from an `NFKModelBuildRequest`: the descriptor's provider class when it
    implements `+backendForBuildRequest:error:`, else the `NFKModelBackendBuilding` registered for the
    engine (`+registerBackendBuilder:forEngine:`), else the descriptor's `providerClass` through

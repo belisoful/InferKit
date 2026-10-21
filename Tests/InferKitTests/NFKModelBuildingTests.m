@@ -604,9 +604,9 @@ static const NSInteger NFKBuildTestGiB = (NSInteger)1 << 30;
 						  config.URLByDeletingLastPathComponent.standardizedURL);
 }
 
-// A URL source that lists no file names a page a person reads, and a plugin keeps its own weights: neither
-// is refused as not downloaded.
-- (void)testAPageSourceAndAPluginModelAreNotRefusedAsNotDownloaded
+// A URL source that lists no file names a page whose files a person fetches: its refusal names the page.
+// A plugin keeps its own weights and is not refused.
+- (void)testAPageSourceNamesItsPageAndAPluginModelIsNotRefused
 {
 	self.catalog.locator = [NFKModelCatalog hubCacheLocatorForCacheDirectoryURL:[self scratchCache]];
 	NFKModelSource *page = [[NFKModelSource alloc] initWithKind:NFKModelSourceKindURL repository:nil revision:nil
@@ -616,8 +616,10 @@ static const NSInteger NFKBuildTestGiB = (NSInteger)1 << 30;
 	[self.catalog addDescriptor:[self modelWithIdentifier:@"page.model" engine:NFKBuildTestEngine provider:nil
 											 requirements:nil variant:[self variantWithSource:page]]];
 	NSError *error = nil;
-	XCTAssertNotNil([self.catalog backendForModelIdentifier:@"page.model" options:nil error:&error], @"%@", error);
-	XCTAssertNil(self.builder.lastRequest.location);
+	XCTAssertNil([self.catalog backendForModelIdentifier:@"page.model" options:nil error:&error]);
+	XCTAssertEqual(error.code, NFKModelCatalogErrorNotDownloaded);
+	XCTAssertTrue([error.localizedDescription containsString:@"https://example.test/model"], @"%@", error);
+	XCTAssertFalse([error.localizedDescription containsString:@"downloadModelSource"], @"%@", error);
 
 	NFKModelSource *hub = [NFKModelSource huggingFaceSourceWithRepository:@"org/plugin-weights" revision:nil
 																   layout:NFKModelSourceLayoutDirectory];
