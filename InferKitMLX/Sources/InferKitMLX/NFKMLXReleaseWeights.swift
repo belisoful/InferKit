@@ -116,6 +116,21 @@ enum NFKMLXReleaseWeights {
         return merged
     }
 
+    /// A checkpoint file's arrays with every floating tensor converted to `dtype`, read and converted in
+    /// groups as ``converting(_:to:remap:)`` does, and whether its 4-D weights need the model's transpose.
+    static func convertedCheckpoint(url: URL, to dtype: DType) throws
+        -> (arrays: [(String, MLXArray)], needsConvTranspose: Bool) {
+        // `stored` alone holds the read arrays, so each stored tensor is freed once it converts.
+        var stored: [String: MLXArray]
+        let needsConvTranspose: Bool
+        do {
+            let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+            stored = checkpoint.arrays
+            needsConvTranspose = checkpoint.needsConvTranspose
+        }
+        return (converting(&stored, to: dtype), needsConvTranspose)
+    }
+
     /// `stored`'s arrays with every floating tensor converted to `dtype`, read and converted in groups of
     /// about 256 MB, each stored array dropped from `stored` once converted, so the stored copy never sits
     /// whole beside the converted one.

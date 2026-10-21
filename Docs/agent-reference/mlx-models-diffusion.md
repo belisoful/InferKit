@@ -154,6 +154,21 @@ The diffusion backend seam and schedulers, the SD networks and pipelines, IP-Ada
   inside its widest rerun's 4.21.
   A custom GPU kernel that copies torch's summation order is written only if a repository Issue requests
   it.
+  The float16 choice (`NFKMLXCatalogImage.float16StableDiffusionReleases`) converts each floating tensor
+  as `loadUNetWeights`, `loadVAEWeights`, and `NFKMLXSDTextEncoder.loadWeights` read it
+  (`castingTo:`), in groups through `NFKMLXReleaseWeights.convertedCheckpoint`. A release takes it where
+  a float16 parity test on its weights holds every network the conversion reaches:
+  - SD 1.5: the UNet with the IP-Adapter, the autoencoder, and the text tower. The text tower rounded to
+    float16 equals SDXL-Turbo's `text_encoder/model.fp16.safetensors` in all 196 tensors, so
+    `testSDXLTextTowersInFloat16MatchTheFloat16Reference` holds it.
+  - SDXL-Turbo: the UNet and both text towers. The autoencoder sets `force_upcast`, so the converted
+    autoencoder widens back to float32, as diffusers upcasts its float16 one, and the memory plan counts
+    it at float32 (`NFKMLXLoadPlan` `castDirectories` names `unet` and the two text towers).
+  - Not offered: LCM Dreamshaper v7, whose text tower is fine-tuned (all 196 tensors differ from CLIP-L)
+    and whose UNet has no float16 test; SD 2.1 base, whose OpenCLIP-H tower has none; SDXL base, which
+    publishes float16 and loads as published; the adapters, whose merge into a float16 UNet has none.
+  `testAFloat16LoadConvertsEachNetworkAsAFloat32LoadAndACastDo` holds the converting load to the bits a
+  float32 load and a cast give, which is what the parity tests measure.
 - `NFKMLXSDTextEncoderNet` / `NFKMLXSDTextEncoder` — the CLIP text tower the releases cross-attend to,
   built from `NFKMLXCLIP`'s own blocks (one implementation, four configurations). `NFKSDTextOutput`
   spells the difference between the releases: SD 1.x and 2.x read the last hidden state after the final

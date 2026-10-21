@@ -44,6 +44,23 @@ final class NFKMLXCatalogImageVideoTests: XCTestCase {
         }
     }
 
+    // A registered Stable Diffusion factory refuses, before it reads a file, a precision no parity test of the
+    // release holds: float16 outside the releases that offer it, and bfloat16 on every release.
+    func testTheStableDiffusionFactoriesRefuseAPrecisionNoParityTestHolds() {
+        NFKMLXReferenceModels.registerAll()
+        let absent = FileManager.default.temporaryDirectory.appendingPathComponent("sd-refusal-\(UUID().uuidString)")
+        let refused = [("lcm-dreamshaper-v7", NFKModelPrecisionFloat16),
+                       ("stable-diffusion-xl-base-1.0", NFKModelPrecisionFloat16),
+                       ("lcm-lora-sdv1-5", NFKModelPrecisionFloat16),
+                       ("stable-diffusion-v1-5", NFKModelPrecisionBFloat16), ("sdxl-turbo", NFKModelPrecisionBFloat16)]
+        for (name, precision) in refused {
+            XCTAssertThrowsError(try NFKMLXModelRegistry.backend(named: name, weightsURL: absent,
+                                                                 options: [NFKModelLoadOptionPrecision: precision])) {
+                XCTAssertTrue($0.localizedDescription.contains("has no parity check"), "\(name) \(precision): \($0)")
+            }
+        }
+    }
+
     func testEveryEntryHasALicenseAndADefaultVariantWithASource() throws {
         for entry in entries {
             let descriptor = try entry.descriptor()

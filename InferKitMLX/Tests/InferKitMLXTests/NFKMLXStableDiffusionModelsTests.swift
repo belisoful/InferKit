@@ -11,6 +11,7 @@
 import XCTest
 import InferKit
 import MLX
+import MLXNN
 @testable import InferKitMLX
 
 final class NFKMLXStableDiffusionModelsTests: XCTestCase {
@@ -147,5 +148,100 @@ final class NFKMLXStableDiffusionModelsTests: XCTestCase {
         let actual = loaded(latent, timestep: MLXArray([Int32(101)]), context: context)
         eval(expected, actual)
         XCTAssertEqual(expected.asArray(Float.self), actual.asArray(Float.self))
+    }
+
+    // MARK: Converting load (needs MLX)
+
+    // The float16 choice converts every floating weight of the UNet, the autoencoder, and the text tower as
+    // it is read, to the bits a float32 load followed by a cast gives, which is what the float16 parity
+    // tests hold to diffusers.
+    func testAFloat16LoadConvertsEachNetworkAsAFloat32LoadAndACastDo() throws {
+        try requireMLXRuntime()
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("sd-cast-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+
+        let unetURL = directory.appendingPathComponent("unet.safetensors")
+        try save(arrays: Self.diffusersLayout(NFKMLXSDUNet(configuration: Self.tinyUNet())), url: unetURL)
+        try assertConvertingLoad("unet", { NFKMLXSDUNet(configuration: Self.tinyUNet()) }) { net, dtype in
+            try NFKMLXStableDiffusionModels.loadUNetWeights(into: net, from: unetURL, precision: .float32, castingTo: dtype)
+        }
+
+        var autoencoder = NFKMLXSDVAEConfiguration()
+        autoencoder.blockChannels = [32, 64]
+        let vaeURL = directory.appendingPathComponent("vae.safetensors")
+        try save(arrays: Self.diffusersLayout(NFKMLXSDAutoencoder(configuration: autoencoder)), url: vaeURL)
+        try assertConvertingLoad("vae", { NFKMLXSDAutoencoder(configuration: autoencoder) }) { net, dtype in
+            try NFKMLXStableDiffusionModels.loadVAEWeights(into: net, from: vaeURL, precision: .float32, castingTo: dtype)
+        }
+
+        let textURL = directory.appendingPathComponent("text_encoder.safetensors")
+        var text = Self.transformersLayout(NFKMLXSDTextEncoderNet(configuration: .tiny))
+        text["text_model.embeddings.position_ids"] = MLXArray(Array(Int64(0) ..< 12)).reshaped([1, 12])
+        try save(arrays: text, url: textURL)
+        try assertConvertingLoad("text", { NFKMLXSDTextEncoderNet(configuration: .tiny) }) { net, dtype in
+            try NFKMLXSDTextEncoder.loadWeights(into: net, from: textURL, precision: .float32, castingTo: dtype)
+        }
+    }
+
+    /// Loads `make()` twice through `load`, at float32 and converting to float16, and asserts every
+    /// parameter of the converted load is the float32 one cast to float16.
+    private func assertConvertingLoad<Net: Module>(_ name: String, _ make: () -> Net,
+                                                   load: (Net, DType?) throws -> Void) throws {
+        let widened = make(), converted = make()
+        try load(widened, nil)
+        try load(converted, .float16)
+        let expected = Dictionary(uniqueKeysWithValues: widened.parameters().flattened())
+        let loaded = converted.parameters().flattened()
+        XCTAssertEqual(loaded.count, expected.count, name)
+        for (key, value) in loaded {
+            let original = try XCTUnwrap(expected[key], "\(name) \(key)")
+            XCTAssertEqual(original.dtype, .float32, "\(name) \(key)")
+            XCTAssertEqual(value.dtype, .float16, "\(name) \(key)")
+            XCTAssertTrue(arrayEqual(value, original.asType(.float16)).item(Bool.self), "\(name) \(key)")
+        }
+    }
+
+    /// A UNet's or an autoencoder's parameters under diffusers' names, with 4-D tensors rotated back to
+    /// `[out, in, kH, kW]`.
+    static func diffusersLayout(_ net: Module) -> [String: MLXArray] {
+        Dictionary(uniqueKeysWithValues: net.parameters().flattened().map { key, value -> (String, MLXArray) in
+            var name = key
+            name = name.replacingOccurrences(of: ".ff.proj.", with: ".ff.net.0.proj.")
+            name = name.replacingOccurrences(of: ".ff.out.", with: ".ff.net.2.")
+            name = name.replacingOccurrences(of: ".to_out.", with: ".to_out.0.")
+            name = name.replacingOccurrences(of: ".proj_in_conv.", with: ".proj_in.")
+            name = name.replacingOccurrences(of: ".proj_out_conv.", with: ".proj_out.")
+            return (name, value.ndim == 4 ? value.transposed(0, 3, 1, 2) : value)
+        })
+    }
+
+    /// A text tower's parameters under transformers' `CLIPTextModel` names, the fused attention input
+    /// projection split into its query, key, and value.
+    static func transformersLayout(_ net: NFKMLXSDTextEncoderNet) -> [String: MLXArray] {
+        let names = ["token_embedding.weight": "embeddings.token_embedding.weight",
+                     "positional_embedding": "embeddings.position_embedding.weight",
+                     "ln_final.weight": "final_layer_norm.weight", "ln_final.bias": "final_layer_norm.bias",
+                     "ln_1": "layer_norm1", "ln_2": "layer_norm2", "mlp.c_fc": "mlp.fc1", "mlp.c_proj": "mlp.fc2",
+                     "attn.out_proj": "self_attn.out_proj"]
+        var arrays = [String: MLXArray]()
+        for (key, value) in net.parameters().flattened() {
+            if let name = names[key] {
+                arrays["text_model." + name] = value
+                continue
+            }
+            let parts = key.split(separator: ".").map(String.init)
+            let layer = "text_model.encoder.layers.\(parts[2])."
+            let part = parts.dropFirst(3).dropLast().joined(separator: ".")
+            if part == "attn", let last = parts.last, last.hasPrefix("in_proj_") {
+                let suffix = last == "in_proj_weight" ? "weight" : "bias"
+                for (index, projection) in split(value, parts: 3, axis: 0).enumerated() {
+                    arrays[layer + "self_attn.\(["q_proj", "k_proj", "v_proj"][index]).\(suffix)"] = projection
+                }
+            } else if let name = names[part], let last = parts.last {
+                arrays[layer + name + "." + last] = value
+            }
+        }
+        return arrays
     }
 }

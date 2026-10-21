@@ -125,6 +125,22 @@ final class NFKMLXLoadOptionsTests: XCTestCase {
             .bfloat16Cast(of: "m", offersBFloat16: false))
     }
 
+    // A factory that reads float32 itself and offers float16 converts for float16, leaves the published
+    // precision and float32 to its own reading, and refuses bfloat16, naming what it loads at.
+    func testTheCastConvertsAnOfferedPrecisionAndRefusesAnUncheckedOne() throws {
+        func cast(_ precision: String?) throws -> DType? {
+            try NFKMLXLoadOptions(precision.map { [NFKModelLoadOptionPrecision: $0] } ?? [:])
+                .cast(of: "m", offering: [NFKModelPrecisionFloat16: .float16], reading: [NFKModelPrecisionFloat32])
+        }
+        XCTAssertNil(try cast(nil))
+        XCTAssertNil(try cast(NFKModelPrecisionCheckpoint))
+        XCTAssertNil(try cast(NFKModelPrecisionFloat32))
+        XCTAssertEqual(try cast(NFKModelPrecisionFloat16), .float16)
+        XCTAssertThrowsError(try cast(NFKModelPrecisionBFloat16)) { error in
+            XCTAssertTrue("\(error)".contains("loads as published or at float16 or at float32"), "\(error)")
+        }
+    }
+
     func testTheDraftBitsKeepAFactoryDefaultOnlyWhenAbsent() {
         XCTAssertEqual(NFKMLXLoadOptions().draftBits(orDefault: 4), 4)
         XCTAssertNil(NFKMLXLoadOptions([NFKModelLoadOptionDraftBits: 0]).draftBits(orDefault: 4))

@@ -359,8 +359,9 @@ options and the build"). The decisions behind them:
   `automatic` plans staged, so a budget-free figure (`descriptorByDerivingMemoryFigures`) is the
   largest stage.
 - **Quantization approximations.** A quantized stage's pageable and largest-layer bytes scale by the
-  stage's own ratio, and a quantized stage does not widen. A precision a stage does not list converts
-  from its checkpoint bytes by the element-size ratio, integer tensors included.
+  stage's own ratio, and a quantized stage does not widen. A precision a stage does not list reads a
+  listed precision of the same element size (`float16` reads `bfloat16`), and otherwise converts from
+  its checkpoint bytes by the element-size ratio, integer tensors included.
 - **The linear maximum is analytic.** (budget − reserve − peak at 0) / bytes per unit, where the bytes
   per unit come from the facts' per-position cache at the combination's cache precision or bits, and
   is exact where the cache stage is the stage the plan holds largest. A combination fits when it fits at

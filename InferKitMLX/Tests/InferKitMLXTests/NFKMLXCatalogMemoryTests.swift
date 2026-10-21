@@ -268,6 +268,40 @@ final class NFKMLXCatalogMemoryTests: XCTestCase {
         XCTAssertNil(try descriptor("wan2.2-ti2v-5b").option(withKey: NFKModelLoadOptionPrecision))
     }
 
+    // The releases whose float16 parity tests hold every network the conversion reaches offer float16 as a
+    // factory argument; the rest keep the published precision and float32 on the backend's property.
+    func testStableDiffusion15AndSDXLTurboOfferFloat16AndTheOtherReleasesDoNot() throws {
+        for identifier in ["stable-diffusion-v1-5", "sdxl-turbo"] {
+            let release = try descriptor(identifier)
+            let option = try XCTUnwrap(release.option(withKey: NFKModelLoadOptionPrecision), identifier)
+            XCTAssertEqual(option.choices.compactMap { $0.value as? String },
+                           [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32, NFKModelPrecisionFloat16], identifier)
+            XCTAssertEqual(option.defaultValue as? String, NFKModelPrecisionCheckpoint, identifier)
+            XCTAssertNil(option.propertyKeyPath, identifier)
+            let half = try release.estimatedMemory(forOptions: [NFKModelLoadOptionPrecision: NFKModelPrecisionFloat16])
+            XCTAssertLessThan(half.residentByteCount, try release.estimatedMemory(forOptions: nil).residentByteCount,
+                              identifier)
+        }
+        for identifier in ["stable-diffusion-xl-base-1.0", "lcm-dreamshaper-v7", "lcm-lora-sdv1-5", "hyper-sdxl-1step-lora"] {
+            let option = try XCTUnwrap(try descriptor(identifier).option(withKey: NFKModelLoadOptionPrecision), identifier)
+            XCTAssertEqual(option.choices.compactMap { $0.value as? String },
+                           [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32], identifier)
+            XCTAssertEqual(option.propertyKeyPath, "precision", identifier)
+        }
+    }
+
+    // SDXL's autoencoder decodes at float32 under a 16-bit load (`force_upcast`), so SDXL-Turbo at float16
+    // holds its UNet and text towers at 16 bits and its autoencoder at float32.
+    func testSDXLTurboAtFloat16CountsItsAutoencoderAtFloat32() throws {
+        let row = try XCTUnwrap(NFKMLXCatalogMeasurements.variant(model: "sdxl-turbo", variant: "default"))
+        let sixteen = ["unet", "text_encoder", "text_encoder_2"].reduce(Int64(0)) {
+            $0 + NFKMLXLoadPlan.bytes(row.tensorBytes[$1] ?? [:], at: .bfloat16)
+        }
+        let autoencoder = NFKMLXLoadPlan.bytes(try XCTUnwrap(row.tensorBytes["vae"]), at: .float32)
+        let half = try descriptor("sdxl-turbo").estimatedMemory(forOptions: [NFKModelLoadOptionPrecision: NFKModelPrecisionFloat16])
+        XCTAssertEqual(half.components[NFKModelMemoryComponentWeights]?.int64Value, sixteen + autoencoder)
+    }
+
     func testEachDraftSharesTheFamilyAndVocabularyAndIsSmaller() throws {
         var drafting = 0
         for descriptor in descriptors {

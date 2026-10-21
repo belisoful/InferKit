@@ -95,9 +95,10 @@ static NSString * _Nullable NFKModelConcretePrecision(NSString *precision, NSStr
 	return [precision isEqualToString:NFKModelPrecisionCheckpoint] ? checkpointPrecision : precision;
 }
 
-// The bytes a dictionary states at a precision. A precision it does not list converts from the
-// checkpoint's bytes, else from its first listed precision, by the ratio of element sizes; integer and
-// packed tensors convert with the floating ones, so the converted figure is an approximation.
+// The bytes a dictionary states at a precision. A precision it does not list takes the figure of a listed
+// precision of the same element size (float16 reads bfloat16's), else converts from the checkpoint's
+// bytes, else from its first listed precision, by the ratio of element sizes; integer and packed tensors
+// convert with the floating ones, so the converted figure is an approximation.
 static NSInteger NFKModelBytesAtPrecision(NSDictionary<NSString *, NSNumber *> *bytes, NSString *precision,
 										  NSString * _Nullable checkpointPrecision)
 {
@@ -116,10 +117,15 @@ static NSInteger NFKModelBytesAtPrecision(NSDictionary<NSString *, NSNumber *> *
 		&& bytes[NFKModelPrecisionCheckpoint] != nil) {
 		return bytes[NFKModelPrecisionCheckpoint].integerValue;
 	}
-	NSString *sourceKey = bytes[NFKModelPrecisionCheckpoint] != nil ? NFKModelPrecisionCheckpoint
-		: [bytes.allKeys sortedArrayUsingSelector:@selector(compare:)].firstObject;
-	NSInteger source = bytes[sourceKey].integerValue;
 	double wanted = NFKModelElementByteCount(concrete);
+	NSArray<NSString *> *listed = [bytes.allKeys sortedArrayUsingSelector:@selector(compare:)];
+	for (NSString *key in listed) {
+		if (wanted > 0 && NFKModelElementByteCount(key) == wanted) {
+			return bytes[key].integerValue;
+		}
+	}
+	NSString *sourceKey = bytes[NFKModelPrecisionCheckpoint] != nil ? NFKModelPrecisionCheckpoint : listed.firstObject;
+	NSInteger source = bytes[sourceKey].integerValue;
 	double stated = NFKModelElementByteCount(NFKModelConcretePrecision(sourceKey, checkpointPrecision));
 	if (wanted <= 0 || stated <= 0) {
 		return source;

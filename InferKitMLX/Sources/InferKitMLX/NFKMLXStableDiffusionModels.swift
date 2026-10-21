@@ -1168,7 +1168,14 @@ public final class NFKMLXStableDiffusionModels: NSObject {
     /// Loads a diffusers UNet checkpoint into `net`.
     public static func loadUNetWeights(into net: NFKMLXSDUNet, from url: URL,
                                        precision: NFKMLXWeightPrecision = .float32) throws {
-        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
+        try loadUNetWeights(into: net, from: url, precision: precision, castingTo: nil)
+    }
+
+    /// Loads a diffusers UNet checkpoint into `net`, its floating tensors converted to `dtype` as they are
+    /// read where `dtype` is set, else held at `precision`.
+    static func loadUNetWeights(into net: NFKMLXSDUNet, from url: URL, precision: NFKMLXWeightPrecision,
+                                castingTo dtype: DType?) throws {
+        let checkpoint = try checkpointArrays(url: url, precision: precision, castingTo: dtype)
         let linear = net.configuration.usesLinearProjection
         let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
             var name = remapUNetKey(key)
@@ -1176,12 +1183,23 @@ public final class NFKMLXStableDiffusionModels: NSObject {
                 name = name.replacingOccurrences(of: ".proj_in_conv.", with: ".proj_in_linear.")
                 name = name.replacingOccurrences(of: ".proj_out_conv.", with: ".proj_out_linear.")
             }
-            guard checkpoint.needsConvTranspose else { return (name, value) }
-            if checkpoint.needsConvTranspose, value.ndim == 4 { return (name, value.transposed(0, 2, 3, 1)) }
-            return (name, value)
+            return (name, checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }
-        try NFKMLXWeights.apply(NFKMLXWeights.converted(mapped, to: precision), to: net)
+        try NFKMLXWeights.apply(mapped, to: net)
         net.upcastsAttention = upcastsAttention(unetWeightsURL: url)
+    }
+
+    /// A diffusers checkpoint's arrays at the precision a load asks for, and whether its 4-D weights need
+    /// the transpose. A `dtype` converts every floating tensor to it as the file is read, in groups, so the
+    /// stored copy never sits whole beside the converted one; without one the arrays are held at `precision`.
+    static func checkpointArrays(url: URL, precision: NFKMLXWeightPrecision, castingTo dtype: DType?) throws
+        -> (arrays: [(String, MLXArray)], needsConvTranspose: Bool) {
+        if let dtype {
+            return try NFKMLXReleaseWeights.convertedCheckpoint(url: url, to: dtype)
+        }
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
+        return (NFKMLXWeights.converted(checkpoint.arrays.map { ($0.key, $0.value) }, to: precision),
+                checkpoint.needsConvTranspose)
     }
 
     /// Whether the release's `config.json` beside a UNet checkpoint sets `upcast_attention` (Stable
@@ -1229,14 +1247,18 @@ public final class NFKMLXStableDiffusionModels: NSObject {
     /// Loads a diffusers autoencoder checkpoint into `net`.
     public static func loadVAEWeights(into net: NFKMLXSDAutoencoder, from url: URL,
                                       precision: NFKMLXWeightPrecision = .float32) throws {
-        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
+        try loadVAEWeights(into: net, from: url, precision: precision, castingTo: nil)
+    }
+
+    /// Loads a diffusers autoencoder checkpoint into `net`, its floating tensors converted to `dtype` as they
+    /// are read where `dtype` is set, else held at `precision`.
+    static func loadVAEWeights(into net: NFKMLXSDAutoencoder, from url: URL, precision: NFKMLXWeightPrecision,
+                               castingTo dtype: DType?) throws {
+        let checkpoint = try checkpointArrays(url: url, precision: precision, castingTo: dtype)
         let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
-            let name = remapVAEKey(key)
-            guard checkpoint.needsConvTranspose else { return (name, value) }
-            if checkpoint.needsConvTranspose, value.ndim == 4 { return (name, value.transposed(0, 2, 3, 1)) }
-            return (name, value)
+            (remapVAEKey(key), checkpoint.needsConvTranspose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }
-        try NFKMLXWeights.apply(NFKMLXWeights.converted(mapped, to: precision), to: net)
+        try NFKMLXWeights.apply(mapped, to: net)
     }
 }
 
@@ -1264,8 +1286,16 @@ public final class NFKMLXSDPipeline: Module {
     /// Loads the released two-file layout: one diffusers checkpoint per network.
     public func loadWeights(unetURL: URL, vaeURL: URL,
                             precision: NFKMLXWeightPrecision = .float32) throws {
-        try NFKMLXStableDiffusionModels.loadUNetWeights(into: unet, from: unetURL, precision: precision)
-        try NFKMLXStableDiffusionModels.loadVAEWeights(into: vae, from: vaeURL, precision: precision)
+        try loadWeights(unetURL: unetURL, vaeURL: vaeURL, precision: precision, castingTo: nil)
+    }
+
+    /// Loads the released two-file layout with both networks' floating tensors converted to `dtype` as they
+    /// are read where `dtype` is set, else held at `precision`.
+    func loadWeights(unetURL: URL, vaeURL: URL, precision: NFKMLXWeightPrecision, castingTo dtype: DType?) throws {
+        try NFKMLXStableDiffusionModels.loadUNetWeights(into: unet, from: unetURL, precision: precision,
+                                                        castingTo: dtype)
+        try NFKMLXStableDiffusionModels.loadVAEWeights(into: vae, from: vaeURL, precision: precision,
+                                                       castingTo: dtype)
     }
 
     /// Loads a single checkpoint holding both networks under `unet.` and `vae.` — the layout

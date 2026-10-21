@@ -11,6 +11,7 @@
 
 import Foundation
 import InferKit
+import MLX
 
 /// Registers the model families that read load options, by the registry names the catalog entries give.
 ///
@@ -220,15 +221,20 @@ enum NFKMLXOptionRegistrations {
     /// Qwen-Image.
     private static func registerImageGenerators() {
         for model in NFKMLXCatalogImage.stableDiffusionReleases {
+            let offered: [String: DType] = NFKMLXCatalogImage.float16StableDiffusionReleases.contains(model)
+                ? [NFKModelPrecisionFloat16: .float16] : [:]
             registerDirectoryModels([NFKMLXCatalogImage.stableDiffusionName(model)],
-                                    consumes: [NFKModelLoadOptionPrecision]) { url, _, options in
-                try NFKMLXTextToImage.backend(configuration: NFKMLXStableDiffusionRelease(model).configuration,
-                                              directoryURL: url, precision: options.precision ?? .checkpoint)
+                                    consumes: [NFKModelLoadOptionPrecision]) { url, name, options in
+                let cast = try options.cast(of: name, offering: offered, reading: [NFKModelPrecisionFloat32])
+                return try NFKMLXTextToImage.backend(configuration: NFKMLXStableDiffusionRelease(model).configuration,
+                                                     directoryURL: url, precision: options.precision ?? .checkpoint,
+                                                     castingTo: cast)
             }
         }
         for adapter in NFKMLXCatalogImage.stableDiffusionAdapters {
-            registerDirectoryModels([adapter.name], consumes: [NFKModelLoadOptionPrecision]) { url, _, options in
-                try adapter.backend(directoryURL: url, precision: options.precision ?? .checkpoint)
+            registerDirectoryModels([adapter.name], consumes: [NFKModelLoadOptionPrecision]) { url, name, options in
+                _ = try options.cast(of: name, offering: [:], reading: [NFKModelPrecisionFloat32])
+                return try adapter.backend(directoryURL: url, precision: options.precision ?? .checkpoint)
             }
         }
         let residency: Set<String> = [NFKModelLoadOptionResidency]

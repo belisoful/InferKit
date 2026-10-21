@@ -1435,6 +1435,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   tables, and `norm2` kept float32. The released 1.3B transformer, cut to two blocks, is held to diffusers'
   bfloat16 run: the worst seam at 0.18 of its floor, the velocity at 2.550e-05 against the reference's
   2.433e-05.
+- Stable Diffusion 1.5 and SDXL-Turbo take `float16`, which converts their float32 releases to float16 as
+  they load. SD 1.5 holds about 2.0 GiB in place of 4.0 GiB, and SDXL-Turbo about 6.6 GiB in place of 12.9
+  GiB. "As published" stays the default. The float16 parity tests on the released weights hold every
+  network the conversion reaches: SD 1.5's UNet, autoencoder, and text tower, which is SDXL-Turbo's CLIP-L
+  tower rounded to float16 tensor for tensor, and SDXL-Turbo's UNet and two text towers. SDXL-Turbo's
+  autoencoder decodes at float32, as diffusers' SDXL pipelines decode a release that sets `force_upcast`.
+  The other Stable Diffusion releases and adapters refuse `float16`, and every Stable Diffusion factory
+  refuses `bfloat16`.
+- The SDXL releases and the adapters merged into them count their autoencoder at float32 in the memory
+  estimate as published, the precision `force_upcast` decodes it at.
+- A precision that a stage's memory facts do not list reads a listed precision of the same element size
+  before it converts from the checkpoint's bytes, so a `float16` estimate reads the `bfloat16` figure.
 
 #### The quantization ladder and the published-precision default
 

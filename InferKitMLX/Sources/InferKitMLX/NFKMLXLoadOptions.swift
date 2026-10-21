@@ -92,16 +92,25 @@ public struct NFKMLXLoadOptions: @unchecked Sendable {
     /// - Throws: `NFKMLXError.unsupportedConfiguration` naming `model` for any other precision, or for
     ///   `bfloat16` where the model has no bfloat16 parity check.
     func bfloat16Cast(of model: String, offersBFloat16: Bool = true) throws -> DType? {
-        switch precisionName {
-        case nil, NFKModelPrecisionCheckpoint?:
+        try cast(of: model, offering: offersBFloat16 ? [NFKModelPrecisionBFloat16: .bfloat16] : [:])
+    }
+
+    /// The type a factory converts a release to for a precision it offers: nil for no precision,
+    /// `checkpoint`, or a precision in `reading`, which the factory reads through ``precision``, and the
+    /// offered type for a precision `offered` names.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` naming `model` for any other precision, which the
+    ///   model has no parity check for.
+    func cast(of model: String, offering offered: [String: DType], reading: Set<String> = []) throws -> DType? {
+        guard let name = precisionName, name != NFKModelPrecisionCheckpoint, !reading.contains(name) else {
             return nil
-        case NFKModelPrecisionBFloat16? where offersBFloat16:
-            return .bfloat16
-        case let name?:
-            throw NFKMLXError.unsupportedConfiguration(
-                "\(model) loads as published\(offersBFloat16 ? " or at bfloat16" : ""); precision \(name) "
-                + "has no parity check for it")
         }
+        if let dtype = offered[name] {
+            return dtype
+        }
+        let loads = reading.union(offered.keys).sorted().map { " or at \($0)" }.joined()
+        throw NFKMLXError.unsupportedConfiguration(
+            "\(model) loads as published\(loads); precision \(name) has no parity check for it")
     }
 
     /// The bits a runtime weight quantization packs each weight into, or nil for none (absent or 0).

@@ -1612,6 +1612,27 @@ enum NFKMLXCatalogImage {
     static let stableDiffusionReleases: [NFKMLXStableDiffusionModel] = [.stableDiffusion15, .stableDiffusion21Base,
                                                                         .sdxlTurbo, .sdxlBase, .lcmDreamshaperV7]
 
+    /// The releases whose registered factories and catalog entries offer float16 beside the published
+    /// precision, every network the conversion reaches held by a float16 parity test on its released weights:
+    /// - Stable Diffusion 1.5: `testSD15UNetWithIPAdapterInFloat16MatchesTheFloat16Reference`,
+    ///   `testSD15AutoencoderInFloat16MatchesTheFloat16Reference`, and
+    ///   `testSDXLTextTowersInFloat16MatchTheFloat16Reference`, whose CLIP-L tower is SD 1.5's text encoder
+    ///   rounded to float16, tensor for tensor.
+    /// - SDXL-Turbo: `testSDXLTurboUNetInFloat16MatchesTheFloat16Reference` and the two text towers. Its
+    ///   autoencoder sets `force_upcast` and decodes at float32.
+    static let float16StableDiffusionReleases: Set<NFKMLXStableDiffusionModel> = [.stableDiffusion15, .sdxlTurbo]
+
+    /// The registry names of the releases whose autoencoder decodes at float32 under a 16-bit load: the
+    /// two-tower releases, whose `force_upcast` diffusers' SDXL pipelines read, and the adapters merged into
+    /// them.
+    static var upcastingAutoencoderNames: Set<String> {
+        let releases = stableDiffusionReleases.filter {
+            NFKMLXStableDiffusionRelease($0).configuration.secondaryTextEncoder != nil
+        }
+        return Set(releases.map(stableDiffusionName)
+                   + stableDiffusionAdapters.filter { releases.contains($0.base) }.map(\.name))
+    }
+
     /// A release's registry name: its repository's name.
     static func stableDiffusionName(_ model: NFKMLXStableDiffusionModel) -> String {
         switch model {
@@ -1785,9 +1806,17 @@ enum NFKMLXCatalogImage {
                 source = source.noting("The publisher no longer serves \(release.repository) publicly. A local copy of the release builds under this registry name.",
                                        publiclyServed: false)
             }
-            return stableDiffusionEntry(stableDiffusionName(sdModel), details.displayName, summary: details.summary,
-                                        configuration: release.configuration, license: details.license,
-                                        source: source)
+            var entry = stableDiffusionEntry(stableDiffusionName(sdModel), details.displayName, summary: details.summary,
+                                             configuration: release.configuration, license: details.license,
+                                             source: source)
+            // The float16 choice converts as the factory loads, which `NFKMLXBackend.precision` cannot name,
+            // so the option is a factory argument here.
+            if float16StableDiffusionReleases.contains(sdModel) {
+                entry.load = .imageModule(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32,
+                                                       NFKModelPrecisionFloat16],
+                                          halvesSteps: true, tasks: [NFKModelTaskTextToImage])
+            }
+            return entry
         }
     }
 

@@ -187,8 +187,19 @@ extension NFKMLXLoadPlan {
         if let plan = modelPlans[entry.identifier] {
             return plan
         }
+        if NFKMLXCatalogImage.upcastingAutoencoderNames.contains(entry.identifier) {
+            return upcastAutoencoder
+        }
         return familyPlans[entry.family] ?? .stored
     }
+
+    /// An SDXL release: the autoencoder at float32, which `force_upcast` widens it to under a 16-bit load,
+    /// and the other networks as stored or as the precision option converts them.
+    private static let upcastAutoencoder: NFKMLXLoadPlan = {
+        var plan = NFKMLXLoadPlan(precision: .stored, directories: ["vae": .float32])
+        plan.castDirectories = ["unet", "text_encoder", "text_encoder_2"]
+        return plan
+    }()
 
     /// The models whose plan differs from their family's.
     private static let modelPlans: [String: NFKMLXLoadPlan] = [

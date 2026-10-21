@@ -329,6 +329,50 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 	XCTAssertEqual(error.code, NFKModelCatalogErrorInvalidOptions);
 }
 
+// A float32 release whose stage states its bytes at float32 and at bfloat16, the bfloat16 figure above half
+// the float32 one because an integer tensor keeps its width.
+- (void)testAPrecisionTheFactsDoNotListReadsAListedOneOfTheSameElementSize
+{
+	NSDictionary *bytes = @{ NFKModelPrecisionCheckpoint: @4000000000, NFKModelPrecisionFloat32: @4000000000,
+							 NFKModelPrecisionBFloat16: @2100000000 };
+	NFKModelStageFacts *stage = [[NFKModelStageFacts alloc] initWithIdentifier:@"model" title:nil byteCountByPrecision:bytes
+													   quantizableElementCount:0 pageableByteCountByPrecision:nil
+																	layerCount:0 largestLayerByteCountByPrecision:nil
+															  widenedPrecision:nil extensions:nil];
+	NFKModelMemoryFacts *facts = [[NFKModelMemoryFacts alloc] initWithStages:@[ stage ] keyValueByteCountPerToken:nil
+													boundedKeyValueByteCount:nil maximumContextLength:nil vocabularySize:nil
+													   loadOverheadByteCount:0 basis:nil extensions:nil];
+	NFKModelVariant *variant = [[NFKModelVariant alloc] initWithIdentifier:@"v" displayName:nil isDefault:YES
+															  registryName:nil source:nil downloadByteCount:nil
+														 residentByteCount:nil peakByteCount:nil parameterCount:nil
+																 precision:NFKModelPrecisionFloat32 minimumMemoryByteCount:nil
+																   license:nil memoryFacts:facts extensions:nil];
+	NSArray<NFKModelOptionChoice *> *precisions = @[ [self choice:NFKModelPrecisionCheckpoint title:@"As published"],
+													 [self choice:NFKModelPrecisionFloat16 title:@"Float16"] ];
+	NFKModelOption *precision = [self loadOptionWithKey:NFKModelLoadOptionPrecision kind:NFKModelOptionKindChoice
+												  title:@"Precision" defaultValue:NFKModelPrecisionCheckpoint
+												choices:precisions minimum:nil maximum:nil step:nil];
+	NFKModelMemoryModel *model = [[NFKModelMemoryModel alloc] initWithPrecisionOptionKey:NFKModelLoadOptionPrecision
+															   quantizationBitsOptionKey:nil quantizationGroupSizeOptionKey:nil
+																  contextLengthOptionKey:nil cacheBitsOptionKey:nil
+																 cacheGroupSizeOptionKey:nil draftOptionKey:nil
+																	  draftBitsOptionKey:nil residencyOptionKey:nil
+																			  cacheStage:nil draftStage:nil
+																		 stagePrecisions:nil extensions:nil];
+	NFKModelDescriptor *descriptor = [[NFKModelDescriptor alloc] initWithIdentifier:@"test.image" displayName:nil
+																			 family:@"test" summary:nil
+																			 engine:NFKModelEnginePlugin registryName:nil
+																  providerClassName:nil tasks:nil inputModalities:nil
+																   outputModalities:nil inputs:nil outputs:nil
+																			options:@[ precision ] variants:@[ variant ]
+																			license:nil requirements:nil residencies:nil
+																		memoryModel:model presets:nil standIn:NO
+																  introducedVersion:nil extensions:nil];
+	NSDictionary *half = @{ NFKModelLoadOptionPrecision: NFKModelPrecisionFloat16 };
+	XCTAssertEqualObjects([self estimateOf:descriptor options:half].components[NFKModelMemoryComponentWeights], @2100000000);
+	XCTAssertEqualObjects([self estimateOf:descriptor options:@{}].components[NFKModelMemoryComponentWeights], @4000000000);
+}
+
 - (void)testAVariantWithoutFactsEstimatesItsDeclaredBytes
 {
 	NFKModelVariant *variant = [[NFKModelVariant alloc] initWithIdentifier:@"v" displayName:nil isDefault:YES

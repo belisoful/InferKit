@@ -274,9 +274,16 @@ public enum NFKMLXSDTextEncoder {
     public static func net(configuration: NFKMLXSDTextEncoderConfiguration,
                            weightsURL: URL? = nil,
                            precision: NFKMLXWeightPrecision = .float32) throws -> NFKMLXSDTextEncoderNet {
+        try net(configuration: configuration, weightsURL: weightsURL, precision: precision, castingTo: nil)
+    }
+
+    /// A tower with released weights whose floating tensors convert to `dtype` as they are read where
+    /// `dtype` is set, else hold at `precision`.
+    static func net(configuration: NFKMLXSDTextEncoderConfiguration, weightsURL: URL?,
+                    precision: NFKMLXWeightPrecision, castingTo dtype: DType?) throws -> NFKMLXSDTextEncoderNet {
         let net = NFKMLXSDTextEncoderNet(configuration: configuration)
         if let weightsURL {
-            try loadWeights(into: net, from: weightsURL, precision: precision)
+            try loadWeights(into: net, from: weightsURL, precision: precision, castingTo: dtype)
         }
         net.train(false)
         return net
@@ -286,8 +293,20 @@ public enum NFKMLXSDTextEncoder {
     /// value projections into the one the module keeps.
     public static func loadWeights(into net: NFKMLXSDTextEncoderNet, from url: URL,
                                    precision: NFKMLXWeightPrecision = .float32) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
-        try NFKMLXWeights.apply(NFKMLXWeights.converted(remap(checkpoint.arrays), to: precision), to: net)
+        try loadWeights(into: net, from: url, precision: precision, castingTo: nil)
+    }
+
+    /// Loads a released `text_encoder` checkpoint, its floating tensors converted to `dtype` as they are
+    /// read where `dtype` is set, else held at `precision`.
+    static func loadWeights(into net: NFKMLXSDTextEncoderNet, from url: URL, precision: NFKMLXWeightPrecision,
+                            castingTo dtype: DType?) throws {
+        guard let dtype else {
+            let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+            try NFKMLXWeights.apply(NFKMLXWeights.converted(remap(checkpoint.arrays), to: precision), to: net)
+            return
+        }
+        let converted = try NFKMLXReleaseWeights.convertedCheckpoint(url: url, to: dtype).arrays
+        try NFKMLXWeights.apply(remap(Dictionary(uniqueKeysWithValues: converted)), to: net)
     }
 
     /// Translates the `transformers` CLIPTextModel layout onto the module's names.

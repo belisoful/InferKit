@@ -32,6 +32,7 @@
 
 import CryptoKit
 import XCTest
+import InferKit
 import Foundation
 import MLX
 import MLXNN
@@ -971,6 +972,24 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         vae.update(parameters: vae.parameters().mapValues { $0.asType(.float16) })
         try autoencoder("sd15-vae", vae, bf16: try record("sd15_vae_f16.safetensors"),
                         f32: try record("sd15_vae_f32.safetensors"), dtype: .float16)
+    }
+
+    // Stable Diffusion 1.5 (`IK_SD15_DIR`, released float32) through its registered factory at `float16`, which
+    // converts every network as it loads: two steps at 256 pixels draw a picture, not a flat or empty plate.
+    func testSD15AtFloat16DrawsThroughItsRegisteredFactory() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_SD15_DIR"], "IK_SD15_DIR"))
+        NFKMLXReferenceModels.registerAll()
+        let backend = try NFKMLXModelRegistry.backend(named: "stable-diffusion-v1-5", weightsURL: directory,
+                                                      options: [NFKModelLoadOptionPrecision: NFKModelPrecisionFloat16])
+        let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "a red apple on a wooden table"],
+                                          parameters: [NFKParameterSteps: 2, NFKParameterWidth: 256,
+                                                       NFKParameterHeight: 256, NFKParameterSeed: 1])
+        let output = try backend.runInference(for: request).output(forKey: NFKOutputImage)
+        let image = try XCTUnwrap(output.map { $0 as! CGImage })
+        XCTAssertEqual(image.width, 256)
+        XCTAssertGreaterThan(Set([UInt8](image.dataProvider!.data! as Data)).count, 32, "the picture varies")
+        Memory.clearCache()
     }
 
     // An autoencoder at a half precision against its `sd_vae_probe` records: every decoder stage over a seeded latent and

@@ -300,6 +300,16 @@ public final class NFKMLXTextToImage: NSObject {
                     files: NFKMLXSDReleaseFiles(directoryURL: directoryURL), precision: precision)
     }
 
+    /// Builds a text-to-image backend from a downloaded release directory, every network's floating tensors
+    /// converted to `dtype` as they are read where `dtype` is set, else held at `precision`. A two-tower
+    /// release whose autoencoder sets `force_upcast` decodes at float32 from the converted weights, as
+    /// diffusers' SDXL pipelines do.
+    static func backend(configuration: NFKMLXSDTextToImageConfiguration, directoryURL: URL,
+                        precision: NFKMLXWeightPrecision, castingTo dtype: DType?) throws -> any NFKInferenceBackend {
+        try NFKMLXSDTextToImageModel(configuration: configuration, files: NFKMLXSDReleaseFiles(directoryURL: directoryURL),
+                                     precision: precision, castingTo: dtype).makeBackend()
+    }
+
     /// Builds a text-to-image backend from a downloaded release directory, choosing the release by
     /// name — the Objective-C path, where the configuration struct cannot go.
     ///
@@ -481,11 +491,13 @@ final class NFKMLXSDTextToImageModel {
         secondaryTokenizer = nil
     }
 
+    /// A released model, its floating tensors converted to `dtype` as they are read where `dtype` is set,
+    /// else held at `precision`.
     init(configuration: NFKMLXSDTextToImageConfiguration, files: NFKMLXSDReleaseFiles,
-         precision: NFKMLXWeightPrecision = .float32) throws {
+         precision: NFKMLXWeightPrecision = .float32, castingTo dtype: DType? = nil) throws {
         self.configuration = configuration
         pipeline = NFKMLXSDPipeline(unet: configuration.unet, vae: configuration.vae)
-        try pipeline.loadWeights(unetURL: files.unet, vaeURL: files.vae, precision: precision)
+        try pipeline.loadWeights(unetURL: files.unet, vaeURL: files.vae, precision: precision, castingTo: dtype)
         // diffusers' SDXL pipelines decode a float16 autoencoder in float32 where the release sets
         // `force_upcast`: its activations leave float16's range.
         let vaeType = NFKReferenceRounding.parameterType(of: pipeline.vae)
@@ -495,7 +507,7 @@ final class NFKMLXSDTextToImageModel {
         }
         pipeline.train(false)
         textEncoder = try NFKMLXSDTextEncoder.net(configuration: configuration.textEncoder,
-                                                  weightsURL: files.textEncoder, precision: precision)
+                                                  weightsURL: files.textEncoder, precision: precision, castingTo: dtype)
         tokenizer = try NFKMLXSDPromptTokenizer(directoryURL: files.tokenizer)
 
         guard let secondary = configuration.secondaryTextEncoder else {
@@ -507,8 +519,8 @@ final class NFKMLXSDTextToImageModel {
             throw NFKMLXError.weightsMismatch("this release cross-attends to two text towers, and the "
                                               + "second one's files are missing")
         }
-        secondaryTextEncoder = try NFKMLXSDTextEncoder.net(configuration: secondary,
-                                                            weightsURL: weightsURL, precision: precision)
+        secondaryTextEncoder = try NFKMLXSDTextEncoder.net(configuration: secondary, weightsURL: weightsURL,
+                                                            precision: precision, castingTo: dtype)
         secondaryTokenizer = try NFKMLXSDPromptTokenizer(directoryURL: vocabularyURL)
     }
 
