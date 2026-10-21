@@ -31,6 +31,10 @@ extern NSString * const NFKPluginManifestRelativePath;
 /*! The model descriptor with the identifier, or nil. */
 - (nullable NFKModelDescriptor *)modelWithIdentifier:(NSString *)identifier;
 
+/*! values with each plugin option the manifest declares a default for and values does not set filled in
+	with that default: what a plugin's context carries. */
+- (NSDictionary<NSString *, id> *)optionValuesWithDefaults:(NSDictionary<NSString *, id> *)values;
+
 #if TARGET_OS_OSX
 /*! Whether this process runs the plugin: the InferKit API version, the plugin protocol's major version,
 	the plugin ABI's major version for a "c-abi" plugin, the macOS version, and the architecture. Returns

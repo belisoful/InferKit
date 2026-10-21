@@ -23,14 +23,28 @@ NS_ASSUME_NONNULL_BEGIN
 API_UNAVAILABLE(ios, tvos, watchos)
 @interface NFKPluginService : NSObject
 
-/*! A service for plugin, which manifest describes. */
+/*! A service for plugin, which manifest describes. The plugin receives no context: the app's option values
+	reach a plugin made with initWithManifest:pluginFactory:. */
 - (instancetype)initWithPlugin:(id<NFKPlugin>)plugin manifest:(NFKPluginManifest *)manifest NS_DESIGNATED_INITIALIZER;
+
+/*!
+	@method     initWithManifest:pluginFactory:
+	@abstract   A service that makes its plugin when the app's hello arrives.
+	@discussion factory receives the context an "objc" plugin's initializer receives: the plugin options
+				the app set, with the manifest's defaults for the rest, a temporary directory the service
+				removes when it stops serving, the host's API version, and a log that reaches the app. An
+				executable plugin makes its plugin this way to read its options. A factory that returns nil
+				fails the hello with its error. Introduced in InferKit 0.4.0.
+*/
+- (instancetype)initWithManifest:(NFKPluginManifest *)manifest
+				   pluginFactory:(id<NFKPlugin> _Nullable (^)(id<NFKPluginContext> context, NSError **error))factory
+	NS_SWIFT_NAME(init(manifest:pluginFactory:));
 
 - (instancetype)init NS_UNAVAILABLE;
 + (instancetype)new NS_UNAVAILABLE;
 
-/*! The plugin served. */
-@property (nonatomic, readonly, strong) id<NFKPlugin> plugin;
+/*! The plugin served; nil until the hello makes it for a service made with a factory. */
+@property (nonatomic, readonly, strong, nullable) id<NFKPlugin> plugin;
 
 /*! The plugin's manifest. */
 @property (nonatomic, readonly, copy) NFKPluginManifest *manifest;

@@ -123,7 +123,9 @@ static id _Nullable NFKPluginServiceJSONSafe(id _Nullable value)
 #pragma mark - Service
 
 @interface NFKPluginService ()
-@property (nonatomic, readwrite, strong) id<NFKPlugin> plugin;
+@property (nonatomic, readwrite, strong, nullable) id<NFKPlugin> plugin;
+/*! The context a factory's plugin received, whose temporary directory goes when serving ends. */
+@property (atomic, strong, nullable) NFKPluginHostContext *factoryContext;
 @property (nonatomic, readwrite, copy) NFKPluginManifest *manifest;
 @property (nonatomic, copy, nullable) NFKPluginServiceLoader loader;
 @property (atomic, strong, nullable) NFKPluginChannel *channel;
@@ -148,6 +150,28 @@ static id _Nullable NFKPluginServiceJSONSafe(id _Nullable value)
 		[self setUpWithManifest:manifest];
 		_plugin = plugin;
 	}
+	return self;
+}
+
+- (instancetype)initWithManifest:(NFKPluginManifest *)manifest
+				   pluginFactory:(id<NFKPlugin> _Nullable (^)(id<NFKPluginContext> context, NSError **error))factory
+{
+	__block __weak NFKPluginService *weakService = nil;
+	NFKPluginManifest *described = [manifest copy];
+	self = [self initWithManifest:described loader:^id<NFKPlugin>(NSDictionary<NSString *, id> *options, NFKPluginLogHandler logHandler,
+																 NSError **error) {
+		NFKPluginHostContext *context = [[NFKPluginHostContext alloc] initWithPluginIdentifier:described.identifier
+																					   options:[described optionValuesWithDefaults:options]
+																			 runsInHostProcess:NO logHandler:logHandler];
+		id<NFKPlugin> plugin = factory(context, error);
+		if (plugin == nil) {
+			[context removeTemporaryDirectory];
+			return nil;
+		}
+		weakService.factoryContext = context;
+		return plugin;
+	}];
+	weakService = self;
 	return self;
 }
 
@@ -213,6 +237,7 @@ static id _Nullable NFKPluginServiceJSONSafe(id _Nullable value)
 	channel.closeHandler = nil;
 	self.channel = nil;
 	self.serving = NO;
+	[self.factoryContext removeTemporaryDirectory];
 	if (closeError != nil) {
 		if (error != NULL) {
 			*error = closeError;

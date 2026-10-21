@@ -762,6 +762,34 @@ static NSInteger NFKServiceTestThreadCount(void)
 	XCTAssertEqualObjects([self messagesOfType:@"log"].firstObject, (@{ @"type": @"log", @"level": @2, @"message": @"loaded" }));
 }
 
+// A factory's plugin reads the app's option values in its context, with the manifest's defaults for the
+// options the app left unset, as an "objc" plugin's initializer does.
+- (void)testAFactoryMakesThePluginWithTheOptionsAndTheirDefaults
+{
+	NSMutableDictionary *object = [@{ @"schemaVersion": @1, @"kind": @"inferkit.plugin", @"id": @"com.example.service-test",
+									  @"version": @"1.0.0", @"compatibility": @{ @"inferkitAPI": @"1.0" },
+									  @"entry": @{ @"kind": @"executable", @"executable": @"Program" },
+									  @"options": @[ @{ @"key": @"greeting", @"kind": @"text", @"default": @"Hello" },
+													 @{ @"key": @"rounds", @"kind": @"integer", @"default": @3 } ],
+									  @"models": @[ @{ @"id": @"echo", @"family": @"echo" } ] } mutableCopy];
+	NSError *error = nil;
+	NFKPluginManifest *manifest = [NFKPluginManifest manifestWithJSONData:[NSJSONSerialization dataWithJSONObject:object options:0 error:NULL]
+																	error:&error];
+	XCTAssertNotNil(manifest, @"%@", error);
+	__block id<NFKPluginContext> received = nil;
+	NFKPluginService *service = [[NFKPluginService alloc] initWithManifest:manifest
+															 pluginFactory:^id<NFKPlugin>(id<NFKPluginContext> context, NSError **factoryError) {
+		received = context;
+		return [[NFKServiceTestPlugin alloc] initWithContext:context];
+	}];
+	XCTAssertNil(service.plugin, @"nothing is made before hello");
+	[self startService:service];
+	XCTAssertNotNil([self request:[self hello]][@"result"]);
+	XCTAssertEqualObjects(received.options, (@{ @"greeting": @"Hi", @"rounds": @3 }), @"the app's value, then the default");
+	XCTAssertNotNil(received.temporaryDirectoryURL);
+	XCTAssertNotNil(service.plugin);
+}
+
 - (void)testAServiceThatLoadsOnHelloAnswersTheLoadError
 {
 	NFKPluginService *service = [[NFKPluginService alloc] initWithManifest:[self manifest] loader:^id<NFKPlugin>(NSDictionary *options,

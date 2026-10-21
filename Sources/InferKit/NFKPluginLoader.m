@@ -284,7 +284,8 @@ BOOL NFKPluginCheckBundleOwnership(NSURL *bundleURL, NSError **error)
 			}
 			return nil;
 		}
-		NFKPluginHostContext *context = [[NFKPluginHostContext alloc] initWithPluginIdentifier:manifest.identifier options:options ?: @{}
+		NFKPluginHostContext *context = [[NFKPluginHostContext alloc] initWithPluginIdentifier:manifest.identifier
+																					   options:[manifest optionValuesWithDefaults:options ?: @{}]
 																			  runsInHostProcess:runsInHostProcess logHandler:logHandler];
 		NSError *loadError = nil;
 		BOOL codeLoaded = NO;

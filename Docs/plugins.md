@@ -262,6 +262,11 @@ descriptor 3 (`INFERKIT_PLUGIN_CHANNEL_FD=3`) and speaks the plugin protocol ove
 The sample in `Tests/PluginFixtures/executable/sample_executable.m` is a complete program that uses
 Foundation alone. An executable plugin always runs in its own process.
 
+A program that links InferKit serves its plugin with `NFKPluginService` instead of speaking the protocol
+itself. `-initWithManifest:pluginFactory:` makes the plugin when the app's hello arrives, with the context
+an `objc` plugin receives, its option values included, and `-runWithChannelDescriptor:` serves it on
+descriptor 3.
+
 ## Signing
 
 Sign the bundle after its manifest and `Info.plist` are in place:
@@ -361,11 +366,13 @@ NSDictionary *values = [registry optionValuesForPluginIdentifier:@"com.example.u
 ```
 
 - The values resolve against the manifest's options as model options do: a string converts to the
-  option's kind, and a choice's text to its value. A value that does not resolve fails with
+  option's kind, and a choice takes its value, written as text or as the value itself, not its title. A value that does not resolve fails with
   `NFKModelCatalogErrorInvalidOptions` in `NFKModelCatalogErrorDomain`, its problems under
   `NFKModelOptionProblemsKey` with the model options' codes, and changes nothing.
 - The plugin reads the values from `-[NFKPluginContext options]`, and a C plugin from its host table's
-  `options_json`. A plugin's process receives them at its next start, and a running process restarts to
+  `options_json`, with the manifest's `default` for each option the app left unset. An executable plugin
+  reads them from the context its `NFKPluginService` hands the factory of
+  `initWithManifest:pluginFactory:`. A plugin's process receives them at its next start, and a running process restarts to
   receive them.
 - A plugin already loaded into the app's process keeps the values it was loaded with until the app quits.
 - The registry keeps the values in memory, through a reload or a removal. The app persists them and sets

@@ -45,6 +45,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKModelTaskAudioGeneration` (`audio-generation`) names making sound effects and other audio from a
   description, beside `NFKModelTaskMusicGeneration`. Stable Audio Open lists both.
 
+#### Plugin options reach every plugin, defaults included
+
+- A plugin's context carries the manifest's `default` for each plugin option the app left unset. Before,
+  it carried only the values the app set.
+- `-[NFKPluginService initWithManifest:pluginFactory:]` makes an executable plugin's plugin when the app's
+  hello arrives, with the context an `objc` plugin receives, so an executable plugin reads its options.
+  `NFKPluginService.plugin` is nil until then.
+
 #### The plugin host keeps InferKit's whole public interface
 
 - A release-built `inferkit-plugin-host` keeps every public constant and function, so an Objective-C

@@ -583,6 +583,17 @@ static NSString * _Nullable NFKPluginManifestResolvedPath(NSURL *url)
 	return [NSURL fileURLWithPath:resolved isDirectory:NO];
 }
 
+- (NSDictionary<NSString *, id> *)optionValuesWithDefaults:(NSDictionary<NSString *, id> *)values
+{
+	NSMutableDictionary<NSString *, id> *filled = [values mutableCopy];
+	for (NFKModelOption *option in self.options) {
+		if (filled[option.key] == nil && option.defaultValue != nil) {
+			filled[option.key] = option.defaultValue;
+		}
+	}
+	return [filled copy];
+}
+
 - (nullable NFKModelDescriptor *)modelWithIdentifier:(NSString *)identifier
 {
 	for (NFKModelDescriptor *model in self.models) {

@@ -118,7 +118,8 @@ API_UNAVAILABLE(ios, tvos, watchos)
 /*! The API version of the InferKit library the host runs, as "major.minor". */
 @property (nonatomic, readonly, copy) NSString *hostAPIVersion;
 
-/*! The values the app chose for the options the plugin declares, keyed by option key. */
+/*! The values the app chose for the options the plugin declares, keyed by option key, with the manifest's
+	default for each option the app left unset. */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *options;
 
 /*! YES when the plugin runs in the app's own process, NO when it runs in a plugin host process. */
