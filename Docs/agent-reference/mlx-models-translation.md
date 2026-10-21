@@ -148,7 +148,12 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   1.0395428 against 1.0395255.
   At its released float32 the 7B fits this machine on neither side. The reference reads each block as
   its forward reaches it (`run_reference.py madlad_layerwise`) and the port streams the blocks
-  `.automatic` cannot hold (`mlx-companion.md`, "Residency"). Float32 against float32: tokenizations id-exact, encoder cosine 1.0000001, logit cosine 1.0 with argmax 17/17, greedy and 4-beam outputs token-exact ("Der schnelle braune Fuchs springt über den faulen Hund."), loss 0.1659758 against 0.16605085. On this 32 GB machine the port streamed the 47 encoder blocks past block 0 and 10 of the 48 decoder blocks: 63.4 GB of encoder reads at 1.76 GB/s and 181.5 GB of decoder reads at 2.32 GB/s over the test, 332 s with an 18.0 GB peak footprint.
+  `.automatic` cannot hold (`mlx-companion.md`, "Residency"). Float32 against float32: tokenizations
+  id-exact, encoder cosine 1.0000001, logit cosine 1.0 with argmax 17/17, greedy and 4-beam outputs
+  token-exact ("Der schnelle braune Fuchs springt über den faulen Hund."), loss 0.1659758 against
+  0.16605085. On this 32 GB machine the port streamed the 47 encoder blocks past block 0 and 10 of the
+  48 decoder blocks: 63.4 GB of encoder reads at 1.76 GB/s and 181.5 GB of decoder reads at 2.32 GB/s
+  over the test, 332 s with an 18.0 GB peak footprint.
 
 - `NFKMLXTranslateGemma` (`@objc`) / `NFKMLXTranslateGemmaTranslator` — TranslateGemma
   (`Gemma3ForConditionalGeneration`, Google, Gemma terms; 4B, 12B, 27B, gated): Gemma 3 fine-tuned for
@@ -233,7 +238,8 @@ byte for byte against `translate`. Further runners: `nllb` (NllbTokenizer with `
 precision: the T5 is built on the meta device, the embedding, the untied head, and both final norms are
 filled, and each encoder and decoder block is read from the release (`F_NOCACHE`) as its forward reaches
 it and freed after; `MADLAD_HELD_DECODER_BLOCKS` keeps that many leading decoder blocks resident, which
-changes the reads and nothing recorded. On the 3B at float32 its record equals `run_madlad`'s bit for bit (17 keys); the 7B float32 record took 177 s with 32 decoder blocks held. Then
+changes the reads and nothing recorded. On the 3B at float32 its record equals `run_madlad`'s bit for
+bit (17 keys); the 7B float32 record took 177 s with 32 decoder blocks held. Then
 `translategemma_layerwise`, which records what `run_translategemma` records for a release too large to
 hold whole: the model is built on the meta device and each decoder layer's tensors are read from the
 release (`F_NOCACHE`, in reads under 1 GiB, since macOS refuses longer ones) as the forward reaches the

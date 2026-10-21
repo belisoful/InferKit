@@ -598,7 +598,11 @@ Streaming:
   conversion its held blocks take. A failed read stops every block of every later pass
   (`streamFailed`): a skipped decoder block leaves no cache entry, and the next pass would attend over
   keys of the wrong length. `NFKMLXTranslationBackend.streamedLayerCount` and `streamedBytesPerPass`
-  report any translator's streams through `NFKMLXTranslator.layerStreams`. Measured on the 7B at float32 on this M1 Max: 38 of 48 decoder blocks and encoder block 0 held, the rest streamed; the parity test read 63.4 GB of encoder blocks at 1.76 GB/s and 181.5 GB of decoder blocks at 2.32 GB/s in 332 s, and its footprint peaked at 18.0 GB, above the planner's budget of 0.85 of Metal's recommended working set. On the 3B with half its decoder streamed, the decoder read 45.6 GB at 1.92 GB/s.
+  report any translator's streams through `NFKMLXTranslator.layerStreams`. Measured on the 7B at float32
+  on this M1 Max: 38 of 48 decoder blocks and encoder block 0 held, the rest streamed; the parity test
+  read 63.4 GB of encoder blocks at 1.76 GB/s and 181.5 GB of decoder blocks at 2.32 GB/s in 332 s, and
+  its footprint peaked at 18.0 GB, above the planner's budget of 0.85 of Metal's recommended working
+  set. On the 3B with half its decoder streamed, the decoder read 45.6 GB at 1.92 GB/s.
 - A draft cuts the passes (`NFKMLXGemma3Model.useDraft(_:)`, `speculate`): a smaller release of the
   same vocabulary, held, proposes `draftTokens` tokens a round and one pass of the streamed decoder scores
   them, through the language family's `verifyGreedily` / `verifyBySampling`. The target's rollback of
