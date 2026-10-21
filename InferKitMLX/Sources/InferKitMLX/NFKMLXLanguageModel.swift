@@ -24,7 +24,7 @@ import MLXRandom
 /// Where a half-precision decoder forward rounds, by the implementation its release is published for.
 /// Introduced in InferKit 0.4.0.
 public enum NFKMLXHalfPrecisionPlacement: Sendable, Equatable {
-    /// As torch rounds: ``NFKReferenceRounding``'s rotary, attention, and SiLU, the placement a
+    /// As torch rounds: `NFKReferenceRounding`'s rotary, attention, and SiLU, the placement a
     /// transformers release is measured at.
     case torch
     /// As mlx_lm runs: MLX's fused rotary and attention, and `silu(gate) · up` compiled as mlx_lm's
