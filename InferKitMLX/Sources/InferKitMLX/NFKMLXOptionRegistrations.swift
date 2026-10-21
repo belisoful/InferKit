@@ -166,6 +166,11 @@ enum NFKMLXOptionRegistrations {
                                                                          NFKModelLoadOptionPrecision])) { url, _, options in
             try NFKMLXQwen3VL.model(directoryURL: url, loadOptions: options).inferenceBackend()
         }
+        registerDirectoryModels(registryNames(families: ["pixtral"]),
+                                consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision]) { url, _, options in
+            try NFKMLXPixtral.backend(directoryURL: url, precision: options.precision ?? .float32,
+                                      residency: options.residency)
+        }
     }
 
     /// TranslateGemma and MADLAD-400.

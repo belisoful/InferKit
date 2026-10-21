@@ -2109,6 +2109,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   7B at its released float32 streams on a 32 GB machine and matches a float32 reference that reads one
   block at a time. `NFKMLXTranslationBackend` reports `streamedLayerCount` and `streamedBytesPerPass`
   for any translator through `NFKMLXTranslator.layerStreams`.
+- The dense decoders `NFKMLXLanguage` loads (Qwen3, Mistral Small 24B) and the Qwen3-VL and Pixtral
+  decoders stream the same way, so Qwen3 14B and 32B, Mistral Small, Qwen3-VL 8B and 32B, and Pixtral
+  12B run on a machine that cannot hold them. `NFKMLXLanguage.backend(directoryURL:precision:residency:)`,
+  `NFKMLXQwen3VL.model(directoryURL:precision:residency:)`, `NFKMLXPixtral.model(directoryURL:precision:residency:)`
+  and `decoder(directoryURL:precision:residency:)`, and their backends take the choice, reached from
+  Objective-C through `backendWithDirectoryURL:precision:residency:error:` and
+  `modelWithDirectoryURL:precision:residency:error:`. `NFKMLXLanguageBackend` reports `streamedLayerCount`
+  and `streamedBytesPerPass`, and `NFKMLXQwen3VL` and `NFKMLXPixtral` report `streamedLayerCount`. A
+  failed read fails the request and empties the cache it wrote; a streamed decoder refuses to fine-tune
+  or to quantize at load. A drafted language backend loads its draft first and plans the model against
+  what the draft leaves.
 - A smaller Gemma 3 release of the same vocabulary drafts for a larger one
   (`NFKMLXGemma3Model.useDraft(_:)`, the `draftDirectoryURL:` factories on `NFKMLXGemma3` and
   `NFKMLXTranslateGemma`): it proposes `NFKMLXGenerationParameterKey.draftTokens` tokens a round and one

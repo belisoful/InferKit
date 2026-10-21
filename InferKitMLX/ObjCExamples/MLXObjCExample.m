@@ -720,6 +720,24 @@
 	[store clearCache];
 	XCTAssertNotEqual(NFKMLXResidencyPaged, NFKMLXResidencyStaged);
 
+	// A dense release larger than the working set streams the decoder layers it cannot hold, reading
+	// each from the release in its turn on every pass. NFKMLXResidencyAutomatic streams only where the
+	// release does not fit whole; the release's own precision halves what a pass reads from a 16-bit one:
+	//   id<NFKInferenceBackend> llm = [NFKMLXLanguage backendWithDirectoryURL:dir
+	//                                                               precision:NFKMLXWeightPrecisionCheckpoint
+	//                                                               residency:NFKMLXResidencyStreamed error:&error];
+	//   NSInteger layers = ((NFKMLXLanguageBackend *)llm).streamedLayerCount;
+	// Qwen3-VL and Pixtral take the same choice for their decoders.
+	XCTAssertTrue([NFKMLXLanguage respondsToSelector:@selector(backendWithDirectoryURL:precision:residency:error:)]);
+	XCTAssertTrue([NFKMLXLanguageBackend instancesRespondToSelector:@selector(streamedLayerCount)]);
+	XCTAssertTrue([NFKMLXLanguageBackend instancesRespondToSelector:@selector(streamedBytesPerPass)]);
+	XCTAssertTrue([NFKMLXQwen3VL respondsToSelector:@selector(backendWithDirectoryURL:precision:residency:error:)]);
+	XCTAssertTrue([NFKMLXQwen3VL respondsToSelector:@selector(modelWithDirectoryURL:precision:residency:error:)]);
+	XCTAssertTrue([NFKMLXQwen3VL instancesRespondToSelector:@selector(streamedLayerCount)]);
+	XCTAssertTrue([NFKMLXPixtral respondsToSelector:@selector(backendWithDirectoryURL:precision:residency:error:)]);
+	XCTAssertTrue([NFKMLXPixtral respondsToSelector:@selector(modelWithDirectoryURL:precision:residency:error:)]);
+	XCTAssertTrue([NFKMLXPixtral instancesRespondToSelector:@selector(streamedLayerCount)]);
+
 	// A GGUF release — the dominant quantized-model format — builds from one file through the native
 	// reader, which turns its metadata into a configuration, remaps and dequantizes its tensors, and
 	// rebuilds its embedded tokenizer:

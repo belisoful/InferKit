@@ -599,47 +599,23 @@ public final class NFKMLXGemma3: NSObject {
     /// such as a draft, takes from the check; `budget` already leaves it out.
     static func streamedLayers(directory: URL, precision: NFKMLXWeightPrecision, includesVision: Bool,
                                residency: NFKMLXResidency, budget: Int, reserving reserved: Int = 0) throws -> Set<Int> {
-        let fitsWhole = {
+        try NFKMLXLayerStream.plannedLayers(residency: residency, budget: budget, footprint: {
+            try decoderFootprint(directory: directory, precision: precision, includesVision: includesVision)
+        }, fitsWhole: {
             try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: precision, reserve: reserved)
-        }
-        switch residency {
-        case .automatic where (try? fitsWhole()) != nil, .resident, .staged, .paged:
-            try fitsWhole()
-            return []
-        case .automatic, .streamed:
-            let footprint = try decoderFootprint(directory: directory, precision: precision, includesVision: includesVision)
-            let plan = try NFKMLXResidencyBudget.plan([footprint], residency: residency, budget: budget)
-            guard plan.streams(0) else {
-                try fitsWhole()
-                return []
-            }
-            return Set(plan.heldLayers(0, of: footprint).upperBound ..< footprint.layerBytes.count)
-        }
+        })
     }
 
     /// The decoder, and the vision tower and projector where they load beside it, as one stage whose
     /// repeated layers are counted apart, at the bytes `precision` holds them in.
     static func decoderFootprint(directory: URL, precision: NFKMLXWeightPrecision,
                                  includesVision: Bool) throws -> NFKMLXStageFootprint {
-        var layers = [Int: Int]()
-        var fixed = 0
-        for url in try NFKMLXReleaseWeights.files(inDirectory: directory) {
-            for (key, entry) in try NFKMLXSafetensors.entries(inFile: url) {
-                let widens = precision == .float32 && (entry.dtype == "BF16" || entry.dtype == "F16")
-                let bytes = entry.byteCount * (widens ? 2 : 1)
-                if let name = NFKMLXGemma3Language.decoderName(of: key) {
-                    if let layer = NFKMLXLayerStream.layer(ofDecoderName: name)?.layer {
-                        layers[layer, default: 0] += bytes
-                    } else {
-                        fixed += bytes
-                    }
-                } else if includesVision, visionName(of: key) != nil || projectorName(of: key) != nil {
-                    fixed += bytes
-                }
-            }
-        }
-        let layerBytes = (0 ..< (layers.keys.max().map { $0 + 1 } ?? 0)).map { layers[$0] ?? 0 }
-        return NFKMLXStageFootprint(bytes: fixed + layerBytes.reduce(0, +), layerBytes: layerBytes)
+        try NFKMLXLayerStream.footprint(directory: directory, precision: precision, includes: { key in
+            NFKMLXGemma3Language.decoderName(of: key) != nil
+                || (includesVision && (visionName(of: key) != nil || projectorName(of: key) != nil))
+        }, layerOf: { key in
+            NFKMLXGemma3Language.decoderName(of: key).flatMap { NFKMLXLayerStream.layer(ofDecoderName: $0)?.layer }
+        })
     }
 
     /// The vision tower's module key for a checkpoint key, or nil for a tensor that is not the tower's.

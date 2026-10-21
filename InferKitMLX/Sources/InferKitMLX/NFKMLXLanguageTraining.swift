@@ -143,8 +143,9 @@ public extension NFKMLXLanguage {
     ///   - observer: receives each step and can end the run early.
     ///
     /// Only the attention query and value projections adapt; the embeddings, the feed-forwards, and the
-    /// norms stay frozen. A mixture-of-experts decoder trains its attention the same way, and a paged
-    /// one is refused because its experts are read from disk. Call `NFKMLXLoRA.merge(into:)` before
+    /// norms stay frozen. A mixture-of-experts decoder trains its attention the same way. A paged one is
+    /// refused because its experts are read from disk, and a streamed one because its streamed layers
+    /// are. Call `NFKMLXLoRA.merge(into:)` before
     /// saving, so the result is one checkpoint ``network(weightsURL:configuration:)`` reads back; or
     /// wrap the adapted decoder with ``backend(network:directoryURL:options:)``. A run is minutes; call
     /// it off the render thread. Introduced in InferKit 0.4.0.
@@ -168,6 +169,7 @@ public extension NFKMLXLanguage {
         guard net.expertStore == nil else {
             throw NFKMLXError.trainingDataMismatch("a paged mixture of experts reads its experts from disk and cannot train; load it resident")
         }
+        try net.requireHeldLayers(for: "train")
         return try NFKMLXFineTune.run(
             net,
             freezing: {

@@ -126,7 +126,8 @@ public final class NFKMLXSa2VAQwenNet: Module {
             // The dense decoder loads whole under any plan; `.resident` would only refuse a float32 4B
             // release, which exceeds a 32 GB machine's recommended working set.
             try NFKMLXQwen3VL.loadDecoderWeights(into: decoder, fromDirectory: directoryURL, precision: .float32,
-                                                 residency: .automatic, outerPrefix: "model.", dtype: dtype)
+                                                 residency: .automatic, outerPrefix: "model.", dtype: dtype,
+                                                 streams: false)
         }
         let groundsWithSAM3 = try saved.map { $0.arrays.keys.contains { $0.hasPrefix("grounding_encoder.neck.") } }
             ?? (NFKMLXReleaseWeights.arrays(inDirectory: directoryURL) { key in

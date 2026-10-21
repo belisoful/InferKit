@@ -311,4 +311,70 @@ extension NFKMLXLayerStream {
         guard let dot = rest.firstIndex(of: "."), let index = Int(rest[..<dot]) else { return nil }
         return (index, String(rest[rest.index(after: dot)...]))
     }
+
+    /// One stage's footprint read from a release's shard headers, at the bytes `precision` holds each
+    /// tensor in: a tensor `layerOf` places in a repeated layer counts toward that layer, and every other
+    /// tensor `includes` keeps counts once.
+    static func footprint(directory: URL, precision: NFKMLXWeightPrecision, includes: (String) -> Bool,
+                          layerOf: (String) -> Int?) throws -> NFKMLXStageFootprint {
+        var layers = [Int: Int]()
+        var fixed = 0
+        for url in try NFKMLXReleaseWeights.files(inDirectory: directory) {
+            for (key, entry) in try NFKMLXSafetensors.entries(inFile: url) where includes(key) {
+                let bytes = NFKMLXExpertInventory.residentBytes(entry, precision: precision)
+                if let layer = layerOf(key) {
+                    layers[layer, default: 0] += bytes
+                } else {
+                    fixed += bytes
+                }
+            }
+        }
+        let layerBytes = (0 ..< (layers.keys.max().map { $0 + 1 } ?? 0)).map { layers[$0] ?? 0 }
+        return NFKMLXStageFootprint(bytes: fixed + layerBytes.reduce(0, +), layerBytes: layerBytes)
+    }
+
+    /// The layers of a one-stage model a load leaves in the release under `residency`; empty where it
+    /// holds them all.
+    ///
+    /// @discussion `.automatic` holds the stage whole where `fitsWhole`, the check every resident load
+    /// makes, passes, so a release that loaded before loads the same way, and plans a stream only where
+    /// that check fails. `.streamed` always plans. Every other residency holds the stage whole, and the
+    /// check refuses a release that does not fit. The plan holds the first layers that fit `budget`
+    /// beside everything else and streams the rest.
+    static func plannedLayers(residency: NFKMLXResidency, budget: Int, footprint: () throws -> NFKMLXStageFootprint,
+                              fitsWhole: () throws -> Void) throws -> Set<Int> {
+        switch residency {
+        case .automatic where (try? fitsWhole()) != nil, .resident, .staged, .paged:
+            try fitsWhole()
+            return []
+        case .automatic, .streamed:
+            let stage = try footprint()
+            let plan = try NFKMLXResidencyBudget.plan([stage], residency: residency, budget: budget)
+            guard plan.streams(0) else {
+                try fitsWhole()
+                return []
+            }
+            return Set(plan.heldLayers(0, of: stage).upperBound ..< stage.layerBytes.count)
+        }
+    }
+
+    /// Leaves the `streamed` layers of `layers` in the release at `directory`, read in their turn on
+    /// every pass, and returns the stream with the empty placeholders those layers hold between turns,
+    /// each named `prefix` + its index + its name inside the layer, for a strict apply of the held
+    /// weights to include. Call it before anything evaluates the layers, so the random weights the
+    /// streamed ones were built with are never materialized.
+    static func vacating(_ streamed: Set<Int>, of layers: [Module], prefix: String, directory: URL,
+                         precision: NFKMLXWeightPrecision, converting conversion: DType? = nil,
+                         layerOf: (String) -> (layer: Int, name: String)?) throws
+        -> (stream: NFKMLXLayerStream, placeholders: [(String, MLXArray)])? {
+        guard !streamed.isEmpty else { return nil }
+        let stream = try streaming(directory: directory, layers: streamed, precision: precision,
+                                   converting: conversion, layerOf: layerOf)
+        var placeholders = [(String, MLXArray)]()
+        for index in streamed.sorted() {
+            stream.vacate(index, module: layers[index])
+            placeholders += layers[index].parameters().flattened().map { ("\(prefix)\(index).\($0)", $1) }
+        }
+        return (stream, placeholders)
+    }
 }

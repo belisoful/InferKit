@@ -1419,6 +1419,10 @@ public final class NFKMLXLanguageNet: Module {
     /// where every expert is resident. Introduced in InferKit 0.4.0.
     public internal(set) var expertStore: NFKMLXExpertStore?
 
+    /// The layers a streamed load leaves in the release, read in their turn on every pass; nil where
+    /// every layer is held. Introduced in InferKit 0.4.0.
+    public internal(set) var layerStream: NFKMLXLayerStream?
+
     init(_ c: NFKMLXLanguageConfiguration) {
         configuration = c
         _model.wrappedValue = NFKLMCore(c)
@@ -1459,7 +1463,9 @@ public final class NFKMLXLanguageNet: Module {
             ? NFKMLXLanguageNet.causalMask(length, offset: cache?.maskCacheLength ?? 0)
             : nil
         for (index, layer) in model.layers.enumerated() {
-            hidden = layer(hidden, mask: mask, cache: cache, layer: index, rope: multimodal?.rope, maskIsCausal: true)
+            hidden = run(layer, index) {
+                layer(hidden, mask: mask, cache: cache, layer: index, rope: multimodal?.rope, maskIsCausal: true)
+            } keeping: { cache?.arrays(layer: index) ?? [] } ?? hidden
             // The deepstack adds a vision feature map to the image-token positions of the first several
             // layers, the reference's `_deepstack_process`, in the hidden state's type.
             if let multimodal, index < multimodal.features.count {
@@ -1490,11 +1496,47 @@ public final class NFKMLXLanguageNet: Module {
                                     MLXArray(Float(-1e9)))
         }
         for (index, layer) in model.layers.enumerated() {
-            hidden = layer(hidden, mask: mask, cache: nil, layer: index, maskIsCausal: keyPadding == nil)
+            hidden = run(layer, index) {
+                layer(hidden, mask: mask, cache: nil, layer: index, maskIsCausal: keyPadding == nil)
+            } keeping: { [] } ?? hidden
             states.append(hidden)
         }
         states[states.count - 1] = model.norm(hidden)
         return states
+    }
+
+    /// Layer `index`'s output from `forward`, its weights read in first and let go after where the layer
+    /// streams; nil where its read failed and the pass skips it. `state` is what the layer wrote beside
+    /// its output, such as its cache rows, evaluated with the output before the weights go.
+    private func run(_ layer: NFKLMBlock, _ index: Int, _ forward: () -> MLXArray,
+                     keeping state: () -> [MLXArray]) -> MLXArray? {
+        guard let layerStream, layerStream.streams(index) else {
+            return forward()
+        }
+        guard layerStream.install(index, into: layer) else {
+            return nil
+        }
+        let output = forward()
+        layerStream.release(index, from: layer, after: [output] + state())
+        return output
+    }
+
+    /// Throws the first failed read of a streamed layer. A pass skips a layer it could not read, so a
+    /// caller holding a streamed decoder checks after each pass. Nothing is thrown where every layer is
+    /// held. Introduced in InferKit 0.4.0.
+    public func verifyStream() throws {
+        if let failure = layerStream?.readFailure {
+            throw failure
+        }
+    }
+
+    /// Throws for a streamed decoder: its streamed layers are read from the release on every pass and
+    /// hold no parameters between passes for an optimizer to update or a quantization to replace.
+    func requireHeldLayers(for purpose: String) throws {
+        guard layerStream == nil else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "a streamed decoder does not \(purpose); load it with a residency that holds every layer")
+        }
     }
 
     /// The output projection on its own: post-norm hidden states → logits.

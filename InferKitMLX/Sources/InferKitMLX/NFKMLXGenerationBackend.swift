@@ -252,18 +252,18 @@ extension NFKMLXGenerationBackend {
 
     /// A backend that answers a question about an image: it reads `NFKInputImage` and `NFKInputPrompt`,
     /// both required, bounds the answer by `NFKParameterMaxTokens` (``defaultAnswerTokens``), and returns
-    /// the text `answer` produces under `NFKOutputText`.
-    static func imageQuestion(identifier: String,
-                              answer: @escaping (_ image: CGImage, _ question: String, _ maxTokens: Int) -> String)
+    /// the text `answer` produces under `NFKOutputText`; an error `answer` throws fails the request.
+    static func imageQuestion(identifier: String, modelInfo: [String: Any]? = nil,
+                              answer: @escaping (_ image: CGImage, _ question: String, _ maxTokens: Int) throws -> String)
         -> NFKMLXGenerationBackend {
         NFKMLXGenerationBackend(identifier: identifier, inputKeys: [NFKInputImage, NFKInputPrompt],
                                 parameterKeys: [NFKParameterMaxTokens],
-                                outputKeys: [NFKOutputText]) { request, job in
+                                outputKeys: [NFKOutputText], modelInfo: modelInfo) { request, job in
             let image = try requiredImage(request, NFKInputImage)
             let question = try requiredText(request, NFKInputPrompt)
             let maxTokens = max(number(request, NFKParameterMaxTokens)?.intValue ?? defaultAnswerTokens, 0)
             job.reportProgress(0)
-            let text = answer(image, question, maxTokens)
+            let text = try answer(image, question, maxTokens)
             if job.status == .cancelled { return nil }
             job.reportProgress(1)
             return NFKInferenceResult(outputs: [NFKOutputText: text])

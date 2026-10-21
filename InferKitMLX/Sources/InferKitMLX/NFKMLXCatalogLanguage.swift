@@ -691,7 +691,8 @@ extension NFKMLXCatalogLanguage {
             variants: [variant(release, files: releaseFiles(required: NFKMLXLanguage.requiredFiles,
                                                             optional: NFKMLXLanguage.optionalFiles,
                                                             weights: NFKMLXLanguage.weightFiles))],
-            license: license(release.repository), residencies: residencies(routesExperts: release.routesExperts),
+            license: license(release.repository),
+            residencies: release.routesExperts ? residencies(routesExperts: true) : streamedResidencies,
             modelTypes: release.modelTypes)
     }
 
@@ -699,6 +700,7 @@ extension NFKMLXCatalogLanguage {
         let release = ggufRelease
         let file = "SmolLM2-135M-Instruct-Q4_K_M.gguf"
         var entry = languageEntry(release)
+        entry.residencies = [NFKModelResidencyResident]
         entry.summary = "SmolLM2 135M Instruct quantized to Q4_K_M, read from one GGUF file with its tokenizer."
         entry.variants = [variant(release, files: [NFKModelFile(path: file, role: NFKModelFileRoleWeights)],
                                   layout: NFKModelSourceLayoutFile)]
@@ -964,7 +966,7 @@ extension NFKMLXCatalogLanguage {
                            summary: "\(release.displayName), the Qwen3-VL vision tower and decoder answering a question about an image.",
                            files: releaseFiles(required: NFKMLXQwen3VL.requiredFiles, optional: NFKMLXQwen3VL.optionalFiles,
                                                weights: NFKMLXQwen3VL.weightFiles),
-                           residencies: residencies(routesExperts: release.routesExperts))
+                           residencies: release.routesExperts ? residencies(routesExperts: true) : streamedResidencies)
     }
 
     fileprivate static var pixtralEntry: NFKMLXCatalogEntry {
@@ -972,7 +974,8 @@ extension NFKMLXCatalogLanguage {
                                                  repository: "mistral-experimental/pixtral-12b", family: "pixtral"),
                            summary: "Pixtral 12B, a 2D-rotary vision encoder and a Mistral NeMo decoder answering a question about an image.",
                            files: releaseFiles(required: NFKMLXPixtral.requiredFiles, optional: NFKMLXPixtral.optionalFiles,
-                                               weights: NFKMLXPixtral.weightFiles))
+                                               weights: NFKMLXPixtral.weightFiles),
+                           residencies: streamedResidencies)
     }
 
     fileprivate static var phi4MMEntry: NFKMLXCatalogEntry {

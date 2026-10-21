@@ -304,9 +304,17 @@ public final class NFKMLXPixtral: NSObject {
     /// tokenizer — from a downloaded release directory, ready to answer a question about an image.
     @objc(modelWithDirectoryURL:error:)
     public static func model(directoryURL: URL) throws -> NFKMLXPixtral {
+        try model(directoryURL: directoryURL, precision: .float32, residency: .automatic)
+    }
+
+    /// ``model(directoryURL:)`` with the decoder at `precision` and held as `residency` says (see
+    /// ``decoder(directoryURL:precision:residency:)``). Introduced in InferKit 0.4.0.
+    @objc(modelWithDirectoryURL:precision:residency:error:)
+    public static func model(directoryURL: URL, precision: NFKMLXWeightPrecision,
+                             residency: NFKMLXResidency) throws -> NFKMLXPixtral {
         let vision = try visionNet(directoryURL: directoryURL)
         let connector = try connector(directoryURL: directoryURL)
-        let decoder = try decoder(directoryURL: directoryURL)
+        let decoder = try decoder(directoryURL: directoryURL, precision: precision, residency: residency)
         guard let tokenizer = NFKMLXLanguage.releaseTokenizer(inDirectory: directoryURL) else {
             throw NFKMLXError.weightsMismatch("the release carries no tokenizer files")
         }
@@ -362,6 +370,18 @@ public final class NFKMLXPixtral: NSObject {
                                                maxTokens: maxTokens, endTokens: endTokens)
         return tokenizer.decode(generated.map { NSNumber(value: $0) })
     }
+
+    /// ``answer(image:question:maxTokens:)``, throwing a streamed decoder's failed read, after which the
+    /// answer means nothing.
+    func verifiedAnswer(image: CGImage, question: String, maxTokens: Int) throws -> String {
+        let text = answer(image: image, question: question, maxTokens: maxTokens)
+        try textDecoder.verifyStream()
+        return text
+    }
+
+    /// How many decoder layers a streamed load leaves in the release, read in their turn on every pass;
+    /// 0 where every layer is held. Introduced in InferKit 0.4.0.
+    @objc public var streamedLayerCount: Int { textDecoder.layerStream?.layers.count ?? 0 }
 
     /// The `[IMG]` / `[IMG_BREAK]` / `[IMG_END]` expansion the Pixtral processor writes for one image:
     /// `gridW` image tokens per row, a break after each row, and an end token last.
@@ -428,13 +448,41 @@ public final class NFKMLXPixtral: NSObject {
     }
 
     /// Builds the Mistral decoder at the release's geometry and loads the `language_model.` subtree —
-    /// the dense stack under `language_model.model.` and the untied `language_model.lm_head.weight`.
+    /// the dense stack under `language_model.model.` and the untied `language_model.lm_head.weight` — at
+    /// float32.
     public static func decoder(directoryURL: URL) throws -> NFKMLXLanguageNet {
-        let configuration = try decoderConfiguration(directoryURL: directoryURL)
-        let net = NFKMLXLanguageNet(configuration)
-        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directoryURL, remap: { key in
+        try decoder(directoryURL: directoryURL, precision: .float32, residency: .automatic)
+    }
+
+    /// ``decoder(directoryURL:)`` at `precision`, held as `residency` says.
+    ///
+    /// @discussion `.automatic` holds the decoder whole where the release fits the working set, and
+    /// otherwise streams the decoder layers it cannot hold (``NFKMLXLanguageNet/layerStream``), as
+    /// `.streamed` does wherever the release does not fit. The 12B is about 50 GB at float32 and 25 GB
+    /// as released. Every other residency holds the decoder whole. A streamed decoder needs its release
+    /// directory in place for its life. Introduced in InferKit 0.4.0.
+    public static func decoder(directoryURL: URL, precision: NFKMLXWeightPrecision,
+                               residency: NFKMLXResidency) throws -> NFKMLXLanguageNet {
+        try decoder(directoryURL: directoryURL, precision: precision, residency: residency,
+                    budget: NFKMLXResidencyBudget.current())
+    }
+
+    /// ``decoder(directoryURL:precision:residency:)`` planned against `budget`.
+    static func decoder(directoryURL: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                        budget: Int) throws -> NFKMLXLanguageNet {
+        let net = NFKMLXLanguageNet(try decoderConfiguration(directoryURL: directoryURL))
+        let moduleKey: (String) -> String? = { key in
             key.hasPrefix("language_model.") ? String(key.dropFirst("language_model.".count)) : nil
-        })
+        }
+        let streamed = try NFKMLXLanguage.streamedLayers(directory: directoryURL, precision: precision,
+                                                         residency: residency, budget: budget, moduleKey: moduleKey)
+        guard streamed.isEmpty else {
+            try NFKMLXLanguage.loadStreamedWeights(into: net, fromDirectory: directoryURL, precision: precision,
+                                                   streamed: streamed, moduleKey: moduleKey)
+            return net
+        }
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directoryURL, precision: precision,
+                                                                 remap: moduleKey)
         try NFKMLXWeights.apply(arrays, to: net)
         return net
     }

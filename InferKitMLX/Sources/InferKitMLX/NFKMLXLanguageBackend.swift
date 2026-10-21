@@ -346,6 +346,8 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     private let countingTokenizer: NFKTokenizer?
     private let holdsDraft: Bool
     private let pagesExpertsAtLoad: Bool
+    private let streamedLayersAtLoad: Int
+    private let streamedBytesAtLoad: Int
     private let identifier: String
     private let defaults: NFKMLXGenerationOptions
     /// The cache kept between requests when a request asks for reuse. Generation is serialized
@@ -374,6 +376,8 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         self.countingTokenizer = tokenizer
         self.holdsDraft = draft != nil
         self.pagesExpertsAtLoad = net.expertStore != nil
+        self.streamedLayersAtLoad = net.layerStream?.layers.count ?? 0
+        self.streamedBytesAtLoad = net.layerStream?.bytesPerPass ?? 0
         self.identifier = identifier
         self.defaults = options
         self.releaseURL = releaseURL
@@ -390,8 +394,8 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// The loaded network's parameter count, weight bytes, precision, and quantization, with the
     /// release's `model_type` and `max_position_embeddings` where its `config.json` states them, the
     /// bytes its release directory or GGUF file occupies on disk, and the key-value bytes each token
-    /// adds while the cache is unquantized, and the residency, `paged` or `resident` (`NFKModelInfo*`
-    /// keys). A paged model's routed experts
+    /// adds while the cache is unquantized, and the residency, `paged`, `streamed`, or `resident`
+    /// (`NFKModelInfo*` keys). A paged model's routed experts
     /// count toward its parameters; its weight bytes are what memory holds, which leaves out experts
     /// read from the release. `NFKModelInfoResidentBytes` and `NFKModelInfoPeakBytes` come from the last
     /// measured load. A model that is unloaded reports the description read while it was loaded.
@@ -411,7 +415,8 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         }
         info[NFKModelInfoArchitecture] = configuration.modelType
         info[NFKModelInfoContextLength] = configuration.maximumPositions
-        info[NFKModelInfoResidency] = pagesExpertsAtLoad ? NFKModelResidencyPaged : NFKModelResidencyResident
+        info[NFKModelInfoResidency] = pagesExpertsAtLoad ? NFKModelResidencyPaged
+            : streamedLayersAtLoad > 0 ? NFKModelResidencyStreamed : NFKModelResidencyResident
         if defaults.cacheQuantization == nil {
             let precision: NFKMLXWeightPrecision = info[NFKModelInfoPrecision] as? String == "float32" ? .float32 : .checkpoint
             info[NFKModelInfoKeyValueBytesPerToken] = NFKMLXModelSizing.keyValueBytesPerToken(of: configuration, precision: precision)
@@ -426,6 +431,14 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// The store a paged model reads its routed experts from, or nil where they are resident or the
     /// model is unloaded. Its cache budget can be changed between requests. Introduced in InferKit 0.4.0.
     @objc public var expertStore: NFKMLXExpertStore? { lifecycle.ifLoaded { $0.net.expertStore } ?? nil }
+
+    /// How many decoder layers a streamed load leaves in the release, read in their turn on every pass;
+    /// 0 where every layer is held. Introduced in InferKit 0.4.0.
+    @objc public var streamedLayerCount: Int { streamedLayersAtLoad }
+
+    /// The bytes each pass reads from the release for the streamed layers; 0 where every layer is held.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var streamedBytesPerPass: Int { streamedBytesAtLoad }
     public var backendIdentifier: String { identifier }
 
     /// The request parameters the backend reads: the core sampling keys, the schema and the two
@@ -630,8 +643,8 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
                 "text generation needs a tokenizer; build the backend with one")
         }
         let (options, tokens, toolCallFormat) = try preparedPrompt(for: request, tokenizer: tokenizer)
-        let (produced, cached) = generate(tokens, options: options, conversation: Self.conversation(of: request),
-                                          holder: holder)
+        let (produced, cached) = try generate(tokens, options: options, conversation: Self.conversation(of: request),
+                                              holder: holder)
         let decode: ([Int]) -> String = { tokenizer.decode($0.map { NSNumber(value: $0) }) }
         let reply = decode(produced)
 
@@ -794,7 +807,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// Answers the tokens produced and how many of the prompt's the cache already held, which is
     /// the cached share a run reports.
     private func generate(_ tokens: [Int], options requested: NFKMLXGenerationOptions,
-                          conversation: String?, holder: NFKLMHolder) -> (produced: [Int], cached: Int) {
+                          conversation: String?, holder: NFKLMHolder) throws -> (produced: [Int], cached: Int) {
         generationLock.lock(); defer { generationLock.unlock() }
         let net = holder.net
         var options = requested
@@ -827,6 +840,14 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             produced = net.generate(prompt: tokens, options: options, draft: draft, promptCache: cache)
         } else {
             produced = net.generate(prompt: tokens, options: options, promptCache: cache)
+        }
+        do {
+            try net.verifyStream()
+        } catch {
+            // The failed pass skipped a layer, so the cache holds rows no later request may extend.
+            cache?.reset()
+            refreshCacheStatus()
+            throw error
         }
         if let conversation {
             conversationCaches.evict(keeping: conversation)
@@ -1558,14 +1579,25 @@ public final class NFKMLXLanguage: NSObject {
     /// ``NFKMLXResidency/paged`` leaves the routed experts in the release and reads each as the router
     /// reaches it, ``NFKMLXResidency/resident`` loads them and fails where the release is known not to
     /// fit, and ``NFKMLXResidency/automatic`` pages only where the release is known not to fit whole.
-    /// ``NFKMLXResidency/staged`` loads the model resident. A dense release has nothing to page and
-    /// loads resident under every residency. ``NFKMLXLanguageBackend/pagesExperts`` reports the
-    /// placement. The release directory has to stay in place for the life of a paged backend.
-    /// Introduced in InferKit 0.4.0.
+    /// ``NFKMLXResidency/staged`` loads the model resident. A dense release has nothing to page; it
+    /// streams the decoder layers it cannot hold under ``NFKMLXResidency/streamed``, and under
+    /// ``NFKMLXResidency/automatic`` where the release does not fit whole, and loads resident otherwise.
+    /// ``NFKMLXLanguageBackend/pagesExperts`` and ``NFKMLXLanguageBackend/streamedLayerCount`` report
+    /// the placement. The release directory has to stay in place for the life of a paged or streamed
+    /// backend. The weights load at float32. Introduced in InferKit 0.4.0.
     public static func backend(directoryURL: URL, residency: NFKMLXResidency,
                                options: NFKMLXGenerationOptions = NFKMLXGenerationOptions())
         throws -> any NFKInferenceBackend {
-        let (net, tokenizer) = try loadedReleaseWithTokenizer(at: directoryURL, residency: residency)
+        try backend(directoryURL: directoryURL, precision: nil, residency: residency, options: options)
+    }
+
+    /// ``backend(directoryURL:residency:options:)`` with the weights at `precision`. A streamed decoder
+    /// reads each streamed layer at `.checkpoint` as stored, so a pass reads half what it reads at
+    /// `.float32` from a 16-bit release. Introduced in InferKit 0.4.0.
+    public static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision?, residency: NFKMLXResidency,
+                               options: NFKMLXGenerationOptions = NFKMLXGenerationOptions())
+        throws -> any NFKInferenceBackend {
+        let (net, tokenizer) = try loadedReleaseWithTokenizer(at: directoryURL, precision: precision, residency: residency)
         return NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: modelName,
                                      options: options, releaseURL: directoryURL)
     }
@@ -1576,12 +1608,13 @@ public final class NFKMLXLanguage: NSObject {
     /// @discussion The draft proposes ``NFKMLXGenerationOptions/draftTokens`` tokens per round and
     /// the main model verifies them in one pass, producing the sequence it would have produced
     /// alone. The two must share a vocabulary, which is checked here; a Qwen3 0.6B drafting for a
-    /// Qwen3 4B is the intended pairing. The draft loads at the same precision as the main model.
+    /// Qwen3 4B is the intended pairing. The draft loads at the same precision as the main model, and
+    /// first, so the main model is planned against what the draft leaves of the working set.
     public static func backend(directoryURL: URL, draftDirectoryURL: URL,
                                options: NFKMLXGenerationOptions = NFKMLXGenerationOptions())
         throws -> any NFKInferenceBackend {
-        let (net, tokenizer) = try loadedReleaseWithTokenizer(at: directoryURL)
         let (draft, _) = try loadedRelease(at: draftDirectoryURL)
+        let (net, tokenizer) = try loadedReleaseWithTokenizer(at: directoryURL, reserving: heldBytes(of: draft))
         try verifyDraft(draft, sharesVocabularyWith: net)
         return NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: modelName,
                                      options: options, draft: draft, releaseURL: directoryURL)
@@ -1595,21 +1628,33 @@ public final class NFKMLXLanguage: NSObject {
     /// with it. Introduced in InferKit 0.4.0.
     static func backend(directoryURL: URL, loadOptions: NFKMLXLoadOptions) throws -> any NFKInferenceBackend {
         let precision = loadOptions.precision ?? .checkpoint
-        let (net, tokenizer) = try loadedReleaseWithTokenizer(at: directoryURL, precision: precision,
-                                                              residency: loadOptions.residency)
-        try loadOptions.applyWeightQuantization(to: net)
+        // The draft loads first, so the model is planned against what the draft leaves of the working set.
         var draft: NFKMLXLanguageNet?
         if let draftURL = loadOptions.draftURL {
             // A draft quantized at load reads the release as stored; widening it first only raises the peak.
             let draftPrecision = loadOptions.draftBits == nil ? precision : .checkpoint
             let (drafter, _) = try loadedRelease(at: draftURL, precision: draftPrecision)
-            try verifyDraft(drafter, sharesVocabularyWith: net)
             try NFKMLXLoadOptions([NFKModelLoadOptionQuantizationBits: loadOptions.draftBits ?? 0])
                 .applyWeightQuantization(to: drafter)
             draft = drafter
         }
+        let (net, tokenizer) = try loadedReleaseWithTokenizer(at: directoryURL, precision: precision,
+                                                              residency: loadOptions.residency,
+                                                              reserving: draft.map(heldBytes(of:)) ?? 0)
+        if let draft {
+            try verifyDraft(draft, sharesVocabularyWith: net)
+        }
+        if loadOptions.quantizationBits != nil {
+            try net.requireHeldLayers(for: "quantize at load")
+        }
+        try loadOptions.applyWeightQuantization(to: net)
         return NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: modelName,
                                      options: loadOptions.generationOptions(), draft: draft, releaseURL: directoryURL)
+    }
+
+    /// The bytes `module`'s parameters hold.
+    static func heldBytes(of module: Module) -> Int {
+        module.parameters().flattened().reduce(0) { $0 + $1.1.nbytes }
     }
 
     /// Refuses a draft whose vocabulary differs from the model's: a draft proposes the model's own token
@@ -1654,10 +1699,10 @@ public final class NFKMLXLanguage: NSObject {
     /// The network and tokenizer of a release a backend will read text through: a directory whose
     /// tokenizer cannot be read is refused.
     static func loadedReleaseWithTokenizer(at directoryURL: URL, precision: NFKMLXWeightPrecision? = nil,
-                                           residency: NFKMLXResidency = .automatic)
+                                           residency: NFKMLXResidency = .automatic, reserving reserved: Int = 0)
         throws -> (NFKMLXLanguageNet, NFKTokenizer) {
         let (net, tokenizer) = try loadedRelease(at: directoryURL, requiringTokenizer: true, precision: precision,
-                                                 residency: residency)
+                                                 residency: residency, reserving: reserved)
         guard let tokenizer else { throw NFKMLXError.unsupportedConfiguration("unreachable: the tokenizer was required") }
         return (net, tokenizer)
     }
@@ -1666,10 +1711,12 @@ public final class NFKMLXLanguage: NSObject {
     /// `requiringTokenizer`; a caller that feeds the network embeddings (the FLUX.2 text encoder) does not.
     /// `precision` nil loads at float32, or as stored for a release whose experts are packed; a caller
     /// whose release is too large at float32 passes `.checkpoint` (the Qwen3-8B inside FLUX.2 [klein]
-    /// 9B is 30.5 GB at float32 and 15.3 GB as released).
+    /// 9B is 30.5 GB at float32 and 15.3 GB as released). `reserved` is what a model held beside this
+    /// one, such as a draft, takes from the working set the load plans against.
     static func loadedRelease(at directoryURL: URL, requiringTokenizer: Bool = false,
                               precision: NFKMLXWeightPrecision? = nil,
-                              residency: NFKMLXResidency = .automatic) throws -> (NFKMLXLanguageNet, NFKTokenizer?) {
+                              residency: NFKMLXResidency = .automatic,
+                              reserving reserved: Int = 0) throws -> (NFKMLXLanguageNet, NFKTokenizer?) {
         var configuration = try self.configuration(
             fromHuggingFace: directoryURL.appendingPathComponent("config.json"))
         if try statesMLXQuantization(configURL: directoryURL.appendingPathComponent("config.json")) {
@@ -1686,8 +1733,10 @@ public final class NFKMLXLanguage: NSObject {
         let net = makeNet(configuration)
         let packed = try storesExpertsMXFP4(configURL: directoryURL.appendingPathComponent("config.json"))
             || packedReleaseEntries(inDirectory: directoryURL, net: net) != nil
+        let budget = NFKMLXResidencyBudget.current()
         try loadWeights(into: net, fromDirectory: directoryURL,
-                        precision: precision ?? (packed ? .checkpoint : .float32), residency: residency)
+                        precision: precision ?? (packed ? .checkpoint : .float32), residency: residency,
+                        budget: budget > 0 && reserved > 0 ? Swift.max(budget - reserved, 1) : budget, reserving: reserved)
         // Checked after the load, whose memory check refuses a release the machine cannot hold before
         // reading any weight: that refusal is the one a caller can act on, so it comes first.
         if requiringTokenizer, let tokenizerRefusal {
@@ -1697,17 +1746,34 @@ public final class NFKMLXLanguage: NSObject {
     }
 
     /// Loads a release held as `residency` plans it: paged where the plan pages the routed experts,
-    /// and resident otherwise.
+    /// streamed where a dense release's layers do not fit whole, and resident otherwise.
     ///
     /// @discussion The plan weighs the release from its shard headers. A model without routed
-    /// experts has nothing to page and loads resident under every residency.
+    /// experts has nothing to page; it streams as ``NFKMLXLayerStream/plannedLayers(residency:budget:footprint:fitsWhole:)``
+    /// plans and loads resident otherwise; an mlx_lm quantized release always loads resident. `reserved`
+    /// is what something held beside the decoder, such as a draft, takes from the check a resident load
+    /// makes; `budget` already leaves it out.
     static func loadWeights(into net: NFKMLXLanguageNet, fromDirectory directory: URL,
-                            precision: NFKMLXWeightPrecision, residency: NFKMLXResidency) throws {
+                            precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                            budget: Int = NFKMLXResidencyBudget.current(), reserving reserved: Int = 0) throws {
         let inventory = try NFKMLXExpertInventory.planning(inDirectory: directory, precision: precision,
                                                            classify: expertSlices(forRelease:entry:))
-        let plan = try NFKMLXResidencyBudget.plan([inventory.footprint], residency: residency,
-                                                  budget: NFKMLXResidencyBudget.current())
+        let plan = try NFKMLXResidencyBudget.plan([inventory.footprint], residency: residency, budget: budget)
         guard plan.pagesExperts else {
+            let tied = net.lmHead == nil
+            let moduleKey: (String) -> String? = { tied && $0.hasPrefix("lm_head.") ? nil : $0 }
+            // An mlx_lm quantized release packs its layers as it loads, and a stream installs tensors into
+            // the layers as built, so it loads as stored.
+            let packed = try statesMLXQuantization(configURL: directory.appendingPathComponent("config.json"))
+            let streamed = inventory.experts.isEmpty && !net.configuration.isMixtureOfExperts && !packed
+                ? try streamedLayers(directory: directory, precision: precision, residency: residency, budget: budget,
+                                     reserving: reserved, moduleKey: moduleKey)
+                : []
+            guard streamed.isEmpty else {
+                try loadStreamedWeights(into: net, fromDirectory: directory, precision: precision, streamed: streamed,
+                                        moduleKey: moduleKey)
+                return
+            }
             try loadWeights(into: net, fromDirectory: directory, precision: precision)
             return
         }
@@ -1719,6 +1785,67 @@ public final class NFKMLXLanguage: NSObject {
     /// ``readTokenizer(inDirectory:)`` refuses it.
     static func releaseTokenizer(inDirectory directory: URL) -> NFKTokenizer? {
         try? readTokenizer(inDirectory: directory)
+    }
+
+    /// The layer a decoder module key of the form `model.layers.<n>.<rest>` belongs to, and its name
+    /// inside the layer.
+    static func streamedLayer(ofModuleKey key: String) -> (layer: Int, name: String)? {
+        guard key.hasPrefix("model.") else { return nil }
+        return NFKMLXLayerStream.layer(ofDecoderName: String(key.dropFirst("model.".count)))
+    }
+
+    /// The decoder layers a dense release's load leaves in the release under `residency`, as
+    /// ``NFKMLXLayerStream/plannedLayers(residency:budget:footprint:fitsWhole:)`` plans them; empty where it
+    /// holds them all.
+    ///
+    /// - Parameters:
+    ///   - moduleKey: the decoder's module key for a release tensor, or nil for one the decoder does not
+    ///     take, such as a multimodal release's vision tower.
+    ///   - reserved: what something held beside the decoder, such as a draft, takes from the check a
+    ///     resident load makes; `budget` already leaves it out.
+    static func streamedLayers(directory: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                               budget: Int, reserving reserved: Int = 0,
+                               moduleKey: (String) -> String?) throws -> Set<Int> {
+        try NFKMLXLayerStream.plannedLayers(residency: residency, budget: budget, footprint: {
+            try NFKMLXLayerStream.footprint(directory: directory, precision: precision,
+                                            includes: { moduleKey($0) != nil },
+                                            layerOf: { moduleKey($0).flatMap(streamedLayer(ofModuleKey:))?.layer })
+        }, fitsWhole: {
+            try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: precision, reserve: reserved)
+        })
+    }
+
+    /// Loads a dense release into `net` with its `streamed` layers left in the release, read in their
+    /// turn on every pass (``NFKMLXLanguageNet/layerStream``), and every other tensor `moduleKey` names
+    /// held. `conversion` converts every floating tensor, held or streamed, to that element type in
+    /// place of `precision`'s.
+    ///
+    /// @discussion A quantized checkpoint is refused: its layers are rebuilt to the stored packing before
+    /// a load, and a stream installs the release's tensors into the layers as built.
+    static func loadStreamedWeights(into net: NFKMLXLanguageNet, fromDirectory directory: URL,
+                                    precision: NFKMLXWeightPrecision, streamed: Set<Int>,
+                                    converting conversion: DType? = nil,
+                                    moduleKey: @escaping (String) -> String?) throws {
+        let files = try NFKMLXReleaseWeights.files(inDirectory: directory)
+        if files.count == 1, try NFKMLXWeights.materializedCheckpoint(url: files[0], reading: { _ in false }).quantization != nil {
+            throw NFKMLXError.unsupportedConfiguration(
+                "\(directory.lastPathComponent) is a quantized checkpoint, which does not stream; "
+                + "load it with a residency that holds every layer")
+        }
+        guard let vacated = try NFKMLXLayerStream.vacating(streamed, of: net.model.layers, prefix: "model.layers.",
+                                                           directory: directory, precision: precision,
+                                                           converting: conversion, layerOf: { key in
+            moduleKey(key).flatMap(streamedLayer(ofModuleKey:))
+        }) else { return }
+        let held: (String) -> String? = { key in
+            guard let name = moduleKey(key) else { return nil }
+            return streamedLayer(ofModuleKey: name).map { streamed.contains($0.layer) } == true ? nil : name
+        }
+        let arrays = try conversion.map { try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: $0, remap: held) }
+            ?? NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: held)
+        try NFKMLXWeights.apply(arrays + vacated.placeholders, to: net, verifyShapes: true)
+        net.layerStream = vacated.stream
+        vacated.stream.prime()
     }
 
     /// The tokenizer a release directory describes, built without loading the weights.
@@ -1998,6 +2125,15 @@ public final class NFKMLXLanguage: NSObject {
     @objc(backendWithDirectoryURL:residency:error:)
     public static func backend(directoryURL: URL, residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
         try backend(directoryURL: directoryURL, residency: residency, options: NFKMLXGenerationOptions())
+    }
+
+    /// The Objective-C entry loading the weights at `precision` and holding the release as `residency`
+    /// says; see ``backend(directoryURL:precision:residency:options:)``. Introduced in InferKit 0.4.0.
+    @objc(backendWithDirectoryURL:precision:residency:error:)
+    public static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision,
+                               residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, precision: precision, residency: residency,
+                    options: NFKMLXGenerationOptions())
     }
 
     /// The Objective-C entry for speculative decoding: a release directory and a smaller release

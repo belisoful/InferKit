@@ -658,17 +658,12 @@ public final class NFKMLXGemma3Language: NSObject {
     /// `net`, so the random weights the streamed layers were built with are never materialized.
     static func stream(_ streamed: Set<Int>, of net: NFKMLXGemma3Net, directory: URL,
                        precision: NFKMLXWeightPrecision) throws -> [(String, MLXArray)] {
-        guard !streamed.isEmpty else { return [] }
-        let stream = try NFKMLXLayerStream.streaming(directory: directory, layers: streamed, precision: precision) { key in
+        guard let vacated = try NFKMLXLayerStream.vacating(streamed, of: net.layers, prefix: "layers.", directory: directory,
+                                                           precision: precision, layerOf: { key in
             decoderName(of: key).flatMap { NFKMLXLayerStream.layer(ofDecoderName: $0) }
-        }
-        var placeholders = [(String, MLXArray)]()
-        for index in streamed.sorted() {
-            stream.vacate(index, module: net.layers[index])
-            placeholders += net.layers[index].parameters().flattened().map { ("layers.\(index).\($0)", $1) }
-        }
-        net.layerStream = stream
-        return placeholders
+        }) else { return [] }
+        net.layerStream = vacated.stream
+        return vacated.placeholders
     }
 
     /// Loads the decoder from a released directory, single-file or sharded, taking only the language

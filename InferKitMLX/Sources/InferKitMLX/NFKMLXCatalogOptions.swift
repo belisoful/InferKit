@@ -132,7 +132,8 @@ struct NFKMLXLoadProfile {
                           contextLength: contextLength, keyValue: keyValue, drafts: drafts, stageIdentifier: "decoder")
     }
 
-    /// A decoder that streams the repeated layers it cannot hold: Gemma 3, MADLAD-400, TranslateGemma.
+    /// A decoder that streams the repeated layers it cannot hold: Gemma 3, MADLAD-400, TranslateGemma,
+    /// Qwen3-VL, Pixtral.
     static func streamedDecoder(precisions: [String], defaultPrecision: String, contextLength: Int?,
                                 keyValue: NFKMLXKeyValueRule?, tasks: Set<String>) -> NFKMLXLoadProfile {
         decoder(precisions: precisions, defaultPrecision: defaultPrecision, contextLength: contextLength,
@@ -200,7 +201,14 @@ struct NFKMLXLoadProfile {
         "gemma3n": [.decoder(contextLength: nil, keyValue: nil)],
         "gemma4": [.pagedMixture()],
         "granite-4.0-h": [.pagedMixture()],
-        "qwen3-vl": [.pagedMixture(tasks: [NFKModelTaskVisionQuestionAnswering])],
+        // A dense Qwen3-VL or Pixtral decoder streams the layers it cannot hold, so its precision sets what a
+        // pass reads.
+        "qwen3-vl": [.streamedDecoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
+                                      defaultPrecision: NFKModelPrecisionFloat32, contextLength: nil, keyValue: nil,
+                                      tasks: [NFKModelTaskVisionQuestionAnswering])],
+        "pixtral": [.streamedDecoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
+                                     defaultPrecision: NFKModelPrecisionFloat32, contextLength: nil, keyValue: nil,
+                                     tasks: [NFKModelTaskVisionQuestionAnswering])],
         "qwen4-exp": [.pagedMixture()],
         "deepseek-v4": [.pagedMixture()],
         "whisper": [.imageModule()],

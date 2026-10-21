@@ -487,7 +487,8 @@ layers' bytes).
   Qwen4-Exp, Granite 4.0-H's mixtures and DeepSeek page.
 - Streaming changes WHEN one stage's layers are loaded. A dense stage too large to hold whole holds
   the repeated layers that fit and reads each of the others from the release in its turn, on every pass
-  (`NFKMLXLayerStreaming.swift`). Gemma 3, TranslateGemma, and MADLAD-400's T5 encoder-decoder stream.
+  (`NFKMLXLayerStreaming.swift`). Gemma 3, TranslateGemma, MADLAD-400's T5 encoder-decoder, and the
+  dense `NFKMLXLanguageNet` (Qwen3, Mistral Small, and the Qwen3-VL and Pixtral decoders) stream.
 
 The cases: `.resident` holds everything and throws where it is known not to fit; `.staged` stages and
 never pages; `.paged` stages and pages; `.streamed` stages and streams each stage with layers that is
@@ -625,6 +626,24 @@ Streaming:
   read 63.4 GB of encoder blocks at 1.76 GB/s and 181.5 GB of decoder blocks at 2.32 GB/s in 332 s, and
   its footprint peaked at 18.0 GB, above the planner's budget of 0.85 of Metal's recommended working
   set. On the 3B with half its decoder streamed, the decoder read 45.6 GB at 1.92 GB/s.
+- The dense `NFKMLXLanguageNet` streams through the same helpers Gemma 3 plans with:
+  `NFKMLXLayerStream.footprint` weighs one stage from the shard headers, `plannedLayers` is the
+  `.automatic`-holds-what-`verifyFits`-passes rule, and `vacating` builds the stream and the
+  placeholders. A module key `model.layers.N.…` names the layer (`NFKMLXLanguage.streamedLayer(ofModuleKey:)`);
+  each loader passes its release-to-module key map, so `NFKMLXLanguage.loadWeights(…residency:budget:reserving:)`
+  (keys as stored), `NFKMLXQwen3VL.loadDecoderWeights` (`model.language_model.` → `model.`, converting
+  through the stream's `converting:` where a caller names a type), and `NFKMLXPixtral.decoder(directoryURL:precision:residency:)`
+  (`language_model.` dropped) share `loadStreamedWeights`. A mixture of experts never streams, so a
+  `.streamed` request on one is paged or held as before. A single-file quantized checkpoint is refused,
+  and an mlx_lm quantized release (`statesMLXQuantization`) loads resident: their layers are rebuilt to
+  the packing before a load, and a stream installs into the layers as built.
+  A streamed net does not fine-tune or quantize at load (`requireHeldLayers(for:)`). The backend checks
+  `verifyStream()` after each run, resets the prompt or conversation cache the failed pass wrote, and
+  throws; `NFKMLXQwen3VL` and `NFKMLXPixtral` answer through `verifiedAnswer`, so their backends fail
+  the request. The drafted factories load the draft first and plan the model against the working set
+  less the draft's held bytes, as Gemma 3's do. Sa2VA's Qwen decoder passes `streams: false`: its
+  float32 4B fails the release-wide `verifyFits`, which doubles every stored byte, and would stream
+  where it has always loaded whole.
 - A draft cuts the passes (`NFKMLXGemma3Model.useDraft(_:)`, `speculate`): a smaller release of the
   same vocabulary, held, proposes `draftTokens` tokens a round and one pass of the streamed decoder scores
   them, through the language family's `verifyGreedily` / `verifyBySampling`. The target's rollback of

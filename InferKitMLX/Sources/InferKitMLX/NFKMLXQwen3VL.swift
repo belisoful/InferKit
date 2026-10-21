@@ -479,6 +479,22 @@ public final class NFKMLXQwen3VL: NSObject {
         try model(directoryURL: directoryURL, loadOptions: NFKMLXLoadOptions())
     }
 
+    /// ``model(directoryURL:)`` with the decoder at `precision` and held as `residency` says (see
+    /// ``decoder(directoryURL:precision:residency:)``): a dense release that does not fit whole streams
+    /// the decoder layers it cannot hold. Introduced in InferKit 0.4.0.
+    @objc(modelWithDirectoryURL:precision:residency:error:)
+    public static func model(directoryURL: URL, precision: NFKMLXWeightPrecision,
+                             residency: NFKMLXResidency) throws -> NFKMLXQwen3VL {
+        try model(directoryURL: directoryURL, loadOptions: NFKMLXLoadOptions([
+            NFKModelLoadOptionPrecision: precision == .float32 ? NFKModelPrecisionFloat32 : NFKModelPrecisionCheckpoint,
+            NFKModelLoadOptionResidency: residency.optionValue,
+        ]))
+    }
+
+    /// How many decoder layers a streamed load leaves in the release, read in their turn on every pass;
+    /// 0 where every layer is held. Introduced in InferKit 0.4.0.
+    @objc public var streamedLayerCount: Int { textDecoder.layerStream?.layers.count ?? 0 }
+
     /// ``model(directoryURL:)`` with the decoder loaded as `loadOptions` say: at its precision (float32
     /// when it names none), held as its residency plans the decoder's routed experts, and quantized to its
     /// quantization bits. Introduced in InferKit 0.4.0.
@@ -486,6 +502,9 @@ public final class NFKMLXQwen3VL: NSObject {
         let vision = try visionNet(directoryURL: directoryURL)
         let decoder = try decoder(directoryURL: directoryURL, precision: loadOptions.precision ?? .float32,
                                   residency: loadOptions.residency)
+        if loadOptions.quantizationBits != nil {
+            try decoder.requireHeldLayers(for: "quantize at load")
+        }
         try loadOptions.applyWeightQuantization(to: decoder)
         guard let tokenizer = NFKMLXLanguage.releaseTokenizer(inDirectory: directoryURL) else {
             throw NFKMLXError.weightsMismatch("the release carries no tokenizer files")
@@ -546,6 +565,14 @@ public final class NFKMLXQwen3VL: NSObject {
             decoder: textDecoder, inputIds: inputIds, visionFeatures: visionOutput, deepstack: deepstack,
             gridT: grid.t, gridH: grid.h, gridW: grid.w, maxTokens: maxTokens, endTokens: endTokens)
         return tokenizer.decode(generated.map { NSNumber(value: $0) })
+    }
+
+    /// ``answer(image:question:maxTokens:)``, throwing a streamed decoder's failed read, after which the
+    /// answer means nothing.
+    func verifiedAnswer(image: CGImage, question: String, maxTokens: Int) throws -> String {
+        let text = answer(image: image, question: question, maxTokens: maxTokens)
+        try textDecoder.verifyStream()
+        return text
     }
 
     /// Builds the vision tower from a downloaded release directory, at the geometry its `config.json`
@@ -646,7 +673,10 @@ public final class NFKMLXQwen3VL: NSObject {
     ///
     /// `residency` ``NFKMLXResidency/paged`` leaves the 30B-A3B's routed experts in the release and
     /// reads each as the router reaches it; ``NFKMLXResidency/automatic`` pages only where the release
-    /// is known not to fit whole. The dense sizes load resident under every residency.
+    /// is known not to fit whole. A dense size streams the decoder layers it cannot hold under
+    /// ``NFKMLXResidency/streamed``, and under ``NFKMLXResidency/automatic`` where the release does not
+    /// fit whole (``NFKMLXLanguageNet/layerStream``); the release directory then stays in place for the
+    /// decoder's life.
     public static func decoder(directoryURL: URL,
                                precision: NFKMLXWeightPrecision = .float32,
                                residency: NFKMLXResidency = .automatic) throws -> NFKMLXLanguageNet {
@@ -655,14 +685,33 @@ public final class NFKMLXQwen3VL: NSObject {
         return net
     }
 
-    /// Loads the decoder's tensors into `net`, its routed experts held as `residency` plans them. `dtype`
-    /// converts each tensor as it is read, so the release's element type is never held whole beside it.
+    /// Loads the decoder's tensors into `net`, its routed experts held as `residency` plans them and a
+    /// dense decoder's layers streamed where it plans a stream. `dtype` converts each tensor as it is
+    /// read, so the release's element type is never held whole beside it. `streams` false holds a dense
+    /// decoder's layers under every residency, for a caller that sizes the decoder beside its own parts.
     static func loadDecoderWeights(into net: NFKMLXLanguageNet, fromDirectory directory: URL,
                                    precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
-                                   outerPrefix: String = "", dtype: DType? = nil) throws {
+                                   outerPrefix: String = "", dtype: DType? = nil, streams: Bool = true,
+                                   budget: Int = NFKMLXResidencyBudget.current()) throws {
         let prefix = outerPrefix + "model.language_model."
         let head = outerPrefix + "lm_head.weight"
         let untied = !net.configuration.tiesWordEmbeddings
+        let moduleKey: (String) -> String? = { key in
+            if key.hasPrefix(prefix) { return "model." + String(key.dropFirst(prefix.count)) }
+            return key == head && untied ? "lm_head.weight" : nil
+        }
+        let dense = try streams && NFKMLXExpertInventory.planning(inDirectory: directory, precision: precision, classify: { key, entry in
+            moduleKey(key).map { expertSlices(forModuleKey: $0, entry: entry) } ?? []
+        }).experts.isEmpty
+        let streamed = dense
+            ? try NFKMLXLanguage.streamedLayers(directory: directory, precision: precision, residency: residency,
+                                                budget: budget, moduleKey: moduleKey)
+            : []
+        guard streamed.isEmpty else {
+            try NFKMLXLanguage.loadStreamedWeights(into: net, fromDirectory: directory, precision: precision,
+                                                   streamed: streamed, converting: dtype, moduleKey: moduleKey)
+            return
+        }
         net.expertStore = try NFKMLXExpertInventory.load(
             directory: directory, precision: precision, residency: residency,
             classify: { key, entry in
@@ -675,9 +724,7 @@ public final class NFKMLXQwen3VL: NSObject {
             },
             load: { skipped in
                 func remap(_ key: String) -> String? {
-                    if skipped(key) { return nil }
-                    if key.hasPrefix(prefix) { return "model." + String(key.dropFirst(prefix.count)) }
-                    return key == head && untied ? "lm_head.weight" : nil
+                    skipped(key) ? nil : moduleKey(key)
                 }
                 // A converted load reads in evaluated groups, so the release's tensors never sit whole
                 // beside their conversions.

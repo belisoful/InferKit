@@ -81,7 +81,10 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   vision features fed in): logit cosine 0.99999999998, argmax 80/80, the first continuation token
   matching. The shared-decoder change was re-verified against the dense Qwen3 (0.99999999999), SmolVLM
   (argmax 1140/1140), and Qwen3-Embedding (0.99999999999) records. `NFKMLXQwen3VLImageProcessor` is the
-  `smart_resize` + patchify input adapter. Its resize is `Qwen2VLImageProcessorFast`'s, torchvision's
+  `smart_resize` + patchify input adapter. A dense size streams the decoder layers it cannot hold
+  (`decoder(directoryURL:precision:residency:)`, `modelWithDirectoryURL:precision:residency:error:`),
+  so the 8B at float32 and the 32B run on this machine; the released 2B decoder streamed with half its
+  layers held computes the held decoder's hidden states exactly (`NFKMLXDenseStreamingTests`). Its resize is `Qwen2VLImageProcessorFast`'s, torchvision's
   antialiased bicubic on the 8-bit image (`int16` weights), exact to float rounding (see Sa2VA's
   preprocessing below).
   The larger sizes are read from their own releases: `NFKMLXQwen3VLVisionConfiguration.configuration(fromHuggingFace:)`
@@ -116,17 +119,22 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   fused pipeline — vision tower, connector, the scatter into the `[IMG]` positions, and the Mistral
   decoder over the fused sequence — is measured against a tiny float32 oracle through the ordinary
   release builders (`run_reference.py pixtral_tiny`): vision output, projected features, and the fused
-  logits all at parity with the reference's argmax at every position. The released 12B decoder needs
-  ~24 GB resident for the fused pass, which does not fit alongside other work on a 32 GB machine, so its
-  released-weight fused-logit check is a separate test behind the `IK_PIXTRAL_FUSED` opt-in. **The
+  logits all at parity with the reference's argmax at every position. The released 12B decoder is about
+  50 GB at float32, more than a 32 GB machine holds, and its released-weight fused-logit check stays
+  behind the `IK_PIXTRAL_FUSED` opt-in. Its first run, streamed at float32 (2026-10-21, 30 of 40 layers
+  streamed), read argmax 161/220 and logit cosine 0.9666205 against the bfloat16 record, short of its
+  bar of 219. The text-only decoder is measured against its own layerwise record
+  (`run_reference.py dense_layerwise`, `IK_PARITY_PIXTRAL_TEXT`,
+  `NFKMLXDenseStreamingTests.testTheStreamedPixtralDecoderMatchesItsTextReference`) to place the
+  difference in the decoder or in the fusion. **The
   head count is not derivable from the config:** Pixtral's `text_config` states `head_dim` 128 but omits
   `num_attention_heads`, and 5120 / 128 = 40 is wrong — the release has 32 heads at a 4096-wide query
   projection, the transformers `MistralConfig` default it inherits, which `decoderConfiguration` applies
   when the count is absent. `NFKMLXPixtralImageProcessor` resizes a `CGImage` within the longest edge
   and to a multiple of the patch, then normalizes with the CLIP mean and standard deviation; the resize
   is CoreGraphics rather than the reference's bicubic, the documented approximation the SmolVLM and
-  Qwen3-VL processors also carry. ObjC reaches the model through `modelWithDirectoryURL:error:` and
-  `answerForImage:question:maxTokens:`. Customization is **offline-only**: the 12B decoder is a language
+  Qwen3-VL processors also carry. ObjC reaches the model through `modelWithDirectoryURL:error:`,
+  `modelWithDirectoryURL:precision:residency:error:`, and `answerForImage:question:maxTokens:`. Customization is **offline-only**: the 12B decoder is a language
   model above 4B, past what a device holds at float precision for training, so the reference route is a
   LoRA fine-tune in Python, merged, then loaded through the ordinary factory.
 

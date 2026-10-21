@@ -17,11 +17,13 @@ extension NFKMLXQwen3VL {
     /// @discussion The backend reads the image under `NFKInputImage` (a `CGImage` or an `MTLTexture`) and
     /// the question under `NFKInputPrompt`, both required, and returns the answer under `NFKOutputText`.
     /// `NFKParameterMaxTokens` bounds the answer (128). The model reads one user turn, so the backend
-    /// takes no `NFKInputMessages`. Introduced in InferKit 0.4.0.
+    /// takes no `NFKInputMessages`. A streamed decoder reports `streamed` under `NFKModelInfoResidency`,
+    /// and a read of a streamed layer that fails fails the request. Introduced in InferKit 0.4.0.
     @objc(inferenceBackend)
     public func inferenceBackend() -> any NFKInferenceBackend {
-        NFKMLXGenerationBackend.imageQuestion(identifier: Self.modelName) { [self] image, question, maxTokens in
-            answer(image: image, question: question, maxTokens: maxTokens)
+        let info: [String: Any]? = streamedLayerCount > 0 ? [NFKModelInfoResidency: NFKModelResidencyStreamed] : nil
+        return NFKMLXGenerationBackend.imageQuestion(identifier: Self.modelName, modelInfo: info) { [self] image, question, maxTokens in
+            try verifiedAnswer(image: image, question: question, maxTokens: maxTokens)
         }
     }
 
@@ -30,6 +32,14 @@ extension NFKMLXQwen3VL {
     @objc(backendWithDirectoryURL:error:)
     public static func backend(directoryURL: URL) throws -> any NFKInferenceBackend {
         try model(directoryURL: directoryURL).inferenceBackend()
+    }
+
+    /// Builds the model as ``model(directoryURL:precision:residency:)`` does and returns it behind the
+    /// InferKit contract. Introduced in InferKit 0.4.0.
+    @objc(backendWithDirectoryURL:precision:residency:error:)
+    public static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision,
+                               residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try model(directoryURL: directoryURL, precision: precision, residency: residency).inferenceBackend()
     }
 
     /// Downloads a release, as ``model(repo:revision:cacheDirectoryURL:)`` does, and returns the model

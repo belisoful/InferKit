@@ -184,6 +184,12 @@ attention and feed-forward.
   `model.safetensors` covers the smallest model and nothing else. 4B is the largest size this machine
   holds at float32 — about 16 GB of weights on each side, measured, with the oracle and the test run as
   separate processes.
+  A dense release larger than the working set streams the decoder layers it cannot hold
+  (`NFKMLXResidency.streamed`, and `.automatic` where `verifyFits` fails; `mlx-companion.md`
+  "Streaming"), so the 14B, the 32B, and Mistral Small 24B run whole on this machine.
+  `NFKMLXDenseStreamingTests` holds a streamed load to the held one element for element on a tiny
+  release, tied and untied, through a plain, a quantized, and a windowed cache and a draft, and on the
+  released Qwen3-4B at bfloat16 with half its layers streamed.
   Prompt cache, speculative decoding, mixture of experts, constrained decoding (all 0.3.0,
   each measured). `NFKMLXKeyValueCache.rollback(by:)` moves the end cursors back and copies nothing;
   it returns false where a window has dropped what it would reach. `NFKMLXPromptCache` keeps the

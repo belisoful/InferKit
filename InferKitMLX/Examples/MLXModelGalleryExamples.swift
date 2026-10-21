@@ -940,6 +940,35 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertGreaterThan(store.materializeCount, 0, "and read only the experts it routed to")
     }
 
+    func testResidencyStreamsADenseDecoder() throws {
+        try requireMLXRuntime()
+        // A dense release larger than the working set streams the decoder layers it cannot hold:
+        // `NFKMLXLanguage.backend(directoryURL:precision:residency:)` with `.streamed`, or `.automatic`,
+        // which streams only where the release does not fit whole; `NFKMLXQwen3VL` and `NFKMLXPixtral`
+        // take the same choice. What runs here is the same load over a tiny decoder written as a release,
+        // planned against the least budget a stream needs, which holds none of its layers.
+        var geometry = NFKMLXLanguageConfiguration.tiny
+        geometry.layerCount = 4
+        let source = NFKMLXLanguage.makeNet(geometry)
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("streaming-example-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try NFKMLXWeights.save(source, to: directory.appendingPathComponent("model.safetensors"))
+
+        let stage = try NFKMLXLayerStream.footprint(directory: directory, precision: .float32, includes: { _ in true },
+                                                    layerOf: { NFKMLXLanguage.streamedLayer(ofModuleKey: $0)?.layer })
+        let streamed = NFKMLXLanguage.makeNet(geometry)
+        try NFKMLXLanguage.loadWeights(into: streamed, fromDirectory: directory, precision: .float32, residency: .streamed,
+                                       budget: NFKMLXResidencyBudget.leastBudget(holding: stage.streamedMinimumBytes))
+        XCTAssertEqual(streamed.layerStream?.layers, [0, 1, 2, 3], "every layer is read in its turn")
+
+        let tokens = MLXArray([3, 17, 42, 8].map { Int32($0) }).reshaped([1, 4])
+        XCTAssertEqual(streamed(tokens).asArray(Float.self), source(tokens).asArray(Float.self),
+                       "a streamed decoder computes the held decoder's logits")
+        try streamed.verifyStream()
+    }
+
     func testQwenImageTextToImage() throws {
         try requireMLXRuntime()
         // The released pipeline loads each stage from its own directory:

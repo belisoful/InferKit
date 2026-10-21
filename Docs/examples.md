@@ -502,7 +502,10 @@ pass, the next one read while the current one computes. `.automatic`, the defaul
 the release does not fit whole, so a release that loads today loads the same way. A streamed decoder
 computes the held decoder's values exactly, and each pass costs a read of every layer it does not
 hold: the 27B TranslateGemma streams about 40 GB a pass from a 2 GB/s drive. Gemma 3, TranslateGemma,
-and MADLAD-400 stream; a streamed model runs and does not fine-tune. MADLAD-400's T5 holds its
+MADLAD-400, the dense decoders `NFKMLXLanguage` loads (Qwen3, Mistral Small), and the decoders of
+Qwen3-VL and Pixtral stream; a streamed model runs and does not fine-tune or quantize at load. A
+release loaded at `.checkpoint` streams its layers as stored, half what a pass reads at `.float32`
+from a 16-bit release. MADLAD-400's T5 holds its
 decoder's blocks first, since the decoder runs on every token and the encoder once per source; the 7B at
 its released float32 (33 GB) streams under `.automatic`.
 
@@ -528,6 +531,18 @@ if let gemma = big as? NFKMLXGemma3Backend {
 id<NFKInferenceBackend> big = [NFKMLXGemma3 backendWithDirectoryURL:releaseDirectory
                                                           residency:NFKMLXResidencyStreamed error:&error];
 NSLog(@"%ld layers streamed", (long)((NFKMLXGemma3Backend *)big).streamedLayerCount);
+```
+
+```swift
+let qwen = try NFKMLXLanguage.backend(directoryURL: releaseDirectory, precision: .checkpoint, residency: .automatic)
+print((qwen as? NFKMLXLanguageBackend)?.streamedLayerCount ?? 0)   // 0 where the release fits whole
+```
+
+```objc
+id<NFKInferenceBackend> qwen = [NFKMLXLanguage backendWithDirectoryURL:releaseDirectory
+                                                             precision:NFKMLXWeightPrecisionCheckpoint
+                                                             residency:NFKMLXResidencyAutomatic error:&error];
+NSLog(@"%ld layers streamed", (long)((NFKMLXLanguageBackend *)qwen).streamedLayerCount);
 ```
 
 A smaller release of the same vocabulary held beside a streamed one cuts the passes: it drafts a few
