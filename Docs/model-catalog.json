@@ -18243,8 +18243,8 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 7724684326,
-                "residentBytes" : 7724684326
+                "peakBytes" : 7891992052,
+                "residentBytes" : 7891992052
               },
               "title" : "As published",
               "value" : "checkpoint"
@@ -18293,7 +18293,7 @@
       ],
       "registryName" : "hyper-sdxl-1step-lora",
       "requirements" : {
-        "minimumMemoryBytes" : 14140766615,
+        "minimumMemoryBytes" : 14337599233,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -18321,21 +18321,22 @@
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "bfloat16" : 7331180030,
-                  "checkpoint" : 7724684326,
-                  "float32" : 14662360060
+                  "bfloat16" : 7891992052,
+                  "checkpoint" : 7891992052,
+                  "float32" : 14662360060,
+                  "loaded" : 7891992052
                 },
                 "id" : "model",
                 "title" : "model"
               }
             ]
           },
-          "minimumMemoryBytes" : 14140766615,
+          "minimumMemoryBytes" : 14337599233,
           "parameterCount" : 3665590015,
-          "peakBytes" : 7724684326,
+          "peakBytes" : 7891992052,
           "precision" : "float16",
           "registryName" : "hyper-sdxl-1step-lora",
-          "residentBytes" : 7724684326,
+          "residentBytes" : 7891992052,
           "source" : {
             "files" : [
               {
@@ -18584,8 +18585,8 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 7724684326,
-                "residentBytes" : 7724684326
+                "peakBytes" : 7891992052,
+                "residentBytes" : 7891992052
               },
               "title" : "As published",
               "value" : "checkpoint"
@@ -18634,7 +18635,7 @@
       ],
       "registryName" : "hyper-sdxl-4steps-lora",
       "requirements" : {
-        "minimumMemoryBytes" : 14140766615,
+        "minimumMemoryBytes" : 14337599233,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -18662,21 +18663,22 @@
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "bfloat16" : 7331180030,
-                  "checkpoint" : 7724684326,
-                  "float32" : 14662360060
+                  "bfloat16" : 7891992052,
+                  "checkpoint" : 7891992052,
+                  "float32" : 14662360060,
+                  "loaded" : 7891992052
                 },
                 "id" : "model",
                 "title" : "model"
               }
             ]
           },
-          "minimumMemoryBytes" : 14140766615,
+          "minimumMemoryBytes" : 14337599233,
           "parameterCount" : 3665590015,
-          "peakBytes" : 7724684326,
+          "peakBytes" : 7891992052,
           "precision" : "float16",
           "registryName" : "hyper-sdxl-4steps-lora",
-          "residentBytes" : 7724684326,
+          "residentBytes" : 7891992052,
           "source" : {
             "files" : [
               {
@@ -18925,8 +18927,8 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 7724684326,
-                "residentBytes" : 7724684326
+                "peakBytes" : 7891992052,
+                "residentBytes" : 7891992052
               },
               "title" : "As published",
               "value" : "checkpoint"
@@ -18984,7 +18986,7 @@
       ],
       "registryName" : "hyper-sdxl-8steps-cfg-lora",
       "requirements" : {
-        "minimumMemoryBytes" : 14140766615,
+        "minimumMemoryBytes" : 14337599233,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -19012,21 +19014,22 @@
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "bfloat16" : 7331180030,
-                  "checkpoint" : 7724684326,
-                  "float32" : 14662360060
+                  "bfloat16" : 7891992052,
+                  "checkpoint" : 7891992052,
+                  "float32" : 14662360060,
+                  "loaded" : 7891992052
                 },
                 "id" : "model",
                 "title" : "model"
               }
             ]
           },
-          "minimumMemoryBytes" : 14140766615,
+          "minimumMemoryBytes" : 14337599233,
           "parameterCount" : 3665590015,
-          "peakBytes" : 7724684326,
+          "peakBytes" : 7891992052,
           "precision" : "float16",
           "registryName" : "hyper-sdxl-8steps-cfg-lora",
-          "residentBytes" : 7724684326,
+          "residentBytes" : 7891992052,
           "source" : {
             "files" : [
               {
@@ -22515,7 +22518,8 @@
         "cacheGroupSize" : "cacheGroupSize",
         "contextLength" : "contextLength",
         "precision" : "precision",
-        "quantizationBits" : "quantizationBits"
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
       },
       "modelTypes" : [
         "mistral",
@@ -22828,6 +22832,37 @@
         {
           "choices" : [
             {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 47815895040,
+                "residentBytes" : 47815895040
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 5578475520,
+                "residentBytes" : 5578475520
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
               "memory" : {
                 "peakBytes" : 47815895040,
                 "residentBytes" : 47815895040
@@ -23116,7 +23151,8 @@
         "requiresAppleSilicon" : true
       },
       "residencies" : [
-        "resident"
+        "resident",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "Mistral Small 3 24B Instruct, a dense decoder that writes text, calls tools, and follows a JSON Schema.",
@@ -23142,6 +23178,12 @@
                   "float32" : 94289612800
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 1111511040,
+                  "checkpoint" : 1111511040,
+                  "float32" : 2223022080
+                },
+                "layerCount" : 40,
                 "quantizableElements" : 22900899840,
                 "title" : "decoder"
               }
@@ -28544,9 +28586,8 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
-        "stagePrecisions" : {
-          "model" : "float32"
-        }
+        "precision" : "precision",
+        "residency" : "residency"
       },
       "options" : [
         {
@@ -28558,6 +28599,64 @@
           "stage" : "request",
           "step" : 1,
           "title" : "Maximum tokens"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 50730958848,
+                "residentBytes" : 50730958848
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9289678848,
+                "residentBytes" : 9289678848
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 25365479424,
+                "residentBytes" : 25365479424
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 50730958848,
+                "residentBytes" : 50730958848
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "float32",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
         }
       ],
       "outputModalities" : [
@@ -28582,7 +28681,8 @@
         "requiresAppleSilicon" : true
       },
       "residencies" : [
-        "resident"
+        "resident",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "Pixtral 12B, a 2D-rotary vision encoder and a Mistral NeMo decoder answering a question about an image.",
@@ -28605,8 +28705,14 @@
                   "checkpoint" : 25365479424,
                   "float32" : 50730958848
                 },
-                "id" : "model",
-                "title" : "model"
+                "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 545280000,
+                  "checkpoint" : 545280000,
+                  "float32" : 1090560000
+                },
+                "layerCount" : 40,
+                "title" : "decoder"
               }
             ],
             "vocabularySize" : 131072
@@ -29890,7 +29996,8 @@
         "cacheGroupSize" : "cacheGroupSize",
         "contextLength" : "contextLength",
         "precision" : "precision",
-        "quantizationBits" : "quantizationBits"
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
       },
       "modelTypes" : [
         "qwen3"
@@ -30198,6 +30305,37 @@
           "kind" : "json",
           "stage" : "request",
           "title" : "Tools"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1973026816,
+                "residentBytes" : 1973026816
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1155017728,
+                "residentBytes" : 1155017728
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
         },
         {
           "choices" : [
@@ -30490,7 +30628,8 @@
         "requiresAppleSilicon" : true
       },
       "residencies" : [
-        "resident"
+        "resident",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "Qwen3 0.6B, a dense decoder that writes text, calls tools, and follows a JSON Schema.",
@@ -30516,6 +30655,12 @@
                   "float32" : 3006529536
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 31461888,
+                  "checkpoint" : 31461888,
+                  "float32" : 62923776
+                },
+                "layerCount" : 28,
                 "quantizableElements" : 595984384,
                 "title" : "decoder"
               }
@@ -30633,7 +30778,8 @@
         "draft" : "draftModel",
         "draftBits" : "draftBits",
         "precision" : "precision",
-        "quantizationBits" : "quantizationBits"
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
       },
       "modelTypes" : [
         "qwen3"
@@ -30941,6 +31087,37 @@
           "kind" : "json",
           "stage" : "request",
           "title" : "Tools"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4533241856,
+                "residentBytes" : 4533241856
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1915769856,
+                "residentBytes" : 1915769856
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
         },
         {
           "choices" : [
@@ -31318,7 +31495,8 @@
         "requiresAppleSilicon" : true
       },
       "residencies" : [
-        "resident"
+        "resident",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "Qwen3 1.7B, a dense decoder that writes text, calls tools, and follows a JSON Schema.",
@@ -31344,6 +31522,12 @@
                   "float32" : 8126959616
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 100672000,
+                  "checkpoint" : 100672000,
+                  "float32" : 201344000
+                },
+                "layerCount" : 28,
                 "quantizableElements" : 1720451072,
                 "title" : "decoder"
               }
@@ -31460,7 +31644,8 @@
         "draft" : "draftModel",
         "draftBits" : "draftBits",
         "precision" : "precision",
-        "quantizationBits" : "quantizationBits"
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
       },
       "modelTypes" : [
         "qwen3"
@@ -31768,6 +31953,37 @@
           "kind" : "json",
           "stage" : "request",
           "title" : "Tools"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 30207703040,
+                "residentBytes" : 30207703040
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 5103995904,
+                "residentBytes" : 5103995904
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
         },
         {
           "choices" : [
@@ -32161,7 +32377,8 @@
         "requiresAppleSilicon" : true
       },
       "residencies" : [
-        "resident"
+        "resident",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "Qwen3 14B, a dense decoder that writes text, calls tools, and follows a JSON Schema.",
@@ -32187,6 +32404,12 @@
                   "float32" : 59073228800
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 660623872,
+                  "checkpoint" : 660623872,
+                  "float32" : 1321247744
+                },
+                "layerCount" : 40,
                 "quantizableElements" : 13989969920,
                 "title" : "decoder"
               }
@@ -33081,7 +33304,8 @@
         "draft" : "draftModel",
         "draftBits" : "draftBits",
         "precision" : "precision",
-        "quantizationBits" : "quantizationBits"
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
       },
       "modelTypes" : [
         "qwen3"
@@ -33389,6 +33613,37 @@
           "kind" : "json",
           "stage" : "request",
           "title" : "Tools"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 66597988352,
+                "residentBytes" : 66597988352
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 6135794688,
+                "residentBytes" : 6135794688
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
         },
         {
           "choices" : [
@@ -33790,7 +34045,8 @@
         "requiresAppleSilicon" : true
       },
       "residencies" : [
-        "resident"
+        "resident",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "Qwen3 32B, a dense decoder that writes text, calls tools, and follows a JSON Schema.",
@@ -33816,6 +34072,12 @@
                   "float32" : 131048493056
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 975196672,
+                  "checkpoint" : 975196672,
+                  "float32" : 1950393344
+                },
+                "layerCount" : 64,
                 "quantizableElements" : 31983534080,
                 "title" : "decoder"
               }
@@ -33932,7 +34194,8 @@
         "draft" : "draftModel",
         "draftBits" : "draftBits",
         "precision" : "precision",
-        "quantizationBits" : "quantizationBits"
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
       },
       "modelTypes" : [
         "qwen3"
@@ -34240,6 +34503,37 @@
           "kind" : "json",
           "stage" : "request",
           "title" : "Tools"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 8648915968,
+                "residentBytes" : 8648915968
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1785620480,
+                "residentBytes" : 1785620480
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
         },
         {
           "choices" : [
@@ -34625,7 +34919,8 @@
         "requiresAppleSilicon" : true
       },
       "residencies" : [
-        "resident"
+        "resident",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "Qwen3 4B, a dense decoder that writes text, calls tools, and follows a JSON Schema.",
@@ -34651,6 +34946,12 @@
                   "float32" : 16089872384
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 201861632,
+                  "checkpoint" : 201861632,
+                  "float32" : 403723264
+                },
+                "layerCount" : 36,
                 "quantizableElements" : 3633315840,
                 "title" : "decoder"
               }
@@ -34919,9 +35220,8 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
-        "stagePrecisions" : {
-          "decoder" : "float32"
-        }
+        "precision" : "precision",
+        "residency" : "residency"
       },
       "options" : [
         {
@@ -34933,6 +35233,64 @@
           "stage" : "request",
           "step" : 1,
           "title" : "Maximum tokens"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 8510128128,
+                "residentBytes" : 8510128128
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 3275184128,
+                "residentBytes" : 3275184128
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 4255064064,
+                "residentBytes" : 4255064064
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 8510128128,
+                "residentBytes" : 8510128128
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "float32",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
         }
       ],
       "outputModalities" : [
@@ -34957,7 +35315,8 @@
         "requiresAppleSilicon" : true
       },
       "residencies" : [
-        "resident"
+        "resident",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "Qwen3-VL 2B Instruct, the Qwen3-VL vision tower and decoder answering a question about an image.",
@@ -34981,6 +35340,12 @@
                   "float32" : 8510128128
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 100672000,
+                  "checkpoint" : 100672000,
+                  "float32" : 201344000
+                },
+                "layerCount" : 28,
                 "title" : "decoder"
               }
             ],
@@ -35091,10 +35456,8 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
-        "residency" : "residency",
-        "stagePrecisions" : {
-          "decoder" : "float32"
-        }
+        "precision" : "precision",
+        "residency" : "residency"
       },
       "options" : [
         {
@@ -35137,6 +35500,33 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 62141508064,
+                "residentBytes" : 62141508064
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 124283016128,
+                "residentBytes" : 124283016128
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "float32",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
         }
       ],
       "outputModalities" : [
@@ -35300,9 +35690,8 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
-        "stagePrecisions" : {
-          "decoder" : "float32"
-        }
+        "precision" : "precision",
+        "residency" : "residency"
       },
       "options" : [
         {
@@ -35314,6 +35703,64 @@
           "stage" : "request",
           "step" : 1,
           "title" : "Maximum tokens"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 133429560256,
+                "residentBytes" : 133429560256
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12505172928,
+                "residentBytes" : 12505172928
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 66714780128,
+                "residentBytes" : 66714780128
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 133429560256,
+                "residentBytes" : 133429560256
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "float32",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
         }
       ],
       "outputModalities" : [
@@ -35338,7 +35785,8 @@
         "requiresAppleSilicon" : true
       },
       "residencies" : [
-        "resident"
+        "resident",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "Qwen3-VL 32B Instruct, the Qwen3-VL vision tower and decoder answering a question about an image.",
@@ -35362,6 +35810,12 @@
                   "float32" : 133429560256
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 975196672,
+                  "checkpoint" : 975196672,
+                  "float32" : 1950393344
+                },
+                "layerCount" : 64,
                 "title" : "decoder"
               }
             ],
@@ -35471,9 +35925,8 @@
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
       "memoryModel" : {
-        "stagePrecisions" : {
-          "decoder" : "float32"
-        }
+        "precision" : "precision",
+        "residency" : "residency"
       },
       "options" : [
         {
@@ -35485,6 +35938,64 @@
           "stage" : "request",
           "step" : 1,
           "title" : "Maximum tokens"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 35068494784,
+                "residentBytes" : 35068494784
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 8827780032,
+                "residentBytes" : 8827780032
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 17534247392,
+                "residentBytes" : 17534247392
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 35068494784,
+                "residentBytes" : 35068494784
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "float32",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
         }
       ],
       "outputModalities" : [
@@ -35509,7 +36020,8 @@
         "requiresAppleSilicon" : true
       },
       "residencies" : [
-        "resident"
+        "resident",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "Qwen3-VL 8B Instruct, the Qwen3-VL vision tower and decoder answering a question about an image.",
@@ -35533,6 +36045,12 @@
                   "float32" : 35068494784
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 385892864,
+                  "checkpoint" : 385892864,
+                  "float32" : 771785728
+                },
+                "layerCount" : 36,
                 "title" : "decoder"
               }
             ],
@@ -47564,16 +48082,16 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 7331180030,
-                "residentBytes" : 7331180030
+                "peakBytes" : 7498487756,
+                "residentBytes" : 7498487756
               },
               "title" : "As published",
               "value" : "checkpoint"
             },
             {
               "memory" : {
-                "peakBytes" : 14662360060,
-                "residentBytes" : 14662360060
+                "peakBytes" : 14268855764,
+                "residentBytes" : 14268855764
               },
               "title" : "Float32",
               "value" : "float32"
@@ -47614,7 +48132,7 @@
       ],
       "registryName" : "sdxl-lightning-4step-lora",
       "requirements" : {
-        "minimumMemoryBytes" : 13677820384,
+        "minimumMemoryBytes" : 13874653003,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -47642,21 +48160,22 @@
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "bfloat16" : 7331180030,
-                  "checkpoint" : 7331180030,
-                  "float32" : 14662360060
+                  "bfloat16" : 7498487756,
+                  "checkpoint" : 7498487756,
+                  "float32" : 14268855764,
+                  "loaded" : 7498487756
                 },
                 "id" : "model",
                 "title" : "model"
               }
             ]
           },
-          "minimumMemoryBytes" : 13677820384,
+          "minimumMemoryBytes" : 13874653003,
           "parameterCount" : 3665590015,
-          "peakBytes" : 7331180030,
+          "peakBytes" : 7498487756,
           "precision" : "float16",
           "registryName" : "sdxl-lightning-4step-lora",
-          "residentBytes" : 7331180030,
+          "residentBytes" : 7498487756,
           "source" : {
             "files" : [
               {
@@ -47918,6 +48437,14 @@
               },
               "title" : "Float32",
               "value" : "float32"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 7104983460,
+                "residentBytes" : 7104983460
+              },
+              "title" : "Float16",
+              "value" : "float16"
             }
           ],
           "default" : "checkpoint",
@@ -47925,7 +48452,6 @@
           "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
-          "property" : "precision",
           "stage" : "load",
           "title" : "Precision"
         }
@@ -47983,9 +48509,10 @@
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "bfloat16" : 6937675734,
+                  "bfloat16" : 7104983460,
                   "checkpoint" : 13875351468,
-                  "float32" : 13875351468
+                  "float32" : 13875351468,
+                  "loaded" : 13875351468
                 },
                 "id" : "model",
                 "title" : "model"
@@ -52675,6 +53202,14 @@
               },
               "title" : "Float32",
               "value" : "float32"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2132471230,
+                "residentBytes" : 2132471230
+              },
+              "title" : "Float16",
+              "value" : "float16"
             }
           ],
           "default" : "checkpoint",
@@ -52682,7 +53217,6 @@
           "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
           "key" : "precision",
           "kind" : "choice",
-          "property" : "precision",
           "stage" : "load",
           "title" : "Precision"
         }
@@ -52966,8 +53500,8 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 6937675734,
-                "residentBytes" : 6937675734
+                "peakBytes" : 7104983460,
+                "residentBytes" : 7104983460
               },
               "title" : "As published",
               "value" : "checkpoint"
@@ -53025,7 +53559,7 @@
       ],
       "registryName" : "stable-diffusion-xl-base-1.0",
       "requirements" : {
-        "minimumMemoryBytes" : 13214874153,
+        "minimumMemoryBytes" : 13411706772,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -53053,21 +53587,22 @@
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "bfloat16" : 6937675734,
-                  "checkpoint" : 6937675734,
-                  "float32" : 13875351468
+                  "bfloat16" : 7104983460,
+                  "checkpoint" : 7104983460,
+                  "float32" : 13875351468,
+                  "loaded" : 7104983460
                 },
                 "id" : "model",
                 "title" : "model"
               }
             ]
           },
-          "minimumMemoryBytes" : 13214874153,
+          "minimumMemoryBytes" : 13411706772,
           "parameterCount" : 3468837867,
-          "peakBytes" : 6937675734,
+          "peakBytes" : 7104983460,
           "precision" : "float16",
           "registryName" : "stable-diffusion-xl-base-1.0",
-          "residentBytes" : 6937675734,
+          "residentBytes" : 7104983460,
           "source" : {
             "files" : [
               {
