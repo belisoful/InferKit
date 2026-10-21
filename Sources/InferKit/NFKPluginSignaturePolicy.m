@@ -163,6 +163,46 @@ typedef OSStatus (^NFKPluginCodeCheck)(SecRequirementRef _Nullable requirement, 
 
 #pragma mark Static code
 
++ (nullable NSString *)signingTeamIdentifierOfCodeAtURL:(NSURL *)url error:(NSError **)error
+{
+	SecStaticCodeRef code = NULL;
+	OSStatus status = SecStaticCodeCreateWithPath((__bridge CFURLRef)url, kSecCSDefaultFlags, &code);
+	if (status != errSecSuccess || code == NULL) {
+		NFKPluginSetError(error, NFKPluginErrorSignatureInvalid,
+						  [NSString stringWithFormat:@"%@ could not be read as code: %@", url.lastPathComponent, NFKPluginSecurityReason(status, NULL)]);
+		return nil;
+	}
+	CFErrorRef checkError = NULL;
+	status = SecStaticCodeCheckValidityWithErrors(code, NFKPluginStaticValidationFlags, NULL, &checkError);
+	if (status == errSecCSUnsigned) {
+		CFRelease(code);
+		if (checkError != NULL) {
+			CFRelease(checkError);
+		}
+		return nil;
+	}
+	if (status != errSecSuccess) {
+		NSString *reason = NFKPluginSecurityReason(status, checkError);
+		CFRelease(code);
+		if (checkError != NULL) {
+			CFRelease(checkError);
+		}
+		NFKPluginSetError(error, NFKPluginErrorSignatureInvalid,
+						  [NSString stringWithFormat:@"%@'s signature is invalid: %@", url.lastPathComponent, reason]);
+		return nil;
+	}
+	CFDictionaryRef rawInformation = NULL;
+	SecCodeCopySigningInformation(code, kSecCSSigningInformation, &rawInformation);
+	CFRelease(code);
+	NSDictionary *information = CFBridgingRelease(rawInformation);
+	uint32_t flags = [information[(__bridge NSString *)kSecCodeInfoFlags] unsignedIntValue];
+	NSString *team = information[(__bridge NSString *)kSecCodeInfoTeamIdentifier];
+	if ((flags & kSecCodeSignatureAdhoc) != 0 || ![team isKindOfClass:NSString.class]) {
+		return nil;
+	}
+	return team;
+}
+
 - (BOOL)validateCodeAtURL:(NSURL *)url error:(NSError **)error
 {
 	SecStaticCodeRef code = NULL;

@@ -284,6 +284,22 @@ An app chooses which signatures it accepts with `NFKPluginSignaturePolicy`:
 The registry checks the signature when a plugin first launches or loads, and caches a success by the
 code's hash and its files, so a later edit to the bundle is checked again.
 
+The registry's `signaturePolicy` covers every plugin, and a plugin can have its own:
+`setSignaturePolicy:forPluginIdentifier:` sets one, and `addPluginsInDirectoryURL:signaturePolicy:errors:`
+gives each plugin of a folder the folder's. An app keeps installed plugins under the default policy
+pinned to their team and a folder of local builds under the development policy:
+
+```objc
+NFKPluginRegistry *registry = NFKPluginRegistry.sharedRegistry;
+[registry addPluginsInDirectoryURL:installedPluginsURL errors:NULL];
+[registry addPluginsInDirectoryURL:developerPluginsURL
+                   signaturePolicy:NFKPluginSignaturePolicy.developmentPolicy errors:NULL];
+```
+
+`+[NFKPluginSignaturePolicy signingTeamIdentifierOfCodeAtURL:error:]` reads the team that signed a bundle
+without loading it, so an app records the team at install and refuses an update another team signed.
+It answers nil, with no error, for a bundle signed ad hoc or not at all.
+
 ## The ownership rule
 
 A plugin is refused when another account could change it between its signature check and its load. The
@@ -402,6 +418,33 @@ server.idleUnloadInterval = 600;
 `addModelWithIdentifier:options:catalog:forModelName:error:` hosts it through the catalog's build entry
 instead. The server's idle unload releases the backend, and the plugin's process then exits after its
 own idle interval.
+
+## Status, start, and stop
+
+The registry reports each plugin's status, whatever started it: a backend's run, a tool call, a
+server's request, or the app.
+
+- `statusForPluginIdentifier:` → `NFKPluginStatus`: `processState` (not running, starting, ready,
+  restarting, failed), `failureError`, `processIdentifier`, `launchDate`, the `version` it runs, and its
+  `isolation`. A trusted plugin reports ready once its code is in the app's process.
+- `statusHandler` and `NFKPluginRegistryStatusDidChangeNotification` deliver every change on a
+  background queue, a signature refused at a start included.
+- `startPluginWithIdentifier:error:` (or `…completionHandler:`) starts the plugin ahead of its first
+  request and runs its signature checks then, so a refusal shows when the user loads the plugin.
+- `stopPluginWithIdentifier:completionHandler:` stops it now: requests made from the call on wait, the
+  runs in flight get `restartDrainTimeout` to finish, and the process ends. The next request starts it
+  again. A plugin in the app's process cannot stop (`NFKPluginErrorInProcessUnloadable`).
+
+```objc
+registry.statusHandler = ^(NFKPluginStatus *status) {
+    // status.processState, status.failureError, status.launchDate: on a background queue
+};
+NSError *error = nil;
+if (![registry startPluginWithIdentifier:@"com.example.upscaler" error:&error]) {
+    // a refused signature, or a process that does not start
+}
+[registry stopPluginWithIdentifier:@"com.example.upscaler" completionHandler:^(NSError *error) { }];
+```
 
 ## Trust and the app's process
 
@@ -523,5 +566,6 @@ Every plugin error is in `NFKPluginErrorDomain`:
 | `UnknownModel`, `UnknownTool`, `UnknownPlugin` | nothing is listed under the identifier |
 | `IdentifierInUse` | the catalog already lists one of the plugin's catalog identifiers, another bundle holds its plugin identifier, or another plugin declares one of its tools |
 | `NotTrusted` | the plugin cannot run in the app's process |
+| `InProcessUnloadable` | a stop asked for a plugin loaded into the app's process |
 
 A plugin's own error reaches the app with its domain and code.

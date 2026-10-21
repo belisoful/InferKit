@@ -59,6 +59,8 @@ extern NSString * const NFKPluginErrorDomain;
 				0.4.0.
 	@constant   NFKPluginErrorUnknownPlugin The registry lists no plugin with the identifier. Introduced
 				in InferKit 0.4.0.
+	@constant   NFKPluginErrorInProcessUnloadable The plugin runs in the app's process, and a loaded bundle
+				stays loaded until the app quits, so it cannot be stopped. Introduced in InferKit 0.4.0.
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ERROR_ENUM(NFKPluginErrorDomain, NFKPluginError) {
@@ -82,6 +84,7 @@ typedef NS_ERROR_ENUM(NFKPluginErrorDomain, NFKPluginError) {
 	NFKPluginErrorTimedOut = 18,
 	NFKPluginErrorIdentifierInUse = 19,
 	NFKPluginErrorUnknownPlugin = 20,
+	NFKPluginErrorInProcessUnloadable = 21,
 };
 
 /*!

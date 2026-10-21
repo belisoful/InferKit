@@ -184,6 +184,19 @@ typedef void (^NFKPluginReplyHandler)(NSDictionary<NSString *, id> * _Nullable r
 	start. Returns NO, changing nothing, otherwise; the caller then restarts. */
 - (BOOL)replaceManifestWhileStopped:(NFKPluginManifest *)manifest;
 
+/*! A second state handler beside stateHandler, which the registry that made the process sets, so the
+	app's handler keeps its slot. Called on the event queue after stateHandler. */
+@property (atomic, copy, nullable) NFKPluginProcessStateHandler registryStateHandler;
+
+/*! When the running process became Ready; nil while none runs. Set by the process alone. */
+@property (atomic, copy, nullable) NSDate *launchDate;
+
+/*! Stops the process as a restart retires one: requests made from the call on are held, the runs in
+	flight get restartDrainTimeout to finish and are then cancelled, the process ends, and the held
+	requests then start a new process. completionHandler runs on the event queue once the process has
+	ended. */
+- (void)stopDrainingWithCompletionHandler:(nullable void (^)(void))completionHandler;
+
 @end
 
 @interface NFKPluginBackend ()

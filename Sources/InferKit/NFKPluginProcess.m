@@ -818,10 +818,19 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 			return;
 		}
 		self.state = state;
+		if (state != NFKPluginProcessStateReady && state != NFKPluginProcessStateRestarting) {
+			self.launchDate = nil;
+		}
 		NFKPluginProcessStateHandler handler = self.stateHandler;
-		if (handler != nil) {
+		NFKPluginProcessStateHandler registryHandler = self.registryStateHandler;
+		if (handler != nil || registryHandler != nil) {
 			dispatch_async(self.eventQueue, ^{
-				handler(self, state);
+				if (handler != nil) {
+					handler(self, state);
+				}
+				if (registryHandler != nil) {
+					registryHandler(self, state);
+				}
 			});
 		}
 	}
@@ -993,6 +1002,7 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 	}
 	self.failureError = nil;
 	self.connection = connection;
+	self.launchDate = [NSDate date];
 	[self enterState:NFKPluginProcessStateReady];
 	[self scheduleIdleTimer];
 	return connection;
@@ -1417,13 +1427,32 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 	});
 }
 
-/*! Drains the runs in flight, stops the old process, and starts the new version. Returns the error that
-	failed the start, or nil. */
-- (nullable NSError *)replaceProcessWithManifest:(NFKPluginManifest *)manifest
+- (void)stopDrainingWithCompletionHandler:(nullable void (^)(void))completionHandler
 {
-	[self enterState:NFKPluginProcessStateRestarting];
+	[self.admissionCondition lock];
+	self.holding = YES;
+	self.pendingRestarts += 1;
+	[self.admissionCondition unlock];
+	dispatch_async(self.controlQueue, ^{
+		[self shutDownDrainingWithReason:@"the plugin stopped before the run finished"];
+		if (self.state != NFKPluginProcessStateFailed) {
+			[self enterState:NFKPluginProcessStateNotRunning];
+		}
+		[self.startLock unlock];
+		[self releaseHeldAdmissionsWithError:nil];
+		if (completionHandler != nil) {
+			dispatch_async(self.eventQueue, completionHandler);
+		}
+	});
+}
+
+/*! Drains the runs in flight on the live process within restartDrainTimeout, cancels what is left, and
+	shuts it down, failing what still waits with stoppedReason. Runs on the control queue and returns
+	holding the start lock. */
+- (void)shutDownDrainingWithReason:(NSString *)stoppedReason
+{
 	NFKPluginConnection *old = self.connection;
-	NSError *stopError = NFKPluginMakeError(NFKPluginErrorStopped, @"the plugin restarted before the run finished");
+	NSError *stopError = NFKPluginMakeError(NFKPluginErrorStopped, stoppedReason);
 	if (old != nil) {
 		self.restartPhase = @"draining";
 		[old retire];
@@ -1446,6 +1475,14 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 	if (old != nil) {
 		[self shutDownConnection:old error:stopError];
 	}
+}
+
+/*! Drains the runs in flight, stops the old process, and starts the new version. Returns the error that
+	failed the start, or nil. */
+- (nullable NSError *)replaceProcessWithManifest:(NFKPluginManifest *)manifest
+{
+	[self enterState:NFKPluginProcessStateRestarting];
+	[self shutDownDrainingWithReason:@"the plugin restarted before the run finished"];
 	if (self.idleExitInterval == self.manifest.idleExitInterval) {
 		self.idleExitInterval = manifest.idleExitInterval;
 	}

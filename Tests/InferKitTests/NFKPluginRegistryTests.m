@@ -827,6 +827,191 @@ static BOOL NFKRegistryTestImageIsLoaded(NSURL *url)
 	[self assertError:error domain:NFKPluginErrorDomain code:NFKPluginErrorTeamMismatch];
 }
 
+#pragma mark Running
+
+// A start launches the process ahead of any request, the status reports it with its pid and start time,
+// and the status handler hears each change.
+- (void)testAStartedPluginReportsItsStatus
+{
+	[self requireHost];
+	NFKPluginRegistry *registry = [self registry];
+	NSError *error = nil;
+	NFKPluginManifest *manifest = [registry addPluginAtURL:[self fixtureOfKind:NFKPluginEntryKindCABI version:@"1.0.0"] error:&error];
+	XCTAssertNotNil(manifest, @"%@", error);
+	NSMutableArray<NFKPluginStatus *> *heard = [NSMutableArray array];
+	registry.statusHandler = ^(NFKPluginStatus *status) {
+		@synchronized (heard) {
+			[heard addObject:status];
+		}
+	};
+
+	NFKPluginStatus *before = [registry statusForPluginIdentifier:manifest.identifier];
+	XCTAssertEqual(before.processState, NFKPluginProcessStateNotRunning);
+	XCTAssertEqual(before.isolation, NFKPluginIsolationProcess);
+	XCTAssertEqual(before.processIdentifier, 0);
+	XCTAssertNil(before.launchDate);
+	XCTAssertNil([registry statusForPluginIdentifier:@"com.example.absent"]);
+
+	XCTAssertTrue([registry startPluginWithIdentifier:manifest.identifier error:&error], @"%@", error);
+	NFKPluginStatus *started = [registry statusForPluginIdentifier:manifest.identifier];
+	XCTAssertEqual(started.processState, NFKPluginProcessStateReady);
+	XCTAssertGreaterThan(started.processIdentifier, 0);
+	XCTAssertNotNil(started.launchDate);
+	XCTAssertEqualObjects(started.version, @"1.0.0");
+	XCTAssertTrue([self waitUntil:^BOOL {
+		@synchronized (heard) {
+			return [[heard valueForKey:@"processState"] containsObject:@(NFKPluginProcessStateReady)];
+		}
+	} timeout:10], @"the handler hears the start");
+	XCTAssertTrue([registry startPluginWithIdentifier:manifest.identifier error:&error], @"a running plugin starts at once");
+
+	XCTestExpectation *unknown = [self expectationWithDescription:@"unknown"];
+	[registry stopPluginWithIdentifier:@"com.example.absent" completionHandler:^(NSError *stopError) {
+		[self assertError:stopError domain:NFKPluginErrorDomain code:NFKPluginErrorUnknownPlugin];
+		[unknown fulfill];
+	}];
+	[self waitForExpectations:@[ unknown ] timeout:10];
+}
+
+// A stop lets the run in flight finish, ends the process, and the next request starts the plugin again.
+- (void)testAStopDrainsTheRunInFlightAndTheNextRequestStartsAgain
+{
+	[self requireHost];
+	NFKPluginRegistry *registry = [self registry];
+	NSError *error = nil;
+	NFKPluginManifest *manifest = [registry addPluginAtURL:[self fixtureOfKind:NFKPluginEntryKindCABI version:@"1.0.0"] error:&error];
+	XCTAssertNotNil(manifest, @"%@", error);
+	NSString *slow = [self catalogIdentifierOfKind:NFKPluginEntryKindCABI model:NFKPluginFixtureSlowModel];
+	NFKPluginBackend *backend = [registry backendForModelIdentifier:slow options:nil error:&error];
+	XCTAssertNotNil(backend, @"%@", error);
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{}
+															   parameters:@{ NFKPluginFixtureStepsKey: @10, NFKPluginFixtureStepMillisecondsKey: @50 }];
+	NFKInferenceJob *job = [backend submitInferenceJobForRequest:request];
+	XCTAssertTrue([self waitUntil:^BOOL {
+		return [registry statusForPluginIdentifier:manifest.identifier].processState == NFKPluginProcessStateReady;
+	} timeout:60], @"%@", backend.process.diagnosticDescription);
+	pid_t first = [registry statusForPluginIdentifier:manifest.identifier].processIdentifier;
+
+	XCTestExpectation *stopped = [self expectationWithDescription:@"stopped"];
+	[registry stopPluginWithIdentifier:manifest.identifier completionHandler:^(NSError *stopError) {
+		XCTAssertNil(stopError);
+		[stopped fulfill];
+	}];
+	[self waitForExpectations:@[ stopped ] timeout:120];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusSucceeded, @"the run in flight finished before the stop: %@", job.error);
+	XCTAssertEqualObjects(job.result.outputs[NFKPluginFixtureStepsKey], @10);
+	XCTAssertEqual([registry statusForPluginIdentifier:manifest.identifier].processState, NFKPluginProcessStateNotRunning);
+	XCTAssertEqual([registry statusForPluginIdentifier:manifest.identifier].processIdentifier, 0);
+
+	NFKInferenceRequest *brief = [NFKInferenceRequest requestWithInputs:@{} parameters:@{ NFKPluginFixtureStepsKey: @1 }];
+	XCTAssertNotNil([backend runInferenceForRequest:brief error:&error], @"the next request starts the plugin again: %@", error);
+	NFKPluginStatus *again = [registry statusForPluginIdentifier:manifest.identifier];
+	XCTAssertEqual(again.processState, NFKPluginProcessStateReady);
+	XCTAssertNotEqual(again.processIdentifier, first);
+}
+
+// A start runs the signature checks, so a refused signature fails the start, and the status and the
+// handler report it.
+- (void)testAStartReportsARefusedSignature
+{
+	[self requireHost];
+	NSError *error = nil;
+	NSURL *tampered = [NFKPluginFixtures tamperedCopyOfBundleAtURL:[self fixtureOfKind:NFKPluginEntryKindCABI version:@"1.0.0"]
+															  error:&error];
+	XCTAssertNotNil(tampered, @"%@", error);
+	[self.temporaryURLs addObject:tampered.URLByDeletingLastPathComponent];
+	NFKPluginRegistry *registry = [self registry];
+	NFKPluginManifest *manifest = [registry addPluginAtURL:tampered error:&error];
+	XCTAssertNotNil(manifest, @"%@", error);
+	__block NFKPluginStatus *failed = nil;
+	registry.statusHandler = ^(NFKPluginStatus *status) {
+		if (status.processState == NFKPluginProcessStateFailed) {
+			@synchronized (self) {
+				failed = status;
+			}
+		}
+	};
+	XCTAssertFalse([registry startPluginWithIdentifier:manifest.identifier error:&error]);
+	[self assertError:error domain:NFKPluginErrorDomain code:NFKPluginErrorSignatureInvalid];
+	NFKPluginStatus *status = [registry statusForPluginIdentifier:manifest.identifier];
+	XCTAssertEqual(status.processState, NFKPluginProcessStateFailed);
+	[self assertError:status.failureError domain:NFKPluginErrorDomain code:NFKPluginErrorSignatureInvalid];
+	XCTAssertTrue([self waitUntil:^BOOL {
+		@synchronized (self) {
+			return failed != nil;
+		}
+	} timeout:10], @"the handler hears the refusal");
+}
+
+// A plugin loaded into the app's process cannot be stopped, and reports where it runs.
+- (void)testAPluginInTheAppsProcessReportsItsLoadAndCannotStop
+{
+	NFKPluginRegistry *registry = [self registry];
+	NSError *error = nil;
+	NFKPluginManifest *manifest = [registry addPluginAtURL:[self fixtureOfKind:NFKPluginEntryKindObjC version:@"1.0.0"] error:&error];
+	XCTAssertNotNil(manifest, @"%@", error);
+	[registry setTrusted:YES forPluginIdentifier:manifest.identifier];
+	XCTAssertEqual([registry statusForPluginIdentifier:manifest.identifier].processState, NFKPluginProcessStateNotRunning);
+	XCTAssertTrue([registry startPluginWithIdentifier:manifest.identifier error:&error], @"%@", error);
+	NFKPluginStatus *status = [registry statusForPluginIdentifier:manifest.identifier];
+	XCTAssertEqual(status.isolation, NFKPluginIsolationInProcess);
+	XCTAssertEqual(status.processState, NFKPluginProcessStateReady);
+	XCTAssertEqual(status.processIdentifier, 0);
+	XCTestExpectation *refused = [self expectationWithDescription:@"refused"];
+	[registry stopPluginWithIdentifier:manifest.identifier completionHandler:^(NSError *stopError) {
+		[self assertError:stopError domain:NFKPluginErrorDomain code:NFKPluginErrorInProcessUnloadable];
+		[refused fulfill];
+	}];
+	[self waitForExpectations:@[ refused ] timeout:10];
+}
+
+// A folder's policy holds for the plugins it adds while the registry's holds for the rest, and a
+// plugin's own policy outlasts a change of the registry's.
+- (void)testAPluginKeepsItsOwnSignaturePolicy
+{
+	NFKPluginRegistry *registry = [self registry];
+	registry.signaturePolicy = NFKPluginSignaturePolicy.defaultPolicy;
+	NSURL *folder = [self pluginsFolderWithCopiesOf:@[ [self fixtureOfKind:NFKPluginEntryKindCABI version:@"1.0.0"] ]];
+	NSArray<NSError *> *errors = nil;
+	NSArray<NFKPluginManifest *> *added = [registry addPluginsInDirectoryURL:folder
+															 signaturePolicy:NFKPluginSignaturePolicy.developmentPolicy
+																	  errors:&errors];
+	XCTAssertEqual(added.count, (NSUInteger)1, @"%@", errors);
+	NSString *identifier = added.firstObject.identifier;
+	XCTAssertEqualObjects([registry signaturePolicyForPluginIdentifier:identifier], NFKPluginSignaturePolicy.developmentPolicy);
+	XCTAssertEqualObjects([registry signaturePolicyForPluginIdentifier:@"com.example.other"], NFKPluginSignaturePolicy.defaultPolicy);
+
+	NFKPluginSignaturePolicy *pinned = NFKPluginSignaturePolicy.defaultPolicy;
+	pinned.teamIdentifier = @"ABCDE12345";
+	registry.signaturePolicy = pinned;
+	XCTAssertEqualObjects([registry signaturePolicyForPluginIdentifier:identifier], NFKPluginSignaturePolicy.developmentPolicy,
+						  @"the registry's policy leaves a plugin's own alone");
+	[registry setSignaturePolicy:nil forPluginIdentifier:identifier];
+	XCTAssertEqualObjects([registry signaturePolicyForPluginIdentifier:identifier], pinned);
+
+	if ([NFKPluginFixtures hostExecutableURL] != nil) {
+		[registry setSignaturePolicy:NFKPluginSignaturePolicy.developmentPolicy forPluginIdentifier:identifier];
+		NSError *error = nil;
+		XCTAssertTrue([registry startPluginWithIdentifier:identifier error:&error], @"the ad hoc fixture starts under its own policy: %@", error);
+	}
+}
+
+// The signing team reads from the bundle alone: the fixtures are signed ad hoc and name none.
+- (void)testTheSigningTeamReadsWithoutLoading
+{
+	NSError *error = nil;
+	NSURL *fixture = [self fixtureOfKind:NFKPluginEntryKindCABI version:@"1.0.0"];
+	XCTAssertNil([NFKPluginSignaturePolicy signingTeamIdentifierOfCodeAtURL:fixture error:&error]);
+	XCTAssertNil(error, @"an ad hoc signature names no team and is no error");
+	NSURL *tampered = [NFKPluginFixtures tamperedCopyOfBundleAtURL:fixture error:&error];
+	XCTAssertNotNil(tampered, @"%@", error);
+	[self.temporaryURLs addObject:tampered.URLByDeletingLastPathComponent];
+	XCTAssertNil([NFKPluginSignaturePolicy signingTeamIdentifierOfCodeAtURL:tampered error:&error]);
+	[self assertError:error domain:NFKPluginErrorDomain code:NFKPluginErrorSignatureInvalid];
+	NSString *own = [NFKPluginSignaturePolicy signingTeamIdentifierOfCodeAtURL:NSBundle.mainBundle.executableURL error:&error];
+	XCTAssertTrue(own == nil || own.length == 10, @"%@", own);
+}
+
 #pragma mark Lazy hosting
 
 - (void)testTheServersIdleUnloadEndsThePluginsProcess

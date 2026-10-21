@@ -9,12 +9,55 @@
 #import <Foundation/Foundation.h>
 #import <InferKit/NFKInferenceTool.h>
 #import <InferKit/NFKModelCatalog.h>
+#import <InferKit/NFKPluginBackend.h>
 #import <InferKit/NFKPluginManifest.h>
+#import <InferKit/NFKPluginProcess.h>
 #import <InferKit/NFKPluginSignaturePolicy.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
-@class NFKPluginBackend;
+/*!
+	@class      NFKPluginStatus
+	@abstract   Where a listed plugin runs and whether it is running, at one moment.
+	@discussion A plugin in its own process reports its process's state. A plugin the app trusts reports
+				NFKPluginProcessStateReady once its code is loaded into the app's process, which it stays
+				in until the app quits, NFKPluginProcessStateFailed when its load failed, and
+				NFKPluginProcessStateNotRunning before. The class is macOS only. Introduced in InferKit
+				0.4.0.
+*/
+API_UNAVAILABLE(ios, tvos, watchos)
+@interface NFKPluginStatus : NSObject
+
+/*! The plugin's identifier. */
+@property (nonatomic, readonly, copy) NSString *pluginIdentifier;
+/*! The version the plugin runs, or the version listed when it is not running. */
+@property (nonatomic, readonly, copy) NSString *version;
+/*! Where the plugin runs: in its own process, or in the app's process for a plugin the app trusts. */
+@property (nonatomic, readonly) NFKPluginIsolation isolation;
+/*! Whether the plugin is running. */
+@property (nonatomic, readonly) NFKPluginProcessState processState;
+/*! Why the last start or load failed, such as a refused signature; nil unless processState is failed. */
+@property (nonatomic, readonly, copy, nullable) NSError *failureError;
+/*! The plugin process's identifier, or 0 when none runs or the plugin runs in the app's process. */
+@property (nonatomic, readonly) pid_t processIdentifier;
+/*! When the running process started, or nil when none runs. */
+@property (nonatomic, readonly, copy, nullable) NSDate *launchDate;
+
+- (instancetype)init NS_UNAVAILABLE;
++ (instancetype)new NS_UNAVAILABLE;
+
+@end
+
+/*! Posted by a registry, the object, when a plugin's status changes. userInfo holds the new status under
+	NFKPluginRegistryStatusKey. Delivered on a background queue. Introduced in InferKit 0.4.0. */
+extern NSNotificationName const NFKPluginRegistryStatusDidChangeNotification API_UNAVAILABLE(ios, tvos, watchos);
+
+/*! The NFKPluginStatus in an NFKPluginRegistryStatusDidChangeNotification's userInfo. Introduced in
+	InferKit 0.4.0. */
+extern NSString * const NFKPluginRegistryStatusKey API_UNAVAILABLE(ios, tvos, watchos);
+
+/*! A block a registry calls with a plugin's new status. Introduced in InferKit 0.4.0. */
+typedef void (^NFKPluginStatusHandler)(NFKPluginStatus *status) API_UNAVAILABLE(ios, tvos, watchos);
 
 /*! A warning an app shows before it trusts a plugin to run in its own process: the plugin stays loaded
 	until the app quits. Introduced in InferKit 0.4.0. */
@@ -70,8 +113,19 @@ API_UNAVAILABLE(ios, tvos, watchos)
 @property (nonatomic, readonly, strong) NFKModelCatalog *catalog;
 
 /*! The signatures a plugin must carry to load or launch. Defaults to
-	+[NFKPluginSignaturePolicy defaultPolicy]. Setting it applies to every plugin's next launch or load. */
+	+[NFKPluginSignaturePolicy defaultPolicy]. Setting it applies to every plugin's next launch or load,
+	except a plugin given a policy of its own. */
 @property (atomic, copy) NFKPluginSignaturePolicy *signaturePolicy;
+
+/*! Gives one plugin a signature policy of its own, from its next launch or load, or nil to return it to
+	signaturePolicy. The registry keeps the choice in memory only, through a reload or a removal; the app
+	persists it. Introduced in InferKit 0.4.0. */
+- (void)setSignaturePolicy:(nullable NFKPluginSignaturePolicy *)signaturePolicy
+	   forPluginIdentifier:(NSString *)identifier;
+
+/*! The policy a plugin launches or loads under: its own, else signaturePolicy. Introduced in InferKit
+	0.4.0. */
+- (NFKPluginSignaturePolicy *)signaturePolicyForPluginIdentifier:(NSString *)identifier;
 
 /*! The plugin host executable, inferkit-plugin-host, that serves an "objc" or "c-abi" plugin in its own
 	process. Defaults to the first executable found: Contents/Helpers in the main bundle, the main
@@ -108,6 +162,15 @@ API_UNAVAILABLE(ios, tvos, watchos)
 - (NSArray<NFKPluginManifest *> *)addPluginsInDirectoryURL:(NSURL *)directoryURL
 													errors:(NSArray<NSError *> * _Nullable * _Nullable)errors
 	NS_SWIFT_NAME(addPlugins(inDirectory:errors:));
+
+/*! Adds every plugin in directoryURL as addPluginsInDirectoryURL:errors: does, and gives each one it adds
+	signaturePolicy as its own, as setSignaturePolicy:forPluginIdentifier: does: a folder of local builds
+	takes +[NFKPluginSignaturePolicy developmentPolicy] while the installed plugins keep the registry's.
+	Introduced in InferKit 0.4.0. */
+- (NSArray<NFKPluginManifest *> *)addPluginsInDirectoryURL:(NSURL *)directoryURL
+										   signaturePolicy:(NFKPluginSignaturePolicy *)signaturePolicy
+													errors:(NSArray<NSError *> * _Nullable * _Nullable)errors
+	NS_SWIFT_NAME(addPlugins(inDirectory:signaturePolicy:errors:));
 
 /*! Removes a plugin and its models from the catalog. Its process stops once no backend or tool holds it.
 	Code loaded into the app's process stays until the app quits. */
@@ -185,6 +248,52 @@ API_UNAVAILABLE(ios, tvos, watchos)
 												 options:(nullable NSDictionary<NSString *, id> *)options
 												   error:(NSError **)error
 	NS_SWIFT_NAME(backend(forModelIdentifier:options:));
+
+#pragma mark Running
+
+/*! The status of a listed plugin, or nil for one the registry does not list. Introduced in InferKit
+	0.4.0. */
+- (nullable NFKPluginStatus *)statusForPluginIdentifier:(NSString *)identifier;
+
+/*! Called on a background queue with a plugin's new status whenever it changes, whatever started or
+	stopped it: a backend's run, a tool call, startPlugin…, stopPlugin…, an idle exit, a crash, a
+	reload, or a refused signature at a start. The registry also posts
+	NFKPluginRegistryStatusDidChangeNotification. A plugin process's own stateHandler stays the app's.
+	Introduced in InferKit 0.4.0. */
+@property (atomic, copy, nullable) NFKPluginStatusHandler statusHandler;
+
+/*!
+	@method     startPluginWithIdentifier:error:
+	@abstract   Starts a plugin ahead of its first request.
+	@discussion Blocks until the plugin's process is ready, running its signature checks then, so a
+				refused signature shows at the start rather than at first use; a plugin the app trusts
+				loads into the app's process instead. Returns NO with NFKPluginErrorUnknownPlugin for a
+				plugin the registry does not list, or with the error that failed the start, which the
+				status then reports. A running plugin returns YES at once. The process exits after its
+				idle interval as one a request started does. Introduced in InferKit 0.4.0.
+*/
+- (BOOL)startPluginWithIdentifier:(NSString *)identifier error:(NSError **)error;
+
+/*! Starts a plugin as startPluginWithIdentifier:error: does without blocking, and calls completionHandler
+	on a background queue with nil once it is ready, or with the error that failed it. Introduced in
+	InferKit 0.4.0. */
+- (void)startPluginWithIdentifier:(NSString *)identifier
+				completionHandler:(void (^ NS_SWIFT_SENDABLE)(NSError * _Nullable error))completionHandler;
+
+/*!
+	@method     stopPluginWithIdentifier:completionHandler:
+	@abstract   Stops a plugin's process now.
+	@discussion The stop retires the process as a reload does: requests made from the call on wait, the
+				runs in flight get the process's restartDrainTimeout to finish and are then cancelled,
+				and the process ends. The waiting requests then start the plugin again, and each backend
+				rebuilds its plugin backend on its next run. completionHandler runs on a background queue
+				once the process has ended, at once when none runs, with NFKPluginErrorUnknownPlugin for a
+				plugin the registry does not list, or with NFKPluginErrorInProcessUnloadable for a
+				plugin loaded into the app's process, which stays until the app quits. Introduced in
+				InferKit 0.4.0.
+*/
+- (void)stopPluginWithIdentifier:(NSString *)identifier
+			   completionHandler:(nullable void (^ NS_SWIFT_SENDABLE)(NSError * _Nullable error))completionHandler;
 
 /*! Every plugin's tools, read from the manifests, sorted by plugin identifier. Listing them starts no
 	process and loads no code: calling a tool starts the plugin's process, or loads a trusted plugin. A

@@ -45,6 +45,21 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKModelTaskAudioGeneration` (`audio-generation`) names making sound effects and other audio from a
   description, beside `NFKModelTaskMusicGeneration`. Stable Audio Open lists both.
 
+#### Plugin status, start, and stop
+
+- `-[NFKPluginRegistry statusForPluginIdentifier:]` reports a plugin's `NFKPluginStatus`: its process
+  state, failure, pid, start time, version, and whether it runs in its own process or the app's.
+  `statusHandler` and `NFKPluginRegistryStatusDidChangeNotification` deliver each change, whatever started
+  the plugin, a signature refused at a start included.
+- `startPluginWithIdentifier:` starts a plugin ahead of its first request and runs its signature checks
+  then. `stopPluginWithIdentifier:completionHandler:` drains its runs in flight and ends its process; the
+  next request starts it again. A plugin in the app's process refuses a stop with
+  `NFKPluginErrorInProcessUnloadable`.
+- A plugin can have a signature policy of its own (`setSignaturePolicy:forPluginIdentifier:`), and
+  `addPluginsInDirectoryURL:signaturePolicy:errors:` gives a folder's plugins one.
+- `+[NFKPluginSignaturePolicy signingTeamIdentifierOfCodeAtURL:error:]` reads the team that signed a
+  bundle without loading it.
+
 #### Breaking: `NFKInferKit.version` is `NFKInferKit.releaseVersion`
 
 - The class property `version` overrode `+[NSObject version]`, the integer class version archiving

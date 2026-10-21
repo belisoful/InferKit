@@ -505,6 +505,16 @@ Restarts are sequential. Requests held while a second restart waits go to the la
 `shutdown`, closes the channel, and stops the launcher with NFKSubprocess's escalation. A Failed process
 stays Failed. Stops and restarts run in order on one serial queue.
 
+`stopDrainingWithCompletionHandler:` (private, behind `-[NFKPluginRegistry stopPluginWithIdentifier:…]`)
+retires the process as a restart does without the relaunch: it holds new admissions, runs
+`shutDownDrainingWithReason:` (the restart's drain, cancel, and shutdown, shared with
+`replaceProcessWithManifest:`), enters NotRunning, and releases the held admissions, which start a new
+process. The registry observes each process through `registryStateHandler`, a second slot beside the
+app's `stateHandler`, and reports an `NFKPluginStatus`; `launchDate` is set at Ready and cleared on
+leaving Ready and Restarting. Per-plugin signature policies live in the registry's
+`signaturePoliciesByPlugin`, read when a process is made and when a trusted plugin loads; the
+registry-wide setter skips plugins with their own.
+
 ### Backend
 
 - Keys come from the manifest's descriptor: inputs and outputs by port key, parameters by the keys of
