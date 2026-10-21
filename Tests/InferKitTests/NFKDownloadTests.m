@@ -462,17 +462,20 @@ static NSString * const NFKTestRepo = @"org/model";
 	XCTAssertEqual([self.hub downloadStatusForModelSource:source].presence, NFKDownloadPresenceComplete);
 }
 
-// A file that changed while the download was paused is fetched again whole: the If-Range no longer names it.
+// A file that changed while the download was paused is fetched again whole: the If-Range no longer names
+// it, so the server answers the whole file and the kept bytes are dropped rather than spliced in. The kept
+// bytes are scrambled here, so a splice would fail the file's checksum.
 - (void)testAPausedFileThatChangedStartsOver
 {
 	NSDictionary<NSString *, NFKStubHubResponse *> *responses = [self serveTheModel];
-	[self pauseAfterTheFirstChunkOf:responses];
+	long long kept = [self pauseAfterTheFirstChunkOf:responses];
+	NSURL *localURL = [self.hub localURLForRepo:NFKTestRepo revision:nil path:@"model.safetensors"];
+	NSFileHandle *partial = [NSFileHandle fileHandleForUpdatingURL:[localURL URLByAppendingPathExtension:@"download"] error:NULL];
+	XCTAssertTrue([partial writeData:[NSMutableData dataWithLength:(NSUInteger)kept] error:NULL]);
+	XCTAssertTrue([partial closeAndReturnError:NULL]);
 
-	NSMutableData *changed = [self.weights mutableCopy];
-	((uint8_t *)changed.mutableBytes)[0] ^= 0xff;
 	[NFKStubHubProtocol reset];
 	responses = [self serveTheModel];
-	responses[@"model.safetensors"].body = changed;
 	NSMutableDictionary *headers = [responses[@"model.safetensors"].headers mutableCopy];
 	headers[@"ETag"] = @"\"changed\"";
 	responses[@"model.safetensors"].headers = headers;
@@ -481,8 +484,10 @@ static NSString * const NFKTestRepo = @"org/model";
 	NSError *error = nil;
 	[self runDownloadOfPlan:[self planPaths:@[ @"model.safetensors" ]] download:&download error:&error];
 	XCTAssertNil(error);
-	NSURL *weightsURL = [self.hub localURLForRepo:NFKTestRepo revision:nil path:@"model.safetensors"];
-	XCTAssertEqualObjects([NSData dataWithContentsOfURL:weightsURL], changed, @"the whole changed file, not a splice");
+	NSArray<NSURLRequest *> *requests = [NFKStubHubProtocol requestsForPath:@"/org/model/resolve/main/model.safetensors"];
+	XCTAssertEqualObjects([requests.firstObject valueForHTTPHeaderField:@"Range"], ([NSString stringWithFormat:@"bytes=%lld-", kept]),
+						  @"the resume was asked for");
+	XCTAssertEqualObjects([NSData dataWithContentsOfURL:localURL], self.weights, @"and the whole file came instead");
 }
 
 // Removing a source takes a paused download's kept partial with it.

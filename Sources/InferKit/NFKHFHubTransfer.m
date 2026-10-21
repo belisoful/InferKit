@@ -202,8 +202,10 @@ typedef NS_ENUM(NSInteger, NFKHFHubAttemptOutcome) {
 	}
 	[fileManager removeItemAtURL:self.destinationURL error:NULL];
 	if (![fileManager createFileAtPath:self.destinationURL.path contents:nil attributes:nil]) {
-		*outError = [NFKDownload errorWithCode:NFKDownloadErrorHTTPStatus
-										reason:[NSString stringWithFormat:@"cannot create %@", self.destinationURL.path]];
+		if (outError != NULL) {
+			*outError = [NFKDownload errorWithCode:NFKDownloadErrorHTTPStatus
+											reason:[NSString stringWithFormat:@"cannot create %@", self.destinationURL.path]];
+		}
 		return NO;
 	}
 	self.fileHandle = [NSFileHandle fileHandleForWritingToURL:self.destinationURL error:outError];
