@@ -860,7 +860,7 @@ public enum NFKMLXStableAudio {
     /// Loads an `AutoencoderOobleck` checkpoint (the release's `vae/diffusion_pytorch_model.safetensors`, or
     /// a fine-tuned save) into `net`.
     public static func loadAutoencoderWeights(into net: NFKMLXOobleckAutoencoderNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         try NFKMLXWeights.apply(autoencoderArrays(checkpoint.arrays, fromPyTorch: checkpoint.needsConvTranspose), to: net,
                                 verifyShapes: true)
     }
@@ -890,7 +890,7 @@ public enum NFKMLXStableAudio {
     /// The projection model's conditioners hold their `nn.Sequential` under `time_positional_embedding`
     /// unchanged; only a file from another layout would need renaming.
     public static func loadProjectionWeights(into net: NFKMLXStableAudioProjectionNet, from url: URL) throws {
-        let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
+        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         try NFKMLXWeights.apply(checkpoint.arrays.map { ($0, $1) }, to: net, verifyShapes: true)
     }
 }

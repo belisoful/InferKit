@@ -52,7 +52,7 @@ final class NFKStableAudioTextStage {
 
 /// Stable Audio Open's sampling loop and decode over loaded networks.
 ///
-/// @discussion ``latents(conditioning:negative:guides:steps:guidance:initial:noise:progress:)`` follows
+/// @discussion ``latents(context:global:negativeContext:steps:guidance:initial:encoded:noise:progress:)`` follows
 /// diffusers' `StableAudioPipeline`: the initial latents scaled by the sampler's `init_noise_sigma`, each
 /// step the transformer over the classifier-free guidance pair `[unconditional, conditional]` at the
 /// preconditioned input, the guided v-prediction `u + g·(c − u)`, and a cosine DPM-Solver++ SDE step.
@@ -89,8 +89,13 @@ public final class NFKMLXStableAudioPipeline {
     /// latents where a clip starts from one) and returns the final latents.
     ///
     /// - Parameters:
-    ///   - context: the conditional `[1, L, d]` sequence, and `global` its `[1, 1, 2d]` token.
-    ///   - negativeContext: the unconditional sequence; zeros where nil. The global token is shared.
+    ///   - context: the conditional `[1, L, d]` sequence.
+    ///   - global: the `[1, 1, 2d]` global token, shared by both branches of the guidance pair.
+    ///   - negativeContext: the unconditional sequence; zeros where nil.
+    ///   - steps: the sampler's step count.
+    ///   - guidance: the classifier-free guidance scale. Above 1 the transformer runs the guidance pair;
+    ///     at 1 or below it runs the conditional branch alone.
+    ///   - initial: standard-normal latents of ``latentShape``, scaled by the sampler's initial sigma.
     ///   - noise: the sampler's standard normal for step `index`.
     ///   - encoded: an encoded waveform's latents, added to the scaled noise.
     ///   - progress: called after each step with its index and the latents it produced; returning false
@@ -174,7 +179,7 @@ public final class NFKMLXStableAudioParameterKey: NSObject {
 /// Stable Audio Open 1.0 text-to-audio, assembled from a diffusers release directory.
 ///
 /// @discussion The release layout is `text_encoder/` (t5-base), `tokenizer/` (its SentencePiece model),
-/// `projection_model/`, `transformer/`, `vae/`, and `scheduler/`. ``audio(forPrompt:negativePrompt:startSeconds:endSeconds:initialAudio:seed:)``
+/// `projection_model/`, `transformer/`, `vae/`, and `scheduler/`. ``audio(forPrompt:negativePrompt:startSeconds:endSeconds:initialAudio:seed:progress:)``
 /// encodes the prompt and its seconds, denoises the release's 1024-frame latent window (47.55 seconds at
 /// 44.1 kHz) with classifier-free guidance, decodes it, and crops the requested span. Every stage runs at
 /// float32, the release's precision. The glue is measured against diffusers' `StableAudioPipeline`. The

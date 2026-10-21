@@ -176,12 +176,17 @@ extension NFKMLXStableAudio {
     ///     and of text positions, which ``NFKMLXStableAudioGenerator/trainingExample(waveform:prompt:startSeconds:totalSeconds:seed:)``
     ///     gives by padding each clip to the release's window and each description to 128 tokens.
     ///   - trainable: the reference's LoRA (rank 8, alpha 8). Adapters persist on `net`; applying again adds none.
+    ///   - loraDropout: the dropout on each adapter's input while training. 0 by default.
     ///   - objective: the reference's v-objective with its conditioning dropout.
     ///   - optimizer: the update rule. Nil uses `torch.optim.AdamW` (bias-corrected, betas 0.9 and 0.999)
     ///     at `learningRate` with `weightDecay`, the release's training configuration.
+    ///   - learningRate: the reference optimizer's learning rate, the release's 5e-5 by default.
+    ///   - weightDecay: the reference optimizer's decoupled weight decay, the release's 1e-3 by default.
     ///   - steps: how many batches to train on.
     ///   - seed: seeds the timesteps, the noise, and the conditioning dropout.
     ///   - clipGradientNorm: bounds the global gradient norm before the update; the reference sets none.
+    ///   - accumulationSteps: how many batches each update averages; `steps` counts updates. 1, the
+    ///     default, updates after every batch.
     ///   - learningRateSchedule: nil uses the reference's `InverseLR` when the reference optimizer runs.
     ///   - checkpoint: writes the network periodically, so a suspended run keeps its progress.
     ///   - observer: receives each step and can end the run early.
