@@ -22,6 +22,7 @@
 #import "NFKServedAnthropic.h"
 #import "NFKServedResponses.h"
 #import "NFKInferenceServerPrivate.h"
+#import "NFKModelDescriptorPrivate.h"
 #import "NFKServedMCP.h"
 #import "NFKInferenceWireCoding.h"
 #import "NFKServedHostStatus.h"
@@ -2324,10 +2325,8 @@ static NSDictionary<NSString *, id> *NFKServedOptionsAtStage(NFKModelDescriptor 
 	model.provider = ^id<NFKInferenceBackend>(NSError **buildError) {
 		NSString *residency = weakModel.admittedResidency;
 		NSMutableDictionary<NSString *, id> *options = [buildOptions mutableCopy];
-		// Admission judged this residency against its own budget; the catalog's budget may differ.
 		if (residency != nil) {
 			options[NFKModelLoadOptionResidency] = residency;
-			options[NFKModelLoadOptionIgnoreMemoryBudget] = @YES;
 		}
 		return [catalog backendForModelIdentifier:buildIdentifier options:options error:buildError];
 	};
@@ -2830,7 +2829,7 @@ static NSDictionary<NSString *, id> *NFKServedOptionsAtStage(NFKModelDescriptor 
 	if (!self.admitsModelsByMemory) {
 		return nil;
 	}
-	NFKModelMemoryBudget *budget = self.admissionMemoryBudget ?: [NFKModelMemoryBudget currentBudget];
+	NFKModelMemoryBudget *budget = [self admissionBudgetForModel:model];
 	NFKModelMemoryEstimate *estimate = [self admissionEstimateForModel:model budget:nil];
 	NSInteger needed = estimate != nil ? estimate.peakByteCount : [model measuredPeakByteCount];
 	if (!budget.isKnown || needed <= 0) {
@@ -2851,6 +2850,15 @@ static NSDictionary<NSString *, id> *NFKServedOptionsAtStage(NFKModelDescriptor 
 		}
 		[NSThread sleepForTimeInterval:MIN(0.25, left)];
 	}
+}
+
+/*! The budget model's admission holds it to: admissionMemoryBudget, or this machine's, and the smaller
+	budget an app set on the catalog that builds the model, which the build's own fit check reads. */
+- (NFKModelMemoryBudget *)admissionBudgetForModel:(NFKServedModel *)model
+{
+	NFKModelMemoryBudget *budget = self.admissionMemoryBudget ?: [NFKModelMemoryBudget currentBudget];
+	NFKModelMemoryBudget *cap = model.catalog.storedMemoryBudget;
+	return cap.isKnown && (!budget.isKnown || cap.byteCount < budget.byteCount) ? cap : budget;
 }
 
 /*! One admission attempt: admits the build where it fits, else releases idle models when that frees

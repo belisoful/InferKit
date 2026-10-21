@@ -953,7 +953,7 @@ after them, reporting what each step freed in an `NFKMemoryRelief`.
 
 Before a hosted model builds, the server makes room for it (`admitsModelsByMemory`, on by default). It
 holds the build beside what the other models hold to `admissionMemoryBudget`, this machine's budget by
-default, its reserve included. A catalog model whose residency is automatic loads at the residency
+default, or to a smaller budget the app set on the model's catalog, its reserve included. A catalog model whose residency is automatic loads at the residency
 planned for the room left: resident where it fits, else staged, paged, or streamed. The build runs with
 that room as `+[NFKModelMemoryBudget currentBudget]`, so the engine sizes its placement to it. A build that
 does not fit releases idle models, least recently used first, and then the runtimes' caches. A build that

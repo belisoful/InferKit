@@ -148,6 +148,8 @@ static NSString * const NFKAdmissionTestEngine = @"admission-test-engine";
 @property (atomic, assign) NSTimeInterval now;
 @property (atomic, assign) double pressure;
 @property (atomic, assign) NSInteger builds;
+/*! Whether testABuildUnderWayCountsWhatAdmissionReservedForIt's provider waits at its gate. */
+@property (atomic, assign) BOOL gatesBuilds;
 @property (nonatomic, assign) NSUInteger savedRetryAttempts;
 @end
 
@@ -720,8 +722,19 @@ static NSString * const NFKAdmissionTestEngine = @"admission-test-engine";
 }
 
 /*! A server holding a pinned model of heldBytes beside the catalog model "staged", whose two stages hold
-	3,500 bytes each and whose residency is automatic, built by builder. */
+	3,500 bytes each and whose residency is automatic, built by builder from a catalog with a 64 GiB working
+	set, and admitted against admissionBudget. */
 - (NFKInferenceServer *)serverHolding:(NSInteger)heldBytes besideAStagedModelBuiltBy:(NFKAdmissionTestBuilder *)builder
+{
+	return [self serverHolding:heldBytes besideAStagedModelBuiltBy:builder
+				 catalogBudget:[NFKModelMemoryBudget budgetWithWorkingSetByteCount:(NSInteger)64 << 30]
+			   admissionBudget:[self admissionBudget]];
+}
+
+/*! serverHolding:besideAStagedModelBuiltBy: with the catalog's budget and the admission budget given. */
+- (NFKInferenceServer *)serverHolding:(NSInteger)heldBytes besideAStagedModelBuiltBy:(NFKAdmissionTestBuilder *)builder
+						catalogBudget:(NFKModelMemoryBudget *)catalogBudget
+					  admissionBudget:(NFKModelMemoryBudget *)admissionBudget
 {
 	[NFKModelCatalog registerBackendBuilder:builder forEngine:NFKAdmissionTestEngine];
 	[self addTeardownBlock:^{
@@ -737,12 +750,12 @@ static NSString * const NFKAdmissionTestEngine = @"admission-test-engine";
 		"  \"memoryFacts\": { \"stages\": [{ \"id\": \"encoder\", \"bytesByPrecision\": { \"checkpoint\": 3500 } },"
 		"    { \"id\": \"decoder\", \"bytesByPrecision\": { \"checkpoint\": 3500 } }], \"basis\": \"measured\" } }] } ] }";
 	NFKModelCatalog *catalog = [[NFKModelCatalog alloc] init];
-	catalog.memoryBudget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:(NSInteger)64 << 30];
+	catalog.memoryBudget = catalogBudget;
 	NSError *error = nil;
 	XCTAssertTrue([catalog addDescriptorsFromManifestData:[json dataUsingEncoding:NSUTF8StringEncoding] error:&error],
 				  @"%@", error);
 	NFKInferenceServer *server = [self server];
-	server.admissionMemoryBudget = [self admissionBudget];
+	server.admissionMemoryBudget = admissionBudget;
 	[server addBackendProvider:[self providerReturning:[self reliefBackendHolding:heldBytes conversations:0 experts:0]]
 				  forModelName:@"held"];
 	[server setPinned:YES forModelName:@"held"];
@@ -765,6 +778,24 @@ static NSString * const NFKAdmissionTestEngine = @"admission-test-engine";
 	XCTAssertLessThan(room.byteCount, 10000, @"the build plans in the room, not the whole budget: %@", room);
 }
 
+// An app's smaller budget on the model's catalog caps admission, as it caps the build's own fit check.
+- (void)testACatalogsSmallerBudgetCapsAdmission
+{
+	NFKModelMemoryBudget *machine = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:(NSInteger)64 << 30];
+	NFKAdmissionTestBuilder *staged = [[NFKAdmissionTestBuilder alloc] init];
+	NFKInferenceServer *server = [self serverHolding:1000 besideAStagedModelBuiltBy:staged
+									   catalogBudget:[self admissionBudget] admissionBudget:machine];
+	XCTAssertNil([self loadReturningError:@"staged" on:server]);
+	XCTAssertEqualObjects(staged.residency, NFKModelResidencyStaged, @"the 10,000-byte cap leaves room for one stage");
+
+	NFKAdmissionTestBuilder *refused = [[NFKAdmissionTestBuilder alloc] init];
+	server = [self serverHolding:3000 besideAStagedModelBuiltBy:refused catalogBudget:[self admissionBudget]
+				 admissionBudget:machine];
+	NSError *refusal = [self loadReturningError:@"staged" on:server];
+	XCTAssertEqual(refusal.code, NFKModelCatalogErrorDoesNotFit, @"%@", refusal);
+	XCTAssertNil(refused.residency, @"nothing was built");
+}
+
 - (void)testAPlannedResidencyIsHeldToTheBudgetsOwnReserve
 {
 	NFKAdmissionTestBuilder *builder = [[NFKAdmissionTestBuilder alloc] init];
@@ -781,11 +812,11 @@ static NSString * const NFKAdmissionTestEngine = @"admission-test-engine";
 	NFKInferenceServer *server = [self server];
 	server.admissionMemoryBudget = [self admissionBudget];
 	dispatch_semaphore_t gate = dispatch_semaphore_create(0);
-	__block BOOL gated = NO;
+	__weak NFKServedResidencyTests *weakSelf = self;
 	XCTestExpectation *building = [self expectationWithDescription:@"the second build of held waits in its provider"];
 	NFKReliefTestBackend *backend = [self reliefBackendHolding:3000 conversations:0 experts:0];
 	[server addBackendProvider:^id<NFKInferenceBackend>(NSError **error) {
-		if (gated) {
+		if (weakSelf.gatesBuilds) {
 			[building fulfill];
 			dispatch_semaphore_wait(gate, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));
 		}
@@ -800,7 +831,7 @@ static NSString * const NFKAdmissionTestEngine = @"admission-test-engine";
 			return [server residencyForModelName:name] == NFKServerModelResidencyNotLoaded;
 		} description:[name stringByAppendingString:@" is measured and unloaded"]];
 	}
-	gated = YES;
+	self.gatesBuilds = YES;
 	XCTestExpectation *built = [self expectationWithDescription:@"held is built"];
 	[server loadModelNamed:@"held" completionHandler:^(NSError *error) {
 		[built fulfill];

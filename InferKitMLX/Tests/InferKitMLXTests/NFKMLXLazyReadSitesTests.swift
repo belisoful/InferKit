@@ -48,7 +48,7 @@ final class NFKMLXLazyReadSitesTests: XCTestCase {
         "NFKMLXQwen3VL.swift": (1, "a probe for lm_head.weight"),
         "NFKMLXRIFEv4Training.swift": (1, "VGG19's first features"),
         "NFKMLXRTDetr.swift": (1, "a probe for the class count"),
-        "NFKMLXReleaseWeights.swift": (3, "the readers' own grouping reads each group as it is taken"),
+        "NFKMLXReleaseWeights.swift": (4, "the readers' own grouping reads each group as it is taken, and a converting read converts each group as it is read"),
         "NFKMLXResembleEnhance.swift": (1, "weight-norm fusion"),
         "NFKMLXSAM2.swift": (3, "one component each of a file the tracker reads whole"),
         "NFKMLXSDTextEncoder.swift": (1, "q, k, and v joined into one projection"),

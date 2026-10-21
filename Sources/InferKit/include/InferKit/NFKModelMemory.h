@@ -105,9 +105,11 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 	@discussion A scope nests, and other threads keep their own answer. NFKInferenceServer builds an admitted
 				model in a scope of the room its admission left, so a catalog build and an engine that sizes
 				its placement from currentBudget plan against that room. Work block hands to another thread
-				reads that thread's budget. Introduced in InferKit 0.4.0.
+				reads that thread's budget, and so does a plugin that builds in its own process. budget is
+				required. Introduced in InferKit 0.4.0.
 */
-+ (void)withCurrentBudget:(NFKModelMemoryBudget *)budget perform:(NS_NOESCAPE void (^)(void))block;
++ (void)withCurrentBudget:(NFKModelMemoryBudget *)budget perform:(NS_NOESCAPE void (^)(void))block
+	NS_SWIFT_NAME(withCurrent(_:perform:));
 /*! The budget of a profile's recommended working set, such as a snapshot of another machine. */
 + (instancetype)budgetForHardwareProfile:(NFKHardwareProfile *)profile;
 /*! The budget of a recommended working set. 0 is a machine that reports none. */

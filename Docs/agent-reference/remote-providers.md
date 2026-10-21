@@ -1573,22 +1573,27 @@ keeping them in memory, and unloads idle ones.
   model's estimated peak for its hosted load options, else the peak the model's last load measured; a
   first build of a provider model has none and is admitted. The held bytes are the other models'
   measured resident bytes plus what admission reserved for builds still under way (`admittedBytes`).
+  The budget is `admissionMemoryBudget` (else this machine's), or the catalog's `memoryBudget` where the
+  app set a smaller one on the catalog that builds the model, since the build's own fit check reads it.
   The accounting leaves the caches out, which keeps it independent of what else the process holds (an
   MLX test process's allocation counts earlier tests' buffers), so admission skips the conversation and
   expert steps, whose release no count would see. The fit:
   - a catalog model with a declared residency option at `automatic` takes the residency the planner
     chooses for the room the budget leaves, `byteCount − reserveByteCount − held`, every time, resident
-    included (`admittedResidency`, which the catalog provider passes as `NFKModelLoadOptionResidency`
-    with `NFKModelLoadOptionIgnoreMemoryBudget`, since admission judged it against its own budget). An
-    estimate without a budget is staged, so admitting such a model on that peak and building it at
+    included (`admittedResidency`, which the catalog provider passes as `NFKModelLoadOptionResidency`).
+    The build's fit check then passes: the planned peak fits the room, which is no larger than the
+    catalog's budget. An estimate without a budget is staged, so admitting such a model on that peak and building it at
     `automatic` would let the catalog resolve it against the whole machine. The room budget is the least
     that holds the room, and the planned peak is held to the real budget again;
   - any other model fits when its peak plus the held bytes fits the budget with its reserve.
   The build runs inside `+[NFKModelMemoryBudget withCurrentBudget:perform:]` with the room budget
-  (`admittedBudget`), a thread-dictionary scope `currentBudget` answers on the build's thread. A catalog
-  whose budget is the default and every MLX planner (`NFKMLXResidencyBudget.current()`: expert paging's
-  cache, streamed layers, widened stages) then size the placement to the room admission measured. Work
-  the build hands to another thread reads that thread's budget.
+  (`admittedBudget`). The scope is a thread-dictionary entry that `currentBudget` answers on the build's
+  thread. A catalog whose budget is the default and every MLX planner (`NFKMLXResidencyBudget.current()`:
+  expert paging's cache, streamed layers, widened stages) then size the placement to the room admission
+  measured. Work the build hands to another thread reads that thread's budget. A plugin that builds in
+  its own process (the default, `plugins.md`) reads its process's budget, so it plans against the whole
+  machine; the build request's `memoryEstimate` is made against the room where the catalog's budget is
+  the default.
   When it does not fit, idle models go, least recently used first, with reason
   `NFKServerModelEventReasonAdmission`, only when the releasable models together cover the shortfall;
   then the runtimes' caches go unless another model is busy (the model being admitted has not begun to
@@ -1598,8 +1603,9 @@ keeping them in memory, and unloads idle ones.
   wait with its not-served error. The runtime-cache release re-checks that no model is busy just before
   it, in relief after the model caches and in admission after the eviction. A run start takes no lock
   the release holds, so the check and the release are as close as `releaseRuntimeCachesWhenIdle`'s; MLX's
-  `clearCache()` frees only buffers no array holds, so a run that starts in between loses no live data. A build clears `admittedBytes` in the same lock that makes it resident,
-  so another admission never reads it as holding nothing.
+  `clearCache()` frees only buffers no array holds, so a run that starts in between loses no live data.
+  A build clears `admittedBytes` in the same lock that makes it resident, so another admission never
+  reads it as holding nothing.
 - Status: each model's `residency` object (`state`, `unloadable`, `last_used` in seconds since 1970,
   `idle_timeout_seconds` when finite, `load_seconds`, `load_error`, `loads`, `unloads`, `resident_bytes`,
   `peak_bytes`) in both the status route and the `/models` entry; `NFKServerModelStatus` reads it. A

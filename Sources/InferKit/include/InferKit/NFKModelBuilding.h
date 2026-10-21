@@ -184,9 +184,11 @@ typedef NSURL * _Nullable (^NFKModelLocator)(NFKModelDescriptor *descriptor,
 	@discussion The default is +[NFKModelMemoryBudget currentBudget], read at each build. An app sets a
 				budget to plan for a known machine, and a test sets one so its builds do not depend on the
 				machine that runs it. Setting nil restores the default. The budget governs the fit check
-				and the refusal's sentences; an engine places the backend it builds against its own
-				reading of the machine. NFKInferenceServer's estimate route reports the budget of its
-				modelCatalog. Introduced in InferKit 0.4.0.
+				and the refusal's sentences; an engine places the backend it builds against
+				+[NFKModelMemoryBudget currentBudget], which +[NFKModelMemoryBudget withCurrentBudget:perform:]
+				sets for a build on its thread. NFKInferenceServer admits a model this catalog builds
+				against the smaller of this budget, when set, and its admissionMemoryBudget, and reports
+				this budget in its estimate route. Introduced in InferKit 0.4.0.
 */
 @property (nonatomic, strong, null_resettable) NFKModelMemoryBudget *memoryBudget;
 

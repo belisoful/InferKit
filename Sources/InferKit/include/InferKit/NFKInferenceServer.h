@@ -831,8 +831,9 @@ NS_SWIFT_SENDABLE
 */
 @property (atomic, assign) BOOL admitsModelsByMemory;
 
-/*! The budget admission holds the hosted models to, or nil for +[NFKModelMemoryBudget currentBudget].
-	Introduced in InferKit 0.4.0. */
+/*! The budget admission holds the hosted models to, or nil for +[NFKModelMemoryBudget currentBudget]. A
+	catalog model whose catalog sets a smaller memoryBudget is held to that one. Introduced in InferKit
+	0.4.0. */
 @property (atomic, copy, nullable) NFKModelMemoryBudget *admissionMemoryBudget;
 
 /*! How long a build that does not fit waits for a model to become releasable, in seconds. Defaults to 0,
