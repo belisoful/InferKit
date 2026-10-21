@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 1,
+  "kind": "inferkit.plugin",
+  "id": "com.example.inferkit.color-palette",
+  "version": "1.0.0",
+  "displayName": "Color Palette",
+  "summary": "Finds the dominant colors of an image by k-means clustering.",
+  "compatibility": {
+    "inferkitAPI": "1.0",
+    "protocol": "1.0",
+    "minimumOS": {
+      "macOS": "11.0"
+    },
+    "architectures": [
+      "arm64",
+      "x86_64"
+    ]
+  },
+  "entry": {
+    "kind": "objc",
+    "executable": "ColorPalette",
+    "principalClass": "ColorPalettePlugin"
+  },
+  "process": {
+    "idleExitSeconds": 300,
+    "allowsInProcess": true,
+    "maximumConcurrentRuns": 2
+  },
+  "options": [
+    {
+      "key": "order",
+      "kind": "choice",
+      "title": "Color order",
+      "help": "The order of the colors in each palette.",
+      "default": "share",
+      "choices": [
+        {
+          "value": "share",
+          "title": "Most common first"
+        },
+        {
+          "value": "lightness",
+          "title": "Darkest first"
+        }
+      ]
+    }
+  ],
+  "models": [
+    {
+      "id": "palette-5",
+      "displayName": "Palette of 5",
+      "family": "color-palette",
+      "summary": "The five dominant colors of an image.",
+      "engine": "plugin",
+      "tasks": [
+        "palette-extraction"
+      ],
+      "inputs": [
+        {
+          "key": "image",
+          "valueType": "image",
+          "required": true,
+          "title": "Image",
+          "help": "A 32BGRA pixel buffer."
+        }
+      ],
+      "outputs": [
+        {
+          "key": "structured",
+          "valueType": "structured",
+          "required": true,
+          "title": "Palette",
+          "help": "colors: an array of {hex, red, green, blue, share}; sampledPixels: the pixels read."
+        }
+      ],
+      "options": [
+        {
+          "key": "samples",
+          "kind": "integer",
+          "title": "Samples",
+          "help": "How many pixels the clustering reads. More samples follow small regions more closely.",
+          "default": 4096,
+          "minimum": 64,
+          "maximum": 262144
+        }
+      ]
+    },
+    {
+      "id": "palette-8",
+      "displayName": "Palette of 8",
+      "family": "color-palette",
+      "summary": "The eight dominant colors of an image.",
+      "engine": "plugin",
+      "tasks": [
+        "palette-extraction"
+      ],
+      "inputs": [
+        {
+          "key": "image",
+          "valueType": "image",
+          "required": true,
+          "title": "Image",
+          "help": "A 32BGRA pixel buffer."
+        }
+      ],
+      "outputs": [
+        {
+          "key": "structured",
+          "valueType": "structured",
+          "required": true,
+          "title": "Palette",
+          "help": "colors: an array of {hex, red, green, blue, share}; sampledPixels: the pixels read."
+        }
+      ],
+      "options": [
+        {
+          "key": "samples",
+          "kind": "integer",
+          "title": "Samples",
+          "help": "How many pixels the clustering reads. More samples follow small regions more closely.",
+          "default": 4096,
+          "minimum": 64,
+          "maximum": 262144
+        }
+      ]
+    }
+  ]
+}

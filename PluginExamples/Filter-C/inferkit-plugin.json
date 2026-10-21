@@ -1,0 +1,104 @@
+{
+  "schemaVersion": 1,
+  "kind": "inferkit.plugin",
+  "id": "com.example.inferkit.tone-filter",
+  "version": "1.0.0",
+  "displayName": "Tone Filter",
+  "summary": "Tones an image in sepia or turns it to shades of gray.",
+  "compatibility": {
+    "inferkitAPI": "1.0",
+    "pluginABI": "1.0",
+    "protocol": "1.0",
+    "minimumOS": {
+      "macOS": "11.0"
+    },
+    "architectures": [
+      "arm64",
+      "x86_64"
+    ]
+  },
+  "entry": {
+    "kind": "c-abi",
+    "executable": "ToneFilter",
+    "symbol": "nfk_plugin_entry"
+  },
+  "process": {
+    "idleExitSeconds": 300,
+    "allowsInProcess": true,
+    "maximumConcurrentRuns": 1
+  },
+  "models": [
+    {
+      "id": "sepia",
+      "displayName": "Sepia",
+      "family": "tone-filter",
+      "summary": "Tones an image in sepia.",
+      "engine": "plugin",
+      "tasks": [
+        "image-to-image"
+      ],
+      "inputs": [
+        {
+          "key": "image",
+          "valueType": "image",
+          "required": true
+        }
+      ],
+      "outputs": [
+        {
+          "key": "image",
+          "valueType": "image",
+          "required": true
+        }
+      ],
+      "options": [
+        {
+          "key": "strength",
+          "kind": "number",
+          "title": "Strength",
+          "help": "0 keeps the image as it is, and 1 tones it fully.",
+          "default": 1,
+          "minimum": 0,
+          "maximum": 1,
+          "step": 0.05
+        }
+      ]
+    },
+    {
+      "id": "grayscale",
+      "displayName": "Grayscale",
+      "family": "tone-filter",
+      "summary": "Turns an image to shades of gray.",
+      "engine": "plugin",
+      "tasks": [
+        "image-to-image"
+      ],
+      "inputs": [
+        {
+          "key": "image",
+          "valueType": "image",
+          "required": true
+        }
+      ],
+      "outputs": [
+        {
+          "key": "image",
+          "valueType": "image",
+          "required": true
+        }
+      ],
+      "options": [
+        {
+          "key": "strength",
+          "kind": "number",
+          "title": "Strength",
+          "help": "0 keeps the image as it is, and 1 removes its color fully.",
+          "default": 1,
+          "minimum": 0,
+          "maximum": 1,
+          "step": 0.05
+        }
+      ]
+    }
+  ]
+}

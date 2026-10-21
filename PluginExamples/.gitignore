@@ -1,0 +1,5 @@
+# The bundles the build scripts assemble, and the Swift example's package state.
+build/
+.build/
+.swiftpm/
+Package.resolved

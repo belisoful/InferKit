@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "kind": "inferkit.plugin",
+  "id": "com.example.inferkit.everyday-tools",
+  "version": "1.0.0",
+  "displayName": "Everyday Tools",
+  "summary": "Converts units and calculates dates, as tools a language model calls.",
+  "compatibility": {
+    "inferkitAPI": "1.0",
+    "protocol": "1.0",
+    "minimumOS": {
+      "macOS": "11.0"
+    },
+    "architectures": [
+      "arm64",
+      "x86_64"
+    ]
+  },
+  "entry": {
+    "kind": "objc",
+    "executable": "EverydayTools",
+    "principalClass": "EverydayToolsPlugin"
+  },
+  "process": {
+    "idleExitSeconds": 120,
+    "allowsInProcess": true,
+    "maximumConcurrentRuns": 1
+  },
+  "options": [
+    {
+      "key": "decimalPlaces",
+      "kind": "integer",
+      "title": "Decimal places",
+      "help": "The decimal places a converted value is rounded to.",
+      "default": 4,
+      "minimum": 0,
+      "maximum": 12
+    }
+  ],
+  "tools": [
+    {
+      "name": "convert_units",
+      "description": "Converts a measurement from one unit to another of the same kind: length (mm, cm, m, km, in, ft, yd, mi), mass (mg, g, kg, oz, lb), volume (ml, l, cup, qt, gal), or temperature (C, F, K). Returns the converted value and its unit.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "value": {
+            "type": "number",
+            "description": "The amount to convert."
+          },
+          "from": {
+            "type": "string",
+            "description": "The unit the value is in, such as \"km\" or \"F\"."
+          },
+          "to": {
+            "type": "string",
+            "description": "The unit to convert to, of the same kind as from."
+          }
+        },
+        "required": [
+          "value",
+          "from",
+          "to"
+        ]
+      }
+    },
+    {
+      "name": "calculate_date",
+      "description": "Calculates with calendar dates in the Gregorian calendar. \"add-days\" adds a number of days to a date, negative to go back, and returns the new date and its weekday. \"days-between\" returns the days from one date to another, negative when the second is earlier. Dates are written YYYY-MM-DD.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "add-days",
+              "days-between"
+            ],
+            "description": "What to calculate."
+          },
+          "date": {
+            "type": "string",
+            "description": "The first date, YYYY-MM-DD."
+          },
+          "days": {
+            "type": "integer",
+            "description": "For add-days: the days to add."
+          },
+          "otherDate": {
+            "type": "string",
+            "description": "For days-between: the second date, YYYY-MM-DD."
+          }
+        },
+        "required": [
+          "operation",
+          "date"
+        ]
+      }
+    }
+  ]
+}

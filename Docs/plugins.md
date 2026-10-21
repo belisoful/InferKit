@@ -5,6 +5,10 @@ app lists a plugin's models in its model catalog from the plugin's manifest, and
 any other `NFKInferenceBackend`. Plugins are macOS only. `NFKPluginManifest` reads a manifest on every
 platform.
 
+[PluginExamples/](../PluginExamples/README.md) in the source tree holds a plugin of each kind to copy: a
+new model family and a member of it, a C filter, a tools-only plugin, a remote chat model, and a Swift
+executable. Each has a `build.sh` that assembles and signs its bundle.
+
 - [Kinds](#kinds)
 - [The bundle](#the-bundle)
 - [The manifest](#the-manifest)

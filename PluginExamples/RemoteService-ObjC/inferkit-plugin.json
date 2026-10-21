@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "kind": "inferkit.plugin",
+  "id": "com.example.inferkit.remote-chat",
+  "version": "1.0.0",
+  "displayName": "Remote Chat",
+  "summary": "A chat model served by an OpenAI-compatible HTTP server.",
+  "compatibility": {
+    "inferkitAPI": "1.0",
+    "protocol": "1.0",
+    "minimumOS": {
+      "macOS": "11.0"
+    },
+    "architectures": [
+      "arm64",
+      "x86_64"
+    ]
+  },
+  "entry": {
+    "kind": "objc",
+    "executable": "RemoteChat",
+    "principalClass": "RemoteChatPlugin"
+  },
+  "process": {
+    "idleExitSeconds": 600,
+    "allowsInProcess": true,
+    "maximumConcurrentRuns": 4
+  },
+  "options": [
+    {
+      "key": "baseURL",
+      "kind": "text",
+      "title": "Server URL",
+      "help": "The server's OpenAI-compatible base URL, the part before chat/completions.",
+      "default": "http://127.0.0.1:8080/v1/"
+    },
+    {
+      "key": "model",
+      "kind": "text",
+      "title": "Model",
+      "help": "The model name the server knows the model by.",
+      "default": ""
+    },
+    {
+      "key": "apiKey",
+      "kind": "text",
+      "title": "API key",
+      "help": "The bearer token the server expects, or empty for a server that takes none.",
+      "default": ""
+    }
+  ],
+  "models": [
+    {
+      "id": "chat",
+      "displayName": "Remote Chat",
+      "family": "remote-chat",
+      "summary": "Writes a reply to a prompt or a conversation on the configured server.",
+      "engine": "plugin",
+      "tasks": [
+        "text-generation"
+      ],
+      "inputs": [
+        {
+          "key": "prompt",
+          "valueType": "text"
+        },
+        {
+          "key": "messages",
+          "valueType": "messages"
+        }
+      ],
+      "outputs": [
+        {
+          "key": "text",
+          "valueType": "text",
+          "required": true
+        }
+      ],
+      "options": [
+        {
+          "key": "temperature",
+          "kind": "number",
+          "title": "Temperature",
+          "minimum": 0,
+          "maximum": 2,
+          "step": 0.1
+        },
+        {
+          "key": "maxTokens",
+          "kind": "integer",
+          "title": "Maximum tokens",
+          "minimum": 1
+        }
+      ]
+    }
+  ]
+}

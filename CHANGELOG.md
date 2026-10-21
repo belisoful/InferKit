@@ -245,6 +245,30 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   no longer declares, and a value that no longer resolves, are dropped.
 - The DocC catalog documents `NFKPluginABI.h` in the article "The C plugin interface".
 
+#### Example plugins to copy
+
+- `PluginExamples/` holds six plugins a plugin author copies as a starting point. Each folder has its
+  sources, its `inferkit-plugin.json` manifest, an `Info.plist` template, a README, and a `build.sh` that
+  builds the code from the source root, assembles the `.inferkitplugin` bundle in `build/`, and signs it
+  ad hoc. None loads weights or touches the network when it runs, except the remote chat model, which
+  calls its server. The folder ships in no distribution.
+- `NewFamily-ObjC` introduces the `color-palette` family: `palette-5` and `palette-8` return an image's
+  dominant colors by k-means under `NFKOutputStructured`, with a per-model `samples` option and a plugin
+  option `order`. Its README states the family contract another plugin implements.
+- `ExistingFamily-ObjC` joins that family with a median-cut model, and its README shows an app running
+  every member of a family through `descriptorsInFamily:` and joining a family InferKit ships.
+- `Filter-C` is a sepia and grayscale filter against `NFKPluginABI.h` alone: request and result buffers,
+  progress, cancellation by polling, and the ownership of payloads and strings, with notes for C++ and
+  Rust.
+- `Tools-ObjC` offers two tools and no models, for an `NFKToolLoop` or an `NFKInferenceServer`'s MCP
+  route.
+- `RemoteService-ObjC` serves a `text-generation` model from an OpenAI-compatible server through
+  `NFKRemoteBackend`, configured by the plugin options `baseURL`, `model`, and `apiKey`.
+- `Executable-Swift` is a Swift program that links InferKit through a SwiftPM package and serves its own
+  `NFKPlugin` with `NFKPluginService`, the form a plugin takes when it needs libraries the plugin host
+  lacks.
+- `Docs/plugins.md` points to the folder.
+
 #### A C interface for programs that call InferKit
 
 - `NFKInferKitC.h` is implemented. A C, C++, or Rust program builds a backend by its catalog identifier

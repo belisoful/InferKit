@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "kind": "inferkit.plugin",
+  "id": "com.example.inferkit.text-statistics",
+  "version": "1.0.0",
+  "displayName": "Text Statistics",
+  "summary": "Counts the words, sentences, and lines of a text and estimates its reading time.",
+  "compatibility": {
+    "inferkitAPI": "1.0",
+    "protocol": "1.0",
+    "minimumOS": {
+      "macOS": "12.0"
+    },
+    "architectures": [
+      "arm64"
+    ]
+  },
+  "entry": {
+    "kind": "executable",
+    "executable": "TextStatistics",
+    "arguments": []
+  },
+  "process": {
+    "idleExitSeconds": 120,
+    "allowsInProcess": false,
+    "maximumConcurrentRuns": 2
+  },
+  "models": [
+    {
+      "id": "text-statistics",
+      "displayName": "Text Statistics",
+      "family": "text-statistics",
+      "summary": "Counts the words, sentences, and lines of a text and estimates its reading time.",
+      "engine": "plugin",
+      "tasks": [
+        "text-analysis"
+      ],
+      "inputs": [
+        {
+          "key": "prompt",
+          "valueType": "text",
+          "required": true,
+          "title": "Text"
+        }
+      ],
+      "outputs": [
+        {
+          "key": "structured",
+          "valueType": "structured",
+          "required": true,
+          "title": "Statistics",
+          "help": "characters, words, sentences, lines, paragraphs, averageWordLength, readingSeconds."
+        }
+      ],
+      "options": [
+        {
+          "key": "wordsPerMinute",
+          "kind": "integer",
+          "title": "Reading speed",
+          "help": "The words a reader reads in a minute, for the reading-time estimate.",
+          "default": 238,
+          "minimum": 50,
+          "maximum": 1000
+        }
+      ]
+    }
+  ]
+}

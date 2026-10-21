@@ -1,0 +1,70 @@
+{
+  "schemaVersion": 1,
+  "kind": "inferkit.plugin",
+  "id": "com.example.inferkit.median-cut-palette",
+  "version": "1.0.0",
+  "displayName": "Median-Cut Palette",
+  "summary": "Finds the dominant colors of an image by median cut.",
+  "compatibility": {
+    "inferkitAPI": "1.0",
+    "protocol": "1.0",
+    "minimumOS": {
+      "macOS": "11.0"
+    },
+    "architectures": [
+      "arm64",
+      "x86_64"
+    ]
+  },
+  "entry": {
+    "kind": "objc",
+    "executable": "MedianCutPalette",
+    "principalClass": "MedianCutPalettePlugin"
+  },
+  "process": {
+    "idleExitSeconds": 300,
+    "allowsInProcess": true,
+    "maximumConcurrentRuns": 2
+  },
+  "models": [
+    {
+      "id": "median-cut-8",
+      "displayName": "Median-Cut Palette of 8",
+      "family": "color-palette",
+      "summary": "The eight dominant colors of an image, by recursive splits at the median.",
+      "engine": "plugin",
+      "tasks": [
+        "palette-extraction"
+      ],
+      "inputs": [
+        {
+          "key": "image",
+          "valueType": "image",
+          "required": true,
+          "title": "Image",
+          "help": "A 32BGRA pixel buffer."
+        }
+      ],
+      "outputs": [
+        {
+          "key": "structured",
+          "valueType": "structured",
+          "required": true,
+          "title": "Palette",
+          "help": "colors: an array of {hex, red, green, blue, share}; sampledPixels: the pixels read."
+        }
+      ],
+      "options": [
+        {
+          "key": "samples",
+          "kind": "integer",
+          "title": "Samples",
+          "help": "How many pixels the median cut reads. More samples follow small regions more closely.",
+          "default": 4096,
+          "minimum": 64,
+          "maximum": 262144
+        }
+      ]
+    }
+  ]
+}

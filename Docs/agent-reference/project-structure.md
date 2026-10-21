@@ -62,6 +62,11 @@ The full repository tree with per-directory notes.
 ├── Tests/InferKitTests/             # XCTest (NFK*Tests.m)
 ├── Examples/                        # Compiled ObjC examples mirroring Docs/examples.md
 ├── SwiftExamples/                   # The same examples in Swift — pins the imported API shape
+├── PluginExamples/                  # Example plugins a plugin author copies, one folder each: objc (a new
+│                                    #   family, a member of it, tools, a remote chat model), c-abi, and a
+│                                    #   Swift executable. Each holds a manifest, an Info.plist template, and
+│                                    #   a build.sh that assembles and signs its bundle in build/ (ignored).
+│                                    #   README.md there is the index. Ships in no distribution.
 ├── Docs/                            # Consumer documents the README links to: inference-guide, examples,
 │                                    #   installation, coreml-llm, companions, model-index, model-parity,
 │                                    #   model-catalog, mlx-runtime-hazards, porting-candidates;

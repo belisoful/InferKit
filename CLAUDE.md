@@ -100,6 +100,7 @@ and `Docs/installation.md`.
 Sources/InferKit/                # Core ObjC: include/InferKit/ (public headers + umbrella), NFK*.m
 Tests/InferKitTests/             # XCTest for the core
 Examples/, SwiftExamples/        # Compiled examples mirroring Docs/examples.md (ObjC and Swift)
+PluginExamples/                  # Example plugins of every kind, each with a build.sh; ships in no distribution
 Docs/                            # Consumer docs; Docs/agent-reference/ holds the maintainer notes
 InferKit.xcworkspace             # Core + the three companions in one Xcode window (rules in the full tree)
 InferKitMLX/                     # MLX companion package (own Package.swift, tests, examples, DocC)
