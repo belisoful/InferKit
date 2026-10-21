@@ -7070,7 +7070,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         let model = try NFKMLXQwen3VL.model(directoryURL: URL(fileURLWithPath: directory))
         let plate = (config["IK_PARITY_QWEN3_VL"].flatMap { try? loadArrays(url: URL(fileURLWithPath: $0)) })?["input_image"]
             ?? MLXArray.zeros([256, 256, 3])
-        let answer = model.answer(image: try image(from: plate), question: "What is in this image?",
+        let answer = try model.answer(image: try image(from: plate), question: "What is in this image?",
                                   maxTokens: 8)
         print("VALIDATION smoke qwen3vl-answer: \"\(answer)\"")
         XCTAssertFalse(answer.isEmpty, "the consumer path generates a reply")

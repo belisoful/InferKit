@@ -42,9 +42,10 @@ final class NFKMLXDenseStreamingTests: XCTestCase {
         return configuration
     }
 
-    /// `geometry` written as a two-shard bfloat16 release with its index and `config.json`, its keys under
-    /// `prefix` as a multimodal release nests its decoder.
-    private func release(_ geometry: NFKMLXLanguageConfiguration, prefix: String = "") throws -> URL {
+    /// `geometry` written as a two-shard bfloat16 release with its index and `config.json`, each module key
+    /// renamed by `releaseKey` as a multimodal release nests its decoder.
+    private func release(_ geometry: NFKMLXLanguageConfiguration,
+                         releaseKey: (String) -> String = { $0 }) throws -> URL {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("dense-stream-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -61,7 +62,7 @@ final class NFKMLXDenseStreamingTests: XCTestCase {
         let net = NFKMLXLanguage.makeNet(geometry)
         let stored = net.parameters().flattened().map { key, value in
             // Random norm weights make every layer's norms count.
-            (prefix + key, (key.hasSuffix("norm.weight") ? 1 + MLXRandom.normal(value.shape) * 0.1 : value).asType(.bfloat16))
+            (releaseKey(key), (key.hasSuffix("norm.weight") ? 1 + MLXRandom.normal(value.shape) * 0.1 : value).asType(.bfloat16))
         }.sorted { $0.0 < $1.0 }
         var weightMap = [String: String]()
         for (index, half) in [stored.prefix(stored.count / 2), stored.dropFirst(stored.count / 2)].enumerated() {
@@ -170,20 +171,76 @@ final class NFKMLXDenseStreamingTests: XCTestCase {
         XCTAssertNil(mixture.layerStream, "a mixture of experts pages its experts; its layers never stream")
     }
 
-    func testAFailedReadFailsTheRequestAndEmptiesItsCache() throws {
+    func testAFailedReadStopsDecodingAndARetryReadsTheReleaseAgain() throws {
         try requireMLXRuntime()
         let geometry = geometry(tied: true)
         let directory = try release(geometry)
+        let held = try loaded(directory, geometry, precision: .checkpoint, residency: .resident)
         let streamed = try loaded(directory, geometry, precision: .checkpoint, residency: .streamed, holding: 1)
-        for shard in ["model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors"] {
-            let file = directory.appendingPathComponent(shard)
+        let shards = ["model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors"]
+            .map { directory.appendingPathComponent($0) }
+        let originals = try shards.map { try Data(contentsOf: $0) }
+        for file in shards {
             let start = try XCTUnwrap(NFKMLXSafetensors.entries(inFile: file).values.map(\.start).min())
             let handle = try FileHandle(forWritingTo: file)
             try handle.truncate(atOffset: UInt64(start))
             try handle.close()
         }
-        _ = streamed(MLXArray(tokens.map { Int32($0) }).reshaped([1, tokens.count]))
+        XCTAssertEqual(streamed.generate(prompt: tokens, options: greedy()), [], "decoding stops at the failed read")
         XCTAssertThrowsError(try streamed.verifyStream(), "the truncated release cannot be read")
+        XCTAssertEqual(streamed.generate(prompt: tokens, options: greedy { $0.draftTokens = 3 },
+                                         draft: NFKMLXLanguage.makeNet(.tiny)), [],
+                       "drafted decoding stops too")
+
+        for (file, original) in zip(shards, originals) {
+            try original.write(to: file)
+        }
+        try XCTUnwrap(streamed.layerStream).clearFailure()
+        let input = MLXArray(tokens.map { Int32($0) }).reshaped([1, tokens.count])
+        XCTAssertEqual(maxDifference(held(input), streamed(input)), 0, "the retried pass reads every layer again")
+        try streamed.verifyStream()
+    }
+
+    func testOnlyACallerThatChecksTheStreamStreams() throws {
+        try requireMLXRuntime()
+        let geometry = geometry(tied: false)
+        // Qwen3-VL nests the stack under `model.language_model.` and keeps the head at the top.
+        let directory = try release(geometry, releaseKey: { key in
+            key.hasPrefix("model.") ? "model.language_model." + key.dropFirst("model.".count) : key
+        })
+        let moduleKey: (String) -> String? = { key in
+            if key.hasPrefix("model.language_model.") { return "model." + String(key.dropFirst("model.language_model.".count)) }
+            return key == "lm_head.weight" ? key : nil
+        }
+        let small = try budget(directory, precision: .float32, holding: 1, moduleKey: moduleKey)
+        let held = NFKMLXLanguageNet(geometry)
+        try NFKMLXQwen3VL.loadDecoderWeights(into: held, fromDirectory: directory, precision: .float32,
+                                             residency: .streamed, budget: small)
+        XCTAssertNil(held.layerStream, "an embedder or text encoder never checks a stream, so it holds the decoder")
+        let streamed = NFKMLXLanguageNet(geometry)
+        try NFKMLXQwen3VL.loadDecoderWeights(into: streamed, fromDirectory: directory, precision: .float32,
+                                             residency: .streamed, streams: true, budget: small)
+        XCTAssertEqual(streamed.layerStream?.layers, [1, 2, 3, 4, 5])
+
+        let plain = try release(geometry)
+        let language = NFKMLXLanguage.makeNet(geometry)
+        try NFKMLXLanguage.loadWeights(into: language, fromDirectory: plain, precision: .float32, residency: .streamed,
+                                       streams: false, budget: try budget(plain, precision: .float32, holding: 1))
+        XCTAssertNil(language.layerStream)
+    }
+
+    func testAStreamPlanCountsWhatTheCallerHoldsBesideTheDecoder() throws {
+        try requireMLXRuntime()
+        let geometry = geometry(tied: true)
+        let directory = try release(geometry)
+        let stage = try NFKMLXLayerStream.footprint(directory: directory, precision: .float32, includes: { _ in true },
+                                                    layerOf: { NFKMLXLanguage.streamedLayer(ofModuleKey: $0)?.layer })
+        let budget = try budget(directory, precision: .float32, holding: 3)
+        XCTAssertEqual(try NFKMLXLanguage.streamedLayers(directory: directory, precision: .float32, residency: .streamed,
+                                                         budget: budget, moduleKey: { $0 }), [3, 4, 5])
+        XCTAssertEqual(try NFKMLXLanguage.streamedLayers(directory: directory, precision: .float32, residency: .streamed,
+                                                         budget: budget, besides: stage.layerBytes[0], moduleKey: { $0 }),
+                       [2, 3, 4, 5], "a tower the size of a layer leaves room for one layer fewer")
     }
 
     func testAStreamedDenseDecoderNeitherTrainsNorQuantizes() throws {
@@ -199,7 +256,7 @@ final class NFKMLXDenseStreamingTests: XCTestCase {
     func testAStreamedNestedDecoderComputesWhatAHeldOneDoes() throws {
         try requireMLXRuntime()
         let geometry = geometry(tied: false)
-        let directory = try release(geometry, prefix: "language_model.")
+        let directory = try release(geometry, releaseKey: { "language_model." + $0 })
         let moduleKey: (String) -> String? = { key in
             key.hasPrefix("language_model.") ? String(key.dropFirst("language_model.".count)) : nil
         }
@@ -281,10 +338,11 @@ final class NFKMLXDenseStreamingTests: XCTestCase {
         let geometry = try NFKMLXQwen3VL.decoderConfiguration(directoryURL: directory)
         let decoder = NFKMLXLanguageNet(geometry)
         let moduleKey: (String) -> String? = { key in
-            key.hasPrefix("model.language_model.") ? "model." + String(key.dropFirst("model.language_model.".count)) : nil
+            if key.hasPrefix("model.language_model.") { return "model." + String(key.dropFirst("model.language_model.".count)) }
+            return key == "lm_head.weight" ? key : nil
         }
         try NFKMLXQwen3VL.loadDecoderWeights(into: decoder, fromDirectory: directory, precision: .checkpoint,
-                                             residency: .streamed,
+                                             residency: .streamed, streams: true,
                                              budget: try budget(directory, precision: .checkpoint,
                                                                 holding: geometry.layerCount / 2, moduleKey: moduleKey))
         XCTAssertEqual(decoder.layerStream?.layers.count, geometry.layerCount - geometry.layerCount / 2)
@@ -362,7 +420,7 @@ final class NFKMLXDenseStreamingTests: XCTestCase {
     }
 
     private func streamedLanguageRelease(_ directory: URL) throws -> NFKMLXLanguageNet {
-        try NFKMLXLanguage.loadedRelease(at: directory, precision: .checkpoint, residency: .streamed).0
+        try NFKMLXLanguage.loadedRelease(at: directory, precision: .checkpoint, residency: .streamed, streams: true).0
     }
 
     func testTheStreamedQwen3_14BMatchesItsReference() throws {
@@ -378,6 +436,7 @@ final class NFKMLXDenseStreamingTests: XCTestCase {
         let record = try denseRecord("IK_PARITY_QWEN3_14B")
         let draft = try NFKMLXLanguage.loadedRelease(at: draftDirectory, precision: .checkpoint).0
         let net = try NFKMLXLanguage.loadedRelease(at: directory, precision: .checkpoint, residency: .streamed,
+                                                   streams: true,
                                                    reserving: NFKMLXLanguage.heldBytes(of: draft)).0
         let stream = try XCTUnwrap(net.layerStream)
         var report = NFKMLXSpeculativeReport()

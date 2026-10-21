@@ -962,11 +962,16 @@ extension NFKMLXCatalogLanguage {
     }
 
     fileprivate static func qwen3VLEntry(_ release: NFKMLXLanguageRelease) -> NFKMLXCatalogEntry {
-        imageQuestionEntry(release,
-                           summary: "\(release.displayName), the Qwen3-VL vision tower and decoder answering a question about an image.",
-                           files: releaseFiles(required: NFKMLXQwen3VL.requiredFiles, optional: NFKMLXQwen3VL.optionalFiles,
-                                               weights: NFKMLXQwen3VL.weightFiles),
-                           residencies: release.routesExperts ? residencies(routesExperts: true) : streamedResidencies)
+        var entry = imageQuestionEntry(
+            release, summary: "\(release.displayName), the Qwen3-VL vision tower and decoder answering a question about an image.",
+            files: releaseFiles(required: NFKMLXQwen3VL.requiredFiles, optional: NFKMLXQwen3VL.optionalFiles,
+                                weights: NFKMLXQwen3VL.weightFiles),
+            residencies: release.routesExperts ? residencies(routesExperts: true) : streamedResidencies)
+        // The mixture pages its routed experts, so its residency is its only load choice.
+        if release.routesExperts {
+            entry.load = .pagedMixture(tasks: [NFKModelTaskVisionQuestionAnswering])
+        }
+        return entry
     }
 
     fileprivate static var pixtralEntry: NFKMLXCatalogEntry {

@@ -314,7 +314,9 @@ public final class NFKMLXPixtral: NSObject {
                              residency: NFKMLXResidency) throws -> NFKMLXPixtral {
         let vision = try visionNet(directoryURL: directoryURL)
         let connector = try connector(directoryURL: directoryURL)
-        let decoder = try decoder(directoryURL: directoryURL, precision: precision, residency: residency)
+        let decoder = try decoder(directoryURL: directoryURL, precision: precision, residency: residency, streams: true,
+                                  besides: NFKMLXLanguage.heldBytes(of: vision) + NFKMLXLanguage.heldBytes(of: connector),
+                                  budget: NFKMLXResidencyBudget.current())
         guard let tokenizer = NFKMLXLanguage.releaseTokenizer(inDirectory: directoryURL) else {
             throw NFKMLXError.weightsMismatch("the release carries no tokenizer files")
         }
@@ -359,24 +361,18 @@ public final class NFKMLXPixtral: NSObject {
     /// Answers `question` about `image`: the processor resizes and normalizes it, the vision tower and
     /// connector encode it, the projected tokens splice into the prompt at the `[IMG]` positions, and the
     /// Mistral decoder generates a reply. The CoreGraphics resize differs from the reference's, so the
-    /// answer is a close approximation of the reference pipeline's rather than token-identical.
-    @objc(answerForImage:question:maxTokens:)
-    public func answer(image: CGImage, question: String, maxTokens: Int) -> String {
+    /// answer is a close approximation of the reference pipeline's rather than token-identical. A streamed
+    /// decoder's failed read is thrown, since the reply it leaves means nothing.
+    @objc(answerForImage:question:maxTokens:error:)
+    public func answer(image: CGImage, question: String, maxTokens: Int) throws -> String {
         let (pixelValues, gridH, gridW) = processor.process(image)
         let features = connector(visionNet(pixelValues))
         let prompt = "<s>[INST]" + imagePlaceholders(gridH: gridH, gridW: gridW) + question + "[/INST]"
         let inputIds = tokenizer.encode(prompt).map(\.intValue)
         let generated = NFKMLXPixtral.generate(decoder: textDecoder, inputIds: inputIds, features: features,
                                                maxTokens: maxTokens, endTokens: endTokens)
-        return tokenizer.decode(generated.map { NSNumber(value: $0) })
-    }
-
-    /// ``answer(image:question:maxTokens:)``, throwing a streamed decoder's failed read, after which the
-    /// answer means nothing.
-    func verifiedAnswer(image: CGImage, question: String, maxTokens: Int) throws -> String {
-        let text = answer(image: image, question: question, maxTokens: maxTokens)
         try textDecoder.verifyStream()
-        return text
+        return tokenizer.decode(generated.map { NSNumber(value: $0) })
     }
 
     /// How many decoder layers a streamed load leaves in the release, read in their turn on every pass;
@@ -447,11 +443,12 @@ public final class NFKMLXPixtral: NSObject {
         return configuration
     }
 
-    /// Builds the Mistral decoder at the release's geometry and loads the `language_model.` subtree —
-    /// the dense stack under `language_model.model.` and the untied `language_model.lm_head.weight` — at
-    /// float32.
+    /// Builds the Mistral decoder at the release's geometry and loads its `language_model.` subtree whole
+    /// at float32: the dense stack under `language_model.model.` and the untied
+    /// `language_model.lm_head.weight`.
     public static func decoder(directoryURL: URL) throws -> NFKMLXLanguageNet {
-        try decoder(directoryURL: directoryURL, precision: .float32, residency: .automatic)
+        try decoder(directoryURL: directoryURL, precision: .float32, residency: .resident, streams: false,
+                    budget: NFKMLXResidencyBudget.current())
     }
 
     /// ``decoder(directoryURL:)`` at `precision`, held as `residency` says.
@@ -463,19 +460,23 @@ public final class NFKMLXPixtral: NSObject {
     /// directory in place for its life. Introduced in InferKit 0.4.0.
     public static func decoder(directoryURL: URL, precision: NFKMLXWeightPrecision,
                                residency: NFKMLXResidency) throws -> NFKMLXLanguageNet {
-        try decoder(directoryURL: directoryURL, precision: precision, residency: residency,
+        try decoder(directoryURL: directoryURL, precision: precision, residency: residency, streams: true,
                     budget: NFKMLXResidencyBudget.current())
     }
 
-    /// ``decoder(directoryURL:precision:residency:)`` planned against `budget`.
+    /// ``decoder(directoryURL:precision:residency:)`` planned against `budget`, streaming only where
+    /// `streams` allows it. `besides` is what the caller holds beside the decoder from the same release,
+    /// such as the vision tower and connector, which a stream's plan counts.
     static func decoder(directoryURL: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
-                        budget: Int) throws -> NFKMLXLanguageNet {
+                        streams: Bool, besides: Int = 0, budget: Int) throws -> NFKMLXLanguageNet {
         let net = NFKMLXLanguageNet(try decoderConfiguration(directoryURL: directoryURL))
         let moduleKey: (String) -> String? = { key in
             key.hasPrefix("language_model.") ? String(key.dropFirst("language_model.".count)) : nil
         }
-        let streamed = try NFKMLXLanguage.streamedLayers(directory: directoryURL, precision: precision,
-                                                         residency: residency, budget: budget, moduleKey: moduleKey)
+        let streamed = streams
+            ? try NFKMLXLanguage.streamedLayers(directory: directoryURL, precision: precision, residency: residency,
+                                                budget: budget, besides: besides, moduleKey: moduleKey)
+            : []
         guard streamed.isEmpty else {
             try NFKMLXLanguage.loadStreamedWeights(into: net, fromDirectory: directoryURL, precision: precision,
                                                    streamed: streamed, moduleKey: moduleKey)

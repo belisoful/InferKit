@@ -149,6 +149,21 @@ public final class NFKMLXLayerStream: @unchecked Sendable {
         return failure
     }
 
+    /// Forgets the recorded read failure and every read still held, so the next pass reads each streamed
+    /// layer again. The reads already queued finish on the reader before their memory is freed.
+    func clearFailure() {
+        lock.lock()
+        let dropped = Array(pending.values)
+        pending.removeAll()
+        failure = nil
+        lock.unlock()
+        reader.async {
+            for layer in dropped {
+                (try? layer.wait())?.forEach { free($0.pointer) }
+            }
+        }
+    }
+
     /// Starts reading the first streamed layer, so it is ready when a pass first reaches it.
     func prime() {
         guard let first = layers.first else { return }

@@ -23,7 +23,7 @@ extension NFKMLXQwen3VL {
     public func inferenceBackend() -> any NFKInferenceBackend {
         let info: [String: Any]? = streamedLayerCount > 0 ? [NFKModelInfoResidency: NFKModelResidencyStreamed] : nil
         return NFKMLXGenerationBackend.imageQuestion(identifier: Self.modelName, modelInfo: info) { [self] image, question, maxTokens in
-            try verifiedAnswer(image: image, question: question, maxTokens: maxTokens)
+            try answer(image: image, question: question, maxTokens: maxTokens)
         }
     }
 

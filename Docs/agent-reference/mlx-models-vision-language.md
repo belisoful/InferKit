@@ -134,7 +134,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   and to a multiple of the patch, then normalizes with the CLIP mean and standard deviation; the resize
   is CoreGraphics rather than the reference's bicubic, the documented approximation the SmolVLM and
   Qwen3-VL processors also carry. ObjC reaches the model through `modelWithDirectoryURL:error:`,
-  `modelWithDirectoryURL:precision:residency:error:`, and `answerForImage:question:maxTokens:`. Customization is **offline-only**: the 12B decoder is a language
+  `modelWithDirectoryURL:precision:residency:error:`, and `answerForImage:question:maxTokens:error:`. Customization is **offline-only**: the 12B decoder is a language
   model above 4B, past what a device holds at float precision for training, so the reference route is a
   LoRA fine-tune in Python, merged, then loaded through the ordinary factory.
 

@@ -136,7 +136,10 @@ public final class NFKMLXQwenImageGenerator: NSObject {
             residency: residency, budget: NFKMLXResidencyBudget.current())
         let generator = NFKMLXQwenImageGenerator(
             resident: plan.holdsStagesResident, tokenizer: tokenizer,
-            loadTextEncoder: { try NFKMLXQwen3VL.decoder(directoryURL: encoderDirectory, precision: .checkpoint) },
+            loadTextEncoder: {
+                try NFKMLXQwen3VL.decoder(directoryURL: encoderDirectory, precision: .checkpoint, residency: .automatic,
+                                          streams: false)
+            },
             loadPipeline: {
                 let transformer = NFKMLXQwenImage.makeNet(configuration)
                 try NFKMLXQwenImage.loadWeights(into: transformer, fromDirectory: transformerDirectory,

@@ -501,7 +501,8 @@ public final class NFKMLXQwen3VL: NSObject {
     static func model(directoryURL: URL, loadOptions: NFKMLXLoadOptions) throws -> NFKMLXQwen3VL {
         let vision = try visionNet(directoryURL: directoryURL)
         let decoder = try decoder(directoryURL: directoryURL, precision: loadOptions.precision ?? .float32,
-                                  residency: loadOptions.residency)
+                                  residency: loadOptions.residency, streams: true,
+                                  besides: NFKMLXLanguage.heldBytes(of: vision))
         if loadOptions.quantizationBits != nil {
             try decoder.requireHeldLayers(for: "quantize at load")
         }
@@ -551,9 +552,10 @@ public final class NFKMLXQwen3VL: NSObject {
     /// Answers `question` about `image`: the image processor tiles the image, the vision tower and its
     /// deepstack encode it, the tokens splice into the prompt, and the decoder generates a reply with
     /// the cached M-RoPE. The CoreGraphics resize differs from the reference's, so the answer is a close
-    /// approximation of the reference pipeline's rather than token-identical.
-    @objc(answerForImage:question:maxTokens:)
-    public func answer(image: CGImage, question: String, maxTokens: Int) -> String {
+    /// approximation of the reference pipeline's rather than token-identical. A streamed decoder's
+    /// failed read is thrown, since the reply it leaves means nothing.
+    @objc(answerForImage:question:maxTokens:error:)
+    public func answer(image: CGImage, question: String, maxTokens: Int) throws -> String {
         let (pixelValues, grid) = processor.process(image)
         let (visionOutput, deepstack) = visionNet(pixelValues, grid: grid)
         let merged = (grid.h / processor.mergeSize) * (grid.w / processor.mergeSize)
@@ -564,15 +566,8 @@ public final class NFKMLXQwen3VL: NSObject {
         let generated = NFKMLXQwen3VL.generate(
             decoder: textDecoder, inputIds: inputIds, visionFeatures: visionOutput, deepstack: deepstack,
             gridT: grid.t, gridH: grid.h, gridW: grid.w, maxTokens: maxTokens, endTokens: endTokens)
-        return tokenizer.decode(generated.map { NSNumber(value: $0) })
-    }
-
-    /// ``answer(image:question:maxTokens:)``, throwing a streamed decoder's failed read, after which the
-    /// answer means nothing.
-    func verifiedAnswer(image: CGImage, question: String, maxTokens: Int) throws -> String {
-        let text = answer(image: image, question: question, maxTokens: maxTokens)
         try textDecoder.verifyStream()
-        return text
+        return tokenizer.decode(generated.map { NSNumber(value: $0) })
     }
 
     /// Builds the vision tower from a downloaded release directory, at the geometry its `config.json`
@@ -680,19 +675,31 @@ public final class NFKMLXQwen3VL: NSObject {
     public static func decoder(directoryURL: URL,
                                precision: NFKMLXWeightPrecision = .float32,
                                residency: NFKMLXResidency = .automatic) throws -> NFKMLXLanguageNet {
+        try decoder(directoryURL: directoryURL, precision: precision, residency: residency, streams: true)
+    }
+
+    /// ``decoder(directoryURL:precision:residency:)`` with streaming as `streams` says: a caller that
+    /// never checks the stream after a pass (an embedder, a text encoder) passes false and holds the
+    /// decoder whole. `besides` is what the caller holds beside the decoder from the same release, which
+    /// a stream's plan counts.
+    static func decoder(directoryURL: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                        streams: Bool, besides: Int = 0) throws -> NFKMLXLanguageNet {
         let net = NFKMLXLanguageNet(try decoderConfiguration(directoryURL: directoryURL))
-        try loadDecoderWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency)
+        try loadDecoderWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency,
+                               streams: streams, besides: besides)
         return net
     }
 
     /// Loads the decoder's tensors into `net`, its routed experts held as `residency` plans them and a
     /// dense decoder's layers streamed where it plans a stream. `dtype` converts each tensor as it is
-    /// read, so the release's element type is never held whole beside it. `streams` false holds a dense
-    /// decoder's layers under every residency, for a caller that sizes the decoder beside its own parts.
+    /// read, so the release's element type is never held whole beside it. `streams` lets a dense decoder
+    /// stream, for a caller that checks the stream after each pass; without it the decoder's layers are
+    /// held under every residency. `besides` is what the caller holds beside the decoder from the same
+    /// release, which a stream's plan counts.
     static func loadDecoderWeights(into net: NFKMLXLanguageNet, fromDirectory directory: URL,
                                    precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
-                                   outerPrefix: String = "", dtype: DType? = nil, streams: Bool = true,
-                                   budget: Int = NFKMLXResidencyBudget.current()) throws {
+                                   outerPrefix: String = "", dtype: DType? = nil, streams: Bool = false,
+                                   besides: Int = 0, budget: Int = NFKMLXResidencyBudget.current()) throws {
         let prefix = outerPrefix + "model.language_model."
         let head = outerPrefix + "lm_head.weight"
         let untied = !net.configuration.tiesWordEmbeddings
@@ -705,7 +712,7 @@ public final class NFKMLXQwen3VL: NSObject {
         }).experts.isEmpty
         let streamed = dense
             ? try NFKMLXLanguage.streamedLayers(directory: directory, precision: precision, residency: residency,
-                                                budget: budget, moduleKey: moduleKey)
+                                                budget: budget, besides: besides, moduleKey: moduleKey)
             : []
         guard streamed.isEmpty else {
             try NFKMLXLanguage.loadStreamedWeights(into: net, fromDirectory: directory, precision: precision,

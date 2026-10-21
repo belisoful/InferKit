@@ -202,7 +202,7 @@ struct NFKMLXLoadProfile {
         "gemma4": [.pagedMixture()],
         "granite-4.0-h": [.pagedMixture()],
         // A dense Qwen3-VL or Pixtral decoder streams the layers it cannot hold, so its precision sets what a
-        // pass reads.
+        // pass reads. The Qwen3-VL mixture keeps its own paged profile on its entry.
         "qwen3-vl": [.streamedDecoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
                                       defaultPrecision: NFKModelPrecisionFloat32, contextLength: nil, keyValue: nil,
                                       tasks: [NFKModelTaskVisionQuestionAnswering])],

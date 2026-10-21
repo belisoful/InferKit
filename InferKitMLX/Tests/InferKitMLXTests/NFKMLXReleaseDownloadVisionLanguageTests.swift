@@ -75,7 +75,7 @@ final class NFKMLXReleaseDownloadVisionLanguageTests: XCTestCase {
                                                    weights: NFKMLXQwen3VL.weightFiles) {
             try NFKMLXQwen3VL.model(repo: repo, revision: nil, cacheDirectoryURL: nil)
         }
-        let answer = model.answer(image: Self.patternImage(width: 128, height: 128),
+        let answer = try model.answer(image: Self.patternImage(width: 128, height: 128),
                                   question: "What is in the image?", maxTokens: 3)
         XCTAssertFalse(answer.isEmpty, "the downloaded tokenizer encodes the prompt and decodes the answer")
     }

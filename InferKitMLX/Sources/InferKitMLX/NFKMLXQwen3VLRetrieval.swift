@@ -119,7 +119,8 @@ public final class NFKMLXQwen3VLEmbedder: NSObject, NFKTextEmbedding {
     @objc(embedderWithDirectoryURL:error:)
     public static func embedder(directoryURL: URL) throws -> NFKMLXQwen3VLEmbedder {
         let vision = try NFKMLXQwen3VL.visionNet(directoryURL: directoryURL)
-        let decoder = try NFKMLXQwen3VL.decoder(directoryURL: directoryURL)
+        let decoder = try NFKMLXQwen3VL.decoder(directoryURL: directoryURL, precision: .float32, residency: .automatic,
+                                                streams: false)
         guard let tokenizer = NFKMLXLanguage.releaseTokenizer(inDirectory: directoryURL) else {
             throw NFKMLXError.weightsMismatch("the release carries no tokenizer files")
         }
@@ -333,7 +334,8 @@ public final class NFKMLXQwen3VLReranker: NSObject {
     @objc(rerankerWithDirectoryURL:error:)
     public static func reranker(directoryURL: URL) throws -> NFKMLXQwen3VLReranker {
         let vision = try NFKMLXQwen3VL.visionNet(directoryURL: directoryURL)
-        let decoder = try NFKMLXQwen3VL.decoder(directoryURL: directoryURL)
+        let decoder = try NFKMLXQwen3VL.decoder(directoryURL: directoryURL, precision: .float32, residency: .automatic,
+                                                streams: false)
         guard let tokenizer = NFKMLXLanguage.releaseTokenizer(inDirectory: directoryURL) else {
             throw NFKMLXError.weightsMismatch("the release carries no tokenizer files")
         }

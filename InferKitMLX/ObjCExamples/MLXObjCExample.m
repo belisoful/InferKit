@@ -723,10 +723,10 @@
 	// A dense release larger than the working set streams the decoder layers it cannot hold, reading
 	// each from the release in its turn on every pass. NFKMLXResidencyAutomatic streams only where the
 	// release does not fit whole; the release's own precision halves what a pass reads from a 16-bit one:
-	//   id<NFKInferenceBackend> llm = [NFKMLXLanguage backendWithDirectoryURL:dir
-	//                                                               precision:NFKMLXWeightPrecisionCheckpoint
-	//                                                               residency:NFKMLXResidencyStreamed error:&error];
-	//   NSInteger layers = ((NFKMLXLanguageBackend *)llm).streamedLayerCount;
+	//   id<NFKInferenceBackend> qwen = [NFKMLXLanguage backendWithDirectoryURL:releaseDirectory
+	//                                                                precision:NFKMLXWeightPrecisionCheckpoint
+	//                                                                residency:NFKMLXResidencyAutomatic error:&error];
+	//   NSLog(@"%ld layers streamed", (long)((NFKMLXLanguageBackend *)qwen).streamedLayerCount);
 	// Qwen3-VL and Pixtral take the same choice for their decoders.
 	XCTAssertTrue([NFKMLXLanguage respondsToSelector:@selector(backendWithDirectoryURL:precision:residency:error:)]);
 	XCTAssertTrue([NFKMLXLanguageBackend instancesRespondToSelector:@selector(streamedLayerCount)]);
@@ -1568,7 +1568,7 @@
 // Docs/examples.md: Pixtral 12B, and Qwen3-VL embedding and reranking
 - (void)testObjectiveCAsksAndRanksThroughTheVisionLanguageFacades
 {
-	XCTAssertTrue([NFKMLXPixtral instancesRespondToSelector:@selector(answerForImage:question:maxTokens:)]);
+	XCTAssertTrue([NFKMLXPixtral instancesRespondToSelector:@selector(answerForImage:question:maxTokens:error:)]);
 	XCTAssertTrue([NFKMLXQwen3VLEmbedder instancesRespondToSelector:@selector(embeddingForText:)]);
 	XCTAssertTrue([NFKMLXQwen3VLEmbedder instancesRespondToSelector:@selector(embeddingForImage:text:instruction:)]);
 	XCTAssertTrue([NFKMLXQwen3VLReranker instancesRespondToSelector:@selector(rankedIndicesForQuery:documents:)]);

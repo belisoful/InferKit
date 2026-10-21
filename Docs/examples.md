@@ -1019,7 +1019,8 @@ positions.
 
 ```objc
 NFKMLXPixtral *model = [NFKMLXPixtral modelWithDirectoryURL:releaseDirectory error:&error];   // mistral-experimental/pixtral-12b
-NSString *answer = [model answerForImage:cgImage question:@"Describe this image in detail." maxTokens:64];
+NSString *answer = [model answerForImage:cgImage question:@"Describe this image in detail." maxTokens:64
+                                    error:&error];
 ```
 
 The vision tower and connector are at reference parity against transformers'

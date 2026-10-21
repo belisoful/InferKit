@@ -65,6 +65,8 @@ public extension NFKMLXLanguageNet {
             return onToken?(token) ?? true
         }
 
+        // A streamed layer that could not be read leaves nothing to decode from.
+        guard !streamFailed else { return produced }
         // The first token needs no draft: the prompt's own logits decide it.
         var next = NFKMLXLanguageNet.sample(promptLogits[0, -1], options: options)
         guard emit(next) else { return produced }
@@ -92,6 +94,7 @@ public extension NFKMLXLanguageNet {
             let batch = [next] + proposals
             let rows = self(MLXArray(batch.map { Int32($0) }).reshaped([1, batch.count]), cache: cache)[0]
             promptCache?.record(batch)
+            guard !streamFailed else { return produced }
 
             let (accepted, following) = options.temperature > 0
                 ? NFKMLXLanguageNet.verifyBySampling(rows: rows, proposals: proposals,

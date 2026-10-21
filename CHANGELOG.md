@@ -2117,8 +2117,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   Objective-C through `backendWithDirectoryURL:precision:residency:error:` and
   `modelWithDirectoryURL:precision:residency:error:`. `NFKMLXLanguageBackend` reports `streamedLayerCount`
   and `streamedBytesPerPass`, and `NFKMLXQwen3VL` and `NFKMLXPixtral` report `streamedLayerCount`. A
-  failed read fails the request and empties the cache it wrote; a streamed decoder refuses to fine-tune
-  or to quantize at load. A drafted language backend loads its draft first and plans the model against
+  failed read stops the pass and the generation, fails the request, and empties the cache it wrote, and
+  the next request reads the release again; a streamed decoder refuses to fine-tune or to quantize at
+  load. `NFKMLXQwen3VL.answer(image:question:maxTokens:)` and `NFKMLXPixtral`'s throw
+  (`answerForImage:question:maxTokens:error:`). The embedders, text encoders, and drafts that read
+  these releases hold them whole, as before. A drafted language backend loads its draft first and plans the model against
   what the draft leaves.
 - A smaller Gemma 3 release of the same vocabulary drafts for a larger one
   (`NFKMLXGemma3Model.useDraft(_:)`, the `draftDirectoryURL:` factories on `NFKMLXGemma3` and

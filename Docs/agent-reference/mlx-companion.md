@@ -637,13 +637,26 @@ Streaming:
   `.streamed` request on one is paged or held as before. A single-file quantized checkpoint is refused,
   and an mlx_lm quantized release (`statesMLXQuantization`) loads resident: their layers are rebuilt to
   the packing before a load, and a stream installs into the layers as built.
-  A streamed net does not fine-tune or quantize at load (`requireHeldLayers(for:)`). The backend checks
-  `verifyStream()` after each run, resets the prompt or conversation cache the failed pass wrote, and
-  throws; `NFKMLXQwen3VL` and `NFKMLXPixtral` answer through `verifiedAnswer`, so their backends fail
-  the request. The drafted factories load the draft first and plan the model against the working set
-  less the draft's held bytes, as Gemma 3's do. Sa2VA's Qwen decoder passes `streams: false`: its
-  float32 4B fails the release-wide `verifyFits`, which doubles every stored byte, and would stream
-  where it has always loaded whole.
+  A streamed net does not fine-tune or quantize at load (`requireHeldLayers(for:)`).
+- Streaming is opt-in at the loader (`streams:` on `NFKMLXLanguage.loadedRelease`,
+  `NFKMLXQwen3VL.loadDecoderWeights`, and Pixtral's internal `decoder`), because only a caller that
+  checks the stream after a pass may receive one. The public residency factories stream: the language
+  backends, `NFKMLXQwen3VL.model`/`decoder(directoryURL:precision:residency:)`, and
+  `NFKMLXPixtral.model`/`decoder(directoryURL:precision:residency:)`. Every other caller holds the
+  release as it did before streaming existed: the Qwen3-VL embedder and reranker, the Qwen-Image and
+  FLUX.2 text encoders (which load inside a stage at generation time, outside any admission budget), the
+  Sa2VA decoder (whose float32 4B fails the release-wide `verifyFits`, which doubles every stored byte),
+  `NFKMLXPixtral.decoder(directoryURL:)`, and every draft.
+- From the first failed read on, every layer of every pass is skipped, held ones included, so no
+  layer's cache gains rows another lacks and a later multi-token pass never builds a mask too narrow
+  for some layer's keys. Generation, plain and speculative, stops there. The backend then throws,
+  resets the prompt or conversation cache the pass wrote, and clears the failure
+  (`NFKMLXLayerStream.clearFailure()`, which drops the reads in flight), so the next request reads
+  every streamed layer again. `NFKMLXQwen3VL.answer` and `NFKMLXPixtral.answer` throw the failure.
+- A stream's plan counts what the caller already holds beside the decoder from the same release
+  (`besides:`): Qwen3-VL's vision tower, and Pixtral's tower and connector, at their held bytes. The
+  drafted factories load the draft first, held, and plan the model against the working set less the
+  draft's held bytes, as Gemma 3's do.
 - A draft cuts the passes (`NFKMLXGemma3Model.useDraft(_:)`, `speculate`): a smaller release of the
   same vocabulary, held, proposes `draftTokens` tokens a round and one pass of the streamed decoder scores
   them, through the language family's `verifyGreedily` / `verifyBySampling`. The target's rollback of

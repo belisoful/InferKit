@@ -52,7 +52,7 @@ final class NFKMLXPixtralBackendTests: XCTestCase {
         let bounded = try backend.runInference(for: NFKInferenceRequest(
             inputs: [NFKInputImage: image, NFKInputPrompt: "Describe it."], parameters: [NFKParameterMaxTokens: 3]))
         XCTAssertEqual(bounded.output(forKey: NFKOutputText) as? String, "!!!")
-        XCTAssertEqual(model.answer(image: image, question: "Describe it.", maxTokens: 3), "!!!")
+        XCTAssertEqual(try model.answer(image: image, question: "Describe it.", maxTokens: 3), "!!!")
 
         let unbounded = try backend.runInference(for: NFKInferenceRequest(
             inputs: [NFKInputImage: image, NFKInputPrompt: "Describe it."], parameters: [:]))

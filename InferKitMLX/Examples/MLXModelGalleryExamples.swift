@@ -967,6 +967,12 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertEqual(streamed(tokens).asArray(Float.self), source(tokens).asArray(Float.self),
                        "a streamed decoder computes the held decoder's logits")
         try streamed.verifyStream()
+
+        // A backend over the release reports the placement, as one built by
+        // `NFKMLXLanguage.backend(directoryURL: releaseDirectory, precision: .checkpoint, residency: .automatic)` does:
+        //   print((qwen as? NFKMLXLanguageBackend)?.streamedLayerCount ?? 0)   // 0 where the release fits whole
+        let qwen: any NFKInferenceBackend = NFKMLXLanguageBackend(net: streamed, tokenizer: nil, identifier: "tiny")
+        XCTAssertEqual((qwen as? NFKMLXLanguageBackend)?.streamedLayerCount, 4)
     }
 
     func testQwenImageTextToImage() throws {
