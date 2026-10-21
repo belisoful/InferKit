@@ -582,7 +582,7 @@ final class NFKMLXSDTextToImageModel {
         }
         // The autoencoder is trained on `-1...1`, where the image bridge delivers `0...1`.
         let batched = image.reshaped([1, image.shape[0], image.shape[1], image.shape[2]]) * 2 - 1
-        let source = pipeline.latent(of: batched, scale: scale)
+        let source = pipeline.sampledLatent(of: batched, scale: scale, stream: 1)
         let (height, width, channels) = (source.shape[1], source.shape[2], source.shape[3])
         conditioning["timeIds"] = timeIds(height: height, width: width)
         return NFKDiffusionContext(conditioning: conditioning, width: width, height: height,

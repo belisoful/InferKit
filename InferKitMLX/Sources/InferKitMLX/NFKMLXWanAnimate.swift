@@ -448,6 +448,11 @@ public final class NFKMLXWanAnimateNet: Module {
                                  referenceKey: MLXArray, referenceValue: MLXArray,
                                  grid: NFKWanAnimateGrid, reference: NFKWanAnimateGrid,
                                  videoFrames: Int, videoArea: Int) -> MLXArray {
+        if NFKMLXHalfPrecision.arithmetic == .reference {
+            return packedAttention(query: query, key: key, value: value, referenceKey: referenceKey,
+                                   referenceValue: referenceValue, grid: grid, reference: reference,
+                                   videoFrames: videoFrames, videoArea: videoArea)
+        }
         let scale = 1.0 / sqrt(Float(config.headDim))
         let keyHeads = key.transposed(1, 0, 2)                             // [heads, N, headDim]
         let valueHeads = value.transposed(1, 0, 2)
@@ -489,6 +494,52 @@ public final class NFKMLXWanAnimateNet: Module {
                 total = total + Float(empty) * NFKReferenceRounding.exponential(-peak)
             }
             perFrame.append((matmul(weights, values) / total).transposed(1, 0, 2))
+        }
+        return concatenated(perFrame, axis: 0)
+    }
+
+    /// ``maskedAttention(query:key:value:referenceKey:referenceValue:grid:reference:videoFrames:videoArea:)`` as the
+    /// reference's eager flex attention computes it over its packed buffer: the scores of float32 queries and keys,
+    /// scaled in float32, torch's float32 softmax over each query's row of the buffer
+    /// (`NFKReferenceRounding.torchPackedSoftmax`), and the probabilities rounded to the operands' type before their
+    /// product with the values. The buffer holds
+    /// the generation span padded to a multiple of 128 positions, then one slot of `videoArea` positions a frame.
+    private func packedAttention(query: MLXArray, key: MLXArray, value: MLXArray,
+                                 referenceKey: MLXArray, referenceValue: MLXArray,
+                                 grid: NFKWanAnimateGrid, reference: NFKWanAnimateGrid,
+                                 videoFrames: Int, videoArea: Int) -> MLXArray {
+        let scale = Float(1 / Double(config.headDim).squareRoot())
+        let keyTransposed = key.asType(.float32).transposed(1, 2, 0)        // [heads, headDim, N]
+        let valueHeads = value.transposed(1, 0, 2)
+        let generationLimit = (videoFrames + 1) * videoArea
+        let packedGeneration = (generationLimit + 127) / 128 * 128
+
+        var perFrame = [MLXArray]()
+        for frame in 0 ..< grid.frames {
+            let rows = (frame * grid.area) ..< ((frame + 1) * grid.area)
+            let queryHeads = query[rows].asType(.float32).transposed(1, 0, 2)  // [heads, area, headDim]
+            let heads = queryHeads.dim(0)
+            let scores = matmul(queryHeads, keyTransposed) * scale
+            var referenceScores: MLXArray?
+            var values = valueHeads
+            var referenceStart = 0, referenceLength = 0
+            let slot = frame - 1
+            if slot >= 0, slot < videoFrames {
+                referenceStart = packedGeneration + slot * videoArea
+                referenceLength = videoArea
+                if slot < reference.frames {
+                    let referenceRows = (slot * reference.area) ..< ((slot + 1) * reference.area)
+                    let rk = referenceKey[referenceRows].asType(.float32).transposed(1, 2, 0)
+                    referenceScores = (matmul(queryHeads, rk) * scale).reshaped([heads * grid.area, -1])
+                    values = concatenated([values, referenceValue[referenceRows].transposed(1, 0, 2)], axis: 1)
+                }
+            }
+            let probabilities = NFKReferenceRounding.torchPackedSoftmax(
+                generationScores: scores.reshaped([heads * grid.area, -1]), referenceScores: referenceScores,
+                area: grid.area, frames: grid.frames, videoArea: videoArea, generationLimit: generationLimit,
+                referenceStart: referenceStart, referenceLength: referenceLength)
+            let typed = probabilities.reshaped([heads, grid.area, -1]).asType(query.dtype)
+            perFrame.append(matmul(typed, values.asType(query.dtype)).transposed(1, 0, 2))
         }
         return concatenated(perFrame, axis: 0)
     }

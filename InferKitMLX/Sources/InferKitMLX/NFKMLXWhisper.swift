@@ -326,7 +326,8 @@ final class NFKWhisperAttention: Module {
         let q = split(NFKReferenceRounding.scaled(query(x), by: 1 / Float(headDim).squareRoot()))
         var scores = q.matmul(split(key(context)).transposed(0, 1, 3, 2))
         if let mask { scores = scores + mask.asType(scores.dtype) }
-        return softmax(scores, axis: -1, precise: true).matmul(split(value(context)))
+        return NFKReferenceRounding.halfSoftmax(scores, fast: softmax(scores, axis: -1, precise: true))
+            .matmul(split(value(context)))
             .transposed(0, 2, 1, 3).reshaped([batch, tokens, state])
     }
 }

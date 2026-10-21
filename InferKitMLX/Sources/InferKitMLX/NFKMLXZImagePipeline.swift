@@ -62,16 +62,17 @@ public final class NFKMLXZImagePipeline {
                               steps: steps, guidance: guidance))
     }
 
-    /// Image-to-image (the diffusers edit path): the Flux VAE encodes `image` `[1, H, W, 3]`, the latent
-    /// is noised to `strength` (0 keeps the source, 1 is a fresh generation), and the denoise runs from
-    /// the matching step. NOTE: SigLIP-conditioned editing is a separate original-repo model not present
-    /// in the diffusers Z-Image; this is diffusers' own strength-based img2img.
+    /// Image-to-image (the diffusers edit path): the Flux VAE encodes `image` `[1, H, W, 3]`, a latent is
+    /// drawn from the encoded distribution, it is noised to `strength` (0 keeps the source, 1 is a fresh
+    /// generation), and the denoise runs from the matching step. The draw takes the first noise after `seed`
+    /// and the added noise the next, in diffusers' order. NOTE: SigLIP-conditioned editing is a separate
+    /// original-repo model not present in the diffusers Z-Image; this is diffusers' own strength-based img2img.
     public func generate(image: MLXArray, promptEmbeds: MLXArray, negativeEmbeds: MLXArray?,
                          strength: Float = 0.6, steps: Int = 20, guidance: Float = 4, seed: UInt64 = 0) -> MLXArray {
         MLXRandom.seed(seed)
         // diffusers encodes the image at the autoencoder's type and normalizes the latent there.
-        let mean = holder.vae.encode(image.asType(NFKReferenceRounding.parameterType(of: holder.vae))).mean
-        let normalized = NFKReferenceRounding.scaled(NFKReferenceRounding.shifted(mean, by: -shiftFactor), by: scaleFactor)
+        let sampled = encodedLatent(image)
+        let normalized = NFKReferenceRounding.scaled(NFKReferenceRounding.shifted(sampled, by: -shiftFactor), by: scaleFactor)
         let imageLatent = normalized[0].transposed(2, 0, 1).expandedDimensions(axis: 1)
         let scheduler = self.scheduler(steps: steps, latent: imageLatent)
         let startIndex = steps - min(Int(Float(steps) * strength), steps)
@@ -80,6 +81,14 @@ public final class NFKMLXZImagePipeline {
         let latent = scheduler.addNoise(imageLatent, noise: noise, sigma: scheduler.sigmas[startIndex])
         return decode(denoise(latent, from: startIndex, scheduler: scheduler, promptEmbeds: promptEmbeds,
                               negativeEmbeds: negativeEmbeds, guidance: guidance))
+    }
+
+    /// A latent drawn from the autoencoder's distribution over `image` `[1, H, W, 3]`, at the autoencoder's type,
+    /// with noise from `MLXRandom`'s current state.
+    func encodedLatent(_ image: MLXArray) -> MLXArray {
+        let (mean, logVariance) = holder.vae.encode(image.asType(NFKReferenceRounding.parameterType(of: holder.vae)))
+        return NFKMLXSDAutoencoder.latentSample(mean: mean, logVariance: logVariance,
+                                                noise: MLXRandom.normal(mean.shape))
     }
 
     /// The denoising loop on its own, from `latent` `[C, 1, H, W]` (the reference's starting noise),

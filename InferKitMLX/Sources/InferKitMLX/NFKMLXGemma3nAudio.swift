@@ -332,7 +332,7 @@ final class NFKGemma3nAudioAttention: Module {
         let (batch, time) = (x.shape[0], x.shape[1])
         let shape = [batch, time, heads, headDimensions]
 
-        let scale = softplus(perDimensionScale).reshaped([1, 1, 1, headDimensions])
+        let scale = NFKReferenceRounding.softplus(perDimensionScale).reshaped([1, 1, 1, headDimensions])
         let queries = queryProjection(x).reshaped(shape) * queryScale * scale
         let keys = keyProjection(x).reshaped(shape)
         let values = valueProjection(x).reshaped(shape)
@@ -404,12 +404,6 @@ enum NFKGemma3nAudioBlocking {
         widths.append(contentsOf: x.shape.dropFirst(2).map { _ in IntOrPair(0) })
         return padded(x, widths: widths)
     }
-}
-
-/// The numerically stable softplus, which MLX does not vend as a free function, rounded once at half
-/// precision as torch's is.
-private func softplus(_ x: MLXArray) -> MLXArray {
-    NFKReferenceRounding.wide(x) { maximum($0, 0) + log1p(exp(-abs($0))) }
 }
 
 // MARK: - Conformer

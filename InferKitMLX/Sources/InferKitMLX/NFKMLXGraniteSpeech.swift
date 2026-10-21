@@ -324,7 +324,8 @@ public final class NFKMLXGraniteSpeechEncoder: Module {
         for (index, layer) in layers.enumerated() {
             h = layer(h)
             if index + 1 == half {
-                h = h + outMid(softmax(out(h), axis: -1, precise: true))
+                let logits = out(h)
+                h = h + outMid(NFKReferenceRounding.halfSoftmax(logits, fast: softmax(logits, axis: -1, precise: true)))
             }
         }
         return h
@@ -366,7 +367,7 @@ final class NFKGraniteSpeechQFormerMHA: Module {
         let scores = NFKReferenceRounding.isReduced(q)
             ? NFKReferenceRounding.divided(matmul(q, k.swappedAxes(-1, -2)), by: Float(headDimensions).squareRoot())
             : matmul(q, k.swappedAxes(-1, -2)) * scale
-        let weights = softmax(scores, axis: -1, precise: true)
+        let weights = NFKReferenceRounding.halfSoftmax(scores, fast: softmax(scores, axis: -1, precise: true))
         return matmul(weights, v).transposed(0, 2, 1, 3).reshaped([batch, queryLength, headCount * headDimensions])
     }
 }

@@ -24,7 +24,9 @@
 //    floor or above it.
 //  - End to end, this side's bf16 sits no farther from float32 than twice the reference's own bf16
 //    does. Past the first flipped element the two bf16 streams diverge chaotically, so the end-to-end
-//    element count carries no signal; the distance from exact arithmetic does.
+//    element count carries no signal; the distance from exact arithmetic does. Where the reference's own
+//    bf16 moves past twice the floor under a one-unit change to a few inputs, the state is held to the
+//    farthest of those jittered twins instead.
 //
 
 import CryptoKit
@@ -99,6 +101,9 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         /// Each summation order's whole-model rerun (`<key>.order.<order>`, the seam's shape,
         /// `IK_PROBE_OUTPUT_ORDER_FLOOR=1`) as its `1 - cosine` against the reference's float32.
         var orderRuns: [(String, Double)] = []
+        /// Each jittered twin of the reference's bf16, the whole model run on inputs a few of which sit one unit in
+        /// the last place apart, as its `1 - cosine` against the reference's float32.
+        var twinRuns: [(String, Double)] = []
 
         /// `ours` as a fraction of the block floor, or nil where none is recorded or the block adds no rounding
         /// (a layer norm CUDA autocast computes in float32 has a block floor of 0).
@@ -158,6 +163,12 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
             if !row.orderRuns.isEmpty {
                 lines.append("      summation orders vs f32, of the floor: "
                              + row.orderRuns.map { String(format: "%@ %.2f", $0.0, $0.1 / max(row.floor, 1e-30)) }
+                                 .joined(separator: ", ")
+                             + String(format: "; ours %.2f", row.exact / max(row.floor, 1e-30)))
+            }
+            if !row.twinRuns.isEmpty {
+                lines.append("      jittered twins vs f32, of the floor: "
+                             + row.twinRuns.map { String(format: "%@ %.2f", $0.0, $0.1 / max(row.floor, 1e-30)) }
                                  .joined(separator: ", ")
                              + String(format: "; ours %.2f", row.exact / max(row.floor, 1e-30)))
             }
@@ -396,7 +407,8 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     /// `isolatedBar` is the fraction of the floor a layer run alone on the reference's input may reach. A seam
     /// with a recorded order floor is held to that instead: the farthest the reference's own block moves when
     /// its products, moments, and convolutions sum in another float32 order. An end-to-end state whose record
-    /// carries whole-model reruns is held to the farthest of them from the float32 run in place of twice the floor.
+    /// carries whole-model reruns is held to the farthest of them from the float32 run in place of twice the floor,
+    /// and one carrying the reference's jittered twins to the farthest twin.
     private func assertRoundingPlacement(_ name: String, endToEnd: [Seam], isolated: [Seam], isolatedBar: Double = 0.25,
                                          file: StaticString = #filePath, line: UInt = #line) {
         let worst = isolated.max { $0.ours / max($0.floor, 1e-30) < $1.ours / max($1.floor, 1e-30) }!
@@ -424,6 +436,12 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         }
         assertWithinBlockFloors(name, isolated, file: file, line: line)
         for row in endToEnd.suffix(2) {
+            if let farthest = row.twinRuns.map(\.1).max() {
+                XCTAssertLessThanOrEqual(row.exact, farthest,
+                                         "\(name) \(row.label): farther from float32 than the reference's farthest jittered twin",
+                                         file: file, line: line)
+                continue
+            }
             if let widest = row.orderRuns.map(\.1).max() {
                 XCTAssertLessThanOrEqual(row.exact, widest,
                                          "\(name) \(row.label): farther from float32 than the reference's widest summation order",
@@ -2512,7 +2530,10 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     // attention (`IK_VOXTRAL_DTYPE=bfloat16 IK_PROBE_ENCODER=1 IK_PROBE_LAYERS=0,1,29 run_reference.py
     // voxtral_real`), float32 arithmetic on the same bf16 features as the floor (`bfloat16-inputs`). Each
     // Whisper-encoder and decoder piece runs on the reference's own bf16 input; the pipeline is then held
-    // to float32.
+    // to float32. The logits are held to the reference's three jittered twins
+    // (`IK_VOXTRAL_FEATURE_JITTER=1|2|3`, 16 of 384,000 features one unit in the last place apart): on 2026-10-20
+    // they sat 4.99e-03, 1.87e-02, and 3.35e-03 from float32 against a floor of 4.35e-03, so the reference's own
+    // bf16 passes twice the floor under one of them.
     func testVoxtralInBFloat16MatchesTheBFloat16Reference() throws {
         try requireMLXRuntime()
         let directory = URL(fileURLWithPath: try existing(config["IK_VAL_VOXTRAL"], "IK_VAL_VOXTRAL"))
@@ -2555,8 +2576,13 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         let encoded = net.audioTower(features)
         let logits = net.logits(tokens: tokens, audioEmbeddings: net.projector(encoded.reshaped([-1, net.config.projectorInputSize])))[0]
         eval(encoded, logits)
-        let endToEnd = try seams([("encoder", encoded[0]), ("logits", logits)], bf16: bf16, f32: f32,
+        var endToEnd = try seams([("encoder", encoded[0]), ("logits", logits)], bf16: bf16, f32: f32,
                                  keys: ["encoder_out", "output"])
+        let floatLogits = floats(try XCTUnwrap(f32["output"]))
+        endToEnd[1].twinRuns = try (1 ... 3).map { seed in
+            let twin = try record("voxtral_bf16_jitter\(seed).safetensors")
+            return ("jitter \(seed)", distance(floats(try XCTUnwrap(twin["output"], "no output in twin \(seed)")), floatLogits))
+        }
         report("voxtral isolated", isolated)
         report("voxtral end to end", endToEnd)
         assertRoundingPlacement("voxtral", endToEnd: endToEnd, isolated: isolated)
@@ -2752,6 +2778,28 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         }
     }
 
+    // diffusers' latent draw, `mean + exp(0.5 · clamp(logvar, −30, 20)) · noise`, over formula inputs whose
+    // log-variances pass both clamps, against the SHA-256 of torch's bf16 and float32 results.
+    func testLatentSampleRoundsAsDiffusersDrawsIt() throws {
+        try requireMLXRuntime()
+        func formula(_ value: (Int) -> Float) -> MLXArray { MLXArray((0 ..< 128).map(value), [1, 4, 4, 8]) }
+        let mean = formula { Float(($0 * 37) % 201 - 100) / 64 }
+        let logVariance = formula { Float(($0 * 53) % 97 - 48) * 0.75 }
+        let noise = formula { Float(($0 * 29) % 89 - 44) / 16 }
+        let cases: [(DType, String)] = [
+            (.bfloat16, "e60743a12782661fdbcc6deed1aff7e4f22971b8951d2e84ade9077c6e028267"),
+            (.float32, "fafff135c0a270aeea4a760c48e1d90b82a76a8ed6cdced76712f5bec1437f1b"),
+        ]
+        for (dtype, expected) in cases {
+            let drawn = NFKMLXSDAutoencoder.latentSample(mean: mean.asType(dtype), logVariance: logVariance.asType(dtype),
+                                                         noise: noise.asType(dtype))
+            let data = dtype == .bfloat16
+                ? drawn.view(dtype: .uint16).asArray(UInt16.self).withUnsafeBufferPointer { Data(buffer: $0) }
+                : drawn.asArray(Float.self).withUnsafeBufferPointer { Data(buffer: $0) }
+            XCTAssertEqual(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(), expected, "\(dtype)")
+        }
+    }
+
     // torch's exact GELU at bf16 and float16 over every finite value (`run_reference.py gelu_rounding`) of
     // magnitude at least twice the least normal float32, so `x · 0.5` is normal: the GPU flushes a subnormal
     // product to zero, and torch's CPU keeps it. The kernel fuses torch's multiply-adds and takes Sleef's
@@ -2854,6 +2902,17 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         let scores = MLXRandom.normal([8, 77]) * 3, weights = MLXRandom.normal([8, 77])
         XCTAssertTrue(allClose(grad({ (NFKReferenceRounding.torchSoftmax($0) * weights).sum() })(scores),
                                grad({ (softmax($0, axis: -1, precise: true) * weights).sum() })(scores)).item(Bool.self))
+        func halfLoss(_ softmax: @escaping (MLXArray) -> MLXArray) -> MLXArray {
+            grad({ (softmax($0.asType(.bfloat16)).asType(.float32) * weights).sum() })(scores)
+        }
+        XCTAssertTrue(allClose(halfLoss(NFKReferenceRounding.torchHalfSoftmax),
+                               halfLoss { softmax($0.asType(.float32), axis: -1, precise: true).asType(.bfloat16) })
+            .item(Bool.self))
+        XCTAssertTrue(allClose(grad({ (NFKReferenceRounding.torchSoftplus($0) * weights).sum() })(scores),
+                               grad({ (MLXNN.softplus($0) * weights).sum() })(scores)).item(Bool.self))
+        let window = MLXRandom.normal([4, 8, 64]), windowScores = MLXRandom.normal([4, 8, 64]) * 2
+        XCTAssertTrue(allClose(grad({ NFKReferenceRounding.torchWindowPool(values: $0, scores: windowScores).sum() })(window),
+                               grad({ ($0 * softmax(windowScores, axis: 1, precise: true)).sum() })(window)).item(Bool.self))
     }
 
     // torch's float32 `softmax` over 8 rows of 1, 3, 5, 77 (keys 10 to 29 masked), and 1,025 values, each an
@@ -2917,6 +2976,154 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
             XCTAssertNotEqual(digest((wide * MLX.sigmoid(wide)).asType(dtype)), expected,
                               "\(dtype): the domain tells MLX's SiLU from torch's")
         }
+    }
+
+    // torch's `softplus` over every finite float16 and bf16 input from −86, whose results are normal float32 values
+    // (the GPU flushes a subnormal result to zero), in either arithmetic, and over float32 values from −30 to 30,
+    // against the SHA-256 of torch's output. MLX's `softplus` rounds float16 and float32 results apart; over bf16
+    // it rounds every result as torch does, and the kernel runs faster.
+    func testReferenceArithmeticComputesTorchsSoftplus() throws {
+        try requireMLXRuntime()
+        let cases: [(DType, String)] = [
+            (.float16, "0864afb5a12b410dd4aefad96dc28a338fb187f5cd263ccf9deeb7526eacf88b"),
+            (.bfloat16, "76a9d3390d39f6b65e4a70fa52ba81b24ba5aa753080a7f5909771762d6fe71d"),
+        ]
+        for (dtype, expected) in cases {
+            let input = MLXArray((0 ..< 1 << 16).map { UInt16($0) }).view(dtype: dtype)
+            let values = input.asType(.float32).asArray(Float.self)
+            let kept = values.indices.filter { values[$0].isFinite && values[$0] >= -86 }
+            func digest(_ y: MLXArray) -> String {
+                let words = y.view(dtype: .uint16).asArray(UInt16.self)
+                let selected = kept.map { words[$0] }
+                return SHA256.hash(data: selected.withUnsafeBufferPointer { Data(buffer: $0) })
+                    .map { String(format: "%02x", $0) }.joined()
+            }
+            XCTAssertEqual(digest(NFKReferenceRounding.softplus(input)), expected, "\(dtype)")
+            NFKMLXHalfPrecision.arithmetic = .fast
+            XCTAssertEqual(digest(NFKReferenceRounding.softplus(input)), expected, "\(dtype), fast arithmetic")
+            NFKMLXHalfPrecision.arithmetic = .reference
+            if dtype == .float16 {
+                XCTAssertNotEqual(digest(MLXNN.softplus(input.asType(.float32)).asType(dtype)), expected,
+                                  "float16: the domain tells MLX's softplus from torch's")
+            }
+        }
+        let grid = MLXArray((0 ..< 4096).map { Float(-30 + 60 * Double($0) / 4096) })
+        func digest(_ y: MLXArray) -> String {
+            SHA256.hash(data: y.asArray(Float.self).withUnsafeBufferPointer { Data(buffer: $0) })
+                .map { String(format: "%02x", $0) }.joined()
+        }
+        let expected = "9e7fcb0a2a12fbb0dad86c02d9ae9fbc42a11cd31eb062def53737d3dbfcb0f9"
+        XCTAssertEqual(digest(NFKReferenceRounding.softplus(grid)), expected, "float32")
+        XCTAssertNotEqual(digest(MLXNN.softplus(grid)), expected, "float32: the grid tells MLX's softplus from torch's")
+    }
+
+    // torch's `softmax` over float16 and bf16 rows of 1, 3, 5, 77, and 1,025 values, each an exact formula, against
+    // the SHA-256 of torch's output. torch computes a half-precision row with its reduced-type kernel, and MLX's
+    // float32 softmax rounded once rounds 2, 1, and 3 of the longer rows' outputs apart. The rows' spread keeps every
+    // probability a normal float32 value, which the GPU does not flush.
+    func testReferenceArithmeticComputesTorchsHalfSoftmax() throws {
+        try requireMLXRuntime()
+        let cases: [(DType, Int, Int, Int, String)] = [
+            (.float16, 8, 1, 128, "32a0018763d9bbf7f5f4aafba8880dd02752d4c469168777dc6fbf7863e5a64a"),
+            (.float16, 8, 3, 128, "16e1134d84e2e57ea987f76e51949f6ebccfb22093aac172e3d5a1f9755bd003"),
+            (.float16, 256, 5, 64, "b104b25ab7b6e83e36cd6129f518b5bb840f9e1c37710eff54b99155120ab5f0"),
+            (.float16, 16, 1025, 64, "2dc8cd6c6fbb0a8111195ae421095cc1c7a61635e10be0a18cbd8db34bddacca"),
+            (.bfloat16, 8, 3, 128, "96a57f6cade00ff55e4ada079196ab6737185ed620372f40312f409f9920ab65"),
+            (.bfloat16, 256, 5, 32, "a11270e06baf0c8def902c49037782c30c22b075fb03b485caa5571d4783a509"),
+            (.bfloat16, 64, 77, 32, "39fbc57ec8c462cd43a96cb9f29c58cd807b7e6255db994b3950c8725243bf36"),
+            (.bfloat16, 16, 1025, 32, "85c024162d18ae4c92692fda49c4f354512b7ff801494a67558f8f84db22932c"),
+        ]
+        func digest(_ y: MLXArray) -> String {
+            let words = y.view(dtype: .uint16).asArray(UInt16.self)
+            return SHA256.hash(data: words.withUnsafeBufferPointer { Data(buffer: $0) })
+                .map { String(format: "%02x", $0) }.joined()
+        }
+        for (dtype, rows, size, divisor, expected) in cases {
+            let x = MLXArray((0 ..< rows * size).map { index -> Float in
+                let (row, column) = index.quotientAndRemainder(dividingBy: size)
+                return Float((row * 131 + column * 37) % 2001 - 1000) / Float(divisor)
+            }, [rows, size]).asType(dtype)
+            let label = "\(dtype) \(rows)×\(size)"
+            XCTAssertEqual(digest(NFKReferenceRounding.torchHalfSoftmax(x)), expected, label)
+            if size >= 77 {
+                XCTAssertNotEqual(digest(softmax(x.asType(.float32), axis: -1, precise: true).asType(dtype)), expected,
+                                  "\(label): the rows tell MLX's softmax from torch's")
+            }
+        }
+    }
+
+    // DeepSeek V4's compressor pooling, `(values · softmax(scores, dim)).sum(dim)` along a window of 8 and of 128
+    // (each an exact formula, the first window's leading scores masked), against the SHA-256 of torch's float32
+    // output. MLX's softmax and sum along the window round apart from torch's.
+    func testWindowPoolSoftmaxesAndSumsAlongTheWindowAsTorch() throws {
+        try requireMLXRuntime()
+        let cases: [(Int, Int, Int, String)] = [
+            (3, 8, 512, "a3a8eac3cc19899e6af99268873dd90bd2093599a4fb271ac11ea5ab6d7579a8"),
+            (2, 128, 64, "6a223760544c0d0f3edcf7ad5061a0dac3a92612ee9795683bf18c4ff0bdace0"),
+        ]
+        func digest(_ y: MLXArray) -> String {
+            SHA256.hash(data: y.asArray(Float.self).withUnsafeBufferPointer { Data(buffer: $0) })
+                .map { String(format: "%02x", $0) }.joined()
+        }
+        for (outer, window, width, expected) in cases {
+            func formula(_ value: (Int, Int, Int) -> Float) -> MLXArray {
+                MLXArray((0 ..< outer * window * width).map { index -> Float in
+                    let (o, rest) = index.quotientAndRemainder(dividingBy: window * width)
+                    let (k, c) = rest.quotientAndRemainder(dividingBy: width)
+                    return value(o, k, c)
+                }, [outer, window, width])
+            }
+            let values = formula { o, k, c in Float((o * 53 + k * 29 + c * 17) % 1001 - 500) / 256 }
+            let scores = formula { o, k, c in
+                o == 0 && k < 2 && c < 3 ? -.infinity : Float(Double((o * 31 + k * 71 + c * 13) % 2001 - 1000) / 100)
+            }
+            XCTAssertEqual(digest(NFKReferenceRounding.torchWindowPool(values: values, scores: scores)), expected,
+                           "window \(window)")
+            XCTAssertNotEqual(digest((values * softmax(scores, axis: 1, precise: true)).sum(axis: 1)), expected,
+                              "window \(window): the case tells MLX's order from torch's")
+        }
+    }
+
+    // Wan Animate's generation attention over a five-frame video buffer of 16-position frames, four of them in the
+    // chunk with 12 positions each and two cached reference frames of 9: each query frame's probabilities over its
+    // row of the packed buffer, the generation scores and reference scores exact formulas, against the SHA-256 of
+    // torch's float32 softmax over the materialized row. MLX's sum over the same scores rounds apart.
+    func testPackedSoftmaxSumsEachRowByBufferPosition() throws {
+        try requireMLXRuntime()
+        let (videoFrames, videoArea, frames, area, referenceFrames, referenceArea, rows) = (4, 16, 4, 12, 2, 9, 24)
+        let generationLimit = (videoFrames + 1) * videoArea
+        let packedGeneration = (generationLimit + 127) / 128 * 128
+        var kernel = [Float](), operations = [Float]()
+        for frame in 0 ..< frames {
+            let generation = MLXArray((0 ..< rows * frames * area).map { index -> Float in
+                let (row, column) = index.quotientAndRemainder(dividingBy: frames * area)
+                return Float((row * 37 + column * 11 + frame * 5) % 1001 - 500) / 64
+            }, [rows, frames * area])
+            let slot = frame - 1
+            let hasSlot = slot >= 0 && slot < videoFrames
+            let referenceCount = hasSlot && slot < referenceFrames ? referenceArea : 0
+            let reference = referenceCount > 0 ? MLXArray((0 ..< rows * referenceCount).map { index -> Float in
+                let (row, column) = index.quotientAndRemainder(dividingBy: referenceCount)
+                return Float((row * 13 + column * 7 + frame * 3) % 801 - 400) / 64
+            }, [rows, referenceCount]) : nil
+            let probabilities = NFKReferenceRounding.torchPackedSoftmax(
+                generationScores: generation, referenceScores: reference, area: area, frames: frames,
+                videoArea: videoArea, generationLimit: generationLimit,
+                referenceStart: hasSlot ? packedGeneration + slot * videoArea : 0, referenceLength: hasSlot ? videoArea : 0)
+            kernel += probabilities.asArray(Float.self)
+            let scores = reference.map { concatenated([generation, $0], axis: -1) } ?? generation
+            let zeroKeys = Float(generationLimit - frames * area + (hasSlot ? videoArea - referenceCount : 0))
+            let peak = maximum(scores.max(axis: -1, keepDims: true), MLXArray(Float(0)))
+            let exponentials = exp(scores - peak)
+            operations += (exponentials / (exponentials.sum(axis: -1, keepDims: true) + zeroKeys * exp(-peak)))
+                .asArray(Float.self)
+        }
+        func digest(_ values: [Float]) -> String {
+            SHA256.hash(data: values.withUnsafeBufferPointer { Data(buffer: $0) }).map { String(format: "%02x", $0) }.joined()
+        }
+        let expected = "b0cc4fcaaef0e041b1f8b889cd4625f0aab2cc3089f81d3a69eba01645e2c33c"
+        XCTAssertEqual(digest(kernel), expected)
+        XCTAssertNotEqual(digest(operations), expected, "the case tells MLX's sum from torch's")
     }
 
     // Wan 2.1 1.3B's 12 heads over 33 frames at 480×832 (14,040 tokens) attend 1,593 query rows at a time,

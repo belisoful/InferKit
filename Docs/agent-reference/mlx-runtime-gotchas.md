@@ -809,6 +809,10 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   behaves differently by how the table was built. Key tokenizer tables by `[UInt32]` scalar sequences
   and read JSON vocabularies through `NSDictionary` into pairs. A dictionary literal with both
   spellings is a duplicate-key fatal error. Found by the 2026-10-02 translation language probes.
+- **A Metal kernel binds an input of fewer than 8 elements in the constant address space (2026-10-20).**
+  `MLXFast.metalKernel` declares such an input `const constant`, so a kernel that names its pointer
+  `device const float*` fails to build. `torchPackedSoftmax` passes an 8-element placeholder when a frame has
+  no reference keys and declares its row pointers `auto`.
 - **A footprint start can count memory MLX has already released (2026-10-16).** `NFKMLXLoadFootprintTests`
   read its start after `clearCache()` and a footprint steady for 200 ms, and the narrowing test failed
   its guard about once a run, alone too (2 of 7 on 2026-10-14; `cc42-rerun2` failed in a fresh process

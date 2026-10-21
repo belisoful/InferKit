@@ -11,7 +11,10 @@ The diffusion backend seam and schedulers, the SD networks and pipelines, IP-Ada
   `denoise` (latent + timestep + context + guidance → prediction), `decode` (latent → image tensor),
   and a scheduler; the backend owns the loop, per-step progress/cancellation, and the image bridge.
   No source latent runs text-to-image; a source latent runs image-to-image (`NFKParameterStrength`);
-  a source latent + mask runs inpainting (kept region held to the source each step).
+  a source latent + mask runs inpainting (kept region held to the source each step). The backend sets
+  `encodingSeed` around `encode`, and an encode that draws a latent from an autoencoder's distribution
+  takes its noise from `encodingNoise`: the run's seed advanced by 1 for the source image and by 2 for the
+  masked image, from the same SplitMix64 stream as the initial noise.
   `windowedContinuation(...)` produces output longer than the model's window, the `NFKMLXMusic3`
   mechanism lifted out for reuse: it tiles one axis into overlapping windows and keeps continuity
   Inside the sampler — each window's overlap is held to the previous window's finished latent,
@@ -107,7 +110,9 @@ The diffusion backend seam and schedulers, the SD networks and pipelines, IP-Ada
   nine-channel conditioning (noisy latent, then mask, then masked-image latent, in that order);
   `denoise` is the UNet (epsilon); `decode` is the VAE. The backend runs the DDIM loop and the per-step
   inpaint compositing. The masked-image latent is the plate with the hole blanked and then encoded, not
-  the plate's latent with the hole blanked; the encoder is not local, so the two differ. `+register`
+  the plate's latent with the hole blanked; the encoder is not local, so the two differ. Both latents are
+  draws from the encoded distribution (`sampledLatent`), as diffusers' `_encode_vae_image` takes them;
+  `NFKMLXTextToImage`'s image-to-image draws its source the same way. `+register`
   under `sd-inpaint`. Pipeline and offline round-trip tested under xcodebuild.
 - `NFKMLXTextToImage` (`@objc`) — Stable Diffusion **text-to-image**, on `NFKMLXDiffusionBackend`, and
   what `NFKMLXBackend` is built from. `encode` turns the prompt into a conditioning sequence, `denoise`

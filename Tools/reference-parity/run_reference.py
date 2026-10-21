@@ -5234,6 +5234,22 @@ def run_voxtral(image, checkpoint):
     return logits.contiguous()
 
 
+def _jittered_bfloat16(values, seed, count=16):
+    """`values` (bf16) with up to `count` elements, in C order, one unit in the last place larger in magnitude.
+    The positions come from a 64-bit LCG (6364136223846793005, 1442695040888963407) starting from
+    `seed · 0x9E3779B97F4A7C15`, each the state's high bits above 33 modulo the element count."""
+    mask = (1 << 64) - 1
+    state = (seed * 0x9E3779B97F4A7C15) & mask
+    flat = values.contiguous().view(torch.int16).reshape(-1).clone()
+    positions = set()
+    for _ in range(count):
+        state = (state * 6364136223846793005 + 1442695040888963407) & mask
+        positions.add((state >> 33) % flat.numel())
+    for position in sorted(positions):
+        flat[position] += 1
+    return flat.view(torch.bfloat16).reshape(values.shape)
+
+
 def run_voxtral_real(image, checkpoint):
     """Voxtral-Mini-3B released decoder, float32. `--checkpoint` is the release directory. Fixed random
     log-mel features (30 s, 128 mel bands) and a prompt with the right number of audio tokens are fed
@@ -5255,7 +5271,14 @@ def run_voxtral_real(image, checkpoint):
     torch.manual_seed(3)
     features = torch.randn(1, 128, 3000)
     if mode:
-        features = features.to(torch.bfloat16).to(dtype)
+        features = features.to(torch.bfloat16)
+        # `IK_VOXTRAL_FEATURE_JITTER=<seed>` raises 16 bf16 features one unit in the last place, for a twin
+        # record that measures the reference's own end-to-end sensitivity. The positions come from a 64-bit
+        # LCG over the features in [frames, mels] order, starting from `seed · 0x9E3779B97F4A7C15`.
+        jitter = os.environ.get("IK_VOXTRAL_FEATURE_JITTER")
+        if jitter:
+            features = _jittered_bfloat16(features.transpose(1, 2), int(jitter)).transpose(1, 2)
+        features = features.to(dtype)
     probes = {}
     if os.environ.get("IK_PROBE_ENCODER"):
         _probe_encoder_layers(model.audio_tower.layers, probes)

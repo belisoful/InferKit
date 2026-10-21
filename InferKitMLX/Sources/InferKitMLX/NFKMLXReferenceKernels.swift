@@ -29,6 +29,14 @@ extension NFKReferenceRounding {
         return torchSoftmax(scores.asType(.float32)).asType(scores.dtype)
     }
 
+    /// The softmax over the last axis of half-precision `scores` that the reference takes without widening them, as
+    /// ``NFKMLXHalfPrecision/arithmetic`` selects: torch's reduced-type kernel (``torchHalfSoftmax(_:)``) or `fast`.
+    /// A float32 `scores` takes `fast`.
+    static func halfSoftmax(_ scores: MLXArray, fast: @autoclosure () -> MLXArray) -> MLXArray {
+        guard isReduced(scores), NFKMLXHalfPrecision.arithmetic == .reference else { return fast() }
+        return torchHalfSoftmax(scores)
+    }
+
     /// The float32 sum over the last axis of a router's kept weights, kept as one value per row, as
     /// ``NFKMLXHalfPrecision/arithmetic`` selects: torch's order (``torchRowSum(_:)``) or MLX's sum.
     static func routingSum(_ weights: MLXArray) -> MLXArray {
@@ -109,6 +117,72 @@ extension NFKReferenceRounding {
         return torchSoftmaxFunction([x])[0]
     }
 
+    /// torch's CPU `softmax` over the last axis of a bfloat16 or float16 `x`, in `x`'s type: the row widened to
+    /// float32, its maximum, Sleef's `expf` of each `x − maximum`, the exponentials of whole 4-value vectors summed
+    /// over 4 lanes and the lanes joined as `(a₀ + a₂) + (a₁ + a₃)`, the remaining exponentials added in order, and
+    /// each exponential times `1 / sum`, rounded once. torch takes the remaining exponentials from the C library's
+    /// `expf`, which Sleef's stands in for: 0 to 3 outputs in a million round apart. On the CPU stream it takes
+    /// MLX's softmax in float32, rounded once.
+    static func torchHalfSoftmax(_ x: MLXArray) -> MLXArray {
+        guard NFKMLXDevice.currentType == .gpu, x.size > 0 else {
+            return softmax(x.asType(.float32), axis: -1, precise: true).asType(x.dtype)
+        }
+        return torchHalfSoftmaxFunction([x])[0]
+    }
+
+    /// torch's `softplus` of `x` with its default β of 1 and threshold of 20, in `x`'s type: `x` above 20, and
+    /// otherwise `log1p(exp(x))` with Sleef's `expf` and `log1pf`, formed in float32 and rounded once. A result
+    /// below the least normal float32 is 0, where torch keeps the subnormal. On the CPU stream it takes MLX
+    /// operations.
+    static func torchSoftplus(_ x: MLXArray) -> MLXArray {
+        guard NFKMLXDevice.currentType == .gpu, x.size > 0 else { return softplusOperations([x])[0] }
+        return torchSoftplusFunction([x])[0]
+    }
+
+    /// `(values · softmax(scores)).sum()` over the second-to-last axis of float32 `values` and `scores`, as torch
+    /// computes it along a non-trailing axis: per column of the trailing axis, the maximum, Sleef's `expf` of each
+    /// `score − maximum`, their sum in order, each exponential divided by the sum, each product with its value,
+    /// and the products summed by torch's cascade (blocks of up to 16 rows summed in order and the block sums
+    /// joined in order). The trailing axis is a whole number of 4-value vectors, which torch vectorizes. On the
+    /// CPU stream it takes MLX operations.
+    static func torchWindowPool(values: MLXArray, scores: MLXArray) -> MLXArray {
+        guard NFKMLXDevice.currentType == .gpu, values.size > 0 else { return windowPoolOperations([values, scores])[0] }
+        return torchWindowPoolFunction([values, scores])[0]
+    }
+
+    /// The probabilities of torch's float32 `softmax` over one query frame's row of a packed key buffer that holds
+    /// only part of its keys, as eager flex attention computes them over Wan Animate's generation buffer.
+    /// `generationScores` `[rows, frames · area]` are the chunk's keys, which sit at `f · videoArea + i` of the
+    /// buffer's first `generationLimit` positions; `referenceScores` `[rows, referenceCount]` sit from
+    /// `referenceStart` within the `referenceLength` positions the query's reference slot spans. Every other
+    /// position of those spans is a zero key that scores 0, and the rest of the buffer is masked. Each row's
+    /// exponentials sum over 4 lanes by their position in the buffer, as ``torchSoftmax(_:)`` sums a row.
+    /// The result is `[rows, frames · area + referenceCount]`. On the CPU stream it takes MLX operations, which sum
+    /// in MLX's order.
+    static func torchPackedSoftmax(generationScores: MLXArray, referenceScores: MLXArray?, area: Int, frames: Int,
+                                   videoArea: Int, generationLimit: Int, referenceStart: Int,
+                                   referenceLength: Int) -> MLXArray {
+        let rows = generationScores.dim(0), generation = generationScores.dim(1)
+        let referenceCount = referenceScores?.dim(1) ?? 0
+        let zeroKeys = (generationLimit - generation) + (referenceLength - referenceCount)
+        guard NFKMLXDevice.currentType == .gpu, generationScores.size > 0 else {
+            var scores = generationScores
+            if let referenceScores { scores = concatenated([scores, referenceScores], axis: -1) }
+            var peak = scores.max(axis: -1, keepDims: true)
+            if zeroKeys > 0 { peak = maximum(peak, MLXArray(Float(0))) }
+            let exponentials = exp(scores - peak)
+            var total = exponentials.sum(axis: -1, keepDims: true)
+            if zeroKeys > 0 { total = total + Float(zeroKeys) * exp(-peak) }
+            return exponentials / total
+        }
+        let layout = MLXArray([rows, generation, referenceCount, videoArea, area, frames, generationLimit,
+                               referenceStart, referenceLength].map(Int32.init))
+        return torchPackedSoftmaxKernel(
+            [generationScores, referenceScores ?? MLXArray.zeros([8]), layout],
+            grid: (rows * 32, 1, 1), threadGroup: (32, 1, 1),
+            outputShapes: [[rows, generation + referenceCount]], outputDTypes: [.float32])[0]
+    }
+
     /// torch's CPU `layer_norm` of a bfloat16, float16, or float32 `x` over its last axis, rounded to `x`'s
     /// type. A missing `weight` is 1 and a missing `bias` 0.
     ///
@@ -170,6 +244,18 @@ extension NFKReferenceRounding {
         return [(wide / (1 + torchExpOperations(-wide))).asType(inputs[0].dtype)]
     }
 
+    /// torch's `softplus` of `[x]` from MLX operations, formed in float32 and rounded once: the gradient of the
+    /// softplus kernel. The bound keeps the unselected branch's gradient finite.
+    private static func softplusOperations(_ inputs: [MLXArray]) -> [MLXArray] {
+        let wide = inputs[0].asType(.float32)
+        return [which(wide .> 20, wide, log1p(exp(minimum(wide, 20)))).asType(inputs[0].dtype)]
+    }
+
+    /// The window pool of `[values, scores]` from MLX operations: the gradient of the window-pool kernel.
+    private static func windowPoolOperations(_ inputs: [MLXArray]) -> [MLXArray] {
+        [(inputs[0] * softmax(inputs[1], axis: -2, precise: true)).sum(axis: -2)]
+    }
+
     /// The layer norm of `[x, weight, bias, eps]` from MLX operations in float32, rounded to `x`'s type: the
     /// gradient of the layer-norm kernel.
     private static func layerNormOperations(_ inputs: [MLXArray]) -> [MLXArray] {
@@ -219,6 +305,46 @@ extension NFKReferenceRounding {
         }
     }
 
+    private static let torchHalfSoftmaxFunction = CustomFunction {
+        Forward { inputs in
+            let x = inputs[0]
+            let size = x.dim(-1), rows = x.size / size
+            let probabilities = torchHalfSoftmaxKernel(
+                [x.reshaped([rows, size]), MLXArray([Int32(rows), Int32(size)])],
+                template: [("T", x.dtype)], grid: (rows * 32, 1, 1), threadGroup: (32, 1, 1),
+                outputShapes: [[rows, size]], outputDTypes: [x.dtype])[0]
+            return [probabilities.reshaped(x.shape)]
+        }
+        VJP { primals, cotangents in
+            vjp({ [softmax($0[0].asType(.float32), axis: -1, precise: true).asType($0[0].dtype)] },
+                primals: primals, cotangents: cotangents).1
+        }
+    }
+
+    private static let torchSoftplusFunction = CustomFunction {
+        Forward { inputs in
+            torchSoftplusKernel([inputs[0]], template: [("T", inputs[0].dtype)], grid: (inputs[0].size, 1, 1),
+                                threadGroup: (256, 1, 1), outputShapes: [inputs[0].shape],
+                                outputDTypes: [inputs[0].dtype])
+        }
+        VJP { primals, cotangents in vjp(softplusOperations, primals: primals, cotangents: cotangents).1 }
+    }
+
+    private static let torchWindowPoolFunction = CustomFunction {
+        Forward { inputs in
+            let shape = inputs[0].shape
+            let window = shape[shape.count - 2], width = shape[shape.count - 1]
+            let outer = inputs[0].size / max(window * width, 1)
+            let pooled = torchWindowPoolKernel(
+                [inputs[0].reshaped([outer, window, width]), inputs[1].reshaped([outer, window, width]),
+                 MLXArray([Int32(outer), Int32(window), Int32(width)])],
+                grid: (outer * width, 1, 1), threadGroup: (256, 1, 1),
+                outputShapes: [[outer, width]], outputDTypes: [.float32])[0]
+            return [pooled.reshaped(Array(shape.dropLast(2)) + [width])]
+        }
+        VJP { primals, cotangents in vjp(windowPoolOperations, primals: primals, cotangents: cotangents).1 }
+    }
+
     private static let torchLayerNormFunction = CustomFunction {
         Forward { inputs in
             let x = inputs[0]
@@ -253,6 +379,48 @@ extension NFKReferenceRounding {
             if (value > 88.72283935546875f) { u = INFINITY; }
             if (value < -104.0f) { u = 0.0f; }
             return u;
+        }
+        """
+
+    /// Sleef's `log1pf` in Metal: `1 + d` scaled by a power of two `2ᵉ` into [0.75, 1.5), the logarithm of the
+    /// scaled value formed from `m / (2 + m)` in double-float arithmetic with a short odd polynomial, and `e · ln 2`
+    /// added in two parts. It matches torch's `log1p` below 10³⁸; softplus reads it up to `exp(20)`.
+    private static let torchLog1pHeader = """
+        inline float nfk_torch_log1pf(const float d) {
+            float dp1 = d + 1.0f;
+            const bool tiny = dp1 < 1.17549435e-38f;
+            if (tiny) { dp1 = dp1 * 18446744073709551616.0f; }
+            const float scaled = dp1 * (1.0f / 0.75f);
+            int e = ((as_type<int>(scaled) >> 23) & 0xff) - 0x7f;
+            const float t = as_type<float>(as_type<int>(1.0f) + ((-e) << 23));
+            const float m = fma(d, t, t - 1.0f);
+            if (tiny) { e = e - 64; }
+            const float fe = float(e);
+            const float sh = 0.69314718246459960938f * fe;
+            const float sl = fma(-1.904654323148236017e-09f, fe, fma(0.69314718246459960938f, fe, -sh));
+            const float ah = 2.0f + m;
+            const float al = (2.0f - ah) + m;
+            const float rt = 1.0f / ah;
+            const float qs = m * rt;
+            const float qu = fma(rt, m, -qs);
+            const float qv = -fma(al, rt, fma(ah, rt, -1.0f));
+            const float xl = fma(qs, qv, fma(0.0f, rt, qu));
+            const float x2 = qs * qs;
+            float p = 0.3027294874f;
+            p = fma(p, x2, 0.3996108174f);
+            p = fma(p, x2, 0.6666694880f);
+            const float yh = qs * 2.0f;
+            const float yl = xl * 2.0f;
+            const float s1 = sh + yh;
+            const float s1l = (((sh - s1) + yh) + sl) + yl;
+            const float w = (x2 * qs) * p;
+            const float s2 = s1 + w;
+            const float s2l = ((s1 - s2) + w) + s1l;
+            float r = s2 + s2l;
+            if (-1.0f > d) { r = NAN; }
+            if (d == -1.0f) { r = -INFINITY; }
+            if (as_type<uint>(d) == 0x80000000u) { r = -0.0f; }
+            return r;
         }
         """
 
@@ -348,6 +516,163 @@ extension NFKReferenceRounding {
             threadgroup_barrier(mem_flags::mem_threadgroup);
             const float reciprocal = shared[0];
             for (int k = int(t); k < size; k += 32) { Y[k] = Y[k] * reciprocal; }
+        """,
+        header: torchExpHeader)
+
+    private static let torchSoftplusKernel = MLXFast.metalKernel(
+        name: "nfk_torch_softplus",
+        inputNames: ["x"],
+        outputNames: ["y"],
+        source: """
+            uint index = thread_position_in_grid.x;
+            const float value = float(x[index]);
+            y[index] = T(value > 20.0f ? value : nfk_torch_log1pf(nfk_torch_expf(value)));
+        """,
+        header: torchExpHeader + torchLog1pHeader)
+
+    // Lanes 0 to 3 sum the exponentials of whole 4-value vectors, and the first thread adds the rest in order.
+    private static let torchHalfSoftmaxKernel = MLXFast.metalKernel(
+        name: "nfk_torch_half_softmax",
+        inputNames: ["x", "shape"],
+        outputNames: ["y"],
+        source: """
+            const uint row = threadgroup_position_in_grid.x;
+            const uint t = thread_position_in_threadgroup.x;
+            const int rows = shape[0];
+            const int size = shape[1];
+            if (int(row) >= rows) { return; }
+            device const T* X = x + row * size;
+            device T* Y = y + row * size;
+            threadgroup float lanes[4];
+            threadgroup float shared[1];
+            float peak = -INFINITY;
+            for (int k = int(t); k < size; k += 32) { peak = max(peak, float(X[k])); }
+            peak = simd_max(peak);
+            const int whole = size - size % 4;
+            if (t < 4) {
+                float total = 0.0f;
+                for (int k = int(t); k < whole; k += 4) { total = total + nfk_torch_expf(float(X[k]) - peak); }
+                lanes[t] = total;
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            if (t == 0) {
+                float total = (lanes[0] + lanes[2]) + (lanes[1] + lanes[3]);
+                for (int k = whole; k < size; ++k) { total = total + nfk_torch_expf(float(X[k]) - peak); }
+                shared[0] = metal::precise::divide(1.0f, total);
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            const float reciprocal = shared[0];
+            for (int k = int(t); k < size; k += 32) { Y[k] = T(nfk_torch_expf(float(X[k]) - peak) * reciprocal); }
+        """,
+        header: torchExpHeader)
+
+    // A thread per column. torch's cascade sums up to 4 levels, each level's step 2^max(4, ⌈log₂ window⌉ / 4) rows.
+    private static let torchWindowPoolKernel = MLXFast.metalKernel(
+        name: "nfk_torch_window_pool",
+        inputNames: ["v", "s", "shape"],
+        outputNames: ["y"],
+        source: """
+            const uint index = thread_position_in_grid.x;
+            const int outer = shape[0];
+            const int window = shape[1];
+            const int width = shape[2];
+            if (int(index) >= outer * width) { return; }
+            const int o = int(index) / width;
+            const int c = int(index) % width;
+            device const float* S = s + o * window * width + c;
+            device const float* V = v + o * window * width + c;
+            float peak = S[0];
+            for (int k = 1; k < window; ++k) { peak = max(peak, S[k * width]); }
+            float total = nfk_torch_expf(S[0] - peak);
+            for (int k = 1; k < window; ++k) { total = total + nfk_torch_expf(S[k * width] - peak); }
+            int bits = 0;
+            while ((1 << bits) < window) { ++bits; }
+            const int power = max(4, bits / 4);
+            const int step = 1 << power;
+            const int mask = step - 1;
+            float acc[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+            int i = 0;
+            while (i + step <= window) {
+                for (int j = 0; j < step; ++j, ++i) {
+                    const float weight = metal::precise::divide(nfk_torch_expf(S[i * width] - peak), total);
+                    const float product = V[i * width] * weight;
+                    acc[0] = acc[0] + product;
+                }
+                for (int j = 1; j < 4; ++j) {
+                    acc[j] = acc[j] + acc[j - 1];
+                    acc[j - 1] = 0.0f;
+                    if ((i & (mask << (j * power))) != 0) { break; }
+                }
+            }
+            for (; i < window; ++i) {
+                const float weight = metal::precise::divide(nfk_torch_expf(S[i * width] - peak), total);
+                const float product = V[i * width] * weight;
+                acc[0] = acc[0] + product;
+            }
+            for (int j = 1; j < 4; ++j) { acc[0] = acc[0] + acc[j]; }
+            y[index] = acc[0];
+        """,
+        header: torchExpHeader)
+
+    // Lanes 0 to 3 walk the buffer positions of their lane in order: the generation span, then the reference slot.
+    // A masked position's exponential is 0 and leaves a lane's sum unchanged, so the walk skips it.
+    private static let torchPackedSoftmaxKernel = MLXFast.metalKernel(
+        name: "nfk_torch_packed_softmax",
+        inputNames: ["generation", "reference", "layout"],
+        outputNames: ["probabilities"],
+        source: """
+            const uint row = threadgroup_position_in_grid.x;
+            const uint t = thread_position_in_threadgroup.x;
+            const int rows = layout[0];
+            const int count = layout[1];
+            const int reference_count = layout[2];
+            const int video_area = layout[3];
+            const int area = layout[4];
+            const int frames = layout[5];
+            const int generation_limit = layout[6];
+            const int reference_start = layout[7];
+            const int reference_length = layout[8];
+            if (int(row) >= rows) { return; }
+            const auto G = generation + row * count;
+            const auto R = reference + row * reference_count;
+            device float* P = probabilities + row * (count + reference_count);
+            threadgroup float lanes[4];
+            threadgroup float shared[1];
+            float peak = -INFINITY;
+            for (int k = int(t); k < count; k += 32) { peak = max(peak, G[k]); }
+            for (int k = int(t); k < reference_count; k += 32) { peak = max(peak, R[k]); }
+            peak = simd_max(peak);
+            if (generation_limit > count || reference_length > reference_count) { peak = max(peak, 0.0f); }
+            if (t < 4) {
+                float total = 0.0f;
+                for (int p = int(t); p < generation_limit; p += 4) {
+                    const int f = p / video_area;
+                    const int i = p % video_area;
+                    const float score = (f < frames && i < area) ? G[f * area + i] : 0.0f;
+                    total = total + nfk_torch_expf(score - peak);
+                }
+                if (reference_length > 0) {
+                    int p = reference_start + (int(t) - reference_start % 4 + 4) % 4;
+                    for (; p < reference_start + reference_length; p += 4) {
+                        const int i = p - reference_start;
+                        const float score = i < reference_count ? R[i] : 0.0f;
+                        total = total + nfk_torch_expf(score - peak);
+                    }
+                }
+                lanes[t] = total;
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            if (t == 0) {
+                const float first = lanes[0] + lanes[2];
+                const float second = lanes[1] + lanes[3];
+                shared[0] = metal::precise::divide(1.0f, first + second);
+            }
+            threadgroup_barrier(mem_flags::mem_threadgroup);
+            const float reciprocal = shared[0];
+            for (int k = int(t); k < count; k += 32) { P[k] = nfk_torch_expf(G[k] - peak) * reciprocal; }
+            for (int k = int(t); k < reference_count; k += 32) {
+                P[count + k] = nfk_torch_expf(R[k] - peak) * reciprocal;
+            }
         """,
         header: torchExpHeader)
 

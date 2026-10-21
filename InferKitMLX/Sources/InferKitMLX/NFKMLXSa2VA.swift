@@ -209,7 +209,7 @@ final class NFKSa2VAAttention: Module {
         // In half precision the reference scales the queries, rounds, and then forms the scores.
         let out = NFKReferenceRounding.isReduced(q)
             ? NFKReferenceRounding.attention(queries: NFKReferenceRounding.scaled(q, by: scale), keys: k, values: v,
-                                             scale: 1, mask: nil)
+                                             scale: 1, mask: nil, halfSoftmax: true)
             : MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v, scale: scale, mask: .none)
         return proj(out.transposed(0, 2, 1, 3).reshaped([batch, length, width]))
     }

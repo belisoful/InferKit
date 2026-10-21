@@ -171,10 +171,12 @@ enum NFKReferenceRounding {
         return x * sigmoid(x)
     }
 
-    /// torch's `softplus` on a half-precision input: computed wide, rounded once.
+    /// torch's `softplus`. A half-precision input takes ``torchSoftplus(_:)`` in either arithmetic, which runs
+    /// faster than MLX's `softplus` in float32. A float32 input takes it in ``NFKMLXArithmetic/reference`` and
+    /// MLX's `softplus` otherwise.
     static func softplus(_ x: MLXArray) -> MLXArray {
-        guard isReduced(x) else { return MLXNN.softplus(x) }
-        return MLXNN.softplus(x.asType(.float32)).asType(x.dtype)
+        guard isReduced(x) || NFKMLXHalfPrecision.arithmetic == .reference else { return MLXNN.softplus(x) }
+        return torchSoftplus(x)
     }
 
     /// torch's MATH `scaled_dot_product_attention` on half-precision operands: widened to float32, the
@@ -376,9 +378,10 @@ enum NFKReferenceRounding {
     /// Scaled dot-product attention over `[batch, heads, length, headDim]` queries and grouped keys and
     /// values. In half precision it is transformers' eager path: the scores round to the input's type,
     /// scale and mask round again, the softmax runs in float32 and rounds (``softmaxProbabilities(_:)``),
-    /// and the weighted sum rounds.
+    /// and the weighted sum rounds. `halfSoftmax` marks a reference that softmaxes the half-precision scores
+    /// without widening them (``halfSoftmax(_:fast:)``).
     static func attention(queries: MLXArray, keys: MLXArray, values: MLXArray, scale: Float,
-                          mask: MLXArray?, softcap: Float = 0) -> MLXArray {
+                          mask: MLXArray?, softcap: Float = 0, halfSoftmax: Bool = false) -> MLXArray {
         guard isReduced(queries) || softcap > 0 else {
             return MLXFast.scaledDotProductAttention(queries: queries, keys: keys, values: values,
                                                      scale: scale, mask: mask)
@@ -396,7 +399,8 @@ enum NFKReferenceRounding {
             scores = wide(scores / cap) { tanh($0) } * cap
         }
         if let mask { scores = scores + mask.asType(scores.dtype) }
-        let probabilities = isReduced(queries) ? softmaxProbabilities(scores) : softmax(scores, axis: -1, precise: true)
+        let probabilities = !isReduced(queries) ? softmax(scores, axis: -1, precise: true)
+            : halfSoftmax ? self.halfSoftmax(scores, fast: softmaxProbabilities(scores)) : softmaxProbabilities(scores)
         return matmul(probabilities, spread(values))
     }
 }

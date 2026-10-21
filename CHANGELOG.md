@@ -1341,6 +1341,25 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### The reference arithmetic computes torch's softplus, half-precision softmax, and window pooling
+
+- `NFKMLXArithmeticReference` takes four more Metal kernels, each equal to PyTorch's output on every case
+  measured:
+  - softplus with Sleef's `log1pf`, over every float16 and bfloat16 input with a normal result and over
+    float32 values. A half-precision softplus takes it in either mode, in 1.4 ms against
+    2.9 ms for MLX's over 2 × 4,096 × 5,120 bfloat16 values.
+  - the softmax PyTorch takes over half-precision scores without widening them: Whisper, Voxtral, the T5
+    encoders, SigLIP 2's pooling head, Granite Speech, Phi-4-MM's speech encoder, Sa2VA's InternViT, and
+    gpt-oss's sink attention and router. PyTorch takes the exponentials past the last whole 4-value vector
+    from the C library, which Sleef's stand in for: 0 to 3 outputs in a million round apart.
+  - DeepSeek V4's compressor pooling, the softmax and sum along each window, in either mode, in
+    1.0 ms against 2.0 ms for the MLX operations over 1,024 windows of 8.
+  - Wan Animate's generation attention over its packed key buffer, each row summed by buffer position.
+- Image-to-image and inpainting draw their latents from the autoencoder's distribution, as diffusers'
+  `retrieve_latents` samples them: Z-Image, Stable Diffusion and SDXL image-to-image, Stable Diffusion
+  inpainting (the source and the masked image), and the FLUX and SD3 ControlNets' control latents. Each
+  draw is repeatable from the request's seed.
+
 #### A bfloat16 choice for float32 releases held to a bfloat16 reference
 
 - SigLIP 2's registered factories and catalog entries take `NFKModelLoadOptionPrecision` `bfloat16`,

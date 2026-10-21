@@ -1112,6 +1112,15 @@ public final class NFKMLXSDAutoencoder: Module {
         return (moments[.ellipsis, 0 ..< latent], moments[.ellipsis, latent ..< (2 * latent)])
     }
 
+    /// A draw from the latent distribution ``encode(_:)`` describes, as diffusers'
+    /// `DiagonalGaussianDistribution.sample` takes it: `mean + exp(0.5 · logVariance) · noise`, the log-variance
+    /// clamped to [−30, 20] and each operation rounded to the mean's type. `noise` is standard normal noise of the
+    /// mean's shape.
+    static func latentSample(mean: MLXArray, logVariance: MLXArray, noise: MLXArray) -> MLXArray {
+        let halved = NFKReferenceRounding.scaled(clip(logVariance, min: -30, max: 20), by: 0.5)
+        return mean + NFKReferenceRounding.exponential(halved) * noise.asType(mean.dtype)
+    }
+
     public func decode(_ latent: MLXArray) -> MLXArray {
         decoder(postQuantConv?(latent) ?? latent)
     }
@@ -1295,6 +1304,17 @@ public final class NFKMLXSDPipeline: Module {
     /// The deterministic latent of `image` (`[1, h, w, 3]` in `-1...1`), already scaled.
     func latent(of image: MLXArray, scale: Float) -> MLXArray {
         vae.encode(image).mean * scale
+    }
+
+    /// A latent drawn from the autoencoder's distribution over `image` (`[1, h, w, 3]` in `-1...1`) and scaled, as
+    /// diffusers' image-to-image and inpainting take it (`retrieve_latents`), its noise from the run's seed
+    /// (``NFKMLXDiffusionBackend/encodingNoise(height:width:channels:stream:)``).
+    func sampledLatent(of image: MLXArray, scale: Float, stream: UInt64) -> MLXArray {
+        let (mean, logVariance) = vae.encode(image)
+        let noise = NFKMLXDiffusionBackend.encodingNoise(height: mean.dim(1), width: mean.dim(2), channels: mean.dim(3),
+                                                         stream: stream).reshaped(mean.shape)
+        let drawn = NFKMLXSDAutoencoder.latentSample(mean: mean, logVariance: logVariance, noise: noise)
+        return NFKReferenceRounding.scaled(drawn, by: scale)
     }
 
     /// The image a latent decodes to. The latent takes the autoencoder's type before it is unscaled, as a

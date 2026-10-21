@@ -3039,16 +3039,21 @@ Some operations give a result that depends on how they are computed: the exponen
 (the diffusion UNets and transformers, the Wan autoencoder, SAM, SAM 2, SAM 3, and MiniMax Music 3), the
 softmax of an eager, math, upcast, or sink attention and of a mixture-of-experts router, the sum that
 renormalizes a router's kept weights, a half-precision forward's layer norms (over its half-precision input,
-and over the float32 input of Wan's `FP32LayerNorm` and SAM 3's norms under autocast), and the float32
+and over the float32 input of Wan's `FP32LayerNorm` and SAM 3's norms under autocast), the float32
 exponentials a reference forms with `torch.exp` (a diffusion model's timestep frequencies and a state-space
-layer's decay rates). `NFKMLXHalfPrecision.arithmetic` selects how they are computed. A forward reads the
-setting as it starts, so set it before the inference it applies to.
+layer's decay rates), the softmax PyTorch takes over half-precision scores without widening them (Whisper,
+Voxtral, the T5 encoders, SigLIP 2's pooling head, Granite Speech, Phi-4-MM's speech encoder, Sa2VA's
+InternViT, and gpt-oss), a float32 softplus, and Wan Animate's attention over its packed key buffer.
+`NFKMLXHalfPrecision.arithmetic` selects how they are computed. A forward reads the setting as it starts, so
+set it before the inference it applies to.
 
 GELU and SiLU at a half precision compute PyTorch's arithmetic on the GPU in either mode, and take MLX
 operations, which round each multiply-add, on the CPU stream. Each kernel matches PyTorch over every float16
 and bfloat16 input the GPU keeps normal and runs faster than the MLX operations it replaces: GELU over
 2 × 4,096 × 5,120 values in 1.1 ms against 30.4 ms, SiLU over 2 × 128 × 128 × 640 values in 0.9 ms against
-2.3 ms.
+2.3 ms. Softplus at a half precision and DeepSeek V4's compressor pooling do the same: softplus over
+2 × 4,096 × 5,120 bfloat16 values in 1.4 ms against 2.9 ms, the pooling
+over 1,024 windows of 8 in 1.0 ms against 2.0 ms.
 
 ```objc
 NFKMLXHalfPrecision.arithmetic = NFKMLXArithmeticReference;   // PyTorch's arithmetic, as parity is measured
@@ -3065,6 +3070,8 @@ float32 rounded once.
   from PyTorch's. A forward sits farther from the reference's: in Stable Diffusion 1.5's UNet at float16,
   MLX's layer norm moves a transformer block by up to 9% of the spread its reference shows from summation
   order, and MLX's exponential by up to 1.8%. A float32 layer norm sums its moments apart from PyTorch's.
+  A half-precision softmax PyTorch takes without widening rounds 1 output in 1,000 to 7,000 apart from
+  PyTorch's.
 
 `NFKMLXArithmeticReference` computes PyTorch's CPU arithmetic: Sleef's `expf`, the softmax, and the layer
 norm in Metal kernels that sum in PyTorch's order (a float32 input read in 4-wide vectors and normalized as
@@ -3072,11 +3079,15 @@ norm in Metal kernels that sum in PyTorch's order (a float32 input read in 4-wid
 
 - Pro: each exponential, softmax, and layer-norm output equals PyTorch's: 0 of 1,048,576 exponentials, 0
   of 13.7 million layer-norm outputs over rows 7 to 4,096 wide at float16 and bfloat16, the float32 layer
-  norm over rows 7 to 5,120 wide with and without the affine, and every softmax row from 1 to 4,097 values.
+  norm over rows 7 to 5,120 wide with and without the affine, every softmax row from 1 to 4,097 values, the
+  softplus over every float16 and bfloat16 input with a normal result, DeepSeek V4's window pooling, and Wan
+  Animate's packed rows. A half-precision softmax leaves 0 to 3 outputs in a million apart, where PyTorch
+  takes its last few exponentials from the C library.
   Every half-precision parity figure is measured in this mode.
 - Con: a diffusion denoiser's forward takes 0.97 to 1.30 times its fast time (SDXL's UNet, at 1.30, under the
-  standing limits), and an encoder up to 2.27 times. The softmax kernel takes up to twice MLX's time over long
-  rows, and the float32 layer norm 4.4 to 4.9 times. On the CPU stream the exponential takes MLX operations,
+  standing limits), and an encoder up to 2.27 times. The softmax kernel takes up to twice
+  MLX's time over long rows, the half-precision softmax kernel 4.55 times, and the
+  float32 layer norm 4.4 to 4.9 times. On the CPU stream the exponential takes MLX operations,
   which leave 1.1% of exponentials one unit from PyTorch's, and the softmax and the layer norm take MLX's own.
 
 The overall change in one whole forward of each network, measured on an M1 Max at the network's released
@@ -3096,15 +3107,15 @@ alternating.
 | Z-Image transformer | 10 of 30 layers and both refiners, 1024×1024 | 4,835 ms | 4,983 ms | 0.97 |
 | Wan 2.1 T2V 1.3B transformer | released, 480×832, 17 frames | 11,733 ms | 9,926 ms | 1.18 |
 | Wan 2.2 Animate 14B, extract pass | 6 of 40 layers, 480×832, one reference frame | 1,212 ms | 1,146 ms | 1.06 |
-| Wan 2.2 Animate 14B, generation pass | 6 of 40 layers, 480×832, a two-latent-frame chunk | 2,654 ms | 2,526 ms | 1.05 |
+| Wan 2.2 Animate 14B, generation pass | 6 of 40 layers, 480×832, a two-latent-frame chunk; single rounds ran up to 4 times the others' time under background load, so the ratio is not resolved | — | — | — |
 | LTX-2.3 transformer | 5 of 48 layers, 512×768, 49 frames | 4,020 ms | 3,907 ms | 1.03 |
 | SD 1.5 autoencoder decode | released, float16, 512×512 | 488 ms | 473 ms | 1.03 |
 | FLUX autoencoder decode | released, bfloat16, 1024×1024, under `NFKMLXGPU.applyStandingLimits()` | 4,034 ms | 3,282 ms | 1.22 |
 | SD 1.5 CLIP text encoder | released, float16, 2×77 tokens | 47.6 ms | 21.0 ms | 2.27 |
 | SigLIP 2 so400m vision tower | released, 384×384 | 223 ms | 170 ms | 1.31 |
 | Gemma 3 vision tower | released, 896×896 | 2,166 ms | 1,525 ms | 1.42 |
-| Whisper large-v3 encoder | released, float16, 30 s | 560 ms | 512 ms | 1.09 |
-| Whisper large-v3 decode step | released, float16, a 100-token prefix | 194 ms | 111 ms | 1.74 |
+| Whisper large-v3 encoder | released, float16, 30 s | 609 ms | 490 ms | 1.24 |
+| Whisper large-v3 decode step | released, float16, a 100-token prefix | 217 ms | 104 ms | 2.08 |
 | SAM ViT-B, an image and one click | released, 1024×1024 | 258 ms | 234 ms | 1.10 |
 | SAM ViT-B mask decoder, one click | released | 53.6 ms | 24.0 ms | 2.23 |
 | SAM 2 Hiera-tiny grounding | released, 1024×1024 | 192 ms | 141 ms | 1.36 |

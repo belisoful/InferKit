@@ -694,8 +694,8 @@ final class NFKDeepSeekGate: Module {
     /// - Parameter images: `[batch · length]`, true for a token inside an image span.
     func callAsFunction(_ x: MLXArray, tokens: MLXArray?,
                         images: MLXArray? = nil) -> (weights: MLXArray, indices: MLXArray) {
-        let scores = sqrt(softplus(matmul(x.asType(.float32),
-                                          weight.asType(.float32).transposed())))
+        let scores = sqrt(NFKReferenceRounding.softplus(matmul(x.asType(.float32),
+                                                               weight.asType(.float32).transposed())))
         var indices: MLXArray
         if routesByHash, let tokenToExpert, let tokens {
             indices = take(tokenToExpert, tokens.reshaped([-1]), axis: 0)
@@ -1977,7 +1977,7 @@ final class NFKDeepSeekCompressor: Module {
         }
 
         // Softmax runs ACROSS the window, so the positions in a window compete with one another.
-        let pooled = (values * softmax(scores, axis: 2)).sum(axis: 2)
+        let pooled = NFKReferenceRounding.torchWindowPool(values: values, scores: scores)
         let compressed = norm(pooled.asType(x.dtype))
 
         // The compressed positions carry a rotary too, at the window's own stride.
@@ -2023,7 +2023,8 @@ final class NFKDeepSeekCompressor: Module {
             guard (absolute + 1) % ratio == 0 else { continue }
             firstGroup = firstGroup ?? (absolute + 1) / ratio - 1
             guard overlaps else {
-                emitted.append((parked * softmax(parkedScores, axis: 1)).sum(axis: 1, keepDims: true))
+                emitted.append(NFKReferenceRounding.torchWindowPool(values: parked, scores: parkedScores)
+                    .expandedDimensions(axis: 1))
                 continue
             }
             // The previous window's first half and this window's second half pool together, and
@@ -2033,7 +2034,7 @@ final class NFKDeepSeekCompressor: Module {
                                     axis: 1)
             let weight = concatenated([parkedScores[0..., 0 ..< ratio, 0 ..< d],
                                        parkedScores[0..., ratio..., d...]], axis: 1)
-            emitted.append((pool * softmax(weight, axis: 1)).sum(axis: 1, keepDims: true))
+            emitted.append(NFKReferenceRounding.torchWindowPool(values: pool, scores: weight).expandedDimensions(axis: 1))
             parked[0..., 0 ..< ratio] = parked[0..., ratio...]
             parkedScores[0..., 0 ..< ratio] = parkedScores[0..., ratio...]
         }

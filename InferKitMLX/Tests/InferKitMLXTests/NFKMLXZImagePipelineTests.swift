@@ -103,6 +103,23 @@ final class NFKMLXZImagePipelineTests: XCTestCase {
         XCTAssertEqual(image.shape[3], 3, "RGB output")
     }
 
+    // Image-to-image draws its latent from the encoded distribution with the first noise after the seed, as
+    // diffusers' `retrieve_latents` samples it.
+    func testImageToImageDrawsItsLatentFromTheEncodedDistribution() throws {
+        try requireMLXRuntime()
+        let vae = NFKMLXSDAutoencoder(configuration: vaeConfiguration)
+        let pipeline = NFKMLXZImagePipeline(transformer: NFKMLXZImageTransformerNet(.tiny), vae: vae)
+        let source = MLXRandom.normal([1, 8, 8, 3])
+        let (mean, logVariance) = vae.encode(source)
+        MLXRandom.seed(7)
+        let noise = MLXRandom.normal(mean.shape)
+        let expected = mean + exp(clip(logVariance, min: -30, max: 20) * 0.5) * noise
+        MLXRandom.seed(7)
+        let drawn = pipeline.encodedLatent(source)
+        XCTAssertTrue(arrayEqual(drawn, expected).item(Bool.self))
+        XCTAssertFalse(allClose(drawn, mean).item(Bool.self), "the draw is not the distribution's mean")
+    }
+
     // The glue against diffusers' ZImagePipeline at a tiny random geometry with the real Qwen3
     // tokenizer: the templated prompt's ids, the penultimate-state features cut to the prompt, the
     // static-shift schedule ending at sigma 0, the guided and unguided loops, and the decode.

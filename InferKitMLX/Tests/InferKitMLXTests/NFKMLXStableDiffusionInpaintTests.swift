@@ -44,6 +44,32 @@ final class NFKMLXStableDiffusionInpaintTests: XCTestCase {
         XCTAssertEqual(output.height, 16)
     }
 
+    // Inpainting draws its source and masked-image latents from the autoencoder's distribution, as diffusers'
+    // `retrieve_latents` samples them: the source from the run's seed advanced by 1, the masked image by 2.
+    func testInpaintingDrawsItsLatentsFromTheRunsSeed() throws {
+        try requireMLXRuntime()
+        let configuration = tinyConfiguration()
+        let model = NFKMLXStableDiffusionInpaint.makeModel(configuration)
+        let image = Self.tensor([16, 16, 3], seed: 1), mask = MLXArray.zeros([16, 16, 1])
+        func encoded(_ seed: UInt64) throws -> NFKDiffusionContext {
+            try NFKMLXDiffusionBackend.$encodingSeed.withValue(seed) { try model.encode(image: image, mask: mask) }
+        }
+        let first = try encoded(7), again = try encoded(7), other = try encoded(8)
+        let source = try XCTUnwrap(first.sourceLatent), masked = try XCTUnwrap(first.conditioning["masked"])
+        XCTAssertTrue(arrayEqual(source, try XCTUnwrap(again.sourceLatent)).item(Bool.self), "a seed repeats its draw")
+        XCTAssertFalse(arrayEqual(source, try XCTUnwrap(other.sourceLatent)).item(Bool.self),
+                       "another seed draws another latent")
+        XCTAssertFalse(arrayEqual(source, masked).item(Bool.self),
+                       "with nothing masked the masked image is the source, drawn from the next stream")
+        let mean = model.pipeline.latent(of: image.reshaped([1, 16, 16, 3]) * 2 - 1, scale: configuration.vae.scaleFactor)
+        XCTAssertFalse(allClose(source, mean.reshaped(source.shape)).item(Bool.self), "the draw is not the mean")
+        let noise = NFKMLXDiffusionBackend.$encodingSeed.withValue(41) {
+            NFKMLXDiffusionBackend.encodingNoise(height: 2, width: 3, channels: 4, stream: 2)
+        }
+        XCTAssertEqual(noise.asArray(Float.self),
+                       NFKMLXDiffusionBackend.gaussianNoise(height: 2, width: 3, channels: 4, seed: 43).asArray(Float.self))
+    }
+
     func testCheckpointRoundTripReproducesTheDenoiseAndDecode() throws {
         try requireMLXRuntime()
         let trained = NFKMLXStableDiffusionInpaint.makeModel(tinyConfiguration())

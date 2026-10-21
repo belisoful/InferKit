@@ -257,7 +257,9 @@ public final class NFKMLXDiffusionBackend: NSObject, NFKInferenceBackend {
             try NFKMLXImageBridge.tensor(from: $0, channels: 1, colorSpace: colorSpace)
         }
 
-        let context = try encode(request, image, mask)
+        let context = try Self.$encodingSeed.withValue(configuration.seed ?? Self.defaultSeed) {
+            try encode(request, image, mask)
+        }
         // A sampler that draws its own noise draws it from the request's seed, as the initial latent does.
         let scheduler = configuration.seed.map { scheduler.seeded($0) } ?? scheduler
         let schedule = scheduler.steps(configuration.steps)
@@ -359,10 +361,26 @@ public final class NFKMLXDiffusionBackend: NSObject, NFKInferenceBackend {
         return min(max(skipped, 0), max(count - 1, 0))
     }
 
+    /// The seed a run without one draws from.
+    static let defaultSeed: UInt64 = 0x9E37_79B9_7F4A_7C15
+
+    /// The seed of the run whose `encode` is in progress, which ``encodingNoise(height:width:channels:stream:)``
+    /// reads.
+    @TaskLocal static var encodingSeed: UInt64?
+
+    /// Standard normal noise `[H, W, C]` for a latent `encode` draws from an autoencoder's distribution: the
+    /// stream ``gaussianNoise(height:width:channels:seed:)`` draws from the run's seed advanced by `stream`, which
+    /// is 1 for the source image and 2 for an inpainting request's masked image. The run's initial noise takes the
+    /// seed itself.
+    static func encodingNoise(height: Int, width: Int, channels: Int, stream: UInt64) -> MLXArray {
+        gaussianNoise(height: height, width: width, channels: channels,
+                      seed: (encodingSeed ?? defaultSeed) &+ stream)
+    }
+
     /// Deterministic unit-variance Gaussian noise `[H, W, C]` from a SplitMix64 stream shaped by
     /// Box–Muller, so a run is repeatable without depending on the MLX random state.
     static func gaussianNoise(height: Int, width: Int, channels: Int, seed: UInt64?) -> MLXArray {
-        var state = seed ?? 0x9E37_79B9_7F4A_7C15
+        var state = seed ?? defaultSeed
         func nextUInt() -> UInt64 {
             state = state &+ 0x9E37_79B9_7F4A_7C15
             var z = state

@@ -506,4 +506,36 @@ final class NFKMLXHalfPrecisionArithmeticTimingTests: XCTestCase {
             }
         }
     }
+
+    // The kernels the reference arithmetic adds, each timed as the reference mode against the MLX operations it
+    // replaces as the fast mode: softplus over 2 × 4,096 × 5,120 bf16 and float32 values, DeepSeek V4's compressor
+    // pooling over 1,024 windows of 8 at width 1,024 and 64 windows of 128 at width 512, and the half-precision
+    // softmax over 8 × 4,096 rows of 4,096 bf16 values.
+    func testReferenceKernelTimeAgainstTheOperationsTheyReplace() throws {
+        try requireMLXRuntime()
+        try requireOptIn()
+        MLXRandom.seed(0)
+        func chosen(_ kernel: () -> MLXArray, _ operations: () -> MLXArray) -> [MLXArray] {
+            [NFKMLXHalfPrecision.arithmetic == .reference ? kernel() : operations()]
+        }
+        for dtype in [DType.bfloat16, .float32] {
+            let x = (MLXRandom.normal([2, 4096, 5120]) * 5).asType(dtype)
+            eval(x)
+            try time("softplus-\(dtype)", "2x4096x5120, the kernel against MLX's softplus in float32") {
+                chosen({ NFKReferenceRounding.torchSoftplus(x) }, { MLXNN.softplus(x.asType(.float32)).asType(dtype) })
+            }
+        }
+        for (windows, window, width) in [(1024, 8, 1024), (64, 128, 512)] {
+            let values = normal([1, windows, window, width], .float32), scores = normal([1, windows, window, width], .float32)
+            try time("window-pool-\(window)", "\(windows) windows of \(window) at width \(width), the kernel against "
+                     + "MLX's softmax and sum") {
+                chosen({ NFKReferenceRounding.torchWindowPool(values: values, scores: scores) },
+                       { (values * softmax(scores, axis: 2, precise: true)).sum(axis: 2) })
+            }
+        }
+        let scores = normal([8, 4096, 4096], .bfloat16)
+        try time("half-softmax", "8x4096 rows of 4096, the kernel against MLX's softmax") {
+            chosen({ NFKReferenceRounding.torchHalfSoftmax(scores) }, { softmax(scores, axis: -1, precise: true) })
+        }
+    }
 }

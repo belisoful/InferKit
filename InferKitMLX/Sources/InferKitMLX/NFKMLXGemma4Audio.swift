@@ -250,7 +250,7 @@ final class NFKGemma4AudioAttention: Module {
     ///   - mask: the blocked validity mask `[batch, blocks, chunk, context]` (1 valid, 0 padding).
     func callAsFunction(_ x: MLXArray, positionEmbeddings: MLXArray, mask: MLXArray?) -> MLXArray {
         let (batch, length) = (x.shape[0], x.shape[1])
-        let scale = queryScale * softplus(perDimensionScale)
+        let scale = queryScale * NFKReferenceRounding.softplus(perDimensionScale)
         let queriesFull = (queryProjection(x).reshaped([batch, length, headCount, width])) * scale
         let keysFull = (keyProjection(x).reshaped([batch, length, headCount, width])) * keyScale
         let valuesFull = valueProjection(x).reshaped([batch, length, headCount, width])
@@ -328,9 +328,6 @@ final class NFKGemma4AudioAttention: Module {
         return h.reshaped([batch, heads, blocks, chunk, contextSize])
     }
 }
-
-/// `softplus(x) = log(1 + e^x)`, the per-dimension query scaling the audio attention learns.
-private func softplus(_ x: MLXArray) -> MLXArray { log(1 + exp(x)) }
 
 /// One Conformer layer: two macaron feed-forwards around a blocked attention and a light convolution,
 /// with sandwich normalizations and overflow clamps.

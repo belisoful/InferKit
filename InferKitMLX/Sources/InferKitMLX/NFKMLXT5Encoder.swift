@@ -134,7 +134,7 @@ final class NFKT5Attention: Module {
             ? NFKDropout.attention(queries: split(q(x)), keys: split(k(x)), values: split(v(x)), scale: 1, mask: bias,
                                    rate: rate, active: true)
             : NFKReferenceRounding.attention(queries: split(q(x)), keys: split(k(x)), values: split(v(x)), scale: 1,
-                                             mask: bias)
+                                             mask: bias, halfSoftmax: true)
         return o(attended.transposed(0, 2, 1, 3).reshaped([batch, length, heads * keyDim]))
     }
 

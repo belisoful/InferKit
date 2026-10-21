@@ -142,12 +142,12 @@ final class NFKMLXSDInpaintModel {
         let batched = image.reshaped([1, height, width, image.shape[2]]) * 2 - 1
         let batchedMask = mask.reshaped([1, height, width, 1])
 
-        let source = pipeline.latent(of: batched, scale: scale)
+        let source = pipeline.sampledLatent(of: batched, scale: scale, stream: 1)
         let latentHeight = source.shape[1], latentWidth = source.shape[2]
         let channels = source.shape[3]
         // The masked-image latent is the plate with the hole blanked, encoded — not the plate's latent
         // with the hole blanked, which is a different tensor because the encoder is not local.
-        let masked = pipeline.latent(of: batched * (1 - batchedMask), scale: scale)
+        let masked = pipeline.sampledLatent(of: batched * (1 - batchedMask), scale: scale, stream: 2)
             .reshaped([latentHeight, latentWidth, channels])
         let maskLatent = NFKMLXResample.resizeNearest(batchedMask, height: latentHeight,
                                                       width: latentWidth)

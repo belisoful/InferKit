@@ -119,7 +119,7 @@ final class NFKTimesFMPerDimScale: Module {
 
     /// `1.442695041 / √d · softplus(per_dim_scale)`, the only scaling the attention applies.
     var factor: MLXArray {
-        softplus(perDimScale) * (1.442695041 / Float(perDimScale.dim(0)).squareRoot())
+        NFKReferenceRounding.softplus(perDimScale) * (1.442695041 / Float(perDimScale.dim(0)).squareRoot())
     }
 }
 

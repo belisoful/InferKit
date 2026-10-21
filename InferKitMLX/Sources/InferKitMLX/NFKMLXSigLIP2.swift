@@ -190,7 +190,8 @@ final class NFKSigLIP2ProbeAttention: Module {
         let attended: MLXArray
         if NFKReferenceRounding.isReduced(q) {
             let scores = matmul(NFKReferenceRounding.scaled(split(q, 1), by: scale), split(k, length).transposed(0, 1, 3, 2))
-            attended = matmul(softmax(scores, axis: -1, precise: true), split(v, length))
+            attended = matmul(NFKReferenceRounding.halfSoftmax(scores, fast: softmax(scores, axis: -1, precise: true)),
+                              split(v, length))
         } else {
             attended = MLXFast.scaledDotProductAttention(
                 queries: split(q, 1), keys: split(k, length), values: split(v, length), scale: scale, mask: nil)

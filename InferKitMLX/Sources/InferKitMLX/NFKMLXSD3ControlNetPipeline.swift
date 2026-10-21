@@ -53,10 +53,14 @@ public final class NFKMLXSD3ControlNetPipeline {
         self.scheduler = NFKMLXFlowMatchScheduler(schedule)
     }
 
-    /// The VAE-encoded, scaled control latent `[1, C, h, w]` from a control image `[1, H, W, 3]`.
+    /// The scaled control latent `[1, C, h, w]` drawn from the autoencoder's distribution over a control image
+    /// `[1, H, W, 3]` with noise from `MLXRandom`, as diffusers' `latent_dist.sample()` takes it.
     private func controlLatent(from controlImage: MLXArray) -> MLXArray {
-        let mean = holder.vae.encode(controlImage).mean                    // [1, h, w, C]
-        return NFKReferenceRounding.scaled(NFKReferenceRounding.shifted(mean, by: -shiftFactor), by: scaleFactor).transposed(0, 3, 1, 2)
+        let (mean, logVariance) = holder.vae.encode(controlImage)          // [1, h, w, C]
+        let drawn = NFKMLXSDAutoencoder.latentSample(mean: mean, logVariance: logVariance,
+                                                     noise: MLXRandom.normal(mean.shape))
+        return NFKReferenceRounding.scaled(NFKReferenceRounding.shifted(drawn, by: -shiftFactor), by: scaleFactor)
+            .transposed(0, 3, 1, 2)
     }
 
     /// Runs the ControlNet for one guidance branch and returns its per-block residuals.
@@ -70,7 +74,8 @@ public final class NFKMLXSD3ControlNetPipeline {
     /// Generates an image steered by `controlImage`. `latentHeight`/`latentWidth` are the LATENT grid
     /// dimensions (the VAE upsamples them by 8×). `controlImage` is `[1, H, W, 3]` in image space.
     /// `controlnetScale` weights the ControlNet's residuals; the negatives enable classifier-free
-    /// guidance.
+    /// guidance. The initial latent takes the first noise after `seed` and the control latent the next:
+    /// diffusers draws the control latent from torch's global generator, outside the seeded one.
     public func generate(promptEmbeds: MLXArray, pooled: MLXArray, negativeEmbeds: MLXArray?,
                          negativePooled: MLXArray?, controlImage: MLXArray, controlnetScale: Float = 1,
                          latentHeight: Int, latentWidth: Int, steps: Int = 28, guidance: Float = 7,

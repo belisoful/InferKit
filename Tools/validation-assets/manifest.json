@@ -5801,6 +5801,11 @@
       "command": "IK_PROBE_ENCODER=1 IK_PROBE_LAYERS=0,1,29 IK_VOXTRAL_DTYPE=bfloat16 | bfloat16-inputs voxtral_real --checkpoint $IK_VAL_VOXTRAL (8.9 GB each: every encoder layer probed)"
     },
     {
+      "records": "voxtral_bf16_jitter1 / _jitter2 / _jitter3",
+      "environment": "llm",
+      "command": "IK_VOXTRAL_FEATURE_JITTER=1 | 2 | 3 IK_VOXTRAL_DTYPE=bfloat16 voxtral_real --checkpoint $IK_VAL_VOXTRAL (212 MB each, no probes)"
+    },
+    {
       "records": "phi4mm_bf16 / _bf16in",
       "environment": "phi4mm",
       "command": "IK_PHI4MM_DTYPE=bfloat16 | bfloat16-inputs phi4mm_bf16 --checkpoint $IK_VAL_PHI4MM (5.3 GB each)"

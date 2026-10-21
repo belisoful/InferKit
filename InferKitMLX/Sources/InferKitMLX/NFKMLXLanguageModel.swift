@@ -957,9 +957,10 @@ final class NFKLMAttention: Module {
             var logits = concatenated([scores, column], axis: -1)
             if NFKReferenceRounding.isReduced(logits) {
                 // The reference subtracts the row maximum in the logits' own type, a rounded step, before
-                // a softmax that widens and rounds once.
+                // a softmax in that type.
                 logits = logits - logits.max(axis: -1, keepDims: true)
-                probabilities = softmax(logits.asType(.float32), axis: -1).asType(logits.dtype)[.ellipsis, 0 ..< totalKeys]
+                probabilities = NFKReferenceRounding.halfSoftmax(
+                    logits, fast: softmax(logits.asType(.float32), axis: -1).asType(logits.dtype))[.ellipsis, 0 ..< totalKeys]
             } else {
                 probabilities = softmax(logits, axis: -1, precise: true)[.ellipsis, 0 ..< totalKeys]
             }
@@ -1261,8 +1262,9 @@ final class NFKLMMixtureFeedForward: NFKLMMLP {
         let weights: MLXArray, chosen: MLXArray
         if softmaxesKeptLogits && NFKReferenceRounding.isReduced(logits) {
             chosen = NFKReferenceRounding.chosen(logits, active: activeExpertCount, forced: forcedChoice)
-            weights = NFKReferenceRounding.softmaxProbabilities(takeAlong(logits, chosen, axis: -1).asType(.float32))
-                .asType(logits.dtype)
+            let kept = takeAlong(logits, chosen, axis: -1)
+            weights = NFKReferenceRounding.halfSoftmax(
+                kept, fast: NFKReferenceRounding.softmaxProbabilities(kept.asType(.float32)).asType(logits.dtype))
         } else if NFKReferenceRounding.isReduced(logits) {
             (weights, chosen) = NFKReferenceRounding.routed(logits, active: activeExpertCount, normalize: normalizesWeights,
                                                             forced: forcedChoice)

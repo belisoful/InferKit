@@ -266,9 +266,10 @@ final class NFKPhi4MMAudioAttention: Module {
         var weights: MLXArray
         if let keyMask {
             scores = MLX.where(keyMask, scores, MLXArray(-Float.infinity).asType(scores.dtype))
-            weights = MLX.where(keyMask, softmax(scores, axis: -1, precise: true), MLXArray(0).asType(scores.dtype))
+            let probabilities = NFKReferenceRounding.halfSoftmax(scores, fast: softmax(scores, axis: -1, precise: true))
+            weights = MLX.where(keyMask, probabilities, MLXArray(0).asType(scores.dtype))
         } else {
-            weights = softmax(scores, axis: -1, precise: true)
+            weights = NFKReferenceRounding.halfSoftmax(scores, fast: softmax(scores, axis: -1, precise: true))
         }
         let attended = matmul(weights, vh)
         return out(attended.transposed(0, 2, 1, 3).reshaped([b, t, heads * headDimensions]))

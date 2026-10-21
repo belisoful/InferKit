@@ -225,12 +225,17 @@ arithmetic as before.
   Validated by a weight-free tiny-config glue test (the guided loop, the timestep/latent conventions,
   the centered-latent decode) plus the DiT/VAE/flow parities — a sampled image is not bitwise-comparable,
   as with LTX and Music 3. The Qwen3-4B DiT + Flux VAE + flow are the complete Z-Image text-to-image path.
-  `generate(image:strength:…)` is the image-to-image (edit) path — the Flux VAE encodes the source, the
-  latent is noised to `strength` through the scheduler's flow `addNoise`, and the denoise runs from the
+  `generate(image:strength:…)` is the image-to-image (edit) path — the Flux VAE encodes the source, a
+  latent is drawn from the encoded distribution (`NFKMLXSDAutoencoder.latentSample`, diffusers'
+  `DiagonalGaussianDistribution.sample`, its noise the first draw after the seed), the latent is noised to
+  `strength` through the scheduler's flow `addNoise`, and the denoise runs from the
   matching step, diffusers' own `pipeline_z_image_img2img`. The paper's SigLIP-conditioned editing is a
   separate original-repo model not present in the diffusers Z-Image (its transformer takes only the image
   latent and the caption; neither diffusers pipeline references SigLIP), so there is no reference to port
-  it against — the img2img path here is diffusers' actual edit capability.
+  it against — the img2img path here is diffusers' actual edit capability. The FLUX ControlNet draws its
+  control latent the same way before the initial noise, as diffusers' `FluxControlNetPipeline` does. The SD3
+  ControlNet draws it after the initial noise: diffusers samples it from torch's global generator, outside
+  the seeded one.
 - `NFKMLXSANATransformerNet` — the SANA linear-attention DiT (`SanaTransformer2DModel`, NVIDIA), the
   fourth DiT family. Two things set it apart: the self-attention is **linear** — ReLU feature maps,
   `O = ((V·1̂) @ ReLU(K)) @ ReLU(Q)` normalized by the ones row, O(N) rather than O(N²), which is what

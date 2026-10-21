@@ -346,7 +346,7 @@ final class NFKHybridLinearAttention: Module {
         // the reference keeps `g` as a LOG rate, formed in float32, and exponentiates it inside the
         // recurrence. The recurrence runs in float32 and its output rounds once to the input's type.
         let decay = exp(-NFKReferenceRounding.exponential(decayLog.asType(.float32))
-                        * softplus(decayProjection(x).asType(.float32) + stepBias.asType(.float32)))
+                        * NFKReferenceRounding.softplus(decayProjection(x).asType(.float32) + stepBias.asType(.float32)))
         let write = NFKReferenceRounding.sigmoid(writeProjection(x)).asType(.float32)
 
         // Key heads are shared across a group of value heads, as grouped-query attention shares them.

@@ -331,7 +331,7 @@ final class NFKMLXMamba2Mixer: Module {
             dt = NFKReferenceRounding.softplus(dtRaw + dtBias.asType(dtRaw.dtype).reshaped([1, 1, heads]))
                 .asType(.float32)
         } else {
-            dt = softplus(dtRaw.asType(.float32) + dtBias.asType(.float32).reshaped([1, 1, heads]))
+            dt = NFKReferenceRounding.softplus(dtRaw.asType(.float32) + dtBias.asType(.float32).reshaped([1, 1, heads]))
         }
         dt = clip(dt, min: config.timeStepLowerLimit, max: config.timeStepUpperLimit)
         let a = -NFKReferenceRounding.exponential(aLog.asType(.float32))  // [heads]

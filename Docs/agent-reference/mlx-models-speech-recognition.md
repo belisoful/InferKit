@@ -206,8 +206,13 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `preprocessor_config.json`). `IK_VAL_VOXTRAL`, `IK_PARITY_VOXTRAL_TINY` / `_REAL`, `IK_SHAPES_VOXTRAL` /
   `IK_CONFIG_VOXTRAL`.
   **At bf16**, the backend's default, every Whisper-encoder and decoder piece matches transformers'
-  bf16 run on its own input at 0.027 of the floor or less, and the logits sit 0.97 of the floor from
-  float32 (`testVoxtralInBFloat16MatchesTheBFloat16Reference`, `IK_VOXTRAL_DTYPE=bfloat16`). Before, the
+  bf16 run on its own input at 0.025 of the floor or less, and the logits sit 1.457e-02 from float32
+  against a floor of 4.352e-03 (`testVoxtralInBFloat16MatchesTheBFloat16Reference`,
+  `IK_VOXTRAL_DTYPE=bfloat16`). The reference's own bf16 moves that far: three twins whose features differ
+  in 16 of 384,000 values by one unit in the last place (`IK_VOXTRAL_FEATURE_JITTER=1|2|3`) sit 4.995e-03,
+  1.874e-02, and 3.355e-03 from float32, and the test holds the logits to the farthest twin. Fed the same
+  jittered features, the port sits 5.110e-03 to 9.905e-03 from each twin. With MLX's half-precision
+  softmax in the encoder the logits sat 4.024e-03 from float32, within the same spread. Before, the
   computed float32 sinusoids promoted the whole encoder to float32. transformers keeps
   `embed_positions` float32 under a bf16 load (`_keep_in_fp32_modules_strict`) and rounds
   `x + table` once, which the encoder now does. transformers' Whisper attention scales the query by

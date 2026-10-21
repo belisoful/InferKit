@@ -254,7 +254,8 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   norms (`NFKReferenceRounding.layerNorm`, reached by `NFKLayerNorm`, `sd3AffineFreeLayerNorm`, and the float32
   norms of Wan, Wan Animate, and SAM 3), and the float32 exponentials a reference forms with `torch.exp`
   (`NFKReferenceRounding.exponential`). `.fast` is the default. `.reference` runs the Metal kernels in
-  `NFKMLXReferenceKernels.swift` (`torchExp`, `torchSoftmax`, and `torchLayerNorm`), each wrapped in a
+  `NFKMLXReferenceKernels.swift` (`torchExp`, `torchSoftmax`, `torchHalfSoftmax`, `torchSoftplus`,
+  `torchWindowPool`, `torchPackedSoftmax`, and `torchLayerNorm`), each wrapped in a
   `CustomFunction` whose VJP is the gradient of the MLX operations it stands for. A kernel cannot dispatch on
   the CPU stream, so there the exponential takes MLX operations (`torchExpOperations`) and the softmax and
   layer norm take MLX's own. `NFKMLXBFloat16ParityTests` sets `.reference` in `setUp` and `.fast` in
@@ -296,6 +297,40 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
     GPU each matches torch over every float16 and bfloat16 input the GPU keeps normal and runs faster than the
     MLX operations it replaced, which the CPU stream takes: GELU over 2 × 4,096 × 5,120 values in 1.1 ms against
     30.4 ms, SiLU over 2 × 128 × 128 × 640 values in 0.9 ms against 2.3 ms.
+  - Softplus at a half precision takes `torchSoftplus` in either mode: `x` above 20, otherwise
+    `log1p(exp(x))` with Sleef's `expf` and `log1pf`, formed in float32 and rounded once. The `log1pf` port
+    matches torch's `log1p` below 10³⁸. The kernel matches torch over every float16 and bfloat16 input whose
+    result is a normal float32 value and runs in 1.4 ms against 2.9 ms for
+    MLX's float32 `softplus` over 2 × 4,096 × 5,120 bfloat16 values. A float32 softplus takes it in
+    `.reference`: a Mamba-2 step, the gated-delta decay of Qwen3.5 and Qwen4-Exp, DeepSeek V4's router, and
+    TimesFM's query scale. Gemma 3n's and Gemma 4's audio query scales take `NFKReferenceRounding.softplus`.
+    Over bfloat16 MLX's `softplus` already rounds every normal result as torch does; over float16 it rounds
+    471 of 63,488 inputs apart.
+  - torch softmaxes half-precision scores without widening them at Whisper's and Voxtral's attention, the
+    T5 encoders' under transformers 5 (4.57 widens them), SigLIP 2's pooling head, Granite Speech's
+    mid-encoder CTC skip and Q-Former, Phi-4-MM's speech Conformer, Sa2VA's InternViT, and gpt-oss's sink
+    attention and router. Its reduced-type kernel widens the row, sums the exponentials of whole 4-value
+    vectors over 4 lanes, joins the lanes, adds the remaining exponentials in order with the C library's
+    `expf`, and multiplies by the sum's reciprocal. `halfSoftmax(_:fast:)` takes `torchHalfSoftmax` in
+    `.reference` and the site's own softmax otherwise; `attention(…halfSoftmax:)` marks the T5 and InternViT
+    calls. Sleef's `expf` stands in for the remaining exponentials and leaves 0 to 3 outputs in a million
+    apart; MLX's float32 softmax rounded once leaves 1 in 1,000 to 7,000. Apple's `expf` is faithfully
+    rounded and leaves 0.6% of float32 results one unit from the correctly rounded value, so no kernel
+    reproduces it. The kernel takes 4.55 times MLX's softmax over 8 × 4,096 rows of
+    4,096 bfloat16 values.
+  - DeepSeek V4's compressor pools each window by `(values · softmax(scores, dim)).sum(dim)` along a
+    non-trailing axis, which torch vectorizes over the trailing axis: per column the exponentials summed in
+    order, a true division, each product, and torch's cascade sum (blocks of up to 16 rows summed in order,
+    the block sums joined in order). `torchWindowPool` computes it in one kernel in either mode, in
+    1.0 ms against 2.0 ms for the MLX operations over 1,024 windows of 8 at
+    width 1,024.
+  - Wan Animate's generation attention in `.reference` follows the reference's eager flex attention: float32
+    scores, torch's float32 softmax over each query's row of the packed buffer (the generation span padded to
+    a multiple of 128, then one slot of `videoArea` positions a frame), summed over 4 lanes by buffer
+    position (`torchPackedSoftmax`), and the probabilities rounded to the operands' type before the product
+    with the values. The fast mode adds the row's zero keys to the denominator as a count.
+  - The GPU flushes a subnormal float32 result to zero, where torch and bfloat16 keep it: a bfloat16 softmax
+    whose scores spread past about 87, and a softplus below −87.
   - Overall, a whole half-precision forward in `.reference` takes 0.97 to 1.30 times the time of the fast mode
     in a diffusion denoiser (SDXL's UNet, at 1.30, under the standing limits) and up to 2.27 times in an
     encoder (`NFKMLXHalfPrecisionArithmeticTimingTests`, `IK_ARITHMETIC_TIMING=1`; the table is in
@@ -307,10 +342,6 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
     2.3 to 4.7 times slower. `compile` of it is 3.2 times faster and 98% of its results are wrong.
   - A Mamba-2 or gated-delta layer's prefill: torch exponentiates its chunked scan's segment sums, an
     operation the port forms another way.
-  - Softplus: torch's is `log1p(exp(x))` with Sleef's `log1p` as well.
-  - A softmax over half-precision scores: torch takes its reduced-type softmax kernel, another algorithm.
-  - DeepSeek V4's compressor softmaxes run over a non-last axis, which torch vectorizes along the trailing axis.
-  - Wan Animate's attention sums its exponentials in MLX's order; torch sums the row of its packed buffer.
   A half-precision flash attention without a `queryBlock` attends `automaticQueryBlock` rows at a time when
   its float32 scores would pass 1 GiB, each row computed as before: Wan at 480×832 and 33 frames held 9.5 GB
   of scores, and at 81 frames would hold 51 GB.
