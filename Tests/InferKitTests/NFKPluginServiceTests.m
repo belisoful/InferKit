@@ -293,7 +293,7 @@ static NSInteger NFKServiceTestThreadCount(void)
 }
 
 // The table the plugin host keeps alive names every constant and function the public headers declare, so
-// a public symbol added without regenerating it fails here rather than in a plugin that cannot bind.
+// a public symbol added without regenerating it fails this test.
 - (void)testThePublicInterfaceTableIsCurrent
 {
 	NSURL *script = [[self sourceRoot] URLByAppendingPathComponent:@"Tools/plugin-host/public-interface.py"];

@@ -60,9 +60,10 @@ API_UNAVAILABLE(ios, tvos, watchos)
 	@abstract   The team that signed the code at url, read without loading it.
 	@discussion Pass a plugin's bundle (NFKPluginManifest.bundleURL) to pin its team when it is
 				installed, and to refuse an update another team signed. Returns the team identifier for a
-				valid signature from a team; nil with no error for code that is unsigned or signed ad hoc,
-				which names no team; and nil with NFKPluginErrorSignatureInvalid for code that cannot be read
-				or whose signature is invalid. Introduced in InferKit 0.4.0.
+				valid signature whose Apple-issued certificate chain proves the team; nil with no error for
+				code that is unsigned or signed ad hoc, which names no team; and nil with
+				NFKPluginErrorSignatureInvalid for code that cannot be read, whose signature is invalid, or
+				whose named team no Apple-issued certificate proves. Introduced in InferKit 0.4.0.
 */
 + (nullable NSString *)signingTeamIdentifierOfCodeAtURL:(NSURL *)url error:(NSError **)error;
 

@@ -904,6 +904,10 @@ static BOOL NFKRegistryTestImageIsLoaded(NSURL *url)
 			return [[heard valueForKey:@"processState"] containsObject:@(NFKPluginProcessStateReady)];
 		}
 	} timeout:10], @"the handler hears the start");
+	@synchronized (heard) {
+		NSArray<NSNumber *> *states = [heard valueForKey:@"processState"];
+		XCTAssertEqualObjects(states, (@[ @(NFKPluginProcessStateStarting), @(NFKPluginProcessStateReady) ]), @"each change once, in order");
+	}
 	XCTAssertTrue([registry startPluginWithIdentifier:manifest.identifier error:&error], @"a running plugin starts at once");
 
 	XCTestExpectation *unknown = [self expectationWithDescription:@"unknown"];
@@ -1035,6 +1039,9 @@ static BOOL NFKRegistryTestImageIsLoaded(NSURL *url)
 		NSError *error = nil;
 		XCTAssertTrue([registry startPluginWithIdentifier:identifier error:&error], @"the ad hoc fixture starts under its own policy: %@", error);
 	}
+	[registry removePluginWithIdentifier:identifier];
+	XCTAssertEqualObjects([registry signaturePolicyForPluginIdentifier:identifier], pinned,
+						  @"a bundle listed later under the identifier starts under the registry's policy");
 }
 
 // The registry's timeouts reach the processes it makes, and a change reaches those already made.
@@ -1055,6 +1062,11 @@ static BOOL NFKRegistryTestImageIsLoaded(NSURL *url)
 	XCTAssertEqual(backend.process.verificationTimeout, 120);
 	registry.verificationTimeout = 240;
 	XCTAssertEqual(backend.process.verificationTimeout, 240);
+	registry.handshakeTimeout = 0;
+	registry.verificationTimeout = -1;
+	XCTAssertEqual(registry.handshakeTimeout, 30, @"a timeout that is not positive sets the default");
+	XCTAssertEqual(backend.process.handshakeTimeout, 30);
+	XCTAssertEqual(backend.process.verificationTimeout, 120);
 }
 
 // The signing team reads from the bundle alone: the fixtures are signed ad hoc and name none.

@@ -168,7 +168,9 @@ static id _Nullable NFKPluginServiceJSONSafe(id _Nullable value)
 			[context removeTemporaryDirectory];
 			return nil;
 		}
-		weakService.factoryContext = context;
+		NFKPluginService *service = weakService;
+		[service.factoryContext removeTemporaryDirectory];
+		service.factoryContext = context;
 		return plugin;
 	}];
 	weakService = self;
@@ -238,6 +240,7 @@ static id _Nullable NFKPluginServiceJSONSafe(id _Nullable value)
 	self.channel = nil;
 	self.serving = NO;
 	[self.factoryContext removeTemporaryDirectory];
+	self.factoryContext = nil;
 	if (closeError != nil) {
 		if (error != NULL) {
 			*error = closeError;

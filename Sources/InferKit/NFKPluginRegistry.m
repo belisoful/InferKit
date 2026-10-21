@@ -77,6 +77,8 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 							failureError:(nullable NSError *)failureError
 					   processIdentifier:(pid_t)processIdentifier
 							  launchDate:(nullable NSDate *)launchDate NS_DESIGNATED_INITIALIZER;
+/*! This status as it reads in processState: a failure only in Failed, a process only while it runs. */
+- (NFKPluginStatus *)statusWithProcessState:(NFKPluginProcessState)processState;
 @end
 
 @implementation NFKPluginStatus
@@ -100,6 +102,18 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 		_launchDate = [launchDate copy];
 	}
 	return self;
+}
+
+- (NFKPluginStatus *)statusWithProcessState:(NFKPluginProcessState)processState
+{
+	BOOL running = processState == NFKPluginProcessStateReady || processState == NFKPluginProcessStateRestarting;
+	return [[NFKPluginStatus alloc] initWithPluginIdentifier:self.pluginIdentifier
+													 version:self.version
+												   isolation:self.isolation
+												processState:processState
+												failureError:processState == NFKPluginProcessStateFailed ? self.failureError : nil
+										   processIdentifier:running ? self.processIdentifier : 0
+												  launchDate:running ? self.launchDate : nil];
 }
 
 - (NSString *)description
@@ -140,6 +154,8 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 @property (nonatomic, readonly) NSMutableSet<NSString *> *trustedIdentifiers;
 @property (nonatomic, readonly) NSMutableDictionary<NSString *, NSDictionary<NSString *, id> *> *optionValuesByPlugin;
 @property (nonatomic, readonly) NSMutableDictionary<NSString *, NFKPluginSignaturePolicy *> *signaturePoliciesByPlugin;
+/*! Delivers status changes one at a time, in the order they happen. */
+@property (nonatomic, readonly) dispatch_queue_t statusQueue;
 /*! Why a trusted plugin last failed to load into the app's process, by plugin. */
 @property (nonatomic, readonly) NSMutableDictionary<NSString *, NSError *> *inProcessLoadErrors;
 @property (nonatomic, copy) NFKPluginSignaturePolicy *storedSignaturePolicy;
@@ -176,6 +192,9 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 @end
 
 #pragma mark - Registry
+
+static const NSTimeInterval NFKPluginRegistryDefaultHandshakeTimeout = 30;
+static const NSTimeInterval NFKPluginRegistryDefaultVerificationTimeout = 120;
 
 @implementation NFKPluginRegistry
 
@@ -232,10 +251,12 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 		_trustedIdentifiers = [NSMutableSet set];
 		_optionValuesByPlugin = [NSMutableDictionary dictionary];
 		_signaturePoliciesByPlugin = [NSMutableDictionary dictionary];
+		_statusQueue = dispatch_queue_create("com.inferkit.plugin-registry.status",
+											 dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0));
 		_inProcessLoadErrors = [NSMutableDictionary dictionary];
 		_storedSignaturePolicy = [NFKPluginSignaturePolicy defaultPolicy];
-		_handshakeTimeout = 30;
-		_verificationTimeout = 120;
+		_handshakeTimeout = NFKPluginRegistryDefaultHandshakeTimeout;
+		_verificationTimeout = NFKPluginRegistryDefaultVerificationTimeout;
 		_buildTimeout = 300;
 		NSHashTable<NFKPluginRegistry *> *live = [NFKPluginRegistry liveRegistries];
 		@synchronized (live) {
@@ -306,12 +327,13 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 - (void)setHandshakeTimeout:(NSTimeInterval)handshakeTimeout
 {
 	NSArray<NFKPluginProcess *> *processes = nil;
+	NSTimeInterval timeout = handshakeTimeout > 0 ? handshakeTimeout : NFKPluginRegistryDefaultHandshakeTimeout;
 	@synchronized (self.lock) {
-		_handshakeTimeout = handshakeTimeout;
+		_handshakeTimeout = timeout;
 		processes = [self processes];
 	}
 	for (NFKPluginProcess *process in processes) {
-		process.handshakeTimeout = handshakeTimeout;
+		process.handshakeTimeout = timeout;
 	}
 }
 
@@ -325,12 +347,13 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 - (void)setVerificationTimeout:(NSTimeInterval)verificationTimeout
 {
 	NSArray<NFKPluginProcess *> *processes = nil;
+	NSTimeInterval timeout = verificationTimeout > 0 ? verificationTimeout : NFKPluginRegistryDefaultVerificationTimeout;
 	@synchronized (self.lock) {
-		_verificationTimeout = verificationTimeout;
+		_verificationTimeout = timeout;
 		processes = [self processes];
 	}
 	for (NFKPluginProcess *process in processes) {
-		process.verificationTimeout = verificationTimeout;
+		process.verificationTimeout = timeout;
 	}
 }
 
@@ -436,6 +459,14 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 
 - (nullable NFKPluginManifest *)addPluginAtURL:(NSURL *)url error:(NSError **)error
 {
+	return [self addPluginAtURL:url signaturePolicy:nil error:error];
+}
+
+/*! Adds the bundle at url; a signaturePolicy applies to it from the moment it is listed. */
+- (nullable NFKPluginManifest *)addPluginAtURL:(NSURL *)url
+							   signaturePolicy:(nullable NFKPluginSignaturePolicy *)signaturePolicy
+										 error:(NSError **)error
+{
 	NFKPluginManifest *manifest = [self checkedManifestAtURL:url error:error];
 	if (manifest == nil) {
 		return nil;
@@ -453,6 +484,9 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 			NFKPluginRegistryEntry *entry = [[NFKPluginRegistryEntry alloc] init];
 			entry.manifest = manifest;
 			entry.catalogIdentifiers = @[];
+			if (signaturePolicy != nil) {
+				self.signaturePoliciesByPlugin[manifest.identifier] = [signaturePolicy copy];
+			}
 			self.entries[manifest.identifier] = entry;
 			[self listDescriptors:descriptors forEntry:entry];
 			if (self.optionValuesByPlugin[manifest.identifier] != nil) {
@@ -467,10 +501,28 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 						  [NSString stringWithFormat:@"the plugin %@ is already listed from %@", manifest.identifier, listedPath]);
 		return nil;
 	}
+	if (signaturePolicy != nil) {
+		[self setSignaturePolicy:signaturePolicy forPluginIdentifier:manifest.identifier];
+	}
 	return [self replaceManifestOfPlugin:manifest.identifier withManifest:manifest restartCompletion:nil error:error] ? manifest : nil;
 }
 
 - (NSArray<NFKPluginManifest *> *)addPluginsInDirectoryURL:(NSURL *)directoryURL errors:(NSArray<NSError *> **)errors
+{
+	return [self addPluginsInDirectoryURL:directoryURL policy:nil errors:errors];
+}
+
+- (NSArray<NFKPluginManifest *> *)addPluginsInDirectoryURL:(NSURL *)directoryURL
+										   signaturePolicy:(NFKPluginSignaturePolicy *)signaturePolicy
+													errors:(NSArray<NSError *> **)errors
+{
+	return [self addPluginsInDirectoryURL:directoryURL policy:signaturePolicy errors:errors];
+}
+
+/*! Adds every plugin bundle in directoryURL, each listed under policy where one is given. */
+- (NSArray<NFKPluginManifest *> *)addPluginsInDirectoryURL:(NSURL *)directoryURL
+													policy:(nullable NFKPluginSignaturePolicy *)signaturePolicy
+													errors:(NSArray<NSError *> **)errors
 {
 	NSError *listError = nil;
 	NSArray<NSURL *> *contents = [NSFileManager.defaultManager contentsOfDirectoryAtURL:directoryURL includingPropertiesForKeys:nil
@@ -492,7 +544,7 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 			continue;
 		}
 		NSError *addError = nil;
-		NFKPluginManifest *manifest = [self addPluginAtURL:bundle error:&addError];
+		NFKPluginManifest *manifest = [self addPluginAtURL:bundle signaturePolicy:signaturePolicy error:&addError];
 		if (manifest != nil) {
 			[added addObject:manifest];
 		} else if (addError != nil) {
@@ -505,17 +557,6 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 	return [added copy];
 }
 
-- (NSArray<NFKPluginManifest *> *)addPluginsInDirectoryURL:(NSURL *)directoryURL
-										   signaturePolicy:(NFKPluginSignaturePolicy *)signaturePolicy
-													errors:(NSArray<NSError *> **)errors
-{
-	NSArray<NFKPluginManifest *> *added = [self addPluginsInDirectoryURL:directoryURL errors:errors];
-	for (NFKPluginManifest *manifest in added) {
-		[self setSignaturePolicy:signaturePolicy forPluginIdentifier:manifest.identifier];
-	}
-	return added;
-}
-
 - (void)removePluginWithIdentifier:(NSString *)identifier
 {
 	@synchronized (self.lock) {
@@ -525,6 +566,8 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 		}
 		[self listDescriptors:@[] forEntry:entry];
 		[self.entries removeObjectForKey:identifier];
+		// A bundle listed later under the identifier, from anywhere, starts under the registry's policy.
+		[self.signaturePoliciesByPlugin removeObjectForKey:identifier];
 	}
 }
 
@@ -888,13 +931,15 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 			entry.loadedPlugin = loaded;
 			[self.inProcessLoadErrors removeObjectForKey:manifest.identifier];
 		} else if (loadError != nil) {
-			changed = YES;
+			NSError *recorded = self.inProcessLoadErrors[manifest.identifier];
+			changed = recorded == nil || recorded.code != loadError.code
+				|| ![recorded.localizedDescription isEqualToString:loadError.localizedDescription];
 			self.inProcessLoadErrors[manifest.identifier] = loadError;
 		}
 	}
 	if (changed) {
-		dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-			[self reportStatusOfPluginIdentifier:manifest.identifier];
+		dispatch_async(self.statusQueue, ^{
+			[self reportStatus:[self statusForPluginIdentifier:manifest.identifier]];
 		});
 	}
 	if (loaded == nil && error != NULL) {
@@ -923,7 +968,10 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 			process.buildTimeout = self.buildTimeout;
 			__weak NFKPluginRegistry *weakSelf = self;
 			process.registryStateHandler = ^(NFKPluginProcess *changed, NFKPluginProcessState state) {
-				[weakSelf reportStatusOfPluginIdentifier:identifier];
+				NFKPluginRegistry *registry = weakSelf;
+				dispatch_async(registry.statusQueue, ^{
+					[registry reportStatus:[[registry statusForPluginIdentifier:identifier] statusWithProcessState:state]];
+				});
 			};
 			entry.process = process;
 		}
@@ -935,33 +983,38 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 
 - (nullable NFKPluginStatus *)statusForPluginIdentifier:(NSString *)identifier
 {
-	NFKPluginRegistryEntry *entry = nil;
+	NFKPluginManifest *manifest = nil;
+	NFKLoadedPlugin *loaded = nil;
+	NFKPluginProcess *process = nil;
 	BOOL trusted = NO;
 	NSError *loadError = nil;
 	@synchronized (self.lock) {
-		entry = self.entries[identifier];
+		NFKPluginRegistryEntry *entry = self.entries[identifier];
+		if (entry == nil) {
+			return nil;
+		}
+		manifest = entry.manifest;
+		loaded = entry.loadedPlugin;
+		process = entry.process;
 		trusted = [self.trustedIdentifiers containsObject:identifier];
 		loadError = self.inProcessLoadErrors[identifier];
 	}
-	if (entry == nil) {
-		return nil;
-	}
 	if (trusted) {
-		NFKPluginProcessState state = entry.loadedPlugin != nil ? NFKPluginProcessStateReady
-			: (loadError != nil ? NFKPluginProcessStateFailed : NFKPluginProcessStateNotRunning);
+		// A plugin a stricter policy now refuses stays loaded, and every run it is asked for fails.
+		NFKPluginProcessState state = loadError != nil ? NFKPluginProcessStateFailed
+			: (loaded != nil ? NFKPluginProcessStateReady : NFKPluginProcessStateNotRunning);
 		return [[NFKPluginStatus alloc] initWithPluginIdentifier:identifier
-														 version:entry.loadedPlugin.manifest.version ?: entry.manifest.version
+														 version:loaded.manifest.version ?: manifest.version
 													   isolation:NFKPluginIsolationInProcess
 													processState:state
 													failureError:state == NFKPluginProcessStateFailed ? loadError : nil
 											   processIdentifier:0
 													  launchDate:nil];
 	}
-	NFKPluginProcess *process = entry.process;
 	NFKPluginProcessState state = process != nil ? process.state : NFKPluginProcessStateNotRunning;
 	BOOL running = state == NFKPluginProcessStateReady || state == NFKPluginProcessStateRestarting;
 	return [[NFKPluginStatus alloc] initWithPluginIdentifier:identifier
-													 version:process.manifest.version ?: entry.manifest.version
+													 version:process.manifest.version ?: manifest.version
 												   isolation:NFKPluginIsolationProcess
 												processState:state
 												failureError:state == NFKPluginProcessStateFailed ? process.failureError : nil
@@ -969,10 +1022,9 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 												  launchDate:running ? process.launchDate : nil];
 }
 
-/*! Delivers the plugin's status to statusHandler and as a notification, on the calling background queue. */
-- (void)reportStatusOfPluginIdentifier:(NSString *)identifier
+/*! Delivers status to statusHandler and as a notification. Runs on the status queue. */
+- (void)reportStatus:(nullable NFKPluginStatus *)status
 {
-	NFKPluginStatus *status = [self statusForPluginIdentifier:identifier];
 	if (status == nil) {
 		return;
 	}
@@ -1018,17 +1070,22 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 			});
 		}
 	};
-	NFKPluginRegistryEntry *entry = nil;
+	BOOL listed = NO;
+	BOOL loadedInProcess = NO;
+	NFKPluginProcess *process = nil;
 	@synchronized (self.lock) {
-		entry = self.entries[identifier];
+		NFKPluginRegistryEntry *entry = self.entries[identifier];
+		listed = entry != nil;
+		loadedInProcess = entry.loadedPlugin != nil;
+		process = entry.process;
 	}
-	if (entry == nil) {
+	if (!listed) {
 		NSError *unknown = nil;
 		NFKPluginSetError(&unknown, NFKPluginErrorUnknownPlugin, [NSString stringWithFormat:@"no plugin %@ is listed", identifier]);
 		finish(unknown);
 		return;
 	}
-	if (entry.loadedPlugin != nil) {
+	if (loadedInProcess) {
 		NSError *unloadable = nil;
 		NFKPluginSetError(&unloadable, NFKPluginErrorInProcessUnloadable,
 						  [NSString stringWithFormat:@"the plugin %@ runs in the app's process, where it stays loaded until the app quits",
@@ -1036,7 +1093,6 @@ static BOOL NFKPluginRunsInProcess(NFKPluginManifest *manifest)
 		finish(unloadable);
 		return;
 	}
-	NFKPluginProcess *process = entry.process;
 	if (process == nil) {
 		finish(nil);
 		return;

@@ -303,6 +303,8 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 @property (atomic, strong, nullable) NFKPluginConnection *connection;
 @property (nonatomic, strong) NSObject *stateLock;
 @property (nonatomic, strong) NSLock *startLock;
+/*! True while a draining stop runs, when the process's exit is the stop's doing. */
+@property (atomic, assign) BOOL stopping;
 @property (nonatomic, strong) NSCondition *admissionCondition;
 @property (nonatomic, strong) NSMutableArray<NFKPluginAdmission *> *heldAdmissions;
 @property (nonatomic, assign) BOOL holding;
@@ -1346,7 +1348,7 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 	}
 	[self stopLauncher:connection.launcher];
 	NSError *exited = [self exitErrorOfLauncher:connection.launcher];
-	if (current && self.state != NFKPluginProcessStateRestarting) {
+	if (current && self.state != NFKPluginProcessStateRestarting && !self.stopping) {
 		[self recordCrashWithError:exited];
 	}
 	[self.startLock unlock];
@@ -1434,10 +1436,12 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 	self.pendingRestarts += 1;
 	[self.admissionCondition unlock];
 	dispatch_async(self.controlQueue, ^{
+		self.stopping = YES;
 		[self shutDownDrainingWithReason:@"the plugin stopped before the run finished"];
 		if (self.state != NFKPluginProcessStateFailed) {
 			[self enterState:NFKPluginProcessStateNotRunning];
 		}
+		self.stopping = NO;
 		[self.startLock unlock];
 		[self releaseHeldAdmissionsWithError:nil];
 		if (completionHandler != nil) {
@@ -1468,12 +1472,17 @@ static NSSet<NSString *> *NFKPluginDescribedKeys(id entries)
 	}
 	self.restartPhase = @"stopping";
 	[self.startLock lock];
-	if (old != nil && self.connection == old) {
+	NFKPluginConnection *current = self.connection;
+	if (current != nil) {
 		self.connection = nil;
 		[self cancelIdleTimer];
 	}
 	if (old != nil) {
 		[self shutDownConnection:old error:stopError];
+	}
+	// A launch that held the start lock when old was read leaves a connection of its own, which no drain saw.
+	if (current != nil && current != old) {
+		[self shutDownConnection:current error:stopError];
 	}
 }
 

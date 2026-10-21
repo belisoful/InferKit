@@ -14,6 +14,7 @@
 
 #import "NFKPluginFixtures.h"
 #import "NFKPluginTestPeer.h"
+#import "../../Sources/InferKit/NFKPluginProcessPrivate.h"
 
 @interface NFKPluginProcessTests : XCTestCase
 @property (nonatomic, strong) NFKPluginTestHarness *harness;
@@ -297,6 +298,66 @@
 	XCTAssertEqual(process.state, NFKPluginProcessStateReady);
 	XCTAssertNil(process.failureError);
 	XCTAssertEqual(self.harness.peers.count, 4u);
+}
+
+/*! Configures the first launch to answer its hello after 0.5 s, and starts the process on another
+	thread once that launch is greeting. Returns the expectation the start fulfills. */
+- (XCTestExpectation *)startDuringASlowHelloOfProcess:(NFKPluginProcess *)process
+{
+	self.harness.configure = ^(NFKPluginTestPeer *peer) {
+		if (peer.launchNumber != 1) {
+			return;
+		}
+		peer.handlers = @{ NFKPluginMessageHello: ^(NFKPluginTestPeer *greeted, NSDictionary *message, NSArray *descriptors) {
+			[NSThread sleepForTimeInterval:0.5];
+			[greeted replyTo:message result:@{ @"protocol": @{ @"major": @1, @"minor": @0 },
+											   @"plugin": @{ @"id": @"com.example.echo", @"version": @"1.0.0" },
+											   @"inferkitAPI": @"1.0", @"capabilities": @[ @"attachments" ], @"pid": @(getpid()) }];
+		} };
+	};
+	XCTestExpectation *started = [self expectationWithDescription:@"start returned"];
+	[NSThread detachNewThreadWithBlock:^{
+		[process startWithError:NULL];
+		[started fulfill];
+	}];
+	XCTAssertNotNil([[self.harness peerAtIndex:0 timeout:30] waitForMessageOfType:NFKPluginMessageHello timeout:30], @"%@", self.diagnostics);
+	return started;
+}
+
+- (void)testAStopDuringAStartShutsDownTheProcessTheStartLaunched
+{
+	NFKPluginProcess *process = [self processWithIdleExit:300];
+	XCTestExpectation *started = [self startDuringASlowHelloOfProcess:process];
+	XCTestExpectation *stopped = [self expectationWithDescription:@"stopped"];
+	[process stopDrainingWithCompletionHandler:^{
+		[stopped fulfill];
+	}];
+	[self waitForExpectations:@[ started, stopped ] reporting:@"the start and the stop"];
+	XCTAssertEqual(process.state, NFKPluginProcessStateNotRunning);
+	XCTAssertEqual(self.harness.peers.count, 1u);
+	XCTAssertTrue(NFKPluginTestWaitUntil(5, ^BOOL {
+		return self.harness.peers.firstObject.stopped;
+	}), @"the process the start launched keeps running. %@", self.diagnostics);
+}
+
+- (void)testARestartDuringAStartStopsTheProcessTheStartLaunched
+{
+	NFKPluginProcess *process = [self processWithIdleExit:300];
+	XCTestExpectation *started = [self startDuringASlowHelloOfProcess:process];
+	XCTestExpectation *restarted = [self expectationWithDescription:@"restarted"];
+	__block NSError *restartError = [NSError errorWithDomain:@"unset" code:0 userInfo:nil];
+	[process restartWithManifest:NFKPluginTestManifest(@"2.0.0", 300) completionHandler:^(NSError *error) {
+		restartError = error;
+		[restarted fulfill];
+	}];
+	[self waitForExpectations:@[ started, restarted ] reporting:@"the start and the restart"];
+	XCTAssertNil(restartError);
+	XCTAssertEqual(process.state, NFKPluginProcessStateReady);
+	XCTAssertEqual(self.harness.peers.count, 2u);
+	XCTAssertTrue(NFKPluginTestWaitUntil(5, ^BOOL {
+		return self.harness.peers.firstObject.stopped;
+	}), @"the process the start launched keeps running. %@", self.diagnostics);
+	XCTAssertFalse(self.harness.peers.lastObject.stopped);
 }
 
 #pragma mark Restart

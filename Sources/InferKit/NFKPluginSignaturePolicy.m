@@ -192,15 +192,49 @@ typedef OSStatus (^NFKPluginCodeCheck)(SecRequirementRef _Nullable requirement, 
 		return nil;
 	}
 	CFDictionaryRef rawInformation = NULL;
-	SecCodeCopySigningInformation(code, kSecCSSigningInformation, &rawInformation);
-	CFRelease(code);
+	status = SecCodeCopySigningInformation(code, kSecCSSigningInformation, &rawInformation);
 	NSDictionary *information = CFBridgingRelease(rawInformation);
+	if (status != errSecSuccess) {
+		CFRelease(code);
+		NFKPluginSetError(error, NFKPluginErrorSignatureInvalid,
+						  [NSString stringWithFormat:@"%@'s signing information could not be read: %@", url.lastPathComponent, NFKPluginSecurityReason(status, NULL)]);
+		return nil;
+	}
 	uint32_t flags = [information[(__bridge NSString *)kSecCodeInfoFlags] unsignedIntValue];
 	NSString *team = information[(__bridge NSString *)kSecCodeInfoTeamIdentifier];
 	if ((flags & kSecCodeSignatureAdhoc) != 0 || ![team isKindOfClass:NSString.class]) {
+		CFRelease(code);
+		return nil;
+	}
+	NSString *reason = [self reasonCodeDoesNotProveTeam:team code:code];
+	CFRelease(code);
+	if (reason != nil) {
+		NFKPluginSetError(error, NFKPluginErrorSignatureInvalid,
+						  [NSString stringWithFormat:@"%@ names team %@, which its certificate chain does not prove: %@", url.lastPathComponent, team, reason]);
 		return nil;
 	}
 	return team;
+}
+
+/*! Nil when an Apple-issued certificate chain proves that code is signed by team; otherwise the reason.
+	The team identifier in signing information is the signer's own claim. */
++ (nullable NSString *)reasonCodeDoesNotProveTeam:(NSString *)team code:(SecStaticCodeRef)code
+{
+	NSString *text = [NSString stringWithFormat:@"anchor apple generic and certificate leaf[subject.OU] = \"%@\"", team];
+	SecRequirementRef requirement = NULL;
+	CFErrorRef failure = NULL;
+	OSStatus status = SecRequirementCreateWithStringAndErrors((__bridge CFStringRef)text, kSecCSDefaultFlags, &failure, &requirement);
+	if (status == errSecSuccess && requirement != NULL) {
+		status = SecStaticCodeCheckValidityWithErrors(code, NFKPluginStaticValidationFlags, requirement, &failure);
+	}
+	NSString *reason = status == errSecSuccess ? nil : NFKPluginSecurityReason(status, failure);
+	if (requirement != NULL) {
+		CFRelease(requirement);
+	}
+	if (failure != NULL) {
+		CFRelease(failure);
+	}
+	return reason;
 }
 
 - (BOOL)validateCodeAtURL:(NSURL *)url error:(NSError **)error

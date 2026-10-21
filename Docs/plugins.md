@@ -262,8 +262,8 @@ descriptor 3 (`INFERKIT_PLUGIN_CHANNEL_FD=3`) and speaks the plugin protocol ove
 The sample in `Tests/PluginFixtures/executable/sample_executable.m` is a complete program that uses
 Foundation alone. An executable plugin always runs in its own process.
 
-A program that links InferKit serves its plugin with `NFKPluginService` instead of speaking the protocol
-itself. `-initWithManifest:pluginFactory:` makes the plugin when the app's hello arrives, with the context
+A program that links InferKit serves its plugin with `NFKPluginService`, which speaks the protocol for
+it. `-initWithManifest:pluginFactory:` makes the plugin when the app's hello arrives, with the context
 an `objc` plugin receives, its option values included, and `-runWithChannelDescriptor:` serves it on
 descriptor 3.
 

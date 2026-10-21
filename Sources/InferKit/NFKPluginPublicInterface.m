@@ -256,6 +256,7 @@ static const void *const NFKPluginPublicInterface[] = {
 	(const void *)&NFKModelTaskSpeechEnhancement,
 	(const void *)&NFKModelTaskVoiceActivityDetection,
 	(const void *)&NFKModelTaskAudioCodec,
+	(const void *)&NFKModelTaskAudioGeneration,
 	(const void *)&NFKModelTaskMusicGeneration,
 	(const void *)&NFKModelTaskMusicTranscription,
 	(const void *)&NFKModelTaskMusicStructure,
