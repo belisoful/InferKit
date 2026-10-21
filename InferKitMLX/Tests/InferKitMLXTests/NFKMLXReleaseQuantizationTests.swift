@@ -245,17 +245,21 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
                        "and generates mlx_lm's greedy tokens")
 
         // A scaled rotary's table comes from a GPU pow the release cannot reproduce (`rotaryTableSteps`); on
-        // mlx_lm's own table, read from the seam record, the logits are mlx_lm's bit for bit.
-        var exact = mine
-        if let seamKey, let seamPath = config[seamKey],
+        // mlx_lm's own table, read from the seam record, the logits are mlx_lm's bit for bit. Without that
+        // table a scaled rotary has no bit-exact bar.
+        let ownTable = net.model.layers.first?.attention.rope.periods
+        var exact: [Float]? = ownTable == nil ? mine : nil
+        if ownTable != nil, let seamKey, let seamPath = config[seamKey],
            let table = try MLX.loadArrays(url: URL(fileURLWithPath: seamPath))["rope.freqs"] {
             Self.useRotaryTable(table, in: net)
             exact = net(input)[0].asType(.float32).reshaped([-1]).asArray(Float.self)
+            Self.useRotaryTable(ownTable, in: net)
         }
-        let differing = zip(exact, runtimeLogits).filter { $0 != $1 }.count
+        let differing = exact.map { values in zip(values, runtimeLogits).filter { $0 != $1 }.count }
         print("VALIDATION PARITY \(label) kernels: \(Self.runsReferenceKernels ? "mlx_lm's" : "this package's"); "
-              + "\(differing) logits differ from mlx_lm's")
-        if Self.runsReferenceKernels {
+              + (differing.map { "\($0) logits differ from mlx_lm's" } ?? "no rotary table to run on mlx_lm's"))
+        if Self.runsReferenceKernels, let differing {
+            XCTAssertEqual(exact?.count, runtimeLogits.count)
             XCTAssertEqual(differing, 0, "the release computes mlx_lm's logits bit for bit")
         }
 
@@ -291,11 +295,18 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
     /// moves a few elements, so the bit-exact bars hold under the wheel's library only (USER 2026-10-21).
     static let runsReferenceKernels: Bool = {
         guard let loaded = NFKMLXGPU.metalLibraryURL else { return false }
-        let library = "mlxlmvenv/lib/python3.12/site-packages/mlx/lib/mlx.metallib"
         let stores = [NFKMLXValidationConfig.root,
                       FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".inferkit-validation")]
+        // The venv's lib directory names its interpreter (`python3.12`), whichever one built it.
+        func wheelLibraries(in store: URL) -> [URL] {
+            let lib = store.appendingPathComponent("mlxlmvenv/lib")
+            let interpreters = (try? FileManager.default.contentsOfDirectory(atPath: lib.path)) ?? []
+            return interpreters.filter { $0.hasPrefix("python3.") }.sorted().map {
+                lib.appendingPathComponent($0).appendingPathComponent("site-packages/mlx/lib/mlx.metallib")
+            }
+        }
         let candidates = NFKMLXValidationConfig.environment["IK_MLXLM_METALLIB"].map { [URL(fileURLWithPath: $0)] }
-            ?? stores.map { $0.appendingPathComponent(library) }
+            ?? stores.flatMap(wheelLibraries)
         guard let wheel = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else { return false }
         func digest(_ url: URL) -> SHA256Digest? {
             (try? Data(contentsOf: url, options: .mappedIfSafe)).map { SHA256.hash(data: $0) }
@@ -310,13 +321,15 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
     /// Llama 3.2 1B's llama3 table: 22 of 32 periods apart, at most 14 steps, the smoothed band the widest.
     static let rotaryTableSteps: Int64 = 14
 
-    /// The largest distance between two float32 arrays, in representable steps.
+    /// The largest distance between two float32 arrays of one length, in representable steps; `Int64.max`
+    /// for arrays of different lengths.
     static func floatSteps(_ a: [Float], _ b: [Float]) -> Int64 {
-        zip(a, b).map { abs(Int64($0.bitPattern) - Int64($1.bitPattern)) }.max() ?? 0
+        guard a.count == b.count else { return .max }
+        return zip(a, b).map { abs(Int64($0.bitPattern) - Int64($1.bitPattern)) }.max() ?? 0
     }
 
     /// Puts `table` in every layer's rotary, as the periods `MLXFast.RoPE` reads.
-    static func useRotaryTable(_ table: MLXArray, in net: NFKMLXLanguageNet) {
+    static func useRotaryTable(_ table: MLXArray?, in net: NFKMLXLanguageNet) {
         for layer in net.model.layers {
             layer.attention.rope.periods = table
         }
@@ -355,12 +368,15 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
         if let theirs = record["rope.freqs"] {
             let ours = try XCTUnwrap(net.model.layers[0].attention.rope.periods, "the scaled rotary carries a period table")
             let a = ours.asArray(Float.self), b = theirs.asArray(Float.self)
+            XCTAssertEqual(a.count, b.count, "\(label)'s rotary table has mlx_lm's length")
             let apart = zip(a, b).enumerated().filter { $0.element.0 != $0.element.1 }
                 .map { "\($0.offset): \($0.element.0) vs \($0.element.1)" }
             let rotary = net.model.layers[0].attention.rope
             let scaling = try XCTUnwrap(net.configuration.ropeScaling)
             let recomputed = NFKLMRotary.mlxLlama3Periods(dimensions: rotary.dimensions, base: rotary.base, scaling: scaling)
-            let recomputedApart = zip(recomputed.asArray(Float.self), b).filter { $0 != $1 }.count
+            let recomputedValues = recomputed.asArray(Float.self)
+            XCTAssertEqual(recomputedValues.count, b.count)
+            let recomputedApart = zip(recomputedValues, b).filter { $0 != $1 }.count
             print("SEAMS \(label) rope path: placement \(rotary.placement), kind \(scaling.kind), base \(rotary.base), "
                   + "dimensions \(rotary.dimensions), factor \(scaling.factor), low \(scaling.lowFrequencyFactor), "
                   + "high \(scaling.highFrequencyFactor), original \(scaling.originalMaxPositionEmbeddings); "
@@ -394,7 +410,7 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
             rows.append(compared("k_rope", attention.rope(keys.transposed(0, 2, 1, 3), offset: 0), try ref("k_rope")))
             let values = try ref("v_proj").reshaped([1, length, keyValueHeads, width]).transposed(0, 2, 1, 3)
             let attended = attention.attended(queries: try ref("q_rope"), keys: try ref("k_rope"), values: values,
-                                              mask: mask)
+                                              mask: mask, causal: true)
             rows.append(compared("attention", attended.transposed(0, 2, 1, 3).reshaped([1, length, heads * width]),
                                  try ref("attention")))
             rows.append(compared("o_proj", attention.outputProjection(try ref("attention")), try ref("o_proj")))
@@ -406,7 +422,7 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
             rows.append(compared("swiglu", feedForward.activated(gate: try ref("gate"), up: try ref("up")), try ref("swiglu")))
             rows.append(compared("down", feedForward.down(try ref("swiglu")), try ref("down")))
             rows.append(compared("output", try ref("attended") + (try ref("down")), try ref("output")))
-            chained = block(chained, mask: mask.asType(chained.dtype), cache: nil, layer: index)
+            chained = block(chained, mask: mask.asType(chained.dtype), cache: nil, layer: index, maskIsCausal: true)
             rows.append(compared("chained", chained, try ref("output")))
             print("SEAMS \(label) layer \(index): \(rows.joined(separator: ", "))")
             NFKMLXGPU.clearCache()

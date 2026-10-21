@@ -466,6 +466,7 @@ extension NFKMLXDeepSeek {
         let manifest: [String: Any] = ["tokenizer": ["type": "bpe-bytelevel",
                                                      "pretokenizer": "gpt2",
                                                      "specialTokens": added]]
+        defer { try? FileManager.default.removeItem(at: files) }
         return try? NFKTokenizer(forManifest: manifest, directory: files)
     }
 

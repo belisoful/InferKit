@@ -428,6 +428,7 @@ public final class NFKMLXModernBERTReranker: NSObject {
             return nil
         }
         let manifest: [String: Any] = ["tokenizer": ["type": "bpe-bytelevel", "pretokenizer": "gpt2"]]
+        defer { try? FileManager.default.removeItem(at: files) }
         return try? NFKTokenizer(forManifest: manifest, directory: files)
     }
 }

@@ -115,6 +115,10 @@ public struct NFKMLXGenerationOptions: Sendable {
     /// default because a base model wants the plain text, and a raw `NFKInputPrompt` is always used
     /// verbatim whatever this says.
     public var chatTemplate: NFKMLXChatTemplate = .none
+    /// Whether a message request renders through the release's own chat template when ``chatTemplate`` is
+    /// `.none` and the request names none. Defaults to true; false flattens the messages as `.none` does.
+    /// Introduced in InferKit 0.4.0.
+    public var usesReleaseChatTemplate = true
 
     /// Stores the key-value cache quantized, or `nil` to keep it in full precision.
     ///
@@ -651,7 +655,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         }
         // An instruct release answers the turns it was trained on, so a message list takes the release's
         // template unless the request or the caller chose one; a raw prompt is read verbatim either way.
-        if case .none = options.chatTemplate, request.messages != nil, let releaseTemplate,
+        if case .none = options.chatTemplate, options.usesReleaseChatTemplate, request.messages != nil, let releaseTemplate,
            request.parameter(forKey: NFKMLXGenerationParameterKey.chatTemplate) == nil {
             options.chatTemplate = releaseTemplate
         }
@@ -1736,7 +1740,12 @@ public final class NFKMLXLanguage: NSObject {
             }
             files = extracted
         }
-        return try NFKTokenizer(forManifest: manifest, directory: files)
+        let tokenizer = try NFKTokenizer(forManifest: manifest, directory: files)
+        // The core reader keeps the vocabulary and merges it read, so the extracted pair is scratch.
+        if files != directory {
+            try? FileManager.default.removeItem(at: files)
+        }
+        return tokenizer
     }
 
     /// How a release's tokenizer encodes text, as far as this package reproduces it.
@@ -1887,7 +1896,8 @@ public final class NFKMLXLanguage: NSObject {
     }
 
     /// Writes a tokenizer.json's byte-level BPE vocabulary and merges as the `vocab.json` and
-    /// `merges.txt` pair the core reader takes, into a scratch directory, and returns it.
+    /// `merges.txt` pair the core reader takes, into a scratch directory, and returns it. The caller removes
+    /// the directory once the tokenizer has read it.
     static func byteLevelFiles(fromTokenizerJSON url: URL) -> URL? {
         guard let data = try? Data(contentsOf: url),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }

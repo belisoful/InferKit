@@ -21,7 +21,6 @@ import MLXFast
 import MLXNN
 import MLXRandom
 
-/// The geometry of a decoder-only language model.
 /// Where a half-precision decoder forward rounds, by the implementation its release is published for.
 /// Introduced in InferKit 0.4.0.
 public enum NFKMLXHalfPrecisionPlacement: Sendable, Equatable {
@@ -33,6 +32,7 @@ public enum NFKMLXHalfPrecisionPlacement: Sendable, Equatable {
     case mlx
 }
 
+/// The geometry of a decoder-only language model.
 public struct NFKMLXLanguageConfiguration: Sendable {
     public var hiddenSize: Int
     public var layerCount: Int
@@ -906,8 +906,12 @@ final class NFKLMAttention: Module {
         return concatenated([-x[.ellipsis, half...], x[.ellipsis, 0 ..< half]], axis: -1)
     }
 
+    /// `maskIsCausal` states that `mask` is the plain causal mask, aligned to the last key, which the
+    /// fused kernel's causal mode reproduces; any other mask, a key-padding one among them, reaches it as
+    /// an array.
     func callAsFunction(_ x: MLXArray, mask: MLXArray?, cache: NFKMLXKeyValueCache?,
-                        layer: Int, rope multimodalRope: (cos: MLXArray, sin: MLXArray)? = nil) -> MLXArray {
+                        layer: Int, rope multimodalRope: (cos: MLXArray, sin: MLXArray)? = nil,
+                        maskIsCausal: Bool = false) -> MLXArray {
         let (batch, length, _) = (x.shape[0], x.shape[1], x.shape[2])
 
         var queries = queryProjection(x).reshaped([batch, length, heads, headDimensions])
@@ -948,18 +952,20 @@ final class NFKLMAttention: Module {
             attention = explicitAttention(queries: queries, keys: keys, values: values, mask: mask,
                                           offset: offset, length: length)
         } else {
-            attention = attended(queries: queries, keys: keys, values: values, mask: mask)
+            attention = attended(queries: queries, keys: keys, values: values, mask: mask, causal: maskIsCausal)
         }
         return outputProjection(attention.transposed(0, 2, 1, 3)
             .reshaped([batch, length, heads * headDimensions]))
     }
 
-    /// Full attention under the layer's placement. `mask` is the causal mask aligned to the last key, or
-    /// nil for a single query; mlx_lm hands the fused kernel the same mask as its `causal` mode.
-    func attended(queries: MLXArray, keys: MLXArray, values: MLXArray, mask: MLXArray?) -> MLXArray {
+    /// Full attention under the layer's placement. `mask` is nil for a single query. Where `causal` states
+    /// it is the plain causal mask, the mlx placement hands the fused kernel its `causal` mode, as mlx_lm
+    /// does; any other mask goes as an array.
+    func attended(queries: MLXArray, keys: MLXArray, values: MLXArray, mask: MLXArray?, causal: Bool = false) -> MLXArray {
         if rope.placement == .mlx {
+            let mode: MLXFast.ScaledDotProductAttentionMaskMode = mask.map { causal ? .causal : .array($0.asType(queries.dtype)) } ?? .none
             return MLXFast.scaledDotProductAttention(queries: queries, keys: keys, values: values, scale: scale,
-                                                     mask: mask == nil ? .none : .causal)
+                                                     mask: mode)
         }
         // A `.checkpoint`-precision load makes this a bf16 module, and the fused attention refuses
         // a float32 mask that does not promote to its own type — invisible at float32.
@@ -1368,8 +1374,9 @@ final class NFKLMBlock: Module {
     }
 
     func callAsFunction(_ x: MLXArray, mask: MLXArray?, cache: NFKMLXKeyValueCache?,
-                        layer: Int, rope: (cos: MLXArray, sin: MLXArray)? = nil) -> MLXArray {
-        let attended = x + attention(attentionNorm(x), mask: mask, cache: cache, layer: layer, rope: rope)
+                        layer: Int, rope: (cos: MLXArray, sin: MLXArray)? = nil, maskIsCausal: Bool = false) -> MLXArray {
+        let attended = x + attention(attentionNorm(x), mask: mask, cache: cache, layer: layer, rope: rope,
+                                     maskIsCausal: maskIsCausal)
         return attended + feedForward(feedForwardNorm(attended))
     }
 }
@@ -1452,7 +1459,7 @@ public final class NFKMLXLanguageNet: Module {
             ? NFKMLXLanguageNet.causalMask(length, offset: cache?.maskCacheLength ?? 0)
             : nil
         for (index, layer) in model.layers.enumerated() {
-            hidden = layer(hidden, mask: mask, cache: cache, layer: index, rope: multimodal?.rope)
+            hidden = layer(hidden, mask: mask, cache: cache, layer: index, rope: multimodal?.rope, maskIsCausal: true)
             // The deepstack adds a vision feature map to the image-token positions of the first several
             // layers, the reference's `_deepstack_process`, in the hidden state's type.
             if let multimodal, index < multimodal.features.count {
@@ -1483,7 +1490,7 @@ public final class NFKMLXLanguageNet: Module {
                                     MLXArray(Float(-1e9)))
         }
         for (index, layer) in model.layers.enumerated() {
-            hidden = layer(hidden, mask: mask, cache: nil, layer: index)
+            hidden = layer(hidden, mask: mask, cache: nil, layer: index, maskIsCausal: keyPadding == nil)
             states.append(hidden)
         }
         states[states.count - 1] = model.norm(hidden)

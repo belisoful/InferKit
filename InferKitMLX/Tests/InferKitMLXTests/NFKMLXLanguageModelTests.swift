@@ -748,6 +748,27 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         XCTAssertGreaterThan(cosines[1], cosines[0], "5 bits track the float mixture closer than 3: \(cosines)")
     }
 
+    // A key-padded forward (FLUX.2's text encoder reads one) keeps its padding under the mlx placement: the
+    // fused kernel takes the padding mask as an array, so the pad rows match the torch placement's and differ
+    // from an unpadded forward's.
+    func testAKeyPaddedForwardUnderTheMLXPlacementMasksThePadKeys() throws {
+        try requireMLXRuntime()
+        var configuration = NFKMLXLanguageConfiguration.tiny
+        MLXRandom.seed(21)
+        let torch = NFKMLXLanguage.makeNet(configuration)
+        configuration.halfPrecisionPlacement = .mlx
+        let placed = NFKMLXLanguage.makeNet(configuration)
+        placed.update(parameters: torch.parameters())
+        let tokens = MLXArray([5, 9, 11, 3, 0, 0].map(Int32.init)).reshaped([1, 6])
+        let padding = MLXArray([true, true, true, true, false, false])
+        let reference = try XCTUnwrap(torch.layerStates(tokens, keyPadding: padding).last)
+        let padded = try XCTUnwrap(placed.layerStates(tokens, keyPadding: padding).last)
+        let unpadded = try XCTUnwrap(placed.layerStates(tokens).last)
+        XCTAssertLessThan(abs(padded - reference).max().item(Float.self), 1e-4)
+        XCTAssertGreaterThan(abs(unpadded[0..., 4...] - reference[0..., 4...]).max().item(Float.self), 1e-3,
+                             "the pad rows read the pad keys only without the padding mask")
+    }
+
     // MARK: Keys grouped along the sequence
 
     /// Eight bits, groups of 32 positions (the smallest MLX packs) — small enough that a short prompt

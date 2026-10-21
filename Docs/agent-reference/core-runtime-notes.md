@@ -29,13 +29,17 @@ that type-checks and returns nil on a mismatch (no crashing cast). Image / mask 
 factory is the public entry, so a new type needs no header change.
 
 - `bpe-bytelevel` → `NFKByteLevelBPETokenizer`, the GPT-2 / Qwen / o200k / Llama 3 scheme. The
-  pre-tokenization pattern is selectable (`"pretokenizer": "gpt2"` (default), `"qwen2"`, `"qwen35"`,
-  `"o200k"` — OpenAI's o200k_base / o200k_harmony, which gpt-oss ships: digits in runs of at most three
-  and words split wherever their case pattern turns over —, `"llama3"` — Qwen2's pattern with digits in
-  runs of at most three, which Llama 3, Mistral's Tekken (Mistral-Small 3, Pixtral, FLUX.2's text
-  encoder), and Granite 4.0 ship —, or `"nemotron"` — o200k's case-pattern words without the
-  contraction, and single digits — in the manifest spec), and
-  the choice is load-bearing: a merge cannot cross a pretoken boundary, so a Qwen vocabulary encoded
+  pre-tokenization pattern is selectable in the manifest spec:
+  - `"gpt2"`, the default;
+  - `"qwen2"` and `"qwen35"`;
+  - `"o200k"`, OpenAI's o200k_base and o200k_harmony, which gpt-oss ships: digits in runs of at most
+    three, and words split wherever their case pattern turns over;
+  - `"llama3"`, Qwen2's pattern with digits in runs of at most three, which Llama 3, Mistral's Tekken
+    (Mistral-Small 3, Pixtral, FLUX.2's text encoder), and Granite 4.0 ship;
+  - `"nemotron"`, o200k's case-pattern words without the contraction, and single digits;
+  - `"smollm"`, GPT-2's pattern after each digit is isolated, in two stages.
+  The choice
+  is load-bearing: a merge cannot cross a pretoken boundary, so a Qwen vocabulary encoded
   under the GPT-2 pattern produces different, valid-looking ids for the same text ("-pop" is one
   Qwen2 pretoken because a letter run may absorb one leading punctuation character; digits split
   singly; a punctuation run absorbs trailing newlines; whitespace runs ending in a newline hold

@@ -182,29 +182,16 @@ Each gap is a judgment refusal until the loader handles it. Otherwise the load s
 wrong output with no error. Closing a gap removes its entry here and widens the judgment in the same
 change.
 
-- **mlx-community quantized releases do not load.** `NFKMLXWeights.loadCheckpoint(url:)` reads
-  quantization only from the `inferkit.quantization` safetensors metadata that `NFKMLXWeights.save`
-  writes. An mlx_lm release records it in `config.json` (`quantization` / `quantization_config`
-  with `bits` and `group_size`), so `NFKMLXQuantization.matchStructure` sees no quantization and the
-  packed `weight` / `scales` / `biases` arrays meet float layers. The sharded path in
-  `NFKMLXLanguage.loadWeights(into:fromDirectory:precision:)` also assumes a quantized release is a
-  single file, which mlx_lm's sharded releases contradict.
-- **Pre-tokenization falls back to Qwen2 silently.** `NFKMLXLanguage.pretokenizationName(inDirectory:)`
-  recognizes the o200k and Qwen3.5 split patterns by substring and returns `"qwen2"` for every other
-  one. A survey of every `tokenizer.json` in the validation store (2026-10-20) found shipped releases
-  read wrongly today:
-  - Mistral-Small 3, Pixtral, the FLUX.2 Mistral text encoder (Tekken), and Granite 4.0-H declare
-    Llama 3's pattern, which splits digits in runs of up to three (`\p{N}{1,3}`). They get Qwen2's,
-    which splits each digit.
-  - Nemotron-H declares an o200k-style letter rule with single digits and no contractions. It contains
-    `\p{Lu}\p{Lt}`, so it gets o200k, which groups digits in threes.
-  - Granite Speech 3.3 declares a bare `ByteLevel` with `use_regex`, the GPT-2 pattern. It gets Qwen2's.
-- **SentencePiece-style tokenizers are not read.** `NFKMLXLanguage.releaseTokenizer(inDirectory:)`
-  builds a byte-level BPE tokenizer. Mixtral's `tokenizer.json` is a `Metaspace` BPE with
-  `byte_fallback`, which that reader turns into byte-level BPE and loses most of the text.
-- **`ignore_merges` is not implemented.** gpt-oss, Tekken, and Nemotron declare it. The core BPE merges
-  every word.
-- **The NFC normalizer applies only to the Qwen3.5 pattern.** Qwen2 and Qwen3 declare NFC as well.
+The loader gaps this list held are closed. mlx_lm's quantized releases load, single-file and sharded,
+dense and mixture (`NFKMLXQuantization.releaseQuantization(configJSON:)`). The release tokenizer reader
+(`NFKMLXLanguage.tokenizerScheme(tokenizerJSON:tokenizerConfiguration:)`) reproduces each shipped
+family's pre-tokenization (Qwen2, Qwen3.5, o200k, Llama 3, Nemotron, GPT-2, SmolLM), its NFC normalizer,
+`ignore_merges`, and Mistral's `Metaspace` BPE with byte fallback, or refuses a scheme it does not
+reproduce by name.
+
+Open: the judgment (`NFKMLXRepositoryMatching.swift`) still refuses a `quantization` block,
+`ignore_merges`, and the Llama 3, Nemotron, and SmolLM patterns. Widening it to what the loader now reads
+is the resolver's next change, which removes this entry.
 
 ## Phasing
 

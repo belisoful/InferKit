@@ -172,13 +172,6 @@ extension NFKMLXLanguage {
         }
     }
 
-    /// Rebuilds the tokenizer a GGUF embeds, for the core byte-level BPE reader.
-    ///
-    /// @discussion GGUF stores a GPT-2-family tokenizer as its already byte-encoded token strings
-    /// (`Ġcapital`), its merge rules, and a per-token type that marks the special tokens. These are
-    /// written to the `vocab.json`/`merges.txt` the core reader takes, the same route the ModernBERT
-    /// tokenizer uses. The pre-tokenization pattern is the release's own (`qwen2` for a Qwen vocabulary,
-    /// `gpt2` otherwise), because a merge cannot cross a pre-token boundary.
     /// The `tokenizer.ggml.pre` names whose splitting the core reproduces, each as the release's own
     /// `tokenizer.json` states it: Qwen2's pattern with NFC, Llama 3's with `ignore_merges`, SmolLM's
     /// isolated digits, and GPT-2's. Any other name builds no tokenizer, since a near pattern encodes the
@@ -204,6 +197,14 @@ extension NFKMLXLanguage {
                       eosToken: marker("tokenizer.ggml.eos_token_id"))
     }
 
+    /// Rebuilds the tokenizer a GGUF embeds, for the core byte-level BPE reader.
+    ///
+    /// @discussion GGUF stores a GPT-2-family tokenizer as its already byte-encoded token strings
+    /// (`Ġcapital`), its merge rules, and a per-token type that marks the special tokens. These are
+    /// written to the `vocab.json`/`merges.txt` the core reader takes, the same route the ModernBERT
+    /// tokenizer uses. The pre-tokenization is the one `tokenizer.ggml.pre` names
+    /// (``ggufPretokenizations``), because a merge cannot cross a pre-token boundary. A name outside that
+    /// table builds no tokenizer.
     static func ggufTokenizer(_ gguf: NFKMLXGGUF) -> NFKTokenizer? {
         guard let tokens = gguf.metadataStringArray(forKey: "tokenizer.ggml.tokens"),
               let merges = gguf.metadataStringArray(forKey: "tokenizer.ggml.merges") else { return nil }
