@@ -60,14 +60,17 @@ typedef NS_ENUM(NSInteger, NFKHFHubAttemptOutcome) {
 	transfer.attemptDone = dispatch_semaphore_create(0);
 	NSError *error = nil;
 	BOOL succeeded = [transfer runWithConfiguration:configuration error:&error];
-	BOOL keeps = report.download.isPaused && !report.download.isCancelled;
-	if (!succeeded && !keeps) {
-		[NSFileManager.defaultManager removeItemAtURL:destinationURL error:NULL];
-		if (outError != NULL) {
-			*outError = error;
-		}
+	if (succeeded) {
+		return YES;
 	}
-	return succeeded;
+	BOOL keeps = report.download.isPaused && !report.download.isCancelled;
+	if (!keeps) {
+		[NSFileManager.defaultManager removeItemAtURL:destinationURL error:NULL];
+	}
+	if (outError != NULL) {
+		*outError = error;
+	}
+	return NO;
 }
 
 + (nullable NSString *)entityTagOfPartialFileAtURL:(NSURL *)URL

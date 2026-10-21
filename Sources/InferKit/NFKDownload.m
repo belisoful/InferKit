@@ -117,6 +117,17 @@ static NSCountedSet<NSString *> *NFKDownloadActiveSnapshots(void)
 	return snapshots;
 }
 
+/*! Partial files a fetch in this process reads or writes, counted per fetch. */
+static NSCountedSet<NSString *> *NFKDownloadActivePartials(void)
+{
+	static NSCountedSet<NSString *> *partials = nil;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		partials = [NSCountedSet set];
+	});
+	return partials;
+}
+
 static NSRecursiveLock *NFKDownloadRegistryLock(void)
 {
 	static NSRecursiveLock *lock = nil;
@@ -166,6 +177,8 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 @property (nonatomic, strong) NSMutableDictionary<NSUUID *, dispatch_block_t> *cancellationHandlers;
 @property (nonatomic, strong) NSMutableSet<NSString *> *snapshotKeys;
 @property (nonatomic, strong) NSMutableArray<NSArray<NSNumber *> *> *rateSamples;
+/*! The partial files a pause kept, which a cancel removes. */
+@property (nonatomic, strong) NSMutableArray<NSURL *> *keptPartialURLs;
 /*! The kept partial bytes counted as received when their transfers started, which the rate leaves out. */
 @property (nonatomic, assign) long long keptByteCount;
 @property (nonatomic, assign) NSInteger activityCount;
@@ -204,6 +217,7 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 		_declaredLocalPaths = [NSMutableSet set];
 		_cancellationHandlers = [NSMutableDictionary dictionary];
 		_snapshotKeys = [NSMutableSet set];
+		_keptPartialURLs = [NSMutableArray array];
 		_rateSamples = [NSMutableArray array];
 		_progress = [NSProgress discreteProgressWithTotalUnitCount:0];
 		_progress.kind = NSProgressKindFile;
@@ -499,16 +513,18 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 			return;
 		}
 	}
-	[self finish];
+	[self finishWithActivitiesEnded:YES];
 }
 
-/*! Moves to the final state the activities and cancellation call for, once. */
-- (void)finish
+/*! Moves to the final state the activities, cancellation, and pause call for, once. activitiesEnded is
+	YES when the last activity ended. */
+- (void)finishWithActivitiesEnded:(BOOL)activitiesEnded
 {
 	NFKDownloadCompletionHandler completion = nil;
 	NSURL *resultURL = nil;
 	NSError *finalError = nil;
 	NSArray<NSString *> *snapshotKeys = nil;
+	NSArray<NSURL *> *removedPartialURLs = nil;
 	@synchronized (self.lock) {
 		if ([self stateIsFinal:self.state]) {
 			return;
@@ -517,7 +533,8 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 		if (self.cancelled) {
 			self.state = NFKDownloadStateCancelled;
 			self.error = [NFKDownload cancellationError];
-		} else if (self.paused) {
+			removedPartialURLs = [self takeKeptPartialURLsLocked];
+		} else if (self.paused && !(activitiesEnded && [self everyFileIsWholeLocked])) {
 			self.state = NFKDownloadStatePaused;
 			self.error = [NFKDownload pauseError];
 		} else if (self.firstActivityError != nil) {
@@ -547,6 +564,7 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 		[NFKDownloadActiveSnapshots() removeObject:key];
 	}
 	[NFKDownloadRegistryLock() unlock];
+	[NFKDownload removePartialFilesAtURLs:removedPartialURLs];
 
 	// Queued behind the final report, so a finished wait has seen every report and the completion.
 	NSCondition *finishedCondition = self.finishedCondition;
@@ -561,8 +579,40 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 	});
 }
 
+/*! YES when no activity reported an error and the download holds files, each of them whole, so a pause
+	that arrived after the last of them completes the download. */
+- (BOOL)everyFileIsWholeLocked
+{
+	if (self.firstActivityError != nil || self.fileRecords.count == 0) {
+		return NO;
+	}
+	for (NFKDownloadFileProgress *record in self.fileRecords) {
+		if (!record.completed) {
+			return NO;
+		}
+	}
+	return YES;
+}
+
+- (NSArray<NSURL *> *)takeKeptPartialURLsLocked
+{
+	NSArray<NSURL *> *URLs = [self.keptPartialURLs copy];
+	[self.keptPartialURLs removeAllObjects];
+	return URLs;
+}
+
+- (void)keepPartialFileAtURL:(NSURL *)partialURL
+{
+	@synchronized (self.lock) {
+		[self.keptPartialURLs addObject:partialURL];
+	}
+}
+
 - (void)cancel
 {
+	if ([self cancelIfPaused]) {
+		return;
+	}
 	NSArray<dispatch_block_t> *handlers = nil;
 	BOOL finishNow = NO;
 	@synchronized (self.lock) {
@@ -580,8 +630,30 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 		[self.progress cancel];
 	}
 	if (finishNow) {
-		[self finish];
+		[self finishWithActivitiesEnded:NO];
 	}
+}
+
+/*! Moves a paused download to cancelled and removes the partial files its pause kept; NO when the
+	download is not paused. */
+- (BOOL)cancelIfPaused
+{
+	NSArray<NSURL *> *removedPartialURLs = nil;
+	@synchronized (self.lock) {
+		if (self.state != NFKDownloadStatePaused) {
+			return NO;
+		}
+		self.cancelled = YES;
+		self.state = NFKDownloadStateCancelled;
+		self.error = [NFKDownload cancellationError];
+		removedPartialURLs = [self takeKeptPartialURLsLocked];
+		[self reportLockedForced:YES];
+	}
+	[NFKDownload removePartialFilesAtURLs:removedPartialURLs];
+	if (!self.progress.isCancelled) {
+		[self.progress cancel];
+	}
+	return YES;
 }
 
 - (void)pause
@@ -603,7 +675,7 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 		[self.progress pause];
 	}
 	if (finishNow) {
-		[self finish];
+		[self finishWithActivitiesEnded:NO];
 	}
 }
 
@@ -661,6 +733,11 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 		NFKDownloadFileProgress *record = [self recordLockedForLocalURL:localURL path:path expected:expected];
 		if (record.expectedByteCount < 0 && expected >= 0) {
 			record.expectedByteCount = expected;
+		}
+		// A file the plan found in the cache counted its bytes; it is gone or changed, so its count starts
+		// over from the kept bytes.
+		if (record.cached) {
+			record.receivedByteCount = 0;
 		}
 		record.cached = NO;
 		record.completed = NO;
@@ -796,6 +873,37 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 {
 	[NFKDownloadRegistryLock() lock];
 	[NFKDownloadActiveSnapshots() removeObject:key];
+	[NFKDownloadRegistryLock() unlock];
+}
+
++ (NSString *)holdPartialURL:(NSURL *)partialURL
+{
+	NSString *key = NFKDownloadSnapshotKey(partialURL);
+	[NFKDownloadRegistryLock() lock];
+	[NFKDownloadActivePartials() addObject:key];
+	[NFKDownloadRegistryLock() unlock];
+	return key;
+}
+
++ (void)endHoldOfPartialKey:(NSString *)key
+{
+	[NFKDownloadRegistryLock() lock];
+	[NFKDownloadActivePartials() removeObject:key];
+	[NFKDownloadRegistryLock() unlock];
+}
+
+/*! Removes each partial file no fetch in this process holds. */
++ (void)removePartialFilesAtURLs:(nullable NSArray<NSURL *> *)URLs
+{
+	if (URLs.count == 0) {
+		return;
+	}
+	[NFKDownloadRegistryLock() lock];
+	for (NSURL *URL in URLs) {
+		if ([NFKDownloadActivePartials() countForObject:NFKDownloadSnapshotKey(URL)] == 0) {
+			[NSFileManager.defaultManager removeItemAtURL:URL error:NULL];
+		}
+	}
 	[NFKDownloadRegistryLock() unlock];
 }
 

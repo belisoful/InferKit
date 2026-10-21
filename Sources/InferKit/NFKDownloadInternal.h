@@ -38,6 +38,8 @@ typedef void (^NFKDownloadCompletionHandler)(NSURL * _Nullable localURL, NSError
 - (void)fileDidFinishAtLocalURL:(NSURL *)localURL path:(NSString *)path byteCount:(long long)byteCount cached:(BOOL)cached;
 /*! The transfer of the file stopped without the file. */
 - (void)fileDidFailAtLocalURL:(NSURL *)localURL;
+/*! A pause kept the partial file at partialURL, which a later cancel removes. */
+- (void)keepPartialFileAtURL:(NSURL *)partialURL;
 
 /*! Registers a block cancel runs; returns a token for removeCancellationHandler:. A download already
 	cancelled runs the block at once. */
@@ -52,6 +54,12 @@ typedef void (^NFKDownloadCompletionHandler)(NSURL * _Nullable localURL, NSError
 + (NSString *)holdSnapshotURL:(NSURL *)snapshotURL;
 /*! Ends one hold that holdSnapshotURL: returned key for. */
 + (void)endHoldOfSnapshotKey:(NSString *)key;
+
+/*! Registers the partial file as one a fetch reads or writes until endHoldOfPartialKey: is sent the
+	returned key, so a cancel of a paused download leaves it in place. */
++ (NSString *)holdPartialURL:(NSURL *)partialURL;
+/*! Ends one hold that holdPartialURL: returned key for. */
++ (void)endHoldOfPartialKey:(NSString *)key;
 
 /*! YES when an unfinished download or a hold in this process has the snapshot folder in use. */
 + (BOOL)isSnapshotURLInUse:(NSURL *)snapshotURL;

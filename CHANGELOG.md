@@ -89,6 +89,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKDownloadStatePaused` with `NFKDownloadErrorPaused`. The next download of the same files, in this
   process or after a restart, continues the partial with an HTTP Range request that the file's ETag
   guards, and starts it over when the file changed. The `NSProgress`'s pause pauses the download.
+- `-[NFKDownload cancel]` on a paused download removes the partial files the pause kept and finishes
+  it in `NFKDownloadStateCancelled`. A pause that arrives once every file is whole leaves the download
+  to complete.
 - `NFKDownloadStatus` reports kept partials (`partialPaths`, `partialByteCount`), and a source with only
   a kept partial reads as `NFKDownloadPresencePartial`. A removal plan removes a source's kept partials.
 - A download's progress counts the bytes of the files already in the cache and of a kept partial as

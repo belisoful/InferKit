@@ -100,7 +100,8 @@ extern const long long NFKDownloadUnknownByteCount;
 @property (nonatomic, readonly, copy) NSString *path;
 /*! Where the file lands in the cache. */
 @property (nonatomic, readonly, copy) NSURL *localURL;
-/*! The bytes received so far. Never decreases. */
+/*! The bytes received so far. Never decreases, except for a file the plan found in the cache that is
+	gone or changed when its turn comes: its count starts over from the bytes its transfer continues. */
 @property (nonatomic, readonly) long long receivedByteCount;
 /*! The file's size; NFKDownloadUnknownByteCount until the plan or the server reports it. */
 @property (nonatomic, readonly) long long expectedByteCount;
@@ -128,7 +129,8 @@ extern const long long NFKDownloadUnknownByteCount;
 @interface NFKDownloadProgress : NSObject
 
 @property (nonatomic, readonly) NFKDownloadState state;
-/*! The bytes received across every file. Never decreases. */
+/*! The bytes received across every file. Never decreases, except when a file the plan found in the
+	cache is gone or changed when its turn comes and its count starts over. */
 @property (nonatomic, readonly) long long receivedByteCount;
 /*! The bytes the download transfers, as far as they are known. */
 @property (nonatomic, readonly) long long expectedByteCount;
@@ -179,7 +181,8 @@ typedef void (^ NS_SWIFT_SENDABLE NFKDownloadProgressHandler)(NFKDownloadProgres
 				ends.
 
 				Cancelling stops the transfer in flight, removes its partial file, and refuses every
-				later transfer. Pausing stops the same way and keeps the partial file. A file reaches
+				later transfer. Pausing stops the same way and keeps the partial file, which a later
+				cancel removes. A file reaches
 				its cache location only whole: the bytes stream into a temporary .download file
 				beside it, which is moved into place at the end and removed on failure or
 				cancellation. A transfer that drops is resumed with an HTTP Range request, up to three
@@ -231,7 +234,9 @@ typedef void (^ NS_SWIFT_SENDABLE NFKDownloadProgressHandler)(NFKDownloadProgres
 @property (nonatomic, readonly, strong) NSProgress *progress;
 
 /*! Cancels the download: the transfer in flight stops, its partial file is removed, and no later
-	transfer starts. Files already whole stay in the cache. Does nothing once finished. */
+	transfer starts. Files already whole stay in the cache. A paused download moves to
+	NFKDownloadStateCancelled and removes the partial files its pause kept, except one that a download
+	in this process continues. Does nothing once completed, failed, or cancelled. */
 - (void)cancel;
 
 /*!
@@ -239,10 +244,12 @@ typedef void (^ NS_SWIFT_SENDABLE NFKDownloadProgressHandler)(NFKDownloadProgres
 	@abstract   Pauses the download: the transfer in flight stops, its partial file stays, and no later
 				transfer starts.
 	@discussion The download finishes in NFKDownloadStatePaused with NFKDownloadErrorPaused, and whole
-				files stay in the cache. A later download of the same source (downloadModelSource:,
+				files stay in the cache. A pause that arrives once every file is whole leaves the
+				download to complete. A later download of the same source (downloadModelSource:,
 				downloadRepo:, or a plan) continues each kept file from its last byte, so a pause
 				survives the process. -[NFKHFHub downloadStatusForModelSource:] counts the kept bytes,
-				and a removal plan for the source removes them. Does nothing once finished. The
+				and a removal plan for the source or a cancel of the download removes them. Does
+				nothing once finished. The
 				NSProgress's pause pauses the download. Introduced in InferKit 0.4.0.
 */
 - (void)pause;
@@ -275,8 +282,8 @@ typedef void (^ NS_SWIFT_SENDABLE NFKDownloadProgressHandler)(NFKDownloadProgres
 - (void)beginActivity;
 
 /*! Marks the end of work begun with beginActivity. When the last activity ends the download
-	finishes: cancelled when cancel was called, failed with the first error an activity reported,
-	and completed otherwise. */
+	finishes: cancelled when cancel was called, paused when pause was called and a file is not whole,
+	failed with the first error an activity reported, and completed otherwise. */
 - (void)endActivityWithError:(nullable NSError *)error NS_SWIFT_NAME(endActivity(error:));
 
 @end

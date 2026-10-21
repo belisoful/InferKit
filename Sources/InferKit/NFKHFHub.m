@@ -536,6 +536,7 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 	// Held for the call, so a trim another download runs meanwhile cannot evict the snapshot, with or
 	// without a current NFKDownload.
 	NSString *holdKey = [NFKDownload holdSnapshotURL:snapshotURL];
+	NSString *partialHoldKey = nil;
 	@try {
 		if ([fileManager fileExistsAtPath:localURL.path]) {
 			if ([self cachedFileAtURL:localURL matchesSHA256:expectedSHA256 byteCount:expectedByteCount]) {
@@ -562,26 +563,37 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 		[self markSnapshotUsedAtURL:snapshotURL];
 
 		NSURL *partialURL = [localURL URLByAppendingPathExtension:@"download"];
+		partialHoldKey = [NFKDownload holdPartialURL:partialURL];
 		NSString *keptTag = nil;
 		long long kept = [self keptByteCountOfPartialURL:partialURL expectedByteCount:expectedByteCount entityTag:&keptTag];
+		// A partial that already holds every listed byte was stopped before it was checked and moved. One
+		// that fails the check is fetched again.
+		BOOL whole = kept > 0 && kept == expectedByteCount
+			&& [self contentErrorOfFileAtURL:partialURL path:path expectedByteCount:expectedByteCount sha256:expectedSHA256] == nil;
+		if (kept == expectedByteCount && !whole) {
+			kept = 0;
+			keptTag = nil;
+		}
 		if (kept == 0) {
 			[fileManager removeItemAtURL:partialURL error:NULL];
 		}
 		[download fileWillStartAtLocalURL:localURL path:path expectedByteCount:expectedByteCount keptByteCount:kept];
-		// A partial that already holds every listed byte was stopped before it was checked and moved.
-		BOOL whole = kept > 0 && kept == expectedByteCount;
+		NSError *fetchError = nil;
 		if (!whole && ![self fetchURL:remoteURL toFileURL:partialURL localURL:localURL path:path
 					   expectedByteCount:expectedByteCount keptByteCount:kept keptEntityTag:keptTag
-								download:download error:outError]) {
-			if (!(download.isPaused && !download.isCancelled)) {
+								download:download error:&fetchError]) {
+			if (download.isPaused && !download.isCancelled) {
+				[download keepPartialFileAtURL:partialURL];
+			} else {
 				[fileManager removeItemAtURL:partialURL error:NULL];
 			}
 			[download fileDidFailAtLocalURL:localURL];
+			[self propagateError:fetchError ?: (download.isStopped ? download.stopError : nil) to:outError];
 			return nil;
 		}
 
-		NSError *contentError = [self contentErrorOfFileAtURL:partialURL path:path
-											 expectedByteCount:expectedByteCount sha256:expectedSHA256];
+		NSError *contentError = whole ? nil : [self contentErrorOfFileAtURL:partialURL path:path
+														  expectedByteCount:expectedByteCount sha256:expectedSHA256];
 		if (contentError != nil) {
 			[fileManager removeItemAtURL:partialURL error:NULL];
 			[download fileDidFailAtLocalURL:localURL];
@@ -605,6 +617,9 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 		[self trimCacheKeepingSnapshotURL:snapshotURL error:NULL];
 		return localURL;
 	} @finally {
+		if (partialHoldKey != nil) {
+			[NFKDownload endHoldOfPartialKey:partialHoldKey];
+		}
 		[NFKDownload endHoldOfSnapshotKey:holdKey];
 		if (scoped) {
 			[cacheDirectoryURL stopAccessingSecurityScopedResource];

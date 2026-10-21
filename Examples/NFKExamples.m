@@ -362,15 +362,19 @@
 	} completionHandler:^(NSURL *localURL, NSError *downloadError) {
 		[done fulfill];                                                // localURL: the cached file
 	}];
-	// [download cancel] stops it and leaves no partial file in the cache. [download pause] stops it and
-	// keeps the partial file, which the next download of the same files continues.
 	[self waitForExpectations:@[ done ] timeout:10];
 	XCTAssertEqual(download.state, NFKDownloadStateCompleted);
+	// Pause keeps the partial file, which the next download of the same files continues. Cancel leaves no
+	// partial file in the cache. Both do nothing once the download completes.
+	[download pause];                                                  // from a Pause button
+	[download cancel];                                                 // from a Cancel button
+	XCTAssertEqual(download.state, NFKDownloadStateCompleted);
 
-	// "Downloaded · 256 KB" and a Delete button.
+	// "Downloaded · 256 KB" and a Delete button. The status reads the cache only.
 	NFKDownloadStatus *status = [hub downloadStatusForModelSource:source];
 	XCTAssertEqual(status.presence, NFKDownloadPresenceComplete);
-	XCTAssertEqual(status.partialByteCount, 0LL, @"nothing paused is held beside the whole files");
+	long long held = status.byteCount + status.partialByteCount;       // whole files and kept partials
+	XCTAssertEqual(held, 256LL * 1024, @"nothing paused is held beside the whole files");
 	NSString *label = [NSByteCountFormatter stringFromByteCount:status.byteCount countStyle:NSByteCountFormatterCountStyleFile];
 	XCTAssertGreaterThan(label.length, 0u);
 
