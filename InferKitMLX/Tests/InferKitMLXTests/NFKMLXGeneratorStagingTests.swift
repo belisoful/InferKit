@@ -173,6 +173,25 @@ final class NFKMLXGeneratorStagingTests: XCTestCase {
         }
     }
 
+    // Wan 2.1 built through the registry with the catalog's bfloat16 transformer choice: the factory reads
+    // the option, the converted transformer loads, and a short clip generates.
+    func testWan21BuildsThroughTheRegistryWithABFloat16Transformer() throws {
+        try requireMLXRuntime()
+        guard let release = NFKMLXValidationConfig.environment["IK_VAL_WAN21_T2V_1_3B"] else {
+            throw XCTSkip("set IK_VAL_WAN21_T2V_1_3B (Wan-AI/Wan2.1-T2V-1.3B-Diffusers)")
+        }
+        NFKMLXReferenceModels.registerAll()
+        let backend = try NFKMLXModelRegistry.backend(named: "wan", weightsURL: URL(fileURLWithPath: release),
+                                                      options: [NFKModelLoadOptionPrecision: NFKModelPrecisionBFloat16])
+        let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "A red fox walking through fresh snow"],
+                                          parameters: [NFKParameterFrameCount: 5, NFKParameterWidth: 320,
+                                                       NFKParameterHeight: 192, NFKParameterSteps: 4,
+                                                       NFKParameterSeed: 0])
+        let result = try backend.runInference(for: request)
+        XCTAssertNotNil(result.output(forKey: NFKOutputVideo), "the bfloat16 transformer generates a clip")
+        print("VALIDATION runtime wan21-t2v-1.3b-bf16-transformer: 5x192x320 at 4 steps through the registry")
+    }
+
     // MARK: The releases the generators read, held by shape
 
     /// A release component's config and its tensors' shapes, fetched from its headers alone

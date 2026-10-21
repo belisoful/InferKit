@@ -311,7 +311,8 @@ final class NFKMLXModelBuilderTests: XCTestCase {
         XCTAssertTrue(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: "gpt-oss-20b")
             .contains(NFKModelLoadOptionQuantizationBits))
         XCTAssertEqual(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: "flux.1-dev"), [NFKModelLoadOptionResidency])
-        XCTAssertEqual(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: "wan"), [NFKModelLoadOptionResidency])
+        XCTAssertEqual(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: "wan"),
+                       [NFKModelLoadOptionPrecision, NFKModelLoadOptionResidency])
         XCTAssertEqual(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: "whisper-base"), [NFKModelLoadOptionPrecision])
         XCTAssertEqual(NFKMLXModelRegistry.consumedOptionKeys(forModelNamed: "stable-diffusion-v1-5"),
                        [NFKModelLoadOptionPrecision])

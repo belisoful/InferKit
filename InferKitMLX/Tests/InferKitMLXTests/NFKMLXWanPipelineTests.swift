@@ -297,4 +297,31 @@ final class NFKMLXWanPipelineTests: XCTestCase {
         XCTAssertEqual(abs(video(loaded) - video(original)).max().item(Float.self), 0,
                        "the directory's pipeline is the one saved")
     }
+
+    // The converting load keeps the parameters diffusers keeps float32 at a half-precision load and converts
+    // every other tensor, and the transformer it builds generates.
+    func testTheConvertingLoadKeepsDiffusersFloat32ParametersAndGenerates() throws {
+        try requireMLXRuntime()
+        let release = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: release) }
+        try FileManager.default.createDirectory(at: release, withIntermediateDirectories: true)
+        let source = NFKMLXWanTransformerNet(.tiny)
+        let stored = Dictionary(uniqueKeysWithValues: source.parameters().flattened().map { key, value in
+            (key, value.ndim == 5 ? value.transposed(0, 4, 1, 2, 3) : value)
+        })
+        try save(arrays: stored, url: release.appendingPathComponent("diffusion_pytorch_model.safetensors"))
+
+        let converted = NFKMLXWanTransformerNet(.tiny)
+        try NFKMLXWanRelease.loadTransformer(into: converted, fromDirectory: release, converting: .bfloat16)
+        let kept = converted.parameters().flattened().filter { NFKMLXWanRelease.keepsFloat32($0.0) }
+        XCTAssertFalse(kept.isEmpty, "the tiny transformer holds parameters diffusers keeps float32")
+        for (key, value) in converted.parameters().flattened() {
+            XCTAssertEqual(value.dtype, NFKMLXWanRelease.keepsFloat32(key) ? .float32 : .bfloat16, key)
+        }
+        let pipeline = NFKMLXWanPipeline(transformer: converted, vae: NFKMLXWanVideoVAENet(.tiny21),
+                                         schedule: NFKMLXUniPCConfiguration(flowShift: 3, solverOrder: 2, trainTimesteps: 1000))
+        let video = pipeline.generate(textEmbeds: MLXRandom.normal([6, 10]).asType(.bfloat16), negativeEmbeds: nil,
+                                      frames: 2, height: 4, width: 4, steps: 2, guidance: 1, seed: 3)
+        XCTAssertTrue(video.asType(.float32).asArray(Float.self).allSatisfy(\.isFinite))
+    }
 }

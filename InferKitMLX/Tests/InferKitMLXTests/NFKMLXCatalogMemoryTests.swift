@@ -258,8 +258,10 @@ final class NFKMLXCatalogMemoryTests: XCTestCase {
             XCTAssertEqual(option.defaultValue as? String, NFKModelPrecisionCheckpoint, identifier)
             XCTAssertEqual(wan.memoryModel?.stagePrecisions["text_encoder"], NFKModelPrecisionBFloat16, identifier)
             XCTAssertNil(wan.memoryModel?.stagePrecisions["transformer"], "\(identifier): the option governs the transformer")
-            let half = try wan.estimatedMemory(forOptions: [NFKModelLoadOptionPrecision: NFKModelPrecisionBFloat16])
-            let stored = try wan.estimatedMemory(forOptions: nil)
+            // Held together, so the transformer stage counts toward the peak beside umT5.
+            let resident = [NFKModelLoadOptionResidency: NFKModelResidencyResident]
+            let half = try wan.estimatedMemory(forOptions: resident.merging([NFKModelLoadOptionPrecision: NFKModelPrecisionBFloat16]) { $1 })
+            let stored = try wan.estimatedMemory(forOptions: resident)
             XCTAssertLessThan(half.residentByteCount, stored.residentByteCount, identifier)
         }
         XCTAssertNil(try descriptor("wan2.2-ti2v-5b").option(withKey: NFKModelLoadOptionPrecision))
