@@ -249,7 +249,9 @@ final class NFKMLXReleaseDownloadProgressTests: XCTestCase {
         XCTAssertEqual(NFKStubReleaseProtocol.requests.compactMap { $0.url?.path }, [], "a cached release asks nothing")
         XCTAssertEqual(download.currentProgress.fileCount, 5)
         XCTAssertEqual(download.currentProgress.completedFileCount, 5)
-        XCTAssertEqual(download.currentProgress.receivedByteCount, 0)
+        XCTAssertGreaterThan(download.currentProgress.receivedByteCount, 0, "the cached files count their bytes")
+        XCTAssertEqual(download.currentProgress.receivedByteCount, download.currentProgress.expectedByteCount)
+        XCTAssertEqual(download.currentProgress.bytesPerSecond, 0, "and none of them was transferred")
     }
 
     func testACachedComponentReleaseIsNeitherListedNorFetched() throws {
