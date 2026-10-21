@@ -102,7 +102,8 @@ NS_ASSUME_NONNULL_BEGIN
 typedef NS_ENUM(NSInteger, NFKDownloadPresence) {
 	/*! None of the files is in the cache. */
 	NFKDownloadPresenceAbsent	= 0,
-	/*! Some files are in the cache and a required one is missing. */
+	/*! Some files are in the cache, or a paused download kept part of one, and a required one is
+		missing. */
 	NFKDownloadPresencePartial	= 1,
 	/*! Every required file is in the cache. */
 	NFKDownloadPresenceComplete	= 2,
@@ -124,6 +125,12 @@ typedef NS_ENUM(NSInteger, NFKDownloadPresence) {
 @property (nonatomic, readonly, copy) NSArray<NSString *> *missingPaths;
 /*! The snapshot folder, or the file of a single-file source; nil for a source with no files. */
 @property (nonatomic, readonly, copy, nullable) NSURL *localURL;
+/*! The required paths a paused download kept part of, which a later download continues. Each is also
+	in missingPaths. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, copy) NSArray<NSString *> *partialPaths;
+/*! The bytes kept for partialPaths, beside byteCount: a source downloaded byteCount + partialByteCount
+	of its bytes. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly) long long partialByteCount;
 
 - (instancetype)init NS_UNAVAILABLE;
 + (instancetype)new NS_UNAVAILABLE;

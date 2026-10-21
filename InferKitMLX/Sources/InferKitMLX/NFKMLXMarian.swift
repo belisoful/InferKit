@@ -253,11 +253,15 @@ enum NFKMLXReleaseDownload {
         return overrideHub ?? NFKHFHub(cacheDirectoryURL: cacheDirectoryURL ?? NFKHFHub.defaultCacheDirectoryURL())
     }
 
-    /// Throws the cancellation error when the current download is cancelled. A cancelled fetch of an
-    /// optional file or a weights candidate reads as an absent file, so the loops check here.
+    /// Throws the cancellation or pause error when the current download is cancelled or paused. A
+    /// stopped fetch of an optional file or a weights candidate reads as an absent file, so the loops
+    /// check here.
     static func checkCancelled() throws {
         if NFKDownload.current?.isCancelled == true {
             throw NFKDownloadError(.cancelled)
+        }
+        if NFKDownload.current?.isPaused == true {
+            throw NFKDownloadError(.paused)
         }
     }
 

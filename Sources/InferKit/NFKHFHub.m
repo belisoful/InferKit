@@ -517,8 +517,8 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 	if (download.isFinished) {
 		download = nil;
 	}
-	if (download.isCancelled) {
-		[self propagateError:[NFKDownload cancellationError] to:outError];
+	if (download.isStopped) {
+		[self propagateError:download.stopError to:outError];
 		return nil;
 	}
 	NSURL *cacheDirectoryURL = self.cacheDirectoryURL;
@@ -541,7 +541,8 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 			if ([self cachedFileAtURL:localURL matchesSHA256:expectedSHA256 byteCount:expectedByteCount]) {
 				[self excludeCacheFromBackupIfNeeded];
 				[self markSnapshotUsedAtURL:snapshotURL];
-				[download fileDidFinishAtLocalURL:localURL path:path byteCount:0 cached:YES];
+				long long size = [[fileManager attributesOfItemAtPath:localURL.path error:NULL][NSFileSize] longLongValue];
+				[download fileDidFinishAtLocalURL:localURL path:path byteCount:size cached:YES];
 				return localURL;
 			}
 			[fileManager removeItemAtURL:localURL error:NULL];
@@ -561,11 +562,20 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 		[self markSnapshotUsedAtURL:snapshotURL];
 
 		NSURL *partialURL = [localURL URLByAppendingPathExtension:@"download"];
-		[fileManager removeItemAtURL:partialURL error:NULL];
-		[download fileWillStartAtLocalURL:localURL path:path expectedByteCount:expectedByteCount];
-		if (![self fetchURL:remoteURL toFileURL:partialURL localURL:localURL path:path
-				expectedByteCount:expectedByteCount download:download error:outError]) {
+		NSString *keptTag = nil;
+		long long kept = [self keptByteCountOfPartialURL:partialURL expectedByteCount:expectedByteCount entityTag:&keptTag];
+		if (kept == 0) {
 			[fileManager removeItemAtURL:partialURL error:NULL];
+		}
+		[download fileWillStartAtLocalURL:localURL path:path expectedByteCount:expectedByteCount keptByteCount:kept];
+		// A partial that already holds every listed byte was stopped before it was checked and moved.
+		BOOL whole = kept > 0 && kept == expectedByteCount;
+		if (!whole && ![self fetchURL:remoteURL toFileURL:partialURL localURL:localURL path:path
+					   expectedByteCount:expectedByteCount keptByteCount:kept keptEntityTag:keptTag
+								download:download error:outError]) {
+			if (!(download.isPaused && !download.isCancelled)) {
+				[fileManager removeItemAtURL:partialURL error:NULL];
+			}
 			[download fileDidFailAtLocalURL:localURL];
 			return nil;
 		}
@@ -579,6 +589,7 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 			return nil;
 		}
 
+		[NFKHFHubTransfer clearEntityTagOfFileAtURL:partialURL];
 		[fileManager removeItemAtURL:localURL error:NULL];
 		NSError *moveError = nil;
 		if (![fileManager moveItemAtURL:partialURL toURL:localURL error:&moveError]) {
@@ -624,6 +635,30 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 	return nil;
 }
 
+/*! The bytes a paused download kept in partialURL for a later one to continue: the partial's size when
+	it records a strong ETag and holds no more than expectedByteCount, else 0. */
+- (long long)keptByteCountOfPartialURL:(NSURL *)partialURL
+					 expectedByteCount:(long long)expectedByteCount
+							 entityTag:(NSString * _Nullable * _Nonnull)entityTag
+{
+	long long size = [self keptByteCountOfPartialURL:partialURL];
+	if (size <= 0 || (expectedByteCount >= 0 && size > expectedByteCount)) {
+		return 0;
+	}
+	*entityTag = [NFKHFHubTransfer entityTagOfPartialFileAtURL:partialURL];
+	return size;
+}
+
+- (long long)keptByteCountOfPartialURL:(NSURL *)partialURL
+{
+	if ([NFKHFHubTransfer entityTagOfPartialFileAtURL:partialURL] == nil) {
+		return 0;
+	}
+	NSDictionary<NSFileAttributeKey, id> *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:partialURL.path
+																									  error:NULL];
+	return attributes != nil ? [attributes[NSFileSize] longLongValue] : 0;
+}
+
 /*! Runs the transport seam with the file's report set on the calling thread for the default
 	transfer to read. */
 - (BOOL)fetchURL:(NSURL *)remoteURL
@@ -631,6 +666,8 @@ static NSString *NFKHFHubDefaultAccessTokenValue = nil;
 		localURL:(NSURL *)localURL
 			path:(NSString *)path
 expectedByteCount:(long long)expectedByteCount
+   keptByteCount:(long long)keptByteCount
+   keptEntityTag:(nullable NSString *)keptEntityTag
 		download:(nullable NFKDownload *)download
 		   error:(NSError * _Nullable *)outError
 {
@@ -642,6 +679,8 @@ expectedByteCount:(long long)expectedByteCount
 	report.path = path;
 	report.expectedByteCount = expectedByteCount;
 	report.ceilingByteCount = [self ceilingByteCountForExpectedByteCount:expectedByteCount];
+	report.keptByteCount = keptByteCount;
+	report.keptEntityTag = keptEntityTag;
 	threadDictionary[NFKHFHubTransferReportKey] = report;
 	@try {
 		return [self fetchURL:remoteURL toFileURL:partialURL error:outError];
@@ -741,8 +780,8 @@ expectedByteCount:(long long)expectedByteCount
 	if (token != nil) {
 		[download removeCancellationHandler:token];
 	}
-	if (download.isCancelled) {
-		[self propagateError:[NFKDownload cancellationError] to:outError];
+	if (download.isStopped) {
+		[self propagateError:download.stopError to:outError];
 		return nil;
 	}
 	if (failure != nil) {

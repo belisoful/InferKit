@@ -60,6 +60,9 @@ typedef NS_ERROR_ENUM(NFKDownloadErrorDomain, NFKDownloadError) {
 		gives, or its transfer streamed past its limit (NFKHFHub.maximumFileByteCount). The file is
 		not kept. */
 	NFKDownloadErrorSizeMismatch				= 13,
+	/*! The download was paused. The file in flight keeps its bytes, which a later download of the
+		same source continues. */
+	NFKDownloadErrorPaused						= 14,
 };
 
 /*!
@@ -79,6 +82,8 @@ typedef NS_ENUM(NSInteger, NFKDownloadState) {
 	NFKDownloadStateFailed		= 4,
 	/*! The download was cancelled. */
 	NFKDownloadStateCancelled	= 5,
+	/*! The download was paused: whole files stay, and the file in flight keeps its bytes. */
+	NFKDownloadStatePaused		= 6,
 };
 
 /*! A byte count the server did not report: -1. Introduced in InferKit 0.4.0. */
@@ -112,10 +117,13 @@ extern const long long NFKDownloadUnknownByteCount;
 /*!
 	@class      NFKDownloadProgress
 	@abstract   The progress of a whole download at one moment.
-	@discussion Byte counts cover the files the download transfers. A file found in the cache counts
-				toward fileCount and completedFileCount and adds no bytes. expectedByteCount can grow
-				while the download learns of files, such as the shards a shard index names, and never
-				falls below receivedByteCount. Introduced in InferKit 0.4.0.
+	@discussion Byte counts cover every file the download holds. A file found in the cache counts
+				its bytes as received and expected, and a file whose kept partial bytes a transfer
+				continues counts them as received when it starts, so a download that resumes another
+				reports the share already present. bytesPerSecond and estimatedSecondsRemaining count
+				only the bytes transferred. expectedByteCount can grow while the download learns of
+				files, such as the shards a shard index names, and never falls below
+				receivedByteCount. Introduced in InferKit 0.4.0.
 */
 @interface NFKDownloadProgress : NSObject
 
@@ -171,11 +179,15 @@ typedef void (^ NS_SWIFT_SENDABLE NFKDownloadProgressHandler)(NFKDownloadProgres
 				ends.
 
 				Cancelling stops the transfer in flight, removes its partial file, and refuses every
-				later transfer. A file reaches its cache location only whole: the bytes stream into
-				a temporary .download file beside it, which is moved into place at the end and
-				removed on failure or cancellation. A transfer that drops is resumed with an HTTP
-				Range request, up to three times, and the server's ETag guards against a file that
-				changed in between. Introduced in InferKit 0.4.0.
+				later transfer. Pausing stops the same way and keeps the partial file. A file reaches
+				its cache location only whole: the bytes stream into a temporary .download file
+				beside it, which is moved into place at the end and removed on failure or
+				cancellation. A transfer that drops is resumed with an HTTP Range request, up to three
+				times, and the server's ETag guards against a file that changed in between. A partial
+				file whose server named a strong ETag records it on the file, so a later download of
+				the same source, in this process or another, continues it with a Range request that
+				If-Range guards, and starts it over when the file changed. Introduced in InferKit
+				0.4.0.
 */
 @interface NFKDownload : NSObject <NSProgressReporting>
 
@@ -195,10 +207,13 @@ typedef void (^ NS_SWIFT_SENDABLE NFKDownloadProgressHandler)(NFKDownloadProgres
 /*! YES once cancel has been called. */
 @property (nonatomic, readonly, getter=isCancelled) BOOL cancelled;
 
-/*! YES once the state is completed, failed, or cancelled. */
+/*! YES once pause has been called. */
+@property (nonatomic, readonly, getter=isPaused) BOOL paused;
+
+/*! YES once the state is completed, failed, cancelled, or paused. */
 @property (nonatomic, readonly, getter=isFinished) BOOL finished;
 
-/*! Why the download failed or was cancelled; nil otherwise. */
+/*! Why the download failed, was cancelled, or was paused; nil otherwise. */
 @property (nonatomic, readonly, copy, nullable) NSError *error;
 
 /*! The plan the download follows; nil until a hub-driven download has planned, and for a download
@@ -218,6 +233,19 @@ typedef void (^ NS_SWIFT_SENDABLE NFKDownloadProgressHandler)(NFKDownloadProgres
 /*! Cancels the download: the transfer in flight stops, its partial file is removed, and no later
 	transfer starts. Files already whole stay in the cache. Does nothing once finished. */
 - (void)cancel;
+
+/*!
+	@method     pause
+	@abstract   Pauses the download: the transfer in flight stops, its partial file stays, and no later
+				transfer starts.
+	@discussion The download finishes in NFKDownloadStatePaused with NFKDownloadErrorPaused, and whole
+				files stay in the cache. A later download of the same source (downloadModelSource:,
+				downloadRepo:, or a plan) continues each kept file from its last byte, so a pause
+				survives the process. -[NFKHFHub downloadStatusForModelSource:] counts the kept bytes,
+				and a removal plan for the source removes them. Does nothing once finished. The
+				NSProgress's pause pauses the download. Introduced in InferKit 0.4.0.
+*/
+- (void)pause;
 
 /*! Blocks until the download finishes and its final progress report and completion handler have run,
 	or until the timeout passes; YES when they have. A negative timeout waits without limit. Called from

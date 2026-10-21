@@ -6417,9 +6417,11 @@ for (NFKDownloadPlanFile *file in plan.files) {
 times a second and at every change of file or state: bytes received and expected overall and per file,
 the current file, the transfer rate, and the time remaining. `download.progress` is the same as an
 `NSProgress`. Cancelling stops the transfer in flight and leaves no partial file in the cache: a file
-streams into a temporary name and moves into place whole. A transfer that drops resumes with an HTTP
-Range request. The download refuses to start when the plan is larger than `cacheSizeLimit` or than
-the volume's free space.
+streams into a temporary name and moves into place whole. Pausing stops the same way and keeps the
+partial file, and the next download of the same files, in this process or after a restart, continues
+it with an HTTP Range request; a file that changed in between starts over. A transfer that drops
+resumes the same way. The download refuses to start when the plan is larger than `cacheSizeLimit` or
+than the volume's free space.
 
 <!-- objc-check: given NFKDownloadPlan *plan = nil; NFKModelSource *source = nil; -->
 ```objc
@@ -6431,10 +6433,12 @@ NFKDownload *download = [hub downloadWithPlan:plan
 } completionHandler:^(NSURL *localURL, NSError *downloadError) {
     // background queue; localURL is the snapshot folder or the single file
 }];
+[download pause];                                                  // from a Pause button
 [download cancel];                                                 // from a Cancel button
 
-// "Downloaded · 4.2 GB" and a Delete button. The status reads the cache only.
+// "Downloaded · 4.2 GB", "Paused · 3.1 GB", and a Delete button. The status reads the cache only.
 NFKDownloadStatus *status = [hub downloadStatusForModelSource:source];
+long long held = status.byteCount + status.partialByteCount;       // whole files and kept partials
 NSString *label = [NSByteCountFormatter stringFromByteCount:status.byteCount
                                                  countStyle:NSByteCountFormatterCountStyleFile];
 

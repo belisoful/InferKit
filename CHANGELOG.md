@@ -83,6 +83,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `+[NFKPluginSignaturePolicy signingTeamIdentifierOfCodeAtURL:error:]` reads the team that signed a
   bundle without loading it.
 
+#### Downloads pause and resume
+
+- `-[NFKDownload pause]` stops the transfer in flight and keeps its partial file, finishing in
+  `NFKDownloadStatePaused` with `NFKDownloadErrorPaused`. The next download of the same files, in this
+  process or after a restart, continues the partial with an HTTP Range request that the file's ETag
+  guards, and starts it over when the file changed. The `NSProgress`'s pause pauses the download.
+- `NFKDownloadStatus` reports kept partials (`partialPaths`, `partialByteCount`), and a source with only
+  a kept partial reads as `NFKDownloadPresencePartial`. A removal plan removes a source's kept partials.
+- A download's progress counts the bytes of the files already in the cache and of a kept partial as
+  received, so a resumed download reports the share already present. The transfer rate counts only
+  the bytes transferred.
+
 #### Breaking: `NFKInferKit.version` is `NFKInferKit.releaseVersion`
 
 - The class property `version` overrode `+[NSObject version]`, the integer class version archiving

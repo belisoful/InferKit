@@ -699,8 +699,8 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	[download becomeCurrent];
 	@try {
 		for (NFKDownloadPlanFile *file in plan.files) {
-			if (download.isCancelled) {
-				return [NFKDownload cancellationError];
+			if (download.isStopped) {
+				return download.stopError;
 			}
 			NSURL *fetched = [self fetchFileFromURL:file.remoteURL
 										   localURL:file.localURL
@@ -839,6 +839,25 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	}
 	[paths sortUsingSelector:@selector(compare:)];
 	return paths;
+}
+
+/*! The partial .download files in a snapshot folder, by path, with the content path each would become. */
+- (NSDictionary<NSString *, NSString *> *)partialPathsInSnapshotURL:(NSURL *)snapshotURL
+{
+	NSDirectoryEnumerator<NSURL *> *enumerator = [NSFileManager.defaultManager enumeratorAtURL:snapshotURL
+																   includingPropertiesForKeys:@[ NSURLIsRegularFileKey ]
+																					  options:0
+																				 errorHandler:nil];
+	NSMutableDictionary<NSString *, NSString *> *partials = [NSMutableDictionary dictionary];
+	for (NSURL *url in enumerator) {
+		NSNumber *isFile = nil;
+		[url getResourceValue:&isFile forKey:NSURLIsRegularFileKey error:NULL];
+		NSString *relative = [self relativePathOfURL:url underURL:snapshotURL];
+		if (isFile.boolValue && [url.pathExtension isEqualToString:@"download"] && relative != nil) {
+			partials[relative] = relative.stringByDeletingPathExtension;
+		}
+	}
+	return partials;
 }
 
 /*! The paths of content matching each of paths (globs or literal paths), in content order. */
@@ -1051,8 +1070,18 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 		for (NSString *path in present) {
 			bytes += [self onDiskSizeOfURL:[snapshotURL URLByAppendingPathComponent:path]];
 		}
+		NSMutableArray<NSString *> *partial = [NSMutableArray array];
+		long long partialBytes = 0;
+		for (NSString *path in missing) {
+			long long kept = [self keptByteCountOfPartialURL:[[snapshotURL URLByAppendingPathComponent:path]
+															 URLByAppendingPathExtension:@"download"]];
+			if (kept > 0) {
+				[partial addObject:path];
+				partialBytes += kept;
+			}
+		}
 		NFKDownloadPresence presence = NFKDownloadPresenceAbsent;
-		if (present.count > 0) {
+		if (present.count > 0 || partial.count > 0) {
 			presence = missing.count == 0 && required.count > 0 ? NFKDownloadPresenceComplete : NFKDownloadPresencePartial;
 		}
 		if (requiredPaths != nil && required.count == 0 && present.count > 0) {
@@ -1062,6 +1091,8 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 												   byteCount:bytes
 												presentPaths:present.array
 												missingPaths:missing
+												partialPaths:partial
+											partialByteCount:partialBytes
 													localURL:localURL ?: snapshotURL];
 	}];
 	return status ?: [[NFKDownloadStatus alloc] initWithPresence:NFKDownloadPresenceAbsent byteCount:0 presentPaths:@[]
@@ -1114,12 +1145,16 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	NSArray<NFKHFHubSourcePart *> *parts = [self partsOfModelSource:source];
 	NSMutableOrderedSet<NSString *> *present = [NSMutableOrderedSet orderedSet];
 	NSMutableArray<NSString *> *missing = [NSMutableArray array];
+	NSMutableArray<NSString *> *partial = [NSMutableArray array];
 	long long bytes = 0;
+	long long partialBytes = 0;
 	for (NFKHFHubSourcePart *part in parts) {
 		NFKDownloadStatus *status = [self statusOfPart:part];
 		[present addObjectsFromArray:status.presentPaths];
 		[missing addObjectsFromArray:status.missingPaths];
+		[partial addObjectsFromArray:status.partialPaths];
 		bytes += status.byteCount;
+		partialBytes += status.partialByteCount;
 	}
 	NSURL *localURL = snapshotURL;
 	if ([source.layout isEqualToString:NFKModelSourceLayoutFile] && source.files.count == 1 && parts.count == 1) {
@@ -1128,13 +1163,15 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 								   : [self localURLForRepo:part.repository revision:part.revision path:part.files.firstObject.path];
 	}
 	NFKDownloadPresence presence = NFKDownloadPresenceAbsent;
-	if (present.count > 0) {
+	if (present.count > 0 || partial.count > 0) {
 		presence = missing.count == 0 ? NFKDownloadPresenceComplete : NFKDownloadPresencePartial;
 	}
 	return [[NFKDownloadStatus alloc] initWithPresence:presence
 											 byteCount:bytes
 										  presentPaths:present.array
 										  missingPaths:missing
+										  partialPaths:partial
+									  partialByteCount:partialBytes
 											  localURL:snapshotURL != nil ? localURL : nil];
 }
 
@@ -1423,8 +1460,26 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 		}
 	}
 
+	// A paused download's kept partial goes with the file it would become.
+	NSDictionary<NSString *, NSString *> *partials = [self partialPathsInSnapshotURL:snapshotURL];
+	BOOL keepsPartial = NO;
+	for (NSString *partialPath in [partials.allKeys sortedArrayUsingSelector:@selector(compare:)]) {
+		NSString *base = partials[partialPath];
+		BOOL named = target.paths == nil || [self paths:target.paths matchingContent:@[ base ]].count > 0;
+		if (!named || claims[base] != nil) {
+			keepsPartial = YES;
+			continue;
+		}
+		NSURL *url = [snapshotURL URLByAppendingPathComponent:partialPath];
+		long long size = [self allocatedSizeOfFileAtURL:url];
+		freed += size;
+		[removedPaths addObject:url.path];
+		[removed addObject:[[NFKCachedFile alloc] initWithURL:url path:[self cachePathOfURL:url cacheURL:cacheDirectoryURL]
+													byteCount:size reason:nil]];
+	}
+
 	NSMutableArray<NSURL *> *bookkeeping = [NSMutableArray array];
-	BOOL emptiesSnapshot = content.count > 0;
+	BOOL emptiesSnapshot = (content.count > 0 || partials.count > 0) && !keepsPartial;
 	for (NSString *path in content) {
 		if (![removedPaths containsObject:[snapshotURL URLByAppendingPathComponent:path].path]) {
 			emptiesSnapshot = NO;

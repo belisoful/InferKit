@@ -26,6 +26,12 @@ typedef void (^NFKDownloadCompletionHandler)(NSURL * _Nullable localURL, NSError
 
 /*! A transfer of the file at localURL begins; expected is NFKDownloadUnknownByteCount when unknown. */
 - (void)fileWillStartAtLocalURL:(NSURL *)localURL path:(NSString *)path expectedByteCount:(long long)expected;
+/*! A transfer of the file begins from keptByteCount bytes a paused download left, which count as received
+	and not toward the transfer rate. */
+- (void)fileWillStartAtLocalURL:(NSURL *)localURL
+						   path:(NSString *)path
+			  expectedByteCount:(long long)expected
+				 keptByteCount:(long long)keptByteCount;
 /*! The transfer of the file has written byteCount bytes of expected. */
 - (void)fileAtLocalURL:(NSURL *)localURL didWriteByteCount:(long long)byteCount expectedByteCount:(long long)expected;
 /*! The file is whole in the cache, byteCount bytes long; cached when no transfer was needed. */
@@ -56,6 +62,15 @@ typedef void (^NFKDownloadCompletionHandler)(NSURL * _Nullable localURL, NSError
 /*! The error a cancelled download reports. */
 + (NSError *)cancellationError;
 
+/*! The error a paused download reports. */
++ (NSError *)pauseError;
+
+/*! YES once cancel or pause has been called: no transfer starts, and the one in flight stops. */
+@property (nonatomic, readonly, getter=isStopped) BOOL stopped;
+
+/*! The error a stopped download's work reports: pauseError when paused, else cancellationError. */
+@property (nonatomic, readonly) NSError *stopError;
+
 /*! An NFKDownloadErrorDomain error. */
 + (NSError *)errorWithCode:(NFKDownloadError)code reason:(NSString *)reason;
 
@@ -81,6 +96,13 @@ typedef void (^NFKDownloadCompletionHandler)(NSURL * _Nullable localURL, NSError
 					   byteCount:(long long)byteCount
 					presentPaths:(NSArray<NSString *> *)presentPaths
 					missingPaths:(NSArray<NSString *> *)missingPaths
+						localURL:(nullable NSURL *)localURL;
+- (instancetype)initWithPresence:(NFKDownloadPresence)presence
+					   byteCount:(long long)byteCount
+					presentPaths:(NSArray<NSString *> *)presentPaths
+					missingPaths:(NSArray<NSString *> *)missingPaths
+					partialPaths:(NSArray<NSString *> *)partialPaths
+				partialByteCount:(long long)partialByteCount
 						localURL:(nullable NSURL *)localURL NS_DESIGNATED_INITIALIZER;
 @end
 

@@ -21,6 +21,10 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, assign) long long expectedByteCount;
 /*! The most bytes the transfer streams whatever else limits it; -1 for none. */
 @property (nonatomic, assign) long long ceilingByteCount;
+/*! The bytes a paused download left in the destination, which the transfer continues from; 0 for none. */
+@property (nonatomic, assign) long long keptByteCount;
+/*! The strong ETag the kept bytes were served under, sent as If-Range. */
+@property (nonatomic, copy, nullable) NSString *keptEntityTag;
 @end
 
 /*!
@@ -32,7 +36,9 @@ NS_ASSUME_NONNULL_BEGIN
 				If-Range, so a file that changed restarts from its first byte. A transfer stops with
 				NFKDownloadErrorSizeMismatch once it streams past its limit: the listed size, else the
 				announced length, lowered to the report's ceiling. A failed or cancelled transfer
-				removes the destination.
+				removes the destination; a paused one keeps it. The strong ETag is recorded on the
+				destination as an extended attribute when the response arrives, so a transfer whose
+				report names the kept bytes continues them in a later process.
 */
 @interface NFKHFHubTransfer : NSObject
 
@@ -45,6 +51,12 @@ NS_ASSUME_NONNULL_BEGIN
 			  toFileURL:(NSURL *)destinationURL
 				 report:(nullable NFKHFHubTransferReport *)report
 				  error:(NSError * _Nullable *)outError;
+
+/*! The strong ETag recorded on a partial file, or nil when it has none. */
++ (nullable NSString *)entityTagOfPartialFileAtURL:(NSURL *)URL;
+
+/*! Removes the ETag record from a file that is whole, before it takes its cache location. */
++ (void)clearEntityTagOfFileAtURL:(NSURL *)URL;
 
 /*! The NFKDownloadErrorDomain error an HTTP failure status maps to, naming subject. */
 + (NSError *)errorForHTTPStatus:(NSInteger)status subject:(NSString *)subject hadToken:(BOOL)hadToken;

@@ -148,6 +148,7 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 @property (nonatomic, copy, nullable) NFKDownloadProgressHandler progressHandler;
 @property (nonatomic, assign) NFKDownloadState state;
 @property (nonatomic, assign, getter=isCancelled) BOOL cancelled;
+@property (nonatomic, assign, getter=isPaused) BOOL paused;
 @property (nonatomic, copy, nullable) NSError *error;
 @property (nonatomic, copy, nullable) NFKDownloadPlan *plan;
 @property (nonatomic, copy, nullable) NSURL *localURL;
@@ -165,6 +166,8 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 @property (nonatomic, strong) NSMutableDictionary<NSUUID *, dispatch_block_t> *cancellationHandlers;
 @property (nonatomic, strong) NSMutableSet<NSString *> *snapshotKeys;
 @property (nonatomic, strong) NSMutableArray<NSArray<NSNumber *> *> *rateSamples;
+/*! The kept partial bytes counted as received when their transfers started, which the rate leaves out. */
+@property (nonatomic, assign) long long keptByteCount;
 @property (nonatomic, assign) NSInteger activityCount;
 @property (nonatomic, copy, nullable) NSError *firstActivityError;
 @property (nonatomic, copy, nullable) NSURL *resultURL;
@@ -210,6 +213,10 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 		_progress.cancellationHandler = ^{
 			[weakSelf cancel];
 		};
+		_progress.pausable = YES;
+		_progress.pausingHandler = ^{
+			[weakSelf pause];
+		};
 	}
 	return self;
 }
@@ -223,7 +230,18 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 
 - (BOOL)stateIsFinal:(NFKDownloadState)state
 {
-	return state == NFKDownloadStateCompleted || state == NFKDownloadStateFailed || state == NFKDownloadStateCancelled;
+	return state == NFKDownloadStateCompleted || state == NFKDownloadStateFailed || state == NFKDownloadStateCancelled
+		|| state == NFKDownloadStatePaused;
+}
+
+- (BOOL)isStopped
+{
+	return self.cancelled || self.paused;
+}
+
+- (NSError *)stopError
+{
+	return self.paused && !self.cancelled ? [NFKDownload pauseError] : [NFKDownload cancellationError];
 }
 
 - (NFKDownloadState)state
@@ -280,10 +298,6 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 	NSMutableArray<NFKDownloadFileProgress *> *files = [NSMutableArray arrayWithCapacity:self.fileRecords.count];
 	for (NFKDownloadFileProgress *record in self.fileRecords) {
 		[files addObject:[record snapshotCopy]];
-		if (record.cached) {
-			completed++;
-			continue;
-		}
 		received += record.receivedByteCount;
 		expected += MAX(record.expectedByteCount, record.receivedByteCount);
 		if (record.completed) {
@@ -298,7 +312,7 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 	NFKDownloadFileProgress *current = self.currentLocalPath != nil ? self.fileRecordsByLocalPath[self.currentLocalPath] : nil;
 	snapshot.currentFile = [current snapshotCopy];
 	snapshot.bytesPerSecond = [self bytesPerSecondLocked];
-	if (snapshot.bytesPerSecond > 0 && expected > 0 && ![self stateIsFinal:self.state]) {
+	if (snapshot.bytesPerSecond > 0 && snapshot.expectedByteCount > received && ![self stateIsFinal:self.state]) {
 		snapshot.estimatedSecondsRemaining = @((double)(snapshot.expectedByteCount - received) / snapshot.bytesPerSecond);
 	}
 	return snapshot;
@@ -320,7 +334,7 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 
 - (void)sampleRateLocked
 {
-	long long received = 0;
+	long long received = -self.keptByteCount;
 	for (NFKDownloadFileProgress *record in self.fileRecords) {
 		if (!record.cached) {
 			received += record.receivedByteCount;
@@ -447,6 +461,9 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 			record = [[NFKDownloadFileProgress alloc] initWithPath:file.path localURL:file.localURL expectedByteCount:file.byteCount];
 			record.cached = file.cached;
 			record.completed = file.cached;
+			if (file.cached && file.byteCount >= 0) {
+				record.receivedByteCount = file.byteCount;
+			}
 			[self.fileRecords addObject:record];
 			self.fileRecordsByLocalPath[key] = record;
 		}
@@ -496,13 +513,20 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 		if ([self stateIsFinal:self.state]) {
 			return;
 		}
+		BOOL downloadError = [self.firstActivityError.domain isEqualToString:NFKDownloadErrorDomain];
 		if (self.cancelled) {
 			self.state = NFKDownloadStateCancelled;
 			self.error = [NFKDownload cancellationError];
+		} else if (self.paused) {
+			self.state = NFKDownloadStatePaused;
+			self.error = [NFKDownload pauseError];
 		} else if (self.firstActivityError != nil) {
-			BOOL cancelledError = [self.firstActivityError.domain isEqualToString:NFKDownloadErrorDomain]
-				&& self.firstActivityError.code == NFKDownloadErrorCancelled;
-			self.state = cancelledError ? NFKDownloadStateCancelled : NFKDownloadStateFailed;
+			self.state = NFKDownloadStateFailed;
+			if (downloadError && self.firstActivityError.code == NFKDownloadErrorCancelled) {
+				self.state = NFKDownloadStateCancelled;
+			} else if (downloadError && self.firstActivityError.code == NFKDownloadErrorPaused) {
+				self.state = NFKDownloadStatePaused;
+			}
 			self.error = self.firstActivityError;
 		} else {
 			self.state = NFKDownloadStateCompleted;
@@ -560,6 +584,29 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 	}
 }
 
+- (void)pause
+{
+	NSArray<dispatch_block_t> *handlers = nil;
+	BOOL finishNow = NO;
+	@synchronized (self.lock) {
+		if (self.isStopped || [self stateIsFinal:self.state]) {
+			return;
+		}
+		self.paused = YES;
+		handlers = self.cancellationHandlers.allValues;
+		finishNow = self.activityCount == 0;
+	}
+	for (dispatch_block_t handler in handlers) {
+		handler();
+	}
+	if (!self.progress.isPaused) {
+		[self.progress pause];
+	}
+	if (finishNow) {
+		[self finish];
+	}
+}
+
 - (BOOL)waitUntilFinishedWithTimeout:(NSTimeInterval)timeout
 {
 	if (dispatch_get_specific(&NFKDownloadReportQueueKey) != NULL) {
@@ -596,6 +643,14 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 
 - (void)fileWillStartAtLocalURL:(NSURL *)localURL path:(NSString *)path expectedByteCount:(long long)expected
 {
+	[self fileWillStartAtLocalURL:localURL path:path expectedByteCount:expected keptByteCount:0];
+}
+
+- (void)fileWillStartAtLocalURL:(NSURL *)localURL
+						   path:(NSString *)path
+			  expectedByteCount:(long long)expected
+				 keptByteCount:(long long)keptByteCount
+{
 	@synchronized (self.lock) {
 		if ([self stateIsFinal:self.state]) {
 			return;
@@ -609,6 +664,10 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 		}
 		record.cached = NO;
 		record.completed = NO;
+		if (keptByteCount > record.receivedByteCount) {
+			self.keptByteCount += keptByteCount - record.receivedByteCount;
+			record.receivedByteCount = keptByteCount;
+		}
 		self.currentLocalPath = localURL.path;
 		[self sampleRateLocked];
 		[self reportLockedForced:YES];
@@ -646,11 +705,10 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 		record.completed = YES;
 		if (cached && record.receivedByteCount == 0) {
 			record.cached = YES;
-		} else {
-			// A transport that reports no bytes (an override of the fetch seam) still lands the file.
-			record.receivedByteCount = MAX(record.receivedByteCount, byteCount);
-			record.expectedByteCount = record.receivedByteCount;
 		}
+		// A transport that reports no bytes (an override of the fetch seam) still lands the file.
+		record.receivedByteCount = MAX(record.receivedByteCount, byteCount);
+		record.expectedByteCount = record.receivedByteCount;
 		if ([self.currentLocalPath isEqualToString:localURL.path]) {
 			self.currentLocalPath = nil;
 		}
@@ -684,7 +742,7 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 	NSUUID *token = [NSUUID UUID];
 	BOOL runNow = NO;
 	@synchronized (self.lock) {
-		if (self.cancelled) {
+		if (self.isStopped) {
 			runNow = YES;
 		} else {
 			self.cancellationHandlers[token] = [handler copy];
@@ -754,6 +812,11 @@ static NSString *NFKDownloadSnapshotKey(NSURL *snapshotURL)
 + (NSError *)cancellationError
 {
 	return [self errorWithCode:NFKDownloadErrorCancelled reason:@"the download was cancelled"];
+}
+
++ (NSError *)pauseError
+{
+	return [self errorWithCode:NFKDownloadErrorPaused reason:@"the download was paused"];
 }
 
 + (NSError *)errorWithCode:(NFKDownloadError)code reason:(NSString *)reason

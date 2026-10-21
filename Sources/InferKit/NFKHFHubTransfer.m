@@ -6,6 +6,10 @@
 #import "NFKHFHubTransfer.h"
 #import "NFKDownload.h"
 #import "NFKDownloadInternal.h"
+#import <sys/xattr.h>
+
+/*! The extended attribute a partial file records its server's strong ETag under. */
+static const char *NFKHFHubEntityTagAttribute = "com.inferkit.download.etag";
 
 @implementation NFKHFHubTransferReport
 @end
@@ -56,13 +60,41 @@ typedef NS_ENUM(NSInteger, NFKHFHubAttemptOutcome) {
 	transfer.attemptDone = dispatch_semaphore_create(0);
 	NSError *error = nil;
 	BOOL succeeded = [transfer runWithConfiguration:configuration error:&error];
-	if (!succeeded) {
+	BOOL keeps = report.download.isPaused && !report.download.isCancelled;
+	if (!succeeded && !keeps) {
 		[NSFileManager.defaultManager removeItemAtURL:destinationURL error:NULL];
 		if (outError != NULL) {
 			*outError = error;
 		}
 	}
 	return succeeded;
+}
+
++ (nullable NSString *)entityTagOfPartialFileAtURL:(NSURL *)URL
+{
+	char buffer[1024];
+	ssize_t length = getxattr(URL.fileSystemRepresentation, NFKHFHubEntityTagAttribute, buffer, sizeof(buffer), 0, 0);
+	if (length <= 0) {
+		return nil;
+	}
+	return [[NSString alloc] initWithBytes:buffer length:(NSUInteger)length encoding:NSUTF8StringEncoding];
+}
+
++ (void)clearEntityTagOfFileAtURL:(NSURL *)URL
+{
+	removexattr(URL.fileSystemRepresentation, NFKHFHubEntityTagAttribute, 0);
+}
+
+/*! Records the strong ETag the destination's bytes are served under, or removes a stale one. */
+- (void)recordEntityTag:(nullable NSString *)tag
+{
+	const char *path = self.destinationURL.fileSystemRepresentation;
+	if (tag == nil) {
+		removexattr(path, NFKHFHubEntityTagAttribute, 0);
+		return;
+	}
+	NSData *bytes = [tag dataUsingEncoding:NSUTF8StringEncoding];
+	setxattr(path, NFKHFHubEntityTagAttribute, bytes.bytes, bytes.length, 0, 0);
 }
 
 + (NSError *)errorForHTTPStatus:(NSInteger)status subject:(NSString *)subject hadToken:(BOOL)hadToken
@@ -94,21 +126,11 @@ typedef NS_ENUM(NSInteger, NFKHFHubAttemptOutcome) {
 - (BOOL)runWithConfiguration:(NSURLSessionConfiguration *)configuration error:(NSError **)outError
 {
 	NFKDownload *download = self.report.download;
-	if (download.isCancelled) {
-		*outError = [NFKDownload cancellationError];
+	if (download.isStopped) {
+		*outError = download.stopError;
 		return NO;
 	}
-	NSFileManager *fileManager = NSFileManager.defaultManager;
-	[fileManager removeItemAtURL:self.destinationURL error:NULL];
-	if (![fileManager createFileAtPath:self.destinationURL.path contents:nil attributes:nil]) {
-		*outError = [NFKDownload errorWithCode:NFKDownloadErrorHTTPStatus
-										reason:[NSString stringWithFormat:@"cannot create %@", self.destinationURL.path]];
-		return NO;
-	}
-	NSError *openError = nil;
-	self.fileHandle = [NSFileHandle fileHandleForWritingToURL:self.destinationURL error:&openError];
-	if (self.fileHandle == nil) {
-		*outError = openError;
+	if (![self openDestinationError:outError]) {
 		return NO;
 	}
 
@@ -130,7 +152,7 @@ typedef NS_ENUM(NSInteger, NFKHFHubAttemptOutcome) {
 		while (YES) {
 			outcome = [self runAttemptInSession:session];
 			if (outcome != NFKHFHubAttemptRetryable || resumes >= NFKHFHubTransfer.maximumResumeCount
-				|| download.isCancelled) {
+				|| download.isStopped) {
 				break;
 			}
 			resumes++;
@@ -144,8 +166,8 @@ typedef NS_ENUM(NSInteger, NFKHFHubAttemptOutcome) {
 		self.fileHandle = nil;
 	}
 
-	if (download.isCancelled) {
-		*outError = [NFKDownload cancellationError];
+	if (download.isStopped) {
+		*outError = download.stopError;
 		return NO;
 	}
 	if (outcome != NFKHFHubAttemptSucceeded) {
@@ -159,6 +181,33 @@ typedef NS_ENUM(NSInteger, NFKHFHubAttemptOutcome) {
 		return NO;
 	}
 	return YES;
+}
+
+/*! Opens the destination for writing: at its end when the report names bytes a paused download kept
+	there under a strong ETag, else emptied. */
+- (BOOL)openDestinationError:(NSError **)outError
+{
+	NSFileManager *fileManager = NSFileManager.defaultManager;
+	long long kept = self.report.keptByteCount;
+	NSString *keptTag = self.report.keptEntityTag;
+	long long size = [[fileManager attributesOfItemAtPath:self.destinationURL.path error:NULL][NSFileSize] longLongValue];
+	if (kept > 0 && keptTag != nil && size == kept) {
+		self.fileHandle = [NSFileHandle fileHandleForWritingToURL:self.destinationURL error:outError];
+		if (self.fileHandle == nil || ![self.fileHandle seekToEndReturningOffset:NULL error:outError]) {
+			return NO;
+		}
+		self.writtenByteCount = kept;
+		self.entityTag = keptTag;
+		return YES;
+	}
+	[fileManager removeItemAtURL:self.destinationURL error:NULL];
+	if (![fileManager createFileAtPath:self.destinationURL.path contents:nil attributes:nil]) {
+		*outError = [NFKDownload errorWithCode:NFKDownloadErrorHTTPStatus
+										reason:[NSString stringWithFormat:@"cannot create %@", self.destinationURL.path]];
+		return NO;
+	}
+	self.fileHandle = [NSFileHandle fileHandleForWritingToURL:self.destinationURL error:outError];
+	return self.fileHandle != nil;
 }
 
 - (NFKHFHubAttemptOutcome)runAttemptInSession:(NSURLSession *)session
@@ -178,7 +227,7 @@ typedef NS_ENUM(NSInteger, NFKHFHubAttemptOutcome) {
 	@synchronized (self) {
 		self.task = task;
 		// A cancel that ran before the task existed found nothing to cancel.
-		if (self.report.download.isCancelled) {
+		if (self.report.download.isStopped) {
 			[task cancel];
 		}
 	}
@@ -260,6 +309,7 @@ didReceiveResponse:(NSURLResponse *)response
 		}
 		NSString *tag = [http valueForHTTPHeaderField:@"ETag"];
 		self.entityTag = tag.length > 0 && ![tag hasPrefix:@"W/"] ? tag : nil;
+		[self recordEntityTag:self.entityTag];
 		[self reportWrittenBytes];
 		completionHandler(NSURLSessionResponseAllow);
 		return;

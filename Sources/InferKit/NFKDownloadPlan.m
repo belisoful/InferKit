@@ -156,12 +156,26 @@
 					missingPaths:(NSArray<NSString *> *)missingPaths
 						localURL:(nullable NSURL *)localURL
 {
+	return [self initWithPresence:presence byteCount:byteCount presentPaths:presentPaths missingPaths:missingPaths
+					 partialPaths:@[] partialByteCount:0 localURL:localURL];
+}
+
+- (instancetype)initWithPresence:(NFKDownloadPresence)presence
+					   byteCount:(long long)byteCount
+					presentPaths:(NSArray<NSString *> *)presentPaths
+					missingPaths:(NSArray<NSString *> *)missingPaths
+					partialPaths:(NSArray<NSString *> *)partialPaths
+				partialByteCount:(long long)partialByteCount
+						localURL:(nullable NSURL *)localURL
+{
 	self = [super init];
 	if (self != nil) {
 		_presence = presence;
 		_byteCount = byteCount;
 		_presentPaths = [presentPaths copy];
 		_missingPaths = [missingPaths copy];
+		_partialPaths = [partialPaths copy];
+		_partialByteCount = partialByteCount;
 		_localURL = [localURL copy];
 	}
 	return self;
@@ -170,7 +184,8 @@
 - (NSString *)description
 {
 	NSArray<NSString *> *names = @[ @"absent", @"partial", @"complete" ];
-	return [NSString stringWithFormat:@"<%@ %@, %lld bytes>", self.class, names[(NSUInteger)self.presence], self.byteCount];
+	return [NSString stringWithFormat:@"<%@ %@, %lld bytes, %lld kept partial>", self.class, names[(NSUInteger)self.presence],
+			self.byteCount, self.partialByteCount];
 }
 
 @end

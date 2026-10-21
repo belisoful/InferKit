@@ -147,8 +147,12 @@ static NSMutableSet<NSString *> *NFKStubHubDroppedPaths;
 	NSData *body = script.body;
 	NSMutableDictionary<NSString *, NSString *> *headers = [script.headers mutableCopy];
 	NSString *range = [self.request valueForHTTPHeaderField:@"Range"];
+	// A Range guarded by an If-Range that no longer names the file is answered whole, as a server does.
+	NSString *ifRange = [self.request valueForHTTPHeaderField:@"If-Range"];
+	BOOL rangeHolds = ifRange == nil || [ifRange isEqualToString:headers[@"ETag"]];
 	long long start = 0;
-	if (status == 200 && range != nil && sscanf(range.UTF8String, "bytes=%lld-", &start) == 1 && start < (long long)body.length) {
+	if (status == 200 && range != nil && rangeHolds && sscanf(range.UTF8String, "bytes=%lld-", &start) == 1
+		&& start < (long long)body.length) {
 		status = 206;
 		headers[@"Content-Range"] = [NSString stringWithFormat:@"bytes %lld-%lu/%lu", start,
 									 (unsigned long)body.length - 1, (unsigned long)body.length];

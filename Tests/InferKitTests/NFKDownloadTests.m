@@ -300,7 +300,9 @@ static NSString * const NFKTestRepo = @"org/model";
 	XCTAssertNil(error);
 	XCTAssertEqual(NFKStubHubProtocol.requests.count, (NSUInteger)0, @"nothing is fetched again");
 	XCTAssertEqual(reports.lastObject.completedFileCount, (NSUInteger)3);
-	XCTAssertEqual(reports.lastObject.receivedByteCount, 0LL);
+	XCTAssertGreaterThan(reports.lastObject.receivedByteCount, 0LL, @"the cached files count their bytes");
+	XCTAssertEqual(reports.lastObject.receivedByteCount, reports.lastObject.expectedByteCount);
+	XCTAssertEqual(reports.lastObject.bytesPerSecond, 0.0, @"and none of them was transferred");
 }
 
 - (void)testADownloadVerifiesTheLargeFileDigest
@@ -391,6 +393,113 @@ static NSString * const NFKTestRepo = @"org/model";
 	NSURL *weightsURL = [self.hub localURLForRepo:NFKTestRepo revision:nil path:@"model.safetensors"];
 	XCTAssertEqualObjects([NSData dataWithContentsOfURL:weightsURL], self.weights);
 	XCTAssertEqual(reports.lastObject.receivedByteCount, (long long)self.weights.length, @"resumed bytes are not counted twice");
+}
+
+#pragma mark Pausing
+
+/*! Starts a download of model.safetensors whose transfer stalls after its first chunk, and pauses it once
+	that chunk has arrived. Returns the bytes the pause kept. */
+- (long long)pauseAfterTheFirstChunkOf:(NSDictionary<NSString *, NFKStubHubResponse *> *)responses
+{
+	responses[@"model.safetensors"].chunkSize = 4096;
+	responses[@"model.safetensors"].stallsAfterFirstChunk = YES;
+	XCTestExpectation *done = [self expectationWithDescription:@"download pauses"];
+	__block NSError *finalError = nil;
+	NFKDownload *download = [self.hub downloadWithPlan:[self planPaths:@[ @"model.safetensors" ]] progressHandler:nil
+									 completionHandler:^(NSURL *localURL, NSError *error) {
+		finalError = error;
+		[done fulfill];
+	}];
+	NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:10];
+	while (download.currentProgress.receivedByteCount == 0 && deadline.timeIntervalSinceNow > 0) {
+		[NSThread sleepForTimeInterval:0.01];
+	}
+	[download pause];
+	[self waitForExpectations:@[ done ] timeout:10];
+	XCTAssertEqual(download.state, NFKDownloadStatePaused);
+	XCTAssertTrue(download.isPaused);
+	XCTAssertFalse(download.isCancelled);
+	XCTAssertEqual(finalError.code, NFKDownloadErrorPaused);
+	NSURL *localURL = [self.hub localURLForRepo:NFKTestRepo revision:nil path:@"model.safetensors"];
+	NSURL *partialURL = [localURL URLByAppendingPathExtension:@"download"];
+	long long kept = [[NSFileManager.defaultManager attributesOfItemAtPath:partialURL.path error:NULL][NSFileSize] longLongValue];
+	XCTAssertEqual(kept, 4096LL, @"the partial file keeps the bytes that arrived");
+	XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:localURL.path]);
+	responses[@"model.safetensors"].stallsAfterFirstChunk = NO;
+	return kept;
+}
+
+// A paused download keeps its partial file, the status counts it, and a later download of the same files
+// continues it with a Range request guarded by the file's ETag, counting the kept bytes as received.
+- (void)testAPausedDownloadIsContinuedByTheNextDownload
+{
+	NSDictionary<NSString *, NFKStubHubResponse *> *responses = [self serveTheModel];
+	long long kept = [self pauseAfterTheFirstChunkOf:responses];
+
+	NFKModelFile *weights = [[NFKModelFile alloc] initWithPath:@"model.safetensors" byteCount:@(self.weights.length) sha256:nil
+														   role:NFKModelFileRoleWeights optional:NO extensions:nil];
+	NFKModelSource *source = [self sourceWithFiles:@[ weights ] requiresConversion:NO];
+	NFKDownloadStatus *status = [self.hub downloadStatusForModelSource:source];
+	XCTAssertEqual(status.presence, NFKDownloadPresencePartial, @"a kept partial is not a download never started");
+	XCTAssertEqual(status.partialByteCount, kept);
+	XCTAssertEqualObjects(status.partialPaths, @[ @"model.safetensors" ]);
+
+	[NFKStubHubProtocol reset];
+	[self serveTheModel];
+	NFKDownload *download = nil;
+	NSError *error = nil;
+	NSArray<NFKDownloadProgress *> *reports = [self runDownloadOfPlan:[self planPaths:@[ @"model.safetensors" ]]
+															 download:&download error:&error];
+	XCTAssertNil(error);
+	NSArray<NSURLRequest *> *requests = [NFKStubHubProtocol requestsForPath:@"/org/model/resolve/main/model.safetensors"];
+	XCTAssertEqual(requests.count, (NSUInteger)1);
+	XCTAssertEqualObjects([requests[0] valueForHTTPHeaderField:@"Range"], ([NSString stringWithFormat:@"bytes=%lld-", kept]));
+	XCTAssertNotNil([requests[0] valueForHTTPHeaderField:@"If-Range"]);
+	NSURL *weightsURL = [self.hub localURLForRepo:NFKTestRepo revision:nil path:@"model.safetensors"];
+	XCTAssertEqualObjects([NSData dataWithContentsOfURL:weightsURL], self.weights);
+	XCTAssertEqual(reports.lastObject.receivedByteCount, (long long)self.weights.length,
+				   @"the kept bytes count once, from the start");
+	XCTAssertEqual([self.hub downloadStatusForModelSource:source].presence, NFKDownloadPresenceComplete);
+}
+
+// A file that changed while the download was paused is fetched again whole: the If-Range no longer names it.
+- (void)testAPausedFileThatChangedStartsOver
+{
+	NSDictionary<NSString *, NFKStubHubResponse *> *responses = [self serveTheModel];
+	[self pauseAfterTheFirstChunkOf:responses];
+
+	NSMutableData *changed = [self.weights mutableCopy];
+	((uint8_t *)changed.mutableBytes)[0] ^= 0xff;
+	[NFKStubHubProtocol reset];
+	responses = [self serveTheModel];
+	responses[@"model.safetensors"].body = changed;
+	NSMutableDictionary *headers = [responses[@"model.safetensors"].headers mutableCopy];
+	headers[@"ETag"] = @"\"changed\"";
+	responses[@"model.safetensors"].headers = headers;
+
+	NFKDownload *download = nil;
+	NSError *error = nil;
+	[self runDownloadOfPlan:[self planPaths:@[ @"model.safetensors" ]] download:&download error:&error];
+	XCTAssertNil(error);
+	NSURL *weightsURL = [self.hub localURLForRepo:NFKTestRepo revision:nil path:@"model.safetensors"];
+	XCTAssertEqualObjects([NSData dataWithContentsOfURL:weightsURL], changed, @"the whole changed file, not a splice");
+}
+
+// Removing a source takes a paused download's kept partial with it.
+- (void)testRemovingASourceRemovesItsKeptPartial
+{
+	NSDictionary<NSString *, NFKStubHubResponse *> *responses = [self serveTheModel];
+	[self pauseAfterTheFirstChunkOf:responses];
+	NFKModelFile *weights = [[NFKModelFile alloc] initWithPath:@"model.safetensors" byteCount:nil sha256:nil
+														   role:NFKModelFileRoleWeights optional:NO extensions:nil];
+	NFKModelSource *source = [self sourceWithFiles:@[ weights ] requiresConversion:NO];
+	NSError *error = nil;
+	NFKRemovalPlan *plan = [self.hub removalPlanForModelSource:source error:&error];
+	XCTAssertNotNil(plan, @"%@", error);
+	XCTAssertNotNil([self.hub removeFilesInPlan:plan error:&error], @"%@", error);
+	NSURL *localURL = [self.hub localURLForRepo:NFKTestRepo revision:nil path:@"model.safetensors"];
+	XCTAssertFalse([NSFileManager.defaultManager fileExistsAtPath:[localURL URLByAppendingPathExtension:@"download"].path]);
+	XCTAssertEqual([self.hub downloadStatusForModelSource:source].presence, NFKDownloadPresenceAbsent);
 }
 
 #pragma mark Model sources

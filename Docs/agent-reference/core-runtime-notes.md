@@ -453,8 +453,9 @@ added 2026-10-15, InferKit 0.4.0). The transfer is `NFKHFHubTransfer` (private).
   hub's plan-driven downloads hold one activity; `NFKMLXReleaseDownload.asyncValue` and
   `NFKMLXDownload.backend` each hold one around the factory's work; the core's legacy
   `downloadRepo:…completionHandler:` holds one too. A synchronous caller brackets its own.
-- Progress accounting: a file the plan or the cache marks cached counts toward the file counts and
-  adds no bytes. Received bytes per file are a running maximum, so a transfer that restarts from byte 0
+- Progress accounting: a file the plan or the cache marks cached counts its size as received and
+  expected, and a kept partial counts its bytes as received when its transfer starts; neither enters
+  the transfer rate (`keptByteCount` offsets the rate samples). Received bytes per file are a running maximum, so a transfer that restarts from byte 0
   (the server ignored `Range`, or `If-Range` found a changed file) never lowers the total. Reports are
   throttled to ten a second and forced at every file start, file end, and state change, and are built
   under the lock and dispatched in order to one serial queue. The completion handler is queued after the
@@ -470,7 +471,19 @@ added 2026-10-15, InferKit 0.4.0). The transfer is `NFKHFHubTransfer` (private).
   `Content-Length` is the encoded length, so only an identity body's length checks the file size.
 - Cancellation sets the flag first and then runs the registered handlers, and a transfer checks the
   flag under the same lock it publishes its task under, so a cancel that lands before the task exists
-  still stops it.
+  still stops it. `pause` does the same through the same handlers (`isStopped`, `stopError`) and
+  finishes in `NFKDownloadStatePaused`, a final state, so a removal is not refused as in use.
+- Pause and resume across processes: the transfer records the first response's strong ETag on the
+  `.download` file as the extended attribute `com.inferkit.download.etag` as soon as the response
+  arrives, so a paused partial, or one a killed process left, carries what a later transfer needs. A
+  fetch keeps a partial that records a tag and holds no more than the listed size, seeds the transfer
+  (`NFKHFHubTransferReport.keptByteCount` / `keptEntityTag`), and the first request already sends
+  `Range` and `If-Range`; a 200 for a changed file truncates. A partial that holds every listed byte
+  skips the request and goes to verification. A failure or a cancel still removes the partial; only a
+  pause keeps it. The tag is removed before the whole file moves into place. `downloadStatusFor…`
+  reports kept partials (`partialPaths`, `partialByteCount`) and reads such a source as `Partial`, and
+  a removal plan removes the partials of the paths it names. A kept partial pins its snapshot against
+  cache trimming, as an in-flight file does.
 - The access token goes only to `endpointURL`'s host (`requestForURL:`). The legacy transfer sent it
   to whatever URL it fetched; a plain URL source must not leak a Hugging Face token to another host.
 - Errors: `NFKDownloadErrorDomain` (`NS_ERROR_ENUM`, so Swift catches `NFKDownloadError.cancelled`).
