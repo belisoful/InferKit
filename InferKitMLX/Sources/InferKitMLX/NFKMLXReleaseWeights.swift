@@ -111,27 +111,37 @@ enum NFKMLXReleaseWeights {
         var merged = [(String, MLXArray)]()
         for url in try files(inDirectory: directory) {
             var stored = try NFKMLXWeights.loadCheckpoint(url: url).arrays
-            var read = [MLXArray](), group = [MLXArray](), groupBytes = 0
-            func flush() {
-                eval(read)
-                eval(group)
-                read.removeAll()
-                group.removeAll()
-                groupBytes = 0
-            }
-            for key in stored.keys.sorted() {
-                guard let value = stored.removeValue(forKey: key), let name = remap(key) else { continue }
-                let converted = value.dtype.isFloatingPoint ? value.asType(dtype) : value
-                merged.append((name, converted))
-                read.append(value)
-                group.append(converted)
-                groupBytes += value.nbytes
-                if groupBytes >= 256 << 20 {
-                    flush()
-                }
-            }
-            flush()
+            merged += converting(&stored, to: dtype, remap: remap)
         }
+        return merged
+    }
+
+    /// `stored`'s arrays with every floating tensor converted to `dtype`, read and converted in groups of
+    /// about 256 MB, each stored array dropped from `stored` once converted, so the stored copy never sits
+    /// whole beside the converted one.
+    static func converting(_ stored: inout [String: MLXArray], to dtype: DType,
+                           remap: (String) -> String? = { $0 }) -> [(String, MLXArray)] {
+        var merged = [(String, MLXArray)]()
+        var read = [MLXArray](), group = [MLXArray](), groupBytes = 0
+        func flush() {
+            eval(read)
+            eval(group)
+            read.removeAll()
+            group.removeAll()
+            groupBytes = 0
+        }
+        for key in stored.keys.sorted() {
+            guard let value = stored.removeValue(forKey: key), let name = remap(key) else { continue }
+            let converted = value.dtype.isFloatingPoint ? value.asType(dtype) : value
+            merged.append((name, converted))
+            read.append(value)
+            group.append(converted)
+            groupBytes += value.nbytes
+            if groupBytes >= 256 << 20 {
+                flush()
+            }
+        }
+        flush()
         return merged
     }
 

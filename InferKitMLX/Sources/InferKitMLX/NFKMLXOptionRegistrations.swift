@@ -288,10 +288,11 @@ enum NFKMLXOptionRegistrations {
         let residency: Set<String> = [NFKModelLoadOptionResidency]
         // The precision option converts Wan 2.1's float32 transformer to bfloat16 as it loads.
         registerDirectoryModels(registryNames(families: ["wan"]), consumes: residency.union([NFKModelLoadOptionPrecision])) {
-            url, _, options in
+            url, name, options in
+            // Wan 2.2 TI2V 5B stores its transformer at 16 bits and has no bfloat16 parity check of its own.
             let generator = try NFKMLXWanVideoGenerator.generator(
                 directoryURL: url, residency: options.residency,
-                transformerType: options.precisionName == NFKModelPrecisionBFloat16 ? .bfloat16 : nil)
+                transformerType: try options.bfloat16Cast(of: name, offersBFloat16: name != "wan2.2-ti2v-5b"))
             report(generator.holdsStagesResident, to: options)
             return generator.inferenceBackend()
         }

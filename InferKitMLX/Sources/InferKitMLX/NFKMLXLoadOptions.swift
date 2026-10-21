@@ -86,6 +86,24 @@ public struct NFKMLXLoadOptions: @unchecked Sendable {
         precision.map { $0 == .checkpoint }
     }
 
+    /// The type a factory converts a float32 release to where it offers `bfloat16` beside the published
+    /// precision: nil for no precision or `checkpoint`, `.bfloat16` for `bfloat16` where `offersBFloat16`.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` naming `model` for any other precision, or for
+    ///   `bfloat16` where the model has no bfloat16 parity check.
+    func bfloat16Cast(of model: String, offersBFloat16: Bool = true) throws -> DType? {
+        switch precisionName {
+        case nil, NFKModelPrecisionCheckpoint?:
+            return nil
+        case NFKModelPrecisionBFloat16? where offersBFloat16:
+            return .bfloat16
+        default:
+            throw NFKMLXError.unsupportedConfiguration(
+                "\(model) loads as published\(offersBFloat16 ? " or at bfloat16" : ""); precision \(precisionName ?? "") "
+                + "has no parity check for it")
+        }
+    }
+
     /// The bits a runtime weight quantization packs each weight into, or nil for none (absent or 0).
     /// Introduced in InferKit 0.4.0.
     public var quantizationBits: Int? {

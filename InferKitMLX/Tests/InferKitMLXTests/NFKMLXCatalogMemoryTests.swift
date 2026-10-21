@@ -51,8 +51,9 @@ final class NFKMLXCatalogMemoryTests: XCTestCase {
         var plan = NFKMLXLoadPlan(precision: .stored, directories: ["text_encoder": .bfloat16, "vae": .float32],
                                   stages: [["text_encoder"], ["transformer", "vae"]])
         plan.castDirectories = ["transformer"]
+        // The VAE is stored at bfloat16 and planned at float32, so a figure that held it as stored would read 150.
         let row = measurement(tensorBytes: ["text_encoder": ["F32": 4000], "transformer": ["F32": 2000],
-                                            "vae": ["F32": 300]])
+                                            "vae": ["BF16": 150]])
         let facts = try XCTUnwrap(NFKMLXVariantFacts(row, plan: plan, converted: false, recipe: NFKMLXFactsRecipe(),
                                                      estimatesStoredBytes: false))
         let text = facts.facts.stages[0].byteCountByPrecision, second = facts.facts.stages[1].byteCountByPrecision

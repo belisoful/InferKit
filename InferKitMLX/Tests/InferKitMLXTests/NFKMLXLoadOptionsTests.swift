@@ -111,6 +111,20 @@ final class NFKMLXLoadOptionsTests: XCTestCase {
         XCTAssertEqual(NFKMLXLoadOptions([NFKModelLoadOptionResidency: "swapped"]).residency, .automatic)
     }
 
+    // A factory offering bfloat16 beside the published precision converts for bfloat16, keeps the release
+    // as stored for none or checkpoint, and refuses a precision it has no parity check for.
+    func testTheBFloat16CastRefusesWhatItHasNoParityCheckFor() throws {
+        XCTAssertNil(try NFKMLXLoadOptions().bfloat16Cast(of: "m"))
+        XCTAssertNil(try NFKMLXLoadOptions([NFKModelLoadOptionPrecision: NFKModelPrecisionCheckpoint]).bfloat16Cast(of: "m"))
+        XCTAssertEqual(try NFKMLXLoadOptions([NFKModelLoadOptionPrecision: NFKModelPrecisionBFloat16]).bfloat16Cast(of: "m"),
+                       .bfloat16)
+        for precision in [NFKModelPrecisionFloat16, NFKModelPrecisionFloat32] {
+            XCTAssertThrowsError(try NFKMLXLoadOptions([NFKModelLoadOptionPrecision: precision]).bfloat16Cast(of: "m"), precision)
+        }
+        XCTAssertThrowsError(try NFKMLXLoadOptions([NFKModelLoadOptionPrecision: NFKModelPrecisionBFloat16])
+            .bfloat16Cast(of: "m", offersBFloat16: false))
+    }
+
     func testTheDraftBitsKeepAFactoryDefaultOnlyWhenAbsent() {
         XCTAssertEqual(NFKMLXLoadOptions().draftBits(orDefault: 4), 4)
         XCTAssertNil(NFKMLXLoadOptions([NFKModelLoadOptionDraftBits: 0]).draftBits(orDefault: 4))

@@ -556,13 +556,13 @@ public final class NFKMLXSigLIP2: NSObject {
 
     /// Registers every released size with `NFKMLXModelRegistry`, each under its release name
     /// (`siglip2-base-patch16-224`, `siglip2-so400m-patch14-384`, …). `NFKModelLoadOptionPrecision`
-    /// `bfloat16` converts the float32 release to bfloat16 as it loads; any other value keeps it as stored.
+    /// `bfloat16` converts the float32 release to bfloat16 as it loads, `checkpoint` keeps it as stored, and
+    /// any other precision is refused.
     @objc public static func register() {
         for variant in allVariants {
-            NFKMLXModelRegistry.register(name: specs(for: variant).name, consumes: [NFKModelLoadOptionPrecision]) {
-                weightsURL, options in
-                try backend(variant: variant, weightsURL: weightsURL,
-                            castingTo: options.precisionName == NFKModelPrecisionBFloat16 ? .bfloat16 : nil)
+            let name = specs(for: variant).name
+            NFKMLXModelRegistry.register(name: name, consumes: [NFKModelLoadOptionPrecision]) { weightsURL, options in
+                try backend(variant: variant, weightsURL: weightsURL, castingTo: try options.bfloat16Cast(of: name))
             }
         }
     }
@@ -572,13 +572,18 @@ public final class NFKMLXSigLIP2: NSObject {
     /// Linear and embedding weights and the pooling head's fused projection are 2-D and pass through. A
     /// `dtype` converts every floating tensor to it.
     static func loadWeights(into net: NFKMLXSigLIP2Net, from url: URL, castingTo dtype: DType? = nil) throws {
-        let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
-        let transpose = checkpoint.needsConvTranspose
-        let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
-            let name = remapReferenceKey(key)
-            let oriented = transpose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value
-            guard let dtype, oriented.dtype.isFloatingPoint else { return (name, oriented) }
-            return (name, oriented.asType(dtype))
+        // `stored` alone holds the read arrays, so each stored tensor is freed once it converts.
+        var stored: [String: MLXArray]
+        let transpose: Bool
+        do {
+            let checkpoint = dtype == nil ? try NFKMLXWeights.materializedCheckpoint(url: url)
+                : try NFKMLXWeights.loadCheckpoint(url: url)
+            transpose = checkpoint.needsConvTranspose
+            stored = checkpoint.arrays
+        }
+        let read = dtype.map { NFKMLXReleaseWeights.converting(&stored, to: $0) } ?? stored.map { ($0.key, $0.value) }
+        let mapped = read.map { key, value -> (String, MLXArray) in
+            (remapReferenceKey(key), transpose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }
         try NFKMLXWeights.apply(mapped, to: net)
     }

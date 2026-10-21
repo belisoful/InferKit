@@ -73,14 +73,14 @@ enum NFKMLXWanRelease {
 
     /// Loads a release's `transformer/` weights as diffusers loads them at a half precision: every floating
     /// tensor converted to `dtype` as it is read, so the stored float32 never sits whole beside the converted
-    /// copy, except the parameters ``keepsFloat32(_:)`` names, which load as stored. `remap` renames a key,
+    /// copy, except the parameters ``keepsFloat32(_:)`` names, which load at float32. `remap` renames a key,
     /// or drops it with nil.
     static func loadTransformer(into net: NFKMLXWanTransformerNet, fromDirectory directory: URL,
                                 converting dtype: DType, remap: (String) -> String? = { $0 }) throws {
         let converted = try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: dtype) { key in
             keepsFloat32(key) ? nil : remap(key)
         }
-        let kept = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: .checkpoint,
+        let kept = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: .float32,
                                                                remap: { keepsFloat32($0) ? remap($0) : nil })
         try NFKMLXWeights.apply((converted + kept).map(adaptedTransformer), to: net, verifyShapes: true)
     }
@@ -337,7 +337,7 @@ public final class NFKMLXWanVideoGenerator: NSObject {
         guard let dtype else {
             return try NFKMLXStageWeights.bytes(inDirectory: directory, precision: .checkpoint)
         }
-        return try NFKMLXStageWeights.bytes(inDirectory: directory, holding: dtype)
+        return try NFKMLXStageWeights.bytes(inDirectory: directory, holding: dtype, float32: NFKMLXWanRelease.keepsFloat32)
     }
 
     /// The component folders a download fetches.

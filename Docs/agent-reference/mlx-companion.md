@@ -736,7 +736,13 @@ Memory facts, load options, and presets (`NFKMLXCatalogOptions.swift`, 2026-10-1
   (a model without one would be estimated at its maximum context).
 - A stage whose directories load at different precisions states `"loaded"` bytes and the memory model's
   `stagePrecisions` names it; a uniform stage names its precision. The precision option, where declared,
-  replaces `stagePrecisions`.
+  replaces `stagePrecisions` for the stages it governs: every stage, or the profile's `precisionStage`
+  alone (Wan's `transformer`), whose siblings keep their plan's precisions.
+- `NFKMLXLoadPlan.castDirectories` names the directories a precision option converts. A stage holding
+  some converted directories and some not states its `checkpoint`, `float32`, and `bfloat16` figures with
+  the converted directories at that precision and the others at the precision the plan gives them, so
+  Wan's `transformer` stage at `bfloat16` counts the transformer at bfloat16 and the VAE at float32. A
+  stage holding none, or only converted ones, states its figures as every other stage does.
 - `NFKMLXKeyValueRule` gives the 16-bit cache per position: `.dense` is
   `NFKMLXModelSizing.keyValueBytesPerToken(of:precision: .checkpoint)` (the tests compare it on the
   released configurations), `.slidingWindow` bounds Gemma 3's sliding layers to the window (pattern by
