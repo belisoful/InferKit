@@ -22518,7 +22518,8 @@
         "quantizationBits" : "quantizationBits"
       },
       "modelTypes" : [
-        "mistral"
+        "mistral",
+        "llama"
       ],
       "options" : [
         {

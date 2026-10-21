@@ -4,8 +4,9 @@
 //
 //  Whether the language loader reads a repository, judged from files placed in a hub cache so no request
 //  leaves the process: a small Qwen3 decoder measured into a descriptor, each refusal and its code, the
-//  catalog's model types, and, gated behind INFERKIT_LIVE_HUB, the runtime measurement of a shipped
-//  release against the figures Tools/catalog/measure.py recorded for it. Nothing here reaches MLX.
+//  catalog's model types, the mlx-community releases in the validation store judged from their own files,
+//  and, gated behind INFERKIT_LIVE_HUB, the runtime measurement of a shipped release against the figures
+//  Tools/catalog/measure.py recorded for it. Nothing here reaches MLX.
 //
 
 import XCTest
@@ -61,6 +62,43 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
         return tensors
     }
 
+    /// The tensors of ``configuration`` as mlx_lm stores them at 4 bits in groups of 64: every projection
+    /// and the embedding packed into `U32` words with bfloat16 scales and biases, the norms in bfloat16.
+    private static var packedTensors: [(String, String, [Int])] {
+        tensors.flatMap { name, shape -> [(String, String, [Int])] in
+            guard shape.count == 2 else { return [(name, "BF16", shape)] }
+            let base = String(name.dropLast(".weight".count))
+            return [(name, "U32", [shape[0], shape[1] / 8]), (base + ".scales", "BF16", [shape[0], shape[1] / 64]),
+                    (base + ".biases", "BF16", [shape[0], shape[1] / 64])]
+        }
+    }
+
+    /// The bytes a tensor list holds, by its dtypes.
+    private static func storedBytes(_ tensors: [(String, String, [Int])]) -> Int64 {
+        tensors.reduce(0) { $0 + Int64($1.2.reduce(1, *) * (elementBytes[$1.1] ?? 0)) }
+    }
+
+    private static let elementBytes = ["BF16": 2, "F16": 2, "F32": 4, "U32": 4, "U8": 1, "I8": 1, "I32": 4, "I64": 8,
+                                       "F8_E4M3": 1, "F8_E5M2": 1]
+
+    /// A safetensors file of `tensors`, each in its own dtype, zero-filled.
+    private static func safetensors(typed tensors: [(String, String, [Int])], metadata: [String: String]? = nil) -> Data {
+        var header = [String: Any]()
+        var offset = 0
+        for (name, dtype, shape) in tensors {
+            let bytes = shape.reduce(1, *) * (elementBytes[dtype] ?? 0)
+            header[name] = ["dtype": dtype, "shape": shape, "data_offsets": [offset, offset + bytes]]
+            offset += bytes
+        }
+        header["__metadata__"] = metadata
+        let json = try! JSONSerialization.data(withJSONObject: header)
+        var length = UInt64(json.count).littleEndian
+        var data = Data(bytes: &length, count: 8)
+        data.append(json)
+        data.append(Data(count: offset))
+        return data
+    }
+
     /// A safetensors file of `tensors` in `dtype`, zero-filled.
     private static func safetensors(_ tensors: [(String, [Int])], dtype: String = "BF16", elementBytes: Int = 2,
                                     metadata: [String: String]? = nil) -> Data {
@@ -81,14 +119,27 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
     }
 
     private static func tokenizer(pattern: String = qwen2Pattern, model: [String: Any] = [:],
-                                  preTokenizer: [String: Any]? = nil) -> [String: Any] {
+                                  preTokenizer: [String: Any]? = nil,
+                                  decoder: [String: Any] = ["type": "ByteLevel"]) -> [String: Any] {
         let split: [String: Any] = ["type": "Split", "pattern": ["Regex": pattern], "behavior": "Isolated",
                                     "invert": false]
         let byteLevel: [String: Any] = ["type": "ByteLevel", "add_prefix_space": false, "trim_offsets": false,
                                         "use_regex": false]
         return ["model": ["type": "BPE", "vocab": [String: Int](), "merges": [String]()].merging(model) { $1 },
                 "pre_tokenizer": preTokenizer ?? ["type": "Sequence", "pretokenizers": [split, byteLevel]],
-                "decoder": ["type": "ByteLevel"]]
+                "decoder": decoder]
+    }
+
+    /// Mistral's SentencePiece-style tokenizer: a Metaspace that prepends `▁` to the first segment only,
+    /// with byte fallback.
+    private static var metaspaceTokenizer: [String: Any] {
+        let decoders: [[String: Any]] = [
+            ["type": "Replace", "pattern": ["String": "▁"], "content": " "], ["type": "ByteFallback"],
+            ["type": "Fuse"], ["type": "Strip", "content": " ", "start": 1, "stop": 0]]
+        return tokenizer(model: ["byte_fallback": true, "unk_token": "<unk>"],
+                         preTokenizer: ["type": "Metaspace", "replacement": "▁", "prepend_scheme": "first",
+                                        "split": false],
+                         decoder: ["type": "Sequence", "decoders": decoders])
     }
 
     private static func json(_ object: Any) -> Data {
@@ -200,6 +251,67 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
         XCTAssertFalse(paths.contains("model.safetensors"))
     }
 
+    func testAnMLXQuantizedRepositoryIsMeasuredAsStored() throws {
+        var configuration = Self.configuration
+        configuration["quantization"] = ["group_size": 64, "bits": 4]
+        configuration["quantization_config"] = ["group_size": 64, "bits": 4]
+        let packed = Self.packedTensors
+        let read = try repository(configuration: configuration,
+                                  weights: ["model.safetensors": Self.safetensors(typed: packed)])
+        let descriptor = try NFKMLXModelDescriptors.descriptor(for: read, matching: try template())
+        let variant = try XCTUnwrap(descriptor.defaultVariant)
+        let stage = try XCTUnwrap(variant.memoryFacts?.stages.first)
+        XCTAssertEqual(stage.byteCountByPrecision[NFKModelPrecisionCheckpoint]?.int64Value, Self.storedBytes(packed))
+        let keys = Set(descriptor.loadOptions.map(\.key))
+        XCTAssertFalse(keys.contains(NFKModelLoadOptionPrecision), "the loader reads an mlx_lm release as stored")
+        XCTAssertFalse(keys.contains(NFKModelLoadOptionQuantizationBits), "the release's layers are packed already")
+        XCTAssertTrue(keys.contains(NFKModelLoadOptionContextLength))
+        XCTAssertNil(descriptor.memoryModel?.precisionOptionKey)
+        XCTAssertNil(descriptor.memoryModel?.quantizationBitsOptionKey)
+        XCTAssertNoThrow(try descriptor.estimatedMemory(forOptions: nil))
+    }
+
+    func testAShardedMLXQuantizedRepositoryReadsEveryShard() throws {
+        var configuration = Self.configuration
+        configuration["quantization"] = ["group_size": 64, "bits": 4]
+        let packed = Self.packedTensors
+        let first = Array(packed.prefix(12)), second = Array(packed.dropFirst(12))
+        var weightMap = [String: String]()
+        first.forEach { weightMap[$0.0] = "model-00001-of-00002.safetensors" }
+        second.forEach { weightMap[$0.0] = "model-00002-of-00002.safetensors" }
+        let read = try repository(configuration: configuration, weights: [
+            "model.safetensors.index.json": Self.json(["weight_map": weightMap]),
+            "model-00001-of-00002.safetensors": Self.safetensors(typed: first),
+            "model-00002-of-00002.safetensors": Self.safetensors(typed: second),
+        ])
+        let variant = try XCTUnwrap(try NFKMLXModelDescriptors.descriptor(for: read, matching: try template()).defaultVariant)
+        XCTAssertEqual(variant.memoryFacts?.stages.first?.byteCountByPrecision[NFKModelPrecisionCheckpoint]?.int64Value,
+                       Self.storedBytes(packed))
+    }
+
+    func testAnInferKitQuantizedSaveIsMeasuredAsStored() throws {
+        let packed = Self.packedTensors
+        let read = try repository(weights: [
+            "model.safetensors": Self.safetensors(typed: packed, metadata: ["inferkit.quantization": "4:64"])])
+        let descriptor = try NFKMLXModelDescriptors.descriptor(for: read, matching: try template())
+        XCTAssertEqual(descriptor.defaultVariant?.memoryFacts?.stages.first?
+                        .byteCountByPrecision[NFKModelPrecisionCheckpoint]?.int64Value, Self.storedBytes(packed))
+        XCTAssertFalse(descriptor.loadOptions.contains { $0.key == NFKModelLoadOptionPrecision })
+    }
+
+    func testTheTokenizersTheLoaderReproducesAreRead() throws {
+        let tokenizers: [String: [String: Any]] = [
+            "llama3": Self.tokenizer(pattern: Self.llama3Pattern),
+            "ignore_merges": Self.tokenizer(pattern: Self.llama3Pattern, model: ["ignore_merges": true]),
+            "nfc": Self.tokenizer().merging(["normalizer": ["type": "NFC"]]) { $1 },
+            "metaspace": Self.metaspaceTokenizer,
+        ]
+        for (name, tokenizer) in tokenizers.sorted(by: { $0.key < $1.key }) {
+            XCTAssertNoThrow(try NFKMLXModelDescriptors.descriptor(for: try repository(tokenizer: tokenizer),
+                                                                   matching: try template()), name)
+        }
+    }
+
     func testTheMeasurementCountsWhatMeasurePyCounts() throws {
         var structure = NFKMLXTensorStructure()
         for (name, shape) in Self.tensors {
@@ -223,15 +335,15 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
 
     // MARK: Refusals
 
-    func testAnMLXQuantizationIsRefused() throws {
-        var configuration = Self.configuration
-        configuration["quantization"] = ["group_size": 64, "bits": 4]
-        try assertRefusal(.unsupportedQuantization, try repository(configuration: configuration))
-    }
-
     func testAnotherQuantizationMethodIsRefused() throws {
         var configuration = Self.configuration
         configuration["quantization_config"] = ["quant_method": "gptq", "bits": 4]
+        try assertRefusal(.unsupportedQuantization, try repository(configuration: configuration))
+    }
+
+    func testAQuantizationBlockWithoutItsGeometryIsRefused() throws {
+        var configuration = Self.configuration
+        configuration["quantization"] = ["mode": "affine"]
         try assertRefusal(.unsupportedQuantization, try repository(configuration: configuration))
     }
 
@@ -240,18 +352,65 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
         try assertRefusal(.unsupportedQuantization, try repository(weights: ["model.safetensors": packed]))
     }
 
-    func testASentencePieceTokenizerIsRefused() throws {
-        let metaspace: [String: Any] = ["type": "Metaspace", "replacement": "▁", "prepend_scheme": "first"]
-        try assertRefusal(.unsupportedTokenizer,
-                          try repository(tokenizer: Self.tokenizer(model: ["byte_fallback": true], preTokenizer: metaspace)))
+    func testPackedOrEightBitFloatWeightsWithoutAQuantizationAreRefused() throws {
+        for dtype in ["I8", "U8", "I32", "F8_E4M3", "F8_E5M2"] {
+            let weights = Self.safetensors(typed: [("model.layers.0.mlp.up_proj.weight", dtype, [128, 64])])
+            try assertRefusal(.unsupportedQuantization, try repository(weights: ["model.safetensors": weights]))
+        }
     }
 
-    func testAPreTokenizationPatternTheTokenizerDoesNotImplementIsRefused() throws {
-        try assertRefusal(.unsupportedTokenizer, try repository(tokenizer: Self.tokenizer(pattern: Self.llama3Pattern)))
+    func testAnIntegerBufferBesideFloatWeightsIsRead() throws {
+        let tensors = Self.tensors.map { ($0.0, "BF16", $0.1) } + [("model.position_ids", "I64", [1, 512])]
+        XCTAssertNoThrow(try NFKMLXModelDescriptors.descriptor(
+            for: try repository(weights: ["model.safetensors": Self.safetensors(typed: tensors)]), matching: try template()))
     }
 
-    func testIgnoredMergesAreRefused() throws {
-        try assertRefusal(.unsupportedTokenizer, try repository(tokenizer: Self.tokenizer(model: ["ignore_merges": true])))
+    func testMXFP4OnAFamilyWithoutFusedExpertsIsRefused() throws {
+        var configuration = Self.configuration
+        configuration["quantization_config"] = ["quant_method": "mxfp4"]
+        try assertRefusal(.unsupportedQuantization, try repository(configuration: configuration))
+    }
+
+    func testAnInferKitQuantizedSaveSplitAcrossFilesIsRefused() throws {
+        let packed = Self.packedTensors
+        let first = Array(packed.prefix(12)), second = Array(packed.dropFirst(12))
+        var weightMap = [String: String]()
+        first.forEach { weightMap[$0.0] = "model-00001-of-00002.safetensors" }
+        second.forEach { weightMap[$0.0] = "model-00002-of-00002.safetensors" }
+        let metadata = ["inferkit.quantization": "4:64"]
+        try assertRefusal(.unsupportedQuantization, try repository(weights: [
+            "model.safetensors.index.json": Self.json(["weight_map": weightMap]),
+            "model-00001-of-00002.safetensors": Self.safetensors(typed: first, metadata: metadata),
+            "model-00002-of-00002.safetensors": Self.safetensors(typed: second, metadata: metadata),
+        ]))
+    }
+
+    func testMLXLMsGptOssLayoutIsRefused() throws {
+        let entry: [String: Any] = ["dtype": "U32", "shape": [4, 8, 8], "data_offsets": [0, 1024]]
+        for name in ["model.layers.0.mlp.experts.gate_proj.weight", "model.layers.0.mlp.switch_mlp.gate_proj.weight"] {
+            XCTAssertThrowsError(try NFKMLXRepositoryJudgment.verifyPacking(
+                headers: [[name: entry]], quantization: .mlx, fusesExperts: true, repository: "org/gpt-oss-4bit"), name) {
+                XCTAssertEqual(($0 as NSError).code, NFKModelResolutionError.Code.unsupportedQuantization.rawValue)
+            }
+            XCTAssertFalse(try NFKMLXRepositoryJudgment.verifyPacking(
+                headers: [[name: entry]], quantization: .mlx, fusesExperts: false, repository: "org/mixture-4bit"))
+        }
+    }
+
+    func testAMetaspaceTokenizerOutsideMistralsFormIsRefused() throws {
+        var tokenizer = Self.metaspaceTokenizer
+        tokenizer["pre_tokenizer"] = ["type": "Metaspace", "replacement": "▁", "prepend_scheme": "always", "split": false]
+        try assertRefusal(.unsupportedTokenizer, try repository(tokenizer: tokenizer))
+    }
+
+    func testAPreTokenizationPatternTheTokenizerDoesNotReproduceIsRefused() throws {
+        try assertRefusal(.unsupportedTokenizer, try repository(tokenizer: Self.tokenizer(pattern: #"\s+|\S+"#)))
+    }
+
+    func testANormalizerTheTokenizerDoesNotReproduceIsRefused() throws {
+        var tokenizer = Self.tokenizer()
+        tokenizer["normalizer"] = ["type": "NFKC"]
+        try assertRefusal(.unsupportedTokenizer, try repository(tokenizer: tokenizer))
     }
 
     func testAMissingTokenizerIsRefused() throws {
@@ -297,17 +456,69 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
 
     func testTheLanguageReleasesListTheModelTypesTheirLoaderReads() throws {
         let catalog = NFKModelCatalog.shared
-        let expected = ["qwen3-0.6b": "qwen3", "qwen3-30b-a3b": "qwen3_moe", "qwen1.5-moe-a2.7b": "qwen2_moe",
-                        "mixtral-8x7b-instruct": "mixtral", "gpt-oss-20b": "gpt_oss",
-                        "mistral-small-24b-instruct-2501": "mistral"]
-        for (identifier, modelType) in expected {
-            XCTAssertEqual(catalog.descriptor(withIdentifier: identifier)?.modelTypes, [modelType], identifier)
+        let expected = ["qwen3-0.6b": ["qwen3"], "qwen3-30b-a3b": ["qwen3_moe"], "qwen1.5-moe-a2.7b": ["qwen2_moe"],
+                        "mixtral-8x7b-instruct": ["mixtral"], "gpt-oss-20b": ["gpt_oss"],
+                        "mistral-small-24b-instruct-2501": ["mistral", "llama"]]
+        for (identifier, modelTypes) in expected {
+            XCTAssertEqual(catalog.descriptor(withIdentifier: identifier)?.modelTypes, modelTypes, identifier)
         }
         for descriptor in NFKMLXModelDescriptors.modelDescriptors() where !descriptor.modelTypes.isEmpty {
             let entry = try XCTUnwrap(NFKMLXModelDescriptors.entries.first { $0.identifier == descriptor.identifier })
             XCTAssertTrue(NFKMLXCatalogLanguage.readsReleases(of: entry),
                           "\(descriptor.identifier) lists model types its loader does not judge")
         }
+    }
+
+    // MARK: The validation store
+
+    /// The release directory a validation key names, placed in the hub cache at ``commit`` by symbolic links,
+    /// and the repository a resolver reads.
+    private func storedRelease(_ key: String, repository name: String) throws -> NFKModelRepository {
+        guard let path = NFKMLXValidationConfig.environment[key] else {
+            throw XCTSkip("set \(key) to the mlx-community release directory")
+        }
+        let directory = URL(fileURLWithPath: path)
+        let hub = NFKHFHub(cacheDirectoryURL: cache)
+        var listed = [NFKDownloadPlanFile]()
+        for file in try FileManager.default.contentsOfDirectory(atPath: path).sorted() where file != "REVISION" {
+            let source = directory.appendingPathComponent(file)
+            let local = try XCTUnwrap(hub.localURL(forRepo: name, revision: Self.commit, path: file))
+            try FileManager.default.createDirectory(at: local.deletingLastPathComponent(),
+                                                    withIntermediateDirectories: true)
+            try FileManager.default.createSymbolicLink(at: local, withDestinationURL: source)
+            let size = try XCTUnwrap(try source.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+            let remote = try XCTUnwrap(hub.remoteURL(forRepo: name, revision: Self.commit, path: file))
+            listed.append(NFKDownloadPlanFile(path: file, remoteURL: remote, localURL: local, byteCount: Int64(size),
+                                              sha256: nil, cached: true, optional: false))
+        }
+        let data = try Data(contentsOf: directory.appendingPathComponent("config.json"))
+        let configuration = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        return NFKModelRepository(repository: name, revision: Self.commit, requestedRevision: nil,
+                                  configuration: configuration, files: listed, license: nil, hub: hub)
+    }
+
+    /// Resolves a stored mlx-community release on `template` and holds its stored bytes to the
+    /// `total_size` mlx_lm wrote in its weight index.
+    private func assertStoredReleaseResolves(_ key: String, repository name: String, template identifier: String) throws {
+        let read = try storedRelease(key, repository: name)
+        let descriptor = try NFKMLXModelDescriptors.descriptor(for: read, matching: try template(identifier))
+        let index = try XCTUnwrap(try read.jsonObjectOfFile(atPath: "model.safetensors.index.json") as? [String: Any])
+        let total = try XCTUnwrap((index["metadata"] as? [String: Any])?["total_size"] as? NSNumber)
+        let stage = try XCTUnwrap(descriptor.defaultVariant?.memoryFacts?.stages.first)
+        XCTAssertEqual(stage.byteCountByPrecision[NFKModelPrecisionCheckpoint]?.int64Value, total.int64Value)
+        XCTAssertFalse(descriptor.loadOptions.contains { $0.key == NFKModelLoadOptionPrecision })
+        XCTAssertFalse(descriptor.loadOptions.contains { $0.key == NFKModelLoadOptionQuantizationBits })
+        XCTAssertEqual(descriptor.registryName, try template(identifier).registryName)
+    }
+
+    func testTheStoredMLXCommunityQwen3FourBitResolves() throws {
+        try assertStoredReleaseResolves("IK_VAL_MLX_QWEN3_06B_4BIT", repository: "mlx-community/Qwen3-0.6B-4bit",
+                                        template: "qwen3-0.6b")
+    }
+
+    func testTheStoredMLXCommunityLlama32FourBitResolves() throws {
+        try assertStoredReleaseResolves("IK_VAL_MLX_LLAMA32_1B_4BIT", repository: "mlx-community/Llama-3.2-1B-Instruct-4bit",
+                                        template: "mistral-small-24b-instruct-2501")
     }
 
     // MARK: Live (network-gated)

@@ -22,19 +22,21 @@ extension NFKMLXModelDescriptors {
     /// The judgment refuses what the loader would read wrongly with no error:
     /// - a configuration ``NFKMLXLanguage/configuration(fromJSON:)`` rejects
     ///   (`NFKModelResolutionErrorUnsupportedConfiguration`);
-    /// - quantized weights other than gpt-oss's MXFP4 experts and a single-file InferKit save
+    /// - a quantization `NFKMLXQuantization.releaseQuantization(configJSON:)` refuses, MXFP4 on a
+    ///   family whose experts the loader does not fuse, packed or 8-bit float weights no configuration or
+    ///   save describes, an InferKit quantized save split across files, and mlx_lm's gpt-oss layout,
+    ///   which stores the expert gate and up projections apart
     ///   (`NFKModelResolutionErrorUnsupportedQuantization`);
-    /// - a tokenizer that is not byte-level BPE, or whose pre-tokenization pattern is not one the core
-    ///   tokenizer implements exactly (`NFKModelResolutionErrorUnsupportedTokenizer`);
+    /// - a tokenizer `NFKMLXLanguage.tokenizerScheme(tokenizerJSON:tokenizerConfiguration:)` does not
+    ///   reproduce (`NFKModelResolutionErrorUnsupportedTokenizer`);
     /// - weights in neither `model.safetensors` nor a `model.safetensors.index.json`, and a header whose
     ///   shape or offsets are outside what a release holds (`NFKModelResolutionErrorUnsupportedWeightFormat`).
     ///
-    /// The Mixtral, gpt-oss, and Mistral tokenizers fail the tokenizer test today, so their families'
-    /// repositories are refused there.
-    ///
     /// The repository is measured as `Tools/catalog/measure.py` measures a shipped release, from its file
     /// listing, its safetensors headers, and its `config.json`, and the descriptor takes the load options,
-    /// memory model, and memory facts a shipped release of the family does. Its identifier is the
+    /// memory model, and memory facts a shipped release of the family does. A repository the loader reads
+    /// as stored (an mlx_lm quantized release, an InferKit quantized save) is measured at its stored
+    /// bytes and offers no precision or weight quantization option. Its identifier is the
     /// repository name, its one variant reads the repository at `repository.revision` and builds under
     /// `descriptor`'s registry name, and its license is the model card's.
     ///
@@ -63,23 +65,30 @@ struct NFKMLXRepositoryJudgment {
     /// The weight files the loader reads, in the order it reads them.
     let weightFiles: [String]
     let measurement: NFKMLXMeasuredVariant
+    /// True where the loader reads the weights as stored whatever the request: an mlx_lm quantized
+    /// release, or an InferKit quantized save.
+    let loadsAsStored: Bool
 
     init(repository: NFKModelRepository, template: NFKMLXCatalogEntry) throws {
         self.repository = repository
         self.template = template
         let configuration = repository.configuration
+        let languageConfiguration: NFKMLXLanguageConfiguration
         do {
-            _ = try NFKMLXLanguage.configuration(fromJSON: configuration)
+            languageConfiguration = try NFKMLXLanguage.configuration(fromJSON: configuration)
         } catch {
             throw Self.refusal(.unsupportedConfiguration,
                 "the \(template.identifier) loader rejects the configuration of \(repository.repository): "
                 + error.localizedDescription)
         }
-        let mxfp4 = try Self.verifyQuantization(of: configuration, repository: repository.repository)
+        let quantization = try Self.verifyQuantization(of: configuration, repository: repository.repository)
         try Self.verifyTokenizer(of: repository)
         weightFiles = try Self.weightFiles(of: repository)
         let headers = try weightFiles.map { try repository.safetensorsHeaderOfFile(atPath: $0) }
-        try Self.verifyPacking(headers: headers, mxfp4: mxfp4, repository: repository.repository)
+        let saved = try Self.verifyPacking(headers: headers, quantization: quantization,
+                                           fusesExperts: languageConfiguration.clampedSwiGLU != nil,
+                                           repository: repository.repository)
+        loadsAsStored = quantization == .mlx || saved
         let tensors = try Self.tensors(of: headers, repository: repository.repository)
         measurement = try Self.measurement(of: repository, template: template, weightFiles: weightFiles,
                                            tensors: tensors)
@@ -100,8 +109,14 @@ struct NFKMLXRepositoryJudgment {
         entry.minimumMemoryByteCount = nil
         entry.variants = [.variant(Self.variantIdentifier(name), displayName: name, isDefault: true,
                                    registryName: entry.registryName, source: source())]
+        if loadsAsStored, var load = NFKMLXLoadProfile.profile(for: template) {
+            load.precisions = []
+            load.defaultPrecision = NFKModelPrecisionCheckpoint
+            load.quantizes = false
+            entry.load = load
+        }
         let measurement = self.measurement
-        let measured = try entry.measured { _ in measurement }.descriptor()
+        let measured = try entry.measured(by: { _ in measurement }, plan: loadsAsStored ? .stored : nil).descriptor()
         let catalog = NFKModelCatalog()
         catalog.addDescriptors([measured])
         return NFKMLXModelDescriptors.withLeastVariantMemory(measured.derivingMemoryFigures(in: catalog))
@@ -143,99 +158,84 @@ struct NFKMLXRepositoryJudgment {
 
 extension NFKMLXRepositoryJudgment {
 
-    /// Refuses a quantization the loader does not read, and returns whether the release stores MXFP4
-    /// experts, which it does.
-    static func verifyQuantization(of configuration: [String: Any], repository: String) throws -> Bool {
-        if configuration["quantization"] != nil {
-            throw refusal(.unsupportedQuantization,
-                "\(repository) is quantized as its config.json's \"quantization\" states, which the loader does not read")
-        }
-        guard let quantization = configuration["quantization_config"] as? [String: Any] else {
-            return false
-        }
-        let method = quantization["quant_method"] as? String ?? "unnamed"
-        guard method == "mxfp4" else {
-            throw refusal(.unsupportedQuantization, "\(repository) is quantized by \(method), which the loader does not read")
-        }
-        return true
+    /// How a repository's `config.json` states its weights are quantized.
+    enum StatedQuantization: Equatable {
+        /// No quantization is stated.
+        case none
+        /// mlx_lm's `quantization` block, or a `quantization_config` with no `quant_method`.
+        case mlx
+        /// A `quant_method` the loader reads: gpt-oss's MXFP4 experts.
+        case method
     }
 
-    /// Refuses packed weights the loader would take as floats: packed words a configuration does not
-    /// describe, and an InferKit save split across files.
-    static func verifyPacking(headers: [[String: Any]], mxfp4: Bool, repository: String) throws {
+    /// The dtypes a release stores unpacked tensors in: the floats, and the integer buffers (position ids,
+    /// masks) a release carries beside its weights.
+    static let unpackedDtypes: Set<String> = ["F64", "F32", "F16", "BF16", "I64", "BOOL"]
+
+    /// The quantization a configuration states, refusing one the loader does not read.
+    static func verifyQuantization(of configuration: [String: Any], repository: String) throws -> StatedQuantization {
+        do {
+            guard try NFKMLXQuantization.releaseQuantization(configJSON: configuration) != nil else { return .none }
+        } catch {
+            throw refusal(.unsupportedQuantization, "\(repository): " + error.localizedDescription)
+        }
+        return NFKMLXLanguage.isMLXQuantization(configuration) ? .mlx : .method
+    }
+
+    /// Refuses packed weights the loader would take as floats or would not place, and returns whether
+    /// the weights are an InferKit quantized save. Refused: MXFP4 on a family whose experts the loader
+    /// does not fuse, packed or 8-bit float tensors no configuration or save describes, an InferKit save
+    /// split across files, and mlx_lm's gpt-oss layout.
+    static func verifyPacking(headers: [[String: Any]], quantization: StatedQuantization, fusesExperts: Bool,
+                              repository: String) throws -> Bool {
+        if quantization == .method && !fusesExperts {
+            throw refusal(.unsupportedQuantization,
+                "\(repository) is quantized with mxfp4, which the loader reads only for gpt-oss's experts")
+        }
         let saved = headers.contains { (($0["__metadata__"] as? [String: Any])?["inferkit.quantization"]) != nil }
         if saved && headers.count > 1 {
             throw refusal(.unsupportedQuantization,
                 "\(repository) is an InferKit quantized save split across files, which the loader reads only whole")
         }
-        let packed = headers.contains { header in
-            header.contains { name, entry in
-                name != "__metadata__" && ((entry as? [String: Any])?["dtype"] as? String) == "U32"
-            }
-        }
-        if packed && !saved && !mxfp4 {
+        let names = headers.flatMap { $0.keys.filter { $0 != "__metadata__" } }
+        func dtype(_ entry: Any) -> String { ((entry as? [String: Any])?["dtype"] as? String) ?? "an unnamed dtype" }
+        let packed = headers.lazy.flatMap { $0 }.first { $0.key != "__metadata__" && !unpackedDtypes.contains(dtype($0.value)) }
+        if let packed, !saved, quantization == .none {
             throw refusal(.unsupportedQuantization,
-                "\(repository) holds packed weights its configuration does not describe")
+                "\(repository) stores \(packed.key) as \(dtype(packed.value)), a packing its configuration does not "
+                + "describe")
         }
+        if quantization == .mlx && fusesExperts && names.contains(where: separatesFusedExperts) {
+            throw refusal(.unsupportedQuantization,
+                "\(repository) stores gpt-oss's expert gate and up projections apart (mlx_lm's layout), where the "
+                + "loader reads them fused")
+        }
+        return saved
     }
 
-    /// The pre-tokenization patterns the core byte-level tokenizer implements, as a release's
-    /// `tokenizer.json` writes them (`NFKByteLevelBPETokenizer.m`): Qwen2's, Qwen3.5's, and o200k's.
-    static let readablePreTokenizationPatterns: Set<String> = [
-        #"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"#,
-        #"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"#,
-        #"[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+(?i:'s|'t|'re|'ve|'m|'ll|'d)?"#
-            + #"|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*(?i:'s|'t|'re|'ve|'m|'ll|'d)?"#
-            + #"|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+"#,
-    ]
+    /// Whether a release tensor holds an expert gate projection apart from its up projection, under the
+    /// module name the loader files it as.
+    private static func separatesFusedExperts(_ name: String) -> Bool {
+        let key = NFKMLXLanguage.moduleKey(forRelease: name)
+        return key.contains(".mlp.experts.") && key.contains(".gate_proj.")
+    }
 
-    /// Refuses a tokenizer the loader's byte-level reader does not read as the release defines it.
+    /// Refuses a tokenizer the loader's reader does not reproduce
+    /// (`NFKMLXLanguage.tokenizerScheme(tokenizerJSON:tokenizerConfiguration:)`).
     static func verifyTokenizer(of repository: NFKModelRepository) throws {
         let name = repository.repository
         for path in NFKMLXLanguage.requiredFiles where path.hasPrefix("tokenizer") && repository.file(atPath: path) == nil {
             throw refusal(.unsupportedTokenizer, "\(name) has no \(path), which the loader reads")
         }
-        guard let tokenizer = try repository.jsonObjectOfFile(atPath: "tokenizer.json") as? [String: Any],
-              let model = tokenizer["model"] as? [String: Any] else {
+        guard let tokenizer = try repository.jsonObjectOfFile(atPath: "tokenizer.json") as? [String: Any] else {
             throw refusal(.unsupportedTokenizer, "the tokenizer.json of \(name) is not a tokenizer definition")
         }
-        guard model["type"] as? String == "BPE" else {
-            throw refusal(.unsupportedTokenizer,
-                "\(name) tokenizes with \(model["type"] as? String ?? "an unnamed model"), not byte-level BPE")
-        }
-        if model["byte_fallback"] as? Bool == true || contains(tokenizer["pre_tokenizer"], type: "Metaspace")
-            || contains(tokenizer["decoder"], type: "Metaspace") {
-            throw refusal(.unsupportedTokenizer,
-                "\(name) tokenizes with a SentencePiece-style BPE (Metaspace, byte fallback), not byte-level BPE")
-        }
-        if model["ignore_merges"] as? Bool == true {
-            throw refusal(.unsupportedTokenizer,
-                "\(name) looks whole words up before merging (ignore_merges), which the tokenizer does not")
-        }
-        let patterns = splitPatterns(tokenizer["pre_tokenizer"])
-        guard patterns.count == 1, let pattern = patterns.first, readablePreTokenizationPatterns.contains(pattern) else {
-            throw refusal(.unsupportedTokenizer,
-                "\(name) splits words with a pre-tokenization pattern the tokenizer does not implement")
-        }
-    }
-
-    /// Whether a tokenizer component, or a step of a sequence of them, has the type.
-    private static func contains(_ component: Any?, type: String) -> Bool {
-        guard let component = component as? [String: Any] else { return false }
-        if component["type"] as? String == type {
-            return true
-        }
-        let steps = (component["pretokenizers"] as? [Any]) ?? (component["decoders"] as? [Any]) ?? []
-        return steps.contains { contains($0, type: type) }
-    }
-
-    /// The regular expressions of a pre-tokenizer's `Split` steps.
-    private static func splitPatterns(_ preTokenizer: Any?) -> [String] {
-        guard let preTokenizer = preTokenizer as? [String: Any] else { return [] }
-        let steps = (preTokenizer["pretokenizers"] as? [[String: Any]]) ?? [preTokenizer]
-        return steps.compactMap { step in
-            guard step["type"] as? String == "Split" else { return nil }
-            return (step["pattern"] as? [String: Any])?["Regex"] as? String
+        let tokenizerConfiguration = try repository.jsonObjectOfFile(atPath: "tokenizer_config.json") as? [String: Any]
+        do {
+            _ = try NFKMLXLanguage.tokenizerScheme(tokenizerJSON: tokenizer, tokenizerConfiguration: tokenizerConfiguration)
+        } catch {
+            throw refusal(.unsupportedTokenizer, "the tokenizer of \(name) is not one the loader reproduces: "
+                          + error.localizedDescription)
         }
     }
 

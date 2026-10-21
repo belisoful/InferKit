@@ -1438,16 +1438,20 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 #### The language loader judges repositories it was not measured on
 
 - `NFKMLXModelDescriptors` answers the resolver for the dense and mixture decoders `NFKMLXLanguage` loads.
-  The Qwen3, Qwen3-MoE, Qwen1.5-MoE, Mixtral, gpt-oss, and Mistral releases list their `model_type`. A
-  repository of one of those types is measured as `Tools/catalog/measure.py` measures a shipped release,
-  and its descriptor takes the family's load options, memory model, and memory facts.
-- The judgment refuses what the loader would read wrongly with no error: a configuration the loader
-  rejects, a quantization other than gpt-oss's MXFP4 experts and a single-file InferKit save, a tokenizer
-  that is not byte-level BPE or whose pre-tokenization pattern the core tokenizer does not implement
-  exactly, a safetensors header whose shape or offsets are outside what a release holds, and weights
-  outside `model.safetensors` or a `model.safetensors.index.json`.
-- A Qwen3, Qwen3-MoE, or Qwen1.5-MoE repository resolves today. A Mixtral, gpt-oss, or Mistral repository
-  is refused at the tokenizer: a Metaspace BPE with byte fallback, `ignore_merges`, and Llama 3's pattern.
+  The Qwen3, Qwen3-MoE, Qwen1.5-MoE, Mixtral, gpt-oss, and Mistral releases list their `model_type`, and
+  Mistral Small 3 lists `llama` as well. A repository of one of those types is measured as
+  `Tools/catalog/measure.py` measures a shipped release, and its descriptor takes the family's load
+  options, memory model, and memory facts.
+- The judgment reads what the loader reads, through the loader's own predicates: mlx_lm's quantized
+  releases and single-file InferKit saves (measured at their stored bytes, with no precision or weight
+  quantization option), gpt-oss's MXFP4 experts, and every tokenizer the release reader reproduces.
+  `mlx-community/Qwen3-0.6B-4bit` and `mlx-community/Llama-3.2-1B-Instruct-4bit` resolve.
+- It refuses what the loader would read wrongly with no error, or would refuse at load: a configuration the
+  loader rejects, another quantization method, MXFP4 outside gpt-oss's experts, packed or 8-bit float
+  weights no configuration describes, an InferKit
+  save split across files, mlx_lm's gpt-oss layout, a tokenizer the reader does not reproduce, a
+  safetensors header whose shape or offsets are outside what a release holds, and weights outside
+  `model.safetensors` or a `model.safetensors.index.json`.
 
 #### Stable Audio Open 1.0
 

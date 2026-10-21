@@ -100,39 +100,46 @@ repository at a time.
 
 `NFKMLXModelDescriptors.descriptor(for:matching:)` (`NFKMLXRepositoryMatching.swift`) answers for the
 entries `NFKMLXCatalogLanguage.readsReleases(of:)` names: the dense and mixture releases `NFKMLXLanguage`
-loads. Their entries list one `model_type` each (`qwen3`, `qwen3_moe`, `qwen2_moe`, `mixtral`, `gpt_oss`,
-`mistral`). Any other entry refuses with `UnsupportedArchitecture`.
+loads. Their entries list the `model_type` values their loader reads (`qwen3`, `qwen3_moe`, `qwen2_moe`,
+`mixtral`, `gpt_oss`, and `mistral` with `llama` on Mistral Small 3). Any other entry refuses with
+`UnsupportedArchitecture`.
 
 The judgment refuses what the loader reads wrongly with no error:
 
 - `NFKMLXLanguage.configuration(fromJSON:)` throws → `UnsupportedConfiguration`.
-- A `quantization` key, or a `quantization_config` whose `quant_method` is not `mxfp4` →
-  `UnsupportedQuantization`. So are `U32` tensors the configuration does not describe, and an InferKit
-  save (`inferkit.quantization` metadata) split across files.
-- The tokenizer → `UnsupportedTokenizer` unless every one of these holds:
-  - `tokenizer.json` and `tokenizer_config.json` are listed;
-  - `model.type` is `BPE`, without `byte_fallback`, `ignore_merges`, or a `Metaspace` step;
-  - the pre-tokenizer has exactly one `Split` whose regex is byte-for-byte one of the Qwen2, Qwen3.5,
-    and o200k patterns `NFKByteLevelBPETokenizer.m` implements.
-  An NFC normalizer is accepted. The shipped Qwen3 releases declare one and the loader applies NFC only
-  for the Qwen3.5 pattern, so the gap is the shipped model's own.
+- A quantization `NFKMLXQuantization.releaseQuantization(configJSON:)` refuses (a `quant_method` other
+  than `mxfp4`, an mlx_lm block without `bits` and `group_size`, a mode MLX does not name) →
+  `UnsupportedQuantization`. So are MXFP4 on a family whose experts the module does not fuse (the loader
+  places MXFP4 words only in gpt-oss's routed experts), a tensor in a dtype outside the floats and the
+  `I64` and `BOOL` buffers (`U32`, `U8`, `I8`, `I32`, `F8_E4M3`, `F8_E5M2`) when no configuration or save
+  describes the packing, an InferKit save
+  (`inferkit.quantization` metadata) split across files, and mlx_lm's gpt-oss layout: a configuration
+  whose experts the module fuses (`clampedSwiGLU`) with an mlx_lm quantization and a separate expert
+  `gate_proj`, the case `NFKMLXLanguage.packedReleaseEntries(inDirectory:net:)` refuses at load.
+- The tokenizer → `UnsupportedTokenizer` when `tokenizer.json` or `tokenizer_config.json` is not listed,
+  or `NFKMLXLanguage.tokenizerScheme(tokenizerJSON:tokenizerConfiguration:)`, the loader's own reader,
+  refuses the pair.
 - Weights outside `model.safetensors` or the shards a `model.safetensors.index.json` names →
   `UnsupportedWeightFormat`.
 - A header shape or offset that is negative, malformed, or past 2^53 alone or in total
   (`NFKMLXRepositoryJudgment.measurableLimit`), and a listed size past it → `UnsupportedWeightFormat`.
   The headers are remote input, and the bound keeps every sum the measurement forms from overflowing.
 
-Of the six families, Qwen3, Qwen3-MoE, and Qwen1.5-MoE repositories resolve today. Mixtral, gpt-oss,
-and Mistral repositories are refused at the tokenizer (a Metaspace BPE with byte fallback,
-`ignore_merges`, and Llama 3's pattern) until the loader-gap fixes below land and the judgment widens.
+`mlx-community/Qwen3-0.6B-4bit` and `mlx-community/Llama-3.2-1B-Instruct-4bit` resolve from their own
+files in the validation store (`NFKMLXRepositoryMatchingTests`), with stored bytes equal to the
+`total_size` mlx_lm wrote in their weight index.
 
 The measurement ports `Tools/catalog/measure.py`'s hub path to Swift: download bytes over the template's
 files plus the shards, safetensors tensor bytes by dtype from the headers, parameters, the repeated
 layers (`NFKMLXTensorStructure`), routed-expert bytes, quantizable elements (rank-2 `.weight`, input width
 divisible by 64, outside embeddings and norms), and the geometry (`NFKMLXMeasuredGeometry(configuration:)`).
 The resolved entry is the template entry with the new identifier, license, and variant, run through
-`NFKMLXCatalogEntry.measured(by:)`, the path the shipped entries take. The family's load plan and load
+`NFKMLXCatalogEntry.measured(by:plan:)`, the path the shipped entries take. The family's load plan and load
 profile are keyed by family, so the resolved descriptor gets the same load options and memory model.
+A repository the loader reads as stored whatever the request (an mlx_lm quantized release, an InferKit
+quantized save) is measured under the `.stored` plan, and its entry's `load` is the family profile without
+the precision and weight quantization options: the loader packs no layer the release already packs, and
+a float32 figure would describe a load that never happens.
 `testLiveMeasurementMatchesTheRecordedMeasurement` (gated on `INFERKIT_LIVE_HUB=1`) measures
 `Qwen/Qwen3-0.6B` at its measured commit and compares every figure with the recorded row.
 
@@ -188,10 +195,7 @@ dense and mixture (`NFKMLXQuantization.releaseQuantization(configJSON:)`). The r
 family's pre-tokenization (Qwen2, Qwen3.5, o200k, Llama 3, Nemotron, GPT-2, SmolLM), its NFC normalizer,
 `ignore_merges`, and Mistral's `Metaspace` BPE with byte fallback, or refuses a scheme it does not
 reproduce by name.
-
-Open: the judgment (`NFKMLXRepositoryMatching.swift`) still refuses a `quantization` block,
-`ignore_merges`, and the Llama 3, Nemotron, and SmolLM patterns. Widening it to what the loader now reads
-is the resolver's next change, which removes this entry.
+The judgment reads what the loader reads through the loader's own predicates.
 
 ## Phasing
 

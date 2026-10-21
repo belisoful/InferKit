@@ -137,8 +137,9 @@ private struct NFKMLXLanguageRelease {
     var family = ""
     var routesExperts = false
     var readsImages = false
-    /// The `model_type` of the release's configuration, where a resolver matches other repositories to it.
-    var modelType: String? = nil
+    /// The `model_type` values of the configurations its loader reads, where a resolver matches other
+    /// repositories to the release.
+    var modelTypes: [String] = []
     /// The type the release stores its weights in, stated where no measurement reads it from the shards.
     var storedPrecision: String? = nil
 }
@@ -150,28 +151,28 @@ extension NFKMLXCatalogLanguage {
     fileprivate static var languageReleases: [NFKMLXLanguageRelease] {
         [
             NFKMLXLanguageRelease(name: "qwen3-0.6b", displayName: "Qwen3 0.6B", repository: "Qwen/Qwen3-0.6B",
-                                  family: "qwen3", modelType: "qwen3"),
+                                  family: "qwen3", modelTypes: ["qwen3"]),
             NFKMLXLanguageRelease(name: "qwen3-1.7b", displayName: "Qwen3 1.7B", repository: "Qwen/Qwen3-1.7B",
-                                  family: "qwen3", modelType: "qwen3"),
+                                  family: "qwen3", modelTypes: ["qwen3"]),
             NFKMLXLanguageRelease(name: "qwen3-4b", displayName: "Qwen3 4B", repository: "Qwen/Qwen3-4B",
-                                  family: "qwen3", modelType: "qwen3"),
+                                  family: "qwen3", modelTypes: ["qwen3"]),
             NFKMLXLanguageRelease(name: "qwen3-14b", displayName: "Qwen3 14B", repository: "Qwen/Qwen3-14B",
-                                  family: "qwen3", modelType: "qwen3"),
+                                  family: "qwen3", modelTypes: ["qwen3"]),
             NFKMLXLanguageRelease(name: "qwen3-32b", displayName: "Qwen3 32B", repository: "Qwen/Qwen3-32B",
-                                  family: "qwen3", modelType: "qwen3"),
+                                  family: "qwen3", modelTypes: ["qwen3"]),
             NFKMLXLanguageRelease(name: "qwen3-30b-a3b", displayName: "Qwen3 30B-A3B", repository: "Qwen/Qwen3-30B-A3B",
-                                  family: "qwen3-moe", routesExperts: true, modelType: "qwen3_moe"),
+                                  family: "qwen3-moe", routesExperts: true, modelTypes: ["qwen3_moe"]),
             NFKMLXLanguageRelease(name: "qwen1.5-moe-a2.7b", displayName: "Qwen1.5-MoE-A2.7B",
                                   repository: "Qwen/Qwen1.5-MoE-A2.7B", family: "qwen2-moe", routesExperts: true,
-                                  modelType: "qwen2_moe"),
+                                  modelTypes: ["qwen2_moe"]),
             NFKMLXLanguageRelease(name: "mixtral-8x7b-instruct", displayName: "Mixtral 8x7B Instruct",
                                   repository: "mistralai/Mixtral-8x7B-Instruct-v0.1", family: "mixtral",
-                                  routesExperts: true, modelType: "mixtral"),
+                                  routesExperts: true, modelTypes: ["mixtral"]),
             NFKMLXLanguageRelease(name: "gpt-oss-20b", displayName: "gpt-oss-20b", repository: "openai/gpt-oss-20b",
-                                  family: "gpt-oss", routesExperts: true, modelType: "gpt_oss"),
+                                  family: "gpt-oss", routesExperts: true, modelTypes: ["gpt_oss"]),
             NFKMLXLanguageRelease(name: "mistral-small-24b-instruct-2501", displayName: "Mistral Small 3 24B Instruct",
                                   repository: "mistralai/Mistral-Small-24B-Instruct-2501", family: "mistral",
-                                  modelType: "mistral"),
+                                  modelTypes: ["mistral", "llama"]),
         ]
     }
 
@@ -691,7 +692,7 @@ extension NFKMLXCatalogLanguage {
                                                             optional: NFKMLXLanguage.optionalFiles,
                                                             weights: NFKMLXLanguage.weightFiles))],
             license: license(release.repository), residencies: residencies(routesExperts: release.routesExperts),
-            modelTypes: release.modelType.map { [$0] } ?? [])
+            modelTypes: release.modelTypes)
     }
 
     fileprivate static var ggufEntry: NFKMLXCatalogEntry {

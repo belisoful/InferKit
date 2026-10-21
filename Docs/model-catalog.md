@@ -692,6 +692,9 @@ safetensors headers, and tries two routes in order:
   at the resolved commit. It carries a `resolution` extension (`NFKModelResolutionExtensionKey`) with
   `verification`, `repository`, `revision`, and `basedOn`. Its dictionary restores it with no network
   request, so an app saves it and adds it to a catalog at launch.
+- A resolved descriptor builds once its files are downloaded. Before that, a build fails with
+  `NFKModelCatalogErrorNotDownloaded`. An app that downloads into its own cache gives its catalog
+  `+[NFKModelCatalog hubCacheLocatorForCacheDirectoryURL:]`.
 
 The refusals:
 
@@ -708,17 +711,25 @@ The refusals:
 | `NFKModelResolutionErrorUnsupportedQuantization` | The loader does not read the quantized weights. |
 
 InferKitMLX judges repositories for the dense and mixture decoders `NFKMLXLanguage` loads: the Qwen3,
-Qwen3-MoE, Qwen1.5-MoE, Mixtral, gpt-oss, and Mistral releases. It measures the repository as
-`Tools/catalog/measure.py` measures a shipped release, so the resolved descriptor carries the same load
-options, memory model, and memory facts. It refuses a quantization other than gpt-oss's MXFP4 experts
-and a single-file InferKit save, a tokenizer that is not byte-level BPE with a pre-tokenization pattern
-the core tokenizer implements exactly, a safetensors header whose shape or offsets are outside what a
-release holds, and weights outside `model.safetensors` or a `model.safetensors.index.json`.
+Qwen3-MoE, Qwen1.5-MoE, Mixtral, gpt-oss, and Mistral releases, and the Mistral release's loader reads
+Llama's `model_type` as well. It measures the repository as `Tools/catalog/measure.py` measures a shipped
+release, so the resolved descriptor carries the same load options, memory model, and memory facts. It
+reads what the loader reads:
 
-The Mixtral, gpt-oss, and Mistral releases list their model type, and their repositories are refused at
-the tokenizer today: Mixtral's is a Metaspace BPE with byte fallback, gpt-oss's declares
-`ignore_merges`, and Mistral's Tekken declares Llama 3's pattern. Of the six families, a Qwen3, Qwen3-MoE,
-or Qwen1.5-MoE repository is the one that resolves.
+- mlx_lm's quantized releases (`mlx-community/*-4bit` and the like), single-file or sharded, and a
+  single-file InferKit quantized save. The loader reads them as stored, so the descriptor's memory
+  figures are the stored bytes, and it offers no precision or weight quantization option.
+- gpt-oss's MXFP4 experts, the one family whose MXFP4 words the loader places.
+- The tokenizers the release reader reproduces: byte-level BPE under the Qwen2, Qwen3.5, o200k, Llama 3,
+  Nemotron, GPT-2, and SmolLM pre-tokenizations, with NFC and `ignore_merges` where stated, and Mistral's
+  Metaspace BPE with byte fallback.
+
+It refuses every other quantization method, MXFP4 on another family, packed or 8-bit float weights no
+configuration or save describes, an
+InferKit save split across files, mlx_lm's gpt-oss layout (the expert gate and up projections stored
+apart), a tokenizer the reader does not reproduce, a safetensors header whose shape or offsets are
+outside what a release holds, and weights outside `model.safetensors` or a
+`model.safetensors.index.json`.
 
 ## Vocabulary
 
