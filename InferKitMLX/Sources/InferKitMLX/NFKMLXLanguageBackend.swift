@@ -390,11 +390,10 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// measured load. A model that is unloaded reports the description read while it was loaded.
     /// Introduced in InferKit 0.4.0.
     @objc public var modelInfo: [String: Any] {
-        var info = lifecycle.ifLoaded { holder in
+        let info = lifecycle.ifLoaded { holder in
             modelInfoCache.value { describe(holder) }
         } ?? modelInfoCache.currentValue ?? [:]
-        info.merge(lifecycle.loadInfo) { _, measured in measured }
-        return info
+        return lifecycle.modelInfo(over: info)
     }
 
     private func describe(_ holder: NFKLMHolder) -> [String: Any] {

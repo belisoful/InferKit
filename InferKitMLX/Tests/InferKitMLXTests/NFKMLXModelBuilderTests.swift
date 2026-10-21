@@ -237,6 +237,23 @@ final class NFKMLXModelBuilderTests: XCTestCase {
         XCTAssertEqual(values[NFKModelLoadOptionPrecision] as? String, NFKModelPrecisionFloat32)
     }
 
+    // A measured build that reports no residency of its own read its weights in: it is resident, and the
+    // model information says so beside the bytes it measured.
+    func testAMeasuredBuildReportsItsResidency() throws {
+        NFKMLXModelDescriptors.registerBackendBuilder()
+        NFKMLXModelRegistry.register(name: Self.plainName) { _ in
+            NFKMLXGenerationBackend(identifier: Self.plainName, inputKeys: [NFKInputPrompt], parameterKeys: [],
+                                    outputKeys: [NFKOutputText]) { _, _ in NFKInferenceResult(outputs: [:]) }
+        }
+        let catalog = catalog(registryName: Self.plainName)
+        let backend = try catalog.backend(forModelIdentifier: "builder-test-model",
+                                          options: [NFKModelLoadOptionIgnoreMemoryBudget: true],
+                                          location: placeholderURL)
+        let info = try XCTUnwrap(backend.modelInfo)
+        XCTAssertEqual(info[NFKModelInfoResidency] as? String, NFKModelResidencyResident)
+        XCTAssertNotNil(info[NFKModelInfoResidentBytes], "beside the measured bytes")
+    }
+
     func testAPropertyOptionSetsTheStableDiffusionBackendsPrecisionWithoutADownload() throws {
         NFKMLXModelDescriptors.registerBackendBuilder()
         NFKMLXModelRegistry.register(name: Self.stableDiffusionName) { _ in

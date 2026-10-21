@@ -494,6 +494,94 @@ static const NSInteger NFKBuildTestGiB = (NSInteger)1 << 30;
 	XCTAssertNotNil(self.catalog.locator);
 }
 
+- (NFKModelVariant *)variantWithSource:(NFKModelSource *)source
+{
+	return [[NFKModelVariant alloc] initWithIdentifier:@"default" displayName:nil isDefault:YES registryName:nil source:source
+									 downloadByteCount:nil residentByteCount:nil peakByteCount:nil parameterCount:nil
+											 precision:nil minimumMemoryByteCount:nil license:nil extensions:nil];
+}
+
+- (NSURL *)scratchCache
+{
+	NSURL *cache = [NSFileManager.defaultManager.temporaryDirectory URLByAppendingPathComponent:NSUUID.UUID.UUIDString];
+	[NSFileManager.defaultManager createDirectoryAtURL:cache withIntermediateDirectories:YES attributes:nil error:NULL];
+	[self addTeardownBlock:^{
+		[NSFileManager.defaultManager removeItemAtURL:cache error:NULL];
+	}];
+	return cache;
+}
+
+// A URL download (Whisper's base.pt) is located in the hub cache as a Hugging Face snapshot is.
+- (void)testTheHubCacheLocatorFindsADownloadedURLSource
+{
+	NSURL *cache = [self scratchCache];
+	NSURL *URL = [NSURL URLWithString:@"https://weights.test/models/base.pt"];
+	NFKModelFile *file = [[NFKModelFile alloc] initWithPath:@"base.pt" byteCount:nil sha256:nil
+													   role:NFKModelFileRoleWeights optional:NO extensions:nil];
+	NFKModelSource *source = [[NFKModelSource alloc] initWithKind:NFKModelSourceKindURL repository:nil revision:nil URL:URL
+														   layout:NFKModelSourceLayoutFile files:@[ file ] requiresConversion:NO
+													   extensions:nil];
+	NFKModelDescriptor *descriptor = [self modelWithIdentifier:@"url.model" engine:NFKBuildTestEngine provider:nil
+												  requirements:nil variant:[self variantWithSource:source]];
+	NFKModelLocator locator = [NFKModelCatalog hubCacheLocatorForCacheDirectoryURL:cache];
+	XCTAssertNil(locator(descriptor, descriptor.defaultVariant, NULL), @"nothing is downloaded yet");
+
+	NSURL *downloaded = [[NFKHFHub hubWithCacheDirectoryURL:cache] localURLForURL:URL fileName:@"base.pt"];
+	[NSFileManager.defaultManager createDirectoryAtURL:downloaded.URLByDeletingLastPathComponent
+						   withIntermediateDirectories:YES attributes:nil error:NULL];
+	XCTAssertTrue([[NSData dataWithBytes:"weights" length:7] writeToURL:downloaded atomically:YES]);
+	XCTAssertEqualObjects(locator(descriptor, descriptor.defaultVariant, NULL).standardizedURL, downloaded.standardizedURL);
+}
+
+// A snapshot holding some of a source's files is not located: the build would read a partial model.
+- (void)testTheHubCacheLocatorSkipsAPartialSnapshot
+{
+	NSURL *cache = [self scratchCache];
+	NSArray<NFKModelFile *> *files = @[
+		[[NFKModelFile alloc] initWithPath:@"config.json" byteCount:nil sha256:nil role:nil optional:NO extensions:nil],
+		[[NFKModelFile alloc] initWithPath:@"model.safetensors" byteCount:nil sha256:nil role:NFKModelFileRoleWeights
+								  optional:NO extensions:nil],
+	];
+	NFKModelSource *source = [[NFKModelSource alloc] initWithKind:NFKModelSourceKindHuggingFace repository:@"org/model"
+														 revision:nil URL:nil layout:NFKModelSourceLayoutDirectory
+															files:files requiresConversion:NO extensions:nil];
+	NFKModelDescriptor *descriptor = [self modelWithIdentifier:@"partial.model" engine:NFKBuildTestEngine provider:nil
+												  requirements:nil variant:[self variantWithSource:source]];
+	NFKHFHub *hub = [NFKHFHub hubWithCacheDirectoryURL:cache];
+	NSURL *config = [hub localURLForRepo:@"org/model" revision:nil path:@"config.json"];
+	[NSFileManager.defaultManager createDirectoryAtURL:config.URLByDeletingLastPathComponent
+						   withIntermediateDirectories:YES attributes:nil error:NULL];
+	XCTAssertTrue([[NSData dataWithBytes:"{}" length:2] writeToURL:config atomically:YES]);
+	NFKModelLocator locator = [NFKModelCatalog hubCacheLocatorForCacheDirectoryURL:cache];
+	XCTAssertNil(locator(descriptor, descriptor.defaultVariant, NULL));
+
+	NSURL *weights = [hub localURLForRepo:@"org/model" revision:nil path:@"model.safetensors"];
+	XCTAssertTrue([[NSData dataWithBytes:"weights" length:7] writeToURL:weights atomically:YES]);
+	XCTAssertEqualObjects(locator(descriptor, descriptor.defaultVariant, NULL).standardizedURL,
+						  config.URLByDeletingLastPathComponent.standardizedURL);
+}
+
+// A variant whose files are not downloaded is refused rather than built: a builder given no location
+// builds its network on initial values, which run and answer nonsense.
+- (void)testABuildWhoseFilesAreNotDownloadedIsRefused
+{
+	NFKModelSource *source = [NFKModelSource huggingFaceSourceWithRepository:@"org/absent" revision:nil
+																	  layout:NFKModelSourceLayoutDirectory];
+	[self.catalog addDescriptor:[self modelWithIdentifier:@"absent.model" engine:NFKBuildTestEngine provider:nil
+											 requirements:nil variant:[self variantWithSource:source]]];
+	self.catalog.locator = [NFKModelCatalog hubCacheLocatorForCacheDirectoryURL:[self scratchCache]];
+	NSError *error = nil;
+	XCTAssertNil([self.catalog backendForModelIdentifier:@"absent.model" options:nil error:&error]);
+	XCTAssertEqualObjects(error.domain, NFKModelCatalogErrorDomain);
+	XCTAssertEqual(error.code, NFKModelCatalogErrorNotDownloaded);
+	XCTAssertNil(self.builder.lastRequest, @"the builder is never asked");
+
+	NSURL *given = [NSURL fileURLWithPath:@"/tmp/given"];
+	XCTAssertNotNil([self.catalog backendForModelIdentifier:@"absent.model" options:nil location:given error:&error],
+					@"%@", error);
+	XCTAssertEqualObjects(self.builder.lastRequest.location, given, @"a given location builds");
+}
+
 - (void)testTheHubCacheLocatorSkipsASystemModel
 {
 	NFKModelDescriptor *system = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"vision-text"];

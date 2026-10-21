@@ -98,6 +98,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   received, so a resumed download reports the share already present. The transfer rate counts only
   the bytes transferred.
 
+#### A catalog build never runs on weights it did not read
+
+- `-[NFKModelCatalog backendForModelIdentifier:options:error:]` refuses a variant whose source downloads
+  files when they are not in the hub cache and no location is given, with
+  `NFKModelCatalogErrorNotDownloaded`. Before, an MLX factory given no location built its network on
+  initial values: a hosted Whisper "loaded" in 8 ms and transcribed with random weights.
+- The hub cache locator finds a URL source's download (Whisper, YOLO, SwinIR, Real-ESRGAN, CLIP, SAM,
+  Demucs) as it finds a Hugging Face snapshot, and locates a source only when every file it requires is
+  present. `+[NFKModelCatalog hubCacheLocatorForCacheDirectoryURL:]` locates in a host's own cache.
+
 #### Breaking: `NFKInferKit.version` is `NFKInferKit.releaseVersion`
 
 - The class property `version` overrode `+[NSObject version]`, the integer class version archiving
@@ -1330,6 +1340,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### Every measured build reports its residency
+
+- An MLX catalog build reports `NFKModelInfoResidency` beside its measured resident and peak bytes: what
+  the factory or the backend reports, else `resident`. MiniMax Music 3 reports `staged`, since each run
+  reads the stages it reaches.
 
 #### The language loader judges repositories it was not measured on
 

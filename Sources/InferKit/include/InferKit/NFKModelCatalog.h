@@ -40,6 +40,9 @@ extern NSString * const NFKModelCatalogErrorDomain;
 	@constant   NFKModelCatalogErrorDoesNotFit The memory estimate does not fit the budget, or the
 				residency planner refuses the residency. NFKModelMemoryEstimateKey holds the estimate
 				where there is one.
+	@constant   NFKModelCatalogErrorNotDownloaded The variant's source downloads files, the hub cache does
+				not hold all of them, and the build was given no location. The build never runs a model
+				on weights it did not read.
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ERROR_ENUM(NFKModelCatalogErrorDomain, NFKModelCatalogError) {
@@ -51,6 +54,7 @@ typedef NS_ERROR_ENUM(NFKModelCatalogErrorDomain, NFKModelCatalogError) {
 	NFKModelCatalogErrorNoBuilder = 6,
 	NFKModelCatalogErrorUnavailable = 7,
 	NFKModelCatalogErrorDoesNotFit = 8,
+	NFKModelCatalogErrorNotDownloaded = 9,
 };
 
 /*! The kind a catalog manifest names: "inferkit.model-catalog". Introduced in InferKit 0.4.0. */

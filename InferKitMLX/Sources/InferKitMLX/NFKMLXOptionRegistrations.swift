@@ -298,7 +298,9 @@ enum NFKMLXOptionRegistrations {
         }
         // Music 3 plans its residency at the start of each run, against its downloaded stages.
         registerDirectoryModels(registryNames(families: ["minimax-music"]), consumes: residency) { url, _, options in
-            try NFKMLXMusic3.backend(directoryURL: url, residency: options.residency)
+            // Each run reads the stages it reaches, so the load itself holds none of them.
+            options.reportResidency(.staged)
+            return try NFKMLXMusic3.backend(directoryURL: url, residency: options.residency)
         }
         registerDirectoryModels(registryNames(families: ["stable-audio"]), consumes: residency) { url, _, options in
             let generator = try NFKMLXStableAudioGenerator.generator(directoryURL: url, residency: options.residency)

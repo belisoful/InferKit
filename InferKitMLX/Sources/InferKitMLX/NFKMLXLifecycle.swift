@@ -151,6 +151,19 @@ final class NFKMLXLifecycle<State>: @unchecked Sendable {
         }
     }
 
+    /// `info` with the last measured load's figures and residency over it, and, after a measured load
+    /// that neither reported nor showed a residency, ``NFKMLXResidency/resident``: the factory read the
+    /// weights in and the measurement holds them. A backend's own residency (a language backend's paged
+    /// experts) stands where the load reported none.
+    func modelInfo(over info: [String: Any]) -> [String: Any] {
+        var merged = info.merging(loadInfo) { _, measured in measured }
+        let measured = lock.withLock { measurement != nil }
+        if measured && merged[NFKModelInfoResidency] == nil {
+            merged[NFKModelInfoResidency] = NFKMLXResidency.resident.optionValue
+        }
+        return merged
+    }
+
     /// The loaded state; throws when the lifecycle is not loaded. A fresh backend's state is read this way
     /// when an older backend of its class loads again.
     func loadedState() throws -> State {

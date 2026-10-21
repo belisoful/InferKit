@@ -137,7 +137,7 @@ public final class NFKMLXMattingBackend: NSObject, NFKInferenceBackend {
     /// `NFKModelInfoResidentBytes` and `NFKModelInfoPeakBytes` from the last measured load, and
     /// `NFKModelInfoResidency` from a build with load options; empty before either. Introduced in
     /// InferKit 0.4.0.
-    @objc public var modelInfo: [String: Any] { lifecycle.loadInfo }
+    @objc public var modelInfo: [String: Any] { lifecycle.modelInfo(over: [:]) }
 
     // MARK: Unloading
 

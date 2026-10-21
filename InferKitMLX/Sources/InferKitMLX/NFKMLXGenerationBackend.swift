@@ -81,7 +81,7 @@ public final class NFKMLXGenerationBackend: NSObject, NFKInferenceBackend {
     /// load options. The description given at creation holds while
     /// the model is unloaded. Introduced in InferKit 0.4.0.
     @objc public var modelInfo: [String: Any] {
-        (information ?? [:]).merging(lifecycle.loadInfo) { _, measured in measured }
+        lifecycle.modelInfo(over: information ?? [:])
     }
 
     // MARK: Unloading

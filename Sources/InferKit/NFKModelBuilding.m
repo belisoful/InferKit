@@ -315,15 +315,41 @@ static NSSet<NSString *> *NFKDefaultedForwardedSelectors(void)
 	}
 }
 
+// Whether a source's files come from a download the hub cache holds: a Hugging Face repository or a URL,
+// loaded as files. A system or none source, and a layout of none, build without files.
+static BOOL NFKModelSourceDownloadsFiles(NFKModelSource * _Nullable source)
+{
+	if (source == nil || [source.layout isEqualToString:NFKModelSourceLayoutNone]) {
+		return NO;
+	}
+	BOOL fromHub = [source.kind isEqualToString:NFKModelSourceKindHuggingFace] && source.repository.length > 0;
+	BOOL fromURL = [source.kind isEqualToString:NFKModelSourceKindURL] && source.URL != nil;
+	return fromHub || fromURL;
+}
+
 + (NFKModelLocator)hubCacheLocator
 {
 	return ^NSURL * _Nullable (NFKModelDescriptor *descriptor, NFKModelVariant * _Nullable variant, NSError **error) {
+		return [NFKModelCatalog hubCacheLocatorForCacheDirectoryURL:[NFKHFHub defaultCacheDirectoryURL]](descriptor, variant,
+																										error);
+	};
+}
+
++ (NFKModelLocator)hubCacheLocatorForCacheDirectoryURL:(NSURL *)cacheDirectoryURL
+{
+	return ^NSURL * _Nullable (NFKModelDescriptor *descriptor, NFKModelVariant * _Nullable variant, NSError **error) {
 		NFKModelSource *source = variant.source;
-		BOOL fromHub = [source.kind isEqualToString:NFKModelSourceKindHuggingFace] && source.repository.length > 0;
-		if (!fromHub || [source.layout isEqualToString:NFKModelSourceLayoutNone]) {
+		if (!NFKModelSourceDownloadsFiles(source)) {
 			return nil;
 		}
-		NFKHFHub *hub = [NFKHFHub hubWithCacheDirectoryURL:[NFKHFHub defaultCacheDirectoryURL]];
+		NFKHFHub *hub = [NFKHFHub hubWithCacheDirectoryURL:cacheDirectoryURL];
+		NFKDownloadStatus *status = [hub downloadStatusForModelSource:source];
+		if (status.presence != NFKDownloadPresenceComplete) {
+			return nil;
+		}
+		if ([source.kind isEqualToString:NFKModelSourceKindURL]) {
+			return status.localURL;
+		}
 		NFKModelFile *file = nil;
 		for (NFKModelFile *candidate in source.files) {
 			if (candidate.overridesSource || candidate.isOptional) {
@@ -460,6 +486,15 @@ static NSSet<NSString *> *NFKDefaultedForwardedSelectors(void)
 			}
 			return nil;
 		}
+	}
+	if (located == nil && NFKModelSourceDownloadsFiles(variant.source)) {
+		if (error != NULL) {
+			*error = NFKModelBuildError(NFKModelCatalogErrorNotDownloaded,
+										[NSString stringWithFormat:@"%@'s files are not downloaded. Download them with "
+										 @"-[NFKHFHub downloadModelSource:progressHandler:completionHandler:], or pass "
+										 @"their location.", descriptor.displayName ?: descriptor.identifier]);
+		}
+		return nil;
 	}
 	return [[NFKModelBuildRequest alloc] initWithDescriptor:descriptor variant:variant loadOptions:loadOptions
 											requestDefaults:requestDefaults location:located memoryEstimate:estimate

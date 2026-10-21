@@ -159,9 +159,20 @@ typedef NSURL * _Nullable (^NFKModelLocator)(NFKModelDescriptor *descriptor,
 /*! The builder registered for an engine, or nil. */
 + (nullable id<NFKModelBackendBuilding>)backendBuilderForEngine:(NSString *)engine;
 
-/*! The locator that finds a variant's Hugging Face files in NFKHFHub's default cache: the snapshot
-	directory of a directory layout, the first weights file of a file layout. */
+/*! hubCacheLocatorForCacheDirectoryURL: over NFKHFHub's default cache. */
 @property (class, nonatomic, readonly) NFKModelLocator hubCacheLocator;
+
+/*!
+	@method     hubCacheLocatorForCacheDirectoryURL:
+	@abstract   The locator that finds a variant's downloaded files in an NFKHFHub cache.
+	@discussion A Hugging Face source is located at the snapshot directory of a directory layout, or the
+				first weights file of a file layout; a URL source at its downloaded file. The locator
+				returns nil until every file the source requires is present
+				(-[NFKHFHub downloadStatusForModelSource:] reports it complete), and the build then
+				refuses with NFKModelCatalogErrorNotDownloaded. A host that downloads into its own cache
+				sets this as the catalog's locator. Introduced in InferKit 0.4.0.
+*/
++ (NFKModelLocator)hubCacheLocatorForCacheDirectoryURL:(NSURL *)cacheDirectoryURL;
 
 /*! The locator the build uses when no location is given. A download store sets its own. Setting nil
 	restores hubCacheLocator. */
@@ -191,7 +202,8 @@ typedef NSURL * _Nullable (^NFKModelLocator)(NFKModelDescriptor *descriptor,
 													  options:(nullable NSDictionary<NSString *, id> *)options
 														error:(NSError **)error;
 
-/*! A backend for the model, its files at location. A nil location asks the locator. */
+/*! A backend for the model, its files at location. A nil location asks the locator, and a variant whose
+	source downloads files the locator does not find is refused with NFKModelCatalogErrorNotDownloaded. */
 - (nullable id<NFKInferenceBackend>)backendForModelIdentifier:(NSString *)identifier
 													  options:(nullable NSDictionary<NSString *, id> *)options
 													 location:(nullable NSURL *)location

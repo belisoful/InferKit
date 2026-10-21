@@ -939,7 +939,10 @@ MLX model through the registry. The pieces:
   (`pagesExperts` → paged or resident, `streamedLayerCount > 0` → streamed, `holdsStagesResident` →
   resident or staged), and `NFKMLXLifecycle.loadInfo` adds it beside the measured figures. The language
   backend, `NFKMLXGemmaBackend` (`pagesExperts`), and `NFKMLXGemma3Backend` (`streamedLayerCount`) also
-  write it into their own description, so a direct build reports it.
+  write it into their own description, so a direct build reports it. A measured build whose factory and
+  backend say nothing is `resident` (`NFKMLXLifecycle.modelInfo(over:)`): the factory read its weights,
+  and every MLX catalog build is measured. MiniMax Music 3 reports `staged`, since each run reads the
+  stages it reaches.
 - The language backend reads `NFKModelLoadOptionContextLength`, `…CacheBits`, and `…CacheGroupSize` as
   request parameters (`applyLoadDefaults`, before the `NFKMLXGenerationParameterKey` keys, which win), so
   the defaults `NFKDefaultedBackend` fills are honored and a request overrides them.

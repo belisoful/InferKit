@@ -127,14 +127,13 @@ public final class NFKMLXReloadableBackend: NSObject, NFKInferenceBackend {
 
     /// The held backend's `modelInfo`, the last one read while the model is unloaded, with
     /// `NFKModelInfoResidentBytes` and `NFKModelInfoPeakBytes` from the last measured build, and
-    /// `NFKModelInfoResidency` from a build with load options. Introduced in InferKit 0.4.0.
+    /// `NFKModelInfoResidency` from the build's load options, else the held backend's own, else
+    /// `resident`. Introduced in InferKit 0.4.0.
     @objc public var modelInfo: [String: Any] {
         if let current = lifecycle.ifLoaded({ $0.modelInfo ?? [:] }) {
             infoLock.withLock { lastModelInfo = current }
         }
-        var info = infoLock.withLock { lastModelInfo }
-        info.merge(lifecycle.loadInfo) { _, measured in measured }
-        return info
+        return lifecycle.modelInfo(over: infoLock.withLock { lastModelInfo })
     }
 
     /// The held backend's `backendStatus`, or empty while the model is unloaded. Present only when the

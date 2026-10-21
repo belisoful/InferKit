@@ -38,6 +38,39 @@ final class NFKMLXCatalogCompletenessTests: XCTestCase {
 
     private let descriptors = NFKMLXModelDescriptors.modelDescriptors()
 
+    // A shipped model whose source downloads files is refused, never built, while those files are absent:
+    // a factory given no weights builds its network on initial values, which run and answer nonsense.
+    func testNoModelWithFilesBuildsWithoutThem() throws {
+        NFKMLXReferenceModels.registerAll()
+        let catalog = NFKModelCatalog()
+        for descriptor in descriptors {
+            catalog.addDescriptor(descriptor)
+        }
+        let empty = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: empty) }
+        catalog.locator = NFKModelCatalog.hubCacheLocator(forCacheDirectoryURL: empty)
+
+        var refused = 0
+        for descriptor in descriptors {
+            for variant in descriptor.variants {
+                guard let source = variant.source, source.layout != NFKModelSourceLayoutNone,
+                      [NFKModelSourceKindHuggingFace, NFKModelSourceKindURL].contains(source.kind) else { continue }
+                let options: [String: Any] = [NFKModelLoadOptionVariant: variant.identifier,
+                                              NFKModelLoadOptionIgnoreMemoryBudget: true]
+                XCTAssertThrowsError(try catalog.backend(forModelIdentifier: descriptor.identifier, options: options),
+                                     "\(descriptor.identifier)/\(variant.identifier)") { error in
+                    let code = (error as NSError).code
+                    XCTAssertTrue([NFKModelCatalogError.Code.notDownloaded.rawValue,
+                                   NFKModelCatalogError.Code.unavailable.rawValue].contains(code),
+                                  "\(descriptor.identifier)/\(variant.identifier): \(error)")
+                    if code == NFKModelCatalogError.Code.notDownloaded.rawValue { refused += 1 }
+                }
+            }
+        }
+        XCTAssertGreaterThan(refused, 300, "the shipped variants with files")
+    }
+
     func testTheRegistryAndTheCatalogNameTheSameModels() {
         NFKMLXReferenceModels.registerAll()
         // A test that registers a model of its own names it with the "test-" prefix.
