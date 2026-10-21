@@ -225,6 +225,10 @@ final class NFKMLXCatalogMemoryTests: XCTestCase {
             XCTAssertEqual(precision.defaultValue as? String, NFKModelPrecisionCheckpoint, identifier)
             let precise = try XCTUnwrap(decoder.preset(withIdentifier: "precise"), identifier)
             XCTAssertEqual(precise.loadOptions[NFKModelLoadOptionPrecision] as? String, NFKModelPrecisionFloat32)
+            // Gemma 3n's gated release is not measured, so its facts state only the stored bytes.
+            guard decoder.defaultVariant?.memoryFacts?.stages.first?.byteCountByPrecision[NFKModelPrecisionFloat32] != nil else {
+                continue
+            }
             XCTAssertGreaterThan(try decoder.estimatedMemory(forOptions: precise.loadOptions).residentByteCount,
                                  try decoder.estimatedMemory(forOptions: nil).residentByteCount, identifier)
         }
