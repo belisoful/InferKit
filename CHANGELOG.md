@@ -45,6 +45,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKModelTaskAudioGeneration` (`audio-generation`) names making sound effects and other audio from a
   description, beside `NFKModelTaskMusicGeneration`. Stable Audio Open lists both.
 
+#### The plugin host keeps InferKit's whole public interface
+
+- A release-built `inferkit-plugin-host` keeps every public constant and function, so an Objective-C
+  plugin that names one the host never uses, such as `NFKCapabilityTextRecognition`, loads. Before, the
+  release link dead-stripped those and the plugin failed to load.
+- `NFKPluginRetainPublicInterface()` is what the host calls. An app that links InferKit statically and
+  trusts plugins to run in its process calls it once.
+
 #### Plugin status, start, and stop
 
 - `-[NFKPluginRegistry statusForPluginIdentifier:]` reports a plugin's `NFKPluginStatus`: its process

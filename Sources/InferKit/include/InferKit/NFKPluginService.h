@@ -57,6 +57,20 @@ API_UNAVAILABLE(ios, tvos, watchos)
 */
 FOUNDATION_EXPORT int NFKPluginHostMain(int argc, char * _Nullable * _Nonnull argv) API_UNAVAILABLE(ios, tvos, watchos);
 
+/*!
+	@function   NFKPluginRetainPublicInterface
+	@abstract   Keeps every public InferKit constant and function in a program that links InferKit
+				statically.
+	@discussion An "objc" plugin binds by name to the InferKit already loaded in its process. A release
+				link dead-strips what the program itself never references, so a constant or function only a
+				plugin names, such as NFKCapabilityTextRecognition, would be missing, and the plugin would
+				fail to load. inferkit-plugin-host calls this at launch. An app that links InferKit
+				statically and trusts plugins to run in its process calls it once too. An app that embeds
+				InferKit as a dynamic framework needs no call. Returns the number of symbols kept.
+				Introduced in InferKit 0.4.0.
+*/
+FOUNDATION_EXPORT NSUInteger NFKPluginRetainPublicInterface(void) API_UNAVAILABLE(ios, tvos, watchos);
+
 NS_ASSUME_NONNULL_END
 
 #endif /* NFKPluginService_h */

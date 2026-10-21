@@ -15,6 +15,7 @@
 
 int main(int argc, char *argv[])
 {
+	NFKPluginRetainPublicInterface();
 	return NFKPluginHostMain(argc, argv);
 }
 

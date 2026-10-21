@@ -284,6 +284,34 @@ static NSInteger NFKServiceTestThreadCount(void)
 	[super tearDown];
 }
 
+#pragma mark The public interface
+
+/*! The repository's root, from this file's location. */
+- (NSURL *)sourceRoot
+{
+	return [[NSURL fileURLWithPath:@__FILE__] URLByAppendingPathComponent:@"../../.."].URLByStandardizingPath;
+}
+
+// The table the plugin host keeps alive names every constant and function the public headers declare, so
+// a public symbol added without regenerating it fails here rather than in a plugin that cannot bind.
+- (void)testThePublicInterfaceTableIsCurrent
+{
+	NSURL *script = [[self sourceRoot] URLByAppendingPathComponent:@"Tools/plugin-host/public-interface.py"];
+	NSError *error = nil;
+	NSString *output = [NFKPluginFixtures runProgram:@"/usr/bin/python3" arguments:@[ @"-I", script.path, @"--check" ] error:&error];
+	XCTAssertNotNil(output, @"%@", error);
+}
+
+// Every symbol the table names resolves in this image.
+- (void)testRetainingThePublicInterfaceKeepsEverySymbol
+{
+	NSURL *table = [[self sourceRoot] URLByAppendingPathComponent:@"Sources/InferKit/NFKPluginPublicInterface.m"];
+	NSString *text = [NSString stringWithContentsOfURL:table encoding:NSUTF8StringEncoding error:NULL];
+	NSUInteger listed = [text componentsSeparatedByString:@"(const void *)&"].count - 1;
+	XCTAssertGreaterThan(listed, (NSUInteger)300);
+	XCTAssertEqual(NFKPluginRetainPublicInterface(), listed);
+}
+
 #pragma mark Harness
 
 - (NFKPluginManifest *)manifest

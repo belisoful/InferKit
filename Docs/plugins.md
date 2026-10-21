@@ -497,6 +497,12 @@ signatures, pin no team on the host.
 `inferkit-plugin-host.entitlements` carries `com.apple.security.cs.disable-library-validation`, so the
 hardened host loads plugin code another team signed.
 
+An `objc` plugin binds by name to the InferKit in the process that loads it, so that process keeps every
+public InferKit constant and function, the ones it never uses itself included. A release link
+dead-strips those, so the host calls `NFKPluginRetainPublicInterface()` at launch, which references
+them all. An app that links InferKit statically and trusts plugins to run in its process calls it once
+too. An app that embeds InferKit as a dynamic framework keeps every public symbol already.
+
 ## Sandboxed and unsandboxed apps
 
 | | unsandboxed app | sandboxed app |
