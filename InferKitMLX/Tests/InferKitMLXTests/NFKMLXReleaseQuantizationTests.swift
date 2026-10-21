@@ -285,13 +285,18 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
     }
 
     /// Whether MLX runs mlx_lm's own compiled kernels: the Metal library it loaded is the mlxlm environment's
-    /// wheel library (`IK_MLXLM_METALLIB`, else the one under the validation root's `mlxlmvenv`). The
+    /// wheel library (`IK_MLXLM_METALLIB`, else the `mlxlmvenv` under the validation root or under
+    /// `~/.inferkit-validation`, where the environments live when the root is a mounted volume). The
     /// library this package builds compiles the fused attention and rotary with another toolchain, which
     /// moves a few elements, so the bit-exact bars hold under the wheel's library only (USER 2026-10-21).
     static let runsReferenceKernels: Bool = {
         guard let loaded = NFKMLXGPU.metalLibraryURL else { return false }
-        let wheel = NFKMLXValidationConfig.environment["IK_MLXLM_METALLIB"].map(URL.init(fileURLWithPath:))
-            ?? NFKMLXValidationConfig.root.appendingPathComponent("mlxlmvenv/lib/python3.12/site-packages/mlx/lib/mlx.metallib")
+        let library = "mlxlmvenv/lib/python3.12/site-packages/mlx/lib/mlx.metallib"
+        let stores = [NFKMLXValidationConfig.root,
+                      FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".inferkit-validation")]
+        let candidates = NFKMLXValidationConfig.environment["IK_MLXLM_METALLIB"].map { [URL(fileURLWithPath: $0)] }
+            ?? stores.map { $0.appendingPathComponent(library) }
+        guard let wheel = candidates.first(where: { FileManager.default.fileExists(atPath: $0.path) }) else { return false }
         func digest(_ url: URL) -> SHA256Digest? {
             (try? Data(contentsOf: url, options: .mappedIfSafe)).map { SHA256.hash(data: $0) }
         }
