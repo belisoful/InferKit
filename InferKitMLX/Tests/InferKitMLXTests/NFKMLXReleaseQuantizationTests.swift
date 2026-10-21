@@ -295,6 +295,14 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
         }
 
         print("SEAMS \(label) embedding: \(compared("embedding", net.model.embedTokens(tokens), try seam("embedding")))")
+        if let theirs = record["rope.freqs"] {
+            let ours = try XCTUnwrap(net.model.layers[0].attention.rope.periods, "the scaled rotary carries a period table")
+            let a = ours.asArray(Float.self), b = theirs.asArray(Float.self)
+            let apart = zip(a, b).enumerated().filter { $0.element.0 != $0.element.1 }
+                .map { "\($0.offset): \($0.element.0) vs \($0.element.1)" }
+            print("SEAMS \(label) rope table: \(apart.isEmpty ? "exact" : apart.joined(separator: "; "))")
+            XCTAssertEqual(apart.count, 0, "\(label)'s rotary periods are mlx_lm's")
+        }
         var chained = net.model.embedTokens(tokens)
         for (index, block) in net.model.layers.enumerated() {
             func ref(_ name: String) throws -> MLXArray { try seam("layers.\(index).\(name)") }

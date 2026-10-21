@@ -13,6 +13,8 @@ Run under the `mlxlm` interpreter of Tools/validation-assets/manifest.json:
 Keys, each `[1, length, …]` unless noted:
 
 - `tokens`, `embedding`, `norm` (the final norm's output), and `output` (the logits, float32).
+- `rope.freqs`: the period table a scaled rotary hands `mx.fast.rope` (`Llama3RoPE._freqs`), where the
+  family's rotary has one.
 - `layers.<i>.<seam>`: `input`, `input_norm`, `q_proj`, `k_proj`, `v_proj`, `q_norm` and `k_norm` (where the
   family normalizes each head; `[1, length, heads, head_dim]`), `q_rope` and `k_rope` (`[1, heads, length,
   head_dim]`), `attention` (the attention output before `o_proj`, `[1, length, heads · head_dim]`), `o_proj`,
@@ -81,6 +83,9 @@ def main():
     inner = model.model
     hidden = inner.embed_tokens(tokens)
     record = {"tokens": tokens[0], "embedding": hidden}
+    freqs = getattr(inner.layers[0].self_attn.rope, "_freqs", None)
+    if freqs is not None:
+        record["rope.freqs"] = freqs
     mask = create_attention_mask(hidden, None)
     for index, layer in enumerate(inner.layers):
         seams = {}
