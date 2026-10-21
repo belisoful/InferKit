@@ -7,6 +7,7 @@
 //  the quantizations this package does not read are refused by name.
 //
 
+import CryptoKit
 import XCTest
 import InferKit
 import MLX
@@ -251,8 +252,12 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
             Self.useRotaryTable(table, in: net)
             exact = net(input)[0].asType(.float32).reshaped([-1]).asArray(Float.self)
         }
-        XCTAssertEqual(zip(exact, runtimeLogits).filter { $0 != $1 }.count, 0,
-                       "the release computes mlx_lm's logits bit for bit")
+        let differing = zip(exact, runtimeLogits).filter { $0 != $1 }.count
+        print("VALIDATION PARITY \(label) kernels: \(Self.runsReferenceKernels ? "mlx_lm's" : "this package's"); "
+              + "\(differing) logits differ from mlx_lm's")
+        if Self.runsReferenceKernels {
+            XCTAssertEqual(differing, 0, "the release computes mlx_lm's logits bit for bit")
+        }
 
         // Every float parameter widened to float32 (the scales, biases, and norms mlx_lm stored at
         // bfloat16) leaves the packed words as read: a loading mistake survives the widening.
@@ -279,6 +284,21 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
                                               label: "mlx-llama-3.2-1b-4bit")
     }
 
+    /// Whether MLX runs mlx_lm's own compiled kernels: the Metal library it loaded is the mlxlm environment's
+    /// wheel library (`IK_MLXLM_METALLIB`, else the one under the validation root's `mlxlmvenv`). The
+    /// library this package builds compiles the fused attention and rotary with another toolchain, which
+    /// moves a few elements, so the bit-exact bars hold under the wheel's library only (USER 2026-10-21).
+    static let runsReferenceKernels: Bool = {
+        guard let loaded = NFKMLXGPU.metalLibraryURL else { return false }
+        let wheel = NFKMLXValidationConfig.environment["IK_MLXLM_METALLIB"].map(URL.init(fileURLWithPath:))
+            ?? NFKMLXValidationConfig.root.appendingPathComponent("mlxlmvenv/lib/python3.12/site-packages/mlx/lib/mlx.metallib")
+        func digest(_ url: URL) -> SHA256Digest? {
+            (try? Data(contentsOf: url, options: .mappedIfSafe)).map { SHA256.hash(data: $0) }
+        }
+        guard let ours = digest(loaded), let theirs = digest(wheel) else { return false }
+        return ours == theirs
+    }()
+
     /// How far a scaled rotary's period table may sit from mlx_lm's, in float32 steps (USER 2026-10-21). mlx_lm
     /// evaluates `base ** (2i/d)` with the GPU pow its wheel precompiles; mlx-swift compiles its pow at run
     /// time as a float32 `exp2(e · log2(base))`, and no arithmetic here reproduces the wheel's. Measured on
@@ -298,8 +318,9 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
     }
 
     /// Each seam of the release's forward against mlx_lm's (`mlx_lm_seams.py`) at the stored precision, from
-    /// mlx_lm's own input to that seam, so a seam that rounds apart shows by itself. Every seam and the
-    /// chained forward's layer outputs are bit-equal; each layer's line reports any element that differs.
+    /// mlx_lm's own input to that seam, so a seam that rounds apart shows by itself. Under mlx_lm's own
+    /// kernels (``runsReferenceKernels``) every seam and the chained forward's layer outputs are bit-equal;
+    /// each layer's line reports any element that differs under either library.
     private func assertReleaseSeams(release releaseKey: String, record recordKey: String, label: String) throws {
         try requireMLXRuntime()
         guard let directory = config[releaseKey], let path = config[recordKey] else {
@@ -316,7 +337,9 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
         func compared(_ name: String, _ mine: MLXArray, _ theirs: MLXArray) -> String {
             XCTAssertEqual(mine.dtype, theirs.dtype, "\(name) is computed in mlx_lm's type")
             let differing = (mine .!= theirs).asType(.int32).sum().item(Int.self)
-            XCTAssertEqual(differing, 0, "\(label) \(name) rounds as mlx_lm's")
+            if Self.runsReferenceKernels {
+                XCTAssertEqual(differing, 0, "\(label) \(name) rounds as mlx_lm's")
+            }
             guard differing > 0 else { return "\(name) exact" }
             let a = mine.asType(.float32).reshaped([-1]).asArray(Float.self)
             let b = theirs.asType(.float32).reshaped([-1]).asArray(Float.self)

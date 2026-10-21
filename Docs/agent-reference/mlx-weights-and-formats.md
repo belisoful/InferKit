@@ -90,7 +90,10 @@ Runtime quantization, the release reader, the native GGUF and PyTorch checkpoint
   Llama's seams near 1e-7. mlx_lm's GPU prefill orders (`orders.incremental`, `chunk2`, `chunk3`)
   reproduce its Qwen3 run exactly, so the gap was placement, not order. The bar is exact: every seam
   and the logits equal mlx_lm's, under mlx_lm's own compiled kernels (the wheel's metallib; mlx-swift's
-  precompiled SDPA and rope differ from it in a few elements). One input is held to a measured gap
+  precompiled SDPA and rope differ from it in a few elements). The tests read which library MLX loaded
+  (`runsReferenceKernels`, its SHA-256 against the mlxlm environment's): under the wheel's they hold the
+  bit-exact bars; under this package's they hold every position's argmax, the greedy tokens, and the
+  float32-widened load, and report the rest (USER 2026-10-21). One input is held to a measured gap
   (USER 2026-10-21): a scaled rotary's period table. mlx_lm computes `base ** (2i/d)` with the
   wheel's precompiled GPU pow, and mlx-swift compiles its pow at run time as a float32
   `exp2(e · log2(base))`; on Llama 3.2's llama3 table 22 of 32 periods differ, at most 14 float32
