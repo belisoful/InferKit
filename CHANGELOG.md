@@ -2016,10 +2016,10 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   The Gemma tokenizer's vocabulary and merge tables take the same keys. An unknown run is looked up
   by its text in a release's `vocab.json`, as MarianTokenizer does over OPUS-MT's union vocabulary.
 - `NFKMLXM2M100` is measured on the 1.2B and SMaLL-100, `NFKMLXMADLAD` on the 7B at bfloat16 (loaded
-  `half` by converting shards as they are read), and `NFKMLXTranslateGemma` on the 27B's first 14 layers
-  against a reference that streams one layer at a time. Nine OPUS-MT pairs and the three multilingual
-  families are held id-exact and text-exact on Japanese, Chinese in both scripts, Arabic, Vietnamese,
-  Thai, Hindi, and Korean probes.
+  `half` by converting shards as they are read), and `NFKMLXTranslateGemma` on the 27B, all 62 layers,
+  its decoder streamed against a reference that reads each layer as its forward reaches it. Nine OPUS-MT
+  pairs and the three multilingual families are held id-exact and text-exact on Japanese, Chinese in
+  both scripts, Arabic, Vietnamese, Thai, Hindi, and Korean probes.
 - `NFKMLXMarian` resolves `zh` to an OPUS group's `cmn_Hans` / `cmn_Hant` markers, and `zh-TW`, `zh-HK`,
   and `zh-MO` imply the Traditional script for OPUS-MT and MADLAD alike.
 
