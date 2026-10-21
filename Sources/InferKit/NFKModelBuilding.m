@@ -323,8 +323,24 @@ static BOOL NFKModelSourceDownloadsFiles(NFKModelSource * _Nullable source)
 		return NO;
 	}
 	BOOL fromHub = [source.kind isEqualToString:NFKModelSourceKindHuggingFace] && source.repository.length > 0;
-	BOOL fromURL = [source.kind isEqualToString:NFKModelSourceKindURL] && source.URL != nil;
+	// A URL source without a file list names a page a person reads, which no download fetches.
+	BOOL fromURL = [source.kind isEqualToString:NFKModelSourceKindURL] && source.URL != nil && source.files.count > 0;
 	return fromHub || fromURL;
+}
+
+// A whole-repository source names no file the status can check without the record a whole download
+// writes. A snapshot filled file by file holds the repository's config.json, which the locator reads.
+static BOOL NFKModelSourceListsNoRequiredFile(NFKModelSource *source)
+{
+	if (![source.kind isEqualToString:NFKModelSourceKindHuggingFace]) {
+		return NO;
+	}
+	for (NFKModelFile *file in source.files) {
+		if (!file.overridesSource && !file.isOptional) {
+			return NO;
+		}
+	}
+	return YES;
 }
 
 + (NFKModelLocator)hubCacheLocator
@@ -344,7 +360,8 @@ static BOOL NFKModelSourceDownloadsFiles(NFKModelSource * _Nullable source)
 		}
 		NFKHFHub *hub = [NFKHFHub hubWithCacheDirectoryURL:cacheDirectoryURL];
 		NFKDownloadStatus *status = [hub downloadStatusForModelSource:source];
-		if (status.presence != NFKDownloadPresenceComplete) {
+		BOOL complete = status.presence == NFKDownloadPresenceComplete;
+		if (!complete && !NFKModelSourceListsNoRequiredFile(source)) {
 			return nil;
 		}
 		if ([source.kind isEqualToString:NFKModelSourceKindURL]) {
@@ -362,7 +379,7 @@ static BOOL NFKModelSourceDownloadsFiles(NFKModelSource * _Nullable source)
 		}
 		NSString *path = file.path ?: @"config.json";
 		NSURL *fileURL = [hub localURLForRepo:source.repository revision:source.revision path:path];
-		if (fileURL == nil) {
+		if (fileURL == nil || (!complete && ![NSFileManager.defaultManager fileExistsAtPath:fileURL.path])) {
 			return nil;
 		}
 		if ([source.layout isEqualToString:NFKModelSourceLayoutFile]) {
@@ -487,7 +504,9 @@ static BOOL NFKModelSourceDownloadsFiles(NFKModelSource * _Nullable source)
 			return nil;
 		}
 	}
-	if (located == nil && NFKModelSourceDownloadsFiles(variant.source)) {
+	// A plugin fetches and keeps its own weights.
+	BOOL pluginKeepsFiles = [descriptor.engine isEqualToString:NFKModelEnginePlugin];
+	if (located == nil && NFKModelSourceDownloadsFiles(variant.source) && !pluginKeepsFiles) {
 		if (error != NULL) {
 			*error = NFKModelBuildError(NFKModelCatalogErrorNotDownloaded,
 										[NSString stringWithFormat:@"%@'s files are not downloaded. Download them with "

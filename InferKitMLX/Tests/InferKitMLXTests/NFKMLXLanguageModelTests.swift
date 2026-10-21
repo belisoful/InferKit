@@ -725,6 +725,29 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         XCTAssertGreaterThan(cosines[0], cosines[cosines.count - 1], "8 bits track the float decoder closer than 2: \(cosines)")
     }
 
+    // A mixture's stacked experts pack at the odd widths too, through the gathered quantized matmul: a tiny
+    // mixture quantized at 3 and at 5 bits in groups of 32 routes and decodes, 5 bits closer to float.
+    func testAMixturesExpertsPackAtTheOddWidths() throws {
+        try requireMLXRuntime()
+        let tokens = MLXArray((0 ..< 12).map { Int32(($0 * 11 + 5) % 512) }).reshaped([1, 12])
+        MLXRandom.seed(13)
+        let float = NFKMLXLanguage.makeNet(.tinyMixture)
+        let reference = float(tokens)[0, -1].asArray(Float.self)
+        var cosines = [Double]()
+        for bits in [3, 5] {
+            MLXRandom.seed(13)
+            let net = NFKMLXLanguage.makeNet(.tinyMixture)
+            try NFKMLXQuantization.quantize(module: net, bits: bits, groupSize: 32)
+            let experts = net.leafModules().flattened().compactMap { $0.1 as? NFKLMQuantizedSwitchLinear }
+            XCTAssertFalse(experts.isEmpty, "\(bits)-bit")
+            XCTAssertTrue(experts.allSatisfy { $0.bits == bits }, "\(bits)-bit")
+            let logits = net(tokens)[0, -1].asArray(Float.self)
+            XCTAssertTrue(logits.allSatisfy(\.isFinite), "\(bits)-bit")
+            cosines.append(cosine(logits, reference))
+        }
+        XCTAssertGreaterThan(cosines[1], cosines[0], "5 bits track the float mixture closer than 3: \(cosines)")
+    }
+
     // MARK: Keys grouped along the sequence
 
     /// Eight bits, groups of 32 positions (the smallest MLX packs) — small enough that a short prompt

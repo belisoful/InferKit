@@ -30,7 +30,7 @@ public enum NFKMLXWeightPrecision: Int, Sendable {
 }
 
 /// Runtime MLX quantization: packs a module's `Linear` layers, a mixture's stacked experts, and
-/// optionally its `Embedding` layers into affine 4- or 8-bit groups.
+/// optionally its `Embedding` layers into affine groups of 2, 3, 4, 5, 6, or 8 bits.
 ///
 /// A layer quantizes only when its input width divides the group size; everything else (convolutions,
 /// norms, the Snake alphas) computes as built. The replacement works because `QuantizedLinear`

@@ -199,7 +199,7 @@ extension NFKMLXLoadPlan {
     /// The families' plans. A family missing here loads its weights as stored.
     private static let familyPlans: [String: NFKMLXLoadPlan] = [
         "birefnet": .float32, "cosmos-tokenizer": .float32, "deberta-v3": .float32, "florence-2": .float32,
-        "gemma3": .float32, "gemma4": .float32, "laya": .float32, "m2m100": .float32, "marian": .float32,
+        "gemma4": .float32, "laya": .float32, "m2m100": .float32, "marian": .float32,
         "modernbert": .float32, "nllb": .float32, "pixtral": .float32, "qwen3-vl": .float32, "smollm2": .float32,
         "smolvlm": .float32, "trocr": .float32,
         "deepseek-v4": .bfloat16, "madlad": .bfloat16, "sa2va": .bfloat16,

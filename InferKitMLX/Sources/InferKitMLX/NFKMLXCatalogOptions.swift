@@ -179,7 +179,7 @@ struct NFKMLXLoadProfile {
         "gpt-oss": [.decoder(precisions: [], defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true, drafts: true)],
         "gemma3": [
             .streamedDecoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
-                             defaultPrecision: NFKModelPrecisionFloat32, contextLength: nil, keyValue: nil,
+                             defaultPrecision: NFKModelPrecisionCheckpoint, contextLength: nil, keyValue: nil,
                              tasks: [NFKModelTaskTextGeneration]),
             .streamedDecoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
                              defaultPrecision: NFKModelPrecisionCheckpoint, contextLength: nil, keyValue: nil,

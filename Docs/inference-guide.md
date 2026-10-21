@@ -312,7 +312,7 @@ and the `NFKMLXGenerationParameterKey` request keys in Objective-C, the same set
 
 - **`contextWindow`** bounds the key-value cache by dropping the oldest positions. Exact while the
   conversation fits inside the window; an approximation past it, so off by default.
-- **`cacheQuantization`** stores the cache at 2 to 8 bits instead of a float per element, with the keys
+- **`cacheQuantization`** stores the cache at 2 to 8 bits per element, with the keys
   grouped per channel along the sequence (the layout that keeps their precision; `keyAxis`). 8-bit was
   measured to track the full-precision logits at cosine above 0.99.
 - **`prefillChunkSize`** runs a long prompt through the cache in slices, bounding the attention peak.
@@ -358,7 +358,7 @@ the port does not implement (`dynamic`, `longrope`; `linear`, `yarn`, and `llama
 A release whose weights exceed the memory budget is refused before any are materialized
 (`NFKMLXReleaseWeights.verifyFits`), and `NFKMLXModelSizing` derives the context window from what the
 machine can hold and reports the decode rate memory bandwidth allows. `NFKMLXQuantization` packs a
-model's linear layers to 4- or 8-bit for a release that would not otherwise fit.
+model's linear layers to 2 to 8 bits for a release that would not otherwise fit.
 
 The [MLX language section of the examples](examples.md#local-on-device-through-mlx-nfkmlxlanguagebackend-swift)
 shows each option in use.

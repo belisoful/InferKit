@@ -139,6 +139,8 @@ private struct NFKMLXLanguageRelease {
     var readsImages = false
     /// The `model_type` of the release's configuration, where a resolver matches other repositories to it.
     var modelType: String? = nil
+    /// The type the release stores its weights in, stated where no measurement reads it from the shards.
+    var storedPrecision: String? = nil
 }
 
 extension NFKMLXCatalogLanguage {
@@ -191,8 +193,11 @@ extension NFKMLXCatalogLanguage {
     /// The Gemma 3n releases, by size.
     fileprivate static var gemma3nReleases: [NFKMLXLanguageRelease] {
         ["E2B", "E4B"].map { size in
+            // The gated releases are not measured. Their shards are bfloat16, so a float32 load takes twice
+            // the stored bytes.
             NFKMLXLanguageRelease(name: "gemma-3n-\(size.lowercased())-it", displayName: "Gemma 3n \(size) IT",
-                                  repository: "google/gemma-3n-\(size)-it", family: "gemma3n")
+                                  repository: "google/gemma-3n-\(size)-it", family: "gemma3n",
+                                  storedPrecision: NFKModelPrecisionBFloat16)
         }
     }
 
@@ -339,7 +344,8 @@ extension NFKMLXCatalogLanguage {
                                     layout: String = NFKModelSourceLayoutDirectory) -> NFKModelVariant {
         .variant(variantIdentifier(release.repository), displayName: release.displayName, isDefault: true,
                  registryName: release.name,
-                 source: .hub(release.repository, revision: release.revision, layout: layout, files: files))
+                 source: .hub(release.repository, revision: release.revision, layout: layout, files: files),
+                 precision: release.storedPrecision)
     }
 
     /// A variant's identifier: the repository's own name, lowercased.

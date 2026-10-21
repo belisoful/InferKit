@@ -663,11 +663,11 @@ The measurement:
   `gated`; a release page or a Google Drive folder is `unmeasurable`; a required file the repository
   does not serve is `missing`.
 - `residentBytes` follows `NFKMLXLoadPlan.plan(for:)`: the precision each family's registered loader
-  holds its weights at, read from the loaders on 2026-10-15. The default is stored. Float32: BiRefNet,
-  Cosmos tokenizer, DeBERTa (Open-Jev), Florence-2, Gemma 3 (not TranslateGemma, which loads at
-  `.checkpoint`), Gemma 3n, Gemma 4, Laya, M2M-100, Marian, NLLB, ModernBERT, Pixtral, the
-  `NFKMLXLanguage` families (Qwen3, Qwen3-MoE, Qwen2-MoE, Mixtral, Mistral, the GGUF), Qwen3-VL,
-  SmolVLM, and TrOCR. Bfloat16: DeepSeek V4, MADLAD-400 (registered `half: true`), and Sa2VA. Phi-4
+  holds its weights at, read from the loaders. The default is stored, which is where the decoders held
+  to their bfloat16 references load by default: Gemma 3, Gemma 3n, and the `NFKMLXLanguage` families
+  (Qwen3, Qwen3-MoE, Qwen2-MoE, Mixtral, Mistral). Float32: BiRefNet, Cosmos tokenizer, DeBERTa
+  (Open-Jev), Florence-2, Gemma 4, Laya, M2M-100, Marian, NLLB, ModernBERT, Pixtral, Qwen3-Embedding,
+  Qwen3-VL, SmolLM2 (the GGUF), SmolVLM, and TrOCR. Bfloat16: DeepSeek V4, MADLAD-400 (registered `half: true`), and Sa2VA. Phi-4
   multimodal loads its decoder stored and its towers at float32 from the same shards, so it is an
   estimate (`residentEstimate`). The staged generators' plans give each component directory its own
   precision; a component that widens only where the budget holds it (FLUX.2's text encoder, SD3's
@@ -941,8 +941,8 @@ MLX model through the registry. The pieces:
   backend, `NFKMLXGemmaBackend` (`pagesExperts`), and `NFKMLXGemma3Backend` (`streamedLayerCount`) also
   write it into their own description, so a direct build reports it. A measured build whose factory and
   backend say nothing is `resident` (`NFKMLXLifecycle.modelInfo(over:)`): the factory read its weights,
-  and every MLX catalog build is measured. MiniMax Music 3 reports `staged`, since each run reads the
-  stages it reaches.
+  and every MLX catalog build is measured. MiniMax Music 3 reports `resident` where resident was asked
+  for and `staged` otherwise, since each run reads its stages.
 - The language backend reads `NFKModelLoadOptionContextLength`, `…CacheBits`, and `…CacheGroupSize` as
   request parameters (`applyLoadDefaults`, before the `NFKMLXGenerationParameterKey` keys, which win), so
   the defaults `NFKDefaultedBackend` fills are honored and a request overrides them.
@@ -970,9 +970,9 @@ kinds). Consumed keys:
 | flux, flux2, stable-diffusion-3, sana, z-image, qwen-image, wan, ltx-video, minimax-music | residency | each generator's `generator(directoryURL:residency:)`; `flux.1-dev` takes the `.flux` schedule |
 | whisper | precision | `NFKMLXWhisper.backend(variant:…precision:identifier:)` by `whisperVariants` |
 
-Each factory keeps its family's previous default for an absent key (float32 for the language families,
-Gemma 3, Gemma 3n, Gemma 4, and Qwen3-VL; stored for Qwen3.5, Qwen4-Exp, Granite, TranslateGemma,
-Whisper, and Stable Diffusion; half for MADLAD; automatic residency).
+Each factory keeps its family's default for an absent key: stored for the `NFKMLXLanguage` families,
+Gemma 3, Gemma 3n, Qwen3.5, Qwen4-Exp, Granite, TranslateGemma, Whisper, and Stable Diffusion; float32
+for Gemma 4 and Qwen3-VL; half for MADLAD; automatic residency.
 
 Not consumed: the context and cache keys on Gemma 3, Gemma 3n, Gemma 4, Qwen3.5 (no key-value cache),
 Granite, and Qwen3-VL, whose backends read no cache parameters, so their descriptors do not declare them;

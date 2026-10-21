@@ -124,7 +124,7 @@ enum NFKMLXOptionRegistrations {
         let gemma3 = registryNames(families: ["gemma3"], where: lists(NFKModelTaskTextGeneration))
         registerDirectoryModels(gemma3, consumes: draftKeys.union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision])) {
             url, _, options in
-            let precision = options.precision ?? .float32
+            let precision = options.precision ?? .checkpoint
             guard let draftURL = options.draftURL else {
                 return try NFKMLXGemma3.backend(directoryURL: url, precision: precision, residency: options.residency)
             }
@@ -298,8 +298,9 @@ enum NFKMLXOptionRegistrations {
         }
         // Music 3 plans its residency at the start of each run, against its downloaded stages.
         registerDirectoryModels(registryNames(families: ["minimax-music"]), consumes: residency) { url, _, options in
-            // Each run reads the stages it reaches, so the load itself holds none of them.
-            options.reportResidency(.staged)
+            // Each run reads its stages: all of them at once where resident was asked for, else as the run's
+            // plan stages them, so the load itself holds none.
+            options.reportResidency(options.residency == .resident ? .resident : .staged)
             return try NFKMLXMusic3.backend(directoryURL: url, residency: options.residency)
         }
         registerDirectoryModels(registryNames(families: ["stable-audio"]), consumes: residency) { url, _, options in

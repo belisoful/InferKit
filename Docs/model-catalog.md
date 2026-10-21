@@ -980,9 +980,9 @@ memory model:
 (32, 64, or 128), and `contextLength` to 4096, at most the release's `max_position_embeddings`. A weight
 quantization at any width is an approximation of the published weights, and its help text says so.
 
-A decoder's `precision` defaults to `checkpoint` where the family is held to its bfloat16 reference
-(Qwen3, Mistral, the Qwen3, Qwen1.5, and Mixtral mixtures, and Gemma 3n), and to `float32` where it is
-not (Gemma 3's text decoder). The `precise` preset loads such a family at float32.
+A decoder's `precision` defaults to `checkpoint` where the family is held to its bfloat16 reference:
+Qwen3, Mistral, the Qwen3, Qwen1.5, and Mixtral mixtures, Gemma 3's text decoder, and Gemma 3n. The
+`precise` preset loads such a family at float32.
 
 A variant's memory facts carry only what its loader acts on:
 

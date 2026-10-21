@@ -1347,15 +1347,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   request-time `NFKMLXGenerationParameterKey.cacheQuantizationBits` takes the same widths. The memory
   estimate scales with the width.
 - A decoder held to its bfloat16 reference loads as published by default: Qwen3, Mistral, the Qwen3,
-  Qwen1.5, and Mixtral mixtures, and Gemma 3n. Each gains the `precise` preset, which loads it at float32.
-  Gemma 3's text decoder keeps float32 as its default. A registered dense or mixture decoder built
-  without a precision option loads as published.
+  Qwen1.5, and Mixtral mixtures, Gemma 3's text decoder, and Gemma 3n. Each gains the `precise` preset,
+  which loads it at float32. A registered decoder of these families built without a precision option
+  loads as published. Gemma 3n's catalog variants state their bfloat16 storage, so a float32 load is
+  estimated at twice the stored bytes.
 
 #### Every measured build reports its residency
 
 - An MLX catalog build reports `NFKModelInfoResidency` beside its measured resident and peak bytes: what
-  the factory or the backend reports, else `resident`. MiniMax Music 3 reports `staged`, since each run
-  reads the stages it reaches.
+  the factory or the backend reports, else `resident`. MiniMax Music 3 reports `resident` where resident
+  was asked for and `staged` otherwise, since each run reads its stages.
 
 #### The language loader judges repositories it was not measured on
 

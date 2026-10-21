@@ -9,7 +9,7 @@ Runtime quantization, the release reader, the native GGUF and PyTorch checkpoint
 - `NFKMLXQuantization` — runtime MLX quantization, the package's first path for running a model in
   MLX-quantized form (`NFKMLXDeepSeekQuantization` only decodes a stored format). `quantize(module:
   bits:groupSize:includeEmbeddings:)` packs `Linear` layers whose input width divides the group size
-  into affine 4- or 8-bit `QuantizedLinear` (everything else computes as built; already-quantized
+  into affine `QuantizedLinear` at 2, 3, 4, 5, 6, or 8 bits (everything else computes as built; already-quantized
   layers are excluded, which matters because `QuantizedLinear` subclasses `Linear` and satisfies a
   type test silently). Each layer is replaced through its owner (`NFKMLXModuleReplacement.place`),
   so a skipped layer inside a module array stays; the call throws. `includeEmbeddings` (default off) also packs `Embedding` layers into

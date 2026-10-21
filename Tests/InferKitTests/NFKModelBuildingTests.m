@@ -561,8 +561,8 @@ static const NSInteger NFKBuildTestGiB = (NSInteger)1 << 30;
 						  config.URLByDeletingLastPathComponent.standardizedURL);
 }
 
-// A variant whose files are not downloaded is refused rather than built: a builder given no location
-// builds its network on initial values, which run and answer nonsense.
+// A variant whose files are not downloaded is refused: a builder given no location builds its network
+// on initial values, which run and answer nonsense.
 - (void)testABuildWhoseFilesAreNotDownloadedIsRefused
 {
 	NFKModelSource *source = [NFKModelSource huggingFaceSourceWithRepository:@"org/absent" revision:nil
@@ -580,6 +580,51 @@ static const NSInteger NFKBuildTestGiB = (NSInteger)1 << 30;
 	XCTAssertNotNil([self.catalog backendForModelIdentifier:@"absent.model" options:nil location:given error:&error],
 					@"%@", error);
 	XCTAssertEqualObjects(self.builder.lastRequest.location, given, @"a given location builds");
+}
+
+// A whole-repository snapshot filled file by file has no completion record; its config.json locates it.
+- (void)testTheHubCacheLocatorFindsAWholeRepositoryByItsConfiguration
+{
+	NSURL *cache = [self scratchCache];
+	NFKModelSource *source = [NFKModelSource huggingFaceSourceWithRepository:@"org/whole" revision:nil
+																	  layout:NFKModelSourceLayoutDirectory];
+	NFKModelDescriptor *descriptor = [self modelWithIdentifier:@"whole.model" engine:NFKBuildTestEngine provider:nil
+												  requirements:nil variant:[self variantWithSource:source]];
+	NFKModelLocator locator = [NFKModelCatalog hubCacheLocatorForCacheDirectoryURL:cache];
+	NFKHFHub *hub = [NFKHFHub hubWithCacheDirectoryURL:cache];
+	NSURL *weights = [hub localURLForRepo:@"org/whole" revision:nil path:@"model.safetensors"];
+	[NSFileManager.defaultManager createDirectoryAtURL:weights.URLByDeletingLastPathComponent
+						   withIntermediateDirectories:YES attributes:nil error:NULL];
+	XCTAssertTrue([[NSData dataWithBytes:"weights" length:7] writeToURL:weights atomically:YES]);
+	XCTAssertNil(locator(descriptor, descriptor.defaultVariant, NULL), @"no config.json yet");
+
+	NSURL *config = [hub localURLForRepo:@"org/whole" revision:nil path:@"config.json"];
+	XCTAssertTrue([[NSData dataWithBytes:"{}" length:2] writeToURL:config atomically:YES]);
+	XCTAssertEqualObjects(locator(descriptor, descriptor.defaultVariant, NULL).standardizedURL,
+						  config.URLByDeletingLastPathComponent.standardizedURL);
+}
+
+// A URL source that lists no file names a page a person reads, and a plugin keeps its own weights: neither
+// is refused as not downloaded.
+- (void)testAPageSourceAndAPluginModelAreNotRefusedAsNotDownloaded
+{
+	self.catalog.locator = [NFKModelCatalog hubCacheLocatorForCacheDirectoryURL:[self scratchCache]];
+	NFKModelSource *page = [[NFKModelSource alloc] initWithKind:NFKModelSourceKindURL repository:nil revision:nil
+															URL:[NSURL URLWithString:@"https://example.test/model"]
+														 layout:NFKModelSourceLayoutFile files:@[] requiresConversion:NO
+													 extensions:nil];
+	[self.catalog addDescriptor:[self modelWithIdentifier:@"page.model" engine:NFKBuildTestEngine provider:nil
+											 requirements:nil variant:[self variantWithSource:page]]];
+	NSError *error = nil;
+	XCTAssertNotNil([self.catalog backendForModelIdentifier:@"page.model" options:nil error:&error], @"%@", error);
+	XCTAssertNil(self.builder.lastRequest.location);
+
+	NFKModelSource *hub = [NFKModelSource huggingFaceSourceWithRepository:@"org/plugin-weights" revision:nil
+																   layout:NFKModelSourceLayoutDirectory];
+	[self.catalog addDescriptor:[self modelWithIdentifier:@"plugin.model" engine:NFKModelEnginePlugin provider:nil
+											 requirements:nil variant:[self variantWithSource:hub]]];
+	XCTAssertNil([self.catalog backendForModelIdentifier:@"plugin.model" options:nil error:&error]);
+	XCTAssertNotEqual(error.code, NFKModelCatalogErrorNotDownloaded, @"%@", error);
 }
 
 - (void)testTheHubCacheLocatorSkipsASystemModel
