@@ -4896,7 +4896,9 @@ def run_granite_hybrid_real(image, checkpoint):
     (the tokenizer is sidestepped; parity is a function of the ids). The record carries the tokens, the
     per-layer hidden states for seam isolation, the prefill logits, and the greedy continuation.
     `IK_GRANITE_DTYPE=bfloat16` builds it at the released bf16 with eager attention instead, the
-    record a bf16 load's rounding placement is held to.
+    record a bf16 load's rounding placement is held to. With it, `IK_GRANITE_EMBED_JITTER=<seed>` raises 16 values of
+    the token embeddings one unit in the last place (`_jittered_bfloat16`), for a twin record that measures the
+    reference's own end-to-end spread.
     """
     import torch
     from transformers import AutoModelForCausalLM
@@ -4904,6 +4906,10 @@ def run_granite_hybrid_real(image, checkpoint):
     if os.environ.get("IK_GRANITE_DTYPE") == "bfloat16":
         model = AutoModelForCausalLM.from_pretrained(checkpoint, dtype=torch.bfloat16,
                                                      attn_implementation="eager").eval()
+        jitter = os.environ.get("IK_GRANITE_EMBED_JITTER")
+        if jitter:
+            model.get_input_embeddings().register_forward_hook(
+                lambda module, inputs, output: _jittered_bfloat16(output, int(jitter)))
     else:
         model = AutoModelForCausalLM.from_pretrained(checkpoint, dtype=torch.float32).eval()
     ids = torch.tensor([[1602, 4934, 322, 1148, 42, 7, 55]], dtype=torch.long)

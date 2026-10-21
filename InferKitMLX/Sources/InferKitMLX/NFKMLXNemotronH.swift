@@ -51,6 +51,8 @@ public struct NFKMLXNemotronHConfiguration: Sendable {
     public var mambaHeadDimensions: Int
     public var mambaGroupCount: Int
     public var mambaStateSize: Int
+    /// The positions the Mamba layers' chunked scan takes at a time (`chunk_size`).
+    public var mambaChunkSize: Int
     public var mambaConvolutionKernel: Int
     public var mambaConvolutionBias: Bool
     public var mambaProjectionBias: Bool
@@ -70,8 +72,8 @@ public struct NFKMLXNemotronHConfiguration: Sendable {
                 mambaHeadCount: Int = 128, mambaHeadDimensions: Int = 80, mambaGroupCount: Int = 8,
                 mambaStateSize: Int = 128, mambaConvolutionKernel: Int = 4,
                 mambaConvolutionBias: Bool = true, mambaProjectionBias: Bool = false,
-                timeStepMinimum: Float = 0.001, intermediateSize: Int = 15680, mlpBias: Bool = false,
-                layerTypes: [NFKMLXNemotronLayerKind]) {
+                timeStepMinimum: Float = 0.001, mambaChunkSize: Int = 128, intermediateSize: Int = 15680,
+                mlpBias: Bool = false, layerTypes: [NFKMLXNemotronLayerKind]) {
         self.hiddenSize = hiddenSize
         self.vocabularySize = vocabularySize
         self.rmsEpsilon = rmsEpsilon
@@ -86,6 +88,7 @@ public struct NFKMLXNemotronHConfiguration: Sendable {
         self.mambaConvolutionBias = mambaConvolutionBias
         self.mambaProjectionBias = mambaProjectionBias
         self.timeStepMinimum = timeStepMinimum
+        self.mambaChunkSize = mambaChunkSize
         self.intermediateSize = intermediateSize
         self.mlpBias = mlpBias
         self.layerTypes = layerTypes
@@ -101,7 +104,7 @@ public struct NFKMLXNemotronHConfiguration: Sendable {
             groupCount: mambaGroupCount, convolutionKernel: mambaConvolutionKernel,
             useConvolutionBias: mambaConvolutionBias, useProjectionBias: mambaProjectionBias,
             timeStepLowerLimit: timeStepMinimum, timeStepUpperLimit: .infinity,
-            gatedNormGroups: mambaGroupCount)
+            gatedNormGroups: mambaGroupCount, chunkSize: mambaChunkSize)
     }
 
     /// The released `nvidia/NVIDIA-Nemotron-Nano-9B-v2` pattern.
@@ -163,6 +166,7 @@ public struct NFKMLXNemotronHConfiguration: Sendable {
             mambaConvolutionBias: (json["use_conv_bias"] as? Bool) ?? true,
             mambaProjectionBias: (json["use_bias"] as? Bool) ?? false,
             timeStepMinimum: float("time_step_min", 0.001),
+            mambaChunkSize: int("chunk_size", 128),
             intermediateSize: int("intermediate_size", 15680),
             mlpBias: (json["mlp_bias"] as? Bool) ?? false,
             layerTypes: kinds)

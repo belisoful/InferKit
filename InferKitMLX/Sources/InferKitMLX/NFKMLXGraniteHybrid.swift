@@ -46,6 +46,8 @@ public struct NFKMLXGraniteHybridConfiguration: Sendable {
     public var mambaHeadDimensions: Int
     public var mambaGroupCount: Int
     public var mambaStateSize: Int
+    /// The positions the Mamba layers' chunked scan takes at a time (`mamba_chunk_size`).
+    public var mambaChunkSize: Int
     public var mambaConvolutionKernel: Int
     public var mambaExpand: Int
     public var mambaConvolutionBias: Bool
@@ -70,7 +72,8 @@ public struct NFKMLXGraniteHybridConfiguration: Sendable {
                 rmsEpsilon: Float = 1e-5, tiesWordEmbeddings: Bool = true,
                 headCount: Int = 12, keyValueHeadCount: Int = 4, headDimensions: Int = 128,
                 mambaHeadCount: Int = 48, mambaHeadDimensions: Int = 64, mambaGroupCount: Int = 1,
-                mambaStateSize: Int = 128, mambaConvolutionKernel: Int = 4, mambaExpand: Int = 2,
+                mambaStateSize: Int = 128, mambaChunkSize: Int = 256, mambaConvolutionKernel: Int = 4,
+                mambaExpand: Int = 2,
                 mambaConvolutionBias: Bool = true, mambaProjectionBias: Bool = false,
                 sharedIntermediateSize: Int = 4096, expertCount: Int = 0, expertsPerToken: Int = 0,
                 expertIntermediateSize: Int = 0,
@@ -89,6 +92,7 @@ public struct NFKMLXGraniteHybridConfiguration: Sendable {
         self.mambaHeadDimensions = mambaHeadDimensions
         self.mambaGroupCount = mambaGroupCount
         self.mambaStateSize = mambaStateSize
+        self.mambaChunkSize = mambaChunkSize
         self.mambaConvolutionKernel = mambaConvolutionKernel
         self.mambaExpand = mambaExpand
         self.mambaConvolutionBias = mambaConvolutionBias
@@ -113,7 +117,7 @@ public struct NFKMLXGraniteHybridConfiguration: Sendable {
             headCount: mambaHeadCount, headDimensions: mambaHeadDimensions, stateSize: mambaStateSize,
             groupCount: mambaGroupCount, convolutionKernel: mambaConvolutionKernel,
             useConvolutionBias: mambaConvolutionBias, useProjectionBias: mambaProjectionBias,
-            tiesWordEmbeddings: tiesWordEmbeddings)
+            tiesWordEmbeddings: tiesWordEmbeddings, chunkSize: mambaChunkSize)
     }
 
     var hasExperts: Bool { expertCount > 0 }
@@ -154,6 +158,7 @@ public struct NFKMLXGraniteHybridConfiguration: Sendable {
             mambaHeadDimensions: int("mamba_d_head", 64),
             mambaGroupCount: int("mamba_n_groups", 1),
             mambaStateSize: int("mamba_d_state", 128),
+            mambaChunkSize: int("mamba_chunk_size", 256),
             mambaConvolutionKernel: int("mamba_d_conv", 4),
             mambaExpand: int("mamba_expand", 2),
             mambaConvolutionBias: (json["mamba_conv_bias"] as? Bool) ?? true,

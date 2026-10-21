@@ -345,17 +345,25 @@ final class NFKHybridLinearAttention: Module {
         // Per-head decay and write strength. `A_log` is stored as a log so the rate stays positive;
         // the reference keeps `g` as a LOG rate, formed in float32, and exponentiates it inside the
         // recurrence. The recurrence runs in float32 and its output rounds once to the input's type.
-        let decay = exp(-NFKReferenceRounding.exponential(decayLog.asType(.float32))
-                        * NFKReferenceRounding.softplus(decayProjection(x).asType(.float32) + stepBias.asType(.float32)))
+        let logDecay = -NFKReferenceRounding.exponential(decayLog.asType(.float32))
+            * NFKReferenceRounding.softplus(decayProjection(x).asType(.float32) + stepBias.asType(.float32))
         let write = NFKReferenceRounding.sigmoid(writeProjection(x)).asType(.float32)
 
         // Key heads are shared across a group of value heads, as grouped-query attention shares them.
+        // The reference arithmetic takes transformers 5.17's chunked rule where the release normalizes as it does.
         let group = c.linearValueHeadCount / c.linearKeyHeadCount
         let wide = c.normalizesKeysInFloat32
-        let read = recurrence(
-            queries: Self.unitNorm(repeated(queries, count: group, axis: 2), widenedFirst: wide),
-            keys: Self.unitNorm(repeated(keys, count: group, axis: 2), widenedFirst: wide),
-            values: values.asType(.float32), decay: decay, write: write).asType(x.dtype)
+        let read: MLXArray
+        if wide && NFKReferenceRounding.computesReferenceScans {
+            read = NFKReferenceRounding.torchChunkGatedDeltaRule(
+                queries: repeated(queries, count: group, axis: 2), keys: repeated(keys, count: group, axis: 2),
+                values: values, logDecay: logDecay, beta: write).asType(x.dtype)
+        } else {
+            read = recurrence(
+                queries: Self.unitNorm(repeated(queries, count: group, axis: 2), widenedFirst: wide),
+                keys: Self.unitNorm(repeated(keys, count: group, axis: 2), widenedFirst: wide),
+                values: values.asType(.float32), decay: exp(logDecay), write: write).asType(x.dtype)
+        }
 
         let gate = gateProjection(x).reshaped([batch, length, c.linearValueHeadCount,
                                                c.linearValueHeadDimensions])

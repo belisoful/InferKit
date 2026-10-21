@@ -12,9 +12,10 @@
 //  and the hybrid Mamba-attention decoders (Granite 4.0-H, Nemotron Nano 2) that add attention and a
 //  mixture of experts on top of this mixer.
 //
-//  The scan here is the explicit sequential recurrence, mathematically equal to the chunked segment-sum
-//  form HF's slow path runs. It is prefill-only, like the hybrid and DeepSeek decoders beside it; the
-//  chunked scan and an incremental single-step cache are separate performance and generation features.
+//  The fast arithmetic runs the explicit sequential recurrence, mathematically equal to the chunked
+//  segment-sum form HF's slow path runs, and the reference arithmetic runs that chunked form itself
+//  (`NFKReferenceRounding.torchMamba2ChunkScan`). Both are prefill-only, like the hybrid and DeepSeek
+//  decoders beside it; an incremental single-step cache is a separate generation feature.
 //
 //  Reference: HF `transformers` `Mamba2Mixer.torch_forward`, the CPU slow path (no CUDA kernel needed).
 //
@@ -65,6 +66,10 @@ public struct NFKMLXMamba2Configuration: Sendable {
     /// float32 run; in bf16 it is where the reference keeps its stream.
     public var residualInFloat32: Bool
 
+    /// The positions the reference's chunked scan takes at a time (`chunk_size`), which
+    /// ``NFKMLXArithmetic/reference`` follows.
+    public var chunkSize: Int
+
     public init(hiddenSize: Int = 4096, layerCount: Int = 64, vocabularySize: Int = 32768,
                 rmsEpsilon: Float = 1e-5, intermediateSize: Int = 8192,
                 headCount: Int = 128, headDimensions: Int = 64, stateSize: Int = 128,
@@ -72,7 +77,7 @@ public struct NFKMLXMamba2Configuration: Sendable {
                 useConvolutionBias: Bool = true, useProjectionBias: Bool = false,
                 tiesWordEmbeddings: Bool = false,
                 timeStepLowerLimit: Float = 0.0, timeStepUpperLimit: Float = .infinity,
-                gatedNormGroups: Int = 1, residualInFloat32: Bool = true) {
+                gatedNormGroups: Int = 1, residualInFloat32: Bool = true, chunkSize: Int = 256) {
         self.hiddenSize = hiddenSize
         self.layerCount = layerCount
         self.vocabularySize = vocabularySize
@@ -90,6 +95,7 @@ public struct NFKMLXMamba2Configuration: Sendable {
         self.timeStepUpperLimit = timeStepUpperLimit
         self.gatedNormGroups = gatedNormGroups
         self.residualInFloat32 = residualInFloat32
+        self.chunkSize = chunkSize
     }
 
     /// The width the depthwise convolution spans: the inner `x` plus the `B` and `C` streams.
@@ -146,7 +152,8 @@ public struct NFKMLXMamba2Configuration: Sendable {
             tiesWordEmbeddings: (json["tie_word_embeddings"] as? Bool) ?? false,
             timeStepLowerLimit: lower,
             timeStepUpperLimit: upper,
-            residualInFloat32: (json["residual_in_fp32"] as? Bool) ?? true)
+            residualInFloat32: (json["residual_in_fp32"] as? Bool) ?? true,
+            chunkSize: int("chunk_size", 256))
     }
 }
 
@@ -347,9 +354,13 @@ final class NFKMLXMamba2Mixer: Module {
         let bHeads = expandGroups(bPart)
         let cHeads = expandGroups(cPart)
 
-        var y = selectiveScan(x: xHeads, b: bHeads, c: cHeads, dt: dt, a: a)
-        // The per-head skip connection D · x, added before the reshape.
-        y = y + d.asType(.float32).reshaped([1, 1, heads, 1]) * xHeads
+        // The per-head skip connection D · x, added before the reshape. The reference arithmetic takes the
+        // reference's chunked scan, which sums in other orders from 8 state values a head.
+        let y = NFKReferenceRounding.computesReferenceScans && state >= 8
+            ? NFKReferenceRounding.torchMamba2ChunkScan(x: xHeads, dt: dt, a: a, b: bHeads, c: cHeads,
+                                                        d: d.asType(.float32), chunkSize: config.chunkSize)
+            : selectiveScan(x: xHeads, b: bHeads, c: cHeads, dt: dt, a: a)
+                + d.asType(.float32).reshaped([1, 1, heads, 1]) * xHeads
         let normalized = norm(y.reshaped([batch, length, intermediate]), gate: gate, dtype: hidden.dtype)
         return outProjection(normalized)
     }

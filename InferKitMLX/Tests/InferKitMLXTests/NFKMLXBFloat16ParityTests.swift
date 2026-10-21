@@ -26,7 +26,8 @@
 //    does. Past the first flipped element the two bf16 streams diverge chaotically, so the end-to-end
 //    element count carries no signal; the distance from exact arithmetic does. Where the reference's own
 //    bf16 moves past twice the floor under a one-unit change to a few inputs, the state is held to the
-//    farthest of those jittered twins instead.
+//    farthest of those jittered twins instead, or, where this side runs under the same jitters, its runs are
+//    held to sit no farther from float32 than the twins by a rank test.
 //
 
 import CryptoKit
@@ -104,6 +105,8 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         /// Each jittered twin of the reference's bf16, the whole model run on inputs a few of which sit one unit in
         /// the last place apart, as its `1 - cosine` against the reference's float32.
         var twinRuns: [(String, Double)] = []
+        /// This side's runs under the twins' own jitters, each as its `1 - cosine` against the reference's float32.
+        var jitteredRuns: [Double] = []
 
         /// `ours` as a fraction of the block floor, or nil where none is recorded or the block adds no rounding
         /// (a layer norm CUDA autocast computes in float32 has a block floor of 0).
@@ -166,7 +169,16 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
                                  .joined(separator: ", ")
                              + String(format: "; ours %.2f", row.exact / max(row.floor, 1e-30)))
             }
-            if !row.twinRuns.isEmpty {
+            if !row.jitteredRuns.isEmpty {
+                func median(_ values: [Double]) -> Double {
+                    let sorted = values.sorted()
+                    return (sorted[(sorted.count - 1) / 2] + sorted[sorted.count / 2]) / 2
+                }
+                let twins = row.twinRuns.map(\.1)
+                lines.append(String(format: "      jittered runs vs f32: ours median %.3e, max %.3e; the reference's twins median "
+                                    + "%.3e, max %.3e; rank z %+.2f", median(row.jitteredRuns), row.jitteredRuns.max() ?? 0,
+                                    median(twins), twins.max() ?? 0, rankZ(row.jitteredRuns, twins)))
+            } else if !row.twinRuns.isEmpty {
                 lines.append("      jittered twins vs f32, of the floor: "
                              + row.twinRuns.map { String(format: "%@ %.2f", $0.0, $0.1 / max(row.floor, 1e-30)) }
                                  .joined(separator: ", ")
@@ -436,6 +448,12 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         }
         assertWithinBlockFloors(name, isolated, file: file, line: line)
         for row in endToEnd.suffix(2) {
+            if !row.jitteredRuns.isEmpty, !row.twinRuns.isEmpty {
+                XCTAssertLessThanOrEqual(rankZ(row.jitteredRuns, row.twinRuns.map(\.1)), 2,
+                                         "\(name) \(row.label): farther from float32 than the reference under the same jitters",
+                                         file: file, line: line)
+                continue
+            }
             if let farthest = row.twinRuns.map(\.1).max() {
                 XCTAssertLessThanOrEqual(row.exact, farthest,
                                          "\(name) \(row.label): farther from float32 than the reference's farthest jittered twin",
@@ -452,6 +470,23 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
                                      "\(name) \(row.label): farther from float32 than twice the reference's bf16",
                                      file: file, line: line)
         }
+    }
+
+    /// The Mann–Whitney z of `ours` against `theirs` under the normal approximation, ties ranked by their mean:
+    /// positive where `ours` ranks higher.
+    private func rankZ(_ ours: [Double], _ theirs: [Double]) -> Double {
+        let pooled = (ours.map { ($0, true) } + theirs.map { ($0, false) }).sorted { $0.0 < $1.0 }
+        var ranks = [Double](repeating: 0, count: pooled.count)
+        var start = 0
+        while start < pooled.count {
+            var end = start
+            while end + 1 < pooled.count && pooled[end + 1].0 == pooled[start].0 { end += 1 }
+            for index in start ... end { ranks[index] = Double(start + end) / 2 + 1 }
+            start = end + 1
+        }
+        let rankSum = zip(pooled, ranks).filter { $0.0.1 }.reduce(0) { $0 + $1.1 }
+        let (n1, n2) = (Double(ours.count), Double(theirs.count))
+        return (rankSum - n1 * (n1 + 1) / 2 - n1 * n2 / 2) / (n1 * n2 * (n1 + n2 + 1) / 12).squareRoot()
     }
 
     /// Each seam with a recorded block floor stays inside it: run on the reference's own input, a block may
@@ -3126,6 +3161,57 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         XCTAssertNotEqual(digest(operations), expected, "the case tells MLX's sum from torch's")
     }
 
+    // transformers' `mamba2_chunk_scan` over 300 positions of 8 heads 16 wide with 32 state values, in chunks of 256,
+    // every input an exact formula, against the SHA-256 of torch's float32 output. The sequential recurrence sums
+    // apart from it.
+    func testReferenceArithmeticComputesTorchsMamba2ChunkScan() throws {
+        try requireMLXRuntime()
+        let (length, heads, width, state) = (300, 8, 16, 32)
+        func formula(_ shape: [Int], _ value: (Int) -> Double) -> MLXArray {
+            MLXArray((0 ..< shape.reduce(1, *)).map { Float(value($0)) }, shape)
+        }
+        let x = formula([1, length, heads, width]) { Double(($0 * 37) % 1001 - 500) / 256 }
+        let dt = formula([1, length, heads]) { Double(($0 * 13) % 97 + 1) / 512 }
+        let a = formula([heads]) { -Double($0 + 1) / 4 }
+        let b = formula([1, length, heads, state]) { Double(($0 * 29) % 257 - 128) / 128 }
+        let c = formula([1, length, heads, state]) { Double(($0 * 31) % 263 - 131) / 128 }
+        let d = formula([heads]) { Double($0 - 3) / 8 }
+        func digest(_ y: MLXArray) -> String {
+            SHA256.hash(data: y.asArray(Float.self).withUnsafeBufferPointer { Data(buffer: $0) })
+                .map { String(format: "%02x", $0) }.joined()
+        }
+        let expected = "886806a159e55e0dd9a7034839a3bb3277330adca72ddac5b87b77625a9dd5cd"
+        XCTAssertEqual(digest(NFKReferenceRounding.torchMamba2ChunkScan(x: x, dt: dt, a: a, b: b, c: c, d: d,
+                                                                        chunkSize: 256)), expected)
+        XCTAssertNotEqual(digest(NFKReferenceRounding.mamba2SequentialScan([x, dt, a, b, c, d])[0]), expected,
+                          "the inputs tell the recurrence's sums from torch's")
+    }
+
+    // transformers 5.17's `torch_chunk_gated_delta_rule` with its in-kernel normalization over 100 positions of 4 heads,
+    // keys 128 wide and values 64, every input an exact formula, against the SHA-256 of torch's float32 read. The
+    // sequential recurrence sums apart from it.
+    func testReferenceArithmeticComputesTorchsChunkGatedDeltaRule() throws {
+        try requireMLXRuntime()
+        let (length, heads, keyWidth, valueWidth) = (100, 4, 128, 64)
+        func formula(_ shape: [Int], _ value: (Int) -> Double) -> MLXArray {
+            MLXArray((0 ..< shape.reduce(1, *)).map { Float(value($0)) }, shape)
+        }
+        let queries = formula([1, length, heads, keyWidth]) { Double(($0 * 41) % 1009 - 504) / 256 }
+        let keys = formula([1, length, heads, keyWidth]) { Double(($0 * 43) % 1013 - 506) / 256 }
+        let values = formula([1, length, heads, valueWidth]) { Double(($0 * 47) % 1019 - 509) / 256 }
+        let logDecay = formula([1, length, heads]) { -Double(($0 * 7) % 50 + 1) / 100 }
+        let beta = formula([1, length, heads]) { Double(($0 * 11) % 90 + 5) / 100 }
+        func digest(_ y: MLXArray) -> String {
+            SHA256.hash(data: y.asArray(Float.self).withUnsafeBufferPointer { Data(buffer: $0) })
+                .map { String(format: "%02x", $0) }.joined()
+        }
+        let expected = "9c60b78cc763196af0cab8305cc013cb341d1d7736be765fa0aecc741babbaff"
+        XCTAssertEqual(digest(NFKReferenceRounding.torchChunkGatedDeltaRule(queries: queries, keys: keys, values: values,
+                                                                            logDecay: logDecay, beta: beta)), expected)
+        XCTAssertNotEqual(digest(NFKReferenceRounding.gatedDeltaRecurrence([queries, keys, values, logDecay, beta])[0]),
+                          expected, "the inputs tell the recurrence's sums from torch's")
+    }
+
     // Wan 2.1 1.3B's 12 heads over 33 frames at 480×832 (14,040 tokens) attend 1,593 query rows at a time,
     // and SD 1.5's 8 heads over 4,096 positions at batch 2 attend at once.
     func testFlashAttentionBlocksItsQueriesWithinOneGibibyte() {
@@ -4863,7 +4949,9 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
 
     // The released granite-4.0-h-1b at bf16, the precision its backend loads by default, against
     // transformers at bf16 with eager attention (`IK_GRANITE_DTYPE=bfloat16 run_reference.py
-    // granite_hybrid_real`) and at float32 from the same ids.
+    // granite_hybrid_real`) and at float32 from the same ids. The logits are held as a distribution: under 20
+    // one-unit jitters of 16 token-embedding values, this side's distances from float32 sit no farther than the
+    // reference's twins under the same jitters (`IK_GRANITE_EMBED_JITTER=1…20`), by a rank test.
     func testGraniteH1BInBFloat16MatchesTheBFloat16Reference() throws {
         try requireMLXRuntime()
         let directory = URL(fileURLWithPath: try existing(config["IK_VAL_GRANITE"], "IK_VAL_GRANITE"))
@@ -4880,7 +4968,14 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         eval(states + [logits])
         let labelled = states.enumerated().map { ($0.offset == 0 ? "embedding" : "layer \($0.offset - 1)", $0.element) }
             + [("logits", logits)]
-        let rows = try seams(labelled, bf16: bf16, f32: f32, keys: states.indices.map { "hidden.\($0)" } + ["output"])
+        var rows = try seams(labelled, bf16: bf16, f32: f32, keys: states.indices.map { "hidden.\($0)" } + ["output"])
+        let floatLogits = floats(try XCTUnwrap(f32["output"]))
+        for seed in 1 ... 20 {
+            let twin = try record("granite_h1b_bf16_jitter\(seed).safetensors")
+            rows[rows.count - 1].twinRuns.append(
+                ("jitter \(seed)", distance(floats(try XCTUnwrap(twin["output"], "no output in twin \(seed)")), floatLogits)))
+            rows[rows.count - 1].jitteredRuns.append(distance(floats(graniteLogits(net, tokens, jitter: seed)), floatLogits))
+        }
         report("granite-h1b", rows)
 
         var isolated = [(String, MLXArray)]()
@@ -4894,6 +4989,25 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolated.indices.map { "hidden.\($0 + 1)" })
         report("granite-h1b isolated", isolatedRows)
         assertRoundingPlacement("granite-h1b", endToEnd: rows, isolated: isolatedRows)
+    }
+
+    /// Granite's logits with 16 token-embedding values one unit in the last place larger in magnitude, at the positions
+    /// `run_reference.py`'s `IK_GRANITE_EMBED_JITTER=jitter` raises.
+    private func graniteLogits(_ net: NFKMLXGraniteHybridNet, _ tokens: MLXArray, jitter: Int) -> MLXArray {
+        var hidden = net.model.embedTokens(tokens)
+        var state = UInt64(jitter) &* 0x9E37_79B9_7F4A_7C15
+        var bumps = [UInt16](repeating: 0, count: hidden.size)
+        for _ in 0 ..< 16 {
+            state = state &* 6364136223846793005 &+ 1442695040888963407
+            bumps[Int(state >> 33) % hidden.size] = 1
+        }
+        hidden = (hidden.reshaped([-1]).view(dtype: .uint16) + MLXArray(bumps)).view(dtype: hidden.dtype)
+            .reshaped(hidden.shape) * net.config.embeddingMultiplier
+        for layer in net.model.layers { hidden = layer(hidden) }
+        let normed = net.model.norm(hidden)
+        let logits = ((net.lmHead.map { $0(normed) } ?? net.model.embedTokens.asLinear(normed)) / net.config.logitsScaling)[0]
+        eval(logits)
+        return logits
     }
 
     // MARK: Gemma 2

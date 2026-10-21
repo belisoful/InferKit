@@ -1377,6 +1377,19 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### The reference arithmetic runs transformers' chunked scans
+
+- In `NFKMLXArithmeticReference`, a Mamba-2 layer's prefill (Codestral, Nemotron-H, Granite-4.0-H) takes
+  transformers' `mamba2_chunk_scan` in chunks of the release's `chunk_size`, and a gated delta layer's
+  (Qwen3.5, Qwen4-Exp) takes transformers 5.17's `torch_chunk_gated_delta_rule`. Each equals torch's float32
+  result bit for bit on the shapes measured. The fast arithmetic keeps the sequential recurrences.
+- torch's CPU float32 matrix products and triangular solves call Accelerate's `sgemm` and `strsm`. The gated
+  delta rule's products run on MLX's CPU stream, which calls the same `sgemm`, and its solves call
+  `cblas_strsm`. torch's `cumsum` accumulates in float64, which MLX's CPU stream reproduces.
+- Granite-4.0-H-1B's bf16 logits are held to the reference's own spread. Under 20 seeded jitters that raise
+  16 token-embedding values one unit in the last place, a rank test holds the port's distances from float32
+  no farther than the reference's under the same jitters (z ≤ 2).
+
 #### Expert-cache bytes in a backend's status
 
 - The language, Gemma 4, and DeepSeek V4 backends report `expert_cache_bytes` and

@@ -255,7 +255,8 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   norms of Wan, Wan Animate, and SAM 3), and the float32 exponentials a reference forms with `torch.exp`
   (`NFKReferenceRounding.exponential`). `.fast` is the default. `.reference` runs the Metal kernels in
   `NFKMLXReferenceKernels.swift` (`torchExp`, `torchSoftmax`, `torchHalfSoftmax`, `torchSoftplus`,
-  `torchWindowPool`, `torchPackedSoftmax`, and `torchLayerNorm`), each wrapped in a
+  `torchWindowPool`, `torchPackedSoftmax`, and `torchLayerNorm`) and the scans in `NFKMLXReferenceScans.swift`,
+  each wrapped in a
   `CustomFunction` whose VJP is the gradient of the MLX operations it stands for. A kernel cannot dispatch on
   the CPU stream, so there the exponential takes MLX operations (`torchExpOperations`) and the softmax and
   layer norm take MLX's own. `NFKMLXBFloat16ParityTests` sets `.reference` in `setUp` and `.fast` in
@@ -324,6 +325,29 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
     the block sums joined in order). `torchWindowPool` computes it in one kernel in either mode, in
     1.0 ms against 2.0 ms for the MLX operations over 1,024 windows of 8 at
     width 1,024.
+  - A Mamba-2 layer's prefill in `.reference` takes `torchMamba2ChunkScan`, transformers' `mamba2_chunk_scan` in
+    chunks of the release's `chunk_size` (Codestral and Granite-4.0-H 256, Nemotron-H 128). Its cumulative and
+    segment sums run in float64 on the CPU stream, where torch's `cumsum` accumulates, and its exponentials are
+    Sleef's. Five kernels form its products and sums in torch's orders. A sum along the last axis reads
+    4-lane vectors in groups of 4 under torch's cascade. A sum along another axis takes the cascade for whole
+    groups of 16 columns and `row_sum` for the rest. The result equals torch's float32 scan bit for bit from 8
+    state values a head; at 4 a few sums take another order.
+  - A gated delta layer's prefill in `.reference` (Qwen3.5 under transformers 5.17's normalization, Qwen4-Exp)
+    takes `torchChunkGatedDeltaRule`, transformers 5.17's `torch_chunk_gated_delta_rule` with its in-kernel
+    normalization. torch's CPU float32 `matmul` and `linalg.solve_triangular` call Accelerate's `sgemm` and
+    `strsm`. The rule's products run on MLX's CPU stream, which calls the same `sgemm`, and its solves call
+    `cblas_strsm` through its C symbol, since the Swift declaration is deprecated in favor of an interface a C
+    macro selects. torch's float32 `rsqrt` is `1 / round(sqrt(x))`. The result equals torch's bit for bit.
+  - Each scan's gradient is its sequential recurrence's, and the fast arithmetic keeps the recurrences. A
+    whole model's float32 states move at the 1e-13 level, where the layers' other matrix products run on the
+    GPU. At bf16 the isolated Mamba and linear-attention seams move closer to the reference.
+  - Granite-4.0-H-1B's bf16 logits move with one-unit changes to the embeddings more than the bar of twice the
+    floor allows. The final RMSNorm scales token 0's channels 441, 830, and 1186 by 70, 251, and 24.75, so a
+    small change layer 39 makes in them moves the logits at the floor's own scale. The reference moves the same
+    way: one of its 20 twins sits past twice its floor. Under 20 seeded jitters of 16 token-embedding values
+    (`IK_GRANITE_EMBED_JITTER=1…20`), the reference's bf16 sits a median 2.203e-05 and at most 4.696e-05 from
+    float32. The port with the chunked scan sits a median 2.517e-05 (rank z +0.37 against the reference),
+    and with the sequential scan a median 3.185e-05 (z +2.10). The test runs the 20 jitters and holds z ≤ 2.
   - Wan Animate's generation attention in `.reference` follows the reference's eager flex attention: float32
     scores, torch's float32 softmax over each query's row of the packed buffer (the generation span padded to
     a multiple of 128, then one slot of `videoArea` positions a frame), summed over 4 lanes by buffer
@@ -340,8 +364,6 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
     count of rounded outputs apart from torch's.
   - Sleef's `expf` from MLX operations on the GPU: 20 to 25 times MLX's `exp`, and a whole denoiser forward
     2.3 to 4.7 times slower. `compile` of it is 3.2 times faster and 98% of its results are wrong.
-  - A Mamba-2 or gated-delta layer's prefill: torch exponentiates its chunked scan's segment sums, an
-    operation the port forms another way.
   A half-precision flash attention without a `queryBlock` attends `automaticQueryBlock` rows at a time when
   its float32 scores would pass 1 GiB, each row computed as before: Wan at 480×832 and 33 frames held 9.5 GB
   of scores, and at 81 frames would hold 51 GB.

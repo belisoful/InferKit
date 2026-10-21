@@ -1244,9 +1244,10 @@ attention and feed-forward.
   the weights' type, and hands the float32 scan output to the gated norm, which multiplies by its
   weight in float32 and rounds once at `out_proj`, as the reference does. The first four blocks of the
   release, cut by `Tools/validation-assets/truncate.py` (1.4 GB), match transformers at float32 in every
-  state, the worst at 0.9999999999993715 and the logits at 0.9999999999989264; the 7B whole never fit
-  float32 here. At bf16 each block on the reference's own input reads at most 0.0011 of the
-  reference's bf16-versus-float32 distance.
+  state, the worst at 0.9999999999993643 and the logits at 0.9999999999989192; the 7B whole never fit
+  float32 here. At bf16 each block on the reference's own input reads at most 0.0010 of the
+  reference's bf16-versus-float32 distance. In the reference arithmetic the mixer runs transformers'
+  chunked scan itself (`NFKReferenceRounding.torchMamba2ChunkScan`), equal to torch's bit for bit.
 - `NFKMLXGraniteHybrid` / `NFKMLXGraniteHybridNet` / `NFKMLXGraniteBackend` (`@objc`) — the Granite 4.0-H
   decoder (`GraniteMoeHybridForCausalLM`, IBM, Apache-2.0), the first hybrid Mamba-attention decoder. Most
   layers are the Mamba-2 **selective-scan mixer reused verbatim** from `NFKMLXMamba2Mixer`, and every
@@ -1295,7 +1296,8 @@ attention and feed-forward.
   released 1B on the reference's own bf16 input reads at most 0.04 of the reference's
   bf16-versus-float32 distance (previously up to 1.6). End to end, layer 5, the first attention layer,
   still reads four times that distance from float32 while its isolated run is exact: it amplifies the
-  difference it receives, and the stream returns within the floor by the last layer.
+  difference it receives. The logits move with one-unit changes to the embeddings as the reference's do, and
+  the test holds them to the reference's spread under 20 such jitters by a rank test (`mlx-companion.md`).
 - `NFKMLXNemotronH` / `NFKMLXNemotronHNet` / `NFKMLXNemotronBackend` (`@objc`) — the Nemotron-H decoder
   (`NemotronHForCausalLM`, NVIDIA, NVIDIA Open Model License) behind Nemotron Nano 2, the second hybrid
   Mamba-attention decoder. Its 56 layers interleave three mixers, one per block from a
@@ -1342,9 +1344,9 @@ attention and feed-forward.
   `network(weightsURL:configuration:)` and its single-file loader.
   The released 9B, cut to its first fifteen layers by `truncate.py` so the cut ends on its first
   attention layer (6.1 GB), matches transformers at float32 in every state, the worst being the logits
-  at 0.9999999999942345. At bf16 its attention runs the eager placement Granite's does, the Mamba
+  at 0.999999999994483. At bf16 its attention runs the eager placement Granite's does, the Mamba
   layers run the shared mixer's, and every layer on the reference's own bf16 input reads at most
-  0.0053 of the reference's bf16-versus-float32 distance. The release sets `residual_in_fp32` false,
+  0.0054 of the reference's bf16-versus-float32 distance. The release sets `residual_in_fp32` false,
   so its residual stays in the weights' type.
 - `NFKMLXChatTemplateRenderer` (`NFKMLXChatTemplate.swift` / `…Engine.swift` / `…Expr.swift`) — a
   native Jinja renderer for the release's `chat_template`, so the language backend reproduces an

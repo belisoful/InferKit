@@ -762,24 +762,29 @@ final class NFKQwen4ExpLinearAttention: Module {
         let keyWidth = c.linearKeyHeadCount * c.linearKeyHeadDimensions
         let group = c.linearValueHeadCount / c.linearKeyHeadCount
         // Key heads are shared across a group of value heads, as grouped-query attention shares them.
-        // The delta rule reads and writes a unit-norm key space, widened to float32 and then normalized:
-        // the reference's chunked rule normalizes after its cast, and the recurrence runs in float32.
-        let queries = NFKHybridLinearAttention.unitNorm(repeated(mixed[0..., 0..., 0 ..< keyWidth]
-            .reshaped([batch, length, c.linearKeyHeadCount, c.linearKeyHeadDimensions]), count: group, axis: 2),
-            widenedFirst: true)
-        let keys = NFKHybridLinearAttention.unitNorm(repeated(mixed[0..., 0..., keyWidth ..< (2 * keyWidth)]
-            .reshaped([batch, length, c.linearKeyHeadCount, c.linearKeyHeadDimensions]), count: group, axis: 2),
-            widenedFirst: true)
+        let rawQueries = repeated(mixed[0..., 0..., 0 ..< keyWidth]
+            .reshaped([batch, length, c.linearKeyHeadCount, c.linearKeyHeadDimensions]), count: group, axis: 2)
+        let rawKeys = repeated(mixed[0..., 0..., keyWidth ..< (2 * keyWidth)]
+            .reshaped([batch, length, c.linearKeyHeadCount, c.linearKeyHeadDimensions]), count: group, axis: 2)
         let values = mixed[0..., 0..., (2 * keyWidth)...]
             .reshaped([batch, length, c.linearValueHeadCount, c.linearValueHeadDimensions]).asType(.float32)
 
         // `A_log` is stored as a log so the rate stays positive; the reference keeps the decay as a
         // LOG rate, formed in float32, and exponentiates it inside the recurrence.
-        let decay = exp(-NFKReferenceRounding.exponential(decayLog.asType(.float32))
-                        * NFKReferenceRounding.softplus(decayProjection(x).asType(.float32) + stepBias.asType(.float32)))
+        let logDecay = -NFKReferenceRounding.exponential(decayLog.asType(.float32))
+            * NFKReferenceRounding.softplus(decayProjection(x).asType(.float32) + stepBias.asType(.float32))
         let write = NFKReferenceRounding.sigmoid(writeProjection(x)).asType(.float32)
-        let read = Self.recurrence(queries: queries, keys: keys, values: values, decay: decay, write: write)
-            .asType(x.dtype)
+        let read: MLXArray
+        if NFKReferenceRounding.computesReferenceScans {
+            read = NFKReferenceRounding.torchChunkGatedDeltaRule(queries: rawQueries, keys: rawKeys, values: values,
+                                                                 logDecay: logDecay, beta: write).asType(x.dtype)
+        } else {
+            // The delta rule reads and writes a unit-norm key space, widened to float32 and then normalized:
+            // the reference's chunked rule normalizes after its cast, and the recurrence runs in float32.
+            read = Self.recurrence(queries: NFKHybridLinearAttention.unitNorm(rawQueries, widenedFirst: true),
+                                   keys: NFKHybridLinearAttention.unitNorm(rawKeys, widenedFirst: true),
+                                   values: values, decay: exp(logDecay), write: write).asType(x.dtype)
+        }
         let gate = gateProjection(x).reshaped([batch, length, c.linearValueHeadCount,
                                                c.linearValueHeadDimensions])
         let gated = norm(read, gate: gate)
