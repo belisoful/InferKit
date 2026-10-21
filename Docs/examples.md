@@ -4250,6 +4250,17 @@ let residentMusic = try NFKMLXMusic3.backend(directoryURL: quantizedDirectory)
 // each stage for its turn and releases it; .resident holds them and fails a run they do not fit.
 // Either choice writes the same audio.
 let stagedMusic = try NFKMLXMusic3.backend(directoryURL: quantizedDirectory, residency: .staged)
+
+// Sound and music generation (Stable Audio Open 1.0): a description under NFKInputPrompt becomes a
+// stereo 44.1 kHz NFKAudioAsset of up to 47.55 seconds. The factory takes the downloaded release
+// directory (stabilityai/stable-audio-open-1.0, ~5.3 GB, gated, Stability AI Community License).
+let stableAudio = try NFKMLXStableAudioGenerator.backend(directoryURL: releaseDirectory)  // "stable-audio-open-1.0"
+// NFKParameterDurationSeconds sets the clip's length and NFKMLXStableAudioParameterKey.startSeconds
+// where it starts within the model's timing; NFKInputNegativePrompt steers away and NFKInputAudio
+// starts from a 44.1 kHz WAV. The generator writes a clip directly:
+let audioGenerator = try NFKMLXStableAudioGenerator.generator(directoryURL: releaseDirectory)
+try audioGenerator.writeAudio(forPrompt: "Rain on a tin roof, distant thunder", negativePrompt: nil,
+                              startSeconds: 0, endSeconds: 10, seed: 7, to: clipURL)
 ```
 
 Video models expose a clip-level Swift API, while the module/matting backend does one frame at a time.
@@ -5223,6 +5234,32 @@ A context window works best as a whole number of 32-step patches with no padding
 normalization's statistics. Every target in a batch holds the same number of steps, at most 128. The loss
 is the one transformers computes for this model; the optimizer is AdamW at 1e-4 with weight decay 0.01 on
 a cosine to zero.
+
+### Fine-tuning Stable Audio on your own sounds
+
+stable-audio-tools fine-tunes Stable Audio Open with LoRA: rank-8 adapters on every linear layer of the
+transformer and of its two seconds conditioners, the base and t5-base frozen. Each clip becomes an example
+through the release's own front end, its latents drawn from the autoencoder's posterior and its
+description encoded by t5-base:
+
+```swift
+let generator = try NFKMLXStableAudioGenerator.generator(directoryURL: release)
+let examples = try myClips.map { try generator.trainingExample(waveform: $0.audio, prompt: $0.description) }
+let net = try NFKMLXStableAudio.network(directoryURL: release)
+try NFKMLXStableAudio.fineTune(net, examples: { _ in Array(examples.shuffled().prefix(4)) }, steps: 2_000)
+
+// Folds the adapters into the weights and writes transformer/ and projection_model/; a copy of the
+// release with these in place of its own loads through the same factories.
+try NFKMLXStableAudio.save(net, toDirectoryURL: tunedRelease)
+let backend = try NFKMLXStableAudioGenerator.backend(directoryURL: tunedRelease)  // Objective-C: backendWithDirectoryURL:error:
+```
+
+The objective is stable-audio-tools' v-diffusion: each clip's latents noised at a cosine-schedule level,
+the transformer's v-prediction held to its target by the mean squared error over the clip's unpadded
+frames, and one example in ten trained without its conditioning so guidance keeps its unconditional
+branch. The optimizer is the release's: AdamW at 5e-5 with weight decay 1e-3 under `InverseLR`. A batch
+holds examples of the same latent length, which `trainingExample` gives by padding each clip to the
+release's 47.55-second window.
 
 ### Resuming, validating, and training in half precision
 

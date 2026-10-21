@@ -106,7 +106,7 @@ Notes:
 | **Cosmos Tokenizer** — SHIPPED (`NFKMLXCosmosTokenizer`) | NVIDIA | Image and video tokenizer | Haar wavelet patcher → 2D (image) or factorized causal 3D (video) autoencoder; continuous latents or FSQ tokens; all ten 0.1 releases | Code Apache-2.0, weights NVIDIA Open Model License | `nvidia-cosmos/cosmos-predict1` tokenizer modules + HF | Med |
 | **Sa2VA** — SHIPPED (`NFKMLXSa2VA`) | ByteDance | Segmentation VLM | SAM 2 and a LLaVA-style VLM fused in a shared token space | Apache-2.0 as stated; four releases carry a Qwen Research, SAM, or Llama 2 component (`Docs/companions.md`) | `bytedance/Sa2VA` + HF | Med |
 | **SD 3.5 Large/Medium/Large Turbo** — SHIPPED (`NFKMLXSD3Generator`); medium at release parity, large and turbo measured on four-block cuts | Stability AI | Text-to-image | MMDiT-X with QK-norm and dual attention, three text encoders (2×CLIP + T5) | Stability Community (free under $1M revenue) | HF `diffusers` (`SD3Transformer2DModel`) | Med–High |
-| **Stable Audio Open 1.0** | Stability AI | Text-to-audio | Latent audio DiT over an Oobleck autoencoder, T5 conditioning | Stability Community | HF `diffusers` (`StableAudioPipeline`) | Med–High |
+| **Stable Audio Open 1.0** — SHIPPED (`NFKMLXStableAudioGenerator`) | Stability AI | Text-to-audio | Latent audio DiT over an Oobleck autoencoder, T5 conditioning | Stability Community | HF `diffusers` (`StableAudioPipeline`) | Med–High |
 
 Notes:
 

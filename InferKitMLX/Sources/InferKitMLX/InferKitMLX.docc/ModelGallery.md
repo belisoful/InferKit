@@ -257,6 +257,7 @@ on); the voice-activity detectors return `[NFKAudioSegment]`; `NFKMLXAudioTagger
 | ``NFKMLXChatterbox`` | `chatterbox` | text → speech in a cloned voice (VoiceEncoder + S3 tokenizer + T3 Llama + S3Gen flow matching + HiFT, 24 kHz) |
 | ``NFKMLXTTS`` | — | a phonemizer, an acoustic model, and a vocoder chained by hand |
 | ``NFKMLXMusicBackend`` | `NFKMLXMusic3.backend(directoryURL:)` | MiniMax Music 3: description + lyrics → stereo 44.1 kHz music (`minimax-music3`; separately licensed weights, ~27 GB or 7.7 GiB quantized) |
+| ``NFKMLXStableAudioGenerator`` | `NFKMLXStableAudioGenerator.backend(directoryURL:)` | Stable Audio Open 1.0: description → up to 47.55 s of stereo 44.1 kHz sound or music (`stable-audio-open-1.0`; Stability AI Community License, ~5.3 GB) |
 
 Every voice writes a WAV `NFKAudioAsset` under `NFKOutputAudio`, the container the core's
 `NFKRemoteSpeechBackend` writes too.

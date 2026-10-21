@@ -27,7 +27,7 @@ import InferKit
 /// - DeepSeek V4: residency, and each other value whose key names an ``NFKMLXDeepSeekLoadOptions``
 ///   property, set by key-value coding;
 /// - the staged generators (FLUX.1 and its ControlNet, FLUX.2, SD3 and its ControlNet, SANA, Z-Image,
-///   Qwen-Image, Wan, LTX-Video, MiniMax Music 3): residency.
+///   Qwen-Image, Wan, LTX-Video, MiniMax Music 3, Stable Audio Open): residency.
 ///
 /// A generator reports whether it holds its stages, so a backend's `modelInfo` names the residency an
 /// automatic load resolved to under `NFKModelInfoResidency`. Introduced in InferKit 0.4.0.
@@ -299,6 +299,11 @@ enum NFKMLXOptionRegistrations {
         // Music 3 plans its residency at the start of each run, against its downloaded stages.
         registerDirectoryModels(registryNames(families: ["minimax-music"]), consumes: residency) { url, _, options in
             try NFKMLXMusic3.backend(directoryURL: url, residency: options.residency)
+        }
+        registerDirectoryModels(registryNames(families: ["stable-audio"]), consumes: residency) { url, _, options in
+            let generator = try NFKMLXStableAudioGenerator.generator(directoryURL: url, residency: options.residency)
+            report(generator.holdsStagesResident, to: options)
+            return generator.inferenceBackend()
         }
     }
 

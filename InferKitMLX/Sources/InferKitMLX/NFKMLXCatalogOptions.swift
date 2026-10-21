@@ -208,6 +208,7 @@ struct NFKMLXLoadProfile {
         "qwen-image": [.diffusionPipeline()],
         "ltx-video": [.diffusionPipeline()],
         "minimax-music": [.diffusionPipeline()],
+        "stable-audio": [.diffusionPipeline()],
     ]
 }
 

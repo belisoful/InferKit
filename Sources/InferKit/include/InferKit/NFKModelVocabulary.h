@@ -153,6 +153,8 @@ extern NSString * const NFKModelTaskSpeechEnhancement;
 extern NSString * const NFKModelTaskVoiceActivityDetection;
 /*! Encoding audio into tokens and decoding it back. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelTaskAudioCodec;
+/*! Making sound effects and other audio from a description. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelTaskAudioGeneration;
 /*! Making music from a prompt or lyrics. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelTaskMusicGeneration;
 /*! Turning a performance into notes. Introduced in InferKit 0.4.0. */

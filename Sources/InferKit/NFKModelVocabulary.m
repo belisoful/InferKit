@@ -68,6 +68,7 @@ NSString * const NFKModelTaskSourceSeparation		= @"source-separation";
 NSString * const NFKModelTaskSpeechEnhancement		= @"speech-enhancement";
 NSString * const NFKModelTaskVoiceActivityDetection	= @"voice-activity-detection";
 NSString * const NFKModelTaskAudioCodec				= @"audio-codec";
+NSString * const NFKModelTaskAudioGeneration		= @"audio-generation";
 NSString * const NFKModelTaskMusicGeneration		= @"music-generation";
 NSString * const NFKModelTaskMusicTranscription		= @"music-transcription";
 NSString * const NFKModelTaskMusicStructure			= @"music-structure";

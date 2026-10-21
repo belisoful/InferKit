@@ -24020,6 +24020,437 @@ CHECKPOINT_MODELS["deeplab_training"] = run_deeplab_training
 CHECKPOINT_MODELS["bisenet_training"] = run_bisenet_training
 
 
+def _stable_audio_torchsde_shim():
+    """Stands a module in for `torchsde`, which diffusers' Stable Audio scheduler imports at module scope
+    for its Brownian-tree noise. The oracle supplies the sampler's noise itself (`_RecordedNoise`), so the
+    tree is never built, and the substitute raises if it is."""
+    import importlib.machinery
+    import types
+
+    if "torchsde" in sys.modules:
+        return
+    shim = types.ModuleType("torchsde")
+    shim.__spec__ = importlib.machinery.ModuleSpec("torchsde", None)
+
+    class BrownianInterval:
+        def __init__(self, *args, **kwargs):
+            raise RuntimeError("the oracle supplies the sampler's noise; the Brownian tree does not run")
+
+    shim.BrownianInterval = BrownianInterval
+    sys.modules["torchsde"] = shim
+
+
+def _cosine_dpm_scheduler_class():
+    _stable_audio_torchsde_shim()
+    import importlib
+
+    return importlib.import_module(
+        "diffusers.schedulers.scheduling_cosine_dpmsolver_multistep").CosineDPMSolverMultistepScheduler
+
+
+class _RecordedNoise:
+    """The sampler's per-step noise, drawn from a seeded generator and kept, in place of the Brownian tree's
+    normalized increments (independent standard normals over the steps' disjoint intervals)."""
+
+    def __init__(self, shape, seed):
+        self.shape = shape
+        self.generator = torch.Generator().manual_seed(seed)
+        self.draws = []
+
+    def __call__(self, sigma, sigma_next):
+        noise = torch.randn(self.shape, generator=self.generator)
+        self.draws.append(noise.clone())
+        return noise
+
+
+def _install_recorded_noise(scheduler, noise):
+    """`set_timesteps` clears the noise sampler, so the recorded one is installed after every call."""
+    original = scheduler.set_timesteps
+
+    def set_timesteps(*args, **kwargs):
+        original(*args, **kwargs)
+        scheduler.noise_sampler = noise
+
+    scheduler.set_timesteps = set_timesteps
+
+
+def _stable_audio_scheduler_records(scheduler, extra, prefix, steps_list=(8, 100)):
+    for steps in steps_list:
+        scheduler.set_timesteps(steps)
+        extra[f"{prefix}sigmas_{steps}"] = scheduler.sigmas.float().contiguous()
+        extra[f"{prefix}timesteps_{steps}"] = scheduler.timesteps.float().contiguous()
+
+
+def run_stable_audio_tiny(image):
+    """Stable Audio Open's networks at tiny random configurations, from diffusers' own classes: the
+    `StableAudioDiTModel` velocity (grouped cross-attention heads, the half-head rotary the pipeline
+    builds, the prepended global token) with its first block as a seam, the `AutoencoderOobleck`
+    posterior and decode, the `StableAudioProjectionModel` (a text projection, which the release leaves
+    as the identity, and both seconds conditioners, one value past the range to exercise the clamp), a
+    ReLU `T5EncoderModel` (the original T5's feed-forward) with a padded mask, and the
+    `CosineDPMSolverMultistepScheduler` (its schedules at 8 and 100 steps, and an 8-step trajectory over
+    recorded model outputs and noise). Weights are recorded as `dit::`, `vae::`, `proj::`, and `t5::`.
+    Runs under the `music` oracle environment (diffusers >= 0.40.0). `image` unused."""
+    from diffusers import AutoencoderOobleck, StableAudioDiTModel
+    from diffusers.models.embeddings import get_1d_rotary_pos_embed
+    from diffusers.pipelines.stable_audio.modeling_stable_audio import StableAudioProjectionModel
+    from transformers import T5Config, T5EncoderModel
+
+    extra = {}
+    generator = torch.Generator().manual_seed(41)
+
+    dit = _randomized(StableAudioDiTModel(
+        sample_size=16, in_channels=4, num_layers=2, attention_head_dim=8, num_attention_heads=4,
+        num_key_value_attention_heads=2, out_channels=4, cross_attention_dim=16, time_proj_dim=8,
+        global_states_input_dim=24, cross_attention_input_dim=12), seed=43)
+    latents = torch.randn(2, 4, 7, generator=generator)
+    context = torch.randn(2, 5, 12, generator=generator)
+    global_states = torch.randn(2, 1, 24, generator=generator)
+    timestep = torch.tensor([0.7])
+    rotary = get_1d_rotary_pos_embed(dit.config.attention_head_dim // 2, latents.shape[2] + 1, use_real=True,
+                                     repeat_interleave_real=False)
+    seams = {}
+    dit.transformer_blocks[0].register_forward_hook(lambda m, i, o: seams.__setitem__("block0", o.detach()))
+    with torch.no_grad():
+        velocity = dit(latents, timestep, encoder_hidden_states=context, global_hidden_states=global_states,
+                       rotary_embedding=rotary, return_dict=False)[0]
+    extra.update({"dit_latents": latents, "dit_context": context, "dit_global": global_states,
+                  "dit_timestep": timestep, "dit_velocity": velocity, "dit_block0": seams["block0"]})
+    extra.update({f"dit::{k}": v.float() for k, v in dit.state_dict().items()})
+
+    vae = _randomized(AutoencoderOobleck(encoder_hidden_size=8, downsampling_ratios=[2, 4], channel_multiples=[1, 2],
+                                         decoder_channels=8, decoder_input_channels=4, audio_channels=2), seed=47)
+    waveform = torch.randn(1, 2, 64, generator=generator) * 0.5
+    with torch.no_grad():
+        posterior = vae.encode(waveform).latent_dist
+        decoded = vae.decode(posterior.mean).sample
+    extra.update({"vae_waveform": waveform, "vae_mean": posterior.mean, "vae_std": posterior.std,
+                  "vae_decoded": decoded})
+    extra.update({f"vae::{k}": v.float() for k, v in vae.state_dict().items()})
+
+    projection = _randomized(StableAudioProjectionModel(text_encoder_dim=10, conditioning_dim=12, min_value=0,
+                                                        max_value=64), seed=53)
+    text = torch.randn(2, 5, 10, generator=generator)
+    start, end = torch.tensor([0.0, 3.5]), torch.tensor([10.0, 100.0])
+    with torch.no_grad():
+        projected = projection(text_hidden_states=text, start_seconds=start, end_seconds=end)
+    extra.update({"proj_text": text, "proj_start": start, "proj_end": end,
+                  "proj_text_out": projected.text_hidden_states,
+                  "proj_start_out": projected.seconds_start_hidden_states,
+                  "proj_end_out": projected.seconds_end_hidden_states})
+    extra.update({f"proj::{k}": v.float() for k, v in projection.state_dict().items()})
+
+    t5 = _randomized(T5EncoderModel(T5Config(
+        vocab_size=128, d_model=32, d_kv=16, d_ff=64, num_layers=2, num_heads=2, relative_attention_num_buckets=16,
+        relative_attention_max_distance=32, feed_forward_proj="relu", dropout_rate=0.0)), seed=59)
+    ids = torch.tensor([[5, 17, 99, 3, 42, 1, 0, 0, 0]])
+    mask = torch.tensor([[1, 1, 1, 1, 1, 1, 0, 0, 0]])
+    with torch.no_grad():
+        states = t5(input_ids=ids, attention_mask=mask).last_hidden_state
+    extra.update({"t5_ids": ids.to(torch.int32), "t5_mask": mask.to(torch.int32), "t5_states": states})
+    # The encoder's `embed_tokens` is tied to `shared`; the record keeps the one the module reads.
+    extra.update({f"t5::{k}": v.float() for k, v in t5.state_dict().items() if k != "encoder.embed_tokens.weight"})
+
+    scheduler_class = _cosine_dpm_scheduler_class()
+    scheduler = scheduler_class()
+    _stable_audio_scheduler_records(scheduler, extra, "sched_")
+    noise = _RecordedNoise((1, 4, 6), seed=61)
+    _install_recorded_noise(scheduler, noise)
+    scheduler.set_timesteps(8)
+    sample = torch.randn(1, 4, 6, generator=generator) * scheduler.init_noise_sigma
+    extra["sched_sample"] = sample.clone()
+    for index, t in enumerate(scheduler.timesteps):
+        output = torch.randn(1, 4, 6, generator=generator)
+        extra[f"sched_output_{index}"] = output
+        sample = scheduler.step(output, t, sample).prev_sample
+        extra[f"sched_prev_{index}"] = sample.clone()
+    for index, draw in enumerate(noise.draws):
+        extra[f"sched_noise_{index}"] = draw
+
+    globals()["_extra"] = {k: v.contiguous().clone() for k, v in extra.items()}
+    return velocity.clone().contiguous()
+
+
+STABLE_AUDIO_PROMPTS = [
+    "The sound of a hammer hitting a wooden surface.",
+    "A gentle piano melody with soft rain in the background, 90 BPM",
+    "  Techno   drums\tand a\nwarm bass line  ",
+    "Ambient synth pad, C# minor — slow, dreamy; café vibes!",
+    "",
+]
+
+
+def _stable_audio_components(root):
+    from diffusers import AutoencoderOobleck, StableAudioDiTModel
+    from diffusers.pipelines.stable_audio.modeling_stable_audio import StableAudioProjectionModel
+    from transformers import AutoTokenizer, T5EncoderModel
+
+    return dict(
+        vae=AutoencoderOobleck.from_pretrained(os.path.join(root, "vae"), torch_dtype=torch.float32).eval(),
+        text_encoder=T5EncoderModel.from_pretrained(os.path.join(root, "text_encoder"),
+                                                    torch_dtype=torch.float32).eval(),
+        projection_model=StableAudioProjectionModel.from_pretrained(os.path.join(root, "projection_model"),
+                                                                    torch_dtype=torch.float32).eval(),
+        tokenizer=AutoTokenizer.from_pretrained(os.path.join(root, "tokenizer")),
+        transformer=StableAudioDiTModel.from_pretrained(os.path.join(root, "transformer"),
+                                                        torch_dtype=torch.float32).eval(),
+        scheduler=_cosine_dpm_scheduler_class().from_pretrained(os.path.join(root, "scheduler")),
+    )
+
+
+def run_stable_audio_components(image, checkpoint):
+    """Stable Audio Open 1.0's released components, each on its own, from diffusers' own classes.
+
+    `--checkpoint` is the RELEASE ROOT. The record carries the release tokenizer's ids and masks for
+    `STABLE_AUDIO_PROMPTS` (`ids_<n>`, `mask_<n>`, padded to its `model_max_length`), the T5 encoder's
+    states for the second prompt, the seconds conditioners' tokens (one value past the range for the
+    clamp), the transformer's prediction on 48 latent frames at three noise levels with the pipeline's own
+    conditioning and on the zeroed unconditional branch, the autoencoder's posterior of a deterministic
+    1.49-second stereo signal and the decode of its mean, and the scheduler's schedules at 8 and 100 steps.
+    Runs under the `music` oracle environment (diffusers >= 0.40.0), float32 on the CPU."""
+    from diffusers.models.embeddings import get_1d_rotary_pos_embed
+
+    parts = _stable_audio_components(checkpoint)
+    tokenizer, text_encoder = parts["tokenizer"], parts["text_encoder"]
+    projection, transformer, vae = parts["projection_model"], parts["transformer"], parts["vae"]
+    extra = {"model_max_length": torch.tensor([tokenizer.model_max_length], dtype=torch.int32)}
+    for index, prompt in enumerate(STABLE_AUDIO_PROMPTS):
+        inputs = tokenizer(prompt, padding="max_length", max_length=tokenizer.model_max_length, truncation=True,
+                           return_tensors="pt")
+        extra[f"ids_{index}"] = inputs.input_ids[0].to(torch.int32)
+        extra[f"mask_{index}"] = inputs.attention_mask[0].to(torch.int32)
+
+    ids, mask = extra["ids_1"][None].long(), extra["mask_1"][None].long()
+    with torch.no_grad():
+        states = text_encoder(ids, attention_mask=mask)[0]
+        text = projection(text_hidden_states=states).text_hidden_states * mask.unsqueeze(-1).to(states.dtype)
+        seconds = projection(start_seconds=torch.tensor([0.0, 1.5, 600.0]),
+                             end_seconds=torch.tensor([4.5, 47.0, 600.0]))
+    extra.update({"t5_states": states[0], "seconds_start_in": torch.tensor([0.0, 1.5, 600.0]),
+                  "seconds_end_in": torch.tensor([4.5, 47.0, 600.0]),
+                  "seconds_start": seconds.seconds_start_hidden_states,
+                  "seconds_end": seconds.seconds_end_hidden_states})
+
+    start, end = seconds.seconds_start_hidden_states[:1], seconds.seconds_end_hidden_states[:1]
+    context = torch.cat([text, start, end], dim=1)
+    global_states = torch.cat([start, end], dim=2)
+    generator = torch.Generator().manual_seed(67)
+    frames = 48
+    latents = torch.randn(1, 64, frames, generator=generator)
+    rotary = get_1d_rotary_pos_embed(transformer.config.attention_head_dim // 2, frames + 1, use_real=True,
+                                     repeat_interleave_real=False)
+    extra.update({"dit_latents": latents[0], "dit_context": context[0], "dit_global": global_states[0]})
+    with torch.no_grad():
+        for name, sigma in (("high", 80.0), ("mid", 3.0), ("low", 0.4)):
+            sigma_t = torch.tensor(sigma)
+            scaled = latents / ((sigma_t ** 2 + 1) ** 0.5)
+            t = (sigma_t.atan() / math.pi * 2).reshape(1)
+            out = transformer(scaled, t, encoder_hidden_states=context, global_hidden_states=global_states,
+                              rotary_embedding=rotary, return_dict=False)[0]
+            extra[f"dit_timestep_{name}"] = t
+            extra[f"dit_input_{name}"] = scaled[0]
+            extra[f"dit_velocity_{name}"] = out[0]
+        out = transformer(extra["dit_input_mid"][None], extra["dit_timestep_mid"],
+                          encoder_hidden_states=torch.zeros_like(context), global_hidden_states=global_states,
+                          rotary_embedding=rotary, return_dict=False)[0]
+        extra["dit_velocity_unconditional"] = out[0]
+
+    samples = 32 * vae.hop_length
+    time = torch.arange(samples, dtype=torch.float64) / vae.sampling_rate
+    left = 0.4 * torch.sin(2 * math.pi * 220 * time) * torch.exp(-1.5 * time)
+    right = 0.3 * torch.sin(2 * math.pi * 330 * time + 0.5) + 0.05 * torch.sin(2 * math.pi * 3000 * time)
+    waveform = torch.stack([left, right]).float()[None]
+    with torch.no_grad():
+        posterior = vae.encode(waveform).latent_dist
+        decoded = vae.decode(posterior.mean).sample
+    extra.update({"vae_waveform": waveform[0], "vae_mean": posterior.mean[0], "vae_std": posterior.std[0],
+                  "vae_decoded": decoded[0]})
+
+    _stable_audio_scheduler_records(parts["scheduler"], extra, "sched_")
+    globals()["_extra"] = {k: (v.float() if v.is_floating_point() else v).contiguous().clone()
+                           for k, v in extra.items()}
+    return extra["dit_velocity_mid"].clone().contiguous()
+
+
+def run_stable_audio_pipeline(image, checkpoint):
+    """Stable Audio Open 1.0 end to end through diffusers' own `StableAudioPipeline`, teacher-forceable.
+
+    `--checkpoint` is the RELEASE ROOT. Two runs at 8 steps and guidance 7: `a_` guides against the zeroed
+    conditioning (no negative prompt) over 0 to 4.5 seconds, and `b_` against a negative prompt over 1.0
+    to 6.0 seconds, so the masked negative branch, the seconds tokens, and the waveform crop are each
+    exercised; `b_` also starts from an initial waveform (a deterministic 3-second stereo signal the
+    pipeline pads to its window), encoded and sampled from the autoencoder's posterior with a recorded
+    generator, whose draw is kept as `b_posterior_noise` beside the posterior's mean and standard
+    deviation. Each run records its initial standard-normal latents (before the scheduler's
+    `init_noise_sigma`), the sampler's noise per step (`_RecordedNoise` stands in for the Brownian tree),
+    the guided prediction and the latents after every step, the conditioning the transformer read, the
+    final latents, and the cropped waveform. Runs under the `music` oracle environment, float32 on the
+    CPU; each run decodes the release's full 47.55-second window."""
+    from diffusers import StableAudioPipeline
+
+    parts = _stable_audio_components(checkpoint)
+    pipe = StableAudioPipeline(**parts)
+    transformer = parts["transformer"]
+    extra = {}
+    runs = (("a_", "A gentle piano melody with soft rain in the background, 90 BPM", None, 0.0, 4.5, 71, False),
+            ("b_", "Techno drums and a warm bass line", "low quality, distorted", 1.0, 6.0, 73, True))
+    rate = parts["vae"].config.sampling_rate
+    for prefix, prompt, negative, start, end, seed, from_audio in runs:
+        # The release states sample_size as 1024.0; the pipeline reads it as int(sample_size).
+        shape = (1, transformer.config.in_channels, int(transformer.config.sample_size))
+        initial = torch.randn(shape, generator=torch.Generator().manual_seed(seed))
+        noise = _RecordedNoise(shape, seed=seed + 100)
+        _install_recorded_noise(pipe.scheduler, noise)
+        predictions, steps_out, inputs = [], [], {}
+
+        def capture(module, args, kwargs, output):
+            if "context" not in inputs:
+                inputs["context"] = kwargs["encoder_hidden_states"].detach().clone()
+                inputs["global"] = kwargs["global_hidden_states"].detach().clone()
+                inputs["first_input"] = args[0].detach().clone()
+            predictions.append(output[0].detach().clone())
+
+        handle = transformer.register_forward_hook(capture, with_kwargs=True)
+        extras = {}
+        if from_audio:
+            time = torch.arange(3 * rate, dtype=torch.float64) / rate
+            initial_audio = torch.stack([0.3 * torch.sin(2 * math.pi * 110 * time),
+                                         0.2 * torch.sign(torch.sin(2 * math.pi * 2 * time))]).float()[None]
+            original_encode = parts["vae"].encode
+
+            def encode(x, *args, **kwargs):
+                result = original_encode(x, *args, **kwargs)
+                inputs["posterior_mean"] = result.latent_dist.mean.detach().clone()
+                inputs["posterior_std"] = result.latent_dist.std.detach().clone()
+                return result
+
+            parts["vae"].encode = encode
+            extras = dict(initial_audio_waveforms=initial_audio, initial_audio_sampling_rate=rate,
+                          generator=torch.Generator().manual_seed(seed + 200))
+            extra[f"{prefix}initial_audio"] = initial_audio[0]
+        with torch.no_grad():
+            audio = pipe(prompt, negative_prompt=negative, audio_start_in_s=start, audio_end_in_s=end,
+                         num_inference_steps=8, guidance_scale=7.0, latents=initial.clone(),
+                         callback=lambda i, t, latents: steps_out.append(latents.detach().clone()),
+                         callback_steps=1, output_type="pt", **extras).audios
+        handle.remove()
+        if from_audio:
+            parts["vae"].encode = original_encode
+            # randn_tensor on the CPU is torch.randn with the generator, so the posterior's draw is redrawn.
+            extra[f"{prefix}posterior_noise"] = torch.randn(
+                inputs["posterior_mean"].shape, generator=torch.Generator().manual_seed(seed + 200))[0]
+            extra[f"{prefix}posterior_mean"] = inputs["posterior_mean"][0]
+            extra[f"{prefix}posterior_std"] = inputs["posterior_std"][0]
+        extra[f"{prefix}first_input"] = inputs["first_input"]
+        extra[f"{prefix}initial"] = initial[0]
+        extra[f"{prefix}context"] = inputs["context"]
+        extra[f"{prefix}global"] = inputs["global"]
+        for index, (prediction, latents, draw) in enumerate(zip(predictions, steps_out, noise.draws)):
+            extra[f"{prefix}prediction_{index}"] = prediction
+            extra[f"{prefix}latents_{index}"] = latents[0]
+            extra[f"{prefix}noise_{index}"] = draw[0]
+        extra[f"{prefix}audio"] = audio[0]
+        extra[f"{prefix}seconds"] = torch.tensor([start, end])
+    globals()["_extra"] = {k: v.float().contiguous().clone() for k, v in extra.items()}
+    return extra["a_audio"].clone()
+
+
+MODELS["stable_audio_tiny"] = run_stable_audio_tiny
+CHECKPOINT_MODELS["stable_audio_components"] = run_stable_audio_components
+CHECKPOINT_MODELS["stable_audio_pipeline"] = run_stable_audio_pipeline
+
+
+def _stable_audio_tools_functions(source_root, names):
+    """The named functions of stable-audio-tools' `training/utils.py` and `inference/sampling.py`, taken
+    verbatim from the source by their syntax trees and run in a namespace holding torch and math, so the
+    modules' Lightning, wandb, and k-diffusion imports, which the loss does not reach, are never executed."""
+    import ast
+
+    namespace = {"torch": torch, "math": math, "tp": __import__("typing")}
+    for relative in ("training/utils.py", "inference/sampling.py"):
+        path = os.path.join(source_root, "stable_audio_tools", relative)
+        tree = ast.parse(open(path).read())
+        chosen = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
+        exec(compile(ast.Module(body=chosen, type_ignores=[]), path, "exec"), namespace)
+    missing = [name for name in names if name not in namespace]
+    if missing:
+        raise SystemExit(f"stable-audio-tools lacks {missing}")
+    return namespace
+
+
+def run_stable_audio_loss(image):
+    """Stable Audio Open's fine-tuning objective on identical tensors: stable-audio-tools'
+    `DiffusionCondTrainingWrapper.training_step` with its `v` objective, over the tiny diffusers
+    transformer and projection model of `stable_audio_tiny`.
+
+    `IK_STABLE_AUDIO_TOOLS_SRC` is the stable-audio-tools source tree (3241adb). Its `get_alphas_sigmas`,
+    `resize_padding_mask`, `compute_normalized_mse`, and `compute_masked_loss` run as the source defines them
+    (`_stable_audio_tools_functions`). The lines `training_step` writes inline are transcribed from it: the
+    noised inputs `x·α + n·σ`, the target `n·α − x·σ`, and the DiT's conditioning dropout, which replaces the
+    cross-attention conditioning with zeros where a recorded Bernoulli draw is set. The conditioning is the
+    conditioner's: the prompt states, then the `seconds_start` and `seconds_total` tokens on the sequence
+    axis, and those two tokens side by side as the global token. The record carries the batch, the loss,
+    and the gradients of three weights, one in the transformer's input path, one in its cross-attention, and
+    one in a seconds conditioner. Runs under the `music` oracle environment. `image` unused."""
+    from diffusers import StableAudioDiTModel
+    from diffusers.models.embeddings import get_1d_rotary_pos_embed
+    from diffusers.pipelines.stable_audio.modeling_stable_audio import StableAudioProjectionModel
+
+    source = os.environ.get("IK_STABLE_AUDIO_TOOLS_SRC")
+    if not source:
+        raise SystemExit("set IK_STABLE_AUDIO_TOOLS_SRC to the stable-audio-tools source tree")
+    sat = _stable_audio_tools_functions(source, ["get_alphas_sigmas", "resize_padding_mask",
+                                                 "compute_normalized_mse", "compute_masked_loss"])
+    dit = _randomized(StableAudioDiTModel(
+        sample_size=16, in_channels=4, num_layers=2, attention_head_dim=8, num_attention_heads=4,
+        num_key_value_attention_heads=2, out_channels=4, cross_attention_dim=16, time_proj_dim=8,
+        global_states_input_dim=24, cross_attention_input_dim=12), seed=43)
+    projection = _randomized(StableAudioProjectionModel(text_encoder_dim=10, conditioning_dim=12, min_value=0,
+                                                        max_value=64), seed=53)
+    generator = torch.Generator().manual_seed(79)
+    frames, hop = 6, 8
+    latents = torch.randn(2, 4, frames, generator=generator)
+    sample_mask = torch.zeros(2, frames * hop, dtype=torch.bool)
+    sample_mask[0, :] = True
+    sample_mask[1, :30] = True
+    mask = sat["resize_padding_mask"](sample_mask, frames)
+    noise = torch.randn(2, 4, frames, generator=generator)
+    t = torch.tensor([0.3, 0.8])
+    dropped = torch.tensor([False, True])
+    text = torch.randn(2, 3, 10, generator=generator)
+    start, total = torch.tensor([0.0, 1.5]), torch.tensor([10.0, 4.0])
+
+    alphas, sigmas = sat["get_alphas_sigmas"](t)
+    alphas, sigmas = alphas[:, None, None], sigmas[:, None, None]
+    noised = latents * alphas + noise * sigmas
+    targets = noise * alphas - latents * sigmas
+    out = projection(text_hidden_states=text, start_seconds=start, end_seconds=total)
+    context = torch.cat([out.text_hidden_states, out.seconds_start_hidden_states, out.seconds_end_hidden_states], dim=1)
+    global_states = torch.cat([out.seconds_start_hidden_states, out.seconds_end_hidden_states], dim=2)
+    context = torch.where(dropped[:, None, None], torch.zeros_like(context), context)
+    rotary = get_1d_rotary_pos_embed(dit.config.attention_head_dim // 2, frames + 1, use_real=True,
+                                     repeat_interleave_real=False)
+    prediction = dit(noised, t, encoder_hidden_states=context, global_hidden_states=global_states,
+                     rotary_embedding=rotary, return_dict=False)[0]
+    mse = sat["compute_normalized_mse"](prediction, targets, mask, "none", 1e-6)
+    loss, _, _ = sat["compute_masked_loss"](mse, mask, False, 0.0)
+    loss.backward()
+
+    extra = {"latents": latents, "mask": mask.float(), "noise": noise, "timesteps": t, "dropped": dropped.float(),
+             "text": text, "start": start, "total": total, "loss": loss.detach().reshape(1),
+             "grad::transformer.proj_in.weight": dit.proj_in.weight.grad,
+             "grad::transformer.transformer_blocks.0.attn2.to_k.weight": dit.transformer_blocks[0].attn2.to_k.weight.grad,
+             "grad::projection.start_number_conditioner.time_positional_embedding.1.weight":
+                 projection.start_number_conditioner.time_positional_embedding[1].weight.grad}
+    extra.update({f"dit::{k}": v.float() for k, v in dit.state_dict().items()})
+    extra.update({f"proj::{k}": v.float() for k, v in projection.state_dict().items()})
+    globals()["_extra"] = {k: v.detach().contiguous().clone() for k, v in extra.items()}
+    return loss.detach().reshape(1).clone()
+
+
+MODELS["stable_audio_loss"] = run_stable_audio_loss
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("model", choices=sorted(MODELS) + sorted(CHECKPOINT_MODELS), help="which reference to run")

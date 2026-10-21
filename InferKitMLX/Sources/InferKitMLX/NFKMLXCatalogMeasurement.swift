@@ -220,6 +220,8 @@ extension NFKMLXLoadPlan {
         "minimax-music": NFKMLXLoadPlan(precision: .stored, directories: ["transformer": .float32],
                                         stages: [["language_model", "rvq_depth_decoder"],
                                                  ["condition_encoder", "transformer"], ["vocoder"]]),
+        "stable-audio": NFKMLXLoadPlan(precision: .float32,
+                                       stages: [["projection_model", "text_encoder"], ["transformer", "vae"]]),
     ]
 
     /// FLUX.1's two text encoders: CLIP-L in `text_encoder` and T5-XXL in `text_encoder_2`.

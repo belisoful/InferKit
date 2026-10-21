@@ -900,6 +900,7 @@ let backend = try NFKMLXMimi.backend(weightsURL: url)
 | Phonemizers | ``NFKMLXNeuralG2P``, ``NFKMLXEspeakPhonemizer`` | `NFKMLXG2PNet` | ``NFKMLXG2PConfiguration`` | — | ``NFKMLXPhonemizing`` protocol (Objective-C and Swift); ``NFKMLXPhonemizer`` protocol (Swift) |
 | Hand-chained TTS | ``NFKMLXTTS`` | `NFKMLXAcousticNet` + `NFKMLXHiFiGANNet` | ``NFKMLXAcousticConfiguration`` | `ttsBackend(phonemizer:acousticURL:vocoderURL:symbols:)`; `makeSpeechBackend()` | ``NFKMLXGenerationBackend``; `makeSpeechBackend()` returns an ``NFKMLXSpeechBackend`` |
 | MiniMax Music 3 | ``NFKMLXMusic3`` | `NFKMusic3VocoderNet`, `NFKMusic3DepthDecoderNet`, `NFKMusic3ConditionEncoderNet`, `NFKMusic3DiTNet`, ``NFKMLXLanguageNet`` | the release directory (bf16 LM, float32 DiT); `quantizeRelease(at:to:bits:transformerBits:groupSize:)` for the 7.7 GiB copy | `minimax-music3`; `backend(directoryURL:)` | ``NFKMLXMusicBackend`` |
+| Stable Audio Open 1.0 | ``NFKMLXStableAudioGenerator`` | ``NFKMLXStableAudioDiTNet``, ``NFKMLXOobleckAutoencoderNet``, ``NFKMLXStableAudioProjectionNet``, `NFKMLXT5EncoderNet` | the release directory, float32 throughout; `NFKMLXStableAudio.network(directoryURL:)` for the fine-tunable transformer and conditioners | `stable-audio-open-1.0`; `backend(directoryURL:)` | ``NFKMLXGenerationBackend`` |
 
 ```swift
 // FastSpeech2 conformer + paired HiFi-GAN (a release directory; g2p adopts NFKMLXPhonemizing)
@@ -926,6 +927,8 @@ let backend = try NFKMLXFastSpeech2.ttsBackend(phonemizer: g2p, acousticURL: aco
 // MiniMax Music 3
 let backend = try NFKMLXMusic3.backend(directoryURL: dir)
 // quantize: try NFKMLXMusic3.quantizeRelease(at: dir, to: outDir)
+// Stable Audio Open 1.0
+let backend = try NFKMLXStableAudioGenerator.backend(directoryURL: dir)
 ```
 
 ```objc
@@ -942,6 +945,8 @@ let backend = try NFKMLXMusic3.backend(directoryURL: dir)
 [NFKMLXFastSpeech2 ttsBackendWithPhonemizer:g2p acousticURL:acousticURL vocoderURL:vocoderURL symbols:symbols error:&error]
 // MiniMax Music 3
 [NFKMLXMusic3 backendWithDirectoryURL:dir error:&error]
+// Stable Audio Open 1.0
+[NFKMLXStableAudioGenerator backendWithDirectoryURL:dir error:&error]
 ```
 
 

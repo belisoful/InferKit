@@ -24,6 +24,16 @@ public struct NFKMLXLearningRateSchedule {
     /// The base rate at every step.
     public static var constant: NFKMLXLearningRateSchedule { NFKMLXLearningRateSchedule { _ in 1 } }
 
+    /// stable-audio-tools' `InverseLR` (k-diffusion's), with no floor: at step `k` the base rate times an
+    /// exponential warmup `1 − warmup^(k+1)` and an inverse decay `(1 + k / inverseGamma)^−power`.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static func inverse(inverseGamma: Float, power: Float, warmup: Float) -> NFKMLXLearningRateSchedule {
+        NFKMLXLearningRateSchedule { step in
+            (1 - powf(warmup, Float(step + 1))) * powf(1 + Float(step) / inverseGamma, -power)
+        }
+    }
+
     /// torch's `MultiStepLR`: the base rate times `gamma` once for every milestone at or before the
     /// zero-based step.
     ///

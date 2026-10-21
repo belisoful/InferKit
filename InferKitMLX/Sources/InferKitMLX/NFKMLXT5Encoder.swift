@@ -9,11 +9,12 @@ import MLX
 import MLXFast
 import MLXNN
 
-// The T5 v1.1 text encoder (`T5EncoderModel`), the text conditioning for several diffusion models (LTX-Video
-// here; PixArt / SD3 / Flux / Wan use the same family). A stack of pre-normalized transformer blocks with
-// two differences from a standard transformer: the attention is UNSCALED and adds a bucketed
-// relative-position bias (computed once, shared across layers), and the norm is T5LayerNorm — an RMS norm
-// with a weight and no mean subtraction. The feed-forward is gated (`wo(gelu(wi_0(x)) · wi_1(x))`).
+// The T5 text encoder (`T5EncoderModel`), the text conditioning for several diffusion models (LTX-Video
+// here; PixArt / SD3 / Flux / Wan use the same family, and Stable Audio Open the original t5-base). A stack
+// of pre-normalized transformer blocks with two differences from a standard transformer: the attention is
+// UNSCALED and adds a bucketed relative-position bias (computed once, shared across layers), and the norm is
+// T5LayerNorm — an RMS norm with a weight and no mean subtraction. The v1.1 feed-forward is gated
+// (`wo(gelu(wi_0(x)) · wi_1(x))`); the original T5's is `wo(relu(wi(x)))`.
 
 /// T5 encoder geometry. Defaults are T5-XXL v1.1 (the LTX text encoder).
 public struct NFKMLXT5Configuration: Sendable {
@@ -28,10 +29,13 @@ public struct NFKMLXT5Configuration: Sendable {
     public var layerNormEps: Float
     /// umT5 gives EVERY layer its own relative-position bias; plain T5 shares block 0's across the stack.
     public var perLayerBias: Bool
+    /// The v1.1 gated-GELU feed-forward (`gated-gelu`); false is the original T5's ReLU one (`relu`).
+    /// Introduced in InferKit 0.4.0.
+    public var gatedFeedForward: Bool
 
     public init(dModel: Int = 4096, layers: Int = 24, heads: Int = 64, keyDim: Int = 64, ffDim: Int = 10240,
                 vocabularySize: Int = 32128, relativeBuckets: Int = 32, relativeMaxDistance: Int = 128,
-                layerNormEps: Float = 1e-6, perLayerBias: Bool = false) {
+                layerNormEps: Float = 1e-6, perLayerBias: Bool = false, gatedFeedForward: Bool = true) {
         self.dModel = dModel
         self.layers = layers
         self.heads = heads
@@ -42,9 +46,15 @@ public struct NFKMLXT5Configuration: Sendable {
         self.relativeMaxDistance = relativeMaxDistance
         self.layerNormEps = layerNormEps
         self.perLayerBias = perLayerBias
+        self.gatedFeedForward = gatedFeedForward
     }
 
     public static let xxl = NFKMLXT5Configuration()
+
+    /// The original t5-base, Stable Audio Open's text encoder: 12 layers of 768 with a ReLU feed-forward.
+    /// Introduced in InferKit 0.4.0.
+    public static let base = NFKMLXT5Configuration(dModel: 768, layers: 12, heads: 12, keyDim: 64, ffDim: 3072,
+                                                   gatedFeedForward: false)
 
     /// umT5-XXL, Wan's text encoder: T5-XXL geometry with a per-layer relative-position bias.
     public static let umt5XXL = NFKMLXT5Configuration(vocabularySize: 256384, perLayerBias: true)
@@ -55,6 +65,10 @@ public struct NFKMLXT5Configuration: Sendable {
     public static let tinyUMT5 = NFKMLXT5Configuration(dModel: 32, layers: 3, heads: 2, keyDim: 16, ffDim: 64,
                                                        vocabularySize: 128, relativeBuckets: 16,
                                                        relativeMaxDistance: 32, perLayerBias: true)
+
+    static let tinyReLU = NFKMLXT5Configuration(dModel: 32, layers: 2, heads: 2, keyDim: 16, ffDim: 64,
+                                                vocabularySize: 128, relativeBuckets: 16, relativeMaxDistance: 32,
+                                                gatedFeedForward: false)
 
     var inner: Int { heads * keyDim }
 }
@@ -154,23 +168,34 @@ final class NFKT5Attention: Module {
     }
 }
 
-/// The gated feed-forward: `wo(gelu(wi_0(x)) · wi_1(x))`, with transformers' `gelu_new`.
+/// The feed-forward: gated, `wo(gelu(wi_0(x)) · wi_1(x))` with transformers' `gelu_new`, or the original
+/// T5's `wo(relu(wi(x)))`.
 final class NFKT5FeedForward: Module {
-    @ModuleInfo(key: "wi_0") var wi0: Linear
-    @ModuleInfo(key: "wi_1") var wi1: Linear
+    @ModuleInfo(key: "wi") var wi: Linear?
+    @ModuleInfo(key: "wi_0") var wi0: Linear?
+    @ModuleInfo(key: "wi_1") var wi1: Linear?
     @ModuleInfo(key: "wo") var wo: Linear
     let rates: NFKDropoutRates?
 
     init(_ c: NFKMLXT5Configuration, rates: NFKDropoutRates? = nil) {
         self.rates = rates
-        _wi0.wrappedValue = Linear(c.dModel, c.ffDim, bias: false)
-        _wi1.wrappedValue = Linear(c.dModel, c.ffDim, bias: false)
+        if c.gatedFeedForward {
+            _wi0.wrappedValue = Linear(c.dModel, c.ffDim, bias: false)
+            _wi1.wrappedValue = Linear(c.dModel, c.ffDim, bias: false)
+        } else {
+            _wi.wrappedValue = Linear(c.dModel, c.ffDim, bias: false)
+        }
         _wo.wrappedValue = Linear(c.ffDim, c.dModel, bias: false)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        wo(NFKDropout.apply(NFKReferenceRounding.geluNew(wi0(x)) * wi1(x), rate: rates?.values.activationDropout ?? 0,
-                            active: training))
+        let activated: MLXArray
+        if let wi0, let wi1 {
+            activated = NFKReferenceRounding.geluNew(wi0(x)) * wi1(x)
+        } else {
+            activated = relu(wi!(x))
+        }
+        return wo(NFKDropout.apply(activated, rate: rates?.values.activationDropout ?? 0, active: training))
     }
 }
 
@@ -309,10 +334,15 @@ public final class NFKMLXT5Encoder: NSObject {
     }
 
     /// The encoder geometry a Hugging Face `config.json` describes: T5 (`t5`) or umT5 (`umt5`), whose
-    /// every layer carries its own relative-position bias.
+    /// every layer carries its own relative-position bias. `feed_forward_proj` is `gated-gelu` (v1.1) or
+    /// `relu` (the original T5), and transformers reads a config without one as `relu`.
     static func configuration(fromHuggingFace url: URL) throws -> NFKMLXT5Configuration {
         guard let json = try JSONSerialization.jsonObject(with: try Data(contentsOf: url)) as? [String: Any] else {
             throw NFKMLXError.unsupportedConfiguration("\(url.lastPathComponent) is not an object")
+        }
+        let feedForward = json["feed_forward_proj"] as? String ?? "relu"
+        guard feedForward == "gated-gelu" || feedForward == "relu" else {
+            throw NFKMLXError.unsupportedConfiguration("T5 feed_forward_proj \(feedForward)")
         }
         let base = NFKMLXT5Configuration.xxl
         return NFKMLXT5Configuration(
@@ -322,7 +352,7 @@ public final class NFKMLXT5Encoder: NSObject {
             relativeBuckets: json["relative_attention_num_buckets"] as? Int ?? base.relativeBuckets,
             relativeMaxDistance: json["relative_attention_max_distance"] as? Int ?? base.relativeMaxDistance,
             layerNormEps: (json["layer_norm_epsilon"] as? NSNumber)?.floatValue ?? base.layerNormEps,
-            perLayerBias: json["model_type"] as? String == "umt5")
+            perLayerBias: json["model_type"] as? String == "umt5", gatedFeedForward: feedForward == "gated-gelu")
     }
 
     static func makeNet(_ configuration: NFKMLXT5Configuration = .xxl) -> NFKMLXT5EncoderNet {

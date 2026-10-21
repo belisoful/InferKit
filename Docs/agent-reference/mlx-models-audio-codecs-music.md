@@ -241,3 +241,61 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   reader loads the release directly. Customization is offline: the codec trains adversarially against
   discriminators the release does not ship, so a fine-tune first trains those discriminators.
   Codes 60/60 exact on both, reconstruction 0.99999999999978 / 0.99999999999984.
+- `NFKMLXStableAudioGenerator` (`@objc`) — Stable Audio Open 1.0 (`stabilityai/stable-audio-open-1.0`,
+  `StableAudioPipeline`, Stability AI), text to sound effects, field recordings, and short music samples
+  as stereo 44.1 kHz audio. The diffusers release holds five networks, each ported on its own:
+  - **Text and seconds** (`NFKStableAudioTextStage`): the original t5-base (`feed_forward_proj="relu"`,
+    which `NFKMLXT5Configuration.gatedFeedForward` reads, transformers' default where the key is absent)
+    pads every prompt to the tokenizer's `model_max_length` of 128, and the projection model's two
+    seconds conditioners (`NFKMLXStableAudioProjectionNet`) clamp a value to `0...512`, normalize it, and
+    project `[t, sin(2π·t·w), cos(2π·t·w)]` to one token. The text projection is the identity in the
+    release. The cross-attention reads `[masked text, start token, end token]`, and the global token is
+    the two seconds tokens side by side.
+  - **Diffusion transformer** (`NFKMLXStableAudioDiTNet`, 24 blocks of 1536, 1.05B parameters): the
+    global token, the seconds embedding plus the Gaussian Fourier timestep embedding, is prepended, so
+    the blocks run over 1025 positions. Each block has pre-norm self-attention with a rotary on the
+    leading 32 channels of each 64-channel head (rotate-half, positions over the global token too), a
+    cross-attention whose 12 key-value heads repeat to the 24 query heads and take no rotary, and a
+    SwiGLU feed-forward. Residual 1×1 convolutions sit before and after, held as `Linear` so LoRA adapts
+    them as the reference's `Conv1d`.
+  - **Oobleck autoencoder** (`NFKMLXOobleckAutoencoderNet`): the log-scale Snake with a separate
+    amplitude (`x + sin²(e^α·x)/(e^β + 1e-9)`), dilated residual units, strided convolutions of kernel
+    2·stride at ratios `[2, 4, 4, 8, 8]` (a hop of 2048), and a diagonal Gaussian posterior with
+    `std = softplus(scale) + 1e-4` over 64 latent channels. The released convolutions are
+    weight-normalized; the loader fuses them (`NFKMLXMusic3.fusedWeightNorm`) and transposes.
+  - **Sampler** (`NFKMLXCosineDPMSolverScheduler`): exponential noise levels from 500 to 0.3 then 0, the
+    input scale `1/√(σ² + 1)`, the timestep `atan(σ)·2/π`, the v-prediction turned into the denoised
+    estimate by the EDM preconditioning, and the second-order midpoint SDE update, first order on the
+    first step and on the last. The schedule follows torch's float32 `linspace` from both ends. The
+    reference's noise is a Brownian tree (torchsde), whose normalized increments over the steps' disjoint
+    intervals are independent standard normals, which is what this side draws; the oracle stands a
+    raising module in for torchsde and records its own draws.
+  - The pipeline always denoises the whole 1024-frame window (47.55 seconds) and crops
+    `int(start·44100) ..< int(end·44100)` after the decode. Without a negative prompt the unconditional
+    branch is zeros of the conditioning's shape; with one it is that prompt's masked states and the same
+    seconds tokens. An initial clip is zero-padded to the window, encoded, sampled from the posterior,
+    and added to the scaled noise.
+  Reference parity on tiny random configurations (`run_reference.py stable_audio_tiny`): transformer
+  0.99999999999997, autoencoder mean 0.9999999999999999, standard deviation 0.9999999999999986, decode
+  0.9999999999999848, projection 0.9999999999999848 or better, t5 ReLU 0.999999999999998, the sampler's
+  8-step trajectory within 1.5e-7 relative at every step. On the released weights
+  (`stable_audio_components`): the tokenizer token for token over five prompts, t5-base 0.9999999999985,
+  the seconds tokens 0.9999999999998 or better, the transformer 0.9999999999899 to 0.9999999999989 at
+  σ 80, 3, and 0.4 and on the zeroed branch, the autoencoder's posterior 0.9999999999929 or better and its
+  decode 0.9999999999980. End to end through `StableAudioPipeline` from the reference's own initial
+  latents and per-step noise (`stable_audio_pipeline`, 8 steps, guidance 7): every step's latents
+  0.9999999996695 or better and the waveform 0.9999999958 against the zeroed branch over 0 to 4.5 s, and
+  every step 0.9999999999639 or better and the waveform 0.9999999998482 against a negative prompt over
+  1 to 6 s, starting from an initial clip whose encoded input reads 0.9999999999999972.
+  Customization: LoRA on every linear layer of the transformer and of the seconds conditioners at rank 8
+  and alpha 8, t5-base outside them, as stable-audio-tools' `lora_config` builds it. The objective is its
+  `v` objective (`NFKMLXStableAudioObjective`): the noised latents `x·α + n·σ` at `α = cos(tπ/2)`,
+  `σ = sin(tπ/2)`, the target `n·α − x·σ`, the cross-attention conditioning zeroed for one example in
+  ten, and the squared error over each clip's unpadded frames per sample (`compute_masked_loss` at
+  `mask_loss_weight` 0), averaged over the batch. On identical tensors against the reference's own loss
+  functions: 0.6383436 vs 0.6383437, gradients 0.99999999999994 or better. The optimizer is the
+  release's AdamW (5e-5, weight decay 1e-3) under `InverseLR` (`inv_gamma` 1e6, `power` 0.5, `warmup`
+  0.99), with no EMA, which the reference also turns off under LoRA. One difference is recorded: timesteps
+  are drawn uniformly where the reference draws a scrambled Sobol sequence over the same range.
+  The autoencoder is offline: it trains adversarially against discriminators the release does not ship.
+  The weights are under the Stability AI Community License (free below USD 1 million annual revenue).

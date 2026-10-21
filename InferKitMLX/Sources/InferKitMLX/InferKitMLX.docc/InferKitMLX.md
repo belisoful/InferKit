@@ -459,6 +459,20 @@ The figures have three limits:
 - ``NFKMLXMusic3``
 - ``NFKMLXMusicBackend``
 
+### Text → audio
+
+- ``NFKMLXStableAudioGenerator``
+- ``NFKMLXStableAudioParameterKey``
+- ``NFKMLXStableAudioPipeline``
+- ``NFKMLXStableAudioDiTNet``
+- ``NFKMLXStableAudioDiTConfiguration``
+- ``NFKMLXOobleckAutoencoderNet``
+- ``NFKMLXOobleckConfiguration``
+- ``NFKMLXStableAudioProjectionNet``
+- ``NFKMLXStableAudioProjectionConfiguration``
+- ``NFKMLXCosineDPMSolverScheduler``
+- ``NFKMLXStableAudio``
+
 ### Text → image
 
 - ``NFKMLXBackend``
@@ -600,6 +614,10 @@ The figures have three limits:
 - ``NFKMLXWav2Vec2BertProcessor``
 - ``NFKMLXTimesFMNet``
 - ``NFKMLXTimesFMObjective``
+- ``NFKMLXStableAudioTrainingNet``
+- ``NFKMLXStableAudioTrainable``
+- ``NFKMLXStableAudioObjective``
+- ``NFKMLXStableAudioExample``
 - ``NFKMLXTimesFMTrainable``
 - ``NFKMLXVGG16Features``
 - ``NFKMLXCLIPNet``

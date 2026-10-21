@@ -47,6 +47,22 @@ enum NFKMLXWaveFile {
     /// Reads a 16-bit PCM WAV file's samples (`-1...1`), downmixing to mono. Returns nil for a
     /// non-PCM16 file. Foundation only; a caller needing other formats decodes with AVFoundation.
     static func read(_ data: Data) -> (samples: [Float], sampleRate: Int)? {
+        guard let file = readChannels(data) else { return nil }
+        guard file.channels > 1 else { return (file.samples, file.sampleRate) }
+        let frames = file.samples.count / file.channels
+        let samples = (0 ..< frames).map { frame -> Float in
+            var sum: Float = 0
+            for channel in 0 ..< file.channels {
+                sum += file.samples[frame * file.channels + channel]
+            }
+            return sum / Float(file.channels)
+        }
+        return (samples, file.sampleRate)
+    }
+
+    /// Reads a 16-bit PCM WAV file's samples (`-1...1`) with its channels kept, interleaved frame by
+    /// frame. Returns nil for a non-PCM16 file.
+    static func readChannels(_ data: Data) -> (samples: [Float], sampleRate: Int, channels: Int)? {
         let bytes = [UInt8](data)
         guard bytes.count > 44,
               String(bytes: bytes[0 ..< 4], encoding: .ascii) == "RIFF",
@@ -73,18 +89,13 @@ enum NFKMLXWaveFile {
         }
         guard dataStart >= 0, bitsPerSample == 16, sampleRate > 0 else { return nil }
 
-        let frameCount = dataSize / (2 * channels)
-        var samples = [Float](repeating: 0, count: frameCount)
-        for frame in 0 ..< frameCount {
-            var sum: Float = 0
-            for channel in 0 ..< channels {
-                let index = dataStart + (frame * channels + channel) * 2
-                let value = Int16(bitPattern: UInt16(bytes[index]) | (UInt16(bytes[index + 1]) << 8))
-                sum += Float(value) / Float(Int16.max)
-            }
-            samples[frame] = sum / Float(channels)
+        let count = dataSize / (2 * channels) * channels
+        let samples = (0 ..< count).map { position -> Float in
+            let index = dataStart + position * 2
+            let value = Int16(bitPattern: UInt16(bytes[index]) | (UInt16(bytes[index + 1]) << 8))
+            return Float(value) / Float(Int16.max)
         }
-        return (samples, sampleRate)
+        return (samples, sampleRate, channels)
     }
 }
 

@@ -786,6 +786,7 @@ resolves through `+[NFKDynamicBackend backendForCapability:error:]` as it is.
 | `speech-enhancement` | `NFKModelTaskSpeechEnhancement` | Removing noise and reverberation from speech. |
 | `voice-activity-detection` | `NFKModelTaskVoiceActivityDetection` | Finding the spans of a recording that hold speech. |
 | `audio-codec` | `NFKModelTaskAudioCodec` | Encoding audio into tokens and decoding it back. |
+| `audio-generation` | `NFKModelTaskAudioGeneration` | Making sound effects and other audio from a description. |
 | `music-generation` | `NFKModelTaskMusicGeneration` | Making music from a prompt or lyrics. |
 | `music-transcription` | `NFKModelTaskMusicTranscription` | Turning a performance into notes. |
 | `music-structure` | `NFKModelTaskMusicStructure` | The beats and sections of a track. |

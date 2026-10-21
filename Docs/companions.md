@@ -541,6 +541,16 @@ models.
   `transformerBits: 6` trades the DiT down to a measured velocity cosine of 0.99844 (0.99990 at
   8-bit) for roughly 0.6 GB more — do a listening A/B first, because the DiT's error compounds over
   the sampling loop.
+- **`NFKMLXStableAudioGenerator`** — sound effects, field recordings, and short music samples from a
+  description (Stable Audio Open 1.0): t5-base and two seconds conditioners condition a 1.05B-parameter
+  diffusion transformer over the latents of the Oobleck waveform autoencoder, sampled by a cosine-schedule
+  DPM-Solver++ SDE with classifier-free guidance, and the decoded window is cropped to the requested span
+  of up to 47.55 seconds of stereo 44.1 kHz audio. A negative prompt and an initial clip are optional.
+  Every network, the sampler, and the pipeline end to end are at reference parity against diffusers'
+  `StableAudioPipeline` on the released weights. Build with `NFKMLXStableAudioGenerator.backend(directoryURL:)`
+  from the downloaded release (~5.3 GB, float32), registered as `stable-audio-open-1.0`. The transformer
+  and its seconds conditioners fine-tune on a consumer's own clips with stable-audio-tools' own LoRA
+  recipe and v-objective (`NFKMLXStableAudio.fineTune`). The weights are separately licensed — see "Model weight licenses" below.
 - **`NFKMLXQwen4Exp`** — the Qwen4-Exp decoder, which Qwen3.8-Flash-Next is the released 180B
   instance of: the hybrid family's recurrence and gated attention, carried over a residual stream
   held four times over by hyper-connections, with a per-layer embedding over hashed n-grams, a
@@ -1008,3 +1018,8 @@ The model's inference code carries no such terms (the architecture derives from 
 Stable Audio tools, MIT; and the Descript Audio Codec, MIT). The obligations attach to the checkpoint.
 An app that ships the MiniMax music backend accepts these terms on behalf of its own product; review
 the LICENSE file in the weight repository before enabling it commercially.
+
+**Stable Audio Open 1.0** (`NFKMLXStableAudioGenerator`, `stabilityai/stable-audio-open-1.0`) is under the
+**Stability AI Community License**, as are the Stable Diffusion 3.5 releases. Use is free for an
+organization below USD 1 million in annual revenue; above it, Stability AI's enterprise license applies.
+The repository is gated: its terms are accepted once on Hugging Face before a download.

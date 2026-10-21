@@ -120,6 +120,7 @@ public final class NFKMLXReferenceModels: NSObject {
         NFKMLXVideoSR.registerClip()
         NFKMLXCosmosTokenizer.register()
         NFKMLXMusic3.register()
+        NFKMLXStableAudioGenerator.register()
         NFKMLXBasicPitch.register()
         NFKMLXAllInOne.register()
         NFKMLXMuScriptor.register()

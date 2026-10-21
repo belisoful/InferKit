@@ -464,6 +464,33 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertEqual(try forecaster.forecast(context: series, horizon: 10).pointForecast.count, 10)
     }
 
+    // Docs/examples.md: Fine-tuning Stable Audio on your own sounds
+    func testExampleFineTuningStableAudioOnOwnSounds() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory.appendingPathComponent("stable-audio-tuned-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+        // A real run builds from the release with NFKMLXStableAudio.network(directoryURL:) and makes each
+        // example with generator.trainingExample(waveform:prompt:); a small geometry keeps this free of downloads.
+        let small = NFKMLXStableAudioDiTConfiguration(sampleSize: 8, inChannels: 4, layers: 1, headDim: 8, heads: 2,
+                                                      keyValueHeads: 1, outChannels: 4, crossAttentionDim: 8,
+                                                      timeProjectionDim: 8, globalStatesInputDim: 16,
+                                                      crossAttentionInputDim: 8)
+        let net = NFKMLXStableAudioTrainingNet(
+            transformer: NFKMLXStableAudioDiTNet(small),
+            projection: NFKMLXStableAudioProjectionNet(NFKMLXStableAudioProjectionConfiguration(textEncoderDim: 8,
+                                                                                                conditioningDim: 8)))
+        let myClips = (0 ..< 2).map { _ in
+            NFKMLXStableAudioExample(latents: MLXRandom.normal([8, 4]), validFrames: 6, text: MLXRandom.normal([3, 8]),
+                                     startSeconds: 0, totalSeconds: 6)
+        }
+        let history = try NFKMLXStableAudio.fineTune(net, examples: { _ in myClips }, steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXStableAudio.save(net, toDirectoryURL: tuned)
+        XCTAssertEqual(try NFKMLXStableAudio.network(directoryURL: tuned).transformer.configuration, small)
+    }
+
     // Docs/examples.md: Adapting a decision model to your own decisions
     func testExampleAdaptingLayaOnOwnDecisions() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

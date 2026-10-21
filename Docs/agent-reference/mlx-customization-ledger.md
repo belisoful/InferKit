@@ -180,6 +180,8 @@ NU-Wave 2, Conv-TasNet, the Denoiser, FRCRN, and MossFormer2 SE ship.
 | `NFKMLXMimi` | offline | — | public net | The codec trains adversarially against discriminators the release does not ship. |
 | `NFKMLXMusic3` | offline | — | internal | The 16 GiB language model and the 9.7 GB transformer exceed a 32 GB working set, so the stack runs staged. |
 | `NFKMLXSNAC` | untrainable | — | internal | hubertsiuzdak/snac is inference only, and its quantizer returns no commitment or codebook loss. |
+| `NFKMLXStableAudioDiTNet` / `NFKMLXStableAudioProjectionNet` | trainable | LoRA | public | stable-audio-tools' own `lora_config`: every linear layer of the transformer and of the seconds conditioners, t5-base outside them, at rank 8. The frozen 1.05B transformer holds at float32 on a device. |
+| `NFKMLXOobleckAutoencoderNet` | offline | — | public | The autoencoder trains adversarially against discriminators the release does not ship. |
 
 ## Stable Diffusion and the diffusion seam
 
@@ -337,6 +339,7 @@ the recipe detail.
 | `NFKMLXVoiceRestore` | untrainable | skirdey/voicerestore at bfda753, both branches. |
 | `NFKMLXDenoiser` | trainable, full | facebookresearch/denoiser at 8afd7c1, `solver.py` and `stft_loss.py`. |
 | `NFKMLXSNAC` | untrainable | hubertsiuzdak/snac at 8f79a71, the whole tree. |
+| `NFKMLXStableAudioDiTNet` / `NFKMLXStableAudioProjectionNet` | trainable, LoRA | Stability-AI/stable-audio-tools at 3241adb, `training/diffusion.py`, `training/utils.py`, and `models/lora/`; the release's `model_config.json` for the optimizer. |
 | `NFKMLXMarigold`, `NFKMLXSDUpscaler` | trainable, LoRA | prs-eth/Marigold at 2bfbdea; the upscaler's `ddpm.py` from a mirror of the deleted Stability-AI/stablediffusion, unpinned. |
 | `NFKMLXTAESD` | untrainable | madebyollin/taesd at 401ce45, the whole tree. |
 | `NFKMLXLTXVideoVAE` | untrainable | Lightricks/LTX-Video at 4b2d053 and LTX-Video-Trainer at e055182. |

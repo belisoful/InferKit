@@ -682,7 +682,7 @@ extension NFKMLXCatalogAudio {
 extension NFKMLXCatalogAudio {
 
     static var music: [NFKMLXCatalogEntry] {
-        [basicPitch, hftTransformer] + muScriptor + [allInOne, music3]
+        [basicPitch, hftTransformer] + muScriptor + [allInOne, music3, stableAudioOpen]
     }
 
     static var basicPitch: NFKMLXCatalogEntry {
@@ -826,6 +826,43 @@ extension NFKMLXCatalogAudio {
                                        note: "A commercial product shows \"MiniMax-Music3\" in its interface, and one above USD 20 million in yearly revenue needs MiniMax's written authorization."),
                      release: "music3",
                      source: .hub("MiniMaxAI/MiniMax-Music3", files: files(required: required, weights: weights)),
+                     residencies: [NFKModelResidencyResident, NFKModelResidencyStaged])
+    }
+
+    static var stableAudioOpen: NFKMLXCatalogEntry {
+        let components = NFKMLXStableAudioGenerator.releaseComponents
+        let maximumSeconds = NSNumber(value: 1024.0 * 2048 / 44100)
+        return model(NFKMLXStableAudioGenerator.modelName, displayName: "Stable Audio Open 1.0", family: "stable-audio",
+                     summary: "Stability AI's latent diffusion generator of sound effects, field recordings, and short music samples from a description, as stereo 44.1 kHz audio.",
+                     tasks: [NFKModelTaskAudioGeneration, NFKModelTaskMusicGeneration],
+                     inputs: [.input(NFKInputPrompt, required: true, title: "Description",
+                                     help: "The sound to make: its source, character, and, for music, genre, instruments, and tempo."),
+                              .input(NFKInputNegativePrompt, title: "Negative prompt",
+                                     help: "What the clip steers away from."),
+                              .input(NFKInputAudio, title: "Initial audio",
+                                     help: "A 16-bit WAV clip at 44.1 kHz the generation starts from.")],
+                     outputs: [.output(NFKOutputAudio, required: true, title: "Audio", help: "A stereo WAV file at 44.1 kHz.")],
+                     parameters: [
+                        .option(NFKParameterDurationSeconds, kind: NFKModelOptionKindNumber, title: "Duration",
+                                help: "The clip's length in seconds.",
+                                defaultValue: 10, minimum: 0.5, maximum: maximumSeconds, step: 0.5),
+                        .option(NFKMLXStableAudioParameterKey.startSeconds, kind: NFKModelOptionKindNumber, title: "Start",
+                                help: "Where the clip starts within the model's timing, in seconds.",
+                                defaultValue: 0, minimum: 0, maximum: maximumSeconds, step: 0.5),
+                        .option(NFKParameterSteps, kind: NFKModelOptionKindInteger, title: "Steps",
+                                help: "The sampling steps.", defaultValue: 100, minimum: 1, step: 1),
+                        .option(NFKParameterGuidanceScale, kind: NFKModelOptionKindNumber, title: "Guidance",
+                                help: "The classifier-free guidance weight. At 1 or below the clip is unguided.",
+                                defaultValue: 7, minimum: 0, step: 0.5),
+                        .option(NFKParameterSeed, kind: NFKModelOptionKindInteger, title: "Seed",
+                                help: "The seed of the sampling.", defaultValue: 0, minimum: 0, step: 1),
+                     ],
+                     license: NFKMLXCatalogImage.gatedStabilityCommunity,
+                     release: "1.0",
+                     source: .hub(NFKMLXStableAudioGenerator.releaseRepo,
+                                  files: files(required: components.flatMap(\.required),
+                                               optional: components.flatMap(\.optional),
+                                               weights: components.compactMap(\.weights.first))),
                      residencies: [NFKModelResidencyResident, NFKModelResidencyStaged])
     }
 }

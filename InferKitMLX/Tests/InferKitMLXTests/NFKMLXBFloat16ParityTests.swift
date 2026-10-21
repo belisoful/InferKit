@@ -865,8 +865,8 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
                                    bf16, p + "1.EncDecAttention.out"))
             lines.append(try piece("feed-forward norm", block.feedForward.layerNorm(input("2.layer_norm")), bf16,
                                    p + "2.layer_norm.out"))
-            lines.append(try piece("wi_0", ff.wi0(input("2.DenseReluDense.wi_0")), bf16, p + "2.DenseReluDense.wi_0.out"))
-            lines.append(try piece("wi_1", ff.wi1(input("2.DenseReluDense.wi_1")), bf16, p + "2.DenseReluDense.wi_1.out"))
+            lines.append(try piece("wi_0", ff.wi0!(input("2.DenseReluDense.wi_0")), bf16, p + "2.DenseReluDense.wi_0.out"))
+            lines.append(try piece("wi_1", ff.wi1!(input("2.DenseReluDense.wi_1")), bf16, p + "2.DenseReluDense.wi_1.out"))
             lines.append(try piece("gelu_new", NFKReferenceRounding.geluNew(input("2.DenseReluDense.act")), bf16,
                                    p + "2.DenseReluDense.act.out"))
             lines.append(try piece("wo", ff.wo(input("2.DenseReluDense.wo")), bf16, p + "2.DenseReluDense.wo.out"))

@@ -1543,6 +1543,21 @@ final class MLXModelGalleryExamples: XCTestCase {
         let staged = try NFKMLXMusic3.backend(directoryURL:
             FileManager.default.temporaryDirectory.appendingPathComponent("minimax-music3"), residency: .staged)
         XCTAssertEqual((staged as? NFKMLXMusicBackend)?.residency, .staged)
+
+        // Stable Audio Open 1.0: a description under NFKInputPrompt becomes a stereo 44.1 kHz clip. The
+        // release assembles from its diffusers directory, NFKMLXStableAudioGenerator.backend(directoryURL:)
+        // (registered as "stable-audio-open-1.0"). Here the same sampling loop and decode run at tiny
+        // geometries from supplied conditioning.
+        let audioDiT = NFKMLXStableAudioDiTConfiguration.tiny
+        let stableAudio = NFKMLXStableAudioPipeline(transformer: NFKMLXStableAudioDiTNet(audioDiT),
+                                                    autoencoder: NFKMLXOobleckAutoencoderNet(.tiny))
+        let audioLatents = try XCTUnwrap(stableAudio.latents(
+            context: MLXRandom.normal([1, 3, audioDiT.crossAttentionInputDim]),
+            global: MLXRandom.normal([1, 1, audioDiT.globalStatesInputDim]), negativeContext: nil, steps: 2,
+            guidance: 7, initial: MLXRandom.normal(stableAudio.latentShape), noise: { _ in MLXRandom.normal(stableAudio.latentShape) }))
+        let clip = stableAudio.waveform(audioLatents, start: 0, end: stableAudio.maximumDuration)
+        eval(clip)
+        XCTAssertEqual(clip.dim(1), 2, "Stable Audio decodes to stereo")
     }
 
     // MARK: Dynamic discovery (Stable Diffusion / transcription activate when linked)

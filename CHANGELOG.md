@@ -40,6 +40,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### The audio-generation task
+
+- `NFKModelTaskAudioGeneration` (`audio-generation`) names making sound effects and other audio from a
+  description, beside `NFKModelTaskMusicGeneration`. Stable Audio Open lists both.
+
 #### Breaking: `NFKInferKit.version` is `NFKInferKit.releaseVersion`
 
 - The class property `version` overrode `+[NSObject version]`, the integer class version archiving
@@ -1262,6 +1267,30 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   outside `model.safetensors` or a `model.safetensors.index.json`.
 - A Qwen3, Qwen3-MoE, or Qwen1.5-MoE repository resolves today. A Mixtral, gpt-oss, or Mistral repository
   is refused at the tokenizer: a Metaspace BPE with byte fallback, `ignore_merges`, and Llama 3's pattern.
+
+#### Stable Audio Open 1.0
+
+- `NFKMLXStableAudioGenerator` generates sound effects, field recordings, and short music samples from a
+  description, as stereo 44.1 kHz audio of up to 47.55 seconds, from the `stabilityai/stable-audio-open-1.0`
+  release directory (`backend(directoryURL:)`, the download factories, and `register()` under
+  `stable-audio-open-1.0`). t5-base and two seconds conditioners condition a 1.05B-parameter diffusion
+  transformer (`NFKMLXStableAudioDiTNet`) over the latents of the Oobleck waveform autoencoder
+  (`NFKMLXOobleckAutoencoderNet`), sampled by the cosine-schedule DPM-Solver++ SDE
+  (`NFKMLXCosineDPMSolverScheduler`) with classifier-free guidance against zeroed conditioning or a
+  negative prompt. An initial clip under `NFKInputAudio` starts the generation from its latents, and
+  `NFKMLXStableAudioParameterKey.startSeconds` sets where the clip starts within the model's timing.
+- Every network, the sampler, and the pipeline end to end are at reference parity against diffusers'
+  `StableAudioPipeline` on the released weights: the transformer 0.9999999999899 or better at three noise
+  levels, and teacher-forced from the reference's own noise, the waveform 0.9999999958 or better.
+- The transformer and its seconds conditioners fine-tune on a consumer's own clips as stable-audio-tools
+  trains them: LoRA on every linear layer (rank 8), the v-objective over each clip's unpadded frames with
+  its conditioning dropout (`NFKMLXStableAudioObjective`), and the release's AdamW under `InverseLR`
+  (`NFKMLXLearningRateSchedule.inverse`). `NFKMLXStableAudioGenerator.trainingExample` prepares a clip
+  through the release's own autoencoder and t5-base, and `NFKMLXStableAudio.save(_:toDirectoryURL:)` writes
+  the `transformer/` and `projection_model/` a copy of the release loads in place of its own.
+- `NFKMLXT5Configuration.gatedFeedForward` and `.base` read the original T5's ReLU feed-forward, which a
+  `config.json` without `feed_forward_proj` names, as transformers reads it.
+- The weights are under the Stability AI Community License: free below USD 1 million in annual revenue.
 
 #### The SD-family autoencoder decodes step by step when the GPU cannot hold the decode whole
 
