@@ -700,6 +700,47 @@ static BOOL NFKRegistryTestImageIsLoaded(NSURL *url)
 	[self waitForExpectations:@[ refused ] timeout:60];
 }
 
+// An update and a rollback by renames, each reloaded synchronously and run at once through the catalog:
+// each run waits for its restart and reaches the version the reload read.
+- (void)testARunAfterAnUpdateAndARollbackReachesTheReloadedVersion
+{
+	[self requireHost];
+	NSURL *first = [self fixtureOfKind:NFKPluginEntryKindCABI version:@"1.0.0"];
+	NSURL *second = [self fixtureOfKind:NFKPluginEntryKindCABI version:@"2.0.0"];
+	NSURL *folder = [self pluginsFolderWithCopiesOf:@[ first ]];
+	NSURL *previous = [self pluginsFolderWithCopiesOf:@[]];
+	NSURL *installed = [folder URLByAppendingPathComponent:first.lastPathComponent];
+	NFKPluginRegistry *registry = [self registry];
+	NSError *error = nil;
+	NFKPluginManifest *manifest = [registry addPluginAtURL:installed error:&error];
+	XCTAssertNotNil(manifest, @"%@", error);
+	NSString *invert = [self catalogIdentifierOfKind:NFKPluginEntryKindCABI model:NFKPluginFixtureInvertModel];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKPluginFixtureValuesKey: @[ @0.5 ] }];
+	NSString *(^version)(void) = ^NSString * {
+		NSError *runError = nil;
+		id<NFKInferenceBackend> backend = [registry.catalog backendForModelIdentifier:invert options:nil error:&runError];
+		NFKInferenceResult *result = [backend runInferenceForRequest:request error:&runError];
+		XCTAssertNotNil(result, @"%@", runError);
+		return result.outputs[NFKPluginFixtureVersionKey];
+	};
+	XCTAssertEqualObjects(version(), @"1.0.0");
+
+	NSURL *kept = [previous URLByAppendingPathComponent:@"1.0.0.inferkitplugin"];
+	XCTAssertTrue([NSFileManager.defaultManager moveItemAtURL:installed toURL:kept error:&error], @"%@", error);
+	XCTAssertTrue([NSFileManager.defaultManager copyItemAtURL:second toURL:installed error:&error], @"%@", error);
+	XCTAssertTrue([registry reloadPluginWithIdentifier:manifest.identifier error:&error], @"%@", error);
+	XCTAssertEqualObjects(version(), @"2.0.0", @"the run after the update waits for its restart");
+
+	NSURL *staged = [previous URLByAppendingPathComponent:@"staged.inferkitplugin"];
+	XCTAssertTrue([NSFileManager.defaultManager moveItemAtURL:kept toURL:staged error:&error], @"%@", error);
+	XCTAssertTrue([NSFileManager.defaultManager moveItemAtURL:installed
+														toURL:[previous URLByAppendingPathComponent:@"2.0.0.inferkitplugin"]
+														error:&error], @"%@", error);
+	XCTAssertTrue([NSFileManager.defaultManager moveItemAtURL:staged toURL:installed error:&error], @"%@", error);
+	XCTAssertTrue([registry reloadPluginWithIdentifier:manifest.identifier error:&error], @"%@", error);
+	XCTAssertEqualObjects(version(), @"1.0.0", @"the run after the rollback waits for its restart");
+}
+
 #pragma mark Trust
 
 - (void)testTrustedPluginsRunInProcessWithTheirOutOfProcessOutputs
