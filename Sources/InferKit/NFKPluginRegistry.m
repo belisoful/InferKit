@@ -969,6 +969,9 @@ static const NSTimeInterval NFKPluginRegistryDefaultVerificationTimeout = 120;
 			__weak NFKPluginRegistry *weakSelf = self;
 			process.registryStateHandler = ^(NFKPluginProcess *changed, NFKPluginProcessState state) {
 				NFKPluginRegistry *registry = weakSelf;
+				if (registry == nil) {
+					return;
+				}
 				dispatch_async(registry.statusQueue, ^{
 					[registry reportStatus:[[registry statusForPluginIdentifier:identifier] statusWithProcessState:state]];
 				});
