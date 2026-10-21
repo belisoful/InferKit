@@ -146,6 +146,7 @@ extension NFKReferenceRounding {
     /// joined in order). The trailing axis is a whole number of 4-value vectors, which torch vectorizes. On the
     /// CPU stream it takes MLX operations.
     static func torchWindowPool(values: MLXArray, scores: MLXArray) -> MLXArray {
+        let (values, scores) = (values.asType(.float32), scores.asType(.float32))
         guard NFKMLXDevice.currentType == .gpu, values.size > 0 else { return windowPoolOperations([values, scores])[0] }
         return torchWindowPoolFunction([values, scores])[0]
     }
@@ -164,6 +165,9 @@ extension NFKReferenceRounding {
                                    referenceLength: Int) -> MLXArray {
         let rows = generationScores.dim(0), generation = generationScores.dim(1)
         let referenceCount = referenceScores?.dim(1) ?? 0
+        precondition(generation == frames * area && area <= videoArea
+                     && referenceCount <= referenceLength && generation <= generationLimit,
+                     "the scores do not fit the packed buffer the layout describes")
         let zeroKeys = (generationLimit - generation) + (referenceLength - referenceCount)
         guard NFKMLXDevice.currentType == .gpu, generationScores.size > 0 else {
             var scores = generationScores
@@ -482,8 +486,8 @@ extension NFKReferenceRounding {
             const int rows = shape[0];
             const int size = shape[1];
             if (int(row) >= rows) { return; }
-            device const float* X = x + row * size;
-            device float* Y = y + row * size;
+            device const float* X = x + ulong(row) * ulong(size);
+            device float* Y = y + ulong(row) * ulong(size);
             threadgroup float lanes[4];
             threadgroup float shared[2];
             float peak = -INFINITY;
@@ -541,8 +545,8 @@ extension NFKReferenceRounding {
             const int rows = shape[0];
             const int size = shape[1];
             if (int(row) >= rows) { return; }
-            device const T* X = x + row * size;
-            device T* Y = y + row * size;
+            device const T* X = x + ulong(row) * ulong(size);
+            device T* Y = y + ulong(row) * ulong(size);
             threadgroup float lanes[4];
             threadgroup float shared[1];
             float peak = -INFINITY;
@@ -576,11 +580,11 @@ extension NFKReferenceRounding {
             const int outer = shape[0];
             const int window = shape[1];
             const int width = shape[2];
-            if (int(index) >= outer * width) { return; }
-            const int o = int(index) / width;
-            const int c = int(index) % width;
-            device const float* S = s + o * window * width + c;
-            device const float* V = v + o * window * width + c;
+            if (ulong(index) >= ulong(outer) * ulong(width)) { return; }
+            const int o = int(index / uint(width));
+            const int c = int(index % uint(width));
+            device const float* S = s + ulong(o) * ulong(window) * ulong(width) + ulong(c);
+            device const float* V = v + ulong(o) * ulong(window) * ulong(width) + ulong(c);
             float peak = S[0];
             for (int k = 1; k < window; ++k) { peak = max(peak, S[k * width]); }
             float total = nfk_torch_expf(S[0] - peak);
@@ -633,9 +637,9 @@ extension NFKReferenceRounding {
             const int reference_start = layout[7];
             const int reference_length = layout[8];
             if (int(row) >= rows) { return; }
-            const auto G = generation + row * count;
-            const auto R = reference + row * reference_count;
-            device float* P = probabilities + row * (count + reference_count);
+            const auto G = generation + ulong(row) * ulong(count);
+            const auto R = reference + ulong(row) * ulong(reference_count);
+            device float* P = probabilities + ulong(row) * ulong(count + reference_count);
             threadgroup float lanes[4];
             threadgroup float shared[1];
             float peak = -INFINITY;
@@ -688,7 +692,7 @@ extension NFKReferenceRounding {
             const int rows = shape[0];
             const int N = shape[1];
             if (int(row) >= rows) { return; }
-            device const T* X = x + row * N;
+            device const T* X = x + ulong(row) * ulong(N);
             const int n = N / (4 * H);
             const int m = (n + 15) / 16;
             const bool stored = m <= 32;
@@ -828,7 +832,7 @@ extension NFKReferenceRounding {
             const float rstd = stats[0];
             const float shift = stats[1];
             const float mean = stats[2];
-            device T* Y = y + row * N;
+            device T* Y = y + ulong(row) * ulong(N);
             for (int k = int(t); k < N; k += 32) {
                 float value;
                 if (H == 1) {
