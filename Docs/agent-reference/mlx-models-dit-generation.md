@@ -295,7 +295,13 @@ arithmetic as before.
   image-conditioning branch, no `added_kv`). Module keys mirror the reference (69 at tiny); the 5-D
   `Conv3d` weight loads transposed to NDHWC. Reference parity against diffusers on the first numeric
   run (`run_reference.py wan`, tiny random config, `ltx` env): full velocity cosine
-  **0.9999999999999767**.
+  **0.9999999999999767**. The released weights at bf16 have their own check,
+  `testWan21TransformerInBFloat16MatchesTheBFloat16Reference` (`run_reference.py wan_release_probe`,
+  records `wan21_t2v_1_3b_cut2_bf16` / `_f32`, `ltx` env). It holds the Wan 2.1 T2V 1.3B transformer, cut
+  to its first two blocks, to diffusers' bf16 run of the same weights and to that run's float32 floor.
+  Both sides load as `from_pretrained(torch_dtype=bfloat16)` does: the `_keep_in_fp32_modules` parameters
+  (`time_embedder`, every `scale_shift_table`, `norm2`; `NFKMLXWanRelease.keepsFloat32`) stay float32 as
+  stored, and every other tensor converts to bf16. No figure is recorded yet.
   `NFKMLXWanVideoVAENet` is the Wan 3D causal VAE (`AutoencoderKLWan`, the Wan 2.2 residual path),
   the last stage of the Wan pipeline and the hardest port of this batch. It also serves Qwen-Image 2.1
   under `NFKMLXWanVAEConfiguration.imageOnly`, which collapses every temporal kernel, pad, and stride

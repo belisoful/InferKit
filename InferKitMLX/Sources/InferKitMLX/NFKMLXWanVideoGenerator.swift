@@ -71,13 +71,18 @@ enum NFKMLXWanRelease {
 
     private static let float32Modules: Set<String> = ["time_embedder", "scale_shift_table", "norm1", "norm2", "norm3"]
 
-    /// Loads a release's `transformer/` weights with every floating tensor converted to `dtype` as it is
-    /// read, so the stored float32 never sits whole beside the converted copy.
+    /// Loads a release's `transformer/` weights as diffusers loads them at a half precision: every floating
+    /// tensor converted to `dtype` as it is read, so the stored float32 never sits whole beside the converted
+    /// copy, except the parameters ``keepsFloat32(_:)`` names, which load as stored. `remap` renames a key,
+    /// or drops it with nil.
     static func loadTransformer(into net: NFKMLXWanTransformerNet, fromDirectory directory: URL,
-                                converting dtype: DType) throws {
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: dtype)
-            .map { ($0, $1.ndim == 5 ? $1.transposed(0, 2, 3, 4, 1) : $1) }
-        try NFKMLXWeights.apply(arrays, to: net, verifyShapes: true)
+                                converting dtype: DType, remap: (String) -> String? = { $0 }) throws {
+        let converted = try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: dtype) { key in
+            keepsFloat32(key) ? nil : remap(key)
+        }
+        let kept = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: .checkpoint,
+                                                               remap: { keepsFloat32($0) ? remap($0) : nil })
+        try NFKMLXWeights.apply((converted + kept).map(adaptedTransformer), to: net, verifyShapes: true)
     }
 
     /// The autoencoder geometry a `vae/config.json` describes, with its latent statistics.

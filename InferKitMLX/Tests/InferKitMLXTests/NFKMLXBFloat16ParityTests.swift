@@ -3168,6 +3168,107 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         print("VALIDATION bf16 z-image-turbo pieces:\n" + lines.joined(separator: "\n"))
     }
 
+    // Wan 2.1 T2V 1.3B's transformer (`IK_VAL_WAN21_T2V_1_3B`, released float32) at bf16, cut to its first two
+    // blocks, against diffusers' `WanTransformer3DModel` at bf16 (`wan_release_probe`; the float32 side widens
+    // the same weights) over a seeded 16×2×8×8 latent, 24 text features, and timestep 500. The load follows
+    // `from_pretrained(torch_dtype=bfloat16)`: the parameters diffusers keeps float32 load as stored, and every
+    // other tensor converts to bf16 as it is read. The timestep projection, the text embedder, each block, and
+    // the output projection run on the reference's own input; the velocity runs end to end; then the condition
+    // embedder's outputs and each piece of the first block.
+    func testWan21TransformerInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_WAN21_T2V_1_3B"], "IK_VAL_WAN21_T2V_1_3B"))
+            .appendingPathComponent("transformer")
+        let bf16 = try record("wan21_t2v_1_3b_cut2_bf16.safetensors")
+        let f32 = try record("wan21_t2v_1_3b_cut2_f32.safetensors")
+        var configuration = try NFKMLXWanRelease.transformerConfiguration(
+            fromHuggingFace: directory.appendingPathComponent("config.json"))
+        configuration.layers = 2
+        let net = NFKMLXWanTransformerNet(configuration)
+        func cut(_ key: String) -> Bool {
+            key.hasPrefix("blocks.") && Int(key.split(separator: ".")[1])! >= configuration.layers
+        }
+        try NFKMLXWanRelease.loadTransformer(into: net, fromDirectory: directory, converting: .bfloat16) { key in
+            cut(key) ? nil : key
+        }
+        func recorded(_ key: String) throws -> MLXArray { try XCTUnwrap(bf16[key], "no \(key)").asType(.bfloat16) }
+        func wideRecorded(_ key: String) throws -> MLXArray { try XCTUnwrap(bf16[key], "no \(key)") }
+        let context = try recorded("condition_embedder.encoder_hidden_states")
+        let modulation = try recorded("condition_embedder.timestep_proj").reshaped([6, -1])
+        var positions = [Float]()
+        for f in 0 ..< 2 { for h in 0 ..< 4 { for w in 0 ..< 4 { positions += [Float(f), Float(h), Float(w)] } } }
+        let (cosT, sinT) = net.rope.table(positions: MLXArray(positions).reshaped([32, 3]))
+        let embedder = net.conditionEmbedder
+
+        var isolated = [(String, MLXArray)](), keys = [String]()
+        func stage(_ name: String, _ run: (MLXArray) -> MLXArray) throws {
+            isolated.append((name, run(try recorded(name + ".in"))))
+            keys.append(name + ".out")
+        }
+        try stage("condition_embedder.time_proj") { embedder.timeProj($0.expandedDimensions(axis: 0))[0] }
+        try stage("condition_embedder.text_embedder") { embedder.textEmbedder($0) }
+        for (i, block) in net.blocks.enumerated() {
+            try stage("blocks.\(i)") { block($0, context: context, temb: modulation, cos: cosT, sin: sinT) }
+        }
+        try stage("proj_out") { net.projOut($0) }
+
+        let velocity = net(try recorded("latent"), text: try recorded("text"), t: try wideRecorded("timestep"))
+        XCTAssertEqual(velocity.dtype, .bfloat16, "a bf16 load runs the transformer at bf16")
+        let states = [("velocity", velocity)]
+        eval(isolated.map(\.1) + states.map(\.1))
+        let rows = try seams(states, bf16: bf16, f32: f32, keys: ["output"])
+        report("wan21-t2v-1.3b", rows)
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: keys)
+        report("wan21-t2v-1.3b isolated", isolatedRows)
+        assertRoundingPlacement("wan21-t2v-1.3b", endToEnd: rows, isolated: isolatedRows)
+
+        // The float32 sinusoid differs from torch's by an ulp, which can flip a bf16 rounding of the time
+        // embedding, so the condition embedder's outputs are reported without a bar.
+        let (temb, proj, text) = embedder(try wideRecorded("timestep"), text: try recorded("text"),
+                                          freqDim: net.config.freqDim)
+        let conditions = [
+            try piece("timesteps_proj", ltxTimestepEmbedding(try wideRecorded("timestep"), channels: net.config.freqDim)[0],
+                      bf16, "condition_embedder.timesteps_proj.out"),
+            try piece("time_embedder", embedder.timeEmbedder(
+                try wideRecorded("condition_embedder.time_embedder.in").expandedDimensions(axis: 0))[0],
+                      bf16, "condition_embedder.time_embedder.out"),
+            try piece("temb", temb, bf16, "condition_embedder.temb"),
+            try piece("timestep_proj", proj, bf16, "condition_embedder.timestep_proj"),
+            try piece("encoder_hidden_states", text, bf16, "condition_embedder.encoder_hidden_states"),
+        ]
+        print("VALIDATION bf16 wan21-t2v-1.3b conditions:\n" + conditions.joined(separator: "\n"))
+
+        let block = net.blocks[0]
+        func input(_ name: String) throws -> MLXArray { try recorded("piece." + name + ".in") }
+        func output(_ name: String) -> String { "piece." + name + ".out" }
+        func normed(_ x: MLXArray, _ norm: LayerNorm? = nil) -> MLXArray {
+            NFKReferenceRounding.layerNorm(x.asType(.float32), weight: norm?.weight?.asType(.float32),
+                                           bias: norm?.bias?.asType(.float32), eps: block.eps)
+        }
+        let lines = [
+            try piece("norm1", normed(input("norm1")), bf16, output("norm1")),
+            try piece("attn1.to_q", block.attn1.toQ(input("attn1.to_q")), bf16, output("attn1.to_q")),
+            try piece("attn1.norm_q", NFKWanAttention.normalized(input("attn1.norm_q"), block.attn1.normQ), bf16,
+                      output("attn1.norm_q")),
+            try piece("attn1.norm_k", NFKWanAttention.normalized(input("attn1.norm_k"), block.attn1.normK), bf16,
+                      output("attn1.norm_k")),
+            try piece("attn1", block.attn1(input("attn1"), context: nil, cos: cosT, sin: sinT), bf16, output("attn1")),
+            try piece("attn1.to_out", (block.attn1.toOut[0] as! Linear)(input("attn1.to_out.0")), bf16,
+                      output("attn1.to_out.0")),
+            try piece("norm2", normed(input("norm2"), block.norm2), bf16, output("norm2")),
+            try piece("attn2.to_k", block.attn2.toK(input("attn2.to_k")), bf16, output("attn2.to_k")),
+            try piece("attn2", block.attn2(input("attn2"), context: context, cos: nil, sin: nil), bf16,
+                      output("attn2")),
+            try piece("attn2.to_out", (block.attn2.toOut[0] as! Linear)(input("attn2.to_out.0")), bf16,
+                      output("attn2.to_out.0")),
+            try piece("norm3", normed(input("norm3")), bf16, output("norm3")),
+            try piece("ffn.net.0", (block.ffn.net[0] as! NFKWanGELU)(input("ffn.net.0")), bf16, output("ffn.net.0")),
+            try piece("ffn.net.2", (block.ffn.net[2] as! Linear)(input("ffn.net.2")), bf16, output("ffn.net.2")),
+            try piece("ffn", block.ffn(input("ffn")), bf16, output("ffn")),
+        ]
+        print("VALIDATION bf16 wan21-t2v-1.3b pieces:\n" + lines.joined(separator: "\n"))
+    }
+
     func testFlux2TransformerInBFloat16MatchesTheBFloat16Reference() throws {
         try requireMLXRuntime()
         let (bf16, f32, weights) = try tinyDiT("flux2")
