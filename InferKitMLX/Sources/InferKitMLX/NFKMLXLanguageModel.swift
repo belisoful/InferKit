@@ -767,7 +767,7 @@ public struct NFKMLXClampedSwiGLU: Sendable, Equatable {
 struct NFKLMRotary {
     let dimensions: Int
     let base: Float
-    let periods: MLXArray?
+    var periods: MLXArray?
     let attentionFactor: Float
     /// LongRoPE's alternate period table, used once the sequence passes the trained window, with the
     /// length that triggers the switch. Nil for every other rotary.
@@ -869,7 +869,7 @@ final class NFKLMAttention: Module {
     let keyValueHeads: Int
     let headDimensions: Int
     let scale: Float
-    let rope: NFKLMRotary
+    var rope: NFKLMRotary
     /// The sliding window this layer attends within, or nil for full attention.
     let slidingWindow: Int?
 

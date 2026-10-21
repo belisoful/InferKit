@@ -89,7 +89,14 @@ Runtime quantization, the release reader, the native GGUF and PyTorch checkpoint
   attention, and SiLU apart: Qwen3's attention seam at 0.99974, its logits at 0.99949 from mlx_lm,
   Llama's seams near 1e-7. mlx_lm's GPU prefill orders (`orders.incremental`, `chunk2`, `chunk3`)
   reproduce its Qwen3 run exactly, so the gap was placement, not order. The bar is exact: every seam
-  and the logits equal mlx_lm's. mlx_lm's CPU stream is no reference for it; it reduces sequentially in
+  and the logits equal mlx_lm's, under mlx_lm's own compiled kernels (the wheel's metallib; mlx-swift's
+  precompiled SDPA and rope differ from it in a few elements). One input is held to a measured gap
+  (USER 2026-10-21): a scaled rotary's period table. mlx_lm computes `base ** (2i/d)` with the
+  wheel's precompiled GPU pow, and mlx-swift compiles its pow at run time as a float32
+  `exp2(e · log2(base))`; on Llama 3.2's llama3 table 22 of 32 periods differ, at most 14 float32
+  steps (`rotaryTableSteps`). Run on mlx_lm's own table (`rope.freqs` in the seam record), every seam
+  and the logits are bit-exact, and on the release's own table every position's argmax and the greedy
+  tokens are mlx_lm's. mlx_lm's CPU stream is no reference for it; it reduces sequentially in
   float32 and sits at 0.9534 from its own GPU run on Qwen3. A mixture's routing (softmax, top-k, and
   the weighted combine) and its experts' activation keep the torch placement; no mlx-community mixture
   release is in the store to measure them against.

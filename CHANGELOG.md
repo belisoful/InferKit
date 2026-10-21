@@ -1480,7 +1480,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - An mlx_lm release runs with mlx_lm's half-precision placement (`NFKMLXHalfPrecisionPlacement.mlx`,
   set from its `quantization` block): MLX's fused rotary and attention, and mlx_lm's compiled
   `swiglu`. Qwen3-0.6B and Llama 3.2 1B in mlx-community's 4-bit releases are held to mlx_lm's logits
-  and to every seam of its forward bit for bit. A transformers release keeps the torch placement.
+  and to every seam of its forward bit for bit. A scaled rotary's period table is held within 14 float32
+  steps of mlx_lm's, since mlx_lm computes it with a GPU pow mlx-swift does not reproduce; Llama 3.2 on
+  mlx_lm's own table is bit-exact. A transformers release keeps the torch placement.
 
 #### The SD-family autoencoder decodes step by step when the GPU cannot hold the decode whole
 

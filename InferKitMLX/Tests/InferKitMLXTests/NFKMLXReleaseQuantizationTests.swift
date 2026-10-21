@@ -189,7 +189,8 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
     /// dequantized network transformers runs (`run_reference.py mlx_quantized_release`), which is where a
     /// misread layer shows.
     private func assertReleaseMatchesItsReferences(release releaseKey: String, record recordKey: String,
-                                                   runtimeRecord runtimeKey: String, label: String) throws {
+                                                   runtimeRecord runtimeKey: String, seamRecord seamKey: String? = nil,
+                                                   label: String) throws {
         try requireMLXRuntime()
         guard let directory = config[releaseKey], let path = config[recordKey], let runtimePath = config[runtimeKey] else {
             throw XCTSkip("set \(releaseKey), \(recordKey) (run_reference.py mlx_quantized_release), and \(runtimeKey) "
@@ -230,8 +231,6 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
               + "\(floors.joined(separator: ", ")); mlx_lm reaches \(cosine(runtimeLogits, reference)) against the "
               + "dequantized float32 reference, this release \(cosine(mine, reference)), and transformers' bf16 run "
               + "\(cosine(half, reference))")
-        XCTAssertEqual(zip(mine, runtimeLogits).filter { $0 != $1 }.count, 0,
-                       "the release computes mlx_lm's logits bit for bit")
         for position in 0 ..< tokens.count {
             let row = Array(mine[(position * vocabulary) ..< ((position + 1) * vocabulary)])
             let theirs = Array(runtimeLogits[(position * vocabulary) ..< ((position + 1) * vocabulary)])
@@ -243,6 +242,17 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
         greedy.maxTokens = 8
         XCTAssertEqual(net.generate(prompt: tokens, options: greedy), Array(runtimeContinuation.prefix(8)),
                        "and generates mlx_lm's greedy tokens")
+
+        // A scaled rotary's table comes from a GPU pow the release cannot reproduce (`rotaryTableSteps`); on
+        // mlx_lm's own table, read from the seam record, the logits are mlx_lm's bit for bit.
+        var exact = mine
+        if let seamKey, let seamPath = config[seamKey],
+           let table = try MLX.loadArrays(url: URL(fileURLWithPath: seamPath))["rope.freqs"] {
+            Self.useRotaryTable(table, in: net)
+            exact = net(input)[0].asType(.float32).reshaped([-1]).asArray(Float.self)
+        }
+        XCTAssertEqual(zip(exact, runtimeLogits).filter { $0 != $1 }.count, 0,
+                       "the release computes mlx_lm's logits bit for bit")
 
         // Every float parameter widened to float32 (the scales, biases, and norms mlx_lm stored at
         // bfloat16) leaves the packed words as read: a loading mistake survives the widening.
@@ -265,7 +275,26 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
     func testMLXCommunityLlama32FourBitMatchesItsReferences() throws {
         try assertReleaseMatchesItsReferences(release: "IK_VAL_MLX_LLAMA32_1B_4BIT", record: "IK_PARITY_MLX_LLAMA32_1B_4BIT",
                                               runtimeRecord: "IK_PARITY_MLX_LLAMA32_1B_4BIT_MLXLM",
+                                              seamRecord: "IK_PARITY_MLX_LLAMA32_1B_4BIT_SEAMS",
                                               label: "mlx-llama-3.2-1b-4bit")
+    }
+
+    /// How far a scaled rotary's period table may sit from mlx_lm's, in float32 steps (USER 2026-10-21). mlx_lm
+    /// evaluates `base ** (2i/d)` with the GPU pow its wheel precompiles; mlx-swift compiles its pow at run
+    /// time as a float32 `exp2(e · log2(base))`, and no arithmetic here reproduces the wheel's. Measured on
+    /// Llama 3.2 1B's llama3 table: 22 of 32 periods apart, at most 14 steps, the smoothed band the widest.
+    static let rotaryTableSteps: Int64 = 14
+
+    /// The largest distance between two float32 arrays, in representable steps.
+    static func floatSteps(_ a: [Float], _ b: [Float]) -> Int64 {
+        zip(a, b).map { abs(Int64($0.bitPattern) - Int64($1.bitPattern)) }.max() ?? 0
+    }
+
+    /// Puts `table` in every layer's rotary, as the periods `MLXFast.RoPE` reads.
+    static func useRotaryTable(_ table: MLXArray, in net: NFKMLXLanguageNet) {
+        for layer in net.model.layers {
+            layer.attention.rope.periods = table
+        }
     }
 
     /// Each seam of the release's forward against mlx_lm's (`mlx_lm_seams.py`) at the stored precision, from
@@ -309,22 +338,11 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
                   + "high \(scaling.highFrequencyFactor), original \(scaling.originalMaxPositionEmbeddings); "
                   + "mlx_lm's table recomputed here differs at \(recomputedApart) of \(b.count)")
             print("SEAMS \(label) rope table: \(apart.isEmpty ? "exact" : apart.joined(separator: "; "))")
-            let ulps = zip(a, b).map { abs(Int64($0.bitPattern) - Int64($1.bitPattern)) }.max() ?? 0
-            print("SEAMS \(label) rope table: at most \(ulps) float32 steps from mlx_lm's")
-            // mlx_lm's own table through the same rotary: what every rope seam computes once the tables agree.
-            let attention = net.model.layers[0].attention
-            let length = tokens.dim(1)
-            let queries = try seam("layers.0.q_proj").reshaped([1, length, attention.heads, attention.headDimensions])
-                .transposed(0, 2, 1, 3)
-            let keys = try seam("layers.0.k_proj").reshaped([1, length, attention.keyValueHeads, attention.headDimensions])
-                .transposed(0, 2, 1, 3)
-            func rotated(_ x: MLXArray) -> MLXArray {
-                MLXFast.RoPE(x, dimensions: rotary.dimensions, traditional: false, base: nil, scale: 1, offset: 0, freqs: theirs)
-            }
-            print("SEAMS \(label) layer 0 with mlx_lm's table: "
-                  + compared("q_rope", rotated(queries), try seam("layers.0.q_rope")) + ", "
-                  + compared("k_rope", rotated(keys), try seam("layers.0.k_rope")))
-            XCTAssertEqual(apart.count, 0, "\(label)'s rotary periods are mlx_lm's")
+            let steps = Self.floatSteps(a, b)
+            print("SEAMS \(label) rope table: at most \(steps) float32 steps from mlx_lm's")
+            XCTAssertLessThanOrEqual(steps, Self.rotaryTableSteps, "\(label)'s rotary periods are mlx_lm's, to its pow")
+            // Every seam after the table runs on mlx_lm's own table, where it is bit-exact.
+            Self.useRotaryTable(theirs, in: net)
         }
         var chained = net.model.embedTokens(tokens)
         for (index, block) in net.model.layers.enumerated() {
