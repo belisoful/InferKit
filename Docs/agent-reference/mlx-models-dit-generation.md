@@ -301,7 +301,11 @@ arithmetic as before.
   to its first two blocks, to diffusers' bf16 run of the same weights and to that run's float32 floor.
   Both sides load as `from_pretrained(torch_dtype=bfloat16)` does: the `_keep_in_fp32_modules` parameters
   (`time_embedder`, every `scale_shift_table`, `norm2`; `NFKMLXWanRelease.keepsFloat32`) stay float32 as
-  stored, and every other tensor converts to bf16. No figure is recorded yet.
+  stored, and every other tensor converts to bf16. Measured: the worst seam on the reference's input
+  (`blocks.0`) sits at 0.18 of its floor, and the velocity at 2.550e-05 from float32 against the
+  reference's own 2.433e-05. The Wan 2.1 entries offer the cast through `NFKModelLoadOptionPrecision`
+  `bfloat16`, which governs the `transformer` stage alone; the text encoder and the VAE load as their plan
+  gives them, and the memory estimate holds the VAE at float32 within that stage.
   `NFKMLXWanVideoVAENet` is the Wan 3D causal VAE (`AutoencoderKLWan`, the Wan 2.2 residual path),
   the last stage of the Wan pipeline and the hardest port of this batch. It also serves Qwen-Image 2.1
   under `NFKMLXWanVAEConfiguration.imageOnly`, which collapses every temporal kernel, pad, and stride

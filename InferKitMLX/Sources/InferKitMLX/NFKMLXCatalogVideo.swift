@@ -253,7 +253,7 @@ enum NFKMLXCatalogVideo {
             + wanAdditionalReleases
         return releases.map { release in
             let framesPerSecond: Double = release.name == "wan2.2-ti2v-5b" ? 24 : 16
-            return NFKMLXCatalogImage.model(release.name, release.displayName, family: "wan",
+            var entry = NFKMLXCatalogImage.model(release.name, release.displayName, family: "wan",
                                             summary: "A diffusion transformer that films a clip from a prompt.",
                                             tasks: [NFKModelTaskVideoGeneration],
                                             inputs: promptInputs,
@@ -266,6 +266,14 @@ enum NFKMLXCatalogVideo {
                                             source: NFKMLXCatalogImage.hubRelease(release.repository,
                                                                                   components: NFKMLXWanVideoGenerator.releaseComponents),
                                             residencies: NFKMLXCatalogImage.stagedResidencies)
+            // Wan 2.1 stores its transformer at float32, and testWan21TransformerInBFloat16MatchesTheBFloat16Reference
+            // holds its bfloat16 load to diffusers' bfloat16 run.
+            if release.name != "wan2.2-ti2v-5b" {
+                entry.load = .diffusionPipeline(widenedStages: ["text_encoder": NFKModelPrecisionFloat32],
+                                                precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionBFloat16],
+                                                precisionStage: "transformer")
+            }
+            return entry
         }
     }
 

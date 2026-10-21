@@ -976,7 +976,7 @@ memory model:
 | MADLAD-400 | `residency` (`automatic`, `resident`, `streamed`) and `precision` (`bfloat16`, `float32`). |
 | Gemma 3n | `precision`. |
 | Gemma 4, Granite 4.0-H, Qwen3-VL, Qwen3.8-Flash-Next, DeepSeek V4 | `residency` (`automatic`, `resident`, `paged`) on a mixture. A dense release declares none. |
-| FLUX.1, FLUX.2, Stable Diffusion 3, SANA, Z-Image, Qwen-Image, Wan, LTX-Video, MiniMax Music 3 | `residency` (`automatic`, `resident`, `staged`). |
+| FLUX.1, FLUX.2, Stable Diffusion 3, SANA, Z-Image, Qwen-Image, Wan, LTX-Video, MiniMax Music 3 | `residency` (`automatic`, `resident`, `staged`). Wan 2.1 adds `precision` (`checkpoint`, `bfloat16`) for its transformer stage alone. |
 | Stable Diffusion 1.5, 2.1, SDXL base 1.0, SDXL-Turbo, LCM Dreamshaper v7, and the LCM-LoRA, SDXL-Lightning, and Hyper-SD adapters merged into their bases | `precision`, set on the backend's `precision` property. |
 | Whisper | `precision`. |
 | SigLIP 2 | `precision` (`checkpoint`, `bfloat16`): the float32 releases convert to bfloat16 as they load. |

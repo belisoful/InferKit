@@ -249,6 +249,22 @@ final class NFKMLXCatalogMemoryTests: XCTestCase {
         }
     }
 
+    func testWan21OffersABFloat16TransformerThatHoldsLessAndWan22OffersNone() throws {
+        for identifier in ["wan", "wan2.1-t2v-14b"] {
+            let wan = try descriptor(identifier)
+            let option = try XCTUnwrap(wan.option(withKey: NFKModelLoadOptionPrecision), identifier)
+            XCTAssertEqual(option.choices.compactMap { $0.value as? String },
+                           [NFKModelPrecisionCheckpoint, NFKModelPrecisionBFloat16], identifier)
+            XCTAssertEqual(option.defaultValue as? String, NFKModelPrecisionCheckpoint, identifier)
+            XCTAssertEqual(wan.memoryModel?.stagePrecisions["text_encoder"], NFKModelPrecisionBFloat16, identifier)
+            XCTAssertNil(wan.memoryModel?.stagePrecisions["transformer"], "\(identifier): the option governs the transformer")
+            let half = try wan.estimatedMemory(forOptions: [NFKModelLoadOptionPrecision: NFKModelPrecisionBFloat16])
+            let stored = try wan.estimatedMemory(forOptions: nil)
+            XCTAssertLessThan(half.residentByteCount, stored.residentByteCount, identifier)
+        }
+        XCTAssertNil(try descriptor("wan2.2-ti2v-5b").option(withKey: NFKModelLoadOptionPrecision))
+    }
+
     func testEachDraftSharesTheFamilyAndVocabularyAndIsSmaller() throws {
         var drafting = 0
         for descriptor in descriptors {

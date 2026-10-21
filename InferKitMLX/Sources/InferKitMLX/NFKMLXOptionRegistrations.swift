@@ -286,8 +286,12 @@ enum NFKMLXOptionRegistrations {
     /// Wan, LTX-Video, and MiniMax Music 3.
     private static func registerVideoAndMusicGenerators() {
         let residency: Set<String> = [NFKModelLoadOptionResidency]
-        registerDirectoryModels(registryNames(families: ["wan"]), consumes: residency) { url, _, options in
-            let generator = try NFKMLXWanVideoGenerator.generator(directoryURL: url, residency: options.residency)
+        // The precision option converts Wan 2.1's float32 transformer to bfloat16 as it loads.
+        registerDirectoryModels(registryNames(families: ["wan"]), consumes: residency.union([NFKModelLoadOptionPrecision])) {
+            url, _, options in
+            let generator = try NFKMLXWanVideoGenerator.generator(
+                directoryURL: url, residency: options.residency,
+                transformerType: options.precisionName == NFKModelPrecisionBFloat16 ? .bfloat16 : nil)
             report(generator.holdsStagesResident, to: options)
             return generator.inferenceBackend()
         }

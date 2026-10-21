@@ -1346,6 +1346,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - SigLIP 2's registered factories and catalog entries take `NFKModelLoadOptionPrecision` `bfloat16`,
   which converts the float32 release to bfloat16 as it loads, half the memory. "As published" stays the
   default. `NFKMLXBFloat16ParityTests` holds the cast to transformers' bfloat16 run of the same weights.
+- Wan 2.1 T2V 1.3B and 14B take `bfloat16` for their float32 transformer, about half its 5.7 GB and 53.7 GB.
+  The option governs the transformer stage alone, and the memory estimate keeps the VAE at float32 within
+  it. The transformer loads as diffusers loads it at bfloat16, with the time embedder, the modulation
+  tables, and `norm2` kept float32. The released 1.3B transformer, cut to two blocks, is held to diffusers'
+  bfloat16 run: the worst seam at 0.18 of its floor, the velocity at 2.550e-05 against the reference's
+  2.433e-05.
 
 #### The quantization ladder and the published-precision default
 
