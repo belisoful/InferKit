@@ -442,8 +442,16 @@ public final class NFKMLXSigLIP2: NSObject {
     /// - Since: InferKit 0.3.1
     @objc(backendWithVariant:weightsURL:error:)
     public static func backend(variant: NFKMLXSigLIP2Variant, weightsURL: URL?) throws -> any NFKInferenceBackend {
+        try backend(variant: variant, weightsURL: weightsURL, castingTo: nil)
+    }
+
+    /// The local factory at a chosen size, its floating weights converted to `dtype` as they load, or held
+    /// as stored (float32) when `dtype` is nil. `NFKMLXBFloat16ParityTests` holds the bfloat16 cast to the
+    /// reference's own bfloat16 run.
+    static func backend(variant: NFKMLXSigLIP2Variant, weightsURL: URL?, castingTo dtype: DType?) throws -> any NFKInferenceBackend {
         let spec = specs(for: variant)
-        return NFKMLXSigLIP2Backend(net: try loadedNet(spec.configuration, weightsURL: weightsURL), identifier: spec.name)
+        return NFKMLXSigLIP2Backend(net: try loadedNet(spec.configuration, weightsURL: weightsURL, castingTo: dtype),
+                                    identifier: spec.name)
     }
 
     /// The download factory at a chosen size.
@@ -517,10 +525,11 @@ public final class NFKMLXSigLIP2: NSObject {
         NFKMLXSigLIP2(net: try loadedNet(configuration, weightsURL: weightsURL))
     }
 
-    private static func loadedNet(_ configuration: NFKMLXSigLIP2Configuration, weightsURL: URL?) throws -> NFKMLXSigLIP2Net {
+    private static func loadedNet(_ configuration: NFKMLXSigLIP2Configuration, weightsURL: URL?,
+                                  castingTo dtype: DType? = nil) throws -> NFKMLXSigLIP2Net {
         let net = makeNet(configuration)
         if let weightsURL {
-            try loadWeights(into: net, from: weightsURL)
+            try loadWeights(into: net, from: weightsURL, castingTo: dtype)
         }
         return net
     }
@@ -545,24 +554,30 @@ public final class NFKMLXSigLIP2: NSObject {
     }
 
     /// Registers every released size with `NFKMLXModelRegistry`, each under its release name
-    /// (`siglip2-base-patch16-224`, `siglip2-so400m-patch14-384`, …).
+    /// (`siglip2-base-patch16-224`, `siglip2-so400m-patch14-384`, …). `NFKModelLoadOptionPrecision`
+    /// `bfloat16` converts the float32 release to bfloat16 as it loads; any other value keeps it as stored.
     @objc public static func register() {
         for variant in allVariants {
-            NFKMLXModelRegistry.register(name: specs(for: variant).name) { weightsURL in
-                try backend(variant: variant, weightsURL: weightsURL)
+            NFKMLXModelRegistry.register(name: specs(for: variant).name, consumes: [NFKModelLoadOptionPrecision]) {
+                weightsURL, options in
+                try backend(variant: variant, weightsURL: weightsURL,
+                            castingTo: options.precisionName == NFKModelPrecisionBFloat16 ? .bfloat16 : nil)
             }
         }
     }
 
     /// Loads a checkpoint, transposing 4-D Conv2d weights `[out, in, kH, kW]` → MLX's `[out, kH, kW, in]`
     /// and mapping the reference's `vision_model.`/`text_model.` prefixes onto the module's `vision`/`text`.
-    /// Linear and embedding weights and the pooling head's fused projection are 2-D and pass through.
-    static func loadWeights(into net: NFKMLXSigLIP2Net, from url: URL) throws {
+    /// Linear and embedding weights and the pooling head's fused projection are 2-D and pass through. A
+    /// `dtype` converts every floating tensor to it.
+    static func loadWeights(into net: NFKMLXSigLIP2Net, from url: URL, castingTo dtype: DType? = nil) throws {
         let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let transpose = checkpoint.needsConvTranspose
         let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
             let name = remapReferenceKey(key)
-            return (transpose && value.ndim == 4) ? (name, value.transposed(0, 2, 3, 1)) : (name, value)
+            let oriented = transpose && value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value
+            guard let dtype, oriented.dtype.isFloatingPoint else { return (name, oriented) }
+            return (name, oriented.asType(dtype))
         }
         try NFKMLXWeights.apply(mapped, to: net)
     }

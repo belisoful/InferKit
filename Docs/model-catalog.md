@@ -979,6 +979,7 @@ memory model:
 | FLUX.1, FLUX.2, Stable Diffusion 3, SANA, Z-Image, Qwen-Image, Wan, LTX-Video, MiniMax Music 3 | `residency` (`automatic`, `resident`, `staged`). |
 | Stable Diffusion 1.5, 2.1, SDXL base 1.0, SDXL-Turbo, LCM Dreamshaper v7, and the LCM-LoRA, SDXL-Lightning, and Hyper-SD adapters merged into their bases | `precision`, set on the backend's `precision` property. |
 | Whisper | `precision`. |
+| SigLIP 2 | `precision` (`checkpoint`, `bfloat16`): the float32 releases convert to bfloat16 as they load. |
 
 `residency` defaults to `automatic`, `precision` to the precision the factory loads at without it,
 `quantizationBits`, `cacheBits`, and `draftBits` to 0 (none, 8, 6, 5, 4, 3, or 2), `cacheGroupSize` to 64

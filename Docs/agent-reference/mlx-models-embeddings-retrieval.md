@@ -77,7 +77,11 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   1536, which is what `projectionSize` carries), with `NFKMLXSigLIP2Variant` (15 cases) selecting one
   from Objective-C and `register()` naming each under its release name. The fourteen beyond the
   measured base-224 are held to the module by shape against their released headers (408 / 792 / 888 /
-  1096 tensors per family, 0 missing, 0 mismatched, 0 unaccounted).
+  1096 tensors per family, 0 missing, 0 mismatched, 0 unaccounted). The releases are float32; the
+  registered factories take `NFKModelLoadOptionPrecision` `bfloat16`, which converts each floating
+  tensor as `loadWeights(into:from:castingTo:)` reads it, and the catalog offers it beside "As
+  published" (the default). `testSigLIP2InBFloat16MatchesTheBFloat16Reference` holds the base-224 cast
+  to transformers' bfloat16 run of the same weights.
   **Customization is a PROBE and it ships** (`NFKMLXSigLIP2Probe.swift`): the shared linear probe,
   `NFKMLXEmbeddingProbe`, over the frozen attention-pooled image embedding. `model(variant:weightsURL:)`
   (`@objc modelWithVariant:weightsURL:error:`) builds the model object, `imageEmbeddings(for:)` encodes a

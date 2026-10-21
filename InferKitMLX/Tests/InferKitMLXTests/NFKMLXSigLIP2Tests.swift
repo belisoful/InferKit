@@ -33,6 +33,29 @@ final class NFKMLXSigLIP2Tests: XCTestCase {
         }
     }
 
+    // The bfloat16 choice converts every floating weight as it loads, to the bits a load followed by a cast
+    // gives, which is what testSigLIP2InBFloat16MatchesTheBFloat16Reference holds to the reference.
+    func testTheBFloat16CastConvertsEveryFloatingWeightAsItLoads() throws {
+        try requireMLXRuntime()
+        MLXRandom.seed(3)
+        let source = NFKMLXSigLIP2.makeNet(.tiny)
+        eval(source)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("siglip2-cast-\(UUID().uuidString).safetensors")
+        addTeardownBlock { try? FileManager.default.removeItem(at: url) }
+        try NFKMLXWeights.save(source, to: url)
+
+        let cast = NFKMLXSigLIP2.makeNet(.tiny)
+        try NFKMLXSigLIP2.loadWeights(into: cast, from: url, castingTo: .bfloat16)
+        let expected = Dictionary(source.parameters().flattened(), uniquingKeysWith: { first, _ in first })
+        let loaded = cast.parameters().flattened()
+        XCTAssertEqual(loaded.count, expected.count)
+        for (name, value) in loaded {
+            let original = try XCTUnwrap(expected[name], name)
+            XCTAssertEqual(value.dtype, original.dtype.isFloatingPoint ? .bfloat16 : original.dtype, name)
+            XCTAssertTrue(arrayEqual(value, original.dtype.isFloatingPoint ? original.asType(.bfloat16) : original).item(Bool.self), name)
+        }
+    }
+
     func testImageEmbeddingIsUnitLength() throws {
         try requireMLXRuntime()
         let c = NFKMLXSigLIP2Configuration.tiny

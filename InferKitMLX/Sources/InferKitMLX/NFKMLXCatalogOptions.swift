@@ -198,6 +198,9 @@ struct NFKMLXLoadProfile {
         "qwen4-exp": [.pagedMixture()],
         "deepseek-v4": [.pagedMixture()],
         "whisper": [.imageModule()],
+        // The float32 releases convert to bfloat16 where asked, held to the reference's bfloat16 run.
+        "siglip2": [.imageModule(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionBFloat16],
+                                 tasks: [NFKModelTaskImageEmbedding])],
         "stable-diffusion": [.imageModule(property: "precision", halvesSteps: true, tasks: [NFKModelTaskTextToImage])],
         "flux": [.diffusionPipeline()],
         // The text encoder and umT5 widen to float32 where the budget holds them.
@@ -311,7 +314,7 @@ extension NFKMLXLoadProfile {
         let titles = [NFKModelPrecisionCheckpoint: "As published", NFKModelPrecisionFloat32: "Float32",
                       NFKModelPrecisionFloat16: "Float16", NFKModelPrecisionBFloat16: "BFloat16"]
         return Self.loadOption(NFKModelLoadOptionPrecision, kind: NFKModelOptionKindChoice, title: "Precision",
-                               help: "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
+                               help: "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
                                defaultValue: defaultPrecision,
                                choices: precisions.map { (value: $0 as Any, title: titles[$0] ?? $0) },
                                property: precisionProperty)

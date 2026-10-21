@@ -1341,6 +1341,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### A bfloat16 choice for float32 releases held to a bfloat16 reference
+
+- SigLIP 2's registered factories and catalog entries take `NFKModelLoadOptionPrecision` `bfloat16`,
+  which converts the float32 release to bfloat16 as it loads, half the memory. "As published" stays the
+  default. `NFKMLXBFloat16ParityTests` holds the cast to transformers' bfloat16 run of the same weights.
+
 #### The quantization ladder and the published-precision default
 
 - The weight, cache, and draft quantization options offer 8, 6, 5, 4, 3, and 2 bits beside none, and the
