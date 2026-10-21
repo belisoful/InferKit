@@ -21,7 +21,7 @@ import MLXNN
 public final class NFKMLXGenerationParameterKey: NSObject {
     /// The most cache positions to retain, as an `NSNumber` integer. See ``NFKMLXGenerationOptions/contextWindow``.
     @objc public static let contextWindow = "NFKMLXParameterContextWindow"
-    /// The bit width to store the key-value cache at (`NSNumber`, 4 or 8). Setting it enables cache
+    /// The bit width to store the key-value cache at (`NSNumber`, 2 to 8). Setting it enables cache
     /// quantization; see ``NFKMLXGenerationOptions/cacheQuantization``.
     @objc public static let cacheQuantizationBits = "NFKMLXParameterCacheQuantizationBits"
     /// The cache quantization group size (`NSNumber`, default 64), which must divide the head dimension.
@@ -1447,20 +1447,21 @@ public final class NFKMLXLanguage: NSObject {
                                      options: options, draft: draft, releaseURL: directoryURL)
     }
 
-    /// Builds from a release directory as `loadOptions` say: the weights at its precision (else float32, or
-    /// as stored for a release whose experts are packed), its routed experts held as its residency plans
+    /// Builds from a release directory as `loadOptions` say: the weights at its precision (else as
+    /// published, the precision each registered family is held to its reference at), its routed experts held as its residency plans
     /// them, its eligible layers quantized to its quantization bits, its draft beside it (quantized to the
     /// draft bits, else at the model's precision), and its context length and cache settings as the
     /// backend's generation defaults. ``NFKMLXOptionRegistrations`` registers the dense and mixture releases
     /// with it. Introduced in InferKit 0.4.0.
     static func backend(directoryURL: URL, loadOptions: NFKMLXLoadOptions) throws -> any NFKInferenceBackend {
-        let (net, tokenizer) = try loadedReleaseWithTokenizer(at: directoryURL, precision: loadOptions.precision,
+        let precision = loadOptions.precision ?? .checkpoint
+        let (net, tokenizer) = try loadedReleaseWithTokenizer(at: directoryURL, precision: precision,
                                                               residency: loadOptions.residency)
         try loadOptions.applyWeightQuantization(to: net)
         var draft: NFKMLXLanguageNet?
         if let draftURL = loadOptions.draftURL {
             // A draft quantized at load reads the release as stored; widening it first only raises the peak.
-            let draftPrecision = loadOptions.draftBits == nil ? loadOptions.precision : .checkpoint
+            let draftPrecision = loadOptions.draftBits == nil ? precision : .checkpoint
             let (drafter, _) = try loadedRelease(at: draftURL, precision: draftPrecision)
             try verifyDraft(drafter, sharesVocabularyWith: net)
             try NFKMLXLoadOptions([NFKModelLoadOptionQuantizationBits: loadOptions.draftBits ?? 0])

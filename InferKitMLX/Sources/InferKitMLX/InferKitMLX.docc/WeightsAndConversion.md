@@ -127,8 +127,9 @@ and rebuilding the embedded tokenizer.
 A language or diffusion release is a directory rather than one file — `config.json`, the tokenizer,
 and weights split across shards named by `model.safetensors.index.json`. The `backend(directoryURL:)`
 factories read the whole tree, and ``NFKMLXWeightPrecision`` chooses whether a bf16 release loads at
-the precision it ships in or at float32; the parity records were measured at float32, which costs
-twice the memory. Runtime MLX quantization packs a model's linear layers to 4 or 8 bits, and a saved
+the precision it ships in or at float32. Float32 costs twice the memory; a catalog build loads a
+family held to its bfloat16 reference as published by default. Runtime MLX quantization packs a model's
+linear layers to 2, 3, 4, 5, 6, or 8 bits, and a saved
 quantized checkpoint records its bit width in metadata so the loaders rebuild the packed structure
 before applying it. `NFKMLXMusic3.quantizeRelease(at:to:)` writes a quantized copy of a release in
 the release's own layout.

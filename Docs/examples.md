@@ -2951,7 +2951,7 @@ NFKMLXReloadableBackend *depth =
 
 The model catalog builds any MLX model from its identifier and the load options a user chose, such as
 the residency, the precision, a draft model, the context length, and a runtime weight quantization of
-the language decoders to 8 or 4 bits. A quantized decoder holds less memory, and its output approximates
+the language decoders to 2 to 8 bits. A quantized decoder holds less memory, and its output approximates
 the published weights. The catalog checks the options against the model's declared choices and the
 machine before it builds. The backend that comes back unloads and loads again with the same options.
 `NFKInferenceLoadOptionValues` reports them as requested, and `modelInfo` names the residency the load

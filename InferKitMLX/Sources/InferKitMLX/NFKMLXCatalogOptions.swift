@@ -99,7 +99,7 @@ struct NFKMLXLoadProfile {
     /// The backend property the precision option sets by key-value coding, or nil for a factory
     /// argument.
     var precisionProperty: String? = nil
-    /// True where the factory packs the decoder's weights to 8 or 4 bits at load.
+    /// True where the factory packs the decoder's weights to one of ``bitWidths`` at load.
     var quantizes = false
     /// The default context length of a decoder with a key-value cache, nil for a model without one.
     var contextLength: Int? = nil
@@ -119,9 +119,10 @@ struct NFKMLXLoadProfile {
 
     /// A text decoder: its precision, the runtime weight quantization where `quantizes`, the key-value
     /// cache defaults, and a draft model where `drafts`. A mixture that pages its routed experts takes
-    /// the residency option from its entry's residencies.
+    /// the residency option from its entry's residencies. The published precision is the default for a
+    /// family whose decoder is held to its bfloat16 reference; float32 is the default for the rest.
     static func decoder(precisions: [String] = [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
-                        defaultPrecision: String = NFKModelPrecisionFloat32, quantizes: Bool = false,
+                        defaultPrecision: String = NFKModelPrecisionCheckpoint, quantizes: Bool = false,
                         contextLength: Int? = 4096, keyValue: NFKMLXKeyValueRule? = .dense, drafts: Bool = false,
                         tasks: Set<String> = [NFKModelTaskTextGeneration]) -> NFKMLXLoadProfile {
         NFKMLXLoadProfile(tasks: tasks, precisions: precisions, defaultPrecision: defaultPrecision, quantizes: quantizes,
@@ -250,7 +251,7 @@ extension NFKMLXLoadProfile {
         }
         if quantizes {
             declaration.options.append(Self.bitsOption(NFKModelLoadOptionQuantizationBits, title: "Weight quantization",
-                                                       help: "Packs the decoder's weights to 8 or 4 bits in groups of 64 as it loads. 8-bit and 4-bit are approximations of the published weights."))
+                                                       help: "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision."))
         }
         let context = contextLength != nil
         if let contextLength {
@@ -310,16 +311,19 @@ extension NFKMLXLoadProfile {
         let titles = [NFKModelPrecisionCheckpoint: "As published", NFKModelPrecisionFloat32: "Float32",
                       NFKModelPrecisionFloat16: "Float16", NFKModelPrecisionBFloat16: "BFloat16"]
         return Self.loadOption(NFKModelLoadOptionPrecision, kind: NFKModelOptionKindChoice, title: "Precision",
-                               help: "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+                               help: "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
                                defaultValue: defaultPrecision,
                                choices: precisions.map { (value: $0 as Any, title: titles[$0] ?? $0) },
                                property: precisionProperty)
     }
 
-    /// A bit-width choice of none, 8, and 4, none the default.
+    /// The widths a weight, cache, or draft quantization packs to, widest first.
+    static let bitWidths = [8, 6, 5, 4, 3, 2]
+
+    /// A bit-width choice of none and each of ``bitWidths``, none the default.
     private static func bitsOption(_ key: String, title: String, help: String, group: String = loadGroup) -> NFKModelOption {
         loadOption(key, kind: NFKModelOptionKindChoice, title: title, help: help, defaultValue: 0,
-                   choices: [(0, "None"), (8, "8-bit"), (4, "4-bit")], group: group)
+                   choices: [(0, "None")] + bitWidths.map { ($0, "\($0)-bit") }, group: group)
     }
 
     /// The context length and the key-value cache's quantization, which a request may override.
@@ -331,7 +335,7 @@ extension NFKMLXLoadProfile {
                        defaultValue: defaultLength, minimum: 256, maximum: maximum.map(NSNumber.init(value:)), step: 256,
                        group: cacheGroup),
             bitsOption(NFKModelLoadOptionCacheBits, title: "Cache quantization",
-                       help: "Stores the key-value cache quantized to 8 or 4 bits by default. A request may override it.",
+                       help: "Stores the key-value cache quantized to 2 to 8 bits by default. A request may override it.",
                        group: cacheGroup),
             loadOption(NFKModelLoadOptionCacheGroupSize, kind: NFKModelOptionKindChoice, title: "Cache group size",
                        help: "The elements that share one scale and bias in a quantized key-value cache. A request may override it.",
@@ -346,7 +350,7 @@ extension NFKMLXLoadProfile {
                        help: "A smaller model of the same family and vocabulary that proposes tokens for speculative decoding. None decodes without one.",
                        defaultValue: nil, choices: drafts.map { (value: $0.identifier as Any, title: $0.title) }),
             bitsOption(NFKModelLoadOptionDraftBits, title: "Draft quantization",
-                       help: "Packs the draft model's weights to 8 or 4 bits as it loads. 8-bit and 4-bit are approximations of the published weights."),
+                       help: "Packs the draft model's weights to 2 to 8 bits as it loads. Every width approximates the published weights."),
         ]
     }
 

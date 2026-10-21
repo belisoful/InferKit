@@ -17,7 +17,7 @@ import InferKit
 /// @discussion Each family's factory reads the `NFKModelLoadOption*` keys it lists as consumed, through
 /// ``NFKMLXLoadOptions``, and keeps the family's own default for a key the options leave out:
 /// - the dense and mixture decoders (``NFKMLXLanguage``): residency, precision, a runtime weight
-///   quantization of 8 or 4 bits at group size 64, a draft model and its bits, and the context length and
+///   quantization of 2 to 8 bits at group size 64, a draft model and its bits, and the context length and
 ///   cache settings as generation defaults;
 /// - Gemma 3 and TranslateGemma: residency, precision, a draft model and its bits;
 /// - Gemma 3n, Qwen3.5, Whisper, and Stable Diffusion (each release, and each released adapter merged into
@@ -134,7 +134,7 @@ enum NFKMLXOptionRegistrations {
         }
         registerDirectoryModels(registryNames(families: ["gemma3n"]), consumes: [NFKModelLoadOptionPrecision]) {
             url, _, options in
-            try NFKMLXGemma3n.backend(directoryURL: url, precision: options.precision ?? .float32)
+            try NFKMLXGemma3n.backend(directoryURL: url, precision: options.precision ?? .checkpoint)
         }
         let gemma4 = registryNames(families: ["gemma4"]) { !$0.tasks.contains(NFKModelTaskTranscription) }
         registerDirectoryModels(gemma4, consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision]) {

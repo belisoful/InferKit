@@ -312,7 +312,7 @@ and the `NFKMLXGenerationParameterKey` request keys in Objective-C, the same set
 
 - **`contextWindow`** bounds the key-value cache by dropping the oldest positions. Exact while the
   conversation fits inside the window; an approximation past it, so off by default.
-- **`cacheQuantization`** stores the cache at 8 or 4 bits instead of a float per element, with the keys
+- **`cacheQuantization`** stores the cache at 2 to 8 bits instead of a float per element, with the keys
   grouped per channel along the sequence (the layout that keeps their precision; `keyAxis`). 8-bit was
   measured to track the full-precision logits at cosine above 0.99.
 - **`prefillChunkSize`** runs a long prompt through the cache in slices, bounding the attention peak.

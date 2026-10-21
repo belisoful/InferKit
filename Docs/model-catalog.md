@@ -622,8 +622,13 @@ model's identifier, or `model@preset`, and the option values an app collected:
    - nothing fits → the description adds the smallest combination's need:
      `… against a 6.8 GiB budget. No combination of options fits: the smallest needs 9.0 GiB plus a 3.4 GiB reserve, against a 6.8 GiB budget.`
 5. The variant's files are located: the given URL, else the catalog's `locator`. The default locator,
-   `hubCacheLocator`, finds a Hugging Face source in `NFKHFHub`'s default cache: the snapshot directory
-   of a directory layout, the first weights file of a file layout. A download store sets its own.
+   `hubCacheLocator`, finds a source in `NFKHFHub`'s default cache: a Hugging Face source at the
+   snapshot directory of a directory layout or the first weights file of a file layout, a URL source at
+   its downloaded file. It finds a source only when every file it requires is present
+   (`downloadStatusForModelSource:` reports it complete). A host that downloads into its own cache sets
+   `hubCacheLocatorForCacheDirectoryURL:`, and a download store sets its own. A variant whose source
+   downloads files the locator does not find is refused (`NFKModelCatalogErrorNotDownloaded`); a build
+   never runs a model on weights it did not read.
 6. A builder builds the backend from an `NFKModelBuildRequest`: the descriptor's provider class when it
    implements `+backendForBuildRequest:error:`, else the `NFKModelBackendBuilding` registered for the
    engine (`+registerBackendBuilder:forEngine:`), else the descriptor's `providerClass` through
@@ -912,6 +917,7 @@ Every failure is in `NFKModelCatalogErrorDomain`.
 | `NFKModelCatalogErrorNoBuilder` | Nothing builds the model's engine: `No builder builds models of the engine "x".` |
 | `NFKModelCatalogErrorUnavailable` | This machine does not meet the model's requirements, or a chosen choice's: `Example Chat cannot run on this machine. This needs Apple silicon.` |
 | `NFKModelCatalogErrorDoesNotFit` | The estimate does not fit the budget, or the residency planner refuses the residency. `NFKModelMemoryEstimateKey` holds the estimate where there is one; a build's refusal adds `NFKModelMemoryFittingOptionsKey` and `NFKModelMemoryFittingEstimateKey` where another combination fits. |
+| `NFKModelCatalogErrorNotDownloaded` | The variant's source downloads files, the locator does not find all of them, and the build was given no location: `Qwen3 0.6B's files are not downloaded. Download them with -[NFKHFHub downloadModelSource:progressHandler:completionHandler:], or pass their location.` |
 
 ## The MLX catalog's measurements
 
@@ -970,9 +976,13 @@ memory model:
 | Whisper | `precision`. |
 
 `residency` defaults to `automatic`, `precision` to the precision the factory loads at without it,
-`quantizationBits`, `cacheBits`, and `draftBits` to 0 (none, 8, or 4), `cacheGroupSize` to 64 (32, 64, or
-128), and `contextLength` to 4096, at most the release's `max_position_embeddings`. An 8-bit or 4-bit
-weight quantization is an approximation of the published weights, and its help text says so.
+`quantizationBits`, `cacheBits`, and `draftBits` to 0 (none, 8, 6, 5, 4, 3, or 2), `cacheGroupSize` to 64
+(32, 64, or 128), and `contextLength` to 4096, at most the release's `max_position_embeddings`. A weight
+quantization at any width is an approximation of the published weights, and its help text says so.
+
+A decoder's `precision` defaults to `checkpoint` where the family is held to its bfloat16 reference
+(Qwen3, Mistral, the Qwen3, Qwen1.5, and Mixtral mixtures, and Gemma 3n), and to `float32` where it is
+not (Gemma 3's text decoder). The `precise` preset loads such a family at float32.
 
 A variant's memory facts carry only what its loader acts on:
 

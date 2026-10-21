@@ -190,6 +190,7 @@ extension NFKMLXLoadPlan {
     /// The models whose plan differs from their family's.
     private static let modelPlans: [String: NFKMLXLoadPlan] = [
         NFKMLXTranslateGemma.modelName: .stored,
+        NFKMLXQwen3Embedding.modelName: .float32,
         NFKMLXFluxControlNetGenerator.modelName: staged(textEncoders(clip: .stored, t5: .float32), denoiser: [:],
                                                         controlNet: .stored, vae: .stored),
         NFKMLXSD3ControlNetGenerator.modelName: sd3(controlNet: .stored),
@@ -198,10 +199,9 @@ extension NFKMLXLoadPlan {
     /// The families' plans. A family missing here loads its weights as stored.
     private static let familyPlans: [String: NFKMLXLoadPlan] = [
         "birefnet": .float32, "cosmos-tokenizer": .float32, "deberta-v3": .float32, "florence-2": .float32,
-        "gemma3": .float32, "gemma3n": .float32, "gemma4": .float32, "laya": .float32, "m2m100": .float32,
-        "marian": .float32, "mistral": .float32, "mixtral": .float32, "modernbert": .float32, "nllb": .float32,
-        "pixtral": .float32, "qwen2-moe": .float32, "qwen3": .float32, "qwen3-moe": .float32,
-        "qwen3-vl": .float32, "smollm2": .float32, "smolvlm": .float32, "trocr": .float32,
+        "gemma3": .float32, "gemma4": .float32, "laya": .float32, "m2m100": .float32, "marian": .float32,
+        "modernbert": .float32, "nllb": .float32, "pixtral": .float32, "qwen3-vl": .float32, "smollm2": .float32,
+        "smolvlm": .float32, "trocr": .float32,
         "deepseek-v4": .bfloat16, "madlad": .bfloat16, "sa2va": .bfloat16,
         // The decoder loads as stored and the image and speech towers at float32, from the same shards.
         "phi-4-multimodal": .unknown,
@@ -264,9 +264,11 @@ extension NFKMLXCatalogEntry {
         measured { NFKMLXCatalogMeasurements.variant(model: identifier, variant: $0.identifier) }
     }
 
-    /// The entry measured as ``measured()`` describes, with each variant's measurement from `measurement`.
-    func measured(by measurement: (NFKModelVariant) -> NFKMLXMeasuredVariant?) -> NFKMLXCatalogEntry {
-        let plan = NFKMLXLoadPlan.plan(for: self)
+    /// The entry measured as ``measured()`` describes, with each variant's measurement from `measurement`,
+    /// loaded as `plan` stages it, else as its family's load plan does.
+    func measured(by measurement: (NFKModelVariant) -> NFKMLXMeasuredVariant?,
+                  plan planOverride: NFKMLXLoadPlan? = nil) -> NFKMLXCatalogEntry {
+        let plan = planOverride ?? NFKMLXLoadPlan.plan(for: self)
         let profile = NFKMLXLoadProfile.profile(for: self)
         var entry = self
         var stagePrecisions = [String: String]()

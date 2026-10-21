@@ -67,7 +67,7 @@ limits.
 the load options a user chose, through ``NFKMLXModelDescriptors/backend(for:)``. The registry takes the
 same `NFKModelLoadOption*` keys in ``NFKMLXModelRegistry/backend(named:weightsURL:options:)``, and a Swift
 factory reads them through ``NFKMLXLoadOptions``: the residency, the precision, a runtime weight
-quantization of the language decoders to 8 or 4 bits, the context length and cache settings, and a draft
+quantization of the language decoders to 2 to 8 bits, the context length and cache settings, and a draft
 model. A quantized decoder holds less memory and approximates the published weights. A backend built
 from a location unloads and builds again with the same options, and its `loadOptionValues` reports them.
 

@@ -210,8 +210,28 @@ final class NFKMLXCatalogMemoryTests: XCTestCase {
         let option = try XCTUnwrap(try descriptor("qwen3-4b").option(withKey: NFKModelLoadOptionQuantizationBits))
         XCTAssertEqual(option.stage, NFKModelOptionStageLoad)
         XCTAssertEqual(option.defaultValue as? Int, 0)
-        XCTAssertEqual(option.choices.map { $0.value as? Int }, [0, 8, 4])
-        XCTAssertTrue(option.help?.contains("approximations of the published weights") == true)
+        XCTAssertEqual(option.choices.map { $0.value as? Int }, [0, 8, 6, 5, 4, 3, 2])
+        XCTAssertTrue(option.help?.contains("approximates the published weights") == true)
+        for key in [NFKModelLoadOptionCacheBits, NFKModelLoadOptionDraftBits] {
+            let widths = try XCTUnwrap(try descriptor("qwen3-4b").option(withKey: key)).choices.map { $0.value as? Int }
+            XCTAssertEqual(widths, [0, 8, 6, 5, 4, 3, 2], key)
+        }
+    }
+
+    func testADecoderHeldToItsBFloat16ReferenceLoadsAsPublished() throws {
+        for identifier in ["qwen3-4b", "qwen3-30b-a3b", "gemma-3n-e2b-it"] {
+            let decoder = try descriptor(identifier)
+            let precision = try XCTUnwrap(decoder.option(withKey: NFKModelLoadOptionPrecision), identifier)
+            XCTAssertEqual(precision.defaultValue as? String, NFKModelPrecisionCheckpoint, identifier)
+            let precise = try XCTUnwrap(decoder.preset(withIdentifier: "precise"), identifier)
+            XCTAssertEqual(precise.loadOptions[NFKModelLoadOptionPrecision] as? String, NFKModelPrecisionFloat32)
+            XCTAssertGreaterThan(try decoder.estimatedMemory(forOptions: precise.loadOptions).residentByteCount,
+                                 try decoder.estimatedMemory(forOptions: nil).residentByteCount, identifier)
+        }
+        let gemma3 = try descriptor("gemma-3-1b-it")
+        XCTAssertEqual(gemma3.option(withKey: NFKModelLoadOptionPrecision)?.defaultValue as? String,
+                       NFKModelPrecisionFloat32, "Gemma 3's text decoder has no bfloat16 record")
+        XCTAssertNil(gemma3.preset(withIdentifier: "precise"))
     }
 
     func testEachDraftSharesTheFamilyAndVocabularyAndIsSmaller() throws {

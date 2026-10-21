@@ -688,6 +688,43 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         XCTAssertLessThan(worstDifference(afterRollback, expected), 2e-3)
     }
 
+    // Every width the catalog offers packs a decoder's weights and its cache: the reconstruction tightens
+    // with each bit, and a decoder quantized at each width decodes 70 positions through a cache packed at
+    // the same width, two groups of 32 keys per channel and a residual.
+    func testEveryCatalogBitWidthPacksTheWeightsAndTheCache() throws {
+        try requireMLXRuntime()
+        let widths = NFKMLXLoadProfile.bitWidths
+        MLXRandom.seed(5)
+        let weight = MLXRandom.normal([64, 256])
+        let errors = widths.map { bits -> Float in
+            let (packed, scales, biases) = quantized(weight, groupSize: 64, bits: bits)
+            let restored = dequantized(packed, scales: scales, biases: biases, groupSize: 64, bits: bits)
+            return abs(restored - weight).mean().item(Float.self)
+        }
+        XCTAssertEqual(errors, errors.sorted(), "each narrower width reconstructs further from the weights: \(errors)")
+        XCTAssertEqual(Set(errors).count, widths.count)
+
+        let prompt = (0 ..< 70).map { Int32(($0 * 7 + 3) % 512) }
+        MLXRandom.seed(9)
+        let reference = wideHeadNet()
+        let float = stepped(reference, prompt, cache: NFKMLXKeyValueCache(layerCount: reference.configuration.layerCount))
+        var cosines = [Double]()
+        for bits in widths {
+            MLXRandom.seed(9)
+            let net = wideHeadNet()
+            try NFKMLXLoadOptions([NFKModelLoadOptionQuantizationBits: bits]).applyWeightQuantization(to: net)
+            let packed = net.leafModules().flattened().compactMap { $0.1 as? QuantizedLinear }
+            XCTAssertFalse(packed.isEmpty)
+            XCTAssertTrue(packed.allSatisfy { $0.bits == bits }, "\(bits)-bit")
+            let cache = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount,
+                                            quantization: .init(bits: bits, groupSize: 32))
+            let logits = stepped(net, prompt, cache: cache)
+            XCTAssertTrue(logits.allSatisfy(\.isFinite), "\(bits)-bit")
+            cosines.append(cosine(logits, float))
+        }
+        XCTAssertGreaterThan(cosines[0], cosines[cosines.count - 1], "8 bits track the float decoder closer than 2: \(cosines)")
+    }
+
     // MARK: Keys grouped along the sequence
 
     /// Eight bits, groups of 32 positions (the smallest MLX packs) — small enough that a short prompt

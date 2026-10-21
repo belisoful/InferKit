@@ -10899,7 +10899,7 @@
           ],
           "default" : "float32",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -11168,7 +11168,7 @@
           ],
           "default" : "float32",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -11437,7 +11437,7 @@
           ],
           "default" : "float32",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -11707,7 +11707,7 @@
           ],
           "default" : "float32",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -11976,7 +11976,7 @@
           ],
           "default" : "float32",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -12202,9 +12202,9 @@
               "value" : "float32"
             }
           ],
-          "default" : "float32",
+          "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -12229,6 +12229,17 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
         }
       ],
       "registryName" : "gemma-3n-e2b-it",
@@ -12258,7 +12269,7 @@
           "isDefault" : true,
           "measurementNote" : "tensor headers unread: model-00001-of-00003.safetensors (HTTP 401), model-00002-of-00003.safetensors (HTTP 401), model-00003-of-00003.safetensors (HTTP 401)",
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
@@ -12274,7 +12285,6 @@
           "peakBytes" : 10879085840,
           "registryName" : "gemma-3n-e2b-it",
           "residentBytes" : 10879085840,
-          "residentEstimate" : "stored-dtype",
           "source" : {
             "files" : [
               {
@@ -12419,9 +12429,9 @@
               "value" : "float32"
             }
           ],
-          "default" : "float32",
+          "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -12446,6 +12456,17 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
         }
       ],
       "registryName" : "gemma-3n-e4b-it",
@@ -12475,7 +12496,7 @@
           "isDefault" : true,
           "measurementNote" : "tensor headers unread: model-00001-of-00004.safetensors (HTTP 401), model-00002-of-00004.safetensors (HTTP 401), model-00003-of-00004.safetensors (HTTP 401) and 1 more",
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
@@ -12491,7 +12512,6 @@
           "peakBytes" : 15700181712,
           "registryName" : "gemma-3n-e4b-it",
           "residentBytes" : 15700181712,
-          "residentEstimate" : "stored-dtype",
           "source" : {
             "files" : [
               {
@@ -14219,12 +14239,28 @@
         {
           "choices" : [
             {
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
               "title" : "4-bit",
               "value" : 4
             },
             {
-              "title" : "8-bit",
-              "value" : 8
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "group" : "Cache",
@@ -14473,16 +14509,48 @@
             },
             {
               "memory" : {
+                "peakBytes" : 12515794560,
+                "residentBytes" : 12515794560
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12363500160,
+                "residentBytes" : 12363500160
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
                 "peakBytes" : 12211205760,
                 "residentBytes" : 12211205760
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12058911360,
+                "residentBytes" : 12058911360
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11906616960,
+                "residentBytes" : 11906616960
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Loading",
-          "help" : "Packs the decoder's weights to 8 or 4 bits in groups of 64 as it loads. 8-bit and 4-bit are approximations of the published weights.",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
           "key" : "quantizationBits",
           "kind" : "choice",
           "stage" : "load",
@@ -14521,16 +14589,48 @@
             },
             {
               "memory" : {
+                "peakBytes" : 13843053696,
+                "residentBytes" : 13843053696
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 13830470784,
+                "residentBytes" : 13830470784
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
                 "peakBytes" : 13817887872,
                 "residentBytes" : 13817887872
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 13805304960,
+                "residentBytes" : 13805304960
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 13792722048,
+                "residentBytes" : 13792722048
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Cache",
-          "help" : "Stores the key-value cache quantized to 8 or 4 bits by default. A request may override it.",
+          "help" : "Stores the key-value cache quantized to 2 to 8 bits by default. A request may override it.",
           "key" : "cacheBits",
           "kind" : "choice",
           "stage" : "load",
@@ -17119,7 +17219,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -17422,7 +17522,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -17725,7 +17825,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -18037,7 +18137,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -18378,7 +18478,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -18719,7 +18819,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -19943,7 +20043,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -20232,7 +20332,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -21213,7 +21313,7 @@
           ],
           "default" : "bfloat16",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -21463,7 +21563,7 @@
           ],
           "default" : "bfloat16",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -22382,12 +22482,28 @@
         {
           "choices" : [
             {
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
               "title" : "4-bit",
               "value" : 4
             },
             {
-              "title" : "8-bit",
-              "value" : 8
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "group" : "Cache",
@@ -22604,9 +22720,9 @@
               "value" : "float32"
             }
           ],
-          "default" : "float32",
+          "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -22616,32 +22732,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 95631790080,
-                "residentBytes" : 95631790080
+                "peakBytes" : 47815895040,
+                "residentBytes" : 47815895040
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 28360396800,
-                "residentBytes" : 28360396800
+                "peakBytes" : 26346301440,
+                "residentBytes" : 26346301440
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 16909946880,
-                "residentBytes" : 16909946880
+                "peakBytes" : 20621076480,
+                "residentBytes" : 20621076480
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 17758464000,
+                "residentBytes" : 17758464000
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 14895851520,
+                "residentBytes" : 14895851520
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12033239040,
+                "residentBytes" : 12033239040
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9170626560,
+                "residentBytes" : 9170626560
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Loading",
-          "help" : "Packs the decoder's weights to 8 or 4 bits in groups of 64 as it loads. 8-bit and 4-bit are approximations of the published weights.",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
           "key" : "quantizationBits",
           "kind" : "choice",
           "stage" : "load",
@@ -22654,7 +22802,7 @@
           "key" : "contextLength",
           "kind" : "integer",
           "maximum" : 32768,
-          "memoryBytesPerUnit" : 327680,
+          "memoryBytesPerUnit" : 163840,
           "minimum" : 256,
           "stage" : "load",
           "step" : 256,
@@ -22664,32 +22812,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 95631790080,
-                "residentBytes" : 95631790080
+                "peakBytes" : 47815895040,
+                "residentBytes" : 47815895040
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 94646128640,
-                "residentBytes" : 94646128640
+                "peakBytes" : 47501322240,
+                "residentBytes" : 47501322240
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 94478356480,
-                "residentBytes" : 94478356480
+                "peakBytes" : 47417436160,
+                "residentBytes" : 47417436160
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 47375493120,
+                "residentBytes" : 47375493120
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 47333550080,
+                "residentBytes" : 47333550080
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 47291607040,
+                "residentBytes" : 47291607040
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 47249664000,
+                "residentBytes" : 47249664000
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Cache",
-          "help" : "Stores the key-value cache quantized to 8 or 4 bits by default. A request may override it.",
+          "help" : "Stores the key-value cache quantized to 2 to 8 bits by default. A request may override it.",
           "key" : "cacheBits",
           "kind" : "choice",
           "stage" : "load",
@@ -22699,24 +22879,24 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 95631790080,
-                "residentBytes" : 95631790080
+                "peakBytes" : 47815895040,
+                "residentBytes" : 47815895040
               },
               "title" : "32",
               "value" : 32
             },
             {
               "memory" : {
-                "peakBytes" : 95631790080,
-                "residentBytes" : 95631790080
+                "peakBytes" : 47815895040,
+                "residentBytes" : 47815895040
               },
               "title" : "64",
               "value" : 64
             },
             {
               "memory" : {
-                "peakBytes" : 95631790080,
-                "residentBytes" : 95631790080
+                "peakBytes" : 47815895040,
+                "residentBytes" : 47815895040
               },
               "title" : "128",
               "value" : 128
@@ -22791,11 +22971,20 @@
           },
           "suggested" : true,
           "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
         }
       ],
       "registryName" : "mistral-small-24b-instruct-2501",
       "requirements" : {
-        "minimumMemoryBytes" : 117560891031,
+        "minimumMemoryBytes" : 61306896866,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -22835,12 +23024,12 @@
             ],
             "vocabularySize" : 131072
           },
-          "minimumMemoryBytes" : 117560891031,
+          "minimumMemoryBytes" : 61306896866,
           "parameterCount" : 23572403200,
-          "peakBytes" : 95631790080,
+          "peakBytes" : 47815895040,
           "precision" : "bfloat16",
           "registryName" : "mistral-small-24b-instruct-2501",
-          "residentBytes" : 95631790080,
+          "residentBytes" : 47815895040,
           "source" : {
             "files" : [
               {
@@ -23032,12 +23221,28 @@
         {
           "choices" : [
             {
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
               "title" : "4-bit",
               "value" : 4
             },
             {
-              "title" : "8-bit",
-              "value" : 8
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "group" : "Cache",
@@ -23243,16 +23448,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 187884912640,
-                "residentBytes" : 187884912640
+                "peakBytes" : 93942456320,
+                "residentBytes" : 93942456320
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 11791253504,
-                "residentBytes" : 11791253504
+                "peakBytes" : 8043110400,
+                "residentBytes" : 8043110400
               },
               "title" : "Paged",
               "value" : "paged"
@@ -23285,9 +23490,9 @@
               "value" : "float32"
             }
           ],
-          "default" : "float32",
+          "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -23297,32 +23502,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 187884912640,
-                "residentBytes" : 187884912640
+                "peakBytes" : 93942456320,
+                "residentBytes" : 93942456320
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 51081265152,
-                "residentBytes" : 51081265152
+                "peakBytes" : 50281717760,
+                "residentBytes" : 50281717760
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 27795537920,
-                "residentBytes" : 27795537920
+                "peakBytes" : 38638854144,
+                "residentBytes" : 38638854144
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 32817422336,
+                "residentBytes" : 32817422336
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 26995990528,
+                "residentBytes" : 26995990528
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 21174558720,
+                "residentBytes" : 21174558720
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 15353126912,
+                "residentBytes" : 15353126912
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Loading",
-          "help" : "Packs the decoder's weights to 8 or 4 bits in groups of 64 as it loads. 8-bit and 4-bit are approximations of the published weights.",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
           "key" : "quantizationBits",
           "kind" : "choice",
           "stage" : "load",
@@ -23335,7 +23572,7 @@
           "key" : "contextLength",
           "kind" : "integer",
           "maximum" : 32768,
-          "memoryBytesPerUnit" : 262144,
+          "memoryBytesPerUnit" : 131072,
           "minimum" : 256,
           "stage" : "load",
           "step" : 256,
@@ -23345,32 +23582,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 187884912640,
-                "residentBytes" : 187884912640
+                "peakBytes" : 93942456320,
+                "residentBytes" : 93942456320
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 187096383488,
-                "residentBytes" : 187096383488
+                "peakBytes" : 93690798080,
+                "residentBytes" : 93690798080
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 186962165760,
-                "residentBytes" : 186962165760
+                "peakBytes" : 93623689216,
+                "residentBytes" : 93623689216
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 93590134784,
+                "residentBytes" : 93590134784
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 93556580352,
+                "residentBytes" : 93556580352
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 93523025920,
+                "residentBytes" : 93523025920
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 93489471488,
+                "residentBytes" : 93489471488
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Cache",
-          "help" : "Stores the key-value cache quantized to 8 or 4 bits by default. A request may override it.",
+          "help" : "Stores the key-value cache quantized to 2 to 8 bits by default. A request may override it.",
           "key" : "cacheBits",
           "kind" : "choice",
           "stage" : "load",
@@ -23380,24 +23649,24 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 187884912640,
-                "residentBytes" : 187884912640
+                "peakBytes" : 93942456320,
+                "residentBytes" : 93942456320
               },
               "title" : "32",
               "value" : 32
             },
             {
               "memory" : {
-                "peakBytes" : 187884912640,
-                "residentBytes" : 187884912640
+                "peakBytes" : 93942456320,
+                "residentBytes" : 93942456320
               },
               "title" : "64",
               "value" : 64
             },
             {
               "memory" : {
-                "peakBytes" : 187884912640,
-                "residentBytes" : 187884912640
+                "peakBytes" : 93942456320,
+                "residentBytes" : 93942456320
               },
               "title" : "128",
               "value" : 128
@@ -23472,11 +23741,20 @@
           },
           "suggested" : true,
           "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
         }
       ],
       "registryName" : "mixtral-8x7b-instruct",
       "requirements" : {
-        "minimumMemoryBytes" : 226093976396,
+        "minimumMemoryBytes" : 115573439549,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -23522,12 +23800,12 @@
             ],
             "vocabularySize" : 32000
           },
-          "minimumMemoryBytes" : 226093976396,
+          "minimumMemoryBytes" : 115573439549,
           "parameterCount" : 46702792704,
-          "peakBytes" : 187884912640,
+          "peakBytes" : 93942456320,
           "precision" : "bfloat16",
           "registryName" : "mixtral-8x7b-instruct",
-          "residentBytes" : 187884912640,
+          "residentBytes" : 93942456320,
           "source" : {
             "files" : [
               {
@@ -28799,12 +29077,28 @@
         {
           "choices" : [
             {
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
               "title" : "4-bit",
               "value" : 4
             },
             {
-              "title" : "8-bit",
-              "value" : 8
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "group" : "Cache",
@@ -29010,16 +29304,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 58873749504,
-                "residentBytes" : 58873749504
+                "peakBytes" : 29436874752,
+                "residentBytes" : 29436874752
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 13340385280,
-                "residentBytes" : 13340385280
+                "peakBytes" : 8817676288,
+                "residentBytes" : 8817676288
               },
               "title" : "Paged",
               "value" : "paged"
@@ -29052,9 +29346,9 @@
               "value" : "float32"
             }
           ],
-          "default" : "float32",
+          "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -29064,32 +29358,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 58873749504,
-                "residentBytes" : 58873749504
+                "peakBytes" : 29436874752,
+                "residentBytes" : 29436874752
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 17735908352,
-                "residentBytes" : 17735908352
+                "peakBytes" : 16307776512,
+                "residentBytes" : 16307776512
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 10733722624,
-                "residentBytes" : 10733722624
+                "peakBytes" : 12806683648,
+                "residentBytes" : 12806683648
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11056137216,
+                "residentBytes" : 11056137216
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9305590784,
+                "residentBytes" : 9305590784
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 7555044352,
+                "residentBytes" : 7555044352
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 5804497920,
+                "residentBytes" : 5804497920
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Loading",
-          "help" : "Packs the decoder's weights to 8 or 4 bits in groups of 64 as it loads. 8-bit and 4-bit are approximations of the published weights.",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
           "key" : "quantizationBits",
           "kind" : "choice",
           "stage" : "load",
@@ -29102,7 +29428,7 @@
           "key" : "contextLength",
           "kind" : "integer",
           "maximum" : 8192,
-          "memoryBytesPerUnit" : 393216,
+          "memoryBytesPerUnit" : 196608,
           "minimum" : 256,
           "stage" : "load",
           "step" : 256,
@@ -29112,32 +29438,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 58873749504,
-                "residentBytes" : 58873749504
+                "peakBytes" : 29436874752,
+                "residentBytes" : 29436874752
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 57690955776,
-                "residentBytes" : 57690955776
+                "peakBytes" : 29059387392,
+                "residentBytes" : 29059387392
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 57489629184,
-                "residentBytes" : 57489629184
+                "peakBytes" : 28958724096,
+                "residentBytes" : 28958724096
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 28908392448,
+                "residentBytes" : 28908392448
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 28858060800,
+                "residentBytes" : 28858060800
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 28807729152,
+                "residentBytes" : 28807729152
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 28757397504,
+                "residentBytes" : 28757397504
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Cache",
-          "help" : "Stores the key-value cache quantized to 8 or 4 bits by default. A request may override it.",
+          "help" : "Stores the key-value cache quantized to 2 to 8 bits by default. A request may override it.",
           "key" : "cacheBits",
           "kind" : "choice",
           "stage" : "load",
@@ -29147,24 +29505,24 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 58873749504,
-                "residentBytes" : 58873749504
+                "peakBytes" : 29436874752,
+                "residentBytes" : 29436874752
               },
               "title" : "32",
               "value" : 32
             },
             {
               "memory" : {
-                "peakBytes" : 58873749504,
-                "residentBytes" : 58873749504
+                "peakBytes" : 29436874752,
+                "residentBytes" : 29436874752
               },
               "title" : "64",
               "value" : 64
             },
             {
               "memory" : {
-                "peakBytes" : 58873749504,
-                "residentBytes" : 58873749504
+                "peakBytes" : 29436874752,
+                "residentBytes" : 29436874752
               },
               "title" : "128",
               "value" : 128
@@ -29239,11 +29597,20 @@
           },
           "suggested" : true,
           "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
         }
       ],
       "registryName" : "qwen1.5-moe-a2.7b",
       "requirements" : {
-        "minimumMemoryBytes" : 74316137412,
+        "minimumMemoryBytes" : 39684520057,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -29289,12 +29656,12 @@
             ],
             "vocabularySize" : 151936
           },
-          "minimumMemoryBytes" : 74316137412,
+          "minimumMemoryBytes" : 39684520057,
           "parameterCount" : 14315784192,
-          "peakBytes" : 58873749504,
+          "peakBytes" : 29436874752,
           "precision" : "bfloat16",
           "registryName" : "qwen1.5-moe-a2.7b",
-          "residentBytes" : 58873749504,
+          "residentBytes" : 29436874752,
           "source" : {
             "files" : [
               {
@@ -29486,12 +29853,28 @@
         {
           "choices" : [
             {
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
               "title" : "4-bit",
               "value" : 4
             },
             {
-              "title" : "8-bit",
-              "value" : 8
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "group" : "Cache",
@@ -29708,9 +30091,9 @@
               "value" : "float32"
             }
           ],
-          "default" : "float32",
+          "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -29720,32 +30103,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 3946053632,
-                "residentBytes" : 3946053632
+                "peakBytes" : 1973026816,
+                "residentBytes" : 1973026816
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 2195349504,
-                "residentBytes" : 2195349504
+                "peakBytes" : 1414291456,
+                "residentBytes" : 1414291456
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 1897357312,
-                "residentBytes" : 1897357312
+                "peakBytes" : 1265295360,
+                "residentBytes" : 1265295360
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1190797312,
+                "residentBytes" : 1190797312
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1116299264,
+                "residentBytes" : 1116299264
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1041801216,
+                "residentBytes" : 1041801216
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 967303168,
+                "residentBytes" : 967303168
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Loading",
-          "help" : "Packs the decoder's weights to 8 or 4 bits in groups of 64 as it loads. 8-bit and 4-bit are approximations of the published weights.",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
           "key" : "quantizationBits",
           "kind" : "choice",
           "stage" : "load",
@@ -29758,7 +30173,7 @@
           "key" : "contextLength",
           "kind" : "integer",
           "maximum" : 40960,
-          "memoryBytesPerUnit" : 229376,
+          "memoryBytesPerUnit" : 114688,
           "minimum" : 256,
           "stage" : "load",
           "step" : 256,
@@ -29768,32 +30183,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 3946053632,
-                "residentBytes" : 3946053632
+                "peakBytes" : 1973026816,
+                "residentBytes" : 1973026816
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 3256090624,
-                "residentBytes" : 3256090624
+                "peakBytes" : 1752825856,
+                "residentBytes" : 1752825856
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 3138650112,
-                "residentBytes" : 3138650112
+                "peakBytes" : 1694105600,
+                "residentBytes" : 1694105600
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1664745472,
+                "residentBytes" : 1664745472
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1635385344,
+                "residentBytes" : 1635385344
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1606025216,
+                "residentBytes" : 1606025216
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1576665088,
+                "residentBytes" : 1576665088
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Cache",
-          "help" : "Stores the key-value cache quantized to 8 or 4 bits by default. A request may override it.",
+          "help" : "Stores the key-value cache quantized to 2 to 8 bits by default. A request may override it.",
           "key" : "cacheBits",
           "kind" : "choice",
           "stage" : "load",
@@ -29803,24 +30250,24 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 3946053632,
-                "residentBytes" : 3946053632
+                "peakBytes" : 1973026816,
+                "residentBytes" : 1973026816
               },
               "title" : "32",
               "value" : 32
             },
             {
               "memory" : {
-                "peakBytes" : 3946053632,
-                "residentBytes" : 3946053632
+                "peakBytes" : 1973026816,
+                "residentBytes" : 1973026816
               },
               "title" : "64",
               "value" : 64
             },
             {
               "memory" : {
-                "peakBytes" : 3946053632,
-                "residentBytes" : 3946053632
+                "peakBytes" : 1973026816,
+                "residentBytes" : 1973026816
               },
               "title" : "128",
               "value" : 128
@@ -29895,11 +30342,20 @@
           },
           "suggested" : true,
           "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
         }
       ],
       "registryName" : "qwen3-0.6b",
       "requirements" : {
-        "minimumMemoryBytes" : 9284832076,
+        "minimumMemoryBytes" : 4642416038,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -29939,12 +30395,12 @@
             ],
             "vocabularySize" : 151936
           },
-          "minimumMemoryBytes" : 9284832076,
+          "minimumMemoryBytes" : 4642416038,
           "parameterCount" : 751632384,
-          "peakBytes" : 3946053632,
+          "peakBytes" : 1973026816,
           "precision" : "bfloat16",
           "registryName" : "qwen3-0.6b",
-          "residentBytes" : 3946053632,
+          "residentBytes" : 1973026816,
           "source" : {
             "files" : [
               {
@@ -30140,12 +30596,28 @@
         {
           "choices" : [
             {
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
               "title" : "4-bit",
               "value" : 4
             },
             {
-              "title" : "8-bit",
-              "value" : 8
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "group" : "Cache",
@@ -30362,9 +30834,9 @@
               "value" : "float32"
             }
           ],
-          "default" : "float32",
+          "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -30374,32 +30846,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 9066483712,
-                "residentBytes" : 9066483712
+                "peakBytes" : 4533241856,
+                "residentBytes" : 4533241856
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 4012658688,
-                "residentBytes" : 4012658688
+                "peakBytes" : 2920318976,
+                "residentBytes" : 2920318976
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 3152433152,
-                "residentBytes" : 3152433152
+                "peakBytes" : 2490206208,
+                "residentBytes" : 2490206208
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2275149824,
+                "residentBytes" : 2275149824
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2060093440,
+                "residentBytes" : 2060093440
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1845037056,
+                "residentBytes" : 1845037056
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1629980672,
+                "residentBytes" : 1629980672
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Loading",
-          "help" : "Packs the decoder's weights to 8 or 4 bits in groups of 64 as it loads. 8-bit and 4-bit are approximations of the published weights.",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
           "key" : "quantizationBits",
           "kind" : "choice",
           "stage" : "load",
@@ -30412,7 +30916,7 @@
           "key" : "contextLength",
           "kind" : "integer",
           "maximum" : 40960,
-          "memoryBytesPerUnit" : 229376,
+          "memoryBytesPerUnit" : 114688,
           "minimum" : 256,
           "stage" : "load",
           "step" : 256,
@@ -30422,32 +30926,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 9066483712,
-                "residentBytes" : 9066483712
+                "peakBytes" : 4533241856,
+                "residentBytes" : 4533241856
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 8376520704,
-                "residentBytes" : 8376520704
+                "peakBytes" : 4313040896,
+                "residentBytes" : 4313040896
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 8259080192,
-                "residentBytes" : 8259080192
+                "peakBytes" : 4254320640,
+                "residentBytes" : 4254320640
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4224960512,
+                "residentBytes" : 4224960512
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4195600384,
+                "residentBytes" : 4195600384
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4166240256,
+                "residentBytes" : 4166240256
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4136880128,
+                "residentBytes" : 4136880128
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Cache",
-          "help" : "Stores the key-value cache quantized to 8 or 4 bits by default. A request may override it.",
+          "help" : "Stores the key-value cache quantized to 2 to 8 bits by default. A request may override it.",
           "key" : "cacheBits",
           "kind" : "choice",
           "stage" : "load",
@@ -30457,24 +30993,24 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 9066483712,
-                "residentBytes" : 9066483712
+                "peakBytes" : 4533241856,
+                "residentBytes" : 4533241856
               },
               "title" : "32",
               "value" : 32
             },
             {
               "memory" : {
-                "peakBytes" : 9066483712,
-                "residentBytes" : 9066483712
+                "peakBytes" : 4533241856,
+                "residentBytes" : 4533241856
               },
               "title" : "64",
               "value" : 64
             },
             {
               "memory" : {
-                "peakBytes" : 9066483712,
-                "residentBytes" : 9066483712
+                "peakBytes" : 4533241856,
+                "residentBytes" : 4533241856
               },
               "title" : "128",
               "value" : 128
@@ -30492,8 +31028,8 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 13012537344,
-                "residentBytes" : 13012537344
+                "peakBytes" : 6506268672,
+                "residentBytes" : 6506268672
               },
               "title" : "Qwen3 0.6B",
               "value" : "qwen3-0.6b"
@@ -30510,32 +31046,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 9066483712,
-                "residentBytes" : 9066483712
+                "peakBytes" : 4533241856,
+                "residentBytes" : 4533241856
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 9066483712,
-                "residentBytes" : 9066483712
+                "peakBytes" : 4533241856,
+                "residentBytes" : 4533241856
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 9066483712,
-                "residentBytes" : 9066483712
+                "peakBytes" : 4533241856,
+                "residentBytes" : 4533241856
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4533241856,
+                "residentBytes" : 4533241856
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4533241856,
+                "residentBytes" : 4533241856
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4533241856,
+                "residentBytes" : 4533241856
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4533241856,
+                "residentBytes" : 4533241856
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Loading",
-          "help" : "Packs the draft model's weights to 8 or 4 bits as it loads. 8-bit and 4-bit are approximations of the published weights.",
+          "help" : "Packs the draft model's weights to 2 to 8 bits as it loads. Every width approximates the published weights.",
           "key" : "draftBits",
           "kind" : "choice",
           "stage" : "load",
@@ -30602,11 +31170,20 @@
           },
           "suggested" : true,
           "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
         }
       ],
       "registryName" : "qwen3-1.7b",
       "requirements" : {
-        "minimumMemoryBytes" : 15719354128,
+        "minimumMemoryBytes" : 10386128415,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -30646,12 +31223,12 @@
             ],
             "vocabularySize" : 151936
           },
-          "minimumMemoryBytes" : 15719354128,
+          "minimumMemoryBytes" : 10386128415,
           "parameterCount" : 2031739904,
-          "peakBytes" : 9066483712,
+          "peakBytes" : 4533241856,
           "precision" : "bfloat16",
           "registryName" : "qwen3-1.7b",
-          "residentBytes" : 9066483712,
+          "residentBytes" : 4533241856,
           "source" : {
             "files" : [
               {
@@ -30846,12 +31423,28 @@
         {
           "choices" : [
             {
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
               "title" : "4-bit",
               "value" : 4
             },
             {
-              "title" : "8-bit",
-              "value" : 8
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "group" : "Cache",
@@ -31068,9 +31661,9 @@
               "value" : "float32"
             }
           ],
-          "default" : "float32",
+          "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -31080,32 +31673,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 60415406080,
-                "residentBytes" : 60415406080
+                "peakBytes" : 30207703040,
+                "residentBytes" : 30207703040
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 19319869440,
-                "residentBytes" : 19319869440
+                "peakBytes" : 17092106240,
+                "residentBytes" : 17092106240
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 12324884480,
-                "residentBytes" : 12324884480
+                "peakBytes" : 13594613760,
+                "residentBytes" : 13594613760
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11845867520,
+                "residentBytes" : 11845867520
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 10097121280,
+                "residentBytes" : 10097121280
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 8348375040,
+                "residentBytes" : 8348375040
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 6599628800,
+                "residentBytes" : 6599628800
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Loading",
-          "help" : "Packs the decoder's weights to 8 or 4 bits in groups of 64 as it loads. 8-bit and 4-bit are approximations of the published weights.",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
           "key" : "quantizationBits",
           "kind" : "choice",
           "stage" : "load",
@@ -31118,7 +31743,7 @@
           "key" : "contextLength",
           "kind" : "integer",
           "maximum" : 40960,
-          "memoryBytesPerUnit" : 327680,
+          "memoryBytesPerUnit" : 163840,
           "minimum" : 256,
           "stage" : "load",
           "step" : 256,
@@ -31128,32 +31753,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 60415406080,
-                "residentBytes" : 60415406080
+                "peakBytes" : 30207703040,
+                "residentBytes" : 30207703040
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 59429744640,
-                "residentBytes" : 59429744640
+                "peakBytes" : 29893130240,
+                "residentBytes" : 29893130240
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 59261972480,
-                "residentBytes" : 59261972480
+                "peakBytes" : 29809244160,
+                "residentBytes" : 29809244160
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 29767301120,
+                "residentBytes" : 29767301120
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 29725358080,
+                "residentBytes" : 29725358080
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 29683415040,
+                "residentBytes" : 29683415040
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 29641472000,
+                "residentBytes" : 29641472000
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Cache",
-          "help" : "Stores the key-value cache quantized to 8 or 4 bits by default. A request may override it.",
+          "help" : "Stores the key-value cache quantized to 2 to 8 bits by default. A request may override it.",
           "key" : "cacheBits",
           "kind" : "choice",
           "stage" : "load",
@@ -31163,24 +31820,24 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 60415406080,
-                "residentBytes" : 60415406080
+                "peakBytes" : 30207703040,
+                "residentBytes" : 30207703040
               },
               "title" : "32",
               "value" : 32
             },
             {
               "memory" : {
-                "peakBytes" : 60415406080,
-                "residentBytes" : 60415406080
+                "peakBytes" : 30207703040,
+                "residentBytes" : 30207703040
               },
               "title" : "64",
               "value" : 64
             },
             {
               "memory" : {
-                "peakBytes" : 60415406080,
-                "residentBytes" : 60415406080
+                "peakBytes" : 30207703040,
+                "residentBytes" : 30207703040
               },
               "title" : "128",
               "value" : 128
@@ -31198,24 +31855,24 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 64361459712,
-                "residentBytes" : 64361459712
+                "peakBytes" : 32180729856,
+                "residentBytes" : 32180729856
               },
               "title" : "Qwen3 0.6B",
               "value" : "qwen3-0.6b"
             },
             {
               "memory" : {
-                "peakBytes" : 69481889792,
-                "residentBytes" : 69481889792
+                "peakBytes" : 34740944896,
+                "residentBytes" : 34740944896
               },
               "title" : "Qwen3 1.7B",
               "value" : "qwen3-1.7b"
             },
             {
               "memory" : {
-                "peakBytes" : 77713238016,
-                "residentBytes" : 77713238016
+                "peakBytes" : 38856619008,
+                "residentBytes" : 38856619008
               },
               "title" : "Qwen3 4B",
               "value" : "qwen3-4b"
@@ -31232,32 +31889,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 60415406080,
-                "residentBytes" : 60415406080
+                "peakBytes" : 30207703040,
+                "residentBytes" : 30207703040
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 60415406080,
-                "residentBytes" : 60415406080
+                "peakBytes" : 30207703040,
+                "residentBytes" : 30207703040
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 60415406080,
-                "residentBytes" : 60415406080
+                "peakBytes" : 30207703040,
+                "residentBytes" : 30207703040
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 30207703040,
+                "residentBytes" : 30207703040
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 30207703040,
+                "residentBytes" : 30207703040
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 30207703040,
+                "residentBytes" : 30207703040
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 30207703040,
+                "residentBytes" : 30207703040
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Loading",
-          "help" : "Packs the draft model's weights to 8 or 4 bits as it loads. 8-bit and 4-bit are approximations of the published weights.",
+          "help" : "Packs the draft model's weights to 2 to 8 bits as it loads. Every width approximates the published weights.",
           "key" : "draftBits",
           "kind" : "choice",
           "stage" : "load",
@@ -31324,11 +32013,20 @@
           },
           "suggested" : true,
           "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
         }
       ],
       "registryName" : "qwen3-14b",
       "requirements" : {
-        "minimumMemoryBytes" : 76129851031,
+        "minimumMemoryBytes" : 40591376866,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -31368,12 +32066,12 @@
             ],
             "vocabularySize" : 151936
           },
-          "minimumMemoryBytes" : 76129851031,
+          "minimumMemoryBytes" : 40591376866,
           "parameterCount" : 14768307200,
-          "peakBytes" : 60415406080,
+          "peakBytes" : 30207703040,
           "precision" : "bfloat16",
           "registryName" : "qwen3-14b",
-          "residentBytes" : 60415406080,
+          "residentBytes" : 30207703040,
           "source" : {
             "files" : [
               {
@@ -31567,12 +32265,28 @@
         {
           "choices" : [
             {
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
               "title" : "4-bit",
               "value" : 4
             },
             {
-              "title" : "8-bit",
-              "value" : 8
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "group" : "Cache",
@@ -31778,16 +32492,16 @@
             },
             {
               "memory" : {
-                "peakBytes" : 122933796864,
-                "residentBytes" : 122933796864
+                "peakBytes" : 61466898432,
+                "residentBytes" : 61466898432
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 11264647168,
-                "residentBytes" : 11264647168
+                "peakBytes" : 7779807232,
+                "residentBytes" : 7779807232
               },
               "title" : "Paged",
               "value" : "paged"
@@ -31820,9 +32534,9 @@
               "value" : "float32"
             }
           ],
-          "default" : "float32",
+          "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -31832,32 +32546,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 122933796864,
-                "residentBytes" : 122933796864
+                "peakBytes" : 61466898432,
+                "residentBytes" : 61466898432
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 34160353280,
-                "residentBytes" : 34160353280
+                "peakBytes" : 33134948352,
+                "residentBytes" : 33134948352
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 19049979904,
-                "residentBytes" : 19049979904
+                "peakBytes" : 25579761664,
+                "residentBytes" : 25579761664
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 21802168320,
+                "residentBytes" : 21802168320
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 18024574976,
+                "residentBytes" : 18024574976
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 14246981632,
+                "residentBytes" : 14246981632
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 10469388288,
+                "residentBytes" : 10469388288
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Loading",
-          "help" : "Packs the decoder's weights to 8 or 4 bits in groups of 64 as it loads. 8-bit and 4-bit are approximations of the published weights.",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
           "key" : "quantizationBits",
           "kind" : "choice",
           "stage" : "load",
@@ -31870,7 +32616,7 @@
           "key" : "contextLength",
           "kind" : "integer",
           "maximum" : 40960,
-          "memoryBytesPerUnit" : 196608,
+          "memoryBytesPerUnit" : 98304,
           "minimum" : 256,
           "stage" : "load",
           "step" : 256,
@@ -31880,32 +32626,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 122933796864,
-                "residentBytes" : 122933796864
+                "peakBytes" : 61466898432,
+                "residentBytes" : 61466898432
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 122342400000,
-                "residentBytes" : 122342400000
+                "peakBytes" : 61278154752,
+                "residentBytes" : 61278154752
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 122241736704,
-                "residentBytes" : 122241736704
+                "peakBytes" : 61227823104,
+                "residentBytes" : 61227823104
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 61202657280,
+                "residentBytes" : 61202657280
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 61177491456,
+                "residentBytes" : 61177491456
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 61152325632,
+                "residentBytes" : 61152325632
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 61127159808,
+                "residentBytes" : 61127159808
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Cache",
-          "help" : "Stores the key-value cache quantized to 8 or 4 bits by default. A request may override it.",
+          "help" : "Stores the key-value cache quantized to 2 to 8 bits by default. A request may override it.",
           "key" : "cacheBits",
           "kind" : "choice",
           "stage" : "load",
@@ -31915,24 +32693,24 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 122933796864,
-                "residentBytes" : 122933796864
+                "peakBytes" : 61466898432,
+                "residentBytes" : 61466898432
               },
               "title" : "32",
               "value" : 32
             },
             {
               "memory" : {
-                "peakBytes" : 122933796864,
-                "residentBytes" : 122933796864
+                "peakBytes" : 61466898432,
+                "residentBytes" : 61466898432
               },
               "title" : "64",
               "value" : 64
             },
             {
               "memory" : {
-                "peakBytes" : 122933796864,
-                "residentBytes" : 122933796864
+                "peakBytes" : 61466898432,
+                "residentBytes" : 61466898432
               },
               "title" : "128",
               "value" : 128
@@ -32007,11 +32785,20 @@
           },
           "suggested" : true,
           "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
         }
       ],
       "registryName" : "qwen3-30b-a3b",
       "requirements" : {
-        "minimumMemoryBytes" : 149680899012,
+        "minimumMemoryBytes" : 77366900857,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -32057,12 +32844,12 @@
             ],
             "vocabularySize" : 151936
           },
-          "minimumMemoryBytes" : 149680899012,
+          "minimumMemoryBytes" : 77366900857,
           "parameterCount" : 30532122624,
-          "peakBytes" : 122933796864,
+          "peakBytes" : 61466898432,
           "precision" : "bfloat16",
           "registryName" : "qwen3-30b-a3b",
-          "residentBytes" : 122933796864,
+          "residentBytes" : 61466898432,
           "source" : {
             "files" : [
               {
@@ -32257,12 +33044,28 @@
         {
           "choices" : [
             {
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
               "title" : "4-bit",
               "value" : 4
             },
             {
-              "title" : "8-bit",
-              "value" : 8
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "group" : "Cache",
@@ -32479,9 +33282,9 @@
               "value" : "float32"
             }
           ],
-          "default" : "float32",
+          "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -32491,32 +33294,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 133195976704,
-                "residentBytes" : 133195976704
+                "peakBytes" : 66597988352,
+                "residentBytes" : 66597988352
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 39244345344,
-                "residentBytes" : 39244345344
+                "peakBytes" : 36613425152,
+                "residentBytes" : 36613425152
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 23252578304,
-                "residentBytes" : 23252578304
+                "peakBytes" : 28617541632,
+                "residentBytes" : 28617541632
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 24619599872,
+                "residentBytes" : 24619599872
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 20621658112,
+                "residentBytes" : 20621658112
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 16623716352,
+                "residentBytes" : 16623716352
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12625774592,
+                "residentBytes" : 12625774592
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Loading",
-          "help" : "Packs the decoder's weights to 8 or 4 bits in groups of 64 as it loads. 8-bit and 4-bit are approximations of the published weights.",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
           "key" : "quantizationBits",
           "kind" : "choice",
           "stage" : "load",
@@ -32529,7 +33364,7 @@
           "key" : "contextLength",
           "kind" : "integer",
           "maximum" : 40960,
-          "memoryBytesPerUnit" : 524288,
+          "memoryBytesPerUnit" : 262144,
           "minimum" : 256,
           "stage" : "load",
           "step" : 256,
@@ -32539,32 +33374,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 133195976704,
-                "residentBytes" : 133195976704
+                "peakBytes" : 66597988352,
+                "residentBytes" : 66597988352
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 131618918400,
-                "residentBytes" : 131618918400
+                "peakBytes" : 66094671872,
+                "residentBytes" : 66094671872
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 131350482944,
-                "residentBytes" : 131350482944
+                "peakBytes" : 65960454144,
+                "residentBytes" : 65960454144
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 65893345280,
+                "residentBytes" : 65893345280
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 65826236416,
+                "residentBytes" : 65826236416
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 65759127552,
+                "residentBytes" : 65759127552
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 65692018688,
+                "residentBytes" : 65692018688
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Cache",
-          "help" : "Stores the key-value cache quantized to 8 or 4 bits by default. A request may override it.",
+          "help" : "Stores the key-value cache quantized to 2 to 8 bits by default. A request may override it.",
           "key" : "cacheBits",
           "kind" : "choice",
           "stage" : "load",
@@ -32574,24 +33441,24 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 133195976704,
-                "residentBytes" : 133195976704
+                "peakBytes" : 66597988352,
+                "residentBytes" : 66597988352
               },
               "title" : "32",
               "value" : 32
             },
             {
               "memory" : {
-                "peakBytes" : 133195976704,
-                "residentBytes" : 133195976704
+                "peakBytes" : 66597988352,
+                "residentBytes" : 66597988352
               },
               "title" : "64",
               "value" : 64
             },
             {
               "memory" : {
-                "peakBytes" : 133195976704,
-                "residentBytes" : 133195976704
+                "peakBytes" : 66597988352,
+                "residentBytes" : 66597988352
               },
               "title" : "128",
               "value" : 128
@@ -32609,32 +33476,32 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 137142030336,
-                "residentBytes" : 137142030336
+                "peakBytes" : 68571015168,
+                "residentBytes" : 68571015168
               },
               "title" : "Qwen3 0.6B",
               "value" : "qwen3-0.6b"
             },
             {
               "memory" : {
-                "peakBytes" : 142262460416,
-                "residentBytes" : 142262460416
+                "peakBytes" : 71131230208,
+                "residentBytes" : 71131230208
               },
               "title" : "Qwen3 1.7B",
               "value" : "qwen3-1.7b"
             },
             {
               "memory" : {
-                "peakBytes" : 150493808640,
-                "residentBytes" : 150493808640
+                "peakBytes" : 75246904320,
+                "residentBytes" : 75246904320
               },
               "title" : "Qwen3 4B",
               "value" : "qwen3-4b"
             },
             {
               "memory" : {
-                "peakBytes" : 193611382784,
-                "residentBytes" : 193611382784
+                "peakBytes" : 96805691392,
+                "residentBytes" : 96805691392
               },
               "title" : "Qwen3 14B",
               "value" : "qwen3-14b"
@@ -32651,32 +33518,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 133195976704,
-                "residentBytes" : 133195976704
+                "peakBytes" : 66597988352,
+                "residentBytes" : 66597988352
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 133195976704,
-                "residentBytes" : 133195976704
+                "peakBytes" : 66597988352,
+                "residentBytes" : 66597988352
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 133195976704,
-                "residentBytes" : 133195976704
+                "peakBytes" : 66597988352,
+                "residentBytes" : 66597988352
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 66597988352,
+                "residentBytes" : 66597988352
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 66597988352,
+                "residentBytes" : 66597988352
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 66597988352,
+                "residentBytes" : 66597988352
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 66597988352,
+                "residentBytes" : 66597988352
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Loading",
-          "help" : "Packs the draft model's weights to 8 or 4 bits as it loads. 8-bit and 4-bit are approximations of the published weights.",
+          "help" : "Packs the draft model's weights to 2 to 8 bits as it loads. Every width approximates the published weights.",
           "key" : "draftBits",
           "kind" : "choice",
           "stage" : "load",
@@ -32743,11 +33642,20 @@
           },
           "suggested" : true,
           "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
         }
       ],
       "registryName" : "qwen3-32b",
       "requirements" : {
-        "minimumMemoryBytes" : 161754051765,
+        "minimumMemoryBytes" : 83403477233,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -32787,12 +33695,12 @@
             ],
             "vocabularySize" : 151936
           },
-          "minimumMemoryBytes" : 161754051765,
+          "minimumMemoryBytes" : 83403477233,
           "parameterCount" : 32762123264,
-          "peakBytes" : 133195976704,
+          "peakBytes" : 66597988352,
           "precision" : "bfloat16",
           "registryName" : "qwen3-32b",
-          "residentBytes" : 133195976704,
+          "residentBytes" : 66597988352,
           "source" : {
             "files" : [
               {
@@ -32987,12 +33895,28 @@
         {
           "choices" : [
             {
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
               "title" : "4-bit",
               "value" : 4
             },
             {
-              "title" : "8-bit",
-              "value" : 8
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "group" : "Cache",
@@ -33209,9 +34133,9 @@
               "value" : "float32"
             }
           ],
-          "default" : "float32",
+          "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -33221,32 +34145,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 17297831936,
-                "residentBytes" : 17297831936
+                "peakBytes" : 8648915968,
+                "residentBytes" : 8648915968
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 6624966656,
-                "residentBytes" : 6624966656
+                "peakBytes" : 5242682368,
+                "residentBytes" : 5242682368
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 4808308736,
-                "residentBytes" : 4808308736
+                "peakBytes" : 4334353408,
+                "residentBytes" : 4334353408
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 3880188928,
+                "residentBytes" : 3880188928
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 3426024448,
+                "residentBytes" : 3426024448
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2971859968,
+                "residentBytes" : 2971859968
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2517695488,
+                "residentBytes" : 2517695488
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Loading",
-          "help" : "Packs the decoder's weights to 8 or 4 bits in groups of 64 as it loads. 8-bit and 4-bit are approximations of the published weights.",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
           "key" : "quantizationBits",
           "kind" : "choice",
           "stage" : "load",
@@ -33259,7 +34215,7 @@
           "key" : "contextLength",
           "kind" : "integer",
           "maximum" : 40960,
-          "memoryBytesPerUnit" : 294912,
+          "memoryBytesPerUnit" : 147456,
           "minimum" : 256,
           "stage" : "load",
           "step" : 256,
@@ -33269,32 +34225,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 17297831936,
-                "residentBytes" : 17297831936
+                "peakBytes" : 8648915968,
+                "residentBytes" : 8648915968
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 16410736640,
-                "residentBytes" : 16410736640
+                "peakBytes" : 8365800448,
+                "residentBytes" : 8365800448
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 16259741696,
-                "residentBytes" : 16259741696
+                "peakBytes" : 8290302976,
+                "residentBytes" : 8290302976
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 8252554240,
+                "residentBytes" : 8252554240
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 8214805504,
+                "residentBytes" : 8214805504
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 8177056768,
+                "residentBytes" : 8177056768
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 8139308032,
+                "residentBytes" : 8139308032
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Cache",
-          "help" : "Stores the key-value cache quantized to 8 or 4 bits by default. A request may override it.",
+          "help" : "Stores the key-value cache quantized to 2 to 8 bits by default. A request may override it.",
           "key" : "cacheBits",
           "kind" : "choice",
           "stage" : "load",
@@ -33304,24 +34292,24 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 17297831936,
-                "residentBytes" : 17297831936
+                "peakBytes" : 8648915968,
+                "residentBytes" : 8648915968
               },
               "title" : "32",
               "value" : 32
             },
             {
               "memory" : {
-                "peakBytes" : 17297831936,
-                "residentBytes" : 17297831936
+                "peakBytes" : 8648915968,
+                "residentBytes" : 8648915968
               },
               "title" : "64",
               "value" : 64
             },
             {
               "memory" : {
-                "peakBytes" : 17297831936,
-                "residentBytes" : 17297831936
+                "peakBytes" : 8648915968,
+                "residentBytes" : 8648915968
               },
               "title" : "128",
               "value" : 128
@@ -33339,16 +34327,16 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 21243885568,
-                "residentBytes" : 21243885568
+                "peakBytes" : 10621942784,
+                "residentBytes" : 10621942784
               },
               "title" : "Qwen3 0.6B",
               "value" : "qwen3-0.6b"
             },
             {
               "memory" : {
-                "peakBytes" : 26364315648,
-                "residentBytes" : 26364315648
+                "peakBytes" : 13182157824,
+                "residentBytes" : 13182157824
               },
               "title" : "Qwen3 1.7B",
               "value" : "qwen3-1.7b"
@@ -33365,32 +34353,64 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 17297831936,
-                "residentBytes" : 17297831936
+                "peakBytes" : 8648915968,
+                "residentBytes" : 8648915968
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 17297831936,
-                "residentBytes" : 17297831936
+                "peakBytes" : 8648915968,
+                "residentBytes" : 8648915968
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 17297831936,
-                "residentBytes" : 17297831936
+                "peakBytes" : 8648915968,
+                "residentBytes" : 8648915968
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 8648915968,
+                "residentBytes" : 8648915968
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 8648915968,
+                "residentBytes" : 8648915968
               },
               "title" : "4-bit",
               "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 8648915968,
+                "residentBytes" : 8648915968
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 8648915968,
+                "residentBytes" : 8648915968
+              },
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "default" : 0,
           "group" : "Loading",
-          "help" : "Packs the draft model's weights to 8 or 4 bits as it loads. 8-bit and 4-bit are approximations of the published weights.",
+          "help" : "Packs the draft model's weights to 2 to 8 bits as it loads. Every width approximates the published weights.",
           "key" : "draftBits",
           "kind" : "choice",
           "stage" : "load",
@@ -33457,11 +34477,20 @@
           },
           "suggested" : true,
           "title" : "Fast"
+        },
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
         }
       ],
       "registryName" : "qwen3-4b",
       "requirements" : {
-        "minimumMemoryBytes" : 25403293215,
+        "minimumMemoryBytes" : 15228097958,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -33501,12 +34530,12 @@
             ],
             "vocabularySize" : 151936
           },
-          "minimumMemoryBytes" : 25403293215,
+          "minimumMemoryBytes" : 15228097958,
           "parameterCount" : 4022468096,
-          "peakBytes" : 17297831936,
+          "peakBytes" : 8648915968,
           "precision" : "bfloat16",
           "registryName" : "qwen3-4b",
-          "residentBytes" : 17297831936,
+          "residentBytes" : 8648915968,
           "source" : {
             "files" : [
               {
@@ -46375,7 +47404,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -46716,7 +47745,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -49176,12 +50205,28 @@
         {
           "choices" : [
             {
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
               "title" : "4-bit",
               "value" : 4
             },
             {
-              "title" : "8-bit",
-              "value" : 8
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "title" : "2-bit",
+              "value" : 2
             }
           ],
           "group" : "Cache",
@@ -50309,6 +51354,268 @@
       ]
     },
     {
+      "displayName" : "Stable Audio Open 1.0",
+      "engine" : "mlx",
+      "family" : "stable-audio",
+      "id" : "stable-audio-open-1.0",
+      "inputModalities" : [
+        "text",
+        "audio"
+      ],
+      "inputs" : [
+        {
+          "help" : "The sound to make: its source, character, and, for music, genre, instruments, and tempo.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Description",
+          "valueType" : "text"
+        },
+        {
+          "help" : "What the clip steers away from.",
+          "key" : "negativePrompt",
+          "required" : false,
+          "title" : "Negative prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "A 16-bit WAV clip at 44.1 kHz the generation starts from.",
+          "key" : "audio",
+          "required" : false,
+          "title" : "Initial audio",
+          "valueType" : "audio"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : true,
+        "name" : "Stability AI Community License",
+        "note" : "Gated: accept the terms on Hugging Face. Free below US$1M in annual revenue; above it, Stability AI's enterprise license applies.",
+        "restrictsCommercialUse" : true,
+        "url" : "https://stability.ai/community-license-agreement"
+      },
+      "memoryModel" : {
+        "residency" : "residency"
+      },
+      "options" : [
+        {
+          "default" : 10,
+          "help" : "The clip's length in seconds.",
+          "key" : "durationSeconds",
+          "kind" : "number",
+          "maximum" : 47.554467120181407,
+          "minimum" : 0.5,
+          "stage" : "request",
+          "step" : 0.5,
+          "title" : "Duration"
+        },
+        {
+          "default" : 0,
+          "help" : "Where the clip starts within the model's window, in seconds. The clip ends within the window.",
+          "key" : "NFKMLXParameterStableAudioStartSeconds",
+          "kind" : "number",
+          "maximum" : 47.554467120181407,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.5,
+          "title" : "Start"
+        },
+        {
+          "default" : 100,
+          "help" : "The sampling steps.",
+          "key" : "steps",
+          "kind" : "integer",
+          "maximum" : 1000,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Steps"
+        },
+        {
+          "default" : 7,
+          "help" : "The classifier-free guidance weight. At 1 or below the clip is unguided.",
+          "key" : "guidanceScale",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.5,
+          "title" : "Guidance"
+        },
+        {
+          "default" : 0,
+          "help" : "The seed of the sampling.",
+          "key" : "seed",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Seed"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "title" : "Staged",
+              "value" : "staged"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        }
+      ],
+      "outputModalities" : [
+        "audio"
+      ],
+      "outputs" : [
+        {
+          "help" : "A stereo WAV file at 44.1 kHz.",
+          "key" : "audio",
+          "required" : true,
+          "title" : "Audio",
+          "valueType" : "audio"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Half the sampling steps, 50 in place of 100: a faster result with less detail.",
+          "id" : "fast",
+          "requestDefaults" : {
+            "steps" : 50
+          },
+          "suggested" : true,
+          "title" : "Fast"
+        }
+      ],
+      "registryName" : "stable-audio-open-1.0",
+      "requirements" : {
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "staged"
+      ],
+      "standIn" : false,
+      "summary" : "Stability AI's latent diffusion generator of sound effects, field recordings, and short music samples from a description, as stereo 44.1 kHz audio.",
+      "tasks" : [
+        "audio-generation",
+        "music-generation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Stable Audio Open 1.0",
+          "id" : "1.0",
+          "isDefault" : true,
+          "registryName" : "stable-audio-open-1.0",
+          "source" : {
+            "files" : [
+              {
+                "optional" : false,
+                "path" : "model_index.json",
+                "role" : "other"
+              },
+              {
+                "optional" : false,
+                "path" : "scheduler/scheduler_config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : false,
+                "path" : "text_encoder/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : false,
+                "path" : "text_encoder/model.safetensors",
+                "role" : "weights"
+              },
+              {
+                "optional" : false,
+                "path" : "tokenizer/spiece.model",
+                "role" : "other"
+              },
+              {
+                "optional" : false,
+                "path" : "tokenizer/tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "optional" : false,
+                "path" : "projection_model/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : false,
+                "path" : "projection_model/diffusion_pytorch_model.safetensors",
+                "role" : "weights"
+              },
+              {
+                "optional" : false,
+                "path" : "transformer/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : false,
+                "path" : "vae/config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : false,
+                "path" : "vae/diffusion_pytorch_model.safetensors",
+                "role" : "weights"
+              },
+              {
+                "optional" : true,
+                "path" : "tokenizer/special_tokens_map.json",
+                "role" : "tokenizer"
+              },
+              {
+                "optional" : true,
+                "path" : "tokenizer/tokenizer.json",
+                "role" : "tokenizer"
+              },
+              {
+                "optional" : true,
+                "path" : "LICENSE.md",
+                "role" : "other"
+              },
+              {
+                "optional" : false,
+                "path" : "transformer/diffusion_pytorch_model.safetensors",
+                "role" : "weights"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "stabilityai/stable-audio-open-1.0",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
       "displayName" : "Stable Diffusion 2.1 base",
       "engine" : "mlx",
       "family" : "stable-diffusion",
@@ -50437,7 +51744,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -50704,7 +52011,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -51008,7 +52315,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "property" : "precision",
@@ -53384,7 +54691,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -60643,7 +61950,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -60789,7 +62096,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -60935,7 +62242,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -61081,7 +62388,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -61227,7 +62534,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -61373,7 +62680,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -61519,7 +62826,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",
@@ -61665,7 +62972,7 @@
           ],
           "default" : "checkpoint",
           "group" : "Loading",
-          "help" : "The precision the weights load at. Float32 is the precision the parity records were measured at.",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; Float32 widens them.",
           "key" : "precision",
           "kind" : "choice",
           "stage" : "load",

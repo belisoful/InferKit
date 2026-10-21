@@ -549,7 +549,7 @@ extension NFKMLXCatalogLanguage {
                     minimum: 1, step: 1, group: "Cache"),
             .option(NFKMLXGenerationParameterKey.cacheQuantizationBits, kind: NFKModelOptionKindChoice,
                     title: "Cache bits", help: "Stores the key-value cache quantized to this bit width. Without it the cache stays in full precision.",
-                    choices: [(4, "4-bit"), (8, "8-bit")], group: "Cache"),
+                    choices: NFKMLXLoadProfile.bitWidths.map { ($0, "\($0)-bit") }, group: "Cache"),
             .option(NFKMLXGenerationParameterKey.cacheQuantizationGroupSize, kind: NFKModelOptionKindInteger,
                     title: "Cache group size", help: "The quantized cache's group size, which divides the head dimension.",
                     defaultValue: 64, minimum: 1, step: 1, group: "Cache"),
