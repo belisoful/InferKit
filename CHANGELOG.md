@@ -1477,6 +1477,10 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKMLXQuantization.releaseQuantization(configJSON:)` names what a `config.json` states, and refuses
   GPTQ, AWQ, bitsandbytes, FP8, and compressed-tensors releases by name. mlx_lm's gpt-oss layout, which
   stores the expert gate and up projections apart, is refused.
+- An mlx_lm release runs with mlx_lm's half-precision placement (`NFKMLXHalfPrecisionPlacement.mlx`,
+  set from its `quantization` block): MLX's fused rotary and attention, and mlx_lm's compiled
+  `swiglu`. Qwen3-0.6B and Llama 3.2 1B in mlx-community's 4-bit releases are held to mlx_lm's logits
+  and to every seam of its forward bit for bit. A transformers release keeps the torch placement.
 
 #### The SD-family autoencoder decodes step by step when the GPU cannot hold the decode whole
 

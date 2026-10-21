@@ -22,6 +22,17 @@ import MLXNN
 import MLXRandom
 
 /// The geometry of a decoder-only language model.
+/// Where a half-precision decoder forward rounds, by the implementation its release is published for.
+/// Introduced in InferKit 0.4.0.
+public enum NFKMLXHalfPrecisionPlacement: Sendable, Equatable {
+    /// As torch rounds: ``NFKReferenceRounding``'s rotary, attention, and SiLU, the placement a
+    /// transformers release is measured at.
+    case torch
+    /// As mlx_lm runs: MLX's fused rotary and attention, and `silu(gate) · up` compiled as mlx_lm's
+    /// `swiglu` is. An mlx_lm rotary scaling table is computed as mlx_lm computes it.
+    case mlx
+}
+
 public struct NFKMLXLanguageConfiguration: Sendable {
     public var hiddenSize: Int
     public var layerCount: Int
@@ -76,6 +87,10 @@ public struct NFKMLXLanguageConfiguration: Sendable {
     /// The positions the release states it was trained to (`max_position_embeddings`), or nil when it
     /// states none. Introduced in InferKit 0.4.0.
     public var maximumPositions: Int?
+    /// How a half-precision forward rounds its rotary embedding, attention, and gated activation:
+    /// `torch` for a transformers release, `mlx` for an mlx_lm quantized release, which the loader sets
+    /// from the release's `config.json`. Introduced in InferKit 0.4.0.
+    public var halfPrecisionPlacement: NFKMLXHalfPrecisionPlacement = .torch
 
     public init(hiddenSize: Int = 1024, layerCount: Int = 28, headCount: Int = 16,
                 keyValueHeadCount: Int = 8, headDimensions: Int = 128, intermediateSize: Int = 3072,
@@ -758,11 +773,18 @@ struct NFKLMRotary {
     /// length that triggers the switch. Nil for every other rotary.
     let longPeriods: MLXArray?
     let longRoPEThreshold: Int
+    let placement: NFKMLXHalfPrecisionPlacement
 
-    init(dimensions: Int, base: Float, scaling: NFKMLXRoPEScaling?) {
+    init(dimensions: Int, base: Float, scaling: NFKMLXRoPEScaling?, placement: NFKMLXHalfPrecisionPlacement = .torch) {
         self.dimensions = dimensions
         self.base = base
-        if let scaling {
+        self.placement = placement
+        if let scaling, scaling.kind == .llama3, placement == .mlx {
+            attentionFactor = 1
+            periods = Self.mlxLlama3Periods(dimensions: dimensions, base: base, scaling: scaling)
+            longPeriods = nil
+            longRoPEThreshold = 0
+        } else if let scaling {
             attentionFactor = scaling.attentionFactor
             if scaling.kind == .longrope {
                 periods = MLXArray(scaling.longRoPEPeriods(dimensions: dimensions, base: base, useLongTable: false))
@@ -781,8 +803,23 @@ struct NFKLMRotary {
         }
     }
 
+    /// mlx_lm's `Llama3RoPE` period table, op for op in MLX float32.
+    static func mlxLlama3Periods(dimensions: Int, base: Float, scaling: NFKMLXRoPEScaling) -> MLXArray {
+        let original = Double(scaling.originalMaxPositionEmbeddings)
+        let low = Double(scaling.lowFrequencyFactor), high = Double(scaling.highFrequencyFactor)
+        let factor = Double(scaling.factor)
+        let exponents = MLXArray(Array(stride(from: Int32(0), to: Int32(dimensions), by: 2))).asType(.float32) / Float(dimensions)
+        var periods = pow(MLXArray(base), exponents)
+        let wavelengths = Float(2 * Double.pi) * periods
+        periods = MLX.where(wavelengths .> Float(original / low), periods * Float(factor), periods)
+        let medium = (wavelengths .> Float(original / high)) .&& (wavelengths .< Float(original / low))
+        let smoothing = (Float(original) / wavelengths - Float(low)) / Float(high - low)
+        let smoothed = periods / ((1 - smoothing) / Float(factor) + smoothing)
+        return MLX.where(medium, smoothed, periods)
+    }
+
     func callAsFunction(_ x: MLXArray, offset: Int) -> MLXArray {
-        if NFKReferenceRounding.isReduced(x) {
+        if placement == .torch, NFKReferenceRounding.isReduced(x) {
             var active = periods
             if let longPeriods, offset + x.dim(x.ndim - 2) > longRoPEThreshold {
                 active = longPeriods
@@ -842,7 +879,7 @@ final class NFKLMAttention: Module {
         headDimensions = c.headDimensions
         scale = 1 / sqrt(Float(c.headDimensions))
         rope = NFKLMRotary(dimensions: c.rotaryDimensions ?? c.headDimensions, base: c.ropeTheta,
-                           scaling: c.ropeScaling)
+                           scaling: c.ropeScaling, placement: c.halfPrecisionPlacement)
         slidingWindow = layer < c.slidingWindows.count ? c.slidingWindows[layer] : nil
         _sinks.wrappedValue = c.attentionSinks ? MLXArray.zeros([c.headCount]) : nil
 
@@ -911,14 +948,23 @@ final class NFKLMAttention: Module {
             attention = explicitAttention(queries: queries, keys: keys, values: values, mask: mask,
                                           offset: offset, length: length)
         } else {
-            // A `.checkpoint`-precision load makes this a bf16 module, and the fused attention refuses
-            // a float32 mask that does not promote to its own type — invisible at float32.
-            attention = NFKReferenceRounding.attention(
-                queries: queries, keys: keys, values: values, scale: scale,
-                mask: mask.map { $0.asType(queries.dtype) })
+            attention = attended(queries: queries, keys: keys, values: values, mask: mask)
         }
         return outputProjection(attention.transposed(0, 2, 1, 3)
             .reshaped([batch, length, heads * headDimensions]))
+    }
+
+    /// Full attention under the layer's placement. `mask` is the causal mask aligned to the last key, or
+    /// nil for a single query; mlx_lm hands the fused kernel the same mask as its `causal` mode.
+    func attended(queries: MLXArray, keys: MLXArray, values: MLXArray, mask: MLXArray?) -> MLXArray {
+        if rope.placement == .mlx {
+            return MLXFast.scaledDotProductAttention(queries: queries, keys: keys, values: values, scale: scale,
+                                                     mask: mask == nil ? .none : .causal)
+        }
+        // A `.checkpoint`-precision load makes this a bf16 module, and the fused attention refuses
+        // a float32 mask that does not promote to its own type — invisible at float32.
+        return NFKReferenceRounding.attention(queries: queries, keys: keys, values: values, scale: scale,
+                                              mask: mask.map { $0.asType(queries.dtype) })
     }
 
     /// Attention with the softmax written out, for what the fused kernel has no slot for: a sink
@@ -987,8 +1033,14 @@ final class NFKLMFeedForward: NFKLMMLP {
     @ModuleInfo(key: "up_proj") var up: Linear
     @ModuleInfo(key: "down_proj") var down: Linear
 
+    /// mlx_lm's `swiglu`: `silu(gate) · up`, compiled shapeless as one fused kernel.
+    private static let compiledSwiGLU = compile(shapeless: true) { (gate: MLXArray, up: MLXArray) in silu(gate) * up }
+
+    var placement = NFKMLXHalfPrecisionPlacement.torch
+
     convenience init(_ c: NFKMLXLanguageConfiguration) {
         self.init(hiddenSize: c.hiddenSize, intermediateSize: c.intermediateSize)
+        placement = c.halfPrecisionPlacement
     }
 
     init(hiddenSize: Int, intermediateSize: Int) {
@@ -998,7 +1050,12 @@ final class NFKLMFeedForward: NFKLMMLP {
         super.init()
     }
 
-    override func callAsFunction(_ x: MLXArray) -> MLXArray { down(NFKReferenceRounding.silu(gate(x)) * up(x)) }
+    override func callAsFunction(_ x: MLXArray) -> MLXArray { down(activated(gate: gate(x), up: up(x))) }
+
+    /// The gated activation under the placement.
+    func activated(gate: MLXArray, up: MLXArray) -> MLXArray {
+        placement == .mlx ? Self.compiledSwiGLU(gate, up) : NFKReferenceRounding.silu(gate) * up
+    }
 }
 
 /// One linear map per expert, applied to each token by the experts its router chose.

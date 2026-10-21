@@ -1450,10 +1450,7 @@ public final class NFKMLXLanguage: NSObject {
     ///   which stores the gate and up projections apart where this module holds them fused.
     static func packedReleaseEntries(inDirectory directory: URL, net: NFKMLXLanguageNet) throws
         -> [String: NFKMLXSafetensorsEntry]? {
-        guard let data = try? Data(contentsOf: directory.appendingPathComponent("config.json")),
-              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              try NFKMLXQuantization.releaseQuantization(configJSON: json) != nil,
-              isMLXQuantization(json) else { return nil }
+        guard try statesMLXQuantization(configURL: directory.appendingPathComponent("config.json")) else { return nil }
         var entries = [String: NFKMLXSafetensorsEntry]()
         var perExpert = [String: (entry: NFKMLXSafetensorsEntry, experts: Int)]()
         for file in try NFKMLXReleaseWeights.files(inDirectory: directory) {
@@ -1483,6 +1480,16 @@ public final class NFKMLXLanguage: NSObject {
                 + "layout); this loader reads them fused, as the release ships them")
         }
         return entries
+    }
+
+    /// Whether the release's `config.json` states an mlx_lm quantization this package reads.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` for one it does not read
+    ///   (``NFKMLXQuantization/releaseQuantization(configJSON:)``).
+    static func statesMLXQuantization(configURL: URL) throws -> Bool {
+        guard let data = try? Data(contentsOf: configURL),
+              let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return try NFKMLXQuantization.releaseQuantization(configJSON: json) != nil && isMLXQuantization(json)
     }
 
     /// Whether a `config.json` states mlx_lm's quantization rather than a transformers `quant_method`.
@@ -1631,8 +1638,11 @@ public final class NFKMLXLanguage: NSObject {
     static func loadedRelease(at directoryURL: URL, requiringTokenizer: Bool = false,
                               precision: NFKMLXWeightPrecision? = nil,
                               residency: NFKMLXResidency = .automatic) throws -> (NFKMLXLanguageNet, NFKTokenizer?) {
-        let configuration = try self.configuration(
+        var configuration = try self.configuration(
             fromHuggingFace: directoryURL.appendingPathComponent("config.json"))
+        if try statesMLXQuantization(configURL: directoryURL.appendingPathComponent("config.json")) {
+            configuration.halfPrecisionPlacement = .mlx
+        }
         let tokenizer: NFKTokenizer?
         var tokenizerRefusal: Error?
         do {

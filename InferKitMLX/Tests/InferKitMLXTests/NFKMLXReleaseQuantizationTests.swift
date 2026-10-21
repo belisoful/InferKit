@@ -181,12 +181,11 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
     }
 
     /// A release mlx_lm published 4-bit, loaded through the release loader with its tokenizer and held to
-    /// two references. At the stored precision it predicts mlx_lm's token at every position and generates
-    /// mlx_lm's greedy tokens (`mlx_lm_logits.py`); the logit cosine to mlx_lm and to its GPU runs in other
-    /// prefill orders (`orders.*`) is reported. The release's scales and norms are bfloat16, and on
-    /// Qwen3-0.6B mlx_lm's run sits at cosine 0.99752 from float32 (0.95991 at position 0) where torch's
-    /// bfloat16 run of the same weights sits at 0.99989, so the float32 reference alone cannot judge it.
-    /// Widened to float32, it computes the
+    /// two references. At the stored precision it runs with mlx_lm's placement and computes mlx_lm's logits
+    /// bit for bit (`mlx_lm_logits.py`), with mlx_lm's greedy tokens. The release's scales and norms are
+    /// bfloat16, and on Qwen3-0.6B mlx_lm's run sits at cosine 0.99752 from float32 (0.95991 at position 0)
+    /// where torch's bfloat16 run of the same weights sits at 0.99989, so the float32 reference alone
+    /// cannot judge it. Widened to float32, it computes the
     /// dequantized network transformers runs (`run_reference.py mlx_quantized_release`), which is where a
     /// misread layer shows.
     private func assertReleaseMatchesItsReferences(release releaseKey: String, record recordKey: String,
@@ -231,8 +230,8 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
               + "\(floors.joined(separator: ", ")); mlx_lm reaches \(cosine(runtimeLogits, reference)) against the "
               + "dequantized float32 reference, this release \(cosine(mine, reference)), and transformers' bf16 run "
               + "\(cosine(half, reference))")
-        // The stored-precision cosine bar waits on the seam localization (`testTheQwen3ReleaseSeamsAgainstMLXLM`):
-        // Qwen3 sits at 0.99949 from mlx_lm where Llama 3.2 sits at 0.999998.
+        XCTAssertEqual(zip(mine, runtimeLogits).filter { $0 != $1 }.count, 0,
+                       "the release computes mlx_lm's logits bit for bit")
         for position in 0 ..< tokens.count {
             let row = Array(mine[(position * vocabulary) ..< ((position + 1) * vocabulary)])
             let theirs = Array(runtimeLogits[(position * vocabulary) ..< ((position + 1) * vocabulary)])
@@ -270,9 +269,9 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
     }
 
     /// Each seam of the release's forward against mlx_lm's (`mlx_lm_seams.py`) at the stored precision, from
-    /// mlx_lm's own input to that seam, so a seam that rounds apart shows by itself. Reports, per layer, the
-    /// elements that differ and the cosine of each seam, and the layer outputs of the chained forward.
-    private func reportReleaseSeams(release releaseKey: String, record recordKey: String, label: String) throws {
+    /// mlx_lm's own input to that seam, so a seam that rounds apart shows by itself. Every seam and the
+    /// chained forward's layer outputs are bit-equal; each layer's line reports any element that differs.
+    private func assertReleaseSeams(release releaseKey: String, record recordKey: String, label: String) throws {
         try requireMLXRuntime()
         guard let directory = config[releaseKey], let path = config[recordKey] else {
             throw XCTSkip("set \(releaseKey) and \(recordKey) (mlx_lm_seams.py)")
@@ -280,6 +279,7 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
         let record = try MLX.loadArrays(url: URL(fileURLWithPath: path))
         func seam(_ key: String) throws -> MLXArray { try XCTUnwrap(record[key], key) }
         let net = try NFKMLXLanguage.loadedRelease(at: URL(fileURLWithPath: directory), precision: .checkpoint).0
+        XCTAssertEqual(net.configuration.halfPrecisionPlacement, .mlx, "an mlx_lm release runs with mlx_lm's placement")
         let tokens = try seam("tokens").reshaped([1, -1])
         let length = tokens.dim(1)
         let mask = NFKMLXLanguageNet.causalMask(length, offset: 0)
@@ -287,6 +287,7 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
         func compared(_ name: String, _ mine: MLXArray, _ theirs: MLXArray) -> String {
             XCTAssertEqual(mine.dtype, theirs.dtype, "\(name) is computed in mlx_lm's type")
             let differing = (mine .!= theirs).asType(.int32).sum().item(Int.self)
+            XCTAssertEqual(differing, 0, "\(label) \(name) rounds as mlx_lm's")
             guard differing > 0 else { return "\(name) exact" }
             let a = mine.asType(.float32).reshaped([-1]).asArray(Float.self)
             let b = theirs.asType(.float32).reshaped([-1]).asArray(Float.self)
@@ -315,9 +316,8 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
             rows.append(compared("q_rope", attention.rope(queries.transposed(0, 2, 1, 3), offset: 0), try ref("q_rope")))
             rows.append(compared("k_rope", attention.rope(keys.transposed(0, 2, 1, 3), offset: 0), try ref("k_rope")))
             let values = try ref("v_proj").reshaped([1, length, keyValueHeads, width]).transposed(0, 2, 1, 3)
-            let attended = NFKReferenceRounding.attention(queries: try ref("q_rope"), keys: try ref("k_rope"),
-                                                          values: values, scale: attention.scale,
-                                                          mask: mask.asType(values.dtype))
+            let attended = attention.attended(queries: try ref("q_rope"), keys: try ref("k_rope"), values: values,
+                                              mask: mask)
             rows.append(compared("attention", attended.transposed(0, 2, 1, 3).reshaped([1, length, heads * width]),
                                  try ref("attention")))
             rows.append(compared("o_proj", attention.outputProjection(try ref("attention")), try ref("o_proj")))
@@ -326,7 +326,7 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
             let feedForward = try XCTUnwrap(block.feedForward as? NFKLMFeedForward)
             rows.append(compared("gate", feedForward.gate(try ref("post_norm")), try ref("gate")))
             rows.append(compared("up", feedForward.up(try ref("post_norm")), try ref("up")))
-            rows.append(compared("swiglu", NFKReferenceRounding.silu(try ref("gate")) * (try ref("up")), try ref("swiglu")))
+            rows.append(compared("swiglu", feedForward.activated(gate: try ref("gate"), up: try ref("up")), try ref("swiglu")))
             rows.append(compared("down", feedForward.down(try ref("swiglu")), try ref("down")))
             rows.append(compared("output", try ref("attended") + (try ref("down")), try ref("output")))
             chained = block(chained, mask: mask.asType(chained.dtype), cache: nil, layer: index)
@@ -340,12 +340,12 @@ final class NFKMLXReleaseQuantizationTests: XCTestCase {
     }
 
     func testTheQwen3ReleaseSeamsAgainstMLXLM() throws {
-        try reportReleaseSeams(release: "IK_VAL_MLX_QWEN3_06B_4BIT", record: "IK_PARITY_MLX_QWEN3_06B_4BIT_SEAMS",
+        try assertReleaseSeams(release: "IK_VAL_MLX_QWEN3_06B_4BIT", record: "IK_PARITY_MLX_QWEN3_06B_4BIT_SEAMS",
                                label: "mlx-qwen3-0.6b-4bit")
     }
 
     func testTheLlama32ReleaseSeamsAgainstMLXLM() throws {
-        try reportReleaseSeams(release: "IK_VAL_MLX_LLAMA32_1B_4BIT", record: "IK_PARITY_MLX_LLAMA32_1B_4BIT_SEAMS",
+        try assertReleaseSeams(release: "IK_VAL_MLX_LLAMA32_1B_4BIT", record: "IK_PARITY_MLX_LLAMA32_1B_4BIT_SEAMS",
                                label: "mlx-llama-3.2-1b-4bit")
     }
 

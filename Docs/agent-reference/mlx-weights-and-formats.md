@@ -77,17 +77,22 @@ Runtime quantization, the release reader, the native GGUF and PyTorch checkpoint
   torch's bfloat16 run of the same weights reaches 0.99989. Llama 3.2 reads near float32 as stored
   (0.9999988), because its `llama3` rotary table is float32 and promotes the activations after the first
   rotation. mlx_lm's own run sits at 0.99752 from float32 on Qwen3 (0.95991 at position 0, the
-  attention-sink token), so float32 cannot judge the stored precision. Against mlx_lm the release
-  reaches 0.99948 on Qwen3 and 0.99999798 on Llama 3.2, with every position's argmax and the greedy
-  tokens equal to mlx_lm's. The stored-precision cosine bar is open (USER 2026-10-20): Qwen3's gap is
-  localized seam by seam against `mlx_lm_seams.py`, whose rebuilt forward equals `model(tokens)` bit
-  for bit, before a bar is set. A fixable rounding placement is fixed and held near Llama's level;
-  ordering noise takes a floor measured from mlx_lm's GPU prefill orders (`orders.chunk2`, `chunk3`,
-  `incremental`). mlx_lm's CPU stream is excluded: it reduces sequentially in float32, other
-  arithmetic, and sits at 0.9534 from its own GPU run on Qwen3. The incremental order reproduces
-  Qwen3's GPU run exactly (1.0), so it measures no ordering there. Our decoder rounds attention and
-  SiLU as torch does (`NFKReferenceRounding`); mlx_lm uses MLX's fused attention and compiled
-  `swiglu`.
+  attention-sink token), so float32 cannot judge the stored precision. An mlx_lm release therefore
+  runs with mlx_lm's placement (USER 2026-10-20): the loader sets
+  `NFKMLXLanguageConfiguration.halfPrecisionPlacement` to `.mlx` from the release's mlx_lm
+  `quantization` block, and the rotary, attention, and gated activation take MLX's fused rope, fused
+  attention in `causal` mode, and `silu(gate) · up` compiled shapeless as mlx_lm's `swiglu` is. A
+  llama3 rotary table is computed as mlx_lm's `Llama3RoPE` computes it. A transformers release keeps
+  `.torch` (`NFKReferenceRounding`). The seam localization that chose this (`mlx_lm_seams.py`, whose
+  rebuilt forward equals `model(tokens)` bit for bit, against the torch placement) found every
+  projection, norm (`q_norm`/`k_norm` included), residual, and the head bit-exact, and only the rotary,
+  attention, and SiLU apart: Qwen3's attention seam at 0.99974, its logits at 0.99949 from mlx_lm,
+  Llama's seams near 1e-7. mlx_lm's GPU prefill orders (`orders.incremental`, `chunk2`, `chunk3`)
+  reproduce its Qwen3 run exactly, so the gap was placement, not order. The bar is exact: every seam
+  and the logits equal mlx_lm's. mlx_lm's CPU stream is no reference for it; it reduces sequentially in
+  float32 and sits at 0.9534 from its own GPU run on Qwen3. A mixture's routing (softmax, top-k, and
+  the weighted combine) and its experts' activation keep the torch placement; no mlx-community mixture
+  release is in the store to measure them against.
 - `NFKMLXReleaseWeights` — one reader for a downloaded release's weights, single-file or sharded
   (`model.safetensors.index.json`, each shard read once), with a remap closure whose nil skips a
   tensor. The dense, hybrid, and Gemma loaders all read through it; before it each had its own copy,
