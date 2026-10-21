@@ -54,16 +54,6 @@ let package = Package(
                 "InferKitMLX",
             ]
         ),
-        // A maintainer tool: records whether Metal and MLX run in a launchd context (a LaunchAgent at
-        // the login window, a LaunchDaemon with no user logged in). Tools/background-probe/README.md.
-        .executableTarget(
-            name: "inferkit-background-probe",
-            dependencies: [
-                .product(name: "InferKit", package: "InferKit"),
-                "InferKitMLX",
-                .product(name: "MLX", package: "mlx-swift"),
-            ]
-        ),
         // An Objective-C backend for the forwarding tests, whose raise runs no Swift frame.
         .target(
             name: "InferKitMLXTestSupport",

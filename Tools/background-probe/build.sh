@@ -1,14 +1,14 @@
 #!/bin/bash
 #
-# Builds inferkit-background-probe in release and places MLX's Metal library beside it, into
-# InferKitMLX/.build/background-probe/. The kernels compile with the flags Tools/mlx-metallib.sh uses.
+# Builds inferkit-background-probe in release from the package beside this script and places MLX's
+# Metal library beside it, into Tools/background-probe/.build/stage/. The kernels compile with the flags
+# Tools/mlx-metallib.sh uses.
 #
 #   Tools/background-probe/build.sh
 #
 set -euo pipefail
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PACKAGE="$ROOT/InferKitMLX"
-STAGE="$PACKAGE/.build/background-probe"
+PACKAGE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STAGE="$PACKAGE/.build/stage"
 ( cd "$PACKAGE" && swift build -c release --product inferkit-background-probe )
 KERNELS="$PACKAGE/.build/checkouts/mlx-swift/Source/Cmlx/mlx-generated/metal"
 WORK="$PACKAGE/.build/mlx-metallib"
