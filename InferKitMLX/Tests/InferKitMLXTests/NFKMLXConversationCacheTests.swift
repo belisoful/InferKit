@@ -137,4 +137,18 @@ final class NFKMLXConversationCacheTests: XCTestCase {
         backend.resetPromptCache()
         XCTAssertEqual(backend.conversationCacheCount, 0)
     }
+
+    // The server's relief drops every conversation's cache and reports the bytes they held.
+    func testReleasingTheIdleCachesReturnsTheBytesTheyHeld() throws {
+        try requireMLXRuntime()
+        let backend = try backend()
+        XCTAssertEqual(try cachedTokens(backend, opening, conversation: "a"), 0)
+        XCTAssertEqual(try cachedTokens(backend, unrelated, conversation: "b"), 0)
+        let held = backend.conversationCacheBytes
+        XCTAssertGreaterThan(held, 0)
+        XCTAssertEqual(backend.releaseIdleConversationCaches(), held)
+        XCTAssertEqual(backend.conversationCacheCount, 0)
+        XCTAssertEqual(backend.backendStatus["conversation_cache_bytes"] as? Int, 0)
+        XCTAssertEqual(backend.releaseIdleConversationCaches(), 0)
+    }
 }

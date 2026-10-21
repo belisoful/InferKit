@@ -151,7 +151,19 @@ public final class NFKMLXExpertStore: NSObject, @unchecked Sendable {
     /// routed expert on every step that reaches it, which is the least memory and the most work.
     @objc public var cacheByteBudget: Int {
         get { locked { budget } }
-        set { locked { budget = newValue; evictDownToBudget() } }
+        set { locked { budget = newValue; evict(downTo: budget) } }
+    }
+
+    /// Evicts the least recently used cached experts until `byteCount` bytes are freed or `keptByteCount`
+    /// bytes remain, and returns the bytes freed. The budget is unchanged, so later requests cache again.
+    /// Introduced in InferKit 0.4.0.
+    @objc(releaseCachedByteCount:keepingByteCount:)
+    public func releaseCachedBytes(_ byteCount: Int, keeping keptByteCount: Int) -> Int {
+        locked {
+            let before = cachedBytesHeld
+            evict(downTo: max(keptByteCount, before - max(byteCount, 0)))
+            return before - cachedBytesHeld
+        }
     }
 
     /// How many experts have been materialized from their sources.
@@ -293,13 +305,13 @@ public final class NFKMLXExpertStore: NSObject, @unchecked Sendable {
             costs[address] = cost
             cachedBytesHeld += cost
         }
-        evictDownToBudget()
+        evict(downTo: budget)
         return members.compactMap { $0 }
     }
 
-    /// Evicts least-recently-used experts until the cache is within its budget. Runs on the lock.
-    private func evictDownToBudget() {
-        while cachedBytesHeld > budget, !cache.isEmpty {
+    /// Evicts least-recently-used experts until the cache holds at most `bound` bytes. Runs on the lock.
+    private func evict(downTo bound: Int) {
+        while cachedBytesHeld > bound, !cache.isEmpty {
             guard let oldest = cache.keys.min(by: { (lastUse[$0] ?? 0) < (lastUse[$1] ?? 0) }) else { break }
             cachedBytesHeld -= costs.removeValue(forKey: oldest) ?? 0
             cache.removeValue(forKey: oldest)

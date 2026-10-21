@@ -276,6 +276,25 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
         conversations.refresh()
     }
 
+    /// Drops every conversation's prompt cache when no run is in progress, and returns the bytes they held;
+    /// returns 0 at once while a run holds them. `NFKInferenceServer` calls it to relieve memory. Introduced
+    /// in InferKit 0.4.0.
+    @objc public func releaseIdleConversationCaches() -> Int {
+        guard generationLock.try() else { return 0 }
+        defer { generationLock.unlock() }
+        let held = conversations.states.heldBytes
+        conversations.states.removeAll()
+        conversations.refresh()
+        return held
+    }
+
+    /// Releases up to `byteCount` of the routed experts the model caches, keeping `keepingByteCount`, and
+    /// returns the bytes freed; 0 where the model holds its experts resident. The cache's budget is
+    /// unchanged. Introduced in InferKit 0.4.0.
+    @objc public func releaseExpertCacheByteCount(_ byteCount: Int, keepingByteCount: Int) -> Int {
+        expertStore?.releaseCachedBytes(byteCount, keeping: keepingByteCount) ?? 0
+    }
+
     /// Drops every conversation's prompt cache. Introduced in InferKit 0.4.0.
     @objc public func resetPromptCache() {
         generationLock.lock(); defer { generationLock.unlock() }

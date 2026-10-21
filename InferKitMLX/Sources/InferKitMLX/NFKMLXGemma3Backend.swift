@@ -134,6 +134,18 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
         conversations.refresh()
     }
 
+    /// Drops every conversation's prompt cache when no run is in progress, and returns the bytes they held;
+    /// returns 0 at once while a run holds them. `NFKInferenceServer` calls it to relieve memory. Introduced
+    /// in InferKit 0.4.0.
+    @objc public func releaseIdleConversationCaches() -> Int {
+        guard generationLock.try() else { return 0 }
+        defer { generationLock.unlock() }
+        let held = conversations.states.heldBytes
+        conversations.states.removeAll()
+        conversations.refresh()
+        return held
+    }
+
     /// Drops every conversation's prompt cache. Introduced in InferKit 0.4.0.
     @objc public func resetPromptCache() {
         generationLock.lock(); defer { generationLock.unlock() }

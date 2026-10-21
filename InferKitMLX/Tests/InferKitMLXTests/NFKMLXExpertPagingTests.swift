@@ -137,6 +137,26 @@ final class NFKMLXExpertPagingTests: XCTestCase {
         XCTAssertEqual(store.cachedBytes, 0, "lowering the budget evicts at once")
     }
 
+    // Relief evicts the least recently used experts down to what it is asked to free or to keep, and leaves
+    // the budget alone, so the cache fills again.
+    func testReleasingCachedBytesEvictsTheLeastRecentAndKeepsTheBudget() throws {
+        try requireMLXRuntime()
+        let store = NFKMLXExpertStore(cacheByteBudget: 48)
+        for expert in 0 ..< 3 {
+            store.store(Counted(value: Float(expert), reads: {}), group: "g", expert: expert, part: "weight")
+        }
+        for expert in 0 ..< 3 {
+            _ = store.expert(group: "g", index: expert)
+        }
+        XCTAssertEqual(store.cachedBytes, 48)
+        XCTAssertEqual(store.releaseCachedBytes(10, keeping: 0), 16, "whole experts, the least recent first")
+        XCTAssertEqual(store.releaseCachedBytes(100, keeping: 16), 16, "down to what it keeps")
+        XCTAssertEqual(store.cachedBytes, 16)
+        XCTAssertEqual(store.cacheByteBudget, 48)
+        _ = store.expert(group: "g", index: 0)
+        XCTAssertEqual(store.cachedBytes, 32, "the cache fills again")
+    }
+
     // A paged switch linear reads only the routed experts and computes what the resident stack computes.
     func testAPagedSwitchLinearIsTheResidentOne() throws {
         try requireMLXRuntime()

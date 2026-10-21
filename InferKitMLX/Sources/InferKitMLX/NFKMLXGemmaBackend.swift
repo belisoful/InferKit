@@ -102,6 +102,13 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     /// the model's "status". Introduced in InferKit 0.4.0.
     @objc public var backendStatus: [String: Any] { expertStore?.statusFigures ?? [:] }
 
+    /// Releases up to `byteCount` of the routed experts the model caches, keeping `keepingByteCount`, and
+    /// returns the bytes freed; 0 where the model holds its experts resident. The cache's budget is
+    /// unchanged. Introduced in InferKit 0.4.0.
+    @objc public func releaseExpertCacheByteCount(_ byteCount: Int, keepingByteCount: Int) -> Int {
+        expertStore?.releaseCachedBytes(byteCount, keeping: keepingByteCount) ?? 0
+    }
+
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
         [NFKParameterTemperature, NFKParameterMaxTokens, NFKParameterSeed, NFKParameterTools,

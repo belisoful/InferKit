@@ -45,6 +45,36 @@
 
 @end
 
+/*! A backend that reports its resident bytes and releases conversation and expert caches it holds. */
+@interface NFKReliefTestBackend : NFKResidencyTestBackend
+@property (atomic, assign) NSInteger residentBytesHeld;
+@property (atomic, assign) NSInteger conversationBytes;
+@property (atomic, assign) NSInteger expertBytes;
+@end
+
+@implementation NFKReliefTestBackend
+
+- (NSInteger)residentByteCount
+{
+	return self.residentBytesHeld;
+}
+
+- (NSInteger)releaseIdleConversationCaches
+{
+	NSInteger held = self.conversationBytes;
+	self.conversationBytes = 0;
+	return held;
+}
+
+- (NSInteger)releaseExpertCacheByteCount:(NSInteger)byteCount keepingByteCount:(NSInteger)keptByteCount
+{
+	NSInteger freed = MAX(MIN(byteCount, self.expertBytes - keptByteCount), 0);
+	self.expertBytes -= freed;
+	return freed;
+}
+
+@end
+
 @interface NFKServedResidencyTests : XCTestCase
 @property (atomic, assign) NSTimeInterval now;
 @property (atomic, assign) double pressure;
@@ -436,6 +466,99 @@
 	XCTAssertEqualObjects([server unloadIdleModels], @[], @"the next pressure unload waits the hysteresis");
 	self.now += 6;
 	XCTAssertEqualObjects([server unloadIdleModels], @[ @"newer" ]);
+}
+
+#pragma mark Relief
+
+- (NFKReliefTestBackend *)reliefBackendHolding:(NSInteger)residentBytes conversations:(NSInteger)conversations
+										experts:(NSInteger)experts
+{
+	NFKReliefTestBackend *backend = [[NFKReliefTestBackend alloc] init];
+	backend.residentBytesHeld = residentBytes;
+	backend.conversationBytes = conversations;
+	backend.expertBytes = experts;
+	return backend;
+}
+
+- (NFKMemoryRelief *)relieve:(NSInteger)byteCount on:(NFKInferenceServer *)server
+{
+	__block NFKMemoryRelief *answer = nil;
+	XCTestExpectation *relieved = [self expectationWithDescription:@"relieved"];
+	[server relieveMemoryByteCount:byteCount completionHandler:^(NFKMemoryRelief *relief) {
+		answer = relief;
+		[relieved fulfill];
+	}];
+	[self waitForExpectations:@[ relieved ] timeout:10];
+	return answer;
+}
+
+- (void)testReliefClimbsTheCachesBeforeItReleasesAModel
+{
+	NFKInferenceServer *server = [self server];
+	NFKReliefTestBackend *older = [self reliefBackendHolding:1000 conversations:100 experts:300];
+	NFKReliefTestBackend *newer = [self reliefBackendHolding:2000 conversations:50 experts:0];
+	[server addBackendProvider:[self providerReturning:older] forModelName:@"older"];
+	[server addBackendProvider:[self providerReturning:newer] forModelName:@"newer"];
+	[self load:@"older" on:server];
+	self.now += 5;
+	[self load:@"newer" on:server];
+
+	NFKMemoryRelief *conversations = [self relieve:120 on:server];
+	XCTAssertEqual(conversations.conversationCacheByteCount, 150, @"%@", conversations);
+	XCTAssertEqual(conversations.expertCacheByteCount, 0);
+	XCTAssertEqualObjects(conversations.releasedModelNames, @[]);
+
+	NFKMemoryRelief *experts = [self relieve:200 on:server];
+	XCTAssertEqual(experts.expertCacheByteCount, 200, @"%@", experts);
+	XCTAssertEqual(older.expertBytes, 100, @"the cache gives up what was asked, not all of it");
+	XCTAssertEqualObjects(experts.releasedModelNames, @[]);
+
+	NFKMemoryRelief *models = [self relieve:1500 on:server];
+	XCTAssertEqual(models.expertCacheByteCount, 100, @"%@", models);
+	XCTAssertEqualObjects(models.releasedModelNames, (@[ @"older", @"newer" ]), @"least recently used first");
+	XCTAssertEqual(models.modelByteCount, 3000);
+	XCTAssertEqual(models.byteCount, 3100);
+	XCTAssertEqual([server residencyForModelName:@"older"], NFKServerModelResidencyNotLoaded);
+	XCTAssertEqual([server residencyForModelName:@"newer"], NFKServerModelResidencyNotLoaded);
+}
+
+- (void)testReliefKeepsPinnedModelsAndModelsWithinTheirGracePeriod
+{
+	NFKInferenceServer *server = [self server];
+	server.expertCacheReliefFloor = 64;
+	NFKReliefTestBackend *pinned = [self reliefBackendHolding:1000 conversations:0 experts:100];
+	[server addBackendProvider:[self providerReturning:pinned] forModelName:@"pinned"];
+	[server addBackendProvider:[self providerReturning:[self reliefBackendHolding:1000 conversations:0 experts:0]]
+				  forModelName:@"fresh"];
+	[server setPinned:YES forModelName:@"pinned"];
+	[self load:@"pinned" on:server];
+	server.unloadGracePeriod = 60;
+	[self load:@"fresh" on:server];
+
+	NFKMemoryRelief *relief = [self relieve:10000 on:server];
+	XCTAssertEqual(relief.expertCacheByteCount, 36, @"down to the floor: %@", relief);
+	XCTAssertEqual(pinned.expertBytes, 64);
+	XCTAssertEqualObjects(relief.releasedModelNames, @[]);
+	XCTAssertEqual([server residencyForModelName:@"pinned"], NFKServerModelResidencyResident);
+	XCTAssertEqual([server residencyForModelName:@"fresh"], NFKServerModelResidencyResident);
+}
+
+- (void)testPressureReleasesCachesBeforeAModel
+{
+	NFKInferenceServer *server = [self server];
+	server.unloadsUnderMemoryPressure = YES;
+	server.pressureUnloadHysteresis = 5;
+	NFKReliefTestBackend *backend = [self reliefBackendHolding:1000 conversations:1200 experts:0];
+	[server addBackendProvider:[self providerReturning:backend] forModelName:@"cached"];
+	[self load:@"cached" on:server];
+	self.pressure = 1;
+
+	self.now += 100;
+	XCTAssertEqualObjects([server unloadIdleModels], @[], @"the conversation caches freed the model's bytes");
+	XCTAssertEqual(backend.conversationBytes, 0);
+	XCTAssertEqual([server residencyForModelName:@"cached"], NFKServerModelResidencyResident);
+	self.now += 6;
+	XCTAssertEqualObjects([server unloadIdleModels], (@[ @"cached" ]), @"with the caches empty the model goes");
 }
 
 - (void)testAFallingPressureTakesEffectAfterTheHysteresis

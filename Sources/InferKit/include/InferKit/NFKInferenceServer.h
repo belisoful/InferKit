@@ -121,6 +121,10 @@ extern NSString * const NFKInferenceServerDefaultAPIKeyName;
 	a hosted model's backend. Introduced in InferKit 0.4.0. */
 + (void)resetPeakAllocatedByteCount;
 
+/*! The bytes the runtime keeps cached for reuse now, which releaseCachedMemory returns, or a negative
+	value when it cannot read them. Introduced in InferKit 0.4.0. */
+@property (class, nonatomic, readonly) NSInteger cachedByteCount;
+
 @end
 
 /*! Builds a hosted model's backend: returns it, or nil with an error. A server calls it on a background
@@ -430,6 +434,34 @@ NS_SWIFT_SENDABLE
 				object.
 				Introduced in InferKit 0.4.0.
 */
+/*!
+	@class      NFKMemoryRelief
+	@abstract   What -[NFKInferenceServer relieveMemoryByteCount:completionHandler:] freed, step by step.
+	@discussion The steps run in order and stop once they have freed the requested bytes:
+				- runtimeCacheByteCount: the runtimes' cached memory, released only while no hosted model
+				  has a run in flight or a backend being built;
+				- conversationCacheByteCount: the conversation caches of models with no run in flight;
+				- expertCacheByteCount: the cached routed experts of models with no run in flight, down to
+				  expertCacheReliefFloor each;
+				- modelByteCount: the resident bytes of the idle models it released, least recently used
+				  first, never a pinned model, one with a run in flight or queued, or one within
+				  unloadGracePeriod of its build.
+				Introduced in InferKit 0.4.0.
+*/
+NS_SWIFT_SENDABLE
+@interface NFKMemoryRelief : NSObject
+@property (nonatomic, readonly) NSInteger requestedByteCount;
+@property (nonatomic, readonly) NSInteger runtimeCacheByteCount;
+@property (nonatomic, readonly) NSInteger conversationCacheByteCount;
+@property (nonatomic, readonly) NSInteger expertCacheByteCount;
+@property (nonatomic, readonly) NSInteger modelByteCount;
+/*! The names of the models released, in the order they were released. */
+@property (nonatomic, readonly, copy) NSArray<NSString *> *releasedModelNames;
+/*! The bytes every step freed together. */
+@property (nonatomic, readonly) NSInteger byteCount;
+- (instancetype)init NS_UNAVAILABLE;
+@end
+
 @interface NFKInferenceServer : NSObject
 
 /*! The port to listen on. Defaults to NFKInferenceServerDefaultPort; 0 lets the system choose. */
@@ -750,6 +782,21 @@ NS_SWIFT_SENDABLE
 /*! Applies the unloading options now, as the periodic check does, and returns the names of the models it
 	unloaded. Introduced in InferKit 0.4.0. */
 - (NSArray<NSString *> *)unloadIdleModels;
+
+/*!
+	@method     relieveMemoryByteCount:completionHandler:
+	@abstract   Frees at least byteCount bytes where it can, releasing a model only after the caches.
+	@discussion Climbs the steps NFKMemoryRelief lists until they have freed byteCount bytes, and calls
+				completionHandler on a background queue with what each step freed. A released model is
+				reported with NFKServerModelEventReasonRelief. Memory-pressure unloading climbs the
+				caches' steps the same way before it releases a model. Introduced in InferKit 0.4.0.
+*/
+- (void)relieveMemoryByteCount:(NSInteger)byteCount
+			 completionHandler:(void (^ NS_SWIFT_SENDABLE)(NFKMemoryRelief *relief))completionHandler;
+
+/*! The cached routed experts relief keeps in each model, in bytes. Defaults to 0. Introduced in InferKit
+	0.4.0. */
+@property (atomic, assign) NSInteger expertCacheReliefFloor;
 
 /*! Stops hosting the model. Its queued runs fail; its running ones finish. The server calls the backend's
 	unload, when it implements one, so its memory is freed once the running runs end. Replacing a model

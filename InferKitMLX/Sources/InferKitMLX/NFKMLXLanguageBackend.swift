@@ -522,6 +522,26 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         refreshCacheStatus()
     }
 
+    /// Drops the unnamed prompt cache and every conversation's when no run is in progress, and returns the
+    /// bytes they held; returns 0 at once while a run holds them. `NFKInferenceServer` calls it to relieve
+    /// memory. Introduced in InferKit 0.4.0.
+    @objc public func releaseIdleConversationCaches() -> Int {
+        guard generationLock.try() else { return 0 }
+        defer { generationLock.unlock() }
+        let held = conversationCaches.heldBytes + (promptCache?.allocatedBytes ?? 0)
+        promptCache = nil
+        conversationCaches.removeAll()
+        refreshCacheStatus()
+        return held
+    }
+
+    /// Releases up to `byteCount` of the routed experts the loaded model caches, keeping `keepingByteCount`,
+    /// and returns the bytes freed; 0 where the model holds its experts resident or is unloaded. The
+    /// cache's budget is unchanged. Introduced in InferKit 0.4.0.
+    @objc public func releaseExpertCacheByteCount(_ byteCount: Int, keepingByteCount: Int) -> Int {
+        expertStore?.releaseCachedBytes(byteCount, keeping: keepingByteCount) ?? 0
+    }
+
     /// Drops one conversation's prompt cache. Introduced in InferKit 0.4.0.
     @objc(resetPromptCacheForConversation:)
     public func resetPromptCache(forConversation conversation: String) {

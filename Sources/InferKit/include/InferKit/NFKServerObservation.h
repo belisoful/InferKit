@@ -99,6 +99,10 @@ typedef NS_ENUM(NSInteger, NFKServerModelEventKind) {
 	@constant   NFKServerModelEventReasonPressure Memory pressure shortened its timeout and it was the least
 				recently used model past it.
 	@constant   NFKServerModelEventReasonRemoved The host removed or replaced the model.
+	@constant   NFKServerModelEventReasonRelief relieveMemoryByteCount:completionHandler: released the
+				idle model after the runtimes' and the backends' caches freed too little.
+	@constant   NFKServerModelEventReasonAdmission The server released the idle model to make room for
+				another model's build.
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ENUM(NSInteger, NFKServerModelEventReason) {
@@ -107,6 +111,8 @@ typedef NS_ENUM(NSInteger, NFKServerModelEventReason) {
 	NFKServerModelEventReasonIdle,
 	NFKServerModelEventReasonPressure,
 	NFKServerModelEventReasonRemoved,
+	NFKServerModelEventReasonRelief,
+	NFKServerModelEventReasonAdmission,
 };
 
 /*! One model's load or unload, as NFKInferenceServerDelegate receives it. Introduced in InferKit 0.4.0. */

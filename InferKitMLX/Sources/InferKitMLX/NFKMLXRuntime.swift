@@ -329,6 +329,12 @@ extension NFKMLXGPU: NFKServingRuntimeStatus {
                 "memory_limit_bytes": memoryLimit]
     }
 
+    /// The bytes MLX's buffer cache holds now, which ``releaseCachedMemory()`` returns, or -1 without MLX's
+    /// Metal library. Introduced in InferKit 0.4.0.
+    @objc public static var cachedByteCount: Int {
+        metalLibraryURL == nil ? -1 : cacheMemory
+    }
+
     /// Returns MLX's buffer cache to the system once the GPU stream has drained, which
     /// `NFKInferenceServer` asks for after it unloads a model. A process without MLX's Metal library
     /// has no cache and is left alone. Introduced in InferKit 0.4.0.

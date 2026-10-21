@@ -142,6 +142,20 @@ public final class NFKMLXReloadableBackend: NSObject, NFKInferenceBackend {
         lifecycle.ifLoaded { $0.backendStatus ?? [:] } ?? [:]
     }
 
+    /// The held backend's conversation caches released, as its `releaseIdleConversationCaches` does, or 0
+    /// while the model is unloaded or the held backend keeps none. Never builds the model. Introduced in
+    /// InferKit 0.4.0.
+    @objc public func releaseIdleConversationCaches() -> Int {
+        lifecycle.ifLoaded { $0.releaseIdleConversationCaches?() ?? 0 } ?? 0
+    }
+
+    /// The held backend's cached experts released, as its `releaseExpertCacheByteCount:keepingByteCount:`
+    /// does, or 0 while the model is unloaded or pages no experts. Never builds the model. Introduced in
+    /// InferKit 0.4.0.
+    @objc public func releaseExpertCacheByteCount(_ byteCount: Int, keepingByteCount: Int) -> Int {
+        lifecycle.ifLoaded { $0.releaseExpertCacheByteCount?(byteCount, keepingByteCount: keepingByteCount) ?? 0 } ?? 0
+    }
+
     /// The load options the backend was built with, keyed by `NFKModelLoadOption*` keys, as requested with
     /// defaults filled; empty for a backend built without options. Introduced in InferKit 0.4.0.
     @objc public var loadOptionValues: [String: Any] { lifecycle.loadOptionValues }

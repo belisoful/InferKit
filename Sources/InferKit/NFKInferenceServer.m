@@ -1338,6 +1338,52 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 @property (atomic, strong, nullable) dispatch_queue_t customDelegateQueue;
 @end
 
+#pragma mark - Memory relief
+
+@interface NFKMemoryRelief ()
+@property (nonatomic, readwrite) NSInteger requestedByteCount;
+@property (nonatomic, readwrite) NSInteger runtimeCacheByteCount;
+@property (nonatomic, readwrite) NSInteger conversationCacheByteCount;
+@property (nonatomic, readwrite) NSInteger expertCacheByteCount;
+@property (nonatomic, readwrite) NSInteger modelByteCount;
+@property (nonatomic, readwrite, copy) NSArray<NSString *> *releasedModelNames;
+- (instancetype)initWithRequestedByteCount:(NSInteger)byteCount NS_DESIGNATED_INITIALIZER;
+/*! Whether the steps so far freed the requested bytes. */
+- (BOOL)isSatisfied;
+@end
+
+@implementation NFKMemoryRelief
+
+- (instancetype)initWithRequestedByteCount:(NSInteger)byteCount
+{
+	self = [super init];
+	if (self != nil) {
+		_requestedByteCount = byteCount;
+		_releasedModelNames = @[];
+	}
+	return self;
+}
+
+- (NSInteger)byteCount
+{
+	return self.runtimeCacheByteCount + self.conversationCacheByteCount + self.expertCacheByteCount + self.modelByteCount;
+}
+
+- (BOOL)isSatisfied
+{
+	return self.byteCount >= self.requestedByteCount;
+}
+
+- (NSString *)description
+{
+	return [NSString stringWithFormat:@"<%@ %ld of %ld bytes: runtime %ld, conversations %ld, experts %ld, models %ld %@>",
+			self.class, (long)self.byteCount, (long)self.requestedByteCount, (long)self.runtimeCacheByteCount,
+			(long)self.conversationCacheByteCount, (long)self.expertCacheByteCount, (long)self.modelByteCount,
+			self.releasedModelNames];
+}
+
+@end
+
 @implementation NFKInferenceServer
 
 - (instancetype)init
@@ -2620,6 +2666,17 @@ static NSDictionary<NSString *, id> *NFKServedOptionsAtStage(NFKModelDescriptor 
 			NSArray<NFKServedModel *> *leastRecentFirst = [pressured sortedArrayUsingComparator:^NSComparisonResult(NFKServedModel *left, NFKServedModel *right) {
 				return [@([left lastUse]) compare:@([right lastUse])];
 			}];
+			// The caches go before a model: what the least recently used model holds is the bytes to free.
+			NSInteger wanted = spaced ? leastRecentFirst.firstObject.residentBytes.integerValue : 0;
+			if (wanted > 0) {
+				NFKMemoryRelief *relief = [[NFKMemoryRelief alloc] initWithRequestedByteCount:wanted];
+				[self relieveCachesInto:relief];
+				if ([relief isSatisfied]) {
+					self.lastPressureUnloadAt = now;
+					self.hasPressureUnloaded = YES;
+					spaced = NO;
+				}
+			}
 			for (NFKServedModel *model in spaced ? leastRecentFirst : @[]) {
 				id<NFKInferenceBackend> taken = [model takeBackendIfUnusedFor:timeouts[model.name].doubleValue grace:grace at:now
 																	   reason:NFKServerModelEventReasonPressure];
@@ -2666,6 +2723,126 @@ static NSDictionary<NSString *, id> *NFKServedOptionsAtStage(NFKModelDescriptor 
 			}
 		}
 	});
+}
+
+#pragma mark Relief
+
+- (void)relieveMemoryByteCount:(NSInteger)byteCount
+			 completionHandler:(void (^)(NFKMemoryRelief *relief))completionHandler
+{
+	__weak NFKInferenceServer *weakSelf = self;
+	dispatch_async(self.residencyQueue, ^{
+		NFKMemoryRelief *relief = [[NFKMemoryRelief alloc] initWithRequestedByteCount:byteCount];
+		NFKInferenceServer *server = weakSelf;
+		if (server != nil) {
+			[server relieveCachesInto:relief];
+			if (![relief isSatisfied]) {
+				[server releaseIdleModelsInto:relief reason:NFKServerModelEventReasonRelief];
+			}
+		}
+		dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+			completionHandler(relief);
+		});
+	});
+}
+
+/*! The first three steps of the relief ladder: the runtimes' caches while nothing runs, then each idle
+	model's conversation caches, then its cached experts down to expertCacheReliefFloor. Stops once relief
+	is satisfied. A model with a run in flight, queued, or a build under way keeps its caches. */
+- (void)relieveCachesInto:(NFKMemoryRelief *)relief
+{
+	NSArray<NFKServedModel *> *models = [self hostedModels];
+	BOOL anyBusy = NO;
+	for (NFKServedModel *model in models) {
+		anyBusy = anyBusy || [model isBusy];
+	}
+	if (!anyBusy) {
+		relief.runtimeCacheByteCount += [NFKInferenceServer releaseRuntimeCachesNow];
+	}
+	for (NFKServedModel *model in models) {
+		if ([relief isSatisfied]) {
+			return;
+		}
+		id<NFKInferenceBackend> backend = [model isBusy] ? nil : [model residentBackend];
+		if ([backend respondsToSelector:@selector(releaseIdleConversationCaches)]) {
+			relief.conversationCacheByteCount += MAX([backend releaseIdleConversationCaches], 0);
+		}
+	}
+	NSInteger floor = MAX(self.expertCacheReliefFloor, 0);
+	for (NFKServedModel *model in models) {
+		if ([relief isSatisfied]) {
+			return;
+		}
+		id<NFKInferenceBackend> backend = [model isBusy] ? nil : [model residentBackend];
+		if ([backend respondsToSelector:@selector(releaseExpertCacheByteCount:keepingByteCount:)]) {
+			NSInteger wanted = relief.requestedByteCount - relief.byteCount;
+			relief.expertCacheByteCount += MAX([backend releaseExpertCacheByteCount:wanted keepingByteCount:floor], 0);
+		}
+	}
+}
+
+/*! The last step of the relief ladder: releases idle models, least recently used first, until relief is
+	satisfied, reporting each with reason. A model is released only when it is unloadable, not pinned, has
+	no run in flight or queued, and was built at least unloadGracePeriod ago. */
+- (void)releaseIdleModelsInto:(NFKMemoryRelief *)relief reason:(NFKServerModelEventReason)reason
+{
+	NSMutableArray<NFKServedModel *> *unloadedModels = [NSMutableArray array];
+	NSMutableArray<NSString *> *names = [relief.releasedModelNames mutableCopy];
+	@autoreleasepool {
+		NSMutableArray<id<NFKInferenceBackend>> *released = [NSMutableArray array];
+		NSTimeInterval grace = MAX(self.unloadGracePeriod, 0.0);
+		@synchronized (self.residencyLock) {
+			NSTimeInterval now = [self now];
+			NSArray<NFKServedModel *> *leastRecentFirst = [[self hostedModels] sortedArrayUsingComparator:
+				^NSComparisonResult(NFKServedModel *left, NFKServedModel *right) {
+					return [@([left lastUse]) compare:@([right lastUse])];
+				}];
+			for (NFKServedModel *model in leastRecentFirst) {
+				if ([relief isSatisfied]) {
+					break;
+				}
+				if (![model isUnloadable] || [self isPinnedModelNamed:model.name]) {
+					continue;
+				}
+				NSInteger bytes = model.residentBytes.integerValue;
+				id<NFKInferenceBackend> taken = [model takeBackendIfUnusedFor:0 grace:grace at:now reason:reason];
+				if (taken != nil) {
+					[released addObject:taken];
+					[unloadedModels addObject:model];
+					[names addObject:model.name];
+					relief.modelByteCount += MAX(bytes, 0);
+				}
+			}
+		}
+		for (id<NFKInferenceBackend> backend in released) {
+			NFKInferenceUnload(backend);
+		}
+		[released removeAllObjects];
+	}
+	for (NFKServedModel *model in unloadedModels) {
+		[model finishUnload];
+	}
+	relief.releasedModelNames = names;
+}
+
+/*! Asks each registered runtime to return its cache now, and returns the bytes the runtimes' reports say
+	it freed. The caller makes sure no hosted model has a run in flight or a backend being built. */
++ (NSInteger)releaseRuntimeCachesNow
+{
+	NSInteger freed = 0;
+	for (Class<NFKServingRuntimeStatus> runtime in [NFKInferenceServer runtimeStatusClasses]) {
+		if (![(Class)runtime respondsToSelector:@selector(releaseCachedMemory)]) {
+			continue;
+		}
+		BOOL counts = [(Class)runtime respondsToSelector:@selector(cachedByteCount)];
+		NSInteger before = counts ? [runtime cachedByteCount] : -1;
+		[runtime releaseCachedMemory];
+		NSInteger after = counts ? [runtime cachedByteCount] : -1;
+		if (before >= 0 && after >= 0) {
+			freed += MAX(before - after, 0);
+		}
+	}
+	return freed;
 }
 
 + (void)registerRuntimeStatusClassName:(NSString *)className

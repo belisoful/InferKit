@@ -40,6 +40,19 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### Memory relief before a model is released
+
+- `-[NFKInferenceServer relieveMemoryByteCount:completionHandler:]` frees memory in steps and stops once
+  it has freed the bytes asked: the runtimes' cached memory while nothing runs, idle models' conversation
+  caches, their cached routed experts down to `expertCacheReliefFloor`, and only then idle models, least
+  recently used first. `NFKMemoryRelief` reports what each step freed, and a released model's event
+  carries `NFKServerModelEventReasonRelief`. Memory-pressure unloading climbs the cache steps first and
+  keeps a model when they free its bytes.
+- `NFKInferenceBackend` gains the optional `releaseIdleConversationCaches` and
+  `releaseExpertCacheByteCount:keepingByteCount:`, which the MLX language, Gemma 3, Gemma 4, and DeepSeek
+  V4 backends implement, and `NFKServingRuntimeStatus` the optional `+cachedByteCount`.
+  `NFKServerModelEventReasonAdmission` names a release that makes room for another model's build.
+
 #### The audio-generation task
 
 - `NFKModelTaskAudioGeneration` (`audio-generation`) names making sound effects and other audio from a

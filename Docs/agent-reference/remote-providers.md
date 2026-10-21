@@ -1553,6 +1553,17 @@ keeping them in memory, and unloads idle ones.
   buffers in-flight work still reads (`mlx-runtime-gotchas.md`). `NFKMLXGPU` implements it as
   `synchronize()` then `clearCache()`, and does nothing without the Metal library. Without it an
   unloaded MLX model's buffers stay in MLX's cache and the footprint does not fall.
+- Relief (`relieveMemoryByteCount:completionHandler:`, on the residency queue) climbs four steps and
+  stops once it has freed the bytes asked: (a) the runtimes' caches, only while no model is busy,
+  measured by the optional `+cachedByteCount`; (b) each idle model's conversation caches, through the
+  backend's optional `releaseIdleConversationCaches`; (c) each idle model's cached experts, through
+  `releaseExpertCacheByteCount:keepingByteCount:`, down to `expertCacheReliefFloor`, budget unchanged;
+  (d) idle models, least recently used first, never pinned, busy, or within grace, each reported with
+  `NFKServerModelEventReasonRelief`. The pressure branch of `unloadIdleModels` runs (a) to (c) for the
+  resident bytes of the model it would release, and keeps the model when they freed that much; the
+  hysteresis then spaces the next attempt. A backend with a run in progress returns 0 from (b) at once
+  (a try-lock on its generation lock). `NFKMLXReloadableBackend` implements both backend methods
+  itself, so an unloaded model answers 0 and is never rebuilt by a relief call.
 - Status: each model's `residency` object (`state`, `unloadable`, `last_used` in seconds since 1970,
   `idle_timeout_seconds` when finite, `load_seconds`, `load_error`, `loads`, `unloads`, `resident_bytes`,
   `peak_bytes`) in both the status route and the `/models` entry; `NFKServerModelStatus` reads it. A

@@ -132,6 +132,23 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *backendStatus;
 
 /*!
+	@method     releaseIdleConversationCaches
+	@abstract   Releases the caches the backend keeps for conversations, and returns the bytes freed.
+	@discussion NFKInferenceServer calls it to relieve memory before it releases a model. A backend with a
+				run in progress returns 0 at once and keeps its caches. Introduced in InferKit 0.4.0.
+*/
+- (NSInteger)releaseIdleConversationCaches;
+
+/*!
+	@method     releaseExpertCacheByteCount:keepingByteCount:
+	@abstract   Releases up to byteCount of the routed experts the backend keeps cached, keeping at least
+				keptByteCount cached, and returns the bytes freed.
+	@discussion The cache's budget is unchanged, so later runs fill it again. NFKInferenceServer calls it to
+				relieve memory before it releases a model. Introduced in InferKit 0.4.0.
+*/
+- (NSInteger)releaseExpertCacheByteCount:(NSInteger)byteCount keepingByteCount:(NSInteger)keptByteCount;
+
+/*!
 	@method     tokenCountForRequest:error:
 	@abstract   The number of input tokens a run of the request would cost, or nil with an error.
 	@discussion The count covers what runInferenceForRequest:error: reads as the prompt: the messages

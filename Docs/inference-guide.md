@@ -945,7 +945,10 @@ Two options unload a model that sits unused, each independent of the other:
 
 A model just built is kept for `unloadGracePeriod`, a model with a run in flight or queued is never
 unloaded, a model pinned with `setPinned:forModelName:` is never unloaded by either option, and under
-pressure the least recently used model goes first. Each model's entry in the
+pressure the least recently used model goes first. Before a model goes for pressure, the server releases
+what costs nothing to rebuild: the runtimes' cached memory, idle models' conversation caches, and their
+cached routed experts. `relieveMemoryByteCount:completionHandler:` climbs the same steps on request and
+releases idle models only after them, reporting what each step freed in an `NFKMemoryRelief`. Each model's entry in the
 status route reports its `residency`: whether it is loaded, when it was last used, its idle timeout at
 the current pressure, and `resident_bytes` and `peak_bytes` from its last load
 (`NFKServerModelStatus.residentBytes` and `peakBytes`). A backend that measures its own load gives
