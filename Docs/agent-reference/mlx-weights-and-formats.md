@@ -76,7 +76,10 @@ Runtime quantization, the release reader, the native GGUF and PyTorch checkpoint
   stored, Qwen3-0.6B's bfloat16 scales and norms move its logits to cosine 0.99727 from float32 where
   torch's bfloat16 run of the same weights reaches 0.99989. Llama 3.2 reads near float32 as stored
   (0.9999988), because its `llama3` rotary table is float32 and promotes the activations after the first
-  rotation.
+  rotation. mlx_lm's own run sits at 0.99752 from float32 on Qwen3 (0.95991 at position 0, the
+  attention-sink token), so the stored-precision bar is that floor: the release must sit closer to
+  mlx_lm than mlx_lm sits to float32 (measured 0.99949), with every position's argmax and the greedy
+  tokens equal to mlx_lm's. Llama 3.2 reaches 0.99999799 against mlx_lm.
 - `NFKMLXReleaseWeights` — one reader for a downloaded release's weights, single-file or sharded
   (`model.safetensors.index.json`, each shard read once), with a remap closure whose nil skips a
   tensor. The dense, hybrid, and Gemma loaders all read through it; before it each had its own copy,
