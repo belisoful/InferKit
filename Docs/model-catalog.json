@@ -14987,6 +14987,11 @@
                 "role" : "tokenizer"
               },
               {
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
+              },
+              {
                 "bytes" : 36355,
                 "optional" : true,
                 "path" : "model.safetensors.index.json",
@@ -23338,6 +23343,11 @@
                 "role" : "tokenizer"
               },
               {
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
+              },
+              {
                 "bytes" : 29894,
                 "optional" : true,
                 "path" : "model.safetensors.index.json",
@@ -24111,6 +24121,11 @@
                 "optional" : true,
                 "path" : "chat_template.jinja",
                 "role" : "tokenizer"
+              },
+              {
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
               },
               {
                 "bytes" : 92658,
@@ -30056,6 +30071,11 @@
                 "role" : "tokenizer"
               },
               {
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
+              },
+              {
                 "bytes" : 416452,
                 "optional" : true,
                 "path" : "model.safetensors.index.json",
@@ -30833,6 +30853,11 @@
                 "optional" : true,
                 "path" : "chat_template.jinja",
                 "role" : "tokenizer"
+              },
+              {
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
               },
               {
                 "optional" : true,
@@ -31700,6 +31725,11 @@
                 "optional" : true,
                 "path" : "chat_template.jinja",
                 "role" : "tokenizer"
+              },
+              {
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
               },
               {
                 "bytes" : 25605,
@@ -32584,6 +32614,11 @@
                 "role" : "tokenizer"
               },
               {
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
+              },
+              {
                 "bytes" : 36514,
                 "optional" : true,
                 "path" : "model.safetensors.index.json",
@@ -33360,6 +33395,11 @@
                 "optional" : true,
                 "path" : "chat_template.jinja",
                 "role" : "tokenizer"
+              },
+              {
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
               },
               {
                 "bytes" : 1699758,
@@ -34252,6 +34292,11 @@
                 "role" : "tokenizer"
               },
               {
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
+              },
+              {
                 "bytes" : 58330,
                 "optional" : true,
                 "path" : "model.safetensors.index.json",
@@ -35124,6 +35169,11 @@
                 "optional" : true,
                 "path" : "chat_template.jinja",
                 "role" : "tokenizer"
+              },
+              {
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
               },
               {
                 "bytes" : 32819,

@@ -377,6 +377,10 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     private let releaseURL: URL?
     /// The release's own template, which a message request renders through when it chooses none.
     private let releaseTemplate: NFKMLXChatTemplate?
+    /// The ids the release's `generation_config.json` ends generation on.
+    private let releaseStops: Set<Int>
+    /// The literals of the tokens the release marks special, which the reference's decode skips.
+    private let releaseSpecialTokens: [String]
 
     init(net: NFKMLXLanguageNet, tokenizer: NFKTokenizer?, identifier: String,
          options: NFKMLXGenerationOptions = NFKMLXGenerationOptions(),
@@ -392,6 +396,8 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         self.defaults = options
         self.releaseURL = releaseURL
         self.releaseTemplate = releaseTemplate ?? releaseURL.flatMap(NFKMLXLanguage.releaseChatTemplate(inDirectory:))
+        self.releaseStops = NFKMLXToolCalling.generationConfigStops(directoryURL: releaseURL)
+        self.releaseSpecialTokens = releaseURL.map(NFKMLXLanguage.specialTokenLiterals(inDirectory:)) ?? []
         super.init()
         lifecycle.setFreeHandler { [weak self] in
             self?.dropCaches()
@@ -672,6 +678,11 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         if !reasoning.isEmpty {
             outputs[NFKOutputReasoning] = reasoning
         }
+        for key in [NFKOutputText, NFKOutputReasoning] {
+            if let text = outputs[key] as? String {
+                outputs[key] = NFKMLXLanguage.removingSpecialTokens(releaseSpecialTokens, from: text)
+            }
+        }
         outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: tokens.count,
                                                       cachedTokens: cached,
                                                       outputTokens: produced.count,
@@ -716,9 +727,10 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             options.chatTemplate = releaseTemplate
         }
         options.chatTemplate = NFKMLXToolCalling.template(options.chatTemplate, for: request, releaseDirectoryURL: releaseURL)
-        if let stops = NFKMLXToolCalling.toolStops(for: request, chosen: options.stopTokens, endOfSequence: tokenizer.eosTokenId,
-                                                   releaseDirectoryURL: releaseURL) {
-            options.stopTokens = stops
+        // The reference's generate ends on every id the release's generation config lists: an instruct
+        // release ends a turn on a marker its tokenizer's `eos_token` may not name.
+        if options.stopTokens.isEmpty {
+            options.stopTokens = releaseStops.union(tokenizer.eosTokenId >= 0 ? [tokenizer.eosTokenId] : [])
         }
 
         let variables = try Self.templateVariables(for: request, template: options.chatTemplate)
@@ -992,7 +1004,7 @@ public final class NFKMLXLanguage: NSObject {
     /// The registry name the model builds under.
     @objc public static let modelName = "qwen3"
     static let requiredFiles = ["config.json", "tokenizer.json", "tokenizer_config.json"]
-    static let optionalFiles = ["vocab.json", "merges.txt", "added_tokens.json", "chat_template.jinja"]
+    static let optionalFiles = ["vocab.json", "merges.txt", "added_tokens.json", "chat_template.jinja", "generation_config.json"]
     static let weightFiles = ["model.safetensors.index.json", "model.safetensors"]
 
     /// A decoder at `configuration`, with random weights until a load fills it. Introduced in InferKit
@@ -2137,6 +2149,27 @@ public final class NFKMLXLanguage: NSObject {
             for (content, id) in json { literals[content] = id.intValue }
         }
         return (literals, endToken)
+    }
+
+    /// The literals of the tokens a release marks special (`"special": true` in `tokenizer.json`'s
+    /// `added_tokens` or `tokenizer_config.json`'s `added_tokens_decoder`), longest first.
+    static func specialTokenLiterals(inDirectory directory: URL) -> [String] {
+        func entries(_ name: String, _ key: String) -> [[String: Any]] {
+            guard let data = try? Data(contentsOf: directory.appendingPathComponent(name)),
+                  let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return [] }
+            if let list = json[key] as? [[String: Any]] { return list }
+            return (json[key] as? [String: [String: Any]]).map { Array($0.values) } ?? []
+        }
+        let literals = (entries("tokenizer.json", "added_tokens") + entries("tokenizer_config.json", "added_tokens_decoder"))
+            .filter { ($0["special"] as? Bool) == true }
+            .compactMap { $0["content"] as? String }
+            .filter { !$0.isEmpty }
+        return Set(literals).sorted { $0.count != $1.count ? $0.count > $1.count : $0 < $1 }
+    }
+
+    /// `text` without the special-token literals, as the reference decodes with `skip_special_tokens`.
+    static func removingSpecialTokens(_ literals: [String], from text: String) -> String {
+        literals.reduce(text) { $0.replacingOccurrences(of: $1, with: "") }
     }
 
     /// The Objective-C entry: builds from a release directory, reading its `config.json`, tokenizer,

@@ -1448,6 +1448,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### A language release ends where its generation config says and answers text without special tokens
+
+- A catalog language release downloads its `generation_config.json`. The backend ends every request on the
+  ids its `eos_token_id` lists, with the tokenizer's `eos_token`, as the reference's `generate` does. Qwen3
+  ends on `<|endoftext|>` as well as `<|im_end|>`. Before, only a tool request read the file.
+- `NFKOutputText` and `NFKOutputReasoning` leave out the tokens the release marks special, as the reference
+  decodes with `skip_special_tokens`. Added tokens that are not special, such as `</think>` and `<tool_call>`,
+  stay.
+
 #### Zero-DCE++ fine-tunes as its training script trains it
 
 - `NFKMLXZeroDCEPlus.fineTune` trains Zero-DCE++ as Li-Chongyi/Zero-DCE_extension's `lowlight_train.py` does:

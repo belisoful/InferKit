@@ -365,6 +365,64 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         XCTAssertTrue(net.generate(prompt: [7], options: options).isEmpty)
     }
 
+    /// A release directory holding a hand-written byte-level vocabulary, removed after the test.
+    private func releaseDirectory() throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NFKMLXLanguageModelTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        let vocabulary: [String: Int] = ["h": 0, "e": 1, "l": 2, "o": 3, "he": 4, "ll": 5, "hello": 6, "Ġ": 7]
+        try JSONSerialization.data(withJSONObject: vocabulary).write(to: directory.appendingPathComponent("vocab.json"))
+        try "#version: 0.2\nh e\nl l\nhe ll\nhell o\n".write(
+            to: directory.appendingPathComponent("merges.txt"), atomically: true, encoding: .utf8)
+        return directory
+    }
+
+    /// A request without tools ends on an id the release's `generation_config.json` lists, as the
+    /// reference's generate does.
+    func testAPlainRequestStopsWhereTheGenerationConfigSays() throws {
+        try requireMLXRuntime()
+        let directory = try releaseDirectory()
+        let tokenizer = try NFKTokenizer(forManifest: ["tokenizer": ["type": "bpe-bytelevel"]], directory: directory)
+        let net = tinyNet()
+        var options = NFKMLXGenerationOptions()
+        options.temperature = 0
+        options.maxTokens = 4
+        let first = try XCTUnwrap(net.generate(prompt: tokenizer.encode("hello").map(\.intValue), options: options).first)
+        try JSONSerialization.data(withJSONObject: ["eos_token_id": [first]])
+            .write(to: directory.appendingPathComponent("generation_config.json"))
+        let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "hello"],
+                                          parameters: [NFKParameterTemperature: 0, NFKParameterMaxTokens: 4])
+        func outputTokens(_ backend: NFKMLXLanguageBackend) throws -> Int? {
+            let usage = try backend.runInference(for: request).output(forKey: NFKOutputUsage) as? [String: Int]
+            return usage?[NFKUsageOutputTokens]
+        }
+
+        XCTAssertEqual(try outputTokens(NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: "tiny")), 4,
+                       "without the release's generation config the run reaches its limit")
+        XCTAssertEqual(try outputTokens(NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: "tiny",
+                                                              releaseURL: directory)), 0)
+    }
+
+    /// The text leaves out the tokens the release marks special, as the reference decodes with
+    /// `skip_special_tokens`, and keeps the added tokens that are not special.
+    func testTheReleasesSpecialTokensAreLeftOutOfTheText() throws {
+        let directory = try releaseDirectory()
+        let decoder: [String: Any] = ["151643": ["content": "<|endoftext|>", "special": true],
+                                      "151645": ["content": "<|im_end|>", "special": true],
+                                      "151668": ["content": "</think>", "special": false]]
+        try JSONSerialization.data(withJSONObject: ["added_tokens_decoder": decoder])
+            .write(to: directory.appendingPathComponent("tokenizer_config.json"))
+        let added: [[String: Any]] = [["id": 151644, "content": "<|im_start|>", "special": true]]
+        try JSONSerialization.data(withJSONObject: ["added_tokens": added])
+            .write(to: directory.appendingPathComponent("tokenizer.json"))
+
+        let literals = NFKMLXLanguage.specialTokenLiterals(inDirectory: directory)
+        XCTAssertEqual(Set(literals), ["<|endoftext|>", "<|im_end|>", "<|im_start|>"])
+        XCTAssertEqual(NFKMLXLanguage.removingSpecialTokens(literals, from: "<|endoftext|>Done.<|im_end|>\n</think>"),
+                       "Done.\n</think>")
+    }
+
     func testAHandlerCanStopGeneration() throws {
         try requireMLXRuntime()
         let net = tinyNet()
