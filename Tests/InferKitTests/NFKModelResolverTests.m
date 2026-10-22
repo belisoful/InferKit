@@ -5,7 +5,8 @@
 //  Resolving repositories against the in-process hub at http://hub.test: a shipped variant with no
 //  request and at its measured commit, a family loader behind the opt-in, each refusal and its code, a
 //  missing repository, the asynchronous form, the dictionary round trips, the safetensors header read, a
-//  Core ML package, and the local-server route against servers stubbed at the same address.
+//  Core ML package, the local-server route against servers stubbed at the same address, and the conversion
+//  hint.
 //
 
 #import <XCTest/XCTest.h>
@@ -474,6 +475,58 @@ static NSUInteger NFKResolverToyAskCount;
 	XCTAssertEqualObjects(NFKModelRouteName(NFKModelRouteFamily), @"family");
 	XCTAssertEqualObjects(NFKModelRouteName(NFKModelRouteCoreMLPackage), @"coreml-package");
 	XCTAssertEqualObjects(NFKModelRouteName(NFKModelRouteLocalServer), @"local-server");
+	XCTAssertEqualObjects(NFKModelRouteName(NFKModelRouteConversion), @"conversion");
+}
+
+#pragma mark Conversion
+
+- (void)testAConvertibleRepositoryNoRouteRunsGetsTheConversionCommand
+{
+	[self serveToyRepo:@"org/llama-like" configuration:@{ @"model_type": @"llama" }];
+	NFKModelResolution *resolution = [self resolve:@"org/llama-like" revision:nil];
+	XCTAssertEqual(resolution.route, NFKModelRouteConversion, @"%@", resolution.reasons);
+	XCTAssertFalse(resolution.isResolved, @"a repository that needs converting does not run yet");
+	XCTAssertNil(resolution.descriptor);
+	XCTAssertEqualObjects(resolution.verification, NFKModelVerificationConversionRequired);
+	XCTAssertEqual(resolution.action.kind, NFKModelResolutionActionKindConvert);
+	XCTAssertEqualObjects(resolution.action.providerIdentifier, @"inferkit-convert");
+	XCTAssertEqualObjects(resolution.action.command, @"python convert.py --model org/llama-like --output llama-like-coreml");
+	XCTAssertEqualObjects(resolution.action.byteCount, @([self.class safetensorsWithRows:4 metadata:nil].length));
+	XCTAssertEqualObjects(resolution.reasons.firstObject.userInfo[NFKModelResolutionRouteKey], @(NFKModelRouteFamily));
+
+	NSError *error = nil;
+	NFKModelResolution *restored = [NFKModelResolution resolutionWithDictionary:resolution.dictionaryRepresentation error:&error];
+	XCTAssertEqualObjects(restored.action, resolution.action, @"%@", error);
+	XCTAssertEqual(restored.route, NFKModelRouteConversion);
+}
+
+- (void)testNoHintForCodeTheRepositoryShipsOrAnArchitectureTheConverterLacks
+{
+	[self serveToyRepo:@"org/custom" configuration:@{ @"model_type": @"llama", @"auto_map": @{ @"AutoModel": @"x.Y" } }];
+	[self assertRefusal:[self resolve:@"org/custom" revision:nil] code:NFKModelResolutionErrorCustomCode];
+	[self serveToyRepo:@"org/other" configuration:@{ @"model_type": @"other" }];
+	[self assertRefusal:[self resolve:@"org/other" revision:nil] code:NFKModelResolutionErrorUnsupportedArchitecture];
+}
+
+- (void)testTheConvertibleModelTypesAreTheConvertersRegistry
+{
+	NSString *tests = [NSString stringWithUTF8String:__FILE__].stringByDeletingLastPathComponent;
+	NSString *path = [tests stringByAppendingPathComponent:@"../../Tools/inferkit-convert/architectures.py"];
+	NSString *source = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:NULL];
+	if (source == nil) {
+		XCTSkip(@"Tools/inferkit-convert is not beside the tests");
+	}
+	NSRegularExpression *tuple = [NSRegularExpression regularExpressionWithPattern:@"model_types = \\(([^)]*)\\)"
+																		   options:0 error:NULL];
+	NSRegularExpression *name = [NSRegularExpression regularExpressionWithPattern:@"\"([^\"]+)\"" options:0 error:NULL];
+	NSMutableSet<NSString *> *registered = [NSMutableSet set];
+	for (NSTextCheckingResult *match in [tuple matchesInString:source options:0 range:NSMakeRange(0, source.length)]) {
+		NSString *list = [source substringWithRange:[match rangeAtIndex:1]];
+		for (NSTextCheckingResult *entry in [name matchesInString:list options:0 range:NSMakeRange(0, list.length)]) {
+			[registered addObject:[list substringWithRange:[entry rangeAtIndex:1]]];
+		}
+	}
+	XCTAssertEqualObjects(registered, [NSSet setWithArray:NFKModelResolver.convertibleModelTypes]);
 }
 
 #pragma mark Core ML package route
@@ -708,7 +761,7 @@ static NSUInteger NFKResolverToyAskCount;
 	XCTAssertNil([NFKModelResolutionAction actionWithDictionary:unknownKind error:&error]);
 	NFKModelResolutionAction *unnamed = [[NFKModelResolutionAction alloc] initWithKind:(NFKModelResolutionActionKind)7
 																  providerIdentifier:@"ollama" baseURL:nil model:@"m"
-																				path:nil byteCount:nil];
+																				path:nil byteCount:nil command:nil];
 	XCTAssertNil(unnamed.dictionaryRepresentation[@"kind"]);
 	XCTAssertNil([NFKModelResolutionAction actionWithDictionary:unnamed.dictionaryRepresentation error:&error]);
 }

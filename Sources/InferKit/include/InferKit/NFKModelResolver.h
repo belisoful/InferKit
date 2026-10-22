@@ -36,6 +36,10 @@ NS_ASSUME_NONNULL_BEGIN
 				   repository, or pulls its GGUF weights. The resolution's action says which; the resolver
 				   performs neither.
 				Routes 2 to 4 resolve only when allowsUnverifiedRoutes is YES.
+				5. NFKModelRouteConversion: no route runs the repository, and Tools/inferkit-convert converts
+				   its architecture to a Core ML package (convertibleModelTypes). The resolution carries the
+				   command and no descriptor, and isResolved is NO: the repository runs once converted,
+				   through route 3.
 				The resolution carries the descriptor, which an app adds to a catalog and builds as any
 				other, and its memory estimate against a budget, this machine's by default. A
 				descriptor's dictionaryRepresentation saves it, and +[NFKModelDescriptor
@@ -102,6 +106,8 @@ typedef NS_ERROR_ENUM(NFKModelResolutionErrorDomain, NFKModelResolutionError) {
 	@constant   NFKModelRouteCoreMLPackage NFKCoreMLLanguageBackend runs the Core ML package the
 				repository holds.
 	@constant   NFKModelRouteLocalServer A model server on this machine serves the repository, or pulls it.
+	@constant   NFKModelRouteConversion No route runs the repository, and Tools/inferkit-convert converts it
+				to a Core ML package; the action holds the command.
 */
 typedef NS_ENUM(NSInteger, NFKModelRoute) {
 	NFKModelRouteNone			= 0,
@@ -109,6 +115,7 @@ typedef NS_ENUM(NSInteger, NFKModelRoute) {
 	NFKModelRouteFamily			= 2,
 	NFKModelRouteCoreMLPackage	= 3,
 	NFKModelRouteLocalServer	= 4,
+	NFKModelRouteConversion		= 5,
 } NS_SWIFT_NAME(NFKModelResolution.Route);
 
 /*! How far a route's output is verified, one of the NFKModelVerification* strings. Introduced in
@@ -121,6 +128,9 @@ extern NFKModelVerification const NFKModelVerificationConfigCompatible;
 /*! Another party converted or quantized the weights, and runs them in a runtime InferKit does not hold
 	to a reference: a Core ML package, or a model server's GGUF weights. */
 extern NFKModelVerification const NFKModelVerificationExternal;
+/*! Nothing runs the repository until Tools/inferkit-convert converts it, and nothing verified the
+	conversion's output. */
+extern NFKModelVerification const NFKModelVerificationConversionRequired;
 
 /*! The userInfo key of a refusal: the NFKModelRoute (an NSNumber) the refusal concerns. Introduced in
 	InferKit 0.4.0. */
@@ -134,8 +144,8 @@ extern NSErrorUserInfoKey const NFKModelResolutionDescriptorKey;
 	dictionary round trip. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelResolutionExtensionKey;
 
-/*! The route's name in a resolution's dictionary: "none", "catalog", "family", "coreml-package", or
-	"local-server". Introduced in InferKit 0.4.0. */
+/*! The route's name in a resolution's dictionary: "none", "catalog", "family", "coreml-package",
+	"local-server", or "conversion". Introduced in InferKit 0.4.0. */
 FOUNDATION_EXPORT NSString *NFKModelRouteName(NFKModelRoute route) NS_SWIFT_NAME(getter:NFKModelRoute.name(self:));
 
 /*!
@@ -203,24 +213,31 @@ FOUNDATION_EXPORT NSString *NFKModelRouteName(NFKModelRoute route) NS_SWIFT_NAME
 	@constant   NFKModelResolutionActionKindPull The server downloads the model first: the host asks the
 				user, then calls -[NFKLocalModelRunner pullModel:] with the action's model on the server's
 				runner.
+	@constant   NFKModelResolutionActionKindConvert Tools/inferkit-convert converts the repository to a
+				Core ML package first: a developer runs the action's command from that folder of an
+				InferKit checkout, and adds the directory it writes as a Core ML model.
 */
 typedef NS_ENUM(NSInteger, NFKModelResolutionActionKind) {
 	NFKModelResolutionActionKindUse		= 1,
 	NFKModelResolutionActionKindPull	= 2,
+	NFKModelResolutionActionKindConvert	= 3,
 } NS_SWIFT_NAME(NFKModelResolutionAction.Kind);
 
 /*!
 	@class      NFKModelResolutionAction
-	@abstract   The step a host takes, with the user's consent, before a local-server route runs.
+	@abstract   The step a host takes, with the user's consent, before a local-server route runs, or the
+				conversion a repository needs before any route runs it.
 	@discussion The resolver reads the server and changes nothing on it. A pull downloads byteCount bytes
 				into the server's own store and changes what it holds, so a host shows the action and
-				performs it only after the user confirms. Introduced in InferKit 0.4.0.
+				performs it only after the user confirms. A conversion runs a Python tool that ships in no
+				distribution, so it is shown, never run. Introduced in InferKit 0.4.0.
 */
 @interface NFKModelResolutionAction : NSObject <NSCopying>
 
-/*! Whether the server holds the model already or pulls it. */
+/*! Whether the server holds the model already, pulls it, or the repository needs converting. */
 @property (nonatomic, readonly) NFKModelResolutionActionKind kind;
-/*! The identifier of the server's NFKRemoteProvider preset, such as "ollama". */
+/*! The identifier of the server's NFKRemoteProvider preset, such as "ollama", or "inferkit-convert" for a
+	conversion. */
 @property (nonatomic, readonly, copy) NSString *providerIdentifier;
 /*! The address the resolver asked the server at, or nil for the preset's own address. */
 @property (nonatomic, readonly, copy, nullable) NSURL *baseURL;
@@ -228,12 +245,14 @@ typedef NS_ENUM(NSInteger, NFKModelResolutionActionKind) {
 	no preset has the identifier. A pull runs on its localRunner. */
 @property (nonatomic, readonly, nullable) NFKRemoteProvider *provider;
 /*! The model's name on the server, which a pull fetches and a request names, such as
-	"hf.co/org/name-GGUF:Q4_K_M". */
+	"hf.co/org/name-GGUF:Q4_K_M", or the repository a conversion reads. */
 @property (nonatomic, readonly, copy) NSString *model;
-/*! The repository file the server pulls, or nil for a model the server holds. */
+/*! The repository file the server pulls, or nil. */
 @property (nonatomic, readonly, copy, nullable) NSString *path;
-/*! The bytes a pull transfers, or nil when unknown. */
+/*! The bytes a pull transfers or a conversion reads, or nil when unknown. */
 @property (nonatomic, readonly, copy, nullable) NSNumber *byteCount;
+/*! The shell command a conversion runs from Tools/inferkit-convert, or nil. */
+@property (nonatomic, readonly, copy, nullable) NSString *command;
 
 /*! An action with every field. */
 - (instancetype)initWithKind:(NFKModelResolutionActionKind)kind
@@ -241,10 +260,12 @@ typedef NS_ENUM(NSInteger, NFKModelResolutionActionKind) {
 					 baseURL:(nullable NSURL *)baseURL
 					   model:(NSString *)model
 						path:(nullable NSString *)path
-				   byteCount:(nullable NSNumber *)byteCount NS_DESIGNATED_INITIALIZER;
+				   byteCount:(nullable NSNumber *)byteCount
+					 command:(nullable NSString *)command NS_DESIGNATED_INITIALIZER;
 
-/*! The action as JSON values: kind ("use" or "pull"), provider, baseURL, model, path, and bytes. A kind
-	outside NFKModelResolutionActionKind has no name, so its dictionary has no kind and does not read back. */
+/*! The action as JSON values: kind ("use", "pull", or "convert"), provider, baseURL, model, path, bytes,
+	and command. A kind outside NFKModelResolutionActionKind has no name, so its dictionary has no kind and
+	does not read back. */
 - (NSDictionary<NSString *, id> *)dictionaryRepresentation;
 
 /*! Reads an action from its dictionary. Returns nil and sets error when a field is missing or malformed. */
@@ -288,9 +309,11 @@ typedef NS_ENUM(NSInteger, NFKModelResolutionActionKind) {
 @property (nonatomic, readonly, copy, nullable) NSNumber *downloadByteCount;
 /*! Why each route passed over does not apply, in the order tried. */
 @property (nonatomic, readonly, copy) NSArray<NSError *> *reasons;
-/*! The step a host takes before a local-server route runs, or nil for every other route. */
+/*! The step a host takes before a local-server route runs, the conversion NFKModelRouteConversion
+	names, or nil for every other route. */
 @property (nonatomic, readonly, copy, nullable) NFKModelResolutionAction *action;
-/*! YES when a route applies. */
+/*! YES when a route runs the repository: NO for NFKModelRouteNone, and for NFKModelRouteConversion, whose
+	repository runs only once converted. */
 @property (nonatomic, readonly, getter=isResolved) BOOL resolved;
 
 /*! A resolution with every field. A nil reasons is empty. */
@@ -366,6 +389,9 @@ typedef NS_ENUM(NSInteger, NFKModelResolutionActionKind) {
 	repository. A server that requires a key is skipped, since the built backend carries none. An empty
 	array turns the route off. */
 @property (atomic, copy) NSArray<NFKRemoteProvider *> *localServers;
+/*! The config.json model_type values Tools/inferkit-convert converts to a Core ML package, the
+	architectures its architectures.py registers: dense rotary decoders and GPT-2. */
+@property (class, nonatomic, readonly, copy) NSArray<NSString *> *convertibleModelTypes;
 
 /*! The resolution of a repository at a revision; nil for the default branch. Blocks on the network.
 	Returns nil and sets error when the metadata cannot be read. */

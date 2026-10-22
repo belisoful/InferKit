@@ -163,6 +163,15 @@ Standing rules for the package:
   regenerates the measurements and `Docs/model-catalog.json` (the commands are in
   `mlx-parity-checklist.md`). `NFKMLXCatalogCompletenessTests` fails when the registry and the catalog
   disagree, a source has no download size, or the snapshot is stale.
+- A new model family joins the universal runner. A loader that reads a release's own `config.json` lists
+  the `model_type` values it reads (`modelTypes`) and gets a family judge (`NFKMLXFamilyJudge`) that
+  refuses what the loader would read wrongly; a loader tied to one release is named, with the reason, in
+  `model-resolver.md`'s unjudged list. Details: `mlx-parity-checklist.md` ("The universal runner and the
+  shared runtime").
+- A new model takes every capability the shared runtime offers that its architecture admits: staged,
+  paged, and streamed residencies, streamed generation, the precision and weight-quantization ladder,
+  the key-value cache options and a draft model for a decoder, and catalog memory facts. A capability it
+  cannot take is named in its entry with the reason.
 - Every `Task.detached` passes `priority: .userInitiated`; every test that reaches MLX calls its class's
   `requireMLXRuntime()` first; a test that loads many models clears the cache in `tearDown`.
 

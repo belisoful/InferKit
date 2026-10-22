@@ -404,6 +404,13 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(resolution.verification, .measured)
         XCTAssertNil(resolution.action)
         XCTAssertEqual(NFKModelResolutionAction.Kind.pull.rawValue, 2)
+        XCTAssertFalse(NFKModelResolver.convertibleModelTypes.isEmpty)
+
+        let backend = NFKPassthroughBackend()
+        backend.outputMap = [NFKOutputText: NFKInputPrompt]
+        let sanity = try NFKModelSanityCheck.check(backend)
+        XCTAssertTrue(sanity.isPassed)
+        XCTAssertEqual(sanity.findings, [])
         let restored = try NFKModelDescriptor(dictionary: try XCTUnwrap(resolution.descriptor).dictionaryRepresentation())
         XCTAssertEqual(restored.modelTypes, ["example"])
     }

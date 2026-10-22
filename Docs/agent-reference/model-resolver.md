@@ -7,9 +7,9 @@ The resolver takes a Hugging Face repository and reports how InferKit runs it, h
 verified, and what it costs, before any weights download. The consumer reference is
 `Docs/model-catalog.md` ("Resolving a repository").
 
-Status, 2026-10-21: phases 1 to 3 are implemented. Tiers 0 to 3 run: the catalog route, the family route
+Status, 2026-10-21: phases 1 to 4 are implemented. Every tier runs: the catalog route, the family route
 (InferKitMLX judges every config-reading family in the judge table below), the Core ML package route,
-and the local-server route. Tier 4 is the plan below.
+the local-server route, and the conversion hint, with the post-load sanity check beside them.
 
 ## Starting point
 
@@ -49,11 +49,37 @@ The resolver tries the tiers in order and records each refusal.
 | 1 | `NFKModelRouteFamily` | `configCompatible` | A descriptor's `modelTypes` holds the configuration's `model_type`, and its provider class builds a descriptor for the repository. | shipped |
 | 2 | `NFKModelRouteCoreMLPackage` | `external` | The repository holds an `inferkit-convert` `manifest.json` for a causal language model, the package it names, and its tokenizer's files. | shipped |
 | 3 | `NFKModelRouteLocalServer` | `external` | A server among `localServers` holds the repository (`use`), or the repository holds a single-file GGUF and a server whose runner pulls answers (`pull`). | shipped |
-| 4 | Conversion hint | `conversionRequired` | `model_type` is one of the nine `Tools/inferkit-convert/architectures.py` registers. | planned |
+| 4 | `NFKModelRouteConversion` | `conversionRequired` | No route runs the repository, and its `model_type` is one of the nine `Tools/inferkit-convert/architectures.py` registers. | shipped |
 | none | `NFKModelRouteNone` | nil | No tier matched. The result carries every refusal. | shipped |
 
 Tier 4 returns the `convert.py` command and runs nothing. `Tools/` ships in no distribution, and the
 converter needs a Python environment.
+
+## Tier 4 and the sanity check
+
+The conversion route (`conversionResolutionOfRepository:reasons:`) applies last, to a repository with a
+readable `config.json` whose `model_type` is in `+[NFKModelResolver convertibleModelTypes]`, with no
+`auto_map`, and with `.safetensors` or `pytorch_model*.bin` weights (the converter loads either through
+transformers). It adds no refusal where it does not apply: the routes before it say why. Its resolution
+has route `NFKModelRouteConversion`, verification `conversionRequired`, no descriptor, and `isResolved`
+NO, since the repository runs only once converted, through the Core ML package route. The action's kind is
+`convert`, its provider `inferkit-convert`, its byte count the weights', and its command
+`python convert.py --model <repository> --output <name>-coreml`, run from `Tools/inferkit-convert`. The
+converter has no revision argument, so it reads the default branch whatever revision was resolved.
+`testTheConvertibleModelTypesAreTheConvertersRegistry` reads `architectures.py` and holds the core's list to
+its `model_types`.
+
+`NFKModelSanityCheck` (`NFKModelSanityCheck.h`) is the post-load check. It runs one greedy generation
+(temperature 0, 48 tokens) from "The capital of France is" on a built backend, and reports:
+
+- `Empty`: the reply is whitespace only;
+- `Garbled`: the reply holds U+FFFD or a control character other than a tab or a line break;
+- `Repetitive`: the reply ends in a stretch of up to 32 characters repeated (ten times for one or two
+  characters, so a number such as 1000000 passes, six for three or four, three for a longer one), or a
+  reply of 32 characters or more uses three distinct characters or fewer.
+
+It is a sanity check, never parity: fluent but wrong text passes. `resultForOutput:` judges a text with no
+backend.
 
 Tier 3's Ollama pull identifier (`hf.co/<owner>/<repo>:<quant>`) is probed against Ollama 0.40.2; the
 record is in `remote-providers.md` ("Pulling a Hugging Face GGUF"). llama.cpp's `-hf` is a launch argument
@@ -411,4 +437,4 @@ The judgment reads what the loader reads through the loader's own predicates.
    in the judge table. Codestral Mamba waits on a core JSON reader that takes `Infinity`.
 3. Tiers 2 and 3, with the server probes recorded. Done.
 4. Tier 4 hints, and an optional post-load check: a short greedy generation tested for degenerate
-   output. It is reported as a sanity check and never as parity.
+   output. It is reported as a sanity check and never as parity. Done.

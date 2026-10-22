@@ -663,7 +663,7 @@ load held the weights reports it in `modelInfo` under `NFKModelInfoResidency`.
 
 `NFKModelResolver` (`NFKModelResolver.h`) answers how InferKit runs a Hugging Face repository before
 any weights download. It reads the repository's commit, model card, file listing, `config.json`, and
-safetensors headers, and tries four routes in order:
+safetensors headers, and tries four routes in order, then a conversion hint:
 
 | Route | `NFKModelRoute` | Verification | When it applies |
 |---|---|---|---|
@@ -671,6 +671,7 @@ safetensors headers, and tries four routes in order:
 | A shipped loader | `NFKModelRouteFamily` | `configCompatible` | A model's `modelTypes` holds the configuration's `model_type`, and the class that supplied the model (`+descriptorForRepository:matchingDescriptor:error:` on `NFKModelDescriptorProvider`) builds a descriptor for the repository. |
 | A Core ML package | `NFKModelRouteCoreMLPackage` | `external` | The repository holds the `manifest.json` `Tools/inferkit-convert` writes for a causal language model, the package it names, and its tokenizer's files. `NFKCoreMLLanguageBackend` runs it on macOS 15, iOS 18, or tvOS 18. |
 | A local server | `NFKModelRouteLocalServer` | `external` | A server among the resolver's `localServers` already holds the repository, or the repository holds a single-file GGUF and a server whose runner pulls (Ollama) answers. |
+| A conversion hint | `NFKModelRouteConversion` | `conversionRequired` | No route runs the repository, its `model_type` is one `Tools/inferkit-convert` converts (`convertibleModelTypes`), it ships no code (`auto_map`), and it holds safetensors or `pytorch_model*.bin` weights. Its action's `command` is the conversion; nothing runs, and `isResolved` is NO. |
 
 - The routes after the first resolve only when `allowsUnverifiedRoutes` is YES. Otherwise the first that
   applies is a refusal with `NFKModelResolutionErrorUnverifiedRouteNotAllowed`, which names the route,
@@ -689,6 +690,12 @@ safetensors headers, and tries four routes in order:
   within two seconds for the models it holds: an Ollama or LM Studio runner's
   installed models, another server's served list. A model named the repository, or `hf.co/` or
   `huggingface.co/` with the repository and a tag, compared without case, is the repository's.
+- A conversion hint carries no descriptor. Its action (kind `convert`) holds the `convert.py` command a
+  developer runs from `Tools/inferkit-convert` in an InferKit checkout; the directory it writes resolves
+  on the Core ML package route. The converter reads the repository's default branch.
+- `NFKModelSanityCheck` runs one greedy generation on a built backend and reports empty, garbled, and
+  looping output (`NFKModelSanityFinding`), a check for a route no reference measured. Fluent but wrong
+  text passes it, so it is never a parity figure.
 - A Core ML or local-server descriptor builds through the core's own builder for its engine (`coreml`,
   `local-server`). A local-server descriptor has no files to download; its `localServer` extension names
   the server's preset (`provider`), the address the resolver asked (`baseURL`), and the model (`model`).

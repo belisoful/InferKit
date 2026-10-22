@@ -62,6 +62,34 @@ registration, the `run_reference.py` oracle mode, and the parity test) is covere
 pattern; a converter under `Tools/<model>-to-safetensors/` is optional because the native `.pth`/`.pt`
 reader loads most released checkpoints directly.
 
+## The universal runner and the shared runtime
+
+A model is not done until the resolver reaches its family and it takes every runtime feature its
+architecture allows (developer decision, 2026-10-21).
+
+- **The universal runner.** A family whose loader reads a release's own `config.json` lists the
+  `model_type` values it reads on its catalog entries (`modelTypes`), and gets a family judge
+  (`NFKMLXFamilyJudge`, `NFKMLXRepositoryMatching*.swift`). The judge refuses what the loader would read
+  wrongly with no error: configuration fields the reader ignores at values the output depends on, layer
+  kinds it maps to a default, a tokenizer its reader does not reproduce, packed or quantized weights it
+  does not place. The judge's hermetic tests go in the family's `NFKMLXRepositoryMatching*Tests`, and the
+  release joins `testEveryStoredReleaseIsReadByItsOwnFamilysJudgment` where the validation store holds it
+  with safetensors weights. A loader tied to one release (fixed geometry, converted weights, custom files)
+  lists no `modelTypes` and is named, with the reason, in `model-resolver.md`'s list of unjudged loaders.
+  A family `Tools/inferkit-convert` converts joins `+[NFKModelResolver convertibleModelTypes]`.
+- **The shared runtime.** A model takes each capability the shared runtime offers that its architecture
+  admits, wired through its factory, its catalog load options, and its memory facts:
+  - the residencies: staged loading for a multi-stage model, paged routed experts for a mixture, streamed
+    repeated layers for a decoder too large to hold (`NFKMLXResidency`; `mlx-companion.md`, "Residency:
+    staging, paging, and streaming");
+  - streamed generation: partial results through the job as tokens decode;
+  - the precision ladder (as published, float32, bfloat16) and runtime weight quantization (8, 6, 5, 4,
+    3, 2 bits);
+  - for a decoder, the key-value cache options (context length, cache quantization) and a draft model;
+  - the catalog's memory facts, so the estimate and the residency planner size it.
+  A capability the architecture cannot take is named in the model's entry with the reason, as the
+  customization ledger names a path that cannot be implemented.
+
 ## Customization is part of parity
 
 A parity cosine is the inference half of done. The other half is the model's customization path, and a

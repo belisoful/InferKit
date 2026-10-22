@@ -21,6 +21,7 @@ NSErrorDomain const NFKModelResolutionErrorDomain = @"NFKModelResolutionErrorDom
 NFKModelVerification const NFKModelVerificationMeasured = @"measured";
 NFKModelVerification const NFKModelVerificationConfigCompatible = @"configCompatible";
 NFKModelVerification const NFKModelVerificationExternal = @"external";
+NFKModelVerification const NFKModelVerificationConversionRequired = @"conversionRequired";
 NSErrorUserInfoKey const NFKModelResolutionRouteKey = @"NFKModelResolutionRoute";
 NSErrorUserInfoKey const NFKModelResolutionDescriptorKey = @"NFKModelResolutionDescriptor";
 NSString * const NFKModelResolutionExtensionKey = @"resolution";
@@ -41,6 +42,8 @@ NSString *NFKModelRouteName(NFKModelRoute route)
 			return @"coreml-package";
 		case NFKModelRouteLocalServer:
 			return @"local-server";
+		case NFKModelRouteConversion:
+			return @"conversion";
 		case NFKModelRouteNone:
 			break;
 	}
@@ -60,6 +63,9 @@ static NFKModelRoute NFKModelRouteNamed(id name)
 	}
 	if ([name isEqual:@"local-server"]) {
 		return NFKModelRouteLocalServer;
+	}
+	if ([name isEqual:@"conversion"]) {
+		return NFKModelRouteConversion;
 	}
 	return NFKModelRouteNone;
 }
@@ -97,6 +103,8 @@ static NSString * _Nullable NFKModelResolutionActionKindName(NFKModelResolutionA
 			return @"use";
 		case NFKModelResolutionActionKindPull:
 			return @"pull";
+		case NFKModelResolutionActionKindConvert:
+			return @"convert";
 	}
 	return nil;
 }
@@ -109,6 +117,9 @@ static NFKModelResolutionActionKind NFKModelResolutionActionKindNamed(id name)
 	}
 	if ([name isEqual:@"pull"]) {
 		return NFKModelResolutionActionKindPull;
+	}
+	if ([name isEqual:@"convert"]) {
+		return NFKModelResolutionActionKindConvert;
 	}
 	return 0;
 }
@@ -209,6 +220,7 @@ static NFKModelResolutionActionKind NFKModelResolutionActionKindNamed(id name)
 					   model:(NSString *)model
 						path:(nullable NSString *)path
 				   byteCount:(nullable NSNumber *)byteCount
+					 command:(nullable NSString *)command
 {
 	self = [super init];
 	if (self != nil) {
@@ -218,6 +230,7 @@ static NFKModelResolutionActionKind NFKModelResolutionActionKindNamed(id name)
 		_model = [model copy];
 		_path = [path copy];
 		_byteCount = [byteCount copy];
+		_command = [command copy];
 	}
 	return self;
 }
@@ -259,6 +272,7 @@ static NFKModelResolutionActionKind NFKModelResolutionActionKindNamed(id name)
 	dictionary[@"model"] = self.model;
 	dictionary[@"path"] = self.path;
 	dictionary[@"bytes"] = self.byteCount;
+	dictionary[@"command"] = self.command;
 	return [dictionary copy];
 }
 
@@ -271,9 +285,11 @@ static NFKModelResolutionActionKind NFKModelResolutionActionKindNamed(id name)
 	id model = dictionary[@"model"];
 	id path = dictionary[@"path"];
 	id bytes = dictionary[@"bytes"];
+	id command = dictionary[@"command"];
 	if (actionKind == 0 || ![provider isKindOfClass:NSString.class] || ![model isKindOfClass:NSString.class]
 		|| (address != nil && baseURL == nil)
-		|| (path != nil && ![path isKindOfClass:NSString.class]) || (bytes != nil && ![bytes isKindOfClass:NSNumber.class])) {
+		|| (path != nil && ![path isKindOfClass:NSString.class]) || (bytes != nil && ![bytes isKindOfClass:NSNumber.class])
+		|| (command != nil && ![command isKindOfClass:NSString.class])) {
 		if (error != NULL) {
 			*error = [NSError errorWithDomain:NFKModelCatalogErrorDomain code:NFKModelCatalogErrorMalformedDescriptor
 									 userInfo:@{ NSLocalizedDescriptionKey: @"The resolution's action lacks its kind, "
@@ -282,7 +298,7 @@ static NFKModelResolutionActionKind NFKModelResolutionActionKindNamed(id name)
 		return nil;
 	}
 	return [[self alloc] initWithKind:actionKind providerIdentifier:provider baseURL:baseURL model:model path:path
-							byteCount:bytes];
+							byteCount:bytes command:command];
 }
 
 - (NSString *)description
@@ -342,7 +358,7 @@ static NFKModelResolutionActionKind NFKModelResolutionActionKindNamed(id name)
 
 - (BOOL)isResolved
 {
-	return self.route != NFKModelRouteNone;
+	return self.route != NFKModelRouteNone && self.route != NFKModelRouteConversion;
 }
 
 - (id)copyWithZone:(nullable NSZone *)zone
@@ -596,7 +612,8 @@ static NFKModelResolutionActionKind NFKModelResolutionActionKindNamed(id name)
 	if (served != nil) {
 		return served;
 	}
-	return [self refusedResolutionOfRepository:repository revision:commit reasons:reasons];
+	NFKModelResolution *conversion = [self conversionResolutionOfRepository:listed reasons:reasons];
+	return conversion ?: [self refusedResolutionOfRepository:repository revision:commit reasons:reasons];
 }
 
 /*! YES for a refused resolution whose last reason is a route that applies without the caller's consent to
@@ -1195,7 +1212,7 @@ static BOOL NFKModelResolutionIsReadFailure(NSError *error)
 																		  providerIdentifier:provider.identifier
 																					 baseURL:provider.baseURL
 																					   model:held.identifier path:nil
-																				   byteCount:nil];
+																				   byteCount:nil command:nil];
 			return [self serverResolutionOfRepository:listed action:action byteCount:held.sizeBytes reasons:reasons];
 		}
 	}
@@ -1226,7 +1243,8 @@ static BOOL NFKModelResolutionIsReadFailure(NSError *error)
 																  providerIdentifier:puller.identifier
 																			 baseURL:puller.baseURL model:model
 																				path:gguf.path
-																		   byteCount:gguf.byteCount >= 0 ? @(gguf.byteCount) : nil];
+																		   byteCount:gguf.byteCount >= 0 ? @(gguf.byteCount) : nil
+																			 command:nil];
 	return [self serverResolutionOfRepository:listed action:action byteCount:action.byteCount reasons:reasons];
 }
 
@@ -1344,6 +1362,51 @@ static BOOL NFKModelResolutionIsReadFailure(NSError *error)
 - (NSString *)variantIdentifierOfRepository:(NSString *)repository
 {
 	return (repository.lastPathComponent ?: repository).lowercaseString;
+}
+
+#pragma mark Conversion
+
++ (NSArray<NSString *> *)convertibleModelTypes
+{
+	return @[ @"gemma", @"gemma2", @"gpt2", @"llama", @"mistral", @"phi3", @"qwen2", @"stablelm", @"starcoder2" ];
+}
+
+/*! The conversion hint: a repository no route runs whose config.json names an architecture
+	Tools/inferkit-convert converts, with weights its transformers loader reads and no code of its own.
+	Returns nil, adding no refusal, for any other repository: the routes before it say why it does not
+	run. */
+- (nullable NFKModelResolution *)conversionResolutionOfRepository:(NFKModelRepository *)listed
+														  reasons:(NSArray<NSError *> *)reasons
+{
+	if ([listed fileAtPath:NFKModelResolutionConfigPath] == nil) {
+		return nil;
+	}
+	id configuration = [listed JSONObjectOfFileAtPath:NFKModelResolutionConfigPath error:NULL];
+	if (![configuration isKindOfClass:NSDictionary.class] || configuration[@"auto_map"] != nil
+		|| ![NFKModelResolver.convertibleModelTypes containsObject:configuration[@"model_type"] ?: @""]) {
+		return nil;
+	}
+	long long weightBytes = 0;
+	for (NFKDownloadPlanFile *file in listed.files) {
+		NSString *name = file.path.lastPathComponent;
+		if ([name hasSuffix:@".safetensors"] || ([name hasPrefix:@"pytorch_model"] && [name hasSuffix:@".bin"])) {
+			weightBytes += MAX(file.byteCount, 0);
+		}
+	}
+	if (weightBytes == 0) {
+		return nil;
+	}
+	NSString *output = [[self variantIdentifierOfRepository:listed.repository] stringByAppendingString:@"-coreml"];
+	NSString *command = [NSString stringWithFormat:@"python convert.py --model %@ --output %@", listed.repository, output];
+	NFKModelResolutionAction *action = [[NFKModelResolutionAction alloc] initWithKind:NFKModelResolutionActionKindConvert
+																  providerIdentifier:@"inferkit-convert" baseURL:nil
+																			   model:listed.repository path:nil
+																		   byteCount:@(weightBytes) command:command];
+	return [[NFKModelResolution alloc] initWithRepository:listed.repository revision:listed.revision
+													route:NFKModelRouteConversion
+											 verification:NFKModelVerificationConversionRequired descriptor:nil
+										variantIdentifier:nil memoryEstimate:nil downloadByteCount:@(weightBytes)
+												  reasons:reasons action:action];
 }
 
 #pragma mark Results

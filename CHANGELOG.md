@@ -622,6 +622,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
     user before a pull.
   - Every route after the first resolves only when `allowsUnverifiedRoutes` is YES, and a route's
     refusal passes to the next route: a GGUF repository with no `config.json` reaches the local server.
+  - `NFKModelRouteConversion` → no route runs the repository, and `Tools/inferkit-convert` converts its
+    architecture (`+[NFKModelResolver convertibleModelTypes]`). Verification `conversionRequired`, no
+    descriptor, `isResolved` NO; the action (kind `convert`) holds the `convert.py` command.
+- `NFKModelSanityCheck.h`: `NFKModelSanityCheck` runs one greedy generation on a built backend and reports
+  empty, garbled, and looping output (`NFKModelSanityResult`, `NFKModelSanityFinding`), a check for a model
+  resolved through a route no reference measured. It is never a parity figure.
 - The core registers builders for the `coreml` and `local-server` engines (`NFKModelEngineCoreML`,
   `NFKModelEngineLocalServer`), so a resolved Core ML or local-server descriptor builds through the
   catalog. The resolver's `localServers` lists the servers asked, `+[NFKRemoteProvider localProviders]`

@@ -195,6 +195,7 @@ static const void *const NFKPluginPublicInterface[] = {
 	(const void *)&NFKModelVerificationMeasured,
 	(const void *)&NFKModelVerificationConfigCompatible,
 	(const void *)&NFKModelVerificationExternal,
+	(const void *)&NFKModelVerificationConversionRequired,
 	(const void *)&NFKModelResolutionRouteKey,
 	(const void *)&NFKModelResolutionDescriptorKey,
 	(const void *)&NFKModelResolutionExtensionKey,

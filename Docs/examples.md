@@ -5634,6 +5634,10 @@ resolver.allowsUnverifiedRoutes = YES;                          // a shipped loa
     if (resolution == nil) {
         return;                                                 // the hub's error: offline, or no such repository
     }
+    if (resolution.route == NFKModelRouteConversion) {
+        NSString *command = resolution.action.command;          // runs from Tools/inferkit-convert in a checkout
+        return;                                                 // the repository runs once converted
+    }
     if (!resolution.isResolved) {
         for (NSError *reason in resolution.reasons) {
             // reason.code is an NFKModelResolutionError; reason.localizedDescription says why
@@ -5654,6 +5658,20 @@ resolver.allowsUnverifiedRoutes = YES;                          // a shipped loa
 
 The resolved descriptor builds as any other, through
 `backendForModelIdentifier:options:error:` with the repository name as its identifier.
+
+A route no reference measured can load a model that runs wrong. `NFKModelSanityCheck` runs one short
+greedy generation on the built backend and reports empty, garbled, and looping output. It is a sanity
+check, not a parity measurement: fluent but wrong text passes it.
+
+```objc
+NFKPassthroughBackend *backend = [NFKPassthroughBackend backend];
+backend.outputMap = @{ NFKOutputText: NFKInputPrompt };          // stands in for a resolved model's backend
+NSError *error = nil;
+NFKModelSanityResult *sanity = [NFKModelSanityCheck checkBackend:backend error:&error];   // blocks: off the main thread
+if (!sanity.isPassed) {
+    NFKModelSanityFinding findings = sanity.findings;            // empty, garbled, or repetitive
+}
+```
 
 ### Plugins
 

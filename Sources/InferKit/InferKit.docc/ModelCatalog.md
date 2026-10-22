@@ -113,8 +113,11 @@ with an ``NFKModelResolution``: a shipped variant that reads it, or, when
 ``NFKModelResolver/allowsUnverifiedRoutes`` is YES, a shipped loader that reads its configuration
 (``NFKModelDescriptor/modelTypes``), the Core ML package it holds, or a model server on this machine
 that holds or pulls it. A local-server resolution carries an ``NFKModelResolutionAction``, which a host
-performs only after the user confirms. Each route passed over leaves a reason in
-`NFKModelResolutionErrorDomain`. The resolved descriptor builds through the catalog as any other.
+performs only after the user confirms. A repository no route runs, of an architecture
+`Tools/inferkit-convert` converts, comes back with the conversion's command and no descriptor. Each route
+passed over leaves a reason in `NFKModelResolutionErrorDomain`. The resolved descriptor builds through the
+catalog as any other, and ``NFKModelSanityCheck`` runs one greedy generation on it to catch empty,
+garbled, or looping output.
 
 ## Topics
 
@@ -134,6 +137,9 @@ performs only after the user confirms. Each route passed over leaves a reason in
 - ``NFKModelResolutionAction``
 - ``NFKModelResolutionActionKind``
 - ``NFKModelResolutionError``
+- ``NFKModelSanityCheck``
+- ``NFKModelSanityResult``
+- ``NFKModelSanityFinding``
 
 ### Options and building
 

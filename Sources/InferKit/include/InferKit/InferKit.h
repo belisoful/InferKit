@@ -55,6 +55,7 @@
 #import <InferKit/NFKModelPreset.h>
 #import <InferKit/NFKModelBuilding.h>
 #import <InferKit/NFKModelResolver.h>
+#import <InferKit/NFKModelSanityCheck.h>
 #import <InferKit/NFKAppleModelDescriptors.h>
 #import <InferKit/NFKPassthroughBackend.h>
 #import <InferKit/NFKCoreMLBackend.h>

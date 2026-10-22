@@ -1734,6 +1734,20 @@
 	XCTAssertEqual(resolution.memoryEstimate.residentByteCount, 2000000000);
 }
 
+// Docs/examples.md: Model catalog — Resolving a Hugging Face repository, the sanity check.
+- (void)testExampleCheckingAResolvedModel
+{
+	NFKPassthroughBackend *backend = [NFKPassthroughBackend backend];
+	backend.outputMap = @{ NFKOutputText: NFKInputPrompt };          // stands in for a resolved model's backend
+	NSError *error = nil;
+	NFKModelSanityResult *sanity = [NFKModelSanityCheck checkBackend:backend error:&error];   // blocks: off the main thread
+	NFKModelSanityFinding findings = sanity.findings;                // empty, garbled, or repetitive
+
+	XCTAssertTrue(sanity.isPassed, @"%@ %@", sanity, error);
+	XCTAssertEqual(findings, NFKModelSanityFindingNone);
+	XCTAssertEqualObjects(sanity.output, NFKModelSanityCheck.defaultPrompt);
+}
+
 #if TARGET_OS_OSX
 // Docs/examples.md: Model catalog — Plugins. The folder holds one executable plugin whose program never
 // runs: listing reads its manifest, and the backend starts nothing until it prepares or runs.
