@@ -73,14 +73,47 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         return try loadArrays(url: URL(fileURLWithPath: path))
     }
 
+    // The element loops below are `while` loops over buffer pointers. In the debug build `swift test` runs, a `for`
+    // over a range calls a generic iterator per element and runs about 25 times slower. The sums stay sequential in
+    // index order, which the recorded figures depend on.
+
     private func floats(_ array: MLXArray) -> [Double] {
-        array.reshaped([-1]).asType(.float32).asArray(Float.self).map(Double.init)
+        let values = array.reshaped([-1]).asType(.float32).asArray(Float.self)
+        return [Double](unsafeUninitializedCapacity: values.count) { widened, count in
+            values.withUnsafeBufferPointer { values in
+                var i = 0
+                while i < values.count { widened[i] = Double(values[i]); i += 1 }
+            }
+            count = values.count
+        }
     }
 
     private func distance(_ a: [Double], _ b: [Double]) -> Double {
         var dot = 0.0, na = 0.0, nb = 0.0
-        for i in 0 ..< min(a.count, b.count) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i] }
+        a.withUnsafeBufferPointer { a in
+            b.withUnsafeBufferPointer { b in
+                let count = min(a.count, b.count)
+                var i = 0
+                while i < count { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; i += 1 }
+            }
+        }
         return 1 - dot / (na.squareRoot() * nb.squareRoot() + 1e-30)
+    }
+
+    /// The number of elements where `a` and `b` differ, over the shorter of the two.
+    private func countDiffering(_ a: [Double], _ b: [Double]) -> Int {
+        var differing = 0
+        a.withUnsafeBufferPointer { a in
+            b.withUnsafeBufferPointer { b in
+                let count = min(a.count, b.count)
+                var i = 0
+                while i < count {
+                    if a[i] != b[i] { differing += 1 }
+                    i += 1
+                }
+            }
+        }
+        return differing
     }
 
     /// One row of the report.
@@ -125,8 +158,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
             let reference = floats(try XCTUnwrap(bf16[key], "no \(key) in the bf16 record"))
             let exact = floats(try XCTUnwrap(f32[key], "no \(key) in the float32 record"))
             XCTAssertEqual(ours.count, reference.count, "\(state.0): element count")
-            let differing = zip(ours, reference).filter { $0 != $1 }.count
-            return Seam(label: state.0, differing: Double(differing) / Double(max(ours.count, 1)),
+            return Seam(label: state.0, differing: Double(countDiffering(ours, reference)) / Double(max(ours.count, 1)),
                         ours: distance(ours, reference), floor: distance(reference, exact),
                         exact: distance(ours, exact),
                         blockFloor: bf16["\(key).floor"].map { distance(reference, floats($0)) },
@@ -5395,7 +5427,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
             XCTFail("\(label): shape \(ours.shape) vs the record's \(arrays[key]!.shape)", file: file, line: line)
             return "  \(label): shape \(ours.shape) vs \(arrays[key]!.shape)"
         }
-        let differing = zip(mine, theirs).filter { $0 != $1 }.count
+        let differing = countDiffering(mine, theirs)
         let ours = distance(mine, theirs)
         var text = String(format: "  %-22s %6d / %-7d differ  1-cos %.3e", (label as NSString).utf8String!,
                           differing, mine.count, ours)
