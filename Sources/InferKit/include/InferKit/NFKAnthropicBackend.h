@@ -68,7 +68,11 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The API version sent as anthropic-version. Defaults to the version this release was written for. */
 @property (nonatomic, copy) NSString *apiVersion;
 
-/*! The max_tokens the API requires. Defaults to 1024; NFKParameterMaxTokens overrides it per request. */
+/*! The max_tokens a request that sets no NFKParameterMaxTokens sends, which the API requires. 0, the
+	default, sends the model's own maximum: the max_tokens the Models API states for modelName, read once per
+	model name with apiKey, or 1024 where the endpoint states none or the backend has no key. A synchronous run that sends the model's maximum reads
+	the reply as a stream, so a long reply keeps its connection busy. NFKParameterMaxTokens overrides it per
+	request. */
 @property (nonatomic, assign) NSInteger maxTokens;
 
 /*! Seconds before the request times out. */

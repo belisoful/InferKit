@@ -27,7 +27,17 @@ No preset carries a default model name. Model identifiers change faster than a r
 stale default fails at the first call with a message about the model rather than about the default.
 The provider's own list is the source instead: `modelsWithAPIKey:error:` (and a completion-handler
 form at user-initiated QoS) returns `NFKRemoteModel`s — identifier, display name, and where the
-provider publishes them `ownedBy` / `createdAt` / `contextLength`, with the entry kept under `raw`.
+provider publishes them `ownedBy` / `createdAt` / `contextLength` / `maximumOutputTokens`, with the
+entry kept under `raw`. The output limit is stated by Anthropic (`max_tokens`, with `max_input_tokens`),
+Gemini's native list (`outputTokenLimit`, `inputTokenLimit`; its OpenAI layer's list states neither, so
+the `gemini` preset's list joins them from `…/v1beta/models` with `x-goog-api-key`, by name without the
+`models/` prefix), OpenRouter (`top_provider.max_completion_tokens`), and Groq (`max_completion_tokens`
+on a single model's entry only). OpenAI's and xAI's lists state none; xAI's Responses API defaults
+`max_output_tokens` to 128,000 when unset (2026-10-22). `NFKAnthropicBackend` with `maxTokens` 0 (the
+default) sends the model's Models API `max_tokens` when a request names no limit, asked once per model
+name and only with a key, so the token counter's keyless builder never asks; a synchronous run that
+sends it reads a stream, because a non-streamed reply that long would idle past `timeout` (Anthropic's
+long-request guidance).
 Every preset answers the same `data[].id` envelope, hosted and local alike, so one parser serves all
 fifteen; only the credential headers differ, and Anthropic paginates (`has_more` / `last_id` →
 `after_id`, page size raised to 1000 from its default 20), which the catalog follows to the end. The

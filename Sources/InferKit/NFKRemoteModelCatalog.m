@@ -15,6 +15,12 @@ static NSString * const NFKAnthropicPageLimit = @"1000";
 @property (nonatomic, copy, readwrite) NFKRemoteProvider *provider;
 @end
 
+/*! A Gemini model name without the native list's "models/" prefix. */
+static NSString *NFKGeminiBareModelName(NSString *name)
+{
+	return [name hasPrefix:@"models/"] ? [name substringFromIndex:7] : name;
+}
+
 @implementation NFKRemoteModelCatalog
 
 @synthesize session = _session;
@@ -72,7 +78,7 @@ static NSString * const NFKAnthropicPageLimit = @"1000";
 		}
 		afterIdentifier = [self nextPageIdentifierIn:page];
 	} while (afterIdentifier != nil);
-	return models;
+	return [self modelsWithGeminiLimits:models];
 }
 
 - (void)modelsWithCompletionHandler:(void (^)(NSArray<NFKRemoteModel *> * _Nullable, NSError * _Nullable))completionHandler
@@ -108,7 +114,7 @@ static NSString * const NFKAnthropicPageLimit = @"1000";
 		*outError = [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure
 											   reason:@"the model entry carries no id"];
 	}
-	return model;
+	return model != nil ? [self modelsWithGeminiLimits:@[ model ]].firstObject : nil;
 }
 
 - (BOOL)isReachableWithError:(NSError * _Nullable *)outError
@@ -123,6 +129,82 @@ static NSString * const NFKAnthropicPageLimit = @"1000";
 		*outError = error;
 	}
 	return NO;
+}
+
+#pragma mark Gemini's limits
+
+/*! Gemini's OpenAI layer lists names alone. Its native list beside it (…/v1beta/models) publishes each
+	model's inputTokenLimit and outputTokenLimit, which join the layer's entries by name, a "models/" prefix
+	aside. Another provider's entries, or a native list that fails, come back as they were. */
+- (NSArray<NFKRemoteModel *> *)modelsWithGeminiLimits:(NSArray<NFKRemoteModel *> *)models
+{
+	NSURL *nativeURL = [self geminiNativeModelsURL];
+	if (nativeURL == nil || models.count == 0) {
+		return models;
+	}
+	NSDictionary<NSString *, NSDictionary *> *limits = [self geminiLimitsFromURL:nativeURL];
+	if (limits.count == 0) {
+		return models;
+	}
+	NSMutableArray<NFKRemoteModel *> *joined = [NSMutableArray arrayWithCapacity:models.count];
+	for (NFKRemoteModel *model in models) {
+		NSDictionary *native = limits[NFKGeminiBareModelName(model.identifier)];
+		if (native == nil) {
+			[joined addObject:model];
+			continue;
+		}
+		NSMutableDictionary *entry = [model.raw mutableCopy];
+		for (NSString *key in @[ @"inputTokenLimit", @"outputTokenLimit" ]) {
+			if (native[key] != nil) {
+				entry[key] = native[key];
+			}
+		}
+		[joined addObject:[NFKRemoteModel modelWithEntry:entry] ?: model];
+	}
+	return joined;
+}
+
+/*! The native list beside a Gemini OpenAI layer (…/v1beta/openai → …/v1beta/models), or nil for another
+	provider. */
+- (nullable NSURL *)geminiNativeModelsURL
+{
+	NSURL *base = self.provider.baseURL;
+	if (![base.host hasSuffix:@"generativelanguage.googleapis.com"] || ![base.path hasSuffix:@"/openai"]) {
+		return nil;
+	}
+	return [base.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"models"];
+}
+
+/*! Each native entry with a limit, by bare name, across the list's pages. */
+- (NSDictionary<NSString *, NSDictionary *> *)geminiLimitsFromURL:(NSURL *)url
+{
+	NSMutableDictionary<NSString *, NSDictionary *> *limits = [NSMutableDictionary dictionary];
+	NSString *pageToken = nil;
+	do {
+		NSURLComponents *components = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
+		NSMutableArray<NSURLQueryItem *> *items = [NSMutableArray arrayWithObject:[NSURLQueryItem queryItemWithName:@"pageSize" value:@"1000"]];
+		if (pageToken != nil) {
+			[items addObject:[NSURLQueryItem queryItemWithName:@"pageToken" value:pageToken]];
+		}
+		components.queryItems = items;
+		NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:components.URL ?: url];
+		request.HTTPMethod = @"GET";
+		request.timeoutInterval = self.timeout;
+		[request setValue:@"application/json" forHTTPHeaderField:@"Accept"];
+		if (self.apiKey.length > 0) {
+			[request setValue:self.apiKey forHTTPHeaderField:@"x-goog-api-key"];
+		}
+		NSDictionary *page = [self JSONObjectForRequest:request error:NULL];
+		NSArray *entries = [page[@"models"] isKindOfClass:NSArray.class] ? page[@"models"] : @[];
+		for (NSDictionary *entry in entries) {
+			NSString *name = [entry isKindOfClass:NSDictionary.class] && [entry[@"name"] isKindOfClass:NSString.class] ? entry[@"name"] : nil;
+			if (name != nil && (entry[@"inputTokenLimit"] != nil || entry[@"outputTokenLimit"] != nil)) {
+				limits[NFKGeminiBareModelName(name)] = entry;
+			}
+		}
+		pageToken = [page[@"nextPageToken"] isKindOfClass:NSString.class] && [page[@"nextPageToken"] length] > 0 ? page[@"nextPageToken"] : nil;
+	} while (pageToken != nil);
+	return limits;
 }
 
 #pragma mark Pages

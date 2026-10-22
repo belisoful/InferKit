@@ -11,6 +11,7 @@
 @property (nonatomic, copy, readwrite, nullable) NSString *ownedBy;
 @property (nonatomic, copy, readwrite, nullable) NSDate *createdAt;
 @property (nonatomic, copy, readwrite, nullable) NSNumber *contextLength;
+@property (nonatomic, copy, readwrite, nullable) NSNumber *maximumOutputTokens;
 @property (nonatomic, copy, readwrite, nullable) NSNumber *sizeBytes;
 @property (nonatomic, copy, readwrite, nullable) NSString *quantization;
 @property (nonatomic, copy, readwrite, nullable) NSArray<NSString *> *capabilities;
@@ -31,6 +32,7 @@
 		return nil;
 	}
 	NSDictionary *details = [entry[@"details"] isKindOfClass:NSDictionary.class] ? entry[@"details"] : @{};
+	NSDictionary *topProvider = [entry[@"top_provider"] isKindOfClass:NSDictionary.class] ? entry[@"top_provider"] : @{};
 
 	NFKRemoteModel *model = [[self alloc] initPrivate];
 	model.identifier = identifier;
@@ -41,7 +43,16 @@
 	model.createdAt = [self creationDateIn:entry];
 	model.contextLength = [self numberIn:entry forKey:@"context_length"]
 		?: [self numberIn:entry forKey:@"max_context_length"]
+		?: [self numberIn:entry forKey:@"context_window"]
+		?: [self numberIn:entry forKey:@"max_input_tokens"]
+		?: [self numberIn:entry forKey:@"inputTokenLimit"]
+		?: [self numberIn:topProvider forKey:@"context_length"]
 		?: [self numberIn:details forKey:@"context_length"];
+	model.maximumOutputTokens = [self numberIn:entry forKey:@"max_tokens"]
+		?: [self numberIn:entry forKey:@"outputTokenLimit"]
+		?: [self numberIn:entry forKey:@"max_completion_tokens"]
+		?: [self numberIn:entry forKey:@"max_output_tokens"]
+		?: [self numberIn:topProvider forKey:@"max_completion_tokens"];
 	model.sizeBytes = [self numberIn:entry forKey:@"size"];
 	model.quantization = [self stringIn:entry forKey:@"quantization"]
 		?: [self stringIn:details forKey:@"quantization_level"];

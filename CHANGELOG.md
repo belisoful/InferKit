@@ -40,6 +40,19 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### Remote models state their output limit, and Anthropic replies run to the model's
+
+- `NFKRemoteModel.maximumOutputTokens` is the most tokens one reply may run to, where the provider's list
+  states it: Anthropic's `max_tokens`, Gemini's `outputTokenLimit`, Groq's `max_completion_tokens`, and
+  OpenRouter's top provider's `max_completion_tokens`. `contextLength` also reads Anthropic's
+  `max_input_tokens`, Gemini's `inputTokenLimit`, Groq's `context_window`, and OpenRouter's top provider's.
+- The Gemini preset's list joins each model's limits from Gemini's native list beside its OpenAI layer, which
+  states none.
+- `NFKAnthropicBackend.maxTokens` defaults to 0, which sends the model's own maximum when a request sets no
+  `NFKParameterMaxTokens`: the `max_tokens` the Models API states for the model, asked once per model name
+  with the backend's key. A model the API states none for, or a backend without a key, sends 1024 as before.
+  A synchronous run that sends the model's maximum reads the reply as a stream.
+
 #### The language a recognizer heard
 
 - `NFKOutputLanguage` (`language`) carries the language a speech recognizer detected or was told under

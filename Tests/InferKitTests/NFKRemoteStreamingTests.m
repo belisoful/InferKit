@@ -53,12 +53,29 @@
 
 @interface NFKStreamStubAnthropicBackend : NFKAnthropicBackend
 @property (nonatomic, strong) NSURLRequest *lastRequest;
+/*! The Models API entry a lookup finds, or nil for a 404. */
+@property (nonatomic, copy, nullable) NSString *modelEntry;
+@property (nonatomic, strong) NSMutableArray<NSURLRequest *> *lookups;
 @property (nonatomic, copy) NSArray<NSString *> *stagedLines;
 @property (nonatomic, assign) BOOL holdOpen;
 @property (nonatomic, assign) BOOL cancelled;
 @end
 
 @implementation NFKStreamStubAnthropicBackend
+// The Models API lookup a run makes first: modelEntry where set, else a 404, so the run sends the fallback.
+- (NSData *)sendRequest:(NSURLRequest *)request response:(NSHTTPURLResponse **)outResponse error:(NSError **)outError
+{
+	if (self.lookups == nil) {
+		self.lookups = [NSMutableArray array];
+	}
+	[self.lookups addObject:request];
+	if (outResponse != NULL) {
+		*outResponse = [[NSHTTPURLResponse alloc] initWithURL:request.URL statusCode:self.modelEntry != nil ? 200 : 404
+												  HTTPVersion:@"HTTP/1.1" headerFields:nil];
+	}
+	return [self.modelEntry ?: @"{}" dataUsingEncoding:NSUTF8StringEncoding];
+}
+
 - (void (^)(void))streamRequest:(NSURLRequest *)request
 					lineHandler:(void (^)(NSString *))lineHandler
 			  completionHandler:(void (^)(NSHTTPURLResponse *, NSData *, NSError *))completionHandler
@@ -285,6 +302,53 @@
 	XCTAssertEqual(failed.status, NFKInferenceJobStatusFailed);
 	XCTAssertEqualObjects(failed.error.localizedDescription, @"Overloaded");
 	XCTAssertEqual(failed.error.code, kNFKError_InferenceRateLimited, @"an overload says back off");
+}
+
+/*! A run that sets no limit sends the model's maximum, which the Models API states, once per model, and a
+	synchronous run sending it reads the reply as a stream. */
+- (void)testAnAnthropicRunWithoutALimitSendsTheModelsMaximumReadAsAStream
+{
+	self.anthropic.modelEntry = @"{\"type\":\"model\",\"id\":\"claude-sonnet-4-5\",\"max_tokens\":64000}";
+	self.anthropic.stagedLines = @[
+		@"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}",
+		@"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"a long answer\"}}",
+		@"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}",
+		@"data: {\"type\":\"message_stop\"}",
+	];
+	NSError *error = nil;
+	NFKInferenceResult *result = [self.anthropic runInferenceForRequest:[self prompt:@"hi"] error:&error];
+	XCTAssertEqualObjects(result.text, @"a long answer", @"%@", error);
+	NSDictionary *body = [self bodyOf:self.anthropic.lastRequest];
+	XCTAssertEqualObjects(body[@"max_tokens"], @64000);
+	XCTAssertEqualObjects(body[@"stream"], @YES, @"a synchronous run sending the model's maximum streams");
+	NSURLRequest *lookup = self.anthropic.lookups.firstObject;
+	XCTAssertEqualObjects(lookup.URL.absoluteString, @"https://api.anthropic.com/v1/models/claude-sonnet-4-5");
+	XCTAssertEqualObjects([lookup valueForHTTPHeaderField:@"x-api-key"], @"k");
+
+	[self.anthropic submitInferenceJobForRequest:[self prompt:@"again"]];
+	XCTAssertEqual(self.anthropic.lookups.count, 1u, @"the model's maximum is asked once");
+}
+
+/*! A limit the backend or the request sets is sent without a lookup, and a model the Models API does not
+	know sends 1024. */
+- (void)testAnAnthropicLimitTheCallerSetsNeedsNoLookup
+{
+	self.anthropic.stagedLines = @[ @"data: {\"type\":\"message_stop\"}" ];
+	[self.anthropic submitInferenceJobForRequest:[self prompt:@"hi"]];
+	XCTAssertEqualObjects([self bodyOf:self.anthropic.lastRequest][@"max_tokens"], @1024, @"the endpoint stated none");
+
+	NFKStreamStubAnthropicBackend *set = [[NFKStreamStubAnthropicBackend alloc] init];
+	set.modelName = @"claude-sonnet-4-5";
+	set.apiKey = @"k";
+	set.maxTokens = 2048;
+	set.stagedLines = self.anthropic.stagedLines;
+	[set submitInferenceJobForRequest:[self prompt:@"hi"]];
+	XCTAssertEqualObjects([self bodyOf:set.lastRequest][@"max_tokens"], @2048);
+	NFKInferenceRequest *limited = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }
+															  parameters:@{ NFKParameterMaxTokens: @64 }];
+	[set submitInferenceJobForRequest:limited];
+	XCTAssertEqualObjects([self bodyOf:set.lastRequest][@"max_tokens"], @64);
+	XCTAssertEqual(set.lookups.count, 0u);
 }
 
 - (void)testAnthropicStreamThatStopsWithARefusalFailsTheJobAsOne

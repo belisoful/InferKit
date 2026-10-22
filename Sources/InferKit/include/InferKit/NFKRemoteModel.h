@@ -15,9 +15,11 @@ NS_ASSUME_NONNULL_BEGIN
 	@abstract   One model a remote provider or a local runner serves, as its list reports it.
 	@discussion The identifier is what a backend's modelName takes. The other fields are read from
 				the entry where the source publishes them and are nil otherwise: the OpenAI envelope
-				carries an owner and a creation time, Anthropic a display name and a creation time,
-				OpenRouter and LM Studio a context length, Ollama's native list a size, a
-				quantization, a context length, and the model's capabilities. The entry itself is
+				carries an owner and a creation time, Anthropic a display name, a creation time, and
+				its input and output limits, Gemini's native list its input and output limits,
+				OpenRouter a context length and its top provider's output limit, Groq a context window
+				and, for one model, its output limit, LM Studio a context length, and Ollama's native
+				list a size, a quantization, a context length, and the model's capabilities. The entry itself is
 				kept under raw for a field this type does not normalize. Introduced in InferKit 0.3.0.
 */
 @interface NFKRemoteModel : NSObject <NSCopying>
@@ -34,9 +36,15 @@ NS_ASSUME_NONNULL_BEGIN
 /*! When the provider says the model was created, where it says. */
 @property (nonatomic, copy, readonly, nullable) NSDate *createdAt;
 
-/*! The context window in tokens, where published (context_length, max_context_length, or a
-	local runner's details). */
+/*! The context window in tokens, where published (context_length, max_context_length,
+	context_window, Anthropic's max_input_tokens, Gemini's inputTokenLimit, OpenRouter's top
+	provider's context_length, or a local runner's details). */
 @property (nonatomic, copy, readonly, nullable) NSNumber *contextLength;
+
+/*! The most tokens one reply may run to, where published: Anthropic's max_tokens, Gemini's
+	outputTokenLimit, Groq's max_completion_tokens, max_output_tokens, or OpenRouter's top provider's
+	max_completion_tokens. Introduced in InferKit 0.4.0. */
+@property (nonatomic, copy, readonly, nullable) NSNumber *maximumOutputTokens;
 
 /*! The weights' size on disk in bytes, where a local runner reports it. */
 @property (nonatomic, copy, readonly, nullable) NSNumber *sizeBytes;

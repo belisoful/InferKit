@@ -108,7 +108,13 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 }
 @end
 
+/*! The max_tokens sent where neither the request, the backend, nor the Models API names one. */
+static const NSInteger NFKAnthropicFallbackMaxTokens = 1024;
+
 @interface NFKAnthropicBackend ()
+/*! The max_tokens the Models API stated for each model name asked about, or NSNull where it stated none.
+	Read and written under @synchronized (self). */
+@property (nonatomic, strong) NSMutableDictionary<NSString *, id> *modelMaximums;
 /*! Whether the model takes a thinking budget in tokens rather than an adaptive effort. */
 @property (nonatomic, readonly) BOOL usesThinkingBudget;
 /*! Whether the model takes temperature, top_p, and top_k when it is not thinking. */
@@ -135,8 +141,8 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 	if (self) {
 		_endpointURL = [NSURL URLWithString:@"https://api.anthropic.com/v1/messages"];
 		_apiVersion = NFKAnthropicAPIVersion;
-		_maxTokens = 1024;
 		_timeout = 120;
+		_modelMaximums = [NSMutableDictionary dictionary];
 		_session = NSURLSession.sharedSession;
 	}
 	return self;
@@ -179,6 +185,9 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 												  error:(NSError * _Nullable *)outError
 {
+	if (self.isReady && [self sendsModelMaximumForRequest:request]) {
+		return [self resultByStreamingRequest:request error:outError];
+	}
 	NSMutableURLRequest *urlRequest = [self urlRequestForRequest:request streaming:NO error:outError];
 	if (urlRequest == nil) {
 		return nil;
@@ -274,6 +283,81 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 	}];
 	job.cancellationHandler = cancel;
 	return job;
+}
+
+/*! Runs the request as a stream and waits for its end, as a run that sends the model's maximum does. */
+- (nullable NFKInferenceResult *)resultByStreamingRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
+	dispatch_semaphore_t finished = dispatch_semaphore_create(0);
+	NFKInferenceJob *job = [self submitInferenceJobForRequest:request];
+	job.completionHandler = ^(NFKInferenceJob *ended) {
+		dispatch_semaphore_signal(finished);
+	};
+	dispatch_semaphore_wait(finished, DISPATCH_TIME_FOREVER);
+	if (job.result == nil && outError != NULL) {
+		*outError = job.error;
+	}
+	return job.result;
+}
+
+#pragma mark Output limit
+
+/*! The max_tokens a request sends when it sets none: the backend's maxTokens, else the model's maximum,
+	else 1024. */
+- (NSInteger)defaultMaxTokens
+{
+	if (self.maxTokens > 0) {
+		return self.maxTokens;
+	}
+	NSInteger maximum = [self modelMaximumOutputTokens].integerValue;
+	return maximum > 0 ? maximum : NFKAnthropicFallbackMaxTokens;
+}
+
+/*! Whether the request sends the model's maximum, a value above the fallback the Models API stated. */
+- (BOOL)sendsModelMaximumForRequest:(NFKInferenceRequest *)request
+{
+	if ([[request parameterForKey:NFKParameterMaxTokens] isKindOfClass:NSNumber.class] || self.maxTokens > 0) {
+		return NO;
+	}
+	return [self modelMaximumOutputTokens].integerValue > NFKAnthropicFallbackMaxTokens;
+}
+
+/*! The max_tokens ceiling the Models API states for modelName (GET …/v1/models/{model}), asked once per
+	name with the backend's key; without a key, nil. An answer without one is remembered as none; a transport
+	failure is not, so a later request asks again. */
+- (nullable NSNumber *)modelMaximumOutputTokens
+{
+	NSString *model = self.modelName;
+	if (model.length == 0 || self.apiKey.length == 0 || self.endpointURL == nil) {
+		return nil;
+	}
+	@synchronized (self) {
+		id known = self.modelMaximums[model];
+		if (known != nil) {
+			return [known isKindOfClass:NSNumber.class] ? known : nil;
+		}
+	}
+	NSURL *url = [[self.endpointURL.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"models"]
+				  URLByAppendingPathComponent:model];
+	NSMutableURLRequest *lookup = [NSMutableURLRequest requestWithURL:url];
+	lookup.HTTPMethod = @"GET";
+	lookup.timeoutInterval = self.timeout;
+	[lookup setValue:@"application/json" forHTTPHeaderField:@"Accept"];
+	[NFKRemoteTransport authorizeRequest:lookup apiKey:self.apiKey style:NFKRemoteAPIStyleAnthropicMessages];
+	[lookup setValue:self.apiVersion forHTTPHeaderField:@"anthropic-version"];
+	NSHTTPURLResponse *response = nil;
+	NSData *data = [self sendRequest:lookup response:&response error:NULL];
+	if (data == nil) {
+		return nil;
+	}
+	id entry = [NFKRemoteTransport errorForResponse:response data:data] == nil
+		? [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL] : nil;
+	NSNumber *maximum = [entry isKindOfClass:NSDictionary.class] && [entry[@"max_tokens"] isKindOfClass:NSNumber.class]
+		&& [entry[@"max_tokens"] integerValue] > 0 ? entry[@"max_tokens"] : nil;
+	@synchronized (self) {
+		self.modelMaximums[model] = maximum ?: NSNull.null;
+	}
+	return maximum;
 }
 
 /*! A stream that ended with a refusal fails the job as one; any other end delivers what streamed. */
@@ -421,7 +505,7 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 	body[@"model"] = self.modelName;
 
 	NSNumber *maxTokens = [request parameterForKey:NFKParameterMaxTokens];
-	body[@"max_tokens"] = [maxTokens isKindOfClass:NSNumber.class] ? maxTokens : @(self.maxTokens);
+	body[@"max_tokens"] = [maxTokens isKindOfClass:NSNumber.class] ? maxTokens : @([self defaultMaxTokens]);
 
 	NSMutableDictionary *outputConfig = [NSMutableDictionary dictionary];
 	BOOL thinks = [self addThinkingForEffort:[request parameterForKey:NFKParameterReasoningEffort]
@@ -527,7 +611,7 @@ static BOOL NFKAnthropicModelIsInFamilies(NSString * _Nullable model, NSArray<NS
 		outputConfig[@"effort"] = [self effortLevelForEffort:effort];
 	}
 	if ([body[@"max_tokens"] integerValue] <= budget.integerValue) {
-		body[@"max_tokens"] = @(budget.integerValue + self.maxTokens);
+		body[@"max_tokens"] = @(budget.integerValue + (self.maxTokens > 0 ? self.maxTokens : NFKAnthropicFallbackMaxTokens));
 	}
 	return YES;
 }

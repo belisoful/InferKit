@@ -186,6 +186,57 @@
 	XCTAssertNil(catalog.requests.firstObject.URL.query);
 }
 
+#pragma mark Output limits
+
+- (void)testEachProvidersPublishedLimitsAreRead
+{
+	NFKRemoteModel *anthropic = [NFKRemoteModel modelWithEntry:@{ @"id": @"claude-sonnet-4-5", @"max_tokens": @64000,
+																   @"max_input_tokens": @200000 }];
+	XCTAssertEqualObjects(anthropic.maximumOutputTokens, @64000);
+	XCTAssertEqualObjects(anthropic.contextLength, @200000);
+	NFKRemoteModel *openRouter = [NFKRemoteModel modelWithEntry:@{ @"id": @"o/m", @"context_length": @131072,
+																	@"top_provider": @{ @"max_completion_tokens": @32768 } }];
+	XCTAssertEqualObjects(openRouter.maximumOutputTokens, @32768);
+	XCTAssertEqualObjects(openRouter.contextLength, @131072);
+	NFKRemoteModel *groq = [NFKRemoteModel modelWithEntry:@{ @"id": @"llama", @"context_window": @131072,
+															  @"max_completion_tokens": @8192 }];
+	XCTAssertEqualObjects(groq.maximumOutputTokens, @8192);
+	XCTAssertEqualObjects(groq.contextLength, @131072);
+	XCTAssertNil([NFKRemoteModel modelWithEntry:@{ @"id": @"gpt" }].maximumOutputTokens, @"the OpenAI envelope states none");
+}
+
+/*! Gemini's OpenAI layer lists names; the native list beside it supplies each model's limits, joined by
+	name whatever prefix either list writes. */
+- (void)testGeminiModelsTakeTheirLimitsFromTheNativeList
+{
+	NFKStubModelCatalog *catalog = [self catalogFor:NFKRemoteProvider.googleGemini pages:@[
+		@"{\"object\":\"list\",\"data\":[{\"id\":\"models/gemini-3.8-flash\",\"object\":\"model\"},{\"id\":\"gemini-embedding\"}]}",
+		(@"{\"models\":[{\"name\":\"models/gemini-3.8-flash\",\"inputTokenLimit\":1048576,\"outputTokenLimit\":65536}],"
+		 "\"nextPageToken\":\"next\"}"),
+		@"{\"models\":[{\"name\":\"models/gemini-embedding\",\"inputTokenLimit\":2048,\"outputTokenLimit\":1}]}" ]];
+
+	NSError *error = nil;
+	NSArray<NFKRemoteModel *> *models = [catalog modelsWithError:&error];
+	XCTAssertEqual(models.count, 2u, @"%@", error);
+	XCTAssertEqualObjects(models[0].identifier, @"models/gemini-3.8-flash", @"the layer's name stays");
+	XCTAssertEqualObjects(models[0].maximumOutputTokens, @65536);
+	XCTAssertEqualObjects(models[0].contextLength, @1048576);
+	XCTAssertEqualObjects(models[1].maximumOutputTokens, @1);
+	NSURLRequest *native = catalog.requests[1];
+	XCTAssertEqualObjects(native.URL.absoluteString,
+						  @"https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000");
+	XCTAssertEqualObjects([native valueForHTTPHeaderField:@"x-goog-api-key"], @"a-key");
+	XCTAssertNil([native valueForHTTPHeaderField:@"Authorization"]);
+	XCTAssertTrue([catalog.requests[2].URL.query containsString:@"pageToken=next"]);
+}
+
+- (void)testAnotherProvidersListMakesNoNativeRequest
+{
+	NFKStubModelCatalog *catalog = [self catalogFor:NFKRemoteProvider.openAI pages:@[ @"{\"data\":[{\"id\":\"gpt\"}]}" ]];
+	XCTAssertEqual([catalog modelsWithError:NULL].count, 1u);
+	XCTAssertEqual(catalog.requests.count, 1u);
+}
+
 #pragma mark The two failures a caller tells apart
 
 - (void)testARunnerThatIsNotRunningIsUnreachableNotEmpty
