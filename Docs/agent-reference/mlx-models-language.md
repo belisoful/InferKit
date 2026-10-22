@@ -197,6 +197,9 @@ attention and feed-forward.
     0.99995464, argmax 5/5, worst last-position layer state 0.9998778 at layer 23, every continuation
     token the argmax after the ones before it. Drafted by Qwen3-0.6B through the cache, the 14B decodes
     the same 16 tokens in 7 verify passes, 12 of 28 proposals kept.
+  - Qwen3 32B (`IK_PARITY_QWEN3_32B`), 51 of 64 layers streamed: logits 0.9998375, argmax 5/5, worst
+    layer 0.9994135 at layer 61, continuation token-exact. With the machine otherwise idle the pass read
+    50.7 GB at 2.62 GB/s.
   - Mistral Small 24B (`IK_PARITY_MISTRAL_SMALL`), 28 of 40 layers streamed: logits 0.9999845, argmax
     6/6, worst layer 0.99993855 at layer 16, continuation token-exact.
   Prompt cache, speculative decoding, mixture of experts, constrained decoding (all 0.3.0,
