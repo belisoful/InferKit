@@ -456,6 +456,26 @@ static BOOL NFKRegistryTestImageIsLoaded(NSURL *url)
 	XCTAssertEqualObjects([registry optionValuesForPluginIdentifier:identifier], @{});
 }
 
+- (void)testSettingTheValuesAProcessHoldsLeavesItRunning
+{
+	[self requireHost];
+	NFKPluginRegistry *registry = [self registry];
+	NSError *error = nil;
+	NFKPluginManifest *manifest = [registry addPluginAtURL:[self fixtureOfKind:NFKPluginEntryKindCABI version:@"1.0.0"] error:&error];
+	XCTAssertNotNil(manifest, @"%@", error);
+	NSDictionary *values = @{ NFKPluginFixtureEchoPrefixOption: @"> " };
+	XCTAssertTrue([registry setOptionValues:values forPluginIdentifier:manifest.identifier error:&error], @"%@", error);
+	XCTAssertEqualObjects([self echoOf:registry], @"> hi");
+	NFKPluginBackend *backend = [registry backendForModelIdentifier:[self catalogIdentifierOfKind:NFKPluginEntryKindCABI model:NFKPluginFixtureInvertModel]
+															options:nil error:&error];
+	pid_t running = backend.process.processIdentifier;
+	XCTAssertGreaterThan(running, 0);
+
+	XCTAssertTrue([registry setOptionValues:values forPluginIdentifier:manifest.identifier error:&error], @"%@", error);
+	XCTAssertEqualObjects([self echoOf:registry], @"> hi");
+	XCTAssertEqual(backend.process.processIdentifier, running);
+}
+
 - (void)testPluginOptionValuesReachATrustedPluginsContext
 {
 	NSString *identifier = @"com.example.inferkit.registry-options";
@@ -647,6 +667,56 @@ static BOOL NFKRegistryTestImageIsLoaded(NSURL *url)
 	XCTAssertEqualObjects(after.outputs[NFKPluginFixtureVersionKey], @"2.0.0", @"the next run reaches the second version");
 	XCTAssertEqualObjects(backend.process.manifest.version, @"2.0.0");
 	XCTAssertEqual(backend.process.state, NFKPluginProcessStateReady);
+}
+
+- (void)testOptionValuesSetDuringAReloadsRestartRestartOnTheReloadedVersion
+{
+	[self requireHost];
+	NSURL *first = [self fixtureOfKind:NFKPluginEntryKindCABI version:@"1.0.0"];
+	NSURL *second = [self fixtureOfKind:NFKPluginEntryKindCABI version:@"2.0.0"];
+	NSURL *folder = [self pluginsFolderWithCopiesOf:@[ first ]];
+	NSURL *installed = [folder URLByAppendingPathComponent:first.lastPathComponent];
+	NFKPluginRegistry *registry = [self registry];
+	NSError *error = nil;
+	NFKPluginManifest *manifest = [registry addPluginAtURL:installed error:&error];
+	XCTAssertNotNil(manifest, @"%@", error);
+	NSString *slow = [self catalogIdentifierOfKind:NFKPluginEntryKindCABI model:NFKPluginFixtureSlowModel];
+	NFKPluginBackend *backend = [registry backendForModelIdentifier:slow options:nil error:&error];
+	XCTAssertNotNil(backend, @"%@", error);
+
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{}
+															   parameters:@{ NFKPluginFixtureStepsKey: @20, NFKPluginFixtureStepMillisecondsKey: @50 }];
+	NFKInferenceJob *job = [backend submitInferenceJobForRequest:request];
+	__block NSInteger reports = 0;
+	job.progressHandler = ^(NFKInferenceJob *updated) {
+		@synchronized (self) {
+			reports += 1;
+		}
+	};
+	XCTAssertTrue([self waitUntil:^BOOL {
+		@synchronized (self) {
+			return reports > 0;
+		}
+	} timeout:60], @"the run reports progress: %@", backend.process.diagnosticDescription);
+
+	XCTAssertTrue([NSFileManager.defaultManager removeItemAtURL:installed error:&error], @"%@", error);
+	XCTAssertTrue([NSFileManager.defaultManager copyItemAtURL:second toURL:installed error:&error], @"%@", error);
+	XCTAssertTrue([registry reloadPluginWithIdentifier:manifest.identifier error:&error], @"%@", error);
+	// The run in flight holds the reload's restart in its drain, so the process still holds version 1.0.
+	XCTAssertEqualObjects(backend.process.manifest.version, @"1.0.0");
+	XCTAssertTrue([registry setOptionValues:@{ NFKPluginFixtureEchoPrefixOption: @"> " } forPluginIdentifier:manifest.identifier error:&error],
+				  @"%@", error);
+
+	XCTAssertTrue([self waitUntil:^BOOL {
+		return job.status >= NFKInferenceJobStatusSucceeded;
+	} timeout:120], @"%@", backend.process.diagnosticDescription);
+	XCTAssertEqual(job.status, NFKInferenceJobStatusSucceeded, @"%@", job.error);
+	NFKInferenceRequest *brief = [NFKInferenceRequest requestWithInputs:@{} parameters:@{ NFKPluginFixtureStepsKey: @1 }];
+	NFKInferenceResult *after = [backend runInferenceForRequest:brief error:&error];
+	XCTAssertNotNil(after, @"%@", error);
+	XCTAssertEqualObjects(after.outputs[NFKPluginFixtureVersionKey], @"2.0.0", @"the values' restart takes the reloaded manifest");
+	XCTAssertEqualObjects(backend.process.manifest.version, @"2.0.0");
+	XCTAssertEqualObjects([self echoOf:registry], @"> hi");
 }
 
 - (void)testReloadCompletionReportsTheRestart

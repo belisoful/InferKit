@@ -631,7 +631,7 @@ static const NSTimeInterval NFKPluginRegistryDefaultVerificationTimeout = 120;
 						  error:(NSError **)error
 {
 	NSDictionary<NSString *, id> *kept = [self optionValues:[self optionValuesForPluginIdentifier:identifier] keptByManifest:manifest];
-	NFKPluginProcess *process = nil;
+	BOOL restarting = NO;
 	@synchronized (self.lock) {
 		NFKPluginRegistryEntry *entry = self.entries[identifier];
 		if (entry == nil) {
@@ -652,12 +652,13 @@ static const NSTimeInterval NFKPluginRegistryDefaultVerificationTimeout = 120;
 		if (self.optionValuesByPlugin[identifier] != nil) {
 			self.optionValuesByPlugin[identifier] = kept;
 		}
-		process = entry.process;
-	}
-	if (process != nil) {
+		NFKPluginProcess *process = entry.process;
 		process.pluginOptions = kept;
+		restarting = [self restartProcess:process withManifest:manifest completion:restartCompletion];
 	}
-	[self handManifest:manifest toProcess:process completion:restartCompletion];
+	if (!restarting && restartCompletion != nil) {
+		restartCompletion(nil);
+	}
 	return YES;
 }
 
@@ -676,19 +677,19 @@ static const NSTimeInterval NFKPluginRegistryDefaultVerificationTimeout = 120;
 	return kept;
 }
 
-/*! Gives a process the manifest: a stopped process takes it for its next start and completion runs at
-	once; a running process restarts with it and completion runs when the restart ends. */
-- (void)handManifest:(NFKPluginManifest *)manifest
-		   toProcess:(nullable NFKPluginProcess *)process
-		  completion:(nullable void (^)(NSError * _Nullable error))completion
+/*! Gives a process the manifest: a stopped process takes it for its next start, and a running process
+	restarts with it and calls completion when the restart ends. Returns whether a restart began; when
+	none did, the caller calls completion once the lock is released. Runs under the lock, so the restarts
+	queue in the order the listed manifests change and the last one carries the manifest listed now. */
+- (BOOL)restartProcess:(nullable NFKPluginProcess *)process
+		  withManifest:(NFKPluginManifest *)manifest
+			completion:(nullable void (^)(NSError * _Nullable error))completion
 {
 	if (process == nil || [process replaceManifestWhileStopped:manifest]) {
-		if (completion != nil) {
-			completion(nil);
-		}
-		return;
+		return NO;
 	}
 	[process restartWithManifest:manifest completionHandler:completion];
+	return YES;
 }
 
 /*! Refuses a manifest that declares a tool another listed plugin declares. Runs under the lock. */
@@ -820,14 +821,16 @@ static const NSTimeInterval NFKPluginRegistryDefaultVerificationTimeout = 120;
 	if (resolved == nil) {
 		return NO;
 	}
-	NFKPluginProcess *process = nil;
 	@synchronized (self.lock) {
 		self.optionValuesByPlugin[identifier] = resolved;
-		process = self.entries[identifier].process;
-	}
-	if (process != nil) {
-		process.pluginOptions = resolved;
-		[self handManifest:process.manifest toProcess:process completion:nil];
+		NFKPluginRegistryEntry *entry = self.entries[identifier];
+		NFKPluginProcess *process = entry.process;
+		// During a reload's restart the process still holds the version it is leaving, so the restart
+		// takes the listed manifest.
+		if (process != nil && ![process.pluginOptions isEqualToDictionary:resolved]) {
+			process.pluginOptions = resolved;
+			[self restartProcess:process withManifest:entry.manifest completion:nil];
+		}
 	}
 	return YES;
 }

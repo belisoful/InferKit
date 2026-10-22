@@ -889,9 +889,21 @@ fixtures all declare `echo`, so a test that lists two of them drops one's tools 
   given keys only, converted; the plugin fills its own defaults.
 - The values live in a dictionary by plugin identifier beside the trusted set, kept through a removal.
   Setting needs a listed plugin, since the manifest declares the options.
-- A process takes them as `pluginOptions` (hello's `options`) when the registry makes it, and on each set.
-  A set then hands the process its own manifest through `handManifest:toProcess:completion:`: a stopped
-  process changes nothing else, and a running one restarts.
+- A process takes them as `pluginOptions` (hello's `options`) when the registry makes it, and on each set
+  that changes them. A set that changes them hands the process the entry's manifest through
+  `restartProcess:withManifest:completion:`: a stopped process changes nothing else, and a running one
+  restarts. A set equal to the process's `pluginOptions` does nothing.
+- The listed manifest matters during a reload's restart. Until the control queue runs the restart, the
+  process's `manifest` is still the version it is leaving, and a restart handed that manifest put the
+  plugin back on it: the host read the new bundle and the hello failed with "the process runs version
+  2.0 … and the manifest names 1.0" (an app that reloads and then reapplies its stored options on the
+  same rescan hit this). `testOptionValuesSetDuringAReloadsRestartRestartOnTheReloadedVersion` holds a
+  slow run in flight so the set lands inside the restart's drain.
+- `replaceManifestOfPlugin:` and `setOptionValues:` call `restartProcess:withManifest:completion:` under
+  the registry's lock, so restarts queue in the order the entry's manifest changes. It takes only the
+  process's admission condition, a `tryLock` of its start lock, and its state lock, and its handlers are
+  dispatched, so nothing it calls waits on the registry. A stopped process's completion runs after the
+  lock is released.
 - An in-process load passes them to the loader's private entry. A plugin already loaded keeps its first
   context, so a later set does not reach it until the app restarts.
 - `optionValues:keptByManifest:` runs on every add of a listed identifier and every reload, before the

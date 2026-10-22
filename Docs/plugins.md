@@ -373,7 +373,8 @@ NSDictionary *values = [registry optionValuesForPluginIdentifier:@"com.example.u
   `options_json`, with the manifest's `default` for each option the app left unset. An executable plugin
   reads them from the context its `NFKPluginService` hands the factory of
   `initWithManifest:pluginFactory:`. A plugin's process receives them at its next start, and a running process restarts to
-  receive them.
+  receive values that differ from the ones it holds. The restart takes the manifest the registry lists,
+  so values set during a reload's restart keep the reloaded version.
 - A plugin already loaded into the app's process keeps the values it was loaded with until the app quits.
 - The registry keeps the values in memory, through a reload or a removal. The app persists them and sets
   them again at launch, after it adds the plugin.

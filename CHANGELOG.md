@@ -81,6 +81,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKPluginRegistry` sets `handshakeTimeout`, `verificationTimeout`, and `buildTimeout` for the processes
   it makes, and a change reaches the processes already made.
 
+#### Plugin options set during a reload keep the reloaded version
+
+- `-[NFKPluginRegistry setOptionValues:forPluginIdentifier:error:]` restarts a running plugin with the
+  manifest the registry lists. Before, it restarted with the manifest its process last started, so values
+  set while a reload's restart was under way restarted the plugin back onto the version it was leaving,
+  and the next request failed with `NFKPluginErrorHandshakeFailed`.
+- Setting the values a running process already holds leaves it running.
+- A reload and an option change queue their restarts in the order they change the listed manifest.
+
 #### Plugin options reach every plugin, defaults included
 
 - A plugin's context carries the manifest's `default` for each plugin option the app left unset. Before,
