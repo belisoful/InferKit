@@ -126,6 +126,12 @@ public struct NFKMLXWav2Vec2Configuration: Sendable, Equatable {
     public func frameCount(samples: Int) -> Int {
         zip(convKernels, convStrides).reduce(samples) { length, layer in (length - layer.0) / layer.1 + 1 }
     }
+
+    /// The seconds between two output frames: the feature encoder's total stride over the 16 kHz input,
+    /// transformers' `inputs_to_logits_ratio / sampling_rate`.
+    var secondsPerFrame: Double {
+        Double(convStrides.reduce(1, *)) / Double(NFKMLXWav2Vec2Processor.sampleRate)
+    }
 }
 
 // MARK: - Feature encoder
@@ -513,6 +519,50 @@ public final class NFKMLXWav2Vec2Tokenizer: NSObject, @unchecked Sendable {
         }
         let characters = collapsed.filter { $0 != padToken }.map { $0 == wordDelimiter ? " " : $0 }
         return characters.joined().trimmingCharacters(in: .whitespaces)
+    }
+
+    /// The words of a greedy CTC decode, each with the frames it spans, as transformers'
+    /// `Wav2Vec2CTCTokenizer.decode(_:output_word_offsets: true)` reports them.
+    ///
+    /// Each run of one id is a character spanning its frames, end exclusive. The blank's runs drop, the
+    /// word delimiter's become spaces, and each stretch of characters between spaces is a word from its
+    /// first character's start to its last one's end. A run of the delimiter ends a word; so does the end
+    /// of the frames.
+    public func words(forFrameTokens frameTokens: [Int]) -> [(word: String, startFrame: Int, endFrame: Int)] {
+        var characters = [(token: String, start: Int, end: Int)]()
+        var start = 0
+        while start < frameTokens.count {
+            var end = start + 1
+            while end < frameTokens.count, frameTokens[end] == frameTokens[start] { end += 1 }
+            let id = frameTokens[start]
+            let token = id < tokens.count ? tokens[id] : unknownToken
+            if token != padToken {
+                characters.append((token == wordDelimiter ? " " : token, start, end))
+            }
+            start = end
+        }
+        var words = [(word: String, startFrame: Int, endFrame: Int)]()
+        var word = ""
+        var wordStart = 0
+        var wordEnd = 0
+        for character in characters {
+            if character.token == " " {
+                if !word.isEmpty {
+                    words.append((word, wordStart, wordEnd))
+                    word = ""
+                }
+                continue
+            }
+            if word.isEmpty {
+                wordStart = character.start
+            }
+            word += character.token
+            wordEnd = character.end
+        }
+        if !word.isEmpty {
+            words.append((word, wordStart, wordEnd))
+        }
+        return words
     }
 
     /// The label ids of a transcript for CTC training: each character's id, the word delimiter for a

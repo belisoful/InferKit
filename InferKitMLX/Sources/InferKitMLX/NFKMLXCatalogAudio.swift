@@ -298,6 +298,8 @@ extension NFKMLXCatalogAudio {
                          inputs: [audioInput("A WAV recording of speech. The backend resamples it to 16 kHz.")],
                          outputs: [.output(NFKOutputText, title: "Transcript",
                                            help: "The greedy CTC transcript, written by a release with a CTC head."),
+                                   .output(NFKOutputWords, title: "Words",
+                                           help: "The transcript's words with their times, each from its first frame to the end of its last, written by a release with a CTC head."),
                                    .output(NFKOutputEmbedding, required: true, title: "Embedding",
                                            help: "The encoder's last hidden state averaged over the frames.")],
                          license: .apache2(),

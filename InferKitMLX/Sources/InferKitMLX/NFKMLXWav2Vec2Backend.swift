@@ -159,8 +159,9 @@ public final class NFKMLXWav2Vec2: NSObject {
 // MARK: - Backend
 
 /// The Wav2Vec2 / HuBERT inference backend. Audio under `NFKInputAudio` (an `NFKAudioAsset` or WAV
-/// `Data`, any sample rate, resampled to 16 kHz) comes back as `NFKOutputText` from a CTC release, and
-/// as a mean-pooled `NFKOutputEmbedding` (`[NSNumber]`, the encoder width) from every release.
+/// `Data`, any sample rate, resampled to 16 kHz) comes back as `NFKOutputText` and timed
+/// `NFKOutputWords` from a CTC release, and as a mean-pooled `NFKOutputEmbedding` (`[NSNumber]`, the
+/// encoder width) from every release.
 ///
 /// Introduced in InferKit 0.4.0.
 @objc(NFKMLXWav2Vec2Backend)
@@ -191,9 +192,9 @@ public final class NFKMLXWav2Vec2Backend: NSObject, NFKInferenceBackend {
     @objc public var supportedParameterKeys: Set<String> { [] }
     @objc public var supportedInputKeys: Set<String> { [NFKInputAudio] }
 
-    /// The result keys the backend writes: the transcript of a release with a CTC head, and the pooled
-    /// embedding. Introduced in InferKit 0.4.0.
-    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputEmbedding] }
+    /// The result keys the backend writes: the transcript and its timed words from a release with a CTC
+    /// head, and the pooled embedding. Introduced in InferKit 0.4.0.
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputWords, NFKOutputEmbedding] }
 
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
@@ -204,6 +205,15 @@ public final class NFKMLXWav2Vec2Backend: NSObject, NFKInferenceBackend {
         if let result = job.result { return result }
         if let error = job.error { throw error }
         throw NFKMLXError.noOutput
+    }
+
+    /// Words as `NFKAudioSegment` spans in seconds, each word its label. A greedy CTC decode gives no
+    /// score, so the confidence is 1.
+    static func timedWords(_ words: [(word: String, startFrame: Int, endFrame: Int)], secondsPerFrame: Double) -> [NFKAudioSegment] {
+        words.map {
+            NFKAudioSegment(startSeconds: Double($0.startFrame) * secondsPerFrame, endSeconds: Double($0.endFrame) * secondsPerFrame,
+                            label: $0.word, confidence: 1)
+        }
     }
 
     @objc(submitInferenceJobForRequest:)
@@ -225,7 +235,10 @@ public final class NFKMLXWav2Vec2Backend: NSObject, NFKInferenceBackend {
                 if let head = holder.net.head, let tokenizer = holder.tokenizer {
                     let frameTokens = argMax(head(hidden)[0], axis: -1).asType(.int32)
                     eval(frameTokens, pooled)
-                    outputs[NFKOutputText] = tokenizer.text(forFrameTokens: frameTokens.asArray(Int32.self).map(Int.init))
+                    let ids = frameTokens.asArray(Int32.self).map(Int.init)
+                    outputs[NFKOutputText] = tokenizer.text(forFrameTokens: ids)
+                    outputs[NFKOutputWords] = Self.timedWords(tokenizer.words(forFrameTokens: ids),
+                                                              secondsPerFrame: holder.net.configuration.secondsPerFrame)
                 } else {
                     eval(pooled)
                 }

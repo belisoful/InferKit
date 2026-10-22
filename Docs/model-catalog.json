@@ -16655,6 +16655,7 @@
       ],
       "outputModalities" : [
         "text",
+        "words",
         "embedding"
       ],
       "outputs" : [
@@ -16664,6 +16665,13 @@
           "required" : false,
           "title" : "Transcript",
           "valueType" : "text"
+        },
+        {
+          "help" : "The transcript's words with their times, each from its first frame to the end of its last, written by a release with a CTC head.",
+          "key" : "words",
+          "required" : false,
+          "title" : "Words",
+          "valueType" : "words"
         },
         {
           "help" : "The encoder's last hidden state averaged over the frames.",
@@ -16778,6 +16786,7 @@
       ],
       "outputModalities" : [
         "text",
+        "words",
         "embedding"
       ],
       "outputs" : [
@@ -16787,6 +16796,13 @@
           "required" : false,
           "title" : "Transcript",
           "valueType" : "text"
+        },
+        {
+          "help" : "The transcript's words with their times, each from its first frame to the end of its last, written by a release with a CTC head.",
+          "key" : "words",
+          "required" : false,
+          "title" : "Words",
+          "valueType" : "words"
         },
         {
           "help" : "The encoder's last hidden state averaged over the frames.",
@@ -16901,6 +16917,7 @@
       ],
       "outputModalities" : [
         "text",
+        "words",
         "embedding"
       ],
       "outputs" : [
@@ -16910,6 +16927,13 @@
           "required" : false,
           "title" : "Transcript",
           "valueType" : "text"
+        },
+        {
+          "help" : "The transcript's words with their times, each from its first frame to the end of its last, written by a release with a CTC head.",
+          "key" : "words",
+          "required" : false,
+          "title" : "Words",
+          "valueType" : "words"
         },
         {
           "help" : "The encoder's last hidden state averaged over the frames.",
@@ -17037,6 +17061,7 @@
       ],
       "outputModalities" : [
         "text",
+        "words",
         "embedding"
       ],
       "outputs" : [
@@ -17046,6 +17071,13 @@
           "required" : false,
           "title" : "Transcript",
           "valueType" : "text"
+        },
+        {
+          "help" : "The transcript's words with their times, each from its first frame to the end of its last, written by a release with a CTC head.",
+          "key" : "words",
+          "required" : false,
+          "title" : "Words",
+          "valueType" : "words"
         },
         {
           "help" : "The encoder's last hidden state averaged over the frames.",
@@ -17160,6 +17192,7 @@
       ],
       "outputModalities" : [
         "text",
+        "words",
         "embedding"
       ],
       "outputs" : [
@@ -17169,6 +17202,13 @@
           "required" : false,
           "title" : "Transcript",
           "valueType" : "text"
+        },
+        {
+          "help" : "The transcript's words with their times, each from its first frame to the end of its last, written by a release with a CTC head.",
+          "key" : "words",
+          "required" : false,
+          "title" : "Words",
+          "valueType" : "words"
         },
         {
           "help" : "The encoder's last hidden state averaged over the frames.",
@@ -62217,6 +62257,7 @@
       ],
       "outputModalities" : [
         "text",
+        "words",
         "embedding"
       ],
       "outputs" : [
@@ -62226,6 +62267,13 @@
           "required" : false,
           "title" : "Transcript",
           "valueType" : "text"
+        },
+        {
+          "help" : "The transcript's words with their times, each from its first frame to the end of its last, written by a release with a CTC head.",
+          "key" : "words",
+          "required" : false,
+          "title" : "Words",
+          "valueType" : "words"
         },
         {
           "help" : "The encoder's last hidden state averaged over the frames.",
@@ -62340,6 +62388,7 @@
       ],
       "outputModalities" : [
         "text",
+        "words",
         "embedding"
       ],
       "outputs" : [
@@ -62349,6 +62398,13 @@
           "required" : false,
           "title" : "Transcript",
           "valueType" : "text"
+        },
+        {
+          "help" : "The transcript's words with their times, each from its first frame to the end of its last, written by a release with a CTC head.",
+          "key" : "words",
+          "required" : false,
+          "title" : "Words",
+          "valueType" : "words"
         },
         {
           "help" : "The encoder's last hidden state averaged over the frames.",
@@ -62480,6 +62536,7 @@
       ],
       "outputModalities" : [
         "text",
+        "words",
         "embedding"
       ],
       "outputs" : [
@@ -62489,6 +62546,13 @@
           "required" : false,
           "title" : "Transcript",
           "valueType" : "text"
+        },
+        {
+          "help" : "The transcript's words with their times, each from its first frame to the end of its last, written by a release with a CTC head.",
+          "key" : "words",
+          "required" : false,
+          "title" : "Words",
+          "valueType" : "words"
         },
         {
           "help" : "The encoder's last hidden state averaged over the frames.",
@@ -62616,6 +62680,7 @@
       ],
       "outputModalities" : [
         "text",
+        "words",
         "embedding"
       ],
       "outputs" : [
@@ -62625,6 +62690,13 @@
           "required" : false,
           "title" : "Transcript",
           "valueType" : "text"
+        },
+        {
+          "help" : "The transcript's words with their times, each from its first frame to the end of its last, written by a release with a CTC head.",
+          "key" : "words",
+          "required" : false,
+          "title" : "Words",
+          "valueType" : "words"
         },
         {
           "help" : "The encoder's last hidden state averaged over the frames.",
@@ -62752,6 +62824,7 @@
       ],
       "outputModalities" : [
         "text",
+        "words",
         "embedding"
       ],
       "outputs" : [
@@ -62761,6 +62834,13 @@
           "required" : false,
           "title" : "Transcript",
           "valueType" : "text"
+        },
+        {
+          "help" : "The transcript's words with their times, each from its first frame to the end of its last, written by a release with a CTC head.",
+          "key" : "words",
+          "required" : false,
+          "title" : "Words",
+          "valueType" : "words"
         },
         {
           "help" : "The encoder's last hidden state averaged over the frames.",
@@ -62875,6 +62955,7 @@
       ],
       "outputModalities" : [
         "text",
+        "words",
         "embedding"
       ],
       "outputs" : [
@@ -62884,6 +62965,13 @@
           "required" : false,
           "title" : "Transcript",
           "valueType" : "text"
+        },
+        {
+          "help" : "The transcript's words with their times, each from its first frame to the end of its last, written by a release with a CTC head.",
+          "key" : "words",
+          "required" : false,
+          "title" : "Words",
+          "valueType" : "words"
         },
         {
           "help" : "The encoder's last hidden state averaged over the frames.",
@@ -62998,6 +63086,7 @@
       ],
       "outputModalities" : [
         "text",
+        "words",
         "embedding"
       ],
       "outputs" : [
@@ -63007,6 +63096,13 @@
           "required" : false,
           "title" : "Transcript",
           "valueType" : "text"
+        },
+        {
+          "help" : "The transcript's words with their times, each from its first frame to the end of its last, written by a release with a CTC head.",
+          "key" : "words",
+          "required" : false,
+          "title" : "Words",
+          "valueType" : "words"
         },
         {
           "help" : "The encoder's last hidden state averaged over the frames.",
@@ -63120,6 +63216,7 @@
       ],
       "outputModalities" : [
         "text",
+        "words",
         "embedding"
       ],
       "outputs" : [
@@ -63129,6 +63226,13 @@
           "required" : false,
           "title" : "Transcript",
           "valueType" : "text"
+        },
+        {
+          "help" : "The transcript's words with their times, each from its first frame to the end of its last, written by a release with a CTC head.",
+          "key" : "words",
+          "required" : false,
+          "title" : "Words",
+          "valueType" : "words"
         },
         {
           "help" : "The encoder's last hidden state averaged over the frames.",
@@ -63242,6 +63346,7 @@
       ],
       "outputModalities" : [
         "text",
+        "words",
         "embedding"
       ],
       "outputs" : [
@@ -63251,6 +63356,13 @@
           "required" : false,
           "title" : "Transcript",
           "valueType" : "text"
+        },
+        {
+          "help" : "The transcript's words with their times, each from its first frame to the end of its last, written by a release with a CTC head.",
+          "key" : "words",
+          "required" : false,
+          "title" : "Words",
+          "valueType" : "words"
         },
         {
           "help" : "The encoder's last hidden state averaged over the frames.",

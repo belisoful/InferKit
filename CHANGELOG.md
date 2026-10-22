@@ -1480,6 +1480,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   English text. The language tokens come from the release's `added_tokens.json`, which the catalog now
   downloads beside the tokenizer.
 
+#### Word times from the CTC speech recognizers
+
+- The wav2vec 2.0 and HuBERT releases with a CTC head answer `NFKOutputWords` beside their transcript:
+  each word as an `NFKAudioSegment` from its first frame to the end of its last, at 20 ms a frame, as
+  transformers' `Wav2Vec2CTCTokenizer` reports word offsets. `NFKMLXWav2Vec2Tokenizer.words(forFrameTokens:)`
+  gives the frames. The catalog entries declare the output.
+
 #### The reference arithmetic runs transformers' chunked scans
 
 - In `NFKMLXArithmeticReference`, a Mamba-2 layer's prefill (Codestral, Nemotron-H, Granite-4.0-H) takes

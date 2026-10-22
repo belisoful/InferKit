@@ -312,7 +312,14 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   norm", a final layer norm after the stack) in the large ones. The base releases group-normalize the
   first convolution alone; the large ones layer-normalize every convolution and carry biases. HuBERT is
   the same network under a `hubert.` prefix. A CTC release adds `lm_head` over a 32-character vocabulary
-  (`Wav2Vec2CTCTokenizer`: the pad token is the blank, `|` the word delimiter). **At reference parity on
+  (`Wav2Vec2CTCTokenizer`: the pad token is the blank, `|` the word delimiter). A CTC release also
+  answers `NFKOutputWords`: `NFKMLXWav2Vec2Tokenizer.words(forFrameTokens:)` reproduces
+  `decode(_, output_word_offsets=True)`. Each run of one id is a character spanning its frames (end
+  exclusive), blank runs drop, delimiter runs are spaces, and a word runs from its first character's
+  start to its last character's end. Frames become seconds at the feature encoder's total stride over
+  16 kHz (`secondsPerFrame`, 320 / 16000 = 20 ms, transformers' `inputs_to_logits_ratio /
+  sampling_rate`). The oracle records `word_offsets` and `words_bytes`, and the parity test holds both
+  exactly when a record carries them. **At reference parity on
   every release measured, each against its own record** (`run_reference.py wav2vec2`, float32, eager
   attention, the validation clip through the release's own `Wav2Vec2FeatureExtractor`): the
   normalization within 4.8e-7, every seam at 0.99999999 or better, and the last hidden state at

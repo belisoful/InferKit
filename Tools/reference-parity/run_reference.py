@@ -23459,7 +23459,8 @@ def run_wav2vec2(image, checkpoint):
     through the release's own `Wav2Vec2FeatureExtractor`. Records the waveform, the extractor's
     `input_values`, the feature encoder's output, the projected features, the outputs of the first,
     middle, and last encoder layers, the last hidden state (the output), and for a CTC release the
-    logits, the greedy frame tokens, and the processor's decoded text (`text_bytes`, UTF-8).
+    logits, the greedy frame tokens, the processor's decoded text (`text_bytes`, UTF-8), and its word
+    offsets (`word_offsets`, [words, 2] start and end frames; `words_bytes`, the words joined by newlines).
     Runs under the `llm` oracle env.
     """
     from transformers import AutoConfig, Wav2Vec2FeatureExtractor
@@ -23497,7 +23498,13 @@ def run_wav2vec2(image, checkpoint):
             logits = loaded.lm_head(out.last_hidden_state)[0]
             tokens = logits.argmax(-1)
             from transformers import Wav2Vec2CTCTokenizer
-            text = Wav2Vec2CTCTokenizer.from_pretrained(checkpoint).decode(tokens.tolist())
+            tokenizer = Wav2Vec2CTCTokenizer.from_pretrained(checkpoint)
+            text = tokenizer.decode(tokens.tolist())
+            words = tokenizer.decode(tokens.tolist(), output_word_offsets=True).word_offsets
+            extra["word_offsets"] = torch.tensor([[w["start_offset"], w["end_offset"]] for w in words],
+                                                 dtype=torch.int64).reshape(-1, 2)
+            extra["words_bytes"] = torch.tensor(list("\n".join(w["word"] for w in words).encode("utf-8")),
+                                                dtype=torch.int64)
             extra["logits"] = logits.contiguous()
             extra["tokens"] = tokens.to(torch.int64).contiguous()
             extra["text_bytes"] = torch.tensor(list(text.encode("utf-8")), dtype=torch.int64)

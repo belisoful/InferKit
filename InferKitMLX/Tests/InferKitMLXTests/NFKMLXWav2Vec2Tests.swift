@@ -112,6 +112,33 @@ final class NFKMLXWav2Vec2Tests: XCTestCase {
         XCTAssertEqual(tokenizer.labels(for: "X"), [3])
     }
 
+    /// Each word spans its first character's first frame to its last character's end; a delimiter run
+    /// ends a word, leading and repeated delimiters make no empty word, and a blank between two runs of a
+    /// letter keeps both inside one word.
+    func testCTCWordsSpanTheFramesOfTheirCharacters() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let vocabulary = ["<pad>": 0, "<s>": 1, "</s>": 2, "<unk>": 3, "|": 4, "E": 5, "T": 6, "L": 7, "H": 8]
+        try JSONSerialization.data(withJSONObject: vocabulary).write(to: directory.appendingPathComponent("vocab.json"))
+        let tokenizer = try NFKMLXWav2Vec2Tokenizer(directoryURL: directory)
+        let words = tokenizer.words(forFrameTokens: [0, 8, 8, 5, 0, 7, 7, 0, 7, 4, 4, 6, 0, 0])
+        XCTAssertEqual(words.map(\.word), ["HELL", "T"])
+        XCTAssertEqual(words.map(\.startFrame), [1, 11])
+        XCTAssertEqual(words.map(\.endFrame), [9, 12])
+        let spaced = tokenizer.words(forFrameTokens: [4, 0, 4, 6, 6, 4, 0, 4, 5])
+        XCTAssertEqual(spaced.map(\.word), ["T", "E"])
+        XCTAssertEqual(spaced.map(\.startFrame), [3, 8])
+        XCTAssertEqual(spaced.map(\.endFrame), [5, 9])
+        XCTAssertTrue(tokenizer.words(forFrameTokens: [0, 0, 4]).isEmpty)
+
+        let timed = NFKMLXWav2Vec2Backend.timedWords(words, secondsPerFrame: 0.02)
+        XCTAssertEqual(timed.map(\.label), ["HELL", "T"])
+        XCTAssertEqual(timed[0].startSeconds, 0.02, accuracy: 1e-12)
+        XCTAssertEqual(timed[0].endSeconds, 0.18, accuracy: 1e-12)
+        XCTAssertEqual(NFKMLXWav2Vec2Configuration().secondsPerFrame, 0.02, accuracy: 1e-15, "a stride of 320 samples at 16 kHz")
+    }
+
     /// PARITY: every release against its own record, at float32.
     func testEveryReleaseIsAtParity() throws {
         try requireMLXRuntime()
@@ -164,6 +191,13 @@ final class NFKMLXWav2Vec2Tests: XCTestCase {
             let referenceText = String(decoding: try XCTUnwrap(record["text_bytes"]).asArray(Int64.self).map(UInt8.init),
                                        as: UTF8.self)
             XCTAssertEqual(tokenizer.text(forFrameTokens: tokens), referenceText, "\(name) decoded text")
+            if let referenceOffsets = record["word_offsets"], let wordsBytes = record["words_bytes"] {
+                let words = tokenizer.words(forFrameTokens: tokens)
+                let referenceWords = String(decoding: wordsBytes.asArray(Int64.self).map(UInt8.init), as: UTF8.self)
+                XCTAssertEqual(words.map(\.word).joined(separator: "\n"), referenceWords, "\(name) words")
+                XCTAssertEqual(words.flatMap { [$0.startFrame, $0.endFrame] }, referenceOffsets.asArray(Int64.self).map(Int.init),
+                               "\(name) word offsets")
+            }
             line += ", logits \(similarity) (max |d| \(maximum)), tokens \(tokens == referenceTokens ? "exact" : "DIFFER"), "
                 + "text \(referenceText.debugDescription)"
         }
@@ -186,6 +220,11 @@ final class NFKMLXWav2Vec2Tests: XCTestCase {
         if record["text_bytes"] != nil {
             let referenceText = String(decoding: record["text_bytes"]!.asArray(Int64.self).map(UInt8.init), as: UTF8.self)
             XCTAssertEqual(result.output(forKey: NFKOutputText) as? String, referenceText, "\(name) backend transcription")
+            if let referenceOffsets = record["word_offsets"] {
+                let words = try XCTUnwrap(result.output(forKey: NFKOutputWords) as? [NFKAudioSegment])
+                let frames = referenceOffsets.asArray(Int64.self).map { Double($0) * 320.0 / 16000.0 }
+                XCTAssertEqual(words.flatMap { [$0.startSeconds, $0.endSeconds] }, frames, "\(name) backend word times")
+            }
         } else {
             XCTAssertNil(result.output(forKey: NFKOutputText), "\(name) has no CTC head")
         }
