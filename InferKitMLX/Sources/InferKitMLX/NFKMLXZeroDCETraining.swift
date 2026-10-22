@@ -55,7 +55,8 @@ public enum NFKMLXZeroDCELoss {
     }
 
     /// Keeps neighboring curve parameters close, so the estimated illumination stays monotonic and
-    /// free of banding. Takes the curve maps `[N, H, W, 24]`, not the image.
+    /// free of banding. Takes the curve maps `[N, H, W, C]`, not the image: Zero-DCE's 24 channels, or
+    /// Zero-DCE++'s single shared map of 3.
     ///
     /// The reference sums the squared differences over the channels as well, while dividing by a
     /// count that covers only the spatial extent. The result therefore carries a factor of the

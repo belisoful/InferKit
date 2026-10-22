@@ -12283,6 +12283,80 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertEqual(move, try array("target_move64").item(Float.self), accuracy: largestTarget.ulp)
     }
 
+    // Zero-DCE++'s training against Li-Chongyi/Zero-DCE_extension's own `Zero-DCE++` code at 09f202b: the released
+    // `enhance_net_nopool` with `Myloss.py`'s losses weighted as `lowlight_train.py` weights them, at the script's
+    // scale factor 1 and the released 12. The enhanced image, the curve map, the four terms, the gradients and their
+    // norm, and the total after one clipped step of the script's Adam. Each is also recorded at float64.
+    //
+    // `IK_ZERO_DCE_PLUS_TRAIN_SRC=sources/refsrc/zerodce_pp
+    //  python run_reference.py zero_dce_plus_training out/zero-dce-plus-training.safetensors --checkpoint zerodce2/Epoch99.pth`
+    func testZeroDCEPlusTrainingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_ZERO_DCE_PLUS_TRAINING"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_ZERO_DCE_PLUS_TRAINING to a record from run_reference.py zero_dce_plus_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        func values(_ key: String) throws -> [Float] { try array(key).asArray(Float.self) }
+        func distance(_ a: MLXArray, _ b: MLXArray) -> Float {
+            sqrt(square(a - b).sum()).item(Float.self) / sqrt(square(b).sum()).item(Float.self)
+        }
+        let photos = try array("images")
+
+        for scale in [1, 12] {
+            let prefix = "s\(scale)::"
+            let net = try NFKMLXZeroDCEPlus.network(weightsURL: weights("IK_VAL_ZERO_DCE_PLUS"))
+            let objective = NFKMLXZeroDCEPlusObjective(scaleFactor: scale)
+
+            let (enhanced, curve) = net.enhancedWithCurve(photos, scaleFactor: scale)
+            for (name, ours) in [("enhanced", enhanced), ("curve", curve)] {
+                let floor = distance(try array(prefix + name), try array(prefix + "f64::" + name))
+                let error = distance(ours, try array(prefix + "f64::" + name))
+                print("PARITY zero-dce-plus-training: scale \(scale) \(name) from float64 \(error) (reference float32 \(floor))")
+                XCTAssertLessThan(error, max(1e-6, 2 * floor), "\(name) at scale \(scale)")
+            }
+
+            let terms = [objective.smoothnessWeight * NFKMLXZeroDCELoss.illuminationSmoothness(curve),
+                         objective.spatialWeight * NFKMLXZeroDCELoss.spatialConsistency(enhanced, original: photos),
+                         objective.colorWeight * NFKMLXZeroDCELoss.colorConstancy(enhanced),
+                         objective.exposureWeight * NFKMLXZeroDCELoss.exposure(enhanced, wellExposedLevel: objective.wellExposedLevel)]
+                .map { $0.item(Float.self) }
+            let terms32 = try values(prefix + "terms"), terms64 = try values(prefix + "f64::terms")
+            for (index, name) in ["smoothness", "spatial", "color", "exposure"].enumerated() {
+                print("PARITY zero-dce-plus-training: scale \(scale) \(name) \(terms[index]) vs \(terms32[index]) (float64 \(terms64[index]))")
+                XCTAssertEqual(terms[index], terms64[index],
+                               accuracy: max(abs(terms64[index]) * 1e-5, 2 * abs(terms32[index] - terms64[index])), "\(name) at scale \(scale)")
+            }
+            let loss = objective(net, photos).item(Float.self)
+            let loss32 = try values(prefix + "loss")[0], loss64 = try values(prefix + "f64::loss")[0]
+            XCTAssertEqual(loss, loss64, accuracy: max(abs(loss64) * 1e-5, 2 * abs(loss32 - loss64)))
+
+            let gradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, arrays in
+                [objective(net, arrays[0])]
+            }(net, [photos]).1.flattened())
+            let norm = sqrt(gradients.values.map { square($0).sum() }.reduce(MLXArray(Float(0)), +)).item(Float.self)
+            let norm32 = try values(prefix + "gradient_norm")[0], norm64 = try values(prefix + "f64::gradient_norm")[0]
+            print("PARITY zero-dce-plus-training: scale \(scale) global gradient norm \(norm) vs \(norm32) (float64 \(norm64))")
+            XCTAssertEqual(norm, norm64, accuracy: max(norm64 * 1e-4, 2 * abs(norm32 - norm64)))
+            for name in ["e_conv1.depth_conv.weight", "e_conv1.point_conv.weight", "e_conv4.depth_conv.bias",
+                         "e_conv7.point_conv.weight", "e_conv7.point_conv.bias"] {
+                func layout(_ value: MLXArray) -> MLXArray { value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value }
+                let ours = try XCTUnwrap(gradients[name], name)
+                let theirs = layout(try array(prefix + "grad::" + name)), theirs64 = layout(try array(prefix + "f64::grad::" + name))
+                let floor = distance(theirs, theirs64)
+                print("PARITY zero-dce-plus-training: scale \(scale) \(name) gradient relative error \(distance(ours, theirs)); "
+                      + "from float64: ours \(distance(ours, theirs64)), reference float32 \(floor)")
+                XCTAssertLessThan(distance(ours, theirs64), max(1e-5, 2 * floor), "\(name) at scale \(scale)")
+            }
+
+            try NFKMLXZeroDCEPlus.fineTune(net, photos: { _ in photos }, objective: objective, steps: 1)
+            let lossAfter = objective(net, photos).item(Float.self)
+            let after32 = try values(prefix + "loss_after_step")[0], after64 = try values(prefix + "f64::loss_after_step")[0]
+            print("PARITY zero-dce-plus-training: scale \(scale) loss after one step \(lossAfter) vs \(after32) (float64 \(after64))")
+            XCTAssertEqual(lossAfter, after64, accuracy: max(abs(after64) * 1e-5, 2 * abs(after32 - after64)), "scale \(scale)")
+        }
+    }
+
     // Conv-TasNet's objective against asteroid v0.5.2's own `PITLossWrapper(pairwise_neg_sisdr)`, on
     // estimates that are the sources crossed, scaled, shifted, and noised: the pairwise matrix and the
     // loss under the best assignment.

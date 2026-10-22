@@ -1441,6 +1441,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Zero-DCE++ fine-tunes as its training script trains it
+
+- `NFKMLXZeroDCEPlus.fineTune` trains Zero-DCE++ as Li-Chongyi/Zero-DCE_extension's `lowlight_train.py` does:
+  Zero-DCE's four zero-reference losses with the smoothness term at 1600 over the shared curve map, torch's Adam
+  at 1e-4 with its L2 decay, a clip at 0.1, and the estimator at scale factor 1.
+- `NFKMLXZeroDCEPlusObjective` is the loss. `NFKMLXZeroDCEPlusNet` is public, with
+  `enhancedWithCurve(_:scaleFactor:)`, and `NFKMLXZeroDCEPlus.network(weightsURL:scaleFactor:)` builds it. A
+  checkpoint `NFKMLXWeights` saved reloads through `backend(weightsURL:)`.
+
 #### The reference arithmetic runs transformers' chunked scans
 
 - In `NFKMLXArithmeticReference`, a Mamba-2 layer's prefill (Codestral, Nemotron-H, Granite-4.0-H) takes

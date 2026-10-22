@@ -924,7 +924,7 @@
       "file": "zerodce2/Epoch99.pth",
       "bytes": 42489,
       "url": "https://github.com/Li-Chongyi/Zero-DCE_extension/raw/main/Zero-DCE%2B%2B/snapshots_Zero_DCE%2B%2B/Epoch99.pth",
-      "note": "Zero-DCE++ (`enhance_net_nopool`), the authors' successor to Zero-DCE: depthwise-separable convolutions (`CSDN_Tem`), ONE shared three-channel curve reused across all eight iterations, and an estimator run at 1/12 resolution with the curve map lifted back by an align-corners bilinear upsample. Keys carry a `module.` prefix from the training wrapper, which the loader strips. Record: `run_reference.py zero_dce_plus <out> --checkpoint <this>` under the llm oracle env -> IK_PARITY_ZERO_DCE_PLUS.",
+      "note": "Zero-DCE++ (`enhance_net_nopool`), the authors' successor to Zero-DCE: depthwise-separable convolutions (`CSDN_Tem`), ONE shared three-channel curve reused across all eight iterations, and an estimator run at 1/12 resolution with the curve map lifted back by an align-corners bilinear upsample. Keys are the module's own (`e_conv1.depth_conv.weight` …), with no wrapper prefix. Record: `run_reference.py zero_dce_plus <out> --checkpoint <this>` under the llm oracle env -> IK_PARITY_ZERO_DCE_PLUS.",
       "config": [
         "IK_VAL_ZERO_DCE_PLUS"
       ]
@@ -5032,6 +5032,7 @@
         "siggraph17_training",
         "eccv16_training",
         "rife_v4_training",
+        "zero_dce_plus_training",
         "laya",
         "laya_episode",
         "florence2",
@@ -6355,6 +6356,12 @@
       "record": "reference/rife-v4-training-reference.safetensors",
       "environment": "llm",
       "command": "IK_RIFE_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/practical-rife-train/v4.15/RIFE4.15\" IK_VGG19_WEIGHTS=\"/Volumes/InferKit Models/inferkit-validation/vgg19/vgg19-dcbb9e9d.pth\" rife_v4_training --checkpoint \"/Volumes/InferKit Models/inferkit-validation/converted/rife_v4.safetensors\""
+    },
+    {
+      "key": "IK_PARITY_ZERO_DCE_PLUS_TRAINING",
+      "record": "reference/zero-dce-plus-training-reference.safetensors",
+      "environment": "llm",
+      "command": "IK_ZERO_DCE_PLUS_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/sources/refsrc/zerodce_pp\" zero_dce_plus_training --checkpoint \"/Volumes/InferKit Models/inferkit-validation/zerodce2/Epoch99.pth\""
     },
     {
       "key": "IK_PARITY_STABLE_AUDIO_LOSS",

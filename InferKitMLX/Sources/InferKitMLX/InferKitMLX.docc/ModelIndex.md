@@ -29,7 +29,7 @@ The measured parity of every row is recorded in `Docs/model-parity.md` in the re
 | HAT | ``NFKMLXHAT`` | `NFKMLXHATNet` | ``NFKMLXHATVariant`` `.base` / `.large` / `.realWorld` (`NFKMLXHATConfiguration.base` — 6 groups of 6 blocks at 180 channels — `.large` — 12 groups) | `hat-x4` · `hat-l-x4` · `real-hat-gan-x4` | ``NFKMLXModuleBackend`` |
 | NAFNet | ``NFKMLXNAFNet`` | `NFKMLXNAFNetNet` | ``NFKMLXNAFNetVariant`` `.sidd` / `.goPro` / `.reds` / `.siddWidth64` / `.goProWidth64` (`NFKMLXNAFNetConfiguration.sidd` …) | `nafnet` | ``NFKMLXModuleBackend`` |
 | Zero-DCE | ``NFKMLXZeroDCE`` | ``NFKMLXZeroDCENet`` | fixed geometry (seven 3×3 convolutions) | `zero-dce` | ``NFKMLXModuleBackend`` |
-| Zero-DCE++ | ``NFKMLXZeroDCEPlus`` | `NFKMLXZeroDCEPlusNet` | fixed geometry (seven depthwise-separable convolutions, one shared curve, scale factor 12) | `zero-dce-plus` | ``NFKMLXModuleBackend`` |
+| Zero-DCE++ | ``NFKMLXZeroDCEPlus`` | ``NFKMLXZeroDCEPlusNet`` | fixed geometry (seven depthwise-separable convolutions, one shared curve, scale factor 12) | `zero-dce-plus` | ``NFKMLXModuleBackend`` |
 | Fast style transfer | ``NFKMLXStyleTransfer`` | `NFKStyleTransferNet` | fixed geometry; one style per checkpoint | `fast-style-transfer` | ``NFKMLXModuleBackend`` |
 | AdaIN | ``NFKMLXAdaIN`` | `NFKMLXAdaINNet` | fixed geometry (VGG-19 through relu4_1 and its mirrored decoder); style image under `NFKInputControl` | `adain` | ``NFKMLXModuleBackend`` |
 | Colorizer ECCV-16 | ``NFKMLXColorizer`` | ``NFKMLXColorizerNet`` | `NFKMLXColorizerConfiguration.eccv16` | `colorizer-eccv16` | ``NFKMLXModuleBackend`` |

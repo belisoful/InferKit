@@ -970,6 +970,30 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertNoThrow(try NFKMLXRIFEv4.backend(weightsURL: tuned))
     }
 
+    // Docs/examples.md: Fine-tuning Zero-DCE++
+    func testExampleFineTuningZeroDCEPlus() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("zerodce-plus-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads the release and trains on 512-pixel photos; a randomly initialized network on
+        // 48-pixel photos stands in.
+        let pixels: [Float] = (0 ..< 48 * 48 * 3).map { index -> Float in Float(index % 61) / 255 }
+        let myPhotos = [MLXArray(pixels, [1, 48, 48, 3])]
+        let net = try NFKMLXZeroDCEPlus.network(weightsURL: nil)
+        var objective = NFKMLXZeroDCEPlusObjective()
+        objective.wellExposedLevel = 0.65
+        let history = try NFKMLXZeroDCEPlus.fineTune(net, photos: { step in myPhotos[step % myPhotos.count] },
+                                                     objective: objective, steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        let enhancer = try NFKMLXZeroDCEPlus.backend(weightsURL: tuned)
+        XCTAssertEqual(enhancer.backendIdentifier, NFKMLXZeroDCEPlus.modelName)
+    }
+
     // Docs/examples.md: Fine-tuning the colorizers
     func testExampleFineTuningTheColorizers() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

@@ -152,6 +152,20 @@ Upscaling, denoising, inpainting, stylization, low-light, colorization, face res
   and the estimator runs at a reduced resolution (`scaleFactor` 12) with the curve map lifted back by an
   align-corners bilinear upsample. Reference parity against the authors' `Zero-DCE++` on their released
   weights (curve map 0.9999999999998159, enhanced image 0.9999999999999741).
+  **Customization is zero-reference and it ships** (`NFKMLXZeroDCEPlusTraining.swift`): `fineTune` trains
+  on unlabeled photos against `NFKMLXZeroDCEPlusObjective`, Zero-DCE's four losses weighted as
+  Li-Chongyi/Zero-DCE_extension 09f202b `Zero-DCE++/lowlight_train.py` weights them (smoothness 1600 over
+  the shared three-channel curve map, spatial 1, color 5, exposure 10 toward 0.6). The script trains the
+  estimator at scale factor 1, and the release runs at 12. `NFKMLXZeroDCEPlusObjective.scaleFactor` sets
+  the training factor, and the network keeps its own for inference (`enhancedWithCurve(_:scaleFactor:)`).
+  The optimizer is torch's Adam at 1e-4 with its L2 decay 1e-4 and a clip at 0.1. Training parity on the
+  released weights at both factors (`run_reference.py zero_dce_plus_training`,
+  `testZeroDCEPlusTrainingMatchesTheReference`): the enhanced image and the curve map within 1.4e-7 of
+  float64 (reference float32 1.5e-7 and 1.6e-7); the four terms and the global gradient norm (10.32555 vs
+  float64 10.325522) within float32 rounding; every gradient within twice the reference's float32
+  distance from float64 (1.7e-7 to 9.2e-6, the reference's 2.0e-7 to 9.0e-6); the total after one step
+  0.32763225 vs float64 0.32763222. `testAFineTunedCheckpointReloadsThroughThePublicFactories` reloads the
+  result through `network(weightsURL:)` and `backend(weightsURL:)`.
 - `NFKMLXSwinIR` (`@objc`) — real transformer super-resolution: SwinIR (shallow-feature conv → residual
   Swin Transformer blocks → pixel-shuffle upsampler) in `MLXNN`, with real window attention — window
   partition/reverse, cyclic shift with the standard attention mask, and a relative-position bias table

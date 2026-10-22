@@ -44,8 +44,8 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 51 |
-| `trainable`, no recipe yet | 47 |
+| `ships` | 52 |
+| `trainable`, no recipe yet | 46 |
 | `offline` | 39 |
 | `uncertain` | 0 |
 | `untrainable` | 13 |
@@ -56,7 +56,7 @@ The 167 model entries become 151 rows because a few entries take one ruling for 
 generation pipelines share a row, the schedulers share a row, and Gemma's parameter-free adapters
 share a row.
 
-Fifty-one recipes ship and 47 models are trainable with none written. That is the size of
+Fifty-two recipes ship and 46 models are trainable with none written. That is the size of
 the work the rule creates.
 
 The largest single finding: **the detector losses are published and portable.** ultralytics ships
@@ -112,7 +112,7 @@ NU-Wave 2, Conv-TasNet, the Denoiser, FRCRN, and MossFormer2 SE ship.
 | `NFKMLXNAFNet` | trainable | full | internal | Paired-data restoration. megvii-research's training option file supplies the loss. |
 | `NFKMLXStyleTransfer` | trainable | full | internal | 1.7M parameters. The VGG-16 perceptual and Gram loss needs `NFKMLXVGG16Features`, which already ships publicly. |
 | `NFKMLXAdaIN` | trainable | full (decoder) | internal | The encoder stays frozen and the loss network is the model's own ported VGG-19 encoder. |
-| `NFKMLXZeroDCEPlus` | trainable | zero-reference | internal | The same four losses already ported. Only the shared curve and the `scaleFactor` 12 estimator differ. |
+| `NFKMLXZeroDCEPlus` | ships | zero-reference | public | `lowlight_train.py`'s four `Myloss.py` losses with smoothness at 1600 over the shared curve map, its Adam, and the clip at 0.1, at the script's scale factor 1 and the released 12, measured by `run_reference.py zero_dce_plus_training`. |
 | `NFKMLXSwinIR` | trainable / offline | full | internal | Classical and lightweight train on L1. The two real-world releases are GANs whose discriminator is not ported. |
 | `NFKMLXHAT` | trainable / offline | full | internal | `.base` and `.large` are reconstruction networks. `.realWorld` carries an adversarial recipe. |
 | `NFKMLXRealESRGAN` | offline | — | internal | The generator alone is ported. The published recipe adds a discriminator no file here holds. |

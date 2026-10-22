@@ -4716,6 +4716,23 @@ try NFKMLXWeights.save(net, to: tuned)
 let interpolator = try NFKMLXRIFEv4.backend(weightsURL: tuned)   // Objective-C: backendWithWeightsURL:…
 ```
 
+### Fine-tuning Zero-DCE++
+
+Zero-DCE++ fine-tunes on unlabeled dark photos, as Zero-DCE does, with the weights and the training scale
+factor of its own training script. The estimator trains at a factor of 1 and the backend runs the result at 12.
+Each step takes photos `[N, H, W, 3]` in [0, 1]; the reference resizes them to 512 × 512.
+
+```swift
+let net = try NFKMLXZeroDCEPlus.network(weightsURL: releasedWeights)
+var objective = NFKMLXZeroDCEPlusObjective()
+objective.wellExposedLevel = 0.65
+try NFKMLXZeroDCEPlus.fineTune(net, photos: { step in myPhotos[step % myPhotos.count] },
+                               objective: objective, steps: 400)
+
+try NFKMLXWeights.save(net, to: tuned)
+let enhancer = try NFKMLXZeroDCEPlus.backend(weightsURL: tuned)   // Objective-C: backendWithWeightsURL:…
+```
+
 ### Teaching bandwidth extension your own audio
 
 NU-Wave 2 restores the high band of a narrow-band recording. Fine-tuning it on wide-band audio of the

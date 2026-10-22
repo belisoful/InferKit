@@ -574,6 +574,8 @@ The figures have three limits:
 - ``NFKMLXZeroDCENet``
 - ``NFKMLXZeroDCEObjective``
 - ``NFKMLXZeroDCELoss``
+- ``NFKMLXZeroDCEPlusNet``
+- ``NFKMLXZeroDCEPlusObjective``
 - ``NFKMLXSegFormerNet``
 - ``NFKMLXSegFormerDropout``
 - ``NFKMLXSegFormerObjective``

@@ -190,8 +190,12 @@ public final class NFKZeroDCEPlusConv: Module {
 /// back before it is applied to the full-resolution image, so cost falls with the square of the factor
 /// while the enhancement stays full resolution.
 ///
+/// Fine-tuning works on this type directly: build one with ``NFKMLXZeroDCEPlus/network(weightsURL:scaleFactor:)``,
+/// train it with ``NFKMLXZeroDCEPlus/fineTune(_:photos:objective:optimizer:steps:clipGradientNorm:accumulationSteps:checkpoint:observer:)``,
+/// then save it for ``NFKMLXZeroDCEPlus/backend(weightsURL:)``.
+///
 /// - Since: InferKit 0.3.1
-final class NFKMLXZeroDCEPlusNet: Module {
+public final class NFKMLXZeroDCEPlusNet: Module {
     @ModuleInfo(key: "e_conv1") var conv1: NFKZeroDCEPlusConv
     @ModuleInfo(key: "e_conv2") var conv2: NFKZeroDCEPlusConv
     @ModuleInfo(key: "e_conv3") var conv3: NFKZeroDCEPlusConv
@@ -200,11 +204,11 @@ final class NFKMLXZeroDCEPlusNet: Module {
     @ModuleInfo(key: "e_conv6") var conv6: NFKZeroDCEPlusConv
     @ModuleInfo(key: "e_conv7") var conv7: NFKZeroDCEPlusConv
 
-    /// How far the curve estimator downsamples before it runs. The released weights are trained at 12.
-    let scaleFactor: Int
+    /// How far the curve estimator downsamples at inference. The released weights run at 12.
+    public let scaleFactor: Int
     private let iterations = 8
 
-    init(filters: Int = 32, scaleFactor: Int = 12) {
+    public init(filters: Int = 32, scaleFactor: Int = 12) {
         self.scaleFactor = scaleFactor
         _conv1.wrappedValue = NFKZeroDCEPlusConv(inputChannels: 3, outputChannels: filters)
         _conv2.wrappedValue = NFKZeroDCEPlusConv(inputChannels: filters, outputChannels: filters)
@@ -217,7 +221,7 @@ final class NFKMLXZeroDCEPlusNet: Module {
 
     /// The single three-channel curve map for a batch `[N, H, W, 3]`, at the estimator's own reduced
     /// resolution.
-    func curveMap(_ batch: MLXArray) -> MLXArray {
+    public func curveMap(_ batch: MLXArray) -> MLXArray {
         let x1 = relu(conv1(batch))
         let x2 = relu(conv2(x1))
         let x3 = relu(conv3(x2))
@@ -228,7 +232,7 @@ final class NFKMLXZeroDCEPlusNet: Module {
     }
 
     /// Applies the eight curve iterations with one shared map, as the reference's `enhance` does.
-    func enhance(_ batch: MLXArray, curve: MLXArray) -> MLXArray {
+    public func enhance(_ batch: MLXArray, curve: MLXArray) -> MLXArray {
         var out = batch
         for _ in 0 ..< iterations {
             out = out + curve * (out * out - out)
@@ -236,8 +240,14 @@ final class NFKMLXZeroDCEPlusNet: Module {
         return out
     }
 
-    /// Brightens a batch `[N, H, W, 3]` in `0...1`, unclipped.
-    func callAsFunction(_ batch: MLXArray) -> MLXArray {
+    /// Brightens a batch `[N, H, W, 3]` in `0...1` with the estimator at `scaleFactor`, returning the
+    /// unclipped image and the curve map at the batch's resolution, as the reference's `forward` does.
+    ///
+    /// Training reads both: the objective scores the image and smooths the map. The reference trains at
+    /// a factor of 1 and runs the released weights at 12.
+    ///
+    /// - Since: InferKit 0.4.0
+    public func enhancedWithCurve(_ batch: MLXArray, scaleFactor: Int) -> (enhanced: MLXArray, curve: MLXArray) {
         let (height, width) = (batch.shape[1], batch.shape[2])
         let reduced = scaleFactor == 1
             ? batch
@@ -247,7 +257,12 @@ final class NFKMLXZeroDCEPlusNet: Module {
             // The reference lifts the map with `nn.UpsamplingBilinear2d`, which is align-corners.
             curve = NFKMLXResample.resizeBilinearAlignCorners(curve, height: height, width: width)
         }
-        return enhance(batch, curve: curve)
+        return (enhance(batch, curve: curve), curve)
+    }
+
+    /// Brightens a batch `[N, H, W, 3]` in `0...1` at the network's own `scaleFactor`, unclipped.
+    public func callAsFunction(_ batch: MLXArray) -> MLXArray {
+        enhancedWithCurve(batch, scaleFactor: scaleFactor).enhanced
     }
 
     /// Brightens a bridged `[H, W, 3]` image in `0...1`.
@@ -310,8 +325,24 @@ public final class NFKMLXZeroDCEPlus: NSObject {
         NFKMLXModelRegistry.register(name: modelName) { weightsURL in try backend(weightsURL: weightsURL) }
     }
 
+    /// Builds the curve estimator itself, ready to fine-tune, rather than a backend wrapping it.
+    ///
+    /// A nil `weightsURL` leaves the network at its random initialization, which is training from
+    /// scratch; passing the released checkpoint fine-tunes from it. `scaleFactor` is the inference
+    /// factor the network keeps; the objective chooses the factor it trains at.
+    ///
+    /// - Since: InferKit 0.4.0
+    public static func network(weightsURL: URL?, scaleFactor: Int = 12) throws -> NFKMLXZeroDCEPlusNet {
+        let net = makeNet(scaleFactor: scaleFactor)
+        if let weightsURL {
+            try loadWeights(into: net, from: weightsURL)
+        }
+        return net
+    }
+
     /// Loads a released checkpoint. The module keys are the checkpoint's, so only the convolution
-    /// layouts move.
+    /// layouts move. A checkpoint written by fine-tuning is already in the module's layout and skips
+    /// the transpose.
     static func loadWeights(into net: NFKMLXZeroDCEPlusNet, from url: URL) throws {
         let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let mapped = checkpoint.arrays.map { key, value in
