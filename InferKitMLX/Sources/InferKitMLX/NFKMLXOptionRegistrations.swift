@@ -346,9 +346,12 @@ enum NFKMLXOptionRegistrations {
             guard let variant = whisperVariants[name] else {
                 continue
             }
-            NFKMLXModelRegistry.register(name: name, consumes: [NFKModelLoadOptionPrecision]) { weightsURL, options in
-                try NFKMLXWhisper.backend(variant: variant, weightsURL: weightsURL, tokenizer: nil, timestamps: false,
-                                          precision: options.precision ?? .checkpoint, identifier: name)
+            let release = NFKMLXCatalogAudio.whisperRelease(named: name)
+            let download = release.flatMap { URL(string: $0.url) }
+            NFKMLXModelRegistry.register(name: name, consumes: [NFKModelLoadOptionPrecision]) { location, options in
+                try NFKMLXWhisper.catalogBackend(variant: variant, location: location, weightsDownload: download,
+                                                 repository: release?.repository, precision: options.precision ?? .checkpoint,
+                                                 identifier: name)
             }
         }
     }

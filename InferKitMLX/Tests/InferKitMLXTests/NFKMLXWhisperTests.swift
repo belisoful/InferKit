@@ -233,4 +233,99 @@ final class NFKMLXWhisperTests: XCTestCase {
         XCTAssertFalse(segments.isEmpty)
         XCTAssertNotNil(timed.text, "the transcript comes back beside the spans")
     }
+
+    // MARK: Catalog builds
+
+    /// A release directory as the catalog's source lays it out: the tokenizer's vocab.json and merges.txt,
+    /// each of the timed configuration's 50 ids a letter, beside a checkpoint of a random net.
+    private func releaseDirectory(withCheckpoint: Bool) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-release-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        let letters = Array("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWX").map(String.init)
+        let vocabulary = Dictionary(uniqueKeysWithValues: letters.enumerated().map { ($1, $0) })
+        try JSONSerialization.data(withJSONObject: vocabulary).write(to: directory.appendingPathComponent("vocab.json"))
+        try "#version: 0.2\n".write(to: directory.appendingPathComponent("merges.txt"), atomically: true, encoding: .utf8)
+        if withCheckpoint {
+            let net = NFKMLXWhisper.makeNet(timedConfiguration())
+            let pytorchLayout = Dictionary(uniqueKeysWithValues: net.parameters().flattened().map { key, value -> (String, MLXArray) in
+                if value.ndim == 4 { return (key, value.transposed(0, 3, 1, 2)) }
+                if value.ndim == 3 { return (key, value.transposed(0, 2, 1)) }
+                return (key, value)
+            })
+            try save(arrays: pytorchLayout, url: directory.appendingPathComponent("model.safetensors"))
+        }
+        return directory
+    }
+
+    func testACatalogBuildDecodesTextWithTheTokenizerInItsDirectory() throws {
+        try requireMLXRuntime()
+        let backend = try NFKMLXWhisper.catalogBackend(configuration: timedConfiguration(), location: try releaseDirectory(withCheckpoint: true),
+                                                       weightsDownload: nil, precision: .checkpoint, identifier: "whisper-test")
+        XCTAssertNotNil(backend.tokenizer)
+        XCTAssertTrue(backend.emitsTimestamps, "a catalog build answers segments by default")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-catalog-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try NFKMLXWaveFile.write(samples: [Float](repeating: 0.1, count: 1600), sampleRate: 16000, to: url)
+        let audio = NFKAudioAsset(fileURL: url, durationSeconds: 0.1, sampleRate: 16000, channelCount: 1)
+
+        let timed = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: audio]))
+        let text = try XCTUnwrap(timed.text)
+        XCTAssertTrue(CharacterSet.letters.isSuperset(of: CharacterSet(charactersIn: text)),
+                      "every id decodes to its letter, never to its number: \(text)")
+        XCTAssertNotNil(timed.segments)
+        let plain = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: audio],
+                                                                       parameters: [NFKMLXGenerationParameterKey.timestamps: false]))
+        XCTAssertNil(plain.segments, "a request turns the timestamps off")
+    }
+
+    func testACatalogBuildWithoutItsCheckpointNamesWhatIsMissing() throws {
+        let directory = try releaseDirectory(withCheckpoint: false)
+        XCTAssertThrowsError(try NFKMLXWhisper.catalogBackend(configuration: timedConfiguration(), location: directory,
+                                                              weightsDownload: nil, precision: .checkpoint, identifier: "whisper-test")) { error in
+            XCTAssertTrue("\(error)".contains("no Whisper checkpoint"), "\(error)")
+        }
+        XCTAssertNotNil(NFKMLXWhisper.tokenizer(in: directory))
+        XCTAssertNil(NFKMLXWhisper.tokenizer(in: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)))
+    }
+
+    func testACatalogBuildDecodesAsLongAsTheReferenceSampleLength() {
+        for variant in [NFKMLXWhisperVariant.tiny, .largeV3] {
+            XCTAssertEqual(NFKMLXWhisper.catalogConfiguration(for: variant).maxTokens, 224, "the reference's sample_len is n_text_ctx // 2")
+        }
+    }
+
+    /// The catalog's whisper-tiny as a host builds it, from the default Hugging Face cache: the
+    /// tokenizer from openai/whisper-tiny and OpenAI's checkpoint beside it. Skips until the release is
+    /// downloaded through the catalog.
+    func testTheCatalogsWhisperTinyTranscribesSpeechToTextAndSegments() throws {
+        try requireMLXRuntime()
+        NFKMLXReferenceModels.registerAll()
+        let catalog = NFKModelCatalog()
+        XCTAssertTrue(catalog.addDescriptors(fromProviderClassName: "NFKMLXModelDescriptors"))
+        let source = try XCTUnwrap(catalog.descriptor(withIdentifier: NFKMLXWhisper.modelName)?.defaultVariant?.source)
+        guard NFKHFHub(cacheDirectoryURL: NFKHFHub.defaultCacheDirectoryURL()).downloadStatus(source: source).presence == .complete else {
+            throw XCTSkip("download the catalog's whisper-tiny into the default Hugging Face cache first")
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-speech-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let spoken = directory.appendingPathComponent("spoken.aiff")
+        let wave = directory.appendingPathComponent("spoken.wav")
+        for (tool, arguments) in [("/usr/bin/say", ["-o", spoken.path, "Hello from the model catalog. This sentence tests the transcript."]),
+                                  ("/usr/bin/afconvert", ["-f", "WAVE", "-d", "LEI16@16000", spoken.path, wave.path])] {
+            let process = try Process.run(URL(fileURLWithPath: tool), arguments: arguments)
+            process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0, tool)
+        }
+        let backend = try catalog.backend(forModelIdentifier: NFKMLXWhisper.modelName, options: nil)
+        let audio = NFKAudioAsset(fileURL: wave, durationSeconds: 0, sampleRate: 16000, channelCount: 1)
+        let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: audio]))
+        let text = try XCTUnwrap(result.text)
+        print("VALIDATION whisper-tiny catalog: \(text)")
+        XCTAssertTrue(text.lowercased().contains("hello"), "the catalog build answers text, not token ids: \(text)")
+        let segments = try XCTUnwrap(result.segments)
+        XCTAssertFalse(segments.isEmpty)
+        XCTAssertTrue(segments.allSatisfy { $0.endSeconds >= $0.startSeconds && !($0.label ?? "").isEmpty })
+    }
 }

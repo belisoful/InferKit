@@ -99,6 +99,21 @@ final class NFKMLXCatalogAudioTests: XCTestCase {
         }
     }
 
+    func testEachWhisperReleaseDownloadsItsTokenizerBesideItsCheckpoint() throws {
+        for release in NFKMLXCatalogAudio.whisperReleases {
+            let source = try XCTUnwrap(try entry(release.name).descriptor().defaultVariant?.source)
+            XCTAssertEqual(source.kind, NFKModelSourceKindHuggingFace)
+            XCTAssertEqual(source.repository, release.repository)
+            XCTAssertEqual(source.revision?.count, 40, "the tokenizer is read at a pinned commit")
+            XCTAssertEqual(source.files.map(\.path), NFKMLXWhisper.tokenizerFiles + [URL(string: release.url)!.lastPathComponent])
+            XCTAssertEqual(Set(source.files.prefix(2).map(\.role)), [NFKModelFileRoleTokenizer])
+            let checkpoint = try XCTUnwrap(source.files.last)
+            XCTAssertEqual(checkpoint.url?.absoluteString, release.url, "the weights stay OpenAI's release")
+            XCTAssertEqual(checkpoint.role, NFKModelFileRoleWeights)
+            XCTAssertTrue(checkpoint.overridesSource)
+        }
+    }
+
     func testTheDirectoryModelsRefuseANilURL() {
         NFKMLXReferenceModels.registerAll()
         for name in NFKMLXCatalogAudio.wav2Vec2Releases.map(\.name)
@@ -119,7 +134,7 @@ final class NFKMLXCatalogAudioTests: XCTestCase {
     func testTheEntriesFollowTheStaticKeySets() throws {
         for release in NFKMLXCatalogAudio.whisperReleases {
             assertPorts(try entry(release.name), inputs: [NFKInputAudio], outputs: [NFKOutputText, NFKOutputSegments],
-                        parameters: [])
+                        parameters: [NFKMLXGenerationParameterKey.timestamps])
         }
         assertPorts(try entry(NFKMLXFastSpeech2.voiceModelName), inputs: NFKMLXFastSpeech2.voiceInputKeys,
                     outputs: [NFKOutputAudio], parameters: [])

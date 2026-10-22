@@ -1452,6 +1452,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `enhancedWithCurve(_:scaleFactor:)`, and `NFKMLXZeroDCEPlus.network(weightsURL:scaleFactor:)` builds it. A
   checkpoint `NFKMLXWeights` saved reloads through `backend(weightsURL:)`.
 
+#### The catalog's Whisper models answer text and timed segments
+
+- Each catalog Whisper release downloads its tokenizer (`vocab.json` and `merges.txt`) from its Hugging Face
+  repository at a pinned commit, beside OpenAI's `.pt` checkpoint, which stays the weights. A catalog build
+  decodes the transcript to text with the reference's non-speech suppression. Before, it wrote the token
+  ids.
+- A catalog build answers `NFKOutputSegments` (`NFKAudioSegment`, each span's text as its label) by default,
+  as the reference's `transcribe` does. The request option `NFKMLXGenerationParameterKey.timestamps` turns
+  the timed decode off, and `NFKMLXWhisperBackend.emitsTimestamps` is its default.
+- A catalog build decodes up to 224 tokens per window, the reference's `sample_len`, up from 64.
+
 #### The reference arithmetic runs transformers' chunked scans
 
 - In `NFKMLXArithmeticReference`, a Mamba-2 layer's prefill (Codestral, Nemotron-H, Granite-4.0-H) takes

@@ -21,6 +21,10 @@ import MLXNN
 public final class NFKMLXGenerationParameterKey: NSObject {
     /// The most cache positions to retain, as an `NSNumber` integer. See ``NFKMLXGenerationOptions/contextWindow``.
     @objc public static let contextWindow = "NFKMLXParameterContextWindow"
+    /// Whether a speech recognizer writes its transcript's timed spans under `NFKOutputSegments`
+    /// (`NSNumber` boolean). Whisper reads it; its default is the backend's ``NFKMLXWhisperBackend/emitsTimestamps``.
+    /// Introduced in InferKit 0.4.0.
+    @objc public static let timestamps = "NFKMLXParameterTimestamps"
     /// The bit width to store the key-value cache at (`NSNumber`, 2 to 8). Setting it enables cache
     /// quantization; see ``NFKMLXGenerationOptions/cacheQuantization``.
     @objc public static let cacheQuantizationBits = "NFKMLXParameterCacheQuantizationBits"

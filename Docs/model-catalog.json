@@ -63353,6 +63353,7 @@
         "gated" : false,
         "id" : "MIT",
         "name" : "MIT License",
+        "note" : "The tokenizer files come from the release's Hugging Face repository, under the same license.",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/openai/whisper/blob/main/LICENSE"
       },
@@ -63360,6 +63361,14 @@
         "precision" : "precision"
       },
       "options" : [
+        {
+          "default" : true,
+          "help" : "Decodes the transcript with its segment times, which the reference's transcribe does by default.",
+          "key" : "NFKMLXParameterTimestamps",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Timestamps"
+        },
         {
           "choices" : [
             {
@@ -63394,14 +63403,14 @@
       ],
       "outputs" : [
         {
-          "help" : "The transcript. A backend built without the model's tokenizer, as the registry builds it, writes the token ids.",
+          "help" : "The transcript of the first 30 seconds.",
           "key" : "text",
           "required" : true,
           "title" : "Transcript",
           "valueType" : "text"
         },
         {
-          "help" : "The timed spans of the transcript, written by a backend built to emit timestamps.",
+          "help" : "The transcript's timed spans, each with its text, while timestamps are on.",
           "key" : "segments",
           "required" : false,
           "title" : "Segments",
@@ -63439,7 +63448,7 @@
       "variants" : [
         {
           "displayName" : "Whisper base",
-          "downloadBytes" : 145262807,
+          "downloadBytes" : 146592226,
           "id" : "base",
           "isDefault" : true,
           "memoryFacts" : {
@@ -63453,7 +63462,8 @@
                 "id" : "model",
                 "title" : "model"
               }
-            ]
+            ],
+            "vocabularySize" : 51865
           },
           "minimumMemoryBytes" : 341794840,
           "peakBytes" : 145262807,
@@ -63463,16 +63473,30 @@
           "source" : {
             "files" : [
               {
+                "bytes" : 835550,
+                "optional" : false,
+                "path" : "vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 493869,
+                "optional" : false,
+                "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
+              {
                 "bytes" : 145262807,
                 "optional" : false,
                 "path" : "base.pt",
-                "role" : "weights"
+                "role" : "weights",
+                "url" : "https://openaipublic.azureedge.net/main/whisper/models/ed3a0b6b1c0edf879ad9b11b1af5a0e6ab5db9205f891f668f8b0e6c6326e34e/base.pt"
               }
             ],
-            "kind" : "url",
-            "layout" : "file",
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "openai/whisper-base",
             "requiresConversion" : false,
-            "url" : "https://openaipublic.azureedge.net/main/whisper/models/ed3a0b6b1c0edf879ad9b11b1af5a0e6ab5db9205f891f668f8b0e6c6326e34e/base.pt"
+            "revision" : "e37978b90ca9030d5170a5c07aadb050351a65bb"
           }
         }
       ]
@@ -63499,6 +63523,7 @@
         "gated" : false,
         "id" : "MIT",
         "name" : "MIT License",
+        "note" : "The tokenizer files come from the release's Hugging Face repository, under the same license.",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/openai/whisper/blob/main/LICENSE"
       },
@@ -63506,6 +63531,14 @@
         "precision" : "precision"
       },
       "options" : [
+        {
+          "default" : true,
+          "help" : "Decodes the transcript with its segment times, which the reference's transcribe does by default.",
+          "key" : "NFKMLXParameterTimestamps",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Timestamps"
+        },
         {
           "choices" : [
             {
@@ -63540,14 +63573,14 @@
       ],
       "outputs" : [
         {
-          "help" : "The transcript. A backend built without the model's tokenizer, as the registry builds it, writes the token ids.",
+          "help" : "The transcript of the first 30 seconds.",
           "key" : "text",
           "required" : true,
           "title" : "Transcript",
           "valueType" : "text"
         },
         {
-          "help" : "The timed spans of the transcript, written by a backend built to emit timestamps.",
+          "help" : "The transcript's timed spans, each with its text, while timestamps are on.",
           "key" : "segments",
           "required" : false,
           "title" : "Segments",
@@ -63585,7 +63618,7 @@
       "variants" : [
         {
           "displayName" : "Whisper large-v1",
-          "downloadBytes" : 3086999982,
+          "downloadBytes" : 3088329401,
           "id" : "large-v1",
           "isDefault" : true,
           "memoryFacts" : {
@@ -63599,7 +63632,8 @@
                 "id" : "model",
                 "title" : "model"
               }
-            ]
+            ],
+            "vocabularySize" : 51865
           },
           "minimumMemoryBytes" : 7263529370,
           "peakBytes" : 3086999982,
@@ -63609,16 +63643,30 @@
           "source" : {
             "files" : [
               {
+                "bytes" : 835550,
+                "optional" : false,
+                "path" : "vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 493869,
+                "optional" : false,
+                "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
+              {
                 "bytes" : 3086999982,
                 "optional" : false,
                 "path" : "large-v1.pt",
-                "role" : "weights"
+                "role" : "weights",
+                "url" : "https://openaipublic.azureedge.net/main/whisper/models/e4b87e7e0bf463eb8e6956e646f1e277e901512310def2c24bf0e11bd3c28e9a/large-v1.pt"
               }
             ],
-            "kind" : "url",
-            "layout" : "file",
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "openai/whisper-large",
             "requiresConversion" : false,
-            "url" : "https://openaipublic.azureedge.net/main/whisper/models/e4b87e7e0bf463eb8e6956e646f1e277e901512310def2c24bf0e11bd3c28e9a/large-v1.pt"
+            "revision" : "4ef9b41f0d4fe232daafdb5f76bb1dd8b23e01d7"
           }
         }
       ]
@@ -63645,6 +63693,7 @@
         "gated" : false,
         "id" : "MIT",
         "name" : "MIT License",
+        "note" : "The tokenizer files come from the release's Hugging Face repository, under the same license.",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/openai/whisper/blob/main/LICENSE"
       },
@@ -63652,6 +63701,14 @@
         "precision" : "precision"
       },
       "options" : [
+        {
+          "default" : true,
+          "help" : "Decodes the transcript with its segment times, which the reference's transcribe does by default.",
+          "key" : "NFKMLXParameterTimestamps",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Timestamps"
+        },
         {
           "choices" : [
             {
@@ -63686,14 +63743,14 @@
       ],
       "outputs" : [
         {
-          "help" : "The transcript. A backend built without the model's tokenizer, as the registry builds it, writes the token ids.",
+          "help" : "The transcript of the first 30 seconds.",
           "key" : "text",
           "required" : true,
           "title" : "Transcript",
           "valueType" : "text"
         },
         {
-          "help" : "The timed spans of the transcript, written by a backend built to emit timestamps.",
+          "help" : "The transcript's timed spans, each with its text, while timestamps are on.",
           "key" : "segments",
           "required" : false,
           "title" : "Segments",
@@ -63731,7 +63788,7 @@
       "variants" : [
         {
           "displayName" : "Whisper large-v2",
-          "downloadBytes" : 3086999982,
+          "downloadBytes" : 3088329401,
           "id" : "large-v2",
           "isDefault" : true,
           "memoryFacts" : {
@@ -63745,7 +63802,8 @@
                 "id" : "model",
                 "title" : "model"
               }
-            ]
+            ],
+            "vocabularySize" : 51865
           },
           "minimumMemoryBytes" : 7263529370,
           "peakBytes" : 3086999982,
@@ -63755,16 +63813,30 @@
           "source" : {
             "files" : [
               {
+                "bytes" : 835550,
+                "optional" : false,
+                "path" : "vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 493869,
+                "optional" : false,
+                "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
+              {
                 "bytes" : 3086999982,
                 "optional" : false,
                 "path" : "large-v2.pt",
-                "role" : "weights"
+                "role" : "weights",
+                "url" : "https://openaipublic.azureedge.net/main/whisper/models/81f7c96c852ee8fc832187b0132e569d6c3065a3252ed18e56effd0b6a73e524/large-v2.pt"
               }
             ],
-            "kind" : "url",
-            "layout" : "file",
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "openai/whisper-large-v2",
             "requiresConversion" : false,
-            "url" : "https://openaipublic.azureedge.net/main/whisper/models/81f7c96c852ee8fc832187b0132e569d6c3065a3252ed18e56effd0b6a73e524/large-v2.pt"
+            "revision" : "ae4642769ce2ad8fc292556ccea8e901f1530655"
           }
         }
       ]
@@ -63791,6 +63863,7 @@
         "gated" : false,
         "id" : "MIT",
         "name" : "MIT License",
+        "note" : "The tokenizer files come from the release's Hugging Face repository, under the same license.",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/openai/whisper/blob/main/LICENSE"
       },
@@ -63798,6 +63871,14 @@
         "precision" : "precision"
       },
       "options" : [
+        {
+          "default" : true,
+          "help" : "Decodes the transcript with its segment times, which the reference's transcribe does by default.",
+          "key" : "NFKMLXParameterTimestamps",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Timestamps"
+        },
         {
           "choices" : [
             {
@@ -63832,14 +63913,14 @@
       ],
       "outputs" : [
         {
-          "help" : "The transcript. A backend built without the model's tokenizer, as the registry builds it, writes the token ids.",
+          "help" : "The transcript of the first 30 seconds.",
           "key" : "text",
           "required" : true,
           "title" : "Transcript",
           "valueType" : "text"
         },
         {
-          "help" : "The timed spans of the transcript, written by a backend built to emit timestamps.",
+          "help" : "The transcript's timed spans, each with its text, while timestamps are on.",
           "key" : "segments",
           "required" : false,
           "title" : "Segments",
@@ -63877,7 +63958,7 @@
       "variants" : [
         {
           "displayName" : "Whisper large-v3",
-          "downloadBytes" : 3087371615,
+          "downloadBytes" : 3088902042,
           "id" : "large-v3",
           "isDefault" : true,
           "memoryFacts" : {
@@ -63891,7 +63972,8 @@
                 "id" : "model",
                 "title" : "model"
               }
-            ]
+            ],
+            "vocabularySize" : 51866
           },
           "minimumMemoryBytes" : 7264403800,
           "peakBytes" : 3087371615,
@@ -63901,16 +63983,30 @@
           "source" : {
             "files" : [
               {
+                "bytes" : 1036558,
+                "optional" : false,
+                "path" : "vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 493869,
+                "optional" : false,
+                "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
+              {
                 "bytes" : 3087371615,
                 "optional" : false,
                 "path" : "large-v3.pt",
-                "role" : "weights"
+                "role" : "weights",
+                "url" : "https://openaipublic.azureedge.net/main/whisper/models/e5b1a55b89c1367dacf97e3e19bfd829a01529dbfdeefa8caeb59b3f1b81dadb/large-v3.pt"
               }
             ],
-            "kind" : "url",
-            "layout" : "file",
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "openai/whisper-large-v3",
             "requiresConversion" : false,
-            "url" : "https://openaipublic.azureedge.net/main/whisper/models/e5b1a55b89c1367dacf97e3e19bfd829a01529dbfdeefa8caeb59b3f1b81dadb/large-v3.pt"
+            "revision" : "06f233fe06e710322aca913c1bc4249a0d71fce1"
           }
         }
       ]
@@ -63937,6 +64033,7 @@
         "gated" : false,
         "id" : "MIT",
         "name" : "MIT License",
+        "note" : "The tokenizer files come from the release's Hugging Face repository, under the same license.",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/openai/whisper/blob/main/LICENSE"
       },
@@ -63944,6 +64041,14 @@
         "precision" : "precision"
       },
       "options" : [
+        {
+          "default" : true,
+          "help" : "Decodes the transcript with its segment times, which the reference's transcribe does by default.",
+          "key" : "NFKMLXParameterTimestamps",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Timestamps"
+        },
         {
           "choices" : [
             {
@@ -63978,14 +64083,14 @@
       ],
       "outputs" : [
         {
-          "help" : "The transcript. A backend built without the model's tokenizer, as the registry builds it, writes the token ids.",
+          "help" : "The transcript of the first 30 seconds.",
           "key" : "text",
           "required" : true,
           "title" : "Transcript",
           "valueType" : "text"
         },
         {
-          "help" : "The timed spans of the transcript, written by a backend built to emit timestamps.",
+          "help" : "The transcript's timed spans, each with its text, while timestamps are on.",
           "key" : "segments",
           "required" : false,
           "title" : "Segments",
@@ -64023,7 +64128,7 @@
       "variants" : [
         {
           "displayName" : "Whisper large-v3-turbo",
-          "downloadBytes" : 1617941637,
+          "downloadBytes" : 1619472064,
           "id" : "large-v3-turbo",
           "isDefault" : true,
           "memoryFacts" : {
@@ -64037,7 +64142,8 @@
                 "id" : "model",
                 "title" : "model"
               }
-            ]
+            ],
+            "vocabularySize" : 51866
           },
           "minimumMemoryBytes" : 3806921499,
           "peakBytes" : 1617941637,
@@ -64047,16 +64153,30 @@
           "source" : {
             "files" : [
               {
+                "bytes" : 1036558,
+                "optional" : false,
+                "path" : "vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 493869,
+                "optional" : false,
+                "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
+              {
                 "bytes" : 1617941637,
                 "optional" : false,
                 "path" : "large-v3-turbo.pt",
-                "role" : "weights"
+                "role" : "weights",
+                "url" : "https://openaipublic.azureedge.net/main/whisper/models/aff26ae408abcba5fbf8813c21e62b0941638c5f6eebfb145be0c9839262a19a/large-v3-turbo.pt"
               }
             ],
-            "kind" : "url",
-            "layout" : "file",
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "openai/whisper-large-v3-turbo",
             "requiresConversion" : false,
-            "url" : "https://openaipublic.azureedge.net/main/whisper/models/aff26ae408abcba5fbf8813c21e62b0941638c5f6eebfb145be0c9839262a19a/large-v3-turbo.pt"
+            "revision" : "41f01f3fe87f28c78e2fbf8b568835947dd65ed9"
           }
         }
       ]
@@ -64083,6 +64203,7 @@
         "gated" : false,
         "id" : "MIT",
         "name" : "MIT License",
+        "note" : "The tokenizer files come from the release's Hugging Face repository, under the same license.",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/openai/whisper/blob/main/LICENSE"
       },
@@ -64090,6 +64211,14 @@
         "precision" : "precision"
       },
       "options" : [
+        {
+          "default" : true,
+          "help" : "Decodes the transcript with its segment times, which the reference's transcribe does by default.",
+          "key" : "NFKMLXParameterTimestamps",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Timestamps"
+        },
         {
           "choices" : [
             {
@@ -64124,14 +64253,14 @@
       ],
       "outputs" : [
         {
-          "help" : "The transcript. A backend built without the model's tokenizer, as the registry builds it, writes the token ids.",
+          "help" : "The transcript of the first 30 seconds.",
           "key" : "text",
           "required" : true,
           "title" : "Transcript",
           "valueType" : "text"
         },
         {
-          "help" : "The timed spans of the transcript, written by a backend built to emit timestamps.",
+          "help" : "The transcript's timed spans, each with its text, while timestamps are on.",
           "key" : "segments",
           "required" : false,
           "title" : "Segments",
@@ -64169,7 +64298,7 @@
       "variants" : [
         {
           "displayName" : "Whisper medium",
-          "downloadBytes" : 1528008539,
+          "downloadBytes" : 1529337958,
           "id" : "medium",
           "isDefault" : true,
           "memoryFacts" : {
@@ -64183,7 +64312,8 @@
                 "id" : "model",
                 "title" : "model"
               }
-            ]
+            ],
+            "vocabularySize" : 51865
           },
           "minimumMemoryBytes" : 3595314210,
           "peakBytes" : 1528008539,
@@ -64193,16 +64323,30 @@
           "source" : {
             "files" : [
               {
+                "bytes" : 835550,
+                "optional" : false,
+                "path" : "vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 493869,
+                "optional" : false,
+                "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
+              {
                 "bytes" : 1528008539,
                 "optional" : false,
                 "path" : "medium.pt",
-                "role" : "weights"
+                "role" : "weights",
+                "url" : "https://openaipublic.azureedge.net/main/whisper/models/345ae4da62f9b3d59415adc60127b97c714f32e89e936602e85993674d08dcb1/medium.pt"
               }
             ],
-            "kind" : "url",
-            "layout" : "file",
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "openai/whisper-medium",
             "requiresConversion" : false,
-            "url" : "https://openaipublic.azureedge.net/main/whisper/models/345ae4da62f9b3d59415adc60127b97c714f32e89e936602e85993674d08dcb1/medium.pt"
+            "revision" : "abdf7c39ab9d0397620ccaea8974cc764cd0953e"
           }
         }
       ]
@@ -64229,6 +64373,7 @@
         "gated" : false,
         "id" : "MIT",
         "name" : "MIT License",
+        "note" : "The tokenizer files come from the release's Hugging Face repository, under the same license.",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/openai/whisper/blob/main/LICENSE"
       },
@@ -64236,6 +64381,14 @@
         "precision" : "precision"
       },
       "options" : [
+        {
+          "default" : true,
+          "help" : "Decodes the transcript with its segment times, which the reference's transcribe does by default.",
+          "key" : "NFKMLXParameterTimestamps",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Timestamps"
+        },
         {
           "choices" : [
             {
@@ -64270,14 +64423,14 @@
       ],
       "outputs" : [
         {
-          "help" : "The transcript. A backend built without the model's tokenizer, as the registry builds it, writes the token ids.",
+          "help" : "The transcript of the first 30 seconds.",
           "key" : "text",
           "required" : true,
           "title" : "Transcript",
           "valueType" : "text"
         },
         {
-          "help" : "The timed spans of the transcript, written by a backend built to emit timestamps.",
+          "help" : "The transcript's timed spans, each with its text, while timestamps are on.",
           "key" : "segments",
           "required" : false,
           "title" : "Segments",
@@ -64315,7 +64468,7 @@
       "variants" : [
         {
           "displayName" : "Whisper small",
-          "downloadBytes" : 483617219,
+          "downloadBytes" : 484946638,
           "id" : "small",
           "isDefault" : true,
           "memoryFacts" : {
@@ -64329,7 +64482,8 @@
                 "id" : "model",
                 "title" : "model"
               }
-            ]
+            ],
+            "vocabularySize" : 51865
           },
           "minimumMemoryBytes" : 1137922869,
           "peakBytes" : 483617219,
@@ -64339,16 +64493,30 @@
           "source" : {
             "files" : [
               {
+                "bytes" : 835550,
+                "optional" : false,
+                "path" : "vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 493869,
+                "optional" : false,
+                "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
+              {
                 "bytes" : 483617219,
                 "optional" : false,
                 "path" : "small.pt",
-                "role" : "weights"
+                "role" : "weights",
+                "url" : "https://openaipublic.azureedge.net/main/whisper/models/9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794/small.pt"
               }
             ],
-            "kind" : "url",
-            "layout" : "file",
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "openai/whisper-small",
             "requiresConversion" : false,
-            "url" : "https://openaipublic.azureedge.net/main/whisper/models/9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794/small.pt"
+            "revision" : "973afd24965f72e36ca33b3055d56a652f456b4d"
           }
         }
       ]
@@ -64375,6 +64543,7 @@
         "gated" : false,
         "id" : "MIT",
         "name" : "MIT License",
+        "note" : "The tokenizer files come from the release's Hugging Face repository, under the same license.",
         "restrictsCommercialUse" : false,
         "url" : "https://github.com/openai/whisper/blob/main/LICENSE"
       },
@@ -64382,6 +64551,14 @@
         "precision" : "precision"
       },
       "options" : [
+        {
+          "default" : true,
+          "help" : "Decodes the transcript with its segment times, which the reference's transcribe does by default.",
+          "key" : "NFKMLXParameterTimestamps",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Timestamps"
+        },
         {
           "choices" : [
             {
@@ -64416,14 +64593,14 @@
       ],
       "outputs" : [
         {
-          "help" : "The transcript. A backend built without the model's tokenizer, as the registry builds it, writes the token ids.",
+          "help" : "The transcript of the first 30 seconds.",
           "key" : "text",
           "required" : true,
           "title" : "Transcript",
           "valueType" : "text"
         },
         {
-          "help" : "The timed spans of the transcript, written by a backend built to emit timestamps.",
+          "help" : "The transcript's timed spans, each with its text, while timestamps are on.",
           "key" : "segments",
           "required" : false,
           "title" : "Segments",
@@ -64461,7 +64638,7 @@
       "variants" : [
         {
           "displayName" : "Whisper tiny",
-          "downloadBytes" : 75572083,
+          "downloadBytes" : 76901502,
           "id" : "tiny",
           "isDefault" : true,
           "memoryFacts" : {
@@ -64475,7 +64652,8 @@
                 "id" : "model",
                 "title" : "model"
               }
-            ]
+            ],
+            "vocabularySize" : 51865
           },
           "minimumMemoryBytes" : 177816666,
           "peakBytes" : 75572083,
@@ -64485,16 +64663,30 @@
           "source" : {
             "files" : [
               {
+                "bytes" : 835550,
+                "optional" : false,
+                "path" : "vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 493869,
+                "optional" : false,
+                "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
+              {
                 "bytes" : 75572083,
                 "optional" : false,
                 "path" : "tiny.pt",
-                "role" : "weights"
+                "role" : "weights",
+                "url" : "https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt"
               }
             ],
-            "kind" : "url",
-            "layout" : "file",
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "openai/whisper-tiny",
             "requiresConversion" : false,
-            "url" : "https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt"
+            "revision" : "169d4a4341b33bc18d8881c4b69c2e104e1cc0af"
           }
         }
       ]

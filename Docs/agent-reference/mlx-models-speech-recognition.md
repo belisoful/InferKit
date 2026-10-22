@@ -54,6 +54,19 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   128-mel encoder over a four-layer decoder) complete the released sizes, each at an exact greedy token
   match; `NFKMLXWhisperVariant` carries all of them. The `.en` releases share the multilingual geometry
   and differ only in their tokenizer files.
+  **Catalog builds** (`NFKMLXWhisper.catalogBackend`): a catalog release's source is its Hugging Face
+  repository (`openai/whisper-<release>`, large-v1 as `openai/whisper-large`) at a pinned commit, listing
+  `vocab.json` and `merges.txt`, with OpenAI's `.pt` as a URL file (`NFKModelFile.url`), so the measured
+  weights are unchanged and the tokenizer downloads with them. The hub locator answers the repository's
+  snapshot directory (the first required file that is not a URL file decides it). The build reads the
+  tokenizer there (`bpe-bytelevel` over the two files, the recipe the parity tests use) and finds the
+  `.pt` through `downloadStatus(source:)` of a one-file URL source, first in the cache that holds the
+  snapshot (the core keeps it at `<cache>/<org>/<name>/<revision>`, so the root is the directory less the
+  repository's components and the revision), then in the default cache; a `.pt` or `model.safetensors`
+  inside the directory is read first, for a release laid out by hand. All three registrations (`register()`,
+  `registerAdditionalModels`, `registerWhisper` with its precision option, which `registerAll` runs last)
+  build through it. It turns `emitsTimestamps` on and sets `maxTokens` to `nTextCtx / 2` (224), the
+  reference's `sample_len`; the configurations keep their 64, which the parity tests build with. A request's `NFKMLXGenerationParameterKey.timestamps` overrides `emitsTimestamps`.
   **Customization is LoRA and it ships** (`NFKMLXWhisperTraining.swift`): `NFKMLXWhisper.network(weightsURL:configuration:)`
   builds the net, `spectrogram(for:sampleRate:configuration:)` pads a clip to the 30-second window, and
   `fineTune(_:examples:rank:alpha:…)` adapts the decoder's query and value projections with the encoder

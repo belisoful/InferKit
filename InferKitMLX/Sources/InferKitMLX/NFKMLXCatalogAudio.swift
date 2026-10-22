@@ -28,10 +28,10 @@ enum NFKMLXCatalogAudio {
     /// give. ``NFKMLXReferenceModels/registerAll()`` calls it.
     static func registerAdditionalModels() {
         for release in whisperReleases where release.name != NFKMLXWhisper.modelName {
-            let (variant, name) = (release.variant, release.name)
-            NFKMLXModelRegistry.register(name: name) { weightsURL in
-                try NFKMLXWhisper.backend(variant: variant, weightsURL: weightsURL, tokenizer: nil, timestamps: false,
-                                          precision: .checkpoint, identifier: name)
+            let (variant, name, download, repository) = (release.variant, release.name, URL(string: release.url), release.repository)
+            NFKMLXModelRegistry.register(name: name) { location in
+                try NFKMLXWhisper.catalogBackend(variant: variant, location: location, weightsDownload: download,
+                                                 repository: repository, precision: .checkpoint, identifier: name)
             }
         }
         for release in wav2Vec2Releases {
@@ -60,25 +60,41 @@ enum NFKMLXCatalogAudio {
 
     // MARK: - Release tables
 
-    /// A released Whisper checkpoint: its name in OpenAI's release, the size it builds as, and the URL
-    /// OpenAI's `whisper` package downloads it from.
+    /// A released Whisper checkpoint: its name in OpenAI's release, the size it builds as, the URL OpenAI's
+    /// `whisper` package downloads it from, and the Hugging Face repository and commit whose tokenizer
+    /// files decode it.
     struct WhisperRelease {
         let release: String
         let variant: NFKMLXWhisperVariant
         let url: String
+        let repository: String
+        let revision: String
         var name: String { "whisper-\(release)" }
+    }
+
+    /// The release a Whisper registry name builds, or nil.
+    static func whisperRelease(named name: String) -> WhisperRelease? {
+        whisperReleases.first { $0.name == name }
     }
 
     /// Every multilingual Whisper release. large-v1 and large-v2 share the `large` geometry.
     static let whisperReleases = [
-        WhisperRelease(release: "tiny", variant: .tiny, url: "https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt"),
-        WhisperRelease(release: "base", variant: .base, url: "https://openaipublic.azureedge.net/main/whisper/models/ed3a0b6b1c0edf879ad9b11b1af5a0e6ab5db9205f891f668f8b0e6c6326e34e/base.pt"),
-        WhisperRelease(release: "small", variant: .small, url: "https://openaipublic.azureedge.net/main/whisper/models/9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794/small.pt"),
-        WhisperRelease(release: "medium", variant: .medium, url: "https://openaipublic.azureedge.net/main/whisper/models/345ae4da62f9b3d59415adc60127b97c714f32e89e936602e85993674d08dcb1/medium.pt"),
-        WhisperRelease(release: "large-v1", variant: .large, url: "https://openaipublic.azureedge.net/main/whisper/models/e4b87e7e0bf463eb8e6956e646f1e277e901512310def2c24bf0e11bd3c28e9a/large-v1.pt"),
-        WhisperRelease(release: "large-v2", variant: .large, url: "https://openaipublic.azureedge.net/main/whisper/models/81f7c96c852ee8fc832187b0132e569d6c3065a3252ed18e56effd0b6a73e524/large-v2.pt"),
-        WhisperRelease(release: "large-v3", variant: .largeV3, url: "https://openaipublic.azureedge.net/main/whisper/models/e5b1a55b89c1367dacf97e3e19bfd829a01529dbfdeefa8caeb59b3f1b81dadb/large-v3.pt"),
-        WhisperRelease(release: "large-v3-turbo", variant: .largeV3Turbo, url: "https://openaipublic.azureedge.net/main/whisper/models/aff26ae408abcba5fbf8813c21e62b0941638c5f6eebfb145be0c9839262a19a/large-v3-turbo.pt"),
+        WhisperRelease(release: "tiny", variant: .tiny, url: "https://openaipublic.azureedge.net/main/whisper/models/65147644a518d12f04e32d6f3b26facc3f8dd46e5390956a9424a650c0ce22b9/tiny.pt",
+                       repository: "openai/whisper-tiny", revision: "169d4a4341b33bc18d8881c4b69c2e104e1cc0af"),
+        WhisperRelease(release: "base", variant: .base, url: "https://openaipublic.azureedge.net/main/whisper/models/ed3a0b6b1c0edf879ad9b11b1af5a0e6ab5db9205f891f668f8b0e6c6326e34e/base.pt",
+                       repository: "openai/whisper-base", revision: "e37978b90ca9030d5170a5c07aadb050351a65bb"),
+        WhisperRelease(release: "small", variant: .small, url: "https://openaipublic.azureedge.net/main/whisper/models/9ecf779972d90ba49c06d968637d720dd632c55bbf19d441fb42bf17a411e794/small.pt",
+                       repository: "openai/whisper-small", revision: "973afd24965f72e36ca33b3055d56a652f456b4d"),
+        WhisperRelease(release: "medium", variant: .medium, url: "https://openaipublic.azureedge.net/main/whisper/models/345ae4da62f9b3d59415adc60127b97c714f32e89e936602e85993674d08dcb1/medium.pt",
+                       repository: "openai/whisper-medium", revision: "abdf7c39ab9d0397620ccaea8974cc764cd0953e"),
+        WhisperRelease(release: "large-v1", variant: .large, url: "https://openaipublic.azureedge.net/main/whisper/models/e4b87e7e0bf463eb8e6956e646f1e277e901512310def2c24bf0e11bd3c28e9a/large-v1.pt",
+                       repository: "openai/whisper-large", revision: "4ef9b41f0d4fe232daafdb5f76bb1dd8b23e01d7"),
+        WhisperRelease(release: "large-v2", variant: .large, url: "https://openaipublic.azureedge.net/main/whisper/models/81f7c96c852ee8fc832187b0132e569d6c3065a3252ed18e56effd0b6a73e524/large-v2.pt",
+                       repository: "openai/whisper-large-v2", revision: "ae4642769ce2ad8fc292556ccea8e901f1530655"),
+        WhisperRelease(release: "large-v3", variant: .largeV3, url: "https://openaipublic.azureedge.net/main/whisper/models/e5b1a55b89c1367dacf97e3e19bfd829a01529dbfdeefa8caeb59b3f1b81dadb/large-v3.pt",
+                       repository: "openai/whisper-large-v3", revision: "06f233fe06e710322aca913c1bc4249a0d71fce1"),
+        WhisperRelease(release: "large-v3-turbo", variant: .largeV3Turbo, url: "https://openaipublic.azureedge.net/main/whisper/models/aff26ae408abcba5fbf8813c21e62b0941638c5f6eebfb145be0c9839262a19a/large-v3-turbo.pt",
+                       repository: "openai/whisper-large-v3-turbo", revision: "41f01f3fe87f28c78e2fbf8b568835947dd65ed9"),
     ]
 
     /// A Wav2Vec2 or HuBERT release `NFKMLXWav2Vec2` reads from its directory. `weights` is the entry of
@@ -173,12 +189,20 @@ extension NFKMLXCatalogAudio {
                   tasks: [NFKModelTaskTranscription],
                   inputs: [audioInput("A WAV recording of speech.")],
                   outputs: [.output(NFKOutputText, required: true, title: "Transcript",
-                                    help: "The transcript. A backend built without the model's tokenizer, as the registry builds it, writes the token ids."),
+                                    help: "The transcript of the first 30 seconds."),
                             .output(NFKOutputSegments, title: "Segments",
-                                    help: "The timed spans of the transcript, written by a backend built to emit timestamps.")],
-                  license: .mit(url: "https://github.com/openai/whisper/blob/main/LICENSE"),
+                                    help: "The transcript's timed spans, each with its text, while timestamps are on.")],
+                  parameters: [.option(NFKMLXGenerationParameterKey.timestamps, kind: NFKModelOptionKindBoolean, title: "Timestamps",
+                                       help: "Decodes the transcript with its segment times, which the reference's transcribe does by default.",
+                                       defaultValue: true)],
+                  license: .mit(url: "https://github.com/openai/whisper/blob/main/LICENSE",
+                                note: "The tokenizer files come from the release's Hugging Face repository, under the same license."),
                   release: release.release,
-                  source: urlSource(release.url, requiresConversion: false),
+                  source: .hub(release.repository, revision: release.revision,
+                               files: NFKMLXWhisper.tokenizerFiles.map { NFKModelFile(path: $0, role: NFKModelFileRoleTokenizer) }
+                                   + [NFKModelFile(path: URL(string: release.url)?.lastPathComponent ?? release.release, byteCount: nil,
+                                                   sha256: nil, role: NFKModelFileRoleWeights, optional: false, repository: nil,
+                                                   revision: nil, url: URL(string: release.url), extensions: nil)]),
                   precision: "float16")
         }
     }

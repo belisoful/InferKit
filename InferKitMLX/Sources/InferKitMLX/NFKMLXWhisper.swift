@@ -644,8 +644,8 @@ public final class NFKMLXWhisperNet: Module {
 @objc(NFKMLXWhisperBackend)
 public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
 
-    private let net: NFKMLXWhisperNet
-    private let tokenizer: NFKTokenizer?
+    let net: NFKMLXWhisperNet
+    let tokenizer: NFKTokenizer?
     private let identifier: String
 
     init(net: NFKMLXWhisperNet, tokenizer: NFKTokenizer?, identifier: String = "whisper") {
@@ -655,10 +655,11 @@ public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
         super.init()
     }
 
-    /// Whether a result carries the transcript's segment times beside its text.
+    /// Whether a result carries the transcript's segment times beside its text, for a request that does
+    /// not set ``NFKMLXGenerationParameterKey/timestamps``.
     ///
     /// @discussion Off by default, which is the decode every other size and every earlier release of
-    /// this backend performs. Turning it on changes the decode rather than the reading of one: the
+    /// this backend performs. A catalog build turns it on. Turning it on changes the decode rather than the reading of one: the
     /// prompt drops `<|notimestamps|>` and the timestamp range stays unmasked, so the model is asked a
     /// different question and may answer it with different words.
     ///
@@ -672,7 +673,7 @@ public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
     @objc public var backendIdentifier: String { identifier }
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
-    @objc public var supportedParameterKeys: Set<String> { [] }
+    @objc public var supportedParameterKeys: Set<String> { [NFKMLXGenerationParameterKey.timestamps] }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputAudio] }
@@ -696,7 +697,8 @@ public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
             prepared = Array(prepared.prefix(targetSamples))
         }
         let mel = NFKMLXMel.logMel(prepared, sampleRate: sampleRate, nMels: net.configuration.nMels)
-        guard emitsTimestamps else {
+        let timestamps = (request.parameter(forKey: NFKMLXGenerationParameterKey.timestamps) as? NSNumber)?.boolValue ?? emitsTimestamps
+        guard timestamps else {
             return NFKInferenceResult(outputs: [NFKOutputText: transcript(net.transcribe(mel))])
         }
         let (spans, tokens) = net.transcribeWithTimestamps(mel)
@@ -842,6 +844,99 @@ public final class NFKMLXWhisper: NSObject {
         return backend
     }
 
+    /// The tokens a catalog build decodes at most: the reference's `sample_len`, half the text context.
+    static func catalogConfiguration(for variant: NFKMLXWhisperVariant) -> NFKMLXWhisperConfiguration {
+        var configuration = self.configuration(for: variant)
+        configuration.maxTokens = configuration.nTextCtx / 2
+        return configuration
+    }
+
+    /// Builds a size as the catalog does, from what its location holds, with timestamps on by default and
+    /// the reference's decode length.
+    ///
+    /// - A directory reads the tokenizer (`vocab.json` and `merges.txt`) and the weights inside it: a
+    ///   `.pt` or `model.safetensors`, else `weightsDownload`, the release's checkpoint URL, where the
+    ///   model cache that holds the directory keeps it (the cache `repository`'s snapshot lives in), else
+    ///   the default cache. The catalog's source is the release's repository with the checkpoint as a URL
+    ///   file, so the build finds both.
+    /// - A file is the weights, with the tokenizer read beside it when both files are there.
+    /// - nil builds random weights without a tokenizer.
+    static func catalogBackend(variant: NFKMLXWhisperVariant, location: URL?, weightsDownload: URL?, repository: String? = nil,
+                               precision: NFKMLXWeightPrecision, identifier: String) throws -> any NFKInferenceBackend {
+        try catalogBackend(configuration: catalogConfiguration(for: variant), location: location,
+                           weightsDownload: weightsDownload, repository: repository, precision: precision, identifier: identifier)
+    }
+
+    /// Builds a catalog backend of `configuration`, as ``catalogBackend(variant:location:weightsDownload:precision:identifier:)``
+    /// builds a released size.
+    static func catalogBackend(configuration base: NFKMLXWhisperConfiguration, location: URL?, weightsDownload: URL?,
+                               repository: String? = nil, precision: NFKMLXWeightPrecision,
+                               identifier: String) throws -> NFKMLXWhisperBackend {
+        var directory: URL?
+        var weights: URL?
+        if let location {
+            var isDirectory: ObjCBool = false
+            FileManager.default.fileExists(atPath: location.path, isDirectory: &isDirectory)
+            directory = isDirectory.boolValue ? location : location.deletingLastPathComponent()
+            weights = isDirectory.boolValue ? try catalogWeights(in: location, download: weightsDownload, repository: repository) : location
+        }
+        let tokenizer = directory.flatMap(tokenizer(in:))
+        var configuration = base
+        if let tokenizer {
+            configuration.suppressTokens = NFKMLXWhisperSuppression.nonSpeechTokens(using: tokenizer)
+        }
+        let net = NFKMLXWhisperNet(configuration)
+        if let weights {
+            try loadWeights(into: net, from: weights, precision: precision)
+        }
+        let holder = NFKMLXWhisperHolder(net)
+        let backend = NFKMLXWhisperBackend(net: holder.net, tokenizer: tokenizer, identifier: identifier)
+        backend.emitsTimestamps = true
+        return backend
+    }
+
+    /// The tokenizer files a release directory holds beside its weights.
+    static let tokenizerFiles = ["vocab.json", "merges.txt"]
+
+    /// The byte-level BPE tokenizer a release's `vocab.json` and `merges.txt` in directory spell, or nil when
+    /// either is absent.
+    static func tokenizer(in directory: URL) -> NFKTokenizer? {
+        let files = tokenizerFiles.map { directory.appendingPathComponent($0) }
+        guard files.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) else { return nil }
+        return try? NFKTokenizer(forManifest: ["tokenizer": ["type": "bpe-bytelevel"]], directory: directory)
+    }
+
+    /// The checkpoint a release directory holds, else the URL download the cache holding the directory
+    /// keeps, else the one the default cache keeps.
+    private static func catalogWeights(in directory: URL, download: URL?, repository: String?) throws -> URL {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        if let name = names.sorted().first(where: { $0.hasSuffix(".pt") || $0 == "model.safetensors" }) {
+            return directory.appendingPathComponent(name)
+        }
+        guard let download else {
+            throw NFKMLXError.weightsMismatch("no Whisper checkpoint in \(directory.path)")
+        }
+        // The cache keeps a repository's snapshot at <cache>/<org>/<name>/<revision>.
+        var roots = [URL]()
+        if let repository {
+            var root = directory.deletingLastPathComponent()
+            for _ in repository.split(separator: "/") { root = root.deletingLastPathComponent() }
+            roots.append(root)
+        }
+        roots.append(NFKHFHub.defaultCacheDirectoryURL())
+        let source = NFKModelSource(kind: NFKModelSourceKindURL, repository: nil, revision: nil, url: download,
+                                    layout: NFKModelSourceLayoutFile,
+                                    files: [NFKModelFile(path: download.lastPathComponent, role: NFKModelFileRoleWeights)],
+                                    requiresConversion: false, extensions: nil)
+        for root in roots {
+            let status = NFKHFHub(cacheDirectoryURL: root).downloadStatus(source: source)
+            if status.presence == .complete, let local = status.localURL {
+                return local
+            }
+        }
+        throw NFKMLXError.weightsMismatch("the Whisper checkpoint \(download.lastPathComponent) is not downloaded")
+    }
+
     /// Builds a size from local weights, ids-only (no tokenizer, no timestamps).
     @objc(backendWithVariant:weightsURL:error:)
     public static func backend(variant: NFKMLXWhisperVariant, weightsURL: URL?) throws -> any NFKInferenceBackend {
@@ -928,7 +1023,12 @@ public final class NFKMLXWhisper: NSObject {
 
     /// Registers Whisper (`whisper-tiny`) with `NFKMLXModelRegistry`, delegating to `backend(weightsURL:)`.
     @objc public static func register() {
-        NFKMLXModelRegistry.register(name: modelName) { weightsURL in try backend(weightsURL: weightsURL) }
+        let release = NFKMLXCatalogAudio.whisperRelease(named: modelName)
+        let download = release.flatMap { URL(string: $0.url) }
+        NFKMLXModelRegistry.register(name: modelName) { location in
+            try catalogBackend(variant: .tiny, location: location, weightsDownload: download, repository: release?.repository,
+                               precision: .checkpoint, identifier: modelName)
+        }
     }
 
     /// Loads a safetensors checkpoint, transposing convolution weights: 4-D `[out,in,kH,kW]` →
