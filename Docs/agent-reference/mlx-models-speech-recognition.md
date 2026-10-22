@@ -99,6 +99,12 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   (now a catalog file); any other build through the reference's order (`NFKMLXWhisper.languageCodes`).
   The result names the language under the core's `NFKOutputLanguage`. The oracle records a detected
   transcribe run and a detected translate run, and the parity test holds both.
+  `decodeWindow` masks `referenceSuppressionMask()`: the release's non-speech ids and `<|transcribe|>`,
+  `<|translate|>`, `<|startoftranscript|>`, `<|startofprev|>`, `<|startoflm|>`, `<|nospeech|>`, the
+  reference's `SuppressTokens` for a `transcribe` call. The single-window paths keep `suppressFrom`'s whole
+  range, which their oracles mask too. `submitInferenceJob` runs on a detached user-initiated task;
+  `transcribeRecording`'s `progress` closure is called after every window (a skipped one included) with
+  `seek / contentFrames`, and a job whose status reads cancelled stops the loop there.
   **Customization is LoRA and it ships** (`NFKMLXWhisperTraining.swift`): `NFKMLXWhisper.network(weightsURL:configuration:)`
   builds the net, `spectrogram(for:sampleRate:configuration:)` pads a clip to the 30-second window, and
   `fineTune(_:examples:rank:alpha:…)` adapts the decoder's query and value projections with the encoder

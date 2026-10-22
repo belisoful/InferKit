@@ -1474,6 +1474,10 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKMLXWhisperNet.transcribeRecording` and `decodeWindow` are the Swift steps.
 - The long-form decode keeps each decoder block's keys and values from step to step, as the reference's
   decoder does, so each step runs the new token alone.
+- A submitted Whisper job reports the share of the recording read after each window, with the transcript
+  and segments so far as its partial result, and a cancelled job ends at the next window.
+- The long-form decode masks the reference's suppressed tokens alone, so the language tokens stay open
+  to it as they do to the reference.
 - A catalog build detects the spoken language from the first 30 seconds unless `NFKParameterSourceLanguage`
   names one (Whisper's codes, which the catalog lists as the option's choices), and answers it under
   `NFKOutputLanguage`. `NFKMLXGenerationParameterKey.speechTask` chooses "transcribe" or "translate", for

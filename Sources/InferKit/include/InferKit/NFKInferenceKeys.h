@@ -301,7 +301,7 @@ extern NSString * const NFKOutputPose;
     most-confident first. */
 extern NSString * const NFKOutputClassifications;
 /*! Time spans (NSArray<NFKAudioSegment *>), for a backend that locates events over time (voice-activity
-    or sound-event detection). */
+    or sound-event detection), or for a speech recognizer, whose spans carry their transcript as the label. */
 extern NSString * const NFKOutputSegments;
 /*! The language the input is in (NSString, the code the backend's model names it by, such as "en"),
     as a speech recognizer detected it or was told it under NFKParameterSourceLanguage. Introduced in

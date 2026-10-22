@@ -690,7 +690,7 @@ public final class NFKMLXWhisperNet: Module {
         var tokens = (context.isEmpty ? [] : [startOfPreviousToken] + context) + sequence
         let sampleBegin = tokens.count
         let startIndex = context.isEmpty ? 0 : context.count + 1
-        let standing = timestamps ? suppressionMask(through: configuration.timestampBegin) : suppressionMask()
+        let standing = referenceSuppressionMask()
         let opening = openingSuppressionMask(standing)
         var sum = 0.0
         var noSpeech = 0.0
@@ -765,7 +765,9 @@ public final class NFKMLXWhisperNet: Module {
 
     /// A whole recording, transcribed as the reference's `transcribe` does at temperature 0 with each
     /// window conditioned on the text before it. `language` is the language token, or nil to detect it
-    /// with ``detectLanguage(_:)``; `translates` asks for English text with `<|translate|>`.
+    /// with ``detectLanguage(_:)``; `translates` asks for English text with `<|translate|>`. `progress`
+    /// receives the share of the recording read, the segments, and the ids after each window, and stops
+    /// the transcription by answering false.
     ///
     /// @discussion The log-mel is computed once over the recording followed by 30 seconds of silence, so
     /// its range is the whole file's. Each pass takes the 30 seconds from `seek`, zero-padded in the mel,
@@ -782,7 +784,9 @@ public final class NFKMLXWhisperNet: Module {
     ///
     /// Introduced in InferKit 0.4.0.
     public func transcribeRecording(_ samples: [Float], timestamps: Bool, language: Int? = nil, translates: Bool = false,
-                                    decodeText: ([Int]) -> String) -> (segments: [RecordingSegment], tokens: [Int], language: Int) {
+                                    decodeText: ([Int]) -> String,
+                                    progress: ((_ fraction: Double, _ segments: [RecordingSegment], _ tokens: [Int]) -> Bool)? = nil)
+        -> (segments: [RecordingSegment], tokens: [Int], language: Int) {
         let rate = 16_000
         let mel = NFKMLXMel.logMel(samples + [Float](repeating: 0, count: 30 * rate), sampleRate: rate, nMels: configuration.nMels)
         let contentFrames = mel.shape[1] - Self.windowFrames
@@ -802,6 +806,7 @@ public final class NFKMLXWhisperNet: Module {
             let decoded = decodeWindow(window, previous: allTokens, sequence: sequence, timestamps: timestamps)
             if decoded.noSpeechProbability > 0.6 && !(decoded.averageLogProbability > -1.0) {
                 seek += size
+                if let progress, !progress(Double(min(seek, contentFrames)) / Double(contentFrames), segments, allTokens) { break }
                 continue
             }
             var (current, advance) = windowSegments(decoded.tokens, offset: offset, frames: size)
@@ -816,6 +821,7 @@ public final class NFKMLXWhisperNet: Module {
             }
             segments += current
             allTokens += current.flatMap(\.tokens)
+            if let progress, !progress(Double(min(seek, contentFrames)) / Double(contentFrames), segments, allTokens) { break }
         }
         return (segments, allTokens, spoken)
     }
@@ -916,6 +922,19 @@ public final class NFKMLXWhisperNet: Module {
         return mask.withUnsafeBufferPointer { MLXArray($0, [configuration.nVocab]) }
     }
 
+    /// The reference's `SuppressTokens` for a `transcribe` decode: the non-speech symbols, `<|transcribe|>`,
+    /// `<|translate|>`, `<|startoftranscript|>`, `<|startofprev|>`, `<|startoflm|>`, and `<|nospeech|>`. The
+    /// language tokens and the timestamps stay open; the timestamp rules order the timestamps.
+    func referenceSuppressionMask() -> MLXArray {
+        var mask = [Float](repeating: 0, count: configuration.nVocab)
+        let specials = [transcribeToken, translateToken, configuration.promptTokens[0], startOfPreviousToken,
+                        configuration.timestampBegin - 4, noSpeechToken]
+        for id in configuration.suppressTokens + specials where id >= 0 && id < configuration.nVocab {
+            mask[id] = -1e9
+        }
+        return mask.withUnsafeBufferPointer { MLXArray($0, [configuration.nVocab]) }
+    }
+
     // `SuppressBlank`: at the first sampled position only, a space and an immediate end of text are
     // masked too, so a segment cannot open with whitespace or decode to nothing.
     private func openingSuppressionMask(_ standing: MLXArray) -> MLXArray {
@@ -990,6 +1009,32 @@ public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
 
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
+        try run(request, observer: nil)
+    }
+
+    /// A job over ``runInference(for:)``'s decode. A long-form run reports the share of the recording read,
+    /// with the transcript and segments so far as its partial result, after each window, and ends at the
+    /// next window once the job is cancelled.
+    @objc(submitInferenceJobForRequest:)
+    public func submitInferenceJob(for request: NFKInferenceRequest) -> NFKInferenceJob {
+        let job = NFKInferenceJob()
+        let backend = NFKMLXWhisperBackendRun(backend: self)
+        Task.detached(priority: .userInitiated) {
+            do {
+                let result = try backend.backend.run(request) { fraction, partial in
+                    job.reportProgress(fraction, partialResult: partial)
+                    return job.status != .cancelled
+                }
+                job.finish(with: result)
+            } catch {
+                job.finish(withError: error as NSError)
+            }
+        }
+        return job
+    }
+
+    private func run(_ request: NFKInferenceRequest,
+                     observer: ((_ fraction: Double, _ partial: NFKInferenceResult) -> Bool)?) throws -> NFKInferenceResult {
         guard let (samples, sampleRate) = Self.audio(from: request) else {
             throw NFKMLXError.unsupportedInput
         }
@@ -1007,7 +1052,7 @@ public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
                 throw NFKMLXError.unsupportedConfiguration("\(identifier) has no task \"\(task)\"; it transcribes or translates")
             }
             return transcribeRecording(NFKMLXAudioRate.matched(samples, from: sampleRate, to: 16_000), timestamps: timestamps,
-                                       language: language, translates: task == NFKMLXWhisper.translateTask)
+                                       language: language, translates: task == NFKMLXWhisper.translateTask, observer: observer)
         }
         // Whisper is trained only on 30-second inputs; pad with silence (or trim) to that length so a
         // short clip is not out of the model's distribution — the dominant cause of word errors.
@@ -1035,12 +1080,26 @@ public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
 
     /// The whole recording's transcript and, with timestamps, its segments in file time. A segment the
     /// reference clears (no length or no text) is left out.
-    private func transcribeRecording(_ samples: [Float], timestamps: Bool, language: Int?, translates: Bool) -> NFKInferenceResult {
+    private func transcribeRecording(_ samples: [Float], timestamps: Bool, language: Int?, translates: Bool,
+                                     observer: ((_ fraction: Double, _ partial: NFKInferenceResult) -> Bool)?) -> NFKInferenceResult {
+        let (segments, tokens, spoken) = net.transcribeRecording(
+            samples, timestamps: timestamps, language: language, translates: translates, decodeText: { transcript($0) },
+            progress: observer.map { observer in
+                { fraction, segments, tokens in
+                    observer(fraction, self.result(segments: segments, tokens: tokens, language: nil, timestamps: timestamps))
+                }
+            })
+        return result(segments: segments, tokens: tokens, language: spoken, timestamps: timestamps)
+    }
+
+    /// The transcript, its segments with timestamps (a segment with no ids left out), and the language.
+    private func result(segments: [NFKMLXWhisperNet.RecordingSegment], tokens: [Int], language: Int?,
+                        timestamps: Bool) -> NFKInferenceResult {
         let begin = net.configuration.timestampBegin
-        let (segments, tokens, spoken) = net.transcribeRecording(samples, timestamps: timestamps, language: language,
-                                                                 translates: translates) { transcript($0) }
         var outputs: [String: Any] = [NFKOutputText: transcript(tokens.filter { $0 < begin })]
-        outputs[NFKOutputLanguage] = languages.first { $0.value == spoken }?.key
+        if let language {
+            outputs[NFKOutputLanguage] = languages.first { $0.value == language }?.key
+        }
         if timestamps {
             outputs[NFKOutputSegments] = segments.filter { !$0.tokens.isEmpty }.map {
                 NFKAudioSegment(startSeconds: $0.start, endSeconds: $0.end,
@@ -1065,6 +1124,12 @@ public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
         }
         return nil
     }
+}
+
+/// Carries the backend into the detached task that runs a submitted job. The backend's net and tokenizer
+/// are read-only once built.
+private struct NFKMLXWhisperBackendRun: @unchecked Sendable {
+    let backend: NFKMLXWhisperBackend
 }
 
 /// Registration and weight loading for Whisper.

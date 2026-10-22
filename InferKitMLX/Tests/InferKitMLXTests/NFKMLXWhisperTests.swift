@@ -420,4 +420,49 @@ final class NFKMLXWhisperTests: XCTestCase {
         XCTAssertEqual(NFKMLXWhisper.languageTable(in: directory, for: net), ["en": 50259, "xx": 50260],
                        "only the tokens in the language range are languages")
     }
+
+    /// The long-form decode masks the reference's `SuppressTokens` alone: the language tokens, the
+    /// timestamps, and `<|notimestamps|>` stay open.
+    func testTheLongFormMaskIsTheReferencesSuppressTokens() throws {
+        try requireMLXRuntime()
+        var configuration = NFKMLXWhisper.configuration(for: .tiny)
+        configuration.suppressTokens = [11, 13]
+        let mask = NFKMLXWhisper.makeNet(configuration).referenceSuppressionMask().asArray(Float.self)
+        for id in [11, 13, 50258, 50358, 50359, 50360, 50361, 50362] {
+            XCTAssertEqual(mask[id], -1e9, "\(id) is suppressed")
+        }
+        for id in [50259, 50300, 50357, 50363, 50364, 51864, 50257] {
+            XCTAssertEqual(mask[id], 0, "\(id) stays open")
+        }
+    }
+
+    func testALongFormJobReportsEachWindowAndStopsWhenCancelled() throws {
+        try requireMLXRuntime()
+        let backend = try NFKMLXWhisper.catalogBackend(configuration: timedConfiguration(), location: try releaseDirectory(withCheckpoint: true),
+                                                       weightsDownload: nil, precision: .checkpoint, identifier: "whisper-test")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-job-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try NFKMLXWaveFile.write(samples: (0 ..< 70 * 16000).map { 0.1 * sinf(Float($0) * 0.05) }, sampleRate: 16000, to: url)
+        let request = NFKInferenceRequest(inputs: [NFKInputAudio: NFKAudioAsset(fileURL: url, durationSeconds: 70, sampleRate: 16000, channelCount: 1)])
+
+        let fractions = NSMutableArray()
+        let finished = expectation(description: "the job ends")
+        let job = backend.submitInferenceJob(for: request)
+        job.progressHandler = { progressed in
+            fractions.add(progressed.progress)
+        }
+        job.completionHandler = { _ in finished.fulfill() }
+        wait(for: [finished], timeout: 120)
+        XCTAssertEqual(job.status, .succeeded, "\(String(describing: job.error))")
+        let reported = fractions.compactMap { ($0 as? NSNumber)?.doubleValue }
+        XCTAssertFalse(reported.isEmpty)
+        XCTAssertEqual(reported, reported.sorted(), "the share read only grows")
+
+        let stopped = expectation(description: "the cancelled job ends")
+        let cancelled = backend.submitInferenceJob(for: request)
+        cancelled.progressHandler = { progressed in progressed.cancel() }
+        cancelled.completionHandler = { _ in stopped.fulfill() }
+        wait(for: [stopped], timeout: 120)
+        XCTAssertEqual(cancelled.status, .cancelled)
+    }
 }
