@@ -95,11 +95,15 @@
 
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request error:(NSError **)error
 {
-	self.running += 1;
+	@synchronized (self) {
+		self.running += 1;
+	}
 	if (self.gate != nil) {
 		dispatch_semaphore_wait(self.gate, DISPATCH_TIME_FOREVER);
 	}
-	self.running -= 1;
+	@synchronized (self) {
+		self.running -= 1;
+	}
 	if ([[request inputForKey:NFKInputPrompt] isEqual:@"fail"]) {
 		if (error != NULL) {
 			*error = [NSError errorWithDomain:NFKInferenceErrorDomain code:kNFKError_InferenceRefused

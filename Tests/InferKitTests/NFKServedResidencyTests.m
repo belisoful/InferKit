@@ -35,11 +35,16 @@
 
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request error:(NSError **)error
 {
-	self.running += 1;
+	// Runs start together, and an atomic property's += is a separate read and write.
+	@synchronized (self) {
+		self.running += 1;
+	}
 	if (self.gate != nil) {
 		dispatch_semaphore_wait(self.gate, DISPATCH_TIME_FOREVER);
 	}
-	self.running -= 1;
+	@synchronized (self) {
+		self.running -= 1;
+	}
 	return [NFKInferenceResult resultWithOutputs:@{ NFKOutputText: @"ok" }];
 }
 
