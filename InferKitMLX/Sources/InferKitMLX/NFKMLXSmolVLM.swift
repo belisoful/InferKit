@@ -477,14 +477,18 @@ public final class NFKMLXSmolVLM: NSObject {
     }
 
     /// Builds the model from a downloaded release directory, ready to answer questions about an image.
-    /// A directory whose `tokenizer.json` is missing or unreadable is refused before the weights load:
-    /// without it every answer would be empty.
+    /// A directory whose `tokenizer.json` is missing, unreadable, or states a scheme the tokenizer reader
+    /// does not reproduce is refused before the weights load: without it every answer would be empty.
     @objc(smolVLMWithDirectoryURL:error:)
     public static func load(directoryURL: URL) throws -> NFKMLXSmolVLM {
         let release = try release(directoryURL: directoryURL)
-        guard let tokenizer = tokenizer(inDirectory: directoryURL) else {
+        let tokenizer: NFKTokenizer
+        do {
+            tokenizer = try self.tokenizer(inDirectory: directoryURL)
+        } catch {
             throw NFKMLXError.unsupportedConfiguration(
-                "\(directoryURL.lastPathComponent) has no readable tokenizer.json, so the model could answer nothing")
+                "\(directoryURL.lastPathComponent) has no readable tokenizer, so the model could answer nothing: "
+                + error.localizedDescription)
         }
         let net = try model(directoryURL: directoryURL)
         let end = specialToken("<end_of_utterance>", inDirectory: directoryURL) ?? 49_279
@@ -694,40 +698,18 @@ public final class NFKMLXSmolVLM: NSObject {
         return "User:" + structure + question + "<end_of_utterance>\nAssistant:"
     }
 
-    /// The byte-level BPE tokenizer a release describes, with every added token (`<image>`, the
-    /// `<row_r_col_c>` markers, `<end_of_utterance>`) registered so the expanded prompt segments on them.
-    static func tokenizer(inDirectory directory: URL) -> NFKTokenizer? {
-        guard let data = try? Data(contentsOf: directory.appendingPathComponent("tokenizer.json")),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let model = json["model"] as? [String: Any],
-              let vocabulary = model["vocab"] as? [String: Int],
-              let merges = model["merges"] as? [Any] else { return nil }
-
-        var specials = [String: Int]()
-        for entry in (json["added_tokens"] as? [[String: Any]]) ?? [] {
-            if let content = entry["content"] as? String, let id = entry["id"] as? Int {
-                specials[content] = id
-            }
-        }
-
-        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
-        guard (try? FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)) != nil,
-              let vocabularyData = try? JSONSerialization.data(withJSONObject: vocabulary),
-              (try? vocabularyData.write(to: scratch.appendingPathComponent("vocab.json"))) != nil else {
-            return nil
-        }
-        var mergesText = "#version: 0.2\n"
-        for entry in merges {
-            if let pair = entry as? [String], pair.count == 2 {
-                mergesText += pair[0] + " " + pair[1] + "\n"
-            } else if let text = entry as? String {
-                mergesText += text + "\n"
-            }
-        }
-        guard (try? mergesText.write(to: scratch.appendingPathComponent("merges.txt"),
-                                     atomically: true, encoding: .utf8)) != nil else { return nil }
-        let manifest: [String: Any] = ["tokenizer": ["type": "bpe-bytelevel", "pretokenizer": "gpt2",
-                                                     "specialTokens": specials]]
-        return try? NFKTokenizer(forManifest: manifest, directory: scratch)
+    /// The byte-level BPE tokenizer a release describes, read by the language reader under the release's
+    /// own pre-tokenization, with every added token (`<image>`, the `<row_r_col_c>` markers,
+    /// `<end_of_utterance>`) registered so the expanded prompt segments on them.
+    ///
+    /// @discussion Every SmolVLM2 release states SmolLM's pre-tokenizer: individual `Digits` before a
+    /// `ByteLevel` split. The cut at each digit leaves a whitespace run that ends at a number as one
+    /// token, where GPT-2's pattern alone leaves the run's last space to encode on its own, so the same
+    /// prompt encodes to different, valid-looking ids.
+    ///
+    /// - Throws: `NFKMLXError.unsupportedConfiguration` naming the part of the tokenizer the reader does
+    ///   not reproduce, or the files it found missing.
+    static func tokenizer(inDirectory directory: URL) throws -> NFKTokenizer {
+        try NFKMLXLanguage.readTokenizer(inDirectory: directory)
     }
 }

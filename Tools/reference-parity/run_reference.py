@@ -4390,6 +4390,47 @@ def run_smolvlm(image, checkpoint):
     return logits.contiguous()
 
 
+SMOLVLM_TOKENIZER_CASES = [
+    "User:Set x =   42 and y =\t\t7, then add  12.<end_of_utterance>\nAssistant:",
+    "User:<fake_token_around_image><row_1_col_2><image><image>\n<fake_token_around_image><global-img><image>"
+    "<fake_token_around_image>Read 1,299.99 and   007 aloud.\n\n3<end_of_utterance>\nAssistant: 42",
+]
+
+
+def run_smolvlm_tokenizer(image, checkpoint):
+    """A SmolVLM2 release's tokenizer on SMOLVLM_TOKENIZER_CASES, from transformers' `AutoTokenizer` as
+    the processor calls it (`checkpoint` is a SmolVLM2 release directory). The release's pre-tokenizer
+    cuts the text at each digit before its byte-level split, so a whitespace run ending at a number
+    encodes as one token. GPT-2's pattern alone leaves the run's last space to lead the number. No
+    vocabulary token joins a digit 0-9 to another character, so that space encodes on its own and a
+    digit run alone encodes one digit per token under either pattern.
+
+    Each case is also encoded under GPT-2's pattern alone (the release's tokenizer with its
+    `pre_tokenizer` replaced), and a case that encodes the same there stops the run: it would not
+    separate the two schemes. For case i the record carries `ids_<i>` and `gpt2_ids_<i>`; each list is
+    printed for the Swift test's table. Returns the first case's ids."""
+    from tokenizers import Tokenizer
+    from transformers import AutoTokenizer
+    tok = AutoTokenizer.from_pretrained(checkpoint)
+    spec = json.loads(tok.backend_tokenizer.to_str())
+    spec["pre_tokenizer"] = {"type": "ByteLevel", "add_prefix_space": False, "trim_offsets": True, "use_regex": True}
+    control = Tokenizer.from_str(json.dumps(spec))
+    extra = {}
+    for index, text in enumerate(SMOLVLM_TOKENIZER_CASES):
+        ids = tok(text).input_ids
+        if ids != tok(text, add_special_tokens=False).input_ids:
+            raise SystemExit("the tokenizer adds special tokens the processor's prompt does not carry")
+        gpt2_ids = control.encode(text, add_special_tokens=False).ids
+        if gpt2_ids == ids:
+            raise SystemExit(f"case {index} encodes the same under GPT-2's pattern, so it does not discriminate")
+        extra[f"ids_{index}"] = torch.tensor(ids, dtype=torch.int32)
+        extra[f"gpt2_ids_{index}"] = torch.tensor(gpt2_ids, dtype=torch.int32)
+        print(f"ids_{index} = {ids}")
+        print(f"gpt2_ids_{index} = {gpt2_ids}")
+    globals()["_extra"] = extra
+    return extra["ids_0"].float()
+
+
 def run_qwen3vl(image, checkpoint):
     """Qwen3-VL's vision tower, from transformers' own Qwen3VLForConditionalGeneration.
 
@@ -22852,7 +22893,7 @@ CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,
                      "audio_tagger": run_audio_tagger, "raft": run_raft, "rvm": run_rvm,
                      "depth": run_depth, "depth_encoder": run_depth_encoder, "depth3": run_depth3,
-                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "denoiser_training": run_denoiser_training, "frcrn_training": run_frcrn_training, "mossformer2_training": run_mossformer2_training, "retinaface_training": run_retinaface_training, "depth_anything_metric_training": run_depth_anything_metric_training, "siggraph17_training": run_siggraph17_training, "eccv16_training": run_eccv16_training, "rife_v4_training": run_rife_v4_training, "qwen3_loss": run_qwen3_loss, "qwen3_5_loss": run_qwen3_5_loss, "gemma3_loss": run_gemma3_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
+                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "smolvlm_tokenizer": run_smolvlm_tokenizer, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "denoiser_training": run_denoiser_training, "frcrn_training": run_frcrn_training, "mossformer2_training": run_mossformer2_training, "retinaface_training": run_retinaface_training, "depth_anything_metric_training": run_depth_anything_metric_training, "siggraph17_training": run_siggraph17_training, "eccv16_training": run_eccv16_training, "rife_v4_training": run_rife_v4_training, "qwen3_loss": run_qwen3_loss, "qwen3_5_loss": run_qwen3_5_loss, "gemma3_loss": run_gemma3_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
                      "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rtdetr_v2_real": run_rtdetr_v2_real, "vitpose": run_vitpose, "ddcolor": run_ddcolor, "realesrgan_compact": run_realesrgan_compact, "zero_dce_plus": run_zero_dce_plus, "rf_detr_real": run_rf_detr_real, "ip_adapter_unet": run_ip_adapter_unet, "kokoro": run_kokoro, "parakeet": run_parakeet, "canary": run_canary, "phi4mm": run_phi4mm, "phi4mm_bf16": run_phi4mm_bf16, "phi4mm_conversation": run_phi4mm_conversation,"table_transformer": run_table_transformer, "table_transformer_loss": run_table_transformer_loss, "vjepa2": run_vjepa2, "sa2va": run_sa2va, "cosmos_tokenizer": run_cosmos_tokenizer, "cosmos_tokenizer_loss": run_cosmos_tokenizer_loss,
                      "chatterbox_voice": run_chatterbox_voice,

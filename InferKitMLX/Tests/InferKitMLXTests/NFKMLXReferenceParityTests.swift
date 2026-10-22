@@ -6951,7 +6951,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         let arrays = try loadArrays(url: URL(fileURLWithPath: path))
         let referenceIds = try XCTUnwrap(arrays["input_ids"]).asArray(Int32.self).map(Int.init)
 
-        let tokenizer = try XCTUnwrap(NFKMLXSmolVLM.tokenizer(inDirectory: URL(fileURLWithPath: directory)))
+        let tokenizer = try NFKMLXSmolVLM.tokenizer(inDirectory: URL(fileURLWithPath: directory))
         let prompt = NFKMLXSmolVLM.prompt(rows: 4, cols: 4, question: "What is in this image?")
         let ids = tokenizer.encode(prompt).map(\.intValue)
         XCTAssertEqual(ids, referenceIds, "the expanded prompt tokenizes to the reference's ids")

@@ -34,13 +34,25 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   split into `⌈h/512⌉ × ⌈w/512⌉` 512×512 sub-tiles plus a global 512×512 thumbnail appended last, each
   normalized to `-1 … 1`), and `NFKMLXSmolVLM.prompt(rows:cols:question:)` builds the expanded
   `User:` + per-tile `<fake_token_around_image><row_r_col_c>` + 64 `<image>` + `<global-img>` tile +
-  question + `<end_of_utterance>\nAssistant:` string, which the byte-level BPE tokenizer (every added
+  question + `<end_of_utterance>\nAssistant:` string, which the release's own tokenizer (every added
   token registered as a special so the string segments on them) turns into ids **token-exactly** against
-  the processor. The resize is CoreGraphics, not the reference's PIL LANCZOS, so a consumer caption is
-  not token-identical to the reference — a documented approximation; the network is at parity on the
-  reference's own pixel values, and end to end on the real Apollo-astronaut validation photo the model
-  answers "a man is standing in front of a backdrop that resembles the moon. He is dressed in a white
-  …". ObjC reaches it through `smolVLMWithDirectoryURL:error:` and `answerForImage:question:`.
+  the processor. `NFKMLXSmolVLM.tokenizer(inDirectory:)` reads it through
+  `NFKMLXLanguage.readTokenizer(inDirectory:)`, so it encodes under the scheme the release states and
+  refuses one the reader does not reproduce. Every SmolVLM2 release states SmolLM's pre-tokenizer
+  (individual `Digits`, then `ByteLevel`). No vocabulary token joins a digit 0–9 to another character, so
+  a digit run encodes one digit per token under either pattern, and the scheme shows only at a whitespace
+  run that ends at a number: SmolLM's cut at the digit leaves the whole run as one token (`ĠĠĠ`), and
+  GPT-2's pattern alone leaves the run's last space to encode on its own (`ĠĠ`, `Ġ`). A tokenizer built
+  with GPT-2's pattern passes the prompt test above and every digit-only probe.
+  `NFKMLXSmolVLMTests.testADigitBearingPromptEncodesAsTransformersDoes` holds two prompts with such runs
+  and image markers to transformers' `AutoTokenizer` ids (`run_reference.py smolvlm_tokenizer`, the `llm`
+  oracle) on all three releases, which share one vocabulary and encode both prompts to the same ids. The
+  oracle also encodes each case under GPT-2's pattern and stops when a case encodes the same, so every
+  case separates the two schemes. The resize is CoreGraphics, not the reference's PIL LANCZOS, so a
+  consumer caption is not token-identical to the reference — a documented approximation; the network is at
+  parity on the reference's own pixel values, and end to end on the real Apollo-astronaut validation photo
+  the model answers "a man is standing in front of a backdrop that resembles the moon. He is dressed in a
+  white …". ObjC reaches it through `smolVLMWithDirectoryURL:error:` and `answerForImage:question:`.
   The port reads the release rather than hard-coding 500M: `NFKMLXSmolVLM.release(directoryURL:)` builds
   the SigLIP geometry, the pixel-shuffle factor, the tile size and the tokens per tile from the
   directory's own `config.json`, and the weights load sharded through `NFKMLXReleaseWeights`, so the

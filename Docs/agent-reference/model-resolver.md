@@ -211,6 +211,7 @@ dense and mixture (`NFKMLXQuantization.releaseQuantization(configJSON:)`). The r
 family's pre-tokenization (Qwen2, Qwen3.5, o200k, Llama 3, Nemotron, GPT-2, SmolLM), its NFC normalizer,
 `ignore_merges`, and Mistral's `Metaspace` BPE with byte fallback, or refuses a scheme it does not
 reproduce by name.
+SmolVLM2's loader (`NFKMLXSmolVLM.tokenizer(inDirectory:)`) reads its tokenizer through the same reader.
 The judgment reads what the loader reads through the loader's own predicates.
 
 ## Phasing
