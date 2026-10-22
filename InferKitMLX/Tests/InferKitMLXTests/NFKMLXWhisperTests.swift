@@ -409,6 +409,17 @@ final class NFKMLXWhisperTests: XCTestCase {
         XCTAssertTrue(net.languageTokens.contains(net.detectLanguage(mel)))
     }
 
+    /// A vocabulary that places no language tokens before `<|translate|>` has none, and its window prompt
+    /// opens with `<|startoftranscript|>` alone.
+    func testAVocabularyWithoutLanguageTokensOpensWithTheStartToken() throws {
+        try requireMLXRuntime()
+        let net = NFKMLXWhisper.makeNet(timedConfiguration())
+        XCTAssertTrue(net.languageTokens.isEmpty)
+        XCTAssertTrue(NFKMLXWhisper.languageTable(for: net).isEmpty)
+        XCTAssertEqual(net.promptSequence(language: nil, translates: true, timestamps: false), [2, 4])
+        XCTAssertEqual(net.promptSequence(language: nil, translates: false, timestamps: true), [2])
+    }
+
     func testAReleasesAddedTokensNameItsLanguages() throws {
         try requireMLXRuntime()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-added-\(UUID().uuidString)")

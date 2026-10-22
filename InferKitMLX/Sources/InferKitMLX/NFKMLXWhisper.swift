@@ -635,18 +635,24 @@ public final class NFKMLXWhisperNet: Module {
     var transcribeToken: Int { configuration.timestampBegin - 5 }
     var translateToken: Int { configuration.timestampBegin - 6 }
 
-    /// The language tokens, from the one after `<|startoftranscript|>` to the one before `<|translate|>`.
-    var languageTokens: Range<Int> { (configuration.promptTokens[0] + 1) ..< translateToken }
+    /// The language tokens, from the one after `<|startoftranscript|>` to the one before `<|translate|>`,
+    /// or none in a vocabulary that places `<|translate|>` no higher.
+    var languageTokens: Range<Int> {
+        let first = configuration.promptTokens[0] + 1
+        return first ..< max(first, translateToken)
+    }
 
-    /// The decode prompt that opens a window: `<|startoftranscript|>`, the language, the task, and
-    /// `<|notimestamps|>` for a decode without timestamps.
-    func promptSequence(language: Int, translates: Bool, timestamps: Bool) -> [Int] {
-        [configuration.promptTokens[0], language, translates ? translateToken : transcribeToken]
+    /// The decode prompt that opens a window: `<|startoftranscript|>`, the language and the task, and
+    /// `<|notimestamps|>` for a decode without timestamps. Without a language, the prompt names no task,
+    /// as the reference's English-only tokenizer opens with `<|startoftranscript|>` alone.
+    func promptSequence(language: Int?, translates: Bool, timestamps: Bool) -> [Int] {
+        [configuration.promptTokens[0]] + (language.map { [$0, translates ? translateToken : transcribeToken] } ?? [])
             + (timestamps ? [] : [noTimestampsToken])
     }
 
     /// The language token the model gives a window, as the reference's `detect_language` reads it: the
-    /// logits after `<|startoftranscript|>` alone, over the language tokens.
+    /// logits after `<|startoftranscript|>` alone, over the language tokens. The vocabulary holds language
+    /// tokens.
     ///
     /// Introduced in InferKit 0.4.0.
     public func detectLanguage(_ mel: MLXArray) -> Int {
@@ -682,8 +688,9 @@ public final class NFKMLXWhisperNet: Module {
                      timestamps: timestamps)
     }
 
-    /// Decodes one window as ``decodeWindow(_:previous:timestamps:)`` does, opened by `sequence`, the prompt
-    /// ``promptSequence(language:translates:timestamps:)`` makes.
+    /// Decodes one window as ``decodeWindow(_:previous:timestamps:)`` does, opened by `sequence`:
+    /// `<|startoftranscript|>`, the language and the task, and `<|notimestamps|>` for a decode without
+    /// timestamps.
     ///
     /// Introduced in InferKit 0.4.0.
     public func decodeWindow(_ mel: MLXArray, previous: [Int], sequence: [Int], timestamps: Bool) -> WindowDecode {
@@ -767,7 +774,8 @@ public final class NFKMLXWhisperNet: Module {
 
     /// A whole recording, transcribed as the reference's `transcribe` does at temperature 0 with each
     /// window conditioned on the text before it. `language` is the language token, or nil to detect it
-    /// with ``detectLanguage(_:)``; `translates` asks for English text with `<|translate|>`. `progress`
+    /// with ``detectLanguage(_:)``; a vocabulary without language tokens decodes with none and answers
+    /// nil. `translates` asks for English text with `<|translate|>`. `progress`
     /// receives the share of the recording read, the segments, and the ids after each window, and stops
     /// the transcription by answering false.
     ///
@@ -788,12 +796,12 @@ public final class NFKMLXWhisperNet: Module {
     public func transcribeRecording(_ samples: [Float], timestamps: Bool, language: Int? = nil, translates: Bool = false,
                                     decodeText: ([Int]) -> String,
                                     progress: ((_ fraction: Double, _ segments: [RecordingSegment], _ tokens: [Int]) -> Bool)? = nil)
-        -> (segments: [RecordingSegment], tokens: [Int], language: Int) {
+        -> (segments: [RecordingSegment], tokens: [Int], language: Int?) {
         let rate = 16_000
         let mel = NFKMLXMel.logMel(samples + [Float](repeating: 0, count: 30 * rate), sampleRate: rate, nMels: configuration.nMels)
         let contentFrames = mel.shape[1] - Self.windowFrames
         // The reference detects on the recording's first 30 seconds of mel, its padding included.
-        let spoken = language ?? detectLanguage(mel[0..., 0 ..< Self.windowFrames, 0...])
+        let spoken = language ?? (languageTokens.isEmpty ? nil : detectLanguage(mel[0..., 0 ..< Self.windowFrames, 0...]))
         let sequence = promptSequence(language: spoken, translates: translates, timestamps: timestamps)
         var seek = 0
         var allTokens = [Int]()
@@ -1325,7 +1333,7 @@ public final class NFKMLXWhisper: NSObject {
     /// The language codes a size knows, in token order.
     static func languageCodes(for variant: NFKMLXWhisperVariant) -> [String] {
         let configuration = self.configuration(for: variant)
-        return Array(languageCodes.prefix(configuration.timestampBegin - 6 - (configuration.promptTokens[0] + 1)))
+        return Array(languageCodes.prefix(max(0, configuration.timestampBegin - 6 - (configuration.promptTokens[0] + 1))))
     }
 
     /// Each language code's token, in the reference's order over the net's language tokens.
