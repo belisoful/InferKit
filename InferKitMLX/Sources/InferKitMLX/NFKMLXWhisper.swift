@@ -39,6 +39,8 @@ public struct NFKMLXWhisperConfiguration: Sendable {
     public var promptTokens: [Int] = [50258, 50259, 50359, 50363]
     public var endToken: Int = 50257
     public var suppressFrom: Int = 50258
+    /// The most tokens a single-window decode (`transcribe`, `transcribeWithTimestamps`) samples. The
+    /// long-form decode (`decodeWindow`) samples the reference's `nTextCtx / 2` whatever this holds.
     public var maxTokens: Int = 64
 
     /// Ids masked at every step, on top of the `suppressFrom` range.
@@ -985,8 +987,10 @@ public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
     /// does. Off, a run transcribes the first 30 seconds.
     ///
     /// @discussion Off by default, which keeps the single-window decode `whisper.decode` performs. A
-    /// catalog build turns it on. Each window decodes up to `nTextCtx / 2` tokens, the reference's `sample_len`; the non-speech symbols are masked only on a backend built with a tokenizer. The recording is resampled to 16 kHz, segments carry seconds from the
-    /// start of the file, and each window is conditioned on the text before it. Introduced in InferKit 0.4.0.
+    /// catalog build turns it on. Each window decodes up to `nTextCtx / 2` tokens, the reference's
+    /// `sample_len`; the non-speech symbols are masked only on a backend built with a tokenizer. The
+    /// recording is resampled to 16 kHz, segments carry seconds from the start of the file, and each
+    /// window is conditioned on the text before it. Introduced in InferKit 0.4.0.
     @objc public var transcribesWholeRecording: Bool = false
 
     @objc public var isReady: Bool { true }
