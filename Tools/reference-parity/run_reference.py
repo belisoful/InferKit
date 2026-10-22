@@ -3503,6 +3503,48 @@ def run_whisper_f16_probe(image, checkpoint):
     return logits[0].float().contiguous()
 
 
+def run_whisper_transcribe(image, checkpoint):
+    """Whisper's long-form `transcribe`, from openai-whisper itself, on a recording longer than one window.
+
+    `--checkpoint` is a released `.pt`. The recording is the validation speech clip repeated with a
+    second of silence after each copy until it passes 75 seconds, so the seek crosses several windows
+    and a silence. The call is the reference's own entry point at temperature 0 (no fallback),
+    English, float32, each window conditioned on the text before it. The record carries the
+    `waveform`, each segment's `segment_bounds` ([segments, 2] float32 seconds), its ids
+    (`segment_tokens`, concatenated, with `segment_lengths`), the result's `text_bytes` (UTF-8), and the
+    tokenizer's `non_speech_tokens` and `timestamp_begin` the decode used.
+    """
+    import whisper
+
+    model = whisper.load_model(checkpoint)
+    model.eval()
+    clip = _speech_clip()
+    silence = np.zeros(16000, dtype=np.float32)
+    pieces = []
+    while sum(len(piece) for piece in pieces) < 75 * 16000:
+        pieces += [clip, silence]
+    wave = np.concatenate(pieces).astype(np.float32)
+    with torch.no_grad():
+        result = whisper.transcribe(model, wave, temperature=0.0, language="en", task="transcribe", fp16=False,
+                                    condition_on_previous_text=True, verbose=None)
+    tokenizer = whisper.tokenizer.get_tokenizer(model.is_multilingual, num_languages=getattr(model, "num_languages", 99),
+                                                language="en", task="transcribe")
+    segments = result["segments"]
+    tokens = [token for segment in segments for token in segment["tokens"]]
+    print(f"text: {result['text']!r}, {len(segments)} segments")
+    globals()["_extra"] = {
+        "waveform": torch.from_numpy(wave).contiguous(),
+        "segment_bounds": torch.tensor([[segment["start"], segment["end"]] for segment in segments], dtype=torch.float32).reshape(-1, 2),
+        "segment_tokens": torch.tensor(tokens, dtype=torch.int64),
+        "segment_lengths": torch.tensor([len(segment["tokens"]) for segment in segments], dtype=torch.int64),
+        "text_bytes": torch.tensor(list(result["text"].encode("utf-8")), dtype=torch.int64),
+        "non_speech_tokens": torch.tensor(list(tokenizer.non_speech_tokens), dtype=torch.int64),
+        "timestamp_begin": torch.tensor([tokenizer.timestamp_begin], dtype=torch.int64),
+    }
+    return torch.tensor(tokens, dtype=torch.int64)
+
+
+
 def run_whisper(image, checkpoint):
     """Whisper tiny transcription, from openai-whisper itself.
 
@@ -23458,6 +23500,7 @@ def run_wav2vec2(image, checkpoint):
 
 
 CHECKPOINT_MODELS["wav2vec2"] = run_wav2vec2
+CHECKPOINT_MODELS["whisper_transcribe"] = run_whisper_transcribe
 
 
 

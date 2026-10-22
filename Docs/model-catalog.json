@@ -63403,14 +63403,14 @@
       ],
       "outputs" : [
         {
-          "help" : "The transcript of the first 30 seconds.",
+          "help" : "The transcript of the whole recording, window after window.",
           "key" : "text",
           "required" : true,
           "title" : "Transcript",
           "valueType" : "text"
         },
         {
-          "help" : "The transcript's timed spans, each with its text, while timestamps are on.",
+          "help" : "The transcript's timed spans in seconds from the start of the recording, each with its text, while timestamps are on.",
           "key" : "segments",
           "required" : false,
           "title" : "Segments",
@@ -63573,14 +63573,14 @@
       ],
       "outputs" : [
         {
-          "help" : "The transcript of the first 30 seconds.",
+          "help" : "The transcript of the whole recording, window after window.",
           "key" : "text",
           "required" : true,
           "title" : "Transcript",
           "valueType" : "text"
         },
         {
-          "help" : "The transcript's timed spans, each with its text, while timestamps are on.",
+          "help" : "The transcript's timed spans in seconds from the start of the recording, each with its text, while timestamps are on.",
           "key" : "segments",
           "required" : false,
           "title" : "Segments",
@@ -63743,14 +63743,14 @@
       ],
       "outputs" : [
         {
-          "help" : "The transcript of the first 30 seconds.",
+          "help" : "The transcript of the whole recording, window after window.",
           "key" : "text",
           "required" : true,
           "title" : "Transcript",
           "valueType" : "text"
         },
         {
-          "help" : "The transcript's timed spans, each with its text, while timestamps are on.",
+          "help" : "The transcript's timed spans in seconds from the start of the recording, each with its text, while timestamps are on.",
           "key" : "segments",
           "required" : false,
           "title" : "Segments",
@@ -63913,14 +63913,14 @@
       ],
       "outputs" : [
         {
-          "help" : "The transcript of the first 30 seconds.",
+          "help" : "The transcript of the whole recording, window after window.",
           "key" : "text",
           "required" : true,
           "title" : "Transcript",
           "valueType" : "text"
         },
         {
-          "help" : "The transcript's timed spans, each with its text, while timestamps are on.",
+          "help" : "The transcript's timed spans in seconds from the start of the recording, each with its text, while timestamps are on.",
           "key" : "segments",
           "required" : false,
           "title" : "Segments",
@@ -64083,14 +64083,14 @@
       ],
       "outputs" : [
         {
-          "help" : "The transcript of the first 30 seconds.",
+          "help" : "The transcript of the whole recording, window after window.",
           "key" : "text",
           "required" : true,
           "title" : "Transcript",
           "valueType" : "text"
         },
         {
-          "help" : "The transcript's timed spans, each with its text, while timestamps are on.",
+          "help" : "The transcript's timed spans in seconds from the start of the recording, each with its text, while timestamps are on.",
           "key" : "segments",
           "required" : false,
           "title" : "Segments",
@@ -64253,14 +64253,14 @@
       ],
       "outputs" : [
         {
-          "help" : "The transcript of the first 30 seconds.",
+          "help" : "The transcript of the whole recording, window after window.",
           "key" : "text",
           "required" : true,
           "title" : "Transcript",
           "valueType" : "text"
         },
         {
-          "help" : "The transcript's timed spans, each with its text, while timestamps are on.",
+          "help" : "The transcript's timed spans in seconds from the start of the recording, each with its text, while timestamps are on.",
           "key" : "segments",
           "required" : false,
           "title" : "Segments",
@@ -64423,14 +64423,14 @@
       ],
       "outputs" : [
         {
-          "help" : "The transcript of the first 30 seconds.",
+          "help" : "The transcript of the whole recording, window after window.",
           "key" : "text",
           "required" : true,
           "title" : "Transcript",
           "valueType" : "text"
         },
         {
-          "help" : "The transcript's timed spans, each with its text, while timestamps are on.",
+          "help" : "The transcript's timed spans in seconds from the start of the recording, each with its text, while timestamps are on.",
           "key" : "segments",
           "required" : false,
           "title" : "Segments",
@@ -64593,14 +64593,14 @@
       ],
       "outputs" : [
         {
-          "help" : "The transcript of the first 30 seconds.",
+          "help" : "The transcript of the whole recording, window after window.",
           "key" : "text",
           "required" : true,
           "title" : "Transcript",
           "valueType" : "text"
         },
         {
-          "help" : "The transcript's timed spans, each with its text, while timestamps are on.",
+          "help" : "The transcript's timed spans in seconds from the start of the recording, each with its text, while timestamps are on.",
           "key" : "segments",
           "required" : false,
           "title" : "Segments",

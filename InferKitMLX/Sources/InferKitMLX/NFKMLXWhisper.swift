@@ -531,6 +531,153 @@ public final class NFKMLXWhisperNet: Module {
     /// `<|notimestamps|>`, which sits immediately below the timestamp range.
     var noTimestampsToken: Int { configuration.timestampBegin - 1 }
 
+    /// `<|nospeech|>`, two below the timestamp range in every multilingual vocabulary.
+    var noSpeechToken: Int { configuration.timestampBegin - 2 }
+
+    /// `<|startofprev|>`, which opens the previous window's text in a conditioned prompt.
+    var startOfPreviousToken: Int { configuration.timestampBegin - 3 }
+
+    // MARK: Long-form transcription
+
+    /// One window's greedy decode as the reference's `DecodingTask` runs it at temperature 0: the ids it
+    /// sampled (the closing `<|endoftext|>` excluded), the summed log-probability of every id it took
+    /// (the closing one included), and the probability the opening position gave `<|nospeech|>`.
+    public struct WindowDecode: Sendable {
+        public var tokens: [Int]
+        public var sumLogProbability: Double
+        public var noSpeechProbability: Double
+        /// The reference's `avg_logprob`: the sum over one more than the sampled ids.
+        public var averageLogProbability: Double { sumLogProbability / Double(tokens.count + 1) }
+    }
+
+    /// Decodes one 30-second window, conditioned on `previous`: the reference prepends `<|startofprev|>`
+    /// and the last `nTextCtx / 2 - 1` previous ids to the decode prompt. The rules are the plain or the
+    /// timestamped decode's, applied from the first sampled position.
+    public func decodeWindow(_ mel: MLXArray, previous: [Int], timestamps: Bool) -> WindowDecode {
+        let audio = encoder(typed(mel))
+        let sequence = timestamps ? configuration.promptTokens.filter { $0 != noTimestampsToken } : configuration.promptTokens
+        let context = Array(previous.suffix(configuration.nTextCtx / 2 - 1))
+        var tokens = (context.isEmpty ? [] : [startOfPreviousToken] + context) + sequence
+        let sampleBegin = tokens.count
+        let startIndex = context.isEmpty ? 0 : context.count + 1
+        let standing = timestamps ? suppressionMask(through: configuration.timestampBegin) : suppressionMask()
+        let opening = openingSuppressionMask(standing)
+        var sum = 0.0
+        var noSpeech = 0.0
+        for _ in 0 ..< configuration.maxTokens {
+            let tokenArray = MLXArray(tokens.map { Int32($0) }).reshaped([1, tokens.count])
+            let all = decoder(tokenArray, audio: audio)[0].asType(.float32)
+            if tokens.count == sampleBegin {
+                let opened = softmax(all[startIndex], axis: -1)
+                noSpeech = Double(opened[noSpeechToken].item(Float.self))
+            }
+            var logits = all[tokens.count - 1] + (tokens.count == sampleBegin ? opening : standing)
+            if timestamps {
+                logits = logits + timestampRuleMask(sampled: Array(tokens.dropFirst(sampleBegin)))
+                logits = takingATimestamp(logits) ? logits + textMask() : logits
+            }
+            let next = logits.argMax().item(Int.self)
+            sum += Double((logits - logSumExp(logits))[next].item(Float.self))
+            if next == configuration.endToken { break }
+            tokens.append(next)
+            if tokens.count > configuration.nTextCtx { break }
+        }
+        return WindowDecode(tokens: Array(tokens.dropFirst(sampleBegin)), sumLogProbability: sum, noSpeechProbability: noSpeech)
+    }
+
+    /// A span of a recording, in seconds from its start, with the ids decoded inside it.
+    public struct RecordingSegment: Sendable {
+        public var start: Double
+        public var end: Double
+        public var tokens: [Int]
+    }
+
+    /// The mel frames a window covers: 30 seconds at the 10 ms hop.
+    static let windowFrames = 3000
+
+    /// The segments one window's ids make, in seconds from the recording's start (`offset` is the window's
+    /// start), and the mel frames `seek` moves by: the reference's reading of a window that covered
+    /// `frames` frames. Each timestamp is two frames.
+    func windowSegments(_ tokens: [Int], offset: Double, frames: Int) -> (segments: [RecordingSegment], advance: Int) {
+        let begin = configuration.timestampBegin
+        // The reference's time_precision: two mel frames of 160 samples at 16 kHz, a double.
+        let precision = Double(2 * 160) / 16_000
+        let isTimestamp = tokens.map { $0 >= begin }
+        let singleTimestampEnding = isTimestamp.count >= 2 && !isTimestamp[isTimestamp.count - 2] && isTimestamp[isTimestamp.count - 1]
+        var consecutive = [Int]()
+        for index in 1 ..< max(tokens.count, 1) where isTimestamp[index - 1] && isTimestamp[index] {
+            consecutive.append(index)
+        }
+        guard !consecutive.isEmpty else {
+            var duration = Double(frames) * 0.01
+            if let lastTimestamp = tokens.last(where: { $0 >= begin }), lastTimestamp != begin {
+                duration = Double(lastTimestamp - begin) * precision
+            }
+            return ([RecordingSegment(start: offset, end: offset + duration, tokens: tokens)], frames)
+        }
+        let slices = singleTimestampEnding ? consecutive + [tokens.count] : consecutive
+        var segments = [RecordingSegment]()
+        var last = 0
+        for slice in slices {
+            let piece = Array(tokens[last ..< slice])
+            segments.append(RecordingSegment(start: offset + Double(piece[0] - begin) * precision,
+                                             end: offset + Double(piece[piece.count - 1] - begin) * precision, tokens: piece))
+            last = slice
+        }
+        return (segments, singleTimestampEnding ? frames : (tokens[last - 1] - begin) * 2)
+    }
+
+    /// A whole recording, transcribed as the reference's `transcribe` does at temperature 0 with each
+    /// window conditioned on the text before it.
+    ///
+    /// @discussion The log-mel is computed once over the recording followed by 30 seconds of silence, so
+    /// its range is the whole file's. Each pass takes the 30 seconds from `seek`, zero-padded in the mel,
+    /// and decodes it:
+    /// - A window the model calls silent (`<|nospeech|>` above 0.6, and an average log-probability not
+    ///   above -1) is skipped whole.
+    /// - With timestamps, each pair of adjacent timestamps closes a segment. A window that ends on a
+    ///   single timestamp moves `seek` past the window; otherwise `seek` moves to the last closed
+    ///   timestamp, so the rest is decoded again in the next window. A window with no closed pair is one
+    ///   segment up to its last timestamp, or its length.
+    /// - Without timestamps, each window is one segment of its length.
+    /// A segment that has no length or no text keeps its place with no ids. `decodeText` turns ids into
+    /// a segment's text for that test.
+    public func transcribeRecording(_ samples: [Float], timestamps: Bool,
+                                    decodeText: ([Int]) -> String) -> (segments: [RecordingSegment], tokens: [Int]) {
+        let rate = 16_000
+        let mel = NFKMLXMel.logMel(samples + [Float](repeating: 0, count: 30 * rate), sampleRate: rate, nMels: configuration.nMels)
+        let contentFrames = mel.shape[1] - Self.windowFrames
+        var seek = 0
+        var allTokens = [Int]()
+        var segments = [RecordingSegment]()
+        while seek < contentFrames {
+            let offset = Double(seek) * 0.01
+            let size = min(Self.windowFrames, contentFrames - seek)
+            var window = mel[0..., seek ..< (seek + size), 0...]
+            if size < Self.windowFrames {
+                window = padded(window, widths: [.init((0, 0)), .init((0, Self.windowFrames - size)), .init((0, 0))])
+            }
+            let decoded = decodeWindow(window, previous: allTokens, timestamps: timestamps)
+            if decoded.noSpeechProbability > 0.6 && !(decoded.averageLogProbability > -1.0) {
+                seek += size
+                continue
+            }
+            var (current, advance) = windowSegments(decoded.tokens, offset: offset, frames: size)
+            // The timestamp rules give every segment a length, so the reference always moves on; a
+            // window that would not is taken whole rather than decoded again.
+            seek += advance > 0 ? advance : size
+            for index in current.indices {
+                let text = decodeText(current[index].tokens.filter { $0 < configuration.endToken })
+                if current[index].start == current[index].end || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    current[index].tokens = []
+                }
+            }
+            segments += current
+            allTokens += current.flatMap(\.tokens)
+        }
+        return (segments, allTokens)
+    }
+
     /// Pairs the sampled ids into spans. A trailing timestamp with no closing one stays open.
     private func segments(from sampled: [Int]) -> [TimedSegment] {
         var result = [TimedSegment]()
@@ -669,6 +816,14 @@ public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
     /// Introduced in InferKit 0.1.0.
     @objc public var emitsTimestamps: Bool = false
 
+    /// Whether a run transcribes the whole recording, window after window as the reference's `transcribe`
+    /// does, rather than its first 30 seconds alone.
+    ///
+    /// @discussion Off by default, which keeps the single-window decode `whisper.decode` performs. A
+    /// catalog build turns it on. The recording is resampled to 16 kHz, segments carry seconds from the
+    /// start of the file, and each window is conditioned on the text before it. Introduced in InferKit 0.4.0.
+    @objc public var transcribesWholeRecording: Bool = false
+
     @objc public var isReady: Bool { true }
     @objc public var backendIdentifier: String { identifier }
 
@@ -687,6 +842,10 @@ public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
         guard let (samples, sampleRate) = Self.audio(from: request) else {
             throw NFKMLXError.unsupportedInput
         }
+        let timestamps = (request.parameter(forKey: NFKMLXGenerationParameterKey.timestamps) as? NSNumber)?.boolValue ?? emitsTimestamps
+        if transcribesWholeRecording {
+            return transcribeRecording(NFKMLXAudioRate.matched(samples, from: sampleRate, to: 16_000), timestamps: timestamps)
+        }
         // Whisper is trained only on 30-second inputs; pad with silence (or trim) to that length so a
         // short clip is not out of the model's distribution — the dominant cause of word errors.
         let targetSamples = 30 * sampleRate
@@ -697,7 +856,6 @@ public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
             prepared = Array(prepared.prefix(targetSamples))
         }
         let mel = NFKMLXMel.logMel(prepared, sampleRate: sampleRate, nMels: net.configuration.nMels)
-        let timestamps = (request.parameter(forKey: NFKMLXGenerationParameterKey.timestamps) as? NSNumber)?.boolValue ?? emitsTimestamps
         guard timestamps else {
             return NFKInferenceResult(outputs: [NFKOutputText: transcript(net.transcribe(mel))])
         }
@@ -710,6 +868,21 @@ public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
         }
         return NFKInferenceResult(outputs: [NFKOutputText: transcript(words),
                                             NFKOutputSegments: segments])
+    }
+
+    /// The whole recording's transcript and, with timestamps, its segments in file time. A segment the
+    /// reference clears (no length or no text) is left out.
+    private func transcribeRecording(_ samples: [Float], timestamps: Bool) -> NFKInferenceResult {
+        let begin = net.configuration.timestampBegin
+        let (segments, tokens) = net.transcribeRecording(samples, timestamps: timestamps) { transcript($0) }
+        var outputs: [String: Any] = [NFKOutputText: transcript(tokens.filter { $0 < begin })]
+        if timestamps {
+            outputs[NFKOutputSegments] = segments.filter { !$0.tokens.isEmpty }.map {
+                NFKAudioSegment(startSeconds: $0.start, endSeconds: $0.end,
+                                label: transcript($0.tokens.filter { $0 < begin }), confidence: 1)
+            }
+        }
+        return NFKInferenceResult(outputs: outputs)
     }
 
     private func transcript(_ tokens: [Int]) -> String {
@@ -892,6 +1065,7 @@ public final class NFKMLXWhisper: NSObject {
         let holder = NFKMLXWhisperHolder(net)
         let backend = NFKMLXWhisperBackend(net: holder.net, tokenizer: tokenizer, identifier: identifier)
         backend.emitsTimestamps = true
+        backend.transcribesWholeRecording = true
         return backend
     }
 

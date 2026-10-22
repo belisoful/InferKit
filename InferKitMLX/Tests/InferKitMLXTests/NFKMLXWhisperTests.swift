@@ -328,4 +328,52 @@ final class NFKMLXWhisperTests: XCTestCase {
         XCTAssertFalse(segments.isEmpty)
         XCTAssertTrue(segments.allSatisfy { $0.endSeconds >= $0.startSeconds && !($0.label ?? "").isEmpty })
     }
+
+    // MARK: Long-form transcription
+
+    /// The reference's reading of a window (timestamps begin at id 5, 20 ms apart): adjacent timestamps
+    /// close segments, a window ending on one timestamp is taken whole, one ending on text moves to its last
+    /// closed timestamp, and a window with no closed pair is one segment to its last timestamp or its end.
+    func testAWindowsTimestampsMakeTheReferencesSegmentsAndSeek() {
+        let net = NFKMLXWhisper.makeNet(timedConfiguration())
+        let ending = net.windowSegments([5, 0, 0, 15, 15, 0, 30], offset: 10, frames: 3000)
+        XCTAssertEqual(ending.segments.map(\.tokens), [[5, 0, 0, 15], [15, 0, 30]])
+        XCTAssertEqual(ending.segments[0].start, 10, accuracy: 1e-12)
+        XCTAssertEqual(ending.segments[1].start, 10.2, accuracy: 1e-12)
+        XCTAssertEqual(ending.segments[0].end, 10.2, accuracy: 1e-12)
+        XCTAssertEqual(ending.segments[1].end, 10.5, accuracy: 1e-12)
+        XCTAssertEqual(ending.advance, 3000, "a window ending on a single timestamp is taken whole")
+
+        let open = net.windowSegments([5, 0, 15, 15, 0], offset: 0, frames: 3000)
+        XCTAssertEqual(open.segments.map(\.tokens), [[5, 0, 15]])
+        XCTAssertEqual(open.advance, 20, "the next window starts at the last closed timestamp, two frames a step")
+
+        let untimed = net.windowSegments([5, 0, 0], offset: 4, frames: 1200)
+        XCTAssertEqual(untimed.segments.count, 1)
+        XCTAssertEqual(untimed.segments[0].end, 16, accuracy: 1e-12, "no closed pair runs to the window's end")
+        XCTAssertEqual(untimed.advance, 1200)
+
+        let closedOnce = net.windowSegments([5, 0, 12], offset: 0, frames: 3000)
+        XCTAssertEqual(closedOnce.segments[0].end, 0.14, accuracy: 1e-12, "to its last timestamp")
+        XCTAssertEqual(closedOnce.advance, 3000)
+    }
+
+    func testACatalogBuildTranscribesTheWholeRecording() throws {
+        try requireMLXRuntime()
+        let backend = try NFKMLXWhisper.catalogBackend(configuration: timedConfiguration(), location: try releaseDirectory(withCheckpoint: true),
+                                                       weightsDownload: nil, precision: .checkpoint, identifier: "whisper-test")
+        XCTAssertTrue(backend.transcribesWholeRecording)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-long-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let samples = (0 ..< 40 * 16000).map { index in 0.1 * sinf(Float(index) * 0.05) }
+        try NFKMLXWaveFile.write(samples: samples, sampleRate: 16000, to: url)
+        let audio = NFKAudioAsset(fileURL: url, durationSeconds: 40, sampleRate: 16000, channelCount: 1)
+
+        let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: audio]))
+        let text = try XCTUnwrap(result.text)
+        XCTAssertTrue(CharacterSet.letters.isSuperset(of: CharacterSet(charactersIn: text)), text)
+        let segments = try XCTUnwrap(result.segments)
+        XCTAssertEqual(segments.map(\.startSeconds), segments.map(\.startSeconds).sorted(), "segments come in file order")
+        XCTAssertTrue(segments.allSatisfy { $0.endSeconds <= 70 && $0.startSeconds <= $0.endSeconds })
+    }
 }

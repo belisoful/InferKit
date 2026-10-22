@@ -66,7 +66,26 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   inside the directory is read first, for a release laid out by hand. All three registrations (`register()`,
   `registerAdditionalModels`, `registerWhisper` with its precision option, which `registerAll` runs last)
   build through it. It turns `emitsTimestamps` on and sets `maxTokens` to `nTextCtx / 2` (224), the
-  reference's `sample_len`; the configurations keep their 64, which the parity tests build with. A request's `NFKMLXGenerationParameterKey.timestamps` overrides `emitsTimestamps`.
+  reference's `sample_len`; the configurations keep their 64, which the parity tests build with. A
+  request's `NFKMLXGenerationParameterKey.timestamps` overrides `emitsTimestamps`.
+  **Long-form** (`transcribesWholeRecording`, on in catalog builds; `NFKMLXWhisperNet.transcribeRecording`)
+  follows openai-whisper's `transcribe` at `temperature=0.0` (no fallback, so no compression-ratio test)
+  with `condition_on_previous_text`: the log-mel is computed once over the recording plus 30 s of zeros
+  (its max-8 floor is the whole file's), each window is `mel[seek : seek + min(3000, content - seek)]`
+  zero-padded in the mel domain, and `decodeWindow` prepends `<|startofprev|>` and the last
+  `nTextCtx / 2 - 1` earlier ids. `<|nospeech|>`'s probability is the softmax of the raw logits at the
+  `<|startoftranscript|>` position on the first step; the summed log-probability is over the filtered
+  logits of every taken id, the closing `<|endoftext|>` included, divided by the ids plus one. A window
+  above 0.6 no-speech whose average is not above -1 is skipped whole. `windowSegments` is the reference's
+  reading of a window (consecutive timestamps close segments; a single trailing timestamp takes the
+  whole window, else `seek` moves to the last closed timestamp at two frames a step; no closed pair is
+  one segment to the last timestamp or the window's end), at the reference's double 0.02 s. A segment
+  with no length or no text keeps its place with no ids, and the backend leaves it out of
+  `NFKOutputSegments`. The audio is resampled to 16 kHz first. Parity:
+  `testWhisperTranscribesALongRecordingAsTheReferenceDoes` against `run_reference.py whisper_transcribe`
+  (the validation clip repeated with 1 s silences past 75 s, float32 both sides), keyed
+  `IK_PARITY_WHISPER_TRANSCRIBE`. The decoder runs without a key-value cache, as the other paths do, so a
+  long recording on a large size is slow.
   **Customization is LoRA and it ships** (`NFKMLXWhisperTraining.swift`): `NFKMLXWhisper.network(weightsURL:configuration:)`
   builds the net, `spectrogram(for:sampleRate:configuration:)` pads a clip to the 30-second window, and
   `fineTune(_:examples:rank:alpha:…)` adapts the decoder's query and value projections with the encoder

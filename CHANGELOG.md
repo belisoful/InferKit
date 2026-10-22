@@ -1462,6 +1462,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   as the reference's `transcribe` does. The request option `NFKMLXGenerationParameterKey.timestamps` turns
   the timed decode off, and `NFKMLXWhisperBackend.emitsTimestamps` is its default.
 - A catalog build decodes up to 224 tokens per window, the reference's `sample_len`, up from 64.
+- A catalog build transcribes the whole recording, not only its first 30 seconds, as the reference's
+  `transcribe` does at temperature 0: window after window from the last closed timestamp, each conditioned
+  on the text before it, a silent window skipped, and the segments in seconds from the start of the file.
+  `NFKMLXWhisperBackend.transcribesWholeRecording` turns it on for a backend built another way, and
+  `NFKMLXWhisperNet.transcribeRecording` and `decodeWindow` are the Swift steps.
 
 #### The reference arithmetic runs transformers' chunked scans
 

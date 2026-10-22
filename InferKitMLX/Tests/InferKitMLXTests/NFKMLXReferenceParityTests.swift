@@ -5881,6 +5881,47 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     // one: the times only exist when `<|notimestamps|>` is left out of the prompt and the timestamp
     // range stays unmasked. `ApplyTimestampRules` then orders the result, and the record carries the
     // ids the reference's own rules produce.
+    /// PARITY: the reference's long-form `transcribe` at temperature 0 over a recording of several windows
+    /// and a silence: every segment's ids, its times, and the text.
+    func testWhisperTranscribesALongRecordingAsTheReferenceDoes() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_WHISPER_TRANSCRIBE"] else { throw XCTSkip("set IK_PARITY_WHISPER_TRANSCRIBE") }
+        guard let tokenizerDirectory = config["IK_TOKENIZER_WHISPER"],
+              let tokenizer = NFKMLXWhisper.tokenizer(in: URL(fileURLWithPath: tokenizerDirectory)) else {
+            throw XCTSkip("set IK_TOKENIZER_WHISPER")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let waveform = try XCTUnwrap(arrays["waveform"]).asArray(Float.self)
+        var configuration = NFKMLXWhisper.catalogConfiguration(for: .tiny)
+        configuration.suppressTokens = try XCTUnwrap(arrays["non_speech_tokens"]).asArray(Int64.self).map(Int.init)
+        configuration.timestampBegin = Int(try XCTUnwrap(arrays["timestamp_begin"]).asArray(Int64.self)[0])
+        let net = NFKMLXWhisper.makeNet(configuration)
+        try NFKMLXWhisper.loadWeights(into: net, from: weights("IK_VAL_WHISPER"), precision: .float32)
+
+        let (segments, tokens) = net.transcribeRecording(waveform, timestamps: true) {
+            tokenizer.decode($0.map { NSNumber(value: $0) })
+        }
+        let bounds = try XCTUnwrap(arrays["segment_bounds"]).asArray(Float.self)
+        let lengths = try XCTUnwrap(arrays["segment_lengths"]).asArray(Int64.self).map(Int.init)
+        let referenceTokens = try XCTUnwrap(arrays["segment_tokens"]).asArray(Int64.self).map(Int.init)
+        var referenceSegments = [[Int]]()
+        var start = 0
+        for length in lengths {
+            referenceSegments.append(Array(referenceTokens[start ..< start + length]))
+            start += length
+        }
+        let text = tokenizer.decode(tokens.filter { $0 < configuration.timestampBegin }.map { NSNumber(value: $0) })
+        let referenceText = String(decoding: try XCTUnwrap(arrays["text_bytes"]).asArray(Int64.self).map(UInt8.init), as: UTF8.self)
+        print("VALIDATION PARITY whisper-transcribe: \(segments.count) segments vs \(lengths.count), text \(text.debugDescription)")
+        XCTAssertEqual(segments.map(\.tokens), referenceSegments, "each window decodes and seeks as the reference's")
+        XCTAssertEqual(segments.count, lengths.count)
+        for (index, segment) in segments.enumerated() where index < lengths.count {
+            XCTAssertEqual(segment.start, Double(bounds[2 * index]), accuracy: 1e-4, "segment \(index) start")
+            XCTAssertEqual(segment.end, Double(bounds[2 * index + 1]), accuracy: 1e-4, "segment \(index) end")
+        }
+        XCTAssertEqual(text, referenceText)
+    }
+
     func testWhisperReproducesTheReferenceTimestampRules() throws {
         try requireMLXRuntime()
         guard let path = config["IK_PARITY_WHISPER"] else { throw XCTSkip("set IK_PARITY_WHISPER") }
