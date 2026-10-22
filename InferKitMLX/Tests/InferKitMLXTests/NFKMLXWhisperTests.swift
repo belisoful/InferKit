@@ -376,4 +376,46 @@ final class NFKMLXWhisperTests: XCTestCase {
         XCTAssertEqual(segments.map(\.startSeconds), segments.map(\.startSeconds).sorted(), "segments come in file order")
         XCTAssertTrue(segments.allSatisfy { $0.endSeconds <= 70 && $0.startSeconds <= $0.endSeconds })
     }
+
+    /// A decode that feeds the cache one new token a step gives each step the logits the full recompute
+    /// gives its last row.
+    func testTheCachedDecodeMatchesTheFullRecomputeRowByRow() throws {
+        try requireMLXRuntime()
+        let net = NFKMLXWhisper.makeNet(timedConfiguration())
+        let mel = NFKMLXMel.logMel([Float](repeating: 0.2, count: 16000), sampleRate: 16000, nMels: 80)
+        let audio = net.encoder(mel)
+        let tokens = [2, 3, 4, 7, 9, 11]
+        let full = net.decoder(MLXArray(tokens.map { Int32($0) }).reshaped([1, tokens.count]), audio: audio)[0]
+        let caches = net.decoder.blocks.map { _ in NFKWhisperBlockCache() }
+        let opening = net.decoder(MLXArray(tokens.prefix(3).map { Int32($0) }).reshaped([1, 3]), audio: audio, caches: caches)[0]
+        XCTAssertLessThan(abs(opening - full[0 ..< 3]).max().item(Float.self), 1e-4)
+        for index in 3 ..< tokens.count {
+            let step = net.decoder(MLXArray([Int32(tokens[index])]).reshaped([1, 1]), audio: audio, caches: caches)[0, 0]
+            XCTAssertLessThan(abs(step - full[index]).max().item(Float.self), 1e-4, "step \(index)")
+            XCTAssertEqual(step.argMax().item(Int.self), full[index].argMax().item(Int.self))
+        }
+    }
+
+    /// The opening prompt names the language and the task, and detection picks among the language tokens.
+    func testTheWindowPromptNamesTheLanguageAndTheTask() throws {
+        try requireMLXRuntime()
+        let net = NFKMLXWhisper.makeNet(NFKMLXWhisper.configuration(for: .tiny))
+        XCTAssertEqual(net.promptSequence(language: 50259, translates: false, timestamps: false), [50258, 50259, 50359, 50363])
+        XCTAssertEqual(net.promptSequence(language: 50260, translates: true, timestamps: true), [50258, 50260, 50358])
+        XCTAssertEqual(net.languageTokens, 50259 ..< 50358, "99 languages before <|translate|>")
+        XCTAssertEqual(NFKMLXWhisper.languageTable(for: net)["zh"], 50260)
+        let mel = NFKMLXMel.logMel([Float](repeating: 0.1, count: 30 * 16000), sampleRate: 16000, nMels: 80)
+        XCTAssertTrue(net.languageTokens.contains(net.detectLanguage(mel)))
+    }
+
+    func testAReleasesAddedTokensNameItsLanguages() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-added-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let added = ["<|endoftext|>": 50257, "<|en|>": 50259, "<|xx|>": 50260, "<|translate|>": 50358]
+        try JSONSerialization.data(withJSONObject: added).write(to: directory.appendingPathComponent("added_tokens.json"))
+        let net = NFKMLXWhisper.makeNet(NFKMLXWhisper.configuration(for: .tiny))
+        XCTAssertEqual(NFKMLXWhisper.languageTable(in: directory, for: net), ["en": 50259, "xx": 50260],
+                       "only the tokens in the language range are languages")
+    }
 }

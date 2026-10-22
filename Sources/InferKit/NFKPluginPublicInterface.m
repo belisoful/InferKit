@@ -129,6 +129,7 @@ static const void *const NFKPluginPublicInterface[] = {
 	(const void *)&NFKOutputPose,
 	(const void *)&NFKOutputClassifications,
 	(const void *)&NFKOutputSegments,
+	(const void *)&NFKOutputLanguage,
 	(const void *)&NFKOutputMIDI,
 	(const void *)&NFKOutputBeats,
 	(const void *)&NFKOutputTempo,

@@ -25,6 +25,9 @@ public final class NFKMLXGenerationParameterKey: NSObject {
     /// (`NSNumber` boolean). Whisper reads it; its default is the backend's ``NFKMLXWhisperBackend/emitsTimestamps``.
     /// Introduced in InferKit 0.4.0.
     @objc public static let timestamps = "NFKMLXParameterTimestamps"
+    /// What a speech recognizer makes of the speech (`NSString`): "transcribe" for text in the language
+    /// spoken, or "translate" for English text. Whisper reads it. Introduced in InferKit 0.4.0.
+    @objc public static let speechTask = "NFKMLXParameterSpeechTask"
     /// The bit width to store the key-value cache at (`NSNumber`, 2 to 8). Setting it enables cache
     /// quantization; see ``NFKMLXGenerationOptions/cacheQuantization``.
     @objc public static let cacheQuantizationBits = "NFKMLXParameterCacheQuantizationBits"

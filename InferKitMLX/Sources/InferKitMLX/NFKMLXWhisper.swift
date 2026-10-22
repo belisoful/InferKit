@@ -315,6 +315,48 @@ final class NFKWhisperAttention: Module {
         return out(attended)
     }
 
+    /// Attention for `x`'s rows over what `cache` holds: the keys and values of the rows before them, which
+    /// `x`'s own are appended to, or for cross-attention `source`'s, projected once. The arithmetic per
+    /// row is the uncached call's.
+    func callAsFunction(_ x: MLXArray, source: MLXArray?, mask: MLXArray?, cache: NFKWhisperAttentionCache) -> MLXArray {
+        let (batch, tokens, state) = (x.shape[0], x.shape[1], x.shape[2])
+        let headDim = state / heads
+        if let source {
+            if cache.keys == nil {
+                cache.keys = key(source)
+                cache.values = value(source)
+            }
+        } else {
+            let keys = key(x)
+            let values = value(x)
+            cache.keys = cache.keys.map { concatenated([$0, keys], axis: 1) } ?? keys
+            cache.values = cache.values.map { concatenated([$0, values], axis: 1) } ?? values
+        }
+        let keys = cache.keys!
+        let values = cache.values!
+        let contextTokens = keys.shape[1]
+        func split(_ y: MLXArray, _ length: Int) -> MLXArray {
+            y.reshaped([batch, length, heads, headDim]).transposed(0, 2, 1, 3)
+        }
+        if NFKReferenceRounding.isReduced(x) {
+            let q = split(NFKReferenceRounding.scaled(query(x), by: 1 / Float(headDim).squareRoot()), tokens)
+            var scores = q.matmul(split(keys, contextTokens).transposed(0, 1, 3, 2))
+            if let mask { scores = scores + mask.asType(scores.dtype) }
+            return out(NFKReferenceRounding.halfSoftmax(scores, fast: softmax(scores, axis: -1, precise: true))
+                .matmul(split(values, contextTokens))
+                .transposed(0, 2, 1, 3).reshaped([batch, tokens, state]))
+        }
+        let scale = powf(Float(headDim), -0.25)
+        let q = split(query(x) * scale, tokens).reshaped([batch * heads, tokens, headDim])
+        let k = split(keys * scale, contextTokens).reshaped([batch * heads, contextTokens, headDim])
+        let v = split(values, contextTokens).reshaped([batch * heads, contextTokens, headDim])
+        var scores = q.matmul(k.transposed(0, 2, 1))
+        if let mask { scores = scores + mask }
+        let attended = softmax(scores, axis: -1).matmul(v)
+            .reshaped([batch, heads, tokens, headDim]).transposed(0, 2, 1, 3).reshaped([batch, tokens, state])
+        return out(attended)
+    }
+
     /// Half-precision attention rounded as transformers' Whisper attention rounds it: the query scaled
     /// by `headDim^-0.5` in float32 and rounded once, the scores rounded, the softmax formed in float32.
     private func reducedAttention(_ x: MLXArray, context: MLXArray, mask: MLXArray?) -> MLXArray {
@@ -330,6 +372,19 @@ final class NFKWhisperAttention: Module {
             .matmul(split(value(context)))
             .transposed(0, 2, 1, 3).reshaped([batch, tokens, state])
     }
+}
+
+/// One attention's keys and values, as its projections produced them, for a decode that runs one step
+/// at a time.
+final class NFKWhisperAttentionCache {
+    var keys: MLXArray?
+    var values: MLXArray?
+}
+
+/// A decoder block's self- and cross-attention caches.
+final class NFKWhisperBlockCache {
+    let attention = NFKWhisperAttentionCache()
+    let crossAttention = NFKWhisperAttentionCache()
 }
 
 /// A Whisper residual block: self-attention, optional cross-attention, and an MLP.
@@ -357,9 +412,21 @@ final class NFKWhisperBlock: Module {
         if let crossAttn, let crossAttnLN, let audio {
             h = h + crossAttn(crossAttnLN(h), source: audio, mask: nil)
         }
+        return h + feedForward(h)
+    }
+
+    /// The block over new rows, with each attention's earlier keys and values in `cache`.
+    func callAsFunction(_ x: MLXArray, audio: MLXArray?, mask: MLXArray?, cache: NFKWhisperBlockCache) -> MLXArray {
+        var h = x + attn(attnLN(x), source: nil, mask: mask, cache: cache.attention)
+        if let crossAttn, let crossAttnLN, let audio {
+            h = h + crossAttn(crossAttnLN(h), source: audio, mask: nil, cache: cache.crossAttention)
+        }
+        return h + feedForward(h)
+    }
+
+    private func feedForward(_ h: MLXArray) -> MLXArray {
         let activation = mlp[1] as! GELU
-        let feed = (mlp[2] as! Linear)(NFKReferenceRounding.wide((mlp[0] as! Linear)(mlpLN(h))) { activation($0) })
-        return h + feed
+        return (mlp[2] as! Linear)(NFKReferenceRounding.wide((mlp[0] as! Linear)(mlpLN(h))) { activation($0) })
     }
 }
 
@@ -410,6 +477,18 @@ final class NFKWhisperDecoder: Module {
         x = ln(x)
         return x.matmul(tokenEmbedding.weight.transposed(1, 0))
     }
+
+    /// The logits of `tokens`, which follow the `caches`' rows: each block's caches gain the new rows'
+    /// keys and values, and the first call fills the cross-attention's from `audio`.
+    func callAsFunction(_ tokens: MLXArray, audio: MLXArray, caches: [NFKWhisperBlockCache]) -> MLXArray {
+        let length = tokens.shape[1]
+        let offset = caches.first?.attention.keys?.shape[1] ?? 0
+        var x = tokenEmbedding(tokens) + positionalEmbedding[offset ..< (offset + length)]
+        let mask = length > 1 ? NFKMLXWhisperNet.causalMask(length, after: offset) : nil
+        for (block, cache) in zip(blocks, caches) { x = block(x, audio: audio, mask: mask, cache: cache) }
+        x = ln(x)
+        return x.matmul(tokenEmbedding.weight.transposed(1, 0))
+    }
 }
 
 /// The Whisper model: audio encoder + text decoder, with greedy transcription.
@@ -442,6 +521,19 @@ public final class NFKMLXWhisperNet: Module {
             }
         }
         return values.withUnsafeBufferPointer { MLXArray($0, [length, channels]) }
+    }
+
+    /// The mask of `length` new rows that follow `offset` earlier ones: each sees every earlier row and the
+    /// new rows up to itself.
+    static func causalMask(_ length: Int, after offset: Int) -> MLXArray {
+        let width = offset + length
+        var values = [Float](repeating: 0, count: length * width)
+        for i in 0 ..< length {
+            for j in (offset + i + 1) ..< width {
+                values[i * width + j] = -1e9
+            }
+        }
+        return values.withUnsafeBufferPointer { MLXArray($0, [length, width]) }
     }
 
     static func causalMask(_ length: Int) -> MLXArray {
@@ -537,6 +629,29 @@ public final class NFKMLXWhisperNet: Module {
     /// `<|startofprev|>`, which opens the previous window's text in a conditioned prompt.
     var startOfPreviousToken: Int { configuration.timestampBegin - 3 }
 
+    /// `<|transcribe|>` and `<|translate|>`, the task a decode prompt names after its language.
+    var transcribeToken: Int { configuration.timestampBegin - 5 }
+    var translateToken: Int { configuration.timestampBegin - 6 }
+
+    /// The language tokens, from the one after `<|startoftranscript|>` to the one before `<|translate|>`.
+    var languageTokens: Range<Int> { (configuration.promptTokens[0] + 1) ..< translateToken }
+
+    /// The decode prompt that opens a window: `<|startoftranscript|>`, the language, the task, and
+    /// `<|notimestamps|>` for a decode without timestamps.
+    func promptSequence(language: Int, translates: Bool, timestamps: Bool) -> [Int] {
+        [configuration.promptTokens[0], language, translates ? translateToken : transcribeToken]
+            + (timestamps ? [] : [noTimestampsToken])
+    }
+
+    /// The language token the model gives a window, as the reference's `detect_language` reads it: the
+    /// logits after `<|startoftranscript|>` alone, over the language tokens.
+    public func detectLanguage(_ mel: MLXArray) -> Int {
+        let audio = encoder(typed(mel))
+        let start = MLXArray([Int32(configuration.promptTokens[0])]).reshaped([1, 1])
+        let logits = decoder(start, audio: audio)[0, 0].asType(.float32)
+        return languageTokens.lowerBound + logits[languageTokens].argMax().item(Int.self)
+    }
+
     // MARK: Long-form transcription
 
     /// One window's greedy decode as the reference's `DecodingTask` runs it at temperature 0: the ids it
@@ -554,8 +669,15 @@ public final class NFKMLXWhisperNet: Module {
     /// and the last `nTextCtx / 2 - 1` previous ids to the decode prompt. The rules are the plain or the
     /// timestamped decode's, applied from the first sampled position.
     public func decodeWindow(_ mel: MLXArray, previous: [Int], timestamps: Bool) -> WindowDecode {
+        decodeWindow(mel, previous: previous, sequence: timestamps ? configuration.promptTokens.filter { $0 != noTimestampsToken }
+                                                                    : configuration.promptTokens,
+                     timestamps: timestamps)
+    }
+
+    /// Decodes one window as ``decodeWindow(_:previous:timestamps:)`` does, opened by `sequence`, the prompt
+    /// ``promptSequence(language:translates:timestamps:)`` makes.
+    public func decodeWindow(_ mel: MLXArray, previous: [Int], sequence: [Int], timestamps: Bool) -> WindowDecode {
         let audio = encoder(typed(mel))
-        let sequence = timestamps ? configuration.promptTokens.filter { $0 != noTimestampsToken } : configuration.promptTokens
         let context = Array(previous.suffix(configuration.nTextCtx / 2 - 1))
         var tokens = (context.isEmpty ? [] : [startOfPreviousToken] + context) + sequence
         let sampleBegin = tokens.count
@@ -564,14 +686,16 @@ public final class NFKMLXWhisperNet: Module {
         let opening = openingSuppressionMask(standing)
         var sum = 0.0
         var noSpeech = 0.0
+        let caches = decoder.blocks.map { _ in NFKWhisperBlockCache() }
+        var fresh = tokens
         for _ in 0 ..< configuration.maxTokens {
-            let tokenArray = MLXArray(tokens.map { Int32($0) }).reshaped([1, tokens.count])
-            let all = decoder(tokenArray, audio: audio)[0].asType(.float32)
+            let tokenArray = MLXArray(fresh.map { Int32($0) }).reshaped([1, fresh.count])
+            let all = decoder(tokenArray, audio: audio, caches: caches)[0].asType(.float32)
             if tokens.count == sampleBegin {
                 let opened = softmax(all[startIndex], axis: -1)
                 noSpeech = Double(opened[noSpeechToken].item(Float.self))
             }
-            var logits = all[tokens.count - 1] + (tokens.count == sampleBegin ? opening : standing)
+            var logits = all[fresh.count - 1] + (tokens.count == sampleBegin ? opening : standing)
             if timestamps {
                 logits = logits + timestampRuleMask(sampled: Array(tokens.dropFirst(sampleBegin)))
                 logits = takingATimestamp(logits) ? logits + textMask() : logits
@@ -580,6 +704,7 @@ public final class NFKMLXWhisperNet: Module {
             sum += Double((logits - logSumExp(logits))[next].item(Float.self))
             if next == configuration.endToken { break }
             tokens.append(next)
+            fresh = [next]
             if tokens.count > configuration.nTextCtx { break }
         }
         return WindowDecode(tokens: Array(tokens.dropFirst(sampleBegin)), sumLogProbability: sum, noSpeechProbability: noSpeech)
@@ -628,7 +753,8 @@ public final class NFKMLXWhisperNet: Module {
     }
 
     /// A whole recording, transcribed as the reference's `transcribe` does at temperature 0 with each
-    /// window conditioned on the text before it.
+    /// window conditioned on the text before it. `language` is the language token, or nil to detect it
+    /// with ``detectLanguage(_:)``; `translates` asks for English text with `<|translate|>`.
     ///
     /// @discussion The log-mel is computed once over the recording followed by 30 seconds of silence, so
     /// its range is the whole file's. Each pass takes the 30 seconds from `seek`, zero-padded in the mel,
@@ -642,11 +768,14 @@ public final class NFKMLXWhisperNet: Module {
     /// - Without timestamps, each window is one segment of its length.
     /// A segment that has no length or no text keeps its place with no ids. `decodeText` turns ids into
     /// a segment's text for that test.
-    public func transcribeRecording(_ samples: [Float], timestamps: Bool,
-                                    decodeText: ([Int]) -> String) -> (segments: [RecordingSegment], tokens: [Int]) {
+    public func transcribeRecording(_ samples: [Float], timestamps: Bool, language: Int? = nil, translates: Bool = false,
+                                    decodeText: ([Int]) -> String) -> (segments: [RecordingSegment], tokens: [Int], language: Int) {
         let rate = 16_000
         let mel = NFKMLXMel.logMel(samples + [Float](repeating: 0, count: 30 * rate), sampleRate: rate, nMels: configuration.nMels)
         let contentFrames = mel.shape[1] - Self.windowFrames
+        // The reference detects on the recording's first 30 seconds of mel, its padding included.
+        let spoken = language ?? detectLanguage(mel[0..., 0 ..< Self.windowFrames, 0...])
+        let sequence = promptSequence(language: spoken, translates: translates, timestamps: timestamps)
         var seek = 0
         var allTokens = [Int]()
         var segments = [RecordingSegment]()
@@ -657,7 +786,7 @@ public final class NFKMLXWhisperNet: Module {
             if size < Self.windowFrames {
                 window = padded(window, widths: [.init((0, 0)), .init((0, Self.windowFrames - size)), .init((0, 0))])
             }
-            let decoded = decodeWindow(window, previous: allTokens, timestamps: timestamps)
+            let decoded = decodeWindow(window, previous: allTokens, sequence: sequence, timestamps: timestamps)
             if decoded.noSpeechProbability > 0.6 && !(decoded.averageLogProbability > -1.0) {
                 seek += size
                 continue
@@ -675,7 +804,7 @@ public final class NFKMLXWhisperNet: Module {
             segments += current
             allTokens += current.flatMap(\.tokens)
         }
-        return (segments, allTokens)
+        return (segments, allTokens, spoken)
     }
 
     /// Pairs the sampled ids into spans. A trailing timestamp with no closing one stays open.
@@ -794,11 +923,15 @@ public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
     let net: NFKMLXWhisperNet
     let tokenizer: NFKTokenizer?
     private let identifier: String
+    /// Each language code's token: the release's own `added_tokens.json` where it was read, else the
+    /// reference's language order over the model's language tokens.
+    let languages: [String: Int]
 
-    init(net: NFKMLXWhisperNet, tokenizer: NFKTokenizer?, identifier: String = "whisper") {
+    init(net: NFKMLXWhisperNet, tokenizer: NFKTokenizer?, identifier: String = "whisper", languages: [String: Int]? = nil) {
         self.net = net
         self.tokenizer = tokenizer
         self.identifier = identifier
+        self.languages = languages ?? NFKMLXWhisper.languageTable(for: net)
         super.init()
     }
 
@@ -828,14 +961,19 @@ public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
     @objc public var backendIdentifier: String { identifier }
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
-    @objc public var supportedParameterKeys: Set<String> { [NFKMLXGenerationParameterKey.timestamps] }
+    @objc public var supportedParameterKeys: Set<String> {
+        transcribesWholeRecording ? [NFKMLXGenerationParameterKey.timestamps, NFKParameterSourceLanguage, NFKMLXGenerationParameterKey.speechTask]
+                                  : [NFKMLXGenerationParameterKey.timestamps]
+    }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputAudio] }
 
     /// The result keys the backend writes: the transcript, and the timed spans when ``emitsTimestamps`` is
     /// set. Introduced in InferKit 0.4.0.
-    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputSegments] }
+    @objc public var supportedOutputKeys: Set<String> {
+        transcribesWholeRecording ? [NFKOutputText, NFKOutputSegments, NFKOutputLanguage] : [NFKOutputText, NFKOutputSegments]
+    }
 
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
@@ -844,7 +982,19 @@ public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
         }
         let timestamps = (request.parameter(forKey: NFKMLXGenerationParameterKey.timestamps) as? NSNumber)?.boolValue ?? emitsTimestamps
         if transcribesWholeRecording {
-            return transcribeRecording(NFKMLXAudioRate.matched(samples, from: sampleRate, to: 16_000), timestamps: timestamps)
+            var language: Int?
+            if let code = request.parameter(forKey: NFKParameterSourceLanguage) as? String {
+                guard let token = languages[code.lowercased()] else {
+                    throw NFKMLXError.unsupportedConfiguration("\(identifier) has no language \"\(code)\"")
+                }
+                language = token
+            }
+            let task = request.parameter(forKey: NFKMLXGenerationParameterKey.speechTask) as? String ?? NFKMLXWhisper.transcribeTask
+            guard [NFKMLXWhisper.transcribeTask, NFKMLXWhisper.translateTask].contains(task) else {
+                throw NFKMLXError.unsupportedConfiguration("\(identifier) has no task \"\(task)\"; it transcribes or translates")
+            }
+            return transcribeRecording(NFKMLXAudioRate.matched(samples, from: sampleRate, to: 16_000), timestamps: timestamps,
+                                       language: language, translates: task == NFKMLXWhisper.translateTask)
         }
         // Whisper is trained only on 30-second inputs; pad with silence (or trim) to that length so a
         // short clip is not out of the model's distribution — the dominant cause of word errors.
@@ -872,10 +1022,12 @@ public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
 
     /// The whole recording's transcript and, with timestamps, its segments in file time. A segment the
     /// reference clears (no length or no text) is left out.
-    private func transcribeRecording(_ samples: [Float], timestamps: Bool) -> NFKInferenceResult {
+    private func transcribeRecording(_ samples: [Float], timestamps: Bool, language: Int?, translates: Bool) -> NFKInferenceResult {
         let begin = net.configuration.timestampBegin
-        let (segments, tokens) = net.transcribeRecording(samples, timestamps: timestamps) { transcript($0) }
+        let (segments, tokens, spoken) = net.transcribeRecording(samples, timestamps: timestamps, language: language,
+                                                                 translates: translates) { transcript($0) }
         var outputs: [String: Any] = [NFKOutputText: transcript(tokens.filter { $0 < begin })]
+        outputs[NFKOutputLanguage] = languages.first { $0.value == spoken }?.key
         if timestamps {
             outputs[NFKOutputSegments] = segments.filter { !$0.tokens.isEmpty }.map {
                 NFKAudioSegment(startSeconds: $0.start, endSeconds: $0.end,
@@ -1063,19 +1215,59 @@ public final class NFKMLXWhisper: NSObject {
             try loadWeights(into: net, from: weights, precision: precision)
         }
         let holder = NFKMLXWhisperHolder(net)
-        let backend = NFKMLXWhisperBackend(net: holder.net, tokenizer: tokenizer, identifier: identifier)
+        let backend = NFKMLXWhisperBackend(net: holder.net, tokenizer: tokenizer, identifier: identifier,
+                                           languages: directory.flatMap { languageTable(in: $0, for: holder.net) })
         backend.emitsTimestamps = true
         backend.transcribesWholeRecording = true
         return backend
     }
 
-    /// The tokenizer files a release directory holds beside its weights.
-    static let tokenizerFiles = ["vocab.json", "merges.txt"]
+    /// The tokenizer files a release directory holds beside its weights. `added_tokens.json` names the
+    /// language tokens.
+    static let tokenizerFiles = ["vocab.json", "merges.txt", "added_tokens.json"]
+
+    /// The task values ``NFKMLXGenerationParameterKey/speechTask`` takes.
+    static let transcribeTask = "transcribe"
+    static let translateTask = "translate"
+
+    /// The reference's language codes in token order. A size with fewer language tokens takes the first
+    /// that many; large-v3 adds `yue`.
+    static let languageCodes = [
+        "en", "zh", "de", "es", "ru", "ko", "fr", "ja", "pt", "tr", "pl", "ca", "nl", "ar", "sv", "it", "id", "hi", "fi", "vi",
+        "he", "uk", "el", "ms", "cs", "ro", "da", "hu", "ta", "no", "th", "ur", "hr", "bg", "lt", "la", "mi", "ml", "cy", "sk",
+        "te", "fa", "lv", "bn", "sr", "az", "sl", "kn", "et", "mk", "br", "eu", "is", "hy", "ne", "mn", "bs", "kk", "sq", "sw",
+        "gl", "mr", "pa", "si", "km", "sn", "yo", "so", "af", "oc", "ka", "be", "tg", "sd", "gu", "am", "yi", "lo", "uz", "fo",
+        "ht", "ps", "tk", "nn", "mt", "sa", "lb", "my", "bo", "tl", "mg", "as", "tt", "haw", "ln", "ha", "ba", "jw", "su", "yue",
+    ]
+
+    /// The language codes a size knows, in token order.
+    static func languageCodes(for variant: NFKMLXWhisperVariant) -> [String] {
+        let configuration = self.configuration(for: variant)
+        return Array(languageCodes.prefix(configuration.timestampBegin - 6 - (configuration.promptTokens[0] + 1)))
+    }
+
+    /// Each language code's token, in the reference's order over the net's language tokens.
+    static func languageTable(for net: NFKMLXWhisperNet) -> [String: Int] {
+        Dictionary(uniqueKeysWithValues: zip(languageCodes, net.languageTokens))
+    }
+
+    /// Each language code's token as a release's `added_tokens.json` names it (`"<|en|>": 50259`), over the
+    /// net's language tokens, or nil when the file is absent.
+    static func languageTable(in directory: URL, for net: NFKMLXWhisperNet) -> [String: Int]? {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent("added_tokens.json")),
+              let added = (try? JSONSerialization.jsonObject(with: data)) as? [String: NSNumber] else { return nil }
+        let tokens = net.languageTokens
+        var table = [String: Int]()
+        for (token, id) in added where tokens.contains(id.intValue) && token.hasPrefix("<|") && token.hasSuffix("|>") {
+            table[String(token.dropFirst(2).dropLast(2))] = id.intValue
+        }
+        return table.isEmpty ? nil : table
+    }
 
     /// The byte-level BPE tokenizer a release's `vocab.json` and `merges.txt` in directory spell, or nil when
     /// either is absent.
     static func tokenizer(in directory: URL) -> NFKTokenizer? {
-        let files = tokenizerFiles.map { directory.appendingPathComponent($0) }
+        let files = tokenizerFiles.prefix(2).map { directory.appendingPathComponent($0) }
         guard files.allSatisfy({ FileManager.default.fileExists(atPath: $0.path) }) else { return nil }
         return try? NFKTokenizer(forManifest: ["tokenizer": ["type": "bpe-bytelevel"]], directory: directory)
     }

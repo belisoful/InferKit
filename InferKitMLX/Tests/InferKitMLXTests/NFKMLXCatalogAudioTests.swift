@@ -106,12 +106,24 @@ final class NFKMLXCatalogAudioTests: XCTestCase {
             XCTAssertEqual(source.repository, release.repository)
             XCTAssertEqual(source.revision?.count, 40, "the tokenizer is read at a pinned commit")
             XCTAssertEqual(source.files.map(\.path), NFKMLXWhisper.tokenizerFiles + [URL(string: release.url)!.lastPathComponent])
-            XCTAssertEqual(Set(source.files.prefix(2).map(\.role)), [NFKModelFileRoleTokenizer])
+            XCTAssertEqual(Set(source.files.prefix(3).map(\.role)), [NFKModelFileRoleTokenizer])
             let checkpoint = try XCTUnwrap(source.files.last)
             XCTAssertEqual(checkpoint.url?.absoluteString, release.url, "the weights stay OpenAI's release")
             XCTAssertEqual(checkpoint.role, NFKModelFileRoleWeights)
             XCTAssertTrue(checkpoint.overridesSource)
         }
+    }
+
+    func testEachWhisperReleaseOffersTheLanguagesItsTokensName() throws {
+        XCTAssertEqual(NFKMLXWhisper.languageCodes(for: .base).count, 99)
+        XCTAssertEqual(NFKMLXWhisper.languageCodes(for: .largeV3).count, 100)
+        XCTAssertEqual(NFKMLXWhisper.languageCodes(for: .largeV3).last, "yue")
+        let options = try entry("whisper-large-v3").descriptor().options
+        let language = try XCTUnwrap(options.first { $0.key == NFKParameterSourceLanguage })
+        XCTAssertEqual(language.choices.count, 100)
+        XCTAssertNil(language.defaultValue, "absent, the model detects the language")
+        let task = try XCTUnwrap(options.first { $0.key == NFKMLXGenerationParameterKey.speechTask })
+        XCTAssertEqual(task.choices.map { $0.value as? String }, ["transcribe", "translate"])
     }
 
     func testTheDirectoryModelsRefuseANilURL() {
@@ -133,8 +145,9 @@ final class NFKMLXCatalogAudioTests: XCTestCase {
 
     func testTheEntriesFollowTheStaticKeySets() throws {
         for release in NFKMLXCatalogAudio.whisperReleases {
-            assertPorts(try entry(release.name), inputs: [NFKInputAudio], outputs: [NFKOutputText, NFKOutputSegments],
-                        parameters: [NFKMLXGenerationParameterKey.timestamps])
+            assertPorts(try entry(release.name), inputs: [NFKInputAudio], outputs: [NFKOutputText, NFKOutputSegments, NFKOutputLanguage],
+                        parameters: [NFKMLXGenerationParameterKey.timestamps, NFKParameterSourceLanguage,
+                                     NFKMLXGenerationParameterKey.speechTask])
         }
         assertPorts(try entry(NFKMLXFastSpeech2.voiceModelName), inputs: NFKMLXFastSpeech2.voiceInputKeys,
                     outputs: [NFKOutputAudio], parameters: [])

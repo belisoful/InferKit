@@ -40,6 +40,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### The language a recognizer heard
+
+- `NFKOutputLanguage` (`language`) carries the language a speech recognizer detected or was told under
+  `NFKParameterSourceLanguage`. Its value type is text.
+
 #### A hosted model runs in the host's process
 
 - `-[NFKInferenceServer submitInferenceJobForRequest:modelName:]` runs a request on a hosted model as one
@@ -1467,6 +1472,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   on the text before it, a silent window skipped, and the segments in seconds from the start of the file.
   `NFKMLXWhisperBackend.transcribesWholeRecording` turns it on for a backend built another way, and
   `NFKMLXWhisperNet.transcribeRecording` and `decodeWindow` are the Swift steps.
+- The long-form decode keeps each decoder block's keys and values from step to step, as the reference's
+  decoder does, so each step runs the new token alone.
+- A catalog build detects the spoken language from the first 30 seconds unless `NFKParameterSourceLanguage`
+  names one (Whisper's codes, which the catalog lists as the option's choices), and answers it under
+  `NFKOutputLanguage`. `NFKMLXGenerationParameterKey.speechTask` chooses "transcribe" or "translate", for
+  English text. The language tokens come from the release's `added_tokens.json`, which the catalog now
+  downloads beside the tokenizer.
 
 #### The reference arithmetic runs transformers' chunked scans
 

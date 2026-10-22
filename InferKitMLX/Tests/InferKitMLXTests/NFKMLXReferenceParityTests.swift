@@ -5882,7 +5882,8 @@ final class NFKMLXReferenceParityTests: XCTestCase {
     // range stays unmasked. `ApplyTimestampRules` then orders the result, and the record carries the
     // ids the reference's own rules produce.
     /// PARITY: the reference's long-form `transcribe` at temperature 0 over a recording of several windows
-    /// and a silence: every segment's ids, its times, and the text.
+    /// and a silence, with the language detected: every segment's ids, its times, the text, and the
+    /// language, transcribing and translating.
     func testWhisperTranscribesALongRecordingAsTheReferenceDoes() throws {
         try requireMLXRuntime()
         guard let path = config["IK_PARITY_WHISPER_TRANSCRIBE"] else { throw XCTSkip("set IK_PARITY_WHISPER_TRANSCRIBE") }
@@ -5897,29 +5898,38 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         configuration.timestampBegin = Int(try XCTUnwrap(arrays["timestamp_begin"]).asArray(Int64.self)[0])
         let net = NFKMLXWhisper.makeNet(configuration)
         try NFKMLXWhisper.loadWeights(into: net, from: weights("IK_VAL_WHISPER"), precision: .float32)
+        let languages = NFKMLXWhisper.languageTable(for: net)
+        func text(_ ids: [Int]) -> String {
+            tokenizer.decode(ids.filter { $0 < configuration.timestampBegin }.map { NSNumber(value: $0) })
+        }
+        func bytes(_ key: String) throws -> String {
+            String(decoding: try XCTUnwrap(arrays[key]).asArray(Int64.self).map(UInt8.init), as: UTF8.self)
+        }
 
-        let (segments, tokens) = net.transcribeRecording(waveform, timestamps: true) {
-            tokenizer.decode($0.map { NSNumber(value: $0) })
+        for (translates, prefix) in [(false, ""), (true, "translate_")] {
+            let run = net.transcribeRecording(waveform, timestamps: true, translates: translates) {
+                tokenizer.decode($0.map { NSNumber(value: $0) })
+            }
+            let bounds = try XCTUnwrap(arrays[prefix + "segment_bounds"]).asArray(Float.self)
+            let lengths = try XCTUnwrap(arrays[prefix + "segment_lengths"]).asArray(Int64.self).map(Int.init)
+            let referenceTokens = try XCTUnwrap(arrays[prefix + "segment_tokens"]).asArray(Int64.self).map(Int.init)
+            var referenceSegments = [[Int]]()
+            var start = 0
+            for length in lengths {
+                referenceSegments.append(Array(referenceTokens[start ..< start + length]))
+                start += length
+            }
+            let task = translates ? "translate" : "transcribe"
+            print("VALIDATION PARITY whisper-transcribe \(task): \(run.segments.count) segments vs \(lengths.count), "
+                  + "language \(languages.first { $0.value == run.language }?.key ?? "?"), text \(text(run.tokens).debugDescription)")
+            XCTAssertEqual(languages.first { $0.value == run.language }?.key, try bytes(prefix + "language_bytes"), "\(task) language")
+            XCTAssertEqual(run.segments.map { $0.tokens }, referenceSegments, "\(task): each window decodes and seeks as the reference's")
+            for (index, segment) in run.segments.enumerated() where index < lengths.count {
+                XCTAssertEqual(segment.start, Double(bounds[2 * index]), accuracy: 1e-4, "\(task) segment \(index) start")
+                XCTAssertEqual(segment.end, Double(bounds[2 * index + 1]), accuracy: 1e-4, "\(task) segment \(index) end")
+            }
+            XCTAssertEqual(text(run.tokens), try bytes(prefix + "text_bytes"), "\(task) text")
         }
-        let bounds = try XCTUnwrap(arrays["segment_bounds"]).asArray(Float.self)
-        let lengths = try XCTUnwrap(arrays["segment_lengths"]).asArray(Int64.self).map(Int.init)
-        let referenceTokens = try XCTUnwrap(arrays["segment_tokens"]).asArray(Int64.self).map(Int.init)
-        var referenceSegments = [[Int]]()
-        var start = 0
-        for length in lengths {
-            referenceSegments.append(Array(referenceTokens[start ..< start + length]))
-            start += length
-        }
-        let text = tokenizer.decode(tokens.filter { $0 < configuration.timestampBegin }.map { NSNumber(value: $0) })
-        let referenceText = String(decoding: try XCTUnwrap(arrays["text_bytes"]).asArray(Int64.self).map(UInt8.init), as: UTF8.self)
-        print("VALIDATION PARITY whisper-transcribe: \(segments.count) segments vs \(lengths.count), text \(text.debugDescription)")
-        XCTAssertEqual(segments.map(\.tokens), referenceSegments, "each window decodes and seeks as the reference's")
-        XCTAssertEqual(segments.count, lengths.count)
-        for (index, segment) in segments.enumerated() where index < lengths.count {
-            XCTAssertEqual(segment.start, Double(bounds[2 * index]), accuracy: 1e-4, "segment \(index) start")
-            XCTAssertEqual(segment.end, Double(bounds[2 * index + 1]), accuracy: 1e-4, "segment \(index) end")
-        }
-        XCTAssertEqual(text, referenceText)
     }
 
     func testWhisperReproducesTheReferenceTimestampRules() throws {

@@ -3508,11 +3508,13 @@ def run_whisper_transcribe(image, checkpoint):
 
     `--checkpoint` is a released `.pt`. The recording is the validation speech clip repeated with a
     second of silence after each copy until it passes 75 seconds, so the seek crosses several windows
-    and a silence. The call is the reference's own entry point at temperature 0 (no fallback),
-    English, float32, each window conditioned on the text before it. The record carries the
-    `waveform`, each segment's `segment_bounds` ([segments, 2] float32 seconds), its ids
-    (`segment_tokens`, concatenated, with `segment_lengths`), the result's `text_bytes` (UTF-8), and the
-    tokenizer's `non_speech_tokens` and `timestamp_begin` the decode used.
+    and a silence. The call is the reference's own entry point at temperature 0 (no fallback), float32,
+    each window conditioned on the text before it, with the language left to its detection: once with
+    `task="transcribe"` and once with `task="translate"`. For each run the record carries each segment's
+    `segment_bounds` ([segments, 2] float32 seconds), its ids (`segment_tokens`, concatenated, with
+    `segment_lengths`), the result's `text_bytes` and `language_bytes` (UTF-8), the translate run's under
+    a `translate_` prefix, and once the `waveform` and the tokenizer's `non_speech_tokens` and
+    `timestamp_begin`.
     """
     import whisper
 
@@ -3524,25 +3526,30 @@ def run_whisper_transcribe(image, checkpoint):
     while sum(len(piece) for piece in pieces) < 75 * 16000:
         pieces += [clip, silence]
     wave = np.concatenate(pieces).astype(np.float32)
-    with torch.no_grad():
-        result = whisper.transcribe(model, wave, temperature=0.0, language="en", task="transcribe", fp16=False,
-                                    condition_on_previous_text=True, verbose=None)
     tokenizer = whisper.tokenizer.get_tokenizer(model.is_multilingual, num_languages=getattr(model, "num_languages", 99),
                                                 language="en", task="transcribe")
-    segments = result["segments"]
-    tokens = [token for segment in segments for token in segment["tokens"]]
-    print(f"text: {result['text']!r}, {len(segments)} segments")
-    globals()["_extra"] = {
+    extra = {
         "waveform": torch.from_numpy(wave).contiguous(),
-        "segment_bounds": torch.tensor([[segment["start"], segment["end"]] for segment in segments], dtype=torch.float32).reshape(-1, 2),
-        "segment_tokens": torch.tensor(tokens, dtype=torch.int64),
-        "segment_lengths": torch.tensor([len(segment["tokens"]) for segment in segments], dtype=torch.int64),
-        "text_bytes": torch.tensor(list(result["text"].encode("utf-8")), dtype=torch.int64),
         "non_speech_tokens": torch.tensor(list(tokenizer.non_speech_tokens), dtype=torch.int64),
         "timestamp_begin": torch.tensor([tokenizer.timestamp_begin], dtype=torch.int64),
     }
-    return torch.tensor(tokens, dtype=torch.int64)
-
+    for task, prefix in (("transcribe", ""), ("translate", "translate_")):
+        with torch.no_grad():
+            result = whisper.transcribe(model, wave, temperature=0.0, task=task, fp16=False,
+                                        condition_on_previous_text=True, verbose=None)
+        segments = result["segments"]
+        tokens = [token for segment in segments for token in segment["tokens"]]
+        print(f"{task}: language {result['language']!r}, text {result['text']!r}, {len(segments)} segments")
+        extra[prefix + "segment_bounds"] = torch.tensor([[segment["start"], segment["end"]] for segment in segments],
+                                                        dtype=torch.float32).reshape(-1, 2)
+        extra[prefix + "segment_tokens"] = torch.tensor(tokens, dtype=torch.int64)
+        extra[prefix + "segment_lengths"] = torch.tensor([len(segment["tokens"]) for segment in segments], dtype=torch.int64)
+        extra[prefix + "text_bytes"] = torch.tensor(list(result["text"].encode("utf-8")), dtype=torch.int64)
+        extra[prefix + "language_bytes"] = torch.tensor(list(result["language"].encode("utf-8")), dtype=torch.int64)
+        if task == "transcribe":
+            output = torch.tensor(tokens, dtype=torch.int64)
+    globals()["_extra"] = extra
+    return output
 
 
 def run_whisper(image, checkpoint):

@@ -303,6 +303,10 @@ extern NSString * const NFKOutputClassifications;
 /*! Time spans (NSArray<NFKAudioSegment *>), for a backend that locates events over time (voice-activity
     or sound-event detection). */
 extern NSString * const NFKOutputSegments;
+/*! The language the input is in (NSString, the code the backend's model names it by, such as "en"),
+    as a speech recognizer detected it or was told it under NFKParameterSourceLanguage. Introduced in
+    InferKit 0.4.0. */
+extern NSString * const NFKOutputLanguage;
 
 /*! A transcribed performance (NFKMIDISequence), for a music-transcription backend that turns audio
     into notes. Introduced in InferKit 0.4.0. */

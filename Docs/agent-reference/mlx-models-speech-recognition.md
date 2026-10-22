@@ -84,8 +84,21 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `NFKOutputSegments`. The audio is resampled to 16 kHz first. Parity:
   `testWhisperTranscribesALongRecordingAsTheReferenceDoes` against `run_reference.py whisper_transcribe`
   (the validation clip repeated with 1 s silences past 75 s, float32 both sides), keyed
-  `IK_PARITY_WHISPER_TRANSCRIBE`. The decoder runs without a key-value cache, as the other paths do, so a
-  long recording on a large size is slow.
+  `IK_PARITY_WHISPER_TRANSCRIBE`. `decodeWindow` runs the decoder through `NFKWhisperBlockCache`: the
+  first call takes the whole opening prompt with a causal mask offset by nothing, each later call the one
+  new token with no mask, each block's self-attention keeps its key and value projections (concatenated
+  along the sequence), and its cross-attention projects the window's encoder output once. The rows'
+  arithmetic is the uncached call's, row for row (`testTheCachedDecodeMatchesTheFullRecomputeRowByRow`);
+  the single-window paths keep the full recompute their parity records were measured with.
+  **Language and task**: with no `NFKParameterSourceLanguage`, `detectLanguage` reads the logits after
+  `<|startoftranscript|>` alone over the language tokens on `mel[:, :3000]` of the padded whole-file mel
+  (not zero-padded: the reference trims the padded mel there), and that token opens every window's
+  prompt `[<|startoftranscript|>, language, <|transcribe|> or <|translate|>]`. The language tokens run
+  from `<|startoftranscript|>` + 1 to `<|translate|>` (`timestampBegin` - 6): 99 for every size before
+  large-v3, 100 after (`yue`). A catalog build maps codes through the release's `added_tokens.json`
+  (now a catalog file); any other build through the reference's order (`NFKMLXWhisper.languageCodes`).
+  The result names the language under the core's `NFKOutputLanguage`. The oracle records a detected
+  transcribe run and a detected translate run, and the parity test holds both.
   **Customization is LoRA and it ships** (`NFKMLXWhisperTraining.swift`): `NFKMLXWhisper.network(weightsURL:configuration:)`
   builds the net, `spectrogram(for:sampleRate:configuration:)` pads a clip to the 30-second window, and
   `fineTune(_:examples:rank:alpha:…)` adapts the decoder's query and value projections with the encoder

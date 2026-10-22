@@ -63372,6 +63372,429 @@
         {
           "choices" : [
             {
+              "title" : "en",
+              "value" : "en"
+            },
+            {
+              "title" : "zh",
+              "value" : "zh"
+            },
+            {
+              "title" : "de",
+              "value" : "de"
+            },
+            {
+              "title" : "es",
+              "value" : "es"
+            },
+            {
+              "title" : "ru",
+              "value" : "ru"
+            },
+            {
+              "title" : "ko",
+              "value" : "ko"
+            },
+            {
+              "title" : "fr",
+              "value" : "fr"
+            },
+            {
+              "title" : "ja",
+              "value" : "ja"
+            },
+            {
+              "title" : "pt",
+              "value" : "pt"
+            },
+            {
+              "title" : "tr",
+              "value" : "tr"
+            },
+            {
+              "title" : "pl",
+              "value" : "pl"
+            },
+            {
+              "title" : "ca",
+              "value" : "ca"
+            },
+            {
+              "title" : "nl",
+              "value" : "nl"
+            },
+            {
+              "title" : "ar",
+              "value" : "ar"
+            },
+            {
+              "title" : "sv",
+              "value" : "sv"
+            },
+            {
+              "title" : "it",
+              "value" : "it"
+            },
+            {
+              "title" : "id",
+              "value" : "id"
+            },
+            {
+              "title" : "hi",
+              "value" : "hi"
+            },
+            {
+              "title" : "fi",
+              "value" : "fi"
+            },
+            {
+              "title" : "vi",
+              "value" : "vi"
+            },
+            {
+              "title" : "he",
+              "value" : "he"
+            },
+            {
+              "title" : "uk",
+              "value" : "uk"
+            },
+            {
+              "title" : "el",
+              "value" : "el"
+            },
+            {
+              "title" : "ms",
+              "value" : "ms"
+            },
+            {
+              "title" : "cs",
+              "value" : "cs"
+            },
+            {
+              "title" : "ro",
+              "value" : "ro"
+            },
+            {
+              "title" : "da",
+              "value" : "da"
+            },
+            {
+              "title" : "hu",
+              "value" : "hu"
+            },
+            {
+              "title" : "ta",
+              "value" : "ta"
+            },
+            {
+              "title" : "no",
+              "value" : "no"
+            },
+            {
+              "title" : "th",
+              "value" : "th"
+            },
+            {
+              "title" : "ur",
+              "value" : "ur"
+            },
+            {
+              "title" : "hr",
+              "value" : "hr"
+            },
+            {
+              "title" : "bg",
+              "value" : "bg"
+            },
+            {
+              "title" : "lt",
+              "value" : "lt"
+            },
+            {
+              "title" : "la",
+              "value" : "la"
+            },
+            {
+              "title" : "mi",
+              "value" : "mi"
+            },
+            {
+              "title" : "ml",
+              "value" : "ml"
+            },
+            {
+              "title" : "cy",
+              "value" : "cy"
+            },
+            {
+              "title" : "sk",
+              "value" : "sk"
+            },
+            {
+              "title" : "te",
+              "value" : "te"
+            },
+            {
+              "title" : "fa",
+              "value" : "fa"
+            },
+            {
+              "title" : "lv",
+              "value" : "lv"
+            },
+            {
+              "title" : "bn",
+              "value" : "bn"
+            },
+            {
+              "title" : "sr",
+              "value" : "sr"
+            },
+            {
+              "title" : "az",
+              "value" : "az"
+            },
+            {
+              "title" : "sl",
+              "value" : "sl"
+            },
+            {
+              "title" : "kn",
+              "value" : "kn"
+            },
+            {
+              "title" : "et",
+              "value" : "et"
+            },
+            {
+              "title" : "mk",
+              "value" : "mk"
+            },
+            {
+              "title" : "br",
+              "value" : "br"
+            },
+            {
+              "title" : "eu",
+              "value" : "eu"
+            },
+            {
+              "title" : "is",
+              "value" : "is"
+            },
+            {
+              "title" : "hy",
+              "value" : "hy"
+            },
+            {
+              "title" : "ne",
+              "value" : "ne"
+            },
+            {
+              "title" : "mn",
+              "value" : "mn"
+            },
+            {
+              "title" : "bs",
+              "value" : "bs"
+            },
+            {
+              "title" : "kk",
+              "value" : "kk"
+            },
+            {
+              "title" : "sq",
+              "value" : "sq"
+            },
+            {
+              "title" : "sw",
+              "value" : "sw"
+            },
+            {
+              "title" : "gl",
+              "value" : "gl"
+            },
+            {
+              "title" : "mr",
+              "value" : "mr"
+            },
+            {
+              "title" : "pa",
+              "value" : "pa"
+            },
+            {
+              "title" : "si",
+              "value" : "si"
+            },
+            {
+              "title" : "km",
+              "value" : "km"
+            },
+            {
+              "title" : "sn",
+              "value" : "sn"
+            },
+            {
+              "title" : "yo",
+              "value" : "yo"
+            },
+            {
+              "title" : "so",
+              "value" : "so"
+            },
+            {
+              "title" : "af",
+              "value" : "af"
+            },
+            {
+              "title" : "oc",
+              "value" : "oc"
+            },
+            {
+              "title" : "ka",
+              "value" : "ka"
+            },
+            {
+              "title" : "be",
+              "value" : "be"
+            },
+            {
+              "title" : "tg",
+              "value" : "tg"
+            },
+            {
+              "title" : "sd",
+              "value" : "sd"
+            },
+            {
+              "title" : "gu",
+              "value" : "gu"
+            },
+            {
+              "title" : "am",
+              "value" : "am"
+            },
+            {
+              "title" : "yi",
+              "value" : "yi"
+            },
+            {
+              "title" : "lo",
+              "value" : "lo"
+            },
+            {
+              "title" : "uz",
+              "value" : "uz"
+            },
+            {
+              "title" : "fo",
+              "value" : "fo"
+            },
+            {
+              "title" : "ht",
+              "value" : "ht"
+            },
+            {
+              "title" : "ps",
+              "value" : "ps"
+            },
+            {
+              "title" : "tk",
+              "value" : "tk"
+            },
+            {
+              "title" : "nn",
+              "value" : "nn"
+            },
+            {
+              "title" : "mt",
+              "value" : "mt"
+            },
+            {
+              "title" : "sa",
+              "value" : "sa"
+            },
+            {
+              "title" : "lb",
+              "value" : "lb"
+            },
+            {
+              "title" : "my",
+              "value" : "my"
+            },
+            {
+              "title" : "bo",
+              "value" : "bo"
+            },
+            {
+              "title" : "tl",
+              "value" : "tl"
+            },
+            {
+              "title" : "mg",
+              "value" : "mg"
+            },
+            {
+              "title" : "as",
+              "value" : "as"
+            },
+            {
+              "title" : "tt",
+              "value" : "tt"
+            },
+            {
+              "title" : "haw",
+              "value" : "haw"
+            },
+            {
+              "title" : "ln",
+              "value" : "ln"
+            },
+            {
+              "title" : "ha",
+              "value" : "ha"
+            },
+            {
+              "title" : "ba",
+              "value" : "ba"
+            },
+            {
+              "title" : "jw",
+              "value" : "jw"
+            },
+            {
+              "title" : "su",
+              "value" : "su"
+            }
+          ],
+          "help" : "The language spoken, by Whisper's code. Absent, the model detects it from the first 30 seconds.",
+          "key" : "sourceLanguage",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Language"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Transcribe",
+              "value" : "transcribe"
+            },
+            {
+              "title" : "Translate to English",
+              "value" : "translate"
+            }
+          ],
+          "default" : "transcribe",
+          "help" : "Transcribes the speech in its own language, or translates it into English text.",
+          "key" : "NFKMLXParameterSpeechTask",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Task"
+        },
+        {
+          "choices" : [
+            {
               "memory" : {
                 "peakBytes" : 145262807,
                 "residentBytes" : 145262807
@@ -63415,6 +63838,13 @@
           "required" : false,
           "title" : "Segments",
           "valueType" : "segments"
+        },
+        {
+          "help" : "The language the speech is in, as given or as the model detected it from the first 30 seconds.",
+          "key" : "language",
+          "required" : false,
+          "title" : "Language",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -63448,7 +63878,7 @@
       "variants" : [
         {
           "displayName" : "Whisper base",
-          "downloadBytes" : 146592226,
+          "downloadBytes" : 146626830,
           "id" : "base",
           "isDefault" : true,
           "memoryFacts" : {
@@ -63482,6 +63912,12 @@
                 "bytes" : 493869,
                 "optional" : false,
                 "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 34604,
+                "optional" : false,
+                "path" : "added_tokens.json",
                 "role" : "tokenizer"
               },
               {
@@ -63542,6 +63978,429 @@
         {
           "choices" : [
             {
+              "title" : "en",
+              "value" : "en"
+            },
+            {
+              "title" : "zh",
+              "value" : "zh"
+            },
+            {
+              "title" : "de",
+              "value" : "de"
+            },
+            {
+              "title" : "es",
+              "value" : "es"
+            },
+            {
+              "title" : "ru",
+              "value" : "ru"
+            },
+            {
+              "title" : "ko",
+              "value" : "ko"
+            },
+            {
+              "title" : "fr",
+              "value" : "fr"
+            },
+            {
+              "title" : "ja",
+              "value" : "ja"
+            },
+            {
+              "title" : "pt",
+              "value" : "pt"
+            },
+            {
+              "title" : "tr",
+              "value" : "tr"
+            },
+            {
+              "title" : "pl",
+              "value" : "pl"
+            },
+            {
+              "title" : "ca",
+              "value" : "ca"
+            },
+            {
+              "title" : "nl",
+              "value" : "nl"
+            },
+            {
+              "title" : "ar",
+              "value" : "ar"
+            },
+            {
+              "title" : "sv",
+              "value" : "sv"
+            },
+            {
+              "title" : "it",
+              "value" : "it"
+            },
+            {
+              "title" : "id",
+              "value" : "id"
+            },
+            {
+              "title" : "hi",
+              "value" : "hi"
+            },
+            {
+              "title" : "fi",
+              "value" : "fi"
+            },
+            {
+              "title" : "vi",
+              "value" : "vi"
+            },
+            {
+              "title" : "he",
+              "value" : "he"
+            },
+            {
+              "title" : "uk",
+              "value" : "uk"
+            },
+            {
+              "title" : "el",
+              "value" : "el"
+            },
+            {
+              "title" : "ms",
+              "value" : "ms"
+            },
+            {
+              "title" : "cs",
+              "value" : "cs"
+            },
+            {
+              "title" : "ro",
+              "value" : "ro"
+            },
+            {
+              "title" : "da",
+              "value" : "da"
+            },
+            {
+              "title" : "hu",
+              "value" : "hu"
+            },
+            {
+              "title" : "ta",
+              "value" : "ta"
+            },
+            {
+              "title" : "no",
+              "value" : "no"
+            },
+            {
+              "title" : "th",
+              "value" : "th"
+            },
+            {
+              "title" : "ur",
+              "value" : "ur"
+            },
+            {
+              "title" : "hr",
+              "value" : "hr"
+            },
+            {
+              "title" : "bg",
+              "value" : "bg"
+            },
+            {
+              "title" : "lt",
+              "value" : "lt"
+            },
+            {
+              "title" : "la",
+              "value" : "la"
+            },
+            {
+              "title" : "mi",
+              "value" : "mi"
+            },
+            {
+              "title" : "ml",
+              "value" : "ml"
+            },
+            {
+              "title" : "cy",
+              "value" : "cy"
+            },
+            {
+              "title" : "sk",
+              "value" : "sk"
+            },
+            {
+              "title" : "te",
+              "value" : "te"
+            },
+            {
+              "title" : "fa",
+              "value" : "fa"
+            },
+            {
+              "title" : "lv",
+              "value" : "lv"
+            },
+            {
+              "title" : "bn",
+              "value" : "bn"
+            },
+            {
+              "title" : "sr",
+              "value" : "sr"
+            },
+            {
+              "title" : "az",
+              "value" : "az"
+            },
+            {
+              "title" : "sl",
+              "value" : "sl"
+            },
+            {
+              "title" : "kn",
+              "value" : "kn"
+            },
+            {
+              "title" : "et",
+              "value" : "et"
+            },
+            {
+              "title" : "mk",
+              "value" : "mk"
+            },
+            {
+              "title" : "br",
+              "value" : "br"
+            },
+            {
+              "title" : "eu",
+              "value" : "eu"
+            },
+            {
+              "title" : "is",
+              "value" : "is"
+            },
+            {
+              "title" : "hy",
+              "value" : "hy"
+            },
+            {
+              "title" : "ne",
+              "value" : "ne"
+            },
+            {
+              "title" : "mn",
+              "value" : "mn"
+            },
+            {
+              "title" : "bs",
+              "value" : "bs"
+            },
+            {
+              "title" : "kk",
+              "value" : "kk"
+            },
+            {
+              "title" : "sq",
+              "value" : "sq"
+            },
+            {
+              "title" : "sw",
+              "value" : "sw"
+            },
+            {
+              "title" : "gl",
+              "value" : "gl"
+            },
+            {
+              "title" : "mr",
+              "value" : "mr"
+            },
+            {
+              "title" : "pa",
+              "value" : "pa"
+            },
+            {
+              "title" : "si",
+              "value" : "si"
+            },
+            {
+              "title" : "km",
+              "value" : "km"
+            },
+            {
+              "title" : "sn",
+              "value" : "sn"
+            },
+            {
+              "title" : "yo",
+              "value" : "yo"
+            },
+            {
+              "title" : "so",
+              "value" : "so"
+            },
+            {
+              "title" : "af",
+              "value" : "af"
+            },
+            {
+              "title" : "oc",
+              "value" : "oc"
+            },
+            {
+              "title" : "ka",
+              "value" : "ka"
+            },
+            {
+              "title" : "be",
+              "value" : "be"
+            },
+            {
+              "title" : "tg",
+              "value" : "tg"
+            },
+            {
+              "title" : "sd",
+              "value" : "sd"
+            },
+            {
+              "title" : "gu",
+              "value" : "gu"
+            },
+            {
+              "title" : "am",
+              "value" : "am"
+            },
+            {
+              "title" : "yi",
+              "value" : "yi"
+            },
+            {
+              "title" : "lo",
+              "value" : "lo"
+            },
+            {
+              "title" : "uz",
+              "value" : "uz"
+            },
+            {
+              "title" : "fo",
+              "value" : "fo"
+            },
+            {
+              "title" : "ht",
+              "value" : "ht"
+            },
+            {
+              "title" : "ps",
+              "value" : "ps"
+            },
+            {
+              "title" : "tk",
+              "value" : "tk"
+            },
+            {
+              "title" : "nn",
+              "value" : "nn"
+            },
+            {
+              "title" : "mt",
+              "value" : "mt"
+            },
+            {
+              "title" : "sa",
+              "value" : "sa"
+            },
+            {
+              "title" : "lb",
+              "value" : "lb"
+            },
+            {
+              "title" : "my",
+              "value" : "my"
+            },
+            {
+              "title" : "bo",
+              "value" : "bo"
+            },
+            {
+              "title" : "tl",
+              "value" : "tl"
+            },
+            {
+              "title" : "mg",
+              "value" : "mg"
+            },
+            {
+              "title" : "as",
+              "value" : "as"
+            },
+            {
+              "title" : "tt",
+              "value" : "tt"
+            },
+            {
+              "title" : "haw",
+              "value" : "haw"
+            },
+            {
+              "title" : "ln",
+              "value" : "ln"
+            },
+            {
+              "title" : "ha",
+              "value" : "ha"
+            },
+            {
+              "title" : "ba",
+              "value" : "ba"
+            },
+            {
+              "title" : "jw",
+              "value" : "jw"
+            },
+            {
+              "title" : "su",
+              "value" : "su"
+            }
+          ],
+          "help" : "The language spoken, by Whisper's code. Absent, the model detects it from the first 30 seconds.",
+          "key" : "sourceLanguage",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Language"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Transcribe",
+              "value" : "transcribe"
+            },
+            {
+              "title" : "Translate to English",
+              "value" : "translate"
+            }
+          ],
+          "default" : "transcribe",
+          "help" : "Transcribes the speech in its own language, or translates it into English text.",
+          "key" : "NFKMLXParameterSpeechTask",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Task"
+        },
+        {
+          "choices" : [
+            {
               "memory" : {
                 "peakBytes" : 3086999982,
                 "residentBytes" : 3086999982
@@ -63585,6 +64444,13 @@
           "required" : false,
           "title" : "Segments",
           "valueType" : "segments"
+        },
+        {
+          "help" : "The language the speech is in, as given or as the model detected it from the first 30 seconds.",
+          "key" : "language",
+          "required" : false,
+          "title" : "Language",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -63618,7 +64484,7 @@
       "variants" : [
         {
           "displayName" : "Whisper large-v1",
-          "downloadBytes" : 3088329401,
+          "downloadBytes" : 3088364005,
           "id" : "large-v1",
           "isDefault" : true,
           "memoryFacts" : {
@@ -63652,6 +64518,12 @@
                 "bytes" : 493869,
                 "optional" : false,
                 "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 34604,
+                "optional" : false,
+                "path" : "added_tokens.json",
                 "role" : "tokenizer"
               },
               {
@@ -63712,6 +64584,429 @@
         {
           "choices" : [
             {
+              "title" : "en",
+              "value" : "en"
+            },
+            {
+              "title" : "zh",
+              "value" : "zh"
+            },
+            {
+              "title" : "de",
+              "value" : "de"
+            },
+            {
+              "title" : "es",
+              "value" : "es"
+            },
+            {
+              "title" : "ru",
+              "value" : "ru"
+            },
+            {
+              "title" : "ko",
+              "value" : "ko"
+            },
+            {
+              "title" : "fr",
+              "value" : "fr"
+            },
+            {
+              "title" : "ja",
+              "value" : "ja"
+            },
+            {
+              "title" : "pt",
+              "value" : "pt"
+            },
+            {
+              "title" : "tr",
+              "value" : "tr"
+            },
+            {
+              "title" : "pl",
+              "value" : "pl"
+            },
+            {
+              "title" : "ca",
+              "value" : "ca"
+            },
+            {
+              "title" : "nl",
+              "value" : "nl"
+            },
+            {
+              "title" : "ar",
+              "value" : "ar"
+            },
+            {
+              "title" : "sv",
+              "value" : "sv"
+            },
+            {
+              "title" : "it",
+              "value" : "it"
+            },
+            {
+              "title" : "id",
+              "value" : "id"
+            },
+            {
+              "title" : "hi",
+              "value" : "hi"
+            },
+            {
+              "title" : "fi",
+              "value" : "fi"
+            },
+            {
+              "title" : "vi",
+              "value" : "vi"
+            },
+            {
+              "title" : "he",
+              "value" : "he"
+            },
+            {
+              "title" : "uk",
+              "value" : "uk"
+            },
+            {
+              "title" : "el",
+              "value" : "el"
+            },
+            {
+              "title" : "ms",
+              "value" : "ms"
+            },
+            {
+              "title" : "cs",
+              "value" : "cs"
+            },
+            {
+              "title" : "ro",
+              "value" : "ro"
+            },
+            {
+              "title" : "da",
+              "value" : "da"
+            },
+            {
+              "title" : "hu",
+              "value" : "hu"
+            },
+            {
+              "title" : "ta",
+              "value" : "ta"
+            },
+            {
+              "title" : "no",
+              "value" : "no"
+            },
+            {
+              "title" : "th",
+              "value" : "th"
+            },
+            {
+              "title" : "ur",
+              "value" : "ur"
+            },
+            {
+              "title" : "hr",
+              "value" : "hr"
+            },
+            {
+              "title" : "bg",
+              "value" : "bg"
+            },
+            {
+              "title" : "lt",
+              "value" : "lt"
+            },
+            {
+              "title" : "la",
+              "value" : "la"
+            },
+            {
+              "title" : "mi",
+              "value" : "mi"
+            },
+            {
+              "title" : "ml",
+              "value" : "ml"
+            },
+            {
+              "title" : "cy",
+              "value" : "cy"
+            },
+            {
+              "title" : "sk",
+              "value" : "sk"
+            },
+            {
+              "title" : "te",
+              "value" : "te"
+            },
+            {
+              "title" : "fa",
+              "value" : "fa"
+            },
+            {
+              "title" : "lv",
+              "value" : "lv"
+            },
+            {
+              "title" : "bn",
+              "value" : "bn"
+            },
+            {
+              "title" : "sr",
+              "value" : "sr"
+            },
+            {
+              "title" : "az",
+              "value" : "az"
+            },
+            {
+              "title" : "sl",
+              "value" : "sl"
+            },
+            {
+              "title" : "kn",
+              "value" : "kn"
+            },
+            {
+              "title" : "et",
+              "value" : "et"
+            },
+            {
+              "title" : "mk",
+              "value" : "mk"
+            },
+            {
+              "title" : "br",
+              "value" : "br"
+            },
+            {
+              "title" : "eu",
+              "value" : "eu"
+            },
+            {
+              "title" : "is",
+              "value" : "is"
+            },
+            {
+              "title" : "hy",
+              "value" : "hy"
+            },
+            {
+              "title" : "ne",
+              "value" : "ne"
+            },
+            {
+              "title" : "mn",
+              "value" : "mn"
+            },
+            {
+              "title" : "bs",
+              "value" : "bs"
+            },
+            {
+              "title" : "kk",
+              "value" : "kk"
+            },
+            {
+              "title" : "sq",
+              "value" : "sq"
+            },
+            {
+              "title" : "sw",
+              "value" : "sw"
+            },
+            {
+              "title" : "gl",
+              "value" : "gl"
+            },
+            {
+              "title" : "mr",
+              "value" : "mr"
+            },
+            {
+              "title" : "pa",
+              "value" : "pa"
+            },
+            {
+              "title" : "si",
+              "value" : "si"
+            },
+            {
+              "title" : "km",
+              "value" : "km"
+            },
+            {
+              "title" : "sn",
+              "value" : "sn"
+            },
+            {
+              "title" : "yo",
+              "value" : "yo"
+            },
+            {
+              "title" : "so",
+              "value" : "so"
+            },
+            {
+              "title" : "af",
+              "value" : "af"
+            },
+            {
+              "title" : "oc",
+              "value" : "oc"
+            },
+            {
+              "title" : "ka",
+              "value" : "ka"
+            },
+            {
+              "title" : "be",
+              "value" : "be"
+            },
+            {
+              "title" : "tg",
+              "value" : "tg"
+            },
+            {
+              "title" : "sd",
+              "value" : "sd"
+            },
+            {
+              "title" : "gu",
+              "value" : "gu"
+            },
+            {
+              "title" : "am",
+              "value" : "am"
+            },
+            {
+              "title" : "yi",
+              "value" : "yi"
+            },
+            {
+              "title" : "lo",
+              "value" : "lo"
+            },
+            {
+              "title" : "uz",
+              "value" : "uz"
+            },
+            {
+              "title" : "fo",
+              "value" : "fo"
+            },
+            {
+              "title" : "ht",
+              "value" : "ht"
+            },
+            {
+              "title" : "ps",
+              "value" : "ps"
+            },
+            {
+              "title" : "tk",
+              "value" : "tk"
+            },
+            {
+              "title" : "nn",
+              "value" : "nn"
+            },
+            {
+              "title" : "mt",
+              "value" : "mt"
+            },
+            {
+              "title" : "sa",
+              "value" : "sa"
+            },
+            {
+              "title" : "lb",
+              "value" : "lb"
+            },
+            {
+              "title" : "my",
+              "value" : "my"
+            },
+            {
+              "title" : "bo",
+              "value" : "bo"
+            },
+            {
+              "title" : "tl",
+              "value" : "tl"
+            },
+            {
+              "title" : "mg",
+              "value" : "mg"
+            },
+            {
+              "title" : "as",
+              "value" : "as"
+            },
+            {
+              "title" : "tt",
+              "value" : "tt"
+            },
+            {
+              "title" : "haw",
+              "value" : "haw"
+            },
+            {
+              "title" : "ln",
+              "value" : "ln"
+            },
+            {
+              "title" : "ha",
+              "value" : "ha"
+            },
+            {
+              "title" : "ba",
+              "value" : "ba"
+            },
+            {
+              "title" : "jw",
+              "value" : "jw"
+            },
+            {
+              "title" : "su",
+              "value" : "su"
+            }
+          ],
+          "help" : "The language spoken, by Whisper's code. Absent, the model detects it from the first 30 seconds.",
+          "key" : "sourceLanguage",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Language"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Transcribe",
+              "value" : "transcribe"
+            },
+            {
+              "title" : "Translate to English",
+              "value" : "translate"
+            }
+          ],
+          "default" : "transcribe",
+          "help" : "Transcribes the speech in its own language, or translates it into English text.",
+          "key" : "NFKMLXParameterSpeechTask",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Task"
+        },
+        {
+          "choices" : [
+            {
               "memory" : {
                 "peakBytes" : 3086999982,
                 "residentBytes" : 3086999982
@@ -63755,6 +65050,13 @@
           "required" : false,
           "title" : "Segments",
           "valueType" : "segments"
+        },
+        {
+          "help" : "The language the speech is in, as given or as the model detected it from the first 30 seconds.",
+          "key" : "language",
+          "required" : false,
+          "title" : "Language",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -63788,7 +65090,7 @@
       "variants" : [
         {
           "displayName" : "Whisper large-v2",
-          "downloadBytes" : 3088329401,
+          "downloadBytes" : 3088364005,
           "id" : "large-v2",
           "isDefault" : true,
           "memoryFacts" : {
@@ -63822,6 +65124,12 @@
                 "bytes" : 493869,
                 "optional" : false,
                 "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 34604,
+                "optional" : false,
+                "path" : "added_tokens.json",
                 "role" : "tokenizer"
               },
               {
@@ -63882,6 +65190,433 @@
         {
           "choices" : [
             {
+              "title" : "en",
+              "value" : "en"
+            },
+            {
+              "title" : "zh",
+              "value" : "zh"
+            },
+            {
+              "title" : "de",
+              "value" : "de"
+            },
+            {
+              "title" : "es",
+              "value" : "es"
+            },
+            {
+              "title" : "ru",
+              "value" : "ru"
+            },
+            {
+              "title" : "ko",
+              "value" : "ko"
+            },
+            {
+              "title" : "fr",
+              "value" : "fr"
+            },
+            {
+              "title" : "ja",
+              "value" : "ja"
+            },
+            {
+              "title" : "pt",
+              "value" : "pt"
+            },
+            {
+              "title" : "tr",
+              "value" : "tr"
+            },
+            {
+              "title" : "pl",
+              "value" : "pl"
+            },
+            {
+              "title" : "ca",
+              "value" : "ca"
+            },
+            {
+              "title" : "nl",
+              "value" : "nl"
+            },
+            {
+              "title" : "ar",
+              "value" : "ar"
+            },
+            {
+              "title" : "sv",
+              "value" : "sv"
+            },
+            {
+              "title" : "it",
+              "value" : "it"
+            },
+            {
+              "title" : "id",
+              "value" : "id"
+            },
+            {
+              "title" : "hi",
+              "value" : "hi"
+            },
+            {
+              "title" : "fi",
+              "value" : "fi"
+            },
+            {
+              "title" : "vi",
+              "value" : "vi"
+            },
+            {
+              "title" : "he",
+              "value" : "he"
+            },
+            {
+              "title" : "uk",
+              "value" : "uk"
+            },
+            {
+              "title" : "el",
+              "value" : "el"
+            },
+            {
+              "title" : "ms",
+              "value" : "ms"
+            },
+            {
+              "title" : "cs",
+              "value" : "cs"
+            },
+            {
+              "title" : "ro",
+              "value" : "ro"
+            },
+            {
+              "title" : "da",
+              "value" : "da"
+            },
+            {
+              "title" : "hu",
+              "value" : "hu"
+            },
+            {
+              "title" : "ta",
+              "value" : "ta"
+            },
+            {
+              "title" : "no",
+              "value" : "no"
+            },
+            {
+              "title" : "th",
+              "value" : "th"
+            },
+            {
+              "title" : "ur",
+              "value" : "ur"
+            },
+            {
+              "title" : "hr",
+              "value" : "hr"
+            },
+            {
+              "title" : "bg",
+              "value" : "bg"
+            },
+            {
+              "title" : "lt",
+              "value" : "lt"
+            },
+            {
+              "title" : "la",
+              "value" : "la"
+            },
+            {
+              "title" : "mi",
+              "value" : "mi"
+            },
+            {
+              "title" : "ml",
+              "value" : "ml"
+            },
+            {
+              "title" : "cy",
+              "value" : "cy"
+            },
+            {
+              "title" : "sk",
+              "value" : "sk"
+            },
+            {
+              "title" : "te",
+              "value" : "te"
+            },
+            {
+              "title" : "fa",
+              "value" : "fa"
+            },
+            {
+              "title" : "lv",
+              "value" : "lv"
+            },
+            {
+              "title" : "bn",
+              "value" : "bn"
+            },
+            {
+              "title" : "sr",
+              "value" : "sr"
+            },
+            {
+              "title" : "az",
+              "value" : "az"
+            },
+            {
+              "title" : "sl",
+              "value" : "sl"
+            },
+            {
+              "title" : "kn",
+              "value" : "kn"
+            },
+            {
+              "title" : "et",
+              "value" : "et"
+            },
+            {
+              "title" : "mk",
+              "value" : "mk"
+            },
+            {
+              "title" : "br",
+              "value" : "br"
+            },
+            {
+              "title" : "eu",
+              "value" : "eu"
+            },
+            {
+              "title" : "is",
+              "value" : "is"
+            },
+            {
+              "title" : "hy",
+              "value" : "hy"
+            },
+            {
+              "title" : "ne",
+              "value" : "ne"
+            },
+            {
+              "title" : "mn",
+              "value" : "mn"
+            },
+            {
+              "title" : "bs",
+              "value" : "bs"
+            },
+            {
+              "title" : "kk",
+              "value" : "kk"
+            },
+            {
+              "title" : "sq",
+              "value" : "sq"
+            },
+            {
+              "title" : "sw",
+              "value" : "sw"
+            },
+            {
+              "title" : "gl",
+              "value" : "gl"
+            },
+            {
+              "title" : "mr",
+              "value" : "mr"
+            },
+            {
+              "title" : "pa",
+              "value" : "pa"
+            },
+            {
+              "title" : "si",
+              "value" : "si"
+            },
+            {
+              "title" : "km",
+              "value" : "km"
+            },
+            {
+              "title" : "sn",
+              "value" : "sn"
+            },
+            {
+              "title" : "yo",
+              "value" : "yo"
+            },
+            {
+              "title" : "so",
+              "value" : "so"
+            },
+            {
+              "title" : "af",
+              "value" : "af"
+            },
+            {
+              "title" : "oc",
+              "value" : "oc"
+            },
+            {
+              "title" : "ka",
+              "value" : "ka"
+            },
+            {
+              "title" : "be",
+              "value" : "be"
+            },
+            {
+              "title" : "tg",
+              "value" : "tg"
+            },
+            {
+              "title" : "sd",
+              "value" : "sd"
+            },
+            {
+              "title" : "gu",
+              "value" : "gu"
+            },
+            {
+              "title" : "am",
+              "value" : "am"
+            },
+            {
+              "title" : "yi",
+              "value" : "yi"
+            },
+            {
+              "title" : "lo",
+              "value" : "lo"
+            },
+            {
+              "title" : "uz",
+              "value" : "uz"
+            },
+            {
+              "title" : "fo",
+              "value" : "fo"
+            },
+            {
+              "title" : "ht",
+              "value" : "ht"
+            },
+            {
+              "title" : "ps",
+              "value" : "ps"
+            },
+            {
+              "title" : "tk",
+              "value" : "tk"
+            },
+            {
+              "title" : "nn",
+              "value" : "nn"
+            },
+            {
+              "title" : "mt",
+              "value" : "mt"
+            },
+            {
+              "title" : "sa",
+              "value" : "sa"
+            },
+            {
+              "title" : "lb",
+              "value" : "lb"
+            },
+            {
+              "title" : "my",
+              "value" : "my"
+            },
+            {
+              "title" : "bo",
+              "value" : "bo"
+            },
+            {
+              "title" : "tl",
+              "value" : "tl"
+            },
+            {
+              "title" : "mg",
+              "value" : "mg"
+            },
+            {
+              "title" : "as",
+              "value" : "as"
+            },
+            {
+              "title" : "tt",
+              "value" : "tt"
+            },
+            {
+              "title" : "haw",
+              "value" : "haw"
+            },
+            {
+              "title" : "ln",
+              "value" : "ln"
+            },
+            {
+              "title" : "ha",
+              "value" : "ha"
+            },
+            {
+              "title" : "ba",
+              "value" : "ba"
+            },
+            {
+              "title" : "jw",
+              "value" : "jw"
+            },
+            {
+              "title" : "su",
+              "value" : "su"
+            },
+            {
+              "title" : "yue",
+              "value" : "yue"
+            }
+          ],
+          "help" : "The language spoken, by Whisper's code. Absent, the model detects it from the first 30 seconds.",
+          "key" : "sourceLanguage",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Language"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Transcribe",
+              "value" : "transcribe"
+            },
+            {
+              "title" : "Translate to English",
+              "value" : "translate"
+            }
+          ],
+          "default" : "transcribe",
+          "help" : "Transcribes the speech in its own language, or translates it into English text.",
+          "key" : "NFKMLXParameterSpeechTask",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Task"
+        },
+        {
+          "choices" : [
+            {
               "memory" : {
                 "peakBytes" : 3087371615,
                 "residentBytes" : 3087371615
@@ -63925,6 +65660,13 @@
           "required" : false,
           "title" : "Segments",
           "valueType" : "segments"
+        },
+        {
+          "help" : "The language the speech is in, as given or as the model detected it from the first 30 seconds.",
+          "key" : "language",
+          "required" : false,
+          "title" : "Language",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -63958,7 +65700,7 @@
       "variants" : [
         {
           "displayName" : "Whisper large-v3",
-          "downloadBytes" : 3088902042,
+          "downloadBytes" : 3088936690,
           "id" : "large-v3",
           "isDefault" : true,
           "memoryFacts" : {
@@ -63992,6 +65734,12 @@
                 "bytes" : 493869,
                 "optional" : false,
                 "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 34648,
+                "optional" : false,
+                "path" : "added_tokens.json",
                 "role" : "tokenizer"
               },
               {
@@ -64052,6 +65800,433 @@
         {
           "choices" : [
             {
+              "title" : "en",
+              "value" : "en"
+            },
+            {
+              "title" : "zh",
+              "value" : "zh"
+            },
+            {
+              "title" : "de",
+              "value" : "de"
+            },
+            {
+              "title" : "es",
+              "value" : "es"
+            },
+            {
+              "title" : "ru",
+              "value" : "ru"
+            },
+            {
+              "title" : "ko",
+              "value" : "ko"
+            },
+            {
+              "title" : "fr",
+              "value" : "fr"
+            },
+            {
+              "title" : "ja",
+              "value" : "ja"
+            },
+            {
+              "title" : "pt",
+              "value" : "pt"
+            },
+            {
+              "title" : "tr",
+              "value" : "tr"
+            },
+            {
+              "title" : "pl",
+              "value" : "pl"
+            },
+            {
+              "title" : "ca",
+              "value" : "ca"
+            },
+            {
+              "title" : "nl",
+              "value" : "nl"
+            },
+            {
+              "title" : "ar",
+              "value" : "ar"
+            },
+            {
+              "title" : "sv",
+              "value" : "sv"
+            },
+            {
+              "title" : "it",
+              "value" : "it"
+            },
+            {
+              "title" : "id",
+              "value" : "id"
+            },
+            {
+              "title" : "hi",
+              "value" : "hi"
+            },
+            {
+              "title" : "fi",
+              "value" : "fi"
+            },
+            {
+              "title" : "vi",
+              "value" : "vi"
+            },
+            {
+              "title" : "he",
+              "value" : "he"
+            },
+            {
+              "title" : "uk",
+              "value" : "uk"
+            },
+            {
+              "title" : "el",
+              "value" : "el"
+            },
+            {
+              "title" : "ms",
+              "value" : "ms"
+            },
+            {
+              "title" : "cs",
+              "value" : "cs"
+            },
+            {
+              "title" : "ro",
+              "value" : "ro"
+            },
+            {
+              "title" : "da",
+              "value" : "da"
+            },
+            {
+              "title" : "hu",
+              "value" : "hu"
+            },
+            {
+              "title" : "ta",
+              "value" : "ta"
+            },
+            {
+              "title" : "no",
+              "value" : "no"
+            },
+            {
+              "title" : "th",
+              "value" : "th"
+            },
+            {
+              "title" : "ur",
+              "value" : "ur"
+            },
+            {
+              "title" : "hr",
+              "value" : "hr"
+            },
+            {
+              "title" : "bg",
+              "value" : "bg"
+            },
+            {
+              "title" : "lt",
+              "value" : "lt"
+            },
+            {
+              "title" : "la",
+              "value" : "la"
+            },
+            {
+              "title" : "mi",
+              "value" : "mi"
+            },
+            {
+              "title" : "ml",
+              "value" : "ml"
+            },
+            {
+              "title" : "cy",
+              "value" : "cy"
+            },
+            {
+              "title" : "sk",
+              "value" : "sk"
+            },
+            {
+              "title" : "te",
+              "value" : "te"
+            },
+            {
+              "title" : "fa",
+              "value" : "fa"
+            },
+            {
+              "title" : "lv",
+              "value" : "lv"
+            },
+            {
+              "title" : "bn",
+              "value" : "bn"
+            },
+            {
+              "title" : "sr",
+              "value" : "sr"
+            },
+            {
+              "title" : "az",
+              "value" : "az"
+            },
+            {
+              "title" : "sl",
+              "value" : "sl"
+            },
+            {
+              "title" : "kn",
+              "value" : "kn"
+            },
+            {
+              "title" : "et",
+              "value" : "et"
+            },
+            {
+              "title" : "mk",
+              "value" : "mk"
+            },
+            {
+              "title" : "br",
+              "value" : "br"
+            },
+            {
+              "title" : "eu",
+              "value" : "eu"
+            },
+            {
+              "title" : "is",
+              "value" : "is"
+            },
+            {
+              "title" : "hy",
+              "value" : "hy"
+            },
+            {
+              "title" : "ne",
+              "value" : "ne"
+            },
+            {
+              "title" : "mn",
+              "value" : "mn"
+            },
+            {
+              "title" : "bs",
+              "value" : "bs"
+            },
+            {
+              "title" : "kk",
+              "value" : "kk"
+            },
+            {
+              "title" : "sq",
+              "value" : "sq"
+            },
+            {
+              "title" : "sw",
+              "value" : "sw"
+            },
+            {
+              "title" : "gl",
+              "value" : "gl"
+            },
+            {
+              "title" : "mr",
+              "value" : "mr"
+            },
+            {
+              "title" : "pa",
+              "value" : "pa"
+            },
+            {
+              "title" : "si",
+              "value" : "si"
+            },
+            {
+              "title" : "km",
+              "value" : "km"
+            },
+            {
+              "title" : "sn",
+              "value" : "sn"
+            },
+            {
+              "title" : "yo",
+              "value" : "yo"
+            },
+            {
+              "title" : "so",
+              "value" : "so"
+            },
+            {
+              "title" : "af",
+              "value" : "af"
+            },
+            {
+              "title" : "oc",
+              "value" : "oc"
+            },
+            {
+              "title" : "ka",
+              "value" : "ka"
+            },
+            {
+              "title" : "be",
+              "value" : "be"
+            },
+            {
+              "title" : "tg",
+              "value" : "tg"
+            },
+            {
+              "title" : "sd",
+              "value" : "sd"
+            },
+            {
+              "title" : "gu",
+              "value" : "gu"
+            },
+            {
+              "title" : "am",
+              "value" : "am"
+            },
+            {
+              "title" : "yi",
+              "value" : "yi"
+            },
+            {
+              "title" : "lo",
+              "value" : "lo"
+            },
+            {
+              "title" : "uz",
+              "value" : "uz"
+            },
+            {
+              "title" : "fo",
+              "value" : "fo"
+            },
+            {
+              "title" : "ht",
+              "value" : "ht"
+            },
+            {
+              "title" : "ps",
+              "value" : "ps"
+            },
+            {
+              "title" : "tk",
+              "value" : "tk"
+            },
+            {
+              "title" : "nn",
+              "value" : "nn"
+            },
+            {
+              "title" : "mt",
+              "value" : "mt"
+            },
+            {
+              "title" : "sa",
+              "value" : "sa"
+            },
+            {
+              "title" : "lb",
+              "value" : "lb"
+            },
+            {
+              "title" : "my",
+              "value" : "my"
+            },
+            {
+              "title" : "bo",
+              "value" : "bo"
+            },
+            {
+              "title" : "tl",
+              "value" : "tl"
+            },
+            {
+              "title" : "mg",
+              "value" : "mg"
+            },
+            {
+              "title" : "as",
+              "value" : "as"
+            },
+            {
+              "title" : "tt",
+              "value" : "tt"
+            },
+            {
+              "title" : "haw",
+              "value" : "haw"
+            },
+            {
+              "title" : "ln",
+              "value" : "ln"
+            },
+            {
+              "title" : "ha",
+              "value" : "ha"
+            },
+            {
+              "title" : "ba",
+              "value" : "ba"
+            },
+            {
+              "title" : "jw",
+              "value" : "jw"
+            },
+            {
+              "title" : "su",
+              "value" : "su"
+            },
+            {
+              "title" : "yue",
+              "value" : "yue"
+            }
+          ],
+          "help" : "The language spoken, by Whisper's code. Absent, the model detects it from the first 30 seconds.",
+          "key" : "sourceLanguage",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Language"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Transcribe",
+              "value" : "transcribe"
+            },
+            {
+              "title" : "Translate to English",
+              "value" : "translate"
+            }
+          ],
+          "default" : "transcribe",
+          "help" : "Transcribes the speech in its own language, or translates it into English text.",
+          "key" : "NFKMLXParameterSpeechTask",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Task"
+        },
+        {
+          "choices" : [
+            {
               "memory" : {
                 "peakBytes" : 1617941637,
                 "residentBytes" : 1617941637
@@ -64095,6 +66270,13 @@
           "required" : false,
           "title" : "Segments",
           "valueType" : "segments"
+        },
+        {
+          "help" : "The language the speech is in, as given or as the model detected it from the first 30 seconds.",
+          "key" : "language",
+          "required" : false,
+          "title" : "Language",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -64128,7 +66310,7 @@
       "variants" : [
         {
           "displayName" : "Whisper large-v3-turbo",
-          "downloadBytes" : 1619472064,
+          "downloadBytes" : 1619506712,
           "id" : "large-v3-turbo",
           "isDefault" : true,
           "memoryFacts" : {
@@ -64162,6 +66344,12 @@
                 "bytes" : 493869,
                 "optional" : false,
                 "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 34648,
+                "optional" : false,
+                "path" : "added_tokens.json",
                 "role" : "tokenizer"
               },
               {
@@ -64222,6 +66410,429 @@
         {
           "choices" : [
             {
+              "title" : "en",
+              "value" : "en"
+            },
+            {
+              "title" : "zh",
+              "value" : "zh"
+            },
+            {
+              "title" : "de",
+              "value" : "de"
+            },
+            {
+              "title" : "es",
+              "value" : "es"
+            },
+            {
+              "title" : "ru",
+              "value" : "ru"
+            },
+            {
+              "title" : "ko",
+              "value" : "ko"
+            },
+            {
+              "title" : "fr",
+              "value" : "fr"
+            },
+            {
+              "title" : "ja",
+              "value" : "ja"
+            },
+            {
+              "title" : "pt",
+              "value" : "pt"
+            },
+            {
+              "title" : "tr",
+              "value" : "tr"
+            },
+            {
+              "title" : "pl",
+              "value" : "pl"
+            },
+            {
+              "title" : "ca",
+              "value" : "ca"
+            },
+            {
+              "title" : "nl",
+              "value" : "nl"
+            },
+            {
+              "title" : "ar",
+              "value" : "ar"
+            },
+            {
+              "title" : "sv",
+              "value" : "sv"
+            },
+            {
+              "title" : "it",
+              "value" : "it"
+            },
+            {
+              "title" : "id",
+              "value" : "id"
+            },
+            {
+              "title" : "hi",
+              "value" : "hi"
+            },
+            {
+              "title" : "fi",
+              "value" : "fi"
+            },
+            {
+              "title" : "vi",
+              "value" : "vi"
+            },
+            {
+              "title" : "he",
+              "value" : "he"
+            },
+            {
+              "title" : "uk",
+              "value" : "uk"
+            },
+            {
+              "title" : "el",
+              "value" : "el"
+            },
+            {
+              "title" : "ms",
+              "value" : "ms"
+            },
+            {
+              "title" : "cs",
+              "value" : "cs"
+            },
+            {
+              "title" : "ro",
+              "value" : "ro"
+            },
+            {
+              "title" : "da",
+              "value" : "da"
+            },
+            {
+              "title" : "hu",
+              "value" : "hu"
+            },
+            {
+              "title" : "ta",
+              "value" : "ta"
+            },
+            {
+              "title" : "no",
+              "value" : "no"
+            },
+            {
+              "title" : "th",
+              "value" : "th"
+            },
+            {
+              "title" : "ur",
+              "value" : "ur"
+            },
+            {
+              "title" : "hr",
+              "value" : "hr"
+            },
+            {
+              "title" : "bg",
+              "value" : "bg"
+            },
+            {
+              "title" : "lt",
+              "value" : "lt"
+            },
+            {
+              "title" : "la",
+              "value" : "la"
+            },
+            {
+              "title" : "mi",
+              "value" : "mi"
+            },
+            {
+              "title" : "ml",
+              "value" : "ml"
+            },
+            {
+              "title" : "cy",
+              "value" : "cy"
+            },
+            {
+              "title" : "sk",
+              "value" : "sk"
+            },
+            {
+              "title" : "te",
+              "value" : "te"
+            },
+            {
+              "title" : "fa",
+              "value" : "fa"
+            },
+            {
+              "title" : "lv",
+              "value" : "lv"
+            },
+            {
+              "title" : "bn",
+              "value" : "bn"
+            },
+            {
+              "title" : "sr",
+              "value" : "sr"
+            },
+            {
+              "title" : "az",
+              "value" : "az"
+            },
+            {
+              "title" : "sl",
+              "value" : "sl"
+            },
+            {
+              "title" : "kn",
+              "value" : "kn"
+            },
+            {
+              "title" : "et",
+              "value" : "et"
+            },
+            {
+              "title" : "mk",
+              "value" : "mk"
+            },
+            {
+              "title" : "br",
+              "value" : "br"
+            },
+            {
+              "title" : "eu",
+              "value" : "eu"
+            },
+            {
+              "title" : "is",
+              "value" : "is"
+            },
+            {
+              "title" : "hy",
+              "value" : "hy"
+            },
+            {
+              "title" : "ne",
+              "value" : "ne"
+            },
+            {
+              "title" : "mn",
+              "value" : "mn"
+            },
+            {
+              "title" : "bs",
+              "value" : "bs"
+            },
+            {
+              "title" : "kk",
+              "value" : "kk"
+            },
+            {
+              "title" : "sq",
+              "value" : "sq"
+            },
+            {
+              "title" : "sw",
+              "value" : "sw"
+            },
+            {
+              "title" : "gl",
+              "value" : "gl"
+            },
+            {
+              "title" : "mr",
+              "value" : "mr"
+            },
+            {
+              "title" : "pa",
+              "value" : "pa"
+            },
+            {
+              "title" : "si",
+              "value" : "si"
+            },
+            {
+              "title" : "km",
+              "value" : "km"
+            },
+            {
+              "title" : "sn",
+              "value" : "sn"
+            },
+            {
+              "title" : "yo",
+              "value" : "yo"
+            },
+            {
+              "title" : "so",
+              "value" : "so"
+            },
+            {
+              "title" : "af",
+              "value" : "af"
+            },
+            {
+              "title" : "oc",
+              "value" : "oc"
+            },
+            {
+              "title" : "ka",
+              "value" : "ka"
+            },
+            {
+              "title" : "be",
+              "value" : "be"
+            },
+            {
+              "title" : "tg",
+              "value" : "tg"
+            },
+            {
+              "title" : "sd",
+              "value" : "sd"
+            },
+            {
+              "title" : "gu",
+              "value" : "gu"
+            },
+            {
+              "title" : "am",
+              "value" : "am"
+            },
+            {
+              "title" : "yi",
+              "value" : "yi"
+            },
+            {
+              "title" : "lo",
+              "value" : "lo"
+            },
+            {
+              "title" : "uz",
+              "value" : "uz"
+            },
+            {
+              "title" : "fo",
+              "value" : "fo"
+            },
+            {
+              "title" : "ht",
+              "value" : "ht"
+            },
+            {
+              "title" : "ps",
+              "value" : "ps"
+            },
+            {
+              "title" : "tk",
+              "value" : "tk"
+            },
+            {
+              "title" : "nn",
+              "value" : "nn"
+            },
+            {
+              "title" : "mt",
+              "value" : "mt"
+            },
+            {
+              "title" : "sa",
+              "value" : "sa"
+            },
+            {
+              "title" : "lb",
+              "value" : "lb"
+            },
+            {
+              "title" : "my",
+              "value" : "my"
+            },
+            {
+              "title" : "bo",
+              "value" : "bo"
+            },
+            {
+              "title" : "tl",
+              "value" : "tl"
+            },
+            {
+              "title" : "mg",
+              "value" : "mg"
+            },
+            {
+              "title" : "as",
+              "value" : "as"
+            },
+            {
+              "title" : "tt",
+              "value" : "tt"
+            },
+            {
+              "title" : "haw",
+              "value" : "haw"
+            },
+            {
+              "title" : "ln",
+              "value" : "ln"
+            },
+            {
+              "title" : "ha",
+              "value" : "ha"
+            },
+            {
+              "title" : "ba",
+              "value" : "ba"
+            },
+            {
+              "title" : "jw",
+              "value" : "jw"
+            },
+            {
+              "title" : "su",
+              "value" : "su"
+            }
+          ],
+          "help" : "The language spoken, by Whisper's code. Absent, the model detects it from the first 30 seconds.",
+          "key" : "sourceLanguage",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Language"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Transcribe",
+              "value" : "transcribe"
+            },
+            {
+              "title" : "Translate to English",
+              "value" : "translate"
+            }
+          ],
+          "default" : "transcribe",
+          "help" : "Transcribes the speech in its own language, or translates it into English text.",
+          "key" : "NFKMLXParameterSpeechTask",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Task"
+        },
+        {
+          "choices" : [
+            {
               "memory" : {
                 "peakBytes" : 1528008539,
                 "residentBytes" : 1528008539
@@ -64265,6 +66876,13 @@
           "required" : false,
           "title" : "Segments",
           "valueType" : "segments"
+        },
+        {
+          "help" : "The language the speech is in, as given or as the model detected it from the first 30 seconds.",
+          "key" : "language",
+          "required" : false,
+          "title" : "Language",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -64298,7 +66916,7 @@
       "variants" : [
         {
           "displayName" : "Whisper medium",
-          "downloadBytes" : 1529337958,
+          "downloadBytes" : 1529372562,
           "id" : "medium",
           "isDefault" : true,
           "memoryFacts" : {
@@ -64332,6 +66950,12 @@
                 "bytes" : 493869,
                 "optional" : false,
                 "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 34604,
+                "optional" : false,
+                "path" : "added_tokens.json",
                 "role" : "tokenizer"
               },
               {
@@ -64392,6 +67016,429 @@
         {
           "choices" : [
             {
+              "title" : "en",
+              "value" : "en"
+            },
+            {
+              "title" : "zh",
+              "value" : "zh"
+            },
+            {
+              "title" : "de",
+              "value" : "de"
+            },
+            {
+              "title" : "es",
+              "value" : "es"
+            },
+            {
+              "title" : "ru",
+              "value" : "ru"
+            },
+            {
+              "title" : "ko",
+              "value" : "ko"
+            },
+            {
+              "title" : "fr",
+              "value" : "fr"
+            },
+            {
+              "title" : "ja",
+              "value" : "ja"
+            },
+            {
+              "title" : "pt",
+              "value" : "pt"
+            },
+            {
+              "title" : "tr",
+              "value" : "tr"
+            },
+            {
+              "title" : "pl",
+              "value" : "pl"
+            },
+            {
+              "title" : "ca",
+              "value" : "ca"
+            },
+            {
+              "title" : "nl",
+              "value" : "nl"
+            },
+            {
+              "title" : "ar",
+              "value" : "ar"
+            },
+            {
+              "title" : "sv",
+              "value" : "sv"
+            },
+            {
+              "title" : "it",
+              "value" : "it"
+            },
+            {
+              "title" : "id",
+              "value" : "id"
+            },
+            {
+              "title" : "hi",
+              "value" : "hi"
+            },
+            {
+              "title" : "fi",
+              "value" : "fi"
+            },
+            {
+              "title" : "vi",
+              "value" : "vi"
+            },
+            {
+              "title" : "he",
+              "value" : "he"
+            },
+            {
+              "title" : "uk",
+              "value" : "uk"
+            },
+            {
+              "title" : "el",
+              "value" : "el"
+            },
+            {
+              "title" : "ms",
+              "value" : "ms"
+            },
+            {
+              "title" : "cs",
+              "value" : "cs"
+            },
+            {
+              "title" : "ro",
+              "value" : "ro"
+            },
+            {
+              "title" : "da",
+              "value" : "da"
+            },
+            {
+              "title" : "hu",
+              "value" : "hu"
+            },
+            {
+              "title" : "ta",
+              "value" : "ta"
+            },
+            {
+              "title" : "no",
+              "value" : "no"
+            },
+            {
+              "title" : "th",
+              "value" : "th"
+            },
+            {
+              "title" : "ur",
+              "value" : "ur"
+            },
+            {
+              "title" : "hr",
+              "value" : "hr"
+            },
+            {
+              "title" : "bg",
+              "value" : "bg"
+            },
+            {
+              "title" : "lt",
+              "value" : "lt"
+            },
+            {
+              "title" : "la",
+              "value" : "la"
+            },
+            {
+              "title" : "mi",
+              "value" : "mi"
+            },
+            {
+              "title" : "ml",
+              "value" : "ml"
+            },
+            {
+              "title" : "cy",
+              "value" : "cy"
+            },
+            {
+              "title" : "sk",
+              "value" : "sk"
+            },
+            {
+              "title" : "te",
+              "value" : "te"
+            },
+            {
+              "title" : "fa",
+              "value" : "fa"
+            },
+            {
+              "title" : "lv",
+              "value" : "lv"
+            },
+            {
+              "title" : "bn",
+              "value" : "bn"
+            },
+            {
+              "title" : "sr",
+              "value" : "sr"
+            },
+            {
+              "title" : "az",
+              "value" : "az"
+            },
+            {
+              "title" : "sl",
+              "value" : "sl"
+            },
+            {
+              "title" : "kn",
+              "value" : "kn"
+            },
+            {
+              "title" : "et",
+              "value" : "et"
+            },
+            {
+              "title" : "mk",
+              "value" : "mk"
+            },
+            {
+              "title" : "br",
+              "value" : "br"
+            },
+            {
+              "title" : "eu",
+              "value" : "eu"
+            },
+            {
+              "title" : "is",
+              "value" : "is"
+            },
+            {
+              "title" : "hy",
+              "value" : "hy"
+            },
+            {
+              "title" : "ne",
+              "value" : "ne"
+            },
+            {
+              "title" : "mn",
+              "value" : "mn"
+            },
+            {
+              "title" : "bs",
+              "value" : "bs"
+            },
+            {
+              "title" : "kk",
+              "value" : "kk"
+            },
+            {
+              "title" : "sq",
+              "value" : "sq"
+            },
+            {
+              "title" : "sw",
+              "value" : "sw"
+            },
+            {
+              "title" : "gl",
+              "value" : "gl"
+            },
+            {
+              "title" : "mr",
+              "value" : "mr"
+            },
+            {
+              "title" : "pa",
+              "value" : "pa"
+            },
+            {
+              "title" : "si",
+              "value" : "si"
+            },
+            {
+              "title" : "km",
+              "value" : "km"
+            },
+            {
+              "title" : "sn",
+              "value" : "sn"
+            },
+            {
+              "title" : "yo",
+              "value" : "yo"
+            },
+            {
+              "title" : "so",
+              "value" : "so"
+            },
+            {
+              "title" : "af",
+              "value" : "af"
+            },
+            {
+              "title" : "oc",
+              "value" : "oc"
+            },
+            {
+              "title" : "ka",
+              "value" : "ka"
+            },
+            {
+              "title" : "be",
+              "value" : "be"
+            },
+            {
+              "title" : "tg",
+              "value" : "tg"
+            },
+            {
+              "title" : "sd",
+              "value" : "sd"
+            },
+            {
+              "title" : "gu",
+              "value" : "gu"
+            },
+            {
+              "title" : "am",
+              "value" : "am"
+            },
+            {
+              "title" : "yi",
+              "value" : "yi"
+            },
+            {
+              "title" : "lo",
+              "value" : "lo"
+            },
+            {
+              "title" : "uz",
+              "value" : "uz"
+            },
+            {
+              "title" : "fo",
+              "value" : "fo"
+            },
+            {
+              "title" : "ht",
+              "value" : "ht"
+            },
+            {
+              "title" : "ps",
+              "value" : "ps"
+            },
+            {
+              "title" : "tk",
+              "value" : "tk"
+            },
+            {
+              "title" : "nn",
+              "value" : "nn"
+            },
+            {
+              "title" : "mt",
+              "value" : "mt"
+            },
+            {
+              "title" : "sa",
+              "value" : "sa"
+            },
+            {
+              "title" : "lb",
+              "value" : "lb"
+            },
+            {
+              "title" : "my",
+              "value" : "my"
+            },
+            {
+              "title" : "bo",
+              "value" : "bo"
+            },
+            {
+              "title" : "tl",
+              "value" : "tl"
+            },
+            {
+              "title" : "mg",
+              "value" : "mg"
+            },
+            {
+              "title" : "as",
+              "value" : "as"
+            },
+            {
+              "title" : "tt",
+              "value" : "tt"
+            },
+            {
+              "title" : "haw",
+              "value" : "haw"
+            },
+            {
+              "title" : "ln",
+              "value" : "ln"
+            },
+            {
+              "title" : "ha",
+              "value" : "ha"
+            },
+            {
+              "title" : "ba",
+              "value" : "ba"
+            },
+            {
+              "title" : "jw",
+              "value" : "jw"
+            },
+            {
+              "title" : "su",
+              "value" : "su"
+            }
+          ],
+          "help" : "The language spoken, by Whisper's code. Absent, the model detects it from the first 30 seconds.",
+          "key" : "sourceLanguage",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Language"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Transcribe",
+              "value" : "transcribe"
+            },
+            {
+              "title" : "Translate to English",
+              "value" : "translate"
+            }
+          ],
+          "default" : "transcribe",
+          "help" : "Transcribes the speech in its own language, or translates it into English text.",
+          "key" : "NFKMLXParameterSpeechTask",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Task"
+        },
+        {
+          "choices" : [
+            {
               "memory" : {
                 "peakBytes" : 483617219,
                 "residentBytes" : 483617219
@@ -64435,6 +67482,13 @@
           "required" : false,
           "title" : "Segments",
           "valueType" : "segments"
+        },
+        {
+          "help" : "The language the speech is in, as given or as the model detected it from the first 30 seconds.",
+          "key" : "language",
+          "required" : false,
+          "title" : "Language",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -64468,7 +67522,7 @@
       "variants" : [
         {
           "displayName" : "Whisper small",
-          "downloadBytes" : 484946638,
+          "downloadBytes" : 484981242,
           "id" : "small",
           "isDefault" : true,
           "memoryFacts" : {
@@ -64502,6 +67556,12 @@
                 "bytes" : 493869,
                 "optional" : false,
                 "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 34604,
+                "optional" : false,
+                "path" : "added_tokens.json",
                 "role" : "tokenizer"
               },
               {
@@ -64562,6 +67622,429 @@
         {
           "choices" : [
             {
+              "title" : "en",
+              "value" : "en"
+            },
+            {
+              "title" : "zh",
+              "value" : "zh"
+            },
+            {
+              "title" : "de",
+              "value" : "de"
+            },
+            {
+              "title" : "es",
+              "value" : "es"
+            },
+            {
+              "title" : "ru",
+              "value" : "ru"
+            },
+            {
+              "title" : "ko",
+              "value" : "ko"
+            },
+            {
+              "title" : "fr",
+              "value" : "fr"
+            },
+            {
+              "title" : "ja",
+              "value" : "ja"
+            },
+            {
+              "title" : "pt",
+              "value" : "pt"
+            },
+            {
+              "title" : "tr",
+              "value" : "tr"
+            },
+            {
+              "title" : "pl",
+              "value" : "pl"
+            },
+            {
+              "title" : "ca",
+              "value" : "ca"
+            },
+            {
+              "title" : "nl",
+              "value" : "nl"
+            },
+            {
+              "title" : "ar",
+              "value" : "ar"
+            },
+            {
+              "title" : "sv",
+              "value" : "sv"
+            },
+            {
+              "title" : "it",
+              "value" : "it"
+            },
+            {
+              "title" : "id",
+              "value" : "id"
+            },
+            {
+              "title" : "hi",
+              "value" : "hi"
+            },
+            {
+              "title" : "fi",
+              "value" : "fi"
+            },
+            {
+              "title" : "vi",
+              "value" : "vi"
+            },
+            {
+              "title" : "he",
+              "value" : "he"
+            },
+            {
+              "title" : "uk",
+              "value" : "uk"
+            },
+            {
+              "title" : "el",
+              "value" : "el"
+            },
+            {
+              "title" : "ms",
+              "value" : "ms"
+            },
+            {
+              "title" : "cs",
+              "value" : "cs"
+            },
+            {
+              "title" : "ro",
+              "value" : "ro"
+            },
+            {
+              "title" : "da",
+              "value" : "da"
+            },
+            {
+              "title" : "hu",
+              "value" : "hu"
+            },
+            {
+              "title" : "ta",
+              "value" : "ta"
+            },
+            {
+              "title" : "no",
+              "value" : "no"
+            },
+            {
+              "title" : "th",
+              "value" : "th"
+            },
+            {
+              "title" : "ur",
+              "value" : "ur"
+            },
+            {
+              "title" : "hr",
+              "value" : "hr"
+            },
+            {
+              "title" : "bg",
+              "value" : "bg"
+            },
+            {
+              "title" : "lt",
+              "value" : "lt"
+            },
+            {
+              "title" : "la",
+              "value" : "la"
+            },
+            {
+              "title" : "mi",
+              "value" : "mi"
+            },
+            {
+              "title" : "ml",
+              "value" : "ml"
+            },
+            {
+              "title" : "cy",
+              "value" : "cy"
+            },
+            {
+              "title" : "sk",
+              "value" : "sk"
+            },
+            {
+              "title" : "te",
+              "value" : "te"
+            },
+            {
+              "title" : "fa",
+              "value" : "fa"
+            },
+            {
+              "title" : "lv",
+              "value" : "lv"
+            },
+            {
+              "title" : "bn",
+              "value" : "bn"
+            },
+            {
+              "title" : "sr",
+              "value" : "sr"
+            },
+            {
+              "title" : "az",
+              "value" : "az"
+            },
+            {
+              "title" : "sl",
+              "value" : "sl"
+            },
+            {
+              "title" : "kn",
+              "value" : "kn"
+            },
+            {
+              "title" : "et",
+              "value" : "et"
+            },
+            {
+              "title" : "mk",
+              "value" : "mk"
+            },
+            {
+              "title" : "br",
+              "value" : "br"
+            },
+            {
+              "title" : "eu",
+              "value" : "eu"
+            },
+            {
+              "title" : "is",
+              "value" : "is"
+            },
+            {
+              "title" : "hy",
+              "value" : "hy"
+            },
+            {
+              "title" : "ne",
+              "value" : "ne"
+            },
+            {
+              "title" : "mn",
+              "value" : "mn"
+            },
+            {
+              "title" : "bs",
+              "value" : "bs"
+            },
+            {
+              "title" : "kk",
+              "value" : "kk"
+            },
+            {
+              "title" : "sq",
+              "value" : "sq"
+            },
+            {
+              "title" : "sw",
+              "value" : "sw"
+            },
+            {
+              "title" : "gl",
+              "value" : "gl"
+            },
+            {
+              "title" : "mr",
+              "value" : "mr"
+            },
+            {
+              "title" : "pa",
+              "value" : "pa"
+            },
+            {
+              "title" : "si",
+              "value" : "si"
+            },
+            {
+              "title" : "km",
+              "value" : "km"
+            },
+            {
+              "title" : "sn",
+              "value" : "sn"
+            },
+            {
+              "title" : "yo",
+              "value" : "yo"
+            },
+            {
+              "title" : "so",
+              "value" : "so"
+            },
+            {
+              "title" : "af",
+              "value" : "af"
+            },
+            {
+              "title" : "oc",
+              "value" : "oc"
+            },
+            {
+              "title" : "ka",
+              "value" : "ka"
+            },
+            {
+              "title" : "be",
+              "value" : "be"
+            },
+            {
+              "title" : "tg",
+              "value" : "tg"
+            },
+            {
+              "title" : "sd",
+              "value" : "sd"
+            },
+            {
+              "title" : "gu",
+              "value" : "gu"
+            },
+            {
+              "title" : "am",
+              "value" : "am"
+            },
+            {
+              "title" : "yi",
+              "value" : "yi"
+            },
+            {
+              "title" : "lo",
+              "value" : "lo"
+            },
+            {
+              "title" : "uz",
+              "value" : "uz"
+            },
+            {
+              "title" : "fo",
+              "value" : "fo"
+            },
+            {
+              "title" : "ht",
+              "value" : "ht"
+            },
+            {
+              "title" : "ps",
+              "value" : "ps"
+            },
+            {
+              "title" : "tk",
+              "value" : "tk"
+            },
+            {
+              "title" : "nn",
+              "value" : "nn"
+            },
+            {
+              "title" : "mt",
+              "value" : "mt"
+            },
+            {
+              "title" : "sa",
+              "value" : "sa"
+            },
+            {
+              "title" : "lb",
+              "value" : "lb"
+            },
+            {
+              "title" : "my",
+              "value" : "my"
+            },
+            {
+              "title" : "bo",
+              "value" : "bo"
+            },
+            {
+              "title" : "tl",
+              "value" : "tl"
+            },
+            {
+              "title" : "mg",
+              "value" : "mg"
+            },
+            {
+              "title" : "as",
+              "value" : "as"
+            },
+            {
+              "title" : "tt",
+              "value" : "tt"
+            },
+            {
+              "title" : "haw",
+              "value" : "haw"
+            },
+            {
+              "title" : "ln",
+              "value" : "ln"
+            },
+            {
+              "title" : "ha",
+              "value" : "ha"
+            },
+            {
+              "title" : "ba",
+              "value" : "ba"
+            },
+            {
+              "title" : "jw",
+              "value" : "jw"
+            },
+            {
+              "title" : "su",
+              "value" : "su"
+            }
+          ],
+          "help" : "The language spoken, by Whisper's code. Absent, the model detects it from the first 30 seconds.",
+          "key" : "sourceLanguage",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Language"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Transcribe",
+              "value" : "transcribe"
+            },
+            {
+              "title" : "Translate to English",
+              "value" : "translate"
+            }
+          ],
+          "default" : "transcribe",
+          "help" : "Transcribes the speech in its own language, or translates it into English text.",
+          "key" : "NFKMLXParameterSpeechTask",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Task"
+        },
+        {
+          "choices" : [
+            {
               "memory" : {
                 "peakBytes" : 75572083,
                 "residentBytes" : 75572083
@@ -64605,6 +68088,13 @@
           "required" : false,
           "title" : "Segments",
           "valueType" : "segments"
+        },
+        {
+          "help" : "The language the speech is in, as given or as the model detected it from the first 30 seconds.",
+          "key" : "language",
+          "required" : false,
+          "title" : "Language",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -64638,7 +68128,7 @@
       "variants" : [
         {
           "displayName" : "Whisper tiny",
-          "downloadBytes" : 76901502,
+          "downloadBytes" : 76936106,
           "id" : "tiny",
           "isDefault" : true,
           "memoryFacts" : {
@@ -64672,6 +68162,12 @@
                 "bytes" : 493869,
                 "optional" : false,
                 "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 34604,
+                "optional" : false,
+                "path" : "added_tokens.json",
                 "role" : "tokenizer"
               },
               {
