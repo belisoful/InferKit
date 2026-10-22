@@ -160,21 +160,55 @@ static BOOL NFKMIDIReadTrack(const uint8_t *bytes, NSUInteger start, NSUInteger 
 	return YES;
 }
 
-/*! The seconds at each tick under a tempo map of (tick, microseconds per quarter) pairs in tick order. */
-static double NFKMIDISecondsAtTick(uint64_t tick, NSArray<NFKMIDIReadEvent *> *tempos, double ticksPerQuarter)
+/*! A file's tempo map: where each tempo takes effect, in ticks and in seconds, and the microseconds per
+	quarter note from there. The first segment starts at tick 0 at the format's default 120 BPM. */
+typedef struct {
+	NSMutableData *ticks;
+	NSMutableData *seconds;
+	NSMutableData *microseconds;
+	NSUInteger count;
+	double ticksPerQuarter;
+} NFKMIDITempoMap;
+
+static void NFKMIDITempoMapAppend(NFKMIDITempoMap *map, uint64_t tick, double seconds, double microseconds)
 {
-	double seconds = 0;
-	uint64_t mark = 0;
-	double microsecondsPerQuarter = 500000;
+	[map->ticks appendBytes:&tick length:sizeof(tick)];
+	[map->seconds appendBytes:&seconds length:sizeof(seconds)];
+	[map->microseconds appendBytes:&microseconds length:sizeof(microseconds)];
+	map->count += 1;
+}
+
+/*! The map of tempo events in tick order, built once so each note's time is a binary search. */
+static NFKMIDITempoMap NFKMIDITempoMapMake(NSArray<NFKMIDIReadEvent *> *tempos, double ticksPerQuarter)
+{
+	NFKMIDITempoMap map = { [NSMutableData data], [NSMutableData data], [NSMutableData data], 0, ticksPerQuarter };
+	NFKMIDITempoMapAppend(&map, 0, 0, 500000);
 	for (NFKMIDIReadEvent *tempo in tempos) {
-		if (tempo.tick >= tick) {
-			break;
-		}
-		seconds += (double)(tempo.tick - mark) * microsecondsPerQuarter / ticksPerQuarter / 1e6;
-		mark = tempo.tick;
-		microsecondsPerQuarter = tempo.value > 0 ? tempo.value : microsecondsPerQuarter;
+		uint64_t lastTick = ((const uint64_t *)map.ticks.bytes)[map.count - 1];
+		double lastSeconds = ((const double *)map.seconds.bytes)[map.count - 1];
+		double lastMicroseconds = ((const double *)map.microseconds.bytes)[map.count - 1];
+		double seconds = lastSeconds + (double)(tempo.tick - lastTick) * lastMicroseconds / ticksPerQuarter / 1e6;
+		NFKMIDITempoMapAppend(&map, tempo.tick, seconds, tempo.value > 0 ? tempo.value : lastMicroseconds);
 	}
-	return seconds + (double)(tick - mark) * microsecondsPerQuarter / ticksPerQuarter / 1e6;
+	return map;
+}
+
+/*! The seconds at tick under the map: from the last segment that starts at or before it. */
+static double NFKMIDISecondsAtTick(uint64_t tick, const NFKMIDITempoMap *map)
+{
+	const uint64_t *ticks = map->ticks.bytes;
+	NSUInteger low = 0;
+	NSUInteger high = map->count;
+	while (high - low > 1) {
+		NSUInteger middle = low + (high - low) / 2;
+		if (ticks[middle] <= tick) {
+			low = middle;
+		} else {
+			high = middle;
+		}
+	}
+	return ((const double *)map->seconds.bytes)[low]
+		+ (double)(tick - ticks[low]) * ((const double *)map->microseconds.bytes)[low] / map->ticksPerQuarter / 1e6;
 }
 
 #pragma mark -
@@ -494,7 +528,7 @@ static void NFKMIDIAppendPitchBend(NSMutableArray<NFKMIDIEvent *> *events, uint3
 	uint16_t format = (uint16_t)((bytes[8] << 8) | bytes[9]);
 	uint16_t division = (uint16_t)((bytes[12] << 8) | bytes[13]);
 	if (format > 1) {
-		NFKMIDIReadFail(error, @"a format-2 file holds independent patterns, not one performance");
+		NFKMIDIReadFail(error, @"a format-2 file holds independent patterns");
 		return nil;
 	}
 	if ((division & 0x8000) != 0 || division == 0) {
@@ -547,7 +581,7 @@ static void NFKMIDIAppendPitchBend(NSMutableArray<NFKMIDIEvent *> *events, uint3
 			[tempos addObject:event];
 		}
 	}
-	double ticksPerQuarter = division;
+	NFKMIDITempoMap tempoMap = NFKMIDITempoMapMake(tempos, division);
 	NSInteger programs[16] = { 0 };
 	NSMutableDictionary<NSNumber *, NSMutableArray<NFKMIDIReadEvent *> *> *sounding = [NSMutableDictionary dictionary];
 	NSMutableDictionary<NSNumber *, NSNumber *> *startPrograms = [NSMutableDictionary dictionary];
@@ -555,8 +589,8 @@ static void NFKMIDIAppendPitchBend(NSMutableArray<NFKMIDIEvent *> *events, uint3
 	void (^close)(NFKMIDIReadEvent *, uint64_t) = ^(NFKMIDIReadEvent *start, uint64_t endTick) {
 		NSInteger program = startPrograms[@(start.sequenceIndex)].integerValue;
 		[notes addObject:[[NFKMIDINote alloc] initWithPitch:start.value
-											   startSeconds:NFKMIDISecondsAtTick(start.tick, tempos, ticksPerQuarter)
-												 endSeconds:NFKMIDISecondsAtTick(endTick, tempos, ticksPerQuarter)
+											   startSeconds:NFKMIDISecondsAtTick(start.tick, &tempoMap)
+												 endSeconds:NFKMIDISecondsAtTick(endTick, &tempoMap)
 												   velocity:start.velocity
 													program:program
 												 percussion:start.channel == NFKMIDIPercussionChannel
@@ -600,7 +634,7 @@ static void NFKMIDIAppendPitchBend(NSMutableArray<NFKMIDIEvent *> *events, uint3
 
 + (nullable instancetype)sequenceWithContentsOfURL:(NSURL *)url error:(NSError **)error
 {
-	NSData *data = [NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:error];
+	NSData *data = [NSData dataWithContentsOfURL:url options:0 error:error];
 	return data != nil ? [self sequenceWithStandardMIDIFileData:data error:error] : nil;
 }
 

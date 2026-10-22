@@ -149,7 +149,7 @@ static NSString * _Nullable NFKValueCodingSingular(NSString *valueType)
 	if ([valueType isEqualToString:NFKModelValueTypeMIDI]) {
 		return [NFKMIDISequence sequenceWithContentsOfURL:url error:error];
 	}
-	NSData *data = [NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:error];
+	NSData *data = [NSData dataWithContentsOfURL:url options:0 error:error];
 	if (data == nil) {
 		return nil;
 	}
@@ -200,6 +200,10 @@ static NSString * _Nullable NFKValueCodingSingular(NSString *valueType)
 
 - (nullable id)pixelBufferFromImageData:(NSData *)data valueType:(NSString *)valueType error:(NSError **)error
 {
+	NSError *limitError = nil;
+	if (!NFKValueFileImageFitsLimit(data, &limitError)) {
+		return NFKValueCodingFail(error, valueType, limitError.localizedDescription);
+	}
 	CVPixelBufferRef buffer = NFKValueFilePixelBufferFromPNG(data, kCVPixelFormatType_32BGRA, NULL);
 	if (buffer == NULL) {
 		buffer = [NFKImageCoding pixelBufferWithImageData:data];
@@ -219,11 +223,9 @@ static NSString * _Nullable NFKValueCodingSingular(NSString *valueType)
 	if (shape.count != 1 || !(singles || [description isEqualToString:@"<f8"])) {
 		return NFKValueCodingFail(error, NFKModelValueTypeEmbedding, @"the .npy file is not a vector of 32- or 64-bit floats");
 	}
-	NSMutableArray<NSNumber *> *vector = [NSMutableArray arrayWithCapacity:shape.firstObject.unsignedIntegerValue];
-	for (NSUInteger index = 0; index < shape.firstObject.unsignedIntegerValue; index++) {
-		[vector addObject:singles ? @(((const float *)elements.bytes)[index]) : @(((const double *)elements.bytes)[index])];
-	}
-	return vector;
+	return [self valueFromJSONValue:@{ @"$nfk": singles ? @"float32Array" : @"float64Array",
+									   @"base64": [elements base64EncodedStringWithOptions:0] }
+							   key:NFKModelValueTypeEmbedding error:error];
 }
 
 - (nullable id)valueOfType:(NSString *)valueType fromJSONValue:(id)JSONValue error:(NSError **)error

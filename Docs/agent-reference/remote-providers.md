@@ -1014,9 +1014,16 @@ machine's remote clients reach a model this process hosts. Files:
   replaces the attachment mode while it is on (`attachesLength:` answers NO). Entries carry "path"
   relative to the directory; the decoder takes the file form for any tagged entry with a "path" and no
   "base64" (value classes excepted: a midiSequence's "path" names its `.mid` companion and the fields
-  decode). `NFKValueFiles.h/.m` (private) hold the formats: `NFKValueFileCreate` makes each name with
-  `O_CREAT|O_EXCL|O_NOFOLLOW` so two coders in one directory never share one; `NFKValueFileResolve`
-  refuses an absolute path and any realpath outside the directory. The PNG writer builds an RGBA or gray
+  decode). `NFKValueFiles.h/.m` (private) hold the formats: `NFKValueFileWrite` and `NFKValueFileCopy`
+  create each name with `O_CREAT|O_EXCL|O_NOFOLLOW` and write through that descriptor (`write`,
+  `fcopyfile`), so a link another writer drops into the directory never redirects a write;
+  `NFKValueFileResolve` refuses an absolute path and any realpath outside the directory, and returns the
+  resolved path so the read opens what was checked. File-form reads are plain reads, not mappings, which
+  a truncation would fault. An image declaring more than 8192 × 8192 pixels
+  (`NFKValueFileImagePixelLimit`, read from ImageIO's properties) is refused before decoding; the exact
+  reader takes RGB and gray color models only, so a CMYK image falls to `NFKImageCoding`'s drawing.
+  The `.npy` reader takes versions 1 to 3 and checks the type string's length before reading its size.
+  The MIDI reader builds the tempo map once and binary-searches it per note. The PNG writer builds an RGBA or gray
   `CGImage` with `kCGImageAlphaLast` (unpremultiplied) from the buffer's bytes, and the reader copies the
   decoded provider's bytes back without drawing, so alpha 0 keeps its color bytes. A PNG of another
   layout (16-bit, premultiplied) is refused there, and `valueOfType:` falls back to `NFKImageCoding`.

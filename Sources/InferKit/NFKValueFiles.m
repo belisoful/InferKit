@@ -7,6 +7,7 @@
 #import <InferKit/NFKErrors.h>
 #import <ImageIO/ImageIO.h>
 #import <CoreGraphics/CoreGraphics.h>
+#include <copyfile.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -38,15 +39,17 @@ static NSString *NFKValueFileSafeStem(NSString *stem)
 	return trimmed.length > 0 ? trimmed : @"value";
 }
 
-NSURL *NFKValueFileCreate(NSURL *directory, NSString *stem, NSString *extension, NSError **error)
+/*! A new file in directory named after stem and extension, created exclusively without following a
+	link, open for writing in *outDescriptor. */
+static NSURL * _Nullable NFKValueFileOpenNew(NSURL *directory, NSString *stem, NSString *extension, int *outDescriptor, NSError **error)
 {
 	NSString *safe = NFKValueFileSafeStem(stem);
 	for (NSUInteger attempt = 1; attempt < 100000; attempt++) {
 		NSString *name = attempt == 1 ? safe : [NSString stringWithFormat:@"%@-%lu", safe, (unsigned long)attempt];
 		NSURL *url = [directory URLByAppendingPathComponent:[name stringByAppendingPathExtension:extension] isDirectory:NO];
-		int descriptor = open(url.fileSystemRepresentation, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0644);
+		int descriptor = open(url.fileSystemRepresentation, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0644);
 		if (descriptor >= 0) {
-			close(descriptor);
+			*outDescriptor = descriptor;
 			return url;
 		}
 		if (errno != EEXIST) {
@@ -56,6 +59,58 @@ NSURL *NFKValueFileCreate(NSURL *directory, NSString *stem, NSString *extension,
 	}
 	NFKValueFileFail(error, [NSString stringWithFormat:@"every name for %@ is taken in %@", safe, directory.path]);
 	return nil;
+}
+
+NSURL *NFKValueFileWrite(NSURL *directory, NSString *stem, NSString *extension, NSData *data, NSError **error)
+{
+	int descriptor = -1;
+	NSURL *url = NFKValueFileOpenNew(directory, stem, extension, &descriptor, error);
+	if (url == nil) {
+		return nil;
+	}
+	const uint8_t *bytes = data.bytes;
+	NSUInteger written = 0;
+	while (written < data.length) {
+		ssize_t count = write(descriptor, bytes + written, data.length - written);
+		if (count < 0 && errno == EINTR) {
+			continue;
+		}
+		if (count <= 0) {
+			NFKValueFileFail(error, [NSString stringWithFormat:@"%@ could not be written: %s", url.lastPathComponent, strerror(errno)]);
+			close(descriptor);
+			return nil;
+		}
+		written += (NSUInteger)count;
+	}
+	if (close(descriptor) != 0) {
+		NFKValueFileFail(error, [NSString stringWithFormat:@"%@ could not be written: %s", url.lastPathComponent, strerror(errno)]);
+		return nil;
+	}
+	return url;
+}
+
+NSURL *NFKValueFileCopy(NSURL *directory, NSString *stem, NSString *extension, NSURL *source, NSError **error)
+{
+	int input = open(source.fileSystemRepresentation, O_RDONLY | O_CLOEXEC);
+	if (input < 0) {
+		NFKValueFileFail(error, [NSString stringWithFormat:@"%@ could not be read: %s", source.lastPathComponent, strerror(errno)]);
+		return nil;
+	}
+	int output = -1;
+	NSURL *url = NFKValueFileOpenNew(directory, stem, extension, &output, error);
+	if (url == nil) {
+		close(input);
+		return nil;
+	}
+	BOOL copied = fcopyfile(input, output, NULL, COPYFILE_DATA) == 0;
+	int copyErrno = errno;
+	close(input);
+	copied = close(output) == 0 && copied;
+	if (!copied) {
+		NFKValueFileFail(error, [NSString stringWithFormat:@"%@ could not be copied: %s", source.lastPathComponent, strerror(copyErrno)]);
+		return nil;
+	}
+	return url;
 }
 
 static NSString * _Nullable NFKValueFileRealPath(NSURL *url)
@@ -68,10 +123,12 @@ NSString *NFKValueFileRelativePath(NSURL *directory, NSURL *url)
 {
 	NSString *root = NFKValueFileRealPath(directory);
 	NSString *path = NFKValueFileRealPath(url);
-	if (root == nil || path == nil || ![path hasPrefix:[root stringByAppendingString:@"/"]]) {
+	NSString *prefix = [root stringByAppendingString:@"/"];
+	// A literal comparison: canonical equivalence could otherwise match a prefix of another length.
+	if (root == nil || path == nil || [path rangeOfString:prefix options:NSLiteralSearch | NSAnchoredSearch].location == NSNotFound) {
 		return nil;
 	}
-	return [path substringFromIndex:root.length + 1];
+	return [path substringFromIndex:prefix.length];
 }
 
 NSURL *NFKValueFileResolve(NSURL *directory, NSString *path, NSError **error)
@@ -81,11 +138,12 @@ NSURL *NFKValueFileResolve(NSURL *directory, NSString *path, NSError **error)
 		return nil;
 	}
 	NSURL *url = [directory URLByAppendingPathComponent:path isDirectory:NO];
-	if (NFKValueFileRelativePath(directory, url) == nil) {
+	NSString *resolved = NFKValueFileRealPath(url);
+	if (resolved == nil || NFKValueFileRelativePath(directory, url) == nil) {
 		NFKValueFileFail(error, [NSString stringWithFormat:@"the path \"%@\" names no file inside the value directory", path]);
 		return nil;
 	}
-	return url;
+	return [NSURL fileURLWithPath:resolved isDirectory:NO];
 }
 
 #pragma mark WAV
@@ -157,22 +215,47 @@ NSData *NFKValueFileWAVData(AVAudioPCMBuffer *buffer, NSError **error)
 	NSUInteger channels = format.channelCount;
 	NSUInteger frames = buffer.frameLength;
 	unsigned long long payload = (unsigned long long)frames * channels * sampleSize;
-	if (payload > UINT32_MAX - 64) {
+	if (channels == 0) {
+		NFKValueFileFail(error, @"the PCM buffer has no channels");
+		return nil;
+	}
+	if (payload > UINT32_MAX - 128) {
 		NFKValueFileFail(error, @"the PCM buffer is larger than a WAV file holds");
 		return nil;
 	}
 	BOOL floating = format.commonFormat == AVAudioPCMFormatFloat32 || format.commonFormat == AVAudioPCMFormatFloat64;
-	NSMutableData *data = [NSMutableData dataWithCapacity:(NSUInteger)payload + 44];
+	// More than two channels takes the extensible format; a float file carries the fact chunk its format
+	// requires. Both are what WAVEFORMATEX readers expect.
+	BOOL extensible = channels > 2;
+	uint32_t formatLength = extensible ? 40 : (floating ? 18 : 16);
+	uint32_t factLength = floating ? 12 : 0;
+	NSMutableData *data = [NSMutableData dataWithCapacity:(NSUInteger)payload + 80];
 	[data appendBytes:"RIFF" length:4];
-	NFKWAVAppend32(data, (uint32_t)(payload + 36));
+	NFKWAVAppend32(data, (uint32_t)(payload + 4 + 8 + formatLength + factLength + 8));
 	[data appendBytes:"WAVEfmt " length:8];
-	NFKWAVAppend32(data, 16);
-	NFKWAVAppend16(data, floating ? NFKWAVFormatFloat : NFKWAVFormatPCM);
+	NFKWAVAppend32(data, formatLength);
+	uint16_t tag = floating ? NFKWAVFormatFloat : NFKWAVFormatPCM;
+	NFKWAVAppend16(data, extensible ? NFKWAVFormatExtensible : tag);
 	NFKWAVAppend16(data, (uint16_t)channels);
 	NFKWAVAppend32(data, (uint32_t)llround(format.sampleRate));
 	NFKWAVAppend32(data, (uint32_t)(llround(format.sampleRate) * channels * sampleSize));
 	NFKWAVAppend16(data, (uint16_t)(channels * sampleSize));
 	NFKWAVAppend16(data, (uint16_t)(sampleSize * 8));
+	if (extensible) {
+		const uint8_t subformatTail[14] = { 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71 };
+		NFKWAVAppend16(data, 22);
+		NFKWAVAppend16(data, (uint16_t)(sampleSize * 8));
+		NFKWAVAppend32(data, 0);
+		NFKWAVAppend16(data, tag);
+		[data appendBytes:subformatTail length:sizeof(subformatTail)];
+	} else if (floating) {
+		NFKWAVAppend16(data, 0);
+	}
+	if (floating) {
+		[data appendBytes:"fact" length:4];
+		NFKWAVAppend32(data, 4);
+		NFKWAVAppend32(data, (uint32_t)frames);
+	}
 	[data appendBytes:"data" length:4];
 	NFKWAVAppend32(data, (uint32_t)payload);
 	const AudioBufferList *list = buffer.audioBufferList;
@@ -238,6 +321,10 @@ AVAudioPCMBuffer *NFKValueFilePCMBufferFromWAV(NSData *data, AVAudioFormat *form
 		return nil;
 	}
 	NSUInteger frameSize = channels * sampleSize;
+	if (frameSize == 0) {
+		NFKValueFileFail(error, @"the WAV file names no channels");
+		return nil;
+	}
 	AVAudioFrameCount frames = (AVAudioFrameCount)(sampleBytes / frameSize);
 	AVAudioPCMBuffer *buffer = [[AVAudioPCMBuffer alloc] initWithPCMFormat:format frameCapacity:MAX(frames, 1)];
 	if (buffer == nil) {
@@ -316,6 +403,9 @@ BOOL NFKValueFileReadNPY(NSData *data, NSData **outElements, NSString **outDescr
 	if (data.length < 10 || memcmp(bytes, "\x93NUMPY", 6) != 0) {
 		return NFKValueFileFail(error, @"the file is not a NumPy .npy file");
 	}
+	if (bytes[6] < 1 || bytes[6] > 3) {
+		return NFKValueFileFail(error, [NSString stringWithFormat:@"the .npy file is of version %u, which this form does not read", bytes[6]]);
+	}
 	NSUInteger headerStart = bytes[6] == 1 ? 10 : 12;
 	if (data.length < headerStart) {
 		return NFKValueFileFail(error, @"the .npy header is cut short");
@@ -347,9 +437,9 @@ BOOL NFKValueFileReadNPY(NSData *data, NSData **outElements, NSString **outDescr
 			count = ULLONG_MAX;
 		}
 	}
-	NSUInteger elementSize = (NSUInteger)[description substringFromIndex:2].integerValue;
-	BOOL known = description.length >= 3 && ([description hasPrefix:@"<"] || [description hasPrefix:@"|"])
-		&& [NFKValueFileNPYDescription([description characterAtIndex:1] == 'f', elementSize) isEqualToString:description];
+	BOOL known = description.length >= 3 && ([description hasPrefix:@"<"] || [description hasPrefix:@"|"]);
+	NSUInteger elementSize = known ? (NSUInteger)[description substringFromIndex:2].integerValue : 0;
+	known = known && [NFKValueFileNPYDescription([description characterAtIndex:1] == 'f', elementSize) isEqualToString:description];
 	NSUInteger payloadStart = headerStart + headerLength;
 	unsigned long long payload = 0;
 	if (!known || count == ULLONG_MAX || __builtin_mul_overflow(count, (unsigned long long)elementSize, &payload)
@@ -363,6 +453,28 @@ BOOL NFKValueFileReadNPY(NSData *data, NSData **outElements, NSString **outDescr
 }
 
 #pragma mark PNG
+
+const unsigned long long NFKValueFileImagePixelLimit = 8192ULL * 8192ULL;
+
+BOOL NFKValueFileImageFitsLimit(NSData *data, NSError **error)
+{
+	CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
+	NSDictionary *properties = source != NULL ? CFBridgingRelease(CGImageSourceCopyPropertiesAtIndex(source, 0, NULL)) : nil;
+	if (source != NULL) {
+		CFRelease(source);
+	}
+	NSNumber *width = properties[(id)kCGImagePropertyPixelWidth];
+	NSNumber *height = properties[(id)kCGImagePropertyPixelHeight];
+	if (width == nil || height == nil) {
+		return NFKValueFileFail(error, @"the file is not an image ImageIO reads");
+	}
+	unsigned long long pixels = 0;
+	if (width.longLongValue <= 0 || height.longLongValue <= 0
+		|| __builtin_mul_overflow(width.unsignedLongLongValue, height.unsignedLongLongValue, &pixels) || pixels > NFKValueFileImagePixelLimit) {
+		return NFKValueFileFail(error, [NSString stringWithFormat:@"the image declares %@ × %@ pixels, more than this form decodes", width, height]);
+	}
+	return YES;
+}
 
 BOOL NFKValueFilePNGHoldsPixelFormat(OSType format)
 {
@@ -433,6 +545,9 @@ NSData *NFKValueFilePNGData(CVPixelBufferRef buffer)
 
 CVPixelBufferRef NFKValueFilePixelBufferFromPNG(NSData *data, OSType format, NSError **error)
 {
+	if (!NFKValueFileImageFitsLimit(data, error)) {
+		return NULL;
+	}
 	CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)data, NULL);
 	CGImageRef image = source != NULL ? CGImageSourceCreateImageAtIndex(source, 0, NULL) : NULL;
 	if (source != NULL) {
@@ -448,8 +563,10 @@ CVPixelBufferRef NFKValueFilePixelBufferFromPNG(NSData *data, OSType format, NSE
 	CGImageAlphaInfo alpha = CGImageGetAlphaInfo(image);
 	CGBitmapInfo byteOrder = CGImageGetBitmapInfo(image) & kCGBitmapByteOrderMask;
 	size_t components = bitsPerPixel / 8;
+	CGColorSpaceModel model = CGColorSpaceGetModel(CGImageGetColorSpace(image));
+	BOOL colorModel = (model == kCGColorSpaceModelRGB && components >= 3) || (model == kCGColorSpaceModelMonochrome && components == 1);
 	BOOL straight = alpha == kCGImageAlphaNone || alpha == kCGImageAlphaLast || alpha == kCGImageAlphaNoneSkipLast;
-	BOOL laidOut = CGImageGetBitsPerComponent(image) == 8 && straight
+	BOOL laidOut = colorModel && CGImageGetBitsPerComponent(image) == 8 && straight
 		&& (byteOrder == kCGBitmapByteOrderDefault || byteOrder == kCGBitmapByteOrder32Big)
 		&& (components == 1 || components == 3 || components == 4);
 	CFDataRef decoded = laidOut ? CGDataProviderCopyData(CGImageGetDataProvider(image)) : NULL;

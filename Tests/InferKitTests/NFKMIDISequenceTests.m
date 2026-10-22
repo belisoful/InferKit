@@ -594,6 +594,25 @@
 	XCTAssertEqualWithAccuracy(read.notes[0].endSeconds, 0.5, 1e-9);
 }
 
+- (void)testOversizedLengthsAndOverlongNumbersAreRefused
+{
+	const uint8_t hugeChunk[] = { 'M', 'T', 'h', 'd', 0, 0, 0, 6, 0, 1, 0, 1, 0x01, 0xE0, 'M', 'T', 'r', 'k', 0xFF, 0xFF, 0xFF, 0xFF, 0x00 };
+	const uint8_t hugeHeader[] = { 'M', 'T', 'h', 'd', 0x7F, 0xFF, 0xFF, 0xFF, 0, 1, 0, 1, 0x01, 0xE0 };
+	const uint8_t overlong[] = { 'M', 'T', 'h', 'd', 0, 0, 0, 6, 0, 1, 0, 1, 0x01, 0xE0,
+								 'M', 'T', 'r', 'k', 0, 0, 0, 9, 0x81, 0x81, 0x81, 0x81, 0x01, 0x90, 0x3C, 0x64, 0x00 };
+	const uint8_t hugeMeta[] = { 'M', 'T', 'h', 'd', 0, 0, 0, 6, 0, 1, 0, 1, 0x01, 0xE0,
+								 'M', 'T', 'r', 'k', 0, 0, 0, 7, 0x00, 0xFF, 0x01, 0x8F, 0xFF, 0xFF, 0x7F };
+	NSArray<NSData *> *files = @[ [NSData dataWithBytes:hugeChunk length:sizeof(hugeChunk)],
+								  [NSData dataWithBytes:hugeHeader length:sizeof(hugeHeader)],
+								  [NSData dataWithBytes:overlong length:sizeof(overlong)],
+								  [NSData dataWithBytes:hugeMeta length:sizeof(hugeMeta)] ];
+	for (NSData *file in files) {
+		NSError *error = nil;
+		XCTAssertNil([NFKMIDISequence sequenceWithStandardMIDIFileData:file error:&error]);
+		XCTAssertEqual(error.code, NSFileReadCorruptFileError, @"%@", error);
+	}
+}
+
 - (void)testAFileThatIsNotOnePerformanceIsRefused
 {
 	NSMutableData *formatTwo = [[self runningStatusFile] mutableCopy];

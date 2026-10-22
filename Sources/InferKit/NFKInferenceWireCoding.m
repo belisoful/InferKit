@@ -7,7 +7,6 @@
 #import "NFKRemoteMediaSupport.h"
 #import "NFKWireValueObjects.h"
 #import "NFKValueFiles.h"
-#include <copyfile.h>
 #import <InferKit/NFKAudioAsset.h>
 #import <InferKit/NFKVideoAsset.h>
 #import <InferKit/NFKImageCoding.h>
@@ -593,12 +592,11 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 	if (relative == nil) {
 		NSError *copyError = nil;
 		NSString *stem = url.lastPathComponent.stringByDeletingPathExtension;
-		NSURL *copy = NFKValueFileCreate(self.fileDirectoryURL, stem.length > 0 ? stem : key,
-										 NFKServedFileExtension(url.pathExtension), &copyError);
-		if (copy == nil || copyfile(url.fileSystemRepresentation, copy.fileSystemRepresentation, NULL, COPYFILE_DATA) != 0) {
-			NSString *reason = copyError.localizedDescription ?: [NSString stringWithFormat:@"%s", strerror(errno)];
+		NSURL *copy = NFKValueFileCopy(self.fileDirectoryURL, stem.length > 0 ? stem : key,
+									   NFKServedFileExtension(url.pathExtension), url, &copyError);
+		if (copy == nil) {
 			return [self failForKey:key reason:[NSString stringWithFormat:@"the file %@ could not be copied into the value directory: %@",
-												url.lastPathComponent, reason] error:outError];
+												url.lastPathComponent, copyError.localizedDescription] error:outError];
 		}
 		relative = copy.lastPathComponent;
 	}
@@ -975,8 +973,8 @@ static void NFKWireCopyMultiArrayElements(void *strided, NSArray<NSNumber *> *sh
 								   key:(NSString *)key error:(NSError * _Nullable *)outError
 {
 	NSError *writeError = nil;
-	NSURL *url = NFKValueFileCreate(self.fileDirectoryURL, key, extension, &writeError);
-	if (url == nil || ![data writeToURL:url options:0 error:&writeError]) {
+	NSURL *url = NFKValueFileWrite(self.fileDirectoryURL, key, extension, data, &writeError);
+	if (url == nil) {
 		return [self failForKey:key reason:writeError.localizedDescription ?: @"the value's file could not be written" error:outError];
 	}
 	NSMutableDictionary *entry = [NSMutableDictionary dictionaryWithDictionary:fields];
@@ -996,13 +994,20 @@ static void NFKWireCopyMultiArrayElements(void *strided, NSArray<NSNumber *> *sh
 	if ([tag isEqualToString:@"file"] || [tag isEqualToString:@"audio"] || [tag isEqualToString:@"video"]) {
 		return [self fileValueForTag:tag entry:entry fileURL:url key:key error:outError];
 	}
+	// Read, not mapped: a file another writer truncates would fault a mapping.
 	NSError *readError = nil;
-	NSData *data = [NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:&readError];
+	NSData *data = [NSData dataWithContentsOfURL:url options:0 error:&readError];
 	if (data == nil) {
 		return [self failForKey:key reason:readError.localizedDescription ?: @"the value's file could not be read" error:outError];
 	}
 	if ([tag isEqualToString:@"data"]) {
 		return data;
+	}
+	NSError *limitError = nil;
+	BOOL image = [tag isEqualToString:@"image"] || [tag isEqualToString:@"cgImage"]
+		|| ([tag isEqualToString:@"pixelBuffer"] && [url.pathExtension.lowercaseString isEqualToString:@"png"]);
+	if (image && !NFKValueFileImageFitsLimit(data, &limitError)) {
+		return [self failForKey:key reason:limitError.localizedDescription error:outError];
 	}
 	if ([tag isEqualToString:@"cgImage"]) {
 		return [self CGImageFromData:data key:key error:outError];
@@ -1517,8 +1522,18 @@ static AVAudioPCMBuffer * _Nullable NFKWirePCMBufferCopyingList(AVAudioFormat *f
 		return [self failForKey:key reason:@"a packed number array has a partial element" error:outError];
 	}
 	NSMutableArray<NSNumber *> *numbers = [NSMutableArray arrayWithCapacity:bytes.length / width];
+	const uint8_t *elements = bytes.bytes;
+	// Copied out element by element: the bytes may start at any offset in a file or an attachment.
 	for (NSUInteger index = 0; index < bytes.length / width; index++) {
-		[numbers addObject:singles ? @(((const float *)bytes.bytes)[index]) : @(((const double *)bytes.bytes)[index])];
+		if (singles) {
+			float single = 0;
+			memcpy(&single, elements + index * width, width);
+			[numbers addObject:@(single)];
+		} else {
+			double value = 0;
+			memcpy(&value, elements + index * width, width);
+			[numbers addObject:@(value)];
+		}
 	}
 	return numbers;
 }

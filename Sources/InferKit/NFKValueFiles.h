@@ -12,14 +12,19 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
-/*! A new, empty file in directory named after stem and extension: stem made safe (letters, digits, "-",
-	and "_", at most 40 characters, "value" when nothing is left), and "-2", "-3", … added until the name
-	is free. The file is created exclusively, so two coders writing into one directory never share a
-	name. */
-NSURL * _Nullable NFKValueFileCreate(NSURL *directory, NSString *stem, NSString *extension, NSError * _Nullable * _Nullable error);
+/*! A new file in directory holding data, named after stem and extension: stem made safe (letters, digits,
+	"-", and "_", at most 40 characters, "value" when nothing is left), and "-2", "-3", … added until the
+	name is free. The file is created exclusively without following a link and written through the
+	descriptor that created it, so a link another writer places in the directory never redirects it. */
+NSURL * _Nullable NFKValueFileWrite(NSURL *directory, NSString *stem, NSString *extension, NSData *data,
+									NSError * _Nullable * _Nullable error);
 
-/*! The file a path names inside directory, or nil with an error when the path is absolute, the file is
-	missing, or the path resolves outside directory, through links included. */
+/*! A new file in directory, named as NFKValueFileWrite names one, holding a copy of the file at source. */
+NSURL * _Nullable NFKValueFileCopy(NSURL *directory, NSString *stem, NSString *extension, NSURL *source,
+								   NSError * _Nullable * _Nullable error);
+
+/*! The file a path names inside directory, resolved through its links, or nil with an error when the
+	path is absolute, the file is missing, or it resolves outside directory. */
 NSURL * _Nullable NFKValueFileResolve(NSURL *directory, NSString *path, NSError * _Nullable * _Nullable error);
 
 /*! The path of url relative to directory when url lies inside it, through links included, or nil. */
@@ -56,8 +61,17 @@ BOOL NFKValueFilePNGHoldsPixelFormat(OSType format);
 /*! The pixel buffer as a PNG holding its bytes exactly, alpha unpremultiplied as stored, or nil. */
 NSData * _Nullable NFKValueFilePNGData(CVPixelBufferRef buffer);
 
+/*! The most pixels an image this form decodes may hold: 8192 × 8192. A file that declares more is refused
+	before it is decoded. */
+extern const unsigned long long NFKValueFileImagePixelLimit;
+
+/*! Whether an encoded image declares dimensions within NFKValueFileImagePixelLimit; NO with an error when
+	it declares more or names none. */
+BOOL NFKValueFileImageFitsLimit(NSData *data, NSError * _Nullable * _Nullable error);
+
 /*! A pixel buffer of format holding a PNG's pixels. A PNG this form wrote comes back byte for byte; any
-	other PNG of 8-bit samples is read as stored. Returns NULL with an error for a PNG of another layout. */
+	other RGB or gray image of 8-bit samples is read as stored. Returns NULL with an error for an image of
+	another layout or color model, or one larger than NFKValueFileImagePixelLimit. */
 CVPixelBufferRef _Nullable NFKValueFilePixelBufferFromPNG(NSData *data, OSType format, NSError * _Nullable * _Nullable error) CF_RETURNS_RETAINED;
 
 NS_ASSUME_NONNULL_END

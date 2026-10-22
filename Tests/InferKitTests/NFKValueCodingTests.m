@@ -81,7 +81,11 @@
 
 - (AVAudioPCMBuffer *)toneOfFormat:(AVAudioCommonFormat)commonFormat channels:(AVAudioChannelCount)channels interleaved:(BOOL)interleaved
 {
-	AVAudioFormat *format = [[AVAudioFormat alloc] initWithCommonFormat:commonFormat sampleRate:24000 channels:channels interleaved:interleaved];
+	return [self tone:[[AVAudioFormat alloc] initWithCommonFormat:commonFormat sampleRate:24000 channels:channels interleaved:interleaved]];
+}
+
+- (AVAudioPCMBuffer *)tone:(AVAudioFormat *)format
+{
 	AVAudioPCMBuffer *buffer = [[AVAudioPCMBuffer alloc] initWithPCMFormat:format frameCapacity:1000];
 	buffer.frameLength = 1000;
 	const AudioBufferList *list = buffer.audioBufferList;
@@ -200,9 +204,13 @@
 - (void)testTheFileFormWritesPCMAsAWAVThatAVAudioFileOpens
 {
 	NFKValueCoding *coding = [[NFKValueCoding alloc] initWithDirectoryURL:self.directory];
+	AVAudioChannelLayout *three = [AVAudioChannelLayout layoutWithLayoutTag:kAudioChannelLayoutTag_DiscreteInOrder | 3];
+	AVAudioFormat *surround = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32 sampleRate:24000 interleaved:NO
+															  channelLayout:three];
 	NSArray<AVAudioPCMBuffer *> *buffers = @[ [self toneOfFormat:AVAudioPCMFormatFloat32 channels:2 interleaved:NO],
 											  [self toneOfFormat:AVAudioPCMFormatInt16 channels:1 interleaved:YES],
-											  [self toneOfFormat:AVAudioPCMFormatInt32 channels:2 interleaved:YES] ];
+											  [self toneOfFormat:AVAudioPCMFormatInt32 channels:2 interleaved:YES],
+											  [self tone:surround] ];
 	for (AVAudioPCMBuffer *buffer in buffers) {
 		NSError *error = nil;
 		NSDictionary *entry = [self throughJSON:[coding JSONValueForValue:buffer key:NFKOutputAudio error:&error]];
@@ -408,6 +416,115 @@
 	XCTAssertEqualObjects([documents.firstObject URLByResolvingSymlinksInPath], inside.URLByResolvingSymlinksInPath, @"%@", error);
 	XCTAssertNil([coding valueOfType:NFKModelValueTypeDocument fromJSONValue:@"../elsewhere/x.pdf" error:&error]);
 	[self assertRefusal:error];
+}
+
+#pragma mark Malformed input
+
+/*! An .npy file whose header is header, padded as the format pads it, with payload after it. */
+- (NSData *)npyWithVersion:(uint8_t)version header:(NSString *)header payload:(NSData *)payload
+{
+	NSMutableString *padded = [header mutableCopy];
+	while ((10 + padded.length + 1) % 64 != 0) {
+		[padded appendString:@" "];
+	}
+	[padded appendString:@"\n"];
+	NSMutableData *data = [NSMutableData dataWithBytes:"\x93NUMPY" length:6];
+	uint8_t versionBytes[2] = { version, 0 };
+	[data appendBytes:versionBytes length:2];
+	uint16_t length = (uint16_t)padded.length;
+	[data appendBytes:&length length:2];
+	[data appendData:[padded dataUsingEncoding:NSASCIIStringEncoding]];
+	[data appendData:payload];
+	return data;
+}
+
+- (void)testMalformedNumPyFilesAreRefusedWithoutAnException
+{
+	NFKValueCoding *coding = [[NFKValueCoding alloc] init];
+	NSData *four = [NSMutableData dataWithLength:4];
+	NSArray<NSData *> *files = @[
+		[self npyWithVersion:1 header:@"{'descr': '', 'fortran_order': False, 'shape': (1,), }" payload:four],
+		[self npyWithVersion:1 header:@"{'descr': 'x', 'fortran_order': False, 'shape': (1,), }" payload:four],
+		[self npyWithVersion:1 header:@"{'descr': '<f4', 'fortran_order': False, 'shape': (2,), }" payload:four],
+		[self npyWithVersion:9 header:@"{'descr': '<f4', 'fortran_order': False, 'shape': (1,), }" payload:four],
+		[NSData dataWithBytes:"\x93NUMPY\x01" length:7],
+	];
+	for (NSData *file in files) {
+		NSError *error = nil;
+		XCTAssertNil([coding valueOfType:NFKModelValueTypeEmbedding fromFileURL:[self write:file named:@"vector.npy"] error:&error]);
+		[self assertRefusal:error];
+	}
+	NSError *error = nil;
+	NSURL *good = [self write:[self npyWithVersion:1 header:@"{'descr': '<f4', 'fortran_order': False, 'shape': (1,), }" payload:four]
+						named:@"good.npy"];
+	XCTAssertEqualObjects([coding valueOfType:NFKModelValueTypeEmbedding fromFileURL:good error:&error], @[ @0 ], @"%@", error);
+}
+
+- (void)testATruncatedWAVIsRefused
+{
+	NFKValueCoding *coding = [[NFKValueCoding alloc] initWithDirectoryURL:self.directory];
+	NSError *error = nil;
+	NSDictionary *entry = [self throughJSON:[coding JSONValueForValue:[self toneOfFormat:AVAudioPCMFormatInt16 channels:1 interleaved:YES]
+																  key:NFKOutputAudio error:&error]];
+	NSURL *wave = [self.directory URLByAppendingPathComponent:entry[@"path"]];
+	NSData *whole = [NSData dataWithContentsOfURL:wave];
+	for (NSNumber *length in @[ @8, @30, @(whole.length - 100) ]) {
+		XCTAssertTrue([[whole subdataWithRange:NSMakeRange(0, length.unsignedIntegerValue)] writeToURL:wave atomically:NO]);
+		error = nil;
+		XCTAssertNil([coding valueFromJSONValue:entry key:NFKOutputAudio error:&error], @"%@ bytes", length);
+		[self assertRefusal:error];
+	}
+}
+
+- (void)testAnImageOfTooManyPixelsIsRefusedBeforeItIsDecoded
+{
+	// One pixel past 8192 × 8192 on each side. The gray zeros compress to a few kilobytes.
+	CGColorSpaceRef gray = CGColorSpaceCreateDeviceGray();
+	CGContextRef context = CGBitmapContextCreate(NULL, 8193, 8193, 8, 0, gray, (CGBitmapInfo)kCGImageAlphaNone);
+	CGImageRef image = CGBitmapContextCreateImage(context);
+	NSMutableData *png = [NSMutableData data];
+	CGImageDestinationRef destination = CGImageDestinationCreateWithData((__bridge CFMutableDataRef)png, CFSTR("public.png"), 1, NULL);
+	CGImageDestinationAddImage(destination, image, NULL);
+	XCTAssertTrue(CGImageDestinationFinalize(destination));
+	CFRelease(destination);
+	CGImageRelease(image);
+	CGContextRelease(context);
+	CGColorSpaceRelease(gray);
+
+	NSError *error = nil;
+	XCTAssertNil([[[NFKValueCoding alloc] init] valueOfType:NFKModelValueTypeMask fromFileURL:[self write:png named:@"large.png"] error:&error]);
+	[self assertRefusal:error];
+	XCTAssertTrue([error.localizedDescription containsString:@"8193"], @"the cap names the declared size: %@", error);
+}
+
+- (void)testACMYKImageIsConvertedToRGB
+{
+	CGColorSpaceRef space = CGColorSpaceCreateDeviceCMYK();
+	CGContextRef context = CGBitmapContextCreate(NULL, 4, 4, 8, 16, space, (CGBitmapInfo)kCGImageAlphaNone);
+	CGFloat white[5] = { 0, 0, 0, 0, 1 };
+	CGContextSetFillColorSpace(context, space);
+	CGContextSetFillColor(context, white);
+	CGContextFillRect(context, CGRectMake(0, 0, 4, 4));
+	CGImageRef image = CGBitmapContextCreateImage(context);
+	NSMutableData *tiff = [NSMutableData data];
+	CGImageDestinationRef destination = CGImageDestinationCreateWithData((__bridge CFMutableDataRef)tiff, CFSTR("public.tiff"), 1, NULL);
+	CGImageDestinationAddImage(destination, image, NULL);
+	XCTAssertTrue(CGImageDestinationFinalize(destination));
+	CFRelease(destination);
+	CGImageRelease(image);
+	CGContextRelease(context);
+	CGColorSpaceRelease(space);
+
+	NSError *error = nil;
+	CVPixelBufferRef buffer = (__bridge CVPixelBufferRef)[[[NFKValueCoding alloc] init] valueOfType:NFKModelValueTypeImage
+																						fromFileURL:[self write:tiff named:@"white.tiff"]
+																							  error:&error];
+	XCTAssertNotEqual(buffer, NULL, @"%@", error);
+	CVPixelBufferLockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
+	const uint8_t *pixel = CVPixelBufferGetBaseAddress(buffer);
+	XCTAssertGreaterThan(pixel[0], 200, @"white comes back white, not its CMYK channels stored as color");
+	XCTAssertGreaterThan(pixel[2], 200);
+	CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
 }
 
 @end
