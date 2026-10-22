@@ -101,7 +101,9 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   36 streamed) against transformers' `Qwen3VLForConditionalGeneration` text-only at bfloat16, each layer
   read in its turn (`run_reference.py dense_layerwise`, `IK_PARITY_QWEN3_VL_8B`): logits 0.9999766,
   argmax 5/5, worst last-position layer state 0.9998874 at layer 19, the 16-token greedy continuation
-  token-exact in one teacher-forced pass. Its resize is `Qwen2VLImageProcessorFast`'s, torchvision's
+  token-exact in one teacher-forced pass. The 32B decoder streams 51 of its 64 layers under `.streamed`
+  (`IK_PARITY_QWEN3_VL_32B`): logits 0.99979705, argmax 5/5, worst layer state 0.99987406 at layer 37,
+  the continuation token-exact. Its resize is `Qwen2VLImageProcessorFast`'s, torchvision's
   antialiased bicubic on the 8-bit image (`int16` weights), exact to float rounding (see Sa2VA's
   preprocessing below).
   The larger sizes are read from their own releases: `NFKMLXQwen3VLVisionConfiguration.configuration(fromHuggingFace:)`
