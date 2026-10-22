@@ -678,11 +678,24 @@ Streaming:
   0.91 GB/s, and a mapped range faulted in after `MADV_WILLNEED` 0.80 GB/s. Hence `pread` per tensor,
   not the expert store's mapping, which suits small reads that repeat. Decode is read-bound: a layer's
   compute is milliseconds against hundreds of milliseconds of read.
-- Inside a run the read rate is set by memory pressure, not the read pattern. The same per-tensor reads
-  of 12B layers measured 2.0–2.2 GB/s on a quiet machine; the streamed 12B read 1.02 GB/s at an 18 GB
-  footprint with swap at 6–8 GB, and the 27B 0.69 GB/s. A pool reusing released layers' buffers was
-  tried and read 0.78 GB/s on the 12B against 1.02 without it, with swap starting higher, so the stream
-  allocates fresh memory per tensor. What lowers the pressure is what the run holds beside the stream:
+- macOS keeps an `F_NOCACHE` read out of the file cache only when its file offset is page-aligned
+  (2026-10-21, TranslateGemma 27B layers, `vm_stat` file-backed pages): reads at a release's own tensor
+  offsets grew the cache by 2.46 of the 2.48 GB they read, and reading them again ran at 5.66 GB/s; the
+  same tensors read as their page-aligned ranges grew it by 0.01 GB and read again at drive speed. A
+  release stores its tensors at arbitrary offsets, so the stream reads each tensor's aligned range and
+  moves it down to the start of its memory. Read at the tensors' own offsets, every pass had filled
+  the cache with the release.
+- A streamed run reads at the drive's rate when the machine is otherwise idle. Measured 2026-10-21 on the
+  Qwen3 14B with the aligned reads, logging every read: the preads ran at 2.14 GB/s (1.9–2.35 GB/s per
+  large tensor) at user-initiated QoS and the default disk policy, and after the first two layers the
+  reader waited about 0.34 s per layer for the compute, so the pass was compute-bound. The same test
+  read at 0.52 GB/s twice while other sessions' builds held every core, which is CPU contention, not the
+  read path. Memory pressure is not the cause: aligned reads into fresh memory ran at 1.98 GB/s beside
+  14 GB of touched ballast, and into one reused buffer at 2.09 GB/s. The slower in-run rates recorded
+  earlier (the 12B at 1.02 GB/s, the 27B at 0.69, a buffer pool at 0.78) were measured while the
+  unaligned reads were filling the file cache and with concurrent builds unrecorded, so a read rate is
+  recorded only with the machine otherwise idle. The stream allocates fresh memory per tensor; a reused
+  buffer gained about 5%. What lowers a run's footprint is what it holds beside the stream:
   quantizing a draft left its replaced bfloat16 weights in MLX's buffer cache, 7 GB. `quantize(module:)`
   leaves lazy arrays over the weights it replaces, so the drafted factory evaluates the draft before it
   clears the cache; clearing first freed nothing. With the evaluation the drafted 12B and 27B runs hold

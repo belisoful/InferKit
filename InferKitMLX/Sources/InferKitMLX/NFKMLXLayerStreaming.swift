@@ -63,8 +63,11 @@ private final class NFKMLXPendingLayer: @unchecked Sendable {
 /// - The read bypasses the file cache (`F_NOCACHE`). Every streamed layer is read again on the next
 ///   pass, and on a machine that cannot hold the release the cache cannot either, so caching the
 ///   reads only evicts what other programs hold.
-/// - Each tensor is read in one `pread` into page-aligned memory of its own, which MLX wraps without
-///   copying where Metal accepts the allocation and copies once where it does not.
+/// - macOS bypasses the cache only for a read whose file offset is page-aligned, and a release stores
+///   its tensors at arbitrary offsets. Each tensor is therefore read as the page-aligned range around
+///   it, in one `pread` into page-aligned memory of its own, and moved down to the start of that
+///   memory, which MLX wraps without copying where Metal accepts the allocation and copies once where
+///   it does not.
 /// - The next streamed layer is read on a background queue while the current one computes, so a pass
 ///   holds at most two streamed layers. Reading is cyclic: after the last streamed layer the first is
 ///   read, ready for the next pass.
@@ -78,6 +81,8 @@ private final class NFKMLXPendingLayer: @unchecked Sendable {
 public final class NFKMLXLayerStream: @unchecked Sendable {
     private let files: [URL]
     private let descriptors: [Int32]
+    /// Each file's length, which an aligned read stops at.
+    private let lengths: [Int]
     private let tensors: [Int: [NFKMLXStreamedTensor]]
     /// The streamed layer indices, ascending, the order a pass reads them in.
     public let layers: [Int]
@@ -102,6 +107,7 @@ public final class NFKMLXLayerStream: @unchecked Sendable {
     init(files: [URL], tensors: [Int: [NFKMLXStreamedTensor]], precision: NFKMLXWeightPrecision,
          converting conversion: DType? = nil) throws {
         var descriptors = [Int32]()
+        var lengths = [Int]()
         for url in files {
             let descriptor = Darwin.open(url.path, O_RDONLY)
             guard descriptor >= 0 else {
@@ -111,9 +117,12 @@ public final class NFKMLXLayerStream: @unchecked Sendable {
             }
             _ = fcntl(descriptor, F_NOCACHE, 1)
             descriptors.append(descriptor)
+            var status = stat()
+            lengths.append(fstat(descriptor, &status) == 0 ? Int(status.st_size) : Int.max)
         }
         self.files = files
         self.descriptors = descriptors
+        self.lengths = lengths
         self.tensors = tensors
         self.layers = tensors.keys.sorted()
         self.precision = precision
@@ -233,12 +242,13 @@ public final class NFKMLXLayerStream: @unchecked Sendable {
         pending[index] = layer
         lock.unlock()
         let parts = tensors[index] ?? []
-        reader.async { [descriptors, files] in
+        reader.async { [descriptors, lengths, files] in
             let start = Date()
             var buffers = [NFKMLXStreamedBuffer]()
             do {
                 for part in parts {
-                    buffers.append(try Self.read(part, descriptor: descriptors[part.file], url: files[part.file]))
+                    buffers.append(try Self.read(part, descriptor: descriptors[part.file], length: lengths[part.file],
+                                                 url: files[part.file]))
                 }
             } catch {
                 buffers.forEach { free($0.pointer) }
@@ -255,18 +265,24 @@ public final class NFKMLXLayerStream: @unchecked Sendable {
         return layer
     }
 
-    /// One tensor read into page-aligned memory the caller frees.
-    private static func read(_ tensor: NFKMLXStreamedTensor, descriptor: Int32, url: URL) throws -> NFKMLXStreamedBuffer {
+    /// One tensor read into page-aligned memory the caller frees: the page-aligned range of the file
+    /// around it, stopping at the file's `length`, then moved down to the start of the memory.
+    private static func read(_ tensor: NFKMLXStreamedTensor, descriptor: Int32, length: Int,
+                             url: URL) throws -> NFKMLXStreamedBuffer {
         let count = tensor.entry.byteCount
         let page = Int(getpagesize())
+        let first = tensor.entry.start / page * page
+        let lead = tensor.entry.start - first
+        let span = Swift.min((tensor.entry.start + count + page - 1) / page * page, length) - first
         var pointer: UnsafeMutableRawPointer?
-        guard posix_memalign(&pointer, page, max(page, (count + page - 1) / page * page)) == 0, let pointer else {
+        guard posix_memalign(&pointer, page, Swift.max(page, (span + page - 1) / page * page)) == 0, let pointer else {
             throw NFKMLXError.unsupportedConfiguration("no memory for \(tensor.name), \(count) bytes")
         }
         var done = 0
-        while done < count {
-            // Darwin refuses a read longer than INT_MAX bytes, so a larger tensor reads in parts.
-            let got = pread(descriptor, pointer + done, Swift.min(count - done, 1 << 30), off_t(tensor.entry.start + done))
+        while done < span {
+            // Darwin refuses a read longer than INT_MAX bytes, so a larger tensor reads in parts; each
+            // part is a whole number of pages, so every part's offset stays aligned.
+            let got = pread(descriptor, pointer + done, Swift.min(span - done, 1 << 30), off_t(first + done))
             if got < 0, errno == EINTR { continue }
             guard got > 0 else {
                 free(pointer)
@@ -275,6 +291,13 @@ public final class NFKMLXLayerStream: @unchecked Sendable {
                     "\(url.lastPathComponent): reading \(tensor.name) failed: \(reason)")
             }
             done += got
+        }
+        guard done >= lead + count else {
+            free(pointer)
+            throw NFKMLXError.unsupportedConfiguration("\(url.lastPathComponent): reading \(tensor.name) failed: the file ends early")
+        }
+        if lead > 0 {
+            memmove(pointer, pointer + lead, count)
         }
         return NFKMLXStreamedBuffer(name: tensor.name, pointer: pointer, shape: tensor.entry.shape, dtype: tensor.dtype)
     }
