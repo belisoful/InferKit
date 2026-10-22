@@ -260,7 +260,7 @@ extension NFKMLXCatalogAudio {
             let summary = release.transcribes
                 ? "\(architecture) speech encoder fine-tuned with a CTC head, which transcribes English speech and embeds a recording."
                 : "\(architecture) self-supervised speech encoder, which embeds a recording as one vector."
-            return model(release.name, displayName: release.displayName, family: release.family, summary: summary,
+            var entry = model(release.name, displayName: release.displayName, family: release.family, summary: summary,
                          tasks: release.transcribes ? [NFKModelTaskTranscription, NFKModelTaskEmbedding] : [NFKModelTaskEmbedding],
                          inputs: [audioInput("A WAV recording of speech. The backend resamples it to 16 kHz.")],
                          outputs: [.output(NFKOutputText, title: "Transcript",
@@ -272,11 +272,13 @@ extension NFKMLXCatalogAudio {
                          source: .hub(release.repository, revision: release.revision,
                                       files: files(required: NFKMLXWav2Vec2.requiredFiles, optional: optional,
                                                    weights: [release.weights])))
+            entry.modelTypes = [release.family]
+            return entry
         }
     }
 
     static var w2vBert: NFKMLXCatalogEntry {
-        model(NFKMLXWav2Vec2Bert.modelName, displayName: "W2V-BERT 2.0", family: "w2v-bert",
+        var entry = model(NFKMLXWav2Vec2Bert.modelName, displayName: "W2V-BERT 2.0", family: "w2v-bert",
               summary: "Meta's multilingual Conformer speech encoder behind Seamless, which embeds a recording as one vector.",
               tasks: [NFKModelTaskEmbedding],
               inputs: [audioInput("A WAV recording of speech. The backend resamples it to 16 kHz.")],
@@ -290,6 +292,8 @@ extension NFKMLXCatalogAudio {
                            files: files(required: NFKMLXWav2Vec2Bert.requiredFiles,
                                         optional: NFKMLXWav2Vec2Bert.optionalFiles.filter { role(of: $0) == NFKModelFileRoleConfig },
                                         weights: NFKMLXWav2Vec2Bert.weightFiles)))
+        entry.modelTypes = ["wav2vec2-bert"]
+        return entry
     }
 }
 

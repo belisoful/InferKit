@@ -10,81 +10,29 @@
 //  Tools/catalog/measure.py recorded for it. Nothing here reaches MLX.
 //
 
-import CryptoKit
 import XCTest
 import InferKit
 @testable import InferKitMLX
 
-/// Answers a hub's requests from files served in memory, as the hub at `http://hub.test` would.
-private final class NFKMLXStubHub: URLProtocol {
-    private static let lock = NSLock()
-    nonisolated(unsafe) private static var responses = [String: (data: Data, headers: [String: String])]()
-
-    static let endpointURL = URL(string: "http://hub.test")!
-
-    static var session: URLSession {
-        let configuration = URLSessionConfiguration.ephemeral
-        configuration.protocolClasses = [NFKMLXStubHub.self]
-        return URLSession(configuration: configuration)
-    }
-
-    static func reset() {
-        lock.withLock { responses = [:] }
-    }
-
-    /// Serves `files` at `commit`, its tree listing, and its revision information naming `commit`.
-    static func serve(_ repository: String, commit: String, files: [String: Data], card: [String: Any]) {
-        var listing = [[String: Any]]()
-        lock.withLock {
-            for (path, data) in files.sorted(by: { $0.key < $1.key }) {
-                let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-                listing.append(["type": "file", "path": path, "size": data.count, "oid": String(sha.prefix(40))])
-                responses["/\(repository)/resolve/\(commit)/\(path)"] = (data, ["ETag": "\"\(sha)\""])
-            }
-            let tree = try! JSONSerialization.data(withJSONObject: listing)
-            responses["/api/models/\(repository)/tree/\(commit)"] = (tree, [:])
-            let information = try! JSONSerialization.data(withJSONObject: [
-                "id": repository, "sha": commit, "gated": false, "cardData": card] as [String: Any])
-            responses["/api/models/\(repository)/revision/main"] = (information, [:])
-        }
-    }
-
-    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == endpointURL.host }
-    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
-
-    override func startLoading() {
-        let url = request.url!
-        let served = Self.lock.withLock { Self.responses[url.path] }
-        let response = HTTPURLResponse(url: url, statusCode: served == nil ? 404 : 200, httpVersion: "HTTP/1.1",
-                                       headerFields: served?.headers ?? [:])!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: served?.data ?? Data())
-        client?.urlProtocolDidFinishLoading(self)
-    }
-
-    override func stopLoading() {}
-}
-
 final class NFKMLXRepositoryMatchingTests: XCTestCase {
 
     private static let repository = "org/qwen3-tiny"
-    private static let commit = "0123456789abcdef0123456789abcdef01234567"
+    private static let commit = NFKMLXRepositoryFixture.commit
     private static let qwen2Pattern =
         #"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"#
     private static let llama3Pattern =
         #"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\r\n\p{L}\p{N}]?\p{L}+|\p{N}{1,3}| ?[^\s\p{L}\p{N}]+[\r\n]*|\s*[\r\n]+|\s+(?!\S)|\s+"#
 
-    private var cache: URL!
+    private var fixture: NFKMLXRepositoryFixture!
+    private var cache: URL { fixture.cache }
 
     override func setUp() {
         super.setUp()
-        cache = FileManager.default.temporaryDirectory
-            .appendingPathComponent("NFKMLXRepositoryMatchingTests-\(UUID().uuidString)")
+        fixture = NFKMLXRepositoryFixture()
     }
 
     override func tearDown() {
-        NFKMLXStubHub.reset()
-        try? FileManager.default.removeItem(at: cache)
+        fixture.remove()
         super.tearDown()
     }
 
@@ -148,47 +96,7 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
 
     /// The bytes a tensor list holds, by its dtypes.
     private static func storedBytes(_ tensors: [(String, String, [Int])]) -> Int64 {
-        tensors.reduce(0) { $0 + Int64($1.2.reduce(1, *) * (elementBytes[$1.1] ?? 0)) }
-    }
-
-    private static let elementBytes = ["BF16": 2, "F16": 2, "F32": 4, "U32": 4, "U8": 1, "I8": 1, "I32": 4, "I64": 8,
-                                       "F8_E4M3": 1, "F8_E5M2": 1]
-
-    /// A safetensors file of `tensors`, each in its own dtype, zero-filled.
-    private static func safetensors(typed tensors: [(String, String, [Int])], metadata: [String: String]? = nil) -> Data {
-        var header = [String: Any]()
-        var offset = 0
-        for (name, dtype, shape) in tensors {
-            let bytes = shape.reduce(1, *) * (elementBytes[dtype] ?? 0)
-            header[name] = ["dtype": dtype, "shape": shape, "data_offsets": [offset, offset + bytes]]
-            offset += bytes
-        }
-        header["__metadata__"] = metadata
-        let json = try! JSONSerialization.data(withJSONObject: header)
-        var length = UInt64(json.count).littleEndian
-        var data = Data(bytes: &length, count: 8)
-        data.append(json)
-        data.append(Data(count: offset))
-        return data
-    }
-
-    /// A safetensors file of `tensors` in `dtype`, zero-filled.
-    private static func safetensors(_ tensors: [(String, [Int])], dtype: String = "BF16", elementBytes: Int = 2,
-                                    metadata: [String: String]? = nil) -> Data {
-        var header = [String: Any]()
-        var offset = 0
-        for (name, shape) in tensors {
-            let bytes = shape.reduce(1, *) * elementBytes
-            header[name] = ["dtype": dtype, "shape": shape, "data_offsets": [offset, offset + bytes]]
-            offset += bytes
-        }
-        header["__metadata__"] = metadata
-        let json = try! JSONSerialization.data(withJSONObject: header)
-        var length = UInt64(json.count).littleEndian
-        var data = Data(bytes: &length, count: 8)
-        data.append(json)
-        data.append(Data(count: offset))
-        return data
+        tensors.reduce(0) { $0 + Int64($1.2.reduce(1, *) * (NFKMLXRepositoryFixture.elementBytes[$1.1] ?? 0)) }
     }
 
     private static func tokenizer(pattern: String = qwen2Pattern, model: [String: Any] = [:],
@@ -215,18 +123,14 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
                          decoder: ["type": "Sequence", "decoders": decoders])
     }
 
-    private static func json(_ object: Any) -> Data {
-        try! JSONSerialization.data(withJSONObject: object)
-    }
-
     /// The repository's files placed in the hub cache at ``commit``, and the repository a resolver reads.
     /// A repository's files: its configuration, tokenizer, and weights.
     private static func files(configuration: [String: Any], tokenizer: [String: Any]?, weights: [String: Data]?,
                               extra: [String: Data] = [:]) -> [String: Data] {
-        var files: [String: Data] = ["config.json": json(configuration),
-                                     "tokenizer_config.json": json(["tokenizer_class": "Qwen2Tokenizer"])]
-        files["tokenizer.json"] = tokenizer.map(json)
-        files.merge(weights ?? ["model.safetensors": safetensors(tensors)]) { $1 }
+        var files: [String: Data] = ["config.json": NFKMLXRepositoryFixture.json(configuration),
+                                     "tokenizer_config.json": NFKMLXRepositoryFixture.json(["tokenizer_class": "Qwen2Tokenizer"])]
+        files["tokenizer.json"] = tokenizer.map(NFKMLXRepositoryFixture.json)
+        files.merge(weights ?? ["model.safetensors": NFKMLXRepositoryFixture.safetensors(tensors)]) { $1 }
         files.merge(extra) { $1 }
         return files
     }
@@ -235,27 +139,16 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
                             weights: [String: Data]? = nil, extra: [String: Data] = [:],
                             name: String = repository) throws -> NFKModelRepository {
         let files = Self.files(configuration: configuration, tokenizer: tokenizer, weights: weights, extra: extra)
-        let hub = NFKHFHub(cacheDirectoryURL: cache)
-        var listed = [NFKDownloadPlanFile]()
-        for (path, data) in files.sorted(by: { $0.key < $1.key }) {
-            let local = try XCTUnwrap(hub.localURL(forRepo: name, revision: Self.commit, path: path))
-            try FileManager.default.createDirectory(at: local.deletingLastPathComponent(),
-                                                    withIntermediateDirectories: true)
-            try data.write(to: local)
-            let remote = try XCTUnwrap(hub.remoteURL(forRepo: name, revision: Self.commit, path: path))
-            listed.append(NFKDownloadPlanFile(path: path, remoteURL: remote, localURL: local,
-                                              byteCount: Int64(data.count), sha256: nil, cached: true, optional: false))
-        }
-        let license = NFKModelLicense(identifier: "apache-2.0", name: "apache-2.0", url: nil)
-        return NFKModelRepository(repository: name, revision: Self.commit, requestedRevision: nil,
-                                  configuration: configuration, files: listed, license: license, hub: hub)
+        return try fixture.repository(name, files: files, configuration: configuration,
+                                      license: NFKModelLicense(identifier: "apache-2.0", name: "apache-2.0", url: nil))
     }
 
     /// The Llama fixture's repository, judged directly.
     private func llamaRepository(configuration: [String: Any] = llamaConfiguration) throws -> NFKModelRepository {
         try repository(configuration: configuration, tokenizer: Self.tokenizer(pattern: Self.llama3Pattern,
                                                                               model: ["ignore_merges": true]),
-                       weights: ["model.safetensors": Self.safetensors(Self.llamaTensors)], name: Self.llamaRepository)
+                       weights: ["model.safetensors": NFKMLXRepositoryFixture.safetensors(Self.llamaTensors)],
+                       name: Self.llamaRepository)
     }
 
     private func template(_ identifier: String = "qwen3-0.6b") throws -> NFKModelDescriptor {
@@ -327,9 +220,9 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
         first.forEach { weightMap[$0.0] = "model-00001-of-00002.safetensors" }
         second.forEach { weightMap[$0.0] = "model-00002-of-00002.safetensors" }
         let read = try repository(weights: [
-            "model.safetensors.index.json": Self.json(["metadata": ["total_size": 181_120], "weight_map": weightMap]),
-            "model-00001-of-00002.safetensors": Self.safetensors(first),
-            "model-00002-of-00002.safetensors": Self.safetensors(second),
+            "model.safetensors.index.json": NFKMLXRepositoryFixture.json(["metadata": ["total_size": 181_120], "weight_map": weightMap]),
+            "model-00001-of-00002.safetensors": NFKMLXRepositoryFixture.safetensors(first),
+            "model-00002-of-00002.safetensors": NFKMLXRepositoryFixture.safetensors(second),
         ])
         let variant = try XCTUnwrap(try NFKMLXModelDescriptors.descriptor(for: read, matching: try template()).defaultVariant)
         XCTAssertEqual(variant.parameterCount, 90_560)
@@ -345,7 +238,7 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
         configuration["quantization_config"] = ["group_size": 64, "bits": 4]
         let packed = Self.packedTensors
         let read = try repository(configuration: configuration,
-                                  weights: ["model.safetensors": Self.safetensors(typed: packed)])
+                                  weights: ["model.safetensors": NFKMLXRepositoryFixture.safetensors(typed: packed)])
         let descriptor = try NFKMLXModelDescriptors.descriptor(for: read, matching: try template())
         let variant = try XCTUnwrap(descriptor.defaultVariant)
         let stage = try XCTUnwrap(variant.memoryFacts?.stages.first)
@@ -370,9 +263,9 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
         first.forEach { weightMap[$0.0] = "model-00001-of-00002.safetensors" }
         second.forEach { weightMap[$0.0] = "model-00002-of-00002.safetensors" }
         let read = try repository(configuration: configuration, weights: [
-            "model.safetensors.index.json": Self.json(["weight_map": weightMap]),
-            "model-00001-of-00002.safetensors": Self.safetensors(typed: first),
-            "model-00002-of-00002.safetensors": Self.safetensors(typed: second),
+            "model.safetensors.index.json": NFKMLXRepositoryFixture.json(["weight_map": weightMap]),
+            "model-00001-of-00002.safetensors": NFKMLXRepositoryFixture.safetensors(typed: first),
+            "model-00002-of-00002.safetensors": NFKMLXRepositoryFixture.safetensors(typed: second),
         ])
         let variant = try XCTUnwrap(try NFKMLXModelDescriptors.descriptor(for: read, matching: try template()).defaultVariant)
         XCTAssertEqual(variant.memoryFacts?.stages.first?.byteCountByPrecision[NFKModelPrecisionCheckpoint]?.int64Value,
@@ -387,7 +280,7 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
             name == "model.embed_tokens.weight" ? (name, dtype, [shape[0], shape[1] * 2]) : (name, dtype, shape)
         }
         let read = try repository(configuration: configuration,
-                                  weights: ["model.safetensors": Self.safetensors(typed: packed)])
+                                  weights: ["model.safetensors": NFKMLXRepositoryFixture.safetensors(typed: packed)])
         let variant = try XCTUnwrap(try NFKMLXModelDescriptors.descriptor(for: read, matching: try template()).defaultVariant)
         XCTAssertEqual(variant.parameterCount, 90_560)
     }
@@ -395,7 +288,7 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
     func testAnInferKitQuantizedSaveIsMeasuredAsStored() throws {
         let packed = Self.packedTensors
         let read = try repository(weights: [
-            "model.safetensors": Self.safetensors(typed: packed, metadata: ["inferkit.quantization": "4:64"])])
+            "model.safetensors": NFKMLXRepositoryFixture.safetensors(typed: packed, metadata: ["inferkit.quantization": "4:64"])])
         let descriptor = try NFKMLXModelDescriptors.descriptor(for: read, matching: try template())
         XCTAssertEqual(descriptor.defaultVariant?.memoryFacts?.stages.first?
                         .byteCountByPrecision[NFKModelPrecisionCheckpoint]?.int64Value, Self.storedBytes(packed))
@@ -421,13 +314,17 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
         XCTAssertEqual(descriptor.identifier, Self.llamaRepository)
         XCTAssertEqual(descriptor.registryName, mistral.registryName)
         XCTAssertEqual(descriptor.defaultVariant?.registryName, mistral.registryName)
+        XCTAssertEqual(descriptor.family, "llama", "a Llama repository names its own family")
+        XCTAssertEqual(descriptor.loadOptions.map(\.key), mistral.loadOptions.map(\.key),
+                       "the loader's options stay the template's")
+        XCTAssertEqual(descriptor.memoryModel, mistral.memoryModel)
         XCTAssertEqual(descriptor.defaultVariant?.parameterCount, 90_432, "the Qwen3 fixture without its query and key norms")
     }
 
     func testALlamaRepositoryResolvesThroughTheFamilyRoute() throws {
         let files = Self.files(configuration: Self.llamaConfiguration,
                                tokenizer: Self.tokenizer(pattern: Self.llama3Pattern, model: ["ignore_merges": true]),
-                               weights: ["model.safetensors": Self.safetensors(Self.llamaTensors)])
+                               weights: ["model.safetensors": NFKMLXRepositoryFixture.safetensors(Self.llamaTensors)])
         NFKMLXStubHub.serve(Self.llamaRepository, commit: Self.commit, files: files, card: ["license": "llama3.2"])
         let hub = NFKHFHub(cacheDirectoryURL: cache)
         hub.endpointURL = NFKMLXStubHub.endpointURL
@@ -532,13 +429,13 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
     }
 
     func testPackedWeightsTheConfigurationDoesNotDescribeAreRefused() throws {
-        let packed = Self.safetensors([("model.layers.0.mlp.up_proj.weight", [128, 8])], dtype: "U32", elementBytes: 4)
+        let packed = NFKMLXRepositoryFixture.safetensors([("model.layers.0.mlp.up_proj.weight", [128, 8])], dtype: "U32", elementBytes: 4)
         try assertRefusal(.unsupportedQuantization, try repository(weights: ["model.safetensors": packed]))
     }
 
     func testPackedOrEightBitFloatWeightsWithoutAQuantizationAreRefused() throws {
         for dtype in ["I8", "U8", "I32", "F8_E4M3", "F8_E5M2"] {
-            let weights = Self.safetensors(typed: [("model.layers.0.mlp.up_proj.weight", dtype, [128, 64])])
+            let weights = NFKMLXRepositoryFixture.safetensors(typed: [("model.layers.0.mlp.up_proj.weight", dtype, [128, 64])])
             try assertRefusal(.unsupportedQuantization, try repository(weights: ["model.safetensors": weights]))
         }
     }
@@ -546,7 +443,7 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
     func testAnIntegerBufferBesideFloatWeightsIsRead() throws {
         let tensors = Self.tensors.map { ($0.0, "BF16", $0.1) } + [("model.position_ids", "I64", [1, 512])]
         XCTAssertNoThrow(try NFKMLXModelDescriptors.descriptor(
-            for: try repository(weights: ["model.safetensors": Self.safetensors(typed: tensors)]), matching: try template()))
+            for: try repository(weights: ["model.safetensors": NFKMLXRepositoryFixture.safetensors(typed: tensors)]), matching: try template()))
     }
 
     func testMXFP4OnAFamilyWithoutFusedExpertsIsRefused() throws {
@@ -563,9 +460,9 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
         second.forEach { weightMap[$0.0] = "model-00002-of-00002.safetensors" }
         let metadata = ["inferkit.quantization": "4:64"]
         try assertRefusal(.unsupportedQuantization, try repository(weights: [
-            "model.safetensors.index.json": Self.json(["weight_map": weightMap]),
-            "model-00001-of-00002.safetensors": Self.safetensors(typed: first, metadata: metadata),
-            "model-00002-of-00002.safetensors": Self.safetensors(typed: second, metadata: metadata),
+            "model.safetensors.index.json": NFKMLXRepositoryFixture.json(["weight_map": weightMap]),
+            "model-00001-of-00002.safetensors": NFKMLXRepositoryFixture.safetensors(typed: first, metadata: metadata),
+            "model-00002-of-00002.safetensors": NFKMLXRepositoryFixture.safetensors(typed: second, metadata: metadata),
         ]))
     }
 
@@ -629,7 +526,7 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
 
     func testWeightsOutsideTheFilesTheLoaderReadsAreRefused() throws {
         try assertRefusal(.unsupportedWeightFormat,
-                          try repository(weights: ["weights/model.safetensors": Self.safetensors(Self.tensors)]))
+                          try repository(weights: ["weights/model.safetensors": NFKMLXRepositoryFixture.safetensors(Self.tensors)]))
     }
 
     func testAModelWhoseLoaderReadsNoOtherRepositoryRefuses() throws {
@@ -638,57 +535,35 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
 
     // MARK: Catalog
 
-    func testTheLanguageReleasesListTheModelTypesTheirLoaderReads() throws {
+    func testTheReleasesListTheModelTypesTheirLoaderReads() throws {
         let catalog = NFKModelCatalog.shared
         let expected = ["qwen3-0.6b": ["qwen3"], "qwen3-30b-a3b": ["qwen3_moe"], "qwen1.5-moe-a2.7b": ["qwen2_moe"],
                         "mixtral-8x7b-instruct": ["mixtral"], "gpt-oss-20b": ["gpt_oss"],
-                        "mistral-small-24b-instruct-2501": ["mistral", "llama"]]
+                        "mistral-small-24b-instruct-2501": ["mistral", "llama"],
+                        "wav2vec2-base-960h": ["wav2vec2"], "hubert-large-ls960-ft": ["hubert"],
+                        NFKMLXWav2Vec2Bert.modelName: ["wav2vec2-bert"], NFKMLXTimesFM.modelName: ["timesfm", "timesfm2_5"],
+                        "gemma-3-1b-it": ["gemma3_text"], "gemma-3-4b-it": ["gemma3"], "gemma-3n-e2b-it": ["gemma3n"],
+                        "gemma-4-e2b-it": ["gemma4"], "gemma-4-12b-it": [],
+                        "qwen3-vl-2b": ["qwen3_vl"], "qwen3-vl-30b-a3b": ["qwen3_vl_moe"], NFKMLXMarian.modelName: ["marian"],
+                        "m2m100": ["m2m_100"], "small100": ["m2m_100"], "trocr-base-printed": ["vision-encoder-decoder"],
+                        NFKMLXGraniteHybrid.graniteModelName: ["granitemoehybrid"], NFKMLXNemotronH.nemotronModelName: ["nemotron_h"],
+                        NFKMLXMamba.mambaModelName: [], "smolvlm2-500m": ["smolvlm"]]
         for (identifier, modelTypes) in expected {
             XCTAssertEqual(catalog.descriptor(withIdentifier: identifier)?.modelTypes, modelTypes, identifier)
         }
         for descriptor in NFKMLXModelDescriptors.modelDescriptors() where !descriptor.modelTypes.isEmpty {
             let entry = try XCTUnwrap(NFKMLXModelDescriptors.entries.first { $0.identifier == descriptor.identifier })
-            XCTAssertTrue(NFKMLXCatalogLanguage.readsReleases(of: entry),
-                          "\(descriptor.identifier) lists model types its loader does not judge")
+            XCTAssertNotNil(NFKMLXFamilyJudge.judge(for: entry),
+                            "\(descriptor.identifier) lists model types its loader does not judge")
         }
     }
 
     // MARK: The validation store
 
-    /// The release directory a validation key names, placed in the hub cache at ``commit`` by symbolic links,
-    /// and the repository a resolver reads.
-    private func storedRelease(_ key: String, repository name: String) throws -> NFKModelRepository {
-        var isDirectory: ObjCBool = false
-        guard let path = NFKMLXValidationConfig.environment[key],
-              FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
-            throw XCTSkip("set \(key) to the mlx-community release directory")
-        }
-        let directory = URL(fileURLWithPath: path)
-        let hub = NFKHFHub(cacheDirectoryURL: cache)
-        var listed = [NFKDownloadPlanFile]()
-        // Only the release's own files: `hf download --local-dir` leaves a `.cache` directory beside them.
-        for file in try FileManager.default.contentsOfDirectory(atPath: path).sorted() where file != "REVISION" {
-            let source = directory.appendingPathComponent(file)
-            guard try source.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile == true else { continue }
-            let local = try XCTUnwrap(hub.localURL(forRepo: name, revision: Self.commit, path: file))
-            try FileManager.default.createDirectory(at: local.deletingLastPathComponent(),
-                                                    withIntermediateDirectories: true)
-            try FileManager.default.createSymbolicLink(at: local, withDestinationURL: source)
-            let size = try XCTUnwrap(try source.resourceValues(forKeys: [.fileSizeKey]).fileSize)
-            let remote = try XCTUnwrap(hub.remoteURL(forRepo: name, revision: Self.commit, path: file))
-            listed.append(NFKDownloadPlanFile(path: file, remoteURL: remote, localURL: local, byteCount: Int64(size),
-                                              sha256: nil, cached: true, optional: false))
-        }
-        let data = try Data(contentsOf: directory.appendingPathComponent("config.json"))
-        let configuration = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
-        return NFKModelRepository(repository: name, revision: Self.commit, requestedRevision: nil,
-                                  configuration: configuration, files: listed, license: nil, hub: hub)
-    }
-
     /// Resolves a stored mlx-community release on `template` and holds its stored bytes to the
     /// `total_size` mlx_lm wrote in its weight index.
     private func assertStoredReleaseResolves(_ key: String, repository name: String, template identifier: String) throws {
-        let read = try storedRelease(key, repository: name)
+        let read = try fixture.storedRelease(key, repository: name)
         guard read.file(atPath: "model.safetensors.index.json") != nil else {
             throw XCTSkip("\(name) in the validation store has no model.safetensors.index.json to hold its bytes to")
         }
@@ -700,6 +575,42 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
         XCTAssertFalse(descriptor.loadOptions.contains { $0.key == NFKModelLoadOptionPrecision })
         XCTAssertFalse(descriptor.loadOptions.contains { $0.key == NFKModelLoadOptionQuantizationBits })
         XCTAssertEqual(descriptor.registryName, try template(identifier).registryName)
+    }
+
+    /// Shipped releases and the validation-store keys of their directories that hold safetensors weights.
+    private static let storedReleases: [(identifier: String, key: String)] = [
+        ("qwen3-0.6b", "IK_VAL_QWEN3"), ("qwen3-1.7b", "IK_VAL_QWEN3_1_7B"), ("qwen3-4b", "IK_VAL_QWEN3_4B"),
+        ("qwen3-14b", "IK_VAL_QWEN3_14B"), ("gpt-oss-20b", "IK_VAL_GPT_OSS"),
+        ("wav2vec2-base-960h", "IK_VAL_WAV2VEC2_BASE_960H"), ("hubert-xlarge-ls960-ft", "IK_VAL_HUBERT_XLARGE_LS960_FT"),
+        (NFKMLXWav2Vec2Bert.modelName, "IK_VAL_W2V_BERT_2"),
+        (NFKMLXTimesFM.modelName, "IK_VAL_TIMESFM25_PYTORCH"), (NFKMLXTimesFM.modelName, "IK_VAL_TIMESFM25"),
+        ("gemma-3-270m-it", "IK_VAL_GEMMA3_270M"), ("gemma-3-1b-it", "IK_VAL_GEMMA3_1B"),
+        ("gemma-3-4b-it", "IK_VAL_GEMMA3_4B"), ("gemma-3n-e2b-it", "IK_VAL_GEMMA3N_E2B"),
+        ("gemma-3n-e4b-it", "IK_VAL_GEMMA3N_E4B"), ("gemma-4-e2b-it", "IK_VAL_GEMMA4"), ("gemma-4-e4b-it", "IK_VAL_GEMMA4_E4B"),
+        ("qwen3-vl-2b", "IK_VAL_QWEN3_VL"), ("small100", "IK_VAL_SMALL100"),
+        ("trocr-base-printed", "IK_VAL_TROCR_BASE_PRINTED"), ("trocr-small-printed", "IK_VAL_TROCR_SMALL_PRINTED"),
+        ("trocr-large-printed", "IK_VAL_TROCR_LARGE_PRINTED"), ("trocr-large-stage1", "IK_VAL_TROCR_LARGE_STAGE1"),
+        (NFKMLXGraniteHybrid.graniteModelName, "IK_VAL_GRANITE"), (NFKMLXNemotronH.nemotronModelName, "IK_VAL_NEMOTRON_H"),
+        ("smolvlm2-500m", "IK_VAL_SMOLVLM2"), ("smolvlm2-256m", "IK_VAL_SMOLVLM2_256M"), ("smolvlm2-2.2b", "IK_VAL_SMOLVLM2_2_2B"),
+    ]
+
+    func testEveryStoredReleaseIsReadByItsOwnFamilysJudgment() throws {
+        var judged = 0
+        for (identifier, key) in Self.storedReleases {
+            var isDirectory: ObjCBool = false
+            guard let path = NFKMLXValidationConfig.environment[key],
+                  FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                continue
+            }
+            let template = try XCTUnwrap(NFKModelCatalog.shared.descriptor(withIdentifier: identifier))
+            // Each directory takes its own repository name, since two may hold one entry's release.
+            let read = try fixture.storedRelease(key, repository: "validation-store/" + key.lowercased())
+            XCTAssertNoThrow(try NFKMLXModelDescriptors.descriptor(for: read, matching: template), "\(identifier), \(key)")
+            judged += 1
+        }
+        if judged == 0 {
+            throw XCTSkip("set any of \(Self.storedReleases.map(\.key).joined(separator: ", "))")
+        }
     }
 
     func testTheStoredMLXCommunityQwen3FourBitResolves() throws {

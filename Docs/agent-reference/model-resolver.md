@@ -7,8 +7,8 @@ The resolver takes a Hugging Face repository and reports how InferKit runs it, h
 verified, and what it costs, before any weights download. The consumer reference is
 `Docs/model-catalog.md` ("Resolving a repository").
 
-Status, 2026-10-20: phase 1 is implemented. The catalog route and the family route run, and InferKitMLX
-judges the dense and mixture decoders `NFKMLXLanguage` loads. Tiers 2 to 4 are the plan below.
+Status, 2026-10-21: phases 1 and 2 are implemented. The catalog route and the family route run, and
+InferKitMLX judges every config-reading family in the judge table below. Tiers 2 to 4 are the plan below.
 
 ## Starting point
 
@@ -98,11 +98,69 @@ repository at a time.
 
 ## The InferKitMLX judgment
 
-`NFKMLXModelDescriptors.descriptor(for:matching:)` (`NFKMLXRepositoryMatching.swift`) answers for the
-entries `NFKMLXCatalogLanguage.readsReleases(of:)` names: the dense and mixture releases `NFKMLXLanguage`
-loads. Their entries list the `model_type` values their loader reads (`qwen3`, `qwen3_moe`, `qwen2_moe`,
-`mixtral`, `gpt_oss`, and `mistral` with `llama` on Mistral Small 3). Any other entry refuses with
-`UnsupportedArchitecture`.
+`NFKMLXModelDescriptors.descriptor(for:matching:)` (`NFKMLXRepositoryMatching.swift`) answers for an
+entry that lists `modelTypes` and has a family judge (`NFKMLXFamilyJudge.judge(for:)`). Any other entry
+refuses with `UnsupportedArchitecture`. `testTheReleasesListTheModelTypesTheirLoaderReads` fails where an
+entry lists model types no judge reads.
+
+The judgment is a shared core and one judge per family:
+
+- The judge (`NFKMLXFamilyJudge`) states what its loader requires: the configuration and tokenizer read by
+  the family's own readers (`verify`), the weight files the loader reads (`weightFiles`), the files beyond
+  the template's it reads where a repository has them (`optionalFiles`), the tensors it places
+  (`verifyTensors`), and the sibling entry whose head and tasks describe the repository (`template`).
+- A judge whose readers take a directory reads the repository's small files from its snapshot in the hub
+  cache (`NFKMLXRepositoryJudgment.snapshot(of:holding:)`), so the reader sees what a load would.
+- The core checks every repository the same way: the packing, the header bounds, the measurement, and
+  the descriptor.
+- `descriptor(for:matching:)` refuses a repository whose `model_type` the asked entry does not list, so a
+  direct caller cannot put a text-only repository on a multimodal entry or a dense one on a mixture's.
+- The resolved variant downloads the weight files the judgment measured (`weightFiles`, with the shard
+  index where the repository lists one), not the template's weight entries, which name the template's own
+  format.
+- The resolved descriptor keeps the template's load profile and plan, and names the template's family.
+  A judge's `families` names another family for a `model_type` its loader also reads (`llama` on
+  Mistral Small 3's loader).
+- A family's fields a reader does not read are refused where stated at a value the output depends on
+  (`verifyFixedFields`, `verifyUnreadFields`, `verifySeq2SeqUnreadFields`). A reader maps an unknown
+  layer kind to a default in Granite 4.0-H and Nemotron-H, so those judges refuse an unknown kind.
+
+| Judge | File | Entries | `modelTypes` |
+|---|---|---|---|
+| `language` | `NFKMLXRepositoryMatching.swift` | the dense and mixture releases `NFKMLXLanguage` loads | `qwen3`, `qwen3_moe`, `qwen2_moe`, `mixtral`, `gpt_oss`, `mistral` with `llama` on Mistral Small 3 |
+| `wav2Vec2` | `…Audio.swift` | the Wav2Vec2 and HuBERT releases | `wav2vec2`, `hubert` |
+| `w2vBert` | `…Audio.swift` | W2V-BERT 2.0 | `wav2vec2-bert` |
+| `timesFM` | `…Forecasting.swift` | TimesFM 2.5 | `timesfm`, `timesfm2_5` |
+| `gemma3` | `…Gemma.swift` | Gemma 3 | `gemma3_text` on the text sizes, `gemma3` on the multimodal ones |
+| `gemma3n` | `…Gemma.swift` | Gemma 3n | `gemma3n` |
+| `gemma4` | `…Gemma.swift` | Gemma 4 but the 12B (`gemma4_unified`) | `gemma4` |
+| `qwen3VL` | `…Vision.swift` | Qwen3-VL | `qwen3_vl`, `qwen3_vl_moe` on the 30B-A3B |
+| `smolVLM` | `…Vision.swift` | SmolVLM2 | `smolvlm` |
+| `trocr` | `…Vision.swift` | TrOCR | `vision-encoder-decoder` |
+| `marian` | `…Translation.swift` | OPUS-MT | `marian` |
+| `m2m100` | `…Translation.swift` | M2M-100 and SMaLL-100 | `m2m_100` |
+| `nllb` | `…Translation.swift` | NLLB-200 | `m2m_100` |
+| `graniteH` | `…Hybrid.swift` | Granite 4.0-H | `granitemoehybrid` |
+| `nemotronH` | `…Hybrid.swift` | Nemotron-H | `nemotron_h` |
+
+The loaders below read one release, or a model type no judge can tell apart, and list no `modelTypes`:
+
+- Codestral Mamba (`mamba2`): its `config.json` writes `Infinity`, which the core resolver's JSON reader
+  refuses before any judge. `NFKMLXMamba2Configuration.configuration(fromDirectory:)` patches the literal.
+- The Gemma 4 12B (`gemma4_unified`), TranslateGemma (a chat template's language table), EmbeddingGemma
+  (fixed geometry), DeepSeek V4 (one release per version, FP8 block scales), Pixtral, Phi-4-multimodal,
+  Florence-2, Voxtral, Granite Speech, Qwen4-Exp, Qwen3.5, MADLAD-400 (`t5` with the gated-GELU fixed),
+  the Qwen3-VL embedder and reranker, ModernBERT, DeBERTa and Open-Jev, Table Transformer, V-JEPA 2, SAM 3,
+  Sa2VA, and ViTPose.
+- The diffusers pipelines state `_class_name`, not `model_type`, so no repository matches them by type.
+
+`testEveryStoredReleaseIsReadByItsOwnFamilysJudgment` judges each shipped release whose directory the
+validation store holds with safetensors weights against its own entry: the Qwen3 sizes, gpt-oss,
+Wav2Vec2, HuBERT, W2V-BERT, both TimesFM 2.5 layouts, Gemma 3, 3n, and 4, Qwen3-VL, SmolVLM2, SMaLL-100,
+TrOCR, Granite 4.0-H, and Nemotron Nano 2. Each family's hermetic judgments are in
+`NFKMLXRepositoryMatching{Audio,Forecasting,Gemma,Vision,Translation,Hybrid}Tests`.
+
+### The language decoders
 
 The judgment refuses what the loader reads wrongly with no error:
 
@@ -141,6 +199,85 @@ files in the validation store (`NFKMLXRepositoryMatchingTests`), with stored byt
 `total_size` mlx_lm wrote in their weight index. A small Llama 3 decoder (llama3 rotary scaling, tied
 embeddings) resolves through `NFKModelResolver`'s family route on Mistral Small 3's loader against a
 stubbed hub (`testALlamaRepositoryResolvesThroughTheFamilyRoute`).
+
+### The speech encoders
+
+`NFKMLXWav2Vec2`'s loader refuses a missing or an extra parameter, so a repository it would read wrongly
+fails loudly at load. The judgment refuses earlier what the resolver can see:
+
+- A configuration `NFKMLXWav2Vec2Configuration` or `NFKMLXWav2Vec2BertConfiguration` refuses (an activation
+  other than the release's, an adapter, a position batch norm) → `UnsupportedConfiguration`.
+- An `architectures` head the loader does not build (a sequence classifier, an x-vector head) →
+  `UnsupportedArchitecture`. The loader builds `…ForCTC`, `…Model`, and Wav2Vec2's `…ForPreTraining`.
+- A CTC head with no `vocab.json`, a `tokenizer_class` other than `Wav2Vec2CTCTokenizer` (a phoneme
+  tokenizer), or a vocabulary past the head's width → `UnsupportedTokenizer`.
+- Weights outside `model.safetensors`, which the loader reads whole → `UnsupportedWeightFormat`. Most of
+  the shipped Wav2Vec2 and HuBERT releases hold only `pytorch_model.bin`, which the resolver refuses
+  before any judge, since it measures from safetensors headers.
+- A stated quantization → `UnsupportedQuantization`.
+
+A repository takes its family's entry with the head it carries: a `…ForCTC` repository a CTC release
+(transcription and embedding), another an encoder release (embedding). A fine-tuned W2V-BERT's
+`vocab.json` and `tokenizer_config.json` join its source, since the W2V-BERT entry lists none.
+
+### TimesFM 2.5
+
+TimesFM 1.0 and 2.0 share the `timesfm` model type and are another network. The judgment refuses a
+configuration stating their frequency embedding (`freq_size`, `use_positional_embedding`) and one
+stating no continuous quantile head (`quantile_horizon_length` or `output_quantile_len`). The network
+fixes its activation (`swish`), biases, key-value heads (one per query head), and rotary base (10000),
+so another stated value is refused. The weights are one `model.safetensors`.
+
+### Gemma
+
+Every Gemma generation ships one tokenizer form, which `NFKMLXGemmaTokenizer` reproduces: a space
+normalized to `▁`, the whole text one pre-token, byte-fallback BPE, decoded through the same steps
+(`NFKMLXFamilyJudge.gemmaTokenizerForm`). The reader takes any BPE vocabulary and merges, so the
+judgment refuses another form. Each generation refuses an activation other than `gelu_pytorch_tanh` and
+attention biases. Each refuses a head untied from the embedding (`tie_word_embeddings` false at the top
+or in `text_config`), since the loaders drop `lm_head.weight`. Gemma 3 refuses a tower other than SigLIP
+and a rotary scaling other than linear (its reader's). Gemma 3n refuses a vision tower other than MobileNet-V5, which the loader builds at the
+released geometry, and reads its audio configuration through the audio reader. Gemma 4 refuses a
+rotary kind other than proportional (full attention) or default (sliding), any `rope_scaling`, and
+weights outside `model.language_model.`. A Gemma 4 repository with routed experts takes the 26B-A4B
+entry.
+
+### Qwen3-VL, SmolVLM2, and TrOCR
+
+Qwen3-VL's `text_config` takes the language decoders' refusals, and its tower the tower reader's. The
+integration fixes the image token (151655), the 2×2 merge, the interleaved M-RoPE sections
+`[24, 20, 20]` (under `rope_scaling`, or `rope_parameters` in transformers 5.x), and three DeepStack
+layers, so another stated value is refused.
+
+SmolVLM2's `text_config` takes the language decoders' refusals, its tokenizer the release reader's
+(SmolLM's digit split), and its tower must be `smolvlm_vision` with the tanh GELU the loader runs.
+
+TrOCR states the generic `vision-encoder-decoder` model type. The judgment requires a ViT or DeiT
+encoder and a `trocr` decoder, refuses another pair (Donut, ViT-GPT2), and requires RoBERTa's
+`vocab.json` and `merges.txt` or XLM-R's `sentencepiece.bpe.model`.
+
+### The translators
+
+Marian, M2M-100, and NLLB-200 read through `NFKMLXSeq2SeqConfiguration`, which takes the encoder's head
+count for both stacks and shares the embeddings. The judgment refuses a decoder head count other than
+the encoder's, unshared embeddings, and a `decoder_vocab_size` other than `vocab_size`. Marian refuses a
+separate target vocabulary. M2M-100 and NLLB-200 both state `m2m_100`: M2M-100 requires its
+`vocab.json` and a tokenizer class of `M2M100Tokenizer` or none, NLLB-200 requires `NllbTokenizer`, so
+each family refuses the other's repositories and the resolver asks the next. A repository shipping
+`tokenization_small100.py` takes the SMaLL-100 entry, and any other M2M-100 repository the M2M-100 entry.
+Most shipped translator releases hold only
+`pytorch_model.bin`, which the resolver refuses before any judge.
+
+### The hybrid decoders
+
+Granite 4.0's attention-only releases share `granitemoehybrid` and rotate their positions. The Granite
+4.0-H network attends without positions, so the judgment refuses a `position_embedding_type` other than
+`nope`, an activation other than `silu`, attention biases, and a layer kind other than `mamba` and
+`attention`. A repository with routed experts takes the Tiny entry. Nemotron-H refuses an MLP activation
+other than `relu2`, attention biases, and any layer outside Mamba-2, attention, and MLP (a pattern letter
+other than `M`, `*`, and `-`, or a `layers_block_type` the reader does not name).
+
+### The measurement
 
 The measurement ports `Tools/catalog/measure.py`'s hub path to Swift: download bytes over the template's
 files plus the shards, safetensors tensor bytes by dtype from the headers, parameters, the repeated
@@ -218,8 +355,8 @@ The judgment reads what the loader reads through the loader's own predicates.
 
 1. Metadata fetch, tier 0, the language-family judgment with the refusals above, the result type, and
    the catalog `modelTypes` field. Done.
-2. Judgments for the other config-reading families (seq2seq and T5, wav2vec2 and HuBERT, Gemma,
-   DeepSeek, and the remaining `directoryURL` factories), each listing its `modelTypes`.
+2. Judgments for the other config-reading families, each listing its `modelTypes`. Done: the families
+   in the judge table. Codestral Mamba waits on a core JSON reader that takes `Infinity`.
 3. Tiers 2 and 3, with the server probes recorded.
 4. Tier 4 hints, and an optional post-load check: a short greedy generation tested for degenerate
    output. It is reported as a sanity check and never as parity.

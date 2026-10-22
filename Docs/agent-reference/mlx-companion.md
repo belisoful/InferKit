@@ -91,10 +91,12 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
     registry name is registered after `registerAll()`, and that each stand-in backend declares exactly
     its descriptor's ports and options.
   - The measurements, the snapshot, and the completeness rules are in "Model catalog" below.
-  - The language releases list their `model_type` (`modelTypes`), and
-    `NFKMLXModelDescriptors.descriptor(for:matching:)` (`NFKMLXRepositoryMatching.swift`) answers the core
-    resolver for them: it judges another repository against the loader and measures it the way
-    `Tools/catalog/measure.py` does. The judgment's refusals and the measurement are in
+  - The families with a judge list their `model_type` (`modelTypes`), and
+    `NFKMLXModelDescriptors.descriptor(for:matching:)` (`NFKMLXRepositoryMatching.swift`, one judge per
+    family in `NFKMLXFamilyJudge`, grouped in `NFKMLXRepositoryMatching{Audio,Forecasting,Gemma,Vision,
+    Translation,Hybrid}.swift`) answers the
+    core resolver for them: it judges another repository against the family's loader and measures it the
+    way `Tools/catalog/measure.py` does. The judgments' refusals and the measurement are in
     `model-resolver.md`.
 - **Reasoning and usage (2026-09-19).** The core's three reasoning keys reach the MLX text backends.
   `NFKMLXReasoning.swift` holds the pieces; `NFKMLXReasoningTests` covers them without the runtime,

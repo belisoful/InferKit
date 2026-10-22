@@ -17,29 +17,30 @@ extension NFKMLXModelDescriptors {
     /// `descriptor`'s loader.
     ///
     /// @discussion The core's `NFKModelResolver` calls this for a shipped descriptor whose `modelTypes`
-    /// holds the repository's `model_type`. The dense and mixture decoders ``NFKMLXLanguage`` loads judge
-    /// a repository; another descriptor refuses with `NFKModelResolutionErrorUnsupportedArchitecture`.
-    /// The judgment refuses what the loader would read wrongly with no error:
-    /// - a configuration ``NFKMLXLanguage/configuration(fromJSON:)`` rejects, or one stating what it does
-    ///   not read: an MLP bias, an activation other than SiLU, no rotary base, or a sliding window
-    ///   narrower than the context (`NFKModelResolutionErrorUnsupportedConfiguration`);
-    /// - a quantization `NFKMLXQuantization.releaseQuantization(configJSON:)` refuses, MXFP4 on a
-    ///   family whose experts the loader does not fuse, packed or 8-bit float weights no configuration or
-    ///   save describes, an InferKit quantized save split across files, and mlx_lm's gpt-oss layout,
-    ///   which stores the expert gate and up projections apart
+    /// holds the repository's `model_type`. Each family whose loader reads another release has a judge
+    /// (`NFKMLXFamilyJudge`): the dense and mixture decoders ``NFKMLXLanguage`` loads, the speech encoders,
+    /// TimesFM 2.5, Gemma 3, 3n, and 4, Qwen3-VL, SmolVLM2, TrOCR, the translators, and the hybrid
+    /// decoders. A descriptor whose family has none, or a repository whose `model_type` the descriptor does
+    /// not list, refuses with `NFKModelResolutionErrorUnsupportedArchitecture`.
+    ///
+    /// A judge refuses what its loader would read wrongly with no error, through the family's own readers:
+    /// - a configuration the family's reader rejects, or one stating a field it does not read at a value the
+    ///   output depends on (`NFKModelResolutionErrorUnsupportedConfiguration`);
+    /// - a head or a layer kind the network does not build (`NFKModelResolutionErrorUnsupportedArchitecture`);
+    /// - a quantization the loader does not read, or packed weights no configuration describes
     ///   (`NFKModelResolutionErrorUnsupportedQuantization`);
-    /// - a tokenizer `NFKMLXLanguage.tokenizerScheme(tokenizerJSON:tokenizerConfiguration:)` does not
-    ///   reproduce (`NFKModelResolutionErrorUnsupportedTokenizer`);
-    /// - weights in neither `model.safetensors` nor a `model.safetensors.index.json`, and a header whose
-    ///   shape or offsets are outside what a release holds (`NFKModelResolutionErrorUnsupportedWeightFormat`).
+    /// - a tokenizer the family's reader does not reproduce (`NFKModelResolutionErrorUnsupportedTokenizer`);
+    /// - weights outside the files the loader reads, and a header whose shape or offsets are outside what a
+    ///   release holds (`NFKModelResolutionErrorUnsupportedWeightFormat`).
     ///
     /// The repository is measured as `Tools/catalog/measure.py` measures a shipped release, from its file
     /// listing, its safetensors headers, and its `config.json`, and the descriptor takes the load options,
     /// memory model, and memory facts a shipped release of the family does. A repository the loader reads
     /// as stored (an mlx_lm quantized release, an InferKit quantized save) is measured at its stored
-    /// bytes and offers no precision or weight quantization option. Its identifier is the
-    /// repository name, its one variant reads the repository at `repository.revision` and builds under
-    /// `descriptor`'s registry name, and its license is the model card's.
+    /// bytes and offers no precision or weight quantization option. Its identifier is the repository
+    /// name, its one variant downloads the weight files the judgment measured at `repository.revision`
+    /// and builds under the registry name of the family's entry that describes the repository, and its
+    /// license is the model card's.
     ///
     /// - Throws: an error in `NFKModelResolutionErrorDomain` naming the refusal, or the hub's error when a
     ///   header or a file cannot be read.
@@ -49,51 +50,115 @@ extension NFKMLXModelDescriptors {
     public static func descriptor(for repository: NFKModelRepository,
                                   matching descriptor: NFKModelDescriptor) throws -> NFKModelDescriptor {
         guard let template = entries.first(where: { $0.identifier == descriptor.identifier }),
-              !template.modelTypes.isEmpty,
-              NFKMLXCatalogLanguage.readsReleases(of: template) else {
+              !template.modelTypes.isEmpty, let judge = NFKMLXFamilyJudge.judge(for: template) else {
             throw NFKMLXRepositoryJudgment.refusal(.unsupportedArchitecture,
                 "\(descriptor.identifier) has no loader that reads another repository")
         }
-        let judgment = try NFKMLXRepositoryJudgment(repository: repository, template: template)
+        guard let modelType = repository.modelType, template.modelTypes.contains(modelType) else {
+            throw NFKMLXRepositoryJudgment.refusal(.unsupportedArchitecture,
+                "\(descriptor.identifier) reads " + template.modelTypes.joined(separator: ", ")
+                + ", not the \(repository.modelType ?? "unstated") model type of \(repository.repository)")
+        }
+        let judgment = try NFKMLXRepositoryJudgment(repository: repository, template: judge.template(repository, template),
+                                                    judge: judge)
         return try judgment.descriptor()
     }
 }
 
-/// What the language loader would read of one repository, judged and measured.
+/// What one family's loader requires of a repository beyond what every judgment checks: its configuration
+/// and tokenizer read as the loader reads them, the weight files it reads, and the tensors it places.
+struct NFKMLXFamilyJudge {
+    /// What a family's configuration states about the weights, which the shared packing check reads.
+    struct Reading {
+        var quantization = NFKMLXRepositoryJudgment.StatedQuantization.none
+        /// True where the module fuses its experts' gate and up projections (gpt-oss).
+        var fusesExperts = false
+    }
+
+    /// Whether the judge answers for the entry.
+    var reads: (NFKMLXCatalogEntry) -> Bool
+    /// The entry of the family whose tasks and files describe the repository: the asked entry, or a sibling
+    /// with the head the repository carries.
+    var template: (NFKModelRepository, NFKMLXCatalogEntry) -> NFKMLXCatalogEntry = { $1 }
+    /// Refuses a configuration or tokenizer the family's readers would read wrongly, and returns what the
+    /// configuration states about the weights.
+    var verify: (NFKModelRepository, NFKMLXCatalogEntry) throws -> Reading
+    /// The weight files the loader reads, in the order it reads them.
+    var weightFiles: (NFKModelRepository) throws -> [String] = NFKMLXRepositoryJudgment.weightFiles(of:)
+    /// Files beyond the template's that the loader reads where a repository has them, by path, with their
+    /// roles: a fine-tuned head's vocabulary on an encoder template.
+    var optionalFiles: [String: String] = [:]
+    /// Refuses tensors the loader would place wrongly or not at all.
+    var verifyTensors: ([NFKMLXHeaderTensor], NFKModelRepository) throws -> Void = { _, _ in }
+    /// The family a repository of each listed `model_type` names, where it is another family the loader
+    /// also reads. Any other `model_type` names the template's family.
+    var families: [String: String] = [:]
+
+    /// The judges, in the order they are asked.
+    static let judges: [NFKMLXFamilyJudge] = [.language, .wav2Vec2, .w2vBert, .timesFM, .gemma3, .gemma3n, .gemma4,
+                                               .qwen3VL, .smolVLM, .marian, .m2m100, .nllb, .trocr, .graniteH,
+                                               .nemotronH]
+
+    /// The judge for an entry, or nil where no loader of the entry reads another repository.
+    static func judge(for entry: NFKMLXCatalogEntry) -> NFKMLXFamilyJudge? {
+        judges.first { $0.reads(entry) }
+    }
+
+    /// The dense and mixture decoders ``NFKMLXLanguage`` loads.
+    static let language = NFKMLXFamilyJudge(
+        reads: NFKMLXCatalogLanguage.readsReleases(of:),
+        verify: { repository, template in
+            let configuration = repository.configuration
+            let name = repository.repository
+            let read = try NFKMLXRepositoryJudgment.reading(repository, template: template) {
+                try NFKMLXLanguage.configuration(fromJSON: configuration)
+            }
+            try NFKMLXRepositoryJudgment.verifyUnreadFields(of: configuration, repository: name)
+            let quantization = try NFKMLXRepositoryJudgment.verifyQuantization(of: configuration, repository: name)
+            try NFKMLXRepositoryJudgment.verifyTokenizer(of: repository)
+            return Reading(quantization: quantization, fusesExperts: read.clampedSwiGLU != nil)
+        },
+        families: ["llama": "llama"])
+}
+
+/// What a family's loader would read of one repository, judged and measured.
 struct NFKMLXRepositoryJudgment {
     let repository: NFKModelRepository
     let template: NFKMLXCatalogEntry
+    /// The family the resolved descriptor names.
+    let family: String
     /// The weight files the loader reads, in the order it reads them.
     let weightFiles: [String]
+    /// The weight files the variant downloads: the shard index where the repository lists one, then
+    /// ``weightFiles``.
+    var downloadedWeightFiles: [String] { Self.downloadedWeightFiles(of: repository, weightFiles: weightFiles) }
+    /// The files beyond the template's the repository lists and the loader reads, by path, with their roles.
+    let optionalFiles: [String: String]
     let measurement: NFKMLXMeasuredVariant
     /// True where the loader reads the weights as stored whatever the request: an mlx_lm quantized
     /// release, or an InferKit quantized save.
     let loadsAsStored: Bool
 
-    init(repository: NFKModelRepository, template: NFKMLXCatalogEntry) throws {
+    init(repository: NFKModelRepository, template: NFKMLXCatalogEntry,
+         judge: NFKMLXFamilyJudge = .language) throws {
         self.repository = repository
         self.template = template
+        family = repository.modelType.flatMap { judge.families[$0] } ?? template.family
         let configuration = repository.configuration
-        let languageConfiguration: NFKMLXLanguageConfiguration
-        do {
-            languageConfiguration = try NFKMLXLanguage.configuration(fromJSON: configuration)
-        } catch {
-            throw Self.refusal(.unsupportedConfiguration,
-                "the \(template.identifier) loader rejects the configuration of \(repository.repository): "
-                + error.localizedDescription)
-        }
-        try Self.verifyUnreadFields(of: configuration, repository: repository.repository)
-        let quantization = try Self.verifyQuantization(of: configuration, repository: repository.repository)
-        try Self.verifyTokenizer(of: repository)
-        weightFiles = try Self.weightFiles(of: repository)
+        let reading = try judge.verify(repository, template)
+        weightFiles = try judge.weightFiles(repository)
+        let templatePaths = Set((template.variants.first?.source?.files ?? []).map(\.path))
+        optionalFiles = judge.optionalFiles.filter { !templatePaths.contains($0.key) && repository.file(atPath: $0.key) != nil }
         let headers = try weightFiles.map { try repository.safetensorsHeaderOfFile(atPath: $0) }
-        let saved = try Self.verifyPacking(headers: headers, quantization: quantization,
-                                           fusesExperts: languageConfiguration.clampedSwiGLU != nil,
-                                           repository: repository.repository)
-        loadsAsStored = quantization == .mlx || saved
+        let saved = try Self.verifyPacking(headers: headers, quantization: reading.quantization,
+                                           fusesExperts: reading.fusesExperts, repository: repository.repository)
+        loadsAsStored = reading.quantization == .mlx || saved
         let tensors = try Self.tensors(of: headers, repository: repository.repository)
+        try judge.verifyTensors(tensors, repository)
         let packedBits = loadsAsStored ? Self.packedBits(of: configuration, headers: headers) : nil
-        measurement = try Self.measurement(of: repository, template: template, weightFiles: weightFiles,
+        measurement = try Self.measurement(of: repository, template: template,
+                                           weightFiles: Self.downloadedWeightFiles(of: repository, weightFiles: weightFiles)
+                                               + optionalFiles.keys.sorted(),
                                            tensors: tensors, packedBits: packedBits)
     }
 
@@ -112,29 +177,33 @@ struct NFKMLXRepositoryJudgment {
         entry.minimumMemoryByteCount = nil
         entry.variants = [.variant(Self.variantIdentifier(name), displayName: name, isDefault: true,
                                    registryName: entry.registryName, source: source())]
-        if loadsAsStored, var load = NFKMLXLoadProfile.profile(for: template) {
+        // The template's profile and plan are fixed before the family changes, since both are keyed by it.
+        var load = NFKMLXLoadProfile.profile(for: template) ?? .plain
+        if loadsAsStored {
             load.precisions = []
             load.defaultPrecision = NFKModelPrecisionCheckpoint
             load.quantizes = false
-            entry.load = load
         }
+        entry.load = load
+        entry.family = family
         let measurement = self.measurement
-        let measured = try entry.measured(by: { _ in measurement }, plan: loadsAsStored ? .stored : nil).descriptor()
+        let plan = loadsAsStored ? .stored : NFKMLXLoadPlan.plan(for: template)
+        let measured = try entry.measured(by: { _ in measurement }, plan: plan).descriptor()
         let catalog = NFKModelCatalog()
         catalog.addDescriptors([measured])
         return NFKMLXModelDescriptors.withLeastVariantMemory(measured.derivingMemoryFigures(in: catalog))
     }
 
-    /// The template's files at the repository's commit, each with its listed size and digest, and the
-    /// weight entry the loader reads.
+    /// The template's other files at the repository's commit, each with its listed size and digest, the
+    /// weight files the judgment measured, and the files beyond the template's the loader reads.
     private func source() -> NFKModelSource {
-        let templateFiles = template.variants.first?.source?.files ?? []
-        let files = templateFiles.compactMap { file -> NFKModelFile? in
-            let listed = repository.file(atPath: file.path)
-            if file.role == NFKModelFileRoleWeights {
-                return listed == nil ? nil : listedFile(file.path, role: file.role, optional: false, listed: listed)
-            }
-            return listedFile(file.path, role: file.role, optional: file.isOptional, listed: listed)
+        let templateFiles = (template.variants.first?.source?.files ?? []).filter { $0.role != NFKModelFileRoleWeights }
+        let files = templateFiles.map { file in
+            listedFile(file.path, role: file.role, optional: file.isOptional, listed: repository.file(atPath: file.path))
+        } + downloadedWeightFiles.map { path in
+            listedFile(path, role: NFKModelFileRoleWeights, optional: false, listed: repository.file(atPath: path))
+        } + optionalFiles.sorted { $0.key < $1.key }.map { path, role in
+            listedFile(path, role: role, optional: true, listed: repository.file(atPath: path))
         }
         return NFKModelSource(kind: NFKModelSourceKindHuggingFace, repository: repository.repository,
                               revision: repository.revision, url: nil, layout: NFKModelSourceLayoutDirectory,
@@ -146,9 +215,88 @@ struct NFKMLXRepositoryJudgment {
                      role: role, optional: optional, extensions: nil)
     }
 
+    /// The shard index where the repository lists one, then `weightFiles`.
+    static func downloadedWeightFiles(of repository: NFKModelRepository, weightFiles: [String]) -> [String] {
+        let index = "model.safetensors.index.json"
+        return repository.file(atPath: index) != nil && !weightFiles.contains(index) ? [index] + weightFiles : weightFiles
+    }
+
     /// A variant's identifier: the repository's own name, lowercased, as the catalog's releases name theirs.
     static func variantIdentifier(_ repository: String) -> String {
         (repository.split(separator: "/").last.map(String.init) ?? repository).lowercased()
+    }
+
+    /// The family reader's result for a repository's configuration, its error refused as
+    /// `NFKModelResolutionErrorUnsupportedConfiguration`.
+    static func reading<Result>(_ repository: NFKModelRepository, template: NFKMLXCatalogEntry,
+                                _ read: () throws -> Result) throws -> Result {
+        do {
+            return try read()
+        } catch {
+            throw refusal(.unsupportedConfiguration,
+                "the \(template.identifier) loader rejects the configuration of \(repository.repository): "
+                + error.localizedDescription)
+        }
+    }
+
+    /// The directory of the repository's snapshot in the hub cache, holding each of `paths` the repository
+    /// lists, fetched where the cache lacks it, so a family's own readers read the files as its load does.
+    static func snapshot(of repository: NFKModelRepository, holding paths: [String]) throws -> URL {
+        var directory: URL?
+        for path in paths {
+            guard let file = repository.file(atPath: path) else { continue }
+            let local = try repository.hub.downloadRepo(repository.repository, revision: repository.revision,
+                                                        path: path, sha256: file.sha256)
+            directory = directory ?? local.deletingLastPathComponent()
+        }
+        guard let directory else {
+            throw refusal(.noConfiguration, "\(repository.repository) lists none of \(paths.joined(separator: ", "))")
+        }
+        return directory
+    }
+
+    /// The one weight file a loader that reads no shard index takes, refusing a repository without it.
+    static func singleWeightFile(_ path: String) -> (NFKModelRepository) throws -> [String] {
+        { repository in
+            guard repository.file(atPath: path) != nil else {
+                throw refusal(.unsupportedWeightFormat,
+                    "\(repository.repository) holds its weights outside \(path), the one file the loader reads whole")
+            }
+            return [path]
+        }
+    }
+
+    /// Refuses a configuration whose `architectures` names a head the family's loader does not build.
+    static func verifyArchitecture(of configuration: [String: Any], repository: String, suffixes: [String]) throws {
+        let architectures = configuration["architectures"] as? [String] ?? []
+        if let unread = architectures.first(where: { name in !suffixes.contains { name.hasSuffix($0) } }) {
+            throw refusal(.unsupportedArchitecture,
+                "\(repository) is a \(unread), a head the loader does not build (it reads "
+                + suffixes.joined(separator: ", ") + ")")
+        }
+    }
+
+    /// Refuses a configuration stating a field at a value other than the one the family's network builds,
+    /// where the reader does not read the field. A field the configuration does not state passes.
+    static func verifyFixedFields(of configuration: [String: Any], repository: String,
+                                  _ fields: [String: Any]) throws {
+        for (key, built) in fields.sorted(by: { $0.key < $1.key }) {
+            guard let stated = configuration[key], !(stated is NSNull) else { continue }
+            if !(stated as AnyObject).isEqual(built) {
+                throw refusal(.unsupportedConfiguration,
+                    "\(repository) states \(key) \(stated), where the loader builds \(built)")
+            }
+        }
+    }
+
+    /// Refuses a configuration that states a quantization, for a family whose loader reads floats only.
+    static func verifyFloatWeights(of configuration: [String: Any], repository: String) throws {
+        for key in ["quantization", "quantization_config"] {
+            if let stated = configuration[key], !(stated is NSNull) {
+                throw refusal(.unsupportedQuantization,
+                    "\(repository) is quantized (\(key)), and this family's loader reads float weights only")
+            }
+        }
     }
 
     static func refusal(_ code: NFKModelResolutionError.Code, _ reason: String) -> NSError {
@@ -421,11 +569,12 @@ extension NFKMLXRepositoryJudgment {
         return measurement
     }
 
-    /// The bytes the variant's download transfers: each template file the repository lists, the weight
-    /// index, and the shards. A listed size past ``measurableLimit`` is refused.
+    /// The bytes the variant's download transfers: each of the template's files other than its weights
+    /// the repository lists, and `weightFiles`, the weight index, the shards, and the other files the
+    /// loader reads. A listed size past ``measurableLimit`` is refused.
     private static func downloadBytes(of repository: NFKModelRepository, template: NFKMLXCatalogEntry,
                                       weightFiles: [String]) throws -> Int64 {
-        let templateFiles = template.variants.first?.source?.files ?? []
+        let templateFiles = (template.variants.first?.source?.files ?? []).filter { $0.role != NFKModelFileRoleWeights }
         let paths = Set(templateFiles.map(\.path)).union(weightFiles)
         var total: Int64 = 0
         for path in paths {

@@ -1512,7 +1512,7 @@ enum NFKMLXCatalogImage {
 
     static var trOCREntries: [NFKMLXCatalogEntry] {
         trOCRReleases.map { release in
-            model(release.name, release.displayName, family: "trocr",
+            var entry = model(release.name, release.displayName, family: "trocr",
                   summary: "A reader that transcribes one line of text from an image.",
                   tasks: [NFKModelTaskTextRecognition],
                   inputs: [imageInput("A crop holding one line of text.")],
@@ -1520,6 +1520,8 @@ enum NFKMLXCatalogImage {
                   license: .mit(url: "https://huggingface.co/\(release.repository)"),
                   source: hubRelease(release.repository, required: NFKMLXTrOCR.requiredFiles,
                                      optional: NFKMLXTrOCR.optionalFiles, weights: NFKMLXTrOCR.weightFiles))
+            entry.modelTypes = ["vision-encoder-decoder"]
+            return entry
         }
     }
 

@@ -732,7 +732,36 @@ expert gate and up projections stored apart). It refuses a configuration that st
 does not read: an MLP bias, an activation other than SiLU, no rotary base, or a sliding window narrower
 than the context outside gpt-oss. It refuses a tokenizer the reader does not reproduce, a safetensors
 header whose shape or offsets are outside what a release holds, and weights outside `model.safetensors`
-or a `model.safetensors.index.json`.
+or a `model.safetensors.index.json`. A Llama repository's descriptor names the `llama` family and takes
+Mistral Small 3's load options.
+
+InferKitMLX also judges these families' repositories, each by its own loader's readers:
+
+| Family | `model_type` |
+|---|---|
+| Wav2Vec2, HuBERT, W2V-BERT 2.0 | `wav2vec2`, `hubert`, `wav2vec2-bert` |
+| TimesFM 2.5 | `timesfm`, `timesfm2_5` |
+| Gemma 3, Gemma 3n, Gemma 4 | `gemma3_text`, `gemma3`, `gemma3n`, `gemma4` |
+| Qwen3-VL | `qwen3_vl`, `qwen3_vl_moe` |
+| SmolVLM2 | `smolvlm` |
+| TrOCR | `vision-encoder-decoder` with a ViT or DeiT encoder and a TrOCR decoder |
+| OPUS-MT, M2M-100 and SMaLL-100, NLLB-200 | `marian`, `m2m_100` |
+| Granite 4.0-H, Nemotron-H | `granitemoehybrid`, `nemotron_h` |
+
+Each refuses the configuration fields, layer kinds, tokenizers, and weight layouts its loader would read
+wrongly. `Docs/agent-reference/model-resolver.md` lists them. A resolved variant downloads the weight
+files the judgment measured, with the shard index where the repository has one.
+
+A speech encoder's `…ForCTC` repository resolves on a CTC release of its family, which transcribes, and
+another on an encoder release, which embeds. A fine-tuned repository's `vocab.json` joins its source.
+The speech judgment refuses:
+
+- a head the loader does not build;
+- a configuration the family's reader refuses;
+- a CTC head without a `vocab.json`, with a tokenizer class other than `Wav2Vec2CTCTokenizer`, or with a
+  vocabulary wider than the head;
+- weights outside a single `model.safetensors`;
+- a quantization.
 
 ## Vocabulary
 

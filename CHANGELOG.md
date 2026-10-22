@@ -1484,6 +1484,21 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   split across files, mlx_lm's gpt-oss layout, a tokenizer the reader does not reproduce, a safetensors
   header whose shape or offsets are outside what a release holds, and weights outside
   `model.safetensors` or a `model.safetensors.index.json`.
+- The speech encoders judge repositories: Wav2Vec2 and HuBERT (`wav2vec2`, `hubert`) and W2V-BERT 2.0
+  (`wav2vec2-bert`). A CTC repository resolves on a transcribing release of its family, another on an
+  encoder release, and a fine-tuned head's vocabulary joins the source. A head the loader does not build,
+  a configuration its reader refuses, a CTC vocabulary it cannot decode, weights outside one
+  `model.safetensors`, and a quantization are refused.
+- A repository of a `model_type` its template's loader also reads names its own family: a Llama
+  repository resolved on Mistral Small 3's loader is family `llama`, with Mistral Small 3's load options.
+- So do TimesFM 2.5, Gemma 3, 3n, and 4, Qwen3-VL, SmolVLM2, TrOCR, OPUS-MT, M2M-100 and SMaLL-100,
+  NLLB-200, Granite 4.0-H, and Nemotron-H, each by its own readers. Each refuses what its loader would
+  read wrongly: TimesFM 1.0 and 2.0 under the shared `timesfm` type, a tokenizer outside Gemma's form, a
+  Gemma head untied from the embedding, the Qwen3-VL token ids and M-RoPE sections the integration fixes, a vision-encoder-decoder other
+  than TrOCR's, a translator's unshared embeddings or decoder head count, Granite 4.0's rotary
+  attention-only releases, and Nemotron-H's routed-expert layers. M2M-100 and NLLB-200 share `m2m_100`
+  and tell their repositories apart by tokenizer. A resolved variant downloads the weight files its
+  judgment measured.
 
 #### Stable Audio Open 1.0
 

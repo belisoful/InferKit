@@ -10811,6 +10811,9 @@
         "precision" : "precision",
         "residency" : "residency"
       },
+      "modelTypes" : [
+        "gemma3"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -11099,6 +11102,9 @@
         "precision" : "precision",
         "residency" : "residency"
       },
+      "modelTypes" : [
+        "gemma3_text"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -11388,6 +11394,9 @@
         "precision" : "precision",
         "residency" : "residency"
       },
+      "modelTypes" : [
+        "gemma3_text"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -11678,6 +11687,9 @@
         "precision" : "precision",
         "residency" : "residency"
       },
+      "modelTypes" : [
+        "gemma3"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -11966,6 +11978,9 @@
         "precision" : "precision",
         "residency" : "residency"
       },
+      "modelTypes" : [
+        "gemma3"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -12261,6 +12276,9 @@
       "memoryModel" : {
         "precision" : "precision"
       },
+      "modelTypes" : [
+        "gemma3n"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -12492,6 +12510,9 @@
       "memoryModel" : {
         "precision" : "precision"
       },
+      "modelTypes" : [
+        "gemma3n"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -12961,6 +12982,9 @@
           "decoder" : "float32"
         }
       },
+      "modelTypes" : [
+        "gemma4"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -13248,6 +13272,9 @@
           "decoder" : "float32"
         }
       },
+      "modelTypes" : [
+        "gemma4"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -13498,6 +13525,9 @@
           "decoder" : "float32"
         }
       },
+      "modelTypes" : [
+        "gemma4"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -13749,6 +13779,9 @@
           "decoder" : "float32"
         }
       },
+      "modelTypes" : [
+        "gemma4"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -15007,6 +15040,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "modelTypes" : [
+        "granitemoehybrid"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -15264,6 +15300,9 @@
       "memoryModel" : {
         "residency" : "residency"
       },
+      "modelTypes" : [
+        "granitemoehybrid"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -16608,6 +16647,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "modelTypes" : [
+        "hubert"
+      ],
       "options" : [
 
       ],
@@ -16728,6 +16770,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "modelTypes" : [
+        "hubert"
+      ],
       "options" : [
 
       ],
@@ -16848,6 +16893,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "modelTypes" : [
+        "hubert"
+      ],
       "options" : [
 
       ],
@@ -16981,6 +17029,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "modelTypes" : [
+        "hubert"
+      ],
       "options" : [
 
       ],
@@ -17101,6 +17152,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "modelTypes" : [
+        "hubert"
+      ],
       "options" : [
 
       ],
@@ -20963,6 +21017,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/facebook/m2m100_418M"
       },
+      "modelTypes" : [
+        "m2m_100"
+      ],
       "options" : [
         {
           "help" : "The BCP-47 language of the text. Without it the language is detected.",
@@ -21148,6 +21205,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/facebook/m2m100_1.2B"
       },
+      "modelTypes" : [
+        "m2m_100"
+      ],
       "options" : [
         {
           "help" : "The BCP-47 language of the text. Without it the language is detected.",
@@ -25396,6 +25456,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/"
       },
+      "modelTypes" : [
+        "nemotron_h"
+      ],
       "options" : [
         {
           "default" : 0,
@@ -25643,6 +25706,9 @@
         "restrictsCommercialUse" : true,
         "url" : "https://creativecommons.org/licenses/by-nc/4.0/"
       },
+      "modelTypes" : [
+        "m2m_100"
+      ],
       "options" : [
         {
           "help" : "The BCP-47 language of the text. Without it the language is detected.",
@@ -25833,6 +25899,9 @@
         "restrictsCommercialUse" : true,
         "url" : "https://creativecommons.org/licenses/by-nc/4.0/"
       },
+      "modelTypes" : [
+        "m2m_100"
+      ],
       "options" : [
         {
           "help" : "The BCP-47 language of the text. Without it the language is detected.",
@@ -26023,6 +26092,9 @@
         "restrictsCommercialUse" : true,
         "url" : "https://creativecommons.org/licenses/by-nc/4.0/"
       },
+      "modelTypes" : [
+        "m2m_100"
+      ],
       "options" : [
         {
           "help" : "The BCP-47 language of the text. Without it the language is detected.",
@@ -26212,6 +26284,9 @@
         "restrictsCommercialUse" : true,
         "url" : "https://creativecommons.org/licenses/by-nc/4.0/"
       },
+      "modelTypes" : [
+        "m2m_100"
+      ],
       "options" : [
         {
           "help" : "The BCP-47 language of the text. Without it the language is detected.",
@@ -27329,6 +27404,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/Helsinki-NLP"
       },
+      "modelTypes" : [
+        "marian"
+      ],
       "options" : [
         {
           "help" : "The BCP-47 language of the text. Without it the language is detected.",
@@ -35223,6 +35301,9 @@
         "precision" : "precision",
         "residency" : "residency"
       },
+      "modelTypes" : [
+        "qwen3_vl"
+      ],
       "options" : [
         {
           "default" : 128,
@@ -35461,6 +35542,9 @@
           "decoder" : "float32"
         }
       },
+      "modelTypes" : [
+        "qwen3_vl_moe"
+      ],
       "options" : [
         {
           "default" : 128,
@@ -35668,6 +35752,9 @@
         "precision" : "precision",
         "residency" : "residency"
       },
+      "modelTypes" : [
+        "qwen3_vl"
+      ],
       "options" : [
         {
           "default" : 128,
@@ -35903,6 +35990,9 @@
         "precision" : "precision",
         "residency" : "residency"
       },
+      "modelTypes" : [
+        "qwen3_vl"
+      ],
       "options" : [
         {
           "default" : 128,
@@ -51037,6 +51127,9 @@
           "model" : "float32"
         }
       },
+      "modelTypes" : [
+        "m2m_100"
+      ],
       "options" : [
         {
           "help" : "The BCP-47 language of the text. Without it the language is detected.",
@@ -51687,6 +51780,9 @@
           "model" : "float32"
         }
       },
+      "modelTypes" : [
+        "smolvlm"
+      ],
       "options" : [
         {
           "default" : 128,
@@ -51835,6 +51931,9 @@
           "model" : "float32"
         }
       },
+      "modelTypes" : [
+        "smolvlm"
+      ],
       "options" : [
         {
           "default" : 128,
@@ -51984,6 +52083,9 @@
           "model" : "float32"
         }
       },
+      "modelTypes" : [
+        "smolvlm"
+      ],
       "options" : [
         {
           "default" : 128,
@@ -55449,6 +55551,10 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "modelTypes" : [
+        "timesfm",
+        "timesfm2_5"
+      ],
       "options" : [
         {
           "default" : 128,
@@ -56241,6 +56347,9 @@
           "model" : "float32"
         }
       },
+      "modelTypes" : [
+        "vision-encoder-decoder"
+      ],
       "options" : [
 
       ],
@@ -56390,6 +56499,9 @@
           "model" : "float32"
         }
       },
+      "modelTypes" : [
+        "vision-encoder-decoder"
+      ],
       "options" : [
 
       ],
@@ -56539,6 +56651,9 @@
           "model" : "float32"
         }
       },
+      "modelTypes" : [
+        "vision-encoder-decoder"
+      ],
       "options" : [
 
       ],
@@ -56683,6 +56798,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/microsoft/trocr-base-str"
       },
+      "modelTypes" : [
+        "vision-encoder-decoder"
+      ],
       "options" : [
 
       ],
@@ -56822,6 +56940,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/microsoft/trocr-large-handwritten"
       },
+      "modelTypes" : [
+        "vision-encoder-decoder"
+      ],
       "options" : [
 
       ],
@@ -56966,6 +57087,9 @@
           "model" : "float32"
         }
       },
+      "modelTypes" : [
+        "vision-encoder-decoder"
+      ],
       "options" : [
 
       ],
@@ -57115,6 +57239,9 @@
           "model" : "float32"
         }
       },
+      "modelTypes" : [
+        "vision-encoder-decoder"
+      ],
       "options" : [
 
       ],
@@ -57259,6 +57386,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/microsoft/trocr-large-str"
       },
+      "modelTypes" : [
+        "vision-encoder-decoder"
+      ],
       "options" : [
 
       ],
@@ -57398,6 +57528,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/microsoft/trocr-small-handwritten"
       },
+      "modelTypes" : [
+        "vision-encoder-decoder"
+      ],
       "options" : [
 
       ],
@@ -57542,6 +57675,9 @@
           "model" : "float32"
         }
       },
+      "modelTypes" : [
+        "vision-encoder-decoder"
+      ],
       "options" : [
 
       ],
@@ -57686,6 +57822,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/microsoft/trocr-small-stage1"
       },
+      "modelTypes" : [
+        "vision-encoder-decoder"
+      ],
       "options" : [
 
       ],
@@ -60969,6 +61108,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://huggingface.co/facebook/w2v-bert-2.0"
       },
+      "modelTypes" : [
+        "wav2vec2-bert"
+      ],
       "options" : [
 
       ],
@@ -62067,6 +62209,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "modelTypes" : [
+        "wav2vec2"
+      ],
       "options" : [
 
       ],
@@ -62187,6 +62332,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "modelTypes" : [
+        "wav2vec2"
+      ],
       "options" : [
 
       ],
@@ -62324,6 +62472,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "modelTypes" : [
+        "wav2vec2"
+      ],
       "options" : [
 
       ],
@@ -62457,6 +62608,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "modelTypes" : [
+        "wav2vec2"
+      ],
       "options" : [
 
       ],
@@ -62590,6 +62744,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "modelTypes" : [
+        "wav2vec2"
+      ],
       "options" : [
 
       ],
@@ -62710,6 +62867,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "modelTypes" : [
+        "wav2vec2"
+      ],
       "options" : [
 
       ],
@@ -62830,6 +62990,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "modelTypes" : [
+        "wav2vec2"
+      ],
       "options" : [
 
       ],
@@ -62949,6 +63112,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "modelTypes" : [
+        "wav2vec2"
+      ],
       "options" : [
 
       ],
@@ -63068,6 +63234,9 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.apache.org/licenses/LICENSE-2.0"
       },
+      "modelTypes" : [
+        "wav2vec2"
+      ],
       "options" : [
 
       ],

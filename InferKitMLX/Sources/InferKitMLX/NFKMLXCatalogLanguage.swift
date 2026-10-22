@@ -189,6 +189,7 @@ extension NFKMLXCatalogLanguage {
                 // The gated releases are not measured. Their shards are bfloat16.
                 NFKMLXLanguageRelease(name: "gemma-3-\(size)-it", displayName: "Gemma 3 \(title) IT",
                                       repository: "google/gemma-3-\(size)-it", family: "gemma3", readsImages: vision,
+                                      modelTypes: [vision ? "gemma3" : "gemma3_text"],
                                       storedPrecision: NFKModelPrecisionBFloat16)
             }
     }
@@ -199,7 +200,7 @@ extension NFKMLXCatalogLanguage {
             // The gated releases are not measured. Their shards are bfloat16, so a float32 load takes twice
             // the stored bytes.
             NFKMLXLanguageRelease(name: "gemma-3n-\(size.lowercased())-it", displayName: "Gemma 3n \(size) IT",
-                                  repository: "google/gemma-3n-\(size)-it", family: "gemma3n",
+                                  repository: "google/gemma-3n-\(size)-it", family: "gemma3n", modelTypes: ["gemma3n"],
                                   storedPrecision: NFKModelPrecisionBFloat16)
         }
     }
@@ -207,8 +208,10 @@ extension NFKMLXCatalogLanguage {
     /// The Gemma 4 releases ``NFKMLXGemmaLanguage`` runs as text, by size.
     fileprivate static var gemma4Releases: [NFKMLXLanguageRelease] {
         [("E2B", false), ("E4B", false), ("12B", false), ("26B-A4B", true), ("31B", false)].map { size, mixture in
+            // The 12B is `gemma4_unified`, whose loader reads that one release.
             NFKMLXLanguageRelease(name: "gemma-4-\(size.lowercased())-it", displayName: "Gemma 4 \(size) IT",
-                                  repository: "google/gemma-4-\(size)-it", family: "gemma4", routesExperts: mixture)
+                                  repository: "google/gemma-4-\(size)-it", family: "gemma4", routesExperts: mixture,
+                                  modelTypes: size == "12B" ? [] : ["gemma4"])
         }
     }
 
@@ -231,13 +234,14 @@ extension NFKMLXCatalogLanguage {
     fileprivate static var qwen3VLReleases: [NFKMLXLanguageRelease] {
         [
             NFKMLXLanguageRelease(name: NFKMLXQwen3VL.modelName, displayName: "Qwen3-VL 2B Instruct",
-                                  repository: "Qwen/Qwen3-VL-2B-Instruct", family: "qwen3-vl"),
+                                  repository: "Qwen/Qwen3-VL-2B-Instruct", family: "qwen3-vl", modelTypes: ["qwen3_vl"]),
             NFKMLXLanguageRelease(name: "qwen3-vl-8b", displayName: "Qwen3-VL 8B Instruct",
-                                  repository: "Qwen/Qwen3-VL-8B-Instruct", family: "qwen3-vl"),
+                                  repository: "Qwen/Qwen3-VL-8B-Instruct", family: "qwen3-vl", modelTypes: ["qwen3_vl"]),
             NFKMLXLanguageRelease(name: "qwen3-vl-32b", displayName: "Qwen3-VL 32B Instruct",
-                                  repository: "Qwen/Qwen3-VL-32B-Instruct", family: "qwen3-vl"),
+                                  repository: "Qwen/Qwen3-VL-32B-Instruct", family: "qwen3-vl", modelTypes: ["qwen3_vl"]),
             NFKMLXLanguageRelease(name: "qwen3-vl-30b-a3b", displayName: "Qwen3-VL 30B-A3B Instruct",
-                                  repository: "Qwen/Qwen3-VL-30B-A3B-Instruct", family: "qwen3-vl", routesExperts: true),
+                                  repository: "Qwen/Qwen3-VL-30B-A3B-Instruct", family: "qwen3-vl", routesExperts: true,
+                                  modelTypes: ["qwen3_vl_moe"]),
         ]
     }
 
@@ -774,19 +778,21 @@ extension NFKMLXCatalogLanguage {
              true),
         ]
         return releases.map { release in
-            decoderEntry(
+            var entry = decoderEntry(
                 name: release.name, displayName: release.displayName, family: "granite-4.0-h", summary: release.summary,
                 variants: [familyVariant(release.name, release.repository, displayName: release.displayName,
                                          isDefault: true, files: files)],
                 license: .apache2(), readsReasoning: false, outputs: toolCallingOutputs + [usageOutput],
                 parameters: toolDecoderOptions, residencies: residencies(routesExperts: release.routesExperts))
+            entry.modelTypes = ["granitemoehybrid"]
+            return entry
         }
     }
 
     fileprivate static var nemotronEntry: NFKMLXCatalogEntry {
         let name = NFKMLXNemotronH.nemotronModelName
         let repository = "nvidia/NVIDIA-Nemotron-Nano-9B-v2"
-        return decoderEntry(
+        var entry = decoderEntry(
             name: name, displayName: "Nemotron Nano 2", family: "nemotron-h",
             summary: "NVIDIA Nemotron Nano 2, a hybrid Mamba-2, attention, and MLP decoder that writes text and calls tools.",
             variants: [familyVariant(name, repository, displayName: "Nemotron Nano 9B v2", isDefault: true,
@@ -795,6 +801,8 @@ extension NFKMLXCatalogLanguage {
                                                          weights: NFKMLXNemotronH.weightFiles))],
             license: license(repository), readsReasoning: false, outputs: toolCallingOutputs + [usageOutput],
             parameters: toolDecoderOptions)
+        entry.modelTypes = ["nemotron_h"]
+        return entry
     }
 
     fileprivate static var mambaEntry: NFKMLXCatalogEntry {
@@ -832,7 +840,7 @@ extension NFKMLXCatalogLanguage {
             variants: [variant(release, files: releaseFiles(required: NFKMLXGemma3.requiredFiles,
                                                             optional: NFKMLXGemma3.optionalFiles,
                                                             weights: NFKMLXGemma3.weightFiles))],
-            license: license(release.repository), residencies: streamedResidencies)
+            license: license(release.repository), residencies: streamedResidencies, modelTypes: release.modelTypes)
     }
 
     fileprivate static func gemma3nEntry(_ release: NFKMLXLanguageRelease) -> NFKMLXCatalogEntry {
@@ -848,7 +856,7 @@ extension NFKMLXCatalogLanguage {
             variants: [variant(release, files: releaseFiles(required: NFKMLXGemma3n.requiredFiles,
                                                             optional: NFKMLXGemma3n.optionalFiles,
                                                             weights: NFKMLXGemma3n.weightFiles))],
-            license: license(release.repository))
+            license: license(release.repository), modelTypes: release.modelTypes)
     }
 
     fileprivate static func gemma4Entry(_ release: NFKMLXLanguageRelease) -> NFKMLXCatalogEntry {
@@ -862,7 +870,8 @@ extension NFKMLXCatalogLanguage {
             variants: [variant(release, files: releaseFiles(required: NFKMLXGemmaLanguage.requiredFiles,
                                                             optional: NFKMLXGemmaLanguage.optionalFiles,
                                                             weights: NFKMLXGemmaLanguage.weightFiles))],
-            license: license(release.repository), residencies: residencies(routesExperts: release.routesExperts))
+            license: license(release.repository), residencies: residencies(routesExperts: release.routesExperts),
+            modelTypes: release.modelTypes)
     }
 
     fileprivate static var gemma4MultimodalEntry: NFKMLXCatalogEntry {
@@ -955,10 +964,13 @@ extension NFKMLXCatalogLanguage {
     }
 
     fileprivate static func smolVLMEntry(_ size: SmolVLMSize) -> NFKMLXCatalogEntry {
-        imageQuestionEntry(size.release,
-                           summary: "\(size.release.displayName), a SigLIP tower and a SmolLM2 decoder that answer a question about an image.",
-                           files: releaseFiles(required: NFKMLXSmolVLM.requiredFiles, optional: NFKMLXSmolVLM.optionalFiles,
-                                               weights: NFKMLXSmolVLM.weightFiles))
+        var entry = imageQuestionEntry(
+            size.release,
+            summary: "\(size.release.displayName), a SigLIP tower and a SmolLM2 decoder that answer a question about an image.",
+            files: releaseFiles(required: NFKMLXSmolVLM.requiredFiles, optional: NFKMLXSmolVLM.optionalFiles,
+                                weights: NFKMLXSmolVLM.weightFiles))
+        entry.modelTypes = ["smolvlm"]
+        return entry
     }
 
     fileprivate static func qwen3VLEntry(_ release: NFKMLXLanguageRelease) -> NFKMLXCatalogEntry {
@@ -971,6 +983,7 @@ extension NFKMLXCatalogLanguage {
         if release.routesExperts {
             entry.load = .pagedMixture(tasks: [NFKModelTaskVisionQuestionAnswering])
         }
+        entry.modelTypes = release.modelTypes
         return entry
     }
 
@@ -1035,7 +1048,8 @@ extension NFKMLXCatalogLanguage {
                                     : nil)
             },
             license: .license("Apache-2.0", name: "Apache License 2.0", url: "https://huggingface.co/Helsinki-NLP",
-                              note: "The en-de and zh-en pairs are CC BY 4.0, which each of those variants states."))
+                              note: "The en-de and zh-en pairs are CC BY 4.0, which each of those variants states."),
+            modelTypes: ["marian"])
     }
 
     fileprivate static func m2m100Entry(_ variant: NFKMLXM2M100Variant) -> NFKMLXCatalogEntry {
@@ -1050,7 +1064,7 @@ extension NFKMLXCatalogLanguage {
             variants: [self.variant(release, files: releaseFiles(required: NFKMLXM2M100.requiredFiles,
                                                                  optional: NFKMLXM2M100.optionalFiles,
                                                                  weights: NFKMLXM2M100.weightFiles))],
-            license: license(release.repository))
+            license: license(release.repository), modelTypes: ["m2m_100"])
     }
 
     fileprivate static func nllbEntry(_ variant: NFKMLXNLLBVariant) -> NFKMLXCatalogEntry {
@@ -1066,7 +1080,7 @@ extension NFKMLXCatalogLanguage {
             variants: [self.variant(release, files: releaseFiles(required: NFKMLXNLLB.requiredFiles,
                                                                  optional: NFKMLXNLLB.optionalFiles,
                                                                  weights: NFKMLXNLLB.weightFiles))],
-            license: license(release.repository))
+            license: license(release.repository), modelTypes: ["m2m_100"])
     }
 
     fileprivate static func madladEntry(_ release: NFKMLXLanguageRelease) -> NFKMLXCatalogEntry {
@@ -1263,6 +1277,6 @@ extension NFKMLXCatalogLanguage {
             ],
             variants: [variant(release, files: releaseFiles(required: NFKMLXTimesFM.requiredFiles,
                                                             weights: NFKMLXTimesFM.weightFiles))],
-            license: license(release.repository))
+            license: license(release.repository), modelTypes: ["timesfm", "timesfm2_5"])
     }
 }
