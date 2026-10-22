@@ -87,6 +87,37 @@ public enum NFKMLXChatTemplate: Sendable {
     case jinja(template: String, bosToken: String = "", eosToken: String = "")
 }
 
+/// The sampling a release's `generation_config.json` sets, read as transformers' `GenerationConfig` reads
+/// it: a file without `do_sample` decodes greedily, and a value a sampling file leaves out takes
+/// transformers' default (temperature 1, top-p 1, top-k 50).
+struct NFKMLXReleaseSampling: Equatable, Sendable {
+    var temperature: Float
+    var topP: Float
+    var topK: Int
+
+    /// The sampling the configuration sets, or nil where it does not sample.
+    init?(generationConfig json: [String: Any]) {
+        guard (json["do_sample"] as? Bool) == true else { return nil }
+        temperature = (json["temperature"] as? NSNumber)?.floatValue ?? 1
+        topP = (json["top_p"] as? NSNumber)?.floatValue ?? 1
+        topK = (json["top_k"] as? NSNumber)?.intValue ?? 50
+    }
+
+    /// The sampling the `generation_config.json` in `directoryURL` sets, or nil without a file that samples.
+    init?(directoryURL: URL?) {
+        guard let url = directoryURL?.appendingPathComponent("generation_config.json"),
+              let data = try? Data(contentsOf: url),
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return nil }
+        self.init(generationConfig: json)
+    }
+
+    init(temperature: Float, topP: Float, topK: Int) {
+        self.temperature = temperature
+        self.topP = topP
+        self.topK = topK
+    }
+}
+
 /// How a generation run samples and how its prompt is prepared.
 public struct NFKMLXGenerationOptions: Sendable {
     /// The most tokens to produce, not counting the prompt.
@@ -96,6 +127,14 @@ public struct NFKMLXGenerationOptions: Sendable {
     /// Nucleus sampling: the smallest set of tokens whose probability sums past this is sampled from.
     /// Ignored at temperature 0.
     public var topP: Float = 1
+    /// Top-k sampling: only the `topK` most probable tokens, with any tied with the last of them, are
+    /// sampled from, before the nucleus filter. 0 keeps every token. Ignored at temperature 0.
+    /// Introduced in InferKit 0.4.0.
+    public var topK: Int = 0
+    /// Whether a backend over a release whose `generation_config.json` samples starts each request from
+    /// that file's temperature, top-p, and top-k, as the reference's `generate` does, in place of this
+    /// struct's. A request's own values override either. Defaults to true. Introduced in InferKit 0.4.0.
+    public var usesReleaseSampling = true
     /// A seed makes a sampled run repeatable.
     public var seed: UInt64?
     /// Generation stops when one of these is produced. Empty, a backend over a release stops on the
@@ -309,8 +348,19 @@ public extension NFKMLXLanguageNet {
     /// `[rows, vocabulary]` at once, which speculative verification scores together.
     static func probabilities(of logits: MLXArray, options: NFKMLXGenerationOptions) -> MLXArray {
         let temperature = Swift.max(options.temperature, Float.leastNormalMagnitude)
-        let distribution = softmax(logits / temperature, axis: -1)
+        var distribution = softmax(logits / temperature, axis: -1)
+        if options.topK > 0 && options.topK < distribution.dim(-1) {
+            distribution = mostProbable(distribution, count: options.topK)
+        }
         return options.topP < 1 ? nucleus(distribution, topP: options.topP) : distribution
+    }
+
+    /// Zeroes every token less probable than the `count`th most probable, keeping ties as the reference's
+    /// top-k filter does, then renormalizes.
+    private static func mostProbable(_ probabilities: MLXArray, count: Int) -> MLXArray {
+        let threshold = sorted(probabilities, axis: -1).take(MLXArray([Int32(probabilities.dim(-1) - count)]), axis: -1)
+        let filtered = MLX.where(probabilities .>= threshold, probabilities, MLXArray(Float(0)))
+        return filtered / filtered.sum(axis: -1, keepDims: true)
     }
 
     /// Zeroes every token outside the smallest set whose probability passes `topP`, then renormalizes.
@@ -331,7 +381,8 @@ public extension NFKMLXLanguageNet {
 /// On-device text generation as an InferKit backend.
 ///
 /// Reads `NFKInputPrompt` or `NFKInputMessages` and returns `NFKOutputText`. `NFKParameterTemperature`,
-/// `NFKParameterTopP`, `NFKParameterMaxTokens`, and `NFKParameterSeed` override the defaults.
+/// `NFKParameterTopP`, `NFKParameterTopK`, `NFKParameterMaxTokens`, and `NFKParameterSeed` override the
+/// defaults. A release whose `generation_config.json` samples defaults to its temperature, top-p, and top-k.
 ///
 /// Tools: `NFKParameterTools` renders into the release's chat template, and the calls the model
 /// writes come back under `NFKOutputToolCalls`, read in the syntax ``NFKMLXToolCallFormat`` names,
@@ -380,6 +431,8 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     private let releaseTemplate: NFKMLXChatTemplate?
     /// The ids the release's `generation_config.json` ends generation on.
     private let releaseStops: Set<Int>
+    /// The sampling the release's `generation_config.json` sets, or nil where it decodes greedily.
+    private let releaseSampling: NFKMLXReleaseSampling?
     /// The tokens the release marks special, by literal, which the reference's decode skips.
     private let releaseSpecialTokens: [String: Int]
 
@@ -398,6 +451,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         self.releaseURL = releaseURL
         self.releaseTemplate = releaseTemplate ?? releaseURL.flatMap(NFKMLXLanguage.releaseChatTemplate(inDirectory:))
         self.releaseStops = NFKMLXToolCalling.generationConfigStops(directoryURL: releaseURL)
+        self.releaseSampling = NFKMLXReleaseSampling(directoryURL: releaseURL)
         self.releaseSpecialTokens = releaseURL.map(NFKMLXLanguage.specialTokenIDs(inDirectory:)) ?? [:]
         super.init()
         lifecycle.setFreeHandler { [weak self] in
@@ -470,7 +524,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// `NFKModelLoadOptionCacheGroupSize`), and every ``NFKMLXGenerationParameterKey``. Introduced in
     /// InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
-        [NFKParameterTemperature, NFKParameterTopP, NFKParameterMaxTokens, NFKParameterSeed,
+        [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens, NFKParameterSeed,
          NFKParameterJSONSchema, NFKParameterOutputFormat, NFKParameterChoices,
          NFKModelLoadOptionContextLength, NFKModelLoadOptionCacheBits, NFKModelLoadOptionCacheGroupSize,
          NFKMLXGenerationParameterKey.contextWindow,
@@ -701,11 +755,19 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     private func preparedPrompt(for request: NFKInferenceRequest, tokenizer: NFKTokenizer) throws
         -> (options: NFKMLXGenerationOptions, tokens: [Int], toolCallFormat: NFKMLXToolCallFormat?) {
         var options = defaults
+        if options.usesReleaseSampling, let releaseSampling {
+            options.temperature = releaseSampling.temperature
+            options.topP = releaseSampling.topP
+            options.topK = releaseSampling.topK
+        }
         if let value = request.parameter(forKey: NFKParameterTemperature) as? NSNumber {
             options.temperature = value.floatValue
         }
         if let value = request.parameter(forKey: NFKParameterTopP) as? NSNumber {
             options.topP = value.floatValue
+        }
+        if let value = request.parameter(forKey: NFKParameterTopK) as? NSNumber {
+            options.topK = value.intValue
         }
         if let value = request.parameter(forKey: NFKParameterMaxTokens) as? NSNumber {
             options.maxTokens = value.intValue

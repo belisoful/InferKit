@@ -446,6 +446,86 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         XCTAssertEqual(decode([0, 1, 2, 1, 3, 4]), "<|end|>ok", "the literal spelled by ordinary tokens stays")
     }
 
+    /// A generation config samples only with `do_sample`, and a value it leaves out takes transformers'
+    /// default.
+    func testAReleasesGenerationConfigSetsItsSampling() {
+        XCTAssertEqual(NFKMLXReleaseSampling(generationConfig: ["do_sample": true, "temperature": 0.6, "top_p": 0.95,
+                                                                "top_k": 20]),
+                       NFKMLXReleaseSampling(temperature: 0.6, topP: 0.95, topK: 20))
+        XCTAssertEqual(NFKMLXReleaseSampling(generationConfig: ["do_sample": true]),
+                       NFKMLXReleaseSampling(temperature: 1, topP: 1, topK: 50))
+        XCTAssertNil(NFKMLXReleaseSampling(generationConfig: ["temperature": 0.6]), "without do_sample, greedy")
+        XCTAssertNil(NFKMLXReleaseSampling(generationConfig: ["do_sample": false, "top_k": 20]))
+    }
+
+    /// Top-k keeps the most probable tokens and any tied with the last of them, then the nucleus filter
+    /// reads what is left.
+    func testTopKKeepsTheMostProbableTokensAndTheirTies() throws {
+        try requireMLXRuntime()
+        var options = NFKMLXGenerationOptions()
+        options.temperature = 1
+        options.topK = 2
+        let kept = NFKMLXLanguageNet.probabilities(of: MLXArray([Float(3), 2, 1, 0]), options: options).asArray(Float.self)
+        XCTAssertEqual(kept.map { $0 > 0 }, [true, true, false, false])
+        XCTAssertEqual(kept.reduce(0, +), 1, accuracy: 1e-6)
+        let tied = NFKMLXLanguageNet.probabilities(of: MLXArray([Float(1), 2, 1, 0]), options: options).asArray(Float.self)
+        XCTAssertEqual(tied.map { $0 > 0 }, [true, true, true, false], "a token tied with the second stays")
+        options.topP = 0.5
+        let nucleus = NFKMLXLanguageNet.probabilities(of: MLXArray([Float(3), 2, 1, 0]), options: options).asArray(Float.self)
+        XCTAssertEqual(nucleus.map { $0 > 0 }, [true, false, false, false])
+    }
+
+    /// A request that sets no sampling samples as the release's generation config says, the request's
+    /// values override it, and a backend that does not use the release's sampling decodes as its options say.
+    func testARequestSamplesAsTheReleasesGenerationConfigSays() throws {
+        try requireMLXRuntime()
+        let directory = try releaseDirectory()
+        // Every id the tiny net samples spells its own text, so two replies differ where their ids do.
+        var vocabulary: [String: Int] = ["h": 0, "e": 1, "l": 2, "o": 3]
+        for id in 4 ..< NFKMLXLanguageConfiguration.tiny.vocabularySize {
+            vocabulary["w\(id)"] = id
+        }
+        try JSONSerialization.data(withJSONObject: vocabulary).write(to: directory.appendingPathComponent("vocab.json"))
+        try "#version: 0.2\n".write(to: directory.appendingPathComponent("merges.txt"), atomically: true, encoding: .utf8)
+        let tokenizer = try NFKTokenizer(forManifest: ["tokenizer": ["type": "bpe-bytelevel"]], directory: directory)
+        try JSONSerialization.data(withJSONObject: ["do_sample": true, "temperature": 50, "top_k": 0])
+            .write(to: directory.appendingPathComponent("generation_config.json"))
+        let net = tinyNet()
+        func reply(_ backend: NFKMLXLanguageBackend, _ parameters: [String: Any]) throws -> String {
+            let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "hello"],
+                                              parameters: parameters.merging([NFKParameterMaxTokens: 12, NFKParameterSeed: 7]) { $1 })
+            return try XCTUnwrap(backend.runInference(for: request).text)
+        }
+        let release = NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: "tiny", releaseURL: directory)
+        let plain = NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: "tiny")
+        var own = NFKMLXGenerationOptions()
+        own.usesReleaseSampling = false
+        let ownOptions = NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: "tiny", options: own,
+                                               releaseURL: directory)
+
+        let sampled = try reply(release, [:])
+        XCTAssertEqual(sampled, try reply(plain, [NFKParameterTemperature: 50, NFKParameterTopK: 0]))
+        let greedy = try reply(plain, [:])
+        XCTAssertNotEqual(sampled, greedy, "at temperature 50 twelve tokens leave the greedy path")
+        XCTAssertEqual(try reply(release, [NFKParameterTemperature: 0]), greedy)
+        XCTAssertEqual(try reply(ownOptions, [:]), greedy)
+    }
+
+    /// The catalog's Qwen3 samples by default as its release's generation config says.
+    func testTheCatalogsQwen3SamplesAsItsGenerationConfigSays() throws {
+        let entry = try XCTUnwrap(NFKMLXCatalogLanguage.entries.first { $0.identifier == "qwen3-0.6b" })
+        let options = try entry.descriptor().options
+        func defaultValue(_ key: String) -> Double? {
+            (options.first { $0.key == key }?.defaultValue as? NSNumber)?.doubleValue
+        }
+        XCTAssertEqual(defaultValue(NFKParameterTemperature) ?? -1, 0.6, accuracy: 1e-6)
+        XCTAssertEqual(defaultValue(NFKParameterTopP) ?? -1, 0.95, accuracy: 1e-6)
+        XCTAssertEqual(defaultValue(NFKParameterTopK), 20)
+        let mixtral = try XCTUnwrap(NFKMLXCatalogLanguage.entries.first { $0.identifier == "mixtral-8x7b-instruct" })
+        XCTAssertEqual((try mixtral.descriptor().options.first { $0.key == NFKParameterTemperature }?.defaultValue as? NSNumber)?
+                        .doubleValue, 0, "a release whose config does not sample decodes greedily")
+    }
+
     func testAHandlerCanStopGeneration() throws {
         try requireMLXRuntime()
         let net = tinyNet()

@@ -374,7 +374,13 @@ attention and feed-forward.
   without the `"special": true` ids (`specialTokenIDs(inDirectory:)`), by id as `skip_special_tokens`
   filters, keeping the ones a marker of the run's reasoning format or its tool-call format's `markers`
   contains (harmony's channels, Mistral's `[TOOL_CALLS]`), since those readers parse them. A text-level
-  strip would also remove a literal the model spelled with ordinary tokens. `NFKMLXLanguageBackend` is now
+  strip would also remove a literal the model spelled with ordinary tokens. **Release sampling (2026-10-22):** a
+  `generation_config.json` with `do_sample` sets the request defaults (`NFKMLXReleaseSampling`), read as
+  transformers' `GenerationConfig` fills a missing value (temperature 1, top-p 1, top-k 50); top-k runs
+  before top-p on the temperature-scaled distribution and keeps ties at the `k`th value. The catalog
+  descriptors state the same values per release (`NFKMLXLanguageRelease.sampling`, read from each
+  repository's file on 2026-10-22), since an app sends the descriptor's defaults. Every release-weight
+  test pins `NFKParameterTemperature: 0`, so the change leaves them greedy. `NFKMLXLanguageBackend` is now
   `@objc(NFKMLXLanguageBackend)` with `hasDraftModel`, `promptCacheLength`, `resetPromptCache`.
   **Conversation caches (2026-10-07):** a request carrying `NFKParameterConversationKey` runs against
   that conversation's own `NFKMLXPromptCache` in `NFKMLXConversationCaches`, under

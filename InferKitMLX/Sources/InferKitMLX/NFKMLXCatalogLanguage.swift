@@ -142,6 +142,9 @@ private struct NFKMLXLanguageRelease {
     var modelTypes: [String] = []
     /// The type the release stores its weights in, stated where no measurement reads it from the shards.
     var storedPrecision: String? = nil
+    /// The sampling the release's `generation_config.json` sets, as the backend reads it, or nil where it
+    /// decodes greedily.
+    var sampling: NFKMLXReleaseSampling? = nil
 }
 
 extension NFKMLXCatalogLanguage {
@@ -149,19 +152,21 @@ extension NFKMLXCatalogLanguage {
     /// The dense and mixture releases ``NFKMLXLanguage`` loads, each measured on its own weights (whole, or
     /// cut to its first layers).
     fileprivate static var languageReleases: [NFKMLXLanguageRelease] {
-        [
+        let qwen3Sampling = NFKMLXReleaseSampling(temperature: 0.6, topP: 0.95, topK: 20)
+        return [
             NFKMLXLanguageRelease(name: "qwen3-0.6b", displayName: "Qwen3 0.6B", repository: "Qwen/Qwen3-0.6B",
-                                  family: "qwen3", modelTypes: ["qwen3"]),
+                                  family: "qwen3", modelTypes: ["qwen3"], sampling: qwen3Sampling),
             NFKMLXLanguageRelease(name: "qwen3-1.7b", displayName: "Qwen3 1.7B", repository: "Qwen/Qwen3-1.7B",
-                                  family: "qwen3", modelTypes: ["qwen3"]),
+                                  family: "qwen3", modelTypes: ["qwen3"], sampling: qwen3Sampling),
             NFKMLXLanguageRelease(name: "qwen3-4b", displayName: "Qwen3 4B", repository: "Qwen/Qwen3-4B",
-                                  family: "qwen3", modelTypes: ["qwen3"]),
+                                  family: "qwen3", modelTypes: ["qwen3"], sampling: qwen3Sampling),
             NFKMLXLanguageRelease(name: "qwen3-14b", displayName: "Qwen3 14B", repository: "Qwen/Qwen3-14B",
-                                  family: "qwen3", modelTypes: ["qwen3"]),
+                                  family: "qwen3", modelTypes: ["qwen3"], sampling: qwen3Sampling),
             NFKMLXLanguageRelease(name: "qwen3-32b", displayName: "Qwen3 32B", repository: "Qwen/Qwen3-32B",
-                                  family: "qwen3", modelTypes: ["qwen3"]),
+                                  family: "qwen3", modelTypes: ["qwen3"], sampling: qwen3Sampling),
             NFKMLXLanguageRelease(name: "qwen3-30b-a3b", displayName: "Qwen3 30B-A3B", repository: "Qwen/Qwen3-30B-A3B",
-                                  family: "qwen3-moe", routesExperts: true, modelTypes: ["qwen3_moe"]),
+                                  family: "qwen3-moe", routesExperts: true, modelTypes: ["qwen3_moe"],
+                                  sampling: qwen3Sampling),
             NFKMLXLanguageRelease(name: "qwen1.5-moe-a2.7b", displayName: "Qwen1.5-MoE-A2.7B",
                                   repository: "Qwen/Qwen1.5-MoE-A2.7B", family: "qwen2-moe", routesExperts: true,
                                   modelTypes: ["qwen2_moe"]),
@@ -169,10 +174,12 @@ extension NFKMLXCatalogLanguage {
                                   repository: "mistralai/Mixtral-8x7B-Instruct-v0.1", family: "mixtral",
                                   routesExperts: true, modelTypes: ["mixtral"]),
             NFKMLXLanguageRelease(name: "gpt-oss-20b", displayName: "gpt-oss-20b", repository: "openai/gpt-oss-20b",
-                                  family: "gpt-oss", routesExperts: true, modelTypes: ["gpt_oss"]),
+                                  family: "gpt-oss", routesExperts: true, modelTypes: ["gpt_oss"],
+                                  sampling: NFKMLXReleaseSampling(temperature: 1, topP: 1, topK: 50)),
             NFKMLXLanguageRelease(name: "mistral-small-24b-instruct-2501", displayName: "Mistral Small 3 24B Instruct",
                                   repository: "mistralai/Mistral-Small-24B-Instruct-2501", family: "mistral",
-                                  modelTypes: ["mistral", "llama"]),
+                                  modelTypes: ["mistral", "llama"],
+                                  sampling: NFKMLXReleaseSampling(temperature: 0.15, topP: 1, topK: 50)),
         ]
     }
 
@@ -474,16 +481,22 @@ extension NFKMLXCatalogLanguage {
         .output(NFKOutputReasoning, title: "Reasoning", help: "The reasoning the model shows before its answer.")
     }
 
-    fileprivate static func temperatureOption() -> NFKModelOption {
+    fileprivate static func temperatureOption(_ defaultValue: Float = generationDefaults.temperature) -> NFKModelOption {
         .option(NFKParameterTemperature, kind: NFKModelOptionKindNumber, title: "Temperature",
                 help: "0 decodes greedily. A higher value divides the logits before sampling.",
-                defaultValue: Double(generationDefaults.temperature), minimum: 0)
+                defaultValue: Double(defaultValue), minimum: 0)
     }
 
-    fileprivate static func topPOption() -> NFKModelOption {
+    fileprivate static func topPOption(_ defaultValue: Float = generationDefaults.topP) -> NFKModelOption {
         .option(NFKParameterTopP, kind: NFKModelOptionKindNumber, title: "Top P",
                 help: "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
-                defaultValue: Double(generationDefaults.topP), minimum: 0, maximum: 1)
+                defaultValue: Double(defaultValue), minimum: 0, maximum: 1)
+    }
+
+    fileprivate static func topKOption(_ defaultValue: Int = generationDefaults.topK) -> NFKModelOption {
+        .option(NFKParameterTopK, kind: NFKModelOptionKindInteger, title: "Top K",
+                help: "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+                defaultValue: defaultValue, minimum: 0, step: 1)
     }
 
     fileprivate static func maxTokensOption(_ defaultValue: Int = NFKMLXGenerationOptions().maxTokens,
@@ -547,11 +560,12 @@ extension NFKMLXCatalogLanguage {
         [temperatureOption(), maxTokensOption(), seedOption(), toolsOption(), toolCallFormatOption()]
     }
 
-    /// The options ``NFKMLXLanguageBackend`` reads.
-    fileprivate static var languageOptions: [NFKModelOption] {
+    /// The options ``NFKMLXLanguageBackend`` reads, sampling by default as `sampling` says.
+    fileprivate static func languageOptions(sampling: NFKMLXReleaseSampling?) -> [NFKModelOption] {
         let defaults = generationDefaults
         return [
-            temperatureOption(), topPOption(), maxTokensOption(), seedOption(), jsonSchemaOption(),
+            temperatureOption(sampling?.temperature ?? defaults.temperature), topPOption(sampling?.topP ?? defaults.topP),
+            topKOption(sampling?.topK ?? defaults.topK), maxTokensOption(), seedOption(), jsonSchemaOption(),
             .option(NFKParameterOutputFormat, kind: NFKModelOptionKindChoice, title: "Output format",
                     help: "Constrains the reply to well-formed JSON, a JSON object, or a JSON array.",
                     choices: [("json", "JSON"), ("json-object", "JSON object"), ("json-array", "JSON array")]),
@@ -691,7 +705,7 @@ extension NFKMLXCatalogLanguage {
             outputs: toolCallingOutputs + [reasoningOutput, usageOutput,
                                            .output(NFKOutputStructured, title: "Parsed reply",
                                                    help: "The reply parsed as JSON, for a request constrained to JSON.")],
-            parameters: languageOptions,
+            parameters: languageOptions(sampling: release.sampling),
             variants: [variant(release, files: releaseFiles(required: NFKMLXLanguage.requiredFiles,
                                                             optional: NFKMLXLanguage.optionalFiles,
                                                             weights: NFKMLXLanguage.weightFiles))],
