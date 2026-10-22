@@ -528,6 +528,8 @@ public final class NFKMLXWav2Vec2Tokenizer: NSObject, @unchecked Sendable {
     /// word delimiter's become spaces, and each stretch of characters between spaces is a word from its
     /// first character's start to its last one's end. A run of the delimiter ends a word; so does the end
     /// of the frames.
+    ///
+    /// Introduced in InferKit 0.4.0.
     public func words(forFrameTokens frameTokens: [Int]) -> [(word: String, startFrame: Int, endFrame: Int)] {
         var characters = [(token: String, start: Int, end: Int)]()
         var start = 0

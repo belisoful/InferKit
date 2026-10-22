@@ -645,6 +645,8 @@ public final class NFKMLXWhisperNet: Module {
 
     /// The language token the model gives a window, as the reference's `detect_language` reads it: the
     /// logits after `<|startoftranscript|>` alone, over the language tokens.
+    ///
+    /// Introduced in InferKit 0.4.0.
     public func detectLanguage(_ mel: MLXArray) -> Int {
         let audio = encoder(typed(mel))
         let start = MLXArray([Int32(configuration.promptTokens[0])]).reshaped([1, 1])
@@ -657,6 +659,8 @@ public final class NFKMLXWhisperNet: Module {
     /// One window's greedy decode as the reference's `DecodingTask` runs it at temperature 0: the ids it
     /// sampled (the closing `<|endoftext|>` excluded), the summed log-probability of every id it took
     /// (the closing one included), and the probability the opening position gave `<|nospeech|>`.
+    ///
+    /// Introduced in InferKit 0.4.0.
     public struct WindowDecode: Sendable {
         public var tokens: [Int]
         public var sumLogProbability: Double
@@ -668,6 +672,8 @@ public final class NFKMLXWhisperNet: Module {
     /// Decodes one 30-second window, conditioned on `previous`: the reference prepends `<|startofprev|>`
     /// and the last `nTextCtx / 2 - 1` previous ids to the decode prompt. The rules are the plain or the
     /// timestamped decode's, applied from the first sampled position.
+    ///
+    /// Introduced in InferKit 0.4.0.
     public func decodeWindow(_ mel: MLXArray, previous: [Int], timestamps: Bool) -> WindowDecode {
         decodeWindow(mel, previous: previous, sequence: timestamps ? configuration.promptTokens.filter { $0 != noTimestampsToken }
                                                                     : configuration.promptTokens,
@@ -676,6 +682,8 @@ public final class NFKMLXWhisperNet: Module {
 
     /// Decodes one window as ``decodeWindow(_:previous:timestamps:)`` does, opened by `sequence`, the prompt
     /// ``promptSequence(language:translates:timestamps:)`` makes.
+    ///
+    /// Introduced in InferKit 0.4.0.
     public func decodeWindow(_ mel: MLXArray, previous: [Int], sequence: [Int], timestamps: Bool) -> WindowDecode {
         let audio = encoder(typed(mel))
         let context = Array(previous.suffix(configuration.nTextCtx / 2 - 1))
@@ -688,7 +696,8 @@ public final class NFKMLXWhisperNet: Module {
         var noSpeech = 0.0
         let caches = decoder.blocks.map { _ in NFKWhisperBlockCache() }
         var fresh = tokens
-        for _ in 0 ..< configuration.maxTokens {
+        // The reference's sample_len, half the text context, whatever the configuration's single-window limit.
+        for _ in 0 ..< configuration.nTextCtx / 2 {
             let tokenArray = MLXArray(fresh.map { Int32($0) }).reshaped([1, fresh.count])
             let all = decoder(tokenArray, audio: audio, caches: caches)[0].asType(.float32)
             if tokens.count == sampleBegin {
@@ -711,6 +720,8 @@ public final class NFKMLXWhisperNet: Module {
     }
 
     /// A span of a recording, in seconds from its start, with the ids decoded inside it.
+    ///
+    /// Introduced in InferKit 0.4.0.
     public struct RecordingSegment: Sendable {
         public var start: Double
         public var end: Double
@@ -768,6 +779,8 @@ public final class NFKMLXWhisperNet: Module {
     /// - Without timestamps, each window is one segment of its length.
     /// A segment that has no length or no text keeps its place with no ids. `decodeText` turns ids into
     /// a segment's text for that test.
+    ///
+    /// Introduced in InferKit 0.4.0.
     public func transcribeRecording(_ samples: [Float], timestamps: Bool, language: Int? = nil, translates: Bool = false,
                                     decodeText: ([Int]) -> String) -> (segments: [RecordingSegment], tokens: [Int], language: Int) {
         let rate = 16_000
@@ -780,7 +793,7 @@ public final class NFKMLXWhisperNet: Module {
         var allTokens = [Int]()
         var segments = [RecordingSegment]()
         while seek < contentFrames {
-            let offset = Double(seek) * 0.01
+            let offset = Double(seek * 160) / 16_000
             let size = min(Self.windowFrames, contentFrames - seek)
             var window = mel[0..., seek ..< (seek + size), 0...]
             if size < Self.windowFrames {
@@ -792,8 +805,8 @@ public final class NFKMLXWhisperNet: Module {
                 continue
             }
             var (current, advance) = windowSegments(decoded.tokens, offset: offset, frames: size)
-            // The timestamp rules give every segment a length, so the reference always moves on; a
-            // window that would not is taken whole rather than decoded again.
+            // The timestamp rules give every segment a length, so the reference always moves on. A window
+            // that would not is taken whole.
             seek += advance > 0 ? advance : size
             for index in current.indices {
                 let text = decodeText(current[index].tokens.filter { $0 < configuration.endToken })
@@ -950,10 +963,10 @@ public final class NFKMLXWhisperBackend: NSObject, NFKInferenceBackend {
     @objc public var emitsTimestamps: Bool = false
 
     /// Whether a run transcribes the whole recording, window after window as the reference's `transcribe`
-    /// does, rather than its first 30 seconds alone.
+    /// does. Off, a run transcribes the first 30 seconds.
     ///
     /// @discussion Off by default, which keeps the single-window decode `whisper.decode` performs. A
-    /// catalog build turns it on. The recording is resampled to 16 kHz, segments carry seconds from the
+    /// catalog build turns it on. Each window decodes up to `nTextCtx / 2` tokens, the reference's `sample_len`; the non-speech symbols are masked only on a backend built with a tokenizer. The recording is resampled to 16 kHz, segments carry seconds from the
     /// start of the file, and each window is conditioned on the text before it. Introduced in InferKit 0.4.0.
     @objc public var transcribesWholeRecording: Bool = false
 
@@ -1387,7 +1400,8 @@ public final class NFKMLXWhisper: NSObject {
                                completionHandler: completionHandler)
     }
 
-    /// Registers Whisper (`whisper-tiny`) with `NFKMLXModelRegistry`, delegating to `backend(weightsURL:)`.
+    /// Registers Whisper (`whisper-tiny`) with `NFKMLXModelRegistry`, building as the catalog does
+    /// (`catalogBackend`): the tokenizer and checkpoint its location holds, long-form, with timestamps.
     @objc public static func register() {
         let release = NFKMLXCatalogAudio.whisperRelease(named: modelName)
         let download = release.flatMap { URL(string: $0.url) }

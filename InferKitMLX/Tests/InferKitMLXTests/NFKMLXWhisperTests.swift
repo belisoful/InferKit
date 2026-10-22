@@ -334,7 +334,8 @@ final class NFKMLXWhisperTests: XCTestCase {
     /// The reference's reading of a window (timestamps begin at id 5, 20 ms apart): adjacent timestamps
     /// close segments, a window ending on one timestamp is taken whole, one ending on text moves to its last
     /// closed timestamp, and a window with no closed pair is one segment to its last timestamp or its end.
-    func testAWindowsTimestampsMakeTheReferencesSegmentsAndSeek() {
+    func testAWindowsTimestampsMakeTheReferencesSegmentsAndSeek() throws {
+        try requireMLXRuntime()
         let net = NFKMLXWhisper.makeNet(timedConfiguration())
         let ending = net.windowSegments([5, 0, 0, 15, 15, 0, 30], offset: 10, frames: 3000)
         XCTAssertEqual(ending.segments.map(\.tokens), [[5, 0, 0, 15], [15, 0, 30]])
@@ -409,6 +410,7 @@ final class NFKMLXWhisperTests: XCTestCase {
     }
 
     func testAReleasesAddedTokensNameItsLanguages() throws {
+        try requireMLXRuntime()
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent("whisper-added-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -222,7 +222,8 @@ final class NFKMLXWav2Vec2Tests: XCTestCase {
             XCTAssertEqual(result.output(forKey: NFKOutputText) as? String, referenceText, "\(name) backend transcription")
             if let referenceOffsets = record["word_offsets"] {
                 let words = try XCTUnwrap(result.output(forKey: NFKOutputWords) as? [NFKAudioSegment])
-                let frames = referenceOffsets.asArray(Int64.self).map { Double($0) * 320.0 / 16000.0 }
+                // transformers multiplies each offset by inputs_to_logits_ratio / sampling_rate, one double.
+                let frames = referenceOffsets.asArray(Int64.self).map { Double($0) * (320.0 / 16000.0) }
                 XCTAssertEqual(words.flatMap { [$0.startSeconds, $0.endSeconds] }, frames, "\(name) backend word times")
             }
         } else {
