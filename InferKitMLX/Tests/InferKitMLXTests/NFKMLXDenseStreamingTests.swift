@@ -470,9 +470,23 @@ final class NFKMLXDenseStreamingTests: XCTestCase {
                                  load: streamedLanguageRelease)
     }
 
+    /// The 8B decoder fits this machine's budget whole at bfloat16, so `.streamed` alone would hold it;
+    /// the test plans it to hold half its layers, which makes the run measure the stream.
     func testTheStreamedQwen3VL8BDecoderMatchesItsReference() throws {
-        try checkStreamedRelease(release: "IK_VAL_QWEN3_VL_8B", record: "IK_PARITY_QWEN3_VL_8B") {
-            try NFKMLXQwen3VL.decoder(directoryURL: $0, precision: .checkpoint, residency: .streamed)
+        try checkStreamedRelease(release: "IK_VAL_QWEN3_VL_8B", record: "IK_PARITY_QWEN3_VL_8B") { directory in
+            let geometry = try NFKMLXQwen3VL.decoderConfiguration(directoryURL: directory)
+            let decoder = NFKMLXLanguageNet(geometry)
+            let moduleKey: (String) -> String? = { key in
+                if key.hasPrefix("model.language_model.") {
+                    return "model." + String(key.dropFirst("model.language_model.".count))
+                }
+                return key == "lm_head.weight" ? key : nil
+            }
+            try NFKMLXQwen3VL.loadDecoderWeights(
+                into: decoder, fromDirectory: directory, precision: .checkpoint, residency: .streamed, streams: true,
+                budget: try budget(directory, precision: .checkpoint, holding: geometry.layerCount / 2,
+                                   moduleKey: moduleKey))
+            return decoder
         }
     }
 

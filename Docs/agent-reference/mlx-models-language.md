@@ -189,7 +189,16 @@ attention and feed-forward.
   "Streaming"), so the 14B, the 32B, and Mistral Small 24B run whole on this machine.
   `NFKMLXDenseStreamingTests` holds a streamed load to the held one element for element on a tiny
   release, tied and untied, through a plain, a quantized, and a windowed cache and a draft, and on the
-  released Qwen3-4B at bfloat16 with half its layers streamed.
+  released Qwen3-4B at bfloat16 with half its layers streamed. The whole releases are measured
+  streamed at bfloat16 against transformers at bfloat16 with each layer read as its forward reaches it
+  (`run_reference.py dense_layerwise`), in one teacher-forced pass over the prompt and the reference's
+  16-token greedy continuation:
+  - Qwen3 14B (`IK_PARITY_QWEN3_14B`), 19 of 40 layers streamed: logits at every prompt position
+    0.99995464, argmax 5/5, worst last-position layer state 0.9998778 at layer 23, every continuation
+    token the argmax after the ones before it. Drafted by Qwen3-0.6B through the cache, the 14B decodes
+    the same 16 tokens in 7 verify passes, 12 of 28 proposals kept.
+  - Mistral Small 24B (`IK_PARITY_MISTRAL_SMALL`), 28 of 40 layers streamed: logits 0.9999845, argmax
+    6/6, worst layer 0.99993855 at layer 16, continuation token-exact.
   Prompt cache, speculative decoding, mixture of experts, constrained decoding (all 0.3.0,
   each measured). `NFKMLXKeyValueCache.rollback(by:)` moves the end cursors back and copies nothing;
   it returns false where a window has dropped what it would reach. `NFKMLXPromptCache` keeps the

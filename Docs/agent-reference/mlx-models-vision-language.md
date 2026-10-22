@@ -96,7 +96,12 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `smart_resize` + patchify input adapter. A dense size streams the decoder layers it cannot hold
   (`decoder(directoryURL:precision:residency:)`, `modelWithDirectoryURL:precision:residency:error:`),
   so the 8B at float32 and the 32B run on this machine; the released 2B decoder streamed with half its
-  layers held computes the held decoder's hidden states exactly (`NFKMLXDenseStreamingTests`). Its resize is `Qwen2VLImageProcessorFast`'s, torchvision's
+  layers held computes the held decoder's hidden states exactly (`NFKMLXDenseStreamingTests`). The 8B
+  decoder, which fits this machine whole at bfloat16, is measured planned to hold half its layers (18 of
+  36 streamed) against transformers' `Qwen3VLForConditionalGeneration` text-only at bfloat16, each layer
+  read in its turn (`run_reference.py dense_layerwise`, `IK_PARITY_QWEN3_VL_8B`): logits 0.9999766,
+  argmax 5/5, worst last-position layer state 0.9998874 at layer 19, the 16-token greedy continuation
+  token-exact in one teacher-forced pass. Its resize is `Qwen2VLImageProcessorFast`'s, torchvision's
   antialiased bicubic on the 8-bit image (`int16` weights), exact to float rounding (see Sa2VA's
   preprocessing below).
   The larger sizes are read from their own releases: `NFKMLXQwen3VLVisionConfiguration.configuration(fromHuggingFace:)`
