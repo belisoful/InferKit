@@ -324,7 +324,8 @@ shape the way the video backend does, and their factories return nil for a prese
   (`stream_format: sse` + `stream` when streamed; OpenRouter's voice clone as `input_references`);
   Mistral (`voice_id` or `ref_audio`, reply `{audio_data}` base64, stream `speech.audio.delta
   {audio_data}`); xAI `/v1/tts` (`text`, `voice_id` optional, `language` defaulting to `auto`,
-  `output_format {codec, sample_rate}`). Stream deltas are read from `audio`, `b64`, or `audio_data`.
+  `output_format {codec, sample_rate}`); Model Studio (see "Alibaba Model Studio" below). Stream
+  deltas are read from `audio`, `b64`, `audio_data`, or Model Studio's `output.audio.data`.
   Groq's 200-character cap is `maximumInputLength`; pieces are cut with
   `NSStringEnumerationBySentences`, which needs a capitalized next sentence to see a break. Voice
   listing: xAI `/v1/tts/voices`, Mistral `/v1/audio/voices`, Together `/v1/voices?model=`.
@@ -903,6 +904,52 @@ the presets use the documented `/inference/` bases.
   `/models` lists and models.dev, and update `openCodeZen` / `openCodeGo` in `NFKRemoteProvider.m`
   with the date. A caller reaches a newer model before a release through
   `providerWithAPIStyle:forModelName:`.
+
+**Alibaba Model Studio (`modelstudio`, 2026-10-21).** Alibaba's DashScope service, added for the
+Qwen-Audio TTS models. Read from the official docs pages of 2026-10-21 (`alibabacloud.com/help/en/model-studio/`:
+`regions`, `compatibility-of-openai-with-dashscope`, `qwen-audio-tts-http-api`, `qwen-audio-tts-voice-list`)
+and the dashscope Python SDK (`dashscope/audio/http_tts/http_speech_synthesizer.py`). No request has
+been made with a key.
+
+- Base: `https://dashscope-intl.aliyuncs.com/compatible-mode/v1` (Singapore, `ap-southeast-1`). A key is
+  bound to its region and answers 401 `invalid_api_key` elsewhere. Beijing is `dashscope.aliyuncs.com`,
+  Hong Kong `cn-hongkong.dashscope.aliyuncs.com`. Frankfurt, Tokyo, and Virginia have only the workspace
+  domain `{WorkspaceId}.{region}.maas.aliyuncs.com`, which the docs recommend everywhere; the regions
+  page says the DashScope domains get no new features after 2026-09-30. `dashscope-us.aliyuncs.com`
+  answers probes and is undocumented.
+- Native routes sit at the host's root (`/api/v1/…`), so the speech factory resolves its path against
+  the base's host, and a re-pointed workspace base keeps working.
+- Chat: `/compatible-mode/v1/chat/completions`, OpenAI's shape and error envelope. Unauthenticated it
+  answers 400 "you must provide a model parameter", since it validates the body before the key.
+- Model list: `/compatible-mode/v1/models` answers 401 with an OpenAI-shaped error and is not in the
+  docs, so its success envelope is unconfirmed. The documented list is native `GET /api/v1/models`
+  (`output.models[].model`, paged, `capabilities=TTS` filters), which the catalog does not read.
+- Speech (`NFKRemoteSpeechAPIStyleModelStudio`): `POST /api/v1/services/audio/tts/SpeechSynthesizer`,
+  Bearer key. Body `{model, input: {text, voice, format, sample_rate, …}}`: every option is inside
+  `input` and there is no `parameters` object. `format` mp3 (default) / pcm / wav / opus;
+  `sample_rate` 8000–48000 (default 22050); `volume`, `rate`, `pitch`, `seed`, `enable_ssml`,
+  `language_hints` (only the first element counts), `instruction` (style, emotion, dialect, on all four
+  models). The backend maps `instructions` → `instruction`, `speed` → `rate`, and
+  `NFKParameterSourceLanguage` → `language_hints`. Models on 2026-10-21: `qwen-audio-3.1-tts-plus`,
+  `qwen-audio-3.1-tts-flash`, `qwen-audio-3.0-tts-plus`, `qwen-audio-3.0-tts-flash`. Voices are
+  per model (`longanhuan_v3.1` on 3.1); a wrong one answers `InvalidParameter`. There is no voice
+  listing endpoint.
+- Reply: `{output: {audio: {data, url, id, expires_at}, finish_reason}, usage, request_id}`. Unstreamed,
+  `data` is empty and `url` is a signed OSS address valid for 24 hours; the backend fetches it without
+  the Authorization header, which belongs to the service's host. A non-empty `data` is read as base64.
+  The fetch goes through the backend's session, so a preset pinned with
+  `providerWithPinnedCertificateSHA256:` pins the storage host too and the fetch fails.
+- Streaming: header `X-DashScope-SSE: enable`. Frames carry `output.type` (`sentence-begin`,
+  `sentence-synthesis`, `sentence-end`) and base64 chunks in `output.audio.data`; the last frame has
+  `finish_reason: stop` and the URL. The docs say one event may carry several `data:` lines, so the
+  backend joins an event's data lines until they parse (one-line events of the other styles parse at
+  once).
+- Errors on native routes are flat `{code, message, request_id}` (`InvalidApiKey` for a missing key);
+  compatible mode uses OpenAI's `{error: {…}}`.
+- Not built (2026-10-21): `qwen3-tts-flash`, which is on the multimodal-generation route with
+  `input.language_type`; ASR; realtime; embeddings (`/compatible-mode/v1/embeddings` exists by probe
+  and is unchecked against the docs); image and video. Each factory but chat and speech returns nil for
+  the preset. The coverage rows are in `remote-provider-capabilities.md`.
 
 **Deliberately absent.** Midjourney has no official public API (its API host does not resolve), so
 shipping a preset would imply one exists. Codex is OpenAI's coding agent, not a separate endpoint; it

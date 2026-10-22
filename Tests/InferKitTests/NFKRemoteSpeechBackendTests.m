@@ -295,6 +295,92 @@
 	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceUnsupported);
 }
 
+- (void)testModelStudioSpeaksThroughItsNativeRouteOnThePresetsHost
+{
+	NFKRemoteSpeechBackend *singapore = [NFKRemoteSpeechBackend backendForProvider:NFKRemoteProvider.modelStudio apiKey:@"k"
+																		 modelName:@"qwen-audio-3.1-tts-plus" voice:@"longanhuan_v3.1"];
+	XCTAssertEqual(singapore.apiStyle, NFKRemoteSpeechAPIStyleModelStudio);
+	XCTAssertEqualObjects(singapore.endpointURL.absoluteString,
+						  @"https://dashscope-intl.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer");
+	NFKRemoteProvider *workspace = [NFKRemoteProvider.modelStudio providerWithBaseURL:
+									[NSURL URLWithString:@"https://ws1.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"]];
+	XCTAssertEqualObjects([NFKRemoteSpeechBackend backendForProvider:workspace apiKey:@"k" modelName:nil voice:@"v"].endpointURL.absoluteString,
+						  @"https://ws1.ap-southeast-1.maas.aliyuncs.com/api/v1/services/audio/tts/SpeechSynthesizer");
+}
+
+- (void)testModelStudioSendsAnInputObjectAndFetchesTheSignedURLWithoutTheKey
+{
+	NFKStubSpeechBackend *studio = [self stubFor:NFKRemoteProvider.modelStudio model:@"qwen-audio-3.1-tts-plus" voice:@"longanhuan_v3.1"];
+	NSData *wav = [self wavWithSamples:[NSData dataWithBytes:"\x01\x02" length:2]];
+	NSString *signed_ = @"https://dashscope-result-sgp.oss-ap-southeast-1.aliyuncs.com/audio.wav?Expires=1";
+	studio.stagedReply = ^NSData *(NSURLRequest *request) {
+		if ([request.HTTPMethod isEqualToString:@"POST"]) {
+			NSString *reply = [NSString stringWithFormat:@"{\"output\":{\"audio\":{\"data\":\"\",\"url\":\"%@\"},\"finish_reason\":\"stop\"}}", signed_];
+			return [reply dataUsingEncoding:NSUTF8StringEncoding];
+		}
+		return wav;
+	};
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello" }
+															   parameters:@{ NFKParameterSampleRate: @24000, NFKParameterSourceLanguage: @"en",
+																			 @"instructions": @"Speak warmly.", @"speed": @1.2, @"seed": @7 }];
+	NSError *error = nil;
+	NFKInferenceResult *result = [studio runInferenceForRequest:request error:&error];
+	XCTAssertNotNil(result, @"%@", error);
+	XCTAssertEqual(studio.requests.count, 2, @"the call, then the fetch of the audio");
+
+	NSDictionary *body = [NSJSONSerialization JSONObjectWithData:studio.requests.firstObject.HTTPBody options:0 error:NULL];
+	NSDictionary *expected = @{ @"text": @"Hello", @"voice": @"longanhuan_v3.1", @"format": @"wav", @"sample_rate": @24000,
+								@"language_hints": @[ @"en" ], @"instruction": @"Speak warmly.", @"rate": @1.2, @"seed": @7 };
+	XCTAssertEqualObjects(body[@"input"], expected);
+	XCTAssertEqualObjects(body[@"model"], @"qwen-audio-3.1-tts-plus");
+	XCTAssertEqual(body.count, 2, @"every option travels inside input");
+	XCTAssertEqualObjects([studio.requests.firstObject valueForHTTPHeaderField:@"Authorization"], @"Bearer k");
+
+	NSURLRequest *fetch = studio.requests.lastObject;
+	XCTAssertEqualObjects(fetch.URL.absoluteString, signed_);
+	XCTAssertEqualObjects(fetch.HTTPMethod, @"GET");
+	XCTAssertNil([fetch valueForHTTPHeaderField:@"Authorization"], @"the key stays with the service's host");
+	XCTAssertEqualObjects([NSData dataWithContentsOfURL:[[result outputForKey:NFKOutputAudio] fileURL]], wav);
+}
+
+- (void)testModelStudioReadsInlineAudioAndRefusesAReplyWithoutAudio
+{
+	NFKStubSpeechBackend *studio = [self stubFor:NFKRemoteProvider.modelStudio model:@"qwen-audio-3.1-tts-flash" voice:@"v"];
+	NSData *audio = [@"RIFFinline" dataUsingEncoding:NSUTF8StringEncoding];
+	NSString *reply = [NSString stringWithFormat:@"{\"output\":{\"audio\":{\"data\":\"%@\"}}}", [audio base64EncodedStringWithOptions:0]];
+	studio.stagedData = [reply dataUsingEncoding:NSUTF8StringEncoding];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hi" }];
+	NSError *error = nil;
+	NFKInferenceResult *result = [studio runInferenceForRequest:request error:&error];
+	XCTAssertNotNil(result, @"%@", error);
+	XCTAssertEqual(studio.requests.count, 1);
+	XCTAssertEqualObjects([NSData dataWithContentsOfURL:[[result outputForKey:NFKOutputAudio] fileURL]], audio);
+
+	studio.stagedData = [@"{\"output\":{\"audio\":{\"data\":\"\"}}}" dataUsingEncoding:NSUTF8StringEncoding];
+	XCTAssertNil([studio runInferenceForRequest:request error:&error]);
+	XCTAssertEqual(error.code, kNFKError_InferenceBackendFailure);
+}
+
+// Model Studio's frames may spread one event over several data lines; they join before parsing.
+- (void)testAModelStudioStreamJoinsAnEventsDataLines
+{
+	NFKStubSpeechBackend *studio = [self stubFor:NFKRemoteProvider.modelStudio model:@"qwen-audio-3.1-tts-plus" voice:@"v"];
+	studio.streams = YES;
+	studio.responseFormat = @"pcm";
+	NSString *one = [[@"ab" dataUsingEncoding:NSUTF8StringEncoding] base64EncodedStringWithOptions:0];
+	NSString *two = [[@"cd" dataUsingEncoding:NSUTF8StringEncoding] base64EncodedStringWithOptions:0];
+	studio.stagedLines = @[ @"id:1", @"event:result",
+							[NSString stringWithFormat:@"data:{\"output\":{\"type\":\"sentence-synthesis\",\"audio\":{\"data\":\"%@\"}},", one],
+							@"data:\"request_id\":\"r\"}", @"",
+							[NSString stringWithFormat:@"data:{\"output\":{\"audio\":{\"data\":\"%@\"}}}", two], @"",
+							@"data:{\"output\":{\"type\":\"sentence-end\",\"audio\":{\"data\":\"\",\"url\":\"https://x.test/a\"},\"finish_reason\":\"stop\"}}" ];
+	NFKInferenceJob *job = [studio submitInferenceJobForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hi" }]];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusSucceeded, @"%@", job.error);
+	XCTAssertEqualObjects([studio.lastRequest valueForHTTPHeaderField:@"X-DashScope-SSE"], @"enable");
+	XCTAssertEqualObjects([NSData dataWithContentsOfURL:[[job.result outputForKey:NFKOutputAudio] fileURL]],
+						  [@"abcd" dataUsingEncoding:NSUTF8StringEncoding]);
+}
+
 - (void)testTheFactoryDerivesTheSpeechURLAndDeclinesAnthropic
 {
 	NFKRemoteSpeechBackend *groq = [NFKRemoteSpeechBackend backendForProvider:NFKRemoteProvider.groq

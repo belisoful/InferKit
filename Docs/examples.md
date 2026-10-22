@@ -3548,7 +3548,8 @@ job reads every line rather than trusting the status.
 
 **The remaining modalities have remote backends too**, so every direction an on-device engine serves
 has a hosted counterpart answering with the same key. Text to speech (`POST /audio/speech`; served by
-openai, groq, together, xai, mistral, and openrouter, verified at release) returns an `NFKAudioAsset`
+openai, groq, together, xai, mistral, and openrouter, and modelstudio's Qwen-Audio voices on its own
+route, verified at release) returns an `NFKAudioAsset`
 under `NFKOutputAudio`, a WAV by default, which is what `NFKMLXSpeechBackend` writes; a voice is required
 and has no default, for the reason a model name has none:
 

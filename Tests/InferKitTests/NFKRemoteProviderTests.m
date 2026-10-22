@@ -226,7 +226,7 @@ static const uint16_t NFKDeadPort = 9;
 {
 	for (NSString *identifier in @[ @"openai", @"anthropic", @"xai", @"gemini", @"groq",
 									@"mistral", @"deepseek", @"together", @"openrouter", @"typesafe",
-									@"opencode", @"opencode-go" ]) {
+									@"opencode", @"opencode-go", @"modelstudio" ]) {
 		NFKRemoteProvider *provider = [NFKRemoteProvider providerWithIdentifier:identifier];
 		XCTAssertNotNil(provider, @"%@ is missing", identifier);
 		XCTAssertTrue(provider.requiresAPIKey, @"%@ is hosted", identifier);
@@ -256,6 +256,7 @@ static const uint16_t NFKDeadPort = 9;
 		@"typesafe": @"https://api.typesafe.ai/v1",
 		@"opencode": @"https://opencode.ai/inference/v1",
 		@"opencode-go": @"https://opencode.ai/inference/go/v1",
+		@"modelstudio": @"https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
 		@"ollama": @"http://localhost:11434/v1",
 	};
 	NSDictionary<NSNumber *, NSString *> *pathsByStyle = @{ @(NFKRemoteAPIStyleOpenAIChat): @"/chat/completions",

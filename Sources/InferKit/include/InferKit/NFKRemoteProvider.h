@@ -330,6 +330,15 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	as Zen. Go routes some model names differently from Zen (Qwen3.8 Max and the MiniMax models are on
 	Messages here), so each preset carries its own table. Introduced in InferKit 0.4.0. */
 @property (class, nonatomic, readonly) NFKRemoteProvider *openCodeGo;
+/*! Alibaba Model Studio (DashScope) in its Singapore region, at the OpenAI-compatible base
+	https://dashscope-intl.aliyuncs.com/compatible-mode/v1, which serves chat completions. Its native
+	routes sit at the same host's root: NFKRemoteSpeechBackend speaks the Qwen-Audio TTS models
+	through /api/v1/services/audio/tts/SpeechSynthesizer. A key is bound to its region, so another
+	region is this preset re-pointed with providerWithBaseURL: at that region's compatible-mode base:
+	https://dashscope.aliyuncs.com/compatible-mode/v1 for Beijing, or a workspace base
+	https://{WorkspaceId}.{region}.maas.aliyuncs.com/compatible-mode/v1 for Frankfurt, Tokyo, and
+	Virginia. Introduced in InferKit 0.4.0. */
+@property (class, nonatomic, readonly) NFKRemoteProvider *modelStudio;
 
 // Local servers. Each is the project's own default address; nothing is assumed to be running.
 @property (class, nonatomic, readonly) NFKRemoteProvider *ollama;

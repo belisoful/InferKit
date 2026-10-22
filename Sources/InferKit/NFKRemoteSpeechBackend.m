@@ -26,6 +26,18 @@ static NSSet<NSString *> *NFKSpeechMappedParameters(void)
 	return mapped;
 }
 
+/*! The name Model Studio gives a parameter inside its input object: instructions → instruction and
+	speed → rate; every other name as given. */
+static NSString *NFKModelStudioSpeechOptionName(NSString *key)
+{
+	static NSDictionary<NSString *, NSString *> *names;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		names = @{ @"instructions": @"instruction", @"speed": @"rate" };
+	});
+	return names[key] ?: key;
+}
+
 /*! The chunk with the given four-character id in a RIFF file, as its range, or NSNotFound. A data
 	chunk whose declared size runs past the file (a streamed WAV) ends at the file's end. */
 static NSRange NFKSpeechWAVChunk(NSData *wav, const char *identifier)
@@ -77,9 +89,11 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 
 @end
 
-/*! What a streamed reply assembles into: the decoded audio so far. */
+/*! What a streamed reply assembles into: the decoded audio so far, and the data lines of the event
+	being read. */
 @interface NFKSpeechStreamState : NSObject
 @property (nonatomic, strong) NSMutableData *audio;
+@property (nonatomic, strong) NSMutableString *pendingEvent;
 @property (nonatomic, assign) BOOL finished;
 @end
 
@@ -114,6 +128,11 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 	} else if ([identifier isEqualToString:@"xai"]) {
 		backend = [self backendWithEndpointURL:[provider URLForPath:@"tts"]];
 		backend.apiStyle = NFKRemoteSpeechAPIStyleXAI;
+	} else if ([identifier isEqualToString:@"modelstudio"]) {
+		// The native route sits at the host's root, beside the OpenAI-compatible base.
+		backend = [self backendWithEndpointURL:[NSURL URLWithString:@"/api/v1/services/audio/tts/SpeechSynthesizer"
+													  relativeToURL:provider.baseURL].absoluteURL];
+		backend.apiStyle = NFKRemoteSpeechAPIStyleModelStudio;
 	}
 	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
 	if (pinned != nil) {
@@ -217,13 +236,30 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 	[job reportProgress:-1.0];
 	NFKSpeechStreamState *state = [[NFKSpeechStreamState alloc] init];
 	state.audio = [NSMutableData data];
+	state.pendingEvent = [NSMutableString string];
 	NSString *format = [self formatForRequest:request];
 	void (^cancel)(void) = [self streamRequest:urlRequest lineHandler:^(NSString *line) {
 		if (state.finished) {
 			return;
 		}
+		if (line.length == 0) {
+			[state.pendingEvent setString:@""];
+			return;
+		}
 		NSString *payload = [NFKRemoteTransport SSEDataForLine:line];
-		id event = payload != nil ? [NSJSONSerialization JSONObjectWithData:[payload dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL] : nil;
+		if (payload == nil) {
+			return;
+		}
+		// One event may span several data lines (Model Studio's do), so the lines join until they parse.
+		if (state.pendingEvent.length > 0) {
+			[state.pendingEvent appendString:@"\n"];
+		}
+		[state.pendingEvent appendString:payload];
+		id event = [NSJSONSerialization JSONObjectWithData:[state.pendingEvent dataUsingEncoding:NSUTF8StringEncoding] options:0 error:NULL];
+		if (event == nil) {
+			return;
+		}
+		[state.pendingEvent setString:@""];
 		NSData *chunk = [event isKindOfClass:NSDictionary.class] ? [self audioInStreamEvent:event] : nil;
 		if (chunk.length > 0) {
 			[state.audio appendData:chunk];
@@ -300,6 +336,7 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 	NSString *voice = [self voiceForRequest:request];
 	NSString *format = [self formatForRequest:request];
 	NSData *reference = [self referenceClipForRequest:request];
+	NSMutableDictionary<NSString *, id> *options = body;
 	switch (self.apiStyle) {
 		case NFKRemoteSpeechAPIStyleOpenAI:
 			body[@"input"] = text;
@@ -327,6 +364,18 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 				body[@"stream"] = @YES;
 			}
 			break;
+		case NFKRemoteSpeechAPIStyleModelStudio: {
+			NSMutableDictionary<NSString *, id> *input = [NSMutableDictionary dictionary];
+			input[@"text"] = text;
+			input[@"voice"] = voice;
+			input[@"format"] = format;
+			input[@"sample_rate"] = parameters[NFKParameterSampleRate];
+			id language = parameters[NFKParameterSourceLanguage];
+			input[@"language_hints"] = language != nil ? @[ language ] : nil;
+			body[@"input"] = input;
+			options = input;
+			break;
+		}
 		case NFKRemoteSpeechAPIStyleXAI: {
 			body[@"text"] = text;
 			body[@"voice_id"] = voice;
@@ -343,7 +392,8 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 	NSSet<NSString *> *mapped = NFKSpeechMappedParameters();
 	for (NSString *key in parameters) {
 		if (![mapped containsObject:key] && ![key isEqualToString:@"voice"] && ![key isEqualToString:@"response_format"]) {
-			body[key] = parameters[key];
+			NSString *name = self.apiStyle == NFKRemoteSpeechAPIStyleModelStudio ? NFKModelStudioSpeechOptionName(key) : key;
+			options[name] = parameters[key];
 		}
 	}
 	return body;
@@ -369,11 +419,15 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 	if (streaming) {
 		[urlRequest setValue:@"text/event-stream" forHTTPHeaderField:@"Accept"];
 	}
+	if (streaming && self.apiStyle == NFKRemoteSpeechAPIStyleModelStudio) {
+		[urlRequest setValue:@"enable" forHTTPHeaderField:@"X-DashScope-SSE"];
+	}
 	[NFKRemoteTransport authorizeRequest:urlRequest apiKey:self.apiKey style:NFKRemoteAPIStyleOpenAIChat];
 	return urlRequest;
 }
 
-// Mistral answers with the audio in base64 inside JSON; the other styles answer with the bytes.
+// Mistral answers with the audio in base64 inside JSON, Model Studio with a URL that holds it; the
+// other styles answer with the bytes.
 - (nullable NSData *)audioForText:(NSString *)text request:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
 {
 	NSMutableURLRequest *urlRequest = [self urlRequestForText:text request:request streaming:NO error:outError];
@@ -398,6 +452,12 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 		reply = [encoded isKindOfClass:NSString.class]
 			? [[NSData alloc] initWithBase64EncodedString:encoded options:NSDataBase64DecodingIgnoreUnknownCharacters] : nil;
 	}
+	if (self.apiStyle == NFKRemoteSpeechAPIStyleModelStudio) {
+		reply = [self modelStudioAudioInReply:reply error:outError];
+		if (reply == nil) {
+			return nil;
+		}
+	}
 	if (reply.length == 0) {
 		[self failWithCode:kNFKError_InferenceBackendFailure reason:@"the endpoint returned no audio" error:outError];
 		return nil;
@@ -405,10 +465,44 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 	return reply;
 }
 
+// The reply's output.audio carries the audio inline as base64 data or, when data is empty, at a
+// URL the service signs. The URL is fetched without the API key, which belongs to the service's host.
+- (nullable NSData *)modelStudioAudioInReply:(NSData *)reply error:(NSError * _Nullable *)outError
+{
+	id body = [NSJSONSerialization JSONObjectWithData:reply options:0 error:NULL];
+	NSDictionary *output = [body isKindOfClass:NSDictionary.class] && [body[@"output"] isKindOfClass:NSDictionary.class] ? body[@"output"] : nil;
+	NSDictionary *audio = [output[@"audio"] isKindOfClass:NSDictionary.class] ? output[@"audio"] : nil;
+	NSString *encoded = [audio[@"data"] isKindOfClass:NSString.class] ? audio[@"data"] : nil;
+	if (encoded.length > 0) {
+		return [[NSData alloc] initWithBase64EncodedString:encoded options:NSDataBase64DecodingIgnoreUnknownCharacters];
+	}
+	NSURL *url = [audio[@"url"] isKindOfClass:NSString.class] ? [NSURL URLWithString:audio[@"url"]] : nil;
+	if (![@[ @"https", @"http" ] containsObject:url.scheme.lowercaseString ?: @""]) {
+		[self failWithCode:kNFKError_InferenceBackendFailure reason:@"the reply names no audio" error:outError];
+		return nil;
+	}
+	NSMutableURLRequest *fetch = [NSMutableURLRequest requestWithURL:url];
+	fetch.timeoutInterval = self.timeout;
+	NSHTTPURLResponse *response = nil;
+	NSError *sendError = nil;
+	NSData *data = [self sendRequest:fetch response:&response error:&sendError];
+	NSError *failure = data == nil ? sendError : [NFKRemoteTransport errorForResponse:response data:data];
+	if (failure != nil) {
+		if (outError != NULL) { *outError = failure; }
+		return nil;
+	}
+	return data;
+}
+
 // OpenAI's speech.audio.delta carries audio, Together's audio.tts.chunk b64, Mistral's
-// speech.audio.delta audio_data.
+// speech.audio.delta audio_data, and Model Studio's frames output.audio.data.
 - (nullable NSData *)audioInStreamEvent:(NSDictionary *)event
 {
+	NSDictionary *output = [event[@"output"] isKindOfClass:NSDictionary.class] ? event[@"output"] : nil;
+	NSDictionary *audio = [output[@"audio"] isKindOfClass:NSDictionary.class] ? output[@"audio"] : nil;
+	if ([audio[@"data"] isKindOfClass:NSString.class]) {
+		return [[NSData alloc] initWithBase64EncodedString:audio[@"data"] options:NSDataBase64DecodingIgnoreUnknownCharacters];
+	}
 	for (NSString *key in @[ @"audio", @"b64", @"audio_data" ]) {
 		if ([event[key] isKindOfClass:NSString.class]) {
 			return [[NSData alloc] initWithBase64EncodedString:event[key] options:NSDataBase64DecodingIgnoreUnknownCharacters];
@@ -587,6 +681,8 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 			return [self.endpointURL URLByAppendingPathComponent:@"voices"];
 		case NFKRemoteSpeechAPIStyleMistral:
 			return [self.endpointURL.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"voices"];
+		case NFKRemoteSpeechAPIStyleModelStudio:
+			return nil;
 		case NFKRemoteSpeechAPIStyleOpenAI: {
 			if (![self.endpointURL.host containsString:@"together"]) {
 				return nil;

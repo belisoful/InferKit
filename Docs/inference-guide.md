@@ -641,7 +641,9 @@ session, and two calls of its own: `isReachableWithError:` answers whether the s
 name the provider does not know, so it is the cheap check before a request carries one.
 
 - **OpenAI-compatible**, served by `NFKRemoteBackend`: `openai`, `xai`, `gemini`, `groq`, `mistral`,
-  `deepseek`, `together`, `openrouter`, and the local servers `ollama`, `lmstudio`, `llamacpp`,
+  `deepseek`, `together`, `openrouter`, `modelstudio` (Alibaba Model Studio, Singapore; another region
+  is the preset re-pointed with `providerWithBaseURL:`, since a key is bound to its region), and the
+  local servers `ollama`, `lmstudio`, `llamacpp`,
   `vllm`. A local server needs no key, and llama.cpp needs no model name either, since it answers for
   whatever it has loaded.
 - **`anthropic`**, served by `NFKAnthropicBackend`: the key travels as `x-api-key`, an
@@ -726,7 +728,7 @@ under `partialResult`, cancellation), and `deleteModel:error:` removes weights. 
 against Ollama 0.33.
 
 **The other directions have remote backends too.** `NFKRemoteSpeechBackend` (text → an `NFKAudioAsset`
-under `NFKOutputAudio`, `POST /audio/speech`) and `NFKRemoteImageBackend` (a prompt → image, an image →
+under `NFKOutputAudio`, `POST /audio/speech`, and Model Studio's own route for the Qwen-Audio voices) and `NFKRemoteImageBackend` (a prompt → image, an image →
 an edit of it, an image and mask → an inpaint; `POST /images/generations` and `/images/edits`) answer
 with the keys the on-device speech and Stable Diffusion backends use, so a feature built on one engine
 falls back to a hosted one without leaving the contract. Which presets serve each path was verified by

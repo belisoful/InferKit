@@ -257,6 +257,13 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 								  style:NFKRemoteAPIStyleSystemOne requiresKey:YES];
 }
 
++ (NFKRemoteProvider *)modelStudio
+{
+	return [self providerWithIdentifier:@"modelstudio" displayName:@"Alibaba Model Studio"
+								   base:@"https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+								  style:NFKRemoteAPIStyleOpenAIChat requiresKey:YES];
+}
+
 // OpenCode's published endpoint tables (opencode.ai/docs/zen and opencode.ai/docs/go, read
 // 2026-10-13), with muse-spark-1.2-contributor-free from models.dev, which OpenCode's own client reads.
 // Every model the tables send to chat completions is left out, since that is the presets' apiStyle.
@@ -349,7 +356,7 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 {
 	return @[ self.openAI, self.anthropic, self.xAI, self.googleGemini, self.groq, self.mistral,
 			  self.deepSeek, self.together, self.openRouter, self.typeSafe, self.openCodeZen, self.openCodeGo,
-			  self.ollama, self.lmStudio, self.llamaCpp, self.vLLM, self.inferKit ];
+			  self.modelStudio, self.ollama, self.lmStudio, self.llamaCpp, self.vLLM, self.inferKit ];
 }
 
 + (nullable NFKRemoteProvider *)providerWithIdentifier:(NSString *)identifier

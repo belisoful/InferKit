@@ -765,6 +765,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `providerWithAPIStyle:forModelName:` routes one model by hand, for a model added after the
   release or a route that changed.
 
+#### Alibaba Model Studio and the Qwen-Audio voices
+
+- `NFKRemoteProvider.modelStudio` (`modelstudio`, `https://dashscope-intl.aliyuncs.com/compatible-mode/v1`)
+  reaches Alibaba Model Studio in its Singapore region through chat completions. A key is bound to
+  its region, so another region is the preset re-pointed with `providerWithBaseURL:`.
+- `NFKRemoteSpeechAPIStyleModelStudio` speaks the Qwen-Audio TTS models (`qwen-audio-3.1-tts-plus`,
+  `qwen-audio-3.1-tts-flash`, and the 3.0 pair) through Model Studio's `SpeechSynthesizer` route.
+  Options travel inside its `input` object, `instructions` as `instruction` and `speed` as `rate`; the
+  backend fetches the signed audio URL the reply names, without the API key, and streams base64
+  frames under `X-DashScope-SSE`.
+- A streamed speech event spread over several `data:` lines is joined before it is read.
+
 #### Gemini's generateContent API
 
 - `NFKGeminiGenerateContentBackend` calls `POST {models}/{model}:generateContent` with the key as

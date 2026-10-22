@@ -24,12 +24,19 @@ NS_ASSUME_NONNULL_BEGIN
 				speech.audio.delta events.
 	@constant   NFKRemoteSpeechAPIStyleXAI xAI's POST /v1/tts: text, voice_id, language, and an
 				output_format object, answered with the audio bytes.
+	@constant   NFKRemoteSpeechAPIStyleModelStudio Alibaba Model Studio's POST
+				/api/v1/services/audio/tts/SpeechSynthesizer, which serves the Qwen-Audio TTS models
+				(qwen-audio-3.1-tts-plus and its peers): model, and an input object with text, voice,
+				format, sample_rate, and the service's other options. The reply names a URL that
+				holds the audio for 24 hours, and the backend fetches it. Streamed as SSE frames whose
+				output.audio.data carries base64 audio.
 	Introduced in InferKit 0.4.0.
 */
 typedef NS_ENUM(NSInteger, NFKRemoteSpeechAPIStyle) {
 	NFKRemoteSpeechAPIStyleOpenAI = 0,
 	NFKRemoteSpeechAPIStyleMistral,
 	NFKRemoteSpeechAPIStyleXAI,
+	NFKRemoteSpeechAPIStyleModelStudio,
 };
 
 /*!
@@ -76,7 +83,10 @@ typedef NS_ENUM(NSInteger, NFKRemoteSpeechAPIStyle) {
 				- NFKParameterSourceLanguage → the language of the text, where the service takes one
 				- NFKParameterSampleRate → the output sample rate, where the service takes one
 
-				Every other parameter goes out under its own name (speed, instructions). The reply
+				Every other parameter goes out under its own name (speed, instructions). Model Studio
+				takes every option inside its input object, so there the other parameters go into
+				input, instructions goes out as instruction, speed as rate, and
+				NFKParameterSourceLanguage as the one-element language_hints. The reply
 				is written to a file in outputDirectoryURL and returned as an NFKAudioAsset under
 				NFKOutputAudio, which is what the on-device NFKMLXSpeechBackend answers with. The
 				format defaults to wav, the container that backend writes. Text longer than
@@ -138,8 +148,9 @@ typedef NS_ENUM(NSInteger, NFKRemoteSpeechAPIStyle) {
 	@abstract   A backend pointed at the provider's speech endpoint in its style, or nil for a
 				provider that serves none.
 	@discussion openai, groq, together, openrouter, and inferkit take the OpenAI style; mistral its
-				own; xai its /v1/tts. anthropic, gemini (its OpenAI layer has no audio path), deepseek, typesafe,
-				and the local runners return nil.
+				own; xai its /v1/tts; modelstudio its SpeechSynthesizer path on the preset's host.
+				anthropic, gemini (its OpenAI layer has no audio path), deepseek, typesafe, and the local
+				runners return nil.
 */
 + (nullable instancetype)backendForProvider:(NFKRemoteProvider *)provider
 									 apiKey:(nullable NSString *)apiKey
@@ -155,7 +166,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteSpeechAPIStyle) {
 	@abstract   The voices the service lists, blocking.
 	@discussion xai (GET /v1/tts/voices), mistral (GET /v1/audio/voices), and together
 				(GET /v1/voices for modelName) list theirs; a service with a fixed, documented set
-				(OpenAI, Groq) has no listing endpoint and answers kNFKError_InferenceUnsupported.
+				(OpenAI, Groq, Model Studio) has no listing endpoint and answers kNFKError_InferenceUnsupported.
 				Introduced in InferKit 0.4.0.
 */
 - (nullable NSArray<NFKRemoteVoice *> *)availableVoicesWithError:(NSError * _Nullable *)error;

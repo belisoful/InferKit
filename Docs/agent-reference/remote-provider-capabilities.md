@@ -181,6 +181,21 @@ The subscription gateway, same key as Zen. Its routes differ from Zen's for some
 | text + image → text, tools (Claude Haiku 5.5, MiniMax, Qwen3.7 Plus and Qwen3.8) | `/messages` | covered (`NFKAnthropicBackend`) |
 | model list | `/models` | covered (ids only) |
 
+### Alibaba Model Studio (`modelstudio`)
+
+DashScope, Singapore base; other regions by `providerWithBaseURL:`. Added 2026-10-21 for the
+Qwen-Audio TTS models, so only chat and speech are built. Detail in `remote-providers.md` ("Alibaba
+Model Studio").
+
+| Mode | Endpoint | Status |
+|---|---|---|
+| text + image → text, tools | `/compatible-mode/v1/chat/completions` | covered (`NFKRemoteBackend`) |
+| text → speech (Qwen-Audio 3.0 / 3.1 Plus and Flash) | `/api/v1/services/audio/tts/SpeechSynthesizer` | covered (`NFKRemoteSpeechAPIStyleModelStudio`, unstreamed URL fetch and SSE) |
+| text → speech (Qwen3-TTS) | `/api/v1/services/aigc/multimodal-generation/generation` | gap |
+| model list | `/compatible-mode/v1/models` | covered if it answers OpenAI's `data[].id`; unconfirmed. Native `/api/v1/models` is a gap |
+| text → embedding | `/compatible-mode/v1/embeddings` | gap (exists by probe) |
+| audio → text, realtime speech, image, video | native routes | gap; not yet surveyed |
+
 ### Local servers
 
 | Server | Beyond the OpenAI layer | Status |
