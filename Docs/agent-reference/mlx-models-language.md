@@ -370,9 +370,11 @@ attention and feed-forward.
   request names none (a behavior change, recorded in the changelog). **Release stops (2026-10-22):** the
   default stop set is the tokenizer's `eos_token` plus every id `generation_config.json`'s `eos_token_id`
   lists, for every request; the catalog downloads the file. Qwen3's tokenizer names `<|im_end|>` alone,
-  so a run without the file generated past `<|endoftext|>` into an invented next turn. The answer and
-  reasoning text drop the `"special": true` literals (`specialTokenLiterals(inDirectory:)`) after the
-  reasoning and tool-call parse, which reads harmony's and Mistral's special markers first. `NFKMLXLanguageBackend` is now
+  so a run without the file generated past `<|endoftext|>` into an invented next turn. The reply decodes
+  without the `"special": true` ids (`specialTokenIDs(inDirectory:)`), by id as `skip_special_tokens`
+  filters, keeping the ones a marker of the run's reasoning format or its tool-call format's `markers`
+  contains (harmony's channels, Mistral's `[TOOL_CALLS]`), since those readers parse them. A text-level
+  strip would also remove a literal the model spelled with ordinary tokens. `NFKMLXLanguageBackend` is now
   `@objc(NFKMLXLanguageBackend)` with `hasDraftModel`, `promptCacheLength`, `resetPromptCache`.
   **Conversation caches (2026-10-07):** a request carrying `NFKParameterConversationKey` runs against
   that conversation's own `NFKMLXPromptCache` in `NFKMLXConversationCaches`, under

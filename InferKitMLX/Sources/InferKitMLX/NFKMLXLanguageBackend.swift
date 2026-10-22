@@ -98,7 +98,8 @@ public struct NFKMLXGenerationOptions: Sendable {
     public var topP: Float = 1
     /// A seed makes a sampled run repeatable.
     public var seed: UInt64?
-    /// Generation stops when one of these is produced.
+    /// Generation stops when one of these is produced. Empty, a backend over a release stops on the
+    /// tokenizer's end-of-sequence token and every id the release's `generation_config.json` lists.
     public var stopTokens: Set<Int> = []
     /// The most cached positions to retain, or `nil` to retain every one.
     ///
@@ -379,8 +380,8 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     private let releaseTemplate: NFKMLXChatTemplate?
     /// The ids the release's `generation_config.json` ends generation on.
     private let releaseStops: Set<Int>
-    /// The literals of the tokens the release marks special, which the reference's decode skips.
-    private let releaseSpecialTokens: [String]
+    /// The tokens the release marks special, by literal, which the reference's decode skips.
+    private let releaseSpecialTokens: [String: Int]
 
     init(net: NFKMLXLanguageNet, tokenizer: NFKTokenizer?, identifier: String,
          options: NFKMLXGenerationOptions = NFKMLXGenerationOptions(),
@@ -397,7 +398,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         self.releaseURL = releaseURL
         self.releaseTemplate = releaseTemplate ?? releaseURL.flatMap(NFKMLXLanguage.releaseChatTemplate(inDirectory:))
         self.releaseStops = NFKMLXToolCalling.generationConfigStops(directoryURL: releaseURL)
-        self.releaseSpecialTokens = releaseURL.map(NFKMLXLanguage.specialTokenLiterals(inDirectory:)) ?? []
+        self.releaseSpecialTokens = releaseURL.map(NFKMLXLanguage.specialTokenIDs(inDirectory:)) ?? [:]
         super.init()
         lifecycle.setFreeHandler { [weak self] in
             self?.dropCaches()
@@ -667,21 +668,20 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         let (options, tokens, toolCallFormat) = try preparedPrompt(for: request, tokenizer: tokenizer)
         let (produced, cached) = try generate(tokens, options: options, conversation: Self.conversation(of: request),
                                               holder: holder)
-        let decode: ([Int]) -> String = { tokenizer.decode($0.map { NSNumber(value: $0) }) }
+        let reasoningFormat = Self.reasoningFormat(for: options)
+        let markers = (reasoningFormat.map { [$0.opening, $0.closing, $0.answerPrefix] } ?? []) + (toolCallFormat?.markers ?? [])
+        let decode = NFKMLXLanguage.replyDecoder(tokenizer,
+                                                 skipping: NFKMLXLanguage.skippedSpecialTokens(releaseSpecialTokens,
+                                                                                               keepingMarkers: markers))
         let reply = decode(produced)
 
-        let (reasoning, answer, reasoningTokens) = NFKMLXUsage.split(reply, format: Self.reasoningFormat(for: options),
+        let (reasoning, answer, reasoningTokens) = NFKMLXUsage.split(reply, format: reasoningFormat,
                                                                      produced: produced, decode: decode)
 
         var outputs = NFKMLXToolCalling.outputs(answer: answer, reasoning: reasoning, request: request,
                                                 format: toolCallFormat, source: identifier)
         if !reasoning.isEmpty {
             outputs[NFKOutputReasoning] = reasoning
-        }
-        for key in [NFKOutputText, NFKOutputReasoning] {
-            if let text = outputs[key] as? String {
-                outputs[key] = NFKMLXLanguage.removingSpecialTokens(releaseSpecialTokens, from: text)
-            }
         }
         outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: tokens.count,
                                                       cachedTokens: cached,
@@ -841,11 +841,6 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         var options = requested
         if let tokenizer = holder.tokenizer {
             options.constraint = constraint(for: requested, tokenizer: tokenizer, holder: holder)
-            // A release names its end-of-sequence token; stopping there is what every caller expects
-            // of a language model, so it is the default stop when the request names none.
-            if options.stopTokens.isEmpty, tokenizer.eosTokenId >= 0 {
-                options.stopTokens = [tokenizer.eosTokenId]
-            }
         }
         var cache: NFKMLXPromptCache?
         if let conversation {
@@ -2151,25 +2146,39 @@ public final class NFKMLXLanguage: NSObject {
         return (literals, endToken)
     }
 
-    /// The literals of the tokens a release marks special (`"special": true` in `tokenizer.json`'s
-    /// `added_tokens` or `tokenizer_config.json`'s `added_tokens_decoder`), longest first.
-    static func specialTokenLiterals(inDirectory directory: URL) -> [String] {
-        func entries(_ name: String, _ key: String) -> [[String: Any]] {
-            guard let data = try? Data(contentsOf: directory.appendingPathComponent(name)),
-                  let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return [] }
-            if let list = json[key] as? [[String: Any]] { return list }
-            return (json[key] as? [String: [String: Any]]).map { Array($0.values) } ?? []
+    /// The tokens a release marks special (`"special": true` in `tokenizer.json`'s `added_tokens` or
+    /// `tokenizer_config.json`'s `added_tokens_decoder`), each literal's id.
+    static func specialTokenIDs(inDirectory directory: URL) -> [String: Int] {
+        func object(_ name: String) -> [String: Any]? {
+            guard let data = try? Data(contentsOf: directory.appendingPathComponent(name)) else { return nil }
+            return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
         }
-        let literals = (entries("tokenizer.json", "added_tokens") + entries("tokenizer_config.json", "added_tokens_decoder"))
-            .filter { ($0["special"] as? Bool) == true }
-            .compactMap { $0["content"] as? String }
-            .filter { !$0.isEmpty }
-        return Set(literals).sorted { $0.count != $1.count ? $0.count > $1.count : $0 < $1 }
+        var specials = [String: Int]()
+        for entry in object("tokenizer.json")?["added_tokens"] as? [[String: Any]] ?? []
+        where (entry["special"] as? Bool) == true {
+            if let content = entry["content"] as? String, let id = (entry["id"] as? NSNumber)?.intValue {
+                specials[content] = id
+            }
+        }
+        for (key, entry) in object("tokenizer_config.json")?["added_tokens_decoder"] as? [String: [String: Any]] ?? [:]
+        where (entry["special"] as? Bool) == true {
+            if let content = entry["content"] as? String, let id = Int(key) {
+                specials[content] = id
+            }
+        }
+        return specials
     }
 
-    /// `text` without the special-token literals, as the reference decodes with `skip_special_tokens`.
-    static func removingSpecialTokens(_ literals: [String], from text: String) -> String {
-        literals.reduce(text) { $0.replacingOccurrences(of: $1, with: "") }
+    /// The special tokens a reply decodes without, as the reference decodes with `skip_special_tokens`:
+    /// every one but those a marker the run's reasoning or tool-call reader finds contains, such as
+    /// harmony's `<|channel|>` or Mistral's `[TOOL_CALLS]`.
+    static func skippedSpecialTokens(_ specials: [String: Int], keepingMarkers markers: [String]) -> Set<Int> {
+        Set(specials.filter { literal, _ in !markers.contains { $0.contains(literal) } }.values)
+    }
+
+    /// Decodes ids to text without the `skipped` ones.
+    static func replyDecoder(_ tokenizer: NFKTokenizer, skipping skipped: Set<Int>) -> ([Int]) -> String {
+        { ids in tokenizer.decode(ids.filter { !skipped.contains($0) }.map { NSNumber(value: $0) }) }
     }
 
     /// The Objective-C entry: builds from a release directory, reading its `config.json`, tokenizer,

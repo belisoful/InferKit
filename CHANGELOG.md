@@ -1453,9 +1453,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - A catalog language release downloads its `generation_config.json`. The backend ends every request on the
   ids its `eos_token_id` lists, with the tokenizer's `eos_token`, as the reference's `generate` does. Qwen3
   ends on `<|endoftext|>` as well as `<|im_end|>`. Before, only a tool request read the file.
-- `NFKOutputText` and `NFKOutputReasoning` leave out the tokens the release marks special, as the reference
-  decodes with `skip_special_tokens`. Added tokens that are not special, such as `</think>` and `<tool_call>`,
-  stay.
+- A reply decodes without the token ids the release marks special, as the reference decodes with
+  `skip_special_tokens`, so `NFKOutputText`, `NFKOutputReasoning`, and `NFKOutputStructured` read the same text.
+  The tokens a run's reasoning or tool-call reader finds stay: harmony's channel markers for gpt-oss, and
+  Mistral's `[TOOL_CALLS]`. Added tokens that are not special, such as `</think>` and `<tool_call>`, stay, and so
+  does a special token's literal that ordinary tokens spell.
+- gpt-oss run without a reasoning format (a raw prompt, or the format `none`) answers its channels' text without
+  the `<|channel|>` and `<|message|>` markers, as the reference's decode gives it: `analysis…assistantfinal…`.
 
 #### Zero-DCE++ fine-tunes as its training script trains it
 

@@ -84,6 +84,23 @@ public final class NFKMLXToolCallFormat: NSObject, @unchecked Sendable {
 
     public override var hash: Int { name.hash }
 
+    /// The marker text the format's reader finds in a reply, which a reply keeps where the release marks
+    /// a marker's token special.
+    var markers: [String] {
+        switch self {
+        case .hermes, .qwenXML: return ["<tool_call>", "</tool_call>"]
+        case .gemma: return ["<|tool_call>", "<tool_call|>", "<|\"|>"]
+        case .harmony: return ["<|start|>", "<|channel|>", "<|message|>", "<|constrain|>", "<|end|>", "<|call|>", "<|return|>"]
+        case .deepSeek: return ["<｜tool▁calls▁begin｜>", "<｜tool▁call▁begin｜>", "<｜tool▁sep｜>", "<｜tool▁call▁end｜>",
+                                "<｜tool▁calls▁end｜>"]
+        case .mistral: return ["[TOOL_CALLS]", "[ARGS]", "[CALL_ID]"]
+        case .granite: return ["<|tool_call|>"]
+        case .llama: return ["<|python_tag|>"]
+        case .nemotron: return ["<TOOLCALL>", "</TOOLCALL>"]
+        default: return []
+        }
+    }
+
     // MARK: Reading calls
 
     /// One call read from a reply: the tool's name and its arguments, an `NFKJinjaOrderedObject` in

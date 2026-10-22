@@ -389,7 +389,7 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         options.temperature = 0
         options.maxTokens = 4
         let first = try XCTUnwrap(net.generate(prompt: tokenizer.encode("hello").map(\.intValue), options: options).first)
-        try JSONSerialization.data(withJSONObject: ["eos_token_id": [first]])
+        try JSONSerialization.data(withJSONObject: ["eos_token_id": first])
             .write(to: directory.appendingPathComponent("generation_config.json"))
         let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "hello"],
                                           parameters: [NFKParameterTemperature: 0, NFKParameterMaxTokens: 4])
@@ -402,25 +402,48 @@ final class NFKMLXLanguageModelTests: XCTestCase {
                        "without the release's generation config the run reaches its limit")
         XCTAssertEqual(try outputTokens(NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: "tiny",
                                                               releaseURL: directory)), 0)
+        var chosen = NFKMLXGenerationOptions()
+        chosen.stopTokens = [-1]
+        XCTAssertEqual(try outputTokens(NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: "tiny",
+                                                              options: chosen, releaseURL: directory)), 4,
+                       "stop tokens the caller chose replace the release's")
     }
 
-    /// The text leaves out the tokens the release marks special, as the reference decodes with
-    /// `skip_special_tokens`, and keeps the added tokens that are not special.
-    func testTheReleasesSpecialTokensAreLeftOutOfTheText() throws {
+    /// A reply decodes without the tokens the release marks special, as the reference decodes with
+    /// `skip_special_tokens`, except those a reasoning or tool-call marker holds. Text that ordinary
+    /// tokens spell stays.
+    func testAReplySkipsTheReleasesSpecialTokensByID() throws {
         let directory = try releaseDirectory()
         let decoder: [String: Any] = ["151643": ["content": "<|endoftext|>", "special": true],
                                       "151645": ["content": "<|im_end|>", "special": true],
                                       "151668": ["content": "</think>", "special": false]]
         try JSONSerialization.data(withJSONObject: ["added_tokens_decoder": decoder])
             .write(to: directory.appendingPathComponent("tokenizer_config.json"))
-        let added: [[String: Any]] = [["id": 151644, "content": "<|im_start|>", "special": true]]
+        let added: [[String: Any]] = [["id": 200005, "content": "<|channel|>", "special": true]]
         try JSONSerialization.data(withJSONObject: ["added_tokens": added])
             .write(to: directory.appendingPathComponent("tokenizer.json"))
 
-        let literals = NFKMLXLanguage.specialTokenLiterals(inDirectory: directory)
-        XCTAssertEqual(Set(literals), ["<|endoftext|>", "<|im_end|>", "<|im_start|>"])
-        XCTAssertEqual(NFKMLXLanguage.removingSpecialTokens(literals, from: "<|endoftext|>Done.<|im_end|>\n</think>"),
-                       "Done.\n</think>")
+        let specials = NFKMLXLanguage.specialTokenIDs(inDirectory: directory)
+        XCTAssertEqual(specials, ["<|endoftext|>": 151643, "<|im_end|>": 151645, "<|channel|>": 200005])
+        let qwen = NFKMLXReasoningFormat.thinkTags
+        XCTAssertEqual(NFKMLXLanguage.skippedSpecialTokens(specials, keepingMarkers: [qwen.opening, qwen.closing]
+                                                            + NFKMLXToolCallFormat.hermes.markers),
+                       [151643, 151645, 200005])
+        let harmony = NFKMLXReasoningFormat.harmonyChannels
+        XCTAssertEqual(NFKMLXLanguage.skippedSpecialTokens(specials, keepingMarkers: [harmony.opening, harmony.closing,
+                                                                                      harmony.answerPrefix]),
+                       [151643, 151645], "harmony's reader reads <|channel|>")
+
+        let vocabulary: [String: Int] = ["<": 0, "|": 1, "end": 2, ">": 3, "ok": 4]
+        try JSONSerialization.data(withJSONObject: vocabulary).write(to: directory.appendingPathComponent("vocab.json"))
+        try "#version: 0.2\n".write(to: directory.appendingPathComponent("merges.txt"), atomically: true, encoding: .utf8)
+        let tokenizer = try NFKTokenizer(forManifest: ["tokenizer": ["type": "bpe-bytelevel",
+                                                                     "specialTokens": ["<|im_end|>": 5]]],
+                                         directory: directory)
+        let decode = NFKMLXLanguage.replyDecoder(tokenizer, skipping: [5])
+        XCTAssertEqual(tokenizer.decode([4, 5].map { NSNumber(value: $0) }), "ok<|im_end|>")
+        XCTAssertEqual(decode([4, 5]), "ok")
+        XCTAssertEqual(decode([0, 1, 2, 1, 3, 4]), "<|end|>ok", "the literal spelled by ordinary tokens stays")
     }
 
     func testAHandlerCanStopGeneration() throws {
