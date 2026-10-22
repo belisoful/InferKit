@@ -69,6 +69,23 @@ NS_ASSUME_NONNULL_BEGIN
 /*! Writes the Standard MIDI File to a URL. Returns NO and fills error when the write fails. */
 - (BOOL)writeToURL:(NSURL *)url error:(NSError **)error;
 
+/*!
+	@method     sequenceWithStandardMIDIFileData:error:
+	@abstract   Reads a format-0 or format-1 Standard MIDI File into a sequence.
+	@discussion Note times follow the file's whole tempo map. The sequence takes the file's first tempo
+				(120 BPM when it states none), its first time signature (4/4 when it states none), and its
+				resolution. Each note takes the program its channel last changed to before it starts, and a
+				note on channel 10 is percussion. A note the file never ends ends at its track's end.
+				Pitch-wheel events are not read, so every note's pitchBend is nil. A format-2 file, a file
+				timed in SMPTE frames, and a truncated or malformed file fail with
+				NSFileReadCorruptFileError in NSCocoaErrorDomain. Introduced in InferKit 0.4.0.
+*/
++ (nullable instancetype)sequenceWithStandardMIDIFileData:(NSData *)data error:(NSError **)error;
+
+/*! Reads the Standard MIDI File at url, as sequenceWithStandardMIDIFileData:error: reads its bytes.
+	Introduced in InferKit 0.4.0. */
++ (nullable instancetype)sequenceWithContentsOfURL:(NSURL *)url error:(NSError **)error;
+
 @end
 
 NS_ASSUME_NONNULL_END

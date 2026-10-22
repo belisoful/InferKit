@@ -49,6 +49,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - The delegate reports such a run with `NFKServerRunRouteInProcess` as its route and an empty client
   address.
 
+#### Values as JSON and files
+
+- `NFKValueCoding` reads and writes requests, results, and single values in the native route's tagged
+  JSON. The inline form carries every value in the JSON. The file form (`initWithDirectoryURL:`) writes
+  images as PNGs that keep every byte, PCM as WAV, audio and video files as themselves, a MIDI sequence
+  beside a Standard MIDI File of it, and large data and arrays as `.bin` and NumPy `.npy` files, named
+  after their keys and read back in place.
+- `valueOfType:fromFileURL:error:` and `valueOfType:fromJSONValue:error:` turn a file or a JSON value into
+  what a model port of an `NFKModelValueType` takes.
+- `+[NFKMIDISequence sequenceWithStandardMIDIFileData:error:]` and `sequenceWithContentsOfURL:error:` read
+  a format-0 or format-1 Standard MIDI File, following its tempo map.
+
 #### Admission makes room for a build
 
 - `NFKInferenceServer` admits each hosted model's build against `admissionMemoryBudget`, or a smaller

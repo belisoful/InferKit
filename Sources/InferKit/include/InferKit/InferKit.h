@@ -73,6 +73,7 @@
 #import <InferKit/NFKRemoteSpeechBackend.h>
 #import <InferKit/NFKRemoteImageBackend.h>
 #import <InferKit/NFKImageCoding.h>
+#import <InferKit/NFKValueCoding.h>
 #import <InferKit/NFKVideoSampling.h>
 #import <InferKit/NFKRemoteVideoBackend.h>
 #import <InferKit/NFKRemoteReranker.h>

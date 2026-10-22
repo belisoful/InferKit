@@ -6,6 +6,8 @@
 #import "NFKInferenceWireCoding.h"
 #import "NFKRemoteMediaSupport.h"
 #import "NFKWireValueObjects.h"
+#import "NFKValueFiles.h"
+#include <copyfile.h>
 #import <InferKit/NFKAudioAsset.h>
 #import <InferKit/NFKVideoAsset.h>
 #import <InferKit/NFKImageCoding.h>
@@ -51,6 +53,13 @@ static BOOL NFKWireWholeNumber(id value, unsigned long long *outValue)
 	}
 	*outValue = (unsigned long long)number;
 	return YES;
+}
+
+/*! Whether a multi-array's elements are floating point. A data type carries its kind above its low byte,
+	which holds the element's width in bits. */
+static BOOL NFKWireMultiArrayIsFloating(MLMultiArrayDataType dataType)
+{
+	return (dataType & ~0xFF) == (MLMultiArrayDataTypeFloat32 & ~0xFF);
 }
 
 /*! The first length bytes of data, sharing its storage; the slice keeps data alive. */
@@ -345,6 +354,9 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 		}
 		return @{ NFKWireTag: @"dictionary", @"value": encoded };
 	}
+	if ([value isKindOfClass:NSData.class] && [self filesLength:[value length]]) {
+		return [self fileEntryAs:@"data" fields:@{} data:value extension:@"bin" key:key error:outError];
+	}
 	if ([value isKindOfClass:NSData.class] && [self attachesLength:[value length]]) {
 		NSData *data = value;
 		return [self attachmentEntryAs:@"data" length:data.length fields:@{} key:key error:outError fill:^(uint8_t *region) {
@@ -387,6 +399,16 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 							   : [self failForKey:key reason:@"a Core ML feature value of this type has no wire form" error:outError];
 	}
 	NSDictionary *valueObject = self.encodesValueObjectsAsJSON ? NFKWireJSONForValueObject(value) : nil;
+	if (valueObject != nil && self.fileDirectoryURL != nil && [value isKindOfClass:NFKMIDISequence.class]) {
+		NSDictionary *standardFile = [self fileEntryAs:@"midiSequence" fields:@{} data:[value standardMIDIFileData] extension:@"mid"
+												   key:key error:outError];
+		if (standardFile == nil) {
+			return nil;
+		}
+		NSMutableDictionary *withFile = [valueObject mutableCopy];
+		withFile[@"path"] = standardFile[@"path"];
+		return withFile;
+	}
 	if (valueObject != nil) {
 		return valueObject;
 	}
@@ -408,6 +430,9 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 			return [self failForKey:key reason:@"the image could not be encoded as PNG" error:outError];
 		}
 		NSString *tag = typeID == CGImageGetTypeID() ? @"cgImage" : @"image";
+		if (self.fileDirectoryURL != nil) {
+			return [self fileEntryAs:tag fields:@{} data:png extension:@"png" key:key error:outError];
+		}
 		if ([self attachesLength:png.length]) {
 			return [self attachmentEntryAs:tag length:png.length fields:@{} key:key error:outError fill:^(uint8_t *region) {
 				memcpy(region, png.bytes, png.length);
@@ -512,6 +537,10 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 		}
 	}];
 	NSString *tag = singles ? @"float32Array" : @"float64Array";
+	if ([self filesLength:packed.length]) {
+		NSData *file = NFKValueFileNPYData(packed, singles ? @"<f4" : @"<f8", @[ @(array.count) ]);
+		return [self fileEntryAs:tag fields:@{} data:file extension:@"npy" key:key error:outError];
+	}
 	if ([self attachesLength:packed.length]) {
 		return [self attachmentEntryAs:tag length:packed.length fields:@{ @"count": @(array.count) } key:key error:outError
 								  fill:^(uint8_t *region) {
@@ -540,6 +569,9 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 	if (url == nil) {
 		return entry;
 	}
+	if (self.fileDirectoryURL != nil) {
+		return [self directoryEntryForFileURL:url key:key error:outError];
+	}
 	if (self.attachmentSink != nil) {
 		return [self referenceEntryForFileURL:url key:key error:outError];
 	}
@@ -552,6 +584,25 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 	entry[@"name"] = url.lastPathComponent;
 	entry[@"base64"] = [bytes base64EncodedStringWithOptions:0];
 	return entry;
+}
+
+/*! A file in the file form: its name and its path in the directory, copied in when it lies outside. */
+- (nullable NSMutableDictionary *)directoryEntryForFileURL:(NSURL *)url key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	NSString *relative = NFKValueFileRelativePath(self.fileDirectoryURL, url);
+	if (relative == nil) {
+		NSError *copyError = nil;
+		NSString *stem = url.lastPathComponent.stringByDeletingPathExtension;
+		NSURL *copy = NFKValueFileCreate(self.fileDirectoryURL, stem.length > 0 ? stem : key,
+										 NFKServedFileExtension(url.pathExtension), &copyError);
+		if (copy == nil || copyfile(url.fileSystemRepresentation, copy.fileSystemRepresentation, NULL, COPYFILE_DATA) != 0) {
+			NSString *reason = copyError.localizedDescription ?: [NSString stringWithFormat:@"%s", strerror(errno)];
+			return [self failForKey:key reason:[NSString stringWithFormat:@"the file %@ could not be copied into the value directory: %@",
+												url.lastPathComponent, reason] error:outError];
+		}
+		relative = copy.lastPathComponent;
+	}
+	return [@{ @"name": url.lastPathComponent, @"path": relative } mutableCopy];
 }
 
 /*! A file in the attachment mode: its path and name, and the index of an open descriptor when the sink
@@ -622,6 +673,10 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 	}
 	BOOL planar = CVPixelBufferIsPlanar(buffer);
 	size_t planeCount = planar ? CVPixelBufferGetPlaneCount(buffer) : 1;
+	if (self.fileDirectoryURL != nil) {
+		CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
+		return [self fileEntryForPixelBuffer:buffer planeCount:planeCount key:key error:outError];
+	}
 	if (self.attachmentSink != nil) {
 		NSError *attachError = nil;
 		id attached = [self attachedEntryForLockedPixelBuffer:buffer planeCount:planeCount key:key error:&attachError];
@@ -647,6 +702,43 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 			  @"width": @(CVPixelBufferGetWidth(buffer)),
 			  @"height": @(CVPixelBufferGetHeight(buffer)),
 			  @"planes": planes };
+}
+
+/*! A pixel buffer in the file form: a PNG of its bytes for a format PNG holds exactly, else a .bin of its
+	planes at aligned offsets, rows padded as the buffer holds them. */
+- (nullable id)fileEntryForPixelBuffer:(CVPixelBufferRef)buffer planeCount:(size_t)planeCount key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	OSType format = CVPixelBufferGetPixelFormatType(buffer);
+	NSMutableDictionary *fields = [@{ @"format": @(format), @"width": @(CVPixelBufferGetWidth(buffer)),
+									  @"height": @(CVPixelBufferGetHeight(buffer)) } mutableCopy];
+	if (NFKValueFilePNGHoldsPixelFormat(format)) {
+		NSData *png = NFKValueFilePNGData(buffer);
+		return png != nil ? [self fileEntryAs:@"pixelBuffer" fields:fields data:png extension:@"png" key:key error:outError]
+						  : [self failForKey:key reason:@"the pixel buffer could not be encoded as PNG" error:outError];
+	}
+	if (CVPixelBufferLockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly) != kCVReturnSuccess) {
+		return [self failForKey:key reason:@"the pixel buffer could not be locked for reading" error:outError];
+	}
+	BOOL planar = CVPixelBufferIsPlanar(buffer);
+	NSMutableArray<NSDictionary *> *planes = [NSMutableArray arrayWithCapacity:planeCount];
+	NSUInteger length = 0;
+	for (size_t plane = 0; plane < planeCount; plane++) {
+		size_t bytesPerRow = planar ? CVPixelBufferGetBytesPerRowOfPlane(buffer, plane) : CVPixelBufferGetBytesPerRow(buffer);
+		size_t rows = planar ? CVPixelBufferGetHeightOfPlane(buffer, plane) : CVPixelBufferGetHeight(buffer);
+		length = NFKWireAlign(length);
+		[planes addObject:@{ @"offset": @(length), @"bytesPerRow": @(bytesPerRow), @"rows": @(rows) }];
+		length += bytesPerRow * rows;
+	}
+	NSMutableData *bytes = [NSMutableData dataWithLength:length];
+	for (size_t plane = 0; plane < planeCount; plane++) {
+		const void *base = planar ? CVPixelBufferGetBaseAddressOfPlane(buffer, plane) : CVPixelBufferGetBaseAddress(buffer);
+		NSDictionary *layout = planes[plane];
+		memcpy((uint8_t *)bytes.mutableBytes + [layout[@"offset"] unsignedLongValue], base,
+			   [layout[@"bytesPerRow"] unsignedLongValue] * [layout[@"rows"] unsignedLongValue]);
+	}
+	CVPixelBufferUnlockBaseAddress(buffer, kCVPixelBufferLock_ReadOnly);
+	fields[@"planes"] = planes;
+	return [self fileEntryAs:@"pixelBuffer" fields:fields data:bytes extension:@"bin" key:key error:outError];
 }
 
 /*! A locked pixel buffer as one attachment holding every plane at an aligned offset, rows padded as the
@@ -688,6 +780,13 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 {
 	NSInteger elementSize = (array.dataType & 0xFF) / 8;
 	NSUInteger length = (NSUInteger)(array.count * elementSize);
+	NSString *description = NFKValueFileNPYDescription(NFKWireMultiArrayIsFloating(array.dataType), (NSUInteger)elementSize);
+	if ([self filesLength:length] && description != nil) {
+		NSMutableData *elements = [NSMutableData dataWithLength:length];
+		NFKWireCopyMultiArrayElements(array.dataPointer, array.shape, array.strides, elements.mutableBytes, elementSize, YES);
+		return [self fileEntryAs:@"multiArray" fields:@{ @"dataType": @(array.dataType), @"shape": array.shape }
+							data:NFKValueFileNPYData(elements, description, array.shape) extension:@"npy" key:key error:outError];
+	}
 	if ([self attachesLength:length]) {
 		return [self attachmentEntryAs:@"multiArray" length:length fields:@{ @"dataType": @(array.dataType), @"shape": array.shape }
 								   key:key error:outError fill:^(uint8_t *region) {
@@ -780,6 +879,11 @@ static void NFKWireCopyMultiArrayElements(void *strided, NSArray<NSNumber *> *sh
 	}
 	const AudioBufferList *list = buffer.audioBufferList;
 	NSUInteger length = (NSUInteger)buffer.frameLength * description->mBytesPerFrame;
+	if (self.fileDirectoryURL != nil && NFKValueFileWAVHoldsFormat(buffer.format)) {
+		NSData *wave = NFKValueFileWAVData(buffer, outError);
+		return wave != nil ? [self fileEntryAs:@"pcmBuffer" fields:[self fieldsForPCMBuffer:buffer] data:wave extension:@"wav" key:key error:outError]
+						   : nil;
+	}
 	if (self.attachmentSink != nil) {
 		NSError *attachError = nil;
 		id attached = [self attachedEntryForPCMBuffer:buffer frameBytes:length key:key error:&attachError];
@@ -857,7 +961,114 @@ static void NFKWireCopyMultiArrayElements(void *strided, NSArray<NSNumber *> *sh
 
 - (BOOL)attachesLength:(NSUInteger)length
 {
-	return self.attachmentSink != nil && length > self.inlineByteLimit;
+	return self.attachmentSink != nil && self.fileDirectoryURL == nil && length > self.inlineByteLimit;
+}
+
+- (BOOL)filesLength:(NSUInteger)length
+{
+	return self.fileDirectoryURL != nil && length > self.inlineByteLimit;
+}
+
+/*! A file-form entry: data written to a new file named after key with extension in the directory, tagged
+	tag with fields beside its relative path. */
+- (nullable NSDictionary *)fileEntryAs:(NSString *)tag fields:(NSDictionary *)fields data:(NSData *)data extension:(NSString *)extension
+								   key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	NSError *writeError = nil;
+	NSURL *url = NFKValueFileCreate(self.fileDirectoryURL, key, extension, &writeError);
+	if (url == nil || ![data writeToURL:url options:0 error:&writeError]) {
+		return [self failForKey:key reason:writeError.localizedDescription ?: @"the value's file could not be written" error:outError];
+	}
+	NSMutableDictionary *entry = [NSMutableDictionary dictionaryWithDictionary:fields];
+	entry[NFKWireTag] = tag;
+	entry[@"path"] = url.lastPathComponent;
+	return entry;
+}
+
+/*! A file-form entry's value: the file its path names inside the directory, read as its tag says. */
+- (nullable id)fileFormValueForTag:(NSString *)tag entry:(NSDictionary *)entry key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	NSError *resolveError = nil;
+	NSURL *url = NFKValueFileResolve(self.fileDirectoryURL, entry[@"path"], &resolveError);
+	if (url == nil) {
+		return [self failForKey:key reason:resolveError.localizedDescription error:outError];
+	}
+	if ([tag isEqualToString:@"file"] || [tag isEqualToString:@"audio"] || [tag isEqualToString:@"video"]) {
+		return [self fileValueForTag:tag entry:entry fileURL:url key:key error:outError];
+	}
+	NSError *readError = nil;
+	NSData *data = [NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:&readError];
+	if (data == nil) {
+		return [self failForKey:key reason:readError.localizedDescription ?: @"the value's file could not be read" error:outError];
+	}
+	if ([tag isEqualToString:@"data"]) {
+		return data;
+	}
+	if ([tag isEqualToString:@"cgImage"]) {
+		return [self CGImageFromData:data key:key error:outError];
+	}
+	if ([tag isEqualToString:@"image"]) {
+		CVPixelBufferRef pixelBuffer = [NFKImageCoding pixelBufferWithImageData:data];
+		return pixelBuffer != NULL ? (__bridge_transfer id)pixelBuffer : [self failForKey:key reason:@"the image could not be decoded" error:outError];
+	}
+	if ([tag isEqualToString:@"pixelBuffer"]) {
+		return [self pixelBufferFromFileData:data entry:entry pathExtension:url.pathExtension key:key error:outError];
+	}
+	if ([tag isEqualToString:@"pcmBuffer"]) {
+		AudioStreamBasicDescription description = {0};
+		AVAudioFormat *format = [self PCMFormatFromEntry:entry description:&description];
+		NSError *waveError = nil;
+		AVAudioPCMBuffer *buffer = format != nil ? NFKValueFilePCMBufferFromWAV(data, format, &waveError) : nil;
+		if (buffer == nil || buffer.frameLength != (AVAudioFrameCount)[self doubleIn:entry forKey:@"frameLength"]) {
+			return [self failForKey:key reason:waveError.localizedDescription ?: @"the WAV file does not hold the frames its entry names"
+							  error:outError];
+		}
+		return buffer;
+	}
+	NSData *elements = nil;
+	NSString *description = nil;
+	NSArray<NSNumber *> *shape = nil;
+	NSError *arrayError = nil;
+	if (!NFKValueFileReadNPY(data, &elements, &description, &shape, &arrayError)) {
+		return [self failForKey:key reason:arrayError.localizedDescription error:outError];
+	}
+	if ([tag isEqualToString:@"float32Array"] || [tag isEqualToString:@"float64Array"]) {
+		BOOL singles = [tag isEqualToString:@"float32Array"];
+		if (shape.count != 1 || ![description isEqualToString:singles ? @"<f4" : @"<f8"]) {
+			return [self failForKey:key reason:@"the .npy file is not a vector of the entry's floats" error:outError];
+		}
+		return [self floatingArrayFromBytes:elements singles:singles key:key error:outError];
+	}
+	if ([tag isEqualToString:@"multiArray"]) {
+		MLMultiArrayDataType dataType = (MLMultiArrayDataType)[self doubleIn:entry forKey:@"dataType"];
+		NSString *expected = NFKValueFileNPYDescription(NFKWireMultiArrayIsFloating(dataType), (NSUInteger)(dataType & 0xFF) / 8);
+		if (![description isEqualToString:expected] || ![shape isEqualToArray:entry[@"shape"]]) {
+			return [self failForKey:key reason:@"the .npy file's type or shape is not the entry's" error:outError];
+		}
+		return [self multiArrayFromEntry:entry bytes:elements key:key error:outError];
+	}
+	return [self failForKey:key reason:[NSString stringWithFormat:@"the wire tag \"%@\" names no file", tag] error:outError];
+}
+
+/*! A file-form pixel buffer: a PNG read into the entry's format, or a .bin of its planes. */
+- (nullable id)pixelBufferFromFileData:(NSData *)data entry:(NSDictionary *)entry pathExtension:(NSString *)extension
+								   key:(NSString *)key error:(NSError * _Nullable *)outError
+{
+	if (![extension.lowercaseString isEqualToString:@"png"]) {
+		return [self pixelBufferWrappingData:data entry:entry key:key error:outError];
+	}
+	OSType format = (OSType)[self doubleIn:entry forKey:@"format"];
+	NSError *imageError = nil;
+	CVPixelBufferRef buffer = NFKValueFilePNGHoldsPixelFormat(format) ? NFKValueFilePixelBufferFromPNG(data, format, &imageError) : NULL;
+	if (buffer == NULL) {
+		return [self failForKey:key reason:imageError.localizedDescription ?: @"a PNG holds no pixel buffer of the entry's format" error:outError];
+	}
+	id owned = (__bridge_transfer id)buffer;
+	if (CVPixelBufferGetWidth(buffer) != (size_t)[self doubleIn:entry forKey:@"width"]
+		|| CVPixelBufferGetHeight(buffer) != (size_t)[self doubleIn:entry forKey:@"height"]) {
+		return [self failForKey:key reason:@"the PNG's dimensions are not the entry's" error:outError];
+	}
+	return owned;
 }
 
 /*! An attachment entry: a region of length bytes that fill writes, tagged "buffer" with kind under "as"
@@ -1186,6 +1397,9 @@ static AVAudioPCMBuffer * _Nullable NFKWirePCMBufferCopyingList(AVAudioFormat *f
 	if ([tag isEqualToString:@"buffer"]) {
 		return [self attachedValueFromEntry:entry key:key error:outError];
 	}
+	if (self.fileDirectoryURL != nil && [entry[@"path"] isKindOfClass:NSString.class] && entry[@"base64"] == nil) {
+		return [self fileFormValueForTag:tag entry:entry key:key error:outError];
+	}
 	NSData *bytes = [self bytesIn:entry forKey:@"base64"];
 	if ([tag isEqualToString:@"data"] && bytes != nil) {
 		return bytes;
@@ -1327,6 +1541,13 @@ static AVAudioPCMBuffer * _Nullable NFKWirePCMBufferCopyingList(AVAudioFormat *f
 			return nil;
 		}
 	}
+	return [self fileValueForTag:tag entry:entry fileURL:fileURL key:key error:outError];
+}
+
+/*! A file, audio, or video value over fileURL with the entry's metadata. */
+- (nullable id)fileValueForTag:(NSString *)tag entry:(NSDictionary *)entry fileURL:(nullable NSURL *)fileURL
+						   key:(NSString *)key error:(NSError * _Nullable *)outError
+{
 	if ([tag isEqualToString:@"file"]) {
 		return fileURL ?: [self failForKey:key reason:@"a file entry carries no bytes" error:outError];
 	}

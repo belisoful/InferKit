@@ -31,6 +31,154 @@ typedef NS_ENUM(NSInteger, NFKMIDIEventOrder) {
 @implementation NFKMIDIEvent
 @end
 
+#pragma mark - Reading a Standard MIDI File
+
+/*! One event of a file being read, at its absolute tick. kind orders events at the same tick: a tempo,
+	then a program change, then a note's end, then a note's start. */
+typedef NS_ENUM(NSInteger, NFKMIDIReadKind) {
+	NFKMIDIReadKindTempo = 0,
+	NFKMIDIReadKindProgram,
+	NFKMIDIReadKindNoteOff,
+	NFKMIDIReadKindNoteOn,
+};
+
+@interface NFKMIDIReadEvent : NSObject
+@property (nonatomic, assign) uint64_t tick;
+@property (nonatomic, assign) NFKMIDIReadKind kind;
+@property (nonatomic, assign) NSUInteger sequenceIndex;
+@property (nonatomic, assign) uint8_t channel;
+@property (nonatomic, assign) uint32_t value;
+@property (nonatomic, assign) uint8_t velocity;
+@end
+
+@implementation NFKMIDIReadEvent
+@end
+
+static BOOL NFKMIDIReadFail(NSError **error, NSString *reason)
+{
+	if (error != NULL) {
+		*error = [NSError errorWithDomain:NSCocoaErrorDomain code:NSFileReadCorruptFileError
+								 userInfo:@{ NSLocalizedDescriptionKey: [NSString stringWithFormat:@"The MIDI file cannot be read: %@.", reason] }];
+	}
+	return NO;
+}
+
+/*! Reads a variable-length quantity at *offset, advancing it, or returns NO past end or past four bytes. */
+static BOOL NFKMIDIReadVariableLength(const uint8_t *bytes, NSUInteger end, NSUInteger *offset, uint32_t *outValue)
+{
+	uint32_t value = 0;
+	for (NSUInteger count = 0; count < 4; count++) {
+		if (*offset >= end) {
+			return NO;
+		}
+		uint8_t byte = bytes[(*offset)++];
+		value = (value << 7) | (byte & 0x7F);
+		if ((byte & 0x80) == 0) {
+			*outValue = value;
+			return YES;
+		}
+	}
+	return NO;
+}
+
+static uint32_t NFKMIDIReadUInt32(const uint8_t *bytes)
+{
+	return ((uint32_t)bytes[0] << 24) | ((uint32_t)bytes[1] << 16) | ((uint32_t)bytes[2] << 8) | bytes[3];
+}
+
+/*! Reads one track's events into events, with their absolute ticks, and its end tick into outEnd. Reads
+	the first time signature into signature when it is still unset. */
+static BOOL NFKMIDIReadTrack(const uint8_t *bytes, NSUInteger start, NSUInteger end, NSMutableArray<NFKMIDIReadEvent *> *events,
+							 uint64_t *outEnd, NSInteger signature[2], NSError **error)
+{
+	NSUInteger offset = start;
+	uint64_t tick = 0;
+	uint8_t status = 0;
+	while (offset < end) {
+		uint32_t delta = 0;
+		if (!NFKMIDIReadVariableLength(bytes, end, &offset, &delta) || offset >= end) {
+			return NFKMIDIReadFail(error, @"a track ends inside an event");
+		}
+		tick += delta;
+		uint8_t byte = bytes[offset];
+		if (byte & 0x80) {
+			status = byte;
+			offset += 1;
+		} else if (status == 0 || status >= 0xF0) {
+			return NFKMIDIReadFail(error, @"a data byte arrives with no running status");
+		}
+		if (status == 0xFF || status == 0xF0 || status == 0xF7) {
+			uint8_t type = 0;
+			if (status == 0xFF) {
+				if (offset >= end) {
+					return NFKMIDIReadFail(error, @"a meta event is cut short");
+				}
+				type = bytes[offset++];
+			}
+			uint32_t length = 0;
+			if (!NFKMIDIReadVariableLength(bytes, end, &offset, &length) || length > end - offset) {
+				return NFKMIDIReadFail(error, @"an event's length runs past its track");
+			}
+			if (status == 0xFF && type == 0x51 && length == 3) {
+				NFKMIDIReadEvent *tempo = [[NFKMIDIReadEvent alloc] init];
+				tempo.tick = tick;
+				tempo.kind = NFKMIDIReadKindTempo;
+				tempo.value = ((uint32_t)bytes[offset] << 16) | ((uint32_t)bytes[offset + 1] << 8) | bytes[offset + 2];
+				[events addObject:tempo];
+			} else if (status == 0xFF && type == 0x58 && length >= 2 && signature[0] == 0) {
+				signature[0] = bytes[offset];
+				signature[1] = bytes[offset + 1] < 8 ? (NSInteger)1 << bytes[offset + 1] : 4;
+			}
+			offset += length;
+			if (status == 0xFF && type == 0x2F) {
+				break;
+			}
+			// Meta and system exclusive events cancel the running status.
+			status = 0;
+			continue;
+		}
+		uint8_t command = status & 0xF0;
+		NSUInteger dataLength = (command == 0xC0 || command == 0xD0) ? 1 : 2;
+		if (status >= 0xF1 || dataLength > end - offset) {
+			return NFKMIDIReadFail(error, @"a channel event is cut short");
+		}
+		uint8_t first = bytes[offset] & 0x7F;
+		uint8_t second = dataLength == 2 ? (bytes[offset + 1] & 0x7F) : 0;
+		offset += dataLength;
+		if (command == 0x90 || command == 0x80 || command == 0xC0) {
+			NFKMIDIReadEvent *event = [[NFKMIDIReadEvent alloc] init];
+			event.tick = tick;
+			event.channel = status & 0x0F;
+			event.value = first;
+			event.velocity = second;
+			event.kind = command == 0xC0 ? NFKMIDIReadKindProgram
+				: (command == 0x90 && second > 0 ? NFKMIDIReadKindNoteOn : NFKMIDIReadKindNoteOff);
+			[events addObject:event];
+		}
+	}
+	*outEnd = tick;
+	return YES;
+}
+
+/*! The seconds at each tick under a tempo map of (tick, microseconds per quarter) pairs in tick order. */
+static double NFKMIDISecondsAtTick(uint64_t tick, NSArray<NFKMIDIReadEvent *> *tempos, double ticksPerQuarter)
+{
+	double seconds = 0;
+	uint64_t mark = 0;
+	double microsecondsPerQuarter = 500000;
+	for (NFKMIDIReadEvent *tempo in tempos) {
+		if (tempo.tick >= tick) {
+			break;
+		}
+		seconds += (double)(tempo.tick - mark) * microsecondsPerQuarter / ticksPerQuarter / 1e6;
+		mark = tempo.tick;
+		microsecondsPerQuarter = tempo.value > 0 ? tempo.value : microsecondsPerQuarter;
+	}
+	return seconds + (double)(tick - mark) * microsecondsPerQuarter / ticksPerQuarter / 1e6;
+}
+
+#pragma mark -
+
 @implementation NFKMIDISequence
 
 + (instancetype)sequenceWithNotes:(NSArray<NFKMIDINote *> *)notes
@@ -330,6 +478,130 @@ static void NFKMIDIAppendPitchBend(NSMutableArray<NFKMIDIEvent *> *events, uint3
 - (BOOL)writeToURL:(NSURL *)url error:(NSError **)error
 {
 	return [[self standardMIDIFileData] writeToURL:url options:NSDataWritingAtomic error:error];
+}
+
+#pragma mark Reading
+
++ (nullable instancetype)sequenceWithStandardMIDIFileData:(NSData *)data error:(NSError **)error
+{
+	const uint8_t *bytes = data.bytes;
+	NSUInteger length = data.length;
+	if (length < 14 || memcmp(bytes, "MThd", 4) != 0 || NFKMIDIReadUInt32(bytes + 4) < 6) {
+		NFKMIDIReadFail(error, @"it has no MThd header");
+		return nil;
+	}
+	NSUInteger headerLength = NFKMIDIReadUInt32(bytes + 4);
+	uint16_t format = (uint16_t)((bytes[8] << 8) | bytes[9]);
+	uint16_t division = (uint16_t)((bytes[12] << 8) | bytes[13]);
+	if (format > 1) {
+		NFKMIDIReadFail(error, @"a format-2 file holds independent patterns, not one performance");
+		return nil;
+	}
+	if ((division & 0x8000) != 0 || division == 0) {
+		NFKMIDIReadFail(error, @"it is timed in SMPTE frames or names no resolution");
+		return nil;
+	}
+	if (headerLength > length - 8) {
+		NFKMIDIReadFail(error, @"its header runs past the file");
+		return nil;
+	}
+	NSMutableArray<NFKMIDIReadEvent *> *events = [NSMutableArray array];
+	NSMutableArray<NSNumber *> *trackEnds = [NSMutableArray array];
+	NSMutableArray<NSNumber *> *eventTracks = [NSMutableArray array];
+	NSInteger signature[2] = { 0, 0 };
+	NSUInteger offset = 8 + headerLength;
+	while (offset + 8 <= length) {
+		NSUInteger chunkLength = NFKMIDIReadUInt32(bytes + offset + 4);
+		if (chunkLength > length - offset - 8) {
+			NFKMIDIReadFail(error, @"a chunk runs past the file");
+			return nil;
+		}
+		if (memcmp(bytes + offset, "MTrk", 4) == 0) {
+			NSUInteger before = events.count;
+			uint64_t end = 0;
+			if (!NFKMIDIReadTrack(bytes, offset + 8, offset + 8 + chunkLength, events, &end, signature, error)) {
+				return nil;
+			}
+			for (NSUInteger index = before; index < events.count; index++) {
+				[eventTracks addObject:@(trackEnds.count)];
+			}
+			[trackEnds addObject:@(end)];
+		}
+		offset += 8 + chunkLength;
+	}
+	[events enumerateObjectsUsingBlock:^(NFKMIDIReadEvent *event, NSUInteger index, BOOL *stop) {
+		event.sequenceIndex = index;
+	}];
+	NSArray<NFKMIDIReadEvent *> *ordered = [events sortedArrayUsingComparator:^NSComparisonResult(NFKMIDIReadEvent *left, NFKMIDIReadEvent *right) {
+		if (left.tick != right.tick) {
+			return left.tick < right.tick ? NSOrderedAscending : NSOrderedDescending;
+		}
+		if (left.kind != right.kind) {
+			return left.kind < right.kind ? NSOrderedAscending : NSOrderedDescending;
+		}
+		return left.sequenceIndex < right.sequenceIndex ? NSOrderedAscending : NSOrderedDescending;
+	}];
+	NSMutableArray<NFKMIDIReadEvent *> *tempos = [NSMutableArray array];
+	for (NFKMIDIReadEvent *event in ordered) {
+		if (event.kind == NFKMIDIReadKindTempo) {
+			[tempos addObject:event];
+		}
+	}
+	double ticksPerQuarter = division;
+	NSInteger programs[16] = { 0 };
+	NSMutableDictionary<NSNumber *, NSMutableArray<NFKMIDIReadEvent *> *> *sounding = [NSMutableDictionary dictionary];
+	NSMutableDictionary<NSNumber *, NSNumber *> *startPrograms = [NSMutableDictionary dictionary];
+	NSMutableArray<NFKMIDINote *> *notes = [NSMutableArray array];
+	void (^close)(NFKMIDIReadEvent *, uint64_t) = ^(NFKMIDIReadEvent *start, uint64_t endTick) {
+		NSInteger program = startPrograms[@(start.sequenceIndex)].integerValue;
+		[notes addObject:[[NFKMIDINote alloc] initWithPitch:start.value
+											   startSeconds:NFKMIDISecondsAtTick(start.tick, tempos, ticksPerQuarter)
+												 endSeconds:NFKMIDISecondsAtTick(endTick, tempos, ticksPerQuarter)
+												   velocity:start.velocity
+													program:program
+												 percussion:start.channel == NFKMIDIPercussionChannel
+												  pitchBend:nil]];
+	};
+	for (NFKMIDIReadEvent *event in ordered) {
+		NSNumber *voice = @((event.channel << 7) | (event.value & 0x7F));
+		switch (event.kind) {
+			case NFKMIDIReadKindTempo:
+				break;
+			case NFKMIDIReadKindProgram:
+				programs[event.channel] = event.value;
+				break;
+			case NFKMIDIReadKindNoteOn: {
+				NSMutableArray<NFKMIDIReadEvent *> *open = sounding[voice] ?: [NSMutableArray array];
+				sounding[voice] = open;
+				startPrograms[@(event.sequenceIndex)] = @(programs[event.channel]);
+				[open addObject:event];
+				break;
+			}
+			case NFKMIDIReadKindNoteOff: {
+				NFKMIDIReadEvent *start = sounding[voice].firstObject;
+				if (start != nil) {
+					[sounding[voice] removeObjectAtIndex:0];
+					close(start, event.tick);
+				}
+				break;
+			}
+		}
+	}
+	for (NSNumber *voice in sounding) {
+		for (NFKMIDIReadEvent *start in sounding[voice]) {
+			close(start, trackEnds[eventTracks[start.sequenceIndex].unsignedIntegerValue].unsignedLongLongValue);
+		}
+	}
+	NFKMIDIReadEvent *firstTempo = tempos.firstObject;
+	double tempoBPM = firstTempo != nil && firstTempo.value > 0 ? 60000000.0 / firstTempo.value : 120.0;
+	return [[self alloc] initWithNotes:notes tempoBPM:tempoBPM beatsPerBar:signature[0] > 0 ? signature[0] : 4
+							  beatUnit:signature[0] > 0 ? signature[1] : 4 ticksPerQuarterNote:division];
+}
+
++ (nullable instancetype)sequenceWithContentsOfURL:(NSURL *)url error:(NSError **)error
+{
+	NSData *data = [NSData dataWithContentsOfURL:url options:NSDataReadingMappedIfSafe error:error];
+	return data != nil ? [self sequenceWithStandardMIDIFileData:data error:error] : nil;
 }
 
 #pragma mark NSSecureCoding

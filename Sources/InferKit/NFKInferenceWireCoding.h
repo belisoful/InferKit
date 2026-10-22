@@ -107,6 +107,23 @@ NSString *NFKServedFileExtension(NSString * _Nullable extension);
 				- A file, audio, or video value → its tag with "path" and "name" in place of "base64",
 				  and "index" when the sink attaches an open descriptor of the file.
 				The decoder wraps each attachment's bytes without a copy where the value type allows.
+
+				The file form writes values into fileDirectoryURL as files a person or another program
+				opens, and names each by its path relative to that directory. It is on while
+				fileDirectoryURL is set, for encoding and decoding alike, and takes the place of the
+				attachment mode.
+				- pixelBuffer of 32BGRA, 32ARGB, or OneComponent8 → a PNG holding its bytes
+				  exactly; of any other format → a .bin of its planes at aligned offsets, as an attachment
+				  lays them out. cgImage and image → a PNG.
+				- pcmBuffer → a WAV of its frames, interleaved, beside its stream description, for 16- and
+				  32-bit integer and 32- and 64-bit float samples; other formats stay inline.
+				- file, audio, video → the file's path. A file outside the directory is copied in first.
+				- midiSequence → its JSON object, with "path" naming a Standard MIDI File of it beside the
+				  fields, which the decoder ignores.
+				- data, float32Array, float64Array, multiArray whose bytes exceed inlineByteLimit → a .bin
+				  of the bytes, or a NumPy .npy of the elements in row-major order.
+				Every file is named after its key, with "-2", "-3", … when the name is taken. The decoder
+				refuses an absolute path and a path that leaves the directory, through links included.
 */
 @interface NFKInferenceWireCoding : NSObject
 
@@ -121,7 +138,10 @@ NSString *NFKServedFileExtension(NSString * _Nullable extension);
 /*! The source that turns on the attachment mode for decoding, or nil. */
 @property (nonatomic, strong, nullable) id<NFKWireAttachmentSource> attachmentSource;
 
-/*! The largest value the attachment mode inlines, in bytes. Defaults to 65536. */
+/*! The directory that turns on the file form, or nil. */
+@property (nonatomic, copy, nullable) NSURL *fileDirectoryURL;
+
+/*! The largest value the attachment mode and the file form inline, in bytes. Defaults to 65536. */
 @property (nonatomic, assign) NSUInteger inlineByteLimit;
 
 /*! Writes InferKit's value classes (NFKDetection, NFKKeypoint, NFKClassification, NFKAudioSegment,

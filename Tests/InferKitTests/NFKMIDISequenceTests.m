@@ -490,4 +490,122 @@
 	XCTAssertNotEqualObjects(a, other, @"different notes are a different sequence");
 	XCTAssertEqual([a copy], a, @"immutable value copies to itself");
 }
+
+#pragma mark Reading a file
+
+- (void)testAWrittenFileReadsBackAsTheSequence
+{
+	NFKMIDINote *piano = [[NFKMIDINote alloc] initWithPitch:60 startSeconds:0.25 endSeconds:1.0
+												   velocity:90 program:0 percussion:NO pitchBend:nil];
+	NFKMIDINote *bass = [[NFKMIDINote alloc] initWithPitch:40 startSeconds:0.5 endSeconds:2.0
+												  velocity:70 program:33 percussion:NO pitchBend:nil];
+	NFKMIDINote *snare = [[NFKMIDINote alloc] initWithPitch:38 startSeconds:1.0 endSeconds:1.125
+												   velocity:110 program:0 percussion:YES pitchBend:nil];
+	NFKMIDISequence *written = [[NFKMIDISequence alloc] initWithNotes:@[ piano, bass, snare ] tempoBPM:90 beatsPerBar:3
+															 beatUnit:4 ticksPerQuarterNote:960];
+	NSError *error = nil;
+	NFKMIDISequence *read = [NFKMIDISequence sequenceWithStandardMIDIFileData:[written standardMIDIFileData] error:&error];
+	XCTAssertNotNil(read, @"%@", error);
+	XCTAssertEqualWithAccuracy(read.tempoBPM, 90, 1e-3);
+	XCTAssertEqual(read.beatsPerBar, 3);
+	XCTAssertEqual(read.beatUnit, 4);
+	XCTAssertEqual(read.ticksPerQuarterNote, 960);
+	XCTAssertEqual(read.notes.count, 3u);
+	// One tick at 90 BPM and 960 ticks per quarter note is 1/1440 of a second.
+	double tick = 60.0 / 90.0 / 960.0;
+	for (NSUInteger index = 0; index < 3; index++) {
+		NFKMIDINote *expected = written.notes[index];
+		NFKMIDINote *actual = read.notes[index];
+		XCTAssertEqual(actual.pitch, expected.pitch);
+		XCTAssertEqual(actual.velocity, expected.velocity);
+		XCTAssertEqual(actual.program, expected.isPercussion ? 0 : expected.program);
+		XCTAssertEqual(actual.isPercussion, expected.isPercussion);
+		XCTAssertEqualWithAccuracy(actual.startSeconds, expected.startSeconds, tick);
+		XCTAssertEqualWithAccuracy(actual.endSeconds, expected.endSeconds, tick);
+		XCTAssertNil(actual.pitchBend);
+	}
+}
+
+/*! A format-0 file of one track with tempo, running status, and a note-on of velocity 0 as its end. */
+- (NSData *)runningStatusFile
+{
+	const uint8_t bytes[] = {
+		'M', 'T', 'h', 'd', 0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xE0,
+		'M', 'T', 'r', 'k', 0, 0, 0, 28,
+		0x00, 0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20,       // 500,000 microseconds per quarter: 120 BPM
+		0x00, 0xC0, 0x05,                               // program 5 on channel 1
+		0x00, 0x90, 0x3C, 0x64,                         // note on 60
+		0x00, 0x40, 0x50,                               // running status: note on 64
+		0x83, 0x60, 0x3C, 0x00,                         // 480 ticks later, note 60 off by velocity 0
+		0x00, 0x40, 0x00,                               // note 64 off
+		0x00, 0xFF, 0x2F, 0x00,
+	};
+	return [NSData dataWithBytes:bytes length:sizeof(bytes)];
+}
+
+- (void)testAFileWithRunningStatusReadsEveryNote
+{
+	NSError *error = nil;
+	NFKMIDISequence *read = [NFKMIDISequence sequenceWithStandardMIDIFileData:[self runningStatusFile] error:&error];
+	XCTAssertNotNil(read, @"%@", error);
+	XCTAssertEqual(read.notes.count, 2u);
+	XCTAssertEqual(read.notes[0].pitch, 60);
+	XCTAssertEqual(read.notes[1].pitch, 64);
+	XCTAssertEqual(read.notes[1].velocity, 80);
+	XCTAssertEqual(read.notes[0].program, 5, @"a note takes the program its channel changed to before it");
+	XCTAssertEqualWithAccuracy(read.notes[0].endSeconds, 0.5, 1e-9, @"480 ticks at 480 per quarter and 120 BPM");
+	XCTAssertEqualWithAccuracy(read.tempoBPM, 120, 1e-9);
+}
+
+- (void)testATempoChangeMovesTheNotesAfterIt
+{
+	NSMutableData *file = [[self runningStatusFile] mutableCopy];
+	// One note whose tempo falls from the default 120 BPM to 60 BPM halfway through it.
+	const uint8_t track[] = {
+		'M', 'T', 'r', 'k', 0, 0, 0, 21,
+		0x00, 0x90, 0x3C, 0x64,                         // note on 60 at tick 0
+		0x81, 0x70, 0xFF, 0x51, 0x03, 0x0F, 0x42, 0x40, // tick 240: 1,000,000 microseconds per quarter
+		0x81, 0x70, 0x80, 0x3C, 0x00,                   // tick 480: note off
+		0x00, 0xFF, 0x2F, 0x00,
+	};
+	[file replaceBytesInRange:NSMakeRange(14, file.length - 14) withBytes:track length:sizeof(track)];
+	NSError *error = nil;
+	NFKMIDISequence *read = [NFKMIDISequence sequenceWithStandardMIDIFileData:file error:&error];
+	XCTAssertNotNil(read, @"%@", error);
+	XCTAssertEqual(read.notes.count, 1u);
+	XCTAssertEqualWithAccuracy(read.notes[0].endSeconds, 0.25 + 0.5, 1e-9, @"half a beat at 120 BPM, then half a beat at 60 BPM");
+	XCTAssertEqualWithAccuracy(read.tempoBPM, 60, 1e-9, @"the sequence takes the file's first tempo");
+}
+
+- (void)testANoteTheFileNeverEndsEndsWithItsTrack
+{
+	const uint8_t bytes[] = {
+		'M', 'T', 'h', 'd', 0, 0, 0, 6, 0, 0, 0, 1, 0x01, 0xE0,
+		'M', 'T', 'r', 'k', 0, 0, 0, 12,
+		0x00, 0x99, 0x24, 0x7F,                         // a kick on channel 10
+		0x83, 0x60, 0xFF, 0x2F, 0x00,                   // the track ends 480 ticks later
+		0x00, 0x00, 0x00,
+	};
+	NSError *error = nil;
+	NFKMIDISequence *read = [NFKMIDISequence sequenceWithStandardMIDIFileData:[NSData dataWithBytes:bytes length:sizeof(bytes)] error:&error];
+	XCTAssertNotNil(read, @"%@", error);
+	XCTAssertEqual(read.notes.count, 1u);
+	XCTAssertTrue(read.notes[0].isPercussion);
+	XCTAssertEqualWithAccuracy(read.notes[0].endSeconds, 0.5, 1e-9);
+}
+
+- (void)testAFileThatIsNotOnePerformanceIsRefused
+{
+	NSMutableData *formatTwo = [[self runningStatusFile] mutableCopy];
+	((uint8_t *)formatTwo.mutableBytes)[9] = 2;
+	NSMutableData *frames = [[self runningStatusFile] mutableCopy];
+	((uint8_t *)frames.mutableBytes)[12] = 0xE7;
+	NSData *cut = [[self runningStatusFile] subdataWithRange:NSMakeRange(0, 30)];
+	for (NSData *file in @[ formatTwo, frames, cut, [@"not midi" dataUsingEncoding:NSUTF8StringEncoding] ]) {
+		NSError *error = nil;
+		XCTAssertNil([NFKMIDISequence sequenceWithStandardMIDIFileData:file error:&error]);
+		XCTAssertEqualObjects(error.domain, NSCocoaErrorDomain);
+		XCTAssertEqual(error.code, NSFileReadCorruptFileError, @"%@", error);
+	}
+}
 @end

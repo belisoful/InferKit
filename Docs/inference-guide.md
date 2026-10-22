@@ -793,7 +793,8 @@ answers HTTP on one port, under `/v1`:
   `NFKInferenceResult` as tagged JSON. Pixel buffers cross with their format and rows, so a float depth
   map arrives exactly; multi-arrays, the core's value types, and audio and video files cross too.
   `NFKRemoteInferKitBackend` is its client, and `backendForProvider:` builds it for the `inferKit`
-  preset. Its streamed form reports the hosted job's progress and partial results.
+  preset. Its streamed form reports the hosted job's progress and partial results. `NFKValueCoding`
+  reads and writes the same JSON in an app (see [Values as JSON and files](#values-as-json-and-files)).
 - The catalog route, `GET /v1/inferkit/catalog`, and the estimate route, `POST /v1/inferkit/estimate`,
   which tell a client what the server can build and what a model would hold on the server's machine
   (see [Catalog models, presets, and aliases](#catalog-models-presets-and-aliases)).
@@ -1113,6 +1114,29 @@ for (NFKServerMCPSession *session in server.MCPSessions) {
 	NSLog(@"%@ %@ since %@", session.clientName, session.clientVersion, session.startDate);
 }
 NFKServerStatus *status = [server currentStatus];
+```
+
+### Values as JSON and files
+
+`NFKValueCoding` writes a request, a result, or one value in the native route's tagged JSON, and reads
+it back. `init` makes the inline form, which carries every value's bytes in the JSON.
+`initWithDirectoryURL:` makes the file form, which writes the values a person opens as files into
+the directory and names each by its relative path: an 8-bit image as a PNG that keeps every byte, PCM
+as a WAV, an audio or video file as itself (copied in when it lies elsewhere), a MIDI sequence beside
+a Standard MIDI File of it, and data or arrays above `inlineByteLimit` as a `.bin` or a NumPy `.npy`.
+The detections, keypoints, and the other value classes are JSON objects of their fields.
+
+`valueOfType:fromFileURL:error:` turns a file into what a model port of an `NFKModelValueType` takes:
+an image into a 32BGRA pixel buffer, a recording into an `NFKAudioAsset`, a `.mid` into an
+`NFKMIDISequence`, text into a number or a list, and a `.json` file into the type's values.
+
+<!-- objc-check: given NFKInferenceResult *result = nil; NSURL *runDirectory = nil; NSURL *picked = nil; -->
+```objc
+NFKValueCoding *files = [[NFKValueCoding alloc] initWithDirectoryURL:runDirectory];
+NSError *error = nil;
+NSDictionary *saved = [files JSONObjectForResult:result error:&error];   // image.png, audio.wav, …
+NFKInferenceResult *again = [files resultFromJSONObject:saved error:&error];
+id input = [files valueOfType:NFKModelValueTypeImage fromFileURL:picked error:&error];
 ```
 
 ### A pool of chat servers

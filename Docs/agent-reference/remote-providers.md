@@ -1010,6 +1010,21 @@ machine's remote clients reach a model this process hosts. Files:
   bytes-per-pixel table; the decoder first checks the planes against the format's own description
   (`CVPixelFormatDescriptionCreateWithPixelFormatType`) so the buffer it allocates is no larger than
   what was sent. Multi-arrays and PCM buffers are checked the same way before allocation.
+  `fileDirectoryURL` turns on the file form, which `NFKValueCoding initWithDirectoryURL:` sets and which
+  replaces the attachment mode while it is on (`attachesLength:` answers NO). Entries carry "path"
+  relative to the directory; the decoder takes the file form for any tagged entry with a "path" and no
+  "base64" (value classes excepted: a midiSequence's "path" names its `.mid` companion and the fields
+  decode). `NFKValueFiles.h/.m` (private) hold the formats: `NFKValueFileCreate` makes each name with
+  `O_CREAT|O_EXCL|O_NOFOLLOW` so two coders in one directory never share one; `NFKValueFileResolve`
+  refuses an absolute path and any realpath outside the directory. The PNG writer builds an RGBA or gray
+  `CGImage` with `kCGImageAlphaLast` (unpremultiplied) from the buffer's bytes, and the reader copies the
+  decoded provider's bytes back without drawing, so alpha 0 keeps its color bytes. A PNG of another
+  layout (16-bit, premultiplied) is refused there, and `valueOfType:` falls back to `NFKImageCoding`.
+  WAV is written with a 16-byte fmt chunk (tag 1 for integers, 3 for floats) and read only into the
+  format the entry names. `.npy` is version 1.0, C order, little-endian.
+- `NFKValueCoding.h/.m`: the public face of the coder, with `encodesValueObjectsAsJSON` always on, and
+  the port-value conversions. An untagged JSON object for a value-class type is read by injecting the
+  type's tag and calling `NFKWireValueObjectFromJSON`.
 - `NFKInferenceServer.m`: registry, per-model FIFO (`NFKServedModel`), routing, auth, streaming.
   A synchronous backend holds its slot until its call returns, cancelled or not, because it cannot be
   interrupted and the next run must not overlap it. A job backend releases its slot when the job ends.
