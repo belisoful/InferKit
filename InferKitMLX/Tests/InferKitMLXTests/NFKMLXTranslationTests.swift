@@ -830,14 +830,16 @@ final class NFKMLXTranslationTests: XCTestCase {
         XCTAssertGreaterThan(translator.languages.count, 500)
         let ids = translator.promptTokens(text: Self.sentences[1], sourceCode: "en", targetCode: "de")
         XCTAssertEqual(ids, ints(record["tokens"]!), "the rendered template's ids")
-        let logits = translator.model.logits(tokens: ids, softTokens: nil)
+        // The logits come from the last layer state: one pass of a streamed decoder reads every layer it does
+        // not hold, and the states end on the post-norm hidden state the logits project.
+        let states = translator.model.decoder.layerStates(MLXArray(ids.map { Int32($0) }).reshaped([1, ids.count]))
+        let logits = translator.model.decoder.logits(fromHidden: states[states.count - 1])
         let tail = logits[0, (ids.count - 16)..., 0...]
         let logitCosine = cosine(tail, record["output"]!)
         // A float32 load reproduces the reference to float error; a .checkpoint load compares bfloat16
         // against a bfloat16 reference, where the two accumulation orders drift apart over the stack.
         XCTAssertGreaterThan(logitCosine, precision == .float32 ? 0.999 : 0.995)
         if record["hidden_last.0"] != nil {
-            let states = translator.model.decoder.layerStates(MLXArray(ids.map { Int32($0) }).reshaped([1, ids.count]))
             var worst: (layer: Int, cosine: Float) = (-1, 1)
             for (index, state) in states.enumerated() {
                 guard let reference = record["hidden_last.\(index)"] else { continue }
@@ -849,11 +851,21 @@ final class NFKMLXTranslationTests: XCTestCase {
         }
         let argmax = tail.argMax(axis: -1).asArray(Int32.self)
         let agreeing = zip(argmax, record["output"]!.argMax(axis: -1).asArray(Int32.self)).filter { $0 == $1 }.count
-        let produced = try translator.generate(promptTokens: ids, maxTokens: 48)
-        let reference = ints(record["continuation"]!).filter { $0 != 1 && $0 != 106 }
-        XCTAssertEqual(produced, reference, "greedy continuation")
-        // A streamed decoder reads every layer it does not hold on each step, so the translation is
-        // decoded from the continuation above rather than generated a second time.
+        let continuation = ints(record["continuation"]!)
+        let produced: [Int]
+        if stream == nil {
+            produced = try translator.generate(promptTokens: ids, maxTokens: 48)
+            XCTAssertEqual(produced, continuation.filter { $0 != 1 && $0 != 106 }, "greedy continuation")
+        } else {
+            // A streamed decoder reads every layer it does not hold on each step, so the greedy continuation
+            // is checked teacher-forced in one pass: each position's argmax is the record's next token, the
+            // stop token included. The drafted tests generate it through the cache.
+            let forced = translator.model.logits(tokens: ids + continuation.dropLast(), softTokens: nil)
+            let predicted = forced[0, (ids.count - 1)..., 0...].argMax(axis: -1).asArray(Int32.self).map(Int.init)
+            XCTAssertEqual(predicted, continuation, "greedy continuation, teacher-forced")
+            produced = predicted.filter { $0 != 1 && $0 != 106 }
+        }
+        // A streamed decoder decodes the translation from the continuation above.
         let text = stream == nil
             ? try translator.translate(Self.sentences[1], from: "en", to: "de", decoding: translator.defaultDecoding)
             : translator.model.decode(produced).trimmingCharacters(in: .whitespacesAndNewlines)

@@ -182,16 +182,17 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   not a seam; the masked SFT loss 0.4313063 against 0.4847855, the drift amplified by a 262k-way
   cross-entropy over a dozen positions. Those 12B figures were measured with the model held, which
   swapped; the test now streams the decoder (`.streamed`, 16 of 48 layers held) through the same path and
-  reads greedy token-exact, logit cosine 0.9990946 with argmax 16/16, and worst layer state 0.9996596 at
-  layer 48 (285 s, 136.7 GB read). A float32 reference for the 12B needs 48 GB and is not producible here.
+  reads the greedy continuation token-exact under teacher forcing, logit cosine 0.9990946 with argmax 16/16,
+  and worst layer state 0.9996596 at layer 48 (114 s, 22.0 GB read). A float32 reference for the 12B needs
+  48 GB and is not producible here.
   The 27B (`google/translategemma-27b-it`, 55 GB of bfloat16, 62 layers at 5376) fits neither side whole:
   the reference reads each decoder layer as its forward reaches it (`run_reference.py
   translategemma_layerwise`, 1687 s, 11.95 GB peak) and the port streams the decoder at `.checkpoint`
   (15 of 62 layers held). bfloat16 against bfloat16: template ids exact; the greedy translation
-  token-exact ("Der flinke braune Fuchs springt über den faulen Hund."); logits at the last 16 prompt
-  positions cosine 0.9991661 with argmax 16/16; worst layer state 0.9996508 at layer 62; the masked
-  SFT loss 0.35301155 against 0.33496428 (855 and 1121 s across two Commit Checks, the store read at
-  0.69 GB/s). The 4B drafting for either size, held at 4 bits, keeps the output and cuts the passes:
+  token-exact under teacher forcing ("Der flinke braune Fuchs springt über den faulen Hund."); logits at
+  the last 16 prompt positions cosine 0.9991661 with argmax 16/16; worst layer state 0.9996508 at layer
+  62; the masked SFT loss 0.35301155 against 0.33496428 (173 s, 116.4 GB read). The 4B drafting for either
+  size, held at 4 bits, keeps the output and cuts the passes:
   the 12B produced its 15 tokens in 6 passes, keeping 14 of 20 proposals, in 93 s; the 27B its 14
   tokens in 6 passes, keeping 13 of 20, in 183 s, both runs in the 18 GB footprint bucket.
 
@@ -247,9 +248,12 @@ layer and freed after it, so `generate` and the `labels=` loss run through trans
 On the 4B at bfloat16 its record equals `run_translategemma`'s bit for bit (42 keys). Probe records are keyed `IK_PARITY_<FAMILY>_<SRC>_<TGT>` (`IK_PARITY_MARIAN_JA_EN`,
 `IK_PARITY_MADLAD_EN_ZH_HANT`), and a probe test skips the pairs whose record is absent. The 12B
 figures above were measured with the whole model resident, which swapped on this 32 GB machine; the
-12B and 27B tests now stream the decoder (`residency: .streamed`) and run the logits, every layer's state,
-the greedy continuation, and the loss through the same code as the 4B. A streamed decoder decodes the
-greedy ids for the printed translation instead of generating twice.
+12B and 27B tests now stream the decoder (`residency: .streamed`) and run every layer's state, the logits,
+and the loss through the same code as the 4B, the logits projected from the last state. A streamed decoder
+reads every layer it does not hold on each pass, so those tests check the greedy continuation teacher-forced
+in one pass, each position's argmax the record's next token with the stop token included, and decode the
+printed translation from it. A streamed test makes three passes: the states, the continuation, and the
+loss. The drafted tests generate the continuation through the cache.
 
 ## Language probes
 
