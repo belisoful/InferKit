@@ -62,7 +62,7 @@ llama.cpp, vLLM, LM Studio, or InferKit server that already lists the repository
 
 ## Tiers 2 and 3
 
-The family route's refusals no longer end a resolution. The resolver reads `config.json` for the family
+A family-route refusal passes to the next route. The resolver reads `config.json` for the family
 route only: a repository without one, or without safetensors weights, is refused by that route with
 `NFKModelRouteFamily` in the refusal, and the Core ML and local-server routes try next. A gated
 `config.json` still ends the resolution, since no route reads the repository then.
@@ -81,7 +81,9 @@ template) with one variant reading the manifest, every file under the package, a
 Its memory facts are one stage of the package's bytes, with the manifest's `contextLength` and
 `vocabSize`. Its requirements are macOS 15, iOS 18, and tvOS 18, where Core ML state holds the cache.
 
-The local-server route (`serverResolutionOfRepository:gated:reasons:`) asks `localServers` with
+The local-server route (`serverResolutionOfRepository:gated:reasons:`) asks no server while
+`allowsUnverifiedRoutes` is NO: it adds an `UnverifiedRouteNotAllowed` refusal and sends no request. With
+the opt-in it skips a server that requires a key and asks the rest with
 `+[NFKRemoteProvider availableProvidersAmong:timeout:]` (two seconds):
 
 1. A server that answers and holds the repository → `use`. An Ollama or LM Studio runner lists its
@@ -92,15 +94,19 @@ The local-server route (`serverResolutionOfRepository:gated:reasons:`) asks `loc
    The tag is the file name's quantization (`Q4_K_M`, `IQ3_XXS`, `Q8_0`, `F16`), preferring `Q4_K_M`,
    `Q4_K_S`, `Q5_K_M`, `Q4_0`, `Q6_K`, `Q8_0`, else the smallest. A file split into parts is skipped.
 3. A repository without a GGUF that no server holds adds no refusal.
+4. A server whose listing fails adds a `NoServer` refusal holding the listing's error, and the route
+   asks the next server.
 
 The descriptor is engine `local-server` with a source of kind `none`: nothing downloads through the hub.
-Its `localServer` extension names the preset and the model, and its registry name is the model. Where
+Its `localServer` extension names the preset, the address the resolver asked (`baseURL`), and the
+model, and its registry name is the model. The action carries the same address, and its `provider` is the
+preset re-pointed there, so the build and a pull reach the server the resolver read. Where
 the size is known, its memory facts are one stage of the model's bytes.
 
 The core registers a builder for each engine in its builder registry (`NFKModelEngineBuilders.m`):
 `NFKCoreMLEngineBuilder` builds `NFKCoreMLLanguageBackend` from the located directory, and
 `NFKLocalServerEngineBuilder` builds `+[NFKRemoteProvider backendForProvider:apiKey:modelName:]` for the
-extension's preset and model. A memory fit is the resolution's estimate on every route; no route refuses
+extension's preset at its address and model, and refuses a preset that requires a key. A memory fit is the resolution's estimate on every route; no route refuses
 for size.
 
 ## The resolution, step by step

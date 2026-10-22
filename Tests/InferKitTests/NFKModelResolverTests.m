@@ -595,11 +595,14 @@ static NSUInteger NFKResolverToyAskCount;
 	XCTAssertEqualObjects(resolution.verification, NFKModelVerificationExternal);
 	XCTAssertEqual(resolution.action.kind, NFKModelResolutionActionKindPull);
 	XCTAssertEqualObjects(resolution.action.providerIdentifier, @"ollama");
+	XCTAssertEqualObjects(resolution.action.baseURL.absoluteString, @"http://hub.test/v1");
+	XCTAssertEqualObjects(resolution.action.provider.baseURL.absoluteString, @"http://hub.test/v1");
 	XCTAssertEqualObjects(resolution.action.model, @"hf.co/org/name-GGUF:Q4_K_M");
 	XCTAssertEqualObjects(resolution.action.path, @"name-Q4_K_M.gguf");
 	XCTAssertEqualObjects(resolution.action.byteCount, @128);
 	XCTAssertEqualObjects(resolution.descriptor.engine, NFKModelEngineLocalServer);
 	XCTAssertEqualObjects(resolution.descriptor.extensions[@"localServer"][@"model"], @"hf.co/org/name-GGUF:Q4_K_M");
+	XCTAssertEqualObjects(resolution.descriptor.extensions[@"localServer"][@"baseURL"], @"http://hub.test/v1");
 	XCTAssertEqualObjects(resolution.variant.source.kind, NFKModelSourceKindNone);
 }
 
@@ -629,10 +632,12 @@ static NSUInteger NFKResolverToyAskCount;
 	XCTAssertEqualObjects(resolution.action.providerIdentifier, NFKRemoteProvider.vLLM.identifier);
 }
 
-- (void)testAGGUFRepositoryWithoutAServerIsRefused
+- (void)testAGGUFRepositoryWithoutAPullingServerIsRefused
 {
 	self.resolver.allowsUnverifiedRoutes = YES;
-	self.resolver.localServers = @[ [NFKRemoteProvider.ollama providerWithBaseURL:[NSURL URLWithString:@"http://127.0.0.1:9/v1"]] ];
+	self.resolver.localServers = @[ [self serverOfPreset:NFKRemoteProvider.vLLM] ];
+	[NFKStubHubProtocol setResponse:[NFKStubHubResponse responseWithStatus:200 body:[self.class JSON:@{ @"data": @[] }]]
+							forPath:@"/v1/models"];
 	[self serveGGUFRepo:@"org/name-GGUF" gated:NO];
 	NFKModelResolution *resolution = [self resolve:@"org/name-GGUF" revision:nil];
 	[self assertRefusal:resolution code:NFKModelResolutionErrorNoServer];
@@ -656,6 +661,33 @@ static NSUInteger NFKResolverToyAskCount;
 	NFKModelResolution *resolution = [self resolve:@"org/name-GGUF" revision:nil];
 	[self assertRefusal:resolution code:NFKModelResolutionErrorUnverifiedRouteNotAllowed];
 	XCTAssertNil(resolution.action);
+	XCTAssertEqual([NFKStubHubProtocol requestsForPath:@"/v1/models"].count, (NSUInteger)0, @"no probe without the opt-in");
+	XCTAssertEqual([NFKStubHubProtocol requestsForPath:@"/api/tags"].count, (NSUInteger)0);
+}
+
+- (void)testAServerWhoseListingFailsIsAReason
+{
+	self.resolver.allowsUnverifiedRoutes = YES;
+	self.resolver.localServers = @[ [self serverOfPreset:NFKRemoteProvider.vLLM] ];
+	[NFKStubHubProtocol setResponse:[NFKStubHubResponse responseWithStatus:500 body:nil] forPath:@"/v1/models"];
+	[self serveToyRepo:@"org/served" configuration:@{ @"model_type": @"other" }];
+	NFKModelResolution *resolution = [self resolve:@"org/served" revision:nil];
+	[self assertRefusal:resolution code:NFKModelResolutionErrorNoServer];
+	XCTAssertEqualObjects(resolution.reasons.lastObject.userInfo[NFKModelResolutionRouteKey], @(NFKModelRouteLocalServer));
+	XCTAssertNotNil(resolution.reasons.lastObject.userInfo[NSUnderlyingErrorKey]);
+}
+
+- (void)testAServerThatRequiresAKeyIsNotAsked
+{
+	self.resolver.allowsUnverifiedRoutes = YES;
+	self.resolver.localServers = @[ [self serverOfPreset:NFKRemoteProvider.openAI] ];
+	[NFKStubHubProtocol setResponse:[NFKStubHubResponse responseWithStatus:200
+																	  body:[self.class JSON:@{ @"data": @[ @{ @"id": @"org/served" } ] }]]
+							forPath:@"/v1/models"];
+	[self serveToyRepo:@"org/served" configuration:@{ @"model_type": @"other" }];
+	NFKModelResolution *resolution = [self resolve:@"org/served" revision:nil];
+	XCTAssertFalse(resolution.isResolved);
+	XCTAssertEqual([NFKStubHubProtocol requestsForPath:@"/v1/models"].count, (NSUInteger)0);
 }
 
 - (void)testAnActionAndItsResolutionRoundTrip
@@ -674,22 +706,45 @@ static NSUInteger NFKResolverToyAskCount;
 	XCTAssertEqualObjects(restored.dictionaryRepresentation, dictionary);
 	NSDictionary *unknownKind = @{ @"kind": @"delete", @"provider": @"ollama", @"model": @"m" };
 	XCTAssertNil([NFKModelResolutionAction actionWithDictionary:unknownKind error:&error]);
+	NFKModelResolutionAction *unnamed = [[NFKModelResolutionAction alloc] initWithKind:(NFKModelResolutionActionKind)7
+																  providerIdentifier:@"ollama" baseURL:nil model:@"m"
+																				path:nil byteCount:nil];
+	XCTAssertNil(unnamed.dictionaryRepresentation[@"kind"]);
+	XCTAssertNil([NFKModelResolutionAction actionWithDictionary:unnamed.dictionaryRepresentation error:&error]);
+}
+
+/*! The local-server builder's answer for a descriptor whose localServer extension is server. */
+- (nullable id<NFKInferenceBackend>)localServerBackendForExtension:(NSDictionary *)server error:(NSError **)error
+{
+	NSDictionary *object = @{ @"id": @"org/name-GGUF", @"family": NFKModelEngineLocalServer, @"engine": NFKModelEngineLocalServer,
+							  @"localServer": server };
+	NFKModelDescriptor *descriptor = [NFKModelDescriptor descriptorWithDictionary:object error:error];
+	XCTAssertNotNil(descriptor);
+	NFKModelBuildRequest *request = [[NFKModelBuildRequest alloc] initWithDescriptor:descriptor variant:nil loadOptions:nil
+																	 requestDefaults:nil location:nil memoryEstimate:nil
+																			 catalog:self.catalog];
+	return [[NFKModelCatalog backendBuilderForEngine:NFKModelEngineLocalServer] backendForBuildRequest:request error:error];
 }
 
 - (void)testTheLocalServerBuilderBuildsTheProvidersBackend
 {
-	NSDictionary *object = @{ @"id": @"org/name-GGUF", @"family": NFKModelEngineLocalServer, @"engine": NFKModelEngineLocalServer,
-							  @"localServer": @{ @"provider": @"ollama", @"model": @"hf.co/org/name-GGUF:Q4_K_M" } };
+	NSString *model = @"hf.co/org/name-GGUF:Q4_K_M";
+	NSURL *address = [NSURL URLWithString:@"http://127.0.0.1:11500/v1"];
 	NSError *error = nil;
-	NFKModelDescriptor *descriptor = [NFKModelDescriptor descriptorWithDictionary:object error:&error];
-	XCTAssertNotNil(descriptor, @"%@", error);
-	NFKModelBuildRequest *request = [[NFKModelBuildRequest alloc] initWithDescriptor:descriptor variant:nil loadOptions:nil
-																	 requestDefaults:nil location:nil memoryEstimate:nil
-																			 catalog:self.catalog];
-	id<NFKInferenceBackend> backend = [[NFKModelCatalog backendBuilderForEngine:NFKModelEngineLocalServer]
-									   backendForBuildRequest:request error:&error];
+	id<NFKInferenceBackend> backend = [self localServerBackendForExtension:@{ @"provider": @"ollama", @"model": model,
+																			  @"baseURL": address.absoluteString }
+																	 error:&error];
 	XCTAssertNotNil(backend, @"%@", error);
-	XCTAssertEqualObjects([(id)backend valueForKey:@"modelName"], @"hf.co/org/name-GGUF:Q4_K_M");
+	XCTAssertEqualObjects([(id)backend valueForKey:@"modelName"], model);
+	NSURL *endpoint = [[NFKRemoteProvider.ollama providerWithBaseURL:address] endpointURLForModelName:model];
+	XCTAssertEqualObjects([(id)backend valueForKey:@"endpointURL"], endpoint);
+
+	id<NFKInferenceBackend> preset = [self localServerBackendForExtension:@{ @"provider": @"ollama", @"model": model } error:&error];
+	XCTAssertEqualObjects([(id)preset valueForKey:@"endpointURL"], [NFKRemoteProvider.ollama endpointURLForModelName:model]);
+
+	NSDictionary *keyed = @{ @"provider": @"openai", @"model": model };
+	XCTAssertNil([self localServerBackendForExtension:keyed error:&error]);
+	XCTAssertEqual(error.code, NFKModelCatalogErrorMalformedDescriptor);
 }
 
 #pragma mark Safetensors headers

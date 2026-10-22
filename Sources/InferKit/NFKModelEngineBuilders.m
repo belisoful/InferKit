@@ -5,6 +5,7 @@
 
 #import "NFKModelEngineBuilders.h"
 #import "NFKCoreMLLanguageBackend.h"
+#import "NFKModelResolver.h"
 #import "NFKModelVocabulary.h"
 #import "NFKRemoteProvider.h"
 
@@ -42,18 +43,18 @@ static NSError *NFKModelEngineBuildError(NFKModelCatalogError code, NSString *re
 - (nullable id<NFKInferenceBackend>)backendForBuildRequest:(NFKModelBuildRequest *)request error:(NSError **)error
 {
 	NSDictionary *server = request.descriptor.extensions[@"localServer"];
-	NSString *providerIdentifier = [server isKindOfClass:NSDictionary.class] ? server[@"provider"] : nil;
-	NSString *model = [server isKindOfClass:NSDictionary.class] ? server[@"model"] : nil;
-	NFKRemoteProvider *provider = nil;
-	for (NFKRemoteProvider *candidate in NFKRemoteProvider.localProviders) {
-		if ([providerIdentifier isKindOfClass:NSString.class] && [candidate.identifier isEqualToString:providerIdentifier]) {
-			provider = candidate;
-		}
+	NFKModelResolutionAction *action = nil;
+	if ([server isKindOfClass:NSDictionary.class]) {
+		NSMutableDictionary *object = [server mutableCopy];
+		object[@"kind"] = @"use";
+		action = [NFKModelResolutionAction actionWithDictionary:object error:NULL];
 	}
-	if (provider == nil || ![model isKindOfClass:NSString.class]) {
+	NFKRemoteProvider *provider = action.provider;
+	NSString *model = action.model;
+	if (provider == nil || provider.requiresAPIKey) {
 		if (error != NULL) {
 			*error = NFKModelEngineBuildError(NFKModelCatalogErrorMalformedDescriptor,
-				[NSString stringWithFormat:@"%@ names no local server preset and model in its localServer extension.",
+				[NSString stringWithFormat:@"%@ names no keyless server preset and model in its localServer extension.",
 				 request.descriptor.identifier]);
 		}
 		return nil;

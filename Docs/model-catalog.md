@@ -684,13 +684,15 @@ safetensors headers, and tries four routes in order:
   (`-[NFKRemoteProvider localRunner]`). A pull names `hf.co/<repository>:<quantization>`, preferring
   `Q4_K_M`, and skips a GGUF split into parts. A gated repository is refused, since a server pulls without
   the account's token.
-- The local-server route asks each server in `localServers` (`+[NFKRemoteProvider localProviders]` by
-  default) that answers within two seconds for the models it holds: an Ollama or LM Studio runner's
+- The local-server route sends no request while `allowsUnverifiedRoutes` is NO. With the opt-in it asks
+  each keyless server in `localServers` (`+[NFKRemoteProvider localProviders]` by default) that answers
+  within two seconds for the models it holds: an Ollama or LM Studio runner's
   installed models, another server's served list. A model named the repository, or `hf.co/` or
   `huggingface.co/` with the repository and a tag, compared without case, is the repository's.
 - A Core ML or local-server descriptor builds through the core's own builder for its engine (`coreml`,
   `local-server`). A local-server descriptor has no files to download; its `localServer` extension names
-  the server's preset (`provider`) and the model (`model`).
+  the server's preset (`provider`), the address the resolver asked (`baseURL`), and the model (`model`).
+  The action's `provider` is that preset at that address, whose `localRunner` performs a pull.
 - `NFKModelResolution` carries the route, the verification, the descriptor, the variant, the download
   size, the memory estimate at the default options against the resolver's `memoryBudget` (the
   catalog's, this machine's by default), and `reasons`: one `NSError` per route passed over, in

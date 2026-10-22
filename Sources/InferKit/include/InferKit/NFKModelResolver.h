@@ -73,7 +73,8 @@ extern NSErrorDomain const NFKModelResolutionErrorDomain;
 				quantized weights.
 	@constant   NFKModelResolutionErrorNoServer No model server on this machine serves the repository or
 				pulls it: none answers among the resolver's localServers, or none that answers pulls a
-				GGUF repository.
+				GGUF repository. A server whose model listing fails, and a server model whose built
+				descriptor does not read, each add one with that error in NSUnderlyingErrorKey.
 	@constant   NFKModelResolutionErrorUnsupportedPackage The repository's Core ML package is not one
 				NFKCoreMLLanguageBackend runs: its manifest is not a causal language model's, or it names
 				a model the listing does not hold.
@@ -221,6 +222,11 @@ typedef NS_ENUM(NSInteger, NFKModelResolutionActionKind) {
 @property (nonatomic, readonly) NFKModelResolutionActionKind kind;
 /*! The identifier of the server's NFKRemoteProvider preset, such as "ollama". */
 @property (nonatomic, readonly, copy) NSString *providerIdentifier;
+/*! The address the resolver asked the server at, or nil for the preset's own address. */
+@property (nonatomic, readonly, copy, nullable) NSURL *baseURL;
+/*! The server the resolver asked: the preset providerIdentifier names, re-pointed at baseURL. Nil when
+	no preset has the identifier. A pull runs on its localRunner. */
+@property (nonatomic, readonly, nullable) NFKRemoteProvider *provider;
 /*! The model's name on the server, which a pull fetches and a request names, such as
 	"hf.co/org/name-GGUF:Q4_K_M". */
 @property (nonatomic, readonly, copy) NSString *model;
@@ -232,11 +238,13 @@ typedef NS_ENUM(NSInteger, NFKModelResolutionActionKind) {
 /*! An action with every field. */
 - (instancetype)initWithKind:(NFKModelResolutionActionKind)kind
 		  providerIdentifier:(NSString *)providerIdentifier
+					 baseURL:(nullable NSURL *)baseURL
 					   model:(NSString *)model
 						path:(nullable NSString *)path
 				   byteCount:(nullable NSNumber *)byteCount NS_DESIGNATED_INITIALIZER;
 
-/*! The action as JSON values: kind ("use" or "pull"), provider, model, path, and bytes. */
+/*! The action as JSON values: kind ("use" or "pull"), provider, baseURL, model, path, and bytes. A kind
+	outside NFKModelResolutionActionKind has no name, so its dictionary has no kind and does not read back. */
 - (NSDictionary<NSString *, id> *)dictionaryRepresentation;
 
 /*! Reads an action from its dictionary. Returns nil and sets error when a field is missing or malformed. */
@@ -353,8 +361,10 @@ typedef NS_ENUM(NSInteger, NFKModelResolutionActionKind) {
 	which is this machine's unless an app set another. */
 @property (atomic, copy, nullable) NFKModelMemoryBudget *memoryBudget;
 /*! The model servers the local-server route asks, in order; +[NFKRemoteProvider localProviders] by
-	default. Each that answers within two seconds is asked for the models it holds, and one whose runner
-	pulls (Ollama) is asked to pull a GGUF repository. An empty array turns the route off. */
+	default. The route asks them only while allowsUnverifiedRoutes is YES. Each that answers within two
+	seconds is asked for the models it holds, and one whose runner pulls (Ollama) is asked to pull a GGUF
+	repository. A server that requires a key is skipped, since the built backend carries none. An empty
+	array turns the route off. */
 @property (atomic, copy) NSArray<NFKRemoteProvider *> *localServers;
 
 /*! The resolution of a repository at a revision; nil for the default branch. Blocks on the network.

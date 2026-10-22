@@ -19,8 +19,9 @@ NS_ASSUME_NONNULL_BEGIN
 @interface NFKCoreMLEngineBuilder : NSObject <NFKModelBackendBuilding>
 @end
 
-/*! Builds the chat backend of the descriptor's "localServer" extension: the NFKRemoteProvider local preset
-	it names (provider) and the model the server serves (model) (NFKModelEngineLocalServer). */
+/*! Builds the chat backend of the descriptor's "localServer" extension: the keyless NFKRemoteProvider
+	preset it names (provider) at the address the resolver asked (baseURL, else the preset's own), and the
+	model the server serves (model) (NFKModelEngineLocalServer). */
 @interface NFKLocalServerEngineBuilder : NSObject <NFKModelBackendBuilding>
 @end
 

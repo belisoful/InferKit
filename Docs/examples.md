@@ -5644,8 +5644,8 @@ resolver.allowsUnverifiedRoutes = YES;                          // a shipped loa
     BOOL fits = resolution.memoryEstimate.fits;                     // against this machine's budget
     NFKModelResolutionAction *action = resolution.action;          // a local server: use it, or pull first
     if (action.kind == NFKModelResolutionActionKindPull) {
-        // Ask the user: action.byteCount bytes download into the server. Then pull action.model with
-        // -[NFKLocalModelRunner pullModel:] on the runner of the preset action.providerIdentifier names.
+        id<NFKLocalModelRunner> runner = action.provider.localRunner;  // the server the resolver asked
+        // Ask the user: action.byteCount bytes download into the server. Then [runner pullModel:action.model].
     }
     NSDictionary *saved = resolution.descriptor.dictionaryRepresentation;  // restores with no network request
     [NFKModelCatalog.sharedCatalog addDescriptor:resolution.descriptor];

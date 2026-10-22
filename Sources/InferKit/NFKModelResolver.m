@@ -90,6 +90,29 @@ static BOOL NFKModelResolutionIsAuthenticationError(NSError * _Nullable error)
 	return [error.domain isEqualToString:NFKDownloadErrorDomain] && error.code == NFKDownloadErrorAuthenticationRequired;
 }
 
+static NSString * _Nullable NFKModelResolutionActionKindName(NFKModelResolutionActionKind kind)
+{
+	switch (kind) {
+		case NFKModelResolutionActionKindUse:
+			return @"use";
+		case NFKModelResolutionActionKindPull:
+			return @"pull";
+	}
+	return nil;
+}
+
+/*! The kind a dictionary names, or 0 for a name no kind has. */
+static NFKModelResolutionActionKind NFKModelResolutionActionKindNamed(id name)
+{
+	if ([name isEqual:@"use"]) {
+		return NFKModelResolutionActionKindUse;
+	}
+	if ([name isEqual:@"pull"]) {
+		return NFKModelResolutionActionKindPull;
+	}
+	return 0;
+}
+
 #pragma mark - NFKModelRepository
 
 @interface NFKModelRepository ()
@@ -182,6 +205,7 @@ static BOOL NFKModelResolutionIsAuthenticationError(NSError * _Nullable error)
 
 - (instancetype)initWithKind:(NFKModelResolutionActionKind)kind
 		  providerIdentifier:(NSString *)providerIdentifier
+					 baseURL:(nullable NSURL *)baseURL
 					   model:(NSString *)model
 						path:(nullable NSString *)path
 				   byteCount:(nullable NSNumber *)byteCount
@@ -190,6 +214,7 @@ static BOOL NFKModelResolutionIsAuthenticationError(NSError * _Nullable error)
 	if (self != nil) {
 		_kind = kind;
 		_providerIdentifier = [providerIdentifier copy];
+		_baseURL = [baseURL copy];
 		_model = [model copy];
 		_path = [path copy];
 		_byteCount = [byteCount copy];
@@ -215,11 +240,22 @@ static BOOL NFKModelResolutionIsAuthenticationError(NSError * _Nullable error)
 	return self.model.hash ^ (NSUInteger)self.kind;
 }
 
+- (nullable NFKRemoteProvider *)provider
+{
+	NFKRemoteProvider *preset = [NFKRemoteProvider providerWithIdentifier:self.providerIdentifier];
+	NSURL *baseURL = self.baseURL;
+	if (preset == nil || baseURL == nil || [baseURL isEqual:preset.baseURL]) {
+		return preset;
+	}
+	return [preset providerWithBaseURL:baseURL];
+}
+
 - (NSDictionary<NSString *, id> *)dictionaryRepresentation
 {
 	NSMutableDictionary<NSString *, id> *dictionary = [NSMutableDictionary dictionary];
-	dictionary[@"kind"] = self.kind == NFKModelResolutionActionKindPull ? @"pull" : @"use";
+	dictionary[@"kind"] = NFKModelResolutionActionKindName(self.kind);
 	dictionary[@"provider"] = self.providerIdentifier;
+	dictionary[@"baseURL"] = self.baseURL.absoluteString;
 	dictionary[@"model"] = self.model;
 	dictionary[@"path"] = self.path;
 	dictionary[@"bytes"] = self.byteCount;
@@ -228,13 +264,15 @@ static BOOL NFKModelResolutionIsAuthenticationError(NSError * _Nullable error)
 
 + (nullable instancetype)actionWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error
 {
-	id kind = dictionary[@"kind"];
+	NFKModelResolutionActionKind actionKind = NFKModelResolutionActionKindNamed(dictionary[@"kind"]);
 	id provider = dictionary[@"provider"];
+	id address = dictionary[@"baseURL"];
+	NSURL *baseURL = [address isKindOfClass:NSString.class] ? [NSURL URLWithString:address] : nil;
 	id model = dictionary[@"model"];
 	id path = dictionary[@"path"];
 	id bytes = dictionary[@"bytes"];
-	BOOL known = [kind isEqual:@"use"] || [kind isEqual:@"pull"];
-	if (!known || ![provider isKindOfClass:NSString.class] || ![model isKindOfClass:NSString.class]
+	if (actionKind == 0 || ![provider isKindOfClass:NSString.class] || ![model isKindOfClass:NSString.class]
+		|| (address != nil && baseURL == nil)
 		|| (path != nil && ![path isKindOfClass:NSString.class]) || (bytes != nil && ![bytes isKindOfClass:NSNumber.class])) {
 		if (error != NULL) {
 			*error = [NSError errorWithDomain:NFKModelCatalogErrorDomain code:NFKModelCatalogErrorMalformedDescriptor
@@ -243,15 +281,15 @@ static BOOL NFKModelResolutionIsAuthenticationError(NSError * _Nullable error)
 		}
 		return nil;
 	}
-	NFKModelResolutionActionKind actionKind = [kind isEqual:@"pull"] ? NFKModelResolutionActionKindPull
-																	 : NFKModelResolutionActionKindUse;
-	return [[self alloc] initWithKind:actionKind providerIdentifier:provider model:model path:path byteCount:bytes];
+	return [[self alloc] initWithKind:actionKind providerIdentifier:provider baseURL:baseURL model:model path:path
+							byteCount:bytes];
 }
 
 - (NSString *)description
 {
-	return [NSString stringWithFormat:@"<%@ %@ %@ on %@>", NSStringFromClass(self.class),
-			self.kind == NFKModelResolutionActionKindPull ? @"pull" : @"use", self.model, self.providerIdentifier];
+	return [NSString stringWithFormat:@"<%@ %@ %@ on %@ at %@>", NSStringFromClass(self.class),
+			NFKModelResolutionActionKindName(self.kind), self.model, self.providerIdentifier,
+			self.baseURL.absoluteString ?: @"its own address"];
 }
 
 @end
@@ -1117,24 +1155,45 @@ static BOOL NFKModelResolutionIsReadFailure(NSError *error)
 #pragma mark Local-server route
 
 /*! The local-server route: a server among localServers that holds the repository already, else one whose
-	runner pulls (Ollama) for a repository holding a single-file GGUF. Appends a refusal only for a GGUF
-	repository no server pulls; a server that answers nothing is not a refusal of another repository. */
+	runner pulls (Ollama) for a repository holding a single-file GGUF. Asks no server until the caller allows
+	unverified routes. Appends a refusal for a GGUF repository no server pulls and for a server whose listing
+	fails; a server that holds nothing else is not a refusal of another repository. */
 - (nullable NFKModelResolution *)serverResolutionOfRepository:(NFKModelRepository *)listed
 														gated:(BOOL)gated
 													  reasons:(NSMutableArray<NSError *> *)reasons
 {
-	NSArray<NFKRemoteProvider *> *servers = self.localServers;
+	NSMutableArray<NFKRemoteProvider *> *servers = [NSMutableArray array];
+	for (NFKRemoteProvider *server in self.localServers) {
+		if (!server.requiresAPIKey) {
+			[servers addObject:server];
+		}
+	}
 	if (servers.count == 0) {
+		return nil;
+	}
+	if (!self.allowsUnverifiedRoutes) {
+		NSString *reason = [NSString stringWithFormat:@"the local-server route asks the servers on this machine for %@ "
+							"only when allowsUnverifiedRoutes is YES", listed.repository];
+		[reasons addObject:NFKModelResolutionRefusal(NFKModelResolutionErrorUnverifiedRouteNotAllowed,
+													 NFKModelRouteLocalServer, nil, reason, nil)];
 		return nil;
 	}
 	NFKDownloadPlanFile *gguf = [self preferredGGUFOfRepository:listed];
 	NSArray<NFKRemoteProvider *> *available = [NFKRemoteProvider availableProvidersAmong:servers
 																			   timeout:NFKModelResolutionServerTimeout];
 	for (NFKRemoteProvider *provider in available) {
-		NFKRemoteModel *held = [self modelOfServer:provider holdingRepository:listed.repository];
+		NSError *listingError = nil;
+		NFKRemoteModel *held = [self modelOfServer:provider holdingRepository:listed.repository error:&listingError];
+		if (listingError != nil) {
+			NSString *reason = [NSString stringWithFormat:@"the %@ server at %@ did not list its models: %@",
+								provider.identifier, provider.baseURL.absoluteString, listingError.localizedDescription];
+			[reasons addObject:NFKModelResolutionRefusal(NFKModelResolutionErrorNoServer, NFKModelRouteLocalServer, nil,
+														 reason, listingError)];
+		}
 		if (held != nil) {
 			NFKModelResolutionAction *action = [[NFKModelResolutionAction alloc] initWithKind:NFKModelResolutionActionKindUse
 																		  providerIdentifier:provider.identifier
+																					 baseURL:provider.baseURL
 																					   model:held.identifier path:nil
 																				   byteCount:nil];
 			return [self serverResolutionOfRepository:listed action:action byteCount:held.sizeBytes reasons:reasons];
@@ -1164,26 +1223,27 @@ static BOOL NFKModelResolutionIsReadFailure(NSError *error)
 	}
 	NSString *model = [NSString stringWithFormat:@"hf.co/%@:%@", listed.repository, [self quantizationOfGGUF:gguf.path]];
 	NFKModelResolutionAction *action = [[NFKModelResolutionAction alloc] initWithKind:NFKModelResolutionActionKindPull
-																  providerIdentifier:puller.identifier model:model
+																  providerIdentifier:puller.identifier
+																			 baseURL:puller.baseURL model:model
 																				path:gguf.path
 																		   byteCount:gguf.byteCount >= 0 ? @(gguf.byteCount) : nil];
 	return [self serverResolutionOfRepository:listed action:action byteCount:action.byteCount reasons:reasons];
 }
 
+/*! The resolution of a server's model, or nil with a refusal when its descriptor does not read. */
 - (nullable NFKModelResolution *)serverResolutionOfRepository:(NFKModelRepository *)listed
 													   action:(NFKModelResolutionAction *)action
 													byteCount:(nullable NSNumber *)byteCount
 													  reasons:(NSMutableArray<NSError *> *)reasons
 {
-	if (!self.allowsUnverifiedRoutes) {
-		return [self unverifiedResolutionOfRepository:listed route:NFKModelRouteLocalServer reasons:reasons];
-	}
 	NSDictionary *variant = byteCount != nil
 		? @{ @"id": [self variantIdentifierOfRepository:listed.repository], @"isDefault": @YES, @"registryName": action.model,
 			 @"source": @{ @"kind": NFKModelSourceKindNone }, @"residentBytes": byteCount,
 			 @"memoryFacts": @{ @"stages": @[ @{ @"id": @"model", @"bytesByPrecision": @{ NFKModelPrecisionCheckpoint: byteCount } } ] } }
 		: @{ @"id": [self variantIdentifierOfRepository:listed.repository], @"isDefault": @YES, @"registryName": action.model,
 			 @"source": @{ @"kind": NFKModelSourceKindNone } };
+	NSMutableDictionary *server = [@{ @"provider": action.providerIdentifier, @"model": action.model } mutableCopy];
+	server[@"baseURL"] = action.baseURL.absoluteString;
 	NSMutableDictionary *object = [@{
 		@"id": listed.repository, @"displayName": listed.repository, @"family": NFKModelEngineLocalServer,
 		@"summary": [NSString stringWithFormat:@"%@, served as %@ by the %@ server on this machine.", listed.repository,
@@ -1193,10 +1253,18 @@ static BOOL NFKModelResolutionIsReadFailure(NSError *error)
 		@"outputs": @[ @{ @"key": NFKOutputText, @"required": @YES } ], @"variants": @[ variant ],
 		NFKModelResolutionExtensionKey: @{ @"verification": NFKModelVerificationExternal, @"repository": listed.repository,
 										   @"revision": listed.revision },
-		@"localServer": @{ @"provider": action.providerIdentifier, @"model": action.model },
+		@"localServer": server,
 	} mutableCopy];
 	object[@"license"] = listed.license.dictionaryRepresentation;
-	NFKModelDescriptor *descriptor = [NFKModelDescriptor descriptorWithDictionary:object error:NULL];
+	NSError *descriptorError = nil;
+	NFKModelDescriptor *descriptor = [NFKModelDescriptor descriptorWithDictionary:object error:&descriptorError];
+	if (descriptor == nil) {
+		NSString *reason = [NSString stringWithFormat:@"the %@ server's model %@ does not describe a model: %@",
+							action.providerIdentifier, action.model, descriptorError.localizedDescription];
+		[reasons addObject:NFKModelResolutionRefusal(NFKModelResolutionErrorNoServer, NFKModelRouteLocalServer, nil,
+													 reason, descriptorError)];
+		return nil;
+	}
 	return [self resolutionOfRepository:listed.repository revision:listed.revision route:NFKModelRouteLocalServer
 						   verification:NFKModelVerificationExternal descriptor:descriptor
 								variant:descriptor.defaultVariant reasons:reasons action:action];
@@ -1204,12 +1272,20 @@ static BOOL NFKModelResolutionIsReadFailure(NSError *error)
 
 /*! The model a server holds for the repository: its own name for it, the repository's name, or a
 	Hugging Face pull of it (hf.co/<repository>:<tag>, huggingface.co/<repository>:<tag>), compared without
-	case. An Ollama or LM Studio server lists its installed models, another its served ones. */
-- (nullable NFKRemoteModel *)modelOfServer:(NFKRemoteProvider *)provider holdingRepository:(NSString *)repository
+	case. An Ollama or LM Studio server lists its installed models, another its served ones. Sets error when
+	the listing fails. */
+- (nullable NFKRemoteModel *)modelOfServer:(NFKRemoteProvider *)provider
+						 holdingRepository:(NSString *)repository
+									 error:(NSError **)error
 {
 	id<NFKLocalModelRunner> runner = provider.localRunner;
-	NSArray<NFKRemoteModel *> *models = runner != nil ? [runner installedModelsWithError:NULL]
-		: [[NFKRemoteModelCatalog catalogForProvider:provider apiKey:nil] modelsWithError:NULL];
+	NSError *listingError = nil;
+	NSArray<NFKRemoteModel *> *models = runner != nil ? [runner installedModelsWithError:&listingError]
+		: [[NFKRemoteModelCatalog catalogForProvider:provider apiKey:nil] modelsWithError:&listingError];
+	if (models == nil) {
+		NFKModelResolutionSet(error, listingError);
+		return nil;
+	}
 	NSString *name = repository.lowercaseString;
 	for (NFKRemoteModel *model in models) {
 		NSString *identifier = model.identifier.lowercaseString;
