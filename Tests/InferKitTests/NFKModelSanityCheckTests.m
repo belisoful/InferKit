@@ -2,8 +2,9 @@
 //  NFKModelSanityCheckTests.m
 //  InferKitTests
 //
-//  The post-load sanity check: the verdicts on fluent, empty, garbled, and looping text, a number that is
-//  no loop, and one greedy generation run through a backend that answers a fixed reply.
+//  The post-load sanity check: the verdicts on fluent, empty, garbled, and looping text, a number, format
+//  characters, and a rule that are no fault, and one greedy generation run through a backend that answers a
+//  fixed reply.
 //
 
 #import <XCTest/XCTest.h>
@@ -50,6 +51,28 @@
 	}
 }
 
+- (void)testFormatCharactersAndARulePass
+{
+	NSArray<NSString *> *replies = @[ @"\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645 \u067e\u0627\u0631\u06cc\u0633",
+									  @"\u200fParis\u200e is the capital\u00ad city.",
+									  @"\U0001F468\u200D\U0001F469\u200D\U0001F467 Paris",
+									  @"Paris\n\n----------",
+									  @"Paris\n==========" ];
+	for (NSString *reply in replies) {
+		XCTAssertEqual([NFKModelSanityCheck resultForOutput:reply].findings, NFKModelSanityFindingNone, @"%@", reply);
+	}
+	NSString *rule = [@"" stringByPaddingToLength:96 withString:@"-" startingAtIndex:0];
+	XCTAssertEqual([NFKModelSanityCheck resultForOutput:rule].findings, NFKModelSanityFindingRepetitive);
+}
+
+- (void)testATokenCountBelowOneIsRefused
+{
+	NSError *error = nil;
+	XCTAssertNil([NFKModelSanityCheck checkBackend:[[NFKSanityReplyBackend alloc] init] prompt:@"Paris" tokenCount:0
+											 error:&error]);
+	XCTAssertEqualObjects(error.domain, NFKInferenceErrorDomain);
+}
+
 - (void)testAnEmptyReplyIsFound
 {
 	XCTAssertEqual([NFKModelSanityCheck resultForOutput:@"  \n "].findings, NFKModelSanityFindingEmpty);
@@ -59,6 +82,8 @@
 {
 	XCTAssertEqual([NFKModelSanityCheck resultForOutput:@"Par�is"].findings, NFKModelSanityFindingGarbled);
 	XCTAssertEqual([NFKModelSanityCheck resultForOutput:@"Paris\a"].findings, NFKModelSanityFindingGarbled);
+	NSString *nextLine = [NSString stringWithFormat:@"Pa%Cris", (unichar)0x85];
+	XCTAssertEqual([NFKModelSanityCheck resultForOutput:nextLine].findings, NFKModelSanityFindingGarbled);
 }
 
 - (void)testALoopIsFound

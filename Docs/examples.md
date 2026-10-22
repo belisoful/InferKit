@@ -5677,8 +5677,8 @@ The resolved descriptor builds as any other, through
 `backendForModelIdentifier:options:error:` with the repository name as its identifier.
 
 A route no reference measured can load a model that runs wrong. `NFKModelSanityCheck` runs one short
-greedy generation on the built backend and reports empty, garbled, and looping output. It is a sanity
-check, not a parity measurement: fluent but wrong text passes it.
+greedy generation on the built backend and reports empty, garbled, and looping output. Fluent but wrong
+text passes it.
 
 ```objc
 NFKPassthroughBackend *backend = [NFKPassthroughBackend backend];

@@ -59,13 +59,18 @@ converter needs a Python environment.
 
 The conversion route (`conversionResolutionOfRepository:reasons:`) applies last, to a repository with a
 readable `config.json` whose `model_type` is in `+[NFKModelResolver convertibleModelTypes]`, with no
-`auto_map`, and with `.safetensors` or `pytorch_model*.bin` weights (the converter loads either through
-transformers). It adds no refusal where it does not apply: the routes before it say why. Its resolution
+`auto_map`, and with `.safetensors` weights. A pickled checkpoint (`pytorch_model*.bin`) gets no hint, since
+loading one through `torch.load` can run code. The route gives no hint after a route refused only for the
+caller's consent (`UnverifiedRouteNotAllowed`), since that route may run the repository once the caller
+allows unverified routes. It adds no refusal where it does not apply: the routes before it say why. Its resolution
 has route `NFKModelRouteConversion`, verification `conversionRequired`, no descriptor, and `isResolved`
 NO, since the repository runs only once converted, through the Core ML package route. The action's kind is
 `convert`, its provider `inferkit-convert`, its byte count the weights', and its command
-`python convert.py --model <repository> --output <name>-coreml`, run from `Tools/inferkit-convert`. The
-converter has no revision argument, so it reads the default branch whatever revision was resolved.
+`python convert.py --model '<repository>' --revision '<commit>' --output '<name>-coreml'`, run from
+`Tools/inferkit-convert`, which converts the commit the resolution read. Each argument is single-quoted
+and matches the hub's name form (`[A-Za-z0-9][A-Za-z0-9._-]*`, owner and name for the repository), so a
+pasted command passes no character the shell reads; a repository, revision, or output name outside it
+gets no hint.
 `testTheConvertibleModelTypesAreTheConvertersRegistry` reads `architectures.py` and holds the core's list to
 its `model_types`.
 

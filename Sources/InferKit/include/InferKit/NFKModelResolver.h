@@ -251,7 +251,9 @@ typedef NS_ENUM(NSInteger, NFKModelResolutionActionKind) {
 @property (nonatomic, readonly, copy, nullable) NSString *path;
 /*! The bytes a pull transfers or a conversion reads, or nil when unknown. */
 @property (nonatomic, readonly, copy, nullable) NSNumber *byteCount;
-/*! The shell command a conversion runs from Tools/inferkit-convert, or nil. */
+/*! The shell command a conversion runs from Tools/inferkit-convert, or nil. It names the repository, the
+	commit the resolution read, and the output directory, each single-quoted and of the hub's name
+	characters. */
 @property (nonatomic, readonly, copy, nullable) NSString *command;
 
 /*! An action with every field. */

@@ -39,11 +39,11 @@ def log(message):
 # Tokenizer + manifest export (works for any Hugging Face tokenizer; no model load required)
 # --------------------------------------------------------------------------------------------------
 
-def export_tokenizer(model, output_dir):
+def export_tokenizer(model, output_dir, revision=None):
     """Writes the tokenizer files and returns the manifest 'tokenizer' section plus token ids."""
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(model)
+    tokenizer = AutoTokenizer.from_pretrained(model, revision=revision)
     tokenizer_type, files = _write_tokenizer_files(tokenizer, output_dir)
 
     special = {}
@@ -232,18 +232,18 @@ def write_manifest(output_dir, tokenizer_section, token_stats, context_length, m
 # Model conversion (PyTorch -> stateful Core ML)
 # --------------------------------------------------------------------------------------------------
 
-def inspect_model(model):
+def inspect_model(model, revision=None):
     """Prints the checkpoint's config so a caller can see the cache shape before converting."""
     from transformers import AutoConfig
 
-    config = AutoConfig.from_pretrained(model)
+    config = AutoConfig.from_pretrained(model, revision=revision)
     fields = ("model_type", "architectures", "hidden_size", "num_hidden_layers",
               "num_attention_heads", "num_key_value_heads", "vocab_size", "max_position_embeddings")
     for field in fields:
         log(f"{field}: {getattr(config, field, None)}")
 
 
-def convert_model(model, output_dir, context_length, quantize, prefill_length):
+def convert_model(model, output_dir, context_length, quantize, prefill_length, revision=None):
     """Traces the model with a stateful KV cache and writes model.mlpackage.
 
     Dispatches to the architecture registered for the checkpoint's model_type. Each architecture
@@ -258,11 +258,11 @@ def convert_model(model, output_dir, context_length, quantize, prefill_length):
     import coremltools as ct
     from transformers import AutoModelForCausalLM, AutoConfig
 
-    config = AutoConfig.from_pretrained(model)
+    config = AutoConfig.from_pretrained(model, revision=revision)
     architecture = architectures.resolve(config.model_type)
     log(f"architecture: {config.model_type} -> {type(architecture).__name__}")
 
-    torch_model = AutoModelForCausalLM.from_pretrained(model, torch_dtype=torch.float32).eval()
+    torch_model = AutoModelForCausalLM.from_pretrained(model, revision=revision, torch_dtype=torch.float32).eval()
     wrapper = architecture.build_wrapper(torch_model, config, context_length)
 
     def convert_length(seq_len):
@@ -377,6 +377,7 @@ def build_tiny(output_dir):
 def main(argv):
     parser = argparse.ArgumentParser(description="Convert a Hugging Face causal LM to an InferKit Core ML directory.")
     parser.add_argument("--model", help="Hugging Face model id or local checkpoint path")
+    parser.add_argument("--revision", help="branch, tag, or commit of a Hugging Face model id (default: main)")
     parser.add_argument("--output", help="output directory")
     parser.add_argument("--context", type=int, default=2048, help="maximum context length")
     parser.add_argument("--quantize", choices=["int8"], help="optional weight quantization")
@@ -395,7 +396,7 @@ def main(argv):
     if args.inspect:
         if not args.model:
             parser.error("--inspect needs --model")
-        inspect_model(args.model)
+        inspect_model(args.model, args.revision)
         return 0
 
     if not args.output:
@@ -409,8 +410,9 @@ def main(argv):
     if not args.model:
         parser.error("--model is required")
 
-    tokenizer_section, token_stats = export_tokenizer(args.model, args.output)
-    model_section = convert_model(args.model, args.output, args.context, args.quantize, args.prefill)
+    tokenizer_section, token_stats = export_tokenizer(args.model, args.output, args.revision)
+    model_section = convert_model(args.model, args.output, args.context, args.quantize, args.prefill,
+                                  args.revision)
     write_manifest(args.output, tokenizer_section, token_stats, args.context, model_section)
     log("done")
     return 0

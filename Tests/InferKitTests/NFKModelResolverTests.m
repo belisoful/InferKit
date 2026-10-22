@@ -490,7 +490,9 @@ static NSUInteger NFKResolverToyAskCount;
 	XCTAssertEqualObjects(resolution.verification, NFKModelVerificationConversionRequired);
 	XCTAssertEqual(resolution.action.kind, NFKModelResolutionActionKindConvert);
 	XCTAssertEqualObjects(resolution.action.providerIdentifier, @"inferkit-convert");
-	XCTAssertEqualObjects(resolution.action.command, @"python convert.py --model org/llama-like --output llama-like-coreml");
+	NSString *command = [NSString stringWithFormat:@"python convert.py --model 'org/llama-like' --revision '%@' "
+						 "--output 'llama-like-coreml'", NFKResolverCommit];
+	XCTAssertEqualObjects(resolution.action.command, command);
 	XCTAssertEqualObjects(resolution.action.byteCount, @([self.class safetensorsWithRows:4 metadata:nil].length));
 	XCTAssertEqualObjects(resolution.reasons.firstObject.userInfo[NFKModelResolutionRouteKey], @(NFKModelRouteFamily));
 
@@ -498,6 +500,30 @@ static NSUInteger NFKResolverToyAskCount;
 	NFKModelResolution *restored = [NFKModelResolution resolutionWithDictionary:resolution.dictionaryRepresentation error:&error];
 	XCTAssertEqualObjects(restored.action, resolution.action, @"%@", error);
 	XCTAssertEqual(restored.route, NFKModelRouteConversion);
+}
+
+- (void)testNoHintForPickledWeightsOrANameTheShellReads
+{
+	NSDictionary *configuration = @{ @"model_type": @"llama" };
+	[self serveRepo:@"org/pickled" files:@{ @"config.json": [self.class JSON:configuration],
+											@"pytorch_model.bin": [NSMutableData dataWithLength:64] } card:nil];
+	NFKModelResolution *pickled = [self resolve:@"org/pickled" revision:nil];
+	XCTAssertNotEqual(pickled.route, NFKModelRouteConversion, @"torch.load of a pickle can run code");
+	XCTAssertNil(pickled.action);
+
+	[self serveToyRepo:@"org/m$(id)" configuration:configuration];
+	NFKModelResolution *injected = [self resolve:@"org/m$(id)" revision:nil];
+	XCTAssertNotEqual(injected.route, NFKModelRouteConversion, @"a pasted command would run $(id)");
+	XCTAssertNil(injected.action);
+}
+
+- (void)testNoHintAfterARouteRefusedForConsent
+{
+	self.resolver.localServers = @[ [self serverOfPreset:NFKRemoteProvider.ollama] ];
+	[self serveToyRepo:@"org/llama-like" configuration:@{ @"model_type": @"llama" }];
+	NFKModelResolution *resolution = [self resolve:@"org/llama-like" revision:nil];
+	[self assertRefusal:resolution code:NFKModelResolutionErrorUnverifiedRouteNotAllowed];
+	XCTAssertNil(resolution.action, @"a local server may run it once the caller allows unverified routes");
 }
 
 - (void)testNoHintForCodeTheRepositoryShipsOrAnArchitectureTheConverterLacks

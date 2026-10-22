@@ -109,6 +109,19 @@ static NSString * _Nullable NFKModelResolutionActionKindName(NFKModelResolutionA
 	return nil;
 }
 
+/*! YES for a repository name of the hub's form (owner/name) or a single name of the same characters, each
+	part starting with a letter or digit, so a command quotes it with no character the shell reads. */
+static BOOL NFKModelResolutionIsShellSafe(NSString * _Nullable value, BOOL isRepository)
+{
+	if (value == nil) {
+		return NO;
+	}
+	NSString *part = @"[A-Za-z0-9][A-Za-z0-9._-]*";
+	NSString *pattern = isRepository ? [NSString stringWithFormat:@"\\A%@/%@\\z", part, part]
+									 : [NSString stringWithFormat:@"\\A%@\\z", part];
+	return [value rangeOfString:pattern options:NSRegularExpressionSearch].location != NSNotFound;
+}
+
 /*! The kind a dictionary names, or 0 for a name no kind has. */
 static NFKModelResolutionActionKind NFKModelResolutionActionKindNamed(id name)
 {
@@ -303,9 +316,9 @@ static NFKModelResolutionActionKind NFKModelResolutionActionKindNamed(id name)
 
 - (NSString *)description
 {
-	return [NSString stringWithFormat:@"<%@ %@ %@ on %@ at %@>", NSStringFromClass(self.class),
-			NFKModelResolutionActionKindName(self.kind), self.model, self.providerIdentifier,
-			self.baseURL.absoluteString ?: @"its own address"];
+	NSString *address = self.baseURL != nil ? [@" at " stringByAppendingString:self.baseURL.absoluteString] : @"";
+	return [NSString stringWithFormat:@"<%@ %@ %@ on %@%@>", NSStringFromClass(self.class),
+			NFKModelResolutionActionKindName(self.kind), self.model, self.providerIdentifier, address];
 }
 
 @end
@@ -1386,18 +1399,25 @@ static BOOL NFKModelResolutionIsReadFailure(NSError *error)
 		|| ![NFKModelResolver.convertibleModelTypes containsObject:configuration[@"model_type"] ?: @""]) {
 		return nil;
 	}
+	for (NSError *reason in reasons) {
+		if ([reason.domain isEqualToString:NFKModelResolutionErrorDomain]
+			&& reason.code == NFKModelResolutionErrorUnverifiedRouteNotAllowed) {
+			return nil;
+		}
+	}
 	long long weightBytes = 0;
 	for (NFKDownloadPlanFile *file in listed.files) {
-		NSString *name = file.path.lastPathComponent;
-		if ([name hasSuffix:@".safetensors"] || ([name hasPrefix:@"pytorch_model"] && [name hasSuffix:@".bin"])) {
+		if ([file.path.lastPathComponent hasSuffix:@".safetensors"]) {
 			weightBytes += MAX(file.byteCount, 0);
 		}
 	}
-	if (weightBytes == 0) {
+	NSString *output = [[self variantIdentifierOfRepository:listed.repository] stringByAppendingString:@"-coreml"];
+	if (weightBytes == 0 || !NFKModelResolutionIsShellSafe(listed.repository, YES)
+		|| !NFKModelResolutionIsShellSafe(listed.revision, NO) || !NFKModelResolutionIsShellSafe(output, NO)) {
 		return nil;
 	}
-	NSString *output = [[self variantIdentifierOfRepository:listed.repository] stringByAppendingString:@"-coreml"];
-	NSString *command = [NSString stringWithFormat:@"python convert.py --model %@ --output %@", listed.repository, output];
+	NSString *command = [NSString stringWithFormat:@"python convert.py --model '%@' --revision '%@' --output '%@'",
+						 listed.repository, listed.revision, output];
 	NFKModelResolutionAction *action = [[NFKModelResolutionAction alloc] initWithKind:NFKModelResolutionActionKindConvert
 																  providerIdentifier:@"inferkit-convert" baseURL:nil
 																			   model:listed.repository path:nil

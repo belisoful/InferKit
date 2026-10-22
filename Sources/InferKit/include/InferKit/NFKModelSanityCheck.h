@@ -55,8 +55,8 @@ typedef NS_OPTIONS(NSUInteger, NFKModelSanityFinding) {
 	@discussion A model resolved through a route no reference measured (NFKModelResolver's family, Core ML
 				package, and local-server routes) can load and run wrong: weights read at the wrong
 				offsets, a tokenizer that splits text differently. The check runs one greedy generation
-				from a fixed prompt and reports empty, garbled, and looping output. It is a sanity check,
-				never a parity measurement: a model that writes fluent but wrong text passes it.
+				from a fixed prompt and reports empty, garbled, and looping output. A model that writes
+				fluent but wrong text passes it.
 				Introduced in InferKit 0.4.0.
 */
 @interface NFKModelSanityCheck : NSObject
@@ -71,7 +71,9 @@ typedef NS_OPTIONS(NSUInteger, NFKModelSanityFinding) {
 	fails or its result holds no NFKOutputText. */
 + (nullable NFKModelSanityResult *)checkBackend:(id<NFKInferenceBackend>)backend error:(NSError **)error;
 
-/*! Runs one generation from prompt, tokenCount tokens at temperature 0, and judges it. */
+/*! Runs one generation from prompt, tokenCount tokens at temperature 0, and judges it. Blocks for the
+	generation. Returns nil and sets error when tokenCount is below 1, the backend fails, or its result
+	holds no NFKOutputText. */
 + (nullable NFKModelSanityResult *)checkBackend:(id<NFKInferenceBackend>)backend
 										 prompt:(NSString *)prompt
 									 tokenCount:(NSInteger)tokenCount

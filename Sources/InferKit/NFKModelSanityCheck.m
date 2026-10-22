@@ -11,6 +11,8 @@
 
 /*! The longest stretch, in characters, whose repetition at the end of a reply counts as a loop. */
 static const NSUInteger NFKModelSanityLongestStretch = 32;
+/*! The run of rule characters, such as ---, that counts as a loop: longer than a line's rule. */
+static const NSUInteger NFKModelSanityRuleLength = 80;
 
 @implementation NFKModelSanityResult
 
@@ -59,6 +61,13 @@ static const NSUInteger NFKModelSanityLongestStretch = 32;
 									 tokenCount:(NSInteger)tokenCount
 										  error:(NSError **)error
 {
+	if (tokenCount < 1) {
+		if (error != NULL) {
+			*error = [NSError errorWithDomain:NFKInferenceErrorDomain code:kNFKError_InferenceUnsupported
+									 userInfo:@{ NSLocalizedDescriptionKey: @"A sanity check generates at least one token." }];
+		}
+		return nil;
+	}
 	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: prompt }
 															   parameters:@{ NFKParameterTemperature: @0,
 																			 NFKParameterMaxTokens: @(tokenCount) }];
@@ -93,18 +102,22 @@ static const NSUInteger NFKModelSanityLongestStretch = 32;
 	return [[NFKModelSanityResult alloc] initWithOutput:output findings:findings];
 }
 
-/*! YES for the replacement character or a control character other than a tab or a line break. */
+/*! YES for the replacement character or a C0 or C1 control character (Unicode Cc) other than a tab or a
+	line break. Format characters (Cf: joiners, directional marks, the soft hyphen) are written text. */
 + (BOOL)isGarbled:(NSString *)text
 {
-	NSMutableCharacterSet *undecoded = [NSMutableCharacterSet controlCharacterSet];
+	NSMutableCharacterSet *undecoded = [NSMutableCharacterSet characterSetWithRange:NSMakeRange(0x00, 0x20)];
+	[undecoded addCharactersInRange:NSMakeRange(0x7F, 0x21)];
 	[undecoded removeCharactersInString:@"\t\n\r"];
-	[undecoded addCharactersInString:@"�"];
+	[undecoded addCharactersInRange:NSMakeRange(0xFFFD, 1)];
 	return [text rangeOfCharacterFromSet:undecoded].location != NSNotFound;
 }
 
 /*! YES when the text ends in a stretch of up to NFKModelSanityLongestStretch characters repeated (ten
 	times for one or two characters, so a number such as 1000000 passes, six for three or four, and three
-	for a longer one), or when a text of 32 characters or more uses three distinct characters or fewer. */
+	for a longer one), or when a text of 32 characters or more uses three distinct characters or fewer. A
+	stretch of rule characters (isRuleUnit:) repeats to NFKModelSanityRuleLength characters first, so a
+	Markdown rule such as ---------- passes. */
 + (BOOL)isRepetitive:(NSString *)text
 {
 	NSUInteger length = text.length;
@@ -117,6 +130,12 @@ static const NSUInteger NFKModelSanityLongestStretch = 32;
 			break;
 		}
 		NSString *unit = [text substringFromIndex:length - stretch];
+		if ([self isRuleUnit:unit]) {
+			repeats = MAX(repeats, (NFKModelSanityRuleLength + stretch - 1) / stretch);
+			if (stretch * repeats > length) {
+				continue;
+			}
+		}
 		BOOL repeated = YES;
 		for (NSUInteger copy = 2; copy <= repeats && repeated; copy++) {
 			NSRange range = NSMakeRange(length - stretch * copy, stretch);
@@ -127,6 +146,13 @@ static const NSUInteger NFKModelSanityLongestStretch = 32;
 		}
 	}
 	return NO;
+}
+
+/*! YES for a stretch of the characters a Markdown rule or divider repeats: - = _ * ~. */
++ (BOOL)isRuleUnit:(NSString *)unit
+{
+	NSCharacterSet *rule = [NSCharacterSet characterSetWithCharactersInString:@"-=_*~"];
+	return [unit rangeOfCharacterFromSet:rule.invertedSet].location == NSNotFound;
 }
 
 + (NSUInteger)distinctCharacterCountOf:(NSString *)text

@@ -26,6 +26,8 @@ pip install -r requirements.txt
 python convert.py --model <hf-id-or-path> --output ./out --context 2048
 ```
 
+`--revision` names a branch, tag, or commit of a Hugging Face model id; the default is `main`.
+
 Inspect a checkpoint's shape before converting:
 
 ```bash

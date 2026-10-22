@@ -671,7 +671,7 @@ safetensors headers, and tries four routes in order, then a conversion hint:
 | A shipped loader | `NFKModelRouteFamily` | `configCompatible` | A model's `modelTypes` holds the configuration's `model_type`, and the class that supplied the model (`+descriptorForRepository:matchingDescriptor:error:` on `NFKModelDescriptorProvider`) builds a descriptor for the repository. |
 | A Core ML package | `NFKModelRouteCoreMLPackage` | `external` | The repository holds the `manifest.json` `Tools/inferkit-convert` writes for a causal language model, the package it names, and its tokenizer's files. `NFKCoreMLLanguageBackend` runs it on macOS 15, iOS 18, or tvOS 18. |
 | A local server | `NFKModelRouteLocalServer` | `external` | A server among the resolver's `localServers` already holds the repository, or the repository holds a single-file GGUF and a server whose runner pulls (Ollama) answers. |
-| A conversion hint | `NFKModelRouteConversion` | `conversionRequired` | No route runs the repository, its `model_type` is one `Tools/inferkit-convert` converts (`convertibleModelTypes`), it ships no code (`auto_map`), and it holds safetensors or `pytorch_model*.bin` weights. Its action's `command` is the conversion; nothing runs, and `isResolved` is NO. |
+| A conversion hint | `NFKModelRouteConversion` | `conversionRequired` | No route runs the repository, its `model_type` is one `Tools/inferkit-convert` converts (`convertibleModelTypes`), it ships no code (`auto_map`), it holds safetensors weights, and no route before it was refused only for the caller's consent. Its action's `command` is the conversion; nothing runs, and `isResolved` is NO. |
 
 - The routes after the first resolve only when `allowsUnverifiedRoutes` is YES. Otherwise the first that
   applies is a refusal with `NFKModelResolutionErrorUnverifiedRouteNotAllowed`, which names the route,
@@ -691,8 +691,9 @@ safetensors headers, and tries four routes in order, then a conversion hint:
   installed models, another server's served list. A model named the repository, or `hf.co/` or
   `huggingface.co/` with the repository and a tag, compared without case, is the repository's.
 - A conversion hint carries no descriptor. Its action (kind `convert`) holds the `convert.py` command a
-  developer runs from `Tools/inferkit-convert` in an InferKit checkout; the directory it writes resolves
-  on the Core ML package route. The converter reads the repository's default branch.
+  developer runs from `Tools/inferkit-convert` in an InferKit checkout, with the repository, the resolved
+  commit (`--revision`), and the output name single-quoted; the directory it writes resolves on the Core
+  ML package route.
 - `NFKModelSanityCheck` runs one greedy generation on a built backend and reports empty, garbled, and
   looping output (`NFKModelSanityFinding`), a check for a route no reference measured. Fluent but wrong
   text passes it, so it is never a parity figure.
