@@ -7,8 +7,9 @@ The resolver takes a Hugging Face repository and reports how InferKit runs it, h
 verified, and what it costs, before any weights download. The consumer reference is
 `Docs/model-catalog.md` ("Resolving a repository").
 
-Status, 2026-10-21: phases 1 and 2 are implemented. The catalog route and the family route run, and
-InferKitMLX judges every config-reading family in the judge table below. Tiers 2 to 4 are the plan below.
+Status, 2026-10-21: phases 1 to 3 are implemented. Tiers 0 to 3 run: the catalog route, the family route
+(InferKitMLX judges every config-reading family in the judge table below), the Core ML package route,
+and the local-server route. Tier 4 is the plan below.
 
 ## Starting point
 
@@ -46,17 +47,61 @@ The resolver tries the tiers in order and records each refusal.
 | --- | --- | --- | --- | --- |
 | 0 | `NFKModelRouteCatalog` | `measured` | A variant's `source.repository` is the repository, case-insensitively: any revision when none is named, else the variant's revision or `measuredRevision`. | shipped |
 | 1 | `NFKModelRouteFamily` | `configCompatible` | A descriptor's `modelTypes` holds the configuration's `model_type`, and its provider class builds a descriptor for the repository. | shipped |
-| 2 | Prebuilt Core ML package | `external` | The repository holds a `.mlpackage` and an `inferkit-convert` `manifest.json`. | planned |
-| 3 | Local server | `external` | GGUF files → an Ollama or llama.cpp pull. Safetensors → a vLLM server that is already running. | planned |
+| 2 | `NFKModelRouteCoreMLPackage` | `external` | The repository holds an `inferkit-convert` `manifest.json` for a causal language model, the package it names, and its tokenizer's files. | shipped |
+| 3 | `NFKModelRouteLocalServer` | `external` | A server among `localServers` holds the repository (`use`), or the repository holds a single-file GGUF and a server whose runner pulls answers (`pull`). | shipped |
 | 4 | Conversion hint | `conversionRequired` | `model_type` is one of the nine `Tools/inferkit-convert/architectures.py` registers. | planned |
 | none | `NFKModelRouteNone` | nil | No tier matched. The result carries every refusal. | shipped |
 
 Tier 4 returns the `convert.py` command and runs nothing. `Tools/` ships in no distribution, and the
 converter needs a Python environment.
 
-Tier 3's pull identifiers (`hf.co/<owner>/<repo>:<quant>` for Ollama, `-hf` for llama.cpp) are taken
-from those projects' documentation and are not probed here yet. Probe them against a live server before
-the route ships, and record the probe in `remote-providers.md`.
+Tier 3's Ollama pull identifier (`hf.co/<owner>/<repo>:<quant>`) is probed against Ollama 0.40.2; the
+record is in `remote-providers.md` ("Pulling a Hugging Face GGUF"). llama.cpp's `-hf` is a launch argument
+with no pull API and no runner adapter, so the route pulls through Ollama only and uses a running
+llama.cpp, vLLM, LM Studio, or InferKit server that already lists the repository.
+
+## Tiers 2 and 3
+
+The family route's refusals no longer end a resolution. The resolver reads `config.json` for the family
+route only: a repository without one, or without safetensors weights, is refused by that route with
+`NFKModelRouteFamily` in the refusal, and the Core ML and local-server routes try next. A gated
+`config.json` still ends the resolution, since no route reads the repository then.
+
+The Core ML package route (`packageResolutionOfRepository:`, `NFKModelResolver.m`) applies to a listing
+with a root `manifest.json`:
+
+- a manifest that is not a JSON object, a `modelType` other than `causal-lm`, or a model it names (else
+  `model.mlmodelc`, `model.mlpackage`, `model.mlmodel`) the listing does not hold →
+  `UnsupportedPackage`;
+- a tokenizer type `NFKTokenizer` does not read, or a tokenizer file it names (with its defaults) the
+  listing does not hold → `UnsupportedTokenizer`.
+
+The descriptor is engine `coreml`: a text decoder (prompt, and messages where the tokenizer states a chat
+template) with one variant reading the manifest, every file under the package, and the tokenizer files.
+Its memory facts are one stage of the package's bytes, with the manifest's `contextLength` and
+`vocabSize`. Its requirements are macOS 15, iOS 18, and tvOS 18, where Core ML state holds the cache.
+
+The local-server route (`serverResolutionOfRepository:gated:reasons:`) asks `localServers` with
+`+[NFKRemoteProvider availableProvidersAmong:timeout:]` (two seconds):
+
+1. A server that answers and holds the repository → `use`. An Ollama or LM Studio runner lists its
+   installed models, another server its served list; a model named the repository, or `hf.co/` or
+   `huggingface.co/` with it and a tag, compared without case, matches.
+2. Else, for a repository holding a GGUF: gated → `Gated` (a server pulls without the account's token);
+   no answering server whose runner pulls → `NoServer`; else → `pull` of `hf.co/<repository>:<tag>`.
+   The tag is the file name's quantization (`Q4_K_M`, `IQ3_XXS`, `Q8_0`, `F16`), preferring `Q4_K_M`,
+   `Q4_K_S`, `Q5_K_M`, `Q4_0`, `Q6_K`, `Q8_0`, else the smallest. A file split into parts is skipped.
+3. A repository without a GGUF that no server holds adds no refusal.
+
+The descriptor is engine `local-server` with a source of kind `none`: nothing downloads through the hub.
+Its `localServer` extension names the preset and the model, and its registry name is the model. Where
+the size is known, its memory facts are one stage of the model's bytes.
+
+The core registers a builder for each engine in its builder registry (`NFKModelEngineBuilders.m`):
+`NFKCoreMLEngineBuilder` builds `NFKCoreMLLanguageBackend` from the located directory, and
+`NFKLocalServerEngineBuilder` builds `+[NFKRemoteProvider backendForProvider:apiKey:modelName:]` for the
+extension's preset and model. A memory fit is the resolution's estimate on every route; no route refuses
+for size.
 
 ## The resolution, step by step
 
@@ -316,10 +361,11 @@ reaches it from its own control protocol. The in-process API meets these require
   `NFKModelResolutionErrorDomain`, with `NFKModelResolutionRouteKey` and
   `NFKModelResolutionDescriptorKey` in its `userInfo`. `NFKModelResolution.dictionaryRepresentation`
   writes each as `{"domain", "code", "description", "route", "descriptor"}`, and
-  `resolutionWithDictionary:error:` reads it back. Tiers 2 and 3 add codes for a model that does not fit
-  and for no available server.
-- **External routes.** A tier-2 or tier-3 result describes an action. The host shows it and performs it
-  only after the user confirms.
+  `resolutionWithDictionary:error:` reads it back. Tiers 2 and 3 add `NoServer` and `UnsupportedPackage`.
+  A model too large for the budget is the estimate's verdict, as on the family route.
+- **External routes.** A local-server resolution carries its `action`: `use` builds at once, and `pull`
+  downloads into the server's own store. The host shows a pull and performs it only after the user
+  confirms. The action's `dictionaryRepresentation` rides in the resolution's.
 
 No `NFKInferenceServer` route is planned for the first phase. A resolve route serves only an app with no
 service process of its own, and is a later decision.
@@ -357,6 +403,6 @@ The judgment reads what the loader reads through the loader's own predicates.
    the catalog `modelTypes` field. Done.
 2. Judgments for the other config-reading families, each listing its `modelTypes`. Done: the families
    in the judge table. Codestral Mamba waits on a core JSON reader that takes `Infinity`.
-3. Tiers 2 and 3, with the server probes recorded.
+3. Tiers 2 and 3, with the server probes recorded. Done.
 4. Tier 4 hints, and an optional post-load check: a short greedy generation tested for degenerate
    output. It is reported as a sanity check and never as parity.

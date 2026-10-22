@@ -10,6 +10,7 @@
 #import "NFKDynamicBackend.h"
 #import "NFKHardwareProfile.h"
 #import "NFKHFHub.h"
+#import "NFKModelEngineBuilders.h"
 
 static NSError *NFKModelBuildError(NFKModelCatalogError code, NSString *reason)
 {
@@ -295,6 +296,8 @@ static NSSet<NSString *> *NFKDefaultedForwardedSelectors(void)
 	static dispatch_once_t once;
 	dispatch_once(&once, ^{
 		builders = [NSMutableDictionary dictionary];
+		builders[NFKModelEngineCoreML] = [[NFKCoreMLEngineBuilder alloc] init];
+		builders[NFKModelEngineLocalServer] = [[NFKLocalServerEngineBuilder alloc] init];
 	});
 	return builders;
 }

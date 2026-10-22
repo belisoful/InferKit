@@ -591,7 +591,19 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   - `NFKModelRouteCatalog` → a shipped variant reads the repository. Verification `measured`. A
     repository named at the variant's revision resolves with no network request.
   - `NFKModelRouteFamily` → a shipped model's loader reads the repository's configuration. Verification
-    `configCompatible`. It resolves only when `allowsUnverifiedRoutes` is YES.
+    `configCompatible`.
+  - `NFKModelRouteCoreMLPackage` → the repository holds a Core ML language model with the
+    `Tools/inferkit-convert` manifest, which `NFKCoreMLLanguageBackend` runs (engine `coreml`).
+    Verification `external`.
+  - `NFKModelRouteLocalServer` → a model server on this machine holds the repository, or Ollama pulls its
+    GGUF (engine `local-server`). Verification `external`. The resolution's `NFKModelResolutionAction`
+    says `use` or `pull`; the resolver performs neither, and a host asks the user before a pull.
+  - Every route after the first resolves only when `allowsUnverifiedRoutes` is YES, and a route's
+    refusal passes to the next route: a GGUF repository with no `config.json` reaches the local server.
+- The core registers builders for the `coreml` and `local-server` engines (`NFKModelEngineCoreML`,
+  `NFKModelEngineLocalServer`), so a resolved Core ML or local-server descriptor builds through the
+  catalog. The resolver's `localServers` lists the servers asked, `+[NFKRemoteProvider localProviders]`
+  by default. New refusals: `NFKModelResolutionErrorNoServer`, `NFKModelResolutionErrorUnsupportedPackage`.
 - A refusal is an `NSError` in `NFKModelResolutionErrorDomain` with the route and the shipped model it
   concerns in its `userInfo`. A failure to read the repository (a transport failure, a revision or a file
   the hub does not serve) fails the call with the hub's error. A refused read is the gated refusal, which

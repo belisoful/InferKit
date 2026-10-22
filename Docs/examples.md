@@ -5619,10 +5619,12 @@ catalog.memoryBudget = nil;                                      // this machine
 ### Resolving a Hugging Face repository
 
 `NFKModelResolver` answers how InferKit runs a repository before any weights download: a shipped
-variant (`measured`), or a shipped loader that reads the repository's configuration
-(`configCompatible`), which resolves only when the app allows it. A repository no route reads comes back
-with one reason per route, each an `NFKModelResolutionErrorDomain` code an interface shows as it is.
-The [model catalog reference](model-catalog.md#resolving-a-repository) lists the routes and the codes.
+variant (`measured`), or, when the app allows it, a shipped loader that reads the repository's
+configuration (`configCompatible`), a Core ML package, or a model server on this machine (`external`). A
+local-server resolution carries the action a host takes first, and a pull downloads into the server, so
+the host asks the user before it pulls. A repository no route reads comes back with one reason per route,
+each an `NFKModelResolutionErrorDomain` code an interface shows as it is. The
+[model catalog reference](model-catalog.md#resolving-a-repository) lists the routes and the codes.
 
 ```objc
 NFKModelResolver *resolver = [[NFKModelResolver alloc] init];   // the shared catalog, the default hub cache
@@ -5638,8 +5640,13 @@ resolver.allowsUnverifiedRoutes = YES;                          // a shipped loa
         }
         return;
     }
-    NFKModelVerification verification = resolution.verification;  // measured, or configCompatible
+    NFKModelVerification verification = resolution.verification;  // measured, configCompatible, or external
     BOOL fits = resolution.memoryEstimate.fits;                     // against this machine's budget
+    NFKModelResolutionAction *action = resolution.action;          // a local server: use it, or pull first
+    if (action.kind == NFKModelResolutionActionKindPull) {
+        // Ask the user: action.byteCount bytes download into the server. Then pull action.model with
+        // -[NFKLocalModelRunner pullModel:] on the runner of the preset action.providerIdentifier names.
+    }
     NSDictionary *saved = resolution.descriptor.dictionaryRepresentation;  // restores with no network request
     [NFKModelCatalog.sharedCatalog addDescriptor:resolution.descriptor];
 }];

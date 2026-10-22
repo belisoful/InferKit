@@ -1721,12 +1721,14 @@
 	NFKModelResolver *resolver = [[NFKModelResolver alloc] initWithCatalog:catalog hub:nil];
 	resolver.allowsUnverifiedRoutes = YES;                         // a shipped loader may read another repository
 	NFKModelResolution *resolution = [resolver resolutionForRepository:@"example/chat-1b" revision:nil error:&error];
-	NSString *verification = resolution.verification;              // measured, or configCompatible
+	NSString *verification = resolution.verification;              // measured, configCompatible, or external
+	NFKModelResolutionAction *action = resolution.action;          // a local server: use it, or pull first
 	NSDictionary *saved = resolution.descriptor.dictionaryRepresentation;   // restores with no network request
 	NFKModelDescriptor *restored = [NFKModelDescriptor descriptorWithDictionary:saved error:&error];
 
 	XCTAssertEqual(resolution.route, NFKModelRouteCatalog, @"%@", error);
 	XCTAssertEqualObjects(verification, NFKModelVerificationMeasured);
+	XCTAssertNil(action, @"a shipped variant needs no step on a server");
 	XCTAssertEqualObjects(restored.identifier, @"example.chat-1b");
 	XCTAssertEqualObjects(restored.modelTypes, @[ @"example" ]);
 	XCTAssertEqual(resolution.memoryEstimate.residentByteCount, 2000000000);

@@ -14,6 +14,7 @@ NS_ASSUME_NONNULL_BEGIN
 
 @class NFKHFHub;
 @class NFKDownloadPlanFile;
+@class NFKRemoteProvider;
 
 /*!
 	@header     NFKModelResolver
@@ -28,8 +29,13 @@ NS_ASSUME_NONNULL_BEGIN
 				   (modelTypes), and the class that supplied a matching descriptor builds a descriptor for
 				   the repository (+[NFKModelDescriptorProvider descriptorForRepository:matchingDescriptor:error:]).
 				   Its memory figures come from the repository's own headers and configuration, and no
-				   reference measured its output. This route resolves only when allowsUnverifiedRoutes
-				   is YES.
+				   reference measured its output.
+				3. NFKModelRouteCoreMLPackage: the repository holds a Core ML language model with the
+				   manifest.json Tools/inferkit-convert writes, which NFKCoreMLLanguageBackend runs.
+				4. NFKModelRouteLocalServer: a model server running on this machine already serves the
+				   repository, or pulls its GGUF weights. The resolution's action says which; the resolver
+				   performs neither.
+				Routes 2 to 4 resolve only when allowsUnverifiedRoutes is YES.
 				The resolution carries the descriptor, which an app adds to a catalog and builds as any
 				other, and its memory estimate against a budget, this machine's by default. A
 				descriptor's dictionaryRepresentation saves it, and +[NFKModelDescriptor
@@ -65,6 +71,12 @@ extern NSErrorDomain const NFKModelResolutionErrorDomain;
 				tokenizer as the release defines it.
 	@constant   NFKModelResolutionErrorUnsupportedQuantization The loader does not read the repository's
 				quantized weights.
+	@constant   NFKModelResolutionErrorNoServer No model server on this machine serves the repository or
+				pulls it: none answers among the resolver's localServers, or none that answers pulls a
+				GGUF repository.
+	@constant   NFKModelResolutionErrorUnsupportedPackage The repository's Core ML package is not one
+				NFKCoreMLLanguageBackend runs: its manifest is not a causal language model's, or it names
+				a model the listing does not hold.
 */
 typedef NS_ERROR_ENUM(NFKModelResolutionErrorDomain, NFKModelResolutionError) {
 	NFKModelResolutionErrorUnverifiedRouteNotAllowed	= 1,
@@ -76,6 +88,8 @@ typedef NS_ERROR_ENUM(NFKModelResolutionErrorDomain, NFKModelResolutionError) {
 	NFKModelResolutionErrorUnsupportedConfiguration		= 7,
 	NFKModelResolutionErrorUnsupportedTokenizer			= 8,
 	NFKModelResolutionErrorUnsupportedQuantization		= 9,
+	NFKModelResolutionErrorNoServer						= 10,
+	NFKModelResolutionErrorUnsupportedPackage			= 11,
 };
 
 /*!
@@ -84,11 +98,16 @@ typedef NS_ERROR_ENUM(NFKModelResolutionErrorDomain, NFKModelResolutionError) {
 	@constant   NFKModelRouteNone No route applies; the resolution's reasons say why.
 	@constant   NFKModelRouteCatalog A shipped variant reads the repository.
 	@constant   NFKModelRouteFamily A shipped model's loader reads the repository's configuration.
+	@constant   NFKModelRouteCoreMLPackage NFKCoreMLLanguageBackend runs the Core ML package the
+				repository holds.
+	@constant   NFKModelRouteLocalServer A model server on this machine serves the repository, or pulls it.
 */
 typedef NS_ENUM(NSInteger, NFKModelRoute) {
-	NFKModelRouteNone		= 0,
-	NFKModelRouteCatalog	= 1,
-	NFKModelRouteFamily		= 2,
+	NFKModelRouteNone			= 0,
+	NFKModelRouteCatalog		= 1,
+	NFKModelRouteFamily			= 2,
+	NFKModelRouteCoreMLPackage	= 3,
+	NFKModelRouteLocalServer	= 4,
 } NS_SWIFT_NAME(NFKModelResolution.Route);
 
 /*! How far a route's output is verified, one of the NFKModelVerification* strings. Introduced in
@@ -98,6 +117,9 @@ typedef NSString *NFKModelVerification NS_TYPED_EXTENSIBLE_ENUM;
 extern NFKModelVerification const NFKModelVerificationMeasured;
 /*! The loader reads the configuration, and no reference measured this repository's output. */
 extern NFKModelVerification const NFKModelVerificationConfigCompatible;
+/*! Another party converted or quantized the weights, and runs them in a runtime InferKit does not hold
+	to a reference: a Core ML package, or a model server's GGUF weights. */
+extern NFKModelVerification const NFKModelVerificationExternal;
 
 /*! The userInfo key of a refusal: the NFKModelRoute (an NSNumber) the refusal concerns. Introduced in
 	InferKit 0.4.0. */
@@ -111,8 +133,8 @@ extern NSErrorUserInfoKey const NFKModelResolutionDescriptorKey;
 	dictionary round trip. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelResolutionExtensionKey;
 
-/*! The route's name in a resolution's dictionary: "none", "catalog", or "family". Introduced in InferKit
-	0.4.0. */
+/*! The route's name in a resolution's dictionary: "none", "catalog", "family", "coreml-package", or
+	"local-server". Introduced in InferKit 0.4.0. */
 FOUNDATION_EXPORT NSString *NFKModelRouteName(NFKModelRoute route) NS_SWIFT_NAME(getter:NFKModelRoute.name(self:));
 
 /*!
@@ -173,14 +195,68 @@ FOUNDATION_EXPORT NSString *NFKModelRouteName(NFKModelRoute route) NS_SWIFT_NAME
 @end
 
 /*!
+	@enum       NFKModelResolutionActionKind
+	@abstract   What a host does before a local-server route runs. Introduced in InferKit 0.4.0.
+	@constant   NFKModelResolutionActionKindUse The server already holds the model: the host builds the
+				descriptor, and nothing downloads.
+	@constant   NFKModelResolutionActionKindPull The server downloads the model first: the host asks the
+				user, then calls -[NFKLocalModelRunner pullModel:] with the action's model on the server's
+				runner.
+*/
+typedef NS_ENUM(NSInteger, NFKModelResolutionActionKind) {
+	NFKModelResolutionActionKindUse		= 1,
+	NFKModelResolutionActionKindPull	= 2,
+} NS_SWIFT_NAME(NFKModelResolutionAction.Kind);
+
+/*!
+	@class      NFKModelResolutionAction
+	@abstract   The step a host takes, with the user's consent, before a local-server route runs.
+	@discussion The resolver reads the server and changes nothing on it. A pull downloads byteCount bytes
+				into the server's own store and changes what it holds, so a host shows the action and
+				performs it only after the user confirms. Introduced in InferKit 0.4.0.
+*/
+@interface NFKModelResolutionAction : NSObject <NSCopying>
+
+/*! Whether the server holds the model already or pulls it. */
+@property (nonatomic, readonly) NFKModelResolutionActionKind kind;
+/*! The identifier of the server's NFKRemoteProvider preset, such as "ollama". */
+@property (nonatomic, readonly, copy) NSString *providerIdentifier;
+/*! The model's name on the server, which a pull fetches and a request names, such as
+	"hf.co/org/name-GGUF:Q4_K_M". */
+@property (nonatomic, readonly, copy) NSString *model;
+/*! The repository file the server pulls, or nil for a model the server holds. */
+@property (nonatomic, readonly, copy, nullable) NSString *path;
+/*! The bytes a pull transfers, or nil when unknown. */
+@property (nonatomic, readonly, copy, nullable) NSNumber *byteCount;
+
+/*! An action with every field. */
+- (instancetype)initWithKind:(NFKModelResolutionActionKind)kind
+		  providerIdentifier:(NSString *)providerIdentifier
+					   model:(NSString *)model
+						path:(nullable NSString *)path
+				   byteCount:(nullable NSNumber *)byteCount NS_DESIGNATED_INITIALIZER;
+
+/*! The action as JSON values: kind ("use" or "pull"), provider, model, path, and bytes. */
+- (NSDictionary<NSString *, id> *)dictionaryRepresentation;
+
+/*! Reads an action from its dictionary. Returns nil and sets error when a field is missing or malformed. */
++ (nullable instancetype)actionWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error;
+
+- (instancetype)init NS_UNAVAILABLE;
++ (instancetype)new NS_UNAVAILABLE;
+
+@end
+
+/*!
 	@class      NFKModelResolution
 	@abstract   How InferKit runs a repository, or why it does not.
 	@discussion route is NFKModelRouteNone when no route resolves, and reasons then holds one error per
 				route the resolver passed over, in NFKModelResolutionErrorDomain, in the order tried. A
 				resolved route keeps the reasons of the routes before it. descriptor is the shipped
-				descriptor for NFKModelRouteCatalog and a descriptor built for the repository for
-				NFKModelRouteFamily, and variant is the one that reads the repository. memoryEstimate is
-				the estimate at the descriptor's default options, judged against the resolver's budget.
+				descriptor for NFKModelRouteCatalog and a descriptor built for the repository for every
+				other route, and variant is the one that reads the repository. memoryEstimate is the
+				estimate at the descriptor's default options, judged against the resolver's budget. action
+				is the step a host takes, with the user's consent, before a local-server route runs.
 				Introduced in InferKit 0.4.0.
 */
 @interface NFKModelResolution : NSObject <NSCopying>
@@ -204,6 +280,8 @@ FOUNDATION_EXPORT NSString *NFKModelRouteName(NFKModelRoute route) NS_SWIFT_NAME
 @property (nonatomic, readonly, copy, nullable) NSNumber *downloadByteCount;
 /*! Why each route passed over does not apply, in the order tried. */
 @property (nonatomic, readonly, copy) NSArray<NSError *> *reasons;
+/*! The step a host takes before a local-server route runs, or nil for every other route. */
+@property (nonatomic, readonly, copy, nullable) NFKModelResolutionAction *action;
 /*! YES when a route applies. */
 @property (nonatomic, readonly, getter=isResolved) BOOL resolved;
 
@@ -216,11 +294,23 @@ FOUNDATION_EXPORT NSString *NFKModelRouteName(NFKModelRoute route) NS_SWIFT_NAME
 				 variantIdentifier:(nullable NSString *)variantIdentifier
 					memoryEstimate:(nullable NFKModelMemoryEstimate *)memoryEstimate
 				 downloadByteCount:(nullable NSNumber *)downloadByteCount
-						   reasons:(nullable NSArray<NSError *> *)reasons NS_DESIGNATED_INITIALIZER;
+						   reasons:(nullable NSArray<NSError *> *)reasons
+							action:(nullable NFKModelResolutionAction *)action NS_DESIGNATED_INITIALIZER;
+
+/*! A resolution without an action. */
+- (instancetype)initWithRepository:(NSString *)repository
+						  revision:(nullable NSString *)revision
+							 route:(NFKModelRoute)route
+					  verification:(nullable NFKModelVerification)verification
+						descriptor:(nullable NFKModelDescriptor *)descriptor
+				 variantIdentifier:(nullable NSString *)variantIdentifier
+					memoryEstimate:(nullable NFKModelMemoryEstimate *)memoryEstimate
+				 downloadByteCount:(nullable NSNumber *)downloadByteCount
+						   reasons:(nullable NSArray<NSError *> *)reasons;
 
 /*! The resolution as JSON values: repository, revision, route (its name), verification, descriptor (its
-	dictionary), variant (its identifier), memoryEstimate, downloadBytes, and reasons, each reason as
-	{"domain", "code", "description", "route", "descriptor"}. */
+	dictionary), variant (its identifier), memoryEstimate, downloadBytes, action (its dictionary), and
+	reasons, each reason as {"domain", "code", "description", "route", "descriptor"}. */
 - (NSDictionary<NSString *, id> *)dictionaryRepresentation;
 
 /*! Reads a resolution from its dictionary. Returns nil and sets error when repository is missing or a
@@ -262,6 +352,10 @@ FOUNDATION_EXPORT NSString *NFKModelRouteName(NFKModelRoute route) NS_SWIFT_NAME
 /*! The budget the memory estimate is judged against; nil, the default, is the catalog's memoryBudget,
 	which is this machine's unless an app set another. */
 @property (atomic, copy, nullable) NFKModelMemoryBudget *memoryBudget;
+/*! The model servers the local-server route asks, in order; +[NFKRemoteProvider localProviders] by
+	default. Each that answers within two seconds is asked for the models it holds, and one whose runner
+	pulls (Ollama) is asked to pull a GGUF repository. An empty array turns the route off. */
+@property (atomic, copy) NSArray<NFKRemoteProvider *> *localServers;
 
 /*! The resolution of a repository at a revision; nil for the default branch. Blocks on the network.
 	Returns nil and sets error when the metadata cannot be read. */

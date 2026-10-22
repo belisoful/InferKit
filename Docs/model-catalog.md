@@ -663,16 +663,34 @@ load held the weights reports it in `modelInfo` under `NFKModelInfoResidency`.
 
 `NFKModelResolver` (`NFKModelResolver.h`) answers how InferKit runs a Hugging Face repository before
 any weights download. It reads the repository's commit, model card, file listing, `config.json`, and
-safetensors headers, and tries two routes in order:
+safetensors headers, and tries four routes in order:
 
 | Route | `NFKModelRoute` | Verification | When it applies |
 |---|---|---|---|
 | A shipped variant | `NFKModelRouteCatalog` | `measured` | A variant's `source.repository` is the repository, at any revision when none is named, else at the variant's revision or `measuredRevision`. A repository named at the variant's revision resolves with no network request. |
 | A shipped loader | `NFKModelRouteFamily` | `configCompatible` | A model's `modelTypes` holds the configuration's `model_type`, and the class that supplied the model (`+descriptorForRepository:matchingDescriptor:error:` on `NFKModelDescriptorProvider`) builds a descriptor for the repository. |
+| A Core ML package | `NFKModelRouteCoreMLPackage` | `external` | The repository holds the `manifest.json` `Tools/inferkit-convert` writes for a causal language model, the package it names, and its tokenizer's files. `NFKCoreMLLanguageBackend` runs it on macOS 15, iOS 18, or tvOS 18. |
+| A local server | `NFKModelRouteLocalServer` | `external` | A server among the resolver's `localServers` already holds the repository, or the repository holds a single-file GGUF and a server whose runner pulls (Ollama) answers. |
 
-- The second route resolves only when `allowsUnverifiedRoutes` is YES. Otherwise it is a refusal with
-  `NFKModelResolutionErrorUnverifiedRouteNotAllowed`, which names the route and the shipped model whose
-  loader reads the repository.
+- The routes after the first resolve only when `allowsUnverifiedRoutes` is YES. Otherwise the first that
+  applies is a refusal with `NFKModelResolutionErrorUnverifiedRouteNotAllowed`, which names the route,
+  and the shipped model whose loader reads the repository where there is one.
+- A route's refusal does not end the resolution: a GGUF repository with no `config.json` is refused by
+  the family route and resolves on the local-server route.
+- A local-server resolution carries an `action` (`NFKModelResolutionAction`). `use` means the server holds
+  the model, and the descriptor builds at once. `pull` means the server downloads `byteCount` bytes of
+  `path` first. The resolver performs neither. A host shows a pull and, after the user confirms, calls
+  `-[NFKLocalModelRunner pullModel:]` with the action's `model` on the server's runner
+  (`-[NFKRemoteProvider localRunner]`). A pull names `hf.co/<repository>:<quantization>`, preferring
+  `Q4_K_M`, and skips a GGUF split into parts. A gated repository is refused, since a server pulls without
+  the account's token.
+- The local-server route asks each server in `localServers` (`+[NFKRemoteProvider localProviders]` by
+  default) that answers within two seconds for the models it holds: an Ollama or LM Studio runner's
+  installed models, another server's served list. A model named the repository, or `hf.co/` or
+  `huggingface.co/` with the repository and a tag, compared without case, is the repository's.
+- A Core ML or local-server descriptor builds through the core's own builder for its engine (`coreml`,
+  `local-server`). A local-server descriptor has no files to download; its `localServer` extension names
+  the server's preset (`provider`) and the model (`model`).
 - `NFKModelResolution` carries the route, the verification, the descriptor, the variant, the download
   size, the memory estimate at the default options against the resolver's `memoryBudget` (the
   catalog's, this machine's by default), and `reasons`: one `NSError` per route passed over, in
@@ -709,6 +727,8 @@ The refusals:
 | `NFKModelResolutionErrorUnsupportedConfiguration` | The loader reads the model type and refuses this configuration. |
 | `NFKModelResolutionErrorUnsupportedTokenizer` | The loader does not read the tokenizer as the release defines it. |
 | `NFKModelResolutionErrorUnsupportedQuantization` | The loader does not read the quantized weights. |
+| `NFKModelResolutionErrorNoServer` | The repository holds GGUF weights, and no server that pulls them answers on this machine. |
+| `NFKModelResolutionErrorUnsupportedPackage` | The repository's Core ML package is not a causal language model's, or names a model the listing does not hold. |
 
 InferKitMLX judges repositories for the dense and mixture decoders `NFKMLXLanguage` loads: the Qwen3,
 Qwen3-MoE, Qwen1.5-MoE, Mixtral, gpt-oss, and Mistral releases, and the Mistral release's loader reads
@@ -853,6 +873,8 @@ resolves through `+[NFKDynamicBackend backendForCapability:error:]` as it is.
 | `foundation-models` | `NFKModelEngineFoundationModels` | The InferKitFoundationModels companion. |
 | `apple-swift` | `NFKModelEngineAppleSwift` | The InferKitAppleSwift companion. |
 | `plugin` | `NFKModelEnginePlugin` | A backend a plugin or an app brings. |
+| `coreml` | `NFKModelEngineCoreML` | `NFKCoreMLLanguageBackend`, running a Core ML language model `Tools/inferkit-convert` writes. |
+| `local-server` | `NFKModelEngineLocalServer` | A model server on this machine, reached through an `NFKRemoteProvider` preset. |
 
 `NFKPluginRegistry` registers the `plugin` engine's builder. A model a plugin's manifest lists joins the
 catalog as `<plugin id>/<model id>` and builds through that builder; another `plugin` descriptor builds

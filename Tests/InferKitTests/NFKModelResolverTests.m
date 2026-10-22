@@ -4,7 +4,8 @@
 //
 //  Resolving repositories against the in-process hub at http://hub.test: a shipped variant with no
 //  request and at its measured commit, a family loader behind the opt-in, each refusal and its code, a
-//  missing repository, the asynchronous form, the dictionary round trips, and the safetensors header read.
+//  missing repository, the asynchronous form, the dictionary round trips, the safetensors header read, a
+//  Core ML package, and the local-server route against servers stubbed at the same address.
 //
 
 #import <XCTest/XCTest.h>
@@ -123,10 +124,12 @@ static NSUInteger NFKResolverToyAskCount;
 	XCTAssertTrue([self.catalog addDescriptorsFromProviderClassName:NSStringFromClass(NFKResolverToyProvider.class)]);
 	self.resolver = [[NFKModelResolver alloc] initWithCatalog:self.catalog hub:self.hub];
 	self.resolver.memoryBudget = [NFKModelMemoryBudget budgetWithWorkingSetByteCount:(NSInteger)16 << 30];
+	self.resolver.localServers = @[];
 }
 
 - (void)tearDown
 {
+	[NSURLProtocol unregisterClass:NFKStubHubProtocol.class];
 	[NSFileManager.defaultManager removeItemAtURL:self.cacheDir error:NULL];
 	[NFKStubHubProtocol reset];
 	NFKResolverToyRefusal = nil;
@@ -469,6 +472,224 @@ static NSUInteger NFKResolverToyAskCount;
 	XCTAssertEqualObjects(NFKModelRouteName(NFKModelRouteNone), @"none");
 	XCTAssertEqualObjects(NFKModelRouteName(NFKModelRouteCatalog), @"catalog");
 	XCTAssertEqualObjects(NFKModelRouteName(NFKModelRouteFamily), @"family");
+	XCTAssertEqualObjects(NFKModelRouteName(NFKModelRouteCoreMLPackage), @"coreml-package");
+	XCTAssertEqualObjects(NFKModelRouteName(NFKModelRouteLocalServer), @"local-server");
+}
+
+#pragma mark Core ML package route
+
+/*! A Core ML language model as Tools/inferkit-convert writes it: the manifest, a package of three files,
+	and the byte-level tokenizer's two. */
+- (NSDictionary<NSString *, NSData *> *)packageFilesWithManifest:(NSDictionary *)manifest
+{
+	return @{ @"manifest.json": [self.class JSON:manifest],
+			  @"model.mlpackage/Manifest.json": [self.class JSON:@{ @"fileFormatVersion": @"1.0.0" }],
+			  @"model.mlpackage/Data/com.apple.CoreML/model.mlmodel": [NSMutableData dataWithLength:64],
+			  @"model.mlpackage/Data/com.apple.CoreML/weights/weight.bin": [NSMutableData dataWithLength:4096],
+			  @"vocab.json": [self.class JSON:@{ @"a": @0 }],
+			  @"merges.txt": [@"#version: 0.2\n" dataUsingEncoding:NSUTF8StringEncoding] };
+}
+
+- (NSDictionary *)packageManifest
+{
+	return @{ @"modelType": @"causal-lm", @"model": @"model.mlpackage", @"contextLength": @2048, @"vocabSize": @256,
+			  @"tokenizer": @{ @"type": @"bpe-bytelevel", @"vocab": @"vocab.json", @"merges": @"merges.txt" } };
+}
+
+- (void)testACoreMLPackageResolvesToTheCoreMLEngine
+{
+	self.resolver.allowsUnverifiedRoutes = YES;
+	[self serveRepo:@"org/qwen-coreml" files:[self packageFilesWithManifest:[self packageManifest]]
+			   card:@{ @"license": @"apache-2.0" }];
+	NFKModelResolution *resolution = [self resolve:@"org/qwen-coreml" revision:nil];
+	XCTAssertEqual(resolution.route, NFKModelRouteCoreMLPackage);
+	XCTAssertEqualObjects(resolution.verification, NFKModelVerificationExternal);
+	XCTAssertEqualObjects(resolution.descriptor.engine, NFKModelEngineCoreML);
+	XCTAssertEqualObjects(resolution.descriptor.extensions[NFKModelResolutionExtensionKey][@"verification"],
+						  NFKModelVerificationExternal);
+	XCTAssertEqualObjects(resolution.reasons.firstObject.userInfo[NFKModelResolutionRouteKey], @(NFKModelRouteFamily),
+						  @"the family route's refusal comes first: the repository has no config.json");
+	NSSet *paths = [NSSet setWithArray:[resolution.variant.source.files valueForKey:@"path"]];
+	NSSet *expected = [NSSet setWithArray:@[ @"manifest.json", @"model.mlpackage/Manifest.json",
+											 @"model.mlpackage/Data/com.apple.CoreML/model.mlmodel",
+											 @"model.mlpackage/Data/com.apple.CoreML/weights/weight.bin",
+											 @"vocab.json", @"merges.txt" ]];
+	XCTAssertEqualObjects(paths, expected);
+	XCTAssertEqualObjects(resolution.variant.source.layout, NFKModelSourceLayoutDirectory);
+	XCTAssertEqualObjects(resolution.descriptor.requirements.minimumOSVersions[@"macOS"], @"15.0");
+	NSData *manifest = [self.class JSON:@{ @"fileFormatVersion": @"1.0.0" }];
+	XCTAssertEqualObjects(resolution.variant.residentByteCount, @(64 + 4096 + manifest.length));
+	XCTAssertNotNil(resolution.memoryEstimate);
+}
+
+- (void)testACoreMLPackageWaitsForTheOptIn
+{
+	[self serveRepo:@"org/qwen-coreml" files:[self packageFilesWithManifest:[self packageManifest]] card:nil];
+	NFKModelResolution *resolution = [self resolve:@"org/qwen-coreml" revision:nil];
+	[self assertRefusal:resolution code:NFKModelResolutionErrorUnverifiedRouteNotAllowed];
+	XCTAssertEqualObjects(resolution.reasons.lastObject.userInfo[NFKModelResolutionRouteKey], @(NFKModelRouteCoreMLPackage));
+}
+
+- (void)testAPackageTheRunnerDoesNotReadIsRefused
+{
+	self.resolver.allowsUnverifiedRoutes = YES;
+	NSMutableDictionary *encoder = [[self packageManifest] mutableCopy];
+	encoder[@"modelType"] = @"seq2seq";
+	[self serveRepo:@"org/encoder" files:[self packageFilesWithManifest:encoder] card:nil];
+	[self assertRefusal:[self resolve:@"org/encoder" revision:nil] code:NFKModelResolutionErrorUnsupportedPackage];
+
+	NSMutableDictionary<NSString *, NSData *> *files = [[self packageFilesWithManifest:[self packageManifest]] mutableCopy];
+	files[@"merges.txt"] = nil;
+	[self serveRepo:@"org/no-merges" files:files card:nil];
+	[self assertRefusal:[self resolve:@"org/no-merges" revision:nil] code:NFKModelResolutionErrorUnsupportedTokenizer];
+}
+
+- (void)testTheCoreEnginesHaveBuilders
+{
+	XCTAssertNotNil([NFKModelCatalog backendBuilderForEngine:NFKModelEngineCoreML]);
+	XCTAssertNotNil([NFKModelCatalog backendBuilderForEngine:NFKModelEngineLocalServer]);
+}
+
+#pragma mark Local-server route
+
+/*! A server at the test address, answering what the stub serves there. */
+- (NFKRemoteProvider *)serverOfPreset:(NFKRemoteProvider *)preset
+{
+	[NSURLProtocol registerClass:NFKStubHubProtocol.class];
+	return [preset providerWithBaseURL:[NSURL URLWithString:@"http://hub.test/v1"]];
+}
+
+/*! A GGUF repository of two quantizations and a split file. */
+- (void)serveGGUFRepo:(NSString *)repo gated:(BOOL)gated
+{
+	NSDictionary *files = @{ @"name-Q8_0.gguf": [NSMutableData dataWithLength:256],
+							 @"name-Q4_K_M.gguf": [NSMutableData dataWithLength:128],
+							 @"name-F16-00001-of-00002.gguf": [NSMutableData dataWithLength:16] };
+	[self serveRepo:repo files:files card:@{ @"license": @"apache-2.0" }];
+	if (gated) {
+		NSDictionary *information = @{ @"id": repo, @"sha": NFKResolverCommit, @"gated": @"auto",
+									   @"cardData": @{ @"license": @"apache-2.0" } };
+		[NFKStubHubProtocol setResponse:[NFKStubHubResponse responseWithStatus:200 body:[self.class JSON:information]]
+								forPath:[NSString stringWithFormat:@"/api/models/%@/revision/main", repo]];
+	}
+}
+
+- (void)setInstalledModels:(NSArray<NSString *> *)names
+{
+	NSMutableArray *models = [NSMutableArray array];
+	for (NSString *name in names) {
+		[models addObject:@{ @"name": name, @"model": name, @"size": @128 }];
+	}
+	[NFKStubHubProtocol setResponse:[NFKStubHubResponse responseWithStatus:200 body:[self.class JSON:@{ @"models": models }]]
+							forPath:@"/api/tags"];
+}
+
+- (void)testAGGUFRepositoryResolvesToAPullOnOllama
+{
+	self.resolver.allowsUnverifiedRoutes = YES;
+	self.resolver.localServers = @[ [self serverOfPreset:NFKRemoteProvider.ollama] ];
+	[self setInstalledModels:@[ @"gpt-oss:20b" ]];
+	[self serveGGUFRepo:@"org/name-GGUF" gated:NO];
+	NFKModelResolution *resolution = [self resolve:@"org/name-GGUF" revision:nil];
+	XCTAssertEqual(resolution.route, NFKModelRouteLocalServer, @"%@", resolution.reasons);
+	XCTAssertEqualObjects(resolution.verification, NFKModelVerificationExternal);
+	XCTAssertEqual(resolution.action.kind, NFKModelResolutionActionKindPull);
+	XCTAssertEqualObjects(resolution.action.providerIdentifier, @"ollama");
+	XCTAssertEqualObjects(resolution.action.model, @"hf.co/org/name-GGUF:Q4_K_M");
+	XCTAssertEqualObjects(resolution.action.path, @"name-Q4_K_M.gguf");
+	XCTAssertEqualObjects(resolution.action.byteCount, @128);
+	XCTAssertEqualObjects(resolution.descriptor.engine, NFKModelEngineLocalServer);
+	XCTAssertEqualObjects(resolution.descriptor.extensions[@"localServer"][@"model"], @"hf.co/org/name-GGUF:Q4_K_M");
+	XCTAssertEqualObjects(resolution.variant.source.kind, NFKModelSourceKindNone);
+}
+
+- (void)testAModelTheServerHoldsResolvesToUse
+{
+	self.resolver.allowsUnverifiedRoutes = YES;
+	self.resolver.localServers = @[ [self serverOfPreset:NFKRemoteProvider.ollama] ];
+	[self setInstalledModels:@[ @"hf.co/Org/Name-GGUF:Q8_0" ]];
+	[self serveGGUFRepo:@"org/name-GGUF" gated:NO];
+	NFKModelResolution *resolution = [self resolve:@"org/name-GGUF" revision:nil];
+	XCTAssertEqual(resolution.action.kind, NFKModelResolutionActionKindUse);
+	XCTAssertEqualObjects(resolution.action.model, @"hf.co/Org/Name-GGUF:Q8_0");
+	XCTAssertNil(resolution.action.path);
+}
+
+- (void)testARepositoryAServedListNamesResolvesToUse
+{
+	self.resolver.allowsUnverifiedRoutes = YES;
+	self.resolver.localServers = @[ [self serverOfPreset:NFKRemoteProvider.vLLM] ];
+	[NFKStubHubProtocol setResponse:[NFKStubHubResponse responseWithStatus:200
+																	  body:[self.class JSON:@{ @"data": @[ @{ @"id": @"org/served" } ] }]]
+							forPath:@"/v1/models"];
+	[self serveToyRepo:@"org/served" configuration:@{ @"model_type": @"other" }];
+	NFKModelResolution *resolution = [self resolve:@"org/served" revision:nil];
+	XCTAssertEqual(resolution.route, NFKModelRouteLocalServer, @"%@", resolution.reasons);
+	XCTAssertEqual(resolution.action.kind, NFKModelResolutionActionKindUse);
+	XCTAssertEqualObjects(resolution.action.providerIdentifier, NFKRemoteProvider.vLLM.identifier);
+}
+
+- (void)testAGGUFRepositoryWithoutAServerIsRefused
+{
+	self.resolver.allowsUnverifiedRoutes = YES;
+	self.resolver.localServers = @[ [NFKRemoteProvider.ollama providerWithBaseURL:[NSURL URLWithString:@"http://127.0.0.1:9/v1"]] ];
+	[self serveGGUFRepo:@"org/name-GGUF" gated:NO];
+	NFKModelResolution *resolution = [self resolve:@"org/name-GGUF" revision:nil];
+	[self assertRefusal:resolution code:NFKModelResolutionErrorNoServer];
+	XCTAssertEqualObjects(resolution.reasons.lastObject.userInfo[NFKModelResolutionRouteKey], @(NFKModelRouteLocalServer));
+}
+
+- (void)testAGatedGGUFRepositoryIsRefused
+{
+	self.resolver.allowsUnverifiedRoutes = YES;
+	self.resolver.localServers = @[ [self serverOfPreset:NFKRemoteProvider.ollama] ];
+	[self setInstalledModels:@[]];
+	[self serveGGUFRepo:@"org/gated-GGUF" gated:YES];
+	[self assertRefusal:[self resolve:@"org/gated-GGUF" revision:nil] code:NFKModelResolutionErrorGated];
+}
+
+- (void)testAPullWaitsForTheOptIn
+{
+	self.resolver.localServers = @[ [self serverOfPreset:NFKRemoteProvider.ollama] ];
+	[self setInstalledModels:@[]];
+	[self serveGGUFRepo:@"org/name-GGUF" gated:NO];
+	NFKModelResolution *resolution = [self resolve:@"org/name-GGUF" revision:nil];
+	[self assertRefusal:resolution code:NFKModelResolutionErrorUnverifiedRouteNotAllowed];
+	XCTAssertNil(resolution.action);
+}
+
+- (void)testAnActionAndItsResolutionRoundTrip
+{
+	self.resolver.allowsUnverifiedRoutes = YES;
+	self.resolver.localServers = @[ [self serverOfPreset:NFKRemoteProvider.ollama] ];
+	[self setInstalledModels:@[]];
+	[self serveGGUFRepo:@"org/name-GGUF" gated:NO];
+	NFKModelResolution *resolution = [self resolve:@"org/name-GGUF" revision:nil];
+	NSDictionary *dictionary = resolution.dictionaryRepresentation;
+	XCTAssertTrue([NSJSONSerialization isValidJSONObject:dictionary]);
+	NSError *error = nil;
+	NFKModelResolution *restored = [NFKModelResolution resolutionWithDictionary:dictionary error:&error];
+	XCTAssertNotNil(restored, @"%@", error);
+	XCTAssertEqualObjects(restored.action, resolution.action);
+	XCTAssertEqualObjects(restored.dictionaryRepresentation, dictionary);
+	NSDictionary *unknownKind = @{ @"kind": @"delete", @"provider": @"ollama", @"model": @"m" };
+	XCTAssertNil([NFKModelResolutionAction actionWithDictionary:unknownKind error:&error]);
+}
+
+- (void)testTheLocalServerBuilderBuildsTheProvidersBackend
+{
+	NSDictionary *object = @{ @"id": @"org/name-GGUF", @"family": NFKModelEngineLocalServer, @"engine": NFKModelEngineLocalServer,
+							  @"localServer": @{ @"provider": @"ollama", @"model": @"hf.co/org/name-GGUF:Q4_K_M" } };
+	NSError *error = nil;
+	NFKModelDescriptor *descriptor = [NFKModelDescriptor descriptorWithDictionary:object error:&error];
+	XCTAssertNotNil(descriptor, @"%@", error);
+	NFKModelBuildRequest *request = [[NFKModelBuildRequest alloc] initWithDescriptor:descriptor variant:nil loadOptions:nil
+																	 requestDefaults:nil location:nil memoryEstimate:nil
+																			 catalog:self.catalog];
+	id<NFKInferenceBackend> backend = [[NFKModelCatalog backendBuilderForEngine:NFKModelEngineLocalServer]
+									   backendForBuildRequest:request error:&error];
+	XCTAssertNotNil(backend, @"%@", error);
+	XCTAssertEqualObjects([(id)backend valueForKey:@"modelName"], @"hf.co/org/name-GGUF:Q4_K_M");
 }
 
 #pragma mark Safetensors headers

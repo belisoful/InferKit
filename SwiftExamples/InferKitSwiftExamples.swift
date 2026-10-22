@@ -402,6 +402,8 @@ final class InferKitSwiftExamples: XCTestCase {
         XCTAssertEqual(resolution.route, .catalog)
         XCTAssertEqual(resolution.route.name, "catalog")
         XCTAssertEqual(resolution.verification, .measured)
+        XCTAssertNil(resolution.action)
+        XCTAssertEqual(NFKModelResolutionAction.Kind.pull.rawValue, 2)
         let restored = try NFKModelDescriptor(dictionary: try XCTUnwrap(resolution.descriptor).dictionaryRepresentation())
         XCTAssertEqual(restored.modelTypes, ["example"])
     }

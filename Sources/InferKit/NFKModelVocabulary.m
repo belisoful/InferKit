@@ -78,6 +78,8 @@ NSString * const NFKModelEngineApple				= @"apple";
 NSString * const NFKModelEngineFoundationModels		= @"foundation-models";
 NSString * const NFKModelEngineAppleSwift			= @"apple-swift";
 NSString * const NFKModelEnginePlugin				= @"plugin";
+NSString * const NFKModelEngineCoreML				= @"coreml";
+NSString * const NFKModelEngineLocalServer			= @"local-server";
 
 NSString * const NFKModelResidencyResident			= @"resident";
 NSString * const NFKModelResidencyStaged			= @"staged";

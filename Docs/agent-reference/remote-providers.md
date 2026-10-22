@@ -113,6 +113,27 @@ concatenation as a direct element of an `@[ ]`/`@{ }` literal raises `-Wobjc-str
 (parenthesize the element) — four of those had shipped in the catalog tests a round earlier because a
 `tail` on the test log hid them. Grep the log for `warning:` without a tail.
 
+**Pulling a Hugging Face GGUF.** Probed 2026-10-21 against a live Ollama 0.40.2 for the resolver's
+local-server route (`NFKModelRouteLocalServer`), with the developer's consent to the download:
+
+- `POST /api/pull {"model": "hf.co/bartowski/SmolLM2-135M-Instruct-GGUF:Q4_K_M", "stream": true}` streams
+  `pulling manifest`, then the weights layer (`pulling 2e8040ceae78`, `total` 105454432, the GGUF's own
+  size, with `completed`), then a 675-byte layer: the chat template Hugging Face's Ollama endpoint
+  derives (`GET https://hf.co/v2/<repo>/blobs/<digest>` serves it in about a second).
+- Ollama 0.40.2 stalled on that 675-byte layer on every attempt: its log repeats
+  `d502d55c1d60 part 0 stalled; retrying` every 30 seconds, and the pull never reported `success`. The
+  weights layer had completed. A client that disconnects ends the pull (`POST /api/pull` returns 200).
+  So the installed listing's name for a pulled `hf.co` model was not observed here; the route matches
+  the requested `hf.co/<repo>:<tag>` and `huggingface.co/<repo>:<tag>` without case.
+- A tag that is no quantization (`:Q9_ZZ`) → HTTP 200, `pulling manifest`, then
+  `{"error":"pull model manifest: 400: {\"error\":\"The specified tag is not a valid quantization
+  scheme. …\"}"}`.
+- A repository that does not exist, or one that is gated (`meta-llama/Llama-3.2-1B`), under `hf.co/` →
+  `{"error":"pull model manifest: realm host \"huggingface.co\" does not match original host \"hf.co\""}`:
+  the hub's 401 challenge names `huggingface.co`, which Ollama refuses to follow. Under `huggingface.co/`
+  the same request answers `{"error":"pull model manifest: 401: {\"error\":\"Invalid username or
+  password.\"}"}`. Ollama sends no Hugging Face token, so the route refuses a gated repository itself.
+
 **Discovery of the local runners** removes the question a consumer cannot answer, which app the user
 has running. `localProviders` is the five local presets in probe order (ollama, lmstudio, llamacpp,
 vllm, inferkit); `availableProvidersAmong:timeout:` probes a list concurrently through a `dispatch_group` and

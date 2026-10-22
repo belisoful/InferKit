@@ -175,6 +175,12 @@ extern NSString * const NFKModelEngineFoundationModels;
 extern NSString * const NFKModelEngineAppleSwift;
 /*! A backend a plugin or an app brings. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelEnginePlugin;
+/*! NFKCoreMLLanguageBackend, running a Core ML language model Tools/inferkit-convert writes. Introduced
+	in InferKit 0.4.0. */
+extern NSString * const NFKModelEngineCoreML;
+/*! A model server on this machine, reached through an NFKRemoteProvider preset. Introduced in InferKit
+	0.4.0. */
+extern NSString * const NFKModelEngineLocalServer;
 
 #pragma mark Residencies
 
