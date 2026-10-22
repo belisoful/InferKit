@@ -20,6 +20,8 @@ FOUNDATION_EXPORT BOOL NFKServedIsCancellation(NSError * _Nullable error);
 /*! Runs in place of the backend's run when set; the run is then synchronous. */
 @property (nonatomic, copy, nullable) NFKInferenceResult * _Nullable (^work)(id<NFKInferenceBackend> backend, NSError * _Nullable * _Nullable error);
 @property (nonatomic, copy, nullable) void (^partialHandler)(NFKInferenceResult * _Nullable partial, double progress);
+/*! Runs once, when the run takes its slot and its work begins. */
+@property (nonatomic, copy, nullable) void (^startHandler)(void);
 @property (nonatomic, copy, nullable) void (^completionHandler)(NFKInferenceResult * _Nullable result, NSError * _Nullable error);
 @property (nonatomic, strong, nullable) NFKInferenceJob *job;
 /*! Files written for the request's inline media, removed once the reply has been built, since a

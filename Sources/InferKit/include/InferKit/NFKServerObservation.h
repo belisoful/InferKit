@@ -20,7 +20,8 @@ NS_ASSUME_NONNULL_BEGIN
 	@constant   NFKServerRunStateCompleted The run returned a result.
 	@constant   NFKServerRunStateFailed The run, or the build it waited for, failed, or its model stopped
 				being served before it started.
-	@constant   NFKServerRunStateCancelled The client went away, before or during the run.
+	@constant   NFKServerRunStateCancelled The client went away, or the app cancelled the job
+				submitInferenceJobForRequest:modelName: returned, before or during the run.
 	@constant   NFKServerRunStateRefused The model's queue was full (maximumQueuedRunsPerModel).
 	Introduced in InferKit 0.4.0.
 */
@@ -31,6 +32,10 @@ typedef NS_ENUM(NSInteger, NFKServerRunState) {
 	NFKServerRunStateCancelled,
 	NFKServerRunStateRefused,
 };
+
+/*! The route of a run that -[NFKInferenceServer submitInferenceJobForRequest:modelName:] submitted
+	in the server's own process: "in-process". Introduced in InferKit 0.4.0. */
+FOUNDATION_EXPORT NSString * const NFKServerRunRouteInProcess;
 
 /*!
 	@class      NFKServerRunEvent
@@ -48,10 +53,10 @@ NS_SWIFT_SENDABLE
 /*! The model the run was for. */
 @property (nonatomic, readonly, copy) NSString *modelName;
 
-/*! The route the request arrived on, such as "/v1/chat/completions". */
+/*! The route the request arrived on, such as "/v1/chat/completions", or NFKServerRunRouteInProcess. */
 @property (nonatomic, readonly, copy) NSString *route;
 
-/*! The client's IP address as text. */
+/*! The client's IP address as text; empty for a run in the server's own process. */
 @property (nonatomic, readonly, copy) NSString *clientAddress;
 
 /*! The name of the key the request presented, or nil. */

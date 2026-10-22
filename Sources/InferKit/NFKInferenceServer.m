@@ -948,6 +948,9 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	}
 	run.began = YES;
 	[self reportRun:run state:NFKServerRunStateStarted error:nil];
+	if (run.startHandler != nil) {
+		run.startHandler();
+	}
 	if (run.work == nil && [backend respondsToSelector:@selector(submitInferenceJobForRequest:)]) {
 		NFKInferenceJob *job = nil;
 		@try {
@@ -1718,6 +1721,44 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		*error = failure;
 	}
 	return result;
+}
+
+- (NFKInferenceJob *)submitInferenceJobForRequest:(NFKInferenceRequest *)request modelName:(nullable NSString *)modelName
+{
+	NFKInferenceJob *job = [[NFKInferenceJob alloc] init];
+	NSError *error = nil;
+	NFKServedTarget *target = [self modelNamed:modelName error:&error];
+	NFKInferenceRequest *checked = NFKServedRequestWithoutNullContractValues(request);
+	error = target != nil ? NFKServedContractTypeError(checked.inputs, checked.parameters) : error;
+	if (target == nil || error != nil) {
+		[job finishWithError:error];
+		return job;
+	}
+	NFKServedRun *run = [[NFKServedRun alloc] init];
+	run.request = checked;
+	run.route = NFKServerRunRouteInProcess;
+	__weak NFKInferenceJob *weakJob = job;
+	run.startHandler = ^{
+		[weakJob reportProgress:-1.0];
+	};
+	run.partialHandler = ^(NFKInferenceResult *partial, double progress) {
+		[weakJob reportProgress:progress partialResult:partial];
+	};
+	// The run holds the job until it finishes, so a caller that keeps only the handlers still hears the end.
+	run.completionHandler = ^(NFKInferenceResult *result, NSError *runError) {
+		if (result != nil) {
+			[job finishWithResult:result];
+		} else if (!NFKServedIsCancellation(runError)) {
+			[job finishWithError:runError];
+		}
+	};
+	__weak NFKServedRun *weakRun = run;
+	job.cancellationHandler = ^{
+		[weakRun cancel];
+	};
+	[self fillDefaultsOf:run target:target];
+	[target.model enqueue:run];
+	return job;
 }
 
 /*! Starts a call of a hosted model's tool (addToolForModelName:outputModality:purpose:error:) as a run in

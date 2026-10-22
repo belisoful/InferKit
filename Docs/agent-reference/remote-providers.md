@@ -1595,6 +1595,18 @@ keeping them in memory, and unloads idle ones.
   release under one lock hold. The backend is released off the lock inside an `@autoreleasepool`, so it
   is gone before the runtime-cache release. `unloadModelNamed:` sets `unloadRequested`, which the end
   of the last run (or of a build) acts on, so an unload never cuts a run. `loadModelNamed:` clears it.
+- `submitInferenceJobForRequest:modelName:` is the in-process entry to the same queue, beside the MCP
+  tool path (`runRequest:onModelNamed:`, `startModelTool:`). It strips null contract values, checks the
+  contract types, resolves the name with `modelNamed:`, fills the target's defaults, and calls
+  `[target.model enqueue:]`, so build, admission, limits, `lastUsedAt`, and events are the route's. It
+  skips the HTTP-only steps: `guardHandlersOf:` (needs a response), the disconnect and header providers,
+  and the key and origin checks in `routeRequest`. The run's route is `NFKServerRunRouteInProcess`, its
+  client address empty, its key nil. `NFKServedRun.startHandler` (called in `start:` after the Started
+  event) moves the job to Running; `partialHandler` feeds `reportProgress:partialResult:`; the completion
+  finishes the job unless the run ended with `NFKServedCancellation`, since a cancelled job is already
+  terminal. The job's `cancellationHandler` cancels the run weakly; the run's completion holds the job
+  strongly until the run finishes. Listener stop never reaches these runs, since only an HTTP
+  disconnect cancels a run.
 - An `addBackend:` model has no provider and is never unloaded; `unloadModelNamed:` answers NO. A model
   that is not resident reports `ready: true`, since `NFKRemoteInferKitBackend.prepareWithError:` and
   the balancer refuse a model that is not ready, and it describes the backend it last held (identifier,

@@ -5,6 +5,8 @@
 
 #import "NFKServerObservationPrivate.h"
 
+NSString * const NFKServerRunRouteInProcess = @"in-process";
+
 @implementation NFKServerRunEvent
 
 - (instancetype)initPrivately

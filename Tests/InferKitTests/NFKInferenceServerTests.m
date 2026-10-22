@@ -705,6 +705,34 @@
 	XCTAssertEqualObjects(seen, (@[ @"a", @"ab", @"abc" ]));
 }
 
+- (void)testAnInProcessJobReportsTheBackendsPartialsAndResult
+{
+	NFKServedStreamingBackend *backend = [[NFKServedStreamingBackend alloc] init];
+	backend.partials = @[ @"a", @"ab", @"abc" ];
+	backend.startGate = dispatch_semaphore_create(0);
+	NFKInferenceServer *server = [[NFKInferenceServer alloc] init];
+	[server addBackend:backend forModelName:@"streamer"];
+	NSMutableArray<NSString *> *seen = [NSMutableArray array];
+	XCTestExpectation *done = [self expectationWithDescription:@"in-process job"];
+	NFKInferenceJob *job = [server submitInferenceJobForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"go" }]
+													  modelName:nil];
+	job.progressHandler = ^(NFKInferenceJob *progressed) {
+		@synchronized (seen) {
+			if (progressed.partialResult.text != nil && ![seen.lastObject isEqualToString:progressed.partialResult.text]) {
+				[seen addObject:progressed.partialResult.text];
+			}
+		}
+	};
+	job.completionHandler = ^(NFKInferenceJob *finished) {
+		[done fulfill];
+	};
+	dispatch_semaphore_signal(backend.startGate);
+	[self waitForExpectations:@[ done ] timeout:10];
+	XCTAssertEqualObjects(job.result.text, @"abc", @"%@", job.error);
+	XCTAssertEqualObjects(seen, (@[ @"a", @"ab", @"abc" ]), @"nil names the only hosted model");
+	XCTAssertEqualObjects([backend.lastRequest inputForKey:NFKInputPrompt], @"go");
+}
+
 - (void)testTheNativeClientReceivesTheHostedErrorIntact
 {
 	NFKServedTestBackend *backend = [[NFKServedTestBackend alloc] init];

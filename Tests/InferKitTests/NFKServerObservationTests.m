@@ -212,6 +212,41 @@
 	XCTAssertNotEqualObjects(failed.identifier, completed.identifier);
 }
 
+- (void)testAnInProcessRunIsReportedWithItsOwnRouteAndNoClient
+{
+	[self.server addBackend:[[NFKObservedBackend alloc] init] forModelName:@"observed"];
+	NFKInferenceJob *job = [self.server submitInferenceJobForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hello" }]
+														   modelName:@"observed"];
+	NSArray<NFKServerRunEvent *> *events = [self runEventsWaitingFor:2];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusSucceeded, @"%@", job.error);
+	XCTAssertEqual(events.firstObject.state, NFKServerRunStateStarted);
+	NFKServerRunEvent *completed = events.lastObject;
+	XCTAssertEqual(completed.state, NFKServerRunStateCompleted);
+	XCTAssertEqualObjects(completed.route, NFKServerRunRouteInProcess);
+	XCTAssertEqualObjects(completed.clientAddress, @"");
+	XCTAssertNil(completed.keyName);
+	XCTAssertEqualObjects(completed.modelName, @"observed");
+}
+
+- (void)testACancelledInProcessRunIsReportedCancelled
+{
+	NFKObservedBackend *backend = [[NFKObservedBackend alloc] init];
+	backend.gate = dispatch_semaphore_create(0);
+	[self.server addBackend:backend forModelName:@"gated"];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hello" }];
+	NFKInferenceJob *running = [self.server submitInferenceJobForRequest:request modelName:@"gated"];
+	[self waitUntil:^BOOL {
+		return backend.running == 1;
+	} description:@"the run holds its slot"];
+	[running cancel];
+	dispatch_semaphore_signal(backend.gate);
+
+	NSArray<NFKServerRunEvent *> *events = [self runEventsWaitingFor:2];
+	XCTAssertEqual(running.status, NFKInferenceJobStatusCancelled);
+	XCTAssertEqual(events.lastObject.state, NFKServerRunStateCancelled);
+	XCTAssertEqualObjects(events.lastObject.route, NFKServerRunRouteInProcess);
+}
+
 - (void)testARefusedRunIsReportedOnceWithoutAStart
 {
 	self.server.maximumQueuedRunsPerModel = 1;

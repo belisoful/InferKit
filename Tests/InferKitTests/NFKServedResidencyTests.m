@@ -1064,6 +1064,143 @@ static NSString * const NFKAdmissionTestEngine = @"admission-test-engine";
 	XCTAssertEqual([self status:@"gated" on:server].refused, 1);
 }
 
+#pragma mark In-process runs
+
+- (NFKInferenceJob *)submit:(NSString *)modelName on:(NFKInferenceServer *)server
+{
+	return [server submitInferenceJobForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }] modelName:modelName];
+}
+
+- (void)waitForJob:(NFKInferenceJob *)job
+{
+	XCTestExpectation *finished = [self expectationWithDescription:@"the job ends"];
+	job.completionHandler = ^(NFKInferenceJob *ended) {
+		[finished fulfill];
+	};
+	[self waitForExpectations:@[ finished ] timeout:10];
+}
+
+- (void)testAnInProcessJobBuildsItsModelOnAServerThatNeverStarted
+{
+	NFKInferenceServer *server = [self server];
+	[server addBackendProvider:[self providerReturning:[[NFKResidencyTestBackend alloc] init]] forModelName:@"lazy"];
+
+	NFKInferenceJob *first = [self submit:@"lazy" on:server];
+	[self waitForJob:first];
+	XCTAssertEqual(first.status, NFKInferenceJobStatusSucceeded, @"%@", first.error);
+	XCTAssertEqualObjects(first.result.text, @"ok");
+	NFKInferenceJob *second = [self submit:@"lazy" on:server];
+	[self waitForJob:second];
+	XCTAssertEqualObjects(second.result.text, @"ok", @"%@", second.error);
+	XCTAssertEqual(self.builds, 1, @"the second job finds the model resident");
+	XCTAssertFalse(server.isRunning);
+	NFKServerModelStatus *status = [[server currentStatus] modelNamed:@"lazy"];
+	XCTAssertEqual(status.residency, NFKServerModelResidencyResident);
+	XCTAssertEqual(status.completed, 2, @"the server counts both runs");
+
+	NFKInferenceJob *unknown = [self submit:@"absent" on:server];
+	XCTAssertEqual(unknown.status, NFKInferenceJobStatusFailed, @"a name that resolves to no model fails at once");
+	XCTAssertEqualObjects(unknown.error.domain, NFKInferenceServerErrorDomain);
+	XCTAssertEqual(unknown.error.code, NFKInferenceServerErrorModelNotFound);
+}
+
+- (void)testAnInProcessRunHoldsItsModelAgainstAnIdleUnload
+{
+	NFKInferenceServer *server = [self server];
+	server.idleUnloadInterval = 1;
+	NFKResidencyTestBackend *backend = [[NFKResidencyTestBackend alloc] init];
+	backend.gate = dispatch_semaphore_create(0);
+	[server addBackendProvider:[self providerReturning:backend] forModelName:@"lazy"];
+
+	NFKInferenceJob *job = [self submit:@"lazy" on:server];
+	[self waitUntil:^BOOL {
+		return backend.running == 1;
+	} description:@"the run holds its slot"];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusRunning, @"the job runs once its run takes the slot");
+	self.now += 100;
+	XCTAssertEqualObjects([server unloadIdleModels], @[], @"a model with an in-process run stays");
+
+	dispatch_semaphore_signal(backend.gate);
+	[self waitForJob:job];
+	XCTAssertEqualObjects(job.result.text, @"ok", @"%@", job.error);
+	self.now += 100;
+	XCTAssertEqualObjects([server unloadIdleModels], @[ @"lazy" ], @"the model unloads once the run ended and the interval passed");
+}
+
+- (void)testInProcessRunsWaitForASlotAndAFullQueueFailsTheJob
+{
+	NFKInferenceServer *server = [self server];
+	server.maximumQueuedRunsPerModel = 1;
+	NFKResidencyTestBackend *backend = [[NFKResidencyTestBackend alloc] init];
+	backend.gate = dispatch_semaphore_create(0);
+	[server addBackend:backend forModelName:@"gated"];
+
+	NFKInferenceJob *running = [self submit:@"gated" on:server];
+	NFKInferenceJob *queued = [self submit:@"gated" on:server];
+	[self waitUntil:^BOOL {
+		return backend.running == 1 && [[server currentStatus] modelNamed:@"gated"].queued == 1;
+	} description:@"one run holds the slot and one waits"];
+	XCTAssertEqual(queued.status, NFKInferenceJobStatusQueued);
+	NFKInferenceJob *refused = [self submit:@"gated" on:server];
+	XCTAssertEqual(refused.status, NFKInferenceJobStatusFailed);
+	XCTAssertEqual(refused.error.code, NFKInferenceServerErrorBusy, @"%@", refused.error);
+
+	dispatch_semaphore_signal(backend.gate);
+	dispatch_semaphore_signal(backend.gate);
+	[self waitForJob:running];
+	[self waitForJob:queued];
+	XCTAssertEqualObjects(running.result.text, @"ok", @"%@", running.error);
+	XCTAssertEqualObjects(queued.result.text, @"ok", @"%@", queued.error);
+	XCTAssertEqual([[server currentStatus] modelNamed:@"gated"].refused, 1);
+}
+
+- (void)testCancellingAnInProcessJobCancelsItsQueuedRun
+{
+	NFKInferenceServer *server = [self server];
+	NFKResidencyTestBackend *backend = [[NFKResidencyTestBackend alloc] init];
+	backend.gate = dispatch_semaphore_create(0);
+	[server addBackend:backend forModelName:@"gated"];
+
+	NFKInferenceJob *running = [self submit:@"gated" on:server];
+	NFKInferenceJob *queued = [self submit:@"gated" on:server];
+	[self waitUntil:^BOOL {
+		return backend.running == 1 && [[server currentStatus] modelNamed:@"gated"].queued == 1;
+	} description:@"one run holds the slot and one waits"];
+	[queued cancel];
+	XCTAssertEqual(queued.status, NFKInferenceJobStatusCancelled);
+	XCTAssertEqual([[server currentStatus] modelNamed:@"gated"].queued, 0, @"a cancelled run no longer counts as queued");
+
+	dispatch_semaphore_signal(backend.gate);
+	[self waitForJob:running];
+	XCTAssertEqualObjects(running.result.text, @"ok", @"%@", running.error);
+	[self waitUntil:^BOOL {
+		return [[server currentStatus] modelNamed:@"gated"].cancelled == 1;
+	} description:@"the cancelled run ends without running"];
+	XCTAssertEqual([[server currentStatus] modelNamed:@"gated"].completed, 1);
+}
+
+- (void)testStoppingTheListenerLeavesAnInProcessRunToFinish
+{
+	NFKInferenceServer *server = [self startedServer:[self server]];
+	NFKResidencyTestBackend *backend = [[NFKResidencyTestBackend alloc] init];
+	backend.gate = dispatch_semaphore_create(0);
+	[server addBackend:backend forModelName:@"gated"];
+
+	NFKInferenceJob *job = [self submit:@"gated" on:server];
+	[self waitUntil:^BOOL {
+		return backend.running == 1;
+	} description:@"the run holds its slot"];
+	[server stop];
+	dispatch_semaphore_signal(backend.gate);
+	[self waitForJob:job];
+	XCTAssertEqualObjects(job.result.text, @"ok", @"%@", job.error);
+
+	NFKInferenceJob *after = [self submit:@"gated" on:server];
+	backend.gate = nil;
+	[self waitForJob:after];
+	XCTAssertEqualObjects(after.result.text, @"ok", @"a stopped server still runs in-process jobs: %@", after.error);
+}
+
 #pragma mark Restarting
 
 - (void)testStopKeepsHostedModelsAndTheSameServerStartsAgain

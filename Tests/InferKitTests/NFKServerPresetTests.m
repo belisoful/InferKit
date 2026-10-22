@@ -398,6 +398,23 @@ static NSString * const NFKPresetTestEngine = @"preset-test-engine";
 	XCTAssertEqual(error.code, NFKInferenceServerErrorModelNotFound);
 }
 
+- (void)testAnInProcessJobResolvesAnAliasAndAPresetWithTheirDefaults
+{
+	[self hostChat];
+	NSError *error = nil;
+	XCTAssertTrue([self.server addAlias:@"talk" forModelName:@"chat" requestDefaults:@{ @"steps": @7 } error:&error], @"%@", error);
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }];
+	for (NSArray *expected in @[ @[ @"talk", @7 ], @[ @"chat@fast", @4 ], @[ @"chat", @0 ] ]) {
+		NFKInferenceJob *job = [self.server submitInferenceJobForRequest:request modelName:expected[0]];
+		XCTestExpectation *finished = [self expectationWithDescription:expected[0]];
+		job.completionHandler = ^(NFKInferenceJob *ended) {
+			[finished fulfill];
+		};
+		[self waitForExpectations:@[ finished ] timeout:10];
+		XCTAssertEqualObjects([job.result outputForKey:@"steps"], expected[1], @"%@: %@", expected[0], job.error);
+	}
+}
+
 #pragma mark Reporting
 
 - (void)testRepliesNameTheModelAsAskedAndReportItsBaseAndPreset

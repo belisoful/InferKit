@@ -40,6 +40,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### A hosted model runs in the host's process
+
+- `-[NFKInferenceServer submitInferenceJobForRequest:modelName:]` runs a request on a hosted model as one
+  of the server's runs and returns its `NFKInferenceJob`. The name resolves as on the routes, a model
+  that is not resident builds through admission and its wait, the run counts against the model's limits,
+  and no unload takes the model during it. It works on a server that was never started or was stopped.
+- The delegate reports such a run with `NFKServerRunRouteInProcess` as its route and an empty client
+  address.
+
 #### Admission makes room for a build
 
 - `NFKInferenceServer` admits each hosted model's build against `admissionMemoryBudget`, or a smaller

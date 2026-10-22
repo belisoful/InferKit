@@ -343,6 +343,7 @@ static const void *const NFKPluginPublicInterface[] = {
 	(const void *)&NFKRemoteErrorRetryAfterKey,
 	(const void *)&NFKServerIdentityErrorDomain,
 	(const void *)&NFKServerIdentityDefaultValidity,
+	(const void *)&NFKServerRunRouteInProcess,
 	(const void *)&NFKSubprocessErrorDomain,
 	(const void *)&NFKTensorSpecMake,
 	(const void *)&NFKTensorElementCount,

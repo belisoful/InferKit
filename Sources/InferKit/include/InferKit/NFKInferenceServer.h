@@ -850,8 +850,32 @@ NS_SWIFT_SENDABLE
 + (void)registerRuntimeStatusClassName:(NSString *)className;
 
 /*! The backend hosted under a model name, or nil, which a provider-hosted model that is not resident
-	also answers. */
+	also answers. A run made on the backend directly is not one of the server's runs: it takes no slot,
+	and an idle or pressure unload may release the backend during it. */
 - (nullable id<NFKInferenceBackend>)backendForModelName:(NSString *)modelName;
+
+/*!
+	@method     submitInferenceJobForRequest:modelName:
+	@abstract   Runs a request on a hosted model in this process, as one of the server's runs.
+	@discussion The run takes the path a request on the native route takes, without the listener:
+				- The name resolves as a route's model field does: a hosted model, an alias, or
+				  "model@preset", with their request defaults. nil names the only hosted model.
+				- A model that is not resident builds, admitted against the memory budget with
+				  admissionWaitInterval's wait, as a route's request builds it.
+				- The run waits for a slot under maximumConcurrentRunsPerModel and counts against
+				  maximumQueuedRunsPerModel. An idle, pressure, or admission release never takes the model
+				  while the run holds or waits for a slot.
+				- The delegate receives the run's events, with NFKServerRunRouteInProcess as the route, an
+				  empty client address, and no key.
+				The job reports Running when the run takes its slot, and the backend's progress and partial
+				results when it reports them. Cancelling the job cancels the run, queued or running. A name
+				that resolves to no model, a request whose input or parameter has another kind than its
+				contract key, and a full queue fail the job before it runs, with the error a route answers.
+				The server need not be started, and -stop leaves these runs to finish. The job's handlers run
+				on the server's queues. Introduced in InferKit 0.4.0.
+*/
+- (NFKInferenceJob *)submitInferenceJobForRequest:(NFKInferenceRequest *)request
+										modelName:(nullable NSString *)modelName NS_SWIFT_NAME(submitInferenceJob(for:modelName:));
 
 /*! The hosted model names, sorted. */
 @property (nonatomic, readonly, copy) NSArray<NSString *> *modelNames;

@@ -1068,6 +1068,29 @@ and `/mcp` stay the server's.
 } error:&error];
 ```
 
+### Running a hosted model in the host's process
+
+`submitInferenceJobForRequest:modelName:` runs a request on a hosted model as one of the server's runs,
+without the listener: the name resolves as a route's model field does (an alias or `model@preset`
+included), a model that is not resident builds through admission, the run waits for a slot under the
+model's limits, and no unload takes the model while the run holds or waits for its slot. The delegate
+reports the run with `NFKServerRunRouteInProcess` as its route. The server need not be started, and
+`stop` leaves these runs to finish, so an app runs its own models with serving turned off.
+
+<!-- objc-check: given NFKInferenceServer *server = nil; NFKInferenceRequest *request = nil; -->
+```objc
+NFKInferenceJob *job = [server submitInferenceJobForRequest:request modelName:@"smol"];
+job.progressHandler = ^(NFKInferenceJob *running) {
+	NSLog(@"%.0f%% %@", running.progress * 100, running.partialResult.text ?: @"");
+};
+job.completionHandler = ^(NFKInferenceJob *finished) {
+	NSLog(@"%@", finished.result.text ?: finished.error.localizedDescription);
+};
+```
+
+A backend taken with `backendForModelName:` and run directly is outside the server's accounting: it
+takes no slot, and an idle or pressure unload may release it during the run.
+
 ### Watching the server
 
 A host observes its server in process through `delegate` (`NFKInferenceServerDelegate`), on
