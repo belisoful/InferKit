@@ -27,15 +27,13 @@ final class NFKMLXDeclaredKeysTests: XCTestCase {
         let backend = NFKMLXLanguageBackend(net: NFKMLXLanguage.makeNet(.tiny), tokenizer: nil,
                                             identifier: "tiny")
         XCTAssertEqual(backend.supportedInputKeys, [NFKInputPrompt, NFKInputMessages])
-        for key in [NFKParameterTemperature, NFKParameterTopP, NFKParameterMaxTokens, NFKParameterSeed,
+        for key in [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens, NFKParameterSeed,
                     NFKParameterJSONSchema, NFKParameterOutputFormat, NFKParameterChoices,
                     NFKMLXGenerationParameterKey.draftTokens, NFKMLXGenerationParameterKey.chatTemplate,
                     NFKMLXGenerationParameterKey.reasoningFormat, NFKParameterReasoningEffort,
                     NFKParameterTools, NFKMLXGenerationParameterKey.toolCallFormat] {
             XCTAssertTrue(backend.supportedParameterKeys.contains(key), key)
         }
-        XCTAssertFalse(backend.supportedParameterKeys.contains(NFKParameterTopK),
-                       "sampling takes top-p, not top-k")
     }
 
     func testTheStableDiffusionBackendAnswersForTheModelItBuilds() {
