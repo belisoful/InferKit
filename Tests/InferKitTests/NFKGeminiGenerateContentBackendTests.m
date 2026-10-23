@@ -129,10 +129,13 @@
 - (void)testTheFinishReasonSaysWhyTheReplyStopped
 {
 	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello" }];
+	[self.backend.stagedReplies removeAllObjects];
 	[self.backend stage:@"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hi.\"}]},\"finishReason\":\"STOP\"}]}"];
 	XCTAssertEqualObjects([[self.backend runInferenceForRequest:request error:NULL] outputForKey:NFKOutputFinishReason], NFKFinishReasonStop);
+	[self.backend.stagedReplies removeAllObjects];
 	[self.backend stage:@"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Once\"}]},\"finishReason\":\"MAX_TOKENS\"}]}"];
 	XCTAssertEqualObjects([[self.backend runInferenceForRequest:request error:NULL] outputForKey:NFKOutputFinishReason], NFKFinishReasonLength);
+	[self.backend.stagedReplies removeAllObjects];
 	[self.backend stage:(@"{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"get_weather\",\"args\":{}}}]},"
 						 "\"finishReason\":\"STOP\"}]}")];
 	XCTAssertEqualObjects([[self.backend runInferenceForRequest:request error:NULL] outputForKey:NFKOutputFinishReason],
