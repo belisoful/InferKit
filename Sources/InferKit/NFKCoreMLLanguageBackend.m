@@ -363,6 +363,17 @@ API_AVAILABLE(macos(15.0), ios(18.0), tvos(18.0))
 	double topP = [self doubleParameter:NFKParameterTopP default:1.0 request:request];
 	double repetitionPenalty = [self doubleParameter:NFKParameterRepetitionPenalty default:1.0 request:request];
 	NSInteger maxTokens = [self integerParameter:NFKParameterMaxTokens default:256 request:request];
+	// The state holds the package's contextLength positions, so a prompt that fills them has no room to be
+	// answered, and the reply stops at the room the prompt leaves.
+	if (_contextLength > 0) {
+		if ((NSInteger)promptTokens.count >= _contextLength) {
+			[self setError:outError code:kNFKError_InferenceUnsupported
+					reason:[NSString stringWithFormat:@"the prompt holds %lu tokens, which fills the model's %ld-token context",
+							(unsigned long)promptTokens.count, (long)_contextLength]];
+			return nil;
+		}
+		maxTokens = MIN(maxTokens, _contextLength - (NSInteger)promptTokens.count);
+	}
 	NSArray<NSString *> *stops = [self stopSequencesForRequest:request];
 	// A chat turn ends at the assistant suffix (for example <|im_end|>); stop there so the reply is
 	// just the answer, not the start of the next turn.

@@ -724,6 +724,7 @@ extension NFKMLXCatalogLanguage {
         entry.summary = "SmolLM2 135M Instruct quantized to Q4_K_M, read from one GGUF file with its tokenizer."
         entry.variants = [variant(release, files: [NFKModelFile(path: file, role: NFKModelFileRoleWeights)],
                                   layout: NFKModelSourceLayoutFile)]
+        entry.outputTokenLimit = 8192       // SmolLM2-135M-Instruct's max_position_embeddings
         return entry
     }
 
@@ -823,7 +824,7 @@ extension NFKMLXCatalogLanguage {
 
     fileprivate static var mambaEntry: NFKMLXCatalogEntry {
         let name = NFKMLXMamba.mambaModelName
-        return decoderEntry(
+        var entry = decoderEntry(
             name: name, displayName: "Codestral Mamba", family: "mamba2",
             summary: "Mistral's Codestral Mamba 7B, a Mamba-2 state-space decoder that writes code and text.",
             variants: [familyVariant(name, "mistralai/Mamba-Codestral-7B-v0.1", displayName: "Mamba-Codestral 7B v0.1",
@@ -832,6 +833,9 @@ extension NFKMLXCatalogLanguage {
                                                          weights: NFKMLXMamba.weightFiles))],
             license: .apache2(), readsReasoning: false, outputs: [textOutput, usageOutput],
             parameters: [temperatureOption(), maxTokensOption(), seedOption()])
+        // A state-space decoder has no position table; Mistral states retrieval tested to 256k tokens.
+        entry.outputTokenLimit = 262_144
+        return entry
     }
 }
 
@@ -843,7 +847,7 @@ extension NFKMLXCatalogLanguage {
         let towerHelp = release.readsImages
             ? "An image the reply is about."
             : "An image, which this release refuses: it carries no vision tower."
-        return NFKMLXCatalogEntry(
+        var entry = NFKMLXCatalogEntry(
             identifier: release.name, displayName: release.displayName, family: release.family,
             summary: "\(release.displayName), a Gemma 3 decoder with a hybrid sliding-window cache"
                 + (release.readsImages ? " and a SigLIP vision tower." : "."),
@@ -857,6 +861,11 @@ extension NFKMLXCatalogLanguage {
                                                             optional: NFKMLXGemma3.optionalFiles,
                                                             weights: NFKMLXGemma3.weightFiles))],
             license: license(release.repository), residencies: streamedResidencies, modelTypes: release.modelTypes)
+        // The gated sizes with a vision tower (4B, 12B, 27B) hold 128K positions, which no measurement reads.
+        if release.readsImages {
+            entry.outputTokenLimit = 131_072
+        }
+        return entry
     }
 
     fileprivate static func gemma3nEntry(_ release: NFKMLXLanguageRelease) -> NFKMLXCatalogEntry {
@@ -1100,7 +1109,7 @@ extension NFKMLXCatalogLanguage {
     }
 
     fileprivate static func madladEntry(_ release: NFKMLXLanguageRelease) -> NFKMLXCatalogEntry {
-        NFKMLXCatalogEntry(
+        var entry = NFKMLXCatalogEntry(
             identifier: release.name, displayName: release.displayName, family: "madlad",
             summary: "\(release.displayName), Google's T5 translator between more than 400 languages, loaded at bfloat16.",
             registryName: release.name, tasks: [NFKModelTaskTranslation],
@@ -1109,6 +1118,8 @@ extension NFKMLXCatalogLanguage {
                                                             optional: NFKMLXMADLAD.optionalFiles,
                                                             weights: NFKMLXMADLAD.weightFiles))],
             license: license(release.repository), residencies: streamedResidencies)
+        entry.outputTokenLimit = 512        // the T5 configuration's n_positions, the length it was trained to
+        return entry
     }
 }
 

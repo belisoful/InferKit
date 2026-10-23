@@ -343,7 +343,10 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
     }
 
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
-        let (options, promptTokens, spans, toolCallFormat) = try preparedPrompt(for: request)
+        var (options, promptTokens, spans, toolCallFormat) = try preparedPrompt(for: request)
+        options.maxTokens = try NFKMLXContextRoom.bounded(options.maxTokens, promptTokens: promptTokens.count,
+                                                          contextLength: modelInfo[NFKModelInfoContextLength] as? Int,
+                                                          source: identifier)
         var embeddings: MLXArray?
         var spanMask: MLXArray?
         if let spans, let images {

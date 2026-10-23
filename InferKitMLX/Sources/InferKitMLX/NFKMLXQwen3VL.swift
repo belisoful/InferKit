@@ -563,9 +563,12 @@ public final class NFKMLXQwen3VL: NSObject {
             + String(repeating: "<|image_pad|>", count: merged)
             + "<|vision_end|>" + question + "<|im_end|>\n<|im_start|>assistant\n"
         let inputIds = tokenizer.encode(prompt).map(\.intValue)
+        let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: inputIds.count,
+                                                  contextLength: textDecoder.configuration.maximumPositions,
+                                                  source: "Qwen3-VL")
         let generated = NFKMLXQwen3VL.generate(
             decoder: textDecoder, inputIds: inputIds, visionFeatures: visionOutput, deepstack: deepstack,
-            gridT: grid.t, gridH: grid.h, gridW: grid.w, maxTokens: maxTokens, endTokens: endTokens)
+            gridT: grid.t, gridH: grid.h, gridW: grid.w, maxTokens: limit, endTokens: endTokens)
         try textDecoder.verifyStream()
         return tokenizer.decode(generated.map { NSNumber(value: $0) })
     }

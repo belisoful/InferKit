@@ -348,14 +348,17 @@ public final class NFKMLXSmolVLMNet {
     }
 
     /// Greedy continuation from a fused image-and-text prompt: prefill through a cache, then decode one
-    /// token at a time until `maxTokens` or an end token.
+    /// token at a time until `maxTokens`, the room the decoder's positions leave after the prompt, or an end
+    /// token. A prompt that fills the positions decodes nothing.
     func generate(inputIds: [Int], pixelValues: MLXArray, maxTokens: Int, endTokens: Set<Int>) -> [Int] {
+        let room = decoder.configuration.maximumPositions.map { max($0 - inputIds.count, 0) } ?? maxTokens
+        guard min(maxTokens, room) > 0 else { return [] }
         let cache = NFKMLXKeyValueCache(layerCount: decoder.configuration.layerCount)
         let embeddings = fusedEmbeddings(inputIds: inputIds,
                                          imageFeatures: imageFeatures(pixelValues: pixelValues))
         var hidden = decoder.hiddenStates(fromEmbeddings: embeddings, cache: cache)
         var produced = [Int]()
-        for _ in 0 ..< maxTokens {
+        for _ in 0 ..< min(maxTokens, room) {
             let lastHidden = hidden[0..., (hidden.dim(1) - 1)...]
             let next = decoder.logits(fromHidden: lastHidden).reshaped([-1]).argMax().item(Int.self)
             if endTokens.contains(next) { break }

@@ -599,6 +599,8 @@ static NSUInteger NFKResolverToyAskCount;
 	NSData *manifest = [self.class JSON:@{ @"fileFormatVersion": @"1.0.0" }];
 	XCTAssertEqualObjects(resolution.variant.residentByteCount, @(64 + 4096 + manifest.length));
 	XCTAssertNotNil(resolution.memoryEstimate);
+	NFKModelOption *maxTokens = [resolution.descriptor optionWithKey:NFKParameterMaxTokens];
+	XCTAssertEqualObjects(maxTokens.maximum, @2048, @"a reply runs at most to the package's context");
 }
 
 - (void)testACoreMLPackageWaitsForTheOptIn

@@ -465,12 +465,25 @@ final class NFKGemmaRotary {
         sines = sin(angles)
     }
 
-    /// Applies the rotation to `x` shaped `[batch, heads, length, width]`.
+    /// Applies the rotation to `x` shaped `[batch, heads, length, width]`. Positions past the precomputed
+    /// table are computed from the same frequencies, so a sequence longer than the table turns as the
+    /// table would have turned it.
     func callAsFunction(_ x: MLXArray, offset: Int = 0) -> MLXArray {
         let length = x.shape[2]
         let half = width / 2
-        let c = cosines[offset ..< (offset + length)].reshaped([1, 1, length, half])
-        let s = sines[offset ..< (offset + length)].reshaped([1, 1, length, half])
+        var c: MLXArray
+        var s: MLXArray
+        if offset + length <= cosines.dim(0) {
+            c = cosines[offset ..< (offset + length)]
+            s = sines[offset ..< (offset + length)]
+        } else {
+            let positions = MLXArray((offset ..< (offset + length)).map(Float.init)).reshaped([length, 1])
+            let angles = positions * MLXArray(frequencies).reshaped([1, half])
+            c = cos(angles)
+            s = sin(angles)
+        }
+        c = c.reshaped([1, 1, length, half])
+        s = s.reshaped([1, 1, length, half])
         let first = x[.ellipsis, 0 ..< half]
         let second = x[.ellipsis, half...]
         return concatenated([first * c - second * s, second * c + first * s], axis: -1)

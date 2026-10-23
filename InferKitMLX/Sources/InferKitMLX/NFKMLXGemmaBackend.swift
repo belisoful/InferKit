@@ -89,6 +89,9 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     /// `config.json` states, and the residency, `paged` or `resident` (`NFKModelInfo*` keys). The 26B-A4B
     /// mixture's paged experts count toward its parameters; its weight bytes are what memory holds, which
     /// leaves out experts read from the release. Introduced in InferKit 0.4.0.
+    /// The positions the release's configuration states, which bound a prompt and its reply.
+    private var contextLength: Int? { modelInfo[NFKModelInfoContextLength] as? Int }
+
     @objc public var modelInfo: [String: Any] {
         modelInfoCache.value {
             var info = NFKMLXModelDescription.info(of: describedModules, releaseDirectoryURL: releaseDirectoryURL)
@@ -137,7 +140,7 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
         }
 
         if let (promptTokens, format) = try toolPrompt(for: request) {
-            let produced = generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed,
+            let produced = try generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed,
                                     stops: templateStopTokens)
             var outputs = NFKMLXToolCalling.outputs(answer: holder.tokenizer.decode(produced), reasoning: "",
                                                     request: request, format: format, source: identifier)
@@ -146,7 +149,7 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
             return NFKInferenceResult(outputs: outputs)
         }
         let promptTokens = try tokens(for: request)
-        let produced = generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed,
+        let produced = try generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed,
                                 stops: rendersConversation(request) ? templateStopTokens : stopTokens)
         return NFKInferenceResult(outputs: [
             NFKOutputText: holder.tokenizer.decode(produced),
@@ -218,10 +221,12 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
 
     /// Prefill-only generation: the whole growing sequence runs through the decoder each step.
     private func generate(_ promptTokens: [Int], temperature: Float, maxTokens: Int, seed: UInt64?,
-                          stops: Set<Int>) -> [Int] {
+                          stops: Set<Int>) throws -> [Int] {
         var tokens = promptTokens
         var produced = [Int]()
-        for step in 0 ..< max(maxTokens, 0) {
+        let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: promptTokens.count,
+                                                  contextLength: contextLength, source: identifier)
+        for step in 0 ..< max(limit, 0) {
             let input = MLXArray(tokens.map(Int32.init)).reshaped([1, tokens.count])
             let logits = holder.logits(input)[0, tokens.count - 1]
             let next: Int

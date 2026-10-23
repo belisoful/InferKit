@@ -1179,6 +1179,13 @@ static BOOL NFKModelResolutionIsReadFailure(NSError *error)
 										   @"revision": listed.revision },
 	} mutableCopy];
 	object[@"license"] = listed.license.dictionaryRepresentation;
+	// The reply runs to the room the package's context leaves, which NFKCoreMLLanguageBackend bounds.
+	NSNumber *context = facts[@"maximumContextLength"];
+	if (context.integerValue > 0) {
+		object[@"options"] = @[ @{ @"key": NFKParameterMaxTokens, @"title": @"Maximum tokens",
+								   @"help": @"The most tokens the reply runs to.", @"default": @256, @"minimum": @1,
+								   @"maximum": context } ];
+	}
 	return [NFKModelDescriptor descriptorWithDictionary:object error:error];
 }
 

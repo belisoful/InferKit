@@ -306,6 +306,10 @@ extension NFKMLXCatalogEntry {
         entry.loadOptions = declaration.options
         entry.memoryModel = declaration.memory
         entry.presets = declaration.presets
+        let positions = variants.compactMap { measurement($0)?.geometry?.maximumPositions }.min()
+        if let limit = outputTokenLimit ?? positions {
+            entry.parameters = entry.parameters.map { $0.key == NFKParameterMaxTokens && $0.maximum == nil ? $0.bounded(by: limit) : $0 }
+        }
         return entry
     }
 
@@ -586,5 +590,15 @@ struct NFKMLXVariantFigures {
         residentBytes = resident
         let stageBytes = plan.stages.map { stage in stage.reduce(Int64(0)) { $0 + (directoryBytes[$1] ?? 0) } }
         minimumMemoryBytes = NFKMLXResidencyBudget.leastWorkingSet(holding: stageBytes.max() ?? resident)
+    }
+}
+
+extension NFKModelOption {
+
+    /// The option with `maximum` as its greatest value, every other field as it is.
+    func bounded(by maximum: Int) -> NFKModelOption {
+        var dictionary = dictionaryRepresentation()
+        dictionary["maximum"] = maximum
+        return (try? NFKModelOption(dictionary: dictionary)) ?? self
     }
 }

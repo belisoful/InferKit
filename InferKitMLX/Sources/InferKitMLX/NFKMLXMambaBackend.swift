@@ -56,6 +56,9 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
     /// The decoder's parameter count, weight bytes, precision, and quantization, with the bytes its
     /// release directory occupies on disk and the `model_type` and `max_position_embeddings` its
     /// `config.json` states (`NFKModelInfo*` keys). Introduced in InferKit 0.4.0.
+    /// The positions the release's configuration states, which bound a prompt and its reply.
+    private var contextLength: Int? { modelInfo[NFKModelInfoContextLength] as? Int }
+
     @objc public var modelInfo: [String: Any] {
         modelInfoCache.value {
             NFKMLXModelDescription.info(of: describedModules, releaseDirectoryURL: releaseDirectoryURL)
@@ -88,7 +91,7 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
         }
 
         let promptTokens = try prompt(for: request)
-        let produced = generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed)
+        let produced = try generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed)
         return NFKInferenceResult(outputs: [
             NFKOutputText: holder.tokenizer.decode(produced),
             NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
@@ -125,10 +128,12 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
     }
 
     /// Prefill-only generation: the whole growing sequence runs through the decoder each step.
-    private func generate(_ promptTokens: [Int], temperature: Float, maxTokens: Int, seed: UInt64?) -> [Int] {
+    private func generate(_ promptTokens: [Int], temperature: Float, maxTokens: Int, seed: UInt64?) throws -> [Int] {
         var tokens = promptTokens
         var produced = [Int]()
-        for step in 0 ..< max(maxTokens, 0) {
+        let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: promptTokens.count,
+                                                  contextLength: contextLength, source: identifier)
+        for step in 0 ..< max(limit, 0) {
             let input = MLXArray(tokens.map(Int32.init)).reshaped([1, tokens.count])
             let logits = holder.logits(input)[0, tokens.count - 1]
             let next: Int

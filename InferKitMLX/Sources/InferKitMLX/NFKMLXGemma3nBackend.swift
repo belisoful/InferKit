@@ -129,9 +129,13 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
     private let identifier: String
     private let generationLock = NSLock()
 
-    init(model: NFKMLXGemma3n, identifier: String) {
+    /// The positions the release states, which bound a prompt and its reply, or nil where unknown.
+    private let contextLength: Int?
+
+    init(model: NFKMLXGemma3n, identifier: String, contextLength: Int? = nil) {
         holder = NFKGemma3nHolder(model)
         self.identifier = identifier
+        self.contextLength = contextLength
         super.init()
     }
 
@@ -185,6 +189,8 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
 
         let gemma = holder.model
         let (ids, image, waveform) = try prompt(for: request)
+        options.maxTokens = try NFKMLXContextRoom.bounded(options.maxTokens, promptTokens: ids.count,
+                                                          contextLength: contextLength, source: identifier)
 
         generationLock.lock(); defer { generationLock.unlock() }
         var produced = [Int]()
@@ -313,7 +319,7 @@ extension NFKMLXGemma3n {
                                precision: NFKMLXWeightPrecision = .float32) throws
         -> any NFKInferenceBackend {
         NFKMLXGemma3nBackend(model: try load(directoryURL: directory, precision: precision),
-                             identifier: modelName)
+                             identifier: modelName, contextLength: NFKMLXModelDescription.contextLength(inDirectory: directory))
     }
 
     @objc(backendWithDirectoryURL:error:)

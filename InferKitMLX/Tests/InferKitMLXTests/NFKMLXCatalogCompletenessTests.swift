@@ -87,6 +87,18 @@ final class NFKMLXCatalogCompletenessTests: XCTestCase {
         XCTAssertEqual(cataloged.subtracting(registered).sorted(), [], "described without a registration")
     }
 
+    /// Every model that takes a token limit declares the most tokens one reply may run to, so a caller that
+    /// sets none can send the model's greatest.
+    func testEveryTokenLimitDeclaresItsMaximum() throws {
+        for descriptor in descriptors {
+            guard let option = descriptor.options.first(where: { $0.key == NFKParameterMaxTokens }) else { continue }
+            XCTAssertGreaterThan(option.maximum?.intValue ?? 0, 0, descriptor.identifier)
+        }
+        let qwen = try XCTUnwrap(descriptors.first { $0.identifier == "qwen3-0.6b" })
+        XCTAssertEqual(qwen.options.first { $0.key == NFKParameterMaxTokens }?.maximum, 40_960,
+                       "a decoder's reply runs at most to its trained context")
+    }
+
     func testEveryIdentifierIsUnique() {
         let identifiers = descriptors.map(\.identifier)
         XCTAssertEqual(Set(identifiers).count, identifiers.count,

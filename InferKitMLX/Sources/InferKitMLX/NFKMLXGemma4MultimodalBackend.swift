@@ -22,14 +22,17 @@ final class NFKGemma4MultimodalModel: @unchecked Sendable {
     let tokenizer: NFKMLXGemmaTokenizer
     /// The release's chat template, or nil to build Gemma 4's turns without one.
     let chatTemplate: String?
+    /// The positions the release's text configuration states, which bound a prompt and its reply.
+    let contextLength: Int?
 
     init(decoder: NFKMLXGemmaNet, vision: (tower: NFKMLXGemma4VisionNet, embedder: NFKMLXGemma4MultimodalEmbedder)?,
          audio: (tower: NFKMLXGemma4AudioNet, embedder: NFKMLXGemma4MultimodalEmbedder)?,
          imageProcessor: NFKMLXGemma4ImageProcessor, tokenizer: NFKMLXGemmaTokenizer,
-         imageTokenId: Int, audioTokenId: Int, chatTemplate: String? = nil) {
+         imageTokenId: Int, audioTokenId: Int, chatTemplate: String? = nil, contextLength: Int? = nil) {
         self.decoder = decoder
         self.tokenizer = tokenizer
         self.chatTemplate = chatTemplate
+        self.contextLength = contextLength
         chain = NFKMLXGemma4ConditionalGeneration(
             decoder: decoder, visionTower: vision?.tower, visionEmbedder: vision?.embedder,
             audioTower: audio?.tower, audioEmbedder: audio?.embedder, imageProcessor: imageProcessor,
@@ -128,9 +131,11 @@ extension NFKMLXGemmaLanguage {
             let stops = Set([model.tokenizer.id(forToken: "<turn|>"), model.tokenizer.id(forToken: "<eos>")]
                 .compactMap { $0 })
 
+            let limit = try NFKMLXContextRoom.bounded(maximumTokens, promptTokens: promptTokens.count,
+                                                      contextLength: model.contextLength, source: gemmaMultimodalModelName)
             var tokens = promptTokens
             var produced = [Int]()
-            for step in 0 ..< max(maximumTokens, 0) {
+            for step in 0 ..< max(limit, 0) {
                 if job.status == .cancelled { return nil }
                 let (embeddings, ids) = model.chain.fusedEmbeddings(tokens: tokens, visionSoftTokens: visionSoft,
                                                                      audioSoftTokens: audioSoft)
@@ -145,7 +150,7 @@ extension NFKMLXGemmaLanguage {
                 if stops.contains(next) { break }
                 produced.append(next)
                 tokens.append(next)
-                job.reportProgress(min(Double(produced.count) / Double(max(maximumTokens, 1)), 0.99))
+                job.reportProgress(min(Double(produced.count) / Double(max(limit, 1)), 0.99))
             }
             return NFKInferenceResult(outputs: [
                 NFKOutputText: model.tokenizer.decode(produced, skipSpecial: true),
@@ -259,7 +264,8 @@ extension NFKMLXGemmaLanguage {
             decoder: decoder, vision: vision, audio: audio, imageProcessor: imageProcessor, tokenizer: tokenizer,
             imageTokenId: (json["image_token_id"] as? NSNumber)?.intValue ?? tokenizer.id(forToken: "<|image|>") ?? 258_880,
             audioTokenId: (json["audio_token_id"] as? NSNumber)?.intValue ?? tokenizer.id(forToken: "<|audio|>") ?? 258_881,
-            chatTemplate: NFKMLXLanguage.chatTemplate(inDirectory: directoryURL))
+            chatTemplate: NFKMLXLanguage.chatTemplate(inDirectory: directoryURL),
+            contextLength: ((json["text_config"] as? [String: Any])?["max_position_embeddings"] as? NSNumber)?.intValue)
         return multimodalBackend(model)
     }
 

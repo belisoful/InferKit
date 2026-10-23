@@ -202,8 +202,12 @@ public final class NFKMLXPhi4MMModel: @unchecked Sendable {
                 options: NFKMLXGenerationOptions, onToken: ((Int) -> Bool)?) throws -> (ids: [Int], promptTokens: Int) {
         lock.lock(); defer { lock.unlock() }
         let prepared = try prepare(messages: messages, images: images, audios: audios)
+        var bounded = options
+        bounded.maxTokens = try NFKMLXContextRoom.bounded(options.maxTokens, promptTokens: prepared.ids.count,
+                                                          contextLength: decoder.configuration.maximumPositions,
+                                                          source: NFKMLXPhi4MM.modelName)
         let ids = NFKMLXPhi4MM.generateFused(decoder: decoder, inputIds: prepared.ids, features: prepared.features,
-                                             options: options, endTokens: NFKMLXPhi4MM.stopTokens, onToken: onToken)
+                                             options: bounded, endTokens: NFKMLXPhi4MM.stopTokens, onToken: onToken)
         return (ids, prepared.ids.count)
     }
 

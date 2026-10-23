@@ -110,6 +110,10 @@ struct NFKMLXCatalogEntry {
     var memoryModel: NFKModelMemoryModel? = nil
     /// The presets a server offers for the model. ``measured()`` sets them.
     var presets: [NFKModelPreset] = []
+    /// The most tokens one reply runs to, where no measurement states the trained context: a release whose
+    /// configuration the measurements do not read, or a decoder whose output length its configuration
+    /// bounds apart from its positions. ``measured()`` declares it as `NFKParameterMaxTokens`'s maximum.
+    var outputTokenLimit: Int? = nil
 
     /// The entry as a manifest model dictionary, the shape `descriptorWithDictionary:error:` reads.
     var dictionaryRepresentation: [String: Any] {

@@ -101,6 +101,19 @@ final class NFKMLXGemmaTests: XCTestCase {
                        [geometry.vocabularySize, geometry.perLayerEmbeddingWidth])
     }
 
+    /// A position past the precomputed rotary table turns as a longer table would have turned it, so a
+    /// sequence runs past 4096 positions.
+    func testTheRotaryTurnsPositionsPastItsTable() throws {
+        try requireMLXRuntime()
+        let short = NFKGemmaRotary(width: 8, theta: 10_000, proportion: 1, maximumPositions: 4)
+        let long = NFKGemmaRotary(width: 8, theta: 10_000, proportion: 1, maximumPositions: 16)
+        let x = MLXRandom.normal([1, 2, 3, 8])
+        for offset in [2, 6] {
+            XCTAssertEqual(abs(short(x, offset: offset) - long(x, offset: offset)).max().item(Float.self), 0,
+                           "offset \(offset)")
+        }
+    }
+
     // MARK: Structure against the released checkpoint
 
     func testEveryParameterMatchesTheReleasedCheckpoint() throws {

@@ -89,6 +89,9 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     /// `config.json` states (`NFKModelInfo*` keys). A paged decoder's routed experts count toward its
     /// parameters; its weight bytes are what memory holds, which leaves out experts read from the
     /// release. Introduced in InferKit 0.4.0.
+    /// The positions the release's configuration states, which bound a prompt and its reply.
+    private var contextLength: Int? { modelInfo[NFKModelInfoContextLength] as? Int }
+
     @objc public var modelInfo: [String: Any] {
         modelInfoCache.value {
             NFKMLXModelDescription.info(of: describedModules, releaseDirectoryURL: releaseDirectoryURL)
@@ -134,7 +137,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
         }
 
         let (promptTokens, format) = try prompt(for: request)
-        let produced = generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed)
+        let produced = try generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed)
         let decode: ([Int]) -> String = { [holder] in holder.tokenizer.decode($0.map { NSNumber(value: $0) }) }
         let reasoningFormat = request.messages != nil ? chatTemplate.flatMap(NFKMLXReasoningFormat.detected(inChatTemplate:)) : nil
         let (reasoning, answer, reasoningTokens) = NFKMLXUsage.split(decode(produced), format: reasoningFormat,
@@ -194,10 +197,12 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     }
 
     /// Prefill-only generation: the whole growing sequence runs through the decoder each step.
-    private func generate(_ promptTokens: [Int], temperature: Float, maxTokens: Int, seed: UInt64?) -> [Int] {
+    private func generate(_ promptTokens: [Int], temperature: Float, maxTokens: Int, seed: UInt64?) throws -> [Int] {
         var tokens = promptTokens
         var produced = [Int]()
-        for step in 0 ..< max(maxTokens, 0) {
+        let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: promptTokens.count,
+                                                  contextLength: contextLength, source: identifier)
+        for step in 0 ..< max(limit, 0) {
             let input = MLXArray(tokens.map(Int32.init)).reshaped([1, tokens.count])
             let logits = holder.logits(input)[0, tokens.count - 1]
             let next: Int

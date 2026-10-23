@@ -98,6 +98,8 @@ extension NFKMLXLanguage {
             attentionBias: names.contains("blk.0.attn_q.bias"))
         // Qwen3 ships per-head query/key norms; Qwen2 and Llama do not.
         configuration.normalizesQueryAndKey = names.contains("blk.0.attn_q_norm.weight")
+        let contextLength = gguf.metadataInteger(forKey: "\(architecture).context_length", defaultValue: 0)
+        configuration.maximumPositions = contextLength > 0 ? contextLength : nil
         return configuration
     }
 

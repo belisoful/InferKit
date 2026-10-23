@@ -374,7 +374,14 @@ attention and feed-forward.
   without the `"special": true` ids (`specialTokenIDs(inDirectory:)`), by id as `skip_special_tokens`
   filters, keeping the ones a marker of the run's reasoning format or its tool-call format's `markers`
   contains (harmony's channels, Mistral's `[TOOL_CALLS]`), since those readers parse them. A text-level
-  strip would also remove a literal the model spelled with ordinary tokens. **Release sampling (2026-10-22):** a
+  strip would also remove a literal the model spelled with ordinary tokens. **Output room (2026-10-22):** `NFKMLXContextRoom.bounded`
+  caps a run's limit at the trained context (`maximumPositions`, or the release config's
+  `max_position_embeddings` through model info) minus the prompt and throws when the prompt fills it. The
+  bound is the trained context, not the context-length load option: that option is `contextWindow`, a
+  rolling cache that drops the oldest positions, so a long conversation keeps going past it. The catalog
+  declares the same figure as `NFKParameterMaxTokens`'s maximum in `measured(by:)` (least `maximumPositions`
+  across variants, else `NFKMLXCatalogEntry.outputTokenLimit`). Gemma's rotary table holds 4096 positions;
+  positions past it are computed from the same frequencies, which matches a longer table bit for bit. **Release sampling (2026-10-22):** a
   `generation_config.json` with `do_sample` sets the request defaults (`NFKMLXReleaseSampling`), read as
   transformers' `GenerationConfig` fills a missing value (temperature 1, top-p 1, top-k 50); top-k runs
   before top-p on the temperature-scaled distribution and keeps ties at the `k`th value. The catalog

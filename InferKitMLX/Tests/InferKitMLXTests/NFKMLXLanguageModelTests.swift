@@ -378,6 +378,33 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         return directory
     }
 
+    /// A run's limit is the room its context leaves after the prompt, and a prompt that fills the context
+    /// is refused, naming both counts.
+    func testTheContextBoundsTheReplyAndRefusesAPromptThatFillsIt() throws {
+        XCTAssertEqual(try NFKMLXContextRoom.bounded(256, promptTokens: 10, contextLength: 16, source: "m"), 6)
+        XCTAssertEqual(try NFKMLXContextRoom.bounded(4, promptTokens: 10, contextLength: 16, source: "m"), 4)
+        XCTAssertEqual(try NFKMLXContextRoom.bounded(256, promptTokens: 10, contextLength: nil, source: "m"), 256)
+        XCTAssertThrowsError(try NFKMLXContextRoom.bounded(1, promptTokens: 16, contextLength: 16, source: "m")) { error in
+            XCTAssertTrue("\(error)".contains("16 tokens") && "\(error)".contains("16-token context"), "\(error)")
+        }
+
+        try requireMLXRuntime()
+        let directory = try releaseDirectory()
+        let tokenizer = try NFKTokenizer(forManifest: ["tokenizer": ["type": "bpe-bytelevel"]], directory: directory)
+        let prompt = tokenizer.encode("hello hello").count
+        var configuration = NFKMLXLanguageConfiguration.tiny
+        configuration.maximumPositions = prompt + 2
+        let backend = NFKMLXLanguageBackend(net: NFKMLXLanguage.makeNet(configuration), tokenizer: tokenizer, identifier: "tiny")
+        let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "hello hello"],
+                                          parameters: [NFKParameterTemperature: 0, NFKParameterMaxTokens: 64])
+        let result = try backend.runInference(for: request)
+        XCTAssertEqual((result.output(forKey: NFKOutputUsage) as? [String: Int])?[NFKUsageOutputTokens], 2)
+        XCTAssertEqual(result.output(forKey: NFKOutputFinishReason) as? String, NFKFinishReasonLength)
+        configuration.maximumPositions = prompt
+        let full = NFKMLXLanguageBackend(net: NFKMLXLanguage.makeNet(configuration), tokenizer: tokenizer, identifier: "tiny")
+        XCTAssertThrowsError(try full.runInference(for: request))
+    }
+
     /// A request without tools ends on an id the release's `generation_config.json` lists, as the
     /// reference's generate does.
     func testAPlainRequestStopsWhereTheGenerationConfigSays() throws {

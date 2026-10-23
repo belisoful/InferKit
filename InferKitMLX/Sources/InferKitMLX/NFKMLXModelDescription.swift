@@ -105,14 +105,26 @@ enum NFKMLXModelDescription {
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return info
         }
-        let text = json["text_config"] as? [String: Any]
         if let type = json["model_type"] as? String {
             info[NFKModelInfoArchitecture] = type
         }
-        if let positions = (json["max_position_embeddings"] ?? text?["max_position_embeddings"]) as? Int {
+        if let positions = contextLength(inConfiguration: json) {
             info[NFKModelInfoContextLength] = positions
         }
         return info
+    }
+
+    /// The `max_position_embeddings` a release's `config.json` states at its top level or, for a multimodal
+    /// release, under `text_config`, or nil where the file states none.
+    static func contextLength(inDirectory directory: URL?) -> Int? {
+        guard let directory, let data = try? Data(contentsOf: directory.appendingPathComponent("config.json")),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return contextLength(inConfiguration: json)
+    }
+
+    private static func contextLength(inConfiguration json: [String: Any]) -> Int? {
+        let text = json["text_config"] as? [String: Any]
+        return (json["max_position_embeddings"] ?? text?["max_position_embeddings"]) as? Int
     }
 
     /// The bytes a release occupies on disk: a single file's, or every file's under a directory, or

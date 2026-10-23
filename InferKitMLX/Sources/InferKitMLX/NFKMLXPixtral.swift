@@ -369,8 +369,11 @@ public final class NFKMLXPixtral: NSObject {
         let features = connector(visionNet(pixelValues))
         let prompt = "<s>[INST]" + imagePlaceholders(gridH: gridH, gridW: gridW) + question + "[/INST]"
         let inputIds = tokenizer.encode(prompt).map(\.intValue)
+        let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: inputIds.count,
+                                                  contextLength: textDecoder.configuration.maximumPositions,
+                                                  source: "Pixtral")
         let generated = NFKMLXPixtral.generate(decoder: textDecoder, inputIds: inputIds, features: features,
-                                               maxTokens: maxTokens, endTokens: endTokens)
+                                               maxTokens: limit, endTokens: endTokens)
         try textDecoder.verifyStream()
         return tokenizer.decode(generated.map { NSNumber(value: $0) })
     }

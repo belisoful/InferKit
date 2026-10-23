@@ -719,7 +719,10 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             throw NFKMLXError.unsupportedConfiguration(
                 "text generation needs a tokenizer; build the backend with one")
         }
-        let (options, tokens, toolCallFormat) = try preparedPrompt(for: request, tokenizer: tokenizer)
+        var (options, tokens, toolCallFormat) = try preparedPrompt(for: request, tokenizer: tokenizer)
+        options.maxTokens = try NFKMLXContextRoom.bounded(options.maxTokens, promptTokens: tokens.count,
+                                                          contextLength: holder.net.configuration.maximumPositions,
+                                                          source: identifier)
         let (produced, cached) = try generate(tokens, options: options, conversation: Self.conversation(of: request),
                                               holder: holder)
         let reasoningFormat = Self.reasoningFormat(for: options)

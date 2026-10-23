@@ -52,9 +52,13 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
     /// The named conversations' caches, read and written under `generationLock`.
     private let conversations = NFKMLXConversationKeeper<NFKMLXGemma3PromptCache>(byteBudget: 2 << 30)
 
-    init(model: NFKMLXGemma3Model, identifier: String) {
+    /// The positions the release states, which bound a prompt and its reply, or nil where unknown.
+    private let contextLength: Int?
+
+    init(model: NFKMLXGemma3Model, identifier: String, contextLength: Int? = nil) {
         holder = NFKGemma3Holder(model)
         self.identifier = identifier
+        self.contextLength = contextLength
         super.init()
     }
 
@@ -191,6 +195,8 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
         let model = holder.model
         let image = request.input(forKey: NFKInputImage)
         let ids = try promptTokens(for: request)
+        options.maxTokens = try NFKMLXContextRoom.bounded(options.maxTokens, promptTokens: ids.count,
+                                                          contextLength: contextLength, source: identifier)
 
         let conversation = NFKMLXConversation.name(of: request)
         generationLock.lock(); defer { generationLock.unlock() }
@@ -345,7 +351,7 @@ public final class NFKMLXGemma3: NSObject {
     public static func backend(directoryURL directory: URL, precision: NFKMLXWeightPrecision = .float32,
                                residency: NFKMLXResidency = .automatic) throws -> any NFKInferenceBackend {
         NFKMLXGemma3Backend(model: try model(directoryURL: directory, precision: precision, residency: residency),
-                            identifier: modelName)
+                            identifier: modelName, contextLength: NFKMLXModelDescription.contextLength(inDirectory: directory))
     }
 
     /// The Objective-C entry: builds a backend from a release directory.
@@ -386,7 +392,7 @@ public final class NFKMLXGemma3: NSObject {
                                residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
         NFKMLXGemma3Backend(model: try model(directoryURL: directory, draftDirectoryURL: draftDirectoryURL,
                                              precision: precision, residency: residency),
-                            identifier: modelName)
+                            identifier: modelName, contextLength: NFKMLXModelDescription.contextLength(inDirectory: directory))
     }
 
     /// The model for a release with the draft release's decoder, quantized to `draftBits`, set as its

@@ -40,6 +40,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### A Core ML language reply runs to the room its context leaves
+
+- `NFKCoreMLLanguageBackend` bounds a run's token limit by the positions its package's `contextLength` leaves after
+  the prompt, and refuses a prompt that fills them. The resolver's descriptor of a Core ML package declares
+  `NFKParameterMaxTokens` with that context as its maximum.
+
 #### A text run says why it stopped
 
 - `NFKOutputFinishReason` (`finishReason`) is why a text run stopped: `NFKFinishReasonStop` (the model ended its
@@ -1472,6 +1478,19 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### A reply runs to the room its model's context leaves
+
+- Every catalog model that takes `NFKParameterMaxTokens` declares the option's maximum, the most tokens one reply
+  may run to: a decoder's trained context (`max_position_embeddings`, the least across its variants), and a
+  translator's or Florence-2's decoder positions. Where no measurement reads it, the entry states it: 131,072 for
+  Gemma 3 4B, 12B, and 27B, 262,144 for Codestral Mamba, 8,192 for the SmolLM2 GGUF, and 512 for MADLAD-400.
+- The language, Qwen3.5 and Qwen4, Granite, Nemotron, Gemma 3, 3n, and 4, DeepSeek, Phi-4-multimodal, Qwen3-VL, and
+  Pixtral backends bound a run's token limit by the positions the context leaves after the prompt, and refuse a
+  prompt that fills it, naming both counts. SmolVLM decodes nothing for such a prompt. The context-length load
+  option still bounds the cache, which keeps a window of the latest positions.
+- A GGUF release reads its context length from `<architecture>.context_length`.
+- Gemma 4's rotary embedding turns positions past its 4,096-position table, so a sequence runs past them.
 
 #### A language run says why it stopped
 
