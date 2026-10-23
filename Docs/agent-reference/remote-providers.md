@@ -1278,6 +1278,19 @@ Traps met while building it:
 - `NFKRemoteTransport`'s blocking send retries 502, 503, and 504, so a served "not ready" (503) is
   retried like a gateway error. Tests that expect a failing status set `retryAttempts` to 0.
 
+**generateContent routes (2026-10-23).** Asked for so Gemini CLI runs on a hosted model.
+`NFKServedGemini` serves `/v1beta/models` (`NFKServedGeminiBasePath`, a second prefix beside `/v1`):
+`{model}:generateContent`, `:streamGenerateContent` (`alt=sse` streams one GenerateContentResponse per
+event carrying only what the reply added; without it a JSON array of one), `:countTokens` (`contents` or
+a whole `generateContentRequest`), `GET models` and `models/{m}`. The SDKs may send `models/{m}` in the
+path, so a repeated `models/` is taken off. Keys: `x-goog-api-key` or `?key=` (Gemini routes only), with
+the Bearer form; errors are `{error: {code, message, status}}` with Google's status names.
+`NFKServedWireOf` picks the wire from the path. Conversion follows the Messages route: functionCall
+parts become tool_calls, a functionResponse without an id answers the earliest unanswered call of its
+name (the core's client sends none for an id it generated), thought parts are not replayed, schema type
+names are lowercased (Gemini CLI's built-in tools write `OBJECT`/`STRING`), and googleSearch and the
+other Google-run tools are dropped. finishReason is STOP for a call, as Gemini reports it.
+
 **Messages and Responses routes (2026-10-15).** Asked for so Claude Code and Codex run on a hosted
 model. `POST /v1/messages`, `/v1/messages/count_tokens`, `/v1/responses`, and `/v1/responses/input_tokens`,
 all `NFKServerKeyScopeInference`. `NFKInferenceServer.m` holds only the routing; each family's serving

@@ -29,6 +29,7 @@
 #import "NFKServerRoutePrivate.h"
 #import "NFKServerObservationPrivate.h"
 #import "NFKServedRequestChecks.h"
+#import "NFKServedGemini.h"
 #import <CommonCrypto/CommonDigest.h>
 #import <unistd.h>
 #import <arpa/inet.h>
@@ -52,6 +53,22 @@ static BOOL NFKServedRequestIsAnthropic(NFKHTTPRequest *request, NSString *path)
 	NSString *models = [NFKServedBasePath stringByAppendingString:@"/models"];
 	BOOL listsModels = [path isEqualToString:models] || [path hasPrefix:[models stringByAppendingString:@"/"]];
 	return listsModels && [request valueForHeader:@"anthropic-version"] != nil;
+}
+
+/*! Whether a path is one of Gemini's routes, under NFKServedGeminiBasePath. */
+static BOOL NFKServedPathIsGemini(NSString *path)
+{
+	return [path isEqualToString:NFKServedGeminiBasePath] || [path hasPrefix:[NFKServedGeminiBasePath stringByAppendingString:@"/"]];
+}
+
+/*! The wire a request's replies take: Gemini's under its base path, Anthropic's for a Messages route or a
+	model list asked for as Anthropic asks, and OpenAI's otherwise. */
+static NFKServedWire NFKServedWireOf(NFKHTTPRequest *request, NSString *path)
+{
+	if (NFKServedPathIsGemini(path)) {
+		return NFKServedWireGemini;
+	}
+	return NFKServedRequestIsAnthropic(request, path) ? NFKServedWireAnthropic : NFKServedWireOpenAI;
 }
 
 static NSError *NFKServedError(NSString *domain, NSInteger code, NSString *reason)
@@ -2075,26 +2092,40 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	}
 }
 
-/*! The tokens a request presents: its Bearer token, and its x-api-key header where the route takes
-	Anthropic's form. */
-- (NSArray<NSString *> *)tokensPresentedBy:(NFKHTTPRequest *)request acceptingAPIKeyHeader:(BOOL)acceptsAPIKeyHeader
+/*! The tokens a request presents: its Bearer token, its x-api-key header where the route takes Anthropic's
+	form, and its x-goog-api-key header or key query parameter where it takes Gemini's. */
+- (NSArray<NSString *> *)tokensPresentedBy:(NFKHTTPRequest *)request wire:(NFKServedWire)wire
 {
 	NSMutableArray<NSString *> *tokens = [NSMutableArray array];
 	NSString *authorization = [request valueForHeader:@"authorization"] ?: @"";
 	if ([authorization.lowercaseString hasPrefix:@"bearer "]) {
-		[tokens addObject:[[authorization substringFromIndex:7] stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet]];
+		[tokens addObject:[authorization substringFromIndex:7]];
 	}
-	NSString *headerKey = acceptsAPIKeyHeader ? [request valueForHeader:@"x-api-key"] : nil;
-	if (headerKey != nil) {
-		[tokens addObject:[headerKey stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet]];
+	if (wire == NFKServedWireAnthropic && [request valueForHeader:@"x-api-key"] != nil) {
+		[tokens addObject:[request valueForHeader:@"x-api-key"]];
 	}
-	return [tokens filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"length > 0"]];
+	if (wire == NFKServedWireGemini) {
+		if ([request valueForHeader:@"x-goog-api-key"] != nil) {
+			[tokens addObject:[request valueForHeader:@"x-goog-api-key"]];
+		}
+		if (request.query[@"key"] != nil) {
+			[tokens addObject:request.query[@"key"]];
+		}
+	}
+	NSMutableArray<NSString *> *trimmed = [NSMutableArray array];
+	for (NSString *token in tokens) {
+		NSString *stripped = [token stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceCharacterSet];
+		if (stripped.length > 0) {
+			[trimmed addObject:stripped];
+		}
+	}
+	return trimmed;
 }
 
 /*! The key a request presents: the first of its tokens the server holds, or nil. */
-- (nullable NFKServedAPIKey *)keyPresentedBy:(NFKHTTPRequest *)request acceptingAPIKeyHeader:(BOOL)acceptsAPIKeyHeader
+- (nullable NFKServedAPIKey *)keyPresentedBy:(NFKHTTPRequest *)request wire:(NFKServedWire)wire
 {
-	for (NSString *token in [self tokensPresentedBy:request acceptingAPIKeyHeader:acceptsAPIKeyHeader]) {
+	for (NSString *token in [self tokensPresentedBy:request wire:wire]) {
 		NFKServedAPIKey *key = [self keyMatching:token];
 		if (key != nil) {
 			return key;
@@ -2193,6 +2224,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	NSString *message = [NSString stringWithFormat:@"no route %@ %@", request.method, request.path];
 	NSDictionary *body = wire == NFKServedWireAnthropic
 		? @{ @"type": @"error", @"error": @{ @"type": @"not_found_error", @"message": message } }
+		: wire == NFKServedWireGemini ? @{ @"error": @{ @"code": @404, @"message": message, @"status": @"NOT_FOUND" } }
 		: @{ @"error": @{ @"message": message, @"type": @"invalid_request_error" } };
 	[response sendStatus:404 JSONObject:body headers:nil];
 }
@@ -3470,10 +3502,10 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	of the key it presented. A client exempt from the check passes whatever it presents. A loopback
 	request whose Host names another host, which is how a browser page reaches this machine by DNS
 	rebinding, is served only with a key that opens the route. An Anthropic route also takes the key
-	as x-api-key. */
+	as x-api-key, and a Gemini route as x-goog-api-key or the key query parameter. */
 - (nullable NSError *)refusalOf:(NFKHTTPRequest *)request scope:(NFKServerKeyScope)scope wire:(NFKServedWire)wire
 {
-	NFKServedAPIKey *key = [self keyPresentedBy:request acceptingAPIKeyHeader:wire == NFKServedWireAnthropic];
+	NFKServedAPIKey *key = [self keyPresentedBy:request wire:wire];
 	request.keyName = key.name;
 	if (request.fromLoopback && !NFKHostNamesLoopback([request valueForHeader:@"host"])) {
 		if ((key.scopes & scope) != 0) {
@@ -3487,10 +3519,13 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 		return nil;
 	}
 	if (key == nil) {
+		NSDictionary<NSNumber *, NSString *> *forms = @{
+			@(NFKServedWireAnthropic): @"x-api-key: <key> or Authorization: Bearer <key>",
+			@(NFKServedWireGemini): @"x-goog-api-key: <key>, the key query parameter, or Authorization: Bearer <key>",
+		};
 		return NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorUnauthorized,
-							  wire == NFKServedWireAnthropic
-								  ? @"a valid key for this route is required; send it as x-api-key: <key> or Authorization: Bearer <key>"
-								  : @"a valid key for this route is required; send it as Authorization: Bearer <key>");
+							  [@"a valid key for this route is required; send it as "
+								  stringByAppendingString:forms[@(wire)] ?: @"Authorization: Bearer <key>"]);
 	}
 	return NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorInsufficientScope,
 						  @"the key does not open this route");
@@ -3506,6 +3541,9 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	if ([path isEqualToString:NFKServedBasePath] || [path hasPrefix:[NFKServedBasePath stringByAppendingString:@"/"]]) {
 		return [path isEqualToString:[NFKServedBasePath stringByAppendingString:@"/inferkit/status"]] ? NFKServerKeyScopeStatus : NFKServerKeyScopeInference;
 	}
+	if (NFKServedPathIsGemini(path)) {
+		return NFKServerKeyScopeInference;
+	}
 	*outPrefix = [self appRoutePrefixForPath:path];
 	return NFKServerKeyScopeAppRoutes;
 }
@@ -3518,9 +3556,9 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	}
 	NSString *appRoutePrefix = nil;
 	NFKServerKeyScope scope = [self scopeOfPath:path appRoutePrefix:&appRoutePrefix];
-	NFKServedWire wire = appRoutePrefix == nil && NFKServedRequestIsAnthropic(request, path) ? NFKServedWireAnthropic : NFKServedWireOpenAI;
+	NFKServedWire wire = appRoutePrefix == nil ? NFKServedWireOf(request, path) : NFKServedWireOpenAI;
 	BOOL servedRoute = [path isEqualToString:NFKServedBasePath] || [path hasPrefix:[NFKServedBasePath stringByAppendingString:@"/"]];
-	if (servedRoute && !NFKServedOriginIsAllowed(request, self.allowedOrigins)) {
+	if ((servedRoute || NFKServedPathIsGemini(path)) && !NFKServedOriginIsAllowed(request, self.allowedOrigins)) {
 		[self sendError:NFKServedError(NFKInferenceServerErrorDomain, NFKInferenceServerErrorOriginRefused,
 									   @"the Origin header names another site; a web page does not reach this server")
 			   response:response wire:wire];
@@ -3545,6 +3583,10 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 													  void (^completion)(NFKToolResult *)) {
 			return [weakSelf startModelTool:tool arguments:arguments request:request completion:completion];
 		}];
+		return;
+	}
+	if (NFKServedPathIsGemini(path)) {
+		[NFKServedGemini serveRequest:request path:path response:response server:self];
 		return;
 	}
 	NSString *modelsPrefix = [NFKServedBasePath stringByAppendingString:@"/models/"];
@@ -3650,7 +3692,7 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 											   @"error": @{ @"code": @(-32603), @"message": error.localizedDescription } } headers:nil];
 		return;
 	}
-	[self sendError:error response:response wire:NFKServedRequestIsAnthropic(request, path) ? NFKServedWireAnthropic : NFKServedWireOpenAI];
+	[self sendError:error response:response wire:NFKServedWireOf(request, path)];
 }
 
 - (NSInteger)statusForError:(NSError *)error
@@ -3702,6 +3744,7 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 	}
 	NSInteger status = [self statusForError:error];
 	id body = wire == NFKServedWireAnthropic ? [NFKServedAnthropic errorObjectForError:error status:status]
+		: wire == NFKServedWireGemini ? [NFKServedGemini errorObjectForError:error status:status]
 		: [NFKInferenceWireCoding JSONObjectForError:error];
 	[response sendStatus:status JSONObject:body headers:headers];
 }

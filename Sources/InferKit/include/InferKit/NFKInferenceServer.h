@@ -191,7 +191,8 @@ NS_SWIFT_SENDABLE
 /*!
 	@class      NFKInferenceServer
 	@abstract   Serves the models this process hosts to clients on this machine and on the network.
-	@discussion A server hosts backends by model name and answers HTTP on two surfaces under /v1:
+	@discussion A server hosts backends by model name and answers HTTP under /v1, and Google's routes under
+				/v1beta:
 
 				- OpenAI-compatible routes: GET /models and /models/{name}, POST /chat/completions
 				  (streamed as server-sent events when the body sets stream), /embeddings,
@@ -212,6 +213,12 @@ NS_SWIFT_SENDABLE
 				  errors in Anthropic's shape ({type: "error", error: {type, message}}). GET /models and
 				  /models/{name} with an anthropic-version header answer in Anthropic's model-list
 				  shape and take x-api-key too.
+				- Google's generateContent API under /v1beta/models: POST {model}:generateContent,
+				  {model}:streamGenerateContent (server-sent events with alt=sse), and
+				  {model}:countTokens, and GET /v1beta/models and /v1beta/models/{model}.
+				  NFKGeminiGenerateContentBackend and Gemini CLI reach it. These routes also take the key
+				  as x-goog-api-key or the key query parameter, and answer errors in Google's shape
+				  ({error: {code, message, status}}).
 				- The native route, POST /inferkit/run, which carries a whole NFKInferenceRequest and
 				  NFKInferenceResult in InferKit's tagged JSON form, so every key reaches the hosted
 				  backend: pixel buffers, masks, multi-arrays, audio and video files, and the core's
@@ -301,8 +308,9 @@ NS_SWIFT_SENDABLE
 
 				Access:
 				- A client presents a key as a Bearer token, which is what the remote backends' apiKey
-				  sends, or, on the Messages routes, as an x-api-key header, which is what
-				  NFKAnthropicBackend and Claude Code send. The server holds several keys, each named and opening a set of scopes
+				  sends; on the Messages routes, as an x-api-key header, which is what
+				  NFKAnthropicBackend and Claude Code send; or on Google's routes, as an x-goog-api-key
+				  header or a key query parameter, which is what Gemini CLI sends. The server holds several keys, each named and opening a set of scopes
 				  (NFKServerKeyScope): addAPIKey:named:scopes: adds one, removeAPIKeyNamed: revokes it
 				  for the next request. apiKey is the key named NFKInferenceServerDefaultAPIKeyName
 				  with every scope.

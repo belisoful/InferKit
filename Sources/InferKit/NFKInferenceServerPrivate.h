@@ -18,6 +18,7 @@ NS_ASSUME_NONNULL_BEGIN
 typedef NS_ENUM(NSInteger, NFKServedWire) {
 	NFKServedWireOpenAI,
 	NFKServedWireAnthropic,
+	NFKServedWireGemini,
 };
 
 /*! What a request's model field reaches: the hosted model, the name as the request sent it, and the

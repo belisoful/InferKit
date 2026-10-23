@@ -787,6 +787,9 @@ answers HTTP on one port, under `/v1`:
   streamed in its own event format when asked. `NFKRemoteResponsesBackend` and `NFKAnthropicBackend`
   reach them unchanged, and so do Codex and Claude Code (see
   [Coding agents on a hosted model](#coding-agents-on-a-hosted-model)).
+- Google's generateContent API under `/v1beta/models`: `{model}:generateContent`,
+  `{model}:streamGenerateContent` (server-sent events with `alt=sse`), `{model}:countTokens`, and the
+  model list. `NFKGeminiGenerateContentBackend` reaches it unchanged, and so does Gemini CLI.
 - The MCP endpoint, `POST /mcp`, which serves the tools added with `addTool:` to MCP clients (see
   [Models as tools](#models-as-tools)).
 - The native route, `POST /v1/inferkit/run`, which carries a whole `NFKInferenceRequest` and
@@ -871,8 +874,9 @@ one run executes, so a balancer routes on the queue figures and the estimated wa
 
 ### Coding agents on a hosted model
 
-Claude Code speaks Anthropic's Messages API and Codex speaks OpenAI's Responses API, and the server
-answers both, so either agent runs on a model the server hosts. The agent's conversation reaches the
+Claude Code speaks Anthropic's Messages API, Codex speaks OpenAI's Responses API, and Gemini CLI speaks
+Google's generateContent API. The server answers all three, so each agent runs on a model the server
+hosts. The agent's conversation reaches the
 backend under `NFKInputMessages` in the contract's chat shape, with its tools under
 `NFKParameterTools`, and the backend's `NFKOutputToolCalls` go back as the agent's own tool calls. The
 hosted backend therefore needs to call tools: an MLX language model whose chat template takes tools,
@@ -903,7 +907,17 @@ export OPENAI_API_KEY=<a key with the inference scope>      # any value where lo
 codex --model qwen3
 ```
 
-Both route families take a key with the inference scope. A client on the same machine needs none
+Gemini CLI reads the server's root URL, without `/v1beta`, from `GOOGLE_GEMINI_BASE_URL`, and sends
+`GEMINI_API_KEY` as `x-goog-api-key`. The server also takes the key as the `key` query parameter. Its
+model is the `-m` option:
+
+```sh
+export GOOGLE_GEMINI_BASE_URL=http://localhost:11480
+export GEMINI_API_KEY=<a key with the inference scope>      # any value where loopback needs no key
+gemini -m qwen3
+```
+
+Every agent's route family takes a key with the inference scope. A client on the same machine needs none
 unless `loopbackExemptScopes` leaves the inference scope out. What the routes do with each agent's
 requests:
 

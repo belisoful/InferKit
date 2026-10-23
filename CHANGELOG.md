@@ -40,6 +40,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### The server answers Google's generateContent API
+
+- `NFKInferenceServer` serves `/v1beta/models/{model}:generateContent`, `:streamGenerateContent` (server-sent
+  events with `alt=sse`), and `:countTokens`, and lists its models at `GET /v1beta/models`, so Gemini CLI and
+  `NFKGeminiGenerateContentBackend` run on a hosted model.
+- Contents, system instructions, function declarations, function calls and responses, inline images and PDFs,
+  and the generation config's limit, sampling, stop sequences, JSON schema, and thinking reach the hosted backend
+  in the contract's shape; the reply carries thought, text, and function-call parts, the finish reason, and the
+  usage metadata.
+- These routes take the key as `x-goog-api-key` or the `key` query parameter beside the Bearer token, and
+  answer errors in Google's shape.
+
 #### A Core ML language reply runs to the room its context leaves
 
 - `NFKCoreMLLanguageBackend` bounds a run's token limit by the positions its package's `contextLength` leaves after
