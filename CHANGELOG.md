@@ -2334,6 +2334,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   (`answerForImage:question:maxTokens:error:`). The embedders, text encoders, and drafts that read
   these releases hold them whole, as before. A drafted language backend loads its draft first and plans the model against
   what the draft leaves.
+- Pixtral 12B's released fused decoder is measured streamed, given the recorded projected image features:
+  at float32 it matches the reference at every position after every layer, and at bfloat16 each layer
+  stays inside its block floor and the whole pass ranks within torch's own jittered bfloat16 runs. The
+  figures are in `Docs/model-parity.md`. The `IK_PIXTRAL_FUSED` opt-in is gone, and the tests run where
+  the validation store holds the records.
 - A smaller Gemma 3 release of the same vocabulary drafts for a larger one
   (`NFKMLXGemma3Model.useDraft(_:)`, the `draftDirectoryURL:` factories on `NFKMLXGemma3` and
   `NFKMLXTranslateGemma`): it proposes `NFKMLXGenerationParameterKey.draftTokens` tokens a round and one

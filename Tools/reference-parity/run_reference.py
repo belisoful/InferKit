@@ -4631,7 +4631,9 @@ def run_pixtral(image, checkpoint):
     isolation harness; the fused logits and the greedy continuation are recorded in the release's
     bfloat16, since fp32 for the 12B decoder does not fit. The record carries the processor's pixel
     values, the patch-embedding, ln_pre, first-layer, and last-layer vision seams, the projected image
-    features, the input ids, the logits, and the continuation.
+    features, the input ids, the logits, and the continuation. The logits come from the bfloat16 tower's
+    features, which differ from the float32 `projected` (cosine 0.995 on average, 0.71 at the worst
+    patch), so a decoder given `projected` is held to `pixtral_fused_layerwise` instead.
     """
     import numpy as np
     import torch
@@ -6854,11 +6856,12 @@ def _stream_float32(model):
             module.register_forward_hook(restore)
 
 
-def _decoder_floor_hooks(model, extra, final=True):
+def _decoder_floor_hooks(model, extra, final=True, prepend=False):
     """Block floors for a decoder's layers, keyed by the states they produce (`hidden.i+1`); the last
     layer's state passes through the final module (a norm, or Qwen4-Exp's hyper-connection readout), which
     its floor follows (`_check_floor_composite` keeps it only where that reproduces the recorded state).
-    Returns the layer count."""
+    `prepend` runs each floor ahead of the layer's other hooks (see `_block_floor_hooks`). Returns the
+    layer count."""
     decoder_layers = next(m for n, m in model.named_modules()
                           if isinstance(m, torch.nn.ModuleList) and n.endswith("layers")
                           and "vision" not in n and "audio" not in n and "embed_tokens_extend" not in n)
@@ -6870,7 +6873,7 @@ def _decoder_floor_hooks(model, extra, final=True):
                        if getattr(parent, name, None) is not None), None) if final else None
     _block_floor_hooks(list(decoder_layers), [f"hidden.{i + 1}" for i in range(count)], extra,
                        indices=list(range(count)),
-                       finals={count - 1: final_norm} if final_norm is not None else None)
+                       finals={count - 1: final_norm} if final_norm is not None else None, prepend=prepend)
     return count
 
 
@@ -7552,7 +7555,7 @@ def _check_floor_composite(extra, key, recorded):
 
 
 def _block_floor_hooks(blocks, keys, extra, batched=True, indices=None, finals=None, keep=None, verify=False,
-                       prepare=None, during=None):
+                       prepare=None, during=None, prepend=False):
     """`IK_PROBE_BLOCK_FLOOR=1`: each of `blocks`, after it runs in a half-precision model, runs again as a
     float32 copy on the same arguments widened, and that output is kept as `<key>.floor`. The distance from
     the block's own half-precision output to it is the rounding the block itself adds, which is the bar a
@@ -7571,8 +7574,9 @@ def _block_floor_hooks(blocks, keys, extra, batched=True, indices=None, finals=N
     seam, for a seam recorded from something other than the hooked module's own output. `prepare(wide)`
     adjusts each float32 copy before it runs (replaying a selection the half run made), and `during()`
     gives a context the copy runs in (a release function that casts to bf16 by name, computed instead as
-    the float32 oracle computes it). Does nothing unless the variable is set and the block runs at half
-    precision (`_runs_wide`)."""
+    the float32 oracle computes it). `prepend` runs the floor ahead of the block's other forward hooks,
+    for a layer read in for its forward and let go by a hook after it (`_read_layers_in_turn`). Does
+    nothing unless the variable is set and the block runs at half precision (`_runs_wide`)."""
     import collections.abc
     import contextlib
     import copy
@@ -7633,7 +7637,7 @@ def _block_floor_hooks(blocks, keys, extra, batched=True, indices=None, finals=N
                 _FLOOR_HALVES[key] = laid_out(first(output))
             del wide, wide_final
             return None
-        block.register_forward_hook(hook, with_kwargs=True)
+        block.register_forward_hook(hook, with_kwargs=True, prepend=prepend)
 
 
 # The summation orders of the reruns `_order_floor_hooks` and `_output_order_floor` make, fixed for every order
@@ -21691,10 +21695,33 @@ def run_dense_layerwise(image, checkpoint):
     the 16-token greedy continuation, with the last position's state after every layer but the last
     (`hidden_last.<i>`, entering the stack at 0). The last layer's state is left out because Qwen3-VL's
     `hidden_states` returns it before the final norm and the causal models after; the logits cover it."""
+    dtype = getattr(torch, os.environ.get("DENSE_DTYPE", "bfloat16"))
+    model, tokenizer, close = _dense_layerwise_model(checkpoint, dtype)
+    try:
+        ids = tokenizer("The capital of France is", return_tensors="pt").input_ids
+        with torch.no_grad():
+            out = model(input_ids=ids, output_hidden_states=True)
+            generated = model.generate(input_ids=ids, max_new_tokens=16, do_sample=False,
+                                       pad_token_id=tokenizer.eos_token_id)
+    finally:
+        close()
+    continuation = generated[0, ids.shape[1]:]
+    print("greedy:", tokenizer.decode(continuation, skip_special_tokens=True))
+    globals()["_extra"] = {
+        "tokens": ids[0].to(torch.int32).contiguous(),
+        "continuation": continuation.to(torch.int32).contiguous(),
+    }
+    for index, state in enumerate(out.hidden_states[:-1]):
+        globals()["_extra"][f"hidden_last.{index}"] = state[0, -1].float().contiguous()
+    return out.logits[0].float().contiguous()
+
+
+def _dense_layerwise_model(checkpoint, dtype):
+    """A release's dense decoder on the meta device with each layer read as the forward reaches it (see
+    `run_dense_layerwise`). Returns the model, the release's tokenizer, and a `close` for its shards."""
     from transformers import (AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText, AutoTokenizer,
                               GenerationConfig)
 
-    dtype = getattr(torch, os.environ.get("DENSE_DTYPE", "bfloat16"))
     config = AutoConfig.from_pretrained(checkpoint)
     tokenizer = AutoTokenizer.from_pretrained(checkpoint)
     entries, read, close = _layerwise_release(checkpoint, dtype)
@@ -21725,24 +21752,107 @@ def run_dense_layerwise(image, checkpoint):
     text_model.norm.weight = torch.nn.Parameter(read(prefix + "norm.weight"), requires_grad=False)
     text_model.rotary_emb = type(text_model.rotary_emb)(config=text_model.config)
     _read_layers_in_turn(text_model.layers, prefix, entries, read)
+    return model, tokenizer, close
 
+
+def run_pixtral_fused_layerwise(image, checkpoint):
+    """Pixtral 12B's decoder over the fused image-and-text sequence of a `run_pixtral` record, read layer
+    by layer as `run_dense_layerwise` reads, so the pass runs at float32, which the 12B cannot hold whole.
+
+    `PIXTRAL_RECORD` is the `run_pixtral` record. Its input ids embed, and image features in DENSE_DTYPE
+    (default bfloat16) replace the `[IMG]` positions in order, as Llava's `masked_scatter` places them.
+    `IK_PROBE_BLOCK_FLOOR=1` at bfloat16 also records each layer's block floor (`hidden.<i+1>.floor`, the
+    layer rerun in float32 on its bfloat16 input; `_decoder_floor_hooks`). DENSE_ATTENTION picks the
+    attention (default sdpa). `PIXTRAL_FEATURES` picks the features: `record` (default) is the record's
+    float32 projected features, `PIXTRAL_JITTERS` adds bfloat16 jitter twins
+    (`_pixtral_jitter_twins`),
+    which a Swift decoder given the same features is held to; `tower` runs the release's vision tower and
+    connector in DENSE_DTYPE over the record's pixels, as `run_pixtral`'s fused pass computes them. The
+    record holds the input ids, both feature sets and their cosine, the fused embeddings, every position's
+    state after every layer but the last (`hidden.<i>`, entering the stack at 0), and the logits. The
+    argmax agreement with the `run_pixtral` record's own logits prints."""
+    from safetensors.torch import load_file
+
+    dtype = getattr(torch, os.environ.get("DENSE_DTYPE", "bfloat16"))
+    record = load_file(os.environ["PIXTRAL_RECORD"])
+    model, _, close = _dense_layerwise_model(checkpoint, dtype)
+    floors = {}
+    _decoder_floor_hooks(model.model.language_model, floors, final=False, prepend=True)
+    entries, read, close_tower = _layerwise_release(checkpoint, dtype)
+    for name in ("vision_tower", "multi_modal_projector"):
+        child = getattr(model.model, name)
+        child.load_state_dict({k[len(name) + 1:]: read(k) for k in entries if k.startswith(name + ".")},
+                              strict=True, assign=True)
+    close_tower()
+    # The rotary table is a buffer the release does not carry, left uninitialized by the meta build.
+    vision_tower = model.model.vision_tower
+    vision_tower.patch_positional_embedding = type(vision_tower.patch_positional_embedding)(vision_tower.config)
+    ids = record["input_ids"].long()[None]
+    pixels = record["pixel_values"].to(dtype)
     try:
-        ids = tokenizer("The capital of France is", return_tensors="pt").input_ids
         with torch.no_grad():
-            out = model(input_ids=ids, output_hidden_states=True)
-            generated = model.generate(input_ids=ids, max_new_tokens=16, do_sample=False,
-                                       pad_token_id=tokenizer.eos_token_id)
+            image_sizes = torch.tensor([list(pixels.shape[-2:])])
+            tower = model.model.get_image_features(pixel_values=pixels, image_sizes=image_sizes,
+                                                   vision_feature_layer=-1,
+                                                   vision_feature_select_strategy="full")
+            tower = torch.cat(list(tower), dim=0) if isinstance(tower, (list, tuple)) else tower.reshape(-1, tower.shape[-1])
+            recorded = record["projected"].reshape(-1, tower.shape[-1])
+            agreement = torch.nn.functional.cosine_similarity(tower.float(), recorded.float(), dim=-1)
+            print(f"{dtype} tower features against the record's float32 projected: mean cosine "
+                  f"{float(agreement.mean()):.7f}, worst {float(agreement.min()):.7f}")
+            features = tower if os.environ.get("PIXTRAL_FEATURES", "record") == "tower" else recorded.to(dtype)
+            embeds = model.model.language_model.embed_tokens(ids)
+            placeholders = (ids == model.config.image_token_index)[..., None].expand_as(embeds)
+            embeds = embeds.masked_scatter(placeholders, features.to(dtype))
+            out = model(inputs_embeds=embeds, output_hidden_states=True)
+            twins = _pixtral_jitter_twins(model, embeds, out) if os.environ.get("PIXTRAL_JITTERS") else {}
     finally:
         close()
-    continuation = generated[0, ids.shape[1]:]
-    print("greedy:", tokenizer.decode(continuation, skip_special_tokens=True))
+    logits = out.logits[0].float()
+    agree = int((logits.argmax(-1) == record["output"].argmax(-1)).sum())
+    print(f"argmax against the run_pixtral record: {agree}/{logits.shape[0]}")
+    # At float32 a state and `.float()` share storage with the embeddings, which save_file refuses.
     globals()["_extra"] = {
-        "tokens": ids[0].to(torch.int32).contiguous(),
-        "continuation": continuation.to(torch.int32).contiguous(),
+        "input_ids": record["input_ids"].clone(),
+        "tower_features": tower.float().clone(),
+        "tower_feature_cosine": agreement.float().clone(),
+        "fused_embeds": embeds[0].float().clone(),
     }
     for index, state in enumerate(out.hidden_states[:-1]):
-        globals()["_extra"][f"hidden_last.{index}"] = state[0, -1].float().contiguous()
-    return out.logits[0].float().contiguous()
+        globals()["_extra"][f"hidden.{index}"] = state[0].float().clone()
+    globals()["_extra"].update(floors)
+    globals()["_extra"].update(twins)
+    return logits.contiguous()
+
+
+def _pixtral_jitter_twins(model, embeds, out):
+    """`PIXTRAL_JITTERS=<first>-<last>`: the bfloat16 pass rerun once per seed with 16 values of the fused
+    embeddings one unit in the last place larger (`_jittered_bfloat16`), each twin summarized against the
+    float32 record `PIXTRAL_F32`: every position's distance (1 − cosine) from its float32 state after every
+    layer but the last (`twin<seed>.distance`, `[layers, positions]`), the logits' distance from the
+    float32 logits (`twin<seed>.logit_distance`), and the argmax (`twin<seed>.argmax`). The unjittered pass
+    is summarized the same way as `twin0`."""
+    from safetensors.torch import load_file
+
+    exact = load_file(os.environ["PIXTRAL_F32"])
+    first, last = (int(x) for x in os.environ["PIXTRAL_JITTERS"].split("-"))
+
+    def summary(seed, run):
+        rows = [torch.nn.functional.cosine_similarity(state[0].double(), exact[f"hidden.{index}"].double(), dim=-1)
+                for index, state in enumerate(run.hidden_states[:-1])]
+        logits = run.logits[0].double()
+        target = exact["output"].double().reshape(-1)
+        cosine = (logits.reshape(-1) @ target) / (logits.norm() * target.norm())
+        print(f"twin {seed}: worst position {float(1 - torch.stack(rows).min()):.6g}, "
+              f"logit distance {float(1 - cosine):.6g}")
+        return {f"twin{seed}.distance": (1 - torch.stack(rows)).float().contiguous(),
+                f"twin{seed}.logit_distance": (1 - cosine).float().reshape(1),
+                f"twin{seed}.argmax": run.logits[0].argmax(-1).to(torch.int32).contiguous()}
+
+    twins = summary(0, out)
+    for seed in range(first, last + 1):
+        twins.update(summary(seed, model(inputs_embeds=_jittered_bfloat16(embeds, seed), output_hidden_states=True)))
+    return twins
 
 
 SEEDX_LANGUAGES = {
@@ -23114,7 +23224,7 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
           "snac": run_snac, "siglip2_probe": run_siglip2_probe, "clip_probe": run_clip_probe, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "glue_rounding": run_glue_rounding, "gelu_rounding": run_gelu_rounding, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
           "gemma4_shared_kv": run_gemma4_shared_kv}
-CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "clip_text_probe": run_clip_text_probe, "sd_vae_probe": run_sd_vae_probe, "gemma3n_audio_probe": run_gemma3n_audio_probe, "sd_unet_probe": run_sd_unet_probe, "z_image_release_probe": run_z_image_release_probe, "wan_release_probe": run_wan_release_probe, "sa2va_llava_probe": run_sa2va_llava_probe, "whisper_f16_probe": run_whisper_f16_probe, "t5_seq2seq_probe": run_t5_seq2seq_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "dense_layerwise": run_dense_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "seedx": run_seedx, "madlad_layerwise": run_madlad_layerwise, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_qwen_generate": run_sa2va_qwen_generate, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
+CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "clip_text_probe": run_clip_text_probe, "sd_vae_probe": run_sd_vae_probe, "gemma3n_audio_probe": run_gemma3n_audio_probe, "sd_unet_probe": run_sd_unet_probe, "z_image_release_probe": run_z_image_release_probe, "wan_release_probe": run_wan_release_probe, "sa2va_llava_probe": run_sa2va_llava_probe, "whisper_f16_probe": run_whisper_f16_probe, "t5_seq2seq_probe": run_t5_seq2seq_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "dense_layerwise": run_dense_layerwise, "pixtral_fused_layerwise": run_pixtral_fused_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "seedx": run_seedx, "madlad_layerwise": run_madlad_layerwise, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_qwen_generate": run_sa2va_qwen_generate, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,

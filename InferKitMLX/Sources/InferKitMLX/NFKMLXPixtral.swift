@@ -503,6 +503,14 @@ public final class NFKMLXPixtral: NSObject {
     /// order. Returns the fused embeddings run through the decoder to post-norm hidden states.
     static func fusedEmbeddings(decoder: NFKMLXLanguageNet, inputIds: [Int], features: MLXArray,
                                 cache: NFKMLXKeyValueCache? = nil) -> (hidden: MLXArray, imageCount: Int) {
+        let (embeddings, imageCount) = fusedInput(decoder: decoder, inputIds: inputIds, features: features)
+        return (decoder.hiddenStates(fromEmbeddings: embeddings, cache: cache), imageCount)
+    }
+
+    /// The decoder's input over a fused sequence, `[1, sequence, hidden]`: the token ids embedded, with the
+    /// projected vision features in the `[IMG]` positions in order, and the number of those positions.
+    static func fusedInput(decoder: NFKMLXLanguageNet, inputIds: [Int],
+                           features: MLXArray) -> (embeddings: MLXArray, imageCount: Int) {
         let sequence = inputIds.count
         let width = decoder.configuration.hiddenSize
         var embeddings = decoder.embed(MLXArray(inputIds.map(Int32.init)).reshaped([1, sequence]))[0]
@@ -520,9 +528,7 @@ public final class NFKMLXPixtral: NSObject {
             let mask = MLXArray(isImage).reshaped([sequence, 1]) .> 0
             embeddings = MLX.where(mask, gathered, embeddings)
         }
-        let hidden = decoder.hiddenStates(fromEmbeddings: embeddings.reshaped([1, sequence, width]),
-                                          cache: cache)
-        return (hidden, Int(counter))
+        return (embeddings.reshaped([1, sequence, width]), Int(counter))
     }
 
     /// Greedy continuation from a fused image-and-text prompt, cached: a prefill over the fused

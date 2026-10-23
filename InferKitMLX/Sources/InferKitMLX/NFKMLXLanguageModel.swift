@@ -1490,9 +1490,15 @@ public final class NFKMLXLanguageNet: Module {
     /// the pad keys changes the pad positions' own states. Those states reach a caller that reads the
     /// whole padded sequence, which is why the flag is not an optimization.
     func layerStates(_ tokens: MLXArray, keyPadding: MLXArray? = nil) -> [MLXArray] {
-        var hidden = model.embedTokens(tokens)
+        layerStates(fromEmbeddings: model.embedTokens(tokens), keyPadding: keyPadding)
+    }
+
+    /// ``layerStates(_:keyPadding:)`` over already-embedded inputs `[batch, length, hidden]`, such as a
+    /// sequence with image features spliced in.
+    func layerStates(fromEmbeddings embeddings: MLXArray, keyPadding: MLXArray? = nil) -> [MLXArray] {
+        var hidden = embeddings
         var states = [hidden]
-        var mask = NFKMLXLanguageNet.causalMask(tokens.shape[1], offset: 0)
+        var mask = NFKMLXLanguageNet.causalMask(embeddings.shape[1], offset: 0)
         if let keyPadding {
             mask = mask + MLX.where(keyPadding.reshaped([1, -1]), MLXArray(Float(0)),
                                     MLXArray(Float(-1e9)))
@@ -1505,6 +1511,16 @@ public final class NFKMLXLanguageNet: Module {
         }
         states[states.count - 1] = model.norm(hidden)
         return states
+    }
+
+    /// Layer `index` alone over `input` `[batch, length, hidden]` under the causal mask, its weights read in
+    /// first where the layer streams: the layer run on a reference's own input. Nil where the pass skips it.
+    func layerOutput(_ index: Int, _ input: MLXArray) -> MLXArray? {
+        let layer = model.layers[index]
+        let mask = NFKMLXLanguageNet.causalMask(input.shape[1], offset: 0)
+        return run(layer, index) {
+            layer(input, mask: mask, cache: nil, layer: index, maskIsCausal: true)
+        } keeping: { [] }
     }
 
     /// Layer `index`'s output from `forward`, its weights read in first and let go after where the layer

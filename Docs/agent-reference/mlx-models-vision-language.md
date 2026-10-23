@@ -139,13 +139,23 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   decoder over the fused sequence — is measured against a tiny float32 oracle through the ordinary
   release builders (`run_reference.py pixtral_tiny`): vision output, projected features, and the fused
   logits all at parity with the reference's argmax at every position. The released 12B decoder is about
-  50 GB at float32, more than a 32 GB machine holds, and its released-weight fused-logit check stays
-  behind the `IK_PIXTRAL_FUSED` opt-in. Its first run, streamed at float32 (2026-10-21, 30 of 40 layers
-  streamed), read argmax 161/220 and logit cosine 0.9666205 against the bfloat16 record, short of its
-  bar of 219. The text-only decoder is measured against its own layerwise record
-  (`run_reference.py dense_layerwise`, `IK_PARITY_PIXTRAL_TEXT`,
-  `NFKMLXDenseStreamingTests.testTheStreamedPixtralDecoderMatchesItsTextReference`) to place the
-  difference in the decoder or in the fusion. **The
+  50 GB at float32, more than a 32 GB machine holds, so its released-weight fused checks stream it and
+  hold the decoder and the splice alone. `run_reference.py pixtral_fused_layerwise` reads the reference
+  decoder one layer at a time and gives it the `run_pixtral` record's float32 `projected` features, the
+  features the Swift decoder takes. `run_pixtral`'s own fused logits come from the bfloat16 tower's
+  features, which differ from its float32 `projected` (cosine 0.995 on average, 0.70 at the worst
+  patch), so any decoder given `projected` agrees with those logits at about 161 of 220 positions, the
+  reference's own included. Streamed at float32 against the float32 reference (`IK_PARITY_PIXTRAL_FUSED`),
+  the fused logits read cosine 1.0 and argmax 220/220, and every position after every layer reads
+  0.9999997 or above. At the release's bfloat16, each layer run alone on the eager bfloat16 reference's
+  input stays within 0.025 of its block floor (`IK_PARITY_PIXTRAL_FUSED_BF16`). End to end, the sequence
+  amplifies a one-unit difference at a few image positions (71, 93, 131, 146, and 161): under a one-ulp
+  jitter of 16 embedding values, torch's own bfloat16 pass departs at position 71 in 4 of 20 runs, by up
+  to 0.47 in 1 − cosine. The bfloat16 pass is held by the Granite rank test against those 20 twins
+  (`IK_PARITY_PIXTRAL_FUSED_TWINS`): under the same jitters, the Mann–Whitney z is at most +1.57 at any
+  layer's worst position (layer 2) and +0.73 at the logits. The text-only decoder is measured against its
+  own layerwise record (`run_reference.py dense_layerwise`, `IK_PARITY_PIXTRAL_TEXT`,
+  `NFKMLXDenseStreamingTests.testTheStreamedPixtralDecoderMatchesItsTextReference`). **The
   head count is not derivable from the config:** Pixtral's `text_config` states `head_dim` 128 but omits
   `num_attention_heads`, and 5120 / 128 = 40 is wrong — the release has 32 heads at a 4096-wide query
   projection, the transformers `MistralConfig` default it inherits, which `decoderConfiguration` applies
