@@ -4391,6 +4391,40 @@
       "note": "TranslateGemma 27B (Google, Gemma terms; gated, the Gemma acceptance covers it), 55 GB of bfloat16 that fits this machine on neither side. The reference reads each decoder layer from the release as its forward reaches it and records what run_translategemma records: `run_reference.py translategemma_layerwise <out> --checkpoint <this directory>` (gemmavenv, bfloat16, about 5 GB); the test streams the decoder at .checkpoint and reads IK_PARITY_TRANSLATEGEMMA_27B."
     },
     {
+      "key": "SEEDX_PPO",
+      "directory": "seed-x-ppo-7b",
+      "repo": "ByteDance-Seed/Seed-X-PPO-7B",
+      "revision": "6ef78fc034ec86c0036d7a7ca2bfc24607f48050",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "model.safetensors",
+        "LICENSE"
+      ],
+      "config": {
+        "IK_VAL_SEEDX_PPO": ""
+      },
+      "note": "Seed-X PPO 7B (ByteDance Seed, OpenMDW-1.0), a MistralForCausalLM translation model, 15 GB of bfloat16. NFKMLXSeedX.translator(directoryURL:precision:) loads it through the language family. Parity records under llmvenv: `run_reference.py seedx <out> --checkpoint <this directory>` (bfloat16) → IK_PARITY_SEEDX_PPO (records/seedx-ppo-bf16.safetensors), and `SEEDX_DTYPE=float32 SEEDX_LAYERWISE=1 run_reference.py seedx <out> --checkpoint <this directory>` → IK_PARITY_SEEDX_PPO_F32 (records/seedx-ppo-f32.safetensors)."
+    },
+    {
+      "key": "SEEDX_INSTRUCT",
+      "directory": "seed-x-instruct-7b",
+      "repo": "ByteDance-Seed/Seed-X-Instruct-7B",
+      "revision": "a41af5abee0fc5acbd5370c8dda9d0feb6cb7103",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "model.safetensors",
+        "LICENSE"
+      ],
+      "config": {
+        "IK_VAL_SEEDX_INSTRUCT": ""
+      },
+      "note": "Seed-X Instruct 7B (ByteDance Seed, OpenMDW-1.0), the instruction-tuned release, the same geometry and tokenizer as the PPO release. Parity record: `run_reference.py seedx <out> --checkpoint <this directory>` (llmvenv, bfloat16) → IK_PARITY_SEEDX_INSTRUCT (records/seedx-instruct-bf16.safetensors)."
+    },
+    {
       "key": "TRANSLATEGEMMA_4B",
       "directory": "translategemma-4b-it",
       "repo": "google/translategemma-4b-it",
@@ -5046,7 +5080,8 @@
         "marian",
         "m2m100",
         "madlad",
-        "madlad_layerwise"
+        "madlad_layerwise",
+        "seedx"
       ]
     },
     "voicerestore": {

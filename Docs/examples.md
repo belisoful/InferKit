@@ -64,7 +64,7 @@ the following cells; each links to its example.
 | image(s) | image(s) | `NFKMLXTensorBackend`, `NFKMLXRIFE` (frame interpolation), `NFKMLXRAFT` (optical flow) | [Many tensors](#many-tensors-in-and-out) |
 | image (+ mask) | image | `NFKMLXDiffusionBackend` (upscale, depth, inpaint) | [Diffusion](#diffusion-upscale-depth-inpaint) |
 | audio | text | `NFKRemoteTranscriptionBackend` (remote), `NFKMLXWhisper` (local) | [Audio → text](#audio--text-transcription) |
-| text | text (translation) | `NFKMLXMarian`, `NFKMLXM2M100`, `NFKMLXNLLB`, `NFKMLXMADLAD`, `NFKMLXTranslateGemma` (local) | [Translation](#translation-nfkmlxmarian-nfkmlxm2m100-nfkmlxmadlad-swift-and-objective-c) |
+| text | text (translation) | `NFKMLXMarian`, `NFKMLXM2M100`, `NFKMLXNLLB`, `NFKMLXMADLAD`, `NFKMLXTranslateGemma`, `NFKMLXSeedX` (local) | [Translation](#translation-nfkmlxmarian-nfkmlxm2m100-nfkmlxmadlad-swift-and-objective-c) |
 | text | audio | `NFKMLXSpeechBackend` | [Text → audio](#text--audio-speech) |
 | audio | audio(s) | `NFKMLXDemucsBackend` / `NFKMLXHTDemucsBackend` (stem separation) | [Audio → stems](#audio--stems-demucs) |
 | any | unchanged | `NFKPassthroughBackend` | [Testing](#testing-without-weights) |
@@ -1284,7 +1284,9 @@ the translation under `NFKOutputText`. OPUS-MT is one small model per language p
 tags; M2M-100 covers 100 languages in one release and NLLB-200 202 on the same network (`NFKMLXNLLB`,
 four sizes from 600M to 3.3B); MADLAD-400 covers 400+ through a `<2xx>` marker;
 TranslateGemma (`NFKMLXTranslateGemma`, gated on Hugging Face) is Gemma 3 driven by its translation
-template, the strongest of the four and the largest.
+template, the strongest of the four and the largest. Seed-X (`NFKMLXSeedX`) is a Mistral 7B trained to
+translate among 28 languages, prompted as its model card writes it; it needs the source language, which
+the backend detects when a request omits it.
 
 ```swift
 let translator = try NFKMLXMarian.backend(sourceLanguage: "en", targetLanguage: "de", cacheDirectoryURL: nil)
@@ -4228,6 +4230,7 @@ let m2m100     = try NFKMLXM2M100.backend(variant: .m418M, directoryURL: m2mDir)
 let nllb       = try NFKMLXNLLB.backend(variant: .distilled600M, directoryURL: nllbDir) // "nllb-200"; 202 languages; .m1_3B, .distilled1_3B, .m3_3B
 let madlad     = try NFKMLXMADLAD.backend(directoryURL: madladDir, half: true)     // "madlad400-3b-mt"; 400+ languages, bfloat16
 let tgemma     = try NFKMLXTranslateGemma.backend(directoryURL: tgDir, precision: .checkpoint) // "translategemma"; Gemma 3 + the translation template
+let seedX      = try NFKMLXSeedX.backend(directoryURL: seedXDir, precision: .checkpoint) // "seed-x"; Mistral 7B, 28 languages
 let transcriber = try NFKMLXWhisper.backend(weightsURL: nil)                   // audio → NFKOutputText; .tiny … .largeV3Turbo
 let wav2vec2    = try NFKMLXWav2Vec2.backend(directoryURL: wav2vec2Dir)        // "wav2vec2"; Wav2Vec2 and HuBERT: NFKOutputText with a CTC head, else NFKOutputEmbedding
 let w2vBert     = try NFKMLXWav2Vec2Bert.backend(directoryURL: w2vBertDir)     // "w2v-bert-2.0"; a Conformer over stacked filterbanks

@@ -192,6 +192,13 @@ struct NFKMLXLoadProfile {
                              defaultPrecision: NFKModelPrecisionCheckpoint, contextLength: nil, keyValue: nil,
                              tasks: [NFKModelTaskTranslation]),
         ],
+        // Seed-X's decoder takes the language family's runtime quantization; the translation backend reads
+        // no cache parameter, and no smaller release shares its vocabulary to draft.
+        "seed-x": [
+            .decoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
+                     defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true, contextLength: nil, keyValue: nil,
+                     tasks: [NFKModelTaskTranslation]),
+        ],
         "madlad": [
             .streamedDecoder(precisions: [NFKModelPrecisionBFloat16, NFKModelPrecisionFloat32],
                              defaultPrecision: NFKModelPrecisionBFloat16, contextLength: nil, keyValue: nil,

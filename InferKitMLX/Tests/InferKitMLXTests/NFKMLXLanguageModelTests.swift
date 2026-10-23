@@ -681,6 +681,43 @@ final class NFKMLXLanguageModelTests: XCTestCase {
                            .isMixtureOfExperts)
     }
 
+    func testAMistralWindowBandsEveryLayer() throws {
+        func configuration(_ json: String) throws -> NFKMLXLanguageConfiguration {
+            try NFKMLXLanguage.configuration(fromJSON: try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]))
+        }
+        let seedX = try configuration(#"""
+        {"architectures":["MistralForCausalLM"],"model_type":"mistral","num_hidden_layers":32,
+         "sliding_window":4096,"max_position_embeddings":32768,"rope_theta":10000.0}
+        """#)
+        XCTAssertEqual(seedX.slidingWindows, Array(repeating: 4096, count: 32))
+        let small = try configuration(#"""
+        {"architectures":["MistralForCausalLM"],"model_type":"mistral","num_hidden_layers":40,"sliding_window":null}
+        """#)
+        XCTAssertTrue(small.slidingWindows.isEmpty, "Mistral Small 3 states no window")
+    }
+
+    // A one-layer decoder's last position under a window of 4 sees only its last four keys, which is what
+    // the unwindowed decoder computes from those four tokens alone: rotary attention depends on relative
+    // positions only. Inside the window the windowed decoder takes the fused path and matches exactly.
+    func testAWindowedLayerAttendsWithinItsWindow() throws {
+        try requireMLXRuntime()
+        var configuration = NFKMLXLanguageConfiguration(
+            hiddenSize: 64, layerCount: 1, headCount: 4, keyValueHeadCount: 2, headDimensions: 16, intermediateSize: 96,
+            vocabularySize: 64, ropeTheta: 10_000, rmsEpsilon: 1e-5, tiesWordEmbeddings: false)
+        let full = NFKMLXLanguage.makeNet(configuration)
+        configuration.slidingWindows = [4]
+        let windowed = NFKMLXLanguage.makeNet(configuration)
+        windowed.update(parameters: full.parameters())
+        let tokens = MLXArray([Int32(3), 9, 17, 4, 22, 8, 31, 5]).reshaped([1, 8])
+        let short = tokens[0..., 0 ..< 3]
+        XCTAssertEqual(abs(full(short) - windowed(short)).max().item(Float.self), 0, "inside the window")
+        let banded = windowed(tokens)[0, 7]
+        let lastFour = full(tokens[0..., 4 ..< 8])[0, 3]
+        XCTAssertLessThan(abs(banded - lastFour).max().item(Float.self), 1e-4, "the window's last four keys")
+        XCTAssertGreaterThan(abs(banded - full(tokens)[0, 7]).max().item(Float.self), 1e-3, "earlier keys are masked")
+    }
+
     func testADenseConfigurationIsRead() throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)

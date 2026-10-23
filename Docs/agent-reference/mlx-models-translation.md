@@ -196,6 +196,34 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   the 12B produced its 15 tokens in 6 passes, keeping 14 of 20 proposals, in 93 s; the 27B its 14
   tokens in 6 passes, keeping 13 of 20, in 183 s, both runs in the 18 GB footprint bucket.
 
+- `NFKMLXSeedX` (`@objc`) / `NFKMLXSeedXTranslator` — Seed-X (ByteDance Seed, OpenMDW; PPO 7B and
+  Instruct 7B, `NFKMLXSeedXVariant`): a `MistralForCausalLM` (32 layers at 4096, 8 key-value heads, a
+  4096-position sliding window, a 65,269-piece vocabulary) trained to translate among 28 languages. It
+  loads through the language family (`NFKMLXLanguage.loadedReleaseWithTokenizer`) and generates with
+  `NFKMLXLanguageNet.generate(prompt:options:)`, greedy, stopping at `</s>`. The prompt is the model
+  card's, with no chat template: `<s>Translate the following <Source> sentence into <Target>:\n<text>
+  <tag>`, the names as the card's table spells them (`Norwegian Bokmal`) and the tag plain text, not an
+  added token. A BCP-47 tag resolves by its primary subtag. The card recommends a four-wide beam, which
+  no decoder-only path implements. The tokenizer is the Llama-style form of the Mistral BPE: a
+  `Prepend("▁")` and `Replace(" ", "▁")` normalizer with no pre-tokenizer, so every run of text between
+  added tokens takes a `▁`, even one that opens with a space (`mlx-models-language.md`). Registered as
+  `seed-x`, loaded at the release's bfloat16 (15 GB); a `.float32` load is 30 GB and streams where it
+  does not fit. It takes the language family's residencies, the precision ladder, and runtime weight
+  quantization through the catalog's load options; the translation backend returns each paragraph whole
+  and reads no cache parameter, and no smaller release shares the 65,269-piece vocabulary to draft for
+  it. The release opens its continuation with `<s>`, which the translation's text leaves out, as the
+  card's `skip_special_tokens` decode does. Seed-X-PPO-7B, bfloat16 against bfloat16: prompt ids exact
+  on the five probe sentences, logit cosine 0.99993867 with argmax 24/25 over the prompt positions,
+  worst last-position layer state 0.9999275 at layer 31, the greedy translation token-exact ("Der
+  schnelle braune Fuchs springt über den faulen Hund."), and the fine-tuning loss 1.3389877 against
+  1.3389881. At float32 against a reference that reads each layer as its forward reaches it: prompt ids
+  exact, logit cosine 0.9999999 with argmax 25/25, worst layer state 0.99999976 at layer 31, the greedy
+  translation token-exact, and the loss 1.3519824 against 1.3519785; 16 of 32 layers streamed, 167.9 GB
+  read at 1.94 GB/s, an MLX peak of 17.7 GB. Seed-X-Instruct-7B, bfloat16 against bfloat16: prompt ids
+  exact, logit cosine 0.9997266 with argmax 23/25, worst layer state 0.9998638 at layer 31, the greedy
+  translation token-exact ("Der schnelle braune Fuchs springt über den faulen Hund."), and the loss
+  0.84905034 against 0.8545502.
+
 ## Customization
 
 All three ship LoRA on the decoder's query and value projections (`decoder.layers.N.*.q_proj` /
@@ -211,7 +239,13 @@ released weights in the parity tests (the three losses above, within 3e-5). `net
 builds the trainable network; after `NFKMLXLoRA.merge(into:)` and `NFKMLXWeights.save`, Marian and
 M2M-100 reload through `network(directoryURL:)` (a directory holding `model.safetensors`) and MADLAD
 through `NFKMLXT5Seq2SeqNet.loadWeights(from:)`; `translator(net:directoryURL:)` wraps an adapted
-network with the release's tokenizers. The round trip is tested on tiny geometries.
+network with the release's tokenizers. The round trip is tested on tiny geometries. Seed-X adapts
+through `NFKMLXSeedX.fineTune`, the language family's `NFKMLXLanguage.fineTune` over
+`NFKMLXCausalLanguageObjective` (`self_attn.q_proj` / `.v_proj`): the example is the prompt's ids and the
+target's, its pieces and `</s>`, as the release's `RM_demo.py` concatenates a pair, and only the target
+is scored, which is the reference's `labels=-100` over the prompt. The merged decoder reloads through
+`NFKMLXLanguage.network(weightsURL:configuration:)`, and `translator(decoder:directoryURL:)` puts the
+release's tokenizer back.
 
 ## Oracle and validation
 
@@ -225,6 +259,15 @@ runs under the gemma interpreter and records the template ids, the last 16 posit
 continuation, the last position's state after every layer, and the masked SFT loss:
 `IK_VAL_TRANSLATEGEMMA` / `IK_PARITY_TRANSLATEGEMMA`, and for the 12B (recorded with
 `TRANSLATEGEMMA_DTYPE=bfloat16`) `IK_VAL_TRANSLATEGEMMA_12B` / `IK_PARITY_TRANSLATEGEMMA_12B`.
+
+`run_reference.py seedx --checkpoint <release directory>` (llmvenv) records the Seed-X seams: the
+card's prompt ids for every probe sentence, the logits at every prompt position, the last position's
+state after every layer but the last, the greedy continuation and its text, and the loss on
+`TRANSLATION_TARGETS[target]` with the prompt masked. `SEEDX_DTYPE` picks the precision (bfloat16 by
+default); `SEEDX_LAYERWISE=1` builds `MistralForCausalLM` on the meta device and reads each decoder layer
+as the forward reaches it (`_layerwise_release`, which reads a single-file release too), for float32.
+Keys `IK_VAL_SEEDX_PPO` / `IK_PARITY_SEEDX_PPO` / `IK_PARITY_SEEDX_PPO_F32` and `IK_VAL_SEEDX_INSTRUCT` /
+`IK_PARITY_SEEDX_INSTRUCT`.
 
 Every translation runner takes its pair from `TRANSLATION_SOURCE_LANG` / `TRANSLATION_TARGET_LANG`
 (default `en` / `de`); `run_marian` reads the pair from the release's `tokenizer_config.json` instead
@@ -320,7 +363,7 @@ not block a port. Each entry below names the port cost, not a bar.
   medium port; the whole model is a large one.
 - TowerInstruct 7B / 13B (CC-BY-NC-4.0, Llama-2 decoders) and Tower+ 9B (Gemma 2 decoder): the
   decoder is shipped, so each is a chat template over `NFKMLXLanguageNet`, the TranslateGemma pattern.
-- Hunyuan-MT 7B (Tencent Hunyuan license, Hunyuan dense decoder) and Seed-X 7B (OpenMDW, Mistral
-  decoder): the same template-over-decoder pattern once the decoder's reader exists.
+- Hunyuan-MT 7B (Tencent Hunyuan license, Hunyuan dense decoder): the same template-over-decoder
+  pattern once the decoder's reader exists.
 - TranslateGemma is gated: a machine whose token has not accepted the Gemma terms on the model page
   gets a `403` on `config.json`, which is what the download factory surfaces.

@@ -1348,7 +1348,8 @@ Each of these unlocks a category rather than a model.
   four are at reference parity against transformers (tokenizers, encoders, logits, greedy and beam
   outputs exact) with LoRA fine-tuning, and `NFKMLXTranslationProvider` sits ahead of Apple's
   translator in the capability chain. TranslateGemma (`NFKMLXTranslateGemma`, 4B / 12B / 27B) is
-  Gemma 3 driven by its translation template, at reference parity on every size. SeamlessM4T is not
+  Gemma 3 driven by its translation template, at reference parity on every size. Seed-X (`NFKMLXSeedX`,
+  PPO and Instruct 7B) is a Mistral 7B prompted for 28 languages, at reference parity. SeamlessM4T is not
   ported: its text path is NLLB's architecture, and its speech paths add a unit decoder and a vocoder.
 - **Text embeddings and reranking — SHIPPED.** Two embedders and a reranker. `Qwen3-Embedding-0.6B`
   (`NFKMLXQwen3Embedding`) is the dense decoder read one layer earlier, last-token pooled over an

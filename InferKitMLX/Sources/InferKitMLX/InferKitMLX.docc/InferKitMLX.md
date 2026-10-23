@@ -283,6 +283,9 @@ The figures have three limits:
 - ``NFKMLXMADLADTranslator``
 - ``NFKMLXTranslateGemma``
 - ``NFKMLXTranslateGemmaTranslator``
+- ``NFKMLXSeedX``
+- ``NFKMLXSeedXTranslator``
+- ``NFKMLXSeedXVariant``
 - ``NFKMLXTranslationBackend``
 - ``NFKMLXTranslationParameterKey``
 - ``NFKMLXTranslator``

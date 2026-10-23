@@ -36,7 +36,7 @@ enum NFKMLXCatalogLanguage {
             + ([.medium] + SmolVLMSize.added).map(smolVLMEntry) + qwen3VLReleases.map(qwen3VLEntry)
             + [pixtralEntry, phi4MMEntry]
             + [opusMTEntry] + NFKMLXM2M100Variant.allCases.map(m2m100Entry) + NFKMLXNLLBVariant.allCases.map(nllbEntry)
-            + madladReleases.map(madladEntry) + [translateGemmaEntry]
+            + madladReleases.map(madladEntry) + [translateGemmaEntry, seedXEntry]
             + [qwen3EmbeddingEntry, embeddingGemmaEntry, qwen3VLEmbeddingEntry]
             + [modernBERTRerankerEntry, qwen3VLRerankerEntry]
             + NFKMLXLayaVariant.allCases.map(layaEntry) + NFKMLXOpenJevVariant.allCases.map(openJevEntry)
@@ -419,6 +419,8 @@ extension NFKMLXCatalogLanguage {
                             url: "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/")
         case "facebook/m2m100_418M", "facebook/m2m100_1.2B", "alirezamsh/small100":
             return .mit(url: modelCardURL(repository))
+        case NFKMLXSeedXVariant.ppo.repository, NFKMLXSeedXVariant.instruct.repository:
+            return .license(nil, name: "OpenMDW License Agreement 1.0", url: repositoryLicenseURL(repository))
         default:
             break
         }
@@ -933,6 +935,26 @@ extension NFKMLXCatalogLanguage {
                               isDefault: size == "4b", files: files)
             },
             license: gemmaTerms, residencies: streamedResidencies)
+    }
+
+    fileprivate static var seedXEntry: NFKMLXCatalogEntry {
+        let name = NFKMLXSeedX.modelName
+        let files = releaseFiles(required: NFKMLXSeedX.requiredFiles, optional: NFKMLXSeedX.optionalFiles,
+                                 weights: NFKMLXSeedX.weightFiles)
+        var entry = NFKMLXCatalogEntry(
+            identifier: name, displayName: "Seed-X", family: "seed-x",
+            summary: "Seed-X, a Mistral 7B decoder trained to translate among 28 languages.",
+            registryName: name, tasks: [NFKModelTaskTranslation],
+            inputs: translationInputs, outputs: translationOutputs, parameters: translationOptions(beams: 1),
+            variants: [
+                familyVariant(name, NFKMLXSeedXVariant.ppo.repository, displayName: "Seed-X PPO 7B", isDefault: true,
+                              files: files),
+                familyVariant(name, NFKMLXSeedXVariant.instruct.repository, displayName: "Seed-X Instruct 7B",
+                              files: files),
+            ],
+            license: license(NFKMLXSeedXVariant.ppo.repository), residencies: streamedResidencies)
+        entry.outputTokenLimit = 32_768     // the Mistral configuration's max_position_embeddings
+        return entry
     }
 
     fileprivate static var embeddingGemmaEntry: NFKMLXCatalogEntry {

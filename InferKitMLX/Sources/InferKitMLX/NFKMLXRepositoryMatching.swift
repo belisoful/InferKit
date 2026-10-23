@@ -336,8 +336,8 @@ extension NFKMLXRepositoryJudgment {
     /// Refuses a configuration that states, with a value the output depends on, a field
     /// ``NFKMLXLanguage/configuration(fromJSON:)`` does not read: an MLP bias (`mlp_bias`), an activation
     /// other than SiLU (`hidden_act`), an unstated rotary base, which the reader takes as 10^6 where
-    /// transformers takes 10^4, and a sliding window narrower than the context outside gpt-oss, whose
-    /// alternating windows the reader builds.
+    /// transformers takes 10^4, and a sliding window narrower than the context outside gpt-oss and
+    /// Mistral, whose windows the reader builds.
     static func verifyUnreadFields(of configuration: [String: Any], repository: String) throws {
         if (configuration["mlp_bias"] as? NSNumber)?.boolValue == true {
             throw refusal(.unsupportedConfiguration,
@@ -352,7 +352,7 @@ extension NFKMLXRepositoryJudgment {
             throw refusal(.unsupportedConfiguration,
                 "\(repository) states no rope_theta, whose default the loader and transformers set differently")
         }
-        guard configuration["model_type"] as? String != "gpt_oss",
+        guard !["gpt_oss", "mistral"].contains(configuration["model_type"] as? String ?? ""),
               let window = (configuration["sliding_window"] as? NSNumber)?.intValue else { return }
         let windowed = (configuration["use_sliding_window"] as? NSNumber)?.boolValue ?? true
         let positions = (configuration["max_position_embeddings"] as? NSNumber)?.intValue ?? Int.max

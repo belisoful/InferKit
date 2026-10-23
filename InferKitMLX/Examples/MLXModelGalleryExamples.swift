@@ -1632,6 +1632,13 @@ final class MLXModelGalleryExamples: XCTestCase {
         let decoding = NFKMLXSeq2SeqDecoding(beams: 1, maxTokens: 8, startToken: 0, endToken: 2)
         XCTAssertLessThanOrEqual(NFKMLXSeq2SeqDecoder.generate(madlad, source: [5, 6, 7, 2], decoding: decoding).count, 8)
 
+        // Seed-X is the shipped language decoder behind its model card's prompt:
+        // NFKMLXSeedX.backend(directoryURL:precision:residency:) loads ByteDance-Seed/Seed-X-PPO-7B or -Instruct-7B
+        // (NFKMLXSeedXVariant), 28 languages. Without a release the factory refuses.
+        XCTAssertThrowsError(try NFKMLXSeedX.translator(directoryURL: URL(fileURLWithPath: "/nonexistent/seed-x"),
+                                                        precision: .checkpoint))
+        XCTAssertEqual(NFKMLXSeedXTranslator.languages["de"], "German")
+
         // TranslateGemma is the shipped Gemma 3 behind the release's translation template:
         // NFKMLXTranslateGemma.backend(directoryURL:precision:) loads a gated google/translategemma-*-it
         // release. The template itself renders without weights.

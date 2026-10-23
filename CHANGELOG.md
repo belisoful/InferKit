@@ -2307,6 +2307,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   refuses to fine-tune.
 - The planner gains streamed stages: a stage declares its layers' bytes, needs everything outside them
   plus two layers in flight, and holds its first layers while they fit what the budget leaves.
+- `NFKMLXSeedX` translates with Seed-X (ByteDance-Seed/Seed-X-PPO-7B and -Instruct-7B, OpenMDW), a
+  Mistral 7B prompted as its model card writes it, among 28 languages: the shipped language decoder
+  underneath, the `seed-x` registry name, the `@objc` factories by directory and by `NFKMLXSeedXVariant`,
+  a LoRA recipe over the language family's, and reference parity against transformers. A Mistral release
+  that states `sliding_window` now bands every layer to it; before, the window was read nowhere and the
+  layers attended fully. The release tokenizer reader reads the Llama-style Mistral BPE (a prepending
+  normalizer and no pre-tokenizer), which puts a `▁` before every run of text between added tokens.
 - MADLAD-400 streams both T5 stacks the same way, holding the decoder's blocks before the encoder's.
   `NFKMLXMADLAD.network`, `translator`, and `backend` gain a `residency:` argument, reached from
   Objective-C through `backendWithDirectoryURL:halfPrecision:residency:error:`. Under `.automatic` the

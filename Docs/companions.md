@@ -776,6 +776,11 @@ models.
   read from `chat_template.jinja`; the shipped Gemma 3 model underneath, greedy decoding, LoRA on the
   decoder; `translategemma`; at reference parity against transformers' `Gemma3ForConditionalGeneration`
   (template ids, logits, and the greedy translation exact on the 4B).
+- **`NFKMLXSeedX`** — Seed-X (PPO 7B and Instruct 7B; OpenMDW), ByteDance Seed's Mistral 7B trained to
+  translate among 28 languages, prompted as its model card writes it; the shipped language decoder
+  underneath, bfloat16 by default and streamed at float32, greedy decoding, LoRA on the decoder;
+  `seed-x`; at reference parity against transformers' `MistralForCausalLM` (prompt ids, logits, and the
+  greedy translation exact).
 - **`NFKMLXWhisper`** — real speech-to-text: the Whisper encoder-decoder at every released size (tiny, base, small, medium, large-v1/v2, large-v3, large-v3-turbo)
   with the reference's suppression rules and timestamped decoding (`emitsTimestamps` → segments);
   `whisper-tiny`; exact token matches against openai-whisper. Also the core's `transcription`

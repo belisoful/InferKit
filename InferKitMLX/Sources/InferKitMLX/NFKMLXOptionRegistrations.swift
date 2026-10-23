@@ -174,7 +174,7 @@ enum NFKMLXOptionRegistrations {
         }
     }
 
-    /// TranslateGemma and MADLAD-400.
+    /// TranslateGemma, MADLAD-400, and Seed-X.
     private static func registerTranslation() {
         let translateGemma = registryNames(families: ["gemma3"], where: lists(NFKModelTaskTranslation))
         registerDirectoryModels(translateGemma,
@@ -192,6 +192,11 @@ enum NFKMLXOptionRegistrations {
         registerDirectoryModels(registryNames(families: ["madlad"]),
                                 consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision]) { url, _, options in
             try NFKMLXMADLAD.backend(directoryURL: url, half: options.halfPrecision ?? true, residency: options.residency)
+        }
+        registerDirectoryModels(registryNames(families: ["seed-x"]),
+                                consumes: quantizationKeys.union([NFKModelLoadOptionResidency,
+                                                                  NFKModelLoadOptionPrecision])) { url, _, options in
+            NFKMLXTranslationBackend(translator: try NFKMLXSeedX.translator(directoryURL: url, loadOptions: options))
         }
     }
 

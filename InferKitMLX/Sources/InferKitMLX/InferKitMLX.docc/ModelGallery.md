@@ -168,6 +168,7 @@ Every translator reads `NFKInputPrompt` with `NFKParameterTargetLanguage` (BCP-4
 | ``NFKMLXNLLB`` | `nllb-200` | NLLB-200 distilled 600M / 1.3B / distilled 1.3B / 3.3B, 202 languages on the M2M-100 network |
 | ``NFKMLXMADLAD`` | `madlad400-3b-mt` | MADLAD-400 3B-MT, 400+ languages over T5, float32 or bfloat16 |
 | ``NFKMLXTranslateGemma`` | `translategemma` | TranslateGemma 4B / 12B / 27B, Gemma 3 driven by its translation template; greedy |
+| ``NFKMLXSeedX`` | `seed-x` | Seed-X PPO 7B / Instruct 7B, a Mistral 7B prompted for 28 languages; greedy |
 
 ### Vision-language
 

@@ -377,9 +377,15 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
         unusedWindow["use_sliding_window"] = false
         var contextWideWindow = Self.llamaConfiguration
         contextWideWindow["sliding_window"] = 131_072
+        var mistralWindowed = Self.llamaConfiguration
+        mistralWindowed["model_type"] = "mistral"
+        mistralWindowed["architectures"] = ["MistralForCausalLM"]
+        mistralWindowed["sliding_window"] = 4096
         XCTAssertNoThrow(try NFKMLXModelDescriptors.descriptor(for: try llamaRepository(configuration: nestedBase),
                                                                matching: try template(Self.mistralTemplate)))
         XCTAssertNoThrow(try NFKMLXModelDescriptors.descriptor(for: try llamaRepository(configuration: contextWideWindow),
+                                                               matching: try template(Self.mistralTemplate)))
+        XCTAssertNoThrow(try NFKMLXModelDescriptors.descriptor(for: try llamaRepository(configuration: mistralWindowed),
                                                                matching: try template(Self.mistralTemplate)))
         XCTAssertNoThrow(try NFKMLXModelDescriptors.descriptor(for: try repository(configuration: unusedWindow),
                                                                matching: try template()))

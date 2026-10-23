@@ -152,6 +152,17 @@ final class NFKMLXReleaseTokenizerTests: XCTestCase {
             [6, 15339, 6, 320, 14957, 8, 611, 2398, 33529, 24849, 3996],
             [45147, 80597, 524, 82, 29],
         ]),
+        ("IK_VAL_SEEDX_PPO", "prepended-metaspace", [
+            [560, 54558, 49023, 48198, 48572, 28770, 49962, 979, 2815, 2434, 429, 49767, 28750, 49571, 28723, 49571, 28723],
+            [315, 28742, 584, 384, 832, 28742, 28738, 478, 28742, 333, 464, 28713, 464, 896],
+            [259, 5374, 10599, 32001, 32001, 391, 633, 8063, 32000, 261, 4737, 28801, 32001],
+            [1879, 28920, 333, 28345, 1040, 11310, 383, 48347, 50269, 30321, 29610, 29753, 53216, 28705, 30012],
+            [317, 28949, 18626, 4481, 264, 30814],
+            [5487, 301, 6160, 15170, 17565, 13706, 28735, 13609, 28814, 28706, 28757],
+            [801, 285, 53566, 1329, 32001, 2287, 604, 1318, 54666, 422, 7930, 32001],
+            [464, 21558, 28742, 325, 9471, 28731, 732, 1740, 28748, 532, 28748, 1516, 28723, 7088],
+            [1, 22557, 2],
+        ]),
         ("IK_VAL_SMOLVLM2_256M", "smollm", [
             [788, 216, 34, 32, 34, 36, 28, 216, 33, 34, 35, 36, 37, 13855, 1708, 1885, 33, 28, 34, 41, 41, 30, 41, 41, 30],
             [57, 3060, 422, 2154, 23, 68, 392, 3543, 637, 99, 637, 3256],
@@ -178,6 +189,8 @@ final class NFKMLXReleaseTokenizerTests: XCTestCase {
                 XCTAssertEqual(pretokenization, release.scheme, release.key)
             case .metaspace:
                 XCTAssertEqual("metaspace", release.scheme, release.key)
+            case .prependedMetaspace:
+                XCTAssertEqual("prepended-metaspace", release.scheme, release.key)
             }
             let tokenizer = try NFKMLXLanguage.readTokenizer(inDirectory: directory)
             for (text, expected) in zip(Self.cases, release.ids) {
@@ -258,6 +271,18 @@ final class NFKMLXReleaseTokenizerTests: XCTestCase {
         return json
     }
 
+    // A `String` key compares by canonical equivalence, so a vocabulary read into one loses one of two
+    // pieces a release keeps apart: U+0341 decomposes to U+0301, and Seed-X holds both.
+    func testAMetaspaceVocabularyKeepsCanonicallyEquivalentPiecesApart() throws {
+        // A Swift literal cannot hold both keys, so the table is read as a release's is, through Foundation.
+        let text = #"{"model": {"type": "BPE", "byte_fallback": true, "merges": [], "#
+            + #""vocab": {"<unk>": 0, "\u2581": 1, "e": 2, "\u0301": 3, "\u0341": 4}}}"#
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+        let tokenizer = try XCTUnwrap(NFKMLXMistralTokenizer(tokenizerJSON: json, prependsEveryRun: true))
+        XCTAssertEqual(tokenizer.encode("e\u{0301}"), [1, 2, 3])
+        XCTAssertEqual(tokenizer.encode("e\u{0341}"), [1, 2, 4])
+    }
+
     func testTheSchemeIsReadStrictly() throws {
         XCTAssertEqual(try NFKMLXLanguage.tokenizerScheme(tokenizerJSON: byteLevel(normalizer: ["type": "NFC"]),
                                                           tokenizerConfiguration: nil),
@@ -274,7 +299,21 @@ final class NFKMLXReleaseTokenizerTests: XCTestCase {
                        .byteLevel(pretokenization: "qwen2", composes: true, ignoresMerges: false),
                        "Qwen2's tokenizer class fixes its pattern and NFC")
 
+        // Seed-X writes the Mistral BPE the Llama way: a prepending normalizer and no pre-tokenizer.
+        var prepended: [String: Any] = [
+            "model": ["type": "BPE", "byte_fallback": true],
+            "normalizer": ["type": "Sequence", "normalizers": [
+                ["type": "Prepend", "prepend": "\u{2581}"],
+                ["type": "Replace", "pattern": ["String": " "], "content": "\u{2581}"]]],
+            "decoder": ["type": "Sequence", "decoders": [["type": "Replace"], ["type": "ByteFallback"], ["type": "Fuse"],
+                                                         ["type": "Strip"]]],
+        ]
+        XCTAssertEqual(try NFKMLXLanguage.tokenizerScheme(tokenizerJSON: prepended, tokenizerConfiguration: nil),
+                       .prependedMetaspace)
+        prepended["model"] = ["type": "BPE"]
+
         let refused: [(String, [String: Any]?, [String: Any]?)] = [
+            ("a prepending normalizer without byte fallback", prepended, nil),
             ("an unknown Split pattern", byteLevel(split: #"\p{N}{1,2}|\p{L}+"#), nil),
             ("a normalizer other than NFC", byteLevel(normalizer: ["type": "NFKC"]), nil),
             ("byte fallback under a byte-level pre-tokenizer", byteLevel(model: ["byte_fallback": true]), nil),

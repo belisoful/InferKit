@@ -312,6 +312,7 @@ encoder frozen, over the reference's teacher-forced `labels=` loss.
 | `NFKMLXNLLB` | ships | LoRA | public | The M2M-100 recipe on the same network; target ids lead with the `xxx_Xxxx` code. The round trip runs through `NFKMLXNLLB.network(directoryURL:)` after the merge. |
 | `NFKMLXMADLAD` | ships | LoRA | public | On the T5 decoder's projections. The 3B release is 11.8 GB at float32. A streamed load, the 7B at float32 on 32 GB, does not train. |
 | `NFKMLXTranslateGemma` | ships | LoRA | public | With the prompt positions masked, the reference's `labels=-100` rule. 12B and 27B stay offline. |
+| `NFKMLXSeedX` | ships | LoRA | public | The language family's recipe on the attention `q_proj` / `v_proj`, the prompt masked and the target closed by `</s>`, as the release's reward-model demonstration lays a pair out. A float32 load is 30 GB, so on 32 GB it streams and does not train. |
 
 ## Music transcription and structure
 

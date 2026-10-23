@@ -62,9 +62,11 @@ public struct NFKMLXLanguageConfiguration: Sendable {
     public var rotaryDimensions: Int?
     /// Each layer's sliding window, or nil for full attention; empty when every layer attends fully.
     ///
-    /// @discussion gpt-oss alternates a 128-position sliding window with full attention. A sliding
-    /// layer keeps every key in the cache and masks the ones further back than its window, so the
-    /// cache accounting is unchanged and only what the layer sees differs.
+    /// @discussion gpt-oss alternates a 128-position sliding window with full attention, and Mistral
+    /// releases that state `sliding_window` band every layer to it. A sliding layer keeps every key in
+    /// the cache and masks the ones further back than its window, so the cache accounting is unchanged
+    /// and only what the layer sees differs. A pass whose positions all fall inside the window
+    /// attends as a full layer does.
     public var slidingWindows: [Int?] = []
     /// Whether every head carries a learned attention SINK: one extra softmax logit that drains
     /// probability mass and contributes no value (gpt-oss). The softmax is written out for it.
@@ -948,7 +950,7 @@ final class NFKLMAttention: Module {
         }
 
         let attention: MLXArray
-        if sinks != nil || slidingWindow != nil {
+        if sinks != nil || slidingWindow.map({ offset + length > $0 }) == true {
             attention = explicitAttention(queries: queries, keys: keys, values: values, mask: mask,
                                           offset: offset, length: length)
         } else {

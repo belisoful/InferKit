@@ -885,6 +885,160 @@ final class NFKMLXTranslationTests: XCTestCase {
         }
     }
 
+    // MARK: Seed-X
+
+    /// A tiny Seed-X translator: a random two-layer Mistral-geometry decoder and a Metaspace tokenizer
+    /// that spells the prompt's characters through byte fallback.
+    private func tinySeedX() throws -> NFKMLXSeedXTranslator {
+        var vocabulary: [String: Int] = ["<unk>": 0, "<s>": 1, "</s>": 2, "\u{2581}": 3]
+        for byte in 0 ..< 256 {
+            vocabulary[String(format: "<0x%02X>", byte)] = 4 + byte
+        }
+        let json: [String: Any] = [
+            "model": ["type": "BPE", "vocab": vocabulary, "merges": [] as [Any], "byte_fallback": true],
+            "added_tokens": [["id": 0, "content": "<unk>", "special": true], ["id": 1, "content": "<s>", "special": true],
+                             ["id": 2, "content": "</s>", "special": true]],
+        ]
+        let tokenizer = try XCTUnwrap(NFKMLXMetaspaceTokenizer(tokenizerJSON: json, endToken: nil, prependsEveryRun: true))
+        let net = NFKMLXLanguage.makeNet(NFKMLXLanguageConfiguration(
+            hiddenSize: 64, layerCount: 2, headCount: 4, keyValueHeadCount: 2, headDimensions: 16, intermediateSize: 96,
+            vocabularySize: 260, ropeTheta: 10_000, rmsEpsilon: 1e-5, tiesWordEmbeddings: false))
+        return NFKMLXSeedXTranslator(net: net, tokenizer: tokenizer, identifier: NFKMLXSeedX.modelName)
+    }
+
+    func testSeedXRendersTheModelCardsPrompt() throws {
+        try requireMLXRuntime()
+        let translator = try tinySeedX()
+        XCTAssertEqual(translator.prompt(text: "May the force be with you", sourceCode: "en", targetCode: "zh"),
+                       "Translate the following English sentence into Chinese:\nMay the force be with you <zh>")
+        let ids = translator.promptTokens(text: "Hi", sourceCode: "en", targetCode: "de")
+        XCTAssertEqual(ids.first, 1, "the prompt opens with <s>")
+        XCTAssertEqual(Array(ids.dropFirst()),
+                       translator.tokenizer.encode(translator.prompt(text: "Hi", sourceCode: "en", targetCode: "de")).map(\.intValue))
+        XCTAssertEqual(translator.targetTokens(translation: "Hallo").last, 2, "a target ends with </s>")
+        // The release's normalizer gives every run between added tokens its own leading ▁, even one that
+        // opens with a space.
+        XCTAssertEqual(translator.tokenizer.encode("a</s>b").map(\.intValue), [3, 4 + 0x61, 2, 3, 4 + 0x62])
+        XCTAssertEqual(translator.tokenizer.encode(" a").map(\.intValue), [3, 3, 4 + 0x61])
+    }
+
+    func testSeedXResolvesLanguageTagsToTheReleasesTwentyEight() throws {
+        try requireMLXRuntime()
+        let translator = try tinySeedX()
+        XCTAssertEqual(NFKMLXSeedXTranslator.languages.count, 28)
+        XCTAssertEqual(translator.code(for: "zh-Hant"), "zh")
+        XCTAssertEqual(translator.code(for: "pt-BR"), "pt")
+        XCTAssertEqual(translator.code(for: "NB"), "nb")
+        XCTAssertEqual(translator.code(for: "no"), "no")
+        XCTAssertNil(translator.code(for: "la"), "Latin is not among the release's languages")
+        XCTAssertTrue(translator.supports(language: "en-GB"))
+        XCTAssertThrowsError(try translator.translate("Hi", from: nil, to: "de", decoding: translator.defaultDecoding))
+        XCTAssertThrowsError(try translator.translate("Hi", from: "en", to: "la", decoding: translator.defaultDecoding))
+    }
+
+    func testSeedXGeneratesGreedilyToTheEndToken() throws {
+        try requireMLXRuntime()
+        let translator = try tinySeedX()
+        let ids = translator.promptTokens(text: "Hi", sourceCode: "en", targetCode: "de")
+        let produced = try translator.generate(promptTokens: ids, maxTokens: 6)
+        XCTAssertLessThanOrEqual(produced.count, 6)
+        XCTAssertFalse(produced.contains(2), "the continuation stops before </s>")
+        XCTAssertEqual(produced, try translator.generate(promptTokens: ids, maxTokens: 6), "greedy decoding repeats")
+        XCTAssertEqual(translator.translation(of: [1, 4 + 0x61, 4 + 0x62, 2]), "ab",
+                       "the translation's text leaves out the <s> the release opens a continuation with")
+        XCTAssertEqual(NFKMLXTranslationBackend(translator: translator).streamedLayerCount, 0)
+    }
+
+    func testSeedXFineTuningAdaptsTheAttentionAndReloads() throws {
+        try requireMLXRuntime()
+        let translator = try tinySeedX()
+        let net = translator.net
+        let prompt = translator.promptTokens(text: "Hi", sourceCode: "en", targetCode: "de")
+        let target = [Int(40), 41, 42, 2]
+        let tokens = MLXArray((prompt + target).map { Int32($0) })
+        let before = NFKMLXCausalLanguageObjective()(net, tokens, promptLength: prompt.count).item(Float.self)
+        let losses = try NFKMLXSeedX.fineTune(net, examples: { _ in (prompt, target) }, rank: 2, steps: 10)
+        XCTAssertEqual(losses.count, 10)
+        XCTAssertLessThan(losses.last!, before)
+        let adapted = net.leafModules().flattened().filter { $0.1 is NFKMLXLoRALinear }.map(\.0)
+        XCTAssertFalse(adapted.isEmpty)
+        XCTAssertTrue(adapted.allSatisfy { $0.contains(".self_attn.") && ($0.hasSuffix(".q_proj") || $0.hasSuffix(".v_proj")) })
+        try NFKMLXLoRA.merge(into: net)
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("seedx-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        try NFKMLXWeights.save(net, to: scratch)
+        let reloaded = try NFKMLXLanguage.network(weightsURL: scratch, configuration: net.configuration)
+        let input = tokens.reshaped([1, tokens.dim(0)])
+        XCTAssertLessThan(abs(net(input) - reloaded(input)).max().item(Float.self), 1e-5)
+    }
+
+    func testSeedXBF16MatchesTheBFloat16Reference() throws {
+        try checkSeedX(weightsKey: "IK_VAL_SEEDX_PPO", recordKey: "IK_PARITY_SEEDX_PPO", precision: .checkpoint,
+                       name: "seed-x-ppo")
+    }
+
+    func testSeedXInstructBF16MatchesTheBFloat16Reference() throws {
+        try checkSeedX(weightsKey: "IK_VAL_SEEDX_INSTRUCT", recordKey: "IK_PARITY_SEEDX_INSTRUCT", precision: .checkpoint,
+                       name: "seed-x-instruct")
+    }
+
+    /// The release at float32 is 30 GB, which this machine holds on neither side: the reference reads each
+    /// layer as its forward reaches it (`SEEDX_DTYPE=float32 SEEDX_LAYERWISE=1 run_reference.py seedx`), and
+    /// the port streams the layers `.automatic` cannot hold.
+    func testSeedXStreamedAtFloat32MatchesTheReference() throws {
+        try checkSeedX(weightsKey: "IK_VAL_SEEDX_PPO", recordKey: "IK_PARITY_SEEDX_PPO_F32", precision: .float32,
+                       name: "seed-x-ppo-f32")
+    }
+
+    private func checkSeedX(weightsKey: String, recordKey: String, precision: NFKMLXWeightPrecision, name: String) throws {
+        try requireMLXRuntime()
+        let (directory, record) = try release(weightsKey, recordKey)
+        let translator = try NFKMLXSeedX.translator(directoryURL: directory, precision: precision)
+        let stream = translator.net.layerStream
+        for (index, sentence) in Self.sentences.enumerated() {
+            XCTAssertEqual(translator.promptTokens(text: sentence, sourceCode: "en", targetCode: "de"),
+                           ints(record["tokens_\(index)"]!), "the prompt ids of \(sentence)")
+        }
+        let ids = translator.promptTokens(text: Self.sentences[1], sourceCode: "en", targetCode: "de")
+        XCTAssertEqual(ids, ints(record["tokens"]!))
+        let input = MLXArray(ids.map { Int32($0) }).reshaped([1, ids.count])
+        let logits = translator.net(input)[0]
+        let logitCosine = cosine(logits, record["output"]!)
+        // A float32 load reproduces the reference to float error; a .checkpoint load compares bfloat16
+        // against a bfloat16 reference, where the two accumulation orders drift apart over the stack.
+        XCTAssertGreaterThan(logitCosine, precision == .float32 ? 0.999 : 0.995)
+        let argmax = logits.argMax(axis: -1).asArray(Int32.self)
+        let agreeing = zip(argmax, record["output"]!.argMax(axis: -1).asArray(Int32.self)).filter { $0 == $1 }.count
+        let states = translator.net.layerStates(input)
+        var worst: (layer: Int, cosine: Float) = (-1, 1)
+        for (index, state) in states.enumerated() {
+            guard let reference = record["hidden_last.\(index)"] else { continue }
+            let layerCosine = cosine(state[0, ids.count - 1], reference)
+            if layerCosine < worst.cosine { worst = (index, layerCosine) }
+        }
+        XCTAssertGreaterThan(worst.cosine, precision == .float32 ? 0.999 : 0.99, "a layer diverges beyond precision drift")
+        let produced = try translator.generate(promptTokens: ids, maxTokens: 64)
+        XCTAssertEqual(produced, ints(record["continuation"]!).filter { $0 != translator.tokenizer.eosTokenId },
+                       "greedy continuation")
+        let text = translator.translation(of: produced)
+        let referenceText = String(decoding: record["greedy_text"]!.asArray(Int32.self).map { UInt8($0) }, as: UTF8.self)
+        XCTAssertEqual(text, referenceText.trimmingCharacters(in: .whitespacesAndNewlines), "the translation's text")
+        let targetIds = ints(record["target_ids"]!)
+        let tokens = MLXArray((ids + targetIds).map { Int32($0) })
+        let loss = NFKMLXCausalLanguageObjective()(translator.net, tokens, promptLength: ids.count).item(Float.self)
+        XCTAssertEqual(loss, record["loss"]!.asArray(Float.self)[0], accuracy: precision == .float32 ? 1e-2 : 0.1,
+                       "fine-tuning loss")
+        try translator.net.verifyStream()
+        print("\(name): \(text) | logit cosine \(logitCosine); argmax \(agreeing)/\(argmax.count); "
+              + "worst layer \(worst.cosine) at \(worst.layer); loss mine \(loss) reference \(record["loss"]!.asArray(Float.self)[0])")
+        if let stream {
+            let (bytes, seconds) = stream.readStatistics
+            print("\(name): \(stream.layers.count) of \(translator.net.configuration.layerCount) layers streamed, "
+                  + String(format: "%.1f GB read at %.2f GB/s", Double(bytes) / 1e9, Double(bytes) / 1e9 / max(seconds, 1e-9))
+                  + Self.memoryReading)
+        }
+    }
+
     // MARK: Language probes
 
     /// One probe set per source language, the table `run_reference.py` records (`TRANSLATION_PROBES`);

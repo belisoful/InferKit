@@ -187,6 +187,15 @@ attention and feed-forward.
   A dense release larger than the working set streams the decoder layers it cannot hold
   (`NFKMLXResidency.streamed`, and `.automatic` where `verifyFits` fails; `mlx-companion.md`
   "Streaming"), so the 14B, the 32B, and Mistral Small 24B run whole on this machine.
+  A `mistral` release that states `sliding_window` bands every layer to it (`slidingWindows`), as
+  transformers does at any context length; Mistral Small 3 states null and is unchanged. A windowed
+  layer takes the fused attention while a pass's positions all fall inside the window and the
+  written-out softmax with the banded mask once they reach past it. Seed-X (`mlx-models-translation.md`)
+  is a Mistral 7B with a 4096 window. Its `tokenizer.json` writes the Mistral BPE the Llama way, a
+  `Prepend("▁")` and `Replace(" ", "▁")` normalizer and no pre-tokenizer, which the reader takes as
+  `.prependedMetaspace`: every run of text between added tokens takes a `▁`, even one that opens with a
+  space, where Metaspace's `prepend_scheme: "first"` puts one before the opening run only and none
+  before a run already opening with `▁`.
   `NFKMLXDenseStreamingTests` holds a streamed load to the held one element for element on a tiny
   release, tied and untied, through a plain, a quantized, and a windowed cache and a draft, and on the
   released Qwen3-4B at bfloat16 with half its layers streamed. The whole releases are measured

@@ -1072,6 +1072,7 @@ kinds). Consumed keys:
 | smollm2 (GGUF) | contextLength, cacheBits, cacheGroupSize | `backend(ggufURL:options:)` |
 | gemma3 (text generation) | residency, precision, draftModel, draftBits (draft default 4 bits) | `NFKMLXGemma3.backend` / `model(…draftDirectoryURL:…draftBits:)` |
 | gemma3 (translation: TranslateGemma) | residency, precision, draftModel, draftBits | `NFKMLXTranslateGemma` |
+| seed-x | residency, precision | `NFKMLXSeedX` |
 | gemma3n | precision | `NFKMLXGemma3n.backend(directoryURL:precision:)` |
 | gemma4 (not the multimodal entry) | residency, precision | `NFKMLXGemmaLanguage.backend(directoryURL:precision:residency:)` |
 | qwen3.5 | precision | `NFKMLXHybridLanguage.backend(directoryURL:precision:)` |

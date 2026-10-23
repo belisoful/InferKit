@@ -311,12 +311,21 @@
 	[NFKMLXNLLB register];
 	[NFKMLXMADLAD register];
 	[NFKMLXTranslateGemma register];
+	[NFKMLXSeedX register];
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"opus-mt"]);
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"m2m100"]);
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"small100"]);
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"nllb-200"]);
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"madlad400-3b-mt"]);
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"translategemma"]);
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"seed-x"]);
+	// Seed-X downloads either release by variant, at the precision named:
+	//   id<NFKInferenceBackend> seedX = [NFKMLXSeedX backendWithVariant:NFKMLXSeedXVariantPpo revision:nil
+	//                                                   cacheDirectoryURL:nil precision:NFKMLXWeightPrecisionCheckpoint
+	//                                                               error:&error];
+	XCTAssertTrue([NFKMLXSeedX respondsToSelector:@selector(backendWithDirectoryURL:precision:residency:error:)]);
+	XCTAssertTrue([NFKMLXSeedX respondsToSelector:@selector(backendWithVariant:revision:cacheDirectoryURL:precision:error:)]);
+	XCTAssertNotEqual(NFKMLXSeedXVariantPpo, NFKMLXSeedXVariantInstruct);
 	XCTAssertEqualObjects([NFKMLXMarian repoWithSourceLanguage:@"en" targetLanguage:@"de"], @"Helsinki-NLP/opus-mt-en-de");
 	NSError *error = nil;
 	id<NFKInferenceBackend> translator = [NFKMLXModelRegistry backendNamed:@"opus-mt" weightsURL:nil error:&error];

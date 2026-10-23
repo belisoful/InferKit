@@ -1171,6 +1171,11 @@ public final class NFKMLXLanguage: NSObject {
             configuration.clampedSwiGLU = NFKMLXClampedSwiGLU(limit: real("swiglu_limit", 7))
             configuration.normWeightInFloat32 = true
         }
+        // Mistral bands every layer to the same window wherever the release states one; transformers
+        // applies it at any context length, so a window wider than the context is read too.
+        if modelType == "mistral", let window = (json["sliding_window"] as? NSNumber)?.intValue, window > 0 {
+            configuration.slidingWindows = Array(repeating: window, count: configuration.layerCount)
+        }
         // A release that extended its window says so here. An unimplemented kind throws rather than
         // loading under the wrong rotary, which would run and be wrong.
         configuration.ropeScaling = try NFKMLXRoPEScaling.read(
@@ -1972,8 +1977,8 @@ public final class NFKMLXLanguage: NSObject {
         let scheme = try tokenizerScheme(tokenizerJSON: tokenizerJSON, tokenizerConfiguration: configuration)
         let (specials, endToken) = specialTokens(inDirectory: directory, tokenizerJSON: tokenizerJSON)
         guard case .byteLevel(let pretokenization, let composes, let ignoresMerges) = scheme else {
-            guard let tokenizerJSON, let tokenizer = NFKMLXMetaspaceTokenizer(tokenizerJSON: tokenizerJSON,
-                                                                               endToken: endToken) else {
+            guard let tokenizerJSON, let tokenizer = NFKMLXMetaspaceTokenizer(
+                tokenizerJSON: tokenizerJSON, endToken: endToken, prependsEveryRun: scheme == .prependedMetaspace) else {
                 throw NFKMLXError.unsupportedConfiguration(
                     "\(directory.lastPathComponent)'s tokenizer.json has no BPE vocabulary and merges")
             }
@@ -2015,6 +2020,9 @@ public final class NFKMLXLanguage: NSObject {
         /// Mistral's SentencePiece-style BPE: spaces become `▁`, one `▁` leads the text, and a
         /// character the vocabulary lacks falls back to its UTF-8 bytes (Mixtral, Codestral-Mamba).
         case metaspace
+        /// The same BPE written the Llama way (Seed-X): a normalizer prepends `▁` to every run of text
+        /// between added tokens and replaces spaces, with no pre-tokenizer.
+        case prependedMetaspace
     }
 
     /// The `Split` patterns this package reproduces, keyed by their exact text in `tokenizer.json`.
@@ -2066,6 +2074,9 @@ public final class NFKMLXLanguage: NSObject {
         let preTokenizer = tokenizerJSON["pre_tokenizer"] as? [String: Any]
         if preTokenizer?["type"] as? String == "Metaspace" {
             return try metaspaceScheme(tokenizerJSON, model: model, preTokenizer: preTokenizer ?? [:])
+        }
+        if preTokenizer == nil, isPrependingNormalizer(tokenizerJSON["normalizer"]) {
+            return try prependedMetaspaceScheme(tokenizerJSON, model: model)
         }
         if flag(model["byte_fallback"]) {
             throw NFKMLXError.unsupportedConfiguration(
@@ -2151,6 +2162,31 @@ public final class NFKMLXLanguage: NSObject {
                 + "byte fallback)")
         }
         return .metaspace
+    }
+
+    /// Whether a `normalizer` is the Llama-style pair: prepend `▁`, then replace each space with `▁`.
+    private static func isPrependingNormalizer(_ normalizer: Any?) -> Bool {
+        guard let normalizer = normalizer as? [String: Any], normalizer["type"] as? String == "Sequence",
+              let steps = normalizer["normalizers"] as? [[String: Any]], steps.count == 2 else { return false }
+        return steps[0]["type"] as? String == "Prepend" && steps[0]["prepend"] as? String == "\u{2581}"
+            && steps[1]["type"] as? String == "Replace"
+            && (steps[1]["pattern"] as? [String: Any])?["String"] as? String == " "
+            && steps[1]["content"] as? String == "\u{2581}"
+    }
+
+    /// The Llama-style scheme (Seed-X): the prepending normalizer, no pre-tokenizer, byte fallback, and
+    /// the Metaspace decoder.
+    private static func prependedMetaspaceScheme(_ tokenizerJSON: [String: Any], model: [String: Any]) throws
+        -> TokenizerScheme {
+        let decoder = tokenizerJSON["decoder"] as? [String: Any]
+        let decoderSteps = ((decoder?["decoders"] as? [[String: Any]]) ?? []).compactMap { $0["type"] as? String }
+        guard (model["byte_fallback"] as? NSNumber)?.boolValue == true,
+              decoderSteps == ["Replace", "ByteFallback", "Fuse", "Strip"] else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "the tokenizer prepends ▁ in its normalizer but lacks the byte fallback and Metaspace decoder of "
+                + "the Llama-style form")
+        }
+        return .prependedMetaspace
     }
 
     /// Writes a tokenizer.json's byte-level BPE vocabulary and merges as the `vocab.json` and
