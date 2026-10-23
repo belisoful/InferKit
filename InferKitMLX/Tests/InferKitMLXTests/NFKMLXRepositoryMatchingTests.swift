@@ -191,7 +191,7 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
         XCTAssertEqual(variant.downloadByteCount?.int64Value, listed)
         XCTAssertEqual(Set(variant.source?.files.map(\.path) ?? []),
                        ["config.json", "tokenizer.json", "tokenizer_config.json", "model.safetensors", "vocab.json",
-                        "merges.txt", "added_tokens.json", "chat_template.jinja"])
+                        "merges.txt", "added_tokens.json", "chat_template.jinja", "generation_config.json"])
         XCTAssertEqual(variant.source?.files.first { $0.path == "model.safetensors" }?.byteCount?.int64Value,
                        read.file(atPath: "model.safetensors")?.byteCount)
         let facts = try XCTUnwrap(variant.memoryFacts)
