@@ -234,6 +234,18 @@
 				   @"the key must open the route");
 }
 
+/*! Gemini's routes hold a rebound page to a key as every route does, and take it in Google's forms. */
+- (void)testAForeignHostNeedsAKeyOnGooglesRoutesInGooglesForms
+{
+	[self.server addAPIKey:@"key-one" named:@"one" scopes:NFKServerKeyScopeInference];
+	[self start];
+	XCTAssertEqual([self statusOf:@"GET" path:@"/v1beta/models" host:@"attacker.example" headers:@{} body:nil], 421);
+	XCTAssertEqual([self statusOf:@"GET" path:@"/v1beta/models?key=key-one" host:@"attacker.example" headers:@{} body:nil], 200);
+	XCTAssertEqual([self statusOf:@"GET" path:@"/v1beta/models" host:@"attacker.example" headers:@{ @"x-goog-api-key": @"key-one" } body:nil], 200);
+	XCTAssertEqual([self statusOf:@"GET" path:@"/v1/models?key=key-one" host:@"attacker.example" headers:@{} body:nil], 421,
+				   @"Google's forms open Google's routes only");
+}
+
 - (void)testTheMCPOriginCheckStillRefusesAnotherSite
 {
 	[self start];

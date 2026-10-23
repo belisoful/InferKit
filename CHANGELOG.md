@@ -53,6 +53,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   answer errors in Google's shape.
 - `/v1beta` is the server's own prefix: `addRouteForPathPrefix:handler:error:` refuses an app route under it, as it
   refuses one under `/v1` and `/mcp`.
+- A model whose name carries a colon, as `qwen3:8b` does, is named whole on these routes. The server reads a query
+  value up to the next `&`, every `=` in it kept, so a key with base64 padding authenticates as `?key=`.
 
 #### A Core ML language reply runs to the room its context leaves
 

@@ -462,9 +462,12 @@ static NSString *NFKHTTPEndpointAddress(nw_endpoint_t _Nullable endpoint)
 	NSMutableDictionary<NSString *, NSString *> *query = [NSMutableDictionary dictionary];
 	if (question.location != NSNotFound) {
 		for (NSString *pair in [[target substringFromIndex:question.location + 1] componentsSeparatedByString:@"&"]) {
-			NSArray<NSString *> *sides = [pair componentsSeparatedByString:@"="];
-			NSString *name = [[sides.firstObject stringByReplacingOccurrencesOfString:@"+" withString:@" "] stringByRemovingPercentEncoding];
-			NSString *value = sides.count > 1 ? [[sides[1] stringByReplacingOccurrencesOfString:@"+" withString:@" "] stringByRemovingPercentEncoding] : @"";
+			// A value keeps every "=" after the first, as a base64 key's padding does.
+			NSRange equals = [pair rangeOfString:@"="];
+			NSString *rawName = equals.location == NSNotFound ? pair : [pair substringToIndex:equals.location];
+			NSString *rawValue = equals.location == NSNotFound ? @"" : [pair substringFromIndex:NSMaxRange(equals)];
+			NSString *name = [[rawName stringByReplacingOccurrencesOfString:@"+" withString:@" "] stringByRemovingPercentEncoding];
+			NSString *value = [[rawValue stringByReplacingOccurrencesOfString:@"+" withString:@" "] stringByRemovingPercentEncoding];
 			if (name.length > 0) {
 				query[name] = value ?: @"";
 			}

@@ -356,6 +356,80 @@
 	XCTAssertEqual(status, 400, @"%@", unanswered);
 }
 
+/*! A model whose name carries a colon, as an Ollama-style name:tag does, is named whole. */
+- (void)testAModelNameWithAColonIsNamedWhole
+{
+	NFKGeminiRouteBackend *backend = [[NFKGeminiRouteBackend alloc] init];
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"qwen3:8b": backend, @"other": [[NFKGeminiRouteBackend alloc] init] }
+											 configuration:nil];
+	NSInteger status = 0;
+	NSDictionary *entry = [self JSONOf:[self send:@"GET" path:@"/v1beta/models/qwen3:8b" body:nil headers:nil server:server status:&status]];
+	XCTAssertEqual(status, 200);
+	XCTAssertEqualObjects(entry[@"name"], @"models/qwen3:8b");
+	[self post:@"/v1beta/models/qwen3:8b:generateContent" body:@{ @"contents": @[ @{ @"parts": @[ @{ @"text": @"Hi" } ] } ] }
+		server:server status:&status];
+	XCTAssertEqual(status, 200);
+	XCTAssertEqualObjects(backend.lastRequest.prompt, @"Hi");
+}
+
+/*! A key with base64 padding authenticates by the key query parameter, its "=" signs kept. */
+- (void)testAPaddedKeyAuthenticatesByTheQuery
+{
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"served": [[NFKGeminiRouteBackend alloc] init] }
+											 configuration:^(NFKInferenceServer *configured) {
+		configured.loopbackExemptScopes = 0;
+		[configured addAPIKey:@"c2VzYW1l==" named:@"padded" scopes:NFKServerKeyScopeInference];
+	}];
+	NSInteger status = 0;
+	[self send:@"GET" path:@"/v1beta/models?key=c2VzYW1l==" body:nil headers:nil server:server status:&status];
+	XCTAssertEqual(status, 200);
+	[self send:@"GET" path:@"/v1beta/models?key=c2VzYW1l" body:nil headers:nil server:server status:&status];
+	XCTAssertEqual(status, 401, @"the key without its padding is another key");
+}
+
+/*! Google's routes keep the server's Origin rule and scopes, and Google's key forms open no other route. */
+- (void)testGooglesRoutesKeepTheOriginRuleAndTheScopes
+{
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"served": [[NFKGeminiRouteBackend alloc] init] }
+											 configuration:^(NFKInferenceServer *configured) {
+		configured.loopbackExemptScopes = 0;
+		[configured addAPIKey:@"sesame" named:@"client" scopes:NFKServerKeyScopeInference | NFKServerKeyScopeMCP];
+		[configured addAPIKey:@"peek" named:@"monitor" scopes:NFKServerKeyScopeStatus];
+	}];
+	NSInteger status = 0;
+	NSDictionary *refused = [self JSONOf:[self send:@"GET" path:@"/v1beta/models" body:nil
+											headers:@{ @"x-goog-api-key": @"sesame", @"Origin": @"https://attacker.example" }
+											 server:server status:&status]];
+	XCTAssertEqual(status, 403);
+	XCTAssertEqualObjects(refused[@"error"][@"status"], @"PERMISSION_DENIED");
+	[self send:@"GET" path:@"/v1beta/models" body:nil headers:@{ @"x-goog-api-key": @"peek" } server:server status:&status];
+	XCTAssertEqual(status, 403, @"a status key does not open the inference routes");
+	[self send:@"GET" path:@"/v1/models" body:nil headers:@{ @"x-goog-api-key": @"sesame" } server:server status:&status];
+	XCTAssertEqual(status, 401, @"x-goog-api-key opens Google's routes only");
+	[self send:@"POST" path:@"/mcp" body:@{ @"jsonrpc": @"2.0", @"id": @1, @"method": @"tools/list" }
+	   headers:@{ @"x-goog-api-key": @"sesame" } server:server status:&status];
+	XCTAssertEqual(status, 401);
+}
+
+/*! A call or a response in the wrong turn, a call without a name, and more than one candidate are refused. */
+- (void)testMisplacedCallsAndSeveralCandidatesAreRefused
+{
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"served": [[NFKGeminiRouteBackend alloc] init] } configuration:nil];
+	NSArray<NSDictionary *> *bodies = @[
+		@{ @"contents": @[ @{ @"role": @"user", @"parts": @[ @{ @"functionCall": @{ @"name": @"lookup", @"args": @{} } } ] } ] },
+		@{ @"contents": @[ @{ @"role": @"model", @"parts": @[ @{ @"functionResponse": @{ @"name": @"lookup", @"response": @{} } } ] } ] },
+		@{ @"contents": @[ @{ @"role": @"model", @"parts": @[ @{ @"functionCall": @{ @"args": @{} } } ] } ] },
+		@{ @"contents": @[ @{ @"role": @"model", @"parts": @[ @{ @"functionCall": @{ @"name": @"lookup", @"args": @"x" } } ] } ] },
+		@{ @"contents": @[ @{ @"parts": @[ @{ @"text": @"Hi" } ] } ], @"generationConfig": @{ @"candidateCount": @2 } },
+	];
+	for (NSDictionary *body in bodies) {
+		NSInteger status = 0;
+		NSDictionary *reply = [self post:@"/v1beta/models/served:generateContent" body:body server:server status:&status];
+		XCTAssertEqual(status, 400, @"%@ → %@", body, reply);
+		XCTAssertEqualObjects(reply[@"error"][@"status"], @"INVALID_ARGUMENT");
+	}
+}
+
 #pragma mark NFKGeminiGenerateContentBackend against the server
 
 - (void)testTheGeminiClientRunsAHostedModelAndItsToolTurns

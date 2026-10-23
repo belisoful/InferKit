@@ -39,7 +39,9 @@ FOUNDATION_EXPORT NSString * const NFKServedGeminiBasePath;
 				run at Google are left out. generationConfig maps maxOutputTokens, temperature, topP,
 				topK, seed, and stopSequences to the core keys; a JSON responseMimeType with
 				responseJsonSchema or responseSchema to NFKParameterJSONSchema; and thinkingConfig's
-				thinkingBudget or thinkingLevel to NFKParameterReasoningEffort.
+				thinkingBudget or thinkingLevel to NFKParameterReasoningEffort. toolConfig's mode ANY asks for
+				a call among every declared function, whatever allowedFunctionNames lists, and a
+				candidateCount above 1 is refused, since a reply holds one candidate.
 
 				The reply's thought parts carry NFKOutputReasoning when thinkingConfig asks for
 				includeThoughts. finishReason is MAX_TOKENS for a reply cut at its limit, SAFETY for a

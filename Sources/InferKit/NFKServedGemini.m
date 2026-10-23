@@ -36,7 +36,8 @@ static NSString *NFKServedGeminiIdentifier(NSString *prefix)
 }
 
 /*! A schema with its type names lowercased, as Gemini's OpenAPI subset writes them in capitals (OBJECT,
-	STRING) where JSON Schema writes them in lowercase. */
+	STRING) where JSON Schema writes them in lowercase. A default, example, enum, or const is a value, not a
+	schema, and keeps its own "type" fields as they are. */
 static id NFKServedGeminiSchema(id schema)
 {
 	if ([schema isKindOfClass:NSArray.class]) {
@@ -56,6 +57,8 @@ static id NFKServedGeminiSchema(id schema)
 			converted[key] = [value lowercaseString];
 		} else if ([key isEqualToString:@"type"] && [value isKindOfClass:NSArray.class]) {
 			converted[key] = [value valueForKey:@"lowercaseString"];
+		} else if ([@[ @"default", @"example", @"examples", @"enum", @"const" ] containsObject:key]) {
+			converted[key] = value;
 		} else {
 			converted[key] = NFKServedGeminiSchema(value);
 		}
@@ -82,18 +85,20 @@ static id NFKServedGeminiSchema(id schema)
 		[self sendStatus:404 message:[NSString stringWithFormat:@"no route %@ %@", request.method, request.path] response:response];
 		return;
 	}
-	// The method follows the model's last colon: models/{model}:generateContent.
+	// The method follows the model's last colon, models/{model}:generateContent. A colon a model's own name
+	// carries, as in qwen3:8b, leaves no method after it, so the whole path names the model.
 	NSRange colon = [name rangeOfString:@":" options:NSBackwardsSearch];
-	if (colon.location == NSNotFound) {
-		if ([self requireMethod:@"GET" of:request response:response]) {
+	NSString *method = colon.location == NSNotFound ? nil : [name substringFromIndex:NSMaxRange(colon)];
+	NSString *model = colon.location == NSNotFound ? name : [name substringToIndex:colon.location];
+	NSArray<NSString *> *methods = @[ @"generateContent", @"streamGenerateContent", @"countTokens" ];
+	if (![methods containsObject:method]) {
+		if ([request.method isEqualToString:@"GET"]) {
 			[self serveModelNamed:name response:response server:server];
+		} else if (method != nil) {
+			[self sendStatus:404 message:[NSString stringWithFormat:@"this server does not serve %@", method] response:response];
+		} else {
+			[self requireMethod:@"GET" of:request response:response];
 		}
-		return;
-	}
-	NSString *method = [name substringFromIndex:NSMaxRange(colon)];
-	NSString *model = [name substringToIndex:colon.location];
-	if (![@[ @"generateContent", @"streamGenerateContent", @"countTokens" ] containsObject:method]) {
-		[self sendStatus:404 message:[NSString stringWithFormat:@"this server does not serve %@", method] response:response];
 		return;
 	}
 	if (![self requireMethod:@"POST" of:request response:response]) {
@@ -335,7 +340,7 @@ static id NFKServedGeminiSchema(id schema)
 	NSArray *parts = [content isKindOfClass:NSDictionary.class] && [content[@"parts"] isKindOfClass:NSArray.class] ? content[@"parts"] : nil;
 	if (parts == nil || !([role isEqualToString:@"user"] || [role isEqualToString:@"model"] || [role isEqualToString:@"function"])) {
 		return [NFKServedOpenAI setError:outError code:kNFKError_InferenceMissingInput
-								  reason:[NSString stringWithFormat:@"contents[%lu] must be an object with parts whose role is user or model",
+								  reason:[NSString stringWithFormat:@"contents[%lu] must be an object with parts whose role is user, model, or function",
 										  (unsigned long)index]];
 	}
 	BOOL fromModel = [role isEqualToString:@"model"];
@@ -353,9 +358,18 @@ static id NFKServedGeminiSchema(id schema)
 				[texts addObject:part[@"text"]];
 			}
 		} else if ([part[@"functionCall"] isKindOfClass:NSDictionary.class]) {
-			NSDictionary *call = [self callForFunctionCall:part[@"functionCall"]];
+			NSDictionary *call = fromModel ? [self callForFunctionCall:part[@"functionCall"] index:index error:outError] : nil;
+			if (call == nil) {
+				return fromModel ? NO : [NFKServedOpenAI setError:outError code:kNFKError_InferenceMissingInput
+													 reason:[NSString stringWithFormat:@"contents[%lu] is not the model's, so it carries no functionCall",
+															 (unsigned long)index]];
+			}
 			[calls addObject:call];
 			[pendingCalls addObject:call];
+		} else if ([part[@"functionResponse"] isKindOfClass:NSDictionary.class] && fromModel) {
+			return [NFKServedOpenAI setError:outError code:kNFKError_InferenceMissingInput
+									  reason:[NSString stringWithFormat:@"contents[%lu] is the model's, so it carries no functionResponse",
+											  (unsigned long)index]];
 		} else if ([part[@"functionResponse"] isKindOfClass:NSDictionary.class]) {
 			NSDictionary *turn = [self toolTurnForFunctionResponse:part[@"functionResponse"] pendingCalls:pendingCalls error:outError];
 			if (turn == nil) {
@@ -386,10 +400,19 @@ static id NFKServedGeminiSchema(id schema)
 	return YES;
 }
 
-+ (NSDictionary *)callForFunctionCall:(NSDictionary *)functionCall
+/*! The call a functionCall part makes, or nil with an error when it names no function or its args are not an
+	object. */
++ (nullable NSDictionary *)callForFunctionCall:(NSDictionary *)functionCall index:(NSUInteger)index error:(NSError * _Nullable *)outError
 {
-	NSString *name = [functionCall[@"name"] isKindOfClass:NSString.class] ? functionCall[@"name"] : @"";
-	NSDictionary *arguments = [functionCall[@"args"] isKindOfClass:NSDictionary.class] ? functionCall[@"args"] : @{};
+	NSString *name = [functionCall[@"name"] isKindOfClass:NSString.class] ? functionCall[@"name"] : nil;
+	id args = functionCall[@"args"];
+	if (name.length == 0 || (args != nil && ![args isKindOfClass:NSDictionary.class])) {
+		[NFKServedOpenAI setError:outError code:kNFKError_InferenceMissingInput
+						   reason:[NSString stringWithFormat:@"contents[%lu] has a functionCall without a name or whose args are not an object",
+								   (unsigned long)index]];
+		return nil;
+	}
+	NSDictionary *arguments = args ?: @{};
 	NSString *identifier = [functionCall[@"id"] isKindOfClass:NSString.class] && [functionCall[@"id"] length] > 0
 		? functionCall[@"id"] : NFKServedGeminiIdentifier(@"call_");
 	return @{ @"id": identifier, @"name": name, @"arguments": arguments, @"argumentsJSON": NFKServedGeminiJSONText(arguments) };
@@ -439,7 +462,7 @@ static id NFKServedGeminiSchema(id schema)
 	NSString *mimeType = [inlineData[@"mimeType"] isKindOfClass:NSString.class] ? inlineData[@"mimeType"] : @"";
 	NSData *bytes = [inlineData[@"data"] isKindOfClass:NSString.class]
 		? [[NSData alloc] initWithBase64EncodedString:inlineData[@"data"] options:NSDataBase64DecodingIgnoreUnknownCharacters] : nil;
-	if (bytes == nil) {
+	if (bytes.length == 0) {
 		return [NFKServedOpenAI setError:outError code:kNFKError_InferenceUnsupported reason:@"inlineData carries no base64 data"];
 	}
 	if ([mimeType hasPrefix:@"image/"]) {
@@ -500,6 +523,10 @@ static id NFKServedGeminiSchema(id schema)
 			parameters[NFKParameterOutputFormat] = @"json";
 		}
 	}
+	if ([generation[@"candidateCount"] isKindOfClass:NSNumber.class] && [generation[@"candidateCount"] integerValue] > 1) {
+		[NFKServedOpenAI setError:outError code:kNFKError_InferenceUnsupported reason:@"this server answers one candidate; candidateCount must be 1"];
+		return nil;
+	}
 	NSDictionary *thinking = [generation[@"thinkingConfig"] isKindOfClass:NSDictionary.class] ? generation[@"thinkingConfig"] : @{};
 	*outIncludeThoughts = [thinking[@"includeThoughts"] isEqual:@YES];
 	NSString *effort = [self effortForThinking:thinking];
@@ -520,8 +547,9 @@ static id NFKServedGeminiSchema(id schema)
 	return parameters;
 }
 
-// A budget passes through as its token count in a string, which the contract's effort key takes; 0 turns
-// thinking off and -1 lets the model decide, which the deep effort stands for. A level names the effort.
+// A budget passes through as its token count in a string, which the contract's effort key takes, and -1
+// lets the model decide, which the deep effort stands for. The contract names no effort that turns thinking
+// off, so 0 leaves the backend's default. A level names the effort.
 + (nullable NSString *)effortForThinking:(NSDictionary *)thinking
 {
 	NSNumber *budget = [thinking[@"thinkingBudget"] isKindOfClass:NSNumber.class] ? thinking[@"thinkingBudget"] : nil;
