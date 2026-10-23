@@ -46,7 +46,8 @@ long-request guidance).
 Gemini `finishReason` (`STOP`, `MAX_TOKENS`, and the safety family), and a Responses `status` or its
 `incomplete_details.reason`. `NFKResultWithFinishReason` keeps it consistent with the result, because
 Gemini reports `STOP` with a function call and Anthropic's forced `structured_output` tool stops on
-`tool_use`. `pause_turn` and Gemini's `OTHER`/`MALFORMED_FUNCTION_CALL` map to nothing. The served
+`tool_use`. `pause_turn` and Gemini's `OTHER`, `MALFORMED_FUNCTION_CALL`, `LANGUAGE`, and
+`TOO_MANY_TOOL_CALLS` map to nothing, which leaves the output absent. The served
 routes prefer the backend's reason and fall back to the usage-versus-limit guess.
 Every preset answers the same `data[].id` envelope, hosted and local alike, so one parser serves all
 fifteen; only the credential headers differ, and Anthropic paginates (`has_more` / `last_id` →

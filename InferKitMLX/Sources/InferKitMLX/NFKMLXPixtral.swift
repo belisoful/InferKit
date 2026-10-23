@@ -370,7 +370,7 @@ public final class NFKMLXPixtral: NSObject {
         let prompt = "<s>[INST]" + imagePlaceholders(gridH: gridH, gridW: gridW) + question + "[/INST]"
         let inputIds = tokenizer.encode(prompt).map(\.intValue)
         let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: inputIds.count,
-                                                  contextLength: textDecoder.configuration.maximumPositions,
+                                                  contextLength: textDecoder.configuration.contextLength,
                                                   source: "Pixtral")
         let generated = NFKMLXPixtral.generate(decoder: textDecoder, inputIds: inputIds, features: features,
                                                maxTokens: limit, endTokens: endTokens)

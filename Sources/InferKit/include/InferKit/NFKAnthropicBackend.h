@@ -68,11 +68,21 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The API version sent as anthropic-version. Defaults to the version this release was written for. */
 @property (nonatomic, copy) NSString *apiVersion;
 
-/*! The max_tokens a request that sets no NFKParameterMaxTokens sends, which the API requires. 0, the
-	default, sends the model's own maximum: the max_tokens the Models API states for modelName, read once per
-	model name with apiKey, or 1024 where the endpoint states none or the backend has no key. A synchronous run that sends the model's maximum reads
-	the reply as a stream, so a long reply keeps its connection busy. NFKParameterMaxTokens overrides it per
-	request. */
+/*!
+	@property   maxTokens
+	@abstract   The max_tokens a request that sets no NFKParameterMaxTokens sends, which the API requires.
+	@discussion 0, the default since InferKit 0.4.0, sends the model's own maximum: the max_tokens the Models
+				API states for modelName, asked with apiKey and remembered from a 200 answer. A backend
+				without a key, a model the API states none for, or a lookup that fails sends 1024, the
+				default before 0.4.0. A model released before Claude 4.5 that receives its maximum is sent
+				the beta that ends a reply at the context window in place of refusing the request.
+				- submitInferenceJobForRequest: asks the Models API off the caller's thread.
+				- runInferenceForRequest:error: asks on its own thread, and reads a reply sent the model's
+				  maximum as a stream. That run is not retried on an overload, and its
+				  NFKRemoteBackendRawKey holds the assembled assistant turn ({role, content}). A run that
+				  names a large limit itself is one response bounded by timeout; a long reply takes
+				  submitInferenceJobForRequest:.
+*/
 @property (nonatomic, assign) NSInteger maxTokens;
 
 /*! Seconds before the request times out. */

@@ -67,9 +67,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - The Gemini preset's list joins each model's limits from Gemini's native list beside its OpenAI layer, which
   states none.
 - `NFKAnthropicBackend.maxTokens` defaults to 0, which sends the model's own maximum when a request sets no
-  `NFKParameterMaxTokens`: the `max_tokens` the Models API states for the model, asked once per model name
-  with the backend's key. A model the API states none for, or a backend without a key, sends 1024 as before.
-  A synchronous run that sends the model's maximum reads the reply as a stream.
+  `NFKParameterMaxTokens`: the `max_tokens` the Models API states for the model, asked with the backend's key
+  within 10 seconds and remembered from a 200 answer. A model the API states none for, a failed lookup, or a
+  backend without a key sends 1024 as before. A submitted job asks off the caller's thread. A synchronous run
+  that sends the model's maximum reads the reply as a stream, not retried on an overload, with the assembled
+  assistant turn as its raw output. A model released before Claude 4.5 sent its maximum is sent the beta that
+  ends the reply at the context window in place of refusing the request.
 
 #### The language a recognizer heard
 

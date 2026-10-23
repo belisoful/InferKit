@@ -564,7 +564,7 @@ public final class NFKMLXQwen3VL: NSObject {
             + "<|vision_end|>" + question + "<|im_end|>\n<|im_start|>assistant\n"
         let inputIds = tokenizer.encode(prompt).map(\.intValue)
         let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: inputIds.count,
-                                                  contextLength: textDecoder.configuration.maximumPositions,
+                                                  contextLength: textDecoder.configuration.contextLength,
                                                   source: "Qwen3-VL")
         let generated = NFKMLXQwen3VL.generate(
             decoder: textDecoder, inputIds: inputIds, visionFeatures: visionOutput, deepstack: deepstack,

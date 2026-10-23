@@ -23,3 +23,15 @@ enum NFKMLXContextRoom {
         return min(maxTokens, contextLength - promptTokens)
     }
 }
+
+extension NFKMLXLanguageConfiguration {
+
+    /// The positions a prompt and its reply may fill: the trained window, or the window `ropeScaling`
+    /// stretches it to (`original_max_position_embeddings` times `factor`) where that is longer. Nil where
+    /// the release states no window.
+    var contextLength: Int? {
+        guard let maximumPositions else { return nil }
+        guard let scaling = ropeScaling else { return maximumPositions }
+        return max(maximumPositions, Int(Float(scaling.originalMaxPositionEmbeddings) * scaling.factor))
+    }
+}

@@ -375,7 +375,9 @@ attention and feed-forward.
   filters, keeping the ones a marker of the run's reasoning format or its tool-call format's `markers`
   contains (harmony's channels, Mistral's `[TOOL_CALLS]`), since those readers parse them. A text-level
   strip would also remove a literal the model spelled with ordinary tokens. **Output room (2026-10-22):** `NFKMLXContextRoom.bounded`
-  caps a run's limit at the trained context (`maximumPositions`, or the release config's
+  caps a run's limit at the trained context (`NFKMLXLanguageConfiguration.contextLength`: `maximumPositions`,
+  or `original_max_position_embeddings` × the `rope_scaling` factor where longer, so a YaRN-stretched Qwen3
+  takes 131,072; or the release config's
   `max_position_embeddings` through model info) minus the prompt and throws when the prompt fills it. The
   bound is the trained context, not the context-length load option: that option is `contextWindow`, a
   rolling cache that drops the oldest positions, so a long conversation keeps going past it. The catalog

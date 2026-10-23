@@ -142,7 +142,10 @@ static NSString *NFKGeminiBareModelName(NSString *name)
 	if (nativeURL == nil || models.count == 0) {
 		return models;
 	}
-	NSDictionary<NSString *, NSDictionary *> *limits = [self geminiLimitsFromURL:nativeURL];
+	// One model reads its own entry; a list reads the native list's pages.
+	NSDictionary<NSString *, NSDictionary *> *limits = models.count == 1
+		? [self geminiLimitsOfModelNamed:NFKGeminiBareModelName(models.firstObject.identifier) atURL:nativeURL]
+		: [self geminiLimitsFromURL:nativeURL];
 	if (limits.count == 0) {
 		return models;
 	}
@@ -175,10 +178,27 @@ static NSString *NFKGeminiBareModelName(NSString *name)
 	return [base.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"models"];
 }
 
-/*! Each native entry with a limit, by bare name, across the list's pages. */
+/*! The native entry of one model, by bare name, or none where it has no limit or the read fails. */
+- (NSDictionary<NSString *, NSDictionary *> *)geminiLimitsOfModelNamed:(NSString *)name atURL:(NSURL *)url
+{
+	NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[url URLByAppendingPathComponent:name]];
+	request.HTTPMethod = @"GET";
+	request.timeoutInterval = self.timeout;
+	[request setValue:@"application/json" forHTTPHeaderField:@"Accept"];
+	if (self.apiKey.length > 0) {
+		[request setValue:self.apiKey forHTTPHeaderField:@"x-goog-api-key"];
+	}
+	NSDictionary *entry = [self JSONObjectForRequest:request error:NULL];
+	BOOL limited = entry[@"inputTokenLimit"] != nil || entry[@"outputTokenLimit"] != nil;
+	return limited ? @{ name: entry } : @{};
+}
+
+/*! Each native entry with a limit, by bare name, across the list's pages. A page token seen before ends
+	the reading, so a list that repeats one cannot hold it. */
 - (NSDictionary<NSString *, NSDictionary *> *)geminiLimitsFromURL:(NSURL *)url
 {
 	NSMutableDictionary<NSString *, NSDictionary *> *limits = [NSMutableDictionary dictionary];
+	NSMutableSet<NSString *> *seenTokens = [NSMutableSet set];
 	NSString *pageToken = nil;
 	do {
 		NSURLComponents *components = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
@@ -203,6 +223,12 @@ static NSString *NFKGeminiBareModelName(NSString *name)
 			}
 		}
 		pageToken = [page[@"nextPageToken"] isKindOfClass:NSString.class] && [page[@"nextPageToken"] length] > 0 ? page[@"nextPageToken"] : nil;
+		if (pageToken != nil && [seenTokens containsObject:pageToken]) {
+			break;
+		}
+		if (pageToken != nil) {
+			[seenTokens addObject:pageToken];
+		}
 	} while (pageToken != nil);
 	return limits;
 }

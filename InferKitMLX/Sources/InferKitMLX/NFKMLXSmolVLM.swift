@@ -351,7 +351,7 @@ public final class NFKMLXSmolVLMNet {
     /// token at a time until `maxTokens`, the room the decoder's positions leave after the prompt, or an end
     /// token. A prompt that fills the positions decodes nothing.
     func generate(inputIds: [Int], pixelValues: MLXArray, maxTokens: Int, endTokens: Set<Int>) -> [Int] {
-        let room = decoder.configuration.maximumPositions.map { max($0 - inputIds.count, 0) } ?? maxTokens
+        let room = decoder.configuration.contextLength.map { max($0 - inputIds.count, 0) } ?? maxTokens
         guard min(maxTokens, room) > 0 else { return [] }
         let cache = NFKMLXKeyValueCache(layerCount: decoder.configuration.layerCount)
         let embeddings = fusedEmbeddings(inputIds: inputIds,

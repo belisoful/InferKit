@@ -405,6 +405,17 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         XCTAssertThrowsError(try full.runInference(for: request))
     }
 
+    /// A release that stretches its window with YaRN bounds a run by the stretched window, so Qwen3 at four
+    /// times its 32,768 positions takes a prompt past its stated 40,960.
+    func testAStretchedWindowBoundsTheRunByItsStretchedLength() throws {
+        var configuration = NFKMLXLanguageConfiguration.tiny
+        configuration.maximumPositions = 40_960
+        XCTAssertEqual(configuration.contextLength, 40_960)
+        configuration.ropeScaling = try NFKMLXRoPEScaling.read(
+            ["rope_type": "yarn", "factor": 4, "original_max_position_embeddings": 32_768], maximumPositions: 40_960)
+        XCTAssertEqual(configuration.contextLength, 131_072)
+    }
+
     /// A request without tools ends on an id the release's `generation_config.json` lists, as the
     /// reference's generate does.
     func testAPlainRequestStopsWhereTheGenerationConfigSays() throws {

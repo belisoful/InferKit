@@ -721,7 +721,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         }
         var (options, tokens, toolCallFormat) = try preparedPrompt(for: request, tokenizer: tokenizer)
         options.maxTokens = try NFKMLXContextRoom.bounded(options.maxTokens, promptTokens: tokens.count,
-                                                          contextLength: holder.net.configuration.maximumPositions,
+                                                          contextLength: holder.net.configuration.contextLength,
                                                           source: identifier)
         let (produced, cached) = try generate(tokens, options: options, conversation: Self.conversation(of: request),
                                               holder: holder)

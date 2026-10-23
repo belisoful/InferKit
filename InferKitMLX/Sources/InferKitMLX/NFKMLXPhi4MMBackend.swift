@@ -204,7 +204,7 @@ public final class NFKMLXPhi4MMModel: @unchecked Sendable {
         let prepared = try prepare(messages: messages, images: images, audios: audios)
         var bounded = options
         bounded.maxTokens = try NFKMLXContextRoom.bounded(options.maxTokens, promptTokens: prepared.ids.count,
-                                                          contextLength: decoder.configuration.maximumPositions,
+                                                          contextLength: decoder.configuration.contextLength,
                                                           source: NFKMLXPhi4MM.modelName)
         let ids = NFKMLXPhi4MM.generateFused(decoder: decoder, inputIds: prepared.ids, features: prepared.features,
                                              options: bounded, endTokens: NFKMLXPhi4MM.stopTokens, onToken: onToken)

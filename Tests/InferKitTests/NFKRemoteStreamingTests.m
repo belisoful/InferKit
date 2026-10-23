@@ -55,6 +55,10 @@
 @property (nonatomic, strong) NSURLRequest *lastRequest;
 /*! The Models API entry a lookup finds, or nil for a 404. */
 @property (nonatomic, copy, nullable) NSString *modelEntry;
+/*! The lookup's status where set, else 200 with a modelEntry and 404 without. */
+@property (nonatomic, assign) NSInteger lookupStatus;
+/*! Holds each lookup until signalled, where set. */
+@property (nonatomic, strong, nullable) dispatch_semaphore_t lookupGate;
 @property (nonatomic, strong) NSMutableArray<NSURLRequest *> *lookups;
 @property (nonatomic, copy) NSArray<NSString *> *stagedLines;
 @property (nonatomic, assign) BOOL holdOpen;
@@ -65,13 +69,18 @@
 // The Models API lookup a run makes first: modelEntry where set, else a 404, so the run sends the fallback.
 - (NSData *)sendRequest:(NSURLRequest *)request response:(NSHTTPURLResponse **)outResponse error:(NSError **)outError
 {
-	if (self.lookups == nil) {
-		self.lookups = [NSMutableArray array];
+	if (self.lookupGate != nil) {
+		dispatch_semaphore_wait(self.lookupGate, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(10 * NSEC_PER_SEC)));
 	}
-	[self.lookups addObject:request];
+	@synchronized (self) {
+		if (self.lookups == nil) {
+			self.lookups = [NSMutableArray array];
+		}
+		[self.lookups addObject:request];
+	}
+	NSInteger status = self.lookupStatus ?: (self.modelEntry != nil ? 200 : 404);
 	if (outResponse != NULL) {
-		*outResponse = [[NSHTTPURLResponse alloc] initWithURL:request.URL statusCode:self.modelEntry != nil ? 200 : 404
-												  HTTPVersion:@"HTTP/1.1" headerFields:nil];
+		*outResponse = [[NSHTTPURLResponse alloc] initWithURL:request.URL statusCode:status HTTPVersion:@"HTTP/1.1" headerFields:nil];
 	}
 	return [self.modelEntry ?: @"{}" dataUsingEncoding:NSUTF8StringEncoding];
 }
@@ -104,9 +113,27 @@
 	self.backend = [[NFKStreamStubRemoteBackend alloc] init];
 	self.backend.endpointURL = [NSURL URLWithString:@"http://localhost:11434/v1/chat/completions"];
 	self.backend.modelName = @"qwen3.5:27b";
-	self.anthropic = [[NFKStreamStubAnthropicBackend alloc] init];
-	self.anthropic.modelName = @"claude-sonnet-4-5";
-	self.anthropic.apiKey = @"k";
+	self.anthropic = [self anthropicBackend];
+	self.anthropic.maxTokens = 1024;		// the Models API lookup has tests of its own
+}
+
+/*! An Anthropic stub that asks the Models API for the model's maximum, as a backend with a key does. */
+- (NFKStreamStubAnthropicBackend *)anthropicBackend
+{
+	NFKStreamStubAnthropicBackend *backend = [[NFKStreamStubAnthropicBackend alloc] init];
+	backend.modelName = @"claude-sonnet-4-5";
+	backend.apiKey = @"k";
+	backend.stagedLines = @[ @"data: {\"type\":\"message_stop\"}" ];
+	return backend;
+}
+
+/*! The job's result once it ends, waiting up to 10 seconds. */
+- (nullable NFKInferenceResult *)finished:(NFKInferenceJob *)job
+{
+	XCTestExpectation *ended = [self expectationWithDescription:@"the job ends"];
+	job.completionHandler = ^(NFKInferenceJob *done) { [ended fulfill]; };
+	[self waitForExpectations:@[ ended ] timeout:10];
+	return job.result;
 }
 
 - (NSDictionary *)bodyOf:(NSURLRequest *)request
@@ -304,45 +331,80 @@
 	XCTAssertEqual(failed.error.code, kNFKError_InferenceRateLimited, @"an overload says back off");
 }
 
-/*! A run that sets no limit sends the model's maximum, which the Models API states, once per model, and a
-	synchronous run sending it reads the reply as a stream. */
+/*! A synchronous run that sets no limit sends the model's maximum, which the Models API states, and reads it
+	as a stream; the answer is remembered. */
 - (void)testAnAnthropicRunWithoutALimitSendsTheModelsMaximumReadAsAStream
 {
-	self.anthropic.modelEntry = @"{\"type\":\"model\",\"id\":\"claude-sonnet-4-5\",\"max_tokens\":64000}";
-	self.anthropic.stagedLines = @[
+	NFKStreamStubAnthropicBackend *backend = [self anthropicBackend];
+	backend.modelEntry = @"{\"type\":\"model\",\"id\":\"claude-sonnet-4-5\",\"max_tokens\":64000}";
+	backend.stagedLines = @[
 		@"data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}",
 		@"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"a long answer\"}}",
 		@"data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\"}}",
 		@"data: {\"type\":\"message_stop\"}",
 	];
 	NSError *error = nil;
-	NFKInferenceResult *result = [self.anthropic runInferenceForRequest:[self prompt:@"hi"] error:&error];
+	NFKInferenceResult *result = [backend runInferenceForRequest:[self prompt:@"hi"] error:&error];
 	XCTAssertEqualObjects(result.text, @"a long answer", @"%@", error);
 	XCTAssertEqualObjects([result outputForKey:NFKOutputFinishReason], NFKFinishReasonStop);
-	NSDictionary *body = [self bodyOf:self.anthropic.lastRequest];
+	NSDictionary *body = [self bodyOf:backend.lastRequest];
 	XCTAssertEqualObjects(body[@"max_tokens"], @64000);
 	XCTAssertEqualObjects(body[@"stream"], @YES, @"a synchronous run sending the model's maximum streams");
-	NSURLRequest *lookup = self.anthropic.lookups.firstObject;
+	XCTAssertNil([backend.lastRequest valueForHTTPHeaderField:@"anthropic-beta"], @"Claude 4.5 ends at the window unasked");
+	NSURLRequest *lookup = backend.lookups.firstObject;
 	XCTAssertEqualObjects(lookup.URL.absoluteString, @"https://api.anthropic.com/v1/models/claude-sonnet-4-5");
 	XCTAssertEqualObjects([lookup valueForHTTPHeaderField:@"x-api-key"], @"k");
 
-	[self.anthropic submitInferenceJobForRequest:[self prompt:@"again"]];
-	XCTAssertEqual(self.anthropic.lookups.count, 1u, @"the model's maximum is asked once");
+	[backend submitInferenceJobForRequest:[self prompt:@"again"]];
+	XCTAssertEqual(backend.lookups.count, 1u, @"a 200 answer is remembered");
+	XCTAssertEqualObjects([self bodyOf:backend.lastRequest][@"max_tokens"], @64000);
 }
 
-/*! A limit the backend or the request sets is sent without a lookup, and a model the Models API does not
-	know sends 1024. */
+/*! A submitted job asks the Models API off the caller's thread: the submit returns while the lookup waits. */
+- (void)testASubmittedAnthropicJobAsksTheModelsAPIOffTheCallersThread
+{
+	NFKStreamStubAnthropicBackend *backend = [self anthropicBackend];
+	backend.modelEntry = @"{\"type\":\"model\",\"id\":\"claude-sonnet-4-5\",\"max_tokens\":64000}";
+	backend.lookupGate = dispatch_semaphore_create(0);
+	NFKInferenceJob *job = [backend submitInferenceJobForRequest:[self prompt:@"hi"]];
+	XCTAssertEqual(job.status, NFKInferenceJobStatusRunning);
+	XCTAssertNil(backend.lastRequest, @"the stream waits for the lookup");
+	dispatch_semaphore_signal(backend.lookupGate);
+	[self finished:job];
+	XCTAssertEqualObjects([self bodyOf:backend.lastRequest][@"max_tokens"], @64000);
+}
+
+/*! Only a 200 answer is remembered: a lookup that failed sends 1024 and is asked again by the next run. */
+- (void)testOnlyAnAnsweredLookupIsRemembered
+{
+	NFKStreamStubAnthropicBackend *backend = [self anthropicBackend];
+	backend.lookupStatus = 503;
+	[self finished:[backend submitInferenceJobForRequest:[self prompt:@"hi"]]];
+	XCTAssertEqualObjects([self bodyOf:backend.lastRequest][@"max_tokens"], @1024);
+
+	backend.lookupStatus = 0;
+	backend.modelEntry = @"{\"type\":\"model\",\"id\":\"claude-sonnet-4-5\",\"max_tokens\":64000}";
+	[self finished:[backend submitInferenceJobForRequest:[self prompt:@"hi"]]];
+	XCTAssertEqualObjects([self bodyOf:backend.lastRequest][@"max_tokens"], @64000);
+	XCTAssertEqual(backend.lookups.count, 2u);
+}
+
+/*! A model released before Claude 4.5 sent its maximum is sent the beta that ends the reply at the context
+	window in place of refusing a prompt that leaves less room. */
+- (void)testAnEarlierModelSentItsMaximumEndsAtTheWindow
+{
+	NFKStreamStubAnthropicBackend *backend = [self anthropicBackend];
+	backend.modelName = @"claude-3-7-sonnet-20250219";
+	backend.modelEntry = @"{\"type\":\"model\",\"id\":\"claude-3-7-sonnet-20250219\",\"max_tokens\":64000}";
+	XCTAssertNotNil([backend runInferenceForRequest:[self prompt:@"hi"] error:NULL]);
+	XCTAssertEqualObjects([backend.lastRequest valueForHTTPHeaderField:@"anthropic-beta"], @"model-context-window-exceeded-2025-08-26");
+}
+
+/*! A limit the backend or the request sets is sent without a lookup. */
 - (void)testAnAnthropicLimitTheCallerSetsNeedsNoLookup
 {
-	self.anthropic.stagedLines = @[ @"data: {\"type\":\"message_stop\"}" ];
-	[self.anthropic submitInferenceJobForRequest:[self prompt:@"hi"]];
-	XCTAssertEqualObjects([self bodyOf:self.anthropic.lastRequest][@"max_tokens"], @1024, @"the endpoint stated none");
-
-	NFKStreamStubAnthropicBackend *set = [[NFKStreamStubAnthropicBackend alloc] init];
-	set.modelName = @"claude-sonnet-4-5";
-	set.apiKey = @"k";
+	NFKStreamStubAnthropicBackend *set = [self anthropicBackend];
 	set.maxTokens = 2048;
-	set.stagedLines = self.anthropic.stagedLines;
 	[set submitInferenceJobForRequest:[self prompt:@"hi"]];
 	XCTAssertEqualObjects([self bodyOf:set.lastRequest][@"max_tokens"], @2048);
 	NFKInferenceRequest *limited = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }

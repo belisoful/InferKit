@@ -335,7 +335,8 @@ extern NSString * const NFKOutputReasoning;
 extern NSString * const NFKOutputUsage;
 
 /*! Why a text run stopped, one of the NFKFinishReason values, where the backend knows (NSString). A
-	remote backend reads it from its provider's own stop value. Introduced in InferKit 0.4.0. */
+	remote backend reads it from its provider's own stop value; a value none of these names, such as
+	Anthropic's pause_turn or Gemini's OTHER, leaves the output absent. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKOutputFinishReason;
 /*! "stop": the model ended its turn. */
 extern NSString * const NFKFinishReasonStop;

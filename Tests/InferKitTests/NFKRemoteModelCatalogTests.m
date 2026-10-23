@@ -230,6 +230,19 @@
 	XCTAssertTrue([catalog.requests[2].URL.query containsString:@"pageToken=next"]);
 }
 
+/*! One Gemini model reads its own native entry, not the whole native list. */
+- (void)testOneGeminiModelReadsItsOwnNativeEntry
+{
+	NFKStubModelCatalog *catalog = [self catalogFor:NFKRemoteProvider.googleGemini pages:@[
+		@"{\"id\":\"gemini-3.8-flash\",\"object\":\"model\"}",
+		@"{\"name\":\"models/gemini-3.8-flash\",\"inputTokenLimit\":1048576,\"outputTokenLimit\":65536}" ]];
+	NSError *error = nil;
+	NFKRemoteModel *model = [catalog modelWithIdentifier:@"gemini-3.8-flash" error:&error];
+	XCTAssertEqualObjects(model.maximumOutputTokens, @65536, @"%@", error);
+	XCTAssertEqualObjects(catalog.requests[1].URL.absoluteString,
+						  @"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash");
+}
+
 - (void)testAnotherProvidersListMakesNoNativeRequest
 {
 	NFKStubModelCatalog *catalog = [self catalogFor:NFKRemoteProvider.openAI pages:@[ @"{\"data\":[{\"id\":\"gpt\"}]}" ]];
