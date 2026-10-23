@@ -283,11 +283,13 @@ final class NFKMLXHalfPrecisionArithmeticTimingTests: XCTestCase {
     // Wan 2.2 Animate 14B's transformer at its released width (40 heads of 128), bfloat16, cut from 40
     // layers to 6; at 480x832, the extract pass over one reference latent frame (1,560 tokens), then a
     // generation pass over a two-latent-frame chunk (3,120 tokens), each over 512 text tokens and 257 CLIP
-    // image tokens. The generation pass's self-attention is its own masked softmax; only its
-    // cross-attentions reach the flash kernel.
+    // image tokens, under the standing limits. The generation pass's self-attention is its own masked
+    // softmax; only its cross-attentions reach the flash kernel. Under MLX's default limits the generation
+    // pass's single rounds ran up to 2.3 times the others' time as the machine swapped.
     func testWanAnimateForwardTimeInEachArithmetic() throws {
         try requireMLXRuntime()
         try requireOptIn()
+        applyStandingLimits()
         MLXRandom.seed(0)
         var configuration = NFKMLXWanAnimateConfiguration.base
         configuration.layers = 6

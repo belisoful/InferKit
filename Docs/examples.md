@@ -3122,8 +3122,8 @@ alternating.
 | Qwen-Image 2.1 transformer | 12 of 32 layers, 1024×1024 | 5,264 ms | 5,058 ms | 1.04 |
 | Z-Image transformer | 10 of 30 layers and both refiners, 1024×1024 | 4,835 ms | 4,983 ms | 0.97 |
 | Wan 2.1 T2V 1.3B transformer | released, 480×832, 17 frames | 11,733 ms | 9,926 ms | 1.18 |
-| Wan 2.2 Animate 14B, extract pass | 6 of 40 layers, 480×832, one reference frame | 1,212 ms | 1,146 ms | 1.06 |
-| Wan 2.2 Animate 14B, generation pass | 6 of 40 layers, 480×832, a two-latent-frame chunk; single rounds ran up to 4 times the others' time under background load, so the ratio is not resolved | — | — | — |
+| Wan 2.2 Animate 14B, extract pass | 6 of 40 layers, 480×832, one reference frame, under `NFKMLXGPU.applyStandingLimits()`; under MLX's default limits it measured 1.04 to 1.08 | 1,509 ms | 1,165 ms | 1.29 |
+| Wan 2.2 Animate 14B, generation pass | 6 of 40 layers, 480×832, a two-latent-frame chunk, under `NFKMLXGPU.applyStandingLimits()`; under MLX's default limits single rounds ran up to 2.3 times the others' time as the machine swapped, so the ratio was not resolved there | 3,270 ms | 2,745 ms | 1.19 |
 | LTX-2.3 transformer | 5 of 48 layers, 512×768, 49 frames | 4,020 ms | 3,907 ms | 1.03 |
 | SD 1.5 autoencoder decode | released, float16, 512×512 | 488 ms | 473 ms | 1.03 |
 | FLUX autoencoder decode | released, bfloat16, 1024×1024, under `NFKMLXGPU.applyStandingLimits()` | 4,034 ms | 3,282 ms | 1.22 |
