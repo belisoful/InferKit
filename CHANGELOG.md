@@ -1523,12 +1523,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKMLXGenerationOptions.topK` keeps the most probable tokens, with their ties, before the nucleus filter, as
   transformers' top-k does. Every MLX backend that samples through the shared sampler reads it, and
   `NFKMLXLanguageBackend` takes it from `NFKParameterTopK`.
-- A release whose `generation_config.json` sets `do_sample` starts each request from its temperature, top-p, and
-  top-k, a value it leaves out taking transformers' default (1, 1, 50), for each of the three the options a backend
-  is built with leave unset. A value set on those options is kept, so a Swift caller that builds with
-  `temperature = 0` decodes greedily, and `NFKMLXGenerationOptions.usesReleaseSampling = false` keeps all three as
-  the options have them. A request's own values override either. A release without `do_sample` decodes greedily
-  as before.
+- A release whose `generation_config.json` sets `do_sample` supplies the temperature, top-p, and top-k that
+  neither the request nor the options a backend is built with set, a value the file leaves out taking
+  transformers' default (1, 1, 50). A release without `do_sample` decodes greedily as before.
+  `NFKMLXGenerationOptions` states the whole order: request parameter, then build option (set counts even at
+  the default), then the release, then the library default; `usesReleaseSampling = false` skips the release.
 - The catalog's language releases declare the same defaults, with a Top K option: Qwen3 at 0.6, 0.95, and 20;
   gpt-oss at 1, 1, and 50; Mistral Small 3 at 0.15, 1, and 50. Mixtral and Qwen1.5-MoE stay greedy.
 - The Qwen3.5 and Qwen4, Granite, Nemotron, Mamba, Gemma 3, 3n, and 4 (text and multimodal), and DeepSeek backends

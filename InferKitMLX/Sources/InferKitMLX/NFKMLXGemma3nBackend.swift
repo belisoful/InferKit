@@ -131,7 +131,7 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
 
     /// The positions the release states, which bound a prompt and its reply, or nil where unknown.
     private let contextLength: Int?
-    /// The sampling the release's generation config sets, which a request's own values override.
+    /// The sampling the release's generation config sets: step 3 of ``NFKMLXGenerationOptions``' sampling order.
     private let releaseSampling: NFKMLXReleaseSampling?
 
     init(model: NFKMLXGemma3n, identifier: String, contextLength: Int? = nil, releaseSampling: NFKMLXReleaseSampling? = nil) {

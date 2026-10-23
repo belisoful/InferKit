@@ -46,7 +46,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     private let stopTokens: Set<Int>
     private let describedModules: [Module]
     private let releaseDirectoryURL: URL?
-    /// The sampling the release's generation config sets, which a request's own values override.
+    /// The sampling the release's generation config sets: step 3 of ``NFKMLXGenerationOptions``' sampling order.
     private let releaseSampling: NFKMLXReleaseSampling?
     private let modelInfoCache = NFKMLXModelInfoCache()
 

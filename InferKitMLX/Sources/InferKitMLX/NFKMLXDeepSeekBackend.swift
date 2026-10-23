@@ -183,7 +183,7 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
     /// The release's own draft stack, where it carries one.
     private let draft: NFKMLXDeepSeekDraftStack?
     private let releaseDirectoryURL: URL?
-    /// The sampling the release's generation config sets, which a request's own values override.
+    /// The sampling the release's generation config sets: step 3 of ``NFKMLXGenerationOptions``' sampling order.
     private let releaseSampling: NFKMLXReleaseSampling?
 
     init(net: NFKMLXDeepSeekNet, tokenizer: NFKTokenizer, identifier: String,

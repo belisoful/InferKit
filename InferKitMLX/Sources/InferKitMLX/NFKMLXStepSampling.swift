@@ -15,7 +15,8 @@ struct NFKMLXStepSampling {
     var topP: Float = 1
     var topK = 0
 
-    /// The sampling a release's generation config sets, or greedy decoding without one.
+    /// The sampling a release's generation config sets, or greedy decoding without one: steps 3 and 4 of the
+    /// sampling order ``NFKMLXGenerationOptions`` states, which ``read(_:)`` completes with step 1.
     init(release: NFKMLXReleaseSampling?) {
         if let release {
             temperature = release.temperature

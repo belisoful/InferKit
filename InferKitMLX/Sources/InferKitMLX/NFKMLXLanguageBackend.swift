@@ -89,7 +89,8 @@ public enum NFKMLXChatTemplate: Sendable {
 
 /// The sampling a release's `generation_config.json` sets, read as transformers' `GenerationConfig` reads
 /// it: a file without `do_sample` decodes greedily, and a value a sampling file leaves out takes
-/// transformers' default (temperature 1, top-p 1, top-k 50).
+/// transformers' default (temperature 1, top-p 1, top-k 50). These values are step 3 of the sampling order
+/// ``NFKMLXGenerationOptions`` states.
 struct NFKMLXReleaseSampling: Equatable, Sendable {
     var temperature: Float
     var topP: Float
@@ -119,6 +120,19 @@ struct NFKMLXReleaseSampling: Equatable, Sendable {
 }
 
 /// How a generation run samples and how its prompt is prepared.
+///
+/// @discussion A run's temperature, top-p, and top-k each come from the first of these sources that sets
+/// the value:
+///
+/// 1. The request's `NFKParameterTemperature`, `NFKParameterTopP`, or `NFKParameterTopK` → that value.
+/// 2. A value set on the options the backend is built with → that value. A set value counts even when it
+///    equals the default, so a backend built with `temperature = 0` decodes greedily.
+/// 3. The release's `generation_config.json`, where it sets `do_sample` → its value, or transformers'
+///    default where the file leaves it out (temperature 1, top-p 1, top-k 50).
+/// 4. Otherwise → the library default: temperature 0, top-p 1, top-k 0.
+///
+/// ``usesReleaseSampling`` set to false skips step 3. A backend that takes no build options skips step 2.
+/// Objective-C cannot build these options, so an Objective-C caller sets sampling through step 1.
 public struct NFKMLXGenerationOptions: Sendable {
     /// The most tokens to produce, not counting the prompt.
     public var maxTokens: Int = 256
@@ -140,14 +154,13 @@ public struct NFKMLXGenerationOptions: Sendable {
         get { chosenTopK ?? 0 }
         set { chosenTopK = newValue }
     }
-    /// The sampling values a caller set, which a release's generation config leaves as they are.
+    /// The sampling values a caller set: step 2 of the sampling order.
     private var chosenTemperature: Float?
     private var chosenTopP: Float?
     private var chosenTopK: Int?
-    /// Whether a backend over a release whose `generation_config.json` samples starts each request from
-    /// that file's temperature, top-p, and top-k, as the reference's `generate` does, for each of the three
-    /// this struct leaves unset. A value set on this struct is kept, and a request's own values override
-    /// either. Defaults to true. Introduced in InferKit 0.4.0.
+    /// Whether a release's `generation_config.json` supplies the temperature, top-p, and top-k these
+    /// options leave unset, as the reference's `generate` does: step 3 of the sampling order. Defaults to
+    /// true. Introduced in InferKit 0.4.0.
     public var usesReleaseSampling = true
 
     /// The options with `release`'s temperature, top-p, and top-k in each of the three this struct leaves

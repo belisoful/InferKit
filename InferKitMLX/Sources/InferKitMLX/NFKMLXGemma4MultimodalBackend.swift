@@ -24,7 +24,7 @@ final class NFKGemma4MultimodalModel: @unchecked Sendable {
     let chatTemplate: String?
     /// The positions the release's text configuration states, which bound a prompt and its reply.
     let contextLength: Int?
-    /// The sampling the release's generation config sets, which a request's own values override.
+    /// The sampling the release's generation config sets: step 3 of ``NFKMLXGenerationOptions``' sampling order.
     let releaseSampling: NFKMLXReleaseSampling?
 
     init(decoder: NFKMLXGemmaNet, vision: (tower: NFKMLXGemma4VisionNet, embedder: NFKMLXGemma4MultimodalEmbedder)?,
