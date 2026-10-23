@@ -359,6 +359,24 @@
 	XCTAssertEqualObjects(reply[@"stop_reason"], @"max_tokens");
 }
 
+/*! A backend's own stop reason decides the route's, so a run cut short of the request's limit still reads
+	as max_tokens, and a stop sequence as stop_sequence. */
+- (void)testTheBackendsFinishReasonIsTheStopReason
+{
+	NFKAnthropicRouteBackend *backend = [[NFKAnthropicRouteBackend alloc] init];
+	__block NSString *reason = NFKFinishReasonLength;
+	backend.reply = ^NFKInferenceResult *(NFKInferenceRequest *request, NSError **error) {
+		return [NFKInferenceResult resultWithOutputs:@{ NFKOutputText: @"Once upon", NFKOutputFinishReason: reason,
+														NFKOutputUsage: @{ NFKUsageInputTokens: @5, NFKUsageOutputTokens: @2 } }];
+	};
+	NFKInferenceServer *server = [self startedServerHosting:@{ @"served": backend }];
+	NSDictionary *body = @{ @"model": @"served", @"max_tokens": @64, @"messages": @[ @{ @"role": @"user", @"content": @"A story." } ] };
+	NSInteger status = 0;
+	XCTAssertEqualObjects([self postMessages:body server:server status:&status][@"stop_reason"], @"max_tokens");
+	reason = NFKFinishReasonStopSequence;
+	XCTAssertEqualObjects([self postMessages:body server:server status:&status][@"stop_reason"], @"stop_sequence");
+}
+
 - (void)testAForcedToolIsStructuredOutput
 {
 	NFKAnthropicRouteBackend *backend = [[NFKAnthropicRouteBackend alloc] init];

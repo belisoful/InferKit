@@ -318,6 +318,7 @@
 	NSError *error = nil;
 	NFKInferenceResult *result = [self.anthropic runInferenceForRequest:[self prompt:@"hi"] error:&error];
 	XCTAssertEqualObjects(result.text, @"a long answer", @"%@", error);
+	XCTAssertEqualObjects([result outputForKey:NFKOutputFinishReason], NFKFinishReasonStop);
 	NSDictionary *body = [self bodyOf:self.anthropic.lastRequest];
 	XCTAssertEqualObjects(body[@"max_tokens"], @64000);
 	XCTAssertEqualObjects(body[@"stream"], @YES, @"a synchronous run sending the model's maximum streams");

@@ -14886,6 +14886,13 @@
           "required" : false,
           "title" : "Parsed reply",
           "valueType" : "structured"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -23243,6 +23250,13 @@
           "required" : false,
           "title" : "Parsed reply",
           "valueType" : "structured"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -24035,6 +24049,13 @@
           "required" : false,
           "title" : "Parsed reply",
           "valueType" : "structured"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -29991,6 +30012,13 @@
           "required" : false,
           "title" : "Parsed reply",
           "valueType" : "structured"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -30783,6 +30811,13 @@
           "required" : false,
           "title" : "Parsed reply",
           "valueType" : "structured"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -31665,6 +31700,13 @@
           "required" : false,
           "title" : "Parsed reply",
           "valueType" : "structured"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -32562,6 +32604,13 @@
           "required" : false,
           "title" : "Parsed reply",
           "valueType" : "structured"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -33356,6 +33405,13 @@
           "required" : false,
           "title" : "Parsed reply",
           "valueType" : "structured"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -34260,6 +34316,13 @@
           "required" : false,
           "title" : "Parsed reply",
           "valueType" : "structured"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -35149,6 +35212,13 @@
           "required" : false,
           "title" : "Parsed reply",
           "valueType" : "structured"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -51880,6 +51950,13 @@
           "required" : false,
           "title" : "Parsed reply",
           "valueType" : "structured"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "registryName" : "smollm2-135m-instruct-gguf",

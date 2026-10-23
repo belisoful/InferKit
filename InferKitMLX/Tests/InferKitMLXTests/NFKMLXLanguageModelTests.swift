@@ -409,6 +409,28 @@ final class NFKMLXLanguageModelTests: XCTestCase {
                        "stop tokens the caller chose replace the release's")
     }
 
+    /// A run that reaches its token limit reports length, and one that ends on a stop token reports stop.
+    func testARunReportsWhyItStopped() throws {
+        try requireMLXRuntime()
+        let directory = try releaseDirectory()
+        let tokenizer = try NFKTokenizer(forManifest: ["tokenizer": ["type": "bpe-bytelevel"]], directory: directory)
+        let net = tinyNet()
+        var options = NFKMLXGenerationOptions()
+        options.temperature = 0
+        options.maxTokens = 4
+        let first = try XCTUnwrap(net.generate(prompt: tokenizer.encode("hello").map(\.intValue), options: options).first)
+        let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "hello"],
+                                          parameters: [NFKParameterTemperature: 0, NFKParameterMaxTokens: 4])
+        let limited = NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: "tiny")
+        XCTAssertEqual(try limited.runInference(for: request).output(forKey: NFKOutputFinishReason) as? String,
+                       NFKFinishReasonLength)
+        var stopping = NFKMLXGenerationOptions()
+        stopping.stopTokens = [first]
+        let stopped = NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: "tiny", options: stopping)
+        XCTAssertEqual(try stopped.runInference(for: request).output(forKey: NFKOutputFinishReason) as? String,
+                       NFKFinishReasonStop)
+    }
+
     /// A reply decodes without the tokens the release marks special, as the reference decodes with
     /// `skip_special_tokens`, except those a reasoning or tool-call marker holds. Text that ordinary
     /// tokens spell stays.

@@ -375,7 +375,10 @@ static NSString *NFKServedExtensionForMediaType(NSString * _Nullable mediaType, 
 		message[@"annotations"] = annotations;
 	}
 	if (outFinishReason != NULL) {
-		*outFinishReason = toolCalls.count > 0 ? @"tool_calls" : @"stop";
+		// The core's values are OpenAI's own, a stop sequence aside, which OpenAI reports as stop.
+		NSString *reported = [result outputForKey:NFKOutputFinishReason];
+		BOOL cut = [reported isEqual:NFKFinishReasonLength] || [reported isEqual:NFKFinishReasonContentFilter];
+		*outFinishReason = toolCalls.count > 0 ? @"tool_calls" : (cut ? reported : @"stop");
 	}
 	return message;
 }

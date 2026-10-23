@@ -103,7 +103,7 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 {
 	return [NSSet setWithArray:@[ NFKOutputText, NFKOutputStructured, NFKOutputReasoning, NFKOutputToolCalls,
 								  NFKOutputAssistantMessage, NFKOutputCitations, NFKOutputServerToolResults,
-								  NFKOutputImage, NFKOutputImages, NFKOutputResponseIdentifier, NFKOutputUsage,
+								  NFKOutputImage, NFKOutputImages, NFKOutputResponseIdentifier, NFKOutputUsage, NFKOutputFinishReason,
 								  NFKRemoteBackendRawKey ]];
 }
 
@@ -611,7 +611,10 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 			outputs[NFKOutputUsage] = counts;
 		}
 	}
-	return [NFKInferenceResult resultWithOutputs:outputs];
+	// An incomplete reply says why under incomplete_details: max_output_tokens or content_filter.
+	NSDictionary *incomplete = [reply[@"incomplete_details"] isKindOfClass:NSDictionary.class] ? reply[@"incomplete_details"] : nil;
+	id finish = [reply[@"status"] isEqual:@"incomplete"] ? incomplete[@"reason"] : reply[@"status"];
+	return NFKResultWithFinishReason([NFKInferenceResult resultWithOutputs:outputs], finish);
 }
 
 - (void)addCitationsOfPart:(NSDictionary *)part to:(NSMutableArray<NSDictionary *> *)citations

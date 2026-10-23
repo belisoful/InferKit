@@ -181,7 +181,7 @@ static const NSUInteger NFKGenerateContentHopLimit = 64;
 {
 	return [NSSet setWithArray:@[ NFKOutputText, NFKOutputStructured, NFKOutputReasoning, NFKOutputImage,
 								  NFKOutputImages, NFKOutputToolCalls, NFKOutputServerToolResults,
-								  NFKOutputCitations, NFKOutputUsage, NFKOutputAssistantMessage,
+								  NFKOutputCitations, NFKOutputUsage, NFKOutputFinishReason, NFKOutputAssistantMessage,
 								  NFKRemoteBackendRawKey ]];
 }
 
@@ -721,7 +721,7 @@ static const NSUInteger NFKGenerateContentHopLimit = 64;
 	}
 	outputs[NFKOutputAssistantMessage] = NFKAssistantMessage(text, toolCalls, NFKProviderTurnFormatGeminiGenerateContent,
 															 self.endpointURL.absoluteString, parts);
-	return [NFKInferenceResult resultWithOutputs:outputs];
+	return NFKResultWithFinishReason([NFKInferenceResult resultWithOutputs:outputs], finishReason);
 }
 
 - (NSString *)textOfParts:(NSArray *)parts

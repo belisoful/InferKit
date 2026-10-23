@@ -72,6 +72,18 @@
 	self.backend.pollInterval = 0;
 }
 
+- (void)testTheFinishReasonComesFromTheStatus
+{
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello" }];
+	self.backend.stagedBodies = [@[ @"{\"id\":\"r\",\"status\":\"completed\",\"output\":[]}" ] mutableCopy];
+	XCTAssertEqualObjects([[self.backend runInferenceForRequest:request error:NULL] outputForKey:NFKOutputFinishReason], NFKFinishReasonStop);
+	self.backend.stagedBodies = [@[ @"{\"id\":\"r\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"output\":[]}" ] mutableCopy];
+	XCTAssertEqualObjects([[self.backend runInferenceForRequest:request error:NULL] outputForKey:NFKOutputFinishReason], NFKFinishReasonLength);
+	self.backend.stagedBodies = [@[ (@"{\"id\":\"r\",\"status\":\"completed\",\"output\":[{\"type\":\"function_call\",\"call_id\":\"c\","
+									 "\"name\":\"get_weather\",\"arguments\":\"{}\"}]}") ] mutableCopy];
+	XCTAssertEqualObjects([[self.backend runInferenceForRequest:request error:NULL] outputForKey:NFKOutputFinishReason], NFKFinishReasonToolCalls);
+}
+
 - (void)testTheFactoryReachesTheServicesThatServeResponses
 {
 	XCTAssertEqualObjects([NFKRemoteResponsesBackend backendForProvider:NFKRemoteProvider.xAI apiKey:@"k" modelName:@"m"].endpointURL.absoluteString,

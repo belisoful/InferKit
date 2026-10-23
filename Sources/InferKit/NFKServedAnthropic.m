@@ -541,6 +541,13 @@ static NSError * _Nullable NFKServedAnthropicBlockTypeError(id block, NSString *
 	if (callsTools) {
 		return @"tool_use";
 	}
+	NSString *reported = [result outputForKey:NFKOutputFinishReason];
+	NSDictionary<NSString *, NSString *> *stopReasons = @{ NFKFinishReasonStop: @"end_turn", NFKFinishReasonLength: @"max_tokens",
+															NFKFinishReasonStopSequence: @"stop_sequence",
+															NFKFinishReasonContentFilter: @"refusal" };
+	if ([reported isKindOfClass:NSString.class] && stopReasons[reported] != nil) {
+		return stopReasons[reported];
+	}
 	NSNumber *limit = [request parameterForKey:NFKParameterMaxTokens];
 	NSDictionary *usage = [result outputForKey:NFKOutputUsage];
 	NSNumber *produced = [usage isKindOfClass:NSDictionary.class] ? usage[NFKUsageOutputTokens] : nil;

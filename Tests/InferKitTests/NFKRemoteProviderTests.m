@@ -431,6 +431,22 @@ static const uint16_t NFKDeadPort = 9;
 	XCTAssertGreaterThan([headers[@"anthropic-version"] length], 0, @"the version header is required");
 }
 
+/*! The stop reason becomes the finish reason, and the forced tool that carries a structured reply is not a
+	tool call. */
+- (void)testAnthropicsStopReasonIsTheFinishReason
+{
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }];
+	self.anthropic.stagedData = [@"{\"content\":[{\"type\":\"text\",\"text\":\"Once\"}],\"stop_reason\":\"max_tokens\"}" dataUsingEncoding:NSUTF8StringEncoding];
+	XCTAssertEqualObjects([[self.anthropic runInferenceForRequest:request error:NULL] outputForKey:NFKOutputFinishReason], NFKFinishReasonLength);
+	self.anthropic.stagedData = [(@"{\"content\":[{\"type\":\"tool_use\",\"id\":\"t\",\"name\":\"structured_output\",\"input\":{\"a\":1}}],"
+								  "\"stop_reason\":\"tool_use\"}") dataUsingEncoding:NSUTF8StringEncoding];
+	NFKInferenceRequest *structured = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }
+																  parameters:@{ NFKParameterJSONSchema: @{ @"type": @"object" } }];
+	NFKInferenceResult *result = [self.anthropic runInferenceForRequest:structured error:NULL];
+	XCTAssertEqualObjects(result.structured, @{ @"a": @1 });
+	XCTAssertEqualObjects([result outputForKey:NFKOutputFinishReason], NFKFinishReasonStop);
+}
+
 - (void)testMaxTokensIsAlwaysSentBecauseTheAPIRequiresIt
 {
 	self.anthropic.stagedData = [@"{\"content\":[]}" dataUsingEncoding:NSUTF8StringEncoding];

@@ -38,6 +38,16 @@ default) sends the model's Models API `max_tokens` when a request names no limit
 name and only with a key, so the token counter's keyless builder never asks; a synchronous run that
 sends it reads a stream, because a non-streamed reply that long would idle past `timeout` (Anthropic's
 long-request guidance).
+
+**Finish reasons (2026-10-22).** `NFKOutputFinishReason` takes OpenAI's vocabulary (`stop`, `length`,
+`stop_sequence`, `tool_calls`, `content_filter`). `NFKFinishReasonForProviderValue` (private, in
+`NFKRemoteTransport.m`) maps every provider spelling: OpenAI `finish_reason`, Anthropic `stop_reason`
+(`end_turn`, `max_tokens`, `stop_sequence`, `tool_use`, `refusal`, `model_context_window_exceeded`),
+Gemini `finishReason` (`STOP`, `MAX_TOKENS`, and the safety family), and a Responses `status` or its
+`incomplete_details.reason`. `NFKResultWithFinishReason` keeps it consistent with the result, because
+Gemini reports `STOP` with a function call and Anthropic's forced `structured_output` tool stops on
+`tool_use`. `pause_turn` and Gemini's `OTHER`/`MALFORMED_FUNCTION_CALL` map to nothing. The served
+routes prefer the backend's reason and fall back to the usage-versus-limit guess.
 Every preset answers the same `data[].id` envelope, hosted and local alike, so one parser serves all
 fifteen; only the credential headers differ, and Anthropic paginates (`has_more` / `last_id` →
 `after_id`, page size raised to 1000 from its default 20), which the catalog follows to the end. The

@@ -64,6 +64,17 @@
 	self.backend.modelName = @"test-model";
 }
 
+- (void)testTheFinishReasonIsTheChoices
+{
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"hi" }];
+	self.backend.stagedData = [@"{\"choices\":[{\"message\":{\"content\":\"Once\"},\"finish_reason\":\"length\"}]}" dataUsingEncoding:NSUTF8StringEncoding];
+	XCTAssertEqualObjects([[self.backend runInferenceForRequest:request error:NULL] outputForKey:NFKOutputFinishReason], NFKFinishReasonLength);
+	self.backend.stagedData = [@"{\"choices\":[{\"message\":{\"content\":\"Done.\"},\"finish_reason\":\"stop\"}]}" dataUsingEncoding:NSUTF8StringEncoding];
+	XCTAssertEqualObjects([[self.backend runInferenceForRequest:request error:NULL] outputForKey:NFKOutputFinishReason], NFKFinishReasonStop);
+	self.backend.stagedData = [@"{\"choices\":[{\"message\":{\"content\":\"?\"}}]}" dataUsingEncoding:NSUTF8StringEncoding];
+	XCTAssertNil([[self.backend runInferenceForRequest:request error:NULL] outputForKey:NFKOutputFinishReason], @"a reply without one says nothing");
+}
+
 - (void)testTheBackendReportsItsIdentity
 {
 	XCTAssertEqualObjects(self.backend.backendIdentifier, @"remote");

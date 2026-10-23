@@ -40,6 +40,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### A text run says why it stopped
+
+- `NFKOutputFinishReason` (`finishReason`) is why a text run stopped: `NFKFinishReasonStop` (the model ended its
+  turn), `NFKFinishReasonLength` (its token limit), `NFKFinishReasonStopSequence`, `NFKFinishReasonToolCalls`, or
+  `NFKFinishReasonContentFilter`. Its value type is text.
+- The chat-completions, Anthropic, Gemini generateContent, and Responses clients read it from their provider's own
+  stop value. A stop beside tool calls reads as tool calls, and Anthropic's forced structured-output tool as a stop.
+  A client-side stop sequence that cut the reply reads as a stop sequence.
+- The server's routes report a backend's finish reason: the OpenAI route's `length` and `content_filter`, the
+  Anthropic route's `max_tokens`, `stop_sequence`, and `refusal`, and the Responses route's incomplete reply at its
+  limit. A backend that reports none is judged by its output count against the request's limit, as before.
+
 #### Remote models state their output limit, and Anthropic replies run to the model's
 
 - `NFKRemoteModel.maximumOutputTokens` is the most tokens one reply may run to, where the provider's list
@@ -1460,6 +1472,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### A language run says why it stopped
+
+- `NFKMLXLanguageBackend` answers `NFKOutputFinishReason`: tool calls where the reply calls tools, length where it
+  reached `NFKParameterMaxTokens`, and stop otherwise. The catalog's language releases declare the output.
 
 #### A language release samples as its generation config says, with top-k
 

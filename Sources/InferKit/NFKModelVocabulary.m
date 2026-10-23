@@ -240,6 +240,7 @@ static NSDictionary<NSString *, NSString *> *NFKResultKeyValueTypes(void)
 			NFKOutputAnswers:						NFKModelValueTypeAnswers,
 			NFKOutputReasoning:						NFKModelValueTypeText,
 			NFKOutputUsage:							NFKModelValueTypeJSON,
+			NFKOutputFinishReason:					NFKModelValueTypeText,
 		};
 	});
 	return types;

@@ -334,6 +334,21 @@ extern NSString * const NFKOutputReasoning;
 	rather than trusting a zero. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKOutputUsage;
 
+/*! Why a text run stopped, one of the NFKFinishReason values, where the backend knows (NSString). A
+	remote backend reads it from its provider's own stop value. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKOutputFinishReason;
+/*! "stop": the model ended its turn. */
+extern NSString * const NFKFinishReasonStop;
+/*! "length": the reply reached its token limit, NFKParameterMaxTokens or the model's own. */
+extern NSString * const NFKFinishReasonLength;
+/*! "stop_sequence": a stop sequence the request named ended the reply. A provider that reports one value
+	for both reports NFKFinishReasonStop. */
+extern NSString * const NFKFinishReasonStopSequence;
+/*! "tool_calls": the model stopped to call the tools under NFKOutputToolCalls. */
+extern NSString * const NFKFinishReasonToolCalls;
+/*! "content_filter": the provider withheld or cut the reply. */
+extern NSString * const NFKFinishReasonContentFilter;
+
 /*! The tokens the request cost, the cached ones included (NSNumber). */
 extern NSString * const NFKUsageInputTokens;
 /*! How many of the input tokens were served from the provider's cache (NSNumber). */

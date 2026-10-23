@@ -551,7 +551,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// when the model shows any, the usage, and the parsed object of a schema-constrained request. Introduced
     /// in InferKit 0.4.0.
     @objc public var supportedOutputKeys: Set<String> {
-        NFKMLXToolCalling.outputKeys.union([NFKOutputReasoning, NFKOutputUsage, NFKOutputStructured])
+        NFKMLXToolCalling.outputKeys.union([NFKOutputReasoning, NFKOutputUsage, NFKOutputStructured, NFKOutputFinishReason])
     }
 
     /// Whether the backend holds a draft model, so requests can decode speculatively.
@@ -737,6 +737,9 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         if !reasoning.isEmpty {
             outputs[NFKOutputReasoning] = reasoning
         }
+        let calls = (outputs[NFKOutputToolCalls] as? [Any])?.isEmpty == false
+        outputs[NFKOutputFinishReason] = calls ? NFKFinishReasonToolCalls
+            : (produced.count >= options.maxTokens ? NFKFinishReasonLength : NFKFinishReasonStop)
         outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: tokens.count,
                                                       cachedTokens: cached,
                                                       outputTokens: produced.count,

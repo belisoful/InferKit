@@ -16,6 +16,7 @@
 #import "NFKErrors.h"
 #import "NFKToolMessageSupport.h"
 #import "NFKJobGuard.h"
+#import "NFKRemoteTransportPrivate.h"
 
 /*! The endpoint's spelling for each core text parameter the contract names. The core keys are
 	camelCase and an OpenAI-compatible service reads underscored names, so the key is renamed and the
@@ -191,7 +192,7 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 
 - (NSSet<NSString *> *)supportedOutputKeys
 {
-	return [NSSet setWithArray:@[ NFKRemoteBackendTextKey, NFKOutputReasoning, NFKOutputUsage,
+	return [NSSet setWithArray:@[ NFKRemoteBackendTextKey, NFKOutputReasoning, NFKOutputUsage, NFKOutputFinishReason,
 								  NFKOutputToolCalls, NFKOutputStructured, NFKOutputAudio,
 								  NFKOutputAssistantMessage, NFKOutputImage, NFKOutputImages,
 								  NFKOutputCitations, NFKOutputServerToolResults, NFKRemoteBackendRawKey ]];
@@ -694,10 +695,12 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 	NSDictionary *message = nil;
 	NSString *content = nil;
 	NSMutableString *chunkReasoning = [NSMutableString string];
+	id finishReason = nil;
 	NSArray *choices = responseBody[@"choices"];
 	if ([choices isKindOfClass:NSArray.class] && choices.count > 0) {
 		NSDictionary *choice = choices.firstObject;
 		if ([choice isKindOfClass:NSDictionary.class]) {
+			finishReason = choice[@"finish_reason"];
 			message = [choice[@"message"] isKindOfClass:NSDictionary.class] ? choice[@"message"] : nil;
 			NSString *refusal = [self refusalInChoice:choice message:message];
 			if (refusal != nil) {
@@ -725,7 +728,11 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 	}
 	NSArray<NSString *> *clientStops = [self clientStopsForRequest:request];
 	if (content != nil && clientStops != nil) {
+		NSString *whole = content;
 		content = NFKRemoteTextBeforeStops(content, clientStops);
+		if (content.length < whole.length) {
+			finishReason = NFKFinishReasonStopSequence;
+		}
 	}
 	NFKInferenceResult *result = [self resultWithText:content
 											reasoning:[self reasoningInMessage:message] ?: (chunkReasoning.length > 0 ? chunkReasoning : nil)
@@ -736,7 +743,7 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 									expectsStructured:[self requestExpectsStructuredReply:request]
 												  raw:responseBody
 												error:outError];
-	result = [self result:result recordingAssistantMessage:message];
+	result = NFKResultWithFinishReason([self result:result recordingAssistantMessage:message], finishReason);
 	NSDictionary<NSString *, id> *extras = [self extraOutputsInMessage:message];
 	if (result == nil || extras.count == 0) {
 		return result;
@@ -1052,8 +1059,13 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 		[wireCalls addObject:state.toolCallsByIndex[index]];
 	}
 	NSString *text = state.text.length > 0 ? [state.text copy] : [state.transcript copy];
+	id finishReason = state.finishReason;
 	if (state.clientStops != nil) {
+		NSString *whole = text;
 		text = NFKRemoteTextBeforeStops(text, state.clientStops);
+		if (text.length < whole.length) {
+			finishReason = NFKFinishReasonStopSequence;
+		}
 	}
 	NSMutableDictionary *message = [NSMutableDictionary dictionaryWithObject:@"assistant" forKey:@"role"];
 	message[@"content"] = [state.text copy];
@@ -1074,7 +1086,7 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 	if (state.reasoning.length > 0) {
 		turn[@"reasoning_content"] = [state.reasoning copy];
 	}
-	result = [self result:result recordingAssistantMessage:turn];
+	result = NFKResultWithFinishReason([self result:result recordingAssistantMessage:turn], finishReason);
 	if (result != nil) {
 		[job finishWithResult:result];
 	} else {

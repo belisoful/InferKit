@@ -10,6 +10,8 @@
 #import <objc/runtime.h>
 #import "NFKJobGuard.h"
 #import <os/log.h>
+#import <InferKit/NFKInferenceResult.h>
+#import <InferKit/NFKInferenceKeys.h>
 
 NSString * const NFKAnthropicAPIVersion = @"2023-06-01";
 NSString * const NFKRemoteErrorStatusCodeKey = @"NFKRemoteErrorStatusCode";
@@ -306,6 +308,48 @@ static NSError *NFKRemoteUnreachableError(NSURL * _Nullable url, NSError * _Null
 }
 
 #pragma mark - Transport
+
+NSString *NFKFinishReasonForProviderValue(id value)
+{
+	if (![value isKindOfClass:NSString.class]) {
+		return nil;
+	}
+	static NSDictionary<NSString *, NSString *> *reasons;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		reasons = @{
+			@"stop": NFKFinishReasonStop, @"end_turn": NFKFinishReasonStop, @"STOP": NFKFinishReasonStop,
+			@"completed": NFKFinishReasonStop,
+			@"length": NFKFinishReasonLength, @"max_tokens": NFKFinishReasonLength, @"MAX_TOKENS": NFKFinishReasonLength,
+			@"max_output_tokens": NFKFinishReasonLength, @"model_context_window_exceeded": NFKFinishReasonLength,
+			@"stop_sequence": NFKFinishReasonStopSequence,
+			@"tool_calls": NFKFinishReasonToolCalls, @"function_call": NFKFinishReasonToolCalls,
+			@"tool_use": NFKFinishReasonToolCalls,
+			@"content_filter": NFKFinishReasonContentFilter, @"refusal": NFKFinishReasonContentFilter,
+			@"SAFETY": NFKFinishReasonContentFilter, @"RECITATION": NFKFinishReasonContentFilter,
+			@"BLOCKLIST": NFKFinishReasonContentFilter, @"PROHIBITED_CONTENT": NFKFinishReasonContentFilter,
+			@"SPII": NFKFinishReasonContentFilter, @"IMAGE_SAFETY": NFKFinishReasonContentFilter,
+		};
+	});
+	return reasons[value];
+}
+
+NFKInferenceResult *NFKResultWithFinishReason(NFKInferenceResult *result, id value)
+{
+	NSString *reason = NFKFinishReasonForProviderValue(value);
+	if (result == nil || reason == nil) {
+		return result;
+	}
+	BOOL calls = [result.outputs[NFKOutputToolCalls] count] > 0;
+	if (calls && [reason isEqualToString:NFKFinishReasonStop]) {
+		reason = NFKFinishReasonToolCalls;
+	} else if (!calls && [reason isEqualToString:NFKFinishReasonToolCalls]) {
+		reason = NFKFinishReasonStop;
+	}
+	NSMutableDictionary<NSString *, id> *outputs = [result.outputs mutableCopy];
+	outputs[NFKOutputFinishReason] = reason;
+	return [NFKInferenceResult resultWithOutputs:outputs];
+}
 
 @implementation NFKRemoteTransport
 

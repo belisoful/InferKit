@@ -23,6 +23,18 @@ NSError * _Nullable NFKRemotePinPreflightError(NSURLSession *session, NSURL * _N
 	this session when it is non-nil. */
 NSURLSession * _Nullable NFKRemotePinnedSessionForProvider(NFKRemoteProvider *provider);
 
+@class NFKInferenceResult;
+
+/*! The NFKFinishReason a provider's stop value names: OpenAI's finish_reason, Anthropic's stop_reason,
+	Gemini's finishReason, or a Responses status reason. nil for a value none of them uses. */
+NSString * _Nullable NFKFinishReasonForProviderValue(id _Nullable value);
+
+/*! result with NFKOutputFinishReason set from the provider's stop value, kept to what the result holds: a
+	stop beside tool calls is NFKFinishReasonToolCalls (Gemini reports STOP for a call), and a tool stop
+	without any is NFKFinishReasonStop (a forced structured-output tool). An unknown value leaves result as it
+	is. */
+NFKInferenceResult * _Nullable NFKResultWithFinishReason(NFKInferenceResult * _Nullable result, id _Nullable value);
+
 @interface NFKRemoteTransport (NFKPrivate)
 
 /*! One attempt, with no retry, for a caller that answers a busy server by going elsewhere. A failure

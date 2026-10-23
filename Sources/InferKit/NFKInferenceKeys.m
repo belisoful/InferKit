@@ -101,6 +101,12 @@ NSString * const NFKOutputTempo				= @"tempo";
 NSString * const NFKOutputReasoning			= @"reasoning";
 NSString * const NFKOutputAnswers			= @"answers";
 NSString * const NFKOutputUsage				= @"usage";
+NSString * const NFKOutputFinishReason		= @"finishReason";
+NSString * const NFKFinishReasonStop		= @"stop";
+NSString * const NFKFinishReasonLength		= @"length";
+NSString * const NFKFinishReasonStopSequence	= @"stop_sequence";
+NSString * const NFKFinishReasonToolCalls	= @"tool_calls";
+NSString * const NFKFinishReasonContentFilter	= @"content_filter";
 
 NSString * const NFKUsageInputTokens		= @"inputTokens";
 NSString * const NFKUsageCachedTokens		= @"cachedTokens";

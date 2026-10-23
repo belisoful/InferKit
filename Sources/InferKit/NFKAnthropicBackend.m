@@ -6,6 +6,7 @@
 #import <InferKit/NFKAnthropicBackend.h>
 #import <InferKit/NFKInferenceRequest.h>
 #import <InferKit/NFKInferenceResult.h>
+#import "NFKRemoteTransportPrivate.h"
 #import <InferKit/NFKInferenceJob.h>
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
@@ -171,7 +172,7 @@ static const NSInteger NFKAnthropicFallbackMaxTokens = 1024;
 - (NSSet<NSString *> *)supportedOutputKeys
 {
 	return [NSSet setWithArray:@[ NFKRemoteBackendTextKey, NFKOutputStructured, NFKOutputReasoning,
-								  NFKOutputToolCalls, NFKOutputAssistantMessage, NFKOutputUsage,
+								  NFKOutputToolCalls, NFKOutputAssistantMessage, NFKOutputUsage, NFKOutputFinishReason,
 								  NFKOutputCitations, NFKOutputServerToolResults, NFKRemoteBackendRawKey ]];
 }
 
@@ -214,10 +215,11 @@ static const NSInteger NFKAnthropicFallbackMaxTokens = 1024;
 		return [self failWithCode:kNFKError_InferenceRefused description:@"the model declined to answer" error:outError];
 	}
 	NSArray *content = [responseBody[@"content"] isKindOfClass:NSArray.class] ? responseBody[@"content"] : @[];
-	return [self resultForContentBlocks:content
-								  usage:[self usageInMessageBody:responseBody]
-									raw:responseBody
-					  expectsStructured:[self requestExpectsStructuredReply:request]];
+	return NFKResultWithFinishReason([self resultForContentBlocks:content
+															usage:[self usageInMessageBody:responseBody]
+															  raw:responseBody
+												expectsStructured:[self requestExpectsStructuredReply:request]],
+									 responseBody[@"stop_reason"]);
 }
 
 - (NFKInferenceJob *)submitInferenceJobForRequest:(NFKInferenceRequest *)request
@@ -1130,10 +1132,11 @@ static const NSInteger NFKAnthropicFallbackMaxTokens = 1024;
 		}
 		[content addObject:block];
 	}
-	return [self resultForContentBlocks:content
-								  usage:state.usage
-									raw:@{ @"role": @"assistant", @"content": content }
-					  expectsStructured:expectsStructured];
+	return NFKResultWithFinishReason([self resultForContentBlocks:content
+															usage:state.usage
+															  raw:@{ @"role": @"assistant", @"content": content }
+												expectsStructured:expectsStructured],
+									 state.stopReason);
 }
 
 #pragma mark Transport

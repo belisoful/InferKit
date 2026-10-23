@@ -637,6 +637,9 @@ static NSError * _Nullable NFKServedResponsesItemTypeError(id item, NSString *pa
 
 + (BOOL)resultReachedLimit:(NFKInferenceResult *)result body:(NSDictionary *)body
 {
+	if ([[result outputForKey:NFKOutputFinishReason] isEqual:NFKFinishReasonLength]) {
+		return YES;
+	}
 	NSNumber *limit = NFKServedResponsesValue(body, @"max_output_tokens", NSNumber.class);
 	NSDictionary *usage = [result outputForKey:NFKOutputUsage];
 	NSNumber *produced = [usage isKindOfClass:NSDictionary.class] ? usage[NFKUsageOutputTokens] : nil;
