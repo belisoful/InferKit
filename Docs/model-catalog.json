@@ -14950,7 +14950,7 @@
       "variants" : [
         {
           "displayName" : "gpt-oss-20b",
-          "downloadBytes" : 13789244177,
+          "downloadBytes" : 13789244354,
           "id" : "gpt-oss-20b",
           "isDefault" : true,
           "memoryFacts" : {
@@ -15026,6 +15026,7 @@
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 177,
                 "optional" : true,
                 "path" : "generation_config.json",
                 "role" : "config"
@@ -23331,7 +23332,7 @@
       "variants" : [
         {
           "displayName" : "Mistral Small 3 24B Instruct",
-          "downloadBytes" : 47162157121,
+          "downloadBytes" : 47162157281,
           "id" : "mistral-small-24b-instruct-2501",
           "isDefault" : true,
           "memoryFacts" : {
@@ -23407,6 +23408,7 @@
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 160,
                 "optional" : true,
                 "path" : "generation_config.json",
                 "role" : "config"
@@ -24131,7 +24133,7 @@
       "variants" : [
         {
           "displayName" : "Mixtral 8x7B Instruct",
-          "downloadBytes" : 93407604173,
+          "downloadBytes" : 93407604289,
           "id" : "mixtral-8x7b-instruct-v0.1",
           "isDefault" : true,
           "memoryFacts" : {
@@ -24205,6 +24207,7 @@
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 116,
                 "optional" : true,
                 "path" : "generation_config.json",
                 "role" : "config"
@@ -30103,7 +30106,7 @@
       "variants" : [
         {
           "displayName" : "Qwen1.5-MoE-A2.7B",
-          "downloadBytes" : 28644040292,
+          "downloadBytes" : 28644040436,
           "id" : "qwen1.5-moe-a2.7b",
           "isDefault" : true,
           "memoryFacts" : {
@@ -30179,6 +30182,7 @@
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 144,
                 "optional" : true,
                 "path" : "generation_config.json",
                 "role" : "config"
@@ -30903,7 +30907,7 @@
       "variants" : [
         {
           "displayName" : "Qwen3 0.6B",
-          "downloadBytes" : 1519182126,
+          "downloadBytes" : 1519182365,
           "id" : "qwen3-0.6b",
           "isDefault" : true,
           "memoryFacts" : {
@@ -30981,6 +30985,7 @@
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 239,
                 "optional" : true,
                 "path" : "generation_config.json",
                 "role" : "config"
@@ -31793,7 +31798,7 @@
       "variants" : [
         {
           "displayName" : "Qwen3 1.7B",
-          "downloadBytes" : 4079422995,
+          "downloadBytes" : 4079423234,
           "id" : "qwen3-1.7b",
           "isDefault" : true,
           "memoryFacts" : {
@@ -31871,6 +31876,7 @@
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 239,
                 "optional" : true,
                 "path" : "generation_config.json",
                 "role" : "config"
@@ -32698,7 +32704,7 @@
       "variants" : [
         {
           "displayName" : "Qwen3 14B",
-          "downloadBytes" : 29552583954,
+          "downloadBytes" : 29552584193,
           "id" : "qwen3-14b",
           "isDefault" : true,
           "memoryFacts" : {
@@ -32776,6 +32782,7 @@
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 239,
                 "optional" : true,
                 "path" : "generation_config.json",
                 "role" : "config"
@@ -33500,7 +33507,7 @@
       "variants" : [
         {
           "displayName" : "Qwen3 30B-A3B",
-          "downloadBytes" : 61084157441,
+          "downloadBytes" : 61084157680,
           "id" : "qwen3-30b-a3b",
           "isDefault" : true,
           "memoryFacts" : {
@@ -33577,6 +33584,7 @@
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 239,
                 "optional" : true,
                 "path" : "generation_config.json",
                 "role" : "config"
@@ -34412,7 +34420,7 @@
       "variants" : [
         {
           "displayName" : "Qwen3 32B",
-          "downloadBytes" : 65540268690,
+          "downloadBytes" : 65540268929,
           "id" : "qwen3-32b",
           "isDefault" : true,
           "memoryFacts" : {
@@ -34490,6 +34498,7 @@
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 239,
                 "optional" : true,
                 "path" : "generation_config.json",
                 "role" : "config"
@@ -35309,7 +35318,7 @@
       "variants" : [
         {
           "displayName" : "Qwen3 4B",
-          "downloadBytes" : 8060896617,
+          "downloadBytes" : 8060896856,
           "id" : "qwen3-4b",
           "isDefault" : true,
           "memoryFacts" : {
@@ -35387,6 +35396,7 @@
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 239,
                 "optional" : true,
                 "path" : "generation_config.json",
                 "role" : "config"
@@ -49025,6 +49035,504 @@
             "layout" : "directory",
             "measuredRevision" : "71153311d3dbb46851df1931d3ca6e939de83304",
             "repository" : "stabilityai/sdxl-turbo",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "Seed-X",
+      "engine" : "mlx",
+      "family" : "seed-x",
+      "id" : "seed-x",
+      "inputModalities" : [
+        "text"
+      ],
+      "inputs" : [
+        {
+          "help" : "The text to translate, paragraph by paragraph.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Text",
+          "valueType" : "text"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "name" : "OpenMDW License Agreement 1.0",
+        "restrictsCommercialUse" : false,
+        "url" : "https://huggingface.co/ByteDance-Seed/Seed-X-PPO-7B/blob/main/LICENSE"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
+      },
+      "options" : [
+        {
+          "help" : "The BCP-47 language of the text. Without it the language is detected.",
+          "key" : "sourceLanguage",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Source language"
+        },
+        {
+          "help" : "The BCP-47 language to translate into. Every request names it.",
+          "key" : "targetLanguage",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Target language"
+        },
+        {
+          "help" : "The most tokens one translated paragraph runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 32768,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        },
+        {
+          "default" : 1,
+          "help" : "The beams the decoder searches. 1 decodes greedily.",
+          "key" : "NFKMLXParameterBeamCount",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Beams"
+        },
+        {
+          "default" : 1,
+          "help" : "Divides a finished hypothesis's log-probability by its length to this power.",
+          "key" : "NFKMLXParameterLengthPenalty",
+          "kind" : "number",
+          "stage" : "request",
+          "title" : "Length penalty"
+        },
+        {
+          "default" : false,
+          "help" : "Translates each sentence on its own. Off translates each paragraph whole.",
+          "key" : "NFKMLXParameterSplitsSentences",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Split sentences"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 15028543488,
+                "residentBytes" : 15028543488
+              },
+              "memoryByVariant" : {
+                "seed-x-instruct-7b" : {
+                  "peakBytes" : 15028543488,
+                  "residentBytes" : 15028543488
+                },
+                "seed-x-ppo-7b" : {
+                  "peakBytes" : 15028543488,
+                  "residentBytes" : 15028543488
+                }
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1941823488,
+                "residentBytes" : 1941823488
+              },
+              "memoryByVariant" : {
+                "seed-x-instruct-7b" : {
+                  "peakBytes" : 1941823488,
+                  "residentBytes" : 1941823488
+                },
+                "seed-x-ppo-7b" : {
+                  "peakBytes" : 1941823488,
+                  "residentBytes" : 1941823488
+                }
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 15028543488,
+                "residentBytes" : 15028543488
+              },
+              "memoryByVariant" : {
+                "seed-x-instruct-7b" : {
+                  "peakBytes" : 15028543488,
+                  "residentBytes" : 15028543488
+                },
+                "seed-x-ppo-7b" : {
+                  "peakBytes" : 15028543488,
+                  "residentBytes" : 15028543488
+                }
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 30057086976,
+                "residentBytes" : 30057086976
+              },
+              "memoryByVariant" : {
+                "seed-x-instruct-7b" : {
+                  "peakBytes" : 30057086976,
+                  "residentBytes" : 30057086976
+                },
+                "seed-x-ppo-7b" : {
+                  "peakBytes" : 30057086976,
+                  "residentBytes" : 30057086976
+                }
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 15028543488,
+                "residentBytes" : 15028543488
+              },
+              "memoryByVariant" : {
+                "seed-x-instruct-7b" : {
+                  "peakBytes" : 15028543488,
+                  "residentBytes" : 15028543488
+                },
+                "seed-x-ppo-7b" : {
+                  "peakBytes" : 15028543488,
+                  "residentBytes" : 15028543488
+                }
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 8234796288,
+                "residentBytes" : 8234796288
+              },
+              "memoryByVariant" : {
+                "seed-x-instruct-7b" : {
+                  "peakBytes" : 8234796288,
+                  "residentBytes" : 8234796288
+                },
+                "seed-x-ppo-7b" : {
+                  "peakBytes" : 8234796288,
+                  "residentBytes" : 8234796288
+                }
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 6423130368,
+                "residentBytes" : 6423130368
+              },
+              "memoryByVariant" : {
+                "seed-x-instruct-7b" : {
+                  "peakBytes" : 6423130368,
+                  "residentBytes" : 6423130368
+                },
+                "seed-x-ppo-7b" : {
+                  "peakBytes" : 6423130368,
+                  "residentBytes" : 6423130368
+                }
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 5517297408,
+                "residentBytes" : 5517297408
+              },
+              "memoryByVariant" : {
+                "seed-x-instruct-7b" : {
+                  "peakBytes" : 5517297408,
+                  "residentBytes" : 5517297408
+                },
+                "seed-x-ppo-7b" : {
+                  "peakBytes" : 5517297408,
+                  "residentBytes" : 5517297408
+                }
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4611464448,
+                "residentBytes" : 4611464448
+              },
+              "memoryByVariant" : {
+                "seed-x-instruct-7b" : {
+                  "peakBytes" : 4611464448,
+                  "residentBytes" : 4611464448
+                },
+                "seed-x-ppo-7b" : {
+                  "peakBytes" : 4611464448,
+                  "residentBytes" : 4611464448
+                }
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 3705631488,
+                "residentBytes" : 3705631488
+              },
+              "memoryByVariant" : {
+                "seed-x-instruct-7b" : {
+                  "peakBytes" : 3705631488,
+                  "residentBytes" : 3705631488
+                },
+                "seed-x-ppo-7b" : {
+                  "peakBytes" : 3705631488,
+                  "residentBytes" : 3705631488
+                }
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2799798528,
+                "residentBytes" : 2799798528
+              },
+              "memoryByVariant" : {
+                "seed-x-instruct-7b" : {
+                  "peakBytes" : 2799798528,
+                  "residentBytes" : 2799798528
+                },
+                "seed-x-ppo-7b" : {
+                  "peakBytes" : 2799798528,
+                  "residentBytes" : 2799798528
+                }
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "text"
+      ],
+      "outputs" : [
+        {
+          "help" : "The translated text.",
+          "key" : "text",
+          "required" : true,
+          "title" : "Translation",
+          "valueType" : "text"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "seed-x",
+      "requirements" : {
+        "minimumMemoryBytes" : 22733542099,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "Seed-X, a Mistral 7B decoder trained to translate among 28 languages.",
+      "tasks" : [
+        "translation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Seed-X PPO 7B",
+          "downloadBytes" : 15031431379,
+          "id" : "seed-x-ppo-7b",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 15028543488,
+                  "checkpoint" : 15028543488,
+                  "float32" : 30057086976
+                },
+                "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 436224000,
+                  "checkpoint" : 436224000,
+                  "float32" : 872448000
+                },
+                "layerCount" : 32,
+                "quantizableElements" : 7246663680,
+                "title" : "decoder"
+              }
+            ],
+            "vocabularySize" : 65269
+          },
+          "minimumMemoryBytes" : 22733542099,
+          "parameterCount" : 7514271744,
+          "peakBytes" : 15028543488,
+          "precision" : "bfloat16",
+          "registryName" : "seed-x",
+          "residentBytes" : 15028543488,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 571,
+                "optional" : false,
+                "path" : "config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 2853156,
+                "optional" : false,
+                "path" : "tokenizer.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 116,
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 15028577536,
+                "optional" : false,
+                "path" : "model.safetensors",
+                "role" : "weights",
+                "sha256" : "3807f2e8e7d4d6320bdb197fdb640a4e08f55ace45df741ed37ebd086b77d609"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "6ef78fc034ec86c0036d7a7ca2bfc24607f48050",
+            "repository" : "ByteDance-Seed/Seed-X-PPO-7B",
+            "requiresConversion" : false
+          }
+        },
+        {
+          "displayName" : "Seed-X Instruct 7B",
+          "downloadBytes" : 15031431379,
+          "id" : "seed-x-instruct-7b",
+          "isDefault" : false,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 15028543488,
+                  "checkpoint" : 15028543488,
+                  "float32" : 30057086976
+                },
+                "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 436224000,
+                  "checkpoint" : 436224000,
+                  "float32" : 872448000
+                },
+                "layerCount" : 32,
+                "quantizableElements" : 7246663680,
+                "title" : "decoder"
+              }
+            ],
+            "vocabularySize" : 65269
+          },
+          "minimumMemoryBytes" : 22733542099,
+          "parameterCount" : 7514271744,
+          "peakBytes" : 15028543488,
+          "precision" : "bfloat16",
+          "registryName" : "seed-x",
+          "residentBytes" : 15028543488,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 571,
+                "optional" : false,
+                "path" : "config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 2853156,
+                "optional" : false,
+                "path" : "tokenizer.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 116,
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 15028577536,
+                "optional" : false,
+                "path" : "model.safetensors",
+                "role" : "weights",
+                "sha256" : "4b11aae85199e96496273df52359f7d6b6e4bceeac22b1a4b620385daa9452dc"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "a41af5abee0fc5acbd5370c8dda9d0feb6cb7103",
+            "repository" : "ByteDance-Seed/Seed-X-Instruct-7B",
             "requiresConversion" : false
           }
         }
