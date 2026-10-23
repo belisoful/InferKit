@@ -376,12 +376,7 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
         -> (options: NFKMLXGenerationOptions, tokens: [Int], spans: [NFKMLXDeepSeekImageStack.Span]?,
             toolCallFormat: NFKMLXToolCallFormat?) {
         try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
-        var options = defaults
-        if options.usesReleaseSampling, let releaseSampling {
-            options.temperature = releaseSampling.temperature
-            options.topP = releaseSampling.topP
-            options.topK = releaseSampling.topK
-        }
+        var options = defaults.sampling(from: releaseSampling)
         if let value = request.parameter(forKey: NFKParameterTemperature) as? NSNumber {
             options.temperature = value.floatValue
         }

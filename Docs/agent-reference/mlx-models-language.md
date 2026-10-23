@@ -406,7 +406,9 @@ attention and feed-forward.
   transformers' `GenerationConfig` fills a missing value (temperature 1, top-p 1, top-k 50); top-k runs
   before top-p on the temperature-scaled distribution and keeps ties at the `k`th value. The catalog
   descriptors state the same values per release (`NFKMLXLanguageRelease.sampling`, read from each
-  repository's file on 2026-10-22), since an app sends the descriptor's defaults. Every release-weight
+  repository's file on 2026-10-22), since an app sends the descriptor's defaults. The release fills only the
+  sampling values the build options leave unset (`NFKMLXGenerationOptions.sampling(from:)`; the three are
+  optional-backed, so an explicit `temperature = 0` stays greedy); `usesReleaseSampling = false` keeps all three. Every release-weight
   test pins `NFKParameterTemperature: 0`, so the change leaves them greedy. `NFKMLXLanguageBackend` is now
   `@objc(NFKMLXLanguageBackend)` with `hasDraftModel`, `promptCacheLength`, `resetPromptCache`.
   **Conversation caches (2026-10-07):** a request carrying `NFKParameterConversationKey` runs against

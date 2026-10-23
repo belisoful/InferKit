@@ -122,19 +122,44 @@ struct NFKMLXReleaseSampling: Equatable, Sendable {
 public struct NFKMLXGenerationOptions: Sendable {
     /// The most tokens to produce, not counting the prompt.
     public var maxTokens: Int = 256
-    /// 0 samples greedily; above 0 divides the logits before sampling.
-    public var temperature: Float = 0
+    /// 0 samples greedily; above 0 divides the logits before sampling. Defaults to 0.
+    public var temperature: Float {
+        get { chosenTemperature ?? 0 }
+        set { chosenTemperature = newValue }
+    }
     /// Nucleus sampling: the smallest set of tokens whose probability sums past this is sampled from.
-    /// Ignored at temperature 0.
-    public var topP: Float = 1
+    /// Ignored at temperature 0. Defaults to 1.
+    public var topP: Float {
+        get { chosenTopP ?? 1 }
+        set { chosenTopP = newValue }
+    }
     /// Top-k sampling: only the `topK` most probable tokens, with any tied with the last of them, are
-    /// sampled from, before the nucleus filter. 0 keeps every token. Ignored at temperature 0.
-    /// Introduced in InferKit 0.4.0.
-    public var topK: Int = 0
+    /// sampled from, before the nucleus filter. 0 keeps every token. Ignored at temperature 0. Defaults
+    /// to 0. Introduced in InferKit 0.4.0.
+    public var topK: Int {
+        get { chosenTopK ?? 0 }
+        set { chosenTopK = newValue }
+    }
+    /// The sampling values a caller set, which a release's generation config leaves as they are.
+    private var chosenTemperature: Float?
+    private var chosenTopP: Float?
+    private var chosenTopK: Int?
     /// Whether a backend over a release whose `generation_config.json` samples starts each request from
-    /// that file's temperature, top-p, and top-k, as the reference's `generate` does, in place of this
-    /// struct's. A request's own values override either. Defaults to true. Introduced in InferKit 0.4.0.
+    /// that file's temperature, top-p, and top-k, as the reference's `generate` does, for each of the three
+    /// this struct leaves unset. A value set on this struct is kept, and a request's own values override
+    /// either. Defaults to true. Introduced in InferKit 0.4.0.
     public var usesReleaseSampling = true
+
+    /// The options with `release`'s temperature, top-p, and top-k in each of the three this struct leaves
+    /// unset, or as they are when ``usesReleaseSampling`` is false.
+    func sampling(from release: NFKMLXReleaseSampling?) -> NFKMLXGenerationOptions {
+        guard usesReleaseSampling, let release else { return self }
+        var options = self
+        options.chosenTemperature = chosenTemperature ?? release.temperature
+        options.chosenTopP = chosenTopP ?? release.topP
+        options.chosenTopK = chosenTopK ?? release.topK
+        return options
+    }
     /// A seed makes a sampled run repeatable.
     public var seed: UInt64?
     /// Generation stops when one of these is produced. Empty, a backend over a release stops on the
@@ -760,12 +785,7 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// its calls are read in.
     private func preparedPrompt(for request: NFKInferenceRequest, tokenizer: NFKTokenizer) throws
         -> (options: NFKMLXGenerationOptions, tokens: [Int], toolCallFormat: NFKMLXToolCallFormat?) {
-        var options = defaults
-        if options.usesReleaseSampling, let releaseSampling {
-            options.temperature = releaseSampling.temperature
-            options.topP = releaseSampling.topP
-            options.topK = releaseSampling.topK
-        }
+        var options = defaults.sampling(from: releaseSampling)
         if let value = request.parameter(forKey: NFKParameterTemperature) as? NSNumber {
             options.temperature = value.floatValue
         }

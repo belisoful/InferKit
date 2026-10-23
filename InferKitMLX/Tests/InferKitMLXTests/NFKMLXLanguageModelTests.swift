@@ -569,6 +569,32 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         XCTAssertNotEqual(sampled, greedy, "at temperature 50 twelve tokens leave the greedy path")
         XCTAssertEqual(try reply(release, [NFKParameterTemperature: 0]), greedy)
         XCTAssertEqual(try reply(ownOptions, [:]), greedy)
+        var chosenGreedy = NFKMLXGenerationOptions()
+        chosenGreedy.temperature = 0
+        XCTAssertEqual(try reply(NFKMLXLanguageBackend(net: net, tokenizer: tokenizer, identifier: "tiny", options: chosenGreedy,
+                                                       releaseURL: directory), [:]), greedy,
+                       "a temperature the caller builds with wins over the release's")
+    }
+
+    /// A release's sampling fills only the values the options leave unset, and none when the options turn
+    /// it off.
+    func testAReleasesSamplingFillsOnlyTheValuesTheOptionsLeaveUnset() {
+        let release = NFKMLXReleaseSampling(temperature: 0.6, topP: 0.95, topK: 20)
+        let unset = NFKMLXGenerationOptions().sampling(from: release)
+        XCTAssertEqual(unset.temperature, 0.6)
+        XCTAssertEqual(unset.topP, 0.95)
+        XCTAssertEqual(unset.topK, 20)
+        var chosen = NFKMLXGenerationOptions()
+        chosen.temperature = 0
+        let filled = chosen.sampling(from: release)
+        XCTAssertEqual(filled.temperature, 0, "the caller's value is kept")
+        XCTAssertEqual(filled.topK, 20, "the values the caller left unset come from the release")
+        var off = NFKMLXGenerationOptions()
+        off.usesReleaseSampling = false
+        let kept = off.sampling(from: release)
+        XCTAssertEqual(kept.temperature, 0)
+        XCTAssertEqual(kept.topP, 1)
+        XCTAssertEqual(kept.topK, 0)
     }
 
     /// A decoder with its own token loop samples as the shared sampler filters: greedy at temperature 0,
