@@ -166,7 +166,7 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
     @objc public var supportedInputKeys: Set<String> { [NFKInputPrompt, NFKInputMessages, NFKInputImage] }
 
     /// The result keys the backend writes. Introduced in InferKit 0.4.0.
-    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputUsage] }
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputUsage, NFKOutputFinishReason] }
 
     /// Whether the release carries a vision tower, so a request may attach `NFKInputImage`.
     @objc public var acceptsImages: Bool { holder.model.acceptsImages }
@@ -221,6 +221,7 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
             NFKOutputText: model.decode(produced),
             NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: ids.count, cachedTokens: promptCache?.sharedPrefixLength ?? 0,
                                                 outputTokens: produced.count, reasoningTokens: nil),
+            NFKOutputFinishReason: NFKMLXContextRoom.finishReason(produced: produced.count, limit: options.maxTokens),
         ])
     }
 

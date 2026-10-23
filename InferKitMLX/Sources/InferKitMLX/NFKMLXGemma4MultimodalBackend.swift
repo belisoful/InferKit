@@ -115,7 +115,7 @@ extension NFKMLXGemmaLanguage {
     static func multimodalBackend(_ model: NFKGemma4MultimodalModel) -> any NFKInferenceBackend {
         NFKMLXGenerationBackend(identifier: gemmaMultimodalModelName, inputKeys: multimodalInputKeys,
                                 parameterKeys: multimodalParameterKeys,
-                                outputKeys: [NFKOutputText, NFKOutputUsage]) { request, job in
+                                outputKeys: [NFKOutputText, NFKOutputUsage, NFKOutputFinishReason]) { request, job in
             try NFKMLXUsage.refuseReasoningEffort(in: request, model: gemmaMultimodalModelName)
             let temperature = NFKMLXGenerationBackend.number(request, NFKParameterTemperature)?.floatValue ?? 0
             let maximumTokens = NFKMLXGenerationBackend.number(request, NFKParameterMaxTokens)?.intValue ?? 256
@@ -156,6 +156,7 @@ extension NFKMLXGemmaLanguage {
                 NFKOutputText: model.tokenizer.decode(produced, skipSpecial: true),
                 NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
                                                     outputTokens: produced.count, reasoningTokens: nil),
+                NFKOutputFinishReason: NFKMLXContextRoom.finishReason(produced: produced.count, limit: limit),
             ])
         }
     }

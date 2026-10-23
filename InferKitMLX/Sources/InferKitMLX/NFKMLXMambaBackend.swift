@@ -74,7 +74,7 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
     @objc public var supportedInputKeys: Set<String> { [NFKInputPrompt, NFKInputMessages] }
 
     /// The result keys the backend writes. Introduced in InferKit 0.4.0.
-    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputUsage] }
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputUsage, NFKOutputFinishReason] }
 
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         var temperature: Float = 0
@@ -91,11 +91,12 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
         }
 
         let promptTokens = try prompt(for: request)
-        let produced = try generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed)
+        let (produced, limit) = try generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed)
         return NFKInferenceResult(outputs: [
             NFKOutputText: holder.tokenizer.decode(produced),
             NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
                                                 outputTokens: produced.count, reasoningTokens: nil),
+            NFKOutputFinishReason: NFKMLXContextRoom.finishReason(produced: produced.count, limit: limit),
         ])
     }
 
@@ -128,7 +129,7 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
     }
 
     /// Prefill-only generation: the whole growing sequence runs through the decoder each step.
-    private func generate(_ promptTokens: [Int], temperature: Float, maxTokens: Int, seed: UInt64?) throws -> [Int] {
+    private func generate(_ promptTokens: [Int], temperature: Float, maxTokens: Int, seed: UInt64?) throws -> (tokens: [Int], limit: Int) {
         var tokens = promptTokens
         var produced = [Int]()
         let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: promptTokens.count,
@@ -147,7 +148,7 @@ public final class NFKMLXMambaBackend: NSObject, NFKInferenceBackend {
             produced.append(next)
             tokens.append(next)
         }
-        return produced
+        return (produced, limit)
     }
 }
 

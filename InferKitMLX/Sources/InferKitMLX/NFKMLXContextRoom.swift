@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import InferKit
 
 enum NFKMLXContextRoom {
 
@@ -21,6 +22,15 @@ enum NFKMLXContextRoom {
                 "\(source)'s prompt holds \(promptTokens) tokens, which fills its \(contextLength)-token context")
         }
         return min(maxTokens, contextLength - promptTokens)
+    }
+
+    /// Why a run stopped, as `NFKOutputFinishReason` states it: tool calls where `outputs` call tools,
+    /// length where the run produced its `limit`, and stop otherwise.
+    static func finishReason(produced: Int, limit: Int, outputs: [String: Any] = [:]) -> String {
+        if (outputs[NFKOutputToolCalls] as? [Any])?.isEmpty == false {
+            return NFKFinishReasonToolCalls
+        }
+        return produced >= limit ? NFKFinishReasonLength : NFKFinishReasonStop
     }
 }
 

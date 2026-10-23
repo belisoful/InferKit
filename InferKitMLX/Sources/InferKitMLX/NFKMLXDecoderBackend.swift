@@ -119,7 +119,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     /// The result keys the backend writes: the reply, the tool calls and the assistant turn, the reasoning
     /// when the model shows any, and the usage. Introduced in InferKit 0.4.0.
     @objc public var supportedOutputKeys: Set<String> {
-        NFKMLXToolCalling.outputKeys.union([NFKOutputReasoning, NFKOutputUsage])
+        NFKMLXToolCalling.outputKeys.union([NFKOutputReasoning, NFKOutputUsage, NFKOutputFinishReason])
     }
 
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
@@ -137,7 +137,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
         }
 
         let (promptTokens, format) = try prompt(for: request)
-        let produced = try generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed)
+        let (produced, limit) = try generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed)
         let decode: ([Int]) -> String = { [holder] in holder.tokenizer.decode($0.map { NSNumber(value: $0) }) }
         let reasoningFormat = request.messages != nil ? chatTemplate.flatMap(NFKMLXReasoningFormat.detected(inChatTemplate:)) : nil
         let (reasoning, answer, reasoningTokens) = NFKMLXUsage.split(decode(produced), format: reasoningFormat,
@@ -147,6 +147,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
         if !reasoning.isEmpty {
             outputs[NFKOutputReasoning] = reasoning
         }
+        outputs[NFKOutputFinishReason] = NFKMLXContextRoom.finishReason(produced: produced.count, limit: limit, outputs: outputs)
         outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
                                                       outputTokens: produced.count, reasoningTokens: reasoningTokens)
         return NFKInferenceResult(outputs: outputs)
@@ -197,7 +198,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     }
 
     /// Prefill-only generation: the whole growing sequence runs through the decoder each step.
-    private func generate(_ promptTokens: [Int], temperature: Float, maxTokens: Int, seed: UInt64?) throws -> [Int] {
+    private func generate(_ promptTokens: [Int], temperature: Float, maxTokens: Int, seed: UInt64?) throws -> (tokens: [Int], limit: Int) {
         var tokens = promptTokens
         var produced = [Int]()
         let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: promptTokens.count,
@@ -216,6 +217,6 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
             produced.append(next)
             tokens.append(next)
         }
-        return produced
+        return (produced, limit)
     }
 }

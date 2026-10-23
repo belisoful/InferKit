@@ -74,6 +74,7 @@ final class NFKMLXDecoderBackendTests: XCTestCase {
         XCTAssertEqual(result.output(forKey: NFKOutputText) as? String, "hehello",
                        "the reply stops at <eos>, which only the generation config names")
         XCTAssertEqual(inputs.calls.count, 3)
+        XCTAssertEqual(result.output(forKey: NFKOutputFinishReason) as? String, NFKFinishReasonStop)
     }
 
     /// The release directory rewritten so three added tokens spell a whole Hermes call: the opening
@@ -165,5 +166,11 @@ final class NFKMLXDecoderBackendTests: XCTestCase {
         XCTAssertEqual(inputs.calls.first, [6], "no chat template and no begin-of-sequence marker")
         XCTAssertEqual(result.output(forKey: NFKOutputText) as? String, "ll")
         XCTAssertEqual(backend.supportedInputKeys, [NFKInputPrompt, NFKInputMessages])
+        XCTAssertEqual(result.output(forKey: NFKOutputFinishReason) as? String, NFKFinishReasonStop)
+
+        let limited = try self.backend(script: [5, 11], inputs: Box()).runInference(
+            for: NFKInferenceRequest(inputs: [NFKInputPrompt: "hello"], parameters: [NFKParameterMaxTokens: 1]))
+        XCTAssertEqual(limited.output(forKey: NFKOutputFinishReason) as? String, NFKFinishReasonLength,
+                       "a reply that reaches its limit says so")
     }
 }

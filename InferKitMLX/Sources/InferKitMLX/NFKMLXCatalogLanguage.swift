@@ -479,6 +479,11 @@ extension NFKMLXCatalogLanguage {
         ]
     }
 
+    fileprivate static var finishReasonOutput: NFKModelPort {
+        .output(NFKOutputFinishReason, title: "Finish reason",
+                help: "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.")
+    }
+
     fileprivate static var reasoningOutput: NFKModelPort {
         .output(NFKOutputReasoning, title: "Reasoning", help: "The reasoning the model shows before its answer.")
     }
@@ -707,8 +712,7 @@ extension NFKMLXCatalogLanguage {
             outputs: toolCallingOutputs + [reasoningOutput, usageOutput,
                                            .output(NFKOutputStructured, title: "Parsed reply",
                                                    help: "The reply parsed as JSON, for a request constrained to JSON."),
-                                           .output(NFKOutputFinishReason, title: "Finish reason",
-                                                   help: "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.")],
+                                           finishReasonOutput],
             parameters: languageOptions(sampling: release.sampling),
             variants: [variant(release, files: releaseFiles(required: NFKMLXLanguage.requiredFiles,
                                                             optional: NFKMLXLanguage.optionalFiles,
@@ -766,7 +770,7 @@ extension NFKMLXCatalogLanguage {
                               revision: NFKMLXOpenJevVariant.twentySevenB.baseRevision, files: files),
             ],
             license: .apache2(), readsReasoning: true,
-            outputs: toolCallingOutputs + [reasoningOutput, usageOutput], parameters: toolDecoderOptions)
+            outputs: toolCallingOutputs + [reasoningOutput, usageOutput, finishReasonOutput], parameters: toolDecoderOptions)
     }
 
     fileprivate static var qwen4ExpEntry: NFKMLXCatalogEntry {
@@ -780,7 +784,7 @@ extension NFKMLXCatalogLanguage {
                                                          optional: NFKMLXQwen4Exp.optionalFiles,
                                                          weights: NFKMLXQwen4Exp.weightFiles))],
             license: license(repository), readsReasoning: true,
-            outputs: toolCallingOutputs + [reasoningOutput, usageOutput], parameters: toolDecoderOptions,
+            outputs: toolCallingOutputs + [reasoningOutput, usageOutput, finishReasonOutput], parameters: toolDecoderOptions,
             residencies: residencies(routesExperts: true))
     }
 
@@ -801,7 +805,7 @@ extension NFKMLXCatalogLanguage {
                 name: release.name, displayName: release.displayName, family: "granite-4.0-h", summary: release.summary,
                 variants: [familyVariant(release.name, release.repository, displayName: release.displayName,
                                          isDefault: true, files: files)],
-                license: .apache2(), readsReasoning: false, outputs: toolCallingOutputs + [usageOutput],
+                license: .apache2(), readsReasoning: false, outputs: toolCallingOutputs + [usageOutput, finishReasonOutput],
                 parameters: toolDecoderOptions, residencies: residencies(routesExperts: release.routesExperts))
             entry.modelTypes = ["granitemoehybrid"]
             return entry
@@ -818,7 +822,7 @@ extension NFKMLXCatalogLanguage {
                                      files: releaseFiles(required: NFKMLXNemotronH.requiredFiles,
                                                          optional: NFKMLXNemotronH.optionalFiles,
                                                          weights: NFKMLXNemotronH.weightFiles))],
-            license: license(repository), readsReasoning: false, outputs: toolCallingOutputs + [usageOutput],
+            license: license(repository), readsReasoning: false, outputs: toolCallingOutputs + [usageOutput, finishReasonOutput],
             parameters: toolDecoderOptions)
         entry.modelTypes = ["nemotron_h"]
         return entry
@@ -833,7 +837,7 @@ extension NFKMLXCatalogLanguage {
                                      isDefault: true,
                                      files: releaseFiles(required: NFKMLXMamba.requiredFiles, optional: NFKMLXMamba.optionalFiles,
                                                          weights: NFKMLXMamba.weightFiles))],
-            license: .apache2(), readsReasoning: false, outputs: [textOutput, usageOutput],
+            license: .apache2(), readsReasoning: false, outputs: [textOutput, usageOutput, finishReasonOutput],
             parameters: [temperatureOption(), maxTokensOption(), seedOption()])
         // A state-space decoder has no position table; Mistral states retrieval tested to 256k tokens.
         entry.outputTokenLimit = 262_144
@@ -856,7 +860,7 @@ extension NFKMLXCatalogLanguage {
             registryName: release.name,
             tasks: [NFKModelTaskTextGeneration] + (release.readsImages ? [NFKModelTaskVisionQuestionAnswering] : []),
             inputs: [promptInput, messagesInput, imageInput(help: towerHelp)],
-            outputs: [textOutput, usageOutput],
+            outputs: [textOutput, usageOutput, finishReasonOutput],
             parameters: [temperatureOption(), topPOption(), maxTokensOption(), seedOption(), conversationKeyOption(),
                          draftTokensOption()],
             variants: [variant(release, files: releaseFiles(required: NFKMLXGemma3.requiredFiles,
@@ -878,7 +882,7 @@ extension NFKMLXCatalogLanguage {
             tasks: [NFKModelTaskTextGeneration, NFKModelTaskVisionQuestionAnswering, NFKModelTaskTranscription],
             inputs: [promptInput, messagesInput, imageInput(help: "An image the reply is about."),
                      .input(NFKInputAudio, title: "Audio", help: "A recording the reply is about.")],
-            outputs: [textOutput, usageOutput],
+            outputs: [textOutput, usageOutput, finishReasonOutput],
             parameters: [temperatureOption(), topPOption(), maxTokensOption(), seedOption()],
             variants: [variant(release, files: releaseFiles(required: NFKMLXGemma3n.requiredFiles,
                                                             optional: NFKMLXGemma3n.optionalFiles,
@@ -892,7 +896,7 @@ extension NFKMLXCatalogLanguage {
             identifier: release.name, displayName: release.displayName, family: release.family,
             summary: "\(release.displayName), a \(kind) Gemma 4 decoder that writes text and calls tools.",
             registryName: release.name, tasks: [NFKModelTaskTextGeneration],
-            inputs: [promptInput, messagesInput], outputs: toolCallingOutputs + [usageOutput],
+            inputs: [promptInput, messagesInput], outputs: toolCallingOutputs + [usageOutput, finishReasonOutput],
             parameters: toolDecoderOptions,
             variants: [variant(release, files: releaseFiles(required: NFKMLXGemmaLanguage.requiredFiles,
                                                             optional: NFKMLXGemmaLanguage.optionalFiles,
@@ -913,7 +917,7 @@ extension NFKMLXCatalogLanguage {
             inputs: [promptInput, messagesInput,
                      imageInput(help: "An image the reply is about, for a release with a vision tower."),
                      .input(NFKInputAudio, title: "Audio", help: "A recording the reply is about, for a release with an audio tower.")],
-            outputs: [textOutput, usageOutput],
+            outputs: [textOutput, usageOutput, finishReasonOutput],
             parameters: [temperatureOption(), maxTokensOption(), seedOption()],
             variants: [familyVariant(name, "google/gemma-4-E2B-it", displayName: "Gemma 4 E2B IT", isDefault: true,
                                      files: files),
@@ -985,7 +989,7 @@ extension NFKMLXCatalogLanguage {
             registryName: release.name,
             tasks: [NFKModelTaskTextGeneration] + (release.readsImages ? [NFKModelTaskVisionQuestionAnswering] : []),
             inputs: [promptInput, messagesInput] + (release.readsImages ? [imageInput()] : []),
-            outputs: toolCallingOutputs + [usageOutput],
+            outputs: toolCallingOutputs + [usageOutput, finishReasonOutput],
             parameters: [temperatureOption(), topPOption(), maxTokensOption(), seedOption(), jsonSchemaOption(),
                          chatTemplateOption(), prefillChunkOption(), conversationKeyOption(), toolsOption(),
                          toolCallFormatOption()],

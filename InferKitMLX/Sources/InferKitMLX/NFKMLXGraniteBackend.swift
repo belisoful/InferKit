@@ -83,7 +83,7 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
 
     /// The result keys the backend writes: the reply, the tool calls and the assistant turn of a tool
     /// request, and the usage. Introduced in InferKit 0.4.0.
-    @objc public var supportedOutputKeys: Set<String> { NFKMLXToolCalling.outputKeys.union([NFKOutputUsage]) }
+    @objc public var supportedOutputKeys: Set<String> { NFKMLXToolCalling.outputKeys.union([NFKOutputUsage, NFKOutputFinishReason]) }
 
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         var temperature: Float = 0
@@ -100,21 +100,23 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
         }
 
         if let (promptTokens, format) = try toolPrompt(for: request) {
-            let produced = try generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed,
+            let (produced, limit) = try generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed,
                                     stops: templateStopTokens)
             var outputs = NFKMLXToolCalling.outputs(answer: holder.tokenizer.decode(produced.map { NSNumber(value: $0) }),
                                                     reasoning: "", request: request, format: format, source: identifier)
+            outputs[NFKOutputFinishReason] = NFKMLXContextRoom.finishReason(produced: produced.count, limit: limit, outputs: outputs)
             outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
                                                           outputTokens: produced.count, reasoningTokens: nil)
             return NFKInferenceResult(outputs: outputs)
         }
         let promptTokens = try tokens(for: request)
-        let produced = try generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed,
+        let (produced, limit) = try generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed,
                                 stops: stopTokens)
         return NFKInferenceResult(outputs: [
             NFKOutputText: holder.tokenizer.decode(produced.map { NSNumber(value: $0) }),
             NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
                                                 outputTokens: produced.count, reasoningTokens: nil),
+            NFKOutputFinishReason: NFKMLXContextRoom.finishReason(produced: produced.count, limit: limit),
         ])
     }
 
@@ -158,7 +160,7 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
 
     /// Prefill-only generation: the whole growing sequence runs through the decoder each step.
     private func generate(_ promptTokens: [Int], temperature: Float, maxTokens: Int, seed: UInt64?,
-                          stops: Set<Int>) throws -> [Int] {
+                          stops: Set<Int>) throws -> (tokens: [Int], limit: Int) {
         var tokens = promptTokens
         var produced = [Int]()
         let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: promptTokens.count,
@@ -177,7 +179,7 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
             produced.append(next)
             tokens.append(next)
         }
-        return produced
+        return (produced, limit)
     }
 }
 

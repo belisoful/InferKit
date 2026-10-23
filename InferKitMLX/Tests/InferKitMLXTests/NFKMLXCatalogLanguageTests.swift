@@ -83,7 +83,7 @@ final class NFKMLXCatalogLanguageTests: XCTestCase {
         try assertKeys(of: NFKMLXGemmaLanguage.gemmaMultimodalModelName,
                        inputs: NFKMLXGemmaLanguage.multimodalInputKeys,
                        parameters: NFKMLXGemmaLanguage.multimodalParameterKeys,
-                       outputs: [NFKOutputText, NFKOutputUsage])
+                       outputs: [NFKOutputText, NFKOutputUsage, NFKOutputFinishReason])
     }
 
     func testTheTimesFMEntryDeclaresTheForecastKeys() throws {

@@ -152,7 +152,7 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
     }
 
     /// The result keys the backend writes. Introduced in InferKit 0.4.0.
-    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputUsage] }
+    @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputUsage, NFKOutputFinishReason] }
 
     @objc public var isReady: Bool { true }
 
@@ -202,6 +202,7 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
             NFKOutputText: gemma.decode(produced),
             NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: ids.count, cachedTokens: 0,
                                                 outputTokens: produced.count, reasoningTokens: nil),
+            NFKOutputFinishReason: NFKMLXContextRoom.finishReason(produced: produced.count, limit: max(options.maxTokens, 1)),
         ])
     }
 

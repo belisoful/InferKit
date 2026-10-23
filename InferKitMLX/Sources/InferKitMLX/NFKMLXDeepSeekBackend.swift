@@ -332,7 +332,7 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
 
     /// The result keys the backend writes: the reply, the tool calls and the assistant turn, and the usage.
     /// Introduced in InferKit 0.4.0.
-    @objc public var supportedOutputKeys: Set<String> { NFKMLXToolCalling.outputKeys.union([NFKOutputUsage]) }
+    @objc public var supportedOutputKeys: Set<String> { NFKMLXToolCalling.outputKeys.union([NFKOutputUsage, NFKOutputFinishReason]) }
 
     /// The input tokens a run of the request costs: its prompt rendered through the chat template the
     /// run uses, tools included, with a picture's span expanded as a run expands it. Runs no decoder.
@@ -362,6 +362,8 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
                                                 reasoning: "", request: request, format: toolCallFormat, source: identifier)
         outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: cached,
                                                       outputTokens: produced.count, reasoningTokens: nil)
+        outputs[NFKOutputFinishReason] = NFKMLXContextRoom.finishReason(produced: produced.count, limit: options.maxTokens,
+                                                                        outputs: outputs)
         return NFKInferenceResult(outputs: outputs)
     }
 

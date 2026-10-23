@@ -2462,6 +2462,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "registryName" : "codestral-mamba",
@@ -4766,6 +4773,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "registryName" : "deepseek-v4-flash-0731",
@@ -5099,6 +5113,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "registryName" : "deepseek-v4-pro-0813",
@@ -5441,6 +5462,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "registryName" : "deepseek-v4.1-flash",
@@ -10954,6 +10982,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -11246,6 +11281,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -11539,6 +11581,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -11833,6 +11882,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -12125,6 +12181,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -12376,6 +12439,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -12611,6 +12681,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "presets" : [
@@ -12863,6 +12940,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "registryName" : "gemma-4-12b-it",
@@ -13150,6 +13234,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "registryName" : "gemma-4-26b-a4b-it",
@@ -13410,6 +13501,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "registryName" : "gemma-4-31b-it",
@@ -13664,6 +13762,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "registryName" : "gemma-4-e2b-it",
@@ -13919,6 +14024,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "registryName" : "gemma-4-e4b-it",
@@ -14116,6 +14228,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "registryName" : "gemma4-multimodal",
@@ -15206,6 +15325,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "registryName" : "granite-4.0-h",
@@ -15498,6 +15624,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "registryName" : "granite-4.0-h-tiny",
@@ -25717,6 +25850,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "registryName" : "nemotron-nano-2",
@@ -37041,6 +37181,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "registryName" : "qwen3.5",
@@ -37637,6 +37784,13 @@
           "required" : true,
           "title" : "Usage",
           "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
         }
       ],
       "registryName" : "qwen4-exp",

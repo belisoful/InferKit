@@ -392,7 +392,10 @@ attention and feed-forward.
   rolling cache that drops the oldest positions, so a long conversation keeps going past it. The catalog
   declares the same figure as `NFKParameterMaxTokens`'s maximum in `measured(by:)` (least `maximumPositions`
   across variants, else `NFKMLXCatalogEntry.outputTokenLimit`). Gemma's rotary table holds 4096 positions;
-  positions past it are computed from the same frequencies, which matches a longer table bit for bit. **Release sampling (2026-10-22):** a
+  positions past it are computed from the same frequencies, which matches a longer table bit for bit. **Finish reasons (2026-10-23):** every text backend but Phi-4-multimodal and the image-question
+  models answers `NFKOutputFinishReason` through `NFKMLXContextRoom.finishReason(produced:limit:outputs:)`;
+  the prefill-only backends' `generate` returns the bounded limit beside the tokens, since a run that stops
+  on an end token at the last step produced fewer than the limit. **Release sampling (2026-10-22):** a
   `generation_config.json` with `do_sample` sets the request defaults (`NFKMLXReleaseSampling`), read as
   transformers' `GenerationConfig` fills a missing value (temperature 1, top-p 1, top-k 50); top-k runs
   before top-p on the temperature-scaled distribution and keeps ties at the `k`th value. The catalog

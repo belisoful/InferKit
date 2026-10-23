@@ -1511,8 +1511,10 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 #### A language run says why it stopped
 
-- `NFKMLXLanguageBackend` answers `NFKOutputFinishReason`: tool calls where the reply calls tools, length where it
-  reached `NFKParameterMaxTokens`, and stop otherwise. The catalog's language releases declare the output.
+- `NFKMLXLanguageBackend`, the Qwen3.5 and Qwen4, Granite, Nemotron, Mamba, Gemma 3, 3n, and 4 (text and
+  multimodal), and DeepSeek backends answer `NFKOutputFinishReason`: tool calls where the reply calls tools, length
+  where it reached its limit (`NFKParameterMaxTokens` or the room its context left), and stop otherwise. Their
+  catalog entries declare the output.
 
 #### A language release samples as its generation config says, with top-k
 
