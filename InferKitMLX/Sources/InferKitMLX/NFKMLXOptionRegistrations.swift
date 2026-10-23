@@ -132,7 +132,8 @@ enum NFKMLXOptionRegistrations {
             let model = try NFKMLXGemma3.model(directoryURL: url, draftDirectoryURL: draftURL, precision: precision,
                                                residency: options.residency, draftBits: options.draftBits(orDefault: 4))
             return NFKMLXGemma3Backend(model: model, identifier: NFKMLXGemma3.modelName,
-                                       contextLength: NFKMLXModelDescription.contextLength(inDirectory: url))
+                                       contextLength: NFKMLXModelDescription.contextLength(inDirectory: url),
+                                       releaseSampling: NFKMLXReleaseSampling(directoryURL: url))
         }
         registerDirectoryModels(registryNames(families: ["gemma3n"]), consumes: [NFKModelLoadOptionPrecision]) {
             url, _, options in

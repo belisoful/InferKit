@@ -24,15 +24,19 @@ final class NFKGemma4MultimodalModel: @unchecked Sendable {
     let chatTemplate: String?
     /// The positions the release's text configuration states, which bound a prompt and its reply.
     let contextLength: Int?
+    /// The sampling the release's generation config sets, which a request's own values override.
+    let releaseSampling: NFKMLXReleaseSampling?
 
     init(decoder: NFKMLXGemmaNet, vision: (tower: NFKMLXGemma4VisionNet, embedder: NFKMLXGemma4MultimodalEmbedder)?,
          audio: (tower: NFKMLXGemma4AudioNet, embedder: NFKMLXGemma4MultimodalEmbedder)?,
          imageProcessor: NFKMLXGemma4ImageProcessor, tokenizer: NFKMLXGemmaTokenizer,
-         imageTokenId: Int, audioTokenId: Int, chatTemplate: String? = nil, contextLength: Int? = nil) {
+         imageTokenId: Int, audioTokenId: Int, chatTemplate: String? = nil, contextLength: Int? = nil,
+         releaseSampling: NFKMLXReleaseSampling? = nil) {
         self.decoder = decoder
         self.tokenizer = tokenizer
         self.chatTemplate = chatTemplate
         self.contextLength = contextLength
+        self.releaseSampling = releaseSampling
         chain = NFKMLXGemma4ConditionalGeneration(
             decoder: decoder, visionTower: vision?.tower, visionEmbedder: vision?.embedder,
             audioTower: audio?.tower, audioEmbedder: audio?.embedder, imageProcessor: imageProcessor,
@@ -89,7 +93,8 @@ extension NFKMLXGemmaLanguage {
     static let multimodalInputKeys: Set<String> = [NFKInputPrompt, NFKInputMessages, NFKInputImage, NFKInputAudio]
 
     /// The request parameters the multimodal backend reads.
-    static let multimodalParameterKeys: Set<String> = [NFKParameterTemperature, NFKParameterMaxTokens, NFKParameterSeed]
+    static let multimodalParameterKeys: Set<String> = [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens,
+                                                        NFKParameterSeed]
 
     /// The samples an `NFKAudioAsset` or raw WAV bytes carry, resampled to 16 kHz, the rate the audio
     /// tower is trained at.
@@ -117,7 +122,8 @@ extension NFKMLXGemmaLanguage {
                                 parameterKeys: multimodalParameterKeys,
                                 outputKeys: [NFKOutputText, NFKOutputUsage, NFKOutputFinishReason]) { request, job in
             try NFKMLXUsage.refuseReasoningEffort(in: request, model: gemmaMultimodalModelName)
-            let temperature = NFKMLXGenerationBackend.number(request, NFKParameterTemperature)?.floatValue ?? 0
+            var sampling = NFKMLXStepSampling(release: model.releaseSampling)
+            sampling.read(request)
             let maximumTokens = NFKMLXGenerationBackend.number(request, NFKParameterMaxTokens)?.intValue ?? 256
             let seed = NFKMLXGenerationBackend.number(request, NFKParameterSeed)?.uint64Value
 
@@ -140,13 +146,7 @@ extension NFKMLXGemmaLanguage {
                 let (embeddings, ids) = model.chain.fusedEmbeddings(tokens: tokens, visionSoftTokens: visionSoft,
                                                                      audioSoftTokens: audioSoft)
                 let logits = model.decoder.logits(fromEmbeddings: embeddings, tokens: ids)[0, tokens.count - 1]
-                let next: Int
-                if temperature <= 0 {
-                    next = logits.argMax(axis: -1).item(Int.self)
-                } else {
-                    if let seed { MLXRandom.seed(seed &+ UInt64(step)) }
-                    next = MLXRandom.categorical(logits * (1 / temperature)).item(Int.self)
-                }
+                let next = sampling.next(logits, seed: seed, step: step)
                 if stops.contains(next) { break }
                 produced.append(next)
                 tokens.append(next)
@@ -266,7 +266,8 @@ extension NFKMLXGemmaLanguage {
             imageTokenId: (json["image_token_id"] as? NSNumber)?.intValue ?? tokenizer.id(forToken: "<|image|>") ?? 258_880,
             audioTokenId: (json["audio_token_id"] as? NSNumber)?.intValue ?? tokenizer.id(forToken: "<|audio|>") ?? 258_881,
             chatTemplate: NFKMLXLanguage.chatTemplate(inDirectory: directoryURL),
-            contextLength: ((json["text_config"] as? [String: Any])?["max_position_embeddings"] as? NSNumber)?.intValue)
+            contextLength: ((json["text_config"] as? [String: Any])?["max_position_embeddings"] as? NSNumber)?.intValue,
+            releaseSampling: NFKMLXReleaseSampling(directoryURL: directoryURL))
         return multimodalBackend(model)
     }
 

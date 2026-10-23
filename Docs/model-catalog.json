@@ -2426,6 +2426,26 @@
           "title" : "Temperature"
         },
         {
+          "default" : 1,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 0,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
+        },
+        {
           "default" : 256,
           "help" : "The most tokens the reply runs to.",
           "key" : "maxTokens",
@@ -4586,7 +4606,7 @@
       },
       "options" : [
         {
-          "default" : 0,
+          "default" : 1,
           "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
           "key" : "temperature",
           "kind" : "number",
@@ -4603,6 +4623,16 @@
           "minimum" : 0,
           "stage" : "request",
           "title" : "Top P"
+        },
+        {
+          "default" : 50,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
         },
         {
           "default" : 256,
@@ -4926,7 +4956,7 @@
       },
       "options" : [
         {
-          "default" : 0,
+          "default" : 1,
           "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
           "key" : "temperature",
           "kind" : "number",
@@ -4943,6 +4973,16 @@
           "minimum" : 0,
           "stage" : "request",
           "title" : "Top P"
+        },
+        {
+          "default" : 50,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
         },
         {
           "default" : 256,
@@ -5292,6 +5332,16 @@
           "minimum" : 0,
           "stage" : "request",
           "title" : "Top P"
+        },
+        {
+          "default" : 0,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
         },
         {
           "default" : 256,
@@ -10852,7 +10902,7 @@
       ],
       "options" : [
         {
-          "default" : 0,
+          "default" : 1,
           "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
           "key" : "temperature",
           "kind" : "number",
@@ -10861,7 +10911,7 @@
           "title" : "Temperature"
         },
         {
-          "default" : 1,
+          "default" : 0.94999998807907104,
           "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
           "key" : "topP",
           "kind" : "number",
@@ -10869,6 +10919,16 @@
           "minimum" : 0,
           "stage" : "request",
           "title" : "Top P"
+        },
+        {
+          "default" : 64,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
         },
         {
           "default" : 256,
@@ -11151,7 +11211,7 @@
       ],
       "options" : [
         {
-          "default" : 0,
+          "default" : 1,
           "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
           "key" : "temperature",
           "kind" : "number",
@@ -11160,7 +11220,7 @@
           "title" : "Temperature"
         },
         {
-          "default" : 1,
+          "default" : 0.94999998807907104,
           "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
           "key" : "topP",
           "kind" : "number",
@@ -11168,6 +11228,16 @@
           "minimum" : 0,
           "stage" : "request",
           "title" : "Top P"
+        },
+        {
+          "default" : 64,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
         },
         {
           "default" : 256,
@@ -11451,7 +11521,7 @@
       ],
       "options" : [
         {
-          "default" : 0,
+          "default" : 1,
           "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
           "key" : "temperature",
           "kind" : "number",
@@ -11460,7 +11530,7 @@
           "title" : "Temperature"
         },
         {
-          "default" : 1,
+          "default" : 0.94999998807907104,
           "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
           "key" : "topP",
           "kind" : "number",
@@ -11468,6 +11538,16 @@
           "minimum" : 0,
           "stage" : "request",
           "title" : "Top P"
+        },
+        {
+          "default" : 64,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
         },
         {
           "default" : 256,
@@ -11752,7 +11832,7 @@
       ],
       "options" : [
         {
-          "default" : 0,
+          "default" : 1,
           "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
           "key" : "temperature",
           "kind" : "number",
@@ -11761,7 +11841,7 @@
           "title" : "Temperature"
         },
         {
-          "default" : 1,
+          "default" : 0.94999998807907104,
           "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
           "key" : "topP",
           "kind" : "number",
@@ -11769,6 +11849,16 @@
           "minimum" : 0,
           "stage" : "request",
           "title" : "Top P"
+        },
+        {
+          "default" : 64,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
         },
         {
           "default" : 256,
@@ -12051,7 +12141,7 @@
       ],
       "options" : [
         {
-          "default" : 0,
+          "default" : 1,
           "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
           "key" : "temperature",
           "kind" : "number",
@@ -12060,7 +12150,7 @@
           "title" : "Temperature"
         },
         {
-          "default" : 1,
+          "default" : 0.94999998807907104,
           "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
           "key" : "topP",
           "kind" : "number",
@@ -12068,6 +12158,16 @@
           "minimum" : 0,
           "stage" : "request",
           "title" : "Top P"
+        },
+        {
+          "default" : 64,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
         },
         {
           "default" : 256,
@@ -12357,7 +12457,7 @@
       ],
       "options" : [
         {
-          "default" : 0,
+          "default" : 1,
           "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
           "key" : "temperature",
           "kind" : "number",
@@ -12366,7 +12466,7 @@
           "title" : "Temperature"
         },
         {
-          "default" : 1,
+          "default" : 0.94999998807907104,
           "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
           "key" : "topP",
           "kind" : "number",
@@ -12374,6 +12474,16 @@
           "minimum" : 0,
           "stage" : "request",
           "title" : "Top P"
+        },
+        {
+          "default" : 64,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
         },
         {
           "default" : 256,
@@ -12599,7 +12709,7 @@
       ],
       "options" : [
         {
-          "default" : 0,
+          "default" : 1,
           "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
           "key" : "temperature",
           "kind" : "number",
@@ -12608,7 +12718,7 @@
           "title" : "Temperature"
         },
         {
-          "default" : 1,
+          "default" : 0.94999998807907104,
           "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
           "key" : "topP",
           "kind" : "number",
@@ -12616,6 +12726,16 @@
           "minimum" : 0,
           "stage" : "request",
           "title" : "Top P"
+        },
+        {
+          "default" : 64,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
         },
         {
           "default" : 256,
@@ -12824,13 +12944,33 @@
       },
       "options" : [
         {
-          "default" : 0,
+          "default" : 1,
           "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
           "key" : "temperature",
           "kind" : "number",
           "minimum" : 0,
           "stage" : "request",
           "title" : "Temperature"
+        },
+        {
+          "default" : 0.94999998807907104,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 64,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
         },
         {
           "default" : 256,
@@ -13087,13 +13227,33 @@
       ],
       "options" : [
         {
-          "default" : 0,
+          "default" : 1,
           "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
           "key" : "temperature",
           "kind" : "number",
           "minimum" : 0,
           "stage" : "request",
           "title" : "Temperature"
+        },
+        {
+          "default" : 0.94999998807907104,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 64,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
         },
         {
           "default" : 256,
@@ -13385,13 +13545,33 @@
       ],
       "options" : [
         {
-          "default" : 0,
+          "default" : 1,
           "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
           "key" : "temperature",
           "kind" : "number",
           "minimum" : 0,
           "stage" : "request",
           "title" : "Temperature"
+        },
+        {
+          "default" : 0.94999998807907104,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 64,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
         },
         {
           "default" : 256,
@@ -13646,13 +13826,33 @@
       ],
       "options" : [
         {
-          "default" : 0,
+          "default" : 1,
           "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
           "key" : "temperature",
           "kind" : "number",
           "minimum" : 0,
           "stage" : "request",
           "title" : "Temperature"
+        },
+        {
+          "default" : 0.94999998807907104,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 64,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
         },
         {
           "default" : 256,
@@ -13908,13 +14108,33 @@
       ],
       "options" : [
         {
-          "default" : 0,
+          "default" : 1,
           "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
           "key" : "temperature",
           "kind" : "number",
           "minimum" : 0,
           "stage" : "request",
           "title" : "Temperature"
+        },
+        {
+          "default" : 0.94999998807907104,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 64,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
         },
         {
           "default" : 256,
@@ -14183,13 +14403,33 @@
       },
       "options" : [
         {
-          "default" : 0,
+          "default" : 1,
           "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
           "key" : "temperature",
           "kind" : "number",
           "minimum" : 0,
           "stage" : "request",
           "title" : "Temperature"
+        },
+        {
+          "default" : 0.94999998807907104,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 64,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
         },
         {
           "default" : 256,
@@ -15218,6 +15458,26 @@
           "title" : "Temperature"
         },
         {
+          "default" : 1,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 0,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
+        },
+        {
           "default" : 256,
           "help" : "The most tokens the reply runs to.",
           "key" : "maxTokens",
@@ -15484,6 +15744,26 @@
           "minimum" : 0,
           "stage" : "request",
           "title" : "Temperature"
+        },
+        {
+          "default" : 1,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 0,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
         },
         {
           "default" : 256,
@@ -25741,6 +26021,26 @@
           "minimum" : 0,
           "stage" : "request",
           "title" : "Temperature"
+        },
+        {
+          "default" : 1,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 0,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
         },
         {
           "default" : 256,
@@ -37046,6 +37346,26 @@
           "title" : "Temperature"
         },
         {
+          "default" : 1,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 0,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
+        },
+        {
           "default" : 256,
           "help" : "The most tokens the reply runs to.",
           "key" : "maxTokens",
@@ -37609,13 +37929,33 @@
       },
       "options" : [
         {
-          "default" : 0,
+          "default" : 1,
           "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
           "key" : "temperature",
           "kind" : "number",
           "minimum" : 0,
           "stage" : "request",
           "title" : "Temperature"
+        },
+        {
+          "default" : 0.94999998807907104,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 20,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
         },
         {
           "default" : 256,

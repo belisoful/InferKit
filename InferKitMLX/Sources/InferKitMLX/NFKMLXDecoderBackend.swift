@@ -46,6 +46,8 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     private let stopTokens: Set<Int>
     private let describedModules: [Module]
     private let releaseDirectoryURL: URL?
+    /// The sampling the release's generation config sets, which a request's own values override.
+    private let releaseSampling: NFKMLXReleaseSampling?
     private let modelInfoCache = NFKMLXModelInfoCache()
 
     init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKTokenizer, identifier: String,
@@ -54,6 +56,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
         self.identifier = identifier
         self.describedModules = modules
         self.releaseDirectoryURL = releaseDirectoryURL
+        releaseSampling = NFKMLXReleaseSampling(directoryURL: releaseDirectoryURL)
         self.chatTemplate = chatTemplate
         beginOfSequence = tokenizer.bosTokenId >= 0 ? tokenizer.bosTokenId : nil
         self.stopTokens = stopTokens
@@ -100,7 +103,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
-        var keys: Set<String> = [NFKParameterTemperature, NFKParameterMaxTokens, NFKParameterSeed, NFKParameterTools,
+        var keys: Set<String> = [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens, NFKParameterSeed, NFKParameterTools,
                                  NFKMLXGenerationParameterKey.toolCallFormat]
         if templateReadsReasoningEffort { keys.insert(NFKParameterReasoningEffort) }
         return keys
@@ -123,12 +126,10 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     }
 
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
-        var temperature: Float = 0
+        var sampling = NFKMLXStepSampling(release: releaseSampling)
+        sampling.read(request)
         var maximumTokens = 256
         var seed: UInt64?
-        if let value = request.parameter(forKey: NFKParameterTemperature) as? NSNumber {
-            temperature = value.floatValue
-        }
         if let value = request.parameter(forKey: NFKParameterMaxTokens) as? NSNumber {
             maximumTokens = value.intValue
         }
@@ -137,7 +138,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
         }
 
         let (promptTokens, format) = try prompt(for: request)
-        let (produced, limit) = try generate(promptTokens, temperature: temperature, maxTokens: maximumTokens, seed: seed)
+        let (produced, limit) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens, seed: seed)
         let decode: ([Int]) -> String = { [holder] in holder.tokenizer.decode($0.map { NSNumber(value: $0) }) }
         let reasoningFormat = request.messages != nil ? chatTemplate.flatMap(NFKMLXReasoningFormat.detected(inChatTemplate:)) : nil
         let (reasoning, answer, reasoningTokens) = NFKMLXUsage.split(decode(produced), format: reasoningFormat,
@@ -198,7 +199,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     }
 
     /// Prefill-only generation: the whole growing sequence runs through the decoder each step.
-    private func generate(_ promptTokens: [Int], temperature: Float, maxTokens: Int, seed: UInt64?) throws -> (tokens: [Int], limit: Int) {
+    private func generate(_ promptTokens: [Int], sampling: NFKMLXStepSampling, maxTokens: Int, seed: UInt64?) throws -> (tokens: [Int], limit: Int) {
         var tokens = promptTokens
         var produced = [Int]()
         let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: promptTokens.count,
@@ -206,13 +207,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
         for step in 0 ..< max(limit, 0) {
             let input = MLXArray(tokens.map(Int32.init)).reshaped([1, tokens.count])
             let logits = holder.logits(input)[0, tokens.count - 1]
-            let next: Int
-            if temperature <= 0 {
-                next = logits.argMax(axis: -1).item(Int.self)
-            } else {
-                if let seed { MLXRandom.seed(seed &+ UInt64(step)) }
-                next = MLXRandom.categorical(logits * (1 / temperature)).item(Int.self)
-            }
+            let next = sampling.next(logits, seed: seed, step: step)
             if stopTokens.contains(next) { break }
             produced.append(next)
             tokens.append(next)

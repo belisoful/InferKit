@@ -571,6 +571,43 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         XCTAssertEqual(try reply(ownOptions, [:]), greedy)
     }
 
+    /// A decoder with its own token loop samples as the shared sampler filters: greedy at temperature 0,
+    /// the most probable token at top-k 1 whatever the temperature, and the request's values over the
+    /// release's.
+    func testTheStepSamplerFiltersAsTheSharedSamplerDoes() throws {
+        try requireMLXRuntime()
+        let logits = MLXArray([Float(0.1), 3, 0.2, 2.9])
+        var sampling = NFKMLXStepSampling(release: nil)
+        XCTAssertEqual(sampling.next(logits, seed: nil, step: 0), 1, "greedy without a release's sampling")
+        sampling = NFKMLXStepSampling(release: NFKMLXReleaseSampling(temperature: 50, topP: 1, topK: 1))
+        for step in 0 ..< 8 {
+            XCTAssertEqual(sampling.next(logits, seed: 7, step: step), 1, "top-k 1 keeps the most probable token")
+        }
+        sampling.read(NFKInferenceRequest(inputs: [NFKInputPrompt: "x"], parameters: [NFKParameterTemperature: 0, NFKParameterTopK: 0]))
+        XCTAssertEqual(sampling.temperature, 0)
+        XCTAssertEqual(sampling.topK, 0)
+        XCTAssertEqual(sampling.topP, 1, "a value the request leaves out keeps the release's")
+    }
+
+    /// The catalog's other families sample by default as their releases' generation configs say.
+    func testTheCatalogsOtherFamiliesSampleAsTheirGenerationConfigsSay() throws {
+        func defaults(_ identifier: String) throws -> [String: Double] {
+            let entry = try XCTUnwrap(NFKMLXCatalogLanguage.entries.first { $0.identifier == identifier }, identifier)
+            var values = [String: Double]()
+            for option in try entry.descriptor().options where [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK].contains(option.key) {
+                values[option.key] = (option.defaultValue as? NSNumber)?.doubleValue
+            }
+            return values
+        }
+        let gemma: [String: Double] = [NFKParameterTemperature: 1, NFKParameterTopP: 0.95, NFKParameterTopK: 64]
+        for identifier in ["gemma-3-1b-it", "gemma-3n-e2b-it", "gemma-4-e2b-it", "gemma4-multimodal"] {
+            XCTAssertEqual(try defaults(identifier).mapValues { ($0 * 100).rounded() }, gemma.mapValues { ($0 * 100).rounded() }, identifier)
+        }
+        XCTAssertEqual(try defaults("qwen4-exp")[NFKParameterTopK], 20)
+        XCTAssertEqual(try defaults("deepseek-v4-flash-0731"), [NFKParameterTemperature: 1, NFKParameterTopP: 1, NFKParameterTopK: 50])
+        XCTAssertEqual(try defaults("granite-4.0-h")[NFKParameterTemperature], 0, "a release whose config does not sample decodes greedily")
+    }
+
     /// The catalog's Qwen3 samples by default as its release's generation config says.
     func testTheCatalogsQwen3SamplesAsItsGenerationConfigSays() throws {
         let entry = try XCTUnwrap(NFKMLXCatalogLanguage.entries.first { $0.identifier == "qwen3-0.6b" })

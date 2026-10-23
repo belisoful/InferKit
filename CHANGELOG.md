@@ -1530,6 +1530,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   greedy decoding sets that flag too. A release without `do_sample` decodes greedily as before.
 - The catalog's language releases declare the same defaults, with a Top K option: Qwen3 at 0.6, 0.95, and 20;
   gpt-oss at 1, 1, and 50; Mistral Small 3 at 0.15, 1, and 50. Mixtral and Qwen1.5-MoE stay greedy.
+- The Qwen3.5 and Qwen4, Granite, Nemotron, Mamba, Gemma 3, 3n, and 4 (text and multimodal), and DeepSeek backends
+  read their release's sampling too, and take `NFKParameterTopP` and `NFKParameterTopK`. Their catalog entries
+  declare it: Gemma 3, 3n, and 4 at 1, 0.95, and 64; Qwen4 at 1, 0.95, and 20; DeepSeek V4 Flash and V4 Pro at 1, 1,
+  and 50. Granite, Nemotron, Codestral Mamba, DeepSeek V4.1 Flash, and the Qwen3.5 entry stay greedy; the Qwen3.5
+  entry's 27B release samples at run time, as its configuration says.
 
 #### A language release ends where its generation config says and answers text without special tokens
 

@@ -230,10 +230,12 @@ extension NFKMLXCatalogLanguage {
                                   routesExperts: true, readsImages: true),
             NFKMLXLanguageRelease(name: "deepseek-v4-flash-0731", displayName: "DeepSeek V4 Flash (0731)",
                                   repository: "deepseek-ai/DeepSeek-V4-Flash-0731", family: "deepseek-v4",
-                                  routesExperts: true),
+                                  routesExperts: true,
+                                  sampling: NFKMLXReleaseSampling(temperature: 1, topP: 1, topK: 50)),
             NFKMLXLanguageRelease(name: "deepseek-v4-pro-0813", displayName: "DeepSeek V4 Pro (0813)",
                                   repository: "deepseek-ai/DeepSeek-V4-Pro-0813", family: "deepseek-v4",
-                                  routesExperts: true),
+                                  routesExperts: true,
+                                  sampling: NFKMLXReleaseSampling(temperature: 1, topP: 1, topK: 50)),
         ]
     }
 
@@ -563,8 +565,19 @@ extension NFKMLXCatalogLanguage {
     }
 
     /// The options of a backend whose decoder runs prefill-only and calls tools.
-    fileprivate static var toolDecoderOptions: [NFKModelOption] {
-        [temperatureOption(), maxTokensOption(), seedOption(), toolsOption(), toolCallFormatOption()]
+    /// Temperature, top-p, and top-k, defaulting to what a release's generation config sets, or greedy decoding.
+    fileprivate static func samplingOptions(_ sampling: NFKMLXReleaseSampling?) -> [NFKModelOption] {
+        let defaults = generationDefaults
+        return [temperatureOption(sampling?.temperature ?? defaults.temperature), topPOption(sampling?.topP ?? defaults.topP),
+                topKOption(sampling?.topK ?? defaults.topK)]
+    }
+
+    /// The sampling Gemma 3, 3n, and 4's generation configs set: temperature 1 (transformers' default where the
+    /// file leaves it out), top-p 0.95, top-k 64.
+    fileprivate static var gemmaSampling: NFKMLXReleaseSampling { NFKMLXReleaseSampling(temperature: 1, topP: 0.95, topK: 64) }
+
+    fileprivate static func toolDecoderOptions(sampling: NFKMLXReleaseSampling? = nil) -> [NFKModelOption] {
+        samplingOptions(sampling) + [maxTokensOption(), seedOption(), toolsOption(), toolCallFormatOption()]
     }
 
     /// The options ``NFKMLXLanguageBackend`` reads, sampling by default as `sampling` says.
@@ -770,7 +783,7 @@ extension NFKMLXCatalogLanguage {
                               revision: NFKMLXOpenJevVariant.twentySevenB.baseRevision, files: files),
             ],
             license: .apache2(), readsReasoning: true,
-            outputs: toolCallingOutputs + [reasoningOutput, usageOutput, finishReasonOutput], parameters: toolDecoderOptions)
+            outputs: toolCallingOutputs + [reasoningOutput, usageOutput, finishReasonOutput], parameters: toolDecoderOptions())
     }
 
     fileprivate static var qwen4ExpEntry: NFKMLXCatalogEntry {
@@ -784,7 +797,7 @@ extension NFKMLXCatalogLanguage {
                                                          optional: NFKMLXQwen4Exp.optionalFiles,
                                                          weights: NFKMLXQwen4Exp.weightFiles))],
             license: license(repository), readsReasoning: true,
-            outputs: toolCallingOutputs + [reasoningOutput, usageOutput, finishReasonOutput], parameters: toolDecoderOptions,
+            outputs: toolCallingOutputs + [reasoningOutput, usageOutput, finishReasonOutput], parameters: toolDecoderOptions(sampling: NFKMLXReleaseSampling(temperature: 1, topP: 0.95, topK: 20)),
             residencies: residencies(routesExperts: true))
     }
 
@@ -806,7 +819,7 @@ extension NFKMLXCatalogLanguage {
                 variants: [familyVariant(release.name, release.repository, displayName: release.displayName,
                                          isDefault: true, files: files)],
                 license: .apache2(), readsReasoning: false, outputs: toolCallingOutputs + [usageOutput, finishReasonOutput],
-                parameters: toolDecoderOptions, residencies: residencies(routesExperts: release.routesExperts))
+                parameters: toolDecoderOptions(), residencies: residencies(routesExperts: release.routesExperts))
             entry.modelTypes = ["granitemoehybrid"]
             return entry
         }
@@ -823,7 +836,7 @@ extension NFKMLXCatalogLanguage {
                                                          optional: NFKMLXNemotronH.optionalFiles,
                                                          weights: NFKMLXNemotronH.weightFiles))],
             license: license(repository), readsReasoning: false, outputs: toolCallingOutputs + [usageOutput, finishReasonOutput],
-            parameters: toolDecoderOptions)
+            parameters: toolDecoderOptions())
         entry.modelTypes = ["nemotron_h"]
         return entry
     }
@@ -838,7 +851,7 @@ extension NFKMLXCatalogLanguage {
                                      files: releaseFiles(required: NFKMLXMamba.requiredFiles, optional: NFKMLXMamba.optionalFiles,
                                                          weights: NFKMLXMamba.weightFiles))],
             license: .apache2(), readsReasoning: false, outputs: [textOutput, usageOutput, finishReasonOutput],
-            parameters: [temperatureOption(), maxTokensOption(), seedOption()])
+            parameters: samplingOptions(nil) + [maxTokensOption(), seedOption()])
         // A state-space decoder has no position table; Mistral states retrieval tested to 256k tokens.
         entry.outputTokenLimit = 262_144
         return entry
@@ -861,8 +874,8 @@ extension NFKMLXCatalogLanguage {
             tasks: [NFKModelTaskTextGeneration] + (release.readsImages ? [NFKModelTaskVisionQuestionAnswering] : []),
             inputs: [promptInput, messagesInput, imageInput(help: towerHelp)],
             outputs: [textOutput, usageOutput, finishReasonOutput],
-            parameters: [temperatureOption(), topPOption(), maxTokensOption(), seedOption(), conversationKeyOption(),
-                         draftTokensOption()],
+            parameters: samplingOptions(gemmaSampling) + [maxTokensOption(), seedOption(), conversationKeyOption(),
+                                                          draftTokensOption()],
             variants: [variant(release, files: releaseFiles(required: NFKMLXGemma3.requiredFiles,
                                                             optional: NFKMLXGemma3.optionalFiles,
                                                             weights: NFKMLXGemma3.weightFiles))],
@@ -883,7 +896,7 @@ extension NFKMLXCatalogLanguage {
             inputs: [promptInput, messagesInput, imageInput(help: "An image the reply is about."),
                      .input(NFKInputAudio, title: "Audio", help: "A recording the reply is about.")],
             outputs: [textOutput, usageOutput, finishReasonOutput],
-            parameters: [temperatureOption(), topPOption(), maxTokensOption(), seedOption()],
+            parameters: samplingOptions(gemmaSampling) + [maxTokensOption(), seedOption()],
             variants: [variant(release, files: releaseFiles(required: NFKMLXGemma3n.requiredFiles,
                                                             optional: NFKMLXGemma3n.optionalFiles,
                                                             weights: NFKMLXGemma3n.weightFiles))],
@@ -897,7 +910,7 @@ extension NFKMLXCatalogLanguage {
             summary: "\(release.displayName), a \(kind) Gemma 4 decoder that writes text and calls tools.",
             registryName: release.name, tasks: [NFKModelTaskTextGeneration],
             inputs: [promptInput, messagesInput], outputs: toolCallingOutputs + [usageOutput, finishReasonOutput],
-            parameters: toolDecoderOptions,
+            parameters: toolDecoderOptions(sampling: gemmaSampling),
             variants: [variant(release, files: releaseFiles(required: NFKMLXGemmaLanguage.requiredFiles,
                                                             optional: NFKMLXGemmaLanguage.optionalFiles,
                                                             weights: NFKMLXGemmaLanguage.weightFiles))],
@@ -918,7 +931,7 @@ extension NFKMLXCatalogLanguage {
                      imageInput(help: "An image the reply is about, for a release with a vision tower."),
                      .input(NFKInputAudio, title: "Audio", help: "A recording the reply is about, for a release with an audio tower.")],
             outputs: [textOutput, usageOutput, finishReasonOutput],
-            parameters: [temperatureOption(), maxTokensOption(), seedOption()],
+            parameters: samplingOptions(gemmaSampling) + [maxTokensOption(), seedOption()],
             variants: [familyVariant(name, "google/gemma-4-E2B-it", displayName: "Gemma 4 E2B IT", isDefault: true,
                                      files: files),
                        familyVariant(name, "google/gemma-4-E4B-it", displayName: "Gemma 4 E4B IT", files: files)],
@@ -990,7 +1003,7 @@ extension NFKMLXCatalogLanguage {
             tasks: [NFKModelTaskTextGeneration] + (release.readsImages ? [NFKModelTaskVisionQuestionAnswering] : []),
             inputs: [promptInput, messagesInput] + (release.readsImages ? [imageInput()] : []),
             outputs: toolCallingOutputs + [usageOutput, finishReasonOutput],
-            parameters: [temperatureOption(), topPOption(), maxTokensOption(), seedOption(), jsonSchemaOption(),
+            parameters: samplingOptions(release.sampling) + [maxTokensOption(), seedOption(), jsonSchemaOption(),
                          chatTemplateOption(), prefillChunkOption(), conversationKeyOption(), toolsOption(),
                          toolCallFormatOption()],
             variants: [variant(release, files: releaseFiles(required: NFKMLXDeepSeek.deepSeekRequiredFiles,

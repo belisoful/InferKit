@@ -54,11 +54,14 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
 
     /// The positions the release states, which bound a prompt and its reply, or nil where unknown.
     private let contextLength: Int?
+    /// The sampling the release's generation config sets, which a request's own values override.
+    private let releaseSampling: NFKMLXReleaseSampling?
 
-    init(model: NFKMLXGemma3Model, identifier: String, contextLength: Int? = nil) {
+    init(model: NFKMLXGemma3Model, identifier: String, contextLength: Int? = nil, releaseSampling: NFKMLXReleaseSampling? = nil) {
         holder = NFKGemma3Holder(model)
         self.identifier = identifier
         self.contextLength = contextLength
+        self.releaseSampling = releaseSampling
         super.init()
     }
 
@@ -94,7 +97,7 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
-        [NFKParameterTemperature, NFKParameterTopP, NFKParameterMaxTokens, NFKParameterSeed,
+        [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens, NFKParameterSeed,
          NFKParameterConversationKey, NFKMLXGenerationParameterKey.draftTokens]
     }
 
@@ -177,11 +180,19 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
 
     private func run(_ request: NFKInferenceRequest, onToken: ((Int, [Int]) -> Bool)?) throws -> NFKInferenceResult {
         var options = NFKMLXGenerationOptions()
+        if let releaseSampling {
+            options.temperature = releaseSampling.temperature
+            options.topP = releaseSampling.topP
+            options.topK = releaseSampling.topK
+        }
         if let value = request.parameter(forKey: NFKParameterTemperature) as? NSNumber {
             options.temperature = value.floatValue
         }
         if let value = request.parameter(forKey: NFKParameterTopP) as? NSNumber {
             options.topP = value.floatValue
+        }
+        if let value = request.parameter(forKey: NFKParameterTopK) as? NSNumber {
+            options.topK = value.intValue
         }
         if let value = request.parameter(forKey: NFKParameterMaxTokens) as? NSNumber {
             options.maxTokens = value.intValue
@@ -352,7 +363,8 @@ public final class NFKMLXGemma3: NSObject {
     public static func backend(directoryURL directory: URL, precision: NFKMLXWeightPrecision = .float32,
                                residency: NFKMLXResidency = .automatic) throws -> any NFKInferenceBackend {
         NFKMLXGemma3Backend(model: try model(directoryURL: directory, precision: precision, residency: residency),
-                            identifier: modelName, contextLength: NFKMLXModelDescription.contextLength(inDirectory: directory))
+                            identifier: modelName, contextLength: NFKMLXModelDescription.contextLength(inDirectory: directory),
+                            releaseSampling: NFKMLXReleaseSampling(directoryURL: directory))
     }
 
     /// The Objective-C entry: builds a backend from a release directory.
@@ -393,7 +405,8 @@ public final class NFKMLXGemma3: NSObject {
                                residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
         NFKMLXGemma3Backend(model: try model(directoryURL: directory, draftDirectoryURL: draftDirectoryURL,
                                              precision: precision, residency: residency),
-                            identifier: modelName, contextLength: NFKMLXModelDescription.contextLength(inDirectory: directory))
+                            identifier: modelName, contextLength: NFKMLXModelDescription.contextLength(inDirectory: directory),
+                            releaseSampling: NFKMLXReleaseSampling(directoryURL: directory))
     }
 
     /// The model for a release with the draft release's decoder, quantized to `draftBits`, set as its

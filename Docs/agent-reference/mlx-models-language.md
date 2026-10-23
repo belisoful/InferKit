@@ -392,7 +392,13 @@ attention and feed-forward.
   rolling cache that drops the oldest positions, so a long conversation keeps going past it. The catalog
   declares the same figure as `NFKParameterMaxTokens`'s maximum in `measured(by:)` (least `maximumPositions`
   across variants, else `NFKMLXCatalogEntry.outputTokenLimit`). Gemma's rotary table holds 4096 positions;
-  positions past it are computed from the same frequencies, which matches a longer table bit for bit. **Finish reasons (2026-10-23):** every text backend but Phi-4-multimodal and the image-question
+  positions past it are computed from the same frequencies, which matches a longer table bit for bit. **Family sampling (2026-10-23):** the backends with their own token loop (Decoder, Granite,
+  Nemotron, Gemma text, Mamba, Gemma 4 multimodal) draw through `NFKMLXStepSampling`, which keeps their
+  per-step seeded `categorical(logits / T)` draw where no top-p or top-k filter is set, so seeded runs
+  repeat, and draws from the shared sampler's filtered distribution otherwise. Gemma 3, 3n, and DeepSeek
+  already use the shared sampler. Each reads `NFKMLXReleaseSampling` from its release directory. A catalog
+  entry with variants of mixed sampling (Qwen3.5: 2B/4B/9B ship no generation config, Qwen3.8-27B samples)
+  declares greedy defaults, since one descriptor states one default. **Finish reasons (2026-10-23):** every text backend but Phi-4-multimodal and the image-question
   models answers `NFKOutputFinishReason` through `NFKMLXContextRoom.finishReason(produced:limit:outputs:)`;
   the prefill-only backends' `generate` returns the bounded limit beside the tokens, since a run that stops
   on an end token at the last step produced fewer than the limit. **Release sampling (2026-10-22):** a

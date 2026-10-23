@@ -183,6 +183,8 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
     /// The release's own draft stack, where it carries one.
     private let draft: NFKMLXDeepSeekDraftStack?
     private let releaseDirectoryURL: URL?
+    /// The sampling the release's generation config sets, which a request's own values override.
+    private let releaseSampling: NFKMLXReleaseSampling?
 
     init(net: NFKMLXDeepSeekNet, tokenizer: NFKTokenizer, identifier: String,
          images: NFKMLXDeepSeekImageStack? = nil, draft: NFKMLXDeepSeekDraftStack? = nil,
@@ -190,6 +192,7 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
         holder = NFKDeepSeekBackendHolder(net: net, tokenizer: tokenizer)
         self.identifier = identifier
         self.releaseDirectoryURL = releaseDirectoryURL
+        releaseSampling = NFKMLXReleaseSampling(directoryURL: releaseDirectoryURL)
         self.images = images
         self.draft = draft
         defaults = options
@@ -227,7 +230,7 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
     /// rejection scheme needs a probability the stack's Markov walk does not expose.
     @objc public var supportedParameterKeys: Set<String> {
         var keys: Set<String> = [
-            NFKParameterTemperature, NFKParameterTopP, NFKParameterMaxTokens, NFKParameterSeed,
+            NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens, NFKParameterSeed,
             NFKParameterJSONSchema, NFKMLXGenerationParameterKey.chatTemplate,
             NFKMLXGenerationParameterKey.prefillChunkSize, NFKParameterConversationKey,
             NFKParameterTools, NFKMLXGenerationParameterKey.toolCallFormat,
@@ -374,11 +377,19 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
             toolCallFormat: NFKMLXToolCallFormat?) {
         try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
         var options = defaults
+        if options.usesReleaseSampling, let releaseSampling {
+            options.temperature = releaseSampling.temperature
+            options.topP = releaseSampling.topP
+            options.topK = releaseSampling.topK
+        }
         if let value = request.parameter(forKey: NFKParameterTemperature) as? NSNumber {
             options.temperature = value.floatValue
         }
         if let value = request.parameter(forKey: NFKParameterTopP) as? NSNumber {
             options.topP = value.floatValue
+        }
+        if let value = request.parameter(forKey: NFKParameterTopK) as? NSNumber {
+            options.topK = value.intValue
         }
         if let value = request.parameter(forKey: NFKParameterMaxTokens) as? NSNumber {
             options.maxTokens = value.intValue
