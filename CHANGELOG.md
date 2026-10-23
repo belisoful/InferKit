@@ -51,6 +51,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   usage metadata.
 - These routes take the key as `x-goog-api-key` or the `key` query parameter beside the Bearer token, and
   answer errors in Google's shape.
+- `/v1beta` is the server's own prefix: `addRouteForPathPrefix:handler:error:` refuses an app route under it, as it
+  refuses one under `/v1` and `/mcp`.
 
 #### A Core ML language reply runs to the room its context leaves
 

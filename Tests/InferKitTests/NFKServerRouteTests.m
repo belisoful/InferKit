@@ -191,8 +191,8 @@
 
 - (void)testTheServersOwnAndMalformedPrefixesAreRefused
 {
-	NSArray<NSString *> *refused = @[ @"/", @"", @"myapp", @"/v1", @"/v1/", @"/v1/myapp/", @"/V1/x", @"/mcp", @"/MCP/x/",
-									   @"/a//b", @"/a/../b", @"/./a" ];
+	NSArray<NSString *> *refused = @[ @"/", @"", @"myapp", @"/v1", @"/v1/", @"/v1/myapp/", @"/V1/x", @"/v1beta/", @"/V1BETA/x",
+									   @"/mcp", @"/MCP/x/", @"/a//b", @"/a/../b", @"/./a" ];
 	for (NSString *prefix in refused) {
 		NSError *error = nil;
 		XCTAssertFalse([self.server addRouteForPathPrefix:prefix handler:[self echoHandlerNamed:@"x"] error:&error], @"%@", prefix);
@@ -200,12 +200,12 @@
 		XCTAssertEqual(error.code, NFKInferenceServerErrorInvalidConfiguration, @"%@", prefix);
 	}
 	XCTAssertEqualObjects(self.server.routePathPrefixes, @[]);
-	XCTAssertTrue([self.server addRouteForPathPrefix:@"/v1beta/" handler:[self echoHandlerNamed:@"beta"] error:NULL],
+	XCTAssertTrue([self.server addRouteForPathPrefix:@"/v1alpha/" handler:[self echoHandlerNamed:@"alpha"] error:NULL],
 				  @"a segment that only starts with v1 is the app's");
 
 	NSHTTPURLResponse *response = nil;
-	NSDictionary *reply = [self JSONFrom:[self send:@"GET" to:@"/v1beta/x" body:nil headers:nil response:&response]];
-	XCTAssertEqualObjects(reply[@"handler"], @"beta");
+	NSDictionary *reply = [self JSONFrom:[self send:@"GET" to:@"/v1alpha/x" body:nil headers:nil response:&response]];
+	XCTAssertEqualObjects(reply[@"handler"], @"alpha");
 	[self send:@"GET" to:@"/v1/nothing" body:nil headers:nil response:&response];
 	XCTAssertEqual(response.statusCode, 404, @"an unknown path under /v1 stays the server's");
 }

@@ -941,7 +941,7 @@ NS_SWIFT_SENDABLE
 				below it, reaches handler on a background queue after its key is checked; the longest
 				matching prefix wins, and a path no route matches is answered 404. The prefix starts
 				with "/" and names one or more non-empty segments; a trailing "/" is added. The root and
-				every prefix under /v1 or /mcp, in any case, belong to the server and are refused with
+				every prefix under /v1, /v1beta, or /mcp, in any case, belong to the server and are refused with
 				NFKInferenceServerErrorInvalidConfiguration. Adding a prefix again replaces its handler.
 				The handler checks the request's method itself, and a browser-facing route checks the
 				Origin header itself. Takes effect on the next request. Introduced in InferKit 0.4.0.

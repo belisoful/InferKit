@@ -148,7 +148,7 @@ NSString * _Nullable NFKServerRouteNormalizedPrefix(NSString *pathPrefix, NSErro
 		}
 	}
 	NSString *first = segments.firstObject.lowercaseString;
-	if ([first isEqualToString:@"v1"] || [first isEqualToString:@"mcp"]) {
+	if ([@[ @"v1", @"v1beta", @"mcp" ] containsObject:first]) {
 		NFKServerRouteRefuse([NSString stringWithFormat:@"the route prefix \"%@\" lies under /%@, which the server keeps for itself", pathPrefix, first], error);
 		return nil;
 	}

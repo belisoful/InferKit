@@ -1070,7 +1070,7 @@ An app serves its own requests on the server's port with `addRouteForPathPrefix:
 route shares the listener, TLS, the Bonjour advertisement, the body limit, and the key checks. A handler
 runs on a background queue with the parsed request (method, path, query, headers, body, and the client's
 address) and replies through its response object, at once or later, whole or as a stream. The root, `/v1`,
-and `/mcp` stay the server's.
+`/v1beta`, and `/mcp` stay the server's.
 
 <!-- objc-check: given NFKInferenceServer *server = nil; -->
 ```objc

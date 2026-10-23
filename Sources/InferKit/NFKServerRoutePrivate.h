@@ -23,7 +23,7 @@ NS_ASSUME_NONNULL_BEGIN
 @end
 
 /*! pathPrefix with one leading and one trailing slash, or nil with an error when it is malformed or
-	names a route the server keeps for itself (/v1 or /mcp). */
+	names a route the server keeps for itself (/v1, /v1beta, or /mcp). */
 NSString * _Nullable NFKServerRouteNormalizedPrefix(NSString *pathPrefix, NSError * _Nullable * _Nullable error);
 
 /*! Whether path lies under the normalized prefix: the prefix without its trailing slash, or anything
