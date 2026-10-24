@@ -563,6 +563,31 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertEqual(try openJev.makeBackend().runInference(for: request).answers?["urgent"]?.type, .noul)
     }
 
+    func testTypedDecisionsPplxDecider() throws {
+        try requireMLXRuntime()
+        // pplx-decider reads the state and every question in one pass of a fine-tuned Qwen3.5 text model,
+        // answering each at its own marker:
+        //   NFKMLXPplxDecider.decider(variant: .flash, revision: nil, cacheDirectoryURL: nil, quantizationBits: 0)
+        // The 27B release packs to 4 bits as it loads: quantizationBits: 4. A tiny random net stands in.
+        NFKMLXRandom.seed(5)
+        let words = NFKMLXDecisionTokenizer { text in
+            text.components(separatedBy: NFKMLXPplxDeciderPrompt.marker).enumerated().flatMap { index, piece in
+                (index > 0 ? [7] : []) + piece.split(whereSeparator: \.isWhitespace)
+                    .map { $0.unicodeScalars.reduce(7) { ($0 * 31 + Int($1.value)) % 490 } + 10 }
+            }
+        }
+        let decider = NFKMLXPplxDecider(net: NFKMLXPplxDeciderNet(.tiny), tokenizer: words)
+        let request = NFKInferenceRequest(inputs: [
+            NFKInputState: "My invoice is wrong and I need it fixed today.",
+            NFKInputQuestions: ["team": NFKDecisionQuestion.choiceQuestion(withInstructions: "Which team?",
+                                                                           options: ["billing", "technical", "sales"]),
+                                "urgent": NFKDecisionQuestion.noulQuestion(withInstructions: "Is it urgent?")],
+        ])
+        let answers = try decider.makeBackend().runInference(for: request).answers
+        XCTAssertEqual(answers?["team"]?.type, .choice)
+        XCTAssertEqual(answers?["urgent"]?.type, .noul)
+    }
+
     /// A validation-store path from the environment, or else from `~/.inferkit-validation.json`, which
     /// `Tools/validation-assets/fetch.py` writes.
     private func validationPath(_ key: String) -> String? {

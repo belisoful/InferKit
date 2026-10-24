@@ -29544,6 +29544,618 @@
       ]
     },
     {
+      "displayName" : "pplx-decider-flash-v1.2",
+      "engine" : "mlx",
+      "family" : "pplx-decider",
+      "id" : "pplx-decider-flash-v1.2",
+      "inputModalities" : [
+        "json",
+        "questions",
+        "text",
+        "messages"
+      ],
+      "inputs" : [
+        {
+          "help" : "The state the questions are about: a string, or a JSON object or array. The prompt or the conversation stands in for it.",
+          "key" : "state",
+          "required" : false,
+          "title" : "State",
+          "valueType" : "json"
+        },
+        {
+          "help" : "The typed questions, keyed by identifier.",
+          "key" : "questions",
+          "required" : true,
+          "title" : "Questions",
+          "valueType" : "questions"
+        },
+        {
+          "help" : "The state as text, where the request carries no state.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "The state as a conversation, where the request carries neither.",
+          "key" : "messages",
+          "required" : false,
+          "title" : "Conversation",
+          "valueType" : "messages"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "Apache-2.0",
+        "name" : "Apache License 2.0",
+        "note" : "Derived from Qwen/Qwen3.5-4B under the Apache License 2.0, as the release's NOTICE states.",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits"
+      },
+      "modelTypes" : [
+        "qwen3_5"
+      ],
+      "options" : [
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 9079836672,
+                "residentBytes" : 9079836672
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 18159673344,
+                "residentBytes" : 18159673344
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 9079836672,
+                "residentBytes" : 9079836672
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 5425139712,
+                "residentBytes" : 5425139712
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4450553856,
+                "residentBytes" : 4450553856
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 3963260928,
+                "residentBytes" : 3963260928
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 3475968000,
+                "residentBytes" : 3475968000
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2988675072,
+                "residentBytes" : 2988675072
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2501382144,
+                "residentBytes" : 2501382144
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "answers",
+        "structured",
+        "json"
+      ],
+      "outputs" : [
+        {
+          "help" : "One typed answer per question.",
+          "key" : "answers",
+          "required" : true,
+          "title" : "Answers",
+          "valueType" : "answers"
+        },
+        {
+          "help" : "The answers in the hosted service's reply shape.",
+          "key" : "structured",
+          "required" : true,
+          "title" : "Reply",
+          "valueType" : "structured"
+        },
+        {
+          "help" : "The input tokens the answers cost.",
+          "key" : "usage",
+          "required" : true,
+          "title" : "Usage",
+          "valueType" : "json"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "pplx-decider-flash-v1.2",
+      "requirements" : {
+        "minimumMemoryBytes" : 15735063492,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident"
+      ],
+      "standIn" : false,
+      "summary" : "pplx-decider-flash-v1.2, a Qwen3.5-4B fine-tune with a readout that answers every typed question about a state in one pass.",
+      "tasks" : [
+        "decision",
+        "classification"
+      ],
+      "variants" : [
+        {
+          "displayName" : "pplx-decider-flash-v1.2",
+          "downloadBytes" : 9099990803,
+          "id" : "pplx-decider-flash-v1.2",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 9079836672,
+                  "checkpoint" : 9079836672,
+                  "float32" : 18159673344
+                },
+                "id" : "decoder",
+                "quantizableElements" : 3898343424,
+                "title" : "decoder"
+              }
+            ],
+            "vocabularySize" : 248320
+          },
+          "minimumMemoryBytes" : 15735063492,
+          "parameterCount" : 4539918336,
+          "peakBytes" : 9079836672,
+          "precision" : "bfloat16",
+          "registryName" : "pplx-decider-flash-v1.2",
+          "residentBytes" : 9079836672,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 2898,
+                "optional" : false,
+                "path" : "config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 5435,
+                "optional" : false,
+                "path" : "decision_config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 248,
+                "optional" : false,
+                "path" : "joint_config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1305712,
+                "optional" : false,
+                "path" : "readout.safetensors",
+                "role" : "weights",
+                "sha256" : "6751578171026190d4db8078e97162b404fd984646e0e9aec13844e4dd5b1711"
+              },
+              {
+                "bytes" : 19989492,
+                "optional" : false,
+                "path" : "tokenizer.json",
+                "role" : "tokenizer",
+                "sha256" : "6f32ce20dc35f57a7f9ad1eac03525bd7d30f9df8cea6507e958279cc3657706"
+              },
+              {
+                "bytes" : 1268,
+                "optional" : false,
+                "path" : "tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 7756,
+                "optional" : true,
+                "path" : "chat_template.jinja",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 61898,
+                "optional" : true,
+                "path" : "model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "optional" : true,
+                "path" : "model.safetensors",
+                "role" : "weights"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "perplexity-ai/pplx-decider-flash-v1.2",
+            "requiresConversion" : false,
+            "revision" : "9ff7cf9838e59df461c276b7699d56b244d2af58"
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "pplx-decider-v1.2",
+      "engine" : "mlx",
+      "family" : "pplx-decider",
+      "id" : "pplx-decider-v1.2",
+      "inputModalities" : [
+        "json",
+        "questions",
+        "text",
+        "messages"
+      ],
+      "inputs" : [
+        {
+          "help" : "The state the questions are about: a string, or a JSON object or array. The prompt or the conversation stands in for it.",
+          "key" : "state",
+          "required" : false,
+          "title" : "State",
+          "valueType" : "json"
+        },
+        {
+          "help" : "The typed questions, keyed by identifier.",
+          "key" : "questions",
+          "required" : true,
+          "title" : "Questions",
+          "valueType" : "questions"
+        },
+        {
+          "help" : "The state as text, where the request carries no state.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "The state as a conversation, where the request carries neither.",
+          "key" : "messages",
+          "required" : false,
+          "title" : "Conversation",
+          "valueType" : "messages"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "Apache-2.0",
+        "name" : "Apache License 2.0",
+        "note" : "Derived from Qwen/Qwen3.8-27B under the Apache License 2.0, as the release's NOTICE states.",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits"
+      },
+      "modelTypes" : [
+        "qwen3_5"
+      ],
+      "options" : [
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 52173271520,
+                "residentBytes" : 52173271520
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 104346543040,
+                "residentBytes" : 104346543040
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 52173271520,
+                "residentBytes" : 52173271520
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 29042726240,
+                "residentBytes" : 29042726240
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 22874580832,
+                "residentBytes" : 22874580832
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 19790508128,
+                "residentBytes" : 19790508128
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 16706435424,
+                "residentBytes" : 16706435424
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 13622362720,
+                "residentBytes" : 13622362720
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 10538290016,
+                "residentBytes" : 10538290016
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "answers",
+        "structured",
+        "json"
+      ],
+      "outputs" : [
+        {
+          "help" : "One typed answer per question.",
+          "key" : "answers",
+          "required" : true,
+          "title" : "Answers",
+          "valueType" : "answers"
+        },
+        {
+          "help" : "The answers in the hosted service's reply shape.",
+          "key" : "structured",
+          "required" : true,
+          "title" : "Reply",
+          "valueType" : "structured"
+        },
+        {
+          "help" : "The input tokens the answers cost.",
+          "key" : "usage",
+          "required" : true,
+          "title" : "Usage",
+          "valueType" : "json"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "pplx-decider-v1.2",
+      "requirements" : {
+        "minimumMemoryBytes" : 66433222137,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident"
+      ],
+      "standIn" : false,
+      "summary" : "pplx-decider-v1.2, a Qwen3.8-27B fine-tune with a readout that answers every typed question about a state in one pass.",
+      "tasks" : [
+        "decision",
+        "classification"
+      ],
+      "variants" : [
+        {
+          "displayName" : "pplx-decider-v1.2",
+          "downloadBytes" : 52193527155,
+          "id" : "pplx-decider-v1.2",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 52173271520,
+                  "checkpoint" : 52173271520,
+                  "float32" : 104346543040
+                },
+                "id" : "decoder",
+                "quantizableElements" : 24672581632,
+                "title" : "decoder"
+              }
+            ],
+            "vocabularySize" : 248320
+          },
+          "minimumMemoryBytes" : 66433222137,
+          "parameterCount" : 26086635760,
+          "peakBytes" : 52173271520,
+          "precision" : "bfloat16",
+          "registryName" : "pplx-decider-v1.2",
+          "residentBytes" : 52173271520,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 3757,
+                "optional" : false,
+                "path" : "config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 5436,
+                "optional" : false,
+                "path" : "decision_config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 248,
+                "optional" : false,
+                "path" : "joint_config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 2611312,
+                "optional" : false,
+                "path" : "readout.safetensors",
+                "role" : "weights",
+                "sha256" : "3bada2dac60a9a27264f6847e00d85a81de606fbe85dcbf9a60a3f9677a0ae6b"
+              },
+              {
+                "bytes" : 19989492,
+                "optional" : false,
+                "path" : "tokenizer.json",
+                "role" : "tokenizer",
+                "sha256" : "6f32ce20dc35f57a7f9ad1eac03525bd7d30f9df8cea6507e958279cc3657706"
+              },
+              {
+                "bytes" : 1268,
+                "optional" : false,
+                "path" : "tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 8952,
+                "optional" : true,
+                "path" : "chat_template.jinja",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 103954,
+                "optional" : true,
+                "path" : "model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "optional" : true,
+                "path" : "model.safetensors",
+                "role" : "weights"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "perplexity-ai/pplx-decider-v1.2",
+            "requiresConversion" : false,
+            "revision" : "cce0f3f80033e9d89d80831d5281fd72124aacce"
+          }
+        }
+      ]
+    },
+    {
       "displayName" : "Qwen-Image 2.1",
       "engine" : "mlx",
       "family" : "qwen-image",

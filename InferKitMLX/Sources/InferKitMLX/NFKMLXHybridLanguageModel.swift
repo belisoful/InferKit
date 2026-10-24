@@ -33,6 +33,16 @@ public enum NFKMLXHybridLayerKind: String, Sendable {
     case fullAttention = "full_attention"
 }
 
+/// Which positions a full-attention layer reads. The linear-attention layers read the prefix in either
+/// mode, since their convolution and recurrence run forward in sequence order. Introduced in InferKit 0.4.0.
+public enum NFKMLXHybridAttention: Sendable {
+    /// Each position reads itself and the positions before it, as the language model generates.
+    case causal
+    /// Each position reads the whole sequence: the noncausal full attention a decision checkpoint
+    /// (`NFKMLXPplxDecider`) was trained with.
+    case bidirectional
+}
+
 /// The geometry of a hybrid decoder.
 public struct NFKMLXHybridConfiguration: Sendable {
     public var hiddenSize: Int
@@ -457,24 +467,49 @@ public final class NFKMLXHybridLanguageNet: Module {
 
     /// The state entering the stack, then each layer's output, with the final normalization folded
     /// into the last entry — the convention the reference's `output_hidden_states` uses.
-    func hiddenStates(_ tokens: MLXArray) -> [MLXArray] {
+    func hiddenStates(_ tokens: MLXArray, attention: NFKMLXHybridAttention = .causal) -> [MLXArray] {
         var trace = [MLXArray]()
-        _ = forward(tokens, trace: &trace)
+        _ = normalizedHidden(tokens, attention: attention, trace: &trace)
         return trace
     }
 
+    /// The final-normalized hidden states `[batch, length, hidden]`, without the output projection:
+    /// the text model's `last_hidden_state`.
+    func normalizedHidden(_ tokens: MLXArray, attention: NFKMLXHybridAttention = .causal) -> MLXArray {
+        var trace: [MLXArray]? = nil
+        return normalizedHidden(tokens, attention: attention, trace: &trace)
+    }
+
     private func forward(_ tokens: MLXArray, trace: inout [MLXArray]) -> MLXArray {
+        let hidden = normalizedHidden(tokens, attention: .causal, trace: &trace)
+        return lmHead?(hidden) ?? model.embedTokens.asLinear(hidden)
+    }
+
+    private func normalizedHidden(_ tokens: MLXArray, attention: NFKMLXHybridAttention,
+                                  trace: inout [MLXArray]) -> MLXArray {
+        var recorded: [MLXArray]? = trace
+        let hidden = normalizedHidden(tokens, attention: attention, trace: &recorded)
+        trace = recorded ?? []
+        return hidden
+    }
+
+    /// The stack's pass. Each state is kept only where `trace` is non-nil, so a pass that reads only the
+    /// final state lets every intermediate one go as the evaluation consumes it.
+    private func normalizedHidden(_ tokens: MLXArray, attention: NFKMLXHybridAttention,
+                                  trace: inout [MLXArray]?) -> MLXArray {
         var hidden = model.embedTokens(tokens)
-        trace.append(hidden)
+        trace?.append(hidden)
         let length = tokens.shape[1]
-        let mask: MLXArray? = length > 1 ? NFKMLXLanguageNet.causalMask(length, offset: 0) : nil
+        let mask: MLXArray? = attention == .causal && length > 1 ? NFKMLXLanguageNet.causalMask(length, offset: 0) : nil
         for layer in model.layers {
             hidden = layer(hidden, mask: mask)
-            trace.append(hidden)
+            trace?.append(hidden)
         }
         hidden = model.norm(hidden)
-        if !trace.isEmpty { trace[trace.count - 1] = hidden }
-        return lmHead?(hidden) ?? model.embedTokens.asLinear(hidden)
+        if trace != nil {
+            trace![trace!.count - 1] = hidden
+        }
+        return hidden
     }
 }
 
@@ -566,10 +601,100 @@ public final class NFKMLXHybridLanguage: NSObject {
         try NFKMLXWeights.apply(merged, to: net)
     }
 
-    /// The module key a checkpoint key maps to, or nil for a tensor this decoder does not carry.
+    /// Loads a released decoder at its stored precision and packs its projections to `bits` as it reads
+    /// them, so the unpacked release never sits whole in memory.
+    ///
+    /// @discussion Each layer's tensors gather as the shards are read, and a layer is installed,
+    /// quantized, and evaluated as soon as its last tensor arrives; the replaced weights then leave MLX's
+    /// buffer cache. A release past the working set at its stored type (Qwen3.8-27B, about 52 GB at
+    /// bfloat16) loads this way at the size of its packed form. `A_log` and the recurrence's norm weight
+    /// take the type most tensors carry, as a `.checkpoint` load gives them. Every parameter must be
+    /// supplied at its shape. Introduced in InferKit 0.4.0.
+    ///
+    /// - Parameters:
+    ///   - net: the decoder to fill, built at the release's geometry.
+    ///   - directory: the release directory, one file or a shard index.
+    ///   - bits: the bits of each packed weight, 2 to 8.
+    ///   - groupSize: the weights sharing one scale and bias.
+    ///   - includeEmbeddings: packs the token embedding too. A tied decoder whose output projection runs
+    ///     reads the packed matrix for both.
+    public static func loadQuantizedWeights(into net: NFKMLXHybridLanguageNet, fromDirectory directory: URL,
+                                            bits: Int, groupSize: Int = 64, includeEmbeddings: Bool = false) throws {
+        let tied = net.lmHead == nil
+        let expected = Dictionary(uniqueKeysWithValues: net.parameters().flattened().map { ($0.0, $0.1.shape) })
+        let layerPrefix = "model.layers."
+        func layerIndex(_ key: String) -> Int? {
+            guard key.hasPrefix(layerPrefix) else { return nil }
+            return Int(key.dropFirst(layerPrefix.count).prefix { $0 != "." })
+        }
+        var unread = Dictionary(grouping: expected.keys.compactMap { key in layerIndex(key).map { ($0, key) } },
+                                by: \.0).mapValues { Set($0.map(\.1)) }
+        var gathered = [Int: [(String, MLXArray)]]()
+        var outside = [(String, MLXArray)]()
+        var misshapen = [String]()
+        var released: DType?
+        for url in try NFKMLXReleaseWeights.files(inDirectory: directory) {
+            let arrays = try NFKMLXWeights.loadCheckpoint(url: url).arrays
+            if released == nil {
+                let counts = Dictionary(grouping: arrays.values.map(\.dtype).filter(\.isFloatingPoint), by: { $0 })
+                released = counts.max { $0.value.count < $1.value.count }?.key
+            }
+            var completed = [Int]()
+            for (key, value) in arrays {
+                guard let name = moduleKey(forReference: key), !(tied && name.hasPrefix("lm_head.")),
+                      let shape = expected[name] else { continue }
+                var tensor = name.hasSuffix("conv1d.weight") && value.ndim == 3 ? value.transposed(0, 2, 1) : value
+                if let released, tensor.dtype.isFloatingPoint, tensor.dtype != released {
+                    tensor = tensor.asType(released)
+                }
+                if tensor.shape != shape {
+                    misshapen.append("\(name) \(tensor.shape) for \(shape)")
+                }
+                guard let layer = layerIndex(name) else {
+                    outside.append((name, tensor))
+                    continue
+                }
+                gathered[layer, default: []].append((name, tensor))
+                unread[layer]?.remove(name)
+                if unread[layer]?.isEmpty == true {
+                    completed.append(layer)
+                }
+            }
+            guard misshapen.isEmpty else {
+                throw NFKMLXError.weightsMismatch("mismatched \(misshapen.sorted().prefix(3))")
+            }
+            for layer in completed {
+                let prefix = "\(layerPrefix)\(layer)."
+                let block = net.model.layers[layer]
+                block.update(parameters: ModuleParameters.unflattened(
+                    (gathered.removeValue(forKey: layer) ?? []).map { (String($0.0.dropFirst(prefix.count)), $0.1) }))
+                try NFKMLXQuantization.quantize(module: block, bits: bits, groupSize: groupSize)
+                eval(block)
+                unread[layer] = nil
+                NFKMLXGPU.clearCache()
+            }
+        }
+        let placed = Set(outside.map(\.0))
+        let missingOutside = expected.keys.filter { layerIndex($0) == nil && !placed.contains($0) }
+        let missing = (unread.values.flatMap { $0 } + missingOutside).sorted()
+        guard missing.isEmpty else {
+            throw NFKMLXError.weightsMismatch("the release lacks \(missing.count) parameters, such as \(missing.prefix(3))")
+        }
+        net.update(parameters: ModuleParameters.unflattened(outside))
+        if includeEmbeddings {
+            try NFKMLXQuantization.quantize(module: net.model, bits: bits, groupSize: groupSize, includeEmbeddings: true)
+        }
+        eval(net)
+        NFKMLXGPU.clearCache()
+    }
+
+    /// The module key a checkpoint key maps to, or nil for a tensor this decoder does not carry. A
+    /// `Qwen3_5Model` save (a decision checkpoint's backbone) holds the decoder under `language_model.`
+    /// with no `model.` wrapper.
     static func moduleKey(forReference key: String) -> String? {
-        let prefix = "model.language_model."
-        if key.hasPrefix(prefix) { return "model." + key.dropFirst(prefix.count) }
+        for prefix in ["model.language_model.", "language_model."] where key.hasPrefix(prefix) {
+            return "model." + key.dropFirst(prefix.count)
+        }
         if key == "lm_head.weight" { return key }
         return nil                      // the vision tower and the multi-token-prediction head
     }

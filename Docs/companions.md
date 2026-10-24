@@ -230,6 +230,15 @@ weights:
   checked structurally against its base's shard headers.
   Customization trains the adapter and head at the release's rates and saves in its own layout.
   `NFKMLXDecisionBackend` puts either behind the request `NFKTypeSafeBackend` reads.
+- **`NFKMLXPplxDecider`** — pplx-decider v1.2 (`perplexity-ai/pplx-decider-flash-v1.2` over Qwen3.5-4B and
+  `perplexity-ai/pplx-decider-v1.2` over Qwen3.8-27B, Apache-2.0), Perplexity's open-weight decision
+  models: a fine-tuned Qwen3.5-architecture text model (`NFKMLXHybridLanguageNet`, its full-attention
+  layers bidirectional) reads the state and every question in one sequence, and a linear readout scores
+  each question's options under answer codes at its own `<|fim_suffix|>` marker. Reference parity against
+  the release's own `pplx_decider` package (the joint prompt token for token, every hidden state, the
+  readouts, the answers); the 27B release runs packed to 4 bits as it loads, which fits 32 GB.
+  Customization trains a LoRA adapter and the readout on soft targets, the distillation the model card
+  describes, and reloads over the release. Images are not read (the vision tower is not ported).
 - **`NFKMLXChronos`** — Chronos-Bolt (`amazon/chronos-bolt-base`, Amazon, Apache-2.0), a time-series
   forecaster: a patched T5 encoder-decoder that standardizes a numeric context window, patchifies it into
   16-sample patches, runs an encoder and a single-token decoder, and emits a quantile forecast over a

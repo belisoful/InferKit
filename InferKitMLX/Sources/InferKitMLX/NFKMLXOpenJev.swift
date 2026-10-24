@@ -218,20 +218,6 @@ public final class NFKMLXOpenJevNet: Module {
     }
 }
 
-extension NFKMLXHybridLanguageNet {
-    /// The final-normalized hidden states `[batch, length, hidden]`, without the output projection:
-    /// the text model's `last_hidden_state`.
-    func normalizedHidden(_ tokens: MLXArray) -> MLXArray {
-        var hidden = model.embedTokens(tokens)
-        let length = tokens.shape[1]
-        let mask: MLXArray? = length > 1 ? NFKMLXLanguageNet.causalMask(length, offset: 0) : nil
-        for layer in model.layers {
-            hidden = layer(hidden, mask: mask)
-        }
-        return model.norm(hidden)
-    }
-}
-
 // MARK: - The model
 
 /// The files an Open-Jev release and its base are downloaded to.

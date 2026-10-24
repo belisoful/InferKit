@@ -598,6 +598,8 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
         ("trocr-large-printed", "IK_VAL_TROCR_LARGE_PRINTED"), ("trocr-large-stage1", "IK_VAL_TROCR_LARGE_STAGE1"),
         (NFKMLXGraniteHybrid.graniteModelName, "IK_VAL_GRANITE"), (NFKMLXNemotronH.nemotronModelName, "IK_VAL_NEMOTRON_H"),
         ("smolvlm2-500m", "IK_VAL_SMOLVLM2"), ("smolvlm2-256m", "IK_VAL_SMOLVLM2_256M"), ("smolvlm2-2.2b", "IK_VAL_SMOLVLM2_2_2B"),
+        (NFKMLXPplxDeciderVariant.flash.registryName, "IK_VAL_PPLX_DECIDER_FLASH"),
+        (NFKMLXPplxDeciderVariant.twentySevenB.registryName, "IK_VAL_PPLX_DECIDER_27B"),
     ]
 
     func testEveryStoredReleaseIsReadByItsOwnFamilysJudgment() throws {

@@ -24,7 +24,7 @@ import MLX
 /// - Gemma 3n, Qwen3.5, Whisper, and Stable Diffusion (each release, and each released adapter merged into
 ///   its base): precision;
 /// - Gemma 4, Qwen4-Exp, Granite 4.0-H, and MADLAD-400: residency and precision;
-/// - Qwen3-VL: residency, precision, and a runtime weight quantization of the decoder;
+/// - Qwen3-VL and pplx-decider: residency, precision, and a runtime weight quantization of the decoder;
 /// - DeepSeek V4: residency, and each other value whose key names an ``NFKMLXDeepSeekLoadOptions``
 ///   property, set by key-value coding;
 /// - the staged generators (FLUX.1 and its ControlNet, FLUX.2, SD3 and its ControlNet, SANA, Z-Image,
@@ -147,7 +147,7 @@ enum NFKMLXOptionRegistrations {
         }
     }
 
-    /// Qwen3.5, Qwen4-Exp, Granite 4.0-H, and Qwen3-VL.
+    /// Qwen3.5, Qwen4-Exp, Granite 4.0-H, Qwen3-VL, pplx-decider, and Pixtral.
     private static func registerOtherDecoders() {
         registerDirectoryModels(registryNames(families: ["qwen3.5"]), consumes: [NFKModelLoadOptionPrecision]) {
             url, _, options in
@@ -167,6 +167,11 @@ enum NFKMLXOptionRegistrations {
         registerDirectoryModels(qwen3VL, consumes: quantizationKeys.union([NFKModelLoadOptionResidency,
                                                                          NFKModelLoadOptionPrecision])) { url, _, options in
             try NFKMLXQwen3VL.model(directoryURL: url, loadOptions: options).inferenceBackend()
+        }
+        registerDirectoryModels(registryNames(families: ["pplx-decider"]),
+                                consumes: quantizationKeys.union([NFKModelLoadOptionResidency,
+                                                                  NFKModelLoadOptionPrecision])) { url, _, options in
+            try NFKMLXPplxDecider.decider(directoryURL: url, loadOptions: options).makeBackend()
         }
         registerDirectoryModels(registryNames(families: ["pixtral"]),
                                 consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision]) { url, _, options in

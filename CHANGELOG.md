@@ -1521,6 +1521,28 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   bottleneck layers, stems, and channels from the file, so a checkpoint `NFKMLXWeights` saved at any size
   reloads.
 
+#### pplx-decider v1.2: typed decisions in one pass
+
+- `NFKMLXPplxDecider` runs Perplexity's open-weight decision models, `perplexity-ai/pplx-decider-flash-v1.2`
+  (fine-tuned from Qwen3.5-4B) and `perplexity-ai/pplx-decider-v1.2` (from Qwen3.8-27B), behind
+  `NFKMLXDecisionBackend`: `NFKDecisionQuestion`s in, `NFKDecisionAnswer`s out, as `NFKTypeSafeBackend` answers.
+  One sequence holds the state and every question, each question's options under answer codes and a
+  `<|fim_suffix|>` marker, and a readout scores the options at each marker. The prompt, the special-token
+  escaping, the calibrated temperature, and the answers follow the release's `pplx_decider` package (protocol
+  version 3), and a request past the length limit splits its questions in halves as the reference splits them.
+- The factories build a release directory at its published bfloat16, at float32, or with the decoder packed to 2
+  to 8 bits as it loads (`deciderWithDirectoryURL:quantizationBits:error:`), which fits the 27B in about 15 GB at
+  4 bits. The download factories take the variant and the bits. The registry names are
+  `pplx-decider-flash-v1.2` and `pplx-decider-v1.2`, and the catalog entries declare the precision and the
+  quantization; the resolver reads another `qwen3_5` repository that carries the readout and the protocol files.
+- `fineTune(examples:steps:)` trains a LoRA adapter over the text model and the readout on target distributions,
+  `saveAdapter(to:)` writes the adapter in PEFT's layout with the readout, and
+  `deciderWithDirectoryURL:adapterDirectoryURL:precision:error:` reloads it over the release.
+- `NFKMLXHybridLanguageNet` reads its full-attention layers bidirectionally where asked (`NFKMLXHybridAttention`),
+  reads a `Qwen3_5Model` save's `language_model.` layout, and `NFKMLXHybridLanguage.loadQuantizedWeights` packs a
+  release layer by layer as it reads the shards.
+- Images are not read: the releases' vision tower is not ported.
+
 #### A reply runs to the room its model's context leaves
 
 - Every catalog model that takes `NFKParameterMaxTokens` declares the option's maximum, the most tokens one reply

@@ -454,6 +454,71 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   same factory reloads; a tiny base written to disk proves that round trip offline. A fine-tune needs
   the base at `.float32`. The temperature is not refitted. The loader's prefix cache (opt-in there) is
   not ported: each candidate is its own pass.
+- `NFKMLXPplxDecider` (`@objc`) / `NFKMLXPplxDeciderNet` — pplx-decider v1.2, Perplexity's open-weight
+  decision models (`perplexity-ai/pplx-decider-flash-v1.2` at `9ff7cf98`, fine-tuned from Qwen/Qwen3.5-4B at
+  `851bf6e8`, and `perplexity-ai/pplx-decider-v1.2` at `cce0f3f8`, from Qwen/Qwen3.8-27B at `1d4bf0f2`;
+  Apache-2.0; public and ungated through the hub API, though each `release-manifest.json` says
+  `private: true`). The reference is the release's own `source/src/pplx_decider` (`protocol.py`,
+  `model.py`'s `reference_logits`).
+  A checkpoint is a `Qwen3_5Model` save (the decoder under `language_model.`, the vision tower under
+  `visual.`) plus `readout.safetensors`, a bias-free `[255, hidden]` linear, and no output projection.
+  `joint_config.json` declares protocol version 3 (`joint-question-inline-readout-v1`), which the loader
+  requires, and `decision_config.json` names `noncausal_full_attention`, the 255 single-token answer codes
+  (`A` … `Z`, `AA` …), and the temperature (Flash 1.5539, 27B 1.3823).
+  **The prompt** is one sequence per request: the system turn "Classify the shared state …", then a user
+  turn `State:\n<state>` and, per question, `Question i:\n<instructions>\nOptions:\nA: …\n<|fim_suffix|>`,
+  joined by blank lines, rendered as the chat template renders it with `enable_thinking=False` (the 27B's
+  template adds a reasoning-effort turn only when thinking is on). Instructions default to "Choose the
+  best matching option."; a noul's meanings default apart to "No / false" and "Yes / true". The tokenizer
+  configuration's `all_special_tokens` (eos, pad, and the seven model-specific vision and audio tokens) and
+  the marker are escaped in user text with U+FF1C/U+FF1E. A dictionary state serializes as Python's
+  `json.dumps` with sorted keys, and the backend numbers questions in sorted identifier order, which the
+  answers depend on. A request past `maxLength` (262,144) bisects its questions as the reference's `plan`
+  does.
+  **The network:** `NFKMLXHybridLanguageNet` with `NFKMLXHybridAttention.bidirectional` (the full-attention
+  layers read the whole sequence, the delta rule and the convolution stay causal, no cache), then the
+  readout at each marker at the decoder's type, logits `[:options]` divided by the temperature. The
+  answers are the Decisions API's (`NFKMLXOpenJev.answer`: a choice's confidence `(p − 1/n)/(1 − 1/n)`, a
+  score's expected index and `1 − distance/baseline`), the same formulas as `protocol.py`.
+  **Reference parity (float32)** against `Decider` on the CPU, each request alone (`run_reference.py
+  pplx_decider`, qwenimagevenv: transformers 5.17.0 and torch 2.14.0, the release's pins), on three
+  requests: a record with a described choice, a score, and a noul with meanings; accented text holding
+  `<|im_end|><|fim_suffix|>` with a default-instruction choice and a one-meaning noul; a 30-option choice
+  reaching the two-letter codes. Flash: every token and marker exact, all 33 hidden states at worst cosine
+  0.999999999986611, the readouts 0.9999999999990621, logits within 2.47e-5, probabilities within 1.9e-6,
+  answers within 1.04e-6. A tiny checkpoint (`pplx_decider_tiny`: a seeded random 4-layer `Qwen3_5Model` at
+  the release's vocabulary, the norms, `A_log`, and `dt_bias` randomized) reads 0.9999999999999672 over its 5
+  hidden states and 0.9999999999999719 on the readouts, logits within 1.1e-6; read with causal full attention
+  the same request's readouts fall to 0.99910, so the record tells the modes apart. At bfloat16, the published
+  precision and the factory default, Flash decides every question as the float32 reference does, with
+  probabilities within 0.0149 and logits within 0.11 (the hidden states to 0.99983). The tensors match:
+  426 decoder parameters and the readout against the shard headers, 0 mismatched, 297 vision tensors left.
+  **The 27B release** is the same layout over 64 layers (48 recurrent, 16 attention, hidden 5120), about
+  52 GB at bfloat16, so it runs packed to 4 bits as it loads (about 15 GB with the embedding packed). Its
+  float32 reference reads the release layer by layer (`PPLX_LAYERWISE=1`), a path that reproduces the
+  Flash record byte for byte. The 27B measurement waits on its download into the validation store, and
+  `testTheTwentySevenBillionReleaseAtFourBitsDecidesAsTheReference` skips until its keys are set.
+  **The runtime:** the precision ladder (as published, float32) and runtime weight quantization of 2 to 8
+  bits, which `NFKMLXHybridLanguage.loadQuantizedWeights` applies layer by layer as the shards are read and
+  which packs the embedding too, since no output projection reads it; the readout stays unpacked. No layer
+  stream: the hybrid decoder has none, and a classifier's single pass would read the whole release per
+  request. No key-value cache, draft, or streamed generation applies: a request is one noncausal pass that
+  decodes nothing. The catalog entries (`pplx-decider-flash-v1.2`, `pplx-decider-v1.2`) list `qwen3_5`, and
+  the `pplxDecider` judge reads another repository only where it is a `Qwen3_5Model` with the readout and
+  the protocol files (`model-resolver.md`).
+  **Not ported:** images. The release reads them through the Qwen3.5 vision tower (vision Decision Index
+  72.53 for Flash), which InferKitMLX does not ship; the loader skips `visual.*`. Nor the CUDA fast path
+  (`fast.py`: packed varlen attention, FP8), which the README holds to the reference path up to bf16 noise.
+  **Customization ships** (`NFKMLXPplxDeciderTraining.swift`): the release publishes no training code, and
+  the model card says Flash was distilled onto the 27B models' full distributions. `NFKMLXPplxDeciderObjective`
+  is that distillation's soft-target cross-entropy, the mean over a request's questions of `−Σ t·log
+  softmax(z)` on the raw logits, matched against torch's `cross_entropy` on the reference's logits in the
+  Flash record (4.0310735, 2.5591812, 6.9156041) within 9.5e-7. `fineTune(examples:steps:)` adapts Open-Jev's
+  target set (`q_proj`/`k_proj`/`v_proj`/`o_proj`, `in_proj_qkv`/`out_proj`) at rank 8, α 16, and the
+  readout, with PyTorch's AdamW (adapter 5e-5, readout 1e-4, weight decay 0.01, clip 1); `saveAdapter(to:)`
+  writes PEFT's layout over `Qwen3_5Model` with the readout and the temperature, and
+  `deciderWithDirectoryURL:adapterDirectoryURL:precision:error:` reloads it. A fine-tune needs float32
+  (Flash about 18 GB); the 27B at float32 (about 108 GB) is offline, and a packed layer takes no adapter.
 - `NFKMLXChronos` / `NFKMLXChronosNet` — Chronos-Bolt (`amazon/chronos-bolt-base`, Amazon, Apache-2.0),
   a **time-series forecaster** (a distinct modality that lives here as a standalone object, the way the
   reranker does). A patched T5 encoder-decoder reads a numeric context window and emits a quantile
@@ -519,6 +584,6 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   folds the adapters in) complete the path. Measured against transformers with the adapters written out as
   PEFT computes them (`run_reference.py timesfm_loss`): the objective on identical tensors to 7e-8
   relative, the training loss on four 64-step windows to 2.9e-7, three steps from the reference's own
-  adapter initialization with every step's loss within 1.2e-6 relative, every watched first-step gradient
+  adapter initialization with every step's loss within 1.1e-6 relative, every watched first-step gradient
   at 0.99999999997 or better, and every watched adapter's movement at 0.99999995 or better.
   `IK_VAL_TIMESFM25_PYTORCH`, `IK_VAL_TIMESFM25`, `IK_PARITY_TIMESFM25`, `IK_PARITY_TIMESFM25_LOSS`.

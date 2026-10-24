@@ -40,7 +40,7 @@ enum NFKMLXCatalogLanguage {
             + [qwen3EmbeddingEntry, embeddingGemmaEntry, qwen3VLEmbeddingEntry]
             + [modernBERTRerankerEntry, qwen3VLRerankerEntry]
             + NFKMLXLayaVariant.allCases.map(layaEntry) + NFKMLXOpenJevVariant.allCases.map(openJevEntry)
-            + [openJevDeBERTaEntry]
+            + [openJevDeBERTaEntry] + NFKMLXPplxDeciderVariant.allCases.map(pplxDeciderEntry)
             + [chronosEntry, timesFMEntry]
     }
 
@@ -121,6 +121,9 @@ enum NFKMLXCatalogLanguage {
         }
         NFKMLXGenerationBackend.registerDirectoryModel(openJevDeBERTaName) {
             try NFKMLXOpenJevDeBERTa.backend(directoryURL: $0)
+        }
+        for variant in NFKMLXPplxDeciderVariant.allCases {
+            NFKMLXGenerationBackend.registerDirectoryModel(variant.registryName) { try NFKMLXPplxDecider.backend(directoryURL: $0) }
         }
     }
 }
@@ -1273,6 +1276,24 @@ extension NFKMLXCatalogLanguage {
                                 source: .hub(variant.repository, revision: variant.measuredRevision,
                                              files: checkpoint + baseFiles))],
             license: .apache2(note: "The adapter reads \(variant.baseRepository) at \(variant.baseRevision), which the download fetches beside it."))
+    }
+
+    /// A pplx-decider release: the fine-tuned backbone, the readout, and the protocol files in one
+    /// repository, read by its own `config.json` and `decision_config.json`.
+    fileprivate static func pplxDeciderEntry(_ variant: NFKMLXPplxDeciderVariant) -> NFKMLXCatalogEntry {
+        let name = variant.registryName
+        let base = variant.baseRepository.split(separator: "/").last.map(String.init) ?? variant.baseRepository
+        let files = releaseFiles(required: NFKMLXPplxDecider.requiredFiles, optional: NFKMLXPplxDecider.optionalFiles,
+                                 weights: NFKMLXPplxDecider.weightFiles)
+        return NFKMLXCatalogEntry(
+            identifier: name, displayName: name, family: "pplx-decider",
+            summary: "\(name), a \(base) fine-tune with a readout that answers every typed question about a state in one pass.",
+            registryName: name, tasks: [NFKModelTaskDecision, NFKModelTaskClassification],
+            inputs: decisionInputs, outputs: decisionOutputs, parameters: [],
+            variants: [.variant(variantIdentifier(variant.repository), displayName: name, isDefault: true, registryName: name,
+                                source: .hub(variant.repository, revision: variant.measuredRevision, files: files))],
+            license: .apache2(note: "Derived from \(variant.baseRepository) under the Apache License 2.0, as the release's NOTICE states."),
+            modelTypes: ["qwen3_5"])
     }
 
     fileprivate static var openJevDeBERTaEntry: NFKMLXCatalogEntry {

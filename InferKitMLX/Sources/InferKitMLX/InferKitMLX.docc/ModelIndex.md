@@ -334,6 +334,7 @@ let backend = try NFKMLXTableTransformer.backend(directoryURL: dir)
 | Laya (typed decisions) | ``NFKMLXLaya`` | ``NFKMLXLayaNet`` | `NFKMLXLayaConfiguration.large` / `.multilingual`, or the variant directory | Swift API | ``NFKMLXLayaBackend`` (`backendWithDirectoryURL:error:`, or `backendWithVariant:revision:cacheDirectoryURL:error:` to download) |
 | open-jev-deberta (typed decisions) | ``NFKMLXOpenJevDeBERTa`` | ``NFKMLXOpenJevDeBERTaNet`` (``NFKMLXDeBERTaV2Net`` + scoring head) | `NFKMLXOpenJevDeBERTaConfiguration.v3Large`, or the release directory | Swift API | ``NFKMLXDecisionBackend`` (`backendWithDirectoryURL:error:`, or `backendWithRevision:cacheDirectoryURL:error:` to download) |
 | Open-Jev 2B / 9B / 27B (typed decisions) | ``NFKMLXOpenJev`` | ``NFKMLXOpenJevNet`` (``NFKMLXHybridLanguageNet`` + LoRA + scalar head) | read from the release's `checkpoint` directory and its base | Swift API | ``NFKMLXDecisionBackend`` (`backendWithVariant:revision:cacheDirectoryURL:error:`) |
+| pplx-decider v1.2 Flash / 27B (typed decisions) | ``NFKMLXPplxDecider`` | ``NFKMLXPplxDeciderNet`` (``NFKMLXHybridLanguageNet`` with bidirectional full attention + readout) | read from the release directory | `pplx-decider-flash-v1.2` · `pplx-decider-v1.2` | ``NFKMLXDecisionBackend`` (`backendWithDirectoryURL:error:`, or `backendWithVariant:revision:cacheDirectoryURL:quantizationBits:error:` to download) |
 | chronos-bolt-base | ``NFKMLXChronos`` | ``NFKMLXChronosNet`` | `NFKMLXChronosConfiguration()` | `chronos-bolt-base`; `backend(weightsURL:)` | ``NFKMLXGenerationBackend`` (``NFKMLXForecastKey``); `forecast(context:horizon:)` on the forecaster |
 | timesfm-2.5-200m | ``NFKMLXTimesFM`` | ``NFKMLXTimesFMNet`` | `NFKMLXTimesFMConfiguration.v2_5`; ``NFKMLXTimesFMForecastOptions`` | `timesfm-2.5-200m`; `backend(directoryURL:)`, `timesFM(directoryURL:)` | ``NFKMLXGenerationBackend`` (``NFKMLXForecastKey``); `forecast(context:horizon:options:)` on the forecaster |
 | Qwen3-VL-Embedding-2B (text + image) | ``NFKMLXQwen3VLEmbedder`` | ``NFKMLXQwen3VLVisionNet`` + ``NFKMLXLanguageNet`` | read from the release's `config.json` and `preprocessor_config.json` | `embedder(directoryURL:)` / `backend(directoryURL:)` | ``NFKMLXTextEmbeddingBackend`` (text path) |
@@ -383,6 +384,9 @@ let deberta = try NFKMLXOpenJevDeBERTa.openJev(directoryURL: dir)   // or openJe
 // Open-Jev-2B / -9B (typed decisions)
 let openJev = try NFKMLXOpenJev.openJev(variant: .twoB, revision: nil, cacheDirectoryURL: nil)
 // or openJev(checkpointDirectoryURL:baseDirectoryURL:); fine-tune: fineTune(examples:steps:) then save(to:)
+// pplx-decider v1.2 (typed decisions in one pass)
+let decider = try NFKMLXPplxDecider.decider(directoryURL: dir)   // the 27B: decider(directoryURL:quantizationBits: 4)
+// fine-tune: fineTune(examples:steps:) then saveAdapter(to:), reloaded by decider(directoryURL:adapterDirectoryURL:precision:)
 // chronos-bolt-base (time-series forecasting)
 let backend = try NFKMLXChronos.backend(weightsURL: url)
 // then the series under NFKMLXForecastKey.series and the steps under NFKMLXForecastKey.horizon;
@@ -466,6 +470,8 @@ let chain = NFKMLXGemma4ConditionalGeneration(decoder: decoder, visionTower: vis
 [NFKMLXOpenJevDeBERTa openJevWithDirectoryURL:dir error:&error]
 // Open-Jev-2B / -9B (typed decisions)
 [NFKMLXOpenJev openJevWithVariant:NFKMLXOpenJevVariantTwoB revision:nil cacheDirectoryURL:nil error:&error]
+// pplx-decider v1.2 (typed decisions in one pass)
+[NFKMLXPplxDecider deciderWithDirectoryURL:dir error:&error]
 // Qwen3-VL-Embedding-2B (text + image)
 [NFKMLXQwen3VLEmbedder embedderWithDirectoryURL:dir error:&error]
 // Qwen3-VL-Reranker-2B (text + image)

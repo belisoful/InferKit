@@ -4607,6 +4607,88 @@
       "note": "Open-Jev-27B-v1.1: the same recipe on Qwen/Qwen3.8-27B at 1d4bf0f2. The 62 MB adapter package only; the base is checked through its headers (QWEN3_8 shapes), never downloaded."
     },
     {
+      "key": "PPLX_DECIDER_FLASH",
+      "directory": "pplx-decider-flash-v1.2",
+      "repo": "perplexity-ai/pplx-decider-flash-v1.2",
+      "revision": "9ff7cf9838e59df461c276b7699d56b244d2af58",
+      "files": [
+        "LICENSE",
+        "NOTICE",
+        "README.md",
+        "chat_template.jinja",
+        "config.json",
+        "decision_config.json",
+        "joint_config.json",
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
+        "model.safetensors.index.json",
+        "processor_config.json",
+        "readout.safetensors",
+        "release-manifest.json",
+        "requirements.txt",
+        "requirements-fast.txt",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "source/pyproject.toml",
+        "source/src/pplx_decider/__init__.py",
+        "source/src/pplx_decider/fast.py",
+        "source/src/pplx_decider/model.py",
+        "source/src/pplx_decider/protocol.py",
+        "source/src/pplx_decider/py.typed",
+        "source/src/pplx_decider/types.py"
+      ],
+      "config": {
+        "IK_VAL_PPLX_DECIDER_FLASH": ""
+      },
+      "note": "pplx-decider-flash-v1.2 (Perplexity, Apache-2.0; fine-tuned from Qwen/Qwen3.5-4B at 851bf6e8): a Qwen3_5Model backbone (decoder under language_model., vision tower under visual.) and a [255, 2560] readout, protocol v3. 9.1 GB bf16. The repository's release-manifest.json says private: true; the hub API says public and ungated. The release's own source/src/pplx_decider is the oracle's reference."
+    },
+    {
+      "key": "PPLX_DECIDER_27B",
+      "directory": "pplx-decider-v1.2",
+      "repo": "perplexity-ai/pplx-decider-v1.2",
+      "revision": "cce0f3f80033e9d89d80831d5281fd72124aacce",
+      "files": [
+        "LICENSE",
+        "NOTICE",
+        "README.md",
+        "chat_template.jinja",
+        "config.json",
+        "decision_config.json",
+        "joint_config.json",
+        "model-00001-of-00011.safetensors",
+        "model-00002-of-00011.safetensors",
+        "model-00003-of-00011.safetensors",
+        "model-00004-of-00011.safetensors",
+        "model-00005-of-00011.safetensors",
+        "model-00006-of-00011.safetensors",
+        "model-00007-of-00011.safetensors",
+        "model-00008-of-00011.safetensors",
+        "model-00009-of-00011.safetensors",
+        "model-00010-of-00011.safetensors",
+        "model-00011-of-00011.safetensors",
+        "model.safetensors.index.json",
+        "processor_config.json",
+        "readout.safetensors",
+        "evaluation/inference-verification.json",
+        "release-manifest.json",
+        "requirements.txt",
+        "requirements-fast.txt",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "source/pyproject.toml",
+        "source/src/pplx_decider/__init__.py",
+        "source/src/pplx_decider/fast.py",
+        "source/src/pplx_decider/model.py",
+        "source/src/pplx_decider/protocol.py",
+        "source/src/pplx_decider/py.typed",
+        "source/src/pplx_decider/types.py"
+      ],
+      "config": {
+        "IK_VAL_PPLX_DECIDER_27B": ""
+      },
+      "note": "pplx-decider-v1.2 (Perplexity, Apache-2.0; fine-tuned from Qwen/Qwen3.8-27B at 1d4bf0f2): the same layout with a [255, 5120] readout. 52.2 GB bf16; the Swift side packs it to 4 bits as it loads, and the oracle reads it layer by layer (PPLX_LAYERWISE=1)."
+    },
+    {
       "key": "GEMMA2_2B",
       "repo": "unsloth/gemma-2-2b-it",
       "directory": "gemma-2-2b-it",
@@ -5409,6 +5491,16 @@
       "note": "The mode loads through jev.model.DecisionModel.load with the two from_pretrained calls redirected to OPEN_JEV_BASE (the base at the revision model.json pins, from the QWEN3_5_2B / QWEN3_5_9B releases) at OPEN_JEV_DTYPE: float32 for the 2B parity record, bfloat16 (the loader's own) for the 9B record, whose float32 form needs about 36 GB.",
       "modes": [
         "open_jev"
+      ]
+    },
+    "pplx_decider": {
+      "interpreter": "~/.inferkit-validation/qwenimagevenv/bin/python3.12",
+      "why": "The release pins transformers 5.17.0 and torch 2.14.0 (requirements.txt), which this interpreter carries; its Qwen3_5Model and create_recurrent_attention_mask are what the release's model.py imports. flash-linear-attention is absent, so the delta rule and the causal convolution take transformers' PyTorch fallbacks, the CPU path the release's reference_logits runs.",
+      "source": "The release's own source/src/pplx_decider (PPLX_SOURCE, default <checkpoint>/source/src): protocol.py builds and tokenizes the joint prompt, model.py's Decider loads at float32 on the CPU and runs reference_logits.",
+      "note": "pplx_decider runs a release (PPLX_LAYERWISE=1 reads the 27B layer by layer, hidden states at the markers only); pplx_decider_tiny writes a seeded random 4-layer checkpoint with the release's tokenizer to PPLX_TINY_OUT and runs it. Both run each request alone, a batch of one.",
+      "modes": [
+        "pplx_decider",
+        "pplx_decider_tiny"
       ]
     },
     "typed_decisions": {
@@ -6416,6 +6508,12 @@
       "record": "reference/stable-audio-loss-reference.safetensors",
       "environment": "music",
       "command": "IK_STABLE_AUDIO_TOOLS_SRC=\"/Volumes/InferKit Models/inferkit-validation/reference-sources/stable-audio-tools/stable-audio-tools-3241adba4fc2a85cf5b29d9eb68d42f40a28e820\" stable_audio_loss"
+    },
+    {
+      "key": "IK_PARITY_PPLX_DECIDER_FLASH",
+      "record": "reference/pplx-decider-flash-reference.safetensors",
+      "environment": "pplx_decider",
+      "command": "pplx_decider --checkpoint <IK_VAL_PPLX_DECIDER_FLASH> (loss.r<i>: the mean over a request's questions of torch's soft-target cross_entropy on the reference's raw logits)"
     }
   ]
 }

@@ -217,6 +217,10 @@ struct NFKMLXLoadProfile {
                                      defaultPrecision: NFKModelPrecisionFloat32, contextLength: nil, keyValue: nil,
                                      tasks: [NFKModelTaskVisionQuestionAnswering])],
         "qwen4-exp": [.pagedMixture()],
+        // A decision checkpoint runs one pass and decodes nothing, so it declares no context or cache option.
+        "pplx-decider": [.decoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
+                                  defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true, contextLength: nil,
+                                  keyValue: nil, tasks: [NFKModelTaskDecision])],
         "deepseek-v4": [.pagedMixture()],
         "whisper": [.imageModule()],
         // The float32 releases convert to bfloat16 where asked, held to the reference's bfloat16 run.

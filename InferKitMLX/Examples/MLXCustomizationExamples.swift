@@ -617,6 +617,43 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: tuned.appendingPathComponent("head.safetensors").path))
     }
 
+    // Docs/examples.md: Adapting pplx-decider to your own decisions
+    func testExampleAdaptingPplxDeciderOnOwnDecisions() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory.appendingPathComponent("pplx-example-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads the release at .float32:
+        //   NFKMLXPplxDecider.decider(directoryURL: release, precision: .float32)
+        // The example adapts a tiny random decoder with a word-level stand-in tokenizer (the marker is id 7).
+        let tokenizer = NFKMLXDecisionTokenizer { text in
+            text.components(separatedBy: NFKMLXPplxDeciderPrompt.marker).enumerated().flatMap { index, piece in
+                (index > 0 ? [7] : []) + piece.split(whereSeparator: \.isWhitespace)
+                    .map { $0.unicodeScalars.reduce(7) { ($0 * 31 + Int($1.value)) % 490 } + 10 }
+            }
+        }
+        let model = NFKMLXPplxDecider(net: NFKMLXPplxDeciderNet(.tiny), tokenizer: tokenizer)
+
+        // A request's questions share one pass; each target has one entry per option.
+        let team = NFKDecisionQuestion.choiceQuestion(withInstructions: "Which team?", options: ["billing", "technical"])
+        let refund = NFKDecisionQuestion.noulQuestion(withInstructions: "Asks for a refund.")
+        let examples = [
+            NFKMLXPplxDeciderExample(state: "Charged twice, refund me.", questions: [team, refund], labels: [0, 1]),
+            NFKMLXPplxDeciderExample(state: "The app crashes.", questions: [team], targets: [[0.1, 0.9]]),
+        ]
+        // A LoRA adapter over the attention and recurrence projections and the readout train; the backbone
+        // stays as released.
+        let history = try model.fineTune(examples: examples, steps: 2, batchSize: 2)
+        XCTAssertEqual(history.count, 2)
+
+        // The adapter and the readout save to a directory that reloads over the same release:
+        // decider(directoryURL: release, adapterDirectoryURL: tuned, precision: .float32).
+        try model.saveAdapter(to: tuned)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tuned.appendingPathComponent("adapter_model.safetensors").path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: tuned.appendingPathComponent("readout.safetensors").path))
+    }
+
     // Docs/examples.md: Adapting a translator to your own sentence pairs
     func testExampleAdaptingATranslatorOnOwnSentencePairs() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

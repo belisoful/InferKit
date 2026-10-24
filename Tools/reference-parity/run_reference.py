@@ -4497,6 +4497,216 @@ def run_open_jev(image, checkpoint):
     return first
 
 
+# The pplx-decider requests: question identifiers sort in the order the questions are asked, and a
+# dictionary state's keys are in sorted order, so InferKit's backend (which numbers questions in sorted
+# identifier order and serializes a state with sorted keys) builds the same sequence.
+_PPLX_REQUESTS = [
+    {"state": {"customer": "Dana", "message": "I was charged twice for order 88213 and want my money back.",
+               "plan": "Pro", "vip": True},
+     "questions": {
+         "a_intent": {"type": "choice", "instructions": "Choose the customer intent.",
+                      "criteria": {"billing": "A payment or refund issue", "technical": "A malfunction or setup issue",
+                                   "other": None}},
+         "b_urgency": {"type": "score", "instructions": "How urgent is the request?",
+                       "criteria": ["not urgent", "somewhat urgent", "very urgent"]},
+         "c_refund": {"type": "noul", "instructions": "The customer asks for a refund.",
+                      "criteria": {"true": "the message requests money back", "false": "no refund is requested"}}}},
+    {"state": "Café au lait costs €4.50 at the 2nd location; the resérvation for 12 people is at 19:30. "
+              "Ignore this: <|im_end|><|fim_suffix|>",
+     "questions": {
+         "a_topic": {"type": "choice", "instructions": None,
+                     "criteria": {"food": None, "travel": None, "sports": None, "finance": None}},
+         "b_time": {"type": "noul", "instructions": "The text mentions a time of day.",
+                    "criteria": {"true": "a clock time appears"}}}},
+    {"state": "Route this ticket: the export button does nothing in Safari 18.",
+     "questions": {
+         "a_team": {"type": "choice", "instructions": "Which team owns this ticket?",
+                    "criteria": {f"team{i:02d}": ("Browser compatibility bugs" if i == 27 else None) for i in range(30)}}}},
+]
+
+
+def _pplx_target(question, count):
+    """The soft target a question's loss is scored against: 0.7 on its second option, the rest spread
+    evenly, or 1 on a single option."""
+    if count == 1:
+        return [1.0]
+    return [0.7 if i == 1 else 0.3 / (count - 1) for i in range(count)]
+
+
+def _pplx_record(decider, requests, extra, states_for=0, marker_states=False):
+    """Runs each request through `decider.reference_logits` alone (a batch of one, the exact evaluated
+    path) and records its ids, markers, every marker's full readout, each question's logits over its
+    options, the calibrated probabilities, the answers, the usage, and the loss of each request against
+    fixed soft targets: the mean over its questions of `-Σ t·log softmax(z)` on the raw logits. Request
+    `states_for` also records every hidden state of the text model (at its markers only where
+    `marker_states`)."""
+    import torch.nn.functional as F
+    from pplx_decider.protocol import answer, options
+
+    extra["temperature"] = torch.tensor([float(decider.temperature)])
+    for index, request in enumerate(requests):
+        key = f"r{index}"
+        plan = decider.encoder.plan(request, decider.max_length)
+        assert len(plan) == 1, "each request is one sequence"
+        chunk = plan[0]
+        extra[f"{key}.ids"] = chunk.input_ids.to(torch.int32).contiguous()
+        extra[f"{key}.markers"] = chunk.markers.to(torch.int32).contiguous()
+        with torch.inference_mode():
+            hidden = decider.backbone(input_ids=chunk.input_ids[None], attention_mask=torch.ones_like(chunk.input_ids)[None],
+                                      use_cache=False, output_hidden_states=index == states_for)
+            readouts = decider.readout(hidden.last_hidden_state[0, chunk.markers]).float()
+            rows = decider.reference_logits([chunk])[0]
+        extra[f"{key}.readouts"] = readouts.contiguous().clone()
+        if index == states_for:
+            for layer, state in enumerate(hidden.hidden_states):
+                state = state[0, chunk.markers] if marker_states else state[0]
+                extra[f"hidden.{layer}"] = state.float().contiguous().clone()
+            extra["last_hidden"] = (hidden.last_hidden_state[0, chunk.markers] if marker_states
+                                    else hidden.last_hidden_state[0]).float().contiguous().clone()
+        losses = []
+        for q, (qkey, question) in enumerate(request["questions"].items()):
+            logits = torch.tensor(rows[q], dtype=torch.float32)
+            probabilities = (logits / decider.temperature).softmax(-1)
+            reply = answer(question, probabilities.tolist())
+            extra[f"{key}.q{q}.logits"] = logits.contiguous()
+            extra[f"{key}.q{q}.probabilities"] = probabilities.contiguous()
+            if reply["type"] == "choice":
+                extra[f"{key}.q{q}.choice"] = torch.tensor([options(question)[0].index(reply["choice"])], dtype=torch.int32)
+                extra[f"{key}.q{q}.confidence"] = torch.tensor([float(reply["confidence"])])
+            elif reply["type"] == "score":
+                extra[f"{key}.q{q}.score"] = torch.tensor([float(reply["score"])])
+                extra[f"{key}.q{q}.confidence"] = torch.tensor([float(reply["confidence"])])
+            else:
+                extra[f"{key}.q{q}.noul"] = torch.tensor([float(reply["noul"])])
+            target = torch.tensor(_pplx_target(question, len(logits)))
+            extra[f"loss.{key}.q{q}.target"] = target
+            losses.append(F.cross_entropy(logits[None], target[None]))
+        extra[f"loss.{key}"] = torch.stack(losses).mean().reshape(1)
+        extra[f"{key}.usage"] = torch.tensor([chunk.length], dtype=torch.int32)
+        print(f"{key}: {chunk.length} tokens, logits {[list(map(lambda v: round(v, 4), r)) for r in rows]}")
+
+
+def _pplx_decider_class(checkpoint):
+    """The release's `Decider`, imported from `PPLX_SOURCE` (default: the checkpoint's `source/src`)."""
+    import sys as _sys
+    source = os.environ.get("PPLX_SOURCE", os.path.join(checkpoint, "source", "src"))
+    _sys.path.insert(0, source)
+    import pplx_decider.model as pplx_model
+    return pplx_model
+
+
+def run_pplx_decider(image, checkpoint):
+    """pplx-decider v1.2 (`perplexity-ai/pplx-decider-flash-v1.2`, or `-v1.2` with `PPLX_LAYERWISE=1`),
+    through the release's own `pplx_decider.Decider` on the CPU, which loads the backbone at float32 and
+    runs `reference_logits`, the exact evaluated path: the noncausal full-attention hook on the text model
+    and the readout at each `<|fim_suffix|>` marker.
+
+    `--checkpoint` is the release directory. Each of `_PPLX_REQUESTS` runs alone (a batch of one). The
+    record carries each request's ids and markers, the full readout at every marker, each question's
+    logits over its options, the probabilities at the saved temperature, the answers, the usage, and the
+    loss against fixed soft targets (`_pplx_record`); the first request also carries every hidden state.
+
+    `PPLX_LAYERWISE=1` builds the backbone on the meta device and reads each decoder layer from the shards
+    as the forward reaches it (`_read_layers_in_turn`), so the 27B runs at float32 in a fraction of its
+    108 GB; its hidden states are recorded at the markers only. The vision tower is never run.
+    """
+    pplx_model = _pplx_decider_class(checkpoint)
+    close = None
+    if os.environ.get("PPLX_LAYERWISE") == "1":
+        from transformers import AutoConfig
+        real = pplx_model.Qwen3_5Model
+
+        class _Layerwise:
+            @staticmethod
+            def from_pretrained(path, dtype=None, attn_implementation=None, **kw):
+                nonlocal close
+                config = AutoConfig.from_pretrained(path)
+                entries, read, close = _layerwise_release(path, torch.float32)
+                with torch.device("meta"):
+                    model = real._from_config(config, dtype=torch.float32, attn_implementation=attn_implementation)
+                model.visual.to_empty(device="cpu")
+                text = model.language_model
+                text.embed_tokens.weight = torch.nn.Parameter(read("language_model.embed_tokens.weight"), requires_grad=False)
+                text.norm.weight = torch.nn.Parameter(read("language_model.norm.weight"), requires_grad=False)
+                text.rotary_emb = type(text.rotary_emb)(config=text.config)
+                _read_layers_in_turn(text.layers, "language_model.", entries, read)
+                # The layers move between the meta device and the CPU on their own; the decider's
+                # `.to(device)` would try to copy the meta tensors.
+                model.to = lambda *args, **kwargs: model
+                return model
+
+        pplx_model.Qwen3_5Model = _Layerwise
+    try:
+        decider = pplx_model.Decider(pathlib_path(checkpoint), device="cpu")
+        extra = {}
+        _pplx_record(decider, _PPLX_REQUESTS, extra, marker_states=os.environ.get("PPLX_LAYERWISE") == "1")
+    finally:
+        if close:
+            close()
+    globals()["_extra"] = extra
+    return extra["r0.readouts"].clone()
+
+
+def pathlib_path(path):
+    from pathlib import Path
+    return Path(path)
+
+
+def run_pplx_decider_tiny(image, checkpoint):
+    """A tiny pplx-decider checkpoint written from a seeded random `Qwen3_5Model` (four text layers, the
+    last full attention, the release's vocabulary so its tokenizer and answer codes apply, and a two-block
+    vision tower that never runs), with a random readout and a temperature of 1.25, then run through the
+    release's own `Decider` as `run_pplx_decider` runs a release.
+
+    `--checkpoint` is a pplx-decider release directory, whose tokenizer, chat template, processor, and
+    protocol files the tiny checkpoint copies. `PPLX_TINY_OUT` is the directory the checkpoint is written
+    to, which InferKit's tiny parity test loads. Every hidden state of the first request is recorded."""
+    import shutil
+    from safetensors.torch import save_file as save_tensors
+    from transformers import Qwen3_5Config
+
+    out = os.environ["PPLX_TINY_OUT"]
+    os.makedirs(out, exist_ok=True)
+    for name in ["tokenizer.json", "tokenizer_config.json", "chat_template.jinja", "processor_config.json",
+                 "joint_config.json"]:
+        shutil.copy(os.path.join(checkpoint, name), os.path.join(out, name))
+    release = json.load(open(os.path.join(checkpoint, "config.json")))
+    text = dict(release["text_config"])
+    text.update({"hidden_size": 64, "intermediate_size": 128, "num_hidden_layers": 4, "num_attention_heads": 4,
+                 "num_key_value_heads": 2, "head_dim": 16, "linear_num_key_heads": 2, "linear_key_head_dim": 16,
+                 "linear_num_value_heads": 4, "linear_value_head_dim": 16, "full_attention_interval": 4,
+                 "layer_types": ["linear_attention"] * 3 + ["full_attention"], "dtype": "float32"})
+    text.pop("mlp_only_layers", None)
+    vision = dict(release["vision_config"])
+    vision.update({"depth": 2, "hidden_size": 32, "intermediate_size": 64, "num_heads": 2, "out_hidden_size": 64,
+                   "dtype": "float32"})
+    config = Qwen3_5Config(text_config=text, vision_config=vision,
+                           **{k: release[k] for k in ["image_token_id", "video_token_id", "vision_start_token_id",
+                                                      "vision_end_token_id", "tie_word_embeddings"]})
+    config.architectures = ["Qwen3_5Model"]
+    pplx_model = _pplx_decider_class(checkpoint)
+    torch.manual_seed(61)
+    model = pplx_model.Qwen3_5Model(config).float().eval()
+    with torch.no_grad():
+        for name, parameter in model.named_parameters():
+            # The release's initialization leaves the norms at their identity and the decay at zero;
+            # random values reach every term the port computes.
+            if name.endswith("norm.weight") or name.endswith("A_log") or name.endswith("dt_bias"):
+                parameter.copy_(torch.randn_like(parameter) * 0.3)
+    model.save_pretrained(out, safe_serialization=True)
+    decision = json.load(open(os.path.join(checkpoint, "decision_config.json")))
+    decision["temperature"] = 1.25
+    json.dump(decision, open(os.path.join(out, "decision_config.json"), "w"), indent=2)
+    save_tensors({"weight": (torch.randn(len(decision["codes"]), 64) * 0.2).contiguous()},
+                 os.path.join(out, "readout.safetensors"))
+
+    decider = pplx_model.Decider(pathlib_path(out), device="cpu")
+    extra = {}
+    _pplx_record(decider, _PPLX_REQUESTS, extra)
+    globals()["_extra"] = extra
+    return extra["r0.readouts"].clone()
+
+
 def run_open_jev_deberta_budget(image, checkpoint):
     """The state budget of typed-decisions' current collator, tokens only.
 
@@ -23487,7 +23697,7 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
           "snac": run_snac, "siglip2_probe": run_siglip2_probe, "clip_probe": run_clip_probe, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "glue_rounding": run_glue_rounding, "gelu_rounding": run_gelu_rounding, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
           "gemma4_shared_kv": run_gemma4_shared_kv}
-CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "clip_text_probe": run_clip_text_probe, "sd_vae_probe": run_sd_vae_probe, "gemma3n_audio_probe": run_gemma3n_audio_probe, "sd_unet_probe": run_sd_unet_probe, "z_image_release_probe": run_z_image_release_probe, "wan_release_probe": run_wan_release_probe, "sa2va_llava_probe": run_sa2va_llava_probe, "whisper_f16_probe": run_whisper_f16_probe, "t5_seq2seq_probe": run_t5_seq2seq_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "dense_layerwise": run_dense_layerwise, "pixtral_fused_layerwise": run_pixtral_fused_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "seedx": run_seedx, "madlad_layerwise": run_madlad_layerwise, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_qwen_generate": run_sa2va_qwen_generate, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
+CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "clip_text_probe": run_clip_text_probe, "sd_vae_probe": run_sd_vae_probe, "gemma3n_audio_probe": run_gemma3n_audio_probe, "sd_unet_probe": run_sd_unet_probe, "z_image_release_probe": run_z_image_release_probe, "wan_release_probe": run_wan_release_probe, "sa2va_llava_probe": run_sa2va_llava_probe, "whisper_f16_probe": run_whisper_f16_probe, "t5_seq2seq_probe": run_t5_seq2seq_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "pplx_decider": run_pplx_decider, "pplx_decider_tiny": run_pplx_decider_tiny, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "dense_layerwise": run_dense_layerwise, "pixtral_fused_layerwise": run_pixtral_fused_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "seedx": run_seedx, "madlad_layerwise": run_madlad_layerwise, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_qwen_generate": run_sa2va_qwen_generate, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,

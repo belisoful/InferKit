@@ -927,6 +927,51 @@ state of the adapted text model, the logits, the answers). The 9B release does n
 32 GB machine, so it is compared at bfloat16 against the loader at bfloat16: the same decisions, with
 probabilities within 0.004.
 
+### pplx-decider (`NFKMLXPplxDecider`)
+
+Perplexity's open-weight decision models take the same `NFKDecisionQuestion`s and return the same
+`NFKDecisionAnswer`s. A fine-tuned Qwen3.5-architecture text model reads the state and every question in
+one sequence, and a readout scores each question's options at the question's own marker:
+
+| Release | Base | Download | Memory here |
+| --- | --- | --- | --- |
+| `.flash` (`perplexity-ai/pplx-decider-flash-v1.2`, Apache-2.0) | Qwen3.5-4B | 9.1 GB | the published bfloat16, or float32 at twice that |
+| `.twentySevenB` (`perplexity-ai/pplx-decider-v1.2`, Apache-2.0) | Qwen3.8-27B | 52.2 GB | packed to 4 bits as it loads, about 15 GB |
+
+```objc
+// One pass answers every question; the questions are numbered in sorted identifier order.
+NFKMLXPplxDecider *decider = [NFKMLXPplxDecider deciderWithVariant:NFKMLXPplxDeciderVariantFlash revision:nil
+                                                 cacheDirectoryURL:nil quantizationBits:0 error:&error];
+NSDictionary<NSString *, NFKDecisionAnswer *> *answers =
+    [decider answersForState:record questions:@{ @"intent": intent, @"refund": refund } error:&error];
+
+// The 27B release packs its decoder to 4 bits as it loads.
+NFKMLXPplxDecider *large = [NFKMLXPplxDecider deciderWithVariant:NFKMLXPplxDeciderVariantTwentySevenB revision:nil
+                                               cacheDirectoryURL:nil quantizationBits:4 error:&error];
+```
+
+```swift
+let decider = try NFKMLXPplxDecider.decider(variant: .flash, revision: nil, cacheDirectoryURL: nil, quantizationBits: 0)
+let answers = try decider.answers(state: record, questions: ["intent": intent, "refund": refund])
+let backend = decider.makeBackend()        // NFKInputState + NFKInputQuestions in, NFKOutputAnswers out
+```
+
+- The questions of a request see each other. The release recommends grouping related questions (facets
+  of one decision) and sending independent candidates, such as documents to rank, as separate requests.
+- A choice takes 1 to 255 options, shown under the codes `A` … `Z`, `AA` …; a score takes 2 to 255 levels;
+  a noul's meanings default to "No / false" and "Yes / true" apart. A question without instructions reads
+  "Choose the best matching option."
+- Special tokens in the state and the questions are escaped with full-width brackets, so user text cannot
+  write a marker or a chat turn.
+- A request longer than `maxLength` (262,144 tokens, the backbone's limit) splits its questions in
+  halves, each half with the whole state; the release trained on sequences up to about 32k tokens.
+- `temperature` defaults to the saved calibration (1.554 for Flash, 1.382 for the 27B).
+- Images are not read: the release's vision tower is not ported.
+
+Reference parity against the release's own `pplx_decider` package on the CPU at float32: the prompt token
+for token, every hidden state, the readouts, the logits, and the answers, on a tiny checkpoint and on the
+Flash release.
+
 ### Time-series forecasting (`NFKMLXChronos`)
 
 Chronos-Bolt reads a numeric context window and forecasts a horizon as quantiles (0.1 … 0.9), so the
@@ -5075,6 +5120,29 @@ questions. Both recipes use PyTorch's AdamW with the releases' two learning rate
 follows its release's schedule, a warm-up over the first 6% of the run then a linear decay to zero,
 unless `learningRateSchedule:` names another; Open-Jev's release trains at a constant rate. The
 temperature is not refitted by a fine-tune.
+
+### Adapting pplx-decider to your own decisions
+
+pplx-decider trains a LoRA adapter over its text model's attention and recurrence projections and its
+readout, the backbone frozen, on target distributions over each question's options: the distillation the
+model card describes for the Flash release. One request carries any number of questions:
+
+```swift
+let model = try NFKMLXPplxDecider.decider(directoryURL: releaseDirectory, precision: .float32)
+let examples = [
+    NFKMLXPplxDeciderExample(state: "Charged twice, refund me.", questions: [team, refund], labels: [0, 1]),
+    NFKMLXPplxDeciderExample(state: "The app crashes.", questions: [team], targets: [[0.1, 0.9]]),
+]
+try model.fineTune(examples: examples, steps: 200, batchSize: 4)
+try model.saveAdapter(to: tunedDirectory)   // adapter_model.safetensors, adapter_config.json, readout.safetensors
+let tuned = try NFKMLXPplxDecider.decider(directoryURL: releaseDirectory, adapterDirectoryURL: tunedDirectory,
+                                          precision: .checkpoint)
+```
+
+The release publishes no training code, so the objective is the cross-entropy against each target,
+measured against PyTorch's on the reference's own logits; the defaults (rank 8, AdamW at 5e-5 for the
+adapter and 1e-4 for the readout) are Open-Jev's on the same decoder. A fine-tune needs the Flash release
+at float32, about 18 GB; the 27B does not fit at float32 here. The temperature is not refitted.
 
 ### Adapting a translator to your own sentence pairs
 

@@ -277,6 +277,7 @@ negatives.
 | `NFKMLXLaya` | ships | head-retarget | public | `rl_common.proper_reward` at measured parity, with the episode-prefix path. |
 | `NFKMLXOpenJevDeBERTa` | ships | head-retarget | public | The release's `decision_loss` with its two AdamW groups. |
 | `NFKMLXOpenJev` | ships | LoRA | public | The loader's own loss, saved in the release's PEFT layout. Needs the base at float32: 2B fits on a device; 9B (about 36 GB) and 27B (about 108 GB) do not. |
+| `NFKMLXPplxDecider` | ships at Flash, offline at 27B | LoRA | public | The release publishes no training code; the model card names distillation onto the 27B models' full distributions, so the objective is the soft-target cross-entropy, measured against torch's `cross_entropy` on the reference's logits. LoRA on Open-Jev's target set plus the readout, saved as a PEFT adapter that reloads over the release. Flash at float32 is about 18 GB; the 27B at float32 (about 108 GB) does not fit, and a packed layer takes no adapter. |
 | `NFKMLXCLIP` | ships | probe | public | The probe ships in `NFKMLXCLIPProbe.swift`. |
 | `NFKMLXSigLIP2` | ships | probe | public | The shared `NFKMLXEmbeddingProbe` over the frozen pooled image embedding; a saved probe reloads through `probeBackendWithProbeURL:labels:error:`. |
 | `NFKMLXTextEmbedder` | ships | probe | public | `NFKMLXTextEmbeddingBackend`'s identity-initialized adapter under `MultipleNegativesRankingLoss`, the objective measured for Qwen3-VL. |

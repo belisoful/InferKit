@@ -525,6 +525,15 @@ attention and feed-forward.
   forward on the reference's weights within 7.7e-7. A fine-tuned file reloads through
   `network(weightsURL:configuration:)` (its convolution already in this module's layout), and
   `backend(network:directoryURL:)` serves it. Qwen3.8-27B is ~54 GB and stays offline.
+  **Bidirectional full attention** (`NFKMLXHybridAttention.bidirectional`, through `normalizedHidden(_:attention:)`
+  and `hiddenStates(_:attention:)`) drops the causal mask from the full-attention layers only; the
+  convolution and the delta rule read the prefix in either mode. pplx-decider (`NFKMLXPplxDecider`, in
+  `mlx-models-embeddings-retrieval.md`) runs this way. `moduleKey(forReference:)` also reads a
+  `Qwen3_5Model` save, whose decoder sits under `language_model.` with no `model.` wrapper.
+  `loadQuantizedWeights(into:fromDirectory:bits:groupSize:includeEmbeddings:)` packs a release as it reads
+  the shards: each layer is installed, quantized, and evaluated when its last tensor arrives, so a release
+  past the working set (Qwen3.8-27B) loads at the size of its packed form; it equals packing after a
+  `.checkpoint` load element for element (`NFKMLXPplxDeciderTests`).
 - `NFKMLXQwen4Exp` — the Qwen4-Exp decoder (`Qwen4ExpForConditionalGeneration`), which
   **Qwen3.8-Flash-Next** is the released 180B instance of. It keeps the hybrid family's skeleton and
   adds four mechanisms nothing else in the package uses, so it is a port rather than a configuration

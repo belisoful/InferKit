@@ -1093,6 +1093,43 @@
 	// NSDictionary<NSString *, NFKDecisionAnswer *> *answers = [model answersForState:record questions:questions error:&error];
 }
 
+// Docs/examples.md: pplx-decider from Objective-C. deciderWithDirectoryURL:error: builds a release at its
+// published bfloat16, deciderWithDirectoryURL:quantizationBits:error: packs the decoder as it loads (the
+// 27B at 4 bits fits 32 GB), and deciderWithVariant:revision:cacheDirectoryURL:quantizationBits:error:
+// downloads a release first. Every question of a request shares one pass. A fine-tuned adapter reloads
+// over its release through deciderWithDirectoryURL:adapterDirectoryURL:precision:error:. The releases
+// need the network, so this pins the entry points.
+- (void)testObjectiveCPplxDeciderEntryPoints
+{
+	XCTAssertEqual(NFKMLXPplxDeciderVariantFlash, 0);
+	XCTAssertEqual(NFKMLXPplxDeciderVariantTwentySevenB, 1);
+	XCTAssertTrue([NFKMLXPplxDecider.requiredFiles containsObject:@"readout.safetensors"]);
+	XCTAssertTrue([NFKMLXPplxDecider respondsToSelector:@selector(deciderWithDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXPplxDecider respondsToSelector:@selector(deciderWithDirectoryURL:precision:error:)]);
+	XCTAssertTrue([NFKMLXPplxDecider respondsToSelector:@selector(deciderWithDirectoryURL:quantizationBits:error:)]);
+	XCTAssertTrue([NFKMLXPplxDecider respondsToSelector:@selector(deciderWithDirectoryURL:adapterDirectoryURL:precision:error:)]);
+	XCTAssertTrue([NFKMLXPplxDecider respondsToSelector:@selector(backendWithDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXPplxDecider respondsToSelector:@selector(backendWithDirectoryURL:precision:quantizationBits:error:)]);
+	XCTAssertTrue([NFKMLXPplxDecider respondsToSelector:@selector(downloadVariant:revision:cacheDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXPplxDecider respondsToSelector:@selector(deciderWithVariant:revision:cacheDirectoryURL:quantizationBits:error:)]);
+	XCTAssertTrue([NFKMLXPplxDecider respondsToSelector:@selector(deciderWithVariant:revision:cacheDirectoryURL:quantizationBits:completionHandler:)]);
+	XCTAssertTrue([NFKMLXPplxDecider respondsToSelector:@selector(backendWithVariant:revision:cacheDirectoryURL:quantizationBits:error:)]);
+	XCTAssertTrue([NFKMLXPplxDecider respondsToSelector:@selector(backendWithVariant:revision:cacheDirectoryURL:quantizationBits:completionHandler:)]);
+	XCTAssertTrue([NFKMLXPplxDecider instancesRespondToSelector:@selector(answersForState:questions:error:)]);
+	XCTAssertTrue([NFKMLXPplxDecider instancesRespondToSelector:@selector(answerForState:question:error:)]);
+	XCTAssertTrue([NFKMLXPplxDecider instancesRespondToSelector:@selector(saveAdapterToDirectoryURL:error:)]);
+	XCTAssertTrue([NFKMLXPplxDecider instancesRespondToSelector:@selector(setTemperature:)]);
+
+	NSError *error = nil;
+	XCTAssertNil([NFKMLXPplxDecider deciderWithDirectoryURL:[NSURL fileURLWithPath:@"/nonexistent/pplx"] error:&error]);
+	XCTAssertNotNil(error);
+
+	// With the network (off the render thread):
+	// NFKMLXPplxDecider *decider = [NFKMLXPplxDecider deciderWithVariant:NFKMLXPplxDeciderVariantFlash revision:nil
+	//                                                  cacheDirectoryURL:nil quantizationBits:0 error:&error];
+	// NSDictionary<NSString *, NFKDecisionAnswer *> *answers = [decider answersForState:ticket questions:questions error:&error];
+}
+
 // Docs/examples.md: downloading a release from Objective-C. Every model that builds from a release
 // directory also downloads one: the directory factory's selector with `DirectoryURL:` replaced by
 // `Repo:revision:cacheDirectoryURL:`, and a `completionHandler:` peer. The downloads need the

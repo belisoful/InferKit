@@ -199,6 +199,11 @@ The figures have three limits:
 - ``NFKMLXOpenJev``
 - ``NFKMLXOpenJevVariant``
 - ``NFKMLXOpenJevRelease``
+- ``NFKMLXPplxDecider``
+- ``NFKMLXPplxDeciderVariant``
+- ``NFKMLXPplxDeciderConfiguration``
+- ``NFKMLXPplxDeciderPrompt``
+- ``NFKMLXPplxDeciderSequence``
 - ``NFKMLXDecisionBackend``
 - ``NFKMLXDecisionModel``
 - ``NFKMLXDecisionTokenizer``
@@ -230,6 +235,7 @@ The figures have three limits:
 - ``NFKMLXQwen4ExpNet``
 - ``NFKMLXHybridLanguage``
 - ``NFKMLXHybridLanguageNet``
+- ``NFKMLXHybridAttention``
 - ``NFKMLXDecoderBackend``
 - ``NFKMLXGemma3``
 - ``NFKMLXGemma3n``
@@ -702,6 +708,10 @@ The figures have three limits:
 - ``NFKMLXOpenJevNet``
 - ``NFKMLXOpenJevObjective``
 - ``NFKMLXOpenJevExample``
+- ``NFKMLXPplxDeciderNet``
+- ``NFKMLXPplxDeciderObjective``
+- ``NFKMLXPplxDeciderExample``
+- ``NFKMLXPplxDeciderAdapter``
 - ``NFKMLXGraniteHybridNet``
 - ``NFKMLXGraniteObjective``
 - ``NFKMLXNemotronHNet``
