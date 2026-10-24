@@ -12488,6 +12488,93 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertTrue(draws.units.isEmpty && draws.integers.isEmpty && draws.uniforms.isEmpty, "every recorded draw is consumed")
     }
 
+    // Hybrid Transformer Demucs's training against demucs 4.0.1's own `solver.py`, `augment.py`, and
+    // `get_optimizer`, on the released drums model of `htdemucs_ft` with its dropout at zero: the estimate at
+    // the clip's own length through both branches, the drums and the equally weighted losses, the global
+    // gradient norm before the clip and ten gradients across both branches, the transformer, and the
+    // spectrogram branch's last decoder, and the loss after one step of the fine-tune's AdamW with the
+    // transformer's decay and the clip at 5, each held to float64's within twice the reference's own float32
+    // distance. The augmentation chain replays the reference's draws.
+    func testHTDemucsTrainingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_HTDEMUCS_TRAINING"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_HTDEMUCS_TRAINING to a record from run_reference.py htdemucs_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        func values(_ key: String) throws -> [Float] { try array(key).asArray(Float.self) }
+        func distance(_ a: MLXArray, _ b: MLXArray) -> Float {
+            sqrt(square(a - b).sum()).item(Float.self) / sqrt(square(b).sum()).item(Float.self)
+        }
+        let stems = try array("stems")
+        var configuration = NFKMLXHTDemucsConfiguration.htdemucs
+        configuration.transformerDropout = 0
+        let net = try NFKMLXHTDemucs.network(weightsURL: weights("IK_VAL_HTDEMUCS_FT_1"), configuration: configuration)
+        let objective = NFKMLXDemucsObjective.stem(0, of: 4)
+        net.train(true)
+
+        let estimate = net.estimate(stems.sum(axis: 1))
+        let estimateFloor = distance(try array("estimate"), try array("f64::estimate"))
+        let estimateError = distance(estimate, try array("f64::estimate"))
+        print("PARITY htdemucs-training: estimate from float64 \(estimateError) (reference float32 \(estimateFloor))")
+        XCTAssertLessThan(estimateError, max(1e-6, 2 * estimateFloor))
+
+        for (key, ours) in [("loss", objective.loss(estimate: estimate, sources: stems)),
+                            ("loss_equal", NFKMLXDemucsObjective().loss(estimate: estimate, sources: stems))] {
+            let value = ours.item(Float.self), value32 = try values(key)[0], value64 = try values("f64::" + key)[0]
+            print("PARITY htdemucs-training: \(key) \(value) vs \(value32) (float64 \(value64))")
+            XCTAssertEqual(value, value64, accuracy: max(abs(value64) * 1e-5, 2 * abs(value32 - value64)), key)
+        }
+
+        let gradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, arrays in
+            [objective(net, arrays[0])]
+        }(net, [stems]).1.flattened())
+        let norm = sqrt(gradients.values.map { square($0).sum() }.reduce(MLXArray(Float(0)), +)).item(Float.self)
+        let norm32 = try values("gradient_norm")[0], norm64 = try values("f64::gradient_norm")[0]
+        print("PARITY htdemucs-training: global gradient norm \(norm) vs \(norm32) (float64 \(norm64))")
+        XCTAssertEqual(norm, norm64, accuracy: max(norm64 * 1e-4, 2 * abs(norm32 - norm64)))
+        // The loader's own layout rules: a transposed convolution rotates the other way from a forward one,
+        // and the channel samplers are 1×1 convolutions held as linear layers.
+        func layout(_ name: String, _ value: MLXArray) -> MLXArray {
+            if name.hasSuffix("conv_tr.weight") {
+                return value.ndim == 4 ? value.transposed(1, 2, 3, 0) : value.transposed(1, 2, 0)
+            }
+            if name.hasPrefix("channel_") && value.ndim == 3 { return value.squeezed(axis: 2) }
+            if value.ndim == 4 { return value.transposed(0, 2, 3, 1) }
+            if value.ndim == 3 { return value.transposed(0, 2, 1) }
+            return value
+        }
+        for reference in ["encoder.0.conv.weight", "tencoder.0.conv.weight", "freq_emb.embedding.weight",
+                          "channel_upsampler.weight", "encoder.1.dconv.layers.0.6.scale",
+                          "crosstransformer.layers.0.self_attn.in_proj_weight",
+                          "crosstransformer.layers.1.cross_attn.out_proj.bias", "crosstransformer.layers_t.4.gamma_2.scale",
+                          "decoder.3.conv_tr.weight", "tdecoder.3.conv_tr.bias"] {
+            let name = NFKMLXHTDemucs.remapReferenceKey(reference)
+            let ours = try XCTUnwrap(gradients[name], name)
+            let theirs = layout(name, try array("grad::" + reference)), theirs64 = layout(name, try array("f64::grad::" + reference))
+            let floor = distance(theirs, theirs64)
+            print("PARITY htdemucs-training: \(name) gradient from float64: ours \(distance(ours, theirs64)), "
+                  + "reference float32 \(floor)")
+            XCTAssertLessThan(distance(ours, theirs64), max(1e-5, 2 * floor), name)
+        }
+
+        var recipe = NFKMLXHTDemucsTrainingRecipe.htdemucsFineTune
+        recipe.augmentation = nil
+        try NFKMLXHTDemucs.fineTune(net, stems: { _ in stems }, objective: objective, recipe: recipe, steps: 1)
+        net.train(true)
+        let lossAfter = objective(net, stems).item(Float.self)
+        let after32 = try values("loss_after_step")[0], after64 = try values("f64::loss_after_step")[0]
+        print("PARITY htdemucs-training: loss after one step \(lossAfter) vs \(after32) (float64 \(after64))")
+        XCTAssertEqual(lossAfter, after64, accuracy: max(abs(after64) * 1e-5, 2 * abs(after32 - after64)))
+
+        var draws = try replayedDemucsDraws(arrays)
+        let augmented = NFKMLXDemucsAugmentation(shift: 16).apply(try array("augment::stems"), draws: &draws)
+        let augmentDifference = abs(augmented - (try array("augment::out"))).max().item(Float.self)
+        print("PARITY htdemucs-training: augmentation worst \(augmentDifference)")
+        XCTAssertLessThan(augmentDifference, 1e-6)
+        XCTAssertTrue(draws.units.isEmpty && draws.integers.isEmpty && draws.uniforms.isEmpty, "every recorded draw is consumed")
+    }
+
     /// A Demucs training record's augmentation draws, each kind in the order the reference took them.
     private func replayedDemucsDraws(_ arrays: [String: MLXArray]) throws -> NFKDemucsReplayedDraws {
         func sequence(_ kind: String) -> [MLXArray] {

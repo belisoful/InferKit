@@ -44,8 +44,8 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 53 |
-| `trainable`, no recipe yet | 45 |
+| `ships` | 54 |
+| `trainable`, no recipe yet | 44 |
 | `offline` | 39 |
 | `uncertain` | 0 |
 | `untrainable` | 13 |
@@ -56,7 +56,7 @@ The 167 model entries become 151 rows because a few entries take one ruling for 
 generation pipelines share a row, the schedulers share a row, and Gemma's parameter-free adapters
 share a row.
 
-Fifty-three recipes ship and 45 models are trainable with none written. That is the size of
+Fifty-four recipes ship and 44 models are trainable with none written. That is the size of
 the work the rule creates.
 
 The largest single finding: **the detector losses are published and portable.** ultralytics ships
@@ -65,10 +65,10 @@ onto Hungarian matchers this package already reproduces in `NFKMLXHungarian`. Th
 read on disk rather than assumed. Detection was previously set aside as too expensive to port, and
 that call was wrong.
 
-The second: **four audio models remain trainable at `full`.** SGMSE+, StoRM, DeepFilterNet3, and
-HT Demucs each publish a plain reconstruction or score-matching objective with no adversary, verified in
-each repository's own loss module. GTCRN, NU-Wave 2, Conv-TasNet, the Denoiser, FRCRN, MossFormer2 SE,
-and Demucs ship.
+The second: **three audio models remain trainable at `full`.** SGMSE+, StoRM, and DeepFilterNet3
+each publish a plain reconstruction or score-matching objective with no adversary, verified in each
+repository's own loss module. GTCRN, NU-Wave 2, Conv-TasNet, the Denoiser, FRCRN, MossFormer2 SE,
+Demucs, and HT Demucs ship.
 
 ## Depth, segmentation, matting
 
@@ -167,7 +167,7 @@ and Demucs ship.
 | Model | Outcome | Level | Reach | What decides it |
 | --- | --- | --- | --- | --- |
 | `NFKMLXDemucs` | ships | full | public | The `v2` branch's `train.py`: L1 against the stems trimmed to the unpadded estimate, its augmentations, and Adam at 3e-4, measured by `run_reference.py demucs_training` on the release. |
-| `NFKMLXHTDemucs` | trainable | full | internal | demucs 4.0.1 `solver.py` trains with an L1 waveform loss and no adversary. 42M parameters, an 81 MB release. |
+| `NFKMLXHTDemucs` | ships | full | public | demucs 4.0.1's `solver.py` through both branches, with the base and `htdemucs_ft` recipes the releases record, measured by `run_reference.py htdemucs_training` on `htdemucs_ft`'s drums model. 42M parameters, an 81 MB release. |
 | `NFKMLXConvTasNet` | ships | full | public | asteroid v0.5.2's `PITLossWrapper(pairwise_neg_sisdr)`, matched by `run_reference.py convtasnet_loss`. 5M parameters. |
 | `NFKMLXDenoiser` | ships | full | public | `denoiser/solver.py`'s L1 within 1e-6 on the released dns48 and its gradients within 1.2e-5, with the STFT term, the four augmentations, and `train.py`'s Adam at 3e-4. No discriminator. |
 
@@ -341,6 +341,7 @@ the recipe detail.
 | `NFKMLXVoiceRestore` | untrainable | skirdey/voicerestore at bfda753, both branches. |
 | `NFKMLXDenoiser` | trainable, full | facebookresearch/denoiser at 8afd7c1, `solver.py` and `stft_loss.py`. |
 | `NFKMLXDemucs` | ships, full | facebookresearch/demucs `v2` branch at 64ed2cb, `train.py` and `augment.py`. |
+| `NFKMLXHTDemucs` | ships, full | facebookresearch/demucs v4.0.1 at ef66d25, `solver.py`, `augment.py`, `train.py`, and `conf/`, with each release's `training_args`. |
 | `NFKMLXSNAC` | untrainable | hubertsiuzdak/snac at 8f79a71, the whole tree. |
 | `NFKMLXStableAudioDiTNet` / `NFKMLXStableAudioProjectionNet` | trainable, LoRA | Stability-AI/stable-audio-tools at 3241adb, `training/diffusion.py`, `training/utils.py`, and `models/lora/`; the release's `model_config.json` for the optimizer. |
 | `NFKMLXMarigold`, `NFKMLXSDUpscaler` | trainable, LoRA | prs-eth/Marigold at 2bfbdea; the upscaler's `ddpm.py` from a mirror of the deleted Stability-AI/stablediffusion, unpinned. |

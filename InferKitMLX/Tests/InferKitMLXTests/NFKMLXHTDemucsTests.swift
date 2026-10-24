@@ -46,13 +46,37 @@ final class NFKMLXHTDemucsTests: XCTestCase {
         XCTAssertEqual(stems.shape, [4, 2, 8192], "the padding to the training segment is trimmed back")
     }
 
+    func testTheStagedTransformIsAsAccurateAsPocketFFT() throws {
+        try requireMLXRuntime()
+        let n = 4096
+        let signal = (0 ..< n).map { Float(sin(Double($0) * 0.37) + 0.5 * cos(Double($0) * 1.91 + Double($0 % 7))) }
+        let spectrum = NFKHTDemucsSpectrum.rfft(MLXArray(signal, [1, n]))
+        eval(spectrum)
+        let real = spectrum.realPart().asArray(Float.self), imaginary = spectrum.imaginaryPart().asArray(Float.self)
+        var error = 0.0, norm = 0.0
+        for k in 0 ... n / 2 {
+            var re = 0.0, im = 0.0
+            for (index, value) in signal.enumerated() {
+                let angle = -2 * Double.pi * Double(k * index % n) / Double(n)
+                re += Double(value) * cos(angle)
+                im += Double(value) * sin(angle)
+            }
+            error += pow(Double(real[k]) - re, 2) + pow(Double(imaginary[k]) - im, 2)
+            norm += re * re + im * im
+        }
+        // pocketfft, the reference's transform, sits near 1.2e-7 here; MLX's direct 4,096-point GPU kernel near 6.9e-7.
+        XCTAssertLessThan(sqrt(error / norm), 3e-7)
+        let restored = NFKHTDemucsSpectrum.irfft(spectrum, n: n)
+        XCTAssertLessThan(abs(restored - MLXArray(signal, [1, n])).max().item(Float.self), 1e-5)
+    }
+
     func testTheTransformInvertsToTheSignalItStartedFrom() throws {
         try requireMLXRuntime()
         let signal = (0 ..< 4096).map { sinf(Float($0) * 0.05) + 0.3 * sinf(Float($0) * 0.31) }
-        let spectrum = NFKHTDemucsSpectrum.transform([signal], nFFT: 256, hop: 64)
+        let spectrum = NFKHTDemucsSpectrum.transform(MLXArray(signal, [1, signal.count]), nFFT: 256, hop: 64)
         let restored = NFKHTDemucsSpectrum.inverseTransform(spectrum, nFFT: 256, hop: 64,
                                                             length: signal.count)
-        let error = zip(signal, restored[0]).map { abs($0 - $1) }.max() ?? 1
+        let error = zip(signal, restored[0].asArray(Float.self)).map { abs($0 - $1) }.max() ?? 1
         XCTAssertLessThan(error, 1e-4, "the windowed overlap-add reconstructs its own input")
     }
 

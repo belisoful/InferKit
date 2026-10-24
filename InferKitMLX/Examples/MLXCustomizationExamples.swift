@@ -1059,6 +1059,31 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertEqual(separator.backendIdentifier, NFKMLXDemucs.modelName)
     }
 
+    // Docs/examples.md: Fine-tuning Hybrid Transformer Demucs
+    func testExampleFineTuningHTDemucs() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("htdemucs-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads the release and fine-tunes on ten-second clips in batches of 8; a randomly
+        // initialized network on a short clip stands in.
+        let net = try NFKMLXHTDemucs.network(weightsURL: nil)
+        var recipe = NFKMLXHTDemucsTrainingRecipe.htdemucsFineTune
+        recipe.augmentation?.shift = 256
+        let length = 8192 + 256
+        let samples: [Float] = (0 ..< 4 * 2 * length).map { Float($0 % 89) / 89 - 0.5 }
+        let myStems = [MLXArray(samples, [1, 4, 2, length])]
+        let history = try NFKMLXHTDemucs.fineTune(net, stems: { step in myStems[step % myStems.count] },
+                                                  objective: .stem(3, of: 4), recipe: recipe, steps: 1)
+        XCTAssertEqual(history.count, 1)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        let separator = try NFKMLXHTDemucs.backend(weightsURL: tuned)
+        XCTAssertEqual(separator.backendIdentifier, NFKMLXHTDemucs.modelName)
+    }
+
     // Docs/examples.md: Fine-tuning the colorizers
     func testExampleFineTuningTheColorizers() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

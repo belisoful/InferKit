@@ -4798,6 +4798,22 @@ try NFKMLXWeights.save(net, to: tuned)
 let separator = try NFKMLXDemucs.backend(weightsURL: tuned)       // Objective-C: backendWithWeightsURL:error:
 ```
 
+### Fine-tuning Hybrid Transformer Demucs
+
+Hybrid Transformer Demucs trains through both of its branches. `htdemucsFineTune` is the recipe that made
+`htdemucs_ft` from the release, one model per stem: AdamW at 1e-4 with weight decay on the transformer, the
+gradient clipped at 5, and only the crop and the flips. `htdemucs` is the grid that trained the release.
+
+```swift
+let net = try NFKMLXHTDemucs.network(weightsURL: releasedWeights)
+try NFKMLXHTDemucs.fineTune(net, stems: { step in myStems[step % myStems.count] },
+                            objective: .stem(3, of: 4),              // vocals
+                            recipe: .htdemucsFineTune, steps: 2000)
+
+try NFKMLXWeights.save(net, to: tuned)
+let separator = try NFKMLXHTDemucs.backend(weightsURL: tuned)     // Objective-C: backendWithWeightsURL:error:
+```
+
 ### Teaching bandwidth extension your own audio
 
 NU-Wave 2 restores the high band of a narrow-band recording. Fine-tuning it on wide-band audio of the

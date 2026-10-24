@@ -17,37 +17,74 @@ import MLX
 import MLXFast
 import MLXFFT
 import MLXNN
+import MLXRandom
 
 // MARK: Short-time Fourier transform
 
 /// The transform pair the spectrogram branch is defined over: a Hann-windowed STFT normalized by
 /// `sqrt(nFFT)`, and its inverse.
 ///
-/// Framing and overlap-add run over Swift buffers and only the transform itself runs in MLX. The
-/// alternative is a scatter-add MLX has no direct operation for, and the buffers here are small
-/// beside the network.
+/// Both run in MLX over a batch of signals. Framing gathers each frame's samples, and the overlap-add
+/// sums the frames' `nFFT / hop` hop-long pieces into the output block each one lands on, so a gradient
+/// reaches the spectrogram branch through the inverse. The transforms run as radix-4 stages (``fft(_:)``).
 enum NFKHTDemucsSpectrum {
+
+    /// The discrete Fourier transform over the last axis of a complex array, as Cooley-Tukey stages of
+    /// 4-point (and at most one 2-point) transforms joined by exactly rounded twiddle factors.
+    ///
+    /// @discussion MLX's GPU transform of 4,096 points carries 6.9e-7 relative error, six times the
+    /// reference's pocketfft. In 4-point stages it carries 1.2e-7, pocketfft's own, and a trained network's
+    /// gradients through the spectrogram branch depend on that difference. A length with another factor
+    /// transforms that remainder in one MLX call.
+    static func fft(_ x: MLXArray) -> MLXArray {
+        let n = x.dim(-1)
+        let radix = n % 4 == 0 ? 4 : (n % 2 == 0 ? 2 : n)
+        guard radix < n else { return MLXFFT.fft(x, axis: -1) }
+        let rest = n / radix
+        let leading = Array(x.shape.dropLast())
+        // n = n1 + radix · n2: transform over n2 first, turn by the twiddles, then over n1.
+        let inner = fft(x.reshaped(leading + [rest, radix]).swappedAxes(-1, -2)).swappedAxes(-1, -2)
+        var real = [Float](repeating: 0, count: rest * radix), imaginary = real
+        for k2 in 0 ..< rest {
+            for n1 in 0 ..< radix {
+                let angle = -2 * Double.pi * Double(k2 * n1) / Double(n)
+                real[k2 * radix + n1] = Float(cos(angle))
+                imaginary[k2 * radix + n1] = Float(sin(angle))
+            }
+        }
+        let twiddles = MLXArray(real, [rest, radix]) + MLXArray(real: 0, imaginary: 1) * MLXArray(imaginary, [rest, radix])
+        let outer = MLXFFT.fft(inner * twiddles, axis: -1)       // X[k2 + rest · k1]
+        return outer.swappedAxes(-1, -2).reshaped(leading + [n])
+    }
+
+    /// The transform of real signals over the last axis, its `n / 2 + 1` non-negative frequencies.
+    static func rfft(_ x: MLXArray) -> MLXArray {
+        let n = x.dim(-1)
+        return fft(x.asType(.complex64))[.ellipsis, 0 ..< (n / 2 + 1)]
+    }
+
+    /// The inverse of ``rfft(_:)`` to `n` real samples. The negative frequencies are the conjugates of the
+    /// positive ones, and the imaginary parts of the zero and Nyquist bins are ignored, as `irfft` does.
+    static func irfft(_ half: MLXArray, n: Int) -> MLXArray {
+        let mirrored = take(half, MLXArray(Array(Int32(1) ..< Int32(n - n / 2)).reversed()), axis: -1)
+        let full = concatenated([half, conjugate(mirrored)], axis: -1)
+        return fft(conjugate(full)).realPart() / Float(n)
+    }
 
     static func hannWindow(_ size: Int) -> [Float] {
         // Periodic, as `torch.hann_window` is by default.
         (0 ..< size).map { 0.5 - 0.5 * cosf(2 * .pi * Float($0) / Float(size)) }
     }
 
-    /// Reflects `left` samples at the start and `right` at the end, as `torch.nn.functional.pad`
-    /// does in `reflect` mode: the edge sample itself is not repeated.
-    static func reflectPadded(_ signal: [Float], left: Int, right: Int) -> [Float] {
-        let n = signal.count
+    /// Reflects `left` samples at the start and `right` at the end of each signal `[signals, L]`, as
+    /// `torch.nn.functional.pad` does in `reflect` mode: the edge sample itself is not repeated.
+    static func reflectPadded(_ signals: MLXArray, left: Int, right: Int) -> MLXArray {
+        let n = signals.dim(1)
         guard n > 1 else {
-            return [Float](repeating: signal.first ?? 0, count: left + n + right)
+            return repeated(signals, count: left + n + right, axis: 1)
         }
-        var out = [Float]()
-        out.reserveCapacity(left + n + right)
-        for i in stride(from: left, to: 0, by: -1) { out.append(signal[mirrored(i, n)]) }
-        out += signal
-        if right > 0 {
-            for i in 1 ... right { out.append(signal[mirrored(n - 1 - i, n)]) }
-        }
-        return out
+        let indices = (-left ..< (n + right)).map { Int32(mirrored($0, n)) }
+        return take(signals, MLXArray(indices), axis: 1)
     }
 
     private static func mirrored(_ index: Int, _ count: Int) -> Int {
@@ -57,63 +94,51 @@ enum NFKHTDemucsSpectrum {
         return folded
     }
 
-    /// `[signals, frames, nFFT/2 + 1]` complex, `torch.stft(normalized: true, center: true)`.
-    static func transform(_ signals: [[Float]], nFFT: Int, hop: Int) -> MLXArray {
-        let window = hannWindow(nFFT)
-        let half = nFFT / 2
-        var padded = signals.map { reflectPadded($0, left: half, right: half) }
-        let frames = 1 + (signals[0].count) / hop
-        let needed = (frames - 1) * hop + nFFT
-        for i in padded.indices where padded[i].count < needed {
-            padded[i] += [Float](repeating: 0, count: needed - padded[i].count)
+    /// `[signals, frames, nFFT/2 + 1]` complex, `torch.stft(normalized: true, center: true)` of
+    /// `[signals, L]`.
+    static func transform(_ signals: MLXArray, nFFT: Int, hop: Int) -> MLXArray {
+        let count = signals.dim(0)
+        let padded = reflectPadded(signals, left: nFFT / 2, right: nFFT / 2)
+        let frames = 1 + signals.dim(1) / hop
+        var gather = [Int32]()
+        gather.reserveCapacity(frames * nFFT)
+        for f in 0 ..< frames {
+            for j in 0 ..< nFFT { gather.append(Int32(f * hop + j)) }
         }
-
-        var data = [Float](repeating: 0, count: signals.count * frames * nFFT)
-        for s in signals.indices {
-            padded[s].withUnsafeBufferPointer { source in
-                for f in 0 ..< frames {
-                    let base = (s * frames + f) * nFFT
-                    let start = f * hop
-                    for j in 0 ..< nFFT { data[base + j] = source[start + j] * window[j] }
-                }
-            }
-        }
-        let framed = data.withUnsafeBufferPointer { MLXArray($0, [signals.count * frames, nFFT]) }
-        let spectrum = MLXFFT.rfft(framed, axis: 1) / MLXArray(sqrtf(Float(nFFT)))
-        return spectrum.reshaped([signals.count, frames, nFFT / 2 + 1])
+        let window = MLXArray(hannWindow(nFFT))
+        let framed = take(padded, MLXArray(gather), axis: 1).reshaped([count, frames, nFFT]) * window
+        return rfft(framed) / MLXArray(sqrtf(Float(nFFT)))
     }
 
-    /// The inverse of ``transform(_:nFFT:hop:)``, trimmed to `length` samples.
-    static func inverseTransform(_ spectrum: MLXArray, nFFT: Int, hop: Int, length: Int) -> [[Float]] {
-        let signals = spectrum.shape[0], frames = spectrum.shape[1]
-        let scaled = spectrum.reshaped([signals * frames, nFFT / 2 + 1]) * MLXArray(sqrtf(Float(nFFT)))
-        let time = MLXFFT.irfft(scaled, n: nFFT, axis: 1)
-        eval(time)
-        let samples = time.asArray(Float.self)
-
+    /// The inverse of ``transform(_:nFFT:hop:)`` over `[signals, frames, nFFT/2 + 1]`, trimmed or
+    /// zero-padded to `length` samples: `[signals, length]`.
+    static func inverseTransform(_ spectrum: MLXArray, nFFT: Int, hop: Int, length: Int) -> MLXArray {
+        let (count, frames) = (spectrum.dim(0), spectrum.dim(1))
+        let pieces = nFFT / hop
         let window = hannWindow(nFFT)
-        let half = nFFT / 2
-        let total = (frames - 1) * hop + nFFT
-        var out = [[Float]]()
-        var weight = [Float](repeating: 0, count: total)
+        let time = irfft(spectrum * MLXArray(sqrtf(Float(nFFT))), n: nFFT) * MLXArray(window)
+
+        let blocks = time.reshaped([count, frames, pieces, hop])
+        var summed: MLXArray?
+        for piece in 0 ..< pieces {
+            let shifted = padded(blocks[0..., 0..., piece, 0...],
+                                 widths: [.init((0, 0)), .init((piece, pieces - 1 - piece)), .init((0, 0))])
+            summed = summed.map { $0 + shifted } ?? shifted
+        }
+        let total = (frames + pieces - 1) * hop
+        var envelope = [Float](repeating: 0, count: total)
         for f in 0 ..< frames {
-            for j in 0 ..< nFFT { weight[f * hop + j] += window[j] * window[j] }
+            for j in 0 ..< nFFT { envelope[f * hop + j] += window[j] * window[j] }
         }
-        for s in 0 ..< signals {
-            var accumulated = [Float](repeating: 0, count: total)
-            for f in 0 ..< frames {
-                let base = (s * frames + f) * nFFT
-                let start = f * hop
-                for j in 0 ..< nFFT { accumulated[start + j] += samples[base + j] * window[j] }
-            }
-            for i in 0 ..< total where weight[i] > 1e-11 { accumulated[i] /= weight[i] }
-            let begin = half
-            let end = min(begin + length, total)
-            var signal = Array(accumulated[begin ..< end])
-            if signal.count < length { signal += [Float](repeating: 0, count: length - signal.count) }
-            out.append(signal)
-        }
-        return out
+        // The window overlap is near zero only at the outer edges, which the trim removes.
+        let divisor = envelope.map { $0 > 1e-11 ? $0 : 1 }
+        let signal = summed!.reshaped([count, total]) / MLXArray(divisor)
+
+        let begin = nFFT / 2
+        let end = min(begin + length, total)
+        let kept = signal[0..., begin ..< end]
+        guard end - begin < length else { return kept }
+        return padded(kept, widths: [.init((0, 0)), .init((0, length - (end - begin)))])
     }
 }
 
@@ -142,11 +167,12 @@ final class NFKHTGroupNorm: Module {
     }
 }
 
-/// A learned per-channel scale on a residual branch, initialized near zero during training.
+/// A learned per-channel scale on a residual branch, initialized near zero: 1e-3 in the dilated
+/// branches (`dconv_init`) and 1e-4 in the transformer (`init_values`).
 final class NFKHTLayerScale: Module {
     @ParameterInfo(key: "scale") var scale: MLXArray
 
-    init(_ channels: Int) { self._scale.wrappedValue = MLXArray.zeros([channels]) }
+    init(_ channels: Int, initial: Float) { self._scale.wrappedValue = MLXArray.full([channels], values: MLXArray(initial)) }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray { scale * x }
 }
@@ -168,7 +194,7 @@ final class NFKHTDConvBlock: Module {
         self._convOut.wrappedValue = Conv1d(inputChannels: hidden, outputChannels: 2 * channels,
                                             kernelSize: 1)
         self._normOut.wrappedValue = NFKHTGroupNorm(2 * channels)
-        self._layerScale.wrappedValue = NFKHTLayerScale(channels)
+        self._layerScale.wrappedValue = NFKHTLayerScale(channels, initial: 1e-3)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
@@ -178,11 +204,12 @@ final class NFKHTDConvBlock: Module {
 }
 
 /// The dilated residual branch every encoder and decoder layer carries. It convolves over time, so a
-/// frequency-branch layer folds its frequency axis into the batch before calling it.
+/// frequency-branch layer folds its frequency axis into the batch before calling it. Its hidden width is
+/// the channels over `compress`, the releases' `dconv_comp` of 8.
 final class NFKHTDConv: Module {
     @ModuleInfo(key: "layers") var layers: [NFKHTDConvBlock]
 
-    init(channels: Int, compress: Int = 4, depth: Int = 2) {
+    init(channels: Int, compress: Int = 8, depth: Int = 2) {
         let hidden = channels / compress
         self._layers.wrappedValue = (0 ..< depth).map {
             NFKHTDConvBlock(channels: channels, hidden: hidden, dilation: 1 << $0)
@@ -366,11 +393,16 @@ final class NFKHTAttention: Module {
 
     let heads: Int
     let dimensions: Int
+    /// The probability of dropping an attention weight while training, `nn.MultiheadAttention`'s `dropout`.
+    let dropout: Float
 
-    init(dimensions: Int, heads: Int) {
+    init(dimensions: Int, heads: Int, dropout: Float) {
         self.heads = heads
         self.dimensions = dimensions
-        self._inProjWeight.wrappedValue = MLXArray.zeros([3 * dimensions, dimensions])
+        self.dropout = dropout
+        // `nn.MultiheadAttention`'s initialization: Xavier-uniform over the stacked projection, zero biases.
+        let bound = sqrt(6 / Float(4 * dimensions))
+        self._inProjWeight.wrappedValue = MLXRandom.uniform(low: -bound, high: bound, [3 * dimensions, dimensions])
         self._inProjBias.wrappedValue = MLXArray.zeros([3 * dimensions])
         self._outProj.wrappedValue = Linear(dimensions, dimensions)
     }
@@ -381,8 +413,17 @@ final class NFKHTAttention: Module {
         let k = project(memory, offset: d)
         let v = project(memory, offset: 2 * d)
         let scale = 1 / sqrt(Float(d / heads))
-        let out = MLXFast.scaledDotProductAttention(queries: split(q), keys: split(k), values: split(v),
+        let out: MLXArray
+        if training && dropout > 0 {
+            // The fused kernel has no dropout, so training forms the weights to drop them.
+            let weights = softmax(split(q).matmul(split(k).transposed(0, 1, 3, 2)) * scale, axis: -1)
+            let keep = 1 - dropout
+            let kept = MLXRandom.bernoulli(MLXArray(keep), weights.shape).asType(weights.dtype)
+            out = (weights * kept / keep).matmul(split(v))
+        } else {
+            out = MLXFast.scaledDotProductAttention(queries: split(q), keys: split(k), values: split(v),
                                                     scale: scale, mask: nil)
+        }
         let merged = out.transposed(0, 2, 1, 3).reshaped([query.shape[0], query.shape[1], d])
         return outProj(merged)
     }
@@ -409,22 +450,28 @@ final class NFKHTSelfLayer: Module {
     @ModuleInfo(key: "norm_out") var normOut: NFKHTGroupNorm
     @ModuleInfo(key: "gamma_1") var gamma1: NFKHTLayerScale
     @ModuleInfo(key: "gamma_2") var gamma2: NFKHTLayerScale
+    @ModuleInfo(key: "dropout") var dropout: Dropout
+    @ModuleInfo(key: "dropout1") var dropout1: Dropout
+    @ModuleInfo(key: "dropout2") var dropout2: Dropout
 
-    init(dimensions: Int, heads: Int, hidden: Int) {
-        self._attn.wrappedValue = NFKHTAttention(dimensions: dimensions, heads: heads)
+    init(dimensions: Int, heads: Int, hidden: Int, dropout: Float) {
+        self._attn.wrappedValue = NFKHTAttention(dimensions: dimensions, heads: heads, dropout: dropout)
         self._linear1.wrappedValue = Linear(dimensions, hidden)
         self._linear2.wrappedValue = Linear(hidden, dimensions)
         self._norm1.wrappedValue = LayerNorm(dimensions: dimensions)
         self._norm2.wrappedValue = LayerNorm(dimensions: dimensions)
         self._normOut.wrappedValue = NFKHTGroupNorm(dimensions)
-        self._gamma1.wrappedValue = NFKHTLayerScale(dimensions)
-        self._gamma2.wrappedValue = NFKHTLayerScale(dimensions)
+        self._gamma1.wrappedValue = NFKHTLayerScale(dimensions, initial: 1e-4)
+        self._gamma2.wrappedValue = NFKHTLayerScale(dimensions, initial: 1e-4)
+        self._dropout.wrappedValue = Dropout(p: dropout)
+        self._dropout1.wrappedValue = Dropout(p: dropout)
+        self._dropout2.wrappedValue = Dropout(p: dropout)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let normed = norm1(x)
-        var out = x + gamma1(attn(normed, normed))
-        out = out + gamma2(linear2(gelu(linear1(norm2(out)))))
+        var out = x + gamma1(dropout1(attn(normed, normed)))
+        out = out + gamma2(dropout2(linear2(dropout(gelu(linear1(norm2(out)))))))
         return normOut(out)
     }
 }
@@ -440,22 +487,28 @@ final class NFKHTCrossLayer: Module {
     @ModuleInfo(key: "norm_out") var normOut: NFKHTGroupNorm
     @ModuleInfo(key: "gamma_1") var gamma1: NFKHTLayerScale
     @ModuleInfo(key: "gamma_2") var gamma2: NFKHTLayerScale
+    @ModuleInfo(key: "dropout") var dropout: Dropout
+    @ModuleInfo(key: "dropout1") var dropout1: Dropout
+    @ModuleInfo(key: "dropout2") var dropout2: Dropout
 
-    init(dimensions: Int, heads: Int, hidden: Int) {
-        self._attn.wrappedValue = NFKHTAttention(dimensions: dimensions, heads: heads)
+    init(dimensions: Int, heads: Int, hidden: Int, dropout: Float) {
+        self._attn.wrappedValue = NFKHTAttention(dimensions: dimensions, heads: heads, dropout: dropout)
         self._linear1.wrappedValue = Linear(dimensions, hidden)
         self._linear2.wrappedValue = Linear(hidden, dimensions)
         self._norm1.wrappedValue = LayerNorm(dimensions: dimensions)
         self._norm2.wrappedValue = LayerNorm(dimensions: dimensions)
         self._norm3.wrappedValue = LayerNorm(dimensions: dimensions)
         self._normOut.wrappedValue = NFKHTGroupNorm(dimensions)
-        self._gamma1.wrappedValue = NFKHTLayerScale(dimensions)
-        self._gamma2.wrappedValue = NFKHTLayerScale(dimensions)
+        self._gamma1.wrappedValue = NFKHTLayerScale(dimensions, initial: 1e-4)
+        self._gamma2.wrappedValue = NFKHTLayerScale(dimensions, initial: 1e-4)
+        self._dropout.wrappedValue = Dropout(p: dropout)
+        self._dropout1.wrappedValue = Dropout(p: dropout)
+        self._dropout2.wrappedValue = Dropout(p: dropout)
     }
 
     func callAsFunction(_ query: MLXArray, _ memory: MLXArray) -> MLXArray {
-        var out = query + gamma1(attn(norm1(query), norm2(memory)))
-        out = out + gamma2(linear2(gelu(linear1(norm3(out)))))
+        var out = query + gamma1(dropout1(attn(norm1(query), norm2(memory))))
+        out = out + gamma2(dropout2(linear2(dropout(gelu(linear1(norm3(out)))))))
         return normOut(out)
     }
 }
@@ -472,22 +525,22 @@ final class NFKHTCrossTransformer: Module {
 
     let layerCount: Int
 
-    init(dimensions: Int, heads: Int, hidden: Int, layers: Int) {
+    init(dimensions: Int, heads: Int, hidden: Int, layers: Int, dropout: Float) {
         self.layerCount = layers
         self._normIn.wrappedValue = LayerNorm(dimensions: dimensions)
         self._normInT.wrappedValue = LayerNorm(dimensions: dimensions)
         let selfCount = (layers + 1) / 2, crossCount = layers / 2
         self._selfLayers.wrappedValue = (0 ..< selfCount).map { _ in
-            NFKHTSelfLayer(dimensions: dimensions, heads: heads, hidden: hidden)
+            NFKHTSelfLayer(dimensions: dimensions, heads: heads, hidden: hidden, dropout: dropout)
         }
         self._selfLayersT.wrappedValue = (0 ..< selfCount).map { _ in
-            NFKHTSelfLayer(dimensions: dimensions, heads: heads, hidden: hidden)
+            NFKHTSelfLayer(dimensions: dimensions, heads: heads, hidden: hidden, dropout: dropout)
         }
         self._crossLayers.wrappedValue = (0 ..< crossCount).map { _ in
-            NFKHTCrossLayer(dimensions: dimensions, heads: heads, hidden: hidden)
+            NFKHTCrossLayer(dimensions: dimensions, heads: heads, hidden: hidden, dropout: dropout)
         }
         self._crossLayersT.wrappedValue = (0 ..< crossCount).map { _ in
-            NFKHTCrossLayer(dimensions: dimensions, heads: heads, hidden: hidden)
+            NFKHTCrossLayer(dimensions: dimensions, heads: heads, hidden: hidden, dropout: dropout)
         }
     }
 
@@ -535,6 +588,9 @@ public struct NFKMLXHTDemucsConfiguration: Sendable {
     public var transformerLayers: Int = 5
     public var transformerHeads: Int = 8
     public var transformerHidden: Int = 2048
+    /// The probability the bottleneck's attention and feed-forward drop an activation while training,
+    /// the reference's `t_dropout`; 0.02 in every release. Inference applies none. Introduced in InferKit 0.4.0.
+    public var transformerDropout: Float = 0.02
     /// The reference's `freq_emb` weight and `ScaledEmbedding` factor. The checkpoint stores the
     /// embedding divided by `embeddingScale` and the forward multiplies it back, so the effective
     /// factor is their product (2.0 for the release), not `frequencyEmbeddingScale` alone.
@@ -688,7 +744,10 @@ public final class NFKMLXHTDemucsNet: Module {
         }
         self._crossTransformer.wrappedValue = NFKHTCrossTransformer(
             dimensions: c.transformerWidth, heads: c.transformerHeads,
-            hidden: c.transformerHidden, layers: c.transformerLayers)
+            hidden: c.transformerHidden, layers: c.transformerLayers, dropout: c.transformerDropout)
+        super.init()
+        // The transformer drops activations in training mode, so a built network starts in evaluation.
+        train(false)
     }
 
     /// Separates `samples` (`[channels, length]`) into `[sources, channels, length]`.
@@ -702,6 +761,13 @@ public final class NFKMLXHTDemucsNet: Module {
         trace(samples, padsToTrainingSegment: padsToTrainingSegment).waveform
     }
 
+    /// Separates a batch `[N, channels, L]` into `[N, sources, channels, L]` at the clips' own length,
+    /// each clip normalized by its own statistics: the reference's forward in training, where it pads
+    /// nothing. Introduced in InferKit 0.4.0.
+    public func estimate(_ mix: MLXArray) -> MLXArray {
+        forward(mix).waveform
+    }
+
     /// The separation together with the tensors bracketing each stage, so a numeric comparison against
     /// the reference names the stage that diverged rather than only the audio.
     func trace(_ samples: MLXArray, padsToTrainingSegment: Bool = true) -> NFKHTDemucsTrace {
@@ -711,17 +777,30 @@ public final class NFKMLXHTDemucsNet: Module {
         if padsToTrainingSegment && requested < c.trainingSamples {
             mix = padded(mix, widths: [.init((0, 0)), .init((0, c.trainingSamples - requested))])
         }
-        let length = mix.shape[1]
+        let pass = forward(mix.expandedDimensions(axis: 0))
+        let out = pass.waveform[0]
+        return NFKHTDemucsTrace(
+            spectrogram: pass.spectrogram[0], bottleneckIn: pass.bottleneckIn[0],
+            bottleneckOut: pass.bottleneckOut[0], frequencyOut: pass.frequencyOut[0], timeOut: pass.timeOut[0],
+            waveform: requested < out.shape[2] ? out[0..., 0..., 0 ..< requested] : out)
+    }
 
-        let z = spectrogram(mix, length: length)                // [channels, frequency, frame] complex
-        let frequencies = z.shape[1], frames = z.shape[2]
-        let spectrogramChannels = complexAsChannels(z)
-        var x = spectrogramChannels.reshaped([1, frequencies, frames, c.audioChannels * 2])
-        let mean = x.mean(), standardDeviation = standardDeviationOf(x)
+    /// Both branches over `[N, channels, L]`, returning `[N, sources, channels, L]` and every seam batched.
+    private func forward(_ mix: MLXArray)
+        -> (waveform: MLXArray, spectrogram: MLXArray, bottleneckIn: MLXArray, bottleneckOut: MLXArray,
+            frequencyOut: MLXArray, timeOut: MLXArray) {
+        let c = configuration
+        let batch = mix.shape[0], length = mix.shape[2]
+
+        let spectrogramChannels = complexAsChannels(spectrogram(mix, length: length))
+        var x = spectrogramChannels
+        let mean = x.mean(axes: [1, 2, 3], keepDims: true)
+        let standardDeviation = Self.standardDeviation(of: x, axes: [1, 2, 3])
         x = (x - mean) / (1e-5 + standardDeviation)
 
-        var xt = mix.transposed(1, 0).reshaped([1, length, c.audioChannels])
-        let timeMean = xt.mean(), timeDeviation = standardDeviationOf(xt)
+        var xt = mix.transposed(0, 2, 1)
+        let timeMean = xt.mean(axes: [1, 2], keepDims: true)
+        let timeDeviation = Self.standardDeviation(of: xt, axes: [1, 2])
         xt = (xt - timeMean) / (1e-5 + timeDeviation)
 
         var saved = [MLXArray](), savedTime = [MLXArray](), timeLengths = [Int]()
@@ -740,7 +819,7 @@ public final class NFKMLXHTDemucsNet: Module {
             saved.append(x)
         }
 
-        let bottleneckIn = x[0]
+        let bottleneckIn = x
         let bottomFrequencies = x.shape[1], bottomFrames = x.shape[2]
         // The channel sampler is a 1×1 convolution over the flattened grid, which is frequency-major —
         // a different order from the transformer's own frame-major tokens.
@@ -748,15 +827,15 @@ public final class NFKMLXHTDemucsNet: Module {
         var bottom = x
         var bottomTime = xt
         if let channelUpsampler, let timeUpsampler {
-            bottom = channelUpsampler(x.reshaped([1, bottomFrequencies * bottomFrames, x.shape[3]]))
-                .reshaped([1, bottomFrequencies, bottomFrames, width])
+            bottom = channelUpsampler(x.reshaped([batch, bottomFrequencies * bottomFrames, x.shape[3]]))
+                .reshaped([batch, bottomFrequencies, bottomFrames, width])
             bottomTime = timeUpsampler(xt)
         }
         (bottom, bottomTime) = crossTransformer(bottom, bottomTime)
-        let bottleneckOut = bottom[0]
+        let bottleneckOut = bottom
         if let channelDownsampler, let timeDownsampler {
-            x = channelDownsampler(bottom.reshaped([1, bottomFrequencies * bottomFrames, width]))
-                .reshaped([1, bottomFrequencies, bottomFrames, saved[c.depth - 1].shape[3]])
+            x = channelDownsampler(bottom.reshaped([batch, bottomFrequencies * bottomFrames, width]))
+                .reshaped([batch, bottomFrequencies, bottomFrames, saved[c.depth - 1].shape[3]])
             xt = timeDownsampler(bottomTime)
         } else {
             x = bottom
@@ -768,77 +847,66 @@ public final class NFKMLXHTDemucsNet: Module {
             xt = timeDecoder[index](xt, skip: savedTime.removeLast(), length: timeLengths.removeLast())
         }
 
-        let frequencyOut = x[0], timeOut = xt[0]
+        let frequencyOut = x, timeOut = xt
         x = x * standardDeviation + mean
         xt = xt * timeDeviation + timeMean
 
-        let waveform = inverseSpectrogram(x, length: length)    // [sources, channels, length]
-        let direct = xt.reshaped([length, c.sources, c.audioChannels]).transposed(1, 2, 0)
-        let out = waveform + direct
-        return NFKHTDemucsTrace(
-            spectrogram: spectrogramChannels, bottleneckIn: bottleneckIn, bottleneckOut: bottleneckOut,
-            frequencyOut: frequencyOut, timeOut: timeOut,
-            waveform: requested < out.shape[2] ? out[0..., 0..., 0 ..< requested] : out)
+        let waveform = inverseSpectrogram(x, length: length)    // [N, sources, channels, length]
+        let direct = xt.reshaped([batch, length, c.sources, c.audioChannels]).transposed(0, 2, 3, 1)
+        return (waveform + direct, spectrogramChannels, bottleneckIn, bottleneckOut, frequencyOut, timeOut)
     }
 
-    /// `torch.std`, which divides by `n - 1`; the branch normalizations depend on the difference.
-    private func standardDeviationOf(_ x: MLXArray) -> MLXArray {
-        let count = Float(x.size)
-        let centered = x - x.mean()
-        return sqrt((centered * centered).sum() / (count - 1))
+    /// `torch.std` over `axes` of each example, which divides by `n - 1`; the branch normalizations
+    /// depend on the difference.
+    private static func standardDeviation(of x: MLXArray, axes: [Int]) -> MLXArray {
+        let count = Float(axes.reduce(1) { $0 * x.shape[$1] })
+        let centered = x - x.mean(axes: axes, keepDims: true)
+        return sqrt((centered * centered).sum(axes: axes, keepDims: true) / (count - 1))
     }
 
-    /// `[channels, frequency, frame]` complex, dropping the Nyquist bin and the frames the reference's
+    /// `[N, channels, frequency, frame]` complex, dropping the Nyquist bin and the frames the reference's
     /// extra padding introduces so that the frame count is exactly the sample count over the hop.
     private func spectrogram(_ mix: MLXArray, length: Int) -> MLXArray {
         let c = configuration
         let hop = c.hop
         let frameCount = (length + hop - 1) / hop
         let pad = hop / 2 * 3
-        eval(mix)
-        let channels = (0 ..< mix.shape[0]).map { mix[$0].asArray(Float.self) }
-        let signals = channels.map {
-            NFKHTDemucsSpectrum.reflectPadded($0, left: pad, right: pad + frameCount * hop - length)
-        }
+        let signals = NFKHTDemucsSpectrum.reflectPadded(
+            mix.reshaped([mix.shape[0] * mix.shape[1], length]), left: pad, right: pad + frameCount * hop - length)
         let spectrum = NFKHTDemucsSpectrum.transform(signals, nFFT: c.nFFT, hop: hop)
-        return spectrum[0..., 2 ..< (2 + frameCount), 0 ..< (c.nFFT / 2)].transposed(0, 2, 1)
+        return spectrum[0..., 2 ..< (2 + frameCount), 0 ..< (c.nFFT / 2)]
+            .reshaped([mix.shape[0], mix.shape[1], frameCount, c.nFFT / 2]).transposed(0, 1, 3, 2)
     }
 
     /// `torch.view_as_real(...).permute(...)`: channel `c` of the input becomes channels `2c` and
-    /// `2c + 1` of the output.
+    /// `2c + 1` of the output, `[N, frequency, frame, channels · 2]`.
     private func complexAsChannels(_ z: MLXArray) -> MLXArray {
-        let real = z.realPart().expandedDimensions(axis: 3)
-        let imaginary = z.imaginaryPart().expandedDimensions(axis: 3)
-        let pairs = concatenated([real, imaginary], axis: 3)    // [channel, frequency, frame, 2]
-        return pairs.transposed(1, 2, 0, 3).reshaped([z.shape[1], z.shape[2], z.shape[0] * 2])
+        let real = z.realPart().expandedDimensions(axis: 4)
+        let imaginary = z.imaginaryPart().expandedDimensions(axis: 4)
+        let pairs = concatenated([real, imaginary], axis: 4)    // [N, channel, frequency, frame, 2]
+        return pairs.transposed(0, 2, 3, 1, 4).reshaped([z.shape[0], z.shape[2], z.shape[3], z.shape[1] * 2])
     }
 
-    /// Turns the spectrogram branch's `[1, frequency, frame, sources · channels · 2]` prediction back
-    /// into `[sources, channels, length]` samples.
+    /// Turns the spectrogram branch's `[N, frequency, frame, sources · channels · 2]` prediction back
+    /// into `[N, sources, channels, length]` samples.
     private func inverseSpectrogram(_ x: MLXArray, length: Int) -> MLXArray {
         let c = configuration
-        let frequencies = x.shape[1], frames = x.shape[2]
+        let batch = x.shape[0], frequencies = x.shape[1], frames = x.shape[2]
         let signals = c.sources * c.audioChannels
-        let parts = x.reshaped([frequencies, frames, signals, 2])
-        var spectrum = parts.transposed(2, 1, 0, 3)             // [signal, frame, frequency, 2]
+        let parts = x.reshaped([batch, frequencies, frames, signals, 2])
+        var spectrum = parts.transposed(0, 3, 2, 1, 4)          // [N, signal, frame, frequency, 2]
         // The reference restores the Nyquist bin as zero and re-adds the two frames it dropped.
-        spectrum = padded(spectrum, widths: [.init((0, 0)), .init((2, 2)), .init((0, 1)), .init((0, 0))])
-        let complexSpectrum = spectrum[0..., 0..., 0..., 0] +
-            MLXArray(real: 0, imaginary: 1) * spectrum[0..., 0..., 0..., 1]
+        spectrum = padded(spectrum, widths: [.init((0, 0)), .init((0, 0)), .init((2, 2)), .init((0, 1)),
+                                             .init((0, 0))])
+        let complexSpectrum = (spectrum[0..., 0..., 0..., 0..., 0] +
+            MLXArray(real: 0, imaginary: 1) * spectrum[0..., 0..., 0..., 0..., 1])
+            .reshaped([batch * signals, frames + 4, frequencies + 1])
 
         let hop = c.hop
         let pad = hop / 2 * 3
         let target = hop * ((length + hop - 1) / hop) + 2 * pad
-        let waves = NFKHTDemucsSpectrum.inverseTransform(complexSpectrum, nFFT: c.nFFT, hop: hop,
-                                                         length: target)
-        var data = [Float](repeating: 0, count: signals * length)
-        for s in 0 ..< signals {
-            let wave = waves[s]
-            for i in 0 ..< length { data[s * length + i] = wave[pad + i] }
-        }
-        return data.withUnsafeBufferPointer {
-            MLXArray($0, [c.sources, c.audioChannels, length])
-        }
+        let waves = NFKHTDemucsSpectrum.inverseTransform(complexSpectrum, nFFT: c.nFFT, hop: hop, length: target)
+        return waves[0..., pad ..< (pad + length)].reshaped([batch, c.sources, c.audioChannels, length])
     }
 }
 
@@ -876,11 +944,17 @@ public extension NFKMLXHTDemucs {
         return name
     }
 
-    /// Loads a converted reference checkpoint into `net`.
+    /// Loads a reference checkpoint, or one `NFKMLXWeights` saved, into `net`.
+    ///
+    /// @discussion The releases store every tensor at float16. The reference's `load_state_dict` copies
+    /// them into float32 parameters, and so does this loader: a half-precision parameter computes the same
+    /// forward against float32 activations, but its gradient comes back at half precision, where a trained
+    /// network's small gradients lose most of their digits.
     static func loadWeights(into net: NFKMLXHTDemucsNet, from url: URL) throws {
         let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
-        let mapped = checkpoint.arrays.map { key, value -> (String, MLXArray) in
+        let mapped = checkpoint.arrays.map { key, stored -> (String, MLXArray) in
             let name = remapReferenceKey(key)
+            let value = stored.dtype == .float16 || stored.dtype == .bfloat16 ? stored.asType(.float32) : stored
             guard checkpoint.needsConvTranspose else { return (name, value) }
             if name.hasSuffix("conv_tr.weight") {
                 // A transposed convolution stores `[in, out, kernel…]` where a forward one stores

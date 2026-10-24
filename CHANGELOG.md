@@ -1509,6 +1509,26 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Hybrid Transformer Demucs fine-tunes through both branches as demucs v4's solver trains it
+
+- `NFKMLXHTDemucs.fineTune` trains Hybrid Transformer Demucs as demucs v4's `solver.py` does, every parameter
+  through both branches. `NFKMLXHTDemucsTrainingRecipe.htdemucs` is the grid that trained the release, Adam at
+  3e-4 with every augmentation, and `.htdemucsFineTune` the per-stem fine-tune that made `htdemucs_ft`: AdamW at
+  1e-4 with 0.05 decay on the transformer, the gradient clipped at 5, and only the crop and the flips.
+- `NFKMLXHTDemucsNet.estimate(_:)` separates a batch at the clips' own length, each clip normalized by its own
+  statistics. The STFT pair runs in MLX, so a gradient reaches the spectrogram branch through the inverse. The
+  bottleneck drops activations at `NFKMLXHTDemucsConfiguration.transformerDropout` (0.02, every release's) in
+  training.
+- The 4,096-point transforms run as radix-4 stages with exactly rounded twiddles, at the reference pocketfft's
+  1.2e-7 relative error. MLX's direct GPU transform carries 6.9e-7, and the spectrogram branch's gradients
+  carried the difference.
+- The loader copies the releases' float16 tensors into float32 parameters, as the reference's
+  `load_state_dict` does. A half-precision parameter returned its gradient at half precision.
+- A new network's attention projections, layer scales, and residual-branch widths start at the reference's
+  values: Xavier-uniform projections, scales of 1e-4 and 1e-3, and branches compressed by 8.
+- `NFKMLXHTDemucs.network(weightsURL:configuration:)` builds the network, and a checkpoint `NFKMLXWeights` saved
+  reloads through `backend(weightsURL:)`.
+
 #### A conversation's cache past its window, and a one-message chat
 
 - A prompt cache, a conversation's under `NFKParameterConversationKey` or the retained one, starts over when its

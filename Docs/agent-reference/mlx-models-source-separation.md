@@ -80,6 +80,35 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   weights so each stem comes from its own model; `backendWithFineTunedWeightsURLs:error:`;
   `run_reference.py htdemucs_bag` drives the same four files). Separated stems 0.99999999999949 (6s)
   and 0.99999999999958 (ft).
+  **Customization ships** at `full` (`NFKMLXHTDemucsTraining.swift`), measured against demucs 4.0.1's `solver.py`
+  (`run_reference.py htdemucs_training`) on `htdemucs_ft`'s drums model with its dropout at zero.
+  - `NFKMLXHTDemucs.fineTune` trains every parameter through both branches. `NFKMLXHTDemucsNet.estimate(_:)`
+    separates a batch at the clips' own length, each clip normalized by its own statistics.
+  - The STFT pair runs in MLX as radix-4 stages with exactly rounded twiddles, at pocketfft's 1.2e-7 relative
+    error. MLX's direct 4,096-point GPU transform carries 6.9e-7, and the gradients through the spectrogram
+    branch carried that difference: the first self-attention's input projection stood at 2.5 times the reference
+    float32's distance from float64.
+  - `NFKMLXHTDemucsTrainingRecipe` holds the two recipes the releases' `training_args` record. `htdemucs` is
+    Adam at 3e-4 with every augmentation. `htdemucsFineTune` is AdamW at 1e-4 with 0.05 decay on the
+    cross-transformer, the gradient clipped at 5, and the crop and flips alone, with
+    `NFKMLXDemucsObjective.stem(_:of:)` for one stem.
+  - The releases store their tensors at float16. The loader copies them into float32 parameters, as
+    `load_state_dict` does. A float16 parameter returns its gradient at float16, which left the attention
+    projections' small gradients 29% off.
+  - Measured on two one-second clips, each figure against float64: the estimate within 5.00e-7 (reference
+    float32 4.80e-7), the drums and equally weighted losses equal to every printed digit, and the global
+    gradient norm 0.061118927 vs 0.061118916.
+  - Ten gradients across both branches, the transformer, and the spectrogram branch's last decoder land within
+    7.13e-6 of float64. The widest is the first self-attention's input projection, against the reference
+    float32's 5.98e-6. The loss after one step of the fine-tune's AdamW is 0.09660634, float64's to every
+    printed digit.
+  - The augmentation chain, replayed from the reference's draws, is exact.
+  - The transformer drops activations at the releases' 0.02 in training. A new network starts at the
+    reference's values: Xavier-uniform attention projections, layer scales of 1e-4 and 1e-3, and residual
+    branches compressed by 8.
+  - Not ported: the loader's tempo and pitch change (the `soundstretch` program), the batch EMAs that choose a
+    checkpoint against a validation set, and `htdemucs_6s`'s D-Adaptation optimizer, which the public solver
+    does not build.
 - `NFKMLXConvTasNet` (`@objc`) — real time-domain speech separation: a 1-D convolutional encoder, a
   masking temporal convolutional network (depthwise-separable dilated Conv1d blocks with global layer
   normalization `NFKTasNetGlobalNorm` and PReLU), and a shared transposed-conv decoder in `MLXNN`.
