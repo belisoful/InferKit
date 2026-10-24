@@ -20,7 +20,7 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
 - The decode is tuned per request through `NFKMLXTranslationParameterKey`: `beamCount`
   (`NFKMLXParameterBeamCount`), `lengthPenalty`, and `splitsSentences`. The defaults are each release's
   own generation config (Marian 4 beams with `renormalize_logits`, M2M-100 5 beams with early stopping,
-  MADLAD greedy). `NFKParameterMaxTokens` caps the output.
+  MADLAD, NLLB, Seed-X, and TranslateGemma greedy). `NFKParameterMaxTokens` caps the output.
 - Input is translated paragraph by paragraph (split on line breaks, separators kept), or sentence by
   sentence under `splitsSentences` (`NLTokenizer`). Off by default so the parity path is one sequence.
 - `NFKMLXTranslationProvider` registers ahead of the core's default chain for `NFKCapabilityTranslation`
@@ -73,11 +73,20 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   the loader maps the first `embed_tokens` seen to `shared` and drops the rest.
 - `NFKMLXSeq2SeqDecoder` / `NFKMLXSeq2SeqDecoding` / `NFKMLXSeq2SeqDecodable` — greedy and beam search
   over any cached one-step decoder. The beam search is transformers' vectorized `_beam_search`:
-  `2 × beams` candidates per step, a hypothesis ending outside the top `beams` ranks dropped, a finished
-  score of `sum / (generated length including the end token)^penalty`, the bank capped at `beams`, and
-  the stop rule `worst kept ≥ best running / (generated length)^penalty` (or `beams` finished under
-  early stopping). A forced first token (M2M-100's target marker), suppressed ids (Marian's pad), and
-  Marian's `renormalize_logits` are decode options.
+  `max(2, 1 + end tokens) × beams` candidates per step, the log-softmax taken over float32 logits, a
+  hypothesis ending outside the top `beams` ranks dropped, a finished score of
+  `sum / (generated length including the end token)^penalty`, every top-`beams` candidate finished at the
+  step the limit allows last whether or not it ends, the bank capped at `beams`, and the stop rule
+  `worst kept ≥ best running / (generated length)^penalty` (or `beams` finished under early stopping). A
+  forced first token (M2M-100's target marker), suppressed ids (Marian's pad), Marian's
+  `renormalize_logits`, and end ids beyond `endToken` (`additionalEndTokens`) are decode options. One
+  core, `beamSearch(prefix:logits:decoding:next:)`, takes the first step's logits and a closure that keeps
+  the chosen cache rows and feeds the next tokens, so a decoder-only model drives it too:
+  `NFKMLXLanguageNet.beamSearch(prompt:decoding:)` and `NFKMLXGemma3Model.beamSearch(tokens:decoding:)`
+  run the prompt once at batch 1, copy its cache rows to every beam (`NFKMLXKeyValueCache.reorder`,
+  `NFKMLXGemma3Cache.reorder`), and step the beams as one batch. The prompt is the prefix, which the
+  n-gram ban reads as transformers' processors read the prompt, and which the length a score is divided
+  by leaves out.
 - `NFKMLXTranslationBackend` (`@objc`) — the `NFKInferenceBackend` face over an `NFKMLXTranslator`.
 
 ## Models
@@ -165,14 +174,19 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   any other BCP-47 tag falls back to primary-with-script, then the primary subtag. The prompt is
   `<bos><start_of_turn>user\nYou are a professional S (sc) to T (tc) translator. …\nProduce only the T
   translation … Please translate the following S text into T:\n\n\n<text | trim><end_of_turn>\n<start_of_turn>model\n`;
-  decoding is greedy (`temperature 0`) to `<end_of_turn>` / `<eos>`, so the beam knobs do not apply;
+  decoding is greedy (`temperature 0`) to `<end_of_turn>` / `<eos>` by default, and `beamCount` above 1
+  runs `NFKMLXGemma3Model.beamSearch(tokens:decoding:)` with both as end tokens, so each step keeps three
+  candidates per beam as the release's two-id generation config makes transformers keep;
   `NFKParameterMaxTokens` caps it. Loads at `.float32` (parity) or `.checkpoint` (the release's bfloat16,
   which the registry uses); the download factory pulls the shard index and its shards. Registered as
   `translategemma`. At reference parity on `google/translategemma-4b-it`: the rendered template's ids
   exact against `apply_chat_template`, logits at the last 16 prompt positions cosine 1.0000001 with
   argmax 16/16, the greedy translation token-exact ("Der schnelle braune Fuchs springt über den faulen
-  Hund."), and the supervised fine-tuning loss 0.011133467 against 0.011132836. The 12B
-  (`google/translategemma-12b-it`, 48 layers at 3840, 16 heads of 256 over 8 KV heads) is measured
+  Hund."), and the supervised fine-tuning loss 0.011133467 against 0.011132836. Its four-beam search
+  against transformers' `generate(num_beams=4)` at float32: the best hypothesis token-exact and
+  text-exact on the five probe sentences and on the search cut at six tokens, and the scores within
+  6.8e-6 of the reference's.
+  The 12B (`google/translategemma-12b-it`, 48 layers at 3840, 16 heads of 256 over 8 KV heads) is measured
   bfloat16 against bfloat16: the release is 24 GB and this machine holds 32 GB, so the reference runs at
   the release's own precision (`TRANSLATEGEMMA_DTYPE=bfloat16`) and the port loads at `.checkpoint`.
   Template ids exact; the greedy translation token-exact over 48 tokens ("Der schnelle, braune Fuchs
@@ -200,11 +214,13 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   Instruct 7B, `NFKMLXSeedXVariant`): a `MistralForCausalLM` (32 layers at 4096, 8 key-value heads, a
   4096-position sliding window, a 65,269-piece vocabulary) trained to translate among 28 languages. It
   loads through the language family (`NFKMLXLanguage.loadedReleaseWithTokenizer`) and generates with
-  `NFKMLXLanguageNet.generate(prompt:options:)`, greedy, stopping at `</s>`. The prompt is the model
+  `NFKMLXLanguageNet.generate(prompt:options:)`, greedy by default as the release's generation config
+  leaves it, stopping at `</s>`; `beamCount` above 1 runs `NFKMLXLanguageNet.beamSearch(prompt:decoding:)`
+  instead. The prompt is the model
   card's, with no chat template: `<s>Translate the following <Source> sentence into <Target>:\n<text>
   <tag>`, the names as the card's table spells them (`Norwegian Bokmal`) and the tag plain text, not an
-  added token. A BCP-47 tag resolves by its primary subtag. The card recommends a four-wide beam, which
-  no decoder-only path implements. The tokenizer is the Llama-style form of the Mistral BPE: a
+  added token. A BCP-47 tag resolves by its primary subtag. The card's example searches four beams. The
+  tokenizer is the Llama-style form of the Mistral BPE: a
   `Prepend("▁")` and `Replace(" ", "▁")` normalizer with no pre-tokenizer, so every run of text between
   added tokens takes a `▁`, even one that opens with a space (`mlx-models-language.md`). Registered as
   `seed-x`, loaded at the release's bfloat16 (15 GB); a `.float32` load is 30 GB and streams where it
@@ -216,7 +232,11 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   on the five probe sentences, logit cosine 0.99993867 with argmax 24/25 over the prompt positions,
   worst last-position layer state 0.9999275 at layer 31, the greedy translation token-exact ("Der
   schnelle braune Fuchs springt über den faulen Hund."), and the fine-tuning loss 1.3389877 against
-  1.3389881. At float32 against a reference that reads each layer as its forward reaches it: prompt ids
+  1.3389881. Its four-beam search against transformers' `generate(num_beams=4)` at bfloat16: the best
+  hypothesis token-exact and text-exact on the five probe sentences and on the search cut at six
+  tokens, and each score within 0.0108962 of the float32 reference's teacher-forced score of the same
+  hypothesis, where the reference's own bfloat16 scores sit up to 0.0183652 from it.
+  At float32 against a reference that reads each layer as its forward reaches it: prompt ids
   exact, logit cosine 0.9999999 with argmax 25/25, worst layer state 0.99999976 at layer 31, the greedy
   translation token-exact, and the loss 1.3519824 against 1.3519785; 16 of 32 layers streamed, 167.9 GB
   read at 1.94 GB/s, an MLX peak of 17.7 GB. Seed-X-Instruct-7B, bfloat16 against bfloat16: prompt ids
@@ -268,6 +288,19 @@ default); `SEEDX_LAYERWISE=1` builds `MistralForCausalLM` on the meta device and
 as the forward reaches it (`_layerwise_release`, which reads a single-file release too), for float32.
 Keys `IK_VAL_SEEDX_PPO` / `IK_PARITY_SEEDX_PPO` / `IK_PARITY_SEEDX_PPO_F32` and `IK_VAL_SEEDX_INSTRUCT` /
 `IK_PARITY_SEEDX_INSTRUCT`.
+
+`run_reference.py seedx_beam` (llmvenv, `SEEDX_DTYPE`, bfloat16 by default) and `translategemma_beam`
+(gemma interpreter, `TRANSLATEGEMMA_DTYPE`, float32 by default) record the beam search through
+`_decoder_beam_record`: transformers' own `generate` with four beams and `do_sample=False`, over the
+prompt of every probe sentence (64 and 48 new tokens, the greedy records' limits), holding each prompt's
+ids, the best hypothesis's continuation with its end token, its text, and its `sequences_scores`, and the
+same search for sentence 1 cut at six tokens, where the limit ends every top hypothesis. Keys
+`IK_PARITY_SEEDX_PPO_BEAM` and `IK_PARITY_TRANSLATEGEMMA_BEAM`. A float32 search's scores hold to 1e-3 of
+the record's. A bfloat16 search's scores are measured from float32: `seedx_beam_scores`
+(`SEEDX_DTYPE=float32 SEEDX_LAYERWISE=1`, `SEEDX_BEAM_RECORD` naming the beam record) teacher-forces each
+recorded hypothesis in one forward and takes its mean log-probability, the score `generate` gives it, and
+a bfloat16 score holds where it sits no further from that value than the record's own scores do
+(`IK_PARITY_SEEDX_PPO_BEAM_F32`).
 
 Every translation runner takes its pair from `TRANSLATION_SOURCE_LANG` / `TRANSLATION_TARGET_LANG`
 (default `en` / `de`); `run_marian` reads the pair from the release's `tokenizer_config.json` instead

@@ -445,6 +445,90 @@ final class NFKMLXTranslationTests: XCTestCase {
         }
     }
 
+    func testTheBeamSearchCountsEveryEndTokenAndFinishesTheTopRanksAtTheLimit() throws {
+        try requireMLXRuntime()
+        func row(_ probabilities: [Int: Float]) -> [Float] { (0 ..< 6).map { log(probabilities[$0] ?? 1e-9) } }
+        let decoding = NFKMLXSeq2SeqDecoding(beams: 2, maxTokens: 3, startToken: 0, endToken: 5, additionalEndTokens: [4])
+        let first = MLXArray(row([0: 0.6, 1: 0.4]) + row([0: 0.6, 1: 0.4]), [2, 1, 6])
+        // Three of the four best candidates end: [0, 4] is kept at rank 0, [0, 5] and [1, 4] at ranks 2 and 3
+        // are dropped, and the second open beam, [1, 3], is the sixth candidate, which only a search keeping
+        // (1 + 2 end tokens) × 2 candidates reaches.
+        let second = row([4: 0.45, 2: 0.3, 5: 0.25]) + row([4: 0.36, 5: 0.34, 3: 0.3])
+        // The limit's step finishes the top two candidates without an end token.
+        let third = row([1: 0.9, 5: 0.1]) + row([0: 0.95, 4: 0.05])
+        var fed = [[Int32]]()
+        let best = try XCTUnwrap(NFKMLXSeq2SeqDecoder.beamSearch(prefix: [7], logits: first, decoding: decoding) { rows, tokens in
+            fed.append(rows.asArray(Int32.self))
+            fed.append(tokens.asArray(Int32.self))
+            return MLXArray(fed.count == 2 ? second : third, [2, 1, 6])
+        })
+        XCTAssertEqual(fed, [[0, 0], [0, 1], [0, 1], [2, 3]])
+        XCTAssertEqual(best.tokens, [0, 2, 1], "the limit's best hypothesis outscores the one [0, 4] ended")
+        XCTAssertEqual(best.score, (log(0.6) + log(0.3) + log(0.9)) / 3, accuracy: 1e-4)
+    }
+
+    func testTheKeyValueCacheReorderCarriesEachRowsPositions() throws {
+        try requireMLXRuntime()
+        MLXRandom.seed(3)
+        // Heads 32 wide, the narrowest a quantization group spans.
+        let net = NFKMLXLanguage.makeNet(NFKMLXLanguageConfiguration(
+            hiddenSize: 64, layerCount: 2, headCount: 2, keyValueHeadCount: 1, headDimensions: 32,
+            intermediateSize: 128, vocabularySize: 512, ropeTheta: 10_000))
+        // Forty positions: one 32-position group of keys quantized along the sequence and a residual.
+        let prompts: [[Int32]] = [Array(10 ..< 50), Array(60 ..< 100)]
+        let sources = [1, 0, 1]
+        let steps: [Int32] = [7, 8, 9]
+        for quantization in [nil, NFKMLXKeyValueCache.Quantization(bits: 8, groupSize: 32)] {
+            let cache = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount, quantization: quantization)
+            _ = net(MLXArray(prompts.flatMap { $0 }).reshaped([2, 40]), cache: cache)
+            cache.reorder(MLXArray(sources.map { Int32($0) }))
+            let stepped = net(MLXArray(steps).reshaped([3, 1]), cache: cache)
+            for (row, (source, token)) in zip(sources, steps).enumerated() {
+                let single = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount, quantization: quantization)
+                _ = net(MLXArray(prompts[source]).reshaped([1, 40]), cache: single)
+                let expected = net(MLXArray([token]).reshaped([1, 1]), cache: single)
+                // A quantized row can round one step apart where the batched prefill's float error crosses a
+                // level; a row read from the wrong prompt differs by the logits' whole scale.
+                XCTAssertLessThan(abs(stepped[row] - expected[0]).max().item(Float.self), quantization == nil ? 1e-4 : 5e-3,
+                                  "row \(row) carries prompt \(source)'s positions")
+            }
+            XCTAssertEqual(cache.offset, 41)
+        }
+    }
+
+    /// The search a decoder runs through its cache, with every hypothesis scored from scratch instead:
+    /// `logits` maps the open hypotheses to their last position's logits `[beams, 1, vocabulary]`.
+    private func uncachedBeamSearch(prompt: [Int], decoding: NFKMLXSeq2SeqDecoding,
+                                    logits: ([[Int]]) -> MLXArray) -> NFKMLXSeq2SeqDecoder.Hypothesis? {
+        var hypotheses = [[Int]](repeating: prompt, count: decoding.beams)
+        return NFKMLXSeq2SeqDecoder.beamSearch(prefix: prompt, logits: logits(hypotheses), decoding: decoding) { rows, tokens in
+            hypotheses = zip(rows.asArray(Int32.self), tokens.asArray(Int32.self)).map { hypotheses[Int($0)] + [Int($1)] }
+            return logits(hypotheses)
+        }
+    }
+
+    func testALanguageDecoderBeamSearchMatchesTheSearchWithoutACache() throws {
+        try requireMLXRuntime()
+        MLXRandom.seed(5)
+        let net = NFKMLXLanguage.makeNet(.tiny)
+        let prompt = [1, 17, 33, 52, 9]
+        var options = NFKMLXGenerationOptions()
+        options.maxTokens = 8
+        let greedy = net.generate(prompt: prompt, options: options)
+        // Ending on tokens the decoder produces finishes hypotheses before the limit as well as at it.
+        let decoding = NFKMLXSeq2SeqDecoding(beams: 3, maxTokens: 8, startToken: 0, endToken: greedy[2],
+                                             additionalEndTokens: [greedy[4]])
+        let cached = try XCTUnwrap(try net.beamHypothesis(prompt: prompt, decoding: decoding))
+        let uncached = try XCTUnwrap(uncachedBeamSearch(prompt: prompt, decoding: decoding) { hypotheses in
+            let length = hypotheses[0].count
+            let tokens = MLXArray(hypotheses.flatMap { $0 }.map { Int32($0) }).reshaped([hypotheses.count, length])
+            return net(tokens)[0..., (length - 1)..., 0...]
+        })
+        XCTAssertEqual(cached.tokens, uncached.tokens)
+        XCTAssertEqual(cached.score, uncached.score, accuracy: 1e-4)
+        XCTAssertEqual(try net.beamSearch(prompt: prompt, decoding: decoding), cached.tokens)
+    }
+
     func testTheSinusoidTablesMatchTheirFormulas() throws {
         try requireMLXRuntime()
         let marian = NFKMLXSeq2SeqNet.marianSinusoids(length: 4, channels: 8)
@@ -752,6 +836,28 @@ final class NFKMLXTranslationTests: XCTestCase {
         XCTAssertLessThan(abs(net(full) - reloaded(full)).max().item(Float.self), 1e-5)
     }
 
+    func testTranslateGemmaBeamSearchMatchesTheSearchWithoutACache() throws {
+        try requireMLXRuntime()
+        MLXRandom.seed(9)
+        let translator = try tinyTranslateGemma()
+        let model = translator.model
+        let prompt = translator.promptTokens(text: "Hi", sourceCode: "en", targetCode: "de")
+        var decoding = translator.defaultDecoding
+        decoding.beams = 3
+        decoding.maxTokens = 8
+        // The prompt and the search run past the tiny decoder's four-position sliding window, so the sliding
+        // cache drops rows between the reorders.
+        XCTAssertGreaterThan(prompt.count, model.decoder.configuration.slidingWindow)
+        let cached = try XCTUnwrap(try model.beamHypothesis(tokens: prompt, decoding: decoding))
+        let uncached = try XCTUnwrap(uncachedBeamSearch(prompt: prompt, decoding: decoding) { hypotheses in
+            concatenated(hypotheses.map { model.logits(tokens: $0, softTokens: nil)[0..., ($0.count - 1)..., 0...] }, axis: 0)
+        })
+        XCTAssertEqual(cached.tokens, uncached.tokens)
+        XCTAssertEqual(cached.score, uncached.score, accuracy: 1e-4)
+        XCTAssertEqual(try translator.translate("Hi", from: "en", to: "de", decoding: decoding),
+                       model.decode(cached.tokens).trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
     func testTranslateGemmaMatchesTheReference() throws {
         try checkTranslateGemma(weightsKey: "IK_VAL_TRANSLATEGEMMA", recordKey: "IK_PARITY_TRANSLATEGEMMA",
                                 precision: .float32, name: "translategemma")
@@ -949,6 +1055,20 @@ final class NFKMLXTranslationTests: XCTestCase {
         XCTAssertEqual(NFKMLXTranslationBackend(translator: translator).streamedLayerCount, 0)
     }
 
+    func testSeedXSearchesBeamsWhenAskedForMoreThanOne() throws {
+        try requireMLXRuntime()
+        let translator = try tinySeedX()
+        var decoding = translator.defaultDecoding
+        decoding.beams = 3
+        decoding.maxTokens = 6
+        let ids = translator.promptTokens(text: "Hi", sourceCode: "en", targetCode: "de")
+        let produced = try translator.beamSearch(promptTokens: ids, decoding: decoding)
+        XCTAssertLessThanOrEqual(produced.count, 6)
+        XCTAssertFalse(produced.contains(2), "the search ends before </s>")
+        XCTAssertEqual(produced, try translator.net.beamSearch(prompt: ids, decoding: decoding))
+        XCTAssertEqual(try translator.translate("Hi", from: "en", to: "de", decoding: decoding), translator.translation(of: produced))
+    }
+
     func testSeedXFineTuningAdaptsTheAttentionAndReloads() throws {
         try requireMLXRuntime()
         let translator = try tinySeedX()
@@ -1037,6 +1157,85 @@ final class NFKMLXTranslationTests: XCTestCase {
                   + String(format: "%.1f GB read at %.2f GB/s", Double(bytes) / 1e9, Double(bytes) / 1e9 / max(seconds, 1e-9))
                   + Self.memoryReading)
         }
+    }
+
+    // MARK: Decoder-only beam search
+
+    /// Seed-X's beam search, four wide as the model card's example, against transformers' `generate`
+    /// (`run_reference.py seedx_beam`, bfloat16 on both sides). A bfloat16 score is measured from the
+    /// float32 reference's teacher-forced score of the same hypothesis (`seedx_beam_scores`), and holds
+    /// where it sits no further from it than the reference's own bfloat16 scores do.
+    func testSeedXBeamSearchMatchesTheReference() throws {
+        try requireMLXRuntime()
+        let (directory, record) = try release("IK_VAL_SEEDX_PPO", "IK_PARITY_SEEDX_PPO_BEAM")
+        let (_, float32) = try release("IK_VAL_SEEDX_PPO", "IK_PARITY_SEEDX_PPO_BEAM_F32")
+        let translator = try NFKMLXSeedX.translator(directoryURL: directory, precision: .checkpoint)
+        let scores = try checkBeamSearch(record: record, name: "seed-x-ppo", decoding: translator.defaultDecoding,
+                                         prompt: { translator.promptTokens(text: $0, sourceCode: "en", targetCode: "de") },
+                                         search: { try translator.net.beamHypothesis(prompt: $0, decoding: $1) },
+                                         text: { translator.translation(of: $0) })
+        let truth = float32["output"]!.asArray(Float.self)
+        let reference = record["output"]!.asArray(Float.self) + [record["beam_cut_score"]!.item(Float.self)]
+        let floor = zip(reference, truth).map { abs($0 - $1) }.max()!
+        for (index, (mine, value)) in zip(scores, truth).enumerated() {
+            XCTAssertLessThanOrEqual(abs(mine - value), floor,
+                                     "score \(index): mine \(mine), float32 \(value), the reference's bfloat16 floor \(floor)")
+        }
+        print("seed-x-ppo beam scores from float32: mine \(zip(scores, truth).map { abs($0 - $1) }.max()!), "
+              + "the reference's bfloat16 floor \(floor)")
+    }
+
+    /// TranslateGemma 4B's beam search against transformers' `generate` at float32
+    /// (`run_reference.py translategemma_beam`): its generation config ends on `<eos>` and `<end_of_turn>`.
+    func testTranslateGemmaBeamSearchMatchesTheReference() throws {
+        try requireMLXRuntime()
+        let (directory, record) = try release("IK_VAL_TRANSLATEGEMMA", "IK_PARITY_TRANSLATEGEMMA_BEAM")
+        let translator = try NFKMLXTranslateGemma.translator(directoryURL: directory, precision: .float32)
+        let scores = try checkBeamSearch(record: record, name: "translategemma", decoding: translator.defaultDecoding,
+                                         prompt: { translator.promptTokens(text: $0, sourceCode: "en", targetCode: "de") },
+                                         search: { try translator.model.beamHypothesis(tokens: $0, decoding: $1) },
+                                         text: { translator.model.decode($0).trimmingCharacters(in: .whitespacesAndNewlines) })
+        let reference = record["output"]!.asArray(Float.self) + [record["beam_cut_score"]!.item(Float.self)]
+        for (index, (mine, value)) in zip(scores, reference).enumerated() {
+            XCTAssertEqual(mine, value, accuracy: 1e-3, "score \(index)")
+        }
+    }
+
+    /// Holds a decoder-only beam search to the record `_decoder_beam_record` writes: for every probe sentence
+    /// the prompt ids, the best hypothesis's tokens (the reference's continuation without its end token), and
+    /// its text; and the same search cut at six tokens, where the limit ends every top hypothesis. Returns the
+    /// best hypotheses' scores, the probe sentences' and then the cut's.
+    private func checkBeamSearch(record: [String: MLXArray], name: String, decoding base: NFKMLXSeq2SeqDecoding,
+                                 prompt: (String) -> [Int],
+                                 search: ([Int], NFKMLXSeq2SeqDecoding) throws -> NFKMLXSeq2SeqDecoder.Hypothesis?,
+                                 text: ([Int]) -> String) throws -> [Float] {
+        var decoding = base
+        decoding.beams = Int(record["beams"]!.item(Int32.self))
+        decoding.maxTokens = Int(record["max_new_tokens"]!.item(Int32.self))
+        let endTokens = decoding.endTokens
+        func generated(_ continuation: MLXArray) -> [Int] {
+            let ids = ints(continuation)
+            return ids.last.map(endTokens.contains) == true ? Array(ids.dropLast()) : ids
+        }
+        let scores = record["output"]!.asArray(Float.self)
+        var found = [Float]()
+        for (index, sentence) in Self.sentences.enumerated() {
+            let ids = prompt(sentence)
+            XCTAssertEqual(ids, ints(record["tokens_\(index)"]!), "the prompt ids of \(sentence)")
+            let best = try XCTUnwrap(try search(ids, decoding))
+            XCTAssertEqual(best.tokens, generated(record["beam_\(index)"]!), "the best hypothesis for \(sentence)")
+            found.append(best.score)
+            let referenceText = String(decoding: record["beam_text_\(index)"]!.asArray(Int32.self).map { UInt8($0) }, as: UTF8.self)
+            let translation = text(best.tokens)
+            XCTAssertEqual(translation, referenceText.trimmingCharacters(in: .whitespacesAndNewlines))
+            print("\(name) beam \(index): \(translation) | score mine \(best.score) reference \(scores[index])")
+        }
+        var cut = decoding
+        cut.maxTokens = 6
+        let best = try XCTUnwrap(try search(prompt(Self.sentences[1]), cut))
+        XCTAssertEqual(best.tokens, generated(record["beam_cut"]!), "the best hypothesis at the length limit")
+        print("\(name) beam at 6 tokens: \(text(best.tokens)) | score mine \(best.score) reference \(record["beam_cut_score"]!.item(Float.self))")
+        return found + [best.score]
     }
 
     // MARK: Language probes

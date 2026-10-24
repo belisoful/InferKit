@@ -2337,6 +2337,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   that states `sliding_window` now bands every layer to it; before, the window was read nowhere and the
   layers attended fully. The release tokenizer reader reads the Llama-style Mistral BPE (a prepending
   normalizer and no pre-tokenizer), which puts a `▁` before every run of text between added tokens.
+- Seed-X and TranslateGemma search beams when `NFKMLXParameterBeamCount` is above 1; before, both decoded
+  greedily whatever the request asked. `NFKMLXLanguageNet.beamSearch(prompt:decoding:)` and
+  `NFKMLXGemma3Model.beamSearch(tokens:decoding:)` search any language-family or Gemma 3 decoder,
+  `NFKMLXKeyValueCache.reorder(_:)` and `NFKMLXGemma3Cache.reorder(_:)` keep chosen batch rows, and
+  `NFKMLXSeq2SeqDecoding.additionalEndTokens` names further end ids. The search is transformers'
+  `generate(num_beams:)`, matched on the released Seed-X PPO and TranslateGemma 4B. The seq2seq
+  translators run the same search, which keeps `max(2, 1 + end tokens) × beams` candidates per step,
+  finishes every top hypothesis at the length limit, and takes the log-softmax of float32 logits, as
+  transformers does.
 - MADLAD-400 streams both T5 stacks the same way, holding the decoder's blocks before the encoder's.
   `NFKMLXMADLAD.network`, `translator`, and `backend` gain a `residency:` argument, reached from
   Objective-C through `backendWithDirectoryURL:halfPrecision:residency:error:`. Under `.automatic` the

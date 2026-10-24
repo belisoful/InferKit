@@ -4408,7 +4408,7 @@
       "config": {
         "IK_VAL_SEEDX_PPO": ""
       },
-      "note": "Seed-X PPO 7B (ByteDance Seed, OpenMDW-1.0), a MistralForCausalLM translation model, 15 GB of bfloat16. NFKMLXSeedX.translator(directoryURL:precision:) loads it through the language family. Parity records under llmvenv: `run_reference.py seedx <out> --checkpoint <this directory>` (bfloat16) → IK_PARITY_SEEDX_PPO (records/seedx-ppo-bf16.safetensors), and `SEEDX_DTYPE=float32 SEEDX_LAYERWISE=1 run_reference.py seedx <out> --checkpoint <this directory>` → IK_PARITY_SEEDX_PPO_F32 (records/seedx-ppo-f32.safetensors)."
+      "note": "Seed-X PPO 7B (ByteDance Seed, OpenMDW-1.0), a MistralForCausalLM translation model, 15 GB of bfloat16. NFKMLXSeedX.translator(directoryURL:precision:) loads it through the language family. Parity records under llmvenv: `run_reference.py seedx <out> --checkpoint <this directory>` (bfloat16) → IK_PARITY_SEEDX_PPO (records/seedx-ppo-bf16.safetensors), and `SEEDX_DTYPE=float32 SEEDX_LAYERWISE=1 run_reference.py seedx <out> --checkpoint <this directory>` → IK_PARITY_SEEDX_PPO_F32 (records/seedx-ppo-f32.safetensors). The beam search's record, four beams under transformers' `generate`: `run_reference.py seedx_beam <out> --checkpoint <this directory>` (bfloat16) → IK_PARITY_SEEDX_PPO_BEAM (records/seedx-ppo-beam-bf16.safetensors), and the float32 reference's teacher-forced scores of that record's hypotheses, which the bfloat16 scores are measured from: `SEEDX_DTYPE=float32 SEEDX_LAYERWISE=1 SEEDX_BEAM_RECORD=<the beam record> run_reference.py seedx_beam_scores <out> --checkpoint <this directory>` → IK_PARITY_SEEDX_PPO_BEAM_F32 (records/seedx-ppo-beam-scores-f32.safetensors)."
     },
     {
       "key": "SEEDX_INSTRUCT",
@@ -4449,7 +4449,7 @@
       "config": {
         "IK_VAL_TRANSLATEGEMMA": ""
       },
-      "note": "TranslateGemma 4B (google/translategemma-4b-it, Gemma terms, GATED: accept the license on the model page and give the hub a token). A Gemma 3 4B release with the translation chat template; NFKMLXTranslateGemma.translator(directoryURL:) loads it through the Gemma 3 reader and reads the language table from chat_template.jinja. Parity record: `run_reference.py translategemma <out> --checkpoint <this directory>` under the gemma oracle interpreter → IK_PARITY_TRANSLATEGEMMA (records/translategemma.safetensors)."
+      "note": "TranslateGemma 4B (google/translategemma-4b-it, Gemma terms, GATED: accept the license on the model page and give the hub a token). A Gemma 3 4B release with the translation chat template; NFKMLXTranslateGemma.translator(directoryURL:) loads it through the Gemma 3 reader and reads the language table from chat_template.jinja. Parity record: `run_reference.py translategemma <out> --checkpoint <this directory>` under the gemma oracle interpreter → IK_PARITY_TRANSLATEGEMMA (records/translategemma.safetensors). The beam search's record, four beams under transformers' `generate` at float32: `run_reference.py translategemma_beam <out> --checkpoint <this directory>` (gemma oracle interpreter) → IK_PARITY_TRANSLATEGEMMA_BEAM (records/translategemma-beam.safetensors)."
     },
     {
       "key": "TRANSLATEGEMMA_12B",
@@ -5084,7 +5084,9 @@
         "m2m100",
         "madlad",
         "madlad_layerwise",
-        "seedx"
+        "seedx",
+        "seedx_beam",
+        "seedx_beam_scores"
       ]
     },
     "voicerestore": {
@@ -5197,6 +5199,7 @@
         "gemma3n_mel",
         "gemma3n_conditional_real",
         "translategemma",
+        "translategemma_beam",
         "qwen3_loss",
         "qwen3_5_loss",
         "gemma3_loss"

@@ -7,10 +7,11 @@ import Foundation
 import MLX
 import MLXNN
 
-// Greedy and beam-search decoding over any encoder-decoder that exposes a cached one-step decode. The
-// beam search follows transformers' `BeamSearchScorer`: `2 × beams` candidates per step, a finished
-// hypothesis bank scored by summed log-probability over length^penalty, and the two stopping rules
-// (`early_stopping` on, or no open beam able to beat the worst kept hypothesis).
+// Greedy and beam-search decoding over any encoder-decoder that exposes a cached one-step decode, and
+// the beam search over a decoder-only prompt. The beam search follows transformers' `_beam_search`:
+// `max(2, 1 + end tokens) × beams` candidates per step, a finished hypothesis bank scored by summed
+// log-probability over the generated length^penalty, and the two stopping rules (`early_stopping` on,
+// or no open beam able to beat the worst kept hypothesis).
 
 /// An encoder-decoder a ``NFKMLXSeq2SeqDecoder`` can drive.
 ///
@@ -42,6 +43,9 @@ public struct NFKMLXSeq2SeqDecoding: Sendable {
     public var startToken: Int
     /// The id that ends a hypothesis.
     public var endToken: Int
+    /// Further ids that end a hypothesis, as a release whose generation config lists several end-of-sequence
+    /// ids stops on each (TranslateGemma's `<end_of_turn>` and `<eos>`). Introduced in InferKit 0.4.0.
+    public var additionalEndTokens: [Int]
     /// A token forced as the first generated one (M2M100's target-language marker).
     public var forcedFirstToken: Int?
     /// A token forced as the last one `maxTokens` allows (transformers' `forced_eos_token_id`).
@@ -56,7 +60,8 @@ public struct NFKMLXSeq2SeqDecoding: Sendable {
 
     public init(beams: Int = 1, maxTokens: Int = 256, lengthPenalty: Float = 1, earlyStopping: Bool = false,
                 startToken: Int, endToken: Int, forcedFirstToken: Int? = nil, forcedLastToken: Int? = nil,
-                noRepeatNgramSize: Int = 0, suppressedTokens: [Int] = [], renormalizes: Bool = false) {
+                noRepeatNgramSize: Int = 0, suppressedTokens: [Int] = [], renormalizes: Bool = false,
+                additionalEndTokens: [Int] = []) {
         self.beams = beams
         self.maxTokens = maxTokens
         self.lengthPenalty = lengthPenalty
@@ -68,7 +73,11 @@ public struct NFKMLXSeq2SeqDecoding: Sendable {
         self.noRepeatNgramSize = noRepeatNgramSize
         self.suppressedTokens = suppressedTokens
         self.renormalizes = renormalizes
+        self.additionalEndTokens = additionalEndTokens
     }
+
+    /// Every id that ends a hypothesis.
+    var endTokens: Set<Int> { Set([endToken] + additionalEndTokens) }
 }
 
 /// Runs greedy or beam-search generation.
@@ -92,7 +101,8 @@ public enum NFKMLXSeq2SeqDecoder {
     /// `sequences` holds each row's tokens so far, the start token first.
     private static func constrainedLogProbabilities(_ logits: MLXArray, sequences: [[Int]], step: Int,
                                                     decoding: NFKMLXSeq2SeqDecoding) -> MLXArray {
-        var scores = logSoftmax(logits[0..., -1, 0...], axis: -1)
+        // transformers takes the log-softmax of float32 logits, which a half-precision decoder's would not be.
+        var scores = logSoftmax(logits[0..., -1, 0...].asType(.float32), axis: -1)
         let vocabulary = scores.dim(-1)
         let forced = step == 0 ? decoding.forcedFirstToken
             : step == decoding.maxTokens - 1 ? decoding.forcedLastToken : nil
@@ -139,13 +149,15 @@ public enum NFKMLXSeq2SeqDecoder {
             let logits = model.decodeStep(MLXArray([Int32(sequence.last!)]).reshaped([1, 1]), memory: memory, cache: cache)
             let scores = constrainedLogProbabilities(logits, sequences: [sequence], step: step, decoding: decoding)
             let next = scores.argMax(axis: -1).item(Int.self)
-            if next == decoding.endToken { break }
+            if decoding.endTokens.contains(next) { break }
             sequence.append(next)
         }
         return Array(sequence.dropFirst())
     }
 
-    private struct Hypothesis {
+    /// A finished hypothesis: its tokens after the prefix, the end token left out, and its summed
+    /// log-probability over the generated length^penalty.
+    struct Hypothesis {
         var tokens: [Int]
         var score: Float
     }
@@ -155,11 +167,32 @@ public enum NFKMLXSeq2SeqDecoder {
         let beams = decoding.beams
         let cache = model.makeDecodingCache()
         let repeatedMemory = broadcast(memory, to: [beams, memory.dim(1), memory.dim(2)])
-        var sequences = [[Int]](repeating: [decoding.startToken], count: beams)
+        let start = MLXArray([Int32](repeating: Int32(decoding.startToken), count: beams)).reshaped([beams, 1])
+        let first = model.decodeStep(start, memory: repeatedMemory, cache: cache)
+        return beamSearch(prefix: [decoding.startToken], logits: first, decoding: decoding) { rows, tokens in
+            model.reorderCache(cache, rows: rows)
+            return model.decodeStep(tokens, memory: repeatedMemory, cache: cache)
+        }?.tokens ?? []
+    }
+
+    /// The best hypothesis a `decoding.beams`-wide search finds, or nil where none was scored.
+    ///
+    /// @discussion `prefix` is what every hypothesis starts from: an encoder-decoder's start token, or a
+    /// decoder-only model's whole prompt. It counts toward the n-gram ban, as transformers' processors
+    /// read the prompt too, and not toward the length a score is divided by. `logits` `[beams, T, V]`
+    /// scores the first step for every beam; `next(rows, tokens)` keeps the cache rows `rows` `[beams]`,
+    /// feeds `tokens` `[beams, 1]`, and returns the next step's logits. A candidate ends where its token
+    /// is an end token, and every candidate ends at the step `maxTokens` allows last; of the ended ones
+    /// only those ranked within the top `beams` reach the bank, as the reference keeps them.
+    static func beamSearch(prefix: [Int], logits first: MLXArray, decoding: NFKMLXSeq2SeqDecoding,
+                           next: (_ rows: MLXArray, _ tokens: MLXArray) throws -> MLXArray) rethrows -> Hypothesis? {
+        let beams = decoding.beams
+        let endTokens = decoding.endTokens
+        var sequences = [[Int]](repeating: prefix, count: beams)
         var beamScores = [Float](repeating: -1e9, count: beams)
         beamScores[0] = 0
         var finished = [Hypothesis]()
-        var lastTokens = MLXArray([Int32](repeating: Int32(decoding.startToken), count: beams)).reshaped([beams, 1])
+        var logits = first
 
         func hypothesisScore(sum: Float, generatedLength: Int) -> Float {
             sum / pow(Float(max(generatedLength, 1)), decoding.lengthPenalty)
@@ -172,17 +205,17 @@ public enum NFKMLXSeq2SeqDecoder {
         }
 
         for step in 0 ..< decoding.maxTokens {
-            let logits = model.decodeStep(lastTokens, memory: repeatedMemory, cache: cache)
             let scores = constrainedLogProbabilities(logits, sequences: sequences, step: step, decoding: decoding) // [beams, V]
             let vocabulary = scores.dim(-1)
             let joint = (scores + MLXArray(beamScores).reshaped([beams, 1])).reshaped([beams * vocabulary])
-            let candidateCount = min(2 * beams, beams * vocabulary)
+            let candidateCount = min(max(2, 1 + endTokens.count) * beams, beams * vocabulary)
             let order = argPartition(-joint, kth: candidateCount - 1)[0 ..< candidateCount]
             let candidateScores = joint[order]
             eval(order, candidateScores)
             let flat = order.asArray(Int32.self)
             let flatScores = candidateScores.asArray(Float.self)
             let ranked = zip(flat, flatScores).sorted { $0.1 > $1.1 }
+            let isLastStep = step == decoding.maxTokens - 1
 
             var nextSequences = [[Int]]()
             var nextScores = [Float]()
@@ -191,46 +224,35 @@ public enum NFKMLXSeq2SeqDecoder {
             for (rank, (index, score)) in ranked.enumerated() {
                 let beam = Int(index) / vocabulary
                 let token = Int(index) % vocabulary
-                if token == decoding.endToken {
+                let ends = endTokens.contains(token)
+                if ends || isLastStep {
                     // A hypothesis ending outside the top `beams` ranks is not kept, as the reference.
                     guard rank < beams else { continue }
-                    finished.append(Hypothesis(tokens: Array(sequences[beam].dropFirst()),
+                    let generated = Array(sequences[beam].dropFirst(prefix.count)) + (ends ? [] : [token])
+                    finished.append(Hypothesis(tokens: generated,
                                                score: hypothesisScore(sum: score, generatedLength: step + 1)))
                     continue
                 }
+                guard nextSequences.count < beams else { continue }
                 nextSequences.append(sequences[beam] + [token])
                 nextScores.append(score)
                 nextRows.append(Int32(beam))
                 nextTokens.append(Int32(token))
-                if nextSequences.count == beams { break }
             }
             // Keep the bank to the best `beams` finished hypotheses.
             if finished.count > beams {
                 finished.sort { $0.score > $1.score }
                 finished.removeLast(finished.count - beams)
             }
-            guard !nextSequences.isEmpty else { break }
+            guard !nextSequences.isEmpty, !isLastStep else { break }
             if isDone(bestOpenSum: nextScores.max() ?? -Float.infinity, generatedLength: step + 1) {
                 break
             }
             sequences = nextSequences
             beamScores = nextScores
-            model.reorderCache(cache, rows: MLXArray(nextRows))
-            lastTokens = MLXArray(nextTokens).reshaped([beams, 1])
-            if step == decoding.maxTokens - 1 {
-                for (sequence, score) in zip(sequences, beamScores) {
-                    finished.append(Hypothesis(tokens: Array(sequence.dropFirst()),
-                                               score: hypothesisScore(sum: score, generatedLength: step + 1)))
-                }
-            }
+            logits = try next(MLXArray(nextRows), MLXArray(nextTokens).reshaped([beams, 1]))
         }
-        if finished.isEmpty {
-            for (sequence, score) in zip(sequences, beamScores) {
-                finished.append(Hypothesis(tokens: Array(sequence.dropFirst()),
-                                           score: hypothesisScore(sum: score, generatedLength: max(sequence.count - 1, 1))))
-            }
-        }
-        return finished.max { $0.score < $1.score }?.tokens ?? []
+        return finished.max { $0.score < $1.score }
     }
 }
 

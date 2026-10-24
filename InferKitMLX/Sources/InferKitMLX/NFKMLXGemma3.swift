@@ -296,6 +296,13 @@ public final class NFKMLXGemma3Cache {
         return full.rollback(by: count, layers: fullLayers) && sliding.rollback(by: count, layers: slidingLayers)
     }
 
+    /// Keeps the batch rows `rows` of both caches, in that order; see ``NFKMLXKeyValueCache/reorder(_:)``.
+    /// Introduced in InferKit 0.4.0.
+    public func reorder(_ rows: MLXArray) {
+        full.reorder(rows)
+        sliding.reorder(rows)
+    }
+
     /// The bytes both caches occupy, their unused capacity included.
     var allocatedBytes: Int { full.allocatedBytes + sliding.allocatedBytes }
 }

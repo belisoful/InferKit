@@ -18,7 +18,7 @@ import NaturalLanguage
 @objc(NFKMLXTranslationParameterKey)
 public final class NFKMLXTranslationParameterKey: NSObject {
     /// Beams to search (NSNumber). 1 decodes greedily. The default is the model's own generation
-    /// setting (Marian 4, M2M100 5, MADLAD 1).
+    /// setting (Marian 4, M2M100 5, MADLAD, NLLB, Seed-X, and TranslateGemma 1).
     @objc public static let beamCount = "NFKMLXParameterBeamCount"
     /// Divides a finished hypothesis's log-probability by `length^penalty` (NSNumber). Default 1.
     @objc public static let lengthPenalty = "NFKMLXParameterLengthPenalty"

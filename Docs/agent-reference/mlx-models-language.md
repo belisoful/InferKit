@@ -213,7 +213,10 @@ attention and feed-forward.
     6/6, worst layer 0.99993855 at layer 16, continuation token-exact.
   Prompt cache, speculative decoding, mixture of experts, constrained decoding (all 0.3.0,
   each measured). `NFKMLXKeyValueCache.rollback(by:)` moves the end cursors back and copies nothing;
-  it returns false where a window has dropped what it would reach. `NFKMLXPromptCache` keeps the
+  it returns false where a window has dropped what it would reach. `NFKMLXKeyValueCache.reorder(_:)`
+  keeps chosen batch rows, a row repeated where it is chosen twice, in every storage form, which is how
+  `NFKMLXLanguageNet.beamSearch(prompt:decoding:)` copies a prompt's rows to each beam and hands the
+  surviving beams their parents' rows (`mlx-models-translation.md`). `NFKMLXPromptCache` keeps the
   cache and its token ids between generations, `align(to:)` rolls back to the shared prefix (capped
   one short of the prompt so a token runs and produces logits), and `save(to:)`/`load(from:)` persist
   it — float or packed rows alike. `reusesPromptCache` makes the backend keep one; the backend

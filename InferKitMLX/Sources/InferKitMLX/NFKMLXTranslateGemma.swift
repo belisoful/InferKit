@@ -21,8 +21,9 @@ import MLXOptimizers
 /// the "You are a professional … translator" instruction naming both languages by name and code, the
 /// text, `<end_of_turn>`, and the opened model turn. The language table is read from that file, so a
 /// tag the release names (`de`, `de-DE`, `zh-Hant`) resolves as written and any other BCP-47 tag falls
-/// back to its primary subtag. Decoding is greedy and stops at `<end_of_turn>` or `<eos>`; the beam
-/// knobs of the seq2seq translators do not apply.
+/// back to its primary subtag. Decoding stops at `<end_of_turn>` or `<eos>` and is greedy by default;
+/// `decoding.beams` above 1 runs a beam search that ends a hypothesis on either, scored as transformers'
+/// `generate` scores one.
 ///
 /// Introduced in InferKit 0.4.0.
 public final class NFKMLXTranslateGemmaTranslator: NFKMLXTranslator {
@@ -37,7 +38,8 @@ public final class NFKMLXTranslateGemmaTranslator: NFKMLXTranslator {
         self.languages = languages
         self.identifier = identifier
         defaultDecoding = NFKMLXSeq2SeqDecoding(beams: 1, maxTokens: 256, startToken: model.tokens.beginOfSequence,
-                                                endToken: model.tokens.endOfTurn)
+                                                endToken: model.tokens.endOfTurn,
+                                                additionalEndTokens: [model.tokens.endOfSequence])
     }
 
     public var fixedSourceLanguage: String? { nil }
@@ -98,7 +100,8 @@ public final class NFKMLXTranslateGemmaTranslator: NFKMLXTranslator {
             throw NFKMLXTranslationBackend.error(.error_InferenceUnsupported, "\(identifier) does not translate into \(target)")
         }
         let ids = promptTokens(text: text, sourceCode: sourceCode, targetCode: targetCode)
-        let produced = try generate(promptTokens: ids, maxTokens: decoding.maxTokens)
+        let produced = decoding.beams > 1 ? try model.beamSearch(tokens: ids, decoding: decoding)
+            : try generate(promptTokens: ids, maxTokens: decoding.maxTokens)
         return model.decode(produced).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

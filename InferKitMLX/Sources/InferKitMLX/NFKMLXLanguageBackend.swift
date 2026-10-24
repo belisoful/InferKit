@@ -339,6 +339,37 @@ public extension NFKMLXLanguageNet {
         return produced
     }
 
+    /// The best continuation of `prompt` a `decoding.beams`-wide beam search finds, without the end token
+    /// that closed it, searched as transformers' `generate(num_beams:)` searches a decoder-only model.
+    ///
+    /// @discussion The prompt runs once and its cache rows are copied to every beam; each step then runs
+    /// the beams as one batch. `decoding` supplies the beams, `maxTokens`, the length penalty, early
+    /// stopping, the end tokens, and the n-gram ban, whose window reaches into the prompt as the
+    /// reference's does. The prompt takes the start token's place, so `startToken` is not read. Throws a
+    /// failed read of a streamed layer. Introduced in InferKit 0.4.0.
+    func beamSearch(prompt: [Int], decoding: NFKMLXSeq2SeqDecoding) throws -> [Int] {
+        try beamHypothesis(prompt: prompt, decoding: decoding)?.tokens ?? []
+    }
+
+    /// ``beamSearch(prompt:decoding:)``'s best hypothesis with its score, or nil where none was scored.
+    internal func beamHypothesis(prompt: [Int], decoding: NFKMLXSeq2SeqDecoding) throws -> NFKMLXSeq2SeqDecoder.Hypothesis? {
+        guard !prompt.isEmpty, decoding.maxTokens > 0 else { return nil }
+        var search = decoding
+        search.beams = Swift.max(decoding.beams, 1)
+        let cache = NFKMLXKeyValueCache(layerCount: configuration.layerCount)
+        let promptLogits = self(MLXArray(prompt.map { Int32($0) }).reshaped([1, prompt.count]), cache: cache)
+        try verifyStream()
+        let last = promptLogits[0..., (prompt.count - 1)..., 0...]
+        cache.reorder(MLXArray.zeros([search.beams], dtype: .int32))
+        return try NFKMLXSeq2SeqDecoder.beamSearch(prefix: prompt, logits: broadcast(last, to: [search.beams, 1, last.dim(-1)]),
+                                                   decoding: search) { rows, tokens in
+            cache.reorder(rows)
+            let logits = self(tokens, cache: cache)
+            try verifyStream()
+            return logits
+        }
+    }
+
     /// The cache a run starts from and the part of `prompt` still to prefill into it: a fresh cache
     /// and the whole prompt, or a prompt cache rolled back to what it shares with `prompt` and the
     /// prompt's remainder.

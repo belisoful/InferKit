@@ -21536,17 +21536,38 @@ def run_translategemma(image, checkpoint):
     return _translategemma_record(model, tokenizer)
 
 
+def _translategemma_ids(tokenizer, sentence, source_lang, target_lang):
+    """The ids the release's chat template renders for one text translation item. The rendered template
+    already spells `<bos>`, so it is tokenized without a second one."""
+    messages = [{"role": "user", "content": [{"type": "text", "source_lang_code": source_lang,
+                                              "target_lang_code": target_lang, "text": sentence}]}]
+    text = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
+    return tokenizer(text, add_special_tokens=False).input_ids
+
+
+def run_translategemma_beam(image, checkpoint):
+    """TranslateGemma's beam search on a release directory (google/translategemma-4b-it), English to German:
+    `_decoder_beam_record` over the ids the release's chat template renders for every probe sentence, at
+    TRANSLATEGEMMA_DTYPE (default float32), 48 new tokens as the greedy record. Its generation config ends on
+    `<eos>` and `<end_of_turn>`, so each step keeps three candidates per beam. `image` unused."""
+    from transformers import AutoModelForImageTextToText, AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    dtype = getattr(torch, os.environ.get("TRANSLATEGEMMA_DTYPE", "float32"))
+    model = AutoModelForImageTextToText.from_pretrained(checkpoint, dtype=dtype).eval()
+    source_lang, target_lang = _translation_languages()
+    prompts = [_translategemma_ids(tokenizer, sentence, source_lang, target_lang)
+               for sentence in TRANSLATION_PROBES[source_lang.split("-")[0]]]
+    return _decoder_beam_record(model, tokenizer, prompts, 48, tokenizer.pad_token_id)
+
+
 def _translategemma_record(model, tokenizer):
     """What `run_translategemma` records, from a built model: the template ids, the last 16 prompt
     positions' logits, the last prompt position's state after every layer, the greedy continuation,
     and the masked fine-tuning loss."""
     source_lang, target_lang = _translation_languages()
     sentence = TRANSLATION_PROBES[source_lang.split("-")[0]][1]
-    messages = [{"role": "user", "content": [{"type": "text", "source_lang_code": source_lang,
-                                              "target_lang_code": target_lang, "text": sentence}]}]
-    # The rendered template already spells `<bos>`, so it is tokenized without a second one.
-    text = tokenizer.apply_chat_template(messages, add_generation_prompt=True, tokenize=False)
-    ids = torch.tensor([tokenizer(text, add_special_tokens=False).input_ids])
+    ids = torch.tensor([_translategemma_ids(tokenizer, sentence, source_lang, target_lang)])
     with torch.no_grad():
         out = model(input_ids=ids, output_hidden_states=True)
         logits = out.logits[0]
@@ -21864,6 +21885,61 @@ SEEDX_LANGUAGES = {
 }
 
 
+def _seedx_prompt(text, source, target):
+    """The model card's prompt for two release tags, without the `<s>` the tokenizer adds."""
+    return (f"Translate the following {SEEDX_LANGUAGES[source]} sentence into {SEEDX_LANGUAGES[target]}:\n"
+            f"{text} <{target}>")
+
+
+def _decoder_beam_record(model, tokenizer, prompts, max_new_tokens, pad_token_id, beams=4):
+    """A decoder-only translator's beam search under transformers' own `generate` (`num_beams` `beams`,
+    `do_sample=False`, the release's length penalty and end tokens): for each prompt its ids (`tokens_<i>`),
+    the best hypothesis's continuation as `generate` returns it, its end token included (`beam_<i>`), its
+    text without special tokens (`beam_text_<i>`), and its score (`sequences_scores`, the output); and for
+    prompt 1 the same search cut at 6 new tokens (`beam_cut`, `beam_cut_score`), where the limit ends every
+    top hypothesis."""
+    def search(ids, limit):
+        input_ids = torch.tensor([ids])
+        out = model.generate(input_ids=input_ids, attention_mask=torch.ones_like(input_ids), max_new_tokens=limit,
+                             num_beams=beams, do_sample=False, return_dict_in_generate=True, output_scores=True,
+                             pad_token_id=pad_token_id)
+        return out.sequences[0, len(ids):], out.sequences_scores[0].float()
+
+    extra = {"beams": torch.tensor([beams], dtype=torch.int32),
+             "max_new_tokens": torch.tensor([max_new_tokens], dtype=torch.int32)}
+    scores = []
+    with torch.no_grad():
+        for index, ids in enumerate(prompts):
+            continuation, score = search(ids, max_new_tokens)
+            text = tokenizer.decode(continuation, skip_special_tokens=True)
+            print(f"beam {index}:", text, float(score))
+            extra[f"tokens_{index}"] = torch.tensor(ids, dtype=torch.int32)
+            extra[f"beam_{index}"] = continuation.to(torch.int32).contiguous()
+            extra[f"beam_text_{index}"] = _utf8(text)
+            scores.append(score)
+        continuation, score = search(prompts[1], 6)
+        print("beam at 6 tokens:", tokenizer.decode(continuation, skip_special_tokens=True), float(score))
+        extra["beam_cut"] = continuation.to(torch.int32).contiguous()
+        extra["beam_cut_score"] = score.reshape(1).contiguous()
+    globals()["_extra"] = extra
+    return torch.stack(scores).contiguous()
+
+
+def run_seedx_beam(image, checkpoint):
+    """Seed-X's beam search on a release directory, four beams as the model card's example, English to
+    German: `_decoder_beam_record` over the card's prompt for every probe sentence, at SEEDX_DTYPE (default
+    bfloat16, the release's), 64 new tokens as the greedy record. `image` unused."""
+    from transformers import AutoTokenizer, MistralForCausalLM
+
+    dtype = getattr(torch, os.environ.get("SEEDX_DTYPE", "bfloat16"))
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    model = MistralForCausalLM.from_pretrained(checkpoint, dtype=dtype).eval()
+    source_lang, target_lang = _translation_languages()
+    source, target = source_lang.split("-")[0], target_lang.split("-")[0]
+    prompts = [tokenizer(_seedx_prompt(sentence, source, target)).input_ids for sentence in TRANSLATION_PROBES[source]]
+    return _decoder_beam_record(model, tokenizer, prompts, 64, tokenizer.eos_token_id)
+
+
 def _seedx_record(model, tokenizer):
     """What a Seed-X translator is measured on, from a built model: the model card's prompt
     (`Translate the following <Source> sentence into <Target>:\n<text> <tag>`) tokenized as the release's
@@ -21876,8 +21952,7 @@ def _seedx_record(model, tokenizer):
     source, target = source_lang.split("-")[0], target_lang.split("-")[0]
 
     def prompt(text):
-        return (f"Translate the following {SEEDX_LANGUAGES[source]} sentence into {SEEDX_LANGUAGES[target]}:\n"
-                f"{text} <{target}>")
+        return _seedx_prompt(text, source, target)
 
     sentences = TRANSLATION_PROBES[source]
     ids = torch.tensor([tokenizer(prompt(sentences[1])).input_ids])
@@ -21911,17 +21986,26 @@ def _seedx_record(model, tokenizer):
 def run_seedx(image, checkpoint):
     """Seed-X (ByteDance-Seed/Seed-X-PPO-7B or -Instruct-7B, `MistralForCausalLM`) on a release directory,
     English to German by default (TRANSLATION_SOURCE_LANG / TRANSLATION_TARGET_LANG): the record of
-    `_seedx_record`. SEEDX_DTYPE picks the precision (default bfloat16, the release's). SEEDX_LAYERWISE=1
-    builds the model on the meta device and reads each decoder layer as the forward reaches it, as
-    `run_dense_layerwise` does, for float32, at which the 7B (30 GB) does not fit whole; the embedding, the
-    untied head, and the final norm are read once and the rotary table is built on the CPU. `image` unused."""
+    `_seedx_record`, from the model `_seedx_model` builds. `image` unused."""
+    model, tokenizer, close = _seedx_model(checkpoint)
+    try:
+        return _seedx_record(model, tokenizer)
+    finally:
+        close()
+
+
+def _seedx_model(checkpoint):
+    """A Seed-X release's `MistralForCausalLM`, its tokenizer, and a function that closes what it reads.
+    SEEDX_DTYPE picks the precision (default bfloat16, the release's). SEEDX_LAYERWISE=1 builds the model on
+    the meta device and reads each decoder layer as the forward reaches it, as `run_dense_layerwise` does,
+    for float32, at which the 7B (30 GB) does not fit whole; the embedding, the untied head, and the final
+    norm are read once and the rotary table is built on the CPU."""
     from transformers import AutoConfig, AutoTokenizer, GenerationConfig, MistralForCausalLM
 
     dtype = getattr(torch, os.environ.get("SEEDX_DTYPE", "bfloat16"))
     tokenizer = AutoTokenizer.from_pretrained(checkpoint)
     if os.environ.get("SEEDX_LAYERWISE") != "1":
-        model = MistralForCausalLM.from_pretrained(checkpoint, dtype=dtype).eval()
-        return _seedx_record(model, tokenizer)
+        return MistralForCausalLM.from_pretrained(checkpoint, dtype=dtype).eval(), tokenizer, lambda: None
     config = AutoConfig.from_pretrained(checkpoint)
     entries, read, close = _layerwise_release(checkpoint, dtype)
     with torch.device("meta"):
@@ -21935,10 +22019,35 @@ def run_seedx(image, checkpoint):
     model.model.norm.weight = torch.nn.Parameter(read("model.norm.weight"), requires_grad=False)
     model.model.rotary_emb = type(model.model.rotary_emb)(config=config)
     _read_layers_in_turn(model.model.layers, "model.", entries, read)
+    return model, tokenizer, close
+
+
+def run_seedx_beam_scores(image, checkpoint):
+    """The reference's own scores for the hypotheses a `seedx_beam` record holds (SEEDX_BEAM_RECORD), each
+    teacher-forced in one forward of the model `_seedx_model` builds: the mean log-probability of the
+    continuation over float32 log-softmaxed logits, its end token included, which is the score `generate`
+    gives a hypothesis at length penalty 1. The output holds prompts 0-4 and then the six-token cut. Run at
+    float32 (`SEEDX_DTYPE=float32 SEEDX_LAYERWISE=1`), it is the value a bfloat16 search's scores are
+    measured from: the record's own scores sit the reference's bfloat16 floor away from it. `image` unused."""
+    from safetensors.torch import load_file
+
+    record = load_file(os.environ["SEEDX_BEAM_RECORD"])
+    pairs = [(record[f"tokens_{index}"], record[f"beam_{index}"]) for index in range(len(TRANSLATION_SENTENCES))]
+    pairs.append((record["tokens_1"], record["beam_cut"]))
+    model, _, close = _seedx_model(checkpoint)
+    scores = []
     try:
-        return _seedx_record(model, tokenizer)
+        with torch.no_grad():
+            for prompt, continuation in pairs:
+                ids = torch.cat([prompt, continuation]).long().reshape(1, -1)
+                logits = model(input_ids=ids).logits[0, prompt.numel() - 1 : -1].float()
+                chosen = torch.log_softmax(logits, dim=-1).gather(1, continuation.long().reshape(-1, 1))
+                scores.append(chosen.sum() / continuation.numel())
+                print("score:", float(scores[-1]))
     finally:
         close()
+    globals()["_extra"] = {"record_scores": torch.cat([record["output"], record["beam_cut_score"]]).float()}
+    return torch.stack(scores).float().contiguous()
 
 
 def run_trocr_loss(image, checkpoint):
@@ -23342,6 +23451,9 @@ def run_ltx_pipeline(image, checkpoint):
 
 
 CHECKPOINT_MODELS["mlx_quantized_release"] = run_mlx_quantized_release
+CHECKPOINT_MODELS["seedx_beam"] = run_seedx_beam
+CHECKPOINT_MODELS["seedx_beam_scores"] = run_seedx_beam_scores
+CHECKPOINT_MODELS["translategemma_beam"] = run_translategemma_beam
 CHECKPOINT_MODELS["ltx_pipeline"] = run_ltx_pipeline
 
 

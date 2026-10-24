@@ -20,10 +20,11 @@ import MLXOptimizers
 /// following <Source> sentence into <Target>:`, a line break, the text, a space, and the target's tag
 /// (`<de>`), which the release was trained to expect. The release has no chat template. The languages
 /// are the 28 the card lists, named as it names them. A BCP-47 tag resolves by its primary subtag
-/// (`zh-Hant` → `zh`, `pt-BR` → `pt`); `nb` and `no` are separate tags in the release. Decoding is
-/// greedy and stops at `</s>`; the card recommends a four-wide beam, which no decoder-only path here
-/// implements, so the beam knobs of the seq2seq translators do not apply. The release opens its
-/// continuation with `<s>`, which the translation's text leaves out, as the card's decode does.
+/// (`zh-Hant` → `zh`, `pt-BR` → `pt`); `nb` and `no` are separate tags in the release. Decoding stops
+/// at `</s>` and is greedy by default, as the release's generation config leaves it; `decoding.beams`
+/// above 1 runs a beam search (the card's example searches four), scored as transformers' `generate`
+/// scores one. The release opens its continuation with `<s>`, which the translation's text leaves out,
+/// as the card's decode does.
 ///
 /// Introduced in InferKit 0.4.0.
 public final class NFKMLXSeedXTranslator: NFKMLXTranslator {
@@ -91,6 +92,18 @@ public final class NFKMLXSeedXTranslator: NFKMLXTranslator {
         return produced
     }
 
+    /// The best continuation of `ids` a `decoding.beams`-wide beam search finds, without the `</s>` that
+    /// ends it. Throws a failed read of a streamed layer, which the next call reads again. Introduced in
+    /// InferKit 0.4.0.
+    public func beamSearch(promptTokens ids: [Int], decoding: NFKMLXSeq2SeqDecoding) throws -> [Int] {
+        do {
+            return try net.beamSearch(prompt: ids, decoding: decoding)
+        } catch {
+            net.layerStream?.clearFailure()
+            throw error
+        }
+    }
+
     public func translate(_ text: String, from source: String?, to target: String,
                           decoding: NFKMLXSeq2SeqDecoding) throws -> String {
         guard let source, let sourceCode = code(for: source) else {
@@ -101,7 +114,8 @@ public final class NFKMLXSeedXTranslator: NFKMLXTranslator {
             throw NFKMLXTranslationBackend.error(.error_InferenceUnsupported, "\(identifier) does not translate into \(target)")
         }
         let ids = promptTokens(text: text, sourceCode: sourceCode, targetCode: targetCode)
-        let produced = try generate(promptTokens: ids, maxTokens: decoding.maxTokens)
+        let produced = decoding.beams > 1 ? try beamSearch(promptTokens: ids, decoding: decoding)
+            : try generate(promptTokens: ids, maxTokens: decoding.maxTokens)
         return translation(of: produced)
     }
 

@@ -386,6 +386,35 @@ public final class NFKMLXGemma3Model {
         return produced
     }
 
+    /// The best continuation of the text prompt `ids` a `decoding.beams`-wide beam search finds, without
+    /// the end token that closed it, searched as transformers' `generate(num_beams:)` searches it; see
+    /// ``NFKMLXLanguageNet/beamSearch(prompt:decoding:)``. The prompt runs once through a hybrid cache whose
+    /// rows are copied to every beam. Throws a failed read of a streamed layer. Introduced in InferKit 0.4.0.
+    public func beamSearch(tokens ids: [Int], decoding: NFKMLXSeq2SeqDecoding) throws -> [Int] {
+        try beamHypothesis(tokens: ids, decoding: decoding)?.tokens ?? []
+    }
+
+    /// ``beamSearch(tokens:decoding:)``'s best hypothesis with its score, or nil where none was scored.
+    func beamHypothesis(tokens ids: [Int], decoding: NFKMLXSeq2SeqDecoding) throws -> NFKMLXSeq2SeqDecoder.Hypothesis? {
+        guard !ids.isEmpty, decoding.maxTokens > 0 else { return nil }
+        var search = decoding
+        search.beams = Swift.max(decoding.beams, 1)
+        let cache = NFKMLXGemma3Cache(layerCount: decoder.configuration.layerCount,
+                                      slidingWindow: decoder.configuration.slidingWindow)
+        let hidden = decoder.hiddenStates(fromEmbeddings: fusedEmbeddings(tokens: ids, softTokens: nil),
+                                          cache: cache, blockIds: blockIds(for: ids))
+        try decoder.verifyStream()
+        let last = decoder.logits(fromHidden: hidden[0..., (hidden.dim(1) - 1)...])
+        cache.reorder(MLXArray.zeros([search.beams], dtype: .int32))
+        return try NFKMLXSeq2SeqDecoder.beamSearch(prefix: ids, logits: broadcast(last, to: [search.beams, 1, last.dim(-1)]),
+                                                   decoding: search) { rows, tokens in
+            cache.reorder(rows)
+            let state = decoder.hiddenStates(fromEmbeddings: decoder.embed(tokens), cache: cache)
+            try decoder.verifyStream()
+            return decoder.logits(fromHidden: state)
+        }
+    }
+
     /// The rest of a generation whose prompt `hidden` ends, with `draft` proposing each round's tokens
     /// and one pass of this model verifying them.
     ///

@@ -687,6 +687,24 @@ public final class NFKMLXKeyValueCache {
         return true
     }
 
+    /// Keeps the batch rows `rows` of every layer, in that order. A row may repeat: a beam search copies
+    /// a prompt's one row to every beam, and each step hands the surviving beams their parents' rows.
+    /// The cursors, the window, and the position count are unchanged. Introduced in InferKit 0.4.0.
+    public func reorder(_ rows: MLXArray) {
+        for layer in values.indices {
+            keys[layer] = keys[layer]?.take(rows, axis: 0)
+            values[layer] = values[layer]?.take(rows, axis: 0)
+            keyScales[layer] = keyScales[layer]?.take(rows, axis: 0)
+            keyBiases[layer] = keyBiases[layer]?.take(rows, axis: 0)
+            valueScales[layer] = valueScales[layer]?.take(rows, axis: 0)
+            valueBiases[layer] = valueBiases[layer]?.take(rows, axis: 0)
+            keyGroups[layer] = keyGroups[layer]?.take(rows, axis: 0)
+            keyGroupScales[layer] = keyGroupScales[layer]?.take(rows, axis: 0)
+            keyGroupBiases[layer] = keyGroupBiases[layer]?.take(rows, axis: 0)
+            keyResidual[layer] = keyResidual[layer]?.take(rows, axis: 0)
+        }
+    }
+
     /// The element type the model computes in, for a persisted cache to restore.
     var storedDTypeForExport: DType { storedDType }
 
