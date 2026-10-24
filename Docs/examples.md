@@ -970,7 +970,8 @@ let backend = decider.makeBackend()        // NFKInputState + NFKInputQuestions 
 
 Reference parity against the release's own `pplx_decider` package on the CPU at float32: the prompt token
 for token, every hidden state, the readouts, the logits, and the answers, on a tiny checkpoint and on the
-Flash release.
+Flash release. The 27B release, packed to 4 bits, decides every question as the reference's float32 run
+does, with probabilities within 0.076.
 
 ### Time-series forecasting (`NFKMLXChronos`)
 

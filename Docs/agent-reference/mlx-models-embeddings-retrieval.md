@@ -485,19 +485,22 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   requests: a record with a described choice, a score, and a noul with meanings; accented text holding
   `<|im_end|><|fim_suffix|>` with a default-instruction choice and a one-meaning noul; a 30-option choice
   reaching the two-letter codes. Flash: every token and marker exact, all 33 hidden states at worst cosine
-  0.999999999986611, the readouts 0.9999999999990621, logits within 2.47e-5, probabilities within 1.9e-6,
-  answers within 1.04e-6. A tiny checkpoint (`pplx_decider_tiny`: a seeded random 4-layer `Qwen3_5Model` at
+  0.999999999986611, the readouts 0.9999999999990621, logits within 2.48e-5, probabilities within 2.0e-6,
+  answers within 1.05e-6. A tiny checkpoint (`pplx_decider_tiny`: a seeded random 4-layer `Qwen3_5Model` at
   the release's vocabulary, the norms, `A_log`, and `dt_bias` randomized) reads 0.9999999999999672 over its 5
-  hidden states and 0.9999999999999719 on the readouts, logits within 1.1e-6; read with causal full attention
+  hidden states and 0.9999999999999719 on the readouts, logits within 1.2e-6; read with causal full attention
   the same request's readouts fall to 0.99910, so the record tells the modes apart. At bfloat16, the published
   precision and the factory default, Flash decides every question as the float32 reference does, with
-  probabilities within 0.0149 and logits within 0.11 (the hidden states to 0.99983). The tensors match:
+  probabilities within 0.015 and logits within 0.12 (the hidden states to 0.99983). The tensors match:
   426 decoder parameters and the readout against the shard headers, 0 mismatched, 297 vision tensors left.
   **The 27B release** is the same layout over 64 layers (48 recurrent, 16 attention, hidden 5120), about
   52 GB at bfloat16, so it runs packed to 4 bits as it loads (about 15 GB with the embedding packed). Its
   float32 reference reads the release layer by layer (`PPLX_LAYERWISE=1`), a path that reproduces the
-  Flash record byte for byte. The 27B measurement waits on its download into the validation store, and
-  `testTheTwentySevenBillionReleaseAtFourBitsDecidesAsTheReference` skips until its keys are set.
+  Flash record byte for byte. Packed to 4 bits, it decides every question as that float32 reference does,
+  with the readouts at cosine 0.99921, logits within 1.02, and probabilities within 0.076; the
+  hidden states at the markers sit at worst 0.989 over 65. The packing bounds those figures. The
+  tensors match: 850 decoder parameters and the readout against the shard headers, 0 mismatched,
+  333 vision tensors left.
   **The runtime:** the precision ladder (as published, float32) and runtime weight quantization of 2 to 8
   bits, which `NFKMLXHybridLanguage.loadQuantizedWeights` applies layer by layer as the shards are read and
   which packs the embedding too, since no output projection reads it; the readout stays unpacked. No layer
@@ -513,7 +516,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   the model card says Flash was distilled onto the 27B models' full distributions. `NFKMLXPplxDeciderObjective`
   is that distillation's soft-target cross-entropy, the mean over a request's questions of `−Σ t·log
   softmax(z)` on the raw logits, matched against torch's `cross_entropy` on the reference's logits in the
-  Flash record (4.0310735, 2.5591812, 6.9156041) within 9.5e-7. `fineTune(examples:steps:)` adapts Open-Jev's
+  Flash record (4.0310735, 2.5591812, 6.9156041) within 9.6e-7. `fineTune(examples:steps:)` adapts Open-Jev's
   target set (`q_proj`/`k_proj`/`v_proj`/`o_proj`, `in_proj_qkv`/`out_proj`) at rank 8, α 16, and the
   readout, with PyTorch's AdamW (adapter 5e-5, readout 1e-4, weight decay 0.01, clip 1); `saveAdapter(to:)`
   writes PEFT's layout over `Qwen3_5Model` with the readout and the temperature, and
