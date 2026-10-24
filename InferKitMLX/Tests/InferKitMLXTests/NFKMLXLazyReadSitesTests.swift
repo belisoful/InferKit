@@ -35,6 +35,7 @@ final class NFKMLXLazyReadSitesTests: XCTestCase {
         "NFKMLXDAC.swift": (1, "weight-norm fusion"),
         "NFKMLXDDColor.swift": (1, "spectral-norm fusion"),
         "NFKMLXDeepSeekRelease.swift": (3, "paged experts are mapped, never read; image and draft stacks share shards"),
+        "NFKMLXDemucsTraining.swift": (1, "a probe for the width, depth, bottleneck layers, and stems"),
         "NFKMLXDenoiserTraining.swift": (1, "a probe for the encoder's width"),
         "NFKMLXDepthAnythingTraining.swift": (1, "the encoder without its head"),
         "NFKMLXFRCRN.swift": (1, "the checkpoint's duplicate stage copies are dropped"),
