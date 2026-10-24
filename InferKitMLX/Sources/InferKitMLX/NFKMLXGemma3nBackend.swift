@@ -200,7 +200,7 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
 
         let gemma = holder.model
         let (ids, image, waveform) = try prompt(for: request)
-        options.maxTokens = try NFKMLXContextRoom.bounded(options.maxTokens, promptTokens: ids.count,
+        options.maxTokens = try NFKMLXContextRoom.bounded(options.chosenMaxTokens, promptTokens: ids.count,
                                                           contextLength: contextLength, source: identifier)
 
         generationLock.lock(); defer { generationLock.unlock() }

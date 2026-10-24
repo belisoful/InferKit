@@ -206,8 +206,9 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
         let model = holder.model
         let image = request.input(forKey: NFKInputImage)
         let ids = try promptTokens(for: request)
-        options.maxTokens = try NFKMLXContextRoom.bounded(options.maxTokens, promptTokens: ids.count,
-                                                          contextLength: contextLength, source: identifier)
+        options.maxTokens = try NFKMLXContextRoom.bounded(options.chosenMaxTokens, promptTokens: ids.count,
+                                                          contextLength: contextLength, window: options.contextWindow,
+                                                          source: identifier)
 
         let conversation = NFKMLXConversation.name(of: request)
         generationLock.lock(); defer { generationLock.unlock() }

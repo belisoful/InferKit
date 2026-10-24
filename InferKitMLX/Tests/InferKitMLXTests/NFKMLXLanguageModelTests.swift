@@ -405,6 +405,41 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         XCTAssertThrowsError(try full.runInference(for: request))
     }
 
+    /// A run whose request and options set no limit runs to the room its context leaves, or its cache
+    /// window's where the prompt leaves the window room. A release that states no context stops at 256.
+    func testAnUnsetLimitRunsToTheRoomTheContextLeaves() throws {
+        XCTAssertEqual(try NFKMLXContextRoom.bounded(nil, promptTokens: 10, contextLength: 40_960, source: "m"), 40_950)
+        XCTAssertEqual(try NFKMLXContextRoom.bounded(nil, promptTokens: 10, contextLength: 40_960, window: 4_096, source: "m"),
+                       4_086)
+        XCTAssertEqual(try NFKMLXContextRoom.bounded(nil, promptTokens: 5_000, contextLength: 40_960, window: 4_096,
+                                                     source: "m"), 35_960, "a prompt past its window runs to the context")
+        XCTAssertEqual(try NFKMLXContextRoom.bounded(nil, promptTokens: 10, contextLength: nil, source: "m"),
+                       NFKMLXContextRoom.unstatedContextLimit)
+        XCTAssertEqual(try NFKMLXContextRoom.bounded(256, promptTokens: 10, contextLength: 40_960, window: 64, source: "m"), 256,
+                       "a set limit is bounded by the context alone")
+
+        try requireMLXRuntime()
+        let directory = try releaseDirectory()
+        let tokenizer = try NFKTokenizer(forManifest: ["tokenizer": ["type": "bpe-bytelevel"]], directory: directory)
+        let prompt = tokenizer.encode("hello hello").count
+        var configuration = NFKMLXLanguageConfiguration.tiny
+        configuration.maximumPositions = prompt + 300
+        let backend = NFKMLXLanguageBackend(net: NFKMLXLanguage.makeNet(configuration), tokenizer: tokenizer, identifier: "tiny")
+        let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "hello hello"],
+                                                                       parameters: [NFKParameterTemperature: 0]))
+        XCTAssertEqual((result.output(forKey: NFKOutputUsage) as? [String: Int])?[NFKUsageOutputTokens], 300)
+        XCTAssertEqual(result.output(forKey: NFKOutputFinishReason) as? String, NFKFinishReasonLength)
+
+        var options = NFKMLXGenerationOptions()
+        options.maxTokens = 256
+        let limited = NFKMLXLanguageBackend(net: NFKMLXLanguage.makeNet(configuration), tokenizer: tokenizer,
+                                            identifier: "tiny", options: options)
+        let capped = try limited.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "hello hello"],
+                                                                       parameters: [NFKParameterTemperature: 0]))
+        XCTAssertEqual((capped.output(forKey: NFKOutputUsage) as? [String: Int])?[NFKUsageOutputTokens], 256,
+                       "a limit set on the build options counts even at the default")
+    }
+
     /// A release that stretches its window with YaRN bounds a run by the stretched window, so Qwen3 at four
     /// times its 32,768 positions takes a prompt past its stated 40,960.
     func testAStretchedWindowBoundsTheRunByItsStretchedLength() throws {

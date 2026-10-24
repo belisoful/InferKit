@@ -2446,8 +2446,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 262144,
@@ -4635,8 +4634,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 1048576,
@@ -4985,8 +4983,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 1048576,
@@ -5344,8 +5341,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 1048576,
@@ -10931,8 +10927,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 131072,
@@ -11240,8 +11235,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 32768,
@@ -11550,8 +11544,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 32768,
@@ -11861,8 +11854,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 131072,
@@ -12170,8 +12162,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 131072,
@@ -12486,8 +12477,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 32768,
@@ -12738,8 +12728,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 32768,
@@ -12974,8 +12963,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 262144,
@@ -13415,8 +13403,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 262144,
@@ -13734,8 +13721,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 262144,
@@ -14180,8 +14166,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 131072,
@@ -14528,8 +14513,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 131072,
@@ -14973,8 +14957,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 131072,
@@ -15262,8 +15245,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 131072,
@@ -16019,8 +16001,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 131072,
@@ -16307,8 +16288,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 131072,
@@ -23662,8 +23642,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 32768,
@@ -24463,8 +24442,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 32768,
@@ -26584,8 +26562,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 131072,
@@ -29605,8 +29582,7 @@
           "title" : "Top P"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 131072,
@@ -31075,8 +31051,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 8192,
@@ -31876,8 +31851,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 40960,
@@ -32682,8 +32656,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 40960,
@@ -33572,8 +33545,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 40960,
@@ -34476,8 +34448,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 40960,
@@ -35280,8 +35251,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 40960,
@@ -36194,8 +36164,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 40960,
@@ -38519,8 +38488,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 262144,
@@ -39111,8 +39079,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 262144,
@@ -53826,8 +53793,7 @@
           "title" : "Top K"
         },
         {
-          "default" : 256,
-          "help" : "The most tokens the reply runs to.",
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
           "key" : "maxTokens",
           "kind" : "integer",
           "maximum" : 8192,

@@ -188,13 +188,15 @@ public final class NFKMLXPhi4MMModel: @unchecked Sendable {
     }
 
     /// The answer's token ids to a conversation, stopping at the turn end. `options` sets the sampling
-    /// (greedy by default, as the release's generation config is), the token budget, and the seed;
-    /// `onToken` sees each id as it is produced, and returning false stops the run.
+    /// (greedy by default, as the release's generation config is), the token budget (256 by default), and
+    /// the seed; `onToken` sees each id as it is produced, and returning false stops the run.
     public func generate(messages: [[String: Any]], images: [NFKMLXPhi4MMImageInput] = [],
                          audios: [NFKMLXPhi4MMAudioInput] = [],
                          options: NFKMLXGenerationOptions = NFKMLXGenerationOptions(),
                          onToken: ((Int) -> Bool)? = nil) throws -> [Int] {
-        try answer(messages: messages, images: images, audios: audios, options: options, onToken: onToken).ids
+        var limited = options
+        limited.maxTokens = options.maxTokens
+        return try answer(messages: messages, images: images, audios: audios, options: limited, onToken: onToken).ids
     }
 
     /// The answer's ids and the prompt's length, which the backend reports as usage.
@@ -203,7 +205,7 @@ public final class NFKMLXPhi4MMModel: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         let prepared = try prepare(messages: messages, images: images, audios: audios)
         var bounded = options
-        bounded.maxTokens = try NFKMLXContextRoom.bounded(options.maxTokens, promptTokens: prepared.ids.count,
+        bounded.maxTokens = try NFKMLXContextRoom.bounded(options.chosenMaxTokens, promptTokens: prepared.ids.count,
                                                           contextLength: decoder.configuration.contextLength,
                                                           source: NFKMLXPhi4MM.modelName)
         let ids = NFKMLXPhi4MM.generateFused(decoder: decoder, inputIds: prepared.ids, features: prepared.features,

@@ -401,7 +401,10 @@ attention and feed-forward.
   repeat, and draws from the shared sampler's filtered distribution otherwise. Gemma 3, 3n, and DeepSeek
   already use the shared sampler. Each reads `NFKMLXReleaseSampling` from its release directory. A catalog
   entry with variants of mixed sampling (Qwen3.5: 2B/4B/9B ship no generation config, Qwen3.8-27B samples)
-  declares greedy defaults, since one descriptor states one default. **Finish reasons (2026-10-23):** every text backend but Phi-4-multimodal and the image-question
+  declares greedy defaults, since one descriptor states one default. **Unset token limits (2026-10-24):** `NFKMLXGenerationOptions.maxTokens` is optional-backed
+  (`chosenMaxTokens`), and `NFKMLXContextRoom.bounded` takes `nil` as "run to the room": the window's room where
+  `contextWindow` exceeds the prompt, else the trained context's, else `unstatedContextLimit` (256) for a
+  configuration without `maximumPositions`. The developer chose OpenAI's semantics for an unset limit. **Finish reasons (2026-10-23):** every text backend but Phi-4-multimodal and the image-question
   models answers `NFKOutputFinishReason` through `NFKMLXContextRoom.finishReason(produced:limit:outputs:)`;
   the prefill-only backends' `generate` returns the bounded limit beside the tokens, since a run that stops
   on an end token at the last step produced fewer than the limit. **Release sampling (2026-10-22):** a

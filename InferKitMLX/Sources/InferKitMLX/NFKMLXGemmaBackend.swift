@@ -165,7 +165,7 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         var sampling = NFKMLXStepSampling(release: releaseSampling)
         sampling.read(request)
-        var maximumTokens = 256
+        var maximumTokens: Int?
         var seed: UInt64?
         if let value = request.parameter(forKey: NFKParameterMaxTokens) as? NSNumber {
             maximumTokens = value.intValue
@@ -264,7 +264,7 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     /// Prefill-only generation: the whole growing sequence runs through the decoder each step, or each
     /// round where a draft proposes `draftTokens` tokens. A step whose streamed layer could not be read
     /// throws, and the next request reads the release again.
-    func generate(_ promptTokens: [Int], sampling: NFKMLXStepSampling, maxTokens: Int, seed: UInt64?,
+    func generate(_ promptTokens: [Int], sampling: NFKMLXStepSampling, maxTokens: Int?, seed: UInt64?,
                   stops: Set<Int>, draftTokens: Int) throws -> (tokens: [Int], limit: Int) {
         var tokens = promptTokens
         var produced = [Int]()

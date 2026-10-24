@@ -511,8 +511,8 @@ extension NFKMLXCatalogLanguage {
                 defaultValue: defaultValue, minimum: 0, step: 1)
     }
 
-    fileprivate static func maxTokensOption(_ defaultValue: Int = NFKMLXGenerationOptions().maxTokens,
-                                            help: String = "The most tokens the reply runs to.") -> NFKModelOption {
+    fileprivate static func maxTokensOption(_ defaultValue: Int? = nil,
+                                            help: String = "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.") -> NFKModelOption {
         .option(NFKParameterMaxTokens, kind: NFKModelOptionKindInteger, title: "Maximum tokens", help: help,
                 defaultValue: defaultValue, minimum: 1, step: 1)
     }

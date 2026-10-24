@@ -134,8 +134,15 @@ struct NFKMLXReleaseSampling: Equatable, Sendable {
 /// ``usesReleaseSampling`` set to false skips step 3. A backend that takes no build options skips step 2.
 /// Objective-C cannot build these options, so an Objective-C caller sets sampling through step 1.
 public struct NFKMLXGenerationOptions: Sendable {
-    /// The most tokens to produce, not counting the prompt.
-    public var maxTokens: Int = 256
+    /// The most tokens to produce, not counting the prompt. Defaults to 256 for a direct `generate` call.
+    /// A backend runs a request whose options and parameters leave it unset to the room its context
+    /// leaves. A set value counts even at 256.
+    public var maxTokens: Int {
+        get { chosenMaxTokens ?? 256 }
+        set { chosenMaxTokens = newValue }
+    }
+    /// The token limit a caller set, or nil for a backend's room in the context.
+    var chosenMaxTokens: Int?
     /// 0 samples greedily; above 0 divides the logits before sampling. Defaults to 0.
     public var temperature: Float {
         get { chosenTemperature ?? 0 }
@@ -452,6 +459,8 @@ public extension NFKMLXLanguageNet {
 /// Reads `NFKInputPrompt` or `NFKInputMessages` and returns `NFKOutputText`. `NFKParameterTemperature`,
 /// `NFKParameterTopP`, `NFKParameterTopK`, `NFKParameterMaxTokens`, and `NFKParameterSeed` override the
 /// defaults. A release whose `generation_config.json` samples defaults to its temperature, top-p, and top-k.
+/// A request that sets no `NFKParameterMaxTokens`, over options that set no `maxTokens`, runs to an end token
+/// or to the room the context leaves.
 ///
 /// Tools: `NFKParameterTools` renders into the release's chat template, and the calls the model
 /// writes come back under `NFKOutputToolCalls`, read in the syntax ``NFKMLXToolCallFormat`` names,
@@ -789,9 +798,9 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
                 "text generation needs a tokenizer; build the backend with one")
         }
         var (options, tokens, toolCallFormat) = try preparedPrompt(for: request, tokenizer: tokenizer)
-        options.maxTokens = try NFKMLXContextRoom.bounded(options.maxTokens, promptTokens: tokens.count,
+        options.maxTokens = try NFKMLXContextRoom.bounded(options.chosenMaxTokens, promptTokens: tokens.count,
                                                           contextLength: holder.net.configuration.contextLength,
-                                                          source: identifier)
+                                                          window: options.contextWindow, source: identifier)
         let (produced, cached) = try generate(tokens, options: options, conversation: Self.conversation(of: request),
                                               holder: holder)
         let reasoningFormat = Self.reasoningFormat(for: options)

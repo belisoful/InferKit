@@ -116,7 +116,7 @@ extension NFKMLXGemmaLanguage {
     /// `NFKInputImage`, and an `NFKAudioAsset` or WAV bytes under `NFKInputAudio`; an image or a clip
     /// needs a release that carries the matching tower. It returns the reply under `NFKOutputText` and
     /// the token counts under `NFKOutputUsage`. Parameters: `NFKParameterTemperature` (0, greedy),
-    /// `NFKParameterMaxTokens` (256), and `NFKParameterSeed`. The decoder runs prefill-only, so each step
+    /// `NFKParameterMaxTokens` (unset, the room the context leaves), and `NFKParameterSeed`. The decoder runs prefill-only, so each step
     /// re-runs the growing sequence with the same soft tokens spliced in.
     static func multimodalBackend(_ model: NFKGemma4MultimodalModel) -> any NFKInferenceBackend {
         NFKMLXGenerationBackend(identifier: gemmaMultimodalModelName, inputKeys: multimodalInputKeys,
@@ -125,7 +125,7 @@ extension NFKMLXGemmaLanguage {
             try NFKMLXUsage.refuseReasoningEffort(in: request, model: gemmaMultimodalModelName)
             var sampling = NFKMLXStepSampling(release: model.releaseSampling)
             sampling.read(request)
-            let maximumTokens = NFKMLXGenerationBackend.number(request, NFKParameterMaxTokens)?.intValue ?? 256
+            let maximumTokens = NFKMLXGenerationBackend.number(request, NFKParameterMaxTokens)?.intValue
             let seed = NFKMLXGenerationBackend.number(request, NFKParameterSeed)?.uint64Value
 
             let visionSoft = try NFKMLXGenerationBackend.image(request, NFKInputImage).map(model.visionSoftTokens)

@@ -1509,6 +1509,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### A reply with no token limit runs to the room its context leaves
+
+- The language, Qwen3.5 and Qwen4, Granite, Nemotron, Mamba, Gemma, Gemma 3, 3n, and Gemma 4 multimodal, DeepSeek,
+  and Phi-4-multimodal backends run a request that sets no `NFKParameterMaxTokens`, over build options that set no
+  `maxTokens`, to an end token or to the positions the context leaves after the prompt, as OpenAI's API does.
+  Where the cache keeps a window the prompt does not fill, the window bounds the run. Before, such a request stopped
+  at 256 tokens. A release that states no context still stops at 256.
+- `NFKMLXGenerationOptions.maxTokens` counts as set even at its default, so a backend built with `maxTokens = 256`
+  stops at 256. A direct `generate` call and `NFKMLXPhi4MM.generate(messages:options:)` keep 256 by default.
+- The catalog's Maximum tokens option declares no default for these models. The image-question backends keep their
+  128-token answers.
+
 #### NAFNet fine-tunes on degraded and clean pairs as its option files train it
 
 - `NFKMLXNAFNet.fineTune` trains NAFNet as megvii-research's basicsr `ImageRestorationModel` does: every parameter,

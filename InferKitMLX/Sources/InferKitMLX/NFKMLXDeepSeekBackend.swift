@@ -347,7 +347,7 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
 
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         var (options, promptTokens, spans, toolCallFormat) = try preparedPrompt(for: request)
-        options.maxTokens = try NFKMLXContextRoom.bounded(options.maxTokens, promptTokens: promptTokens.count,
+        options.maxTokens = try NFKMLXContextRoom.bounded(options.chosenMaxTokens, promptTokens: promptTokens.count,
                                                           contextLength: modelInfo[NFKModelInfoContextLength] as? Int,
                                                           source: identifier)
         var embeddings: MLXArray?

@@ -90,7 +90,7 @@ public final class NFKMLXNemotronBackend: NSObject, NFKInferenceBackend {
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         var sampling = NFKMLXStepSampling(release: releaseSampling)
         sampling.read(request)
-        var maximumTokens = 256
+        var maximumTokens: Int?
         var seed: UInt64?
         if let value = request.parameter(forKey: NFKParameterMaxTokens) as? NSNumber {
             maximumTokens = value.intValue
@@ -156,7 +156,7 @@ public final class NFKMLXNemotronBackend: NSObject, NFKInferenceBackend {
     }
 
     /// Prefill-only generation: the whole growing sequence runs through the decoder each step.
-    private func generate(_ promptTokens: [Int], sampling: NFKMLXStepSampling, maxTokens: Int, seed: UInt64?,
+    private func generate(_ promptTokens: [Int], sampling: NFKMLXStepSampling, maxTokens: Int?, seed: UInt64?,
                           stops: Set<Int>) throws -> (tokens: [Int], limit: Int) {
         var tokens = promptTokens
         var produced = [Int]()
