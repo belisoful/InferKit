@@ -44,6 +44,27 @@ Upscaling, denoising, inpainting, stylization, low-light, colorization, face res
   −111 to 110), so a record made from it reproduces exactly while measuring nothing (the first run read
   0.527 against that record). `NFKMLXNAFNetVariant` (`.sidd`/`.goPro`/`.reds`/`.siddWidth64`/`.goProWidth64`)
   selects the geometry from Objective-C.
+  The channel layer norms use basicsr's epsilon of 1e-6, and the forward zero-pads to a multiple of 16 and
+  crops back, as the reference's `check_image_size` does.
+  **Customization ships** at `full` (`NFKMLXNAFNetTraining.swift`), measured against megvii-research/NAFNet's
+  basicsr at 2b4af71 (`run_reference.py nafnet_training`) on the released SIDD width-32 denoiser.
+  - `NFKMLXNAFNet.fineTune` trains every parameter on degraded and clean pairs `[N, H, W, 3]`, with
+    `NFKMLXNAFNetObjective`, basicsr's `PSNRLoss`: `10 / ln 10` times the batch mean of `log(mse + 1e-8)`.
+  - `NFKMLXNAFNetTrainingRecipe` holds each release's option file: AdamW at 1e-3 with betas 0.9 and 0.9, decay
+    0 for SIDD and 1e-3 for GoPro and REDS on every parameter, the gradient clipped at 0.01 (`use_grad_clip`,
+    on by default), and `CosineAnnealingLR` to 1e-7 over 200,000 or 400,000 updates.
+  - `NFKMLXNAFNetAugmentation` is the paired dataset's 256-pixel crop at the same place in both images, with
+    the horizontal flip, vertical flip, and transpose for GoPro and REDS, each example drawing its own. A pair
+    smaller than the crop is mirrored with its edge repeated, OpenCV's `BORDER_REFLECT`.
+  - Measured on two 64-pixel noisy photographs, each figure against float64: the restoration within 7.10e-8
+    (reference float32 6.99e-8), the loss -30.712341 vs -30.712343, and the global gradient norm 92.02206 vs
+    92.022095.
+  - Ten gradients through the depthwise convolutions, the channel attention, the norms, `beta` and `gamma`, the
+    upsampler, and the ending land within 1.83e-6 of float64, each within 1.32 times the reference float32's
+    own distance. The loss after one step is -34.412937 vs -34.41294.
+  - The crop and flips, replayed from the reference's draws, are exact.
+  - The GoPro and REDS releases train through `NAFNetLocal`. Its channel attention pools over a window 1.5
+    times the 256-pixel training crop, which covers the crop, so training pools globally as `NAFNet` does.
 - `NFKMLXLaMa` (`@objc`) — a real single-forward inpainter: the LaMa FFC-ResNet generator in `MLXNN`
   (each Fast Fourier Convolution runs a spatial branch and an FFT spectral branch via `MLXFFT`
   `rfft2`/`irfft2`, orthogonally normalized), run through an `NFKMLXMattingBackend` (plate under

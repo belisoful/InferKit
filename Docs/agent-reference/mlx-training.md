@@ -196,11 +196,12 @@ configuration on 2026-09-30 (sources under `inferkit-validation/sources/decay-au
 column. All-In-One, VAD, DeepLabV3, Silero VAD, the PANNs tagger, and HT Demucs build it at their references'
 rates; every other recipe that has one exposes it off by default, and the row names the property that
 turns it on. A reference whose training runs none (Wav2Vec2 / HuBERT, V-JEPA 2, RT-DETR, YOLO,
-Cosmos, Zero-DCE, Zero-DCE++, Basic Pitch, Conv-TasNet, GTCRN, NU-Wave 2, Open-Jev, the denoiser, Demucs v2) lists nothing for it.
+Cosmos, Zero-DCE, Zero-DCE++, Basic Pitch, Conv-TasNet, GTCRN, NU-Wave 2, Open-Jev, the denoiser, Demucs v2, NAFNet) lists nothing for it.
 
 | Recipe | Reference optimizer | Not reproduced |
 | --- | --- | --- |
 | Zero-DCE | `lowlight_train.py`: `torch.optim.Adam`, 1e-4, weight decay 1e-4 (added to the gradient), clip 0.1 | — |
+| NAFNet | megvii-research/NAFNet 2b4af71 basicsr `ImageRestorationModel` and each release's `options/train` file: `torch.optim.AdamW` 1e-3, betas 0.9 / 0.9, decay 0 (SIDD) or 1e-3 (GoPro, REDS) on every parameter, `clip_grad_norm_` at 0.01 (`use_grad_clip`, on by default), `CosineAnnealingLR` to 1e-7 over 200,000 or 400,000 updates (`NFKMLXNAFNetTrainingRecipe`); `PSNRLoss`; a 256-pixel paired crop, with flips and a transpose for GoPro and REDS | the batch of 32 or 64 (8 GPUs, `batchSize`); the recipe steps on the batch `examples` returns. The GoPro and REDS releases run `NAFNetLocal`, whose channel attention pools over a window 1.5 times the training crop; at the 256-pixel crop that window covers the input, so training pools globally as `NAFNet` does |
 | Zero-DCE++ | Li-Chongyi/Zero-DCE_extension 09f202b `Zero-DCE++/lowlight_train.py`: `torch.optim.Adam`, 1e-4, weight decay 1e-4 (added to the gradient), clip 0.1, a constant rate; the estimator at scale factor 1 (`NFKMLXZeroDCEPlusObjective.scaleFactor`) | `dataloader.py`'s 512-pixel resize, the caller's data choice; the batch of 8 |
 | SegFormer | NVlabs `segformer.*.py` (mmseg): AdamW 6e-5 and 6e-4 for the decode head (`head` ×10), betas 0.9 / 0.999, decay 0.01, none on `norm` parameters (the encoder's layer norms), no clip; `poly` (power 1) after a 1,500-step linear warm-up from 1e-6 | none for dropout: NVlabs' classifier `Dropout2d` 0.1 and the drop path rising to 0.1 (`local_configs/segformer/*`, `mix_transformer.py`, in the store at `sources/segformer`, commit 65fa8cf) are off by default; `NFKMLXSegFormerNet.dropout = .reference` applies them |
 | SAM 2 | `sam2.1_hiera_b+_MOSE_finetune.yaml`: AdamW 5e-6, and 3e-6 for the image encoder with the trunk decayed 0.9 per layer (`pos_embed` exempt), decay 0.1, none on `*bias*` or `nn.LayerNorm` (`LayerNorm2d` decays), clip 0.1; cosine to a tenth | — |

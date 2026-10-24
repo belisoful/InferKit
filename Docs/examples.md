@@ -4815,6 +4815,21 @@ try NFKMLXWeights.save(net, to: tuned)
 let separator = try NFKMLXHTDemucs.backend(weightsURL: tuned)     // Objective-C: backendWithWeightsURL:error:
 ```
 
+### Fine-tuning NAFNet
+
+NAFNet fine-tunes on pairs of degraded and clean images as its option files train it. Each step takes both
+as `[N, H, W, 3]` in `0...1`; the recipe crops 256-pixel patches at the same place in each pair, and the
+GoPro and REDS recipes also flip and transpose them. Pick the recipe for the release being tuned.
+
+```swift
+let net = try NFKMLXNAFNet.network(weightsURL: releasedWeights, configuration: .sidd)
+try NFKMLXNAFNet.fineTune(net, examples: { step in myPairs[step % myPairs.count] },
+                          recipe: .sidd, steps: 2000)
+
+try NFKMLXWeights.save(net, to: tuned)
+let denoiser = try NFKMLXNAFNet.backend(variant: .sidd, weightsURL: tuned)  // Objective-C: backendWithVariant:weightsURL:error:
+```
+
 ### Teaching bandwidth extension your own audio
 
 NU-Wave 2 restores the high band of a narrow-band recording. Fine-tuning it on wide-band audio of the

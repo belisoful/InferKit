@@ -1084,6 +1084,31 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertEqual(separator.backendIdentifier, NFKMLXHTDemucs.modelName)
     }
 
+    // Docs/examples.md: Fine-tuning NAFNet
+    func testExampleFineTuningNAFNet() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("nafnet-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads the release and trains on 256-pixel crops of full-size pairs; a randomly
+        // initialized network on 48-pixel pairs and 32-pixel crops stands in.
+        let clean: [Float] = (0 ..< 2 * 48 * 48 * 3).map { Float($0 % 53) / 53 }
+        let noisy: [Float] = clean.enumerated().map { $0.element + 0.05 * Float(($0.offset * 7) % 11) / 11 }
+        let myPairs = [(degraded: MLXArray(noisy, [2, 48, 48, 3]), clean: MLXArray(clean, [2, 48, 48, 3]))]
+        let net = try NFKMLXNAFNet.network(weightsURL: nil, configuration: .sidd)
+        var recipe = NFKMLXNAFNetTrainingRecipe.sidd
+        recipe.augmentation?.patchSize = 32
+        let history = try NFKMLXNAFNet.fineTune(net, examples: { step in myPairs[step % myPairs.count] },
+                                                recipe: recipe, steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        let denoiser = try NFKMLXNAFNet.backend(variant: .sidd, weightsURL: tuned)
+        XCTAssertEqual(denoiser.backendIdentifier, NFKMLXNAFNet.modelName)
+    }
+
     // Docs/examples.md: Fine-tuning the colorizers
     func testExampleFineTuningTheColorizers() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

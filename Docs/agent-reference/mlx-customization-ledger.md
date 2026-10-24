@@ -44,19 +44,22 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 54 |
+| `ships` | 58 |
 | `trainable`, no recipe yet | 44 |
-| `offline` | 39 |
+| `offline` | 40 |
 | `uncertain` | 0 |
 | `untrainable` | 13 |
 | Shared infrastructure, no objective of its own | 1 |
-| Total rows | 151 |
+| Total rows | 156 |
 
-The 167 model entries become 151 rows because a few entries take one ruling for several symbols: the
+A row that rules on two parts or sizes of one model, such as `trainable (T3) / offline (HiFT)` or
+`ships at 2B and 4B, offline at 27B`, counts under its first outcome.
+
+The model entries become 156 rows because a few entries take one ruling for several symbols: the
 generation pipelines share a row, the schedulers share a row, and Gemma's parameter-free adapters
 share a row.
 
-Fifty-four recipes ship and 44 models are trainable with none written. That is the size of
+Fifty-eight rows ship a recipe and 44 models are trainable with none written. That is the size of
 the work the rule creates.
 
 The largest single finding: **the detector losses are published and portable.** ultralytics ships
@@ -109,7 +112,7 @@ Demucs, and HT Demucs ship.
 | Model | Outcome | Level | Reach | What decides it |
 | --- | --- | --- | --- | --- |
 | `NFKMLXZeroDCE` | ships | zero-reference | public | Four `Myloss.py` losses measured by `run_reference.py zero_dce_losses`. |
-| `NFKMLXNAFNet` | trainable | full | internal | Paired-data restoration. megvii-research's training option file supplies the loss. |
+| `NFKMLXNAFNet` | ships | full | public | basicsr's `PSNRLoss`, AdamW with the 0.01 clip, and the cosine schedule, one recipe per release's option file, measured by `run_reference.py nafnet_training` on the SIDD width-32 release. |
 | `NFKMLXStyleTransfer` | trainable | full | internal | 1.7M parameters. The VGG-16 perceptual and Gram loss needs `NFKMLXVGG16Features`, which already ships publicly. |
 | `NFKMLXAdaIN` | trainable | full (decoder) | internal | The encoder stays frozen and the loss network is the model's own ported VGG-19 encoder. |
 | `NFKMLXZeroDCEPlus` | ships | zero-reference | public | `lowlight_train.py`'s four `Myloss.py` losses with smoothness at 1600 over the shared curve map, its Adam, and the clip at 0.1, at the script's scale factor 1 and the released 12, measured by `run_reference.py zero_dce_plus_training`. |
@@ -341,6 +344,7 @@ the recipe detail.
 | `NFKMLXVoiceRestore` | untrainable | skirdey/voicerestore at bfda753, both branches. |
 | `NFKMLXDenoiser` | trainable, full | facebookresearch/denoiser at 8afd7c1, `solver.py` and `stft_loss.py`. |
 | `NFKMLXDemucs` | ships, full | facebookresearch/demucs `v2` branch at 64ed2cb, `train.py` and `augment.py`. |
+| `NFKMLXNAFNet` | ships, full | megvii-research/NAFNet at 2b4af71, basicsr's `ImageRestorationModel`, losses, transforms, and `options/train`. |
 | `NFKMLXHTDemucs` | ships, full | facebookresearch/demucs v4.0.1 at ef66d25, `solver.py`, `augment.py`, `train.py`, and `conf/`, with each release's `training_args`. |
 | `NFKMLXSNAC` | untrainable | hubertsiuzdak/snac at 8f79a71, the whole tree. |
 | `NFKMLXStableAudioDiTNet` / `NFKMLXStableAudioProjectionNet` | trainable, LoRA | Stability-AI/stable-audio-tools at 3241adb, `training/diffusion.py`, `training/utils.py`, and `models/lora/`; the release's `model_config.json` for the optimizer. |

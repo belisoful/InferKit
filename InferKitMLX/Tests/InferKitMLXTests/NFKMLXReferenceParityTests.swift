@@ -12586,6 +12586,85 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                                       uniforms: sequence("uniforms").map { $0.asArray(Float.self) })
     }
 
+    // NAFNet's training against megvii-research's own basicsr (2b4af71) on the released SIDD width-32 denoiser:
+    // the restoration, `PSNRLoss`, the global gradient norm before `clip_grad_norm_`'s 0.01 and ten gradients
+    // through the depthwise convolutions, the channel attention, the norms, `beta` and `gamma`, the upsampler,
+    // and the ending, then the loss after one step of the option file's AdamW, each held to float64's within
+    // twice the reference's own float32 distance. The paired crop and flips replay the reference's draws.
+    func testNAFNetTrainingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_NAFNET_TRAINING"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_NAFNET_TRAINING to a record from run_reference.py nafnet_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        func values(_ key: String) throws -> [Float] { try array(key).asArray(Float.self) }
+        func distance(_ a: MLXArray, _ b: MLXArray) -> Float {
+            sqrt(square(a - b).sum()).item(Float.self) / sqrt(square(b).sum()).item(Float.self)
+        }
+        let degraded = try array("degraded"), clean = try array("clean")
+        let net = try NFKMLXNAFNet.network(weightsURL: weights("IK_VAL_NAFNET"), configuration: .sidd)
+        let objective = NFKMLXNAFNetObjective()
+        net.train(true)
+
+        let restored = net(degraded)
+        let restoredFloor = distance(try array("restored"), try array("f64::restored"))
+        let restoredError = distance(restored, try array("f64::restored"))
+        print("PARITY nafnet-training: restoration from float64 \(restoredError) (reference float32 \(restoredFloor))")
+        XCTAssertLessThan(restoredError, max(1e-7, 2 * restoredFloor))
+
+        let loss = objective.loss(restored: restored, target: clean).item(Float.self)
+        let loss32 = try values("loss")[0], loss64 = try values("f64::loss")[0]
+        print("PARITY nafnet-training: loss \(loss) vs \(loss32) (float64 \(loss64))")
+        XCTAssertEqual(loss, loss64, accuracy: max(abs(loss64) * 1e-5, 2 * abs(loss32 - loss64)))
+
+        let gradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, arrays in
+            [objective(net, arrays[0], arrays[1])]
+        }(net, [degraded, clean]).1.flattened())
+        let norm = sqrt(gradients.values.map { square($0).sum() }.reduce(MLXArray(Float(0)), +)).item(Float.self)
+        let norm32 = try values("gradient_norm")[0], norm64 = try values("f64::gradient_norm")[0]
+        print("PARITY nafnet-training: global gradient norm \(norm) vs \(norm32) (float64 \(norm64))")
+        XCTAssertEqual(norm, norm64, accuracy: max(norm64 * 1e-4, 2 * abs(norm32 - norm64)))
+        for reference in ["intro.weight", "encoders.0.0.norm1.weight", "encoders.3.7.conv2.weight", "encoders.1.1.conv4.bias",
+                          "downs.2.weight", "middle_blks.0.beta", "middle_blks.11.sca.1.weight", "ups.0.0.weight",
+                          "decoders.3.1.gamma", "ending.bias"] {
+            let name = NFKMLXNAFNet.remapReferenceKey(reference)
+            let ours = try XCTUnwrap(gradients[name], name)
+            // `beta` and `gamma` are `[1, C, 1, 1]` in the reference and `[1, 1, 1, C]` here; a convolution's
+            // kernel moves its input channels last.
+            func layout(_ value: MLXArray) -> MLXArray {
+                if reference.hasSuffix("beta") || reference.hasSuffix("gamma") { return value.reshaped(ours.shape) }
+                return value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value
+            }
+            let theirs = layout(try array("grad::" + reference)), theirs64 = layout(try array("f64::grad::" + reference))
+            let floor = distance(theirs, theirs64)
+            print("PARITY nafnet-training: \(name) gradient from float64: ours \(distance(ours, theirs64)), "
+                  + "reference float32 \(floor)")
+            XCTAssertLessThan(distance(ours, theirs64), max(1e-7, 2 * floor), name)
+        }
+
+        var recipe = NFKMLXNAFNetTrainingRecipe.sidd
+        recipe.augmentation = nil
+        try NFKMLXNAFNet.fineTune(net, examples: { _ in (degraded, clean) }, recipe: recipe, steps: 1)
+        net.train(true)
+        let lossAfter = objective(net, degraded, clean).item(Float.self)
+        let after32 = try values("loss_after_step")[0], after64 = try values("f64::loss_after_step")[0]
+        print("PARITY nafnet-training: loss after one step \(lossAfter) vs \(after32) (float64 \(after64))")
+        XCTAssertEqual(lossAfter, after64, accuracy: max(abs(after64) * 1e-5, 2 * abs(after32 - after64)))
+
+        let halves = try values("augment::draws")
+        var draws = NFKDenoiserReplayedDraws(
+            values: Swift.stride(from: 0, to: halves.count, by: 2).map { Double(halves[$0]) + Double(halves[$0 + 1]) },
+            permutationValues: [], offsetValues: [])
+        let (outDegraded, outClean) = NFKMLXNAFNetAugmentation(patchSize: 32, flip: true, rotation: true)
+            .apply(degraded: try array("augment::degraded"), clean: try array("augment::clean"), draws: &draws)
+        let augmentDifference = max(abs(outDegraded - (try array("augment::out_degraded"))).max().item(Float.self),
+                                    abs(outClean - (try array("augment::out_clean"))).max().item(Float.self))
+        print("PARITY nafnet-training: augmentation worst \(augmentDifference); \(draws.values.count) draws left")
+        XCTAssertEqual(augmentDifference, 0)
+        XCTAssertTrue(draws.values.isEmpty, "every recorded draw is consumed")
+    }
+
     // Conv-TasNet's objective against asteroid v0.5.2's own `PITLossWrapper(pairwise_neg_sisdr)`, on
     // estimates that are the sources crossed, scaled, shifted, and noised: the pairwise matrix and the
     // loss under the best assignment.

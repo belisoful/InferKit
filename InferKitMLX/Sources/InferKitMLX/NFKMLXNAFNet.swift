@@ -72,12 +72,13 @@ final class NFKNAFBlock: Module {
     let gamma: MLXArray
 
     init(channels c: Int) {
-        norm1 = LayerNorm(dimensions: c)
+        // basicsr's `LayerNorm2d` normalizes with an epsilon of 1e-6.
+        norm1 = LayerNorm(dimensions: c, eps: 1e-6)
         conv1 = Conv2d(inputChannels: c, outputChannels: c * 2, kernelSize: 1)
         conv2 = Conv2d(inputChannels: c * 2, outputChannels: c * 2, kernelSize: 3, padding: 1, groups: c * 2)
         conv3 = Conv2d(inputChannels: c, outputChannels: c, kernelSize: 1)
         sca = Conv2d(inputChannels: c, outputChannels: c, kernelSize: 1)
-        norm2 = LayerNorm(dimensions: c)
+        norm2 = LayerNorm(dimensions: c, eps: 1e-6)
         conv4 = Conv2d(inputChannels: c, outputChannels: c * 2, kernelSize: 1)
         conv5 = Conv2d(inputChannels: c, outputChannels: c, kernelSize: 1)
         beta = MLXArray.zeros([1, 1, 1, c])
@@ -104,8 +105,10 @@ final class NFKNAFBlock: Module {
     }
 }
 
-/// The NAFNet U-shaped restoration network. Input `[1, H, W, 3]` → restored `[1, H, W, 3]`.
-final class NFKMLXNAFNetNet: Module {
+/// The NAFNet U-shaped restoration network: a degraded batch `[N, H, W, 3]` in, the restored batch out.
+///
+/// Introduced in InferKit 0.4.0.
+public final class NFKMLXNAFNetNet: Module {
     @ModuleInfo(key: "intro") var intro: Conv2d
     @ModuleInfo(key: "encoders") var encoders: [[NFKNAFBlock]]
     @ModuleInfo(key: "downs") var downs: [Conv2d]
@@ -115,8 +118,11 @@ final class NFKMLXNAFNetNet: Module {
     @ModuleInfo(key: "ending") var ending: Conv2d
 
     let levels: Int
+    /// The geometry the network was built at.
+    public let configuration: NFKMLXNAFNetConfiguration
 
     init(_ configuration: NFKMLXNAFNetConfiguration) {
+        self.configuration = configuration
         levels = configuration.levels
         _intro.wrappedValue = Conv2d(inputChannels: 3, outputChannels: configuration.width, kernelSize: 3, padding: 1)
 
@@ -152,6 +158,22 @@ final class NFKMLXNAFNetNet: Module {
             .reshaped([n, h * 2, w * 2, c / 4])
     }
 
+    /// Restores a batch `[N, H, W, 3]`, as the reference's `forward` does: the batch is zero-padded on the
+    /// bottom and right to a multiple of `2^levels`, run, added to its input, and cropped back. Nothing is
+    /// clamped, so training sees the raw residual sum. Introduced in InferKit 0.4.0.
+    public func callAsFunction(_ batch: MLXArray) -> MLXArray {
+        let (height, width) = (batch.dim(1), batch.dim(2))
+        let multiple = 1 << levels
+        let padH = (multiple - height % multiple) % multiple
+        let padW = (multiple - width % multiple) % multiple
+        var input = batch
+        if padH > 0 || padW > 0 {
+            input = padded(batch, widths: [IntOrPair((0, 0)), IntOrPair((0, padH)), IntOrPair((0, padW)), IntOrPair((0, 0))])
+        }
+        let output = run(input)
+        return padH > 0 || padW > 0 ? output[0..., 0 ..< height, 0 ..< width, 0...] : output
+    }
+
     private func run(_ input: MLXArray) -> MLXArray {
         var x = intro(input)
         var skips = [MLXArray]()
@@ -169,19 +191,9 @@ final class NFKMLXNAFNetNet: Module {
         return ending(x) + input
     }
 
-    /// Restores a bridged image `[H, W, 3]` (`0...1`). Pads to a multiple of `2^levels` for the
-    /// symmetric down/up path, then crops back.
+    /// Restores a bridged image `[H, W, 3]` (`0...1`), clamped back to that range.
     func restore(_ image: MLXArray) -> MLXArray {
-        let (height, width) = (image.shape[0], image.shape[1])
-        let multiple = 1 << levels
-        let padH = (multiple - height % multiple) % multiple
-        let padW = (multiple - width % multiple) % multiple
-        var input = image.reshaped([1, height, width, image.shape[2]])
-        if padH > 0 || padW > 0 {
-            input = padded(input, widths: [IntOrPair((0, 0)), IntOrPair((0, padH)), IntOrPair((0, padW)), IntOrPair((0, 0))], mode: .edge)
-        }
-        let output = clip(run(input), min: 0, max: 1)
-        return output[0, 0 ..< height, 0 ..< width, 0...]
+        clip(self(image.expandedDimensions(axis: 0)), min: 0, max: 1)[0]
     }
 }
 
@@ -208,6 +220,18 @@ public final class NFKMLXNAFNet: NSObject {
 
     static func makeNet(_ configuration: NFKMLXNAFNetConfiguration = NFKMLXNAFNetConfiguration()) -> NFKMLXNAFNetNet {
         NFKMLXNAFNetNet(configuration)
+    }
+
+    /// Builds a NAFNet at `configuration` for training or for reloading a trained checkpoint. With a
+    /// `weightsURL` the checkpoint loads, a released one (converted or raw) or one `NFKMLXWeights` saved,
+    /// into that geometry; without one the net is randomly initialized. Introduced in InferKit 0.4.0.
+    public static func network(weightsURL: URL?,
+                               configuration: NFKMLXNAFNetConfiguration = .sidd) throws -> NFKMLXNAFNetNet {
+        let net = makeNet(configuration)
+        if let weightsURL {
+            try loadWeights(into: net, from: weightsURL)
+        }
+        return net
     }
 
     /// Builds a NAFNet restoration backend directly from optional local weights — no registry required.

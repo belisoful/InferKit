@@ -5367,7 +5367,8 @@
         "convtasnet",
         "audio_tagger_training",
         "demucs_training",
-        "htdemucs_training"
+        "htdemucs_training",
+        "nafnet_training"
       ]
     },
     "basic_pitch": {
@@ -6509,6 +6510,12 @@
       "record": "reference/htdemucs-training-reference.safetensors",
       "environment": "ultralytics",
       "command": "htdemucs_training --checkpoint \"/Volumes/InferKit Models/inferkit-validation/raw/htdemucs_ft/f7e0c4bc-ba3fe64a.th\""
+    },
+    {
+      "key": "IK_PARITY_NAFNET_TRAINING",
+      "record": "reference/nafnet-training-reference.safetensors",
+      "environment": "ultralytics",
+      "command": "IK_NAFNET_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/sources/refsrc/nafnet_train\" nafnet_training --checkpoint \"/Volumes/InferKit Models/InferKit/validation/raw/nafnet_sidd_width32.pth\""
     },
     {
       "key": "IK_PARITY_STABLE_AUDIO_LOSS",

@@ -1509,6 +1509,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### NAFNet fine-tunes on degraded and clean pairs as its option files train it
+
+- `NFKMLXNAFNet.fineTune` trains NAFNet as megvii-research's basicsr `ImageRestorationModel` does: every parameter,
+  `PSNRLoss`, AdamW with betas 0.9 and 0.9, the gradient clipped at 0.01, and a cosine schedule to 1e-7.
+  `NFKMLXNAFNetTrainingRecipe` holds each release's option file: `.sidd`, `.siddWidth64`, `.goPro`,
+  `.goProWidth64`, and `.reds`.
+- `NFKMLXNAFNetObjective` is the loss, and `NFKMLXNAFNetAugmentation` the paired dataset's random crop, flips,
+  and transpose, with an undersized pair mirrored to the crop size.
+- `NFKMLXNAFNetNet` is public, and `NFKMLXNAFNet.network(weightsURL:configuration:)` builds it. Its forward
+  zero-pads to a multiple of 16 and crops back, as the reference's does; it had padded by repeating the edge.
+- The channel layer norms use basicsr's epsilon of 1e-6 in place of 1e-5.
+
 #### Hybrid Transformer Demucs fine-tunes through both branches as demucs v4's solver trains it
 
 - `NFKMLXHTDemucs.fineTune` trains Hybrid Transformer Demucs as demucs v4's `solver.py` does, every parameter
