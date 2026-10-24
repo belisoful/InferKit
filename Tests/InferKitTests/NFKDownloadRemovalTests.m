@@ -125,7 +125,15 @@
 
 	[self place:8192 inRepo:@"org/model" path:@"model.bin"];
 	status = [self.hub downloadStatusForModelSource:source];
-	XCTAssertEqual(status.presence, NFKDownloadPresenceComplete, @"an absent optional file does not make it partial");
+	XCTAssertEqual(status.presence, NFKDownloadPresencePartial, @"no download has asked the server for extra.json");
+	NSArray<NSString *> *unchecked = @[ @"extra.json" ];
+	XCTAssertEqualObjects(status.uncheckedOptionalPaths, unchecked);
+	XCTAssertEqual(status.missingPaths.count, (NSUInteger)0);
+
+	XCTAssertTrue([self.hub recordCompleteDownloadOfRepo:@"org/model" revision:nil paths:@[] absentPaths:unchecked error:NULL]);
+	status = [self.hub downloadStatusForModelSource:source];
+	XCTAssertEqual(status.presence, NFKDownloadPresenceComplete, @"an optional file the server lacks does not make it partial");
+	XCTAssertEqual(status.uncheckedOptionalPaths.count, (NSUInteger)0);
 	XCTAssertGreaterThanOrEqual(status.byteCount, 4096LL + 8192LL);
 	XCTAssertEqualObjects(status.localURL.path, [self.cacheDir URLByAppendingPathComponent:@"org/model/main"].path);
 }

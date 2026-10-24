@@ -120,7 +120,9 @@ removal cover every repository a source's files come from.
 ### Downloaded or not, and removal
 
 `-downloadStatusForModelSource:` reads the cache alone and answers complete, partial, or absent, with
-the bytes on disk. `-removalPlanForModelSource:error:` lists the files a removal deletes and the files
+the bytes on disk. An optional file the catalog lists after the download, which no download has asked
+the server for, makes the source partial and appears in `uncheckedOptionalPaths`; the next download
+fetches it or records that the server lacks it, and the model builds meanwhile. `-removalPlanForModelSource:error:` lists the files a removal deletes and the files
 it keeps, each with its reason: a file another catalog model whose download is complete uses, or the
 target of a symbolic link that something else still needs, such as a file of another snapshot. A file
 that a link elsewhere in the cache resolves to stays too. `-removeFilesInPlan:error:` deletes them,

@@ -376,7 +376,8 @@ calls cover what an app shows for a model:
   catalog variant) returns an `NFKDownload`: progress overall and per file, the transfer rate, an
   `NSProgress`, and `cancel`.
 - Status and removal → `downloadStatusForModelSource:` reads complete, partial, or absent with the
-  bytes on disk, and `removalPlanForModelSource:error:` then `removeFilesInPlan:error:` delete the
+  bytes on disk. A file the catalog lists after a download makes it partial until the next download
+  fetches it (`uncheckedOptionalPaths`), and the model still builds meanwhile, and `removalPlanForModelSource:error:` then `removeFilesInPlan:error:` delete the
   downloaded files, keeping any another downloaded model uses.
 
 <!-- objc-check: given NFKModelDescriptor *model = nil; -->

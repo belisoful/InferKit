@@ -97,6 +97,9 @@ typedef void (^NFKDownloadCompletionHandler)(NSURL * _Nullable localURL, NSError
 @property (nonatomic, copy, nullable) NSString *cacheRepository;
 /*! YES for a plan of a whole repository, whose completion the hub records in the snapshot. */
 @property (nonatomic, assign) BOOL recordsCompletion;
+/*! The optional paths each repository of the plan lacks, recorded as absent once the download
+	completes: dictionaries of "repository", "revision" (absent for the default), and "paths". */
+@property (nonatomic, copy) NSArray<NSDictionary<NSString *, id> *> *absentOptionalFiles;
 @end
 
 @interface NFKDownloadStatus ()
@@ -111,7 +114,18 @@ typedef void (^NFKDownloadCompletionHandler)(NSURL * _Nullable localURL, NSError
 					missingPaths:(NSArray<NSString *> *)missingPaths
 					partialPaths:(NSArray<NSString *> *)partialPaths
 				partialByteCount:(long long)partialByteCount
+						localURL:(nullable NSURL *)localURL;
+- (instancetype)initWithPresence:(NFKDownloadPresence)presence
+					   byteCount:(long long)byteCount
+					presentPaths:(NSArray<NSString *> *)presentPaths
+					missingPaths:(NSArray<NSString *> *)missingPaths
+					partialPaths:(NSArray<NSString *> *)partialPaths
+				partialByteCount:(long long)partialByteCount
+		  uncheckedOptionalPaths:(NSArray<NSString *> *)uncheckedOptionalPaths
 						localURL:(nullable NSURL *)localURL NS_DESIGNATED_INITIALIZER;
+/*! Whether the cache holds every required file of a source that lists them: complete, or partial over
+	unchecked optional paths alone. A model builds from such a download. */
+@property (nonatomic, readonly) BOOL holdsEveryRequiredFile;
 @end
 
 @interface NFKCachedFile ()

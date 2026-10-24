@@ -40,6 +40,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### A download fetches the optional files its catalog lists later
+
+- `NFKDownloadStatus.uncheckedOptionalPaths` lists a catalog source's optional files that are not cached and that
+  no download has found missing from the server. Such a file makes the source partial, so the next download
+  fetches it. A release downloaded before the catalog listed `generation_config.json` reads partial until then.
+  Before, the status read complete and the file never arrived.
+- A catalog source download records the optional files the server lacks in the snapshot, so the status reads
+  complete after it with no network.
+- The hub cache locator builds a model whose only gaps are unchecked optional files, and a removal keeps the files
+  such a download uses.
+
 #### The server answers Google's generateContent API
 
 - `NFKInferenceServer` serves `/v1beta/models/{model}:generateContent`, `:streamGenerateContent` (server-sent

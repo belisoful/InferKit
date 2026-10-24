@@ -10,6 +10,7 @@
 #import "NFKDynamicBackend.h"
 #import "NFKHardwareProfile.h"
 #import "NFKHFHub.h"
+#import "NFKDownloadInternal.h"
 #import "NFKModelEngineBuilders.h"
 
 static NSError *NFKModelBuildError(NFKModelCatalogError code, NSString *reason)
@@ -375,7 +376,7 @@ static NSString *NFKModelNotDownloadedReason(NFKModelDescriptor *descriptor, NFK
 		}
 		NFKHFHub *hub = [NFKHFHub hubWithCacheDirectoryURL:cacheDirectoryURL];
 		NFKDownloadStatus *status = [hub downloadStatusForModelSource:source];
-		BOOL complete = status.presence == NFKDownloadPresenceComplete;
+		BOOL complete = status.holdsEveryRequiredFile;
 		if (!complete && !NFKModelSourceListsNoRequiredFile(source)) {
 			return nil;
 		}

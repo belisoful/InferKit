@@ -591,13 +591,20 @@ added 2026-10-15, InferKit 0.4.0). The transfer is `NFKHFHubTransfer` (private).
   download's files) and `absent` (optional files the server refused with HTTP 404), each unioned on
   write under one process-wide lock; a path recorded present leaves `absent`. A bare JSON array, the
   first format, reads as `paths`. A whole-repository plan and every InferKitMLX release download write
-  it (`recordCompleteDownloadOfRepo:revision:paths:absentPaths:error:`). `paths` is how a source that
+  it (`recordCompleteDownloadOfRepo:revision:paths:absentPaths:error:`). A catalog source download writes
+  `absent` alone: each repository part's optional paths its listing lacks (`absentOptionalFiles` on the
+  plan), recorded after the last file lands. `paths` is how a source that
   lists no files reads complete; without it such a snapshot reads partial whenever it holds a file.
   `absent` is how a cached release loads offline: the release layer skips a recorded refusal.
   `forgetRecordedAbsentPathsOfRepo:revision:error:` clears it and writes nothing when there is no
   record.
-- Status counts a present file's allocated bytes at its link target. Optional files add bytes and do
-  not decide completeness. A source of kind `system` or `none` is complete with no bytes.
+- Status counts a present file's allocated bytes at its link target. Optional files add bytes. An
+  optional path of a repository part that is neither cached nor in `absent` is unchecked
+  (`uncheckedOptionalPaths`, globs aside) and reads the source partial: the catalog listed it after the
+  download, which never asked for it (2026-10-23: Qwen3 snapshots from before `generation_config.json`
+  joined the language releases). The next download fetches it or records it absent. The hub locator and
+  removal claims use `holdsEveryRequiredFile`, so such a snapshot still builds offline and still claims
+  its files. A source of kind `system` or `none` is complete with no bytes.
 - Removal plans read the cache alone. A file is kept when another catalog variant (`hub.modelCatalog`,
   default the shared catalog) at the same repository and normalized revision lists it and that
   variant's download is complete. A variant whose listed paths equal the target's (or that, like the

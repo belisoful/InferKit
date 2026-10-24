@@ -50,6 +50,7 @@
 @synthesize snapshotURL = _snapshotURL;
 @synthesize cacheRepository = _cacheRepository;
 @synthesize recordsCompletion = _recordsCompletion;
+@synthesize absentOptionalFiles = _absentOptionalFiles;
 
 - (instancetype)initWithRepository:(nullable NSString *)repository
 						  revision:(nullable NSString *)revision
@@ -64,6 +65,7 @@
 		_sourceURL = [sourceURL copy];
 		_files = [files copy];
 		_localURL = [localURL copy];
+		_absentOptionalFiles = @[];
 	}
 	return self;
 }
@@ -168,6 +170,20 @@
 				partialByteCount:(long long)partialByteCount
 						localURL:(nullable NSURL *)localURL
 {
+	return [self initWithPresence:presence byteCount:byteCount presentPaths:presentPaths missingPaths:missingPaths
+					 partialPaths:partialPaths partialByteCount:partialByteCount uncheckedOptionalPaths:@[]
+						 localURL:localURL];
+}
+
+- (instancetype)initWithPresence:(NFKDownloadPresence)presence
+					   byteCount:(long long)byteCount
+					presentPaths:(NSArray<NSString *> *)presentPaths
+					missingPaths:(NSArray<NSString *> *)missingPaths
+					partialPaths:(NSArray<NSString *> *)partialPaths
+				partialByteCount:(long long)partialByteCount
+		  uncheckedOptionalPaths:(NSArray<NSString *> *)uncheckedOptionalPaths
+						localURL:(nullable NSURL *)localURL
+{
 	self = [super init];
 	if (self != nil) {
 		_presence = presence;
@@ -176,9 +192,17 @@
 		_missingPaths = [missingPaths copy];
 		_partialPaths = [partialPaths copy];
 		_partialByteCount = partialByteCount;
+		_uncheckedOptionalPaths = [uncheckedOptionalPaths copy];
 		_localURL = [localURL copy];
 	}
 	return self;
+}
+
+- (BOOL)holdsEveryRequiredFile
+{
+	return self.presence == NFKDownloadPresenceComplete
+		|| (self.presence == NFKDownloadPresencePartial && self.missingPaths.count == 0
+			&& self.uncheckedOptionalPaths.count > 0);
 }
 
 - (NSString *)description

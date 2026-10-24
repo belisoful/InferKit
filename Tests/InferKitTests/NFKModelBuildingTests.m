@@ -561,6 +561,32 @@ static const NSInteger NFKBuildTestGiB = (NSInteger)1 << 30;
 						  config.URLByDeletingLastPathComponent.standardizedURL);
 }
 
+// A snapshot holding every required file is located while an optional file no download has asked for
+// is missing: the model builds, and a download fetches the file later.
+- (void)testTheHubCacheLocatorFindsASnapshotMissingOnlyAnUncheckedOptionalFile
+{
+	NSURL *cache = [self scratchCache];
+	NSArray<NFKModelFile *> *files = @[
+		[[NFKModelFile alloc] initWithPath:@"config.json" byteCount:nil sha256:nil role:nil optional:NO extensions:nil],
+		[[NFKModelFile alloc] initWithPath:@"generation_config.json" byteCount:nil sha256:nil role:nil optional:YES
+								extensions:nil],
+	];
+	NFKModelSource *source = [[NFKModelSource alloc] initWithKind:NFKModelSourceKindHuggingFace repository:@"org/model"
+														 revision:nil URL:nil layout:NFKModelSourceLayoutDirectory
+															files:files requiresConversion:NO extensions:nil];
+	NFKModelDescriptor *descriptor = [self modelWithIdentifier:@"unchecked.model" engine:NFKBuildTestEngine provider:nil
+												  requirements:nil variant:[self variantWithSource:source]];
+	NFKHFHub *hub = [NFKHFHub hubWithCacheDirectoryURL:cache];
+	NSURL *config = [hub localURLForRepo:@"org/model" revision:nil path:@"config.json"];
+	[NSFileManager.defaultManager createDirectoryAtURL:config.URLByDeletingLastPathComponent
+						   withIntermediateDirectories:YES attributes:nil error:NULL];
+	XCTAssertTrue([[NSData dataWithBytes:"{}" length:2] writeToURL:config atomically:YES]);
+	XCTAssertEqual([hub downloadStatusForModelSource:source].presence, NFKDownloadPresencePartial);
+	NFKModelLocator locator = [NFKModelCatalog hubCacheLocatorForCacheDirectoryURL:cache];
+	XCTAssertEqualObjects(locator(descriptor, descriptor.defaultVariant, NULL).standardizedURL,
+						  config.URLByDeletingLastPathComponent.standardizedURL);
+}
+
 // A variant whose files are not downloaded is refused: a builder given no location builds its network
 // on initial values, which run and answer nonsense.
 - (void)testABuildWhoseFilesAreNotDownloadedIsRefused

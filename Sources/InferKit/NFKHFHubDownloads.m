@@ -249,7 +249,11 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 		}
 		[chosen addObject:path];
 	}
+	NSMutableArray<NSString *> *absentOptional = [NSMutableArray array];
 	for (NSString *path in optionalPaths) {
+		if (!NFKHFHubIsGlob(path) && entriesByPath[path] == nil) {
+			[absentOptional addObject:path];
+		}
 		for (NSDictionary *entry in entries) {
 			NSString *entryPath = entry[@"path"];
 			BOOL matches = NFKHFHubIsGlob(path) ? NFKHFHubGlobMatches(path, entryPath) : [path isEqualToString:entryPath];
@@ -278,6 +282,9 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	plan.snapshotURL = snapshotURL;
 	plan.cacheRepository = repo;
 	plan.recordsCompletion = requiredPaths == nil;
+	if (absentOptional.count > 0) {
+		plan.absentOptionalFiles = @[ @{ @"repository": repo, @"revision": normalized, @"paths": absentOptional } ];
+	}
 	return plan;
 }
 
@@ -582,11 +589,16 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 				 listings:listings singleFile:singleFile error:outError];
 }
 
-/*! The planned files of one part. An optional URL file the server does not have is left out. */
-- (nullable NSArray<NFKDownloadPlanFile *> *)planFilesOfPart:(NFKHFHubSourcePart *)part error:(NSError **)outError
+/*! The planned files of one part. An optional URL file the server does not have is left out; the
+	optional files a repository part lacks join absentOptionalFiles. */
+- (nullable NSArray<NFKDownloadPlanFile *> *)planFilesOfPart:(NFKHFHubSourcePart *)part
+										 absentOptionalFiles:(NSMutableArray<NSDictionary<NSString *, id> *> *)absentOptionalFiles
+													   error:(NSError **)outError
 {
 	if (part.URL == nil) {
-		return [self planPart:part singleFile:NO error:outError].files;
+		NFKDownloadPlan *plan = [self planPart:part singleFile:NO error:outError];
+		[absentOptionalFiles addObjectsFromArray:plan.absentOptionalFiles ?: @[]];
+		return plan.files;
 	}
 	NFKModelFile *file = part.files.firstObject;
 	NSError *error = nil;
@@ -626,8 +638,10 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 		}
 	}
 	NSMutableArray<NFKDownloadPlanFile *> *files = [NSMutableArray array];
+	NSMutableArray<NSDictionary<NSString *, id> *> *absentOptionalFiles = [NSMutableArray array];
 	for (NFKHFHubSourcePart *part in parts) {
-		NSArray<NFKDownloadPlanFile *> *partFiles = [self planFilesOfPart:part error:outError];
+		NSArray<NFKDownloadPlanFile *> *partFiles = [self planFilesOfPart:part absentOptionalFiles:absentOptionalFiles
+																	 error:outError];
 		if (partFiles == nil) {
 			return nil;
 		}
@@ -641,6 +655,7 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 															   localURL:files.count > 0 ? localURL : nil];
 	plan.snapshotURL = sourceSnapshotURL;
 	plan.cacheRepository = source.repository;
+	plan.absentOptionalFiles = absentOptionalFiles;
 	return plan;
 }
 
@@ -719,6 +734,10 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	if (plan.recordsCompletion && plan.repository != nil) {
 		[self recordCompleteDownloadOfRepo:plan.repository revision:plan.revision
 									 paths:[plan.files valueForKey:@"path"] error:NULL];
+	}
+	for (NSDictionary<NSString *, id> *absent in plan.absentOptionalFiles) {
+		[self recordCompleteDownloadOfRepo:absent[@"repository"] revision:absent[@"revision"] paths:@[]
+							   absentPaths:absent[@"paths"] error:NULL];
 	}
 	return nil;
 }
@@ -1146,6 +1165,7 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	NSMutableOrderedSet<NSString *> *present = [NSMutableOrderedSet orderedSet];
 	NSMutableArray<NSString *> *missing = [NSMutableArray array];
 	NSMutableArray<NSString *> *partial = [NSMutableArray array];
+	NSMutableArray<NSString *> *unchecked = [NSMutableArray array];
 	long long bytes = 0;
 	long long partialBytes = 0;
 	for (NFKHFHubSourcePart *part in parts) {
@@ -1153,6 +1173,7 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 		[present addObjectsFromArray:status.presentPaths];
 		[missing addObjectsFromArray:status.missingPaths];
 		[partial addObjectsFromArray:status.partialPaths];
+		[unchecked addObjectsFromArray:status.uncheckedOptionalPaths];
 		bytes += status.byteCount;
 		partialBytes += status.partialByteCount;
 	}
@@ -1164,7 +1185,7 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	}
 	NFKDownloadPresence presence = NFKDownloadPresenceAbsent;
 	if (present.count > 0 || partial.count > 0) {
-		presence = missing.count == 0 ? NFKDownloadPresenceComplete : NFKDownloadPresencePartial;
+		presence = missing.count == 0 && unchecked.count == 0 ? NFKDownloadPresenceComplete : NFKDownloadPresencePartial;
 	}
 	return [[NFKDownloadStatus alloc] initWithPresence:presence
 											 byteCount:bytes
@@ -1172,6 +1193,7 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 										  missingPaths:missing
 										  partialPaths:partial
 									  partialByteCount:partialBytes
+								uncheckedOptionalPaths:unchecked
 											  localURL:snapshotURL != nil ? localURL : nil];
 }
 
@@ -1184,10 +1206,22 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 		[(file.optional ? optional : required) addObject:file.path];
 	}
 	if (part.URL == nil) {
-		return [self statusInSnapshotURL:[self snapshotURLForRepo:part.repository revision:part.revision]
-						   requiredPaths:required
-						   optionalPaths:optional
-								localURL:nil];
+		NSURL *snapshotURL = [self snapshotURLForRepo:part.repository revision:part.revision];
+		NFKDownloadStatus *status = [self statusInSnapshotURL:snapshotURL requiredPaths:required optionalPaths:optional
+													 localURL:nil];
+		NSArray<NSString *> *unchecked = [self uncheckedPaths:optional ofStatus:status inSnapshotURL:snapshotURL];
+		if (unchecked.count == 0) {
+			return status;
+		}
+		NFKDownloadPresence presence = status.presence == NFKDownloadPresenceComplete ? NFKDownloadPresencePartial : status.presence;
+		return [[NFKDownloadStatus alloc] initWithPresence:presence
+												 byteCount:status.byteCount
+											  presentPaths:status.presentPaths
+											  missingPaths:status.missingPaths
+											  partialPaths:status.partialPaths
+										  partialByteCount:status.partialByteCount
+									uncheckedOptionalPaths:unchecked
+												  localURL:status.localURL];
 	}
 	NSURL *localURL = [self localURLOfURLPart:part error:NULL];
 	if (localURL == nil) {
@@ -1199,6 +1233,29 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 					   requiredPaths:optionalFile ? @[] : name
 					   optionalPaths:optionalFile ? name : @[]
 							localURL:localURL];
+}
+
+/*! The optional paths, globs aside, that are neither in the snapshot nor in its record of the files
+	the server lacks. */
+- (NSArray<NSString *> *)uncheckedPaths:(NSArray<NSString *> *)optionalPaths
+							   ofStatus:(NFKDownloadStatus *)status
+						  inSnapshotURL:(nullable NSURL *)snapshotURL
+{
+	if (snapshotURL == nil || optionalPaths.count == 0) {
+		return @[];
+	}
+	NSSet<NSString *> *present = [NSSet setWithArray:status.presentPaths];
+	__block NSSet<NSString *> *absent = [NSSet set];
+	[self performWithCacheAccess:^(NSURL *cacheDirectoryURL) {
+		absent = [NSSet setWithArray:[self completionRecordInSnapshotURL:snapshotURL][@"absent"]];
+	}];
+	NSMutableArray<NSString *> *unchecked = [NSMutableArray array];
+	for (NSString *path in optionalPaths) {
+		if (!NFKHFHubIsGlob(path) && ![present containsObject:path] && ![absent containsObject:path]) {
+			[unchecked addObject:path];
+		}
+	}
+	return unchecked;
 }
 
 #pragma mark Removal plans
@@ -1255,7 +1312,7 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 				}
 				NSSet<NSString *> *listed = [self listedPathsOfPart:part];
 				BOOL sameDownload = (listed == nil && targetPaths == nil) || [listed isEqualToSet:targetPaths];
-				if (sameDownload || [self downloadStatusForModelSource:source].presence != NFKDownloadPresenceComplete) {
+				if (sameDownload || ![self downloadStatusForModelSource:source].holdsEveryRequiredFile) {
 					continue;
 				}
 				NSArray<NSString *> *used = listed != nil ? listed.allObjects : [self recordedCompletePathsInSnapshotURL:target.snapshotURL];

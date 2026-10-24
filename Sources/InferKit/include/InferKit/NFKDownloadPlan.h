@@ -103,9 +103,10 @@ typedef NS_ENUM(NSInteger, NFKDownloadPresence) {
 	/*! None of the files is in the cache. */
 	NFKDownloadPresenceAbsent	= 0,
 	/*! Some files are in the cache, or a paused download kept part of one, and a required one is
-		missing. */
+		missing or an optional one is unchecked (NFKDownloadStatus.uncheckedOptionalPaths). */
 	NFKDownloadPresencePartial	= 1,
-	/*! Every required file is in the cache. */
+	/*! Every required file is in the cache, and every optional one is in the cache or recorded as one
+		the server lacks. */
 	NFKDownloadPresenceComplete	= 2,
 };
 
@@ -131,6 +132,16 @@ typedef NS_ENUM(NSInteger, NFKDownloadPresence) {
 /*! The bytes kept for partialPaths, beside byteCount: a source downloaded byteCount + partialByteCount
 	of its bytes. Introduced in InferKit 0.4.0. */
 @property (nonatomic, readonly) long long partialByteCount;
+/*!
+	@property   uncheckedOptionalPaths
+	@abstract   The optional paths of a catalog source that are not in the cache and that no download
+				has found missing from the server. Introduced in InferKit 0.4.0.
+	@discussion A file the catalog lists after a download of the release is one: the download that
+				planned the release never asked for it. Such a path makes the status partial, and a
+				download of the source fetches it or records that the server lacks it. A status whose
+				only gaps are these paths holds every required file, so the model builds from it.
+*/
+@property (nonatomic, readonly, copy) NSArray<NSString *> *uncheckedOptionalPaths;
 
 - (instancetype)init NS_UNAVAILABLE;
 + (instancetype)new NS_UNAVAILABLE;

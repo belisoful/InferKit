@@ -669,6 +669,40 @@ static NSString * const NFKTestRepo = @"org/model";
 	XCTAssertEqual(download.state, NFKDownloadStateCompleted);
 	XCTAssertEqualObjects(location.path, [self.cacheDir URLByAppendingPathComponent:@"org/model/main"].path);
 	XCTAssertEqual([self.hub downloadStatusForModelSource:source].presence, NFKDownloadPresenceComplete);
+	NSArray<NSString *> *absent = @[ @"generation_config.json" ];
+	XCTAssertEqualObjects([self.hub recordedAbsentPathsOfRepo:NFKTestRepo revision:nil], absent);
+}
+
+- (void)testADownloadMadeBeforeTheSourceListedAnOptionalFileFetchesItNext
+{
+	[self serveTheModel];
+	NSArray<NFKModelFile *> *required = @[ [NFKModelFile fileWithPath:@"config.json" role:NFKModelFileRoleConfig],
+										   [NFKModelFile fileWithPath:@"model.safetensors" role:NFKModelFileRoleWeights] ];
+	NFKModelSource *earlier = [self sourceWithFiles:required requiresConversion:NO];
+	XCTestExpectation *first = [self expectationWithDescription:@"first download"];
+	[self.hub downloadModelSource:earlier progressHandler:nil completionHandler:^(NSURL *localURL, NSError *error) {
+		XCTAssertNil(error);
+		[first fulfill];
+	}];
+	[self waitForExpectations:@[ first ] timeout:20];
+
+	NFKModelFile *vocabulary = [[NFKModelFile alloc] initWithPath:@"tokenizer/vocab.json" byteCount:nil sha256:nil
+															 role:NFKModelFileRoleTokenizer optional:YES extensions:nil];
+	NFKModelSource *later = [self sourceWithFiles:[required arrayByAddingObject:vocabulary] requiresConversion:NO];
+	NFKDownloadStatus *status = [self.hub downloadStatusForModelSource:later];
+	XCTAssertEqual(status.presence, NFKDownloadPresencePartial);
+	NSArray<NSString *> *unchecked = @[ @"tokenizer/vocab.json" ];
+	XCTAssertEqualObjects(status.uncheckedOptionalPaths, unchecked);
+
+	NFKDownloadPlan *plan = [self.hub planDownloadOfModelSource:later error:NULL];
+	XCTAssertEqual(plan.remainingByteCount, 2LL, @"only the newly listed file is fetched");
+	XCTestExpectation *second = [self expectationWithDescription:@"second download"];
+	[self.hub downloadModelSource:later progressHandler:nil completionHandler:^(NSURL *localURL, NSError *error) {
+		XCTAssertNil(error);
+		[second fulfill];
+	}];
+	[self waitForExpectations:@[ second ] timeout:20];
+	XCTAssertEqual([self.hub downloadStatusForModelSource:later].presence, NFKDownloadPresenceComplete);
 }
 
 - (void)testASourceThatRequiresConversionIsRefused
