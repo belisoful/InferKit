@@ -1167,6 +1167,15 @@ Sign the bundle after the manifest and `Info.plist` are in place. The signature 
   sources, the templates, the headers the build reads, the flags, the version, and the architecture.
   Each build happens in a staging directory renamed into place, so concurrent test processes share one
   complete build. `build-commands.txt` beside the bundle records the commands.
+- A cache is reused only when its bundle holds the manifest, the `Info.plist`, and the executable, each a
+  nonempty regular file, and `codesign --verify --strict` passes. The verify runs once per process for
+  each size and modification time of those files. macOS's temporary-file cleanup removes the files of
+  an old cache and keeps its directories: on 2026-10-20, 47 emptied caches failed 46 `NFKPlugin*` tests
+  with "holds no Contents/Resources/inferkit-plugin.json". A cache that fails the check is built again
+  in staging; the broken directory is renamed to `<cache>.discarded/<UUID>`, never removed, since
+  another process may still read it, and the staging directory is renamed into its place. The
+  discarded directories sit in a folder of their own because `$TMPDIR` on the shared machine holds
+  about 150,000 entries (2026-10-24), and one listing of it takes 37 s.
 - `+hostExecutableURL` is `NFK_PLUGIN_HOST_PATH` when set, else `inferkit-plugin-host` beside the
   test bundle, where `swift build --build-tests` and Xcode both place it.
 - `+tamperedCopyOfBundleAtURL:error:` copies a bundle and edits its manifest's summary after signing.

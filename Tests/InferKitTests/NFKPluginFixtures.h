@@ -64,7 +64,9 @@ extern NSString * const NFKPluginFixtureAllocationCounterSymbol;
 + (NSString *)pluginIdentifierForKind:(NFKPluginEntryKind)kind;
 
 /*! The fixture of kind at version (such as "1.0.0" or "2.0.0"), built on first use and cached in the
-	temporary directory under a hash of its sources, flags, and version, or nil with an error. */
+	temporary directory under a hash of its sources, flags, and version, or nil with an error. A cached
+	build that lacks its manifest, its Info.plist, or its executable, or whose signature no longer
+	verifies, is built again, and the broken cache directory is renamed into <cache>.discarded/. */
 + (nullable NSURL *)bundleURLForKind:(NFKPluginEntryKind)kind version:(NSString *)version error:(NSError **)error;
 
 /*! An Objective-C fixture that defines its own NFKInferenceRequest, as a bundle embedding InferKit would. */

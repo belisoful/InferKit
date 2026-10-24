@@ -2,7 +2,8 @@
 //  NFKPluginFixturesTests.m
 //  InferKitTests
 //
-//  The sample plugins themselves: each builds as a signed bundle, a tampered copy fails verification,
+//  The sample plugins themselves: each builds as a signed bundle, a broken cached build is built again,
+//  a tampered copy fails verification,
 //  the C library honors its interface's version and frees everything it allocates, and the executable
 //  speaks the protocol over a channel this test drives.
 //
@@ -65,6 +66,13 @@ static NSString *NFKFixtureTakeString(const nfk_plugin *plugin, char * _Nullable
 	NSString *copy = [NSString stringWithUTF8String:string] ?: @"";
 	plugin->free_string(plugin->context, string);
 	return copy;
+}
+
+/*! The directory a fixture build renames a broken cache into, beside the cache. */
+static NSURL *NFKFixtureDiscardedDirectoryOfCache(NSURL *cache)
+{
+	return [cache.URLByDeletingLastPathComponent URLByAppendingPathComponent:[cache.lastPathComponent stringByAppendingString:@".discarded"]
+																 isDirectory:YES];
 }
 
 #pragma mark - Channel replies
@@ -239,6 +247,84 @@ static NSString *NFKFixtureTakeString(const nfk_plugin *plugin, char * _Nullable
 	XCTAssertNil(verified, @"an edited manifest breaks the sealed resources");
 	NSArray<NSString *> *verifyOriginal = @[ @"--verify", @"--strict", bundle.path ];
 	XCTAssertNotNil([NFKPluginFixtures runProgram:@"/usr/bin/codesign" arguments:verifyOriginal error:NULL], @"the original still verifies");
+}
+
+#pragma mark The build cache
+
+/*! A version no other test builds, so the cache directory of a fixture at it belongs to this test. */
+- (NSString *)privateVersion
+{
+	return [@"1.0.0-cache-" stringByAppendingString:NSUUID.UUID.UUIDString];
+}
+
+/*! The C fixture at a private version. Its cache and every directory renamed aside from it are removed
+	at teardown. */
+- (nullable NSURL *)privateCFixtureAtVersion:(NSString *)version
+{
+	NSURL *bundle = [self assertFixtureOfKind:NFKPluginEntryKindCABI version:version];
+	if (bundle == nil) {
+		return nil;
+	}
+	NSURL *cache = bundle.URLByDeletingLastPathComponent;
+	[self addTeardownBlock:^{
+		NSFileManager *files = NSFileManager.defaultManager;
+		[files removeItemAtURL:cache error:NULL];
+		[files removeItemAtURL:NFKFixtureDiscardedDirectoryOfCache(cache) error:NULL];
+	}];
+	return bundle;
+}
+
+- (NSUInteger)countOfDirectoriesDiscardedFromCacheOf:(NSURL *)bundle
+{
+	NSURL *discarded = NFKFixtureDiscardedDirectoryOfCache(bundle.URLByDeletingLastPathComponent);
+	return [NSFileManager.defaultManager contentsOfDirectoryAtPath:discarded.path error:NULL].count;
+}
+
+- (void)testACachedBuildWhoseFilesWereRemovedIsBuiltAgain
+{
+	NSString *version = [self privateVersion];
+	NSURL *bundle = [self privateCFixtureAtVersion:version];
+	if (bundle == nil) {
+		return;
+	}
+	NSFileManager *files = NSFileManager.defaultManager;
+	NSArray<NSURL *> *purged = @[ [bundle URLByAppendingPathComponent:@"Contents/Resources/inferkit-plugin.json"],
+								   [bundle URLByAppendingPathComponent:@"Contents/Info.plist"],
+								   [NFKPluginFixtures executableURLOfBundleAtURL:bundle] ];
+	NSError *error = nil;
+	for (NSURL *file in purged) {
+		XCTAssertTrue([files removeItemAtURL:file error:&error], @"%@", error);
+	}
+	BOOL isDirectory = NO;
+	XCTAssertTrue([files fileExistsAtPath:[bundle URLByAppendingPathComponent:@"Contents/Resources"].path isDirectory:&isDirectory] && isDirectory,
+				  @"the directories stay, as the system's temporary-file cleanup leaves them");
+
+	NSURL *rebuilt = [self assertFixtureOfKind:NFKPluginEntryKindCABI version:version];
+	XCTAssertEqualObjects(rebuilt, bundle, @"the build lands at the same path");
+	XCTAssertEqual([self countOfDirectoriesDiscardedFromCacheOf:bundle], 1u,
+				   @"the emptied cache is renamed aside");
+}
+
+- (void)testACachedBuildWhoseSignatureNoLongerVerifiesIsBuiltAgain
+{
+	NSString *version = [self privateVersion];
+	NSURL *bundle = [self privateCFixtureAtVersion:version];
+	if (bundle == nil) {
+		return;
+	}
+	NSURL *infoURL = [bundle URLByAppendingPathComponent:@"Contents/Info.plist"];
+	NSMutableDictionary *information = [NSMutableDictionary dictionaryWithContentsOfURL:infoURL];
+	information[@"NFKEditedAfterSigning"] = @YES;
+	NSError *error = nil;
+	XCTAssertTrue([information writeToURL:infoURL error:&error], @"%@", error);
+	NSArray<NSString *> *verify = @[ @"--verify", @"--strict", bundle.path ];
+	XCTAssertNil([NFKPluginFixtures runProgram:@"/usr/bin/codesign" arguments:verify error:NULL], @"an edited Info.plist breaks the signature");
+
+	NSURL *rebuilt = [self assertFixtureOfKind:NFKPluginEntryKindCABI version:version];
+	XCTAssertEqualObjects(rebuilt, bundle, @"the build lands at the same path");
+	XCTAssertNil([NSDictionary dictionaryWithContentsOfURL:infoURL][@"NFKEditedAfterSigning"], @"the Info.plist is the one the build writes");
+	XCTAssertEqual([self countOfDirectoriesDiscardedFromCacheOf:bundle], 1u,
+				   @"the cache that no longer verifies is renamed aside");
 }
 
 #pragma mark The C library

@@ -31,6 +31,8 @@ static NSString * const NFKPluginFixturesDuplicateRuntime = @"duplicate-runtime"
 
 static NSString * const NFKPluginFixturesManifestPath = @"Contents/Resources/inferkit-plugin.json";
 
+static NSString * const NFKPluginFixturesInfoPath = @"Contents/Info.plist";
+
 static const NSTimeInterval NFKPluginFixturesToolTimeout = 300;
 
 static BOOL NFKPluginFixturesSetError(NSError **error, NSString *reason)
@@ -169,13 +171,13 @@ static NSString *NFKPluginFixturesArchitecture(void)
 		NSString *cacheName = [@"inferkit-plugin-fixtures-" stringByAppendingString:digest];
 		NSURL *cache = [temporary URLByAppendingPathComponent:cacheName isDirectory:YES];
 		NSURL *bundle = [cache URLByAppendingPathComponent:recipe[@"bundleName"] isDirectory:YES];
-		if ([NSFileManager.defaultManager fileExistsAtPath:[bundle URLByAppendingPathComponent:NFKPluginFixturesManifestPath].path]) {
+		if ([self isCompleteBundleAtURL:bundle recipe:recipe]) {
 			return bundle;
 		}
 		NSString *stagingName = [NSString stringWithFormat:@"%@.staging-%@", cacheName, NSUUID.UUID.UUIDString];
 		NSURL *staging = [temporary URLByAppendingPathComponent:stagingName isDirectory:YES];
 		BOOL built = [self buildRecipe:recipe version:version intoDirectory:staging error:error];
-		if (built && [self moveStagingDirectory:staging toCacheDirectory:cache error:error]) {
+		if (built && [self moveStagingDirectory:staging toCacheDirectory:cache recipe:recipe error:error]) {
 			return bundle;
 		}
 		[NSFileManager.defaultManager removeItemAtURL:staging error:NULL];
@@ -183,18 +185,93 @@ static NSString *NFKPluginFixturesArchitecture(void)
 	}
 }
 
-/*! Renames the finished staging directory into place in one step, so a cache directory that exists is
-	complete. Another process that finished the same build first wins, and its copy is used. */
-+ (BOOL)moveStagingDirectory:(NSURL *)staging toCacheDirectory:(NSURL *)cache error:(NSError **)error
+/*! The bundle-relative paths of the files a complete fixture holds. */
++ (NSArray<NSString *> *)requiredPathsOfRecipe:(NSDictionary *)recipe
 {
-	if (rename(staging.fileSystemRepresentation, cache.fileSystemRepresentation) == 0) {
+	return @[ NFKPluginFixturesManifestPath, NFKPluginFixturesInfoPath, [@"Contents/MacOS/" stringByAppendingString:recipe[@"executable"]] ];
+}
+
+/*! The size and modification time of each required file, or nil when one is missing, empty, or not a
+	regular file. */
++ (nullable NSString *)fingerprintOfBundleAtURL:(NSURL *)bundle recipe:(NSDictionary *)recipe
+{
+	NSMutableArray<NSString *> *parts = [NSMutableArray array];
+	for (NSString *path in [self requiredPathsOfRecipe:recipe]) {
+		NSDictionary *attributes = [NSFileManager.defaultManager attributesOfItemAtPath:[bundle URLByAppendingPathComponent:path].path error:NULL];
+		if (![attributes.fileType isEqualToString:NSFileTypeRegular] || attributes.fileSize == 0) {
+			return nil;
+		}
+		[parts addObject:[NSString stringWithFormat:@"%@\x1f%llu\x1f%.9f", path, attributes.fileSize,
+						  attributes.fileModificationDate.timeIntervalSinceReferenceDate]];
+	}
+	return [parts componentsJoinedByString:@"\x1e"];
+}
+
+/*! The fingerprint of each bundle whose signature this process verified, by path. Read and written on
+	the class's lock. */
++ (NSMutableDictionary<NSString *, NSString *> *)verifiedFingerprints
+{
+	static NSMutableDictionary<NSString *, NSString *> *fingerprints = nil;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		fingerprints = [NSMutableDictionary dictionary];
+	});
+	return fingerprints;
+}
+
+/*! Whether a cached bundle holds its manifest, its Info.plist, and its executable, and its ad hoc
+	signature verifies. The system's temporary-file cleanup removes the files of an old cache and leaves
+	its directories. The signature is checked once for each state of the files. */
++ (BOOL)isCompleteBundleAtURL:(NSURL *)bundle recipe:(NSDictionary *)recipe
+{
+	NSString *fingerprint = [self fingerprintOfBundleAtURL:bundle recipe:recipe];
+	if (fingerprint == nil) {
+		return NO;
+	}
+	if ([self.verifiedFingerprints[bundle.path] isEqualToString:fingerprint]) {
 		return YES;
 	}
-	if ([NSFileManager.defaultManager fileExistsAtPath:cache.path]) {
-		[NSFileManager.defaultManager removeItemAtURL:staging error:NULL];
-		return YES;
+	NSString *executable = [bundle URLByAppendingPathComponent:[self requiredPathsOfRecipe:recipe].lastObject].path;
+	if (![NSFileManager.defaultManager isExecutableFileAtPath:executable]) {
+		return NO;
 	}
-	return NFKPluginFixturesSetError(error, [NSString stringWithFormat:@"the fixture could not be moved into %@: %s", cache.path, strerror(errno)]);
+	if ([self runProgram:@"/usr/bin/codesign" arguments:@[ @"--verify", @"--strict", bundle.path ] error:NULL] == nil) {
+		return NO;
+	}
+	self.verifiedFingerprints[bundle.path] = fingerprint;
+	return YES;
+}
+
+/*! Renames the finished staging directory into place in one step, so a cache directory is never seen
+	half built. A complete copy another process moved in first wins, and its copy is used. An incomplete
+	one is renamed into <cache>.discarded/ and left for the system's cleanup, since another process may
+	still be reading it. */
++ (BOOL)moveStagingDirectory:(NSURL *)staging toCacheDirectory:(NSURL *)cache recipe:(NSDictionary *)recipe error:(NSError **)error
+{
+	NSURL *bundle = [cache URLByAppendingPathComponent:recipe[@"bundleName"] isDirectory:YES];
+	NSURL *discarded = [cache.URLByDeletingLastPathComponent URLByAppendingPathComponent:[cache.lastPathComponent stringByAppendingString:@".discarded"]
+																			 isDirectory:YES];
+	int failure = 0;
+	for (NSUInteger attempt = 0; attempt < 3; attempt++) {
+		if (rename(staging.fileSystemRepresentation, cache.fileSystemRepresentation) == 0) {
+			return YES;
+		}
+		failure = errno;
+		if (failure != ENOTEMPTY && failure != EEXIST) {
+			break;
+		}
+		if ([self isCompleteBundleAtURL:bundle recipe:recipe]) {
+			[NSFileManager.defaultManager removeItemAtURL:staging error:NULL];
+			return YES;
+		}
+		[NSFileManager.defaultManager createDirectoryAtURL:discarded withIntermediateDirectories:YES attributes:nil error:NULL];
+		NSURL *aside = [discarded URLByAppendingPathComponent:NSUUID.UUID.UUIDString isDirectory:YES];
+		if (rename(cache.fileSystemRepresentation, aside.fileSystemRepresentation) != 0 && errno != ENOENT) {
+			failure = errno;
+			break;
+		}
+	}
+	return NFKPluginFixturesSetError(error, [NSString stringWithFormat:@"the fixture could not be moved into %@: %s", cache.path, strerror(failure)]);
 }
 
 + (NSString *)substitute:(NSString *)text recipe:(NSDictionary *)recipe version:(NSString *)version
