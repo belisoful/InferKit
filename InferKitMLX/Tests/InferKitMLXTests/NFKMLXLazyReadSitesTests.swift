@@ -41,6 +41,7 @@ final class NFKMLXLazyReadSitesTests: XCTestCase {
         "NFKMLXFlorence2.swift": (1, "the vision half; the language half loads separately"),
         "NFKMLXGraniteSpeech.swift": (1, "the adapter fold spans tensors"),
         "NFKMLXHiFiGAN.swift": (1, "weight-norm fusion"),
+        "NFKMLXHybridLanguageModel.swift": (1, "a packed load reads each layer only as it is quantized"),
         "NFKMLXKokoro.swift": (2, "weight-norm fusion and stacked alphas; a voicepack read as data"),
         "NFKMLXMODNet.swift": (1, "the backbone's duplicate copy is dropped"),
         "NFKMLXMossFormer2SR.swift": (1, "weight-norm fusion"),
