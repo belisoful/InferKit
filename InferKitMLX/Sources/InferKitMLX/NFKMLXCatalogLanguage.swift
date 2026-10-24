@@ -908,7 +908,7 @@ extension NFKMLXCatalogLanguage {
 
     fileprivate static func gemma4Entry(_ release: NFKMLXLanguageRelease) -> NFKMLXCatalogEntry {
         let kind = release.routesExperts ? "mixture-of-experts" : "dense"
-        return NFKMLXCatalogEntry(
+        var entry = NFKMLXCatalogEntry(
             identifier: release.name, displayName: release.displayName, family: release.family,
             summary: "\(release.displayName), a \(kind) Gemma 4 decoder that writes text and calls tools.",
             registryName: release.name, tasks: [NFKModelTaskTextGeneration],
@@ -917,8 +917,13 @@ extension NFKMLXCatalogLanguage {
             variants: [variant(release, files: releaseFiles(required: NFKMLXGemmaLanguage.requiredFiles,
                                                             optional: NFKMLXGemmaLanguage.optionalFiles,
                                                             weights: NFKMLXGemmaLanguage.weightFiles))],
-            license: license(release.repository), residencies: residencies(routesExperts: release.routesExperts),
+            license: license(release.repository),
+            residencies: release.routesExperts ? residencies(routesExperts: true) : streamedResidencies,
             modelTypes: release.modelTypes)
+        if release.routesExperts {
+            entry.load = .pagedMixture()
+        }
+        return entry
     }
 
     fileprivate static var gemma4MultimodalEntry: NFKMLXCatalogEntry {

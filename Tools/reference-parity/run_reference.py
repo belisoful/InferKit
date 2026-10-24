@@ -22050,10 +22050,14 @@ def _layerwise_release(checkpoint, dtype):
 
 def _read_layers_in_turn(layers, prefix, entries, read):
     """Hooks each of a meta-device model's decoder `layers` to read its tensors (`prefix` + `layers.<i>.`)
-    as the forward reaches it and to return to the meta device after it, so every pass reads every layer."""
+    as the forward reaches it and to return to the meta device after it, so every pass reads every layer.
+    A tensor the layer does not hold is left unread, as `from_pretrained` leaves it: Gemma 4 E-series
+    layers that share another layer's keys and values carry no key or value projection, which the
+    release still stores."""
     for index, layer in enumerate(layers):
         layer_prefix = f"{prefix}layers.{index}."
-        keys = [k for k in entries if k.startswith(layer_prefix)]
+        held = set(layer.state_dict())
+        keys = [k for k in entries if k.startswith(layer_prefix) and k[len(layer_prefix):] in held]
 
         def install(module, args, layer_prefix=layer_prefix, keys=keys):
             module.load_state_dict({k[len(layer_prefix):]: read(k) for k in keys}, strict=True, assign=True)
@@ -22076,6 +22080,12 @@ def run_dense_layerwise(image, checkpoint):
     built on the CPU. Precision from DENSE_DTYPE (default bfloat16, the releases'); DENSE_ATTENTION picks
     the attention implementation (default sdpa, what `from_pretrained` uses on this machine).
 
+    A Gemma text model (Gemma 4's E-series, 31B, and 12B unified) reads its scaled embeddings and its
+    per-layer input modules as the release builds them (`_read_scaled_text_model`), and its prompt opens
+    with `<bos>`, which its tokenizer leaves to the chat template. `DENSE_CHECK=1` also
+    loads a release small enough to hold whole and requires the two runs to agree bit for bit
+    (`_check_against_whole_load`).
+
     The record is `run_qwen3`'s, on the same prompt: the prompt's ids, the logits at every position, and
     the 16-token greedy continuation, with the last position's state after every layer but the last
     (`hidden_last.<i>`, entering the stack at 0). The last layer's state is left out because Qwen3-VL's
@@ -22084,6 +22094,10 @@ def run_dense_layerwise(image, checkpoint):
     model, tokenizer, close = _dense_layerwise_model(checkpoint, dtype)
     try:
         ids = tokenizer("The capital of France is", return_tensors="pt").input_ids
+        # Gemma's tokenizer leaves `<bos>` to the chat template, and a Gemma decoder without it writes nonsense.
+        bos = tokenizer.bos_token_id
+        if hasattr(model.get_input_embeddings(), "scalar_embed_scale") and bos is not None and int(ids[0, 0]) != bos:
+            ids = torch.cat([torch.tensor([[bos]]), ids], dim=1)
         with torch.no_grad():
             out = model(input_ids=ids, output_hidden_states=True)
             generated = model.generate(input_ids=ids, max_new_tokens=16, do_sample=False,
@@ -22092,6 +22106,8 @@ def run_dense_layerwise(image, checkpoint):
         close()
     continuation = generated[0, ids.shape[1]:]
     print("greedy:", tokenizer.decode(continuation, skip_special_tokens=True))
+    if os.environ.get("DENSE_CHECK") == "1":
+        _check_against_whole_load(checkpoint, dtype, ids, out, continuation)
     globals()["_extra"] = {
         "tokens": ids[0].to(torch.int32).contiguous(),
         "continuation": continuation.to(torch.int32).contiguous(),
@@ -22099,6 +22115,31 @@ def run_dense_layerwise(image, checkpoint):
     for index, state in enumerate(out.hidden_states[:-1]):
         globals()["_extra"][f"hidden_last.{index}"] = state[0, -1].float().contiguous()
     return out.logits[0].float().contiguous()
+
+
+def _check_against_whole_load(checkpoint, dtype, ids, out, continuation):
+    """`DENSE_CHECK=1`, for a release small enough to hold: loads it whole through `from_pretrained` and
+    raises unless its logits, every hidden state, and its greedy continuation equal the layer-by-layer
+    run's, bit for bit."""
+    from transformers import AutoConfig, AutoModelForCausalLM, AutoModelForImageTextToText
+
+    config = AutoConfig.from_pretrained(checkpoint)
+    multimodal = any(name.endswith("ForConditionalGeneration") for name in config.architectures or [])
+    builder = AutoModelForImageTextToText if multimodal else AutoModelForCausalLM
+    whole = builder.from_pretrained(checkpoint, dtype=dtype,
+                                    attn_implementation=os.environ.get("DENSE_ATTENTION", "sdpa")).eval()
+    with torch.no_grad():
+        reference = whole(input_ids=ids, output_hidden_states=True)
+        generated = whole.generate(input_ids=ids, max_new_tokens=continuation.shape[0], do_sample=False)
+    pairs = [("logits", out.logits, reference.logits)] + [
+        (f"hidden_states[{i}]", a, b) for i, (a, b) in enumerate(zip(out.hidden_states, reference.hidden_states))]
+    for name, a, b in pairs:
+        if not torch.equal(a, b):
+            raise ValueError(f"the layer-by-layer {name} differs from a whole load's by up to "
+                             f"{float((a.float() - b.float()).abs().max())}")
+    if not torch.equal(generated[0, ids.shape[1]:], continuation):
+        raise ValueError("the layer-by-layer greedy continuation differs from a whole load's")
+    print(f"whole-load check: logits, {len(pairs) - 1} hidden states, and the continuation are bit-identical")
 
 
 def _dense_layerwise_model(checkpoint, dtype):
@@ -22128,6 +22169,10 @@ def _dense_layerwise_model(checkpoint, dtype):
         text_model = model.model
     embed_key = next(k for k in entries if k.endswith("embed_tokens.weight") and "vision" not in k and "visual" not in k)
     prefix = embed_key[: -len("embed_tokens.weight")]
+    if hasattr(text_model.embed_tokens, "scalar_embed_scale"):
+        _read_scaled_text_model(model, text_model, prefix, entries, read, dtype)
+        _read_layers_in_turn(text_model.layers, prefix, entries, read)
+        return model, tokenizer, close
     embed = torch.nn.Embedding(text_model.config.vocab_size, text_model.config.hidden_size,
                                text_model.config.pad_token_id)
     embed.weight = torch.nn.Parameter(read(embed_key), requires_grad=False)
@@ -22138,6 +22183,28 @@ def _dense_layerwise_model(checkpoint, dtype):
     text_model.rotary_emb = type(text_model.rotary_emb)(config=text_model.config)
     _read_layers_in_turn(text_model.layers, prefix, entries, read)
     return model, tokenizer, close
+
+
+def _read_scaled_text_model(model, text_model, prefix, entries, read, dtype):
+    """Reads everything a Gemma text model holds outside its layers (`_dense_layerwise_model`): the scaled
+    token embedding, the E-series' per-layer embedding, projection, and norm, and the final norm, each
+    module as the release builds it, and the tied head. Each scaled embedding's factor is a buffer the
+    release does not carry, rebuilt in the type the model was built in, as its constructor makes it; the
+    rotary tables are rebuilt on the CPU."""
+    for name, child in text_model.named_children():
+        if name in ("layers", "rotary_emb"):
+            continue
+        child.to_empty(device="cpu")
+        stored = {k[len(prefix + name) + 1:]: read(k) for k in entries if k.startswith(prefix + name + ".")}
+        missing = {n for n, _ in child.named_parameters()} - set(stored)
+        if missing:
+            raise ValueError(f"{prefix}{name} lacks {sorted(missing)}")
+        child.load_state_dict(stored, strict=False, assign=True)
+        for module in child.modules():
+            if hasattr(module, "scalar_embed_scale"):
+                module.embed_scale = torch.tensor(module.scalar_embed_scale, dtype=dtype)
+    text_model.rotary_emb = type(text_model.rotary_emb)(config=text_model.config)
+    model.lm_head.weight = text_model.embed_tokens.weight
 
 
 def run_pixtral_fused_layerwise(image, checkpoint):

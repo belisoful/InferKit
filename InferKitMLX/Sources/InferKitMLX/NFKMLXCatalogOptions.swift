@@ -132,12 +132,13 @@ struct NFKMLXLoadProfile {
                           contextLength: contextLength, keyValue: keyValue, drafts: drafts, stageIdentifier: "decoder")
     }
 
-    /// A decoder that streams the repeated layers it cannot hold: Gemma 3, MADLAD-400, TranslateGemma,
-    /// Qwen3-VL, Pixtral.
+    /// A decoder that streams the repeated layers it cannot hold: Gemma 3, Gemma 4, MADLAD-400,
+    /// TranslateGemma, Qwen3-VL, Pixtral.
     static func streamedDecoder(precisions: [String], defaultPrecision: String, contextLength: Int?,
-                                keyValue: NFKMLXKeyValueRule?, tasks: Set<String>) -> NFKMLXLoadProfile {
+                                keyValue: NFKMLXKeyValueRule?, drafts: Bool = false,
+                                tasks: Set<String>) -> NFKMLXLoadProfile {
         decoder(precisions: precisions, defaultPrecision: defaultPrecision, contextLength: contextLength,
-                keyValue: keyValue, tasks: tasks)
+                keyValue: keyValue, drafts: drafts, tasks: tasks)
     }
 
     /// A decoder whose only load choice is how it holds its routed experts, with the cache defaults where
@@ -206,7 +207,11 @@ struct NFKMLXLoadProfile {
         ],
         // These generation backends read no cache parameter, so they declare no context or cache option.
         "gemma3n": [.decoder(contextLength: nil, keyValue: nil)],
-        "gemma4": [.pagedMixture()],
+        // A dense Gemma 4 decoder streams the layers it cannot hold, so its precision sets what a pass reads,
+        // and a smaller one drafts for it. The 26B-A4B mixture keeps its own paged profile on its entry.
+        "gemma4": [.streamedDecoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
+                                    defaultPrecision: NFKModelPrecisionFloat32, contextLength: nil, keyValue: nil,
+                                    drafts: true, tasks: [NFKModelTaskTextGeneration])],
         "granite-4.0-h": [.pagedMixture()],
         // A dense Qwen3-VL or Pixtral decoder streams the layers it cannot hold, so its precision sets what a
         // pass reads. The Qwen3-VL mixture keeps its own paged profile on its entry.

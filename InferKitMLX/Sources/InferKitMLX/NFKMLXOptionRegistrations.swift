@@ -140,10 +140,15 @@ enum NFKMLXOptionRegistrations {
             try NFKMLXGemma3n.backend(directoryURL: url, precision: options.precision ?? .checkpoint)
         }
         let gemma4 = registryNames(families: ["gemma4"]) { !$0.tasks.contains(NFKModelTaskTranscription) }
-        registerDirectoryModels(gemma4, consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision]) {
+        registerDirectoryModels(gemma4, consumes: draftKeys.union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision])) {
             url, _, options in
-            try NFKMLXGemmaLanguage.backend(directoryURL: url, precision: options.precision ?? .float32,
-                                            residency: options.residency)
+            guard let draftURL = options.draftURL else {
+                return try NFKMLXGemmaLanguage.backend(directoryURL: url, precision: options.precision ?? .float32,
+                                                       residency: options.residency)
+            }
+            return try NFKMLXGemmaLanguage.backend(directoryURL: url, draftDirectoryURL: draftURL,
+                                                   precision: options.precision ?? .float32, residency: options.residency,
+                                                   draftBits: options.draftBits(orDefault: 4))
         }
     }
 

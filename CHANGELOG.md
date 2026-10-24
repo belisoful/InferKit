@@ -2422,6 +2422,20 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   (`answerForImage:question:maxTokens:error:`). The embedders, text encoders, and drafts that read
   these releases hold them whole, as before. A drafted language backend loads its draft first and plans the model against
   what the draft leaves.
+- The dense Gemma 4 decoders stream the same way, so the 31B and the 12B unified decoder run on a machine
+  that cannot hold them. `NFKMLXGemmaLanguage.backend(directoryURL:precision:residency:)` and the
+  multimodal backend take the choice, reached from Objective-C through
+  `gemmaBackendWithDirectoryURL:precision:residency:error:` and
+  `gemmaMultimodalBackendWithDirectoryURL:precision:residency:error:`; `NFKMLXGemmaBackend` reports
+  `streamedLayerCount` and `streamedBytesPerPass`. The multimodal backend loads its towers before the
+  decoder and plans the decoder against what they hold. The 26B-A4B mixture pages its experts as before.
+  A smaller Gemma 4 release drafts for a larger one
+  (`NFKMLXGemmaLanguage.backend(directoryURL:draftDirectoryURL:precision:residency:draftBits:)`,
+  `gemmaBackendWithDirectoryURL:draftDirectoryURL:precision:residency:error:`): the decoders run without a
+  key-value cache, so each round the draft proposes `NFKMLXGenerationParameterKey.draftTokens` tokens and
+  one pass of the release scores them all. The draft is held at 4 bits, embeddings included, and the
+  catalog's dense Gemma 4 entries offer it as their draft model. At temperature 0 the reply is the
+  release's greedy reply.
 - Pixtral 12B's released fused decoder is measured streamed, given the recorded projected image features:
   at float32 it matches the reference at every position after every layer, and at bfloat16 each layer
   stays inside its block floor and the whole pass ranks within torch's own jittered bfloat16 runs. The

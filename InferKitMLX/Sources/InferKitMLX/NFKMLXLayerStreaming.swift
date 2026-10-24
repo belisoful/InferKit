@@ -305,6 +305,33 @@ public final class NFKMLXLayerStream: @unchecked Sendable {
 
 extension NFKMLXLayerStream {
 
+    /// Layer `index`'s output from `forward` under `stream`, the layer's weights read in first and let go
+    /// after where it streams; nil where the pass skips it. `kept` names what the layer wrote beside its
+    /// output, such as its cache rows or the keys and values a later layer shares, evaluated with the
+    /// output before the weights go.
+    ///
+    /// @discussion From the first failed read on, every layer, held or streamed, is skipped until
+    /// ``clearFailure()``: a layer computed after a skipped one would write state the skipped layer has
+    /// not, and a later pass's mask would no longer fit every layer's keys.
+    static func run<Output>(_ stream: NFKMLXLayerStream?, layer: Module, index: Int, _ forward: () -> Output,
+                            keeping kept: (Output) -> [MLXArray]) -> Output? {
+        guard let stream else {
+            return forward()
+        }
+        guard stream.readFailure == nil else {
+            return nil
+        }
+        guard stream.streams(index) else {
+            return forward()
+        }
+        guard stream.install(index, into: layer) else {
+            return nil
+        }
+        let output = forward()
+        stream.release(index, from: layer, after: kept(output))
+        return output
+    }
+
     /// A stream over the layers of a release directory that `layerOf` names, keeping only `streamed`.
     ///
     /// - Parameters:

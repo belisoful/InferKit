@@ -6434,6 +6434,25 @@ id<NFKInferenceBackend> mixture = [NFKMLXGemmaLanguage gemmaBackendWithDirectory
                                                                               error:&error];
 ```
 
+The dense sizes stream the layers they cannot hold, so the 31B runs at its released bfloat16 on a
+machine that cannot hold it. A smaller Gemma 4 release drafts for it: the decoders run
+without a key-value cache, so each round the draft proposes a few tokens and one pass of the 31B
+scores them all. Measured on the streamed 31B drafted by the E2B at 4 bits: its 16-token greedy reply
+in 6 passes of the release.
+
+<!-- objc-check: given NSURL *draftDirectory; -->
+```objc
+id<NFKInferenceBackend> streamed = [NFKMLXGemmaLanguage gemmaBackendWithDirectoryURL:releaseDirectory
+                                                                           precision:NFKMLXWeightPrecisionCheckpoint
+                                                                           residency:NFKMLXResidencyStreamed
+                                                                               error:&error];
+id<NFKInferenceBackend> drafted = [NFKMLXGemmaLanguage gemmaBackendWithDirectoryURL:releaseDirectory
+                                                                  draftDirectoryURL:draftDirectory
+                                                                          precision:NFKMLXWeightPrecisionCheckpoint
+                                                                          residency:NFKMLXResidencyStreamed
+                                                                              error:&error];
+```
+
 ## Choosing a backend at runtime
 
 Because every engine adopts `NFKInferenceBackend`, a caller selects one at runtime and builds the

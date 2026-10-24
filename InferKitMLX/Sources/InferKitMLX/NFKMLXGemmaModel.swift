@@ -639,6 +639,19 @@ public final class NFKMLXGemmaNet: Module {
     /// where every expert is resident. Introduced in InferKit 0.4.0.
     public internal(set) var expertStore: NFKMLXExpertStore?
 
+    /// The layers a streamed load leaves in the release, read in their turn on every pass; nil where
+    /// every layer is held. Introduced in InferKit 0.4.0.
+    public internal(set) var layerStream: NFKMLXLayerStream?
+
+    /// Throws the first failed read of a streamed layer. Every pass after a failed read skips every
+    /// layer, so a caller holding a streamed decoder checks after each pass. Nothing is thrown where
+    /// every layer is held. Introduced in InferKit 0.4.0.
+    public func verifyStream() throws {
+        if let failure = layerStream?.readFailure {
+            throw failure
+        }
+    }
+
     init(_ c: NFKMLXGemmaConfiguration) {
         configuration = c
         _embedTokens.wrappedValue = Embedding(embeddingCount: c.vocabularySize, dimensions: c.hiddenSize)
@@ -669,6 +682,13 @@ public final class NFKMLXGemmaNet: Module {
     func callAsFunction(_ tokens: MLXArray) -> MLXArray {
         var trace = [MLXArray]()
         return forward(tokens, trace: &trace)
+    }
+
+    /// ``hiddenStates(_:)`` and the logits from one pass, which a streamed decoder reads its release once for.
+    func pass(_ tokens: MLXArray) -> (states: [MLXArray], logits: MLXArray) {
+        var trace = [MLXArray]()
+        let logits = forward(tokens, trace: &trace)
+        return (trace, logits)
     }
 
     /// The scaled token embedding, the main stream a caller splices multimodal soft tokens into
@@ -722,8 +742,12 @@ public final class NFKMLXGemmaNet: Module {
         for (index, layer) in layers.enumerated() {
             let kind = c.layerTypes[index]
             let shared = index >= c.firstSharedLayer ? latest[kind] : nil
-            let (next, keys, values) = layer(hidden, perLayerInput: normalized?[0..., 0..., index],
-                                             mask: mask, shared: shared)
+            guard let (next, keys, values) = NFKMLXLayerStream.run(layerStream, layer: layer, index: index, {
+                layer(hidden, perLayerInput: normalized?[0..., 0..., index], mask: mask, shared: shared)
+            }, keeping: { [$0.output, $0.keys, $0.values] }) else {
+                trace.append(hidden)
+                continue
+            }
             hidden = next
             trace.append(hidden)
             if index < c.firstSharedLayer {
@@ -852,9 +876,26 @@ public final class NFKMLXGemmaLanguage: NSObject {
 
     /// Loads the decoder with its routed experts held as `residency` plans them. The 26B-A4B mixture
     /// stores each projection stacked in the module's own layout, so an expert pages as the release
-    /// stores it; the E-series has no experts and loads resident under every residency.
+    /// stores it.
+    ///
+    /// @discussion A dense decoder has no experts. Where `streams` allows it, it streams the layers
+    /// `residency` plans to leave in the release (``streamedLayers(directory:precision:residency:budget:reserving:)``,
+    /// ``NFKMLXGemmaNet/layerStream``); otherwise it loads resident under every residency. Only a caller
+    /// that checks ``NFKMLXGemmaNet/verifyStream()`` after each pass may pass `streams`. A mixture never
+    /// streams.
     static func loadWeights(into net: NFKMLXGemmaNet, fromDirectory directory: URL,
-                            precision: NFKMLXWeightPrecision, residency: NFKMLXResidency) throws {
+                            precision: NFKMLXWeightPrecision, residency: NFKMLXResidency, streams: Bool = false,
+                            besides: Int = 0, budget: Int = NFKMLXResidencyBudget.current(),
+                            reserving reserved: Int = 0) throws {
+        if streams, net.configuration.expertCount == 0 {
+            let streamed = try streamedLayers(directory: directory, precision: precision, residency: residency,
+                                              budget: budget, reserving: reserved, besides: besides)
+            if !streamed.isEmpty {
+                net.layerStream = try loadStreamedWeights(into: net, layers: net.layers, fromDirectory: directory,
+                                                          precision: precision, streamed: streamed)
+                return
+            }
+        }
         let prefix = "model.language_model."
         net.expertStore = try NFKMLXExpertInventory.load(
             directory: directory, precision: precision, residency: residency,
@@ -875,5 +916,49 @@ public final class NFKMLXGemmaLanguage: NSObject {
                 }
             },
             load: { try loadWeights(into: net, fromDirectory: directory, precision: precision, skipping: $0) })
+    }
+
+    /// The decoder's module key for a release tensor: the key without `model.language_model.`, or nil
+    /// for a tensor of the vision or audio tower.
+    static func decoderKey(of key: String) -> String? {
+        key.hasPrefix("model.language_model.") ? String(key.dropFirst("model.language_model.".count)) : nil
+    }
+
+    /// The decoder layers a dense Gemma 4 release's load leaves in the release under `residency`, as
+    /// ``NFKMLXLayerStream/plannedLayers(residency:budget:footprint:fitsWhole:)`` plans them; empty where it
+    /// holds them all. `reserved` is what something held beside the decoder takes from the check a
+    /// resident load makes; `budget` already leaves it out. `besides` is what the caller holds beside the
+    /// decoder from the same release, such as the vision and audio towers, which the plan counts with the
+    /// decoder's fixed bytes.
+    static func streamedLayers(directory: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                               budget: Int = NFKMLXResidencyBudget.current(), reserving reserved: Int = 0,
+                               besides: Int = 0) throws -> Set<Int> {
+        try NFKMLXLayerStream.plannedLayers(residency: residency, budget: budget, footprint: {
+            let decoder = try NFKMLXLayerStream.footprint(
+                directory: directory, precision: precision, includes: { decoderKey(of: $0) != nil },
+                layerOf: { decoderKey(of: $0).flatMap { NFKMLXLayerStream.layer(ofDecoderName: $0) }?.layer })
+            return NFKMLXStageFootprint(bytes: decoder.bytes + besides, layerBytes: decoder.layerBytes)
+        }, fitsWhole: {
+            try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: precision, reserve: reserved)
+        })
+    }
+
+    /// Loads a dense Gemma 4 release into `net`, whose decoder layers are `layers`, with its `streamed`
+    /// layers left in the release and every other decoder tensor held, and returns the stream that reads
+    /// the streamed layers in their turn on every pass, primed.
+    static func loadStreamedWeights(into net: Module, layers: [Module], fromDirectory directory: URL,
+                                    precision: NFKMLXWeightPrecision, streamed: Set<Int>) throws -> NFKMLXLayerStream? {
+        guard let vacated = try NFKMLXLayerStream.vacating(streamed, of: layers, prefix: "layers.", directory: directory,
+                                                           precision: precision, layerOf: { key in
+            decoderKey(of: key).flatMap { NFKMLXLayerStream.layer(ofDecoderName: $0) }
+        }) else { return nil }
+        let held: (String) -> String? = { key in
+            guard let name = decoderKey(of: key) else { return nil }
+            return NFKMLXLayerStream.layer(ofDecoderName: name).map { streamed.contains($0.layer) } == true ? nil : name
+        }
+        let arrays = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: held)
+        try NFKMLXWeights.apply(arrays + vacated.placeholders, to: net, verifyShapes: true)
+        vacated.stream.prime()
+        return vacated.stream
     }
 }

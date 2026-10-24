@@ -1548,30 +1548,12 @@ public final class NFKMLXLanguageNet: Module {
         } keeping: { [] }
     }
 
-    /// Layer `index`'s output from `forward`, its weights read in first and let go after where the layer
-    /// streams; nil where the pass skips it. `state` is what the layer wrote beside its output, such as
-    /// its cache rows, evaluated with the output before the weights go.
-    ///
-    /// @discussion From the first failed read on, every layer, held or streamed, is skipped until
-    /// ``NFKMLXLayerStream/clearFailure()``: a layer computed after a skipped one would write cache rows
-    /// the skipped layer has not, and a later pass's mask would no longer fit every layer's keys.
+    /// Layer `index`'s output from `forward` under the stream
+    /// (``NFKMLXLayerStream/run(_:layer:index:_:keeping:)``); nil where the pass skips it. `state` is what
+    /// the layer wrote beside its output, such as its cache rows.
     private func run(_ layer: NFKLMBlock, _ index: Int, _ forward: () -> MLXArray,
                      keeping state: () -> [MLXArray]) -> MLXArray? {
-        guard let layerStream else {
-            return forward()
-        }
-        guard layerStream.readFailure == nil else {
-            return nil
-        }
-        guard layerStream.streams(index) else {
-            return forward()
-        }
-        guard layerStream.install(index, into: layer) else {
-            return nil
-        }
-        let output = forward()
-        layerStream.release(index, from: layer, after: [output] + state())
-        return output
+        NFKMLXLayerStream.run(layerStream, layer: layer, index: index, forward, keeping: { [$0] + state() })
     }
 
     /// Throws the first failed read of a streamed layer. Every pass after a failed read skips every

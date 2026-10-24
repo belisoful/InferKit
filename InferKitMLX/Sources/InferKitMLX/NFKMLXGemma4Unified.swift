@@ -57,6 +57,18 @@ public final class NFKMLXGemma4UnifiedNet: Module {
 
     let configuration: NFKMLXGemmaConfiguration
 
+    /// The layers a streamed load leaves in the release, read in their turn on every pass; nil where
+    /// every layer is held. Introduced in InferKit 0.4.0.
+    public internal(set) var layerStream: NFKMLXLayerStream?
+
+    /// Throws the first failed read of a streamed layer, as ``NFKMLXGemmaNet/verifyStream()`` does.
+    /// Introduced in InferKit 0.4.0.
+    public func verifyStream() throws {
+        if let failure = layerStream?.readFailure {
+            throw failure
+        }
+    }
+
     init(_ c: NFKMLXGemmaConfiguration) {
         configuration = c
         _embedTokens.wrappedValue = Embedding(embeddingCount: c.vocabularySize, dimensions: c.hiddenSize)
@@ -80,6 +92,13 @@ public final class NFKMLXGemma4UnifiedNet: Module {
         return forward(tokens, trace: &trace)
     }
 
+    /// ``hiddenStates(_:)`` and the logits from one pass, which a streamed decoder reads its release once for.
+    func pass(_ tokens: MLXArray) -> (states: [MLXArray], logits: MLXArray) {
+        var trace = [MLXArray]()
+        let logits = forward(tokens, trace: &trace)
+        return (trace, logits)
+    }
+
     private func forward(_ tokens: MLXArray, trace: inout [MLXArray]) -> MLXArray {
         let c = configuration
         let length = tokens.shape[1]
@@ -93,7 +112,12 @@ public final class NFKMLXGemma4UnifiedNet: Module {
         for (index, layer) in layers.enumerated() {
             let kind = c.layerTypes[index]
             let shared = index >= c.firstSharedLayer ? latest[kind] : nil
-            let (next, keys, values) = layer(hidden, mask: mask, shared: shared)
+            guard let (next, keys, values) = NFKMLXLayerStream.run(layerStream, layer: layer, index: index, {
+                layer(hidden, mask: mask, shared: shared)
+            }, keeping: { [$0.output, $0.keys, $0.values] }) else {
+                trace.append(hidden)
+                continue
+            }
             hidden = next
             trace.append(hidden)
             if index < c.firstSharedLayer {
@@ -176,6 +200,26 @@ public extension NFKMLXGemmaLanguage {
     /// Loads the unified decoder from a released directory, taking only the language model's tensors.
     static func loadUnifiedWeights(into net: NFKMLXGemma4UnifiedNet, fromDirectory directory: URL,
                                    precision: NFKMLXWeightPrecision = .float32) throws {
+        try loadUnifiedWeights(into: net, fromDirectory: directory, precision: precision, residency: .resident)
+    }
+
+    /// ``loadUnifiedWeights(into:fromDirectory:precision:)`` streaming, where `streams` allows it, the layers
+    /// `residency` plans to leave in the release (``streamedLayers(directory:precision:residency:budget:reserving:)``,
+    /// ``NFKMLXGemma4UnifiedNet/layerStream``). Only a caller that checks
+    /// ``NFKMLXGemma4UnifiedNet/verifyStream()`` after each pass may pass `streams`.
+    internal static func loadUnifiedWeights(into net: NFKMLXGemma4UnifiedNet, fromDirectory directory: URL,
+                                            precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                                            streams: Bool = false, budget: Int = NFKMLXResidencyBudget.current(),
+                                            reserving reserved: Int = 0) throws {
+        if streams {
+            let streamed = try streamedLayers(directory: directory, precision: precision, residency: residency,
+                                              budget: budget, reserving: reserved)
+            if !streamed.isEmpty {
+                net.layerStream = try loadStreamedWeights(into: net, layers: net.layers, fromDirectory: directory,
+                                                          precision: precision, streamed: streamed)
+                return
+            }
+        }
         let prefix = "model.language_model."
         let mapped = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: {
             $0.hasPrefix(prefix) ? String($0.dropFirst(prefix.count)) : nil

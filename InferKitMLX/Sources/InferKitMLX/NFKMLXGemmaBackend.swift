@@ -25,9 +25,13 @@ import MLXRandom
 final class NFKGemmaBackendHolder: @unchecked Sendable {
     let logits: (MLXArray) -> MLXArray
     let tokenizer: NFKMLXGemmaTokenizer
-    init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKMLXGemmaTokenizer) {
+    /// The draft decoder's logits, which propose tokens for `logits` to verify; nil where nothing drafts.
+    let draft: ((MLXArray) -> MLXArray)?
+    init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKMLXGemmaTokenizer,
+         draft: ((MLXArray) -> MLXArray)? = nil) {
         self.logits = logits
         self.tokenizer = tokenizer
+        self.draft = draft
     }
 }
 
@@ -63,14 +67,37 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     /// router reaches them. Introduced in InferKit 0.4.0.
     @objc public var pagesExperts: Bool { expertStore != nil }
 
+    /// The decoder layers a streamed load leaves in the release, read in their turn on every pass; nil
+    /// where every layer is held.
+    private let layerStream: NFKMLXLayerStream?
+
+    /// How many decoder layers the model leaves in the release, read in their turn on every pass; 0
+    /// where every layer is held. Introduced in InferKit 0.4.0.
+    @objc public var streamedLayerCount: Int { layerStream?.layers.count ?? 0 }
+
+    /// The bytes each pass reads from the release for the streamed layers; 0 where every layer is held.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var streamedBytesPerPass: Int { layerStream?.bytesPerPass ?? 0 }
+
+    /// Whether generation drafts with a smaller Gemma 4 release of the same vocabulary
+    /// (``NFKMLXGemmaLanguage/backend(directoryURL:draftDirectoryURL:precision:residency:draftBits:)``).
+    /// Introduced in InferKit 0.4.0.
+    @objc public var hasDraftModel: Bool { holder.draft != nil }
+
+    /// What the last request that drafted did: its verifying passes and its kept proposals.
+    /// Introduced in InferKit 0.4.0.
+    public private(set) var lastSpeculativeReport = NFKMLXSpeculativeReport()
+
     init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKMLXGemmaTokenizer, identifier: String,
-         expertStore: NFKMLXExpertStore? = nil, modules: [Module] = [], releaseDirectoryURL: URL? = nil) {
-        self.holder = NFKGemmaBackendHolder(logits: logits, tokenizer: tokenizer)
+         expertStore: NFKMLXExpertStore? = nil, layerStream: NFKMLXLayerStream? = nil,
+         draft: ((MLXArray) -> MLXArray)? = nil, modules: [Module] = [], releaseDirectoryURL: URL? = nil) {
+        self.holder = NFKGemmaBackendHolder(logits: logits, tokenizer: tokenizer, draft: draft)
         self.identifier = identifier
         self.describedModules = modules
         self.releaseDirectoryURL = releaseDirectoryURL
         releaseSampling = NFKMLXReleaseSampling(directoryURL: releaseDirectoryURL)
         self.expertStore = expertStore
+        self.layerStream = layerStream
         beginOfSequence = tokenizer.id(forToken: "<bos>")
         startOfTurn = tokenizer.id(forToken: "<start_of_turn>")
         endOfTurn = tokenizer.id(forToken: "<end_of_turn>")
@@ -91,14 +118,16 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     /// release directory occupies on disk and the `model_type` and `max_position_embeddings` its
     /// `config.json` states, and the residency, `paged` or `resident` (`NFKModelInfo*` keys). The 26B-A4B
     /// mixture's paged experts count toward its parameters; its weight bytes are what memory holds, which
-    /// leaves out experts read from the release. Introduced in InferKit 0.4.0.
+    /// leaves out experts read from the release, and a streamed decoder reports `streamed`. Introduced
+    /// in InferKit 0.4.0.
     /// The positions the release's configuration states, which bound a prompt and its reply.
     private var contextLength: Int? { modelInfo[NFKModelInfoContextLength] as? Int }
 
     @objc public var modelInfo: [String: Any] {
         modelInfoCache.value {
             var info = NFKMLXModelDescription.info(of: describedModules, releaseDirectoryURL: releaseDirectoryURL)
-            info[NFKModelInfoResidency] = pagesExperts ? NFKModelResidencyPaged : NFKModelResidencyResident
+            info[NFKModelInfoResidency] = pagesExperts ? NFKModelResidencyPaged
+                : layerStream != nil ? NFKModelResidencyStreamed : NFKModelResidencyResident
             return info
         }
     }
@@ -115,10 +144,15 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
         expertStore?.releaseCachedBytes(byteCount, keeping: keepingByteCount) ?? 0
     }
 
-    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
+    /// The request parameters the backend reads, with `NFKMLXGenerationParameterKey.draftTokens` where
+    /// a draft model proposes tokens. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
-        [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens, NFKParameterSeed, NFKParameterTools,
-         NFKMLXGenerationParameterKey.toolCallFormat]
+        var keys: Set<String> = [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens,
+                                 NFKParameterSeed, NFKParameterTools, NFKMLXGenerationParameterKey.toolCallFormat]
+        if hasDraftModel {
+            keys.insert(NFKMLXGenerationParameterKey.draftTokens)
+        }
+        return keys
     }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
@@ -139,10 +173,14 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
         if let value = request.parameter(forKey: NFKParameterSeed) as? NSNumber {
             seed = value.uint64Value
         }
+        var draftTokens = hasDraftModel ? NFKMLXGenerationOptions().draftTokens : 0
+        if hasDraftModel, let value = request.parameter(forKey: NFKMLXGenerationParameterKey.draftTokens) as? NSNumber {
+            draftTokens = value.intValue
+        }
 
         if let (promptTokens, format) = try toolPrompt(for: request) {
             let (produced, limit) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens, seed: seed,
-                                    stops: templateStopTokens)
+                                                 stops: templateStopTokens, draftTokens: draftTokens)
             var outputs = NFKMLXToolCalling.outputs(answer: holder.tokenizer.decode(produced), reasoning: "",
                                                     request: request, format: format, source: identifier)
             outputs[NFKOutputFinishReason] = NFKMLXContextRoom.finishReason(produced: produced.count, limit: limit, outputs: outputs)
@@ -152,7 +190,8 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
         }
         let promptTokens = try tokens(for: request)
         let (produced, limit) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens, seed: seed,
-                                stops: rendersConversation(request) ? templateStopTokens : stopTokens)
+                                             stops: rendersConversation(request) ? templateStopTokens : stopTokens,
+                                             draftTokens: draftTokens)
         return NFKInferenceResult(outputs: [
             NFKOutputText: holder.tokenizer.decode(produced),
             NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
@@ -222,22 +261,99 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
         return ids
     }
 
-    /// Prefill-only generation: the whole growing sequence runs through the decoder each step.
-    private func generate(_ promptTokens: [Int], sampling: NFKMLXStepSampling, maxTokens: Int, seed: UInt64?,
-                          stops: Set<Int>) throws -> (tokens: [Int], limit: Int) {
+    /// Prefill-only generation: the whole growing sequence runs through the decoder each step, or each
+    /// round where a draft proposes `draftTokens` tokens. A step whose streamed layer could not be read
+    /// throws, and the next request reads the release again.
+    func generate(_ promptTokens: [Int], sampling: NFKMLXStepSampling, maxTokens: Int, seed: UInt64?,
+                  stops: Set<Int>, draftTokens: Int) throws -> (tokens: [Int], limit: Int) {
         var tokens = promptTokens
         var produced = [Int]()
         let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: promptTokens.count,
                                                   contextLength: contextLength, source: identifier)
+        if let draft = holder.draft, draftTokens > 0 {
+            return (try speculate(promptTokens, draft: draft, proposals: draftTokens, sampling: sampling,
+                                  limit: limit, seed: seed, stops: stops), limit)
+        }
         for step in 0 ..< max(limit, 0) {
             let input = MLXArray(tokens.map(Int32.init)).reshaped([1, tokens.count])
             let logits = holder.logits(input)[0, tokens.count - 1]
             let next = sampling.next(logits, seed: seed, step: step)
+            try verifyStream()
             if stops.contains(next) { break }
             produced.append(next)
             tokens.append(next)
         }
         return (produced, limit)
+    }
+
+    /// Throws a streamed layer's failed read and clears it, so the next request reads the release again.
+    private func verifyStream() throws {
+        if let failure = layerStream?.readFailure {
+            layerStream?.clearFailure()
+            throw failure
+        }
+    }
+
+    /// Drafted prefill-only generation, sampling as `sampling` says. Each round the draft proposes up to `proposals` tokens, one pass of
+    /// its own over the growing sequence each, and one pass of the decoder over the sequence and every
+    /// proposal scores them all: the leading proposals it agrees with are kept, with the decoder's own
+    /// token after them, so a round yields up to `proposals` + 1 tokens for one pass of the decoder.
+    ///
+    /// @discussion At temperature 0 each kept token is the decoder's argmax given the tokens before it, so
+    /// the reply is the greedy reply. Above 0 the proposals pass a rejection test that leaves the reply
+    /// distributed as the decoder alone samples it (``NFKMLXLanguageNet/verifyBySampling(rows:proposals:proposalDistributions:options:)``).
+    private func speculate(_ promptTokens: [Int], draft: (MLXArray) -> MLXArray, proposals count: Int,
+                           sampling: NFKMLXStepSampling, limit: Int, seed: UInt64?, stops: Set<Int>) throws -> [Int] {
+        var options = NFKMLXGenerationOptions()
+        options.temperature = sampling.temperature
+        options.topP = sampling.topP
+        options.topK = sampling.topK
+        let temperature = sampling.temperature
+        if let seed { MLXRandom.seed(seed) }
+        func input(_ sequence: [Int]) -> MLXArray { MLXArray(sequence.map(Int32.init)).reshaped([1, sequence.count]) }
+
+        var report = NFKMLXSpeculativeReport()
+        defer { lastSpeculativeReport = report }
+        var tokens = promptTokens
+        var produced = [Int]()
+        while produced.count < limit {
+            var proposals = [Int]()
+            var distributions = [MLXArray]()
+            var drafted = tokens
+            // The round's last token is the decoder's own, so the draft proposes no more than the reply has room for.
+            while proposals.count < Swift.min(count, limit - produced.count - 1) {
+                let row = draft(input(drafted))[0, drafted.count - 1]
+                let token: Int
+                if temperature > 0 {
+                    let distribution = NFKMLXLanguageNet.probabilities(of: row, options: options)
+                    distributions.append(distribution)
+                    token = MLXRandom.categorical(log(distribution)).item(Int.self)
+                } else {
+                    token = row.argMax().item(Int.self)
+                }
+                proposals.append(token)
+                drafted.append(token)
+                if stops.contains(token) { break }
+            }
+            // Row j predicts what follows the j-th proposal's predecessor, so row j judges proposal j and
+            // the last row gives the token after the final proposal.
+            let rows = holder.logits(input(tokens + proposals))[0, (tokens.count - 1)...]
+            eval(rows)
+            try verifyStream()
+            let (accepted, following) = temperature > 0
+                ? NFKMLXLanguageNet.verifyBySampling(rows: rows, proposals: proposals,
+                                                     proposalDistributions: distributions, options: options)
+                : NFKMLXLanguageNet.verifyGreedily(rows: rows, proposals: proposals)
+            report.rounds += 1
+            report.proposed += proposals.count
+            report.accepted += accepted
+            for token in proposals.prefix(accepted) + [following] {
+                guard produced.count < limit, !stops.contains(token) else { return produced }
+                produced.append(token)
+                tokens.append(token)
+            }
+        }
+        return produced
     }
 }
 
@@ -256,8 +372,10 @@ public extension NFKMLXGemmaLanguage {
     /// ``backend(directoryURL:precision:)`` with the 26B-A4B mixture's routed experts held as
     /// `residency` plans them: ``NFKMLXResidency/paged`` leaves them in the release and reads each as
     /// the router reaches it, and ``NFKMLXResidency/automatic`` pages only where the release is known
-    /// not to fit whole. The dense decoders have nothing to page and load resident under every
-    /// residency. The release directory has to stay in place for the life of a paged backend.
+    /// not to fit whole. The dense decoders (the E-series, the 31B, and the 12B unified) have nothing
+    /// to page: ``NFKMLXResidency/automatic`` holds them whole where the release fits and streams the
+    /// layers it cannot hold otherwise, as ``NFKMLXResidency/streamed`` does wherever the release does
+    /// not fit. The release directory has to stay in place for the life of a paged or streamed backend.
     /// Introduced in InferKit 0.4.0.
     static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision = .float32,
                         residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
@@ -269,16 +387,85 @@ public extension NFKMLXGemmaLanguage {
         guard let tokenizer = NFKMLXGemmaTokenizer(directoryURL: directoryURL) else {
             throw NFKMLXError.unsupportedConfiguration("the Gemma release has no readable tokenizer.json")
         }
+        let decoder = try textDecoder(directoryURL: directoryURL, precision: precision, residency: residency, streams: true)
+        return NFKMLXGemmaBackend(logits: decoder.logits, tokenizer: tokenizer, identifier: modelName,
+                                  expertStore: decoder.expertStore, layerStream: decoder.layerStream,
+                                  modules: [decoder.module], releaseDirectoryURL: directoryURL)
+    }
+
+    /// Builds a text-generation backend from a Gemma 4 release with a smaller Gemma 4 release of the same
+    /// vocabulary drafting for it: the 31B streamed with the E2B held beside it, for instance.
+    ///
+    /// @discussion The decoders run prefill-only, so each token of a plain run is one pass of the release,
+    /// and a streamed one reads every layer it does not hold on each. With a draft, a round is one pass of
+    /// the draft per proposal and one pass of the release over every proposal
+    /// (`NFKMLXGenerationParameterKey.draftTokens` a round, 4 by default, 0 to decode without it). At
+    /// temperature 0 the reply is the release's greedy reply. The draft loads held at its release's own
+    /// precision and is quantized to `draftBits` (4 by default; nil keeps it at that precision), its
+    /// embeddings included, since a draft's precision moves how many proposals are kept and never the
+    /// reply: the E2B's per-layer embedding alone is 4.7 GB at bfloat16. The release is held as
+    /// `residency` plans it against what the draft leaves of the working set. Introduced in InferKit 0.4.0.
+    static func backend(directoryURL: URL, draftDirectoryURL: URL, precision: NFKMLXWeightPrecision = .float32,
+                        residency: NFKMLXResidency = .automatic, draftBits: Int? = 4) throws -> NFKMLXGemmaBackend {
+        let configURL = directoryURL.appendingPathComponent("config.json")
+        guard !NFKMLXGemma3.isGemma3(configURL: configURL),
+              !NFKMLXGemma3.isGemma3(configURL: draftDirectoryURL.appendingPathComponent("config.json")) else {
+            throw NFKMLXError.unsupportedConfiguration("a Gemma 3 release drafts through NFKMLXGemma3's backend")
+        }
+        guard let tokenizer = NFKMLXGemmaTokenizer(directoryURL: directoryURL) else {
+            throw NFKMLXError.unsupportedConfiguration("the Gemma release has no readable tokenizer.json")
+        }
+        let draft = try textDecoder(directoryURL: draftDirectoryURL, precision: draftBits == nil ? precision : .checkpoint,
+                                    residency: .resident, streams: false)
+        if let draftBits {
+            try NFKMLXQuantization.quantize(module: draft.module, bits: draftBits, includeEmbeddings: true)
+            // The weights the quantized ones replace go before the release is planned, which they would
+            // otherwise crowd.
+            eval(draft.module)
+            NFKMLXGPU.clearCache()
+        }
+        let draftBytes = NFKMLXLanguage.heldBytes(of: draft.module)
+        let budget = NFKMLXResidencyBudget.current()
+        let decoder = try textDecoder(directoryURL: directoryURL, precision: precision, residency: residency, streams: true,
+                                      budget: budget > 0 ? Swift.max(budget - draftBytes, 1) : 0, reserving: draftBytes)
+        guard draft.vocabularySize == decoder.vocabularySize else {
+            throw NFKMLXError.unsupportedConfiguration(
+                "the draft's vocabulary has \(draft.vocabularySize) entries where the model's has "
+                + "\(decoder.vocabularySize); a draft must share the model's vocabulary")
+        }
+        return NFKMLXGemmaBackend(logits: decoder.logits, tokenizer: tokenizer, identifier: modelName,
+                                  expertStore: decoder.expertStore, layerStream: decoder.layerStream, draft: draft.logits,
+                                  modules: [decoder.module], releaseDirectoryURL: directoryURL)
+    }
+
+    /// The Objective-C entry for a release with a smaller release drafting for it, the draft at 4 bits;
+    /// see ``backend(directoryURL:draftDirectoryURL:precision:residency:draftBits:)``. Introduced in
+    /// InferKit 0.4.0.
+    @objc(gemmaBackendWithDirectoryURL:draftDirectoryURL:precision:residency:error:)
+    static func gemmaBackend(directoryURL: URL, draftDirectoryURL: URL, precision: NFKMLXWeightPrecision,
+                             residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, draftDirectoryURL: draftDirectoryURL, precision: precision,
+                    residency: residency)
+    }
+
+    /// A Gemma 4 text decoder from a release directory, the E-series, the 31B, the mixture, or the 12B
+    /// unified as its config's model type says, with its logits, held as `residency` plans it and streamed
+    /// where `streams` allows.
+    internal static func textDecoder(directoryURL: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                                     streams: Bool, budget: Int = NFKMLXResidencyBudget.current(), reserving reserved: Int = 0)
+        throws -> (logits: (MLXArray) -> MLXArray, module: Module, layerStream: NFKMLXLayerStream?,
+                   expertStore: NFKMLXExpertStore?, vocabularySize: Int) {
+        let configURL = directoryURL.appendingPathComponent("config.json")
         if try isUnified(configURL) {
             let net = makeUnifiedNet(try unifiedConfiguration(fromHuggingFace: configURL))
-            try loadUnifiedWeights(into: net, fromDirectory: directoryURL, precision: precision)
-            return NFKMLXGemmaBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: modelName,
-                                      modules: [net], releaseDirectoryURL: directoryURL)
+            try loadUnifiedWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency,
+                                   streams: streams, budget: budget, reserving: reserved)
+            return ({ net($0) }, net, net.layerStream, nil, net.configuration.vocabularySize)
         }
         let net = makeNet(try configuration(fromHuggingFace: configURL))
-        try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency)
-        return NFKMLXGemmaBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: modelName,
-                                  expertStore: net.expertStore, modules: [net], releaseDirectoryURL: directoryURL)
+        try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency,
+                        streams: streams, budget: budget, reserving: reserved)
+        return ({ net($0) }, net, net.layerStream, net.expertStore, net.configuration.vocabularySize)
     }
 
     /// The Objective-C entry: builds a Gemma text-generation backend from a release directory.
@@ -292,6 +479,16 @@ public extension NFKMLXGemmaLanguage {
     @objc(gemmaBackendWithDirectoryURL:residency:error:)
     static func gemmaBackend(directoryURL: URL, residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
         try backend(directoryURL: directoryURL, residency: residency)
+    }
+
+    /// The Objective-C entry loading the decoder at `precision` and holding it as `residency` says; see
+    /// ``backend(directoryURL:precision:residency:)``. A release larger than memory loads at its own
+    /// precision (``NFKMLXWeightPrecision/checkpoint``) and streams what it cannot hold. Introduced in
+    /// InferKit 0.4.0.
+    @objc(gemmaBackendWithDirectoryURL:precision:residency:error:)
+    static func gemmaBackend(directoryURL: URL, precision: NFKMLXWeightPrecision,
+                             residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, precision: precision, residency: residency)
     }
 
     // The optional files are the chat template a Gemma 3 release carries, which the dispatch to

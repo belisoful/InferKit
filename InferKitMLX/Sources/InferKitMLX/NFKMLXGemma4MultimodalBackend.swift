@@ -13,6 +13,7 @@ import CoreGraphics
 import Foundation
 import InferKit
 import MLX
+import MLXNN
 import MLXRandom
 
 /// A Gemma 4 release's towers and decoder, assembled for the multimodal backend.
@@ -147,6 +148,10 @@ extension NFKMLXGemmaLanguage {
                                                                      audioSoftTokens: audioSoft)
                 let logits = model.decoder.logits(fromEmbeddings: embeddings, tokens: ids)[0, tokens.count - 1]
                 let next = sampling.next(logits, seed: seed, step: step)
+                if let stream = model.decoder.layerStream, let failure = stream.readFailure {
+                    stream.clearFailure()
+                    throw failure
+                }
                 if stops.contains(next) { break }
                 produced.append(next)
                 tokens.append(next)
@@ -220,6 +225,20 @@ extension NFKMLXGemmaLanguage {
     /// inference off the render thread. Introduced in InferKit 0.4.0.
     @objc(gemmaMultimodalBackendWithDirectoryURL:residency:error:)
     public static func gemmaMultimodalBackend(directoryURL: URL, residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try gemmaMultimodalBackend(directoryURL: directoryURL, precision: .float32, residency: residency)
+    }
+
+    /// ``gemmaMultimodalBackend(directoryURL:residency:)`` with the decoder at `precision`.
+    ///
+    /// @discussion A dense decoder (the E-series and the 31B) that does not fit beside the towers streams
+    /// the layers it cannot hold under ``NFKMLXResidency/automatic`` and ``NFKMLXResidency/streamed``,
+    /// read in their turn on every pass; the plan counts the towers, which load first and stay held. A
+    /// release larger than memory loads at its own precision (``NFKMLXWeightPrecision/checkpoint``). The
+    /// release directory has to stay in place for the life of a paged or streamed backend. Introduced in
+    /// InferKit 0.4.0.
+    @objc(gemmaMultimodalBackendWithDirectoryURL:precision:residency:error:)
+    public static func gemmaMultimodalBackend(directoryURL: URL, precision: NFKMLXWeightPrecision,
+                                              residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
         let configURL = directoryURL.appendingPathComponent("config.json")
         guard let json = try JSONSerialization.jsonObject(with: Data(contentsOf: configURL)) as? [String: Any] else {
             throw NFKMLXError.unsupportedConfiguration("config.json is not a JSON object")
@@ -232,7 +251,6 @@ extension NFKMLXGemmaLanguage {
             throw NFKMLXError.unsupportedConfiguration("the Gemma release has no readable tokenizer.json")
         }
         let decoder = makeNet(try configuration(fromHuggingFace: configURL))
-        try loadWeights(into: decoder, fromDirectory: directoryURL, precision: .float32, residency: residency)
         let hidden = decoder.configuration.hiddenSize
 
         var vision: (tower: NFKMLXGemma4VisionNet, embedder: NFKMLXGemma4MultimodalEmbedder)?
@@ -261,6 +279,9 @@ extension NFKMLXGemmaLanguage {
             try NFKMLXWeights.apply(arrays(inDirectory: directoryURL, prefix: "model.embed_audio."), to: embedder)
             audio = (tower, embedder)
         }
+        let towers: [Module] = [vision?.tower, vision?.embedder, audio?.tower, audio?.embedder].compactMap { $0 }
+        try loadWeights(into: decoder, fromDirectory: directoryURL, precision: precision, residency: residency,
+                        streams: true, besides: towers.reduce(0) { $0 + NFKMLXLanguage.heldBytes(of: $1) })
         let model = NFKGemma4MultimodalModel(
             decoder: decoder, vision: vision, audio: audio, imageProcessor: imageProcessor, tokenizer: tokenizer,
             imageTokenId: (json["image_token_id"] as? NSNumber)?.intValue ?? tokenizer.id(forToken: "<|image|>") ?? 258_880,

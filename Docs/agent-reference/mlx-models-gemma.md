@@ -462,6 +462,27 @@ quarter of the floor.
   itself is already at parity layer by layer, so the backend test exercises the tokenizer and the
   generation loop it adds. The networks and tokenizer cross the async job boundary through an
   `@unchecked Sendable` holder, as the core language backend does.
+  The dense decoders stream the layers they cannot hold (mlx-companion.md "Streaming"): the E-series and
+  the 31B through `NFKMLXGemmaNet.layerStream`, the 12B through `NFKMLXGemma4UnifiedNet.layerStream`,
+  planned by `NFKMLXGemmaLanguage.streamedLayers` over the `model.language_model.` subtree. A streamed
+  layer that computes keys and values a later layer shares keeps them evaluated before its weights go.
+  The 26B-A4B mixture never streams. The text and multimodal backends check the stream after every
+  pass, and a failed read fails the request and is cleared for the next. Measured streamed at bf16
+  against `run_reference.py dense_layerwise` on the full releases: the 12B with half its layers
+  streamed reads prompt logits 0.99975216, argmax 6/6, worst last-position state 0.99929184, and the
+  31B with 47 of 60 streamed 0.99942386, 6/6, 0.9992635, each with its 16-token greedy continuation
+  token-exact; the E4B streamed computes its held load's values element for element. The reference
+  reads the scaled embeddings and the E-series per-layer modules as the release builds them and
+  prepends `<bos>`, which Gemma 4's tokenizer leaves to the chat template; without it the 12B
+  continues "The capital of France is" with "111.1......".
+  **Drafting** (`backend(directoryURL:draftDirectoryURL:precision:residency:draftBits:)`): the decoders
+  carry no key-value cache, so a drafted round runs the draft once per proposal over the growing
+  sequence and the release once over the sequence and every proposal, keeping the agreed proposals
+  through the language family's `verifyGreedily` / `verifyBySampling` with the request's sampling. The
+  draft loads first, held, quantized to `draftBits` with its embeddings, since the E2B's per-layer
+  embedding alone is 4.7 GB at bf16; the release is planned against what the draft leaves. The streamed
+  31B drafted by the E2B at 4 bits decodes its reference's 16 tokens in 6 passes, 10 of 23 proposals
+  kept.
 - `NFKMLXGemma4ImageProcessor` (`NFKMLXGemma4ImageProcessor.swift`) — the vision **image processor**:
   a `CGImage` to the flattened patches and `(x, y)` positions the tower reads. It resizes preserving
   aspect ratio to fit a patch budget (both sides a multiple of `poolingKernelSize · patchSize`),

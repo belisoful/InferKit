@@ -489,8 +489,9 @@ layers' bytes).
   Qwen4-Exp, Granite 4.0-H's mixtures and DeepSeek page.
 - Streaming changes WHEN one stage's layers are loaded. A dense stage too large to hold whole holds
   the repeated layers that fit and reads each of the others from the release in its turn, on every pass
-  (`NFKMLXLayerStreaming.swift`). Gemma 3, TranslateGemma, MADLAD-400's T5 encoder-decoder, and the
-  dense `NFKMLXLanguageNet` (Qwen3, Mistral Small, and the Qwen3-VL and Pixtral decoders) stream.
+  (`NFKMLXLayerStreaming.swift`). Gemma 3, TranslateGemma, MADLAD-400's T5 encoder-decoder, the
+  dense `NFKMLXLanguageNet` (Qwen3, Mistral Small, and the Qwen3-VL and Pixtral decoders), and the dense
+  Gemma 4 decoders (the E-series, the 31B, and the 12B unified) stream.
 
 The cases: `.resident` holds everything and throws where it is known not to fit; `.staged` stages and
 never pages; `.paged` stages and pages; `.streamed` stages and streams each stage with layers that is
@@ -671,6 +672,20 @@ Streaming:
   passing those bytes to `verifyFits` as its reserve. Unquantized, a 4B draft (about 9 GB with its
   vision tower) left this machine's planner budget of about 15.4 GB too little for the 12B's streamed
   minimum (3.75 GB plus the 4 GiB reserve) or the 27B's (5.3 GB plus the reserve).
+- The Gemma 4 decoders stream through `NFKMLXLayerStream.run(_:layer:index:_:keeping:)`, the stream
+  wrapper `NFKMLXLanguageNet` also runs its layers through: it skips every layer after a failed read,
+  installs and releases a streamed one, and evaluates what the layer `kept` (its output, and the keys
+  and values a later layer shares) before the weights go. `NFKMLXGemmaLanguage.loadWeights(…streams:besides:budget:reserving:)`
+  and `loadUnifiedWeights(…residency:streams:…)` stream only where `streams` is set; the text backend,
+  the multimodal backend (`besides:` its towers), and the drafted factory set it. The decoders run
+  without a key-value cache, so a failed read leaves nothing to empty, and a draft is verified by one
+  pass over the sequence and every proposal (mlx-models-gemma.md, `NFKMLXGemmaBackend`).
+- The reference for a release too large to hold, `run_reference.py dense_layerwise`, reads a Gemma text
+  model's non-layer modules as the release builds them (`_read_scaled_text_model`) and reads into each
+  layer only the tensors it holds, as `from_pretrained` does for Gemma 4 layers that share keys and
+  values. `DENSE_CHECK=1` also loads a release small enough to hold and requires the layer-by-layer
+  run's logits, hidden states, and greedy continuation to equal the whole load's bit for bit; the
+  Gemma 4 31B and 12B six-layer cuts, the E4B, and Qwen3 4B pass.
 - A streamed pass computes the held pass's values exactly: the same stored tensors, the same exact
   bfloat16 → float32 widening at `.float32`, the same kernels; only the evaluation boundaries move.
 - The drive: the store's 4 TB Thunderbolt SSD reads uncached at 2.12 GB/s in 64 MB `pread`s at one
