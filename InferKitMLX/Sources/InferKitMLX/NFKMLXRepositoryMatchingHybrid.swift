@@ -24,7 +24,8 @@ extension NFKMLXFamilyJudge {
         template: { repository, template in
             let mixture = ((repository.configuration["num_local_experts"] as? NSNumber)?.intValue ?? 0) > 0
             return NFKMLXModelDescriptors.entries.first {
-                $0.family == template.family && !$0.modelTypes.isEmpty && ($0.residencies.count > 1) == mixture
+                $0.family == template.family && !$0.modelTypes.isEmpty
+                    && $0.residencies.contains(NFKModelResidencyPaged) == mixture
             } ?? template
         },
         verify: { repository, template in

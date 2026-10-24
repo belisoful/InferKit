@@ -62,7 +62,8 @@ extension NFKMLXFamilyJudge {
             let text = (repository.configuration["text_config"] as? [String: Any]) ?? repository.configuration
             let mixture = (text["enable_moe_block"] as? NSNumber)?.boolValue ?? false
             return NFKMLXModelDescriptors.entries.first {
-                $0.family == template.family && !$0.modelTypes.isEmpty && ($0.residencies.count > 1) == mixture
+                $0.family == template.family && !$0.modelTypes.isEmpty
+                    && $0.residencies.contains(NFKModelResidencyPaged) == mixture
             } ?? template
         },
         verify: { repository, template in
