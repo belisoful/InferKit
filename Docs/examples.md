@@ -4736,6 +4736,23 @@ try NFKMLXWeights.save(net, to: tuned)
 let enhancer = try NFKMLXZeroDCEPlus.backend(weightsURL: tuned)   // Objective-C: backendWithWeightsURL:…
 ```
 
+### Fine-tuning Demucs
+
+Demucs v2 fine-tunes on separated stems as its training script trains it: each batch of stems is
+augmented, summed into the mix, and the separation is held to the stems by L1. Each step takes stems
+`[N, 4, 2, clip]` at 44.1 kHz in the order drums, bass, other, vocals. The remix shuffles stems in groups of
+four, so `N` is a multiple of four.
+
+```swift
+let net = try NFKMLXDemucs.network(weightsURL: releasedWeights)
+// Ten seconds rounded to the length the network round-trips, plus the one-second random crop.
+let clip = net.validLength(NFKMLXDemucs.referenceSegmentSamples) + NFKMLXDemucsAugmentation.demucsV2.shift
+try NFKMLXDemucs.fineTune(net, stems: { step in myStems[step % myStems.count] }, steps: 2000)
+
+try NFKMLXWeights.save(net, to: tuned)
+let separator = try NFKMLXDemucs.backend(weightsURL: tuned)       // Objective-C: backendWithWeightsURL:error:
+```
+
 ### Teaching bandwidth extension your own audio
 
 NU-Wave 2 restores the high band of a narrow-band recording. Fine-tuning it on wide-band audio of the

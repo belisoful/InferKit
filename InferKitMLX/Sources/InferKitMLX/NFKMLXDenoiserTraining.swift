@@ -369,10 +369,7 @@ public extension NFKMLXDenoiser {
     /// Adam moves each of the two by the same normalized step, so the folded bias steps at twice the rate.
     /// Introduced in InferKit 0.4.0.
     static func referenceOptimizer(for net: NFKMLXDemucsNet) -> Optimizer {
-        NFKMLXReferenceOptimizers.adamW(learningRate: 3e-4, over: net) { key in
-            let recurrentBias = (key.hasPrefix("lstm.lstm.") || key.hasPrefix("lstm.reverse.")) && key.hasSuffix(".bias")
-            return (rateScale: recurrentBias ? 2 : 1, weightDecay: 0)
-        }
+        NFKMLXDemucs.referenceOptimizer(for: net)
     }
 
     /// Trains a denoiser on pairs of noisy and clean speech.

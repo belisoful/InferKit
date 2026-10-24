@@ -12408,6 +12408,97 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         }
     }
 
+    // Demucs v2's training against the v2 branch's own `train.py` and `augment.py` (64ed2cb) on the released
+    // checkpoint: the unpadded estimate, the L1 loss over the stems trimmed to its middle, the global gradient
+    // norm and eight gradients across the encoder, the bidirectional LSTM, and the decoder, and the loss after
+    // one step of its Adam, each held to float64's within twice the reference's own float32 distance. The
+    // augmentation chain replays the reference's draws.
+    func testDemucsTrainingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_DEMUCS_TRAINING"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_DEMUCS_TRAINING to a record from run_reference.py demucs_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        func values(_ key: String) throws -> [Float] { try array(key).asArray(Float.self) }
+        func distance(_ a: MLXArray, _ b: MLXArray) -> Float {
+            sqrt(square(a - b).sum()).item(Float.self) / sqrt(square(b).sum()).item(Float.self)
+        }
+        let stems = try array("stems")
+        let net = try NFKMLXDemucs.network(weightsURL: weights("IK_VAL_DEMUCS"))
+        let objective = NFKMLXDemucsObjective()
+        net.train(true)
+
+        let estimate = net.estimate(stems.sum(axis: 1).transposed(0, 2, 1))
+        let stemsFirst = estimate.reshaped([estimate.dim(0), estimate.dim(1), 4, 2]).transposed(0, 2, 3, 1)
+        let estimateFloor = distance(try array("estimate"), try array("f64::estimate"))
+        let estimateError = distance(stemsFirst, try array("f64::estimate"))
+        print("PARITY demucs-training: estimate from float64 \(estimateError) (reference float32 \(estimateFloor))")
+        XCTAssertLessThan(estimateError, max(1e-6, 2 * estimateFloor))
+
+        let loss = objective(net, stems).item(Float.self)
+        let loss32 = try values("loss")[0], loss64 = try values("f64::loss")[0]
+        print("PARITY demucs-training: loss \(loss) vs \(loss32) (float64 \(loss64))")
+        XCTAssertEqual(loss, loss64, accuracy: max(abs(loss64) * 1e-5, 2 * abs(loss32 - loss64)))
+
+        let gradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, arrays in
+            [objective(net, arrays[0])]
+        }(net, [stems]).1.flattened())
+        // The reference's LSTM carries two biases that each receive the folded bias's gradient, so its norm
+        // counts that gradient twice.
+        let recurrentBiases = gradients.filter { $0.key.hasPrefix("lstm.") && $0.key.hasSuffix(".bias") && !$0.key.contains("linear") }
+        let squares = gradients.values.map { square($0).sum() } + recurrentBiases.values.map { square($0).sum() }
+        let norm = sqrt(squares.reduce(MLXArray(Float(0)), +)).item(Float.self)
+        let norm32 = try values("gradient_norm")[0], norm64 = try values("f64::gradient_norm")[0]
+        print("PARITY demucs-training: global gradient norm \(norm) vs \(norm32) (float64 \(norm64))")
+        XCTAssertEqual(norm, norm64, accuracy: max(norm64 * 1e-4, 2 * abs(norm32 - norm64)))
+        let named: [(reference: String, ours: String, layout: (MLXArray) -> MLXArray)] = [
+            ("encoder.0.0.weight", "encoder.0.conv1.weight", { $0.transposed(0, 2, 1) }),
+            ("encoder.5.2.bias", "encoder.5.conv2.bias", { $0 }),
+            ("lstm.lstm.weight_ih_l0", "lstm.lstm.0.Wx", { $0 }),
+            ("lstm.lstm.bias_ih_l1_reverse", "lstm.reverse.1.bias", { $0 }),
+            ("lstm.linear.weight", "lstm.linear.weight", { $0 }),
+            ("decoder.0.0.weight", "decoder.0.conv1.weight", { $0.transposed(0, 2, 1) }),
+            ("decoder.5.2.weight", "decoder.5.convt.conv.weight", { $0.transposed(1, 2, 0).expandedDimensions(axis: 2) }),
+            ("decoder.5.2.bias", "decoder.5.convt.conv.bias", { $0 }),
+        ]
+        for (reference, name, layout) in named {
+            let ours = try XCTUnwrap(gradients[name], name)
+            let theirs = layout(try array("grad::" + reference)), theirs64 = layout(try array("f64::grad::" + reference))
+            let floor = distance(theirs, theirs64)
+            print("PARITY demucs-training: \(name) gradient from float64: ours \(distance(ours, theirs64)), "
+                  + "reference float32 \(floor)")
+            XCTAssertLessThan(distance(ours, theirs64), max(1e-5, 2 * floor), name)
+        }
+
+        try NFKMLXDemucs.fineTune(net, stems: { _ in stems }, augmentation: nil, steps: 1)
+        net.train(true)
+        let lossAfter = objective(net, stems).item(Float.self)
+        let after32 = try values("loss_after_step")[0], after64 = try values("f64::loss_after_step")[0]
+        print("PARITY demucs-training: loss after one step \(lossAfter) vs \(after32) (float64 \(after64))")
+        XCTAssertEqual(lossAfter, after64, accuracy: max(abs(after64) * 1e-5, 2 * abs(after32 - after64)))
+
+        // The v2 branch's remix takes no probability draw; the port draws one, which a probability of 1 ignores.
+        var draws = try replayedDemucsDraws(arrays)
+        draws.units.append(0)
+        let augmented = NFKMLXDemucsAugmentation(shift: 16, signBeforeChannels: true).apply(try array("augment::stems"), draws: &draws)
+        let augmentDifference = abs(augmented - (try array("augment::out"))).max().item(Float.self)
+        print("PARITY demucs-training: augmentation worst \(augmentDifference)")
+        XCTAssertLessThan(augmentDifference, 1e-6)
+        XCTAssertTrue(draws.units.isEmpty && draws.integers.isEmpty && draws.uniforms.isEmpty, "every recorded draw is consumed")
+    }
+
+    /// A Demucs training record's augmentation draws, each kind in the order the reference took them.
+    private func replayedDemucsDraws(_ arrays: [String: MLXArray]) throws -> NFKDemucsReplayedDraws {
+        func sequence(_ kind: String) -> [MLXArray] {
+            (0...).lazy.map { arrays["augment::\(kind)::\($0)"] }.prefix { $0 != nil }.map { $0! }
+        }
+        let units = try XCTUnwrap(arrays["augment::units"], "augment::units").asArray(Float.self).map(Double.init)
+        return NFKDemucsReplayedDraws(units: units,
+                                      integers: sequence("integers").map { $0.asArray(Int32.self).map(Int.init) },
+                                      uniforms: sequence("uniforms").map { $0.asArray(Float.self) })
+    }
+
     // Conv-TasNet's objective against asteroid v0.5.2's own `PITLossWrapper(pairwise_neg_sisdr)`, on
     // estimates that are the sources crossed, scaled, shifted, and noised: the pairwise matrix and the
     // loss under the best assignment.

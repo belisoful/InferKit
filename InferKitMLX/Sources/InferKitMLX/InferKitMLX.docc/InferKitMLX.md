@@ -713,6 +713,8 @@ The figures have three limits:
 - ``NFKMLXDemucsNet``
 - ``NFKMLXDenoiserObjective``
 - ``NFKMLXDenoiserAugmentation``
+- ``NFKMLXDemucsObjective``
+- ``NFKMLXDemucsAugmentation``
 - ``NFKMLXFRCRNNet``
 - ``NFKMLXFRCRNObjective``
 - ``NFKMLXMossFormer2Objective``

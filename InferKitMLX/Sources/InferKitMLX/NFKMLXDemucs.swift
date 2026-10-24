@@ -345,8 +345,8 @@ public final class NFKMLXDemucsNet: Module {
     /// The input length the encoder/decoder stack round-trips exactly, mirroring the reference's
     /// `valid_length`: each encoder block takes `ceil((length - kernel) / stride) + 1` and gains the
     /// `context - 1` samples its decoder convolution will consume, each decoder block grows the result
-    /// back by `(length - 1) * stride + kernel`.
-    func validLength(_ length: Int) -> Int {
+    /// back by `(length - 1) * stride + kernel`. Introduced in InferKit 0.4.0.
+    public func validLength(_ length: Int) -> Int {
         var value = length * configuration.resample
         for _ in 0 ..< configuration.depth {
             value = max(Int(ceil(Double(value - 8) / 4)) + 1, 1)
@@ -374,18 +374,39 @@ public final class NFKMLXDemucsNet: Module {
     public func callAsFunction(_ input: MLXArray) -> MLXArray {
         var x = input
         let length = input.shape[1]
-
-        // The reference divides by `floor + std` and rescales by `std`, with `std` fixed at 1 when
-        // normalization is off — so the input is still scaled by 1/(1 + floor) and never scaled back.
-        // Reproduced as written; the music model trains with normalization off.
-        let deviation = configuration.normalize ? Self.standardDeviation(of: x) : MLXArray(Float(1))
-        x = x / (configuration.normalizationFloor + deviation)
+        let deviation = self.deviation(of: input)
 
         let target = validLength(length)
         if target > length {
             x = MLX.padded(x, widths: [IntOrPair((0, 0)), IntOrPair((0, target - length)), IntOrPair((0, 0))],
                            mode: .constant)
         }
+        x = estimate(x, deviation: deviation)
+        if x.shape[1] < length {
+            x = MLX.padded(x, widths: [IntOrPair((0, 0)), IntOrPair((0, length - x.shape[1])), IntOrPair((0, 0))],
+                           mode: .edge)
+        }
+        let trimmed = configuration.centersOutput ? Self.centerTrimmed(x, to: length) : x
+        return trimmed[0..., 0 ..< length, 0...]
+    }
+
+    /// The reference's `forward` over a batch `[N, L, channels]` without padding or trimming: returns
+    /// `[N, L', stems·channels]`, where `L'` is shorter than `L` by what the decoder's context consumes.
+    /// Training compares it with the stems trimmed to its middle. Introduced in InferKit 0.4.0.
+    public func estimate(_ input: MLXArray) -> MLXArray {
+        estimate(input, deviation: deviation(of: input))
+    }
+
+    /// The deviation the input is scaled by. The reference divides by `floor + std` and rescales by
+    /// `std`, with `std` fixed at 1 when normalization is off, so the input is still scaled by
+    /// 1/(1 + floor) and never scaled back. Reproduced as written; the music model trains with
+    /// normalization off.
+    private func deviation(of input: MLXArray) -> MLXArray {
+        configuration.normalize ? Self.standardDeviation(of: input) : MLXArray(Float(1))
+    }
+
+    private func estimate(_ input: MLXArray, deviation: MLXArray) -> MLXArray {
+        var x = input / (configuration.normalizationFloor + deviation)
         x = resampled(x, from: 1, to: configuration.resample)
 
         var skips = [MLXArray]()
@@ -400,13 +421,7 @@ public final class NFKMLXDemucsNet: Module {
             x = x[0..., 0 ..< common, 0...] + skip[0..., 0 ..< common, 0...]
             x = block(x, last: i == configuration.depth - 1)
         }
-        x = resampled(x, from: configuration.resample, to: 1)
-        if x.shape[1] < length {
-            x = MLX.padded(x, widths: [IntOrPair((0, 0)), IntOrPair((0, length - x.shape[1])), IntOrPair((0, 0))],
-                           mode: .edge)
-        }
-        let trimmed = configuration.centersOutput ? Self.centerTrimmed(x, to: length) : x
-        return trimmed[0..., 0 ..< length, 0...] * deviation
+        return resampled(x, from: configuration.resample, to: 1) * deviation
     }
 
     /// The deviation the reference measures: over the mono mix rather than per channel, and unbiased.
@@ -518,15 +533,14 @@ public final class NFKMLXDemucs: NSObject {
     }
 
     /// Builds a Demucs stem-separation backend directly from optional local weights — no registry
-    /// required. A nil `weightsURL` builds random weights (`isReady` is true). Reads audio under
+    /// required. The checkpoint's width, depth, bottleneck layers, and stem count are read from the file,
+    /// so a network trained at another size loads. A nil `weightsURL` builds random weights at the
+    /// release's geometry (`isReady` is true). Reads audio under
     /// `NFKInputAudio`, returns a stem `NFKAudioAsset` under each of "drums"/"bass"/"other"/"vocals".
     /// Run inference off the render thread.
     @objc(backendWithWeightsURL:error:)
     public static func backend(weightsURL: URL?) throws -> any NFKInferenceBackend {
-        let net = NFKMLXDemucsNet(NFKMLXDemucsConfiguration())
-        if let weightsURL {
-            try loadWeights(into: net, from: weightsURL)
-        }
+        let net = try network(weightsURL: weightsURL)
         let holder = NFKMLXDemucsHolder(net)
         return NFKMLXDemucsBackend(net: holder.net)
     }

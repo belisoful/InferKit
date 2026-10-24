@@ -994,6 +994,34 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertEqual(enhancer.backendIdentifier, NFKMLXZeroDCEPlus.modelName)
     }
 
+    // Docs/examples.md: Fine-tuning Demucs
+    func testExampleFineTuningDemucs() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("demucs-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run loads the release and trains on ten-second clips in batches of 64; a small randomly
+        // initialized network on short clips stands in.
+        var geometry = NFKMLXDemucsConfiguration()
+        geometry.baseChannels = 8
+        geometry.depth = 2
+        let net = try NFKMLXDemucs.network(weightsURL: nil, configuration: geometry)
+        var augmentation = NFKMLXDemucsAugmentation.demucsV2
+        augmentation.shift = 64
+        let length = net.validLength(1024) + augmentation.shift
+        let samples: [Float] = (0 ..< 4 * 4 * 2 * length).map { Float($0 % 97) / 97 - 0.5 }
+        let myStems = [MLXArray(samples, [4, 4, 2, length])]       // drums, bass, other, vocals; stereo
+        let history = try NFKMLXDemucs.fineTune(net, stems: { step in myStems[step % myStems.count] },
+                                                augmentation: augmentation, steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        let separator = try NFKMLXDemucs.backend(weightsURL: tuned)
+        XCTAssertEqual(separator.backendIdentifier, NFKMLXDemucs.modelName)
+    }
+
     // Docs/examples.md: Fine-tuning the colorizers
     func testExampleFineTuningTheColorizers() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

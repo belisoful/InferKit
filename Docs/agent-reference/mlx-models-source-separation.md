@@ -20,6 +20,25 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   loader for both. Parity, round-trip, and per-stem stereo WAV tested.
   Demucs v4 (htdemucs) is `NFKMLXHTDemucs`, a separate architecture — `NFKMLXDemucsNet` is the v2
   time-domain U-Net and no v4 checkpoint fits it.
+  **Customization ships** at `full` (`NFKMLXDemucsTraining.swift`), measured against the facebookresearch/demucs
+  `v2` branch at 64ed2cb (`run_reference.py demucs_training`) on the released `demucs-e07c671f`.
+  - `NFKMLXDemucs.fineTune` trains every parameter on stems `[N, 4, 2, L]`. Each batch is augmented, summed into
+    the mix, and run through the unpadded forward (`NFKMLXDemucsNet.estimate`). Its output is shorter than the
+    mix by what the decoder's context consumes, and `train.py` holds it to the stems trimmed to its middle by
+    `nn.L1Loss`.
+  - `NFKMLXDemucsObjective` takes the solver's per-stem weights. `NFKMLXDemucsAugmentation.demucsV2` ports
+    `augment.py`'s crop, sign and channel flips, gain, and remix in the v2 order. The reference optimizer is
+    `__main__.py`'s Adam at 3e-4, with the LSTMs' folded bias at twice the rate.
+  - Measured on two clips of `valid_length(8192)` samples, each figure against float64: the estimate within
+    2.36e-6 (reference float32 2.19e-6), the loss 0.10613971 vs 0.10613976, and the global gradient norm
+    0.32932547 vs 0.32932603.
+  - Eight gradients across the encoder, the bidirectional LSTM, and the decoder land within 8.45e-6 of float64,
+    each within 1.05× the reference float32's own distance. The output transposed convolution's is 8.19e-7,
+    against the reference's 1.61e-6. The loss after one Adam step is 0.08232483 vs 0.08232479.
+  - The augmentation chain, replayed from the reference's draws, is exact.
+  - The reference loader's tempo and pitch change runs the external `soundstretch` program and is not ported.
+  - `network(weightsURL:)` and `backend(weightsURL:)` read the checkpoint's width, depth, bottleneck layers,
+    stem count, and channels from the file, so a checkpoint trained at another size loads.
 - `NFKMLXHTDemucs` / `NFKMLXHTDemucsBackend` (`@objc`) — Demucs v4 (Hybrid Transformer Demucs), at
   reference parity on the released `htdemucs` checkpoint (separated stems cosine
   0.9999999999996, mean |difference| 7.7e-8), every parameter covered on the first triage run and

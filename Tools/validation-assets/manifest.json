@@ -5270,8 +5270,8 @@
     },
     "ultralytics": {
       "interpreter": "/usr/bin/python3",
-      "why": "The system interpreter (Python 3.9, torch 2.8, transformers 4.33.3), outside the virtual environments the other oracles use. The YOLO oracles read ultralytics' own model, and the released .pt files carry a pickled module rather than a bare state dict, so the package that wrote them has to import them; version 8.4.120 supports every generation this port covers, including YOLO26. The other modes here are the older oracles measured on the same interpreter before the per-reference environments existed.",
-      "rebuild": "/usr/bin/python3 -m pip install --user ultralytics",
+      "why": "The system interpreter (Python 3.9, torch 2.8, transformers 4.33.3), outside the virtual environments the other oracles use. The YOLO oracles read ultralytics' own model, and the released .pt files carry a pickled module rather than a bare state dict, so the package that wrote them has to import them; version 8.4.120 supports every generation this port covers, including YOLO26. The Demucs training oracle reads demucs 4.0.1's own pieces and the v2 branch's `train.py`, and runs on this interpreter. The other modes here are the older oracles measured on the same interpreter before the per-reference environments existed.",
+      "rebuild": "/usr/bin/python3 -m pip install --user ultralytics 'demucs==4.0.1'",
       "modes": [
         "yolo",
         "yolo_detections",
@@ -5283,7 +5283,8 @@
         "zero_dce_losses",
         "gtcrn",
         "convtasnet",
-        "audio_tagger_training"
+        "audio_tagger_training",
+        "demucs_training"
       ]
     },
     "basic_pitch": {
@@ -6403,6 +6404,12 @@
       "record": "reference/zero-dce-plus-training-reference.safetensors",
       "environment": "llm",
       "command": "IK_ZERO_DCE_PLUS_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/sources/refsrc/zerodce_pp\" zero_dce_plus_training --checkpoint \"/Volumes/InferKit Models/inferkit-validation/zerodce2/Epoch99.pth\""
+    },
+    {
+      "key": "IK_PARITY_DEMUCS_TRAINING",
+      "record": "reference/demucs-training-reference.safetensors",
+      "environment": "ultralytics",
+      "command": "IK_DEMUCS_SRC=\"/Volumes/InferKit Models/inferkit-validation/sources/demucs_v2\" IK_DEMUCS_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/sources/refsrc/demucs_v2_train/demucs\" demucs_training --checkpoint \"/Volumes/InferKit Models/inferkit-validation/raw/demucs_v2.th\""
     },
     {
       "key": "IK_PARITY_STABLE_AUDIO_LOSS",

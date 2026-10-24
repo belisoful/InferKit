@@ -1498,6 +1498,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Demucs v2 fine-tunes on separated stems as its training script trains it
+
+- `NFKMLXDemucs.fineTune` trains Demucs v2 as the `v2` branch's `train.py` does: the stems are augmented and summed
+  into the mix, and the network's unpadded estimate is held to the stems trimmed to its middle by L1, under
+  torch's Adam at 3e-4. `NFKMLXDemucsNet.estimate(_:)` is that forward, and `validLength(_:)` is public.
+- `NFKMLXDemucsObjective` is the solver's loss, L1 or L2 over per-stem weights; `stem(_:of:)` trains one stem.
+  `NFKMLXDemucsAugmentation` holds the solver's augmentations in each branch's order: the crop, the channel and
+  sign flips, the gain, and the remix.
+- `NFKMLXDemucs.network(weightsURL:configuration:)` and `backend(weightsURL:)` read a checkpoint's width, depth,
+  bottleneck layers, stems, and channels from the file, so a checkpoint `NFKMLXWeights` saved at any size
+  reloads.
+
 #### A reply runs to the room its model's context leaves
 
 - Every catalog model that takes `NFKParameterMaxTokens` declares the option's maximum, the most tokens one reply
