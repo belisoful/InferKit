@@ -12938,9 +12938,10 @@
         "url" : "https://ai.google.dev/gemma/docs/gemma_4_license"
       },
       "memoryModel" : {
-        "stagePrecisions" : {
-          "decoder" : "float32"
-        }
+        "draft" : "draftModel",
+        "draftBits" : "draftBits",
+        "precision" : "precision",
+        "residency" : "residency"
       },
       "options" : [
         {
@@ -13045,6 +13046,157 @@
           "kind" : "choice",
           "stage" : "request",
           "title" : "Tool-call format"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 47838920896,
+                "residentBytes" : 47838920896
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 3339583496,
+                "residentBytes" : 3339583496
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 23919460448,
+                "residentBytes" : 23919460448
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 47838920896,
+                "residentBytes" : 47838920896
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "float32",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 68331636812,
+                "residentBytes" : 68331636812
+              },
+              "title" : "Gemma 4 E2B IT",
+              "value" : "gemma-4-e2b-it"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 79823550568,
+                "residentBytes" : 79823550568
+              },
+              "title" : "Gemma 4 E4B IT",
+              "value" : "gemma-4-e4b-it"
+            }
+          ],
+          "group" : "Loading",
+          "help" : "A smaller model of the same family and vocabulary that proposes tokens for speculative decoding. None decodes without one.",
+          "key" : "draftModel",
+          "kind" : "model-reference",
+          "stage" : "load",
+          "title" : "Draft model"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 47838920896,
+                "residentBytes" : 47838920896
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 47838920896,
+                "residentBytes" : 47838920896
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 47838920896,
+                "residentBytes" : 47838920896
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 47838920896,
+                "residentBytes" : 47838920896
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 47838920896,
+                "residentBytes" : 47838920896
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 47838920896,
+                "residentBytes" : 47838920896
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 47838920896,
+                "residentBytes" : 47838920896
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the draft model's weights to 2 to 8 bits as it loads. Every width approximates the published weights.",
+          "key" : "draftBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Draft quantization"
         }
       ],
       "outputModalities" : [
@@ -13099,7 +13251,8 @@
         "requiresAppleSilicon" : true
       },
       "residencies" : [
-        "resident"
+        "resident",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "Gemma 4 12B IT, a dense Gemma 4 decoder that writes text and calls tools.",
@@ -13123,6 +13276,12 @@
                   "float32" : 47838920896
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 483688450,
+                  "checkpoint" : 483688450,
+                  "float32" : 967376900
+                },
+                "layerCount" : 48,
                 "title" : "decoder"
               }
             ],
@@ -13536,9 +13695,10 @@
         "url" : "https://ai.google.dev/gemma/docs/gemma_4_license"
       },
       "memoryModel" : {
-        "stagePrecisions" : {
-          "decoder" : "float32"
-        }
+        "draft" : "draftModel",
+        "draftBits" : "draftBits",
+        "precision" : "precision",
+        "residency" : "residency"
       },
       "modelTypes" : [
         "gemma4"
@@ -13646,6 +13806,165 @@
           "kind" : "choice",
           "stage" : "request",
           "title" : "Tool-call format"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 125092355504,
+                "residentBytes" : 125092355504
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4169745226,
+                "residentBytes" : 4169745226
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 62546177752,
+                "residentBytes" : 62546177752
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 125092355504,
+                "residentBytes" : 125092355504
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "float32",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 145585071420,
+                "residentBytes" : 145585071420
+              },
+              "title" : "Gemma 4 E2B IT",
+              "value" : "gemma-4-e2b-it"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 157076985176,
+                "residentBytes" : 157076985176
+              },
+              "title" : "Gemma 4 E4B IT",
+              "value" : "gemma-4-e4b-it"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 172931276400,
+                "residentBytes" : 172931276400
+              },
+              "title" : "Gemma 4 12B IT",
+              "value" : "gemma-4-12b-it"
+            }
+          ],
+          "group" : "Loading",
+          "help" : "A smaller model of the same family and vocabulary that proposes tokens for speculative decoding. None decodes without one.",
+          "key" : "draftModel",
+          "kind" : "model-reference",
+          "stage" : "load",
+          "title" : "Draft model"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 125092355504,
+                "residentBytes" : 125092355504
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 125092355504,
+                "residentBytes" : 125092355504
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 125092355504,
+                "residentBytes" : 125092355504
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 125092355504,
+                "residentBytes" : 125092355504
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 125092355504,
+                "residentBytes" : 125092355504
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 125092355504,
+                "residentBytes" : 125092355504
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 125092355504,
+                "residentBytes" : 125092355504
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the draft model's weights to 2 to 8 bits as it loads. Every width approximates the published weights.",
+          "key" : "draftBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Draft quantization"
         }
       ],
       "outputModalities" : [
@@ -13700,7 +14019,8 @@
         "requiresAppleSilicon" : true
       },
       "residencies" : [
-        "resident"
+        "resident",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "Gemma 4 31B IT, a dense Gemma 4 decoder that writes text and calls tools.",
@@ -13724,6 +14044,12 @@
                   "float32" : 125092355504
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 1068019714,
+                  "checkpoint" : 1068019714,
+                  "float32" : 2136039428
+                },
+                "layerCount" : 60,
                 "title" : "decoder"
               }
             ],
@@ -13817,9 +14143,8 @@
         "url" : "https://ai.google.dev/gemma/docs/gemma_4_license"
       },
       "memoryModel" : {
-        "stagePrecisions" : {
-          "decoder" : "float32"
-        }
+        "precision" : "precision",
+        "residency" : "residency"
       },
       "modelTypes" : [
         "gemma4"
@@ -13927,6 +14252,64 @@
           "kind" : "choice",
           "stage" : "request",
           "title" : "Tool-call format"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 20492715916,
+                "residentBytes" : 20492715916
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 11044945672,
+                "residentBytes" : 11044945672
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 10246357958,
+                "residentBytes" : 10246357958
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 20492715916,
+                "residentBytes" : 20492715916
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "float32",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
         }
       ],
       "outputModalities" : [
@@ -13981,7 +14364,8 @@
         "requiresAppleSilicon" : true
       },
       "residencies" : [
-        "resident"
+        "resident",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "Gemma 4 E2B IT, a dense Gemma 4 decoder that writes text and calls tools.",
@@ -14005,6 +14389,12 @@
                   "float32" : 20492715916
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 143148034,
+                  "checkpoint" : 143148034,
+                  "float32" : 286296068
+                },
+                "layerCount" : 35,
                 "title" : "decoder"
               }
             ],
@@ -14099,9 +14489,10 @@
         "url" : "https://ai.google.dev/gemma/docs/gemma_4_license"
       },
       "memoryModel" : {
-        "stagePrecisions" : {
-          "decoder" : "float32"
-        }
+        "draft" : "draftModel",
+        "draftBits" : "draftBits",
+        "precision" : "precision",
+        "residency" : "residency"
       },
       "modelTypes" : [
         "gemma4"
@@ -14209,6 +14600,149 @@
           "kind" : "choice",
           "stage" : "request",
           "title" : "Tool-call format"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 31984629672,
+                "residentBytes" : 31984629672
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 14995486472,
+                "residentBytes" : 14995486472
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 15992314836,
+                "residentBytes" : 15992314836
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 31984629672,
+                "residentBytes" : 31984629672
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "float32",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 52477345588,
+                "residentBytes" : 52477345588
+              },
+              "title" : "Gemma 4 E2B IT",
+              "value" : "gemma-4-e2b-it"
+            }
+          ],
+          "group" : "Loading",
+          "help" : "A smaller model of the same family and vocabulary that proposes tokens for speculative decoding. None decodes without one.",
+          "key" : "draftModel",
+          "kind" : "model-reference",
+          "stage" : "load",
+          "title" : "Draft model"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 31984629672,
+                "residentBytes" : 31984629672
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 31984629672,
+                "residentBytes" : 31984629672
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 31984629672,
+                "residentBytes" : 31984629672
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 31984629672,
+                "residentBytes" : 31984629672
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 31984629672,
+                "residentBytes" : 31984629672
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 31984629672,
+                "residentBytes" : 31984629672
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 31984629672,
+                "residentBytes" : 31984629672
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the draft model's weights to 2 to 8 bits as it loads. Every width approximates the published weights.",
+          "key" : "draftBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Draft quantization"
         }
       ],
       "outputModalities" : [
@@ -14263,7 +14797,8 @@
         "requiresAppleSilicon" : true
       },
       "residencies" : [
-        "resident"
+        "resident",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "Gemma 4 E4B IT, a dense Gemma 4 decoder that writes text and calls tools.",
@@ -14287,6 +14822,12 @@
                   "float32" : 31984629672
                 },
                 "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 212364290,
+                  "checkpoint" : 212364290,
+                  "float32" : 424728580
+                },
+                "layerCount" : 42,
                 "title" : "decoder"
               }
             ],
