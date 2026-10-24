@@ -178,12 +178,13 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
         NFKMLXToolCalling.format(for: request, template: chatTemplate)
     }
 
-    /// The prompt as token ids. A raw prompt follows the begin-of-sequence marker where the tokenizer
-    /// defines one; a message list renders through the chat template, which places its own markers.
+    /// The prompt as token ids. A message list renders through the chat template, which places its own
+    /// markers. A request without one has its raw prompt follow the begin-of-sequence marker where the
+    /// tokenizer defines one.
     private func tokens(for request: NFKInferenceRequest, toolCallFormat: NFKMLXToolCallFormat?,
                         variables: [String: Any]) throws -> [Int] {
         let prefix = beginOfSequence.map { [$0] } ?? []
-        if let prompt = request.prompt {
+        if request.messages == nil, let prompt = request.prompt {
             return prefix + holder.tokenizer.encode(prompt).map(\.intValue)
         }
         guard let original = request.messages else { throw NFKMLXError.unsupportedInput }

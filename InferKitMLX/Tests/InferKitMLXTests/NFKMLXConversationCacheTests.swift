@@ -53,6 +53,44 @@ final class NFKMLXConversationCacheTests: XCTestCase {
         return try XCTUnwrap(usage[NFKUsageCachedTokens])
     }
 
+    /// The text a greedy run of `prompt` answers and the cached share of its input.
+    private func reply(_ backend: NFKMLXLanguageBackend, _ prompt: String, conversation: String? = nil,
+                       maxTokens: Int = 6, window: Int? = nil) throws -> (text: String, cached: Int) {
+        var parameters: [String: Any] = [NFKParameterTemperature: 0, NFKParameterMaxTokens: maxTokens]
+        if let conversation {
+            parameters[NFKParameterConversationKey] = conversation
+        }
+        if let window {
+            parameters[NFKModelLoadOptionContextLength] = window
+        }
+        let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: prompt],
+                                                                       parameters: parameters))
+        let usage = try XCTUnwrap(result.output(forKey: NFKOutputUsage) as? [String: Int])
+        return (try XCTUnwrap(result.output(forKey: NFKOutputText) as? String), try XCTUnwrap(usage[NFKUsageCachedTokens]))
+    }
+
+    func testAContinuedConversationAnswersAsARunWithoutACacheDoes() throws {
+        try requireMLXRuntime()
+        let backend = try backend()
+        _ = try reply(backend, opening, conversation: "a")
+        let followUp = opening + " he he"
+        let continued = try reply(backend, followUp, conversation: "a")
+        XCTAssertGreaterThan(continued.cached, 0)
+        XCTAssertEqual(continued.text, try reply(backend, followUp).text,
+                       "the cache rolls back past the previous reply before the follow-up prefills")
+    }
+
+    func testAConversationWhoseWindowDroppedItsStartPrefillsTheNextTurnWhole() throws {
+        try requireMLXRuntime()
+        let backend = try backend()
+        let window = 8
+        _ = try reply(backend, opening, conversation: "a", maxTokens: window - 2, window: window)
+        let followUp = opening + " he he"
+        let continued = try reply(backend, followUp, conversation: "a", window: window)
+        XCTAssertEqual(continued.cached, 0, "the window dropped the first position, which every prompt reads")
+        XCTAssertEqual(continued.text, try reply(backend, followUp, window: window).text)
+    }
+
     func testInterleavedConversationsEachContinueTheirOwnCache() throws {
         try requireMLXRuntime()
         let single = try backend()

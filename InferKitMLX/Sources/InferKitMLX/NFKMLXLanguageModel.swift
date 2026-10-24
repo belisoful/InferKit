@@ -332,6 +332,13 @@ public final class NFKMLXKeyValueCache {
     /// Rows a layer currently holds.
     public func retainedLength(layer: Int = 0) -> Int { ends[layer] - starts[layer] }
 
+    /// Whether a window has dropped the oldest positions of a layer that holds rows, so the cache no
+    /// longer holds the sequence from its start. A slot a cache shared between layer kinds leaves
+    /// empty is not counted.
+    var hasDroppedPositions: Bool {
+        ends.indices.contains { retainedLength(layer: $0) > 0 && retainedLength(layer: $0) < offset }
+    }
+
     /// Every array the cache holds for `layer`.
     func arrays(layer: Int) -> [MLXArray] {
         [keys, values, keyScales, keyBiases, valueScales, valueBiases,

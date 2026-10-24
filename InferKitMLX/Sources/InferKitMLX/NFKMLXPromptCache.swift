@@ -66,8 +66,9 @@ public final class NFKMLXPromptCache {
     /// length. The caller prefills `prompt` from there.
     ///
     /// @discussion The shared prefix is capped one short of the prompt, so at least one token runs
-    /// through the model and produces the logits generation starts from. When the rollback reaches
-    /// past what a window retains, the cache starts over and the whole prompt prefills.
+    /// through the model and produces the logits generation starts from. The cache starts over, and
+    /// the whole prompt prefills, when a window has dropped the sequence's first positions, since every
+    /// prompt reads from position 0, or when the rollback reaches past what a window retains.
     func align(to prompt: [Int]) -> Int {
         var shared = 0
         let limit = Swift.min(tokens.count, Swift.max(prompt.count - 1, 0))
@@ -75,7 +76,7 @@ public final class NFKMLXPromptCache {
             shared += 1
         }
         let discarded = tokens.count - shared
-        guard cache.rollback(by: discarded) else {
+        guard !cache.hasDroppedPositions, cache.rollback(by: discarded) else {
             reset()
             sharedPrefixLength = 0
             return 0

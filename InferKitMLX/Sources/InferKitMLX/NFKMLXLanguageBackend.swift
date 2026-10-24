@@ -1082,17 +1082,17 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         options = NFKMLXLoadOptions(values).generationOptions(base: options)
     }
 
-    /// The prompt text, from either input key. A raw `NFKInputPrompt` is used verbatim; a message
-    /// list is flattened plainly, or rendered through the chat template when one is asked for, with
-    /// the request's tools and its tool conversation in the shape templates read. `source` names the
-    /// backend whose assistant turns get their reasoning back.
+    /// The prompt text, from either input key. A message list, which wins over `NFKInputPrompt` when a
+    /// request carries both, is flattened plainly, or rendered through the chat template when one is
+    /// asked for, with the request's tools and its tool conversation in the shape templates read. A
+    /// request without one has its `NFKInputPrompt` used verbatim. `source` names the backend whose
+    /// assistant turns get their reasoning back.
     static func prompt(from request: NFKInferenceRequest,
                        template: NFKMLXChatTemplate = .none,
                        variables: [String: Any] = [:],
                        source: String = "",
                        toolCallFormat: NFKMLXToolCallFormat? = nil) -> String? {
-        if let prompt = request.prompt { return prompt }
-        guard let original = request.messages else { return nil }
+        guard let original = request.messages else { return request.prompt }
         let messages = NFKMLXToolCalling.templateMessages(original, format: toolCallFormat, source: source)
         switch template {
         case .none:

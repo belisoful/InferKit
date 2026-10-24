@@ -845,6 +845,15 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         XCTAssertEqual(NFKMLXLanguageBackend.prompt(from: request), "be brief\nhello")
     }
 
+    func testAMessageListWinsOverTheRawPromptARequestAlsoCarries() {
+        let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "hello",
+                                                   NFKInputMessages: [["role": "user", "content": "hello"]]])
+        XCTAssertEqual(NFKMLXLanguageBackend.prompt(from: request, template: .chatML),
+                       "<|im_start|>user\nhello<|im_end|>\n<|im_start|>assistant\n")
+        XCTAssertEqual(NFKMLXLanguageBackend.prompt(from: NFKInferenceRequest(inputs: [NFKInputPrompt: "hello"]),
+                                                    template: .chatML), "hello")
+    }
+
     // MARK: A bounded cache
 
     // The window is the whole point: memory stops growing with the conversation.

@@ -242,11 +242,11 @@ public final class NFKMLXGemma3nBackend: NSObject, NFKInferenceBackend {
             // preserves its duration.
             waveform = MLXArray(NFKMLXAudioRate.matched(clip.samples, from: clip.sampleRate, to: 16_000))
         }
-        if let prompt = request.prompt {
-            return (gemma.promptTokens(prompt, withImage: image != nil, withAudio: waveform != nil), image, waveform)
-        }
         if let messages = request.messages {
             return (gemma.chatTokens(messages: messages, withImage: image != nil, withAudio: waveform != nil), image, waveform)
+        }
+        if let prompt = request.prompt {
+            return (gemma.promptTokens(prompt, withImage: image != nil, withAudio: waveform != nil), image, waveform)
         }
         throw NFKMLXError.unsupportedInput
     }

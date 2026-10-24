@@ -417,7 +417,10 @@ attention and feed-forward.
   `@objc(NFKMLXLanguageBackend)` with `hasDraftModel`, `promptCacheLength`, `resetPromptCache`.
   **Conversation caches (2026-10-07):** a request carrying `NFKParameterConversationKey` runs against
   that conversation's own `NFKMLXPromptCache` in `NFKMLXConversationCaches`, under
-  `conversationCacheByteBudget` (2 GiB). Bytes are `NFKMLXKeyValueCache.allocatedBytes`, the sum of
+  `conversationCacheByteBudget` (2 GiB). `align(to:)` starts the cache over once a window has dropped
+  the sequence's first positions (`NFKMLXKeyValueCache.hasDroppedPositions`): the catalog's
+  context-length load option is that window (4,096 on Qwen3), and a turn past it left a cache whose
+  rollback succeeded without position 0 (2026-10-23). Bytes are `NFKMLXKeyValueCache.allocatedBytes`, the sum of
   every stored array's `nbytes`, capacity included. Eviction runs after each named run, least
   recently used first, skipping the conversation that ran, so one conversation over the budget
   keeps its cache. The unnamed retained cache is separate and keeps its old rule: a request that

@@ -126,7 +126,7 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
     private func tokens(for request: NFKInferenceRequest) throws -> [Int] {
         var ids = [Int]()
         if let bos = beginOfSequence { ids.append(bos) }
-        if let prompt = request.prompt {
+        if request.messages == nil, let prompt = request.prompt {
             ids += holder.tokenizer.encode(prompt).map(\.intValue)
             return ids
         }

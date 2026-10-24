@@ -1498,6 +1498,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### A conversation's cache past its window, and a one-message chat
+
+- A prompt cache, a conversation's under `NFKParameterConversationKey` or the retained one, starts over when its
+  window has dropped the sequence's first positions, since every prompt reads from position 0. Before, a later
+  turn reused the prefix it matched from a cache that no longer held its start, and Qwen3 0.6B past its default
+  4,096-position window answered one repeated character.
+- The language, Qwen3.5 and Qwen4, Granite, Nemotron, Mamba, Gemma, Gemma 3, 3n, and Gemma 4 multimodal backends
+  read `NFKInputMessages` before `NFKInputPrompt`, as the key states, so a request carrying both renders its
+  message list through the chat template. The server's chat routes send both for a conversation of one user
+  message, which reached these backends as raw text.
+
 #### Demucs v2 fine-tunes on separated stems as its training script trains it
 
 - `NFKMLXDemucs.fineTune` trains Demucs v2 as the `v2` branch's `train.py` does: the stems are augmented and summed

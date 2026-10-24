@@ -73,10 +73,10 @@ final class NFKGemma4MultimodalModel: @unchecked Sendable {
             media += "<|audio>" + String(repeating: "<|audio|>", count: audioTokens) + "<audio|>"
         }
         let messages: [[String: Any]]
-        if let prompt = request.prompt {
-            messages = [["role": "user", "content": prompt]]
-        } else if let conversation = request.messages {
+        if let conversation = request.messages {
             messages = conversation
+        } else if let prompt = request.prompt {
+            messages = [["role": "user", "content": prompt]]
         } else {
             throw NFKMLXError.unsupportedInput
         }

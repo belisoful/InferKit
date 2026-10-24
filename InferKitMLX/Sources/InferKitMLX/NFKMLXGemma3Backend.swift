@@ -253,11 +253,11 @@ public final class NFKMLXGemma3Backend: NSObject, NFKInferenceBackend {
             throw NFKMLXError.unsupportedConfiguration(
                 "\(identifier) is a text-only release; an image needs a multimodal Gemma 3 (4B and up)")
         }
-        if let prompt = request.prompt {
-            return model.promptTokens(prompt, withImage: image != nil)
-        }
         if let messages = request.messages {
             return model.chatTokens(messages: messages, withImage: image != nil)
+        }
+        if let prompt = request.prompt {
+            return model.promptTokens(prompt, withImage: image != nil)
         }
         throw NFKMLXError.unsupportedInput
     }

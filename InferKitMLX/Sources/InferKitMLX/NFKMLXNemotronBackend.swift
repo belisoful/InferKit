@@ -124,7 +124,7 @@ public final class NFKMLXNemotronBackend: NSObject, NFKInferenceBackend {
     /// `add_bos_token` false). A message list is joined into plain text (the base decoder carries no
     /// chat template).
     private func tokens(for request: NFKInferenceRequest) throws -> [Int] {
-        if let prompt = request.prompt {
+        if request.messages == nil, let prompt = request.prompt {
             return holder.tokenizer.encode(prompt).map(\.intValue)
         }
         guard let messages = request.messages else { throw NFKMLXError.unsupportedInput }

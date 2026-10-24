@@ -184,10 +184,10 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
         return (holder.tokenizer.encode(text), format)
     }
 
-    /// Whether a request's messages render as a Gemma 4 conversation: a message list without a raw
-    /// prompt, on a tokenizer that has no `<start_of_turn>` turns.
+    /// Whether a request's messages render as a Gemma 4 conversation: a message list on a tokenizer
+    /// that has no `<start_of_turn>` turns.
     private func rendersConversation(_ request: NFKInferenceRequest) -> Bool {
-        request.prompt == nil && request.messages != nil && (startOfTurn == nil || endOfTurn == nil)
+        request.messages != nil && (startOfTurn == nil || endOfTurn == nil)
     }
 
     /// The prompt as token ids. A raw prompt is encoded after the begin-of-sequence marker. A message
@@ -202,7 +202,7 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
         }
         var ids = [Int]()
         if let bos = beginOfSequence { ids.append(bos) }
-        if let prompt = request.prompt {
+        if request.messages == nil, let prompt = request.prompt {
             ids += holder.tokenizer.encode(prompt)
             return ids
         }
