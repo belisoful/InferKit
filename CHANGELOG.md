@@ -1596,6 +1596,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKMLXHybridLanguageNet` reads its full-attention layers bidirectionally where asked (`NFKMLXHybridAttention`),
   reads a `Qwen3_5Model` save's `language_model.` layout, and `NFKMLXHybridLanguage.loadQuantizedWeights` packs a
   release layer by layer as it reads the shards.
+- At bfloat16, pplx-decider's full-attention layers compute as torch's MATH `scaled_dot_product_attention` does
+  (`NFKMLXHybridConfiguration.halfPrecisionAttention`), the attention its release asks for, and the published
+  precision is held to the release's own bfloat16 run layer by layer.
 - Images are not read: the releases' vision tower is not ported.
 
 #### A reply runs to the room its model's context leaves

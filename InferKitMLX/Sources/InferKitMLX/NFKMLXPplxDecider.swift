@@ -92,6 +92,8 @@ public struct NFKMLXPplxDeciderConfiguration: Sendable {
                 modelName: String = "pplx-decider") {
         var geometry = decoder
         geometry.tiesWordEmbeddings = true
+        // The release loads its backbone with `attn_implementation="sdpa"`.
+        geometry.halfPrecisionAttention = .sdpaMath
         self.decoder = geometry
         self.codes = codes
         self.codeTokenIds = codeTokenIds

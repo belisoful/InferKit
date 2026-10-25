@@ -4791,6 +4791,7 @@ def _pplx_record(decider, requests, extra, states_for=0, marker_states=False):
                 extra[f"hidden.{layer}"] = state.float().contiguous().clone()
             extra["last_hidden"] = (hidden.last_hidden_state[0, chunk.markers] if marker_states
                                     else hidden.last_hidden_state[0]).float().contiguous().clone()
+            _check_floor_composite(extra, f"hidden.{len(hidden.hidden_states) - 1}", hidden.hidden_states[-1])
         losses = []
         for q, (qkey, question) in enumerate(request["questions"].items()):
             logits = torch.tensor(rows[q], dtype=torch.float32)
@@ -4837,9 +4838,29 @@ def run_pplx_decider(image, checkpoint):
     `PPLX_LAYERWISE=1` builds the backbone on the meta device and reads each decoder layer from the shards
     as the forward reaches it (`_read_layers_in_turn`), so the 27B runs at float32 in a fraction of its
     108 GB; its hidden states are recorded at the markers only. The vision tower is never run.
+
+    `PPLX_DTYPE=bfloat16` loads the backbone through `from_pretrained` at bfloat16 (the precision the release
+    is evaluated at, its non-persistent buffers as the constructor builds them) and the readout at bfloat16,
+    which is the CUDA path of `Decider` run on the CPU. `PPLX_SDPA=math` runs every pass under
+    `sdpa_kernel(SDPBackend.MATH)`, torch's own definition of the attention the release asks for
+    (`attn_implementation="sdpa"`), since its default CPU kernel is one backend among several; at bfloat16 the
+    first request's readouts under the default backend are kept as `default_sdpa.readouts`, a measured gap.
+    `IK_PROBE_BLOCK_FLOOR=1` keeps each decoder layer's own floor as `hidden.<i + 1>.floor`, the last through
+    the final norm (`_block_floor_hooks`).
     """
+    import contextlib
     pplx_model = _pplx_decider_class(checkpoint)
     close = None
+    half = os.environ.get("PPLX_DTYPE", "float32") == "bfloat16"
+    if half:
+        real_half = pplx_model.Qwen3_5Model
+
+        class _HalfBackbone:
+            @staticmethod
+            def from_pretrained(path, dtype=None, attn_implementation=None, **kw):
+                return real_half.from_pretrained(path, dtype=torch.bfloat16, attn_implementation=attn_implementation, **kw)
+
+        pplx_model.Qwen3_5Model = _HalfBackbone
     if os.environ.get("PPLX_LAYERWISE") == "1":
         from transformers import AutoConfig
         real = pplx_model.Qwen3_5Model
@@ -4867,7 +4888,25 @@ def run_pplx_decider(image, checkpoint):
     try:
         decider = pplx_model.Decider(pathlib_path(checkpoint), device="cpu")
         extra = {}
-        _pplx_record(decider, _PPLX_REQUESTS, extra, marker_states=os.environ.get("PPLX_LAYERWISE") == "1")
+        if half:
+            decider.readout.to(torch.bfloat16)
+            text = decider.backbone.language_model
+            layers = list(text.layers)
+            _block_floor_hooks(layers, [f"hidden.{i + 1}" for i in range(len(layers))], extra,
+                               finals={len(layers) - 1: text.norm})
+        if os.environ.get("PPLX_SDPA") == "math":
+            from torch.nn.attention import SDPBackend, sdpa_kernel
+            attention = sdpa_kernel(SDPBackend.MATH)
+        else:
+            attention = contextlib.nullcontext()
+        with attention:
+            _pplx_record(decider, _PPLX_REQUESTS, extra, marker_states=os.environ.get("PPLX_LAYERWISE") == "1")
+        if half and os.environ.get("PPLX_SDPA") == "math":
+            chunk = decider.encoder.plan(_PPLX_REQUESTS[0], decider.max_length)[0]
+            with torch.inference_mode():
+                hidden = decider.backbone(input_ids=chunk.input_ids[None],
+                                          attention_mask=torch.ones_like(chunk.input_ids)[None], use_cache=False)
+                extra["default_sdpa.readouts"] = decider.readout(hidden.last_hidden_state[0, chunk.markers]).float().clone()
     finally:
         if close:
             close()

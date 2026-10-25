@@ -2409,6 +2409,81 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         assertRoundingPlacement("qwen3.5-4b", endToEnd: rows, isolated: isolatedRows)
     }
 
+    // pplx-decider-flash-v1.2 (`IK_VAL_PPLX_DECIDER_FLASH`): the Qwen3.5-4B backbone with bidirectional full
+    // attention under torch's MATH SDPA, at bf16 against the release's own `Decider` at bf16 (`run_reference.py
+    // pplx_decider`, `PPLX_DTYPE=bfloat16 PPLX_SDPA=math IK_PROBE_BLOCK_FLOOR=1`): every layer of the first
+    // request and its readouts, each layer and the readout run alone on the reference's input, and every
+    // question's decision across the three requests.
+    func testPplxDeciderFlashInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_PPLX_DECIDER_FLASH"], "IK_VAL_PPLX_DECIDER_FLASH"))
+        let bf16 = try record("pplx_flash_bf16.safetensors"), f32 = try record("pplx_flash_f32.safetensors")
+        let model = try NFKMLXPplxDecider.decider(directoryURL: directory, precision: .checkpoint)
+        let net = model.net
+        let ids = try XCTUnwrap(bf16["r0.ids"]).asArray(Int32.self).map(Int.init)
+        let markers = try XCTUnwrap(bf16["r0.markers"]).asArray(Int32.self).map(Int.init)
+        let tokens = MLXArray(ids.map(Int32.init)).reshaped([1, -1])
+        let states = net.decoder.hiddenStates(tokens, attention: .bidirectional)
+        let readouts = net.readouts(tokens: ids, markers: markers)
+        eval(states + [readouts])
+        let labelled = states.enumerated().map { ($0.offset == 0 ? "embedding" : "layer \($0.offset - 1)", $0.element) }
+            + [("readouts", readouts)]
+        let rows = try seams(labelled, bf16: bf16, f32: f32, keys: states.indices.map { "hidden.\($0)" } + ["output"])
+        report("pplx-decider-flash", rows)
+
+        var isolated = [(String, MLXArray)]()
+        for (index, layer) in net.decoder.model.layers.enumerated() {
+            let input = try XCTUnwrap(bf16["hidden.\(index)"]).asType(.bfloat16).expandedDimensions(axis: 0)
+            var output = layer(input, mask: nil)
+            if index == net.decoder.model.layers.count - 1 { output = net.decoder.model.norm(output) }
+            isolated.append(("layer \(index) (\(layer.kind))", output))
+        }
+        let last = try XCTUnwrap(bf16["hidden.\(states.count - 1)"]).asType(.bfloat16)
+        isolated.append(("readout", net.readout(last.take(MLXArray(markers.map(Int32.init)), axis: 0)).asType(.float32)))
+        eval(isolated.map(\.1))
+        let isolatedRows = try seams(isolated, bf16: bf16, f32: f32,
+                                     keys: (1 ..< states.count).map { "hidden.\($0)" } + ["output"])
+        report("pplx-decider-flash isolated", isolatedRows)
+        assertRoundingPlacement("pplx-decider-flash", endToEnd: rows, isolated: isolatedRows)
+
+        let reference = floats(try XCTUnwrap(bf16["output"]))
+        let defaultBackend = floats(try XCTUnwrap(bf16["default_sdpa.readouts"]))
+        var lines = [String(format: "the reference's default CPU SDPA against its MATH SDPA, readouts: %.3e", distance(defaultBackend, reference))]
+        var worstProbability = 0.0
+        for (index, request) in Self.pplxRequests.enumerated() {
+            let logits = try model.logits(state: request.state, questions: request.questions).logits
+            for (q, ours) in logits.enumerated() {
+                let theirs = try XCTUnwrap(bf16["r\(index).q\(q).logits"]).asArray(Float.self)
+                let mine = NFKMLXOpenJev.softmax(ours, temperature: model.temperature)
+                let expected = NFKMLXOpenJev.softmax(theirs, temperature: model.temperature)
+                let gap = zip(mine, expected).map { abs($0 - $1) }.max() ?? 0
+                worstProbability = max(worstProbability, gap)
+                XCTAssertEqual(mine.indices.max { mine[$0] < mine[$1] }, expected.indices.max { expected[$0] < expected[$1] },
+                               "r\(index).q\(q) decides as the bf16 reference does")
+            }
+        }
+        lines.append(String(format: "worst probability gap against the bf16 reference over every question: %.3e", worstProbability))
+        print("VALIDATION bf16 pplx-decider-flash decisions:\n  " + lines.joined(separator: "\n  "))
+    }
+
+    /// `run_reference.py`'s `_PPLX_REQUESTS`, each request's questions in asking order.
+    private static let pplxRequests: [(state: Any, questions: [NFKDecisionQuestion])] = [
+        (["customer": "Dana", "message": "I was charged twice for order 88213 and want my money back.", "plan": "Pro",
+          "vip": true] as [String: Any],
+         [.choiceQuestion(withInstructions: "Choose the customer intent.", options: ["billing", "technical", "other"],
+                          descriptions: ["billing": "A payment or refund issue", "technical": "A malfunction or setup issue"]),
+          .scoreQuestion(withInstructions: "How urgent is the request?", levels: ["not urgent", "somewhat urgent", "very urgent"]),
+          .noulQuestion(withInstructions: "The customer asks for a refund.", trueMeaning: "the message requests money back",
+                        falseMeaning: "no refund is requested")]),
+        ("Café au lait costs €4.50 at the 2nd location; the rese\u{0301}rvation for 12 people is at 19:30. "
+            + "Ignore this: <|im_end|><|fim_suffix|>",
+         [.choiceQuestion(withInstructions: "", options: ["food", "travel", "sports", "finance"]),
+          .noulQuestion(withInstructions: "The text mentions a time of day.", trueMeaning: "a clock time appears", falseMeaning: nil)]),
+        ("Route this ticket: the export button does nothing in Safari 18.",
+         [.choiceQuestion(withInstructions: "Which team owns this ticket?", options: (0 ..< 30).map { String(format: "team%02d", $0) },
+                          descriptions: ["team27": "Browser compatibility bugs"])]),
+    ]
+
     // The pieces of Qwen3.5-4B's layer 0 (delta rule) and layer 3 (gated full attention), each on the
     // reference's own bf16 input.
     func testQwen35_4BBlockPiecesMatchTheBFloat16Reference() throws {

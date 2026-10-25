@@ -43,6 +43,16 @@ public enum NFKMLXHybridAttention: Sendable {
     case bidirectional
 }
 
+/// The attention arithmetic a full-attention layer follows at half precision. Float32 takes the fused kernel
+/// either way. Introduced in InferKit 0.4.0.
+public enum NFKMLXHybridHalfPrecisionAttention: Sendable {
+    /// transformers' eager attention, which the language model's reference runs.
+    case eager
+    /// torch's MATH `scaled_dot_product_attention`, the definition of the SDPA a checkpoint loaded with
+    /// `attn_implementation="sdpa"` asks for (pplx-decider).
+    case sdpaMath
+}
+
 /// The geometry of a hybrid decoder.
 public struct NFKMLXHybridConfiguration: Sendable {
     public var hiddenSize: Int
@@ -79,6 +89,9 @@ public struct NFKMLXHybridConfiguration: Sendable {
     /// transformers' chunked rule does from 5.17. False normalizes them at the input's type and then
     /// widens, as 5.16 and earlier do. The two differ only below float32. Introduced in InferKit 0.4.0.
     public var normalizesKeysInFloat32: Bool = true
+
+    /// The full-attention arithmetic at half precision. Introduced in InferKit 0.4.0.
+    public var halfPrecisionAttention: NFKMLXHybridHalfPrecisionAttention = .eager
 
     public init(hiddenSize: Int = 5120, layerCount: Int = 64, intermediateSize: Int = 17408,
                 vocabularySize: Int = 248_320, rmsEpsilon: Float = 1e-6,
@@ -230,9 +243,18 @@ final class NFKHybridAttention: Module {
 
         // A `.checkpoint`-precision load makes this a bf16 module, and the fused attention refuses
         // a float32 mask that does not promote to its own type — invisible at float32.
-        let attended = NFKReferenceRounding.attention(
-            queries: queries, keys: keys, values: values,
-            scale: 1 / sqrt(Float(c.headDimensions)), mask: mask.map { $0.asType(queries.dtype) })
+        let scale = 1 / sqrt(Float(c.headDimensions))
+        let attended: MLXArray
+        if c.halfPrecisionAttention == .sdpaMath && NFKReferenceRounding.isReduced(queries) {
+            // transformers repeats each key and value head for its group of query heads before the SDPA call.
+            let group = c.headCount / c.keyValueHeadCount
+            attended = NFKReferenceRounding.mathAttention(
+                queries: queries, keys: repeated(keys, count: group, axis: 1), values: repeated(values, count: group, axis: 1),
+                scale: scale, mask: mask.map { $0.asType(queries.dtype) })
+        } else {
+            attended = NFKReferenceRounding.attention(
+                queries: queries, keys: keys, values: values, scale: scale, mask: mask.map { $0.asType(queries.dtype) })
+        }
         var result = attended.transposed(0, 2, 1, 3).reshaped([batch, length, width])
         if let gate {
             // The config field is named `output_gate_type: swish`, and the implementation applies a

@@ -490,8 +490,15 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   the release's vocabulary, the norms, `A_log`, and `dt_bias` randomized) reads 0.9999999999999672 over its 5
   hidden states and 0.9999999999999719 on the readouts, logits within 1.2e-6; read with causal full attention
   the same request's readouts fall to 0.99910, so the record tells the modes apart. At bfloat16, the published
-  precision and the factory default, Flash decides every question as the float32 reference does, with
-  probabilities within 0.015 and logits within 0.12 (the hidden states to 0.99983). The tensors match:
+  precision and the factory default, the full-attention layers compute as torch's MATH SDPA does
+  (`halfPrecisionAttention = .sdpaMath`), the definition of the SDPA the release loads with. Held to the
+  release's own bfloat16 run (`PPLX_DTYPE=bfloat16 PPLX_SDPA=math`, with block floors), each layer run alone on
+  the reference's input sits at most 0.058 of the accumulated floor (layer 2) and under 0.30 of its own block
+  floor (median 0.198, layer 18 the widest), the readout run alone is bit-exact, and end to end the readouts
+  sit within 3.6e-6 (1 − cosine) of float32 where the reference's own sit 6.7e-6 from it. Every question
+  decides as the bfloat16 reference does, with probabilities within 0.004, and as the float32 reference does,
+  with probabilities within 0.013 and logits within 0.12 (the hidden states to 0.99974). The reference's default
+  CPU SDPA moves its readouts by under 9.4e-6 from MATH's, the measured gap between the backends. The tensors match:
   426 decoder parameters and the readout against the shard headers, 0 mismatched, 297 vision tensors left.
   **The 27B release** is the same layout over 64 layers (48 recurrent, 16 attention, hidden 5120), about
   52 GB at bfloat16, so it runs packed to 4 bits as it loads (about 15 GB with the embedding packed). Its

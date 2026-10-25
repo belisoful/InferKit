@@ -6101,6 +6101,11 @@
       "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_LAYERS=0,3 IK_PROBE_FUNCTIONS=causal_conv1d_fn,l2norm,torch_chunk_gated_delta_rule | IK_PROBE_STREAM_F32=1 hf_layer_probe --checkpoint $IK_VAL_QWEN3_5 (transformers 5.17, whose chunked delta rule normalizes the queries and keys after widening them to float32)"
     },
     {
+      "records": "pplx_flash_bf16 / pplx_flash_f32",
+      "environment": "pplx_decider",
+      "command": "PPLX_DTYPE=bfloat16 PPLX_SDPA=math IK_PROBE_BLOCK_FLOOR=1 pplx_decider | PPLX_SDPA=math pplx_decider, each --checkpoint $IK_VAL_PPLX_DECIDER_FLASH (the release's own Decider; bf16 through from_pretrained, the readout cast to bf16; torch's MATH SDPA, the default CPU kernel's readouts kept as default_sdpa.readouts)"
+    },
+    {
       "records": "umt5_xxl_bf16 / umt5_xxl_f32, t5_xxl_bf16 / t5_xxl_f32",
       "environment": "qwenimage",
       "command": "IK_PROBE_DTYPE=bfloat16 IK_PROBE_LAYERS=0,23 | IK_PROBE_STREAM_F32=1 t5_layer_probe --checkpoint <Wan2.1-T2V-1.3B-Diffusers>/text_encoder with IK_PROBE_TOKENIZER=<validation root>/umt5-tokenizer | <stable-diffusion-3.5-medium>/text_encoder_3 with IK_PROBE_TOKENIZER=<stable-diffusion-3.5-medium>/tokenizer_3 (transformers 5.17)"

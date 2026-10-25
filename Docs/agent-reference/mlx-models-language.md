@@ -531,7 +531,11 @@ attention and feed-forward.
   **Bidirectional full attention** (`NFKMLXHybridAttention.bidirectional`, through `normalizedHidden(_:attention:)`
   and `hiddenStates(_:attention:)`) drops the causal mask from the full-attention layers only; the
   convolution and the delta rule read the prefix in either mode. pplx-decider (`NFKMLXPplxDecider`, in
-  `mlx-models-embeddings-retrieval.md`) runs this way. `moduleKey(forReference:)` also reads a
+  `mlx-models-embeddings-retrieval.md`) runs this way, and at half precision it takes torch's MATH SDPA
+  (`NFKMLXHybridConfiguration.halfPrecisionAttention = .sdpaMath`: transformers' repeated key and value heads
+  through `NFKReferenceRounding.mathAttention`), since its release loads with `attn_implementation="sdpa"`; the
+  language model keeps transformers' eager attention, and float32 takes the fused kernel either way.
+  `moduleKey(forReference:)` also reads a
   `Qwen3_5Model` save, whose decoder sits under `language_model.` with no `model.` wrapper.
   `loadQuantizedWeights(into:fromDirectory:bits:groupSize:includeEmbeddings:)` packs a release as it reads
   the shards: each layer is installed, quantized, and evaluated when its last tensor arrives, so a release
