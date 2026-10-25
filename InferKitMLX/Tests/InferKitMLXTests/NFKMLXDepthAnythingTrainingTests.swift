@@ -3,8 +3,8 @@
 //  InferKitMLXTests
 //
 //  Depth Anything V2's metric fine-tune without released weights: the SiLog loss and its mask, the metric
-//  head's range, the reference schedule, the encoder-only load, and a fine-tune that lowers the loss and
-//  reloads.
+//  head's range, the reference schedule, the encoder-only load, the output convolution's row-staged weight
+//  gradient, and a fine-tune that lowers the loss and reloads.
 //
 
 import XCTest
@@ -116,6 +116,42 @@ final class NFKMLXDepthAnythingTrainingTests: XCTestCase {
         let reloaded = try NFKMLXDepthAnything.network(weightsURL: url, configuration: small())
         let input = NFKMLXDepthAnything.trainingInput(images)
         XCTAssertLessThan(abs(net(input) - reloaded(input)).max().item(Float.self), 1e-4)
+    }
+
+    // The head's output convolution at the metric fine-tune's size: two 518-pixel maps of 32 rectified
+    // channels. Its value is MLX's `conv2d` bit for bit, and its weight gradient lands nearer float64 than the
+    // one-product gradient does.
+    func testTheOutputConvolutionSumsItsWeightGradientByRow() throws {
+        try requireMLXRuntime()
+        let convolution = Conv2d(inputChannels: 32, outputChannels: 1, kernelSize: 1)
+        let x = relu(MLXRandom.normal([2, 518, 518, 32], key: MLXRandom.key(3)) * 0.5 + 0.2)
+        let cotangent = MLXRandom.normal([2, 518, 518, 1], key: MLXRandom.key(4)) * 0.1 + 0.05
+        let value = NFKMLXStagedReduction.pointwiseConvolution(convolution, x)
+        XCTAssertTrue(arrayEqual(value, convolution(x)).item(Bool.self))
+
+        func weightGradient(_ forward: @escaping (Conv2d, MLXArray) -> MLXArray) -> [Float] {
+            let gradients = valueAndGrad(model: convolution) { convolution, arrays in
+                [(forward(convolution, arrays[0]) * cotangent).sum()]
+            }(convolution, [x]).1.flattened()
+            return Dictionary(uniqueKeysWithValues: gradients)["weight"]!.asArray(Float.self)
+        }
+        let staged = weightGradient { NFKMLXStagedReduction.pointwiseConvolution($0, $1) }
+        let product = weightGradient { $0($1) }
+        let inputs = x.reshaped([-1, 32]).asArray(Float.self), cotangents = cotangent.asArray(Float.self)
+        var exact = [Double](repeating: 0, count: 32)
+        for position in cotangents.indices {
+            let g = Double(cotangents[position])
+            for channel in 0 ..< 32 {
+                exact[channel] += g * Double(inputs[position * 32 + channel])
+            }
+        }
+        func distance(_ values: [Float]) -> Double {
+            let difference = zip(values, exact).map { (Double($0) - $1) * (Double($0) - $1) }.reduce(0, +)
+            return (difference / exact.map { $0 * $0 }.reduce(0, +)).squareRoot()
+        }
+        print("PARITY depth-pointwise-gradient: from float64 by row \(distance(staged)), one product \(distance(product))")
+        XCTAssertLessThan(distance(staged), 2e-7)
+        XCTAssertLessThan(distance(staged), distance(product) / 4)
     }
 
     func testTheReferenceOptimizerRunsTheHeadAtTenTimesTheEncoderRate() throws {

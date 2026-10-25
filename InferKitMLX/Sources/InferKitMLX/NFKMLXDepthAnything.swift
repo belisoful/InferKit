@@ -332,8 +332,9 @@ final class NFKDPTScratch: Module {
 
         // The reference resizes to the full input size between the two output convolutions.
         let depth = NFKMLXResample.resizeBilinearAlignCorners(outputConv1(path), height: size, width: size)
-        let map = (outputConv2[3] as! UnaryLayer)((outputConv2[2] as! Conv2d)(
-            (outputConv2[1] as! ReLU)((outputConv2[0] as! Conv2d)(depth))))
+        let features = (outputConv2[1] as! ReLU)((outputConv2[0] as! Conv2d)(depth))
+        let map = (outputConv2[3] as! UnaryLayer)(
+            NFKMLXStagedReduction.pointwiseConvolution(outputConv2[2] as! Conv2d, features))
         return maxDepth.map { map * $0 } ?? map
     }
 }

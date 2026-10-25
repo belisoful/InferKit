@@ -11938,8 +11938,8 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         let predictionFloor = distance(try array("prediction"), try array("prediction64"))
         print("PARITY depth-metric-training: prediction from float64 \(predictionDistance) (reference float32 \(predictionFloor)); "
               + "loss \(loss) vs \(try scalar("output")) (float64 \(try scalar("loss64")))")
-        XCTAssertLessThan(predictionDistance, max(1e-5, 2 * predictionFloor))
-        XCTAssertEqual(loss, try scalar("loss64"), accuracy: max(abs(try scalar("loss64")) * 1e-5, 2 * abs(try scalar("output") - (try scalar("loss64")))))
+        XCTAssertLessThanOrEqual(predictionDistance, 2 * predictionFloor)
+        XCTAssertEqual(loss, try scalar("loss64"), accuracy: 2 * abs(try scalar("output") - (try scalar("loss64"))))
 
         let gradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, arrays in
             [objective(net, arrays[0], arrays[1], arrays[2])]
@@ -11947,7 +11947,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         let norm = sqrt(gradients.values.map { square($0).sum() }.reduce(MLXArray(Float(0)), +)).item(Float.self)
         let norm64 = try scalar("gradient_norm64")
         print("PARITY depth-metric-training: global gradient norm \(norm) vs \(try scalar("gradient_norm")) (float64 \(norm64))")
-        XCTAssertEqual(norm, norm64, accuracy: max(norm64 * 1e-4, 2 * abs(try scalar("gradient_norm") - norm64)))
+        XCTAssertEqual(norm, norm64, accuracy: 2 * abs(try scalar("gradient_norm") - norm64))
         let transposed: Set<String> = ["depth_head.resize_layers.0.weight"]
         for name in ["pretrained.patch_embed.proj.weight", "pretrained.blocks.0.attn.qkv.weight",
                      "pretrained.blocks.11.mlp.fc2.weight", "depth_head.projects.0.weight",
@@ -11962,7 +11962,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
             let floor = distance(theirs, theirs64)
             print("PARITY depth-metric-training: \(name) gradient relative error \(distance(ours, theirs)); "
                   + "from float64: ours \(distance(ours, theirs64)), reference float32 \(floor)")
-            XCTAssertLessThan(distance(ours, theirs64), max(1e-4, 2 * floor), name)
+            XCTAssertLessThan(distance(ours, theirs64), 2 * floor, name)
         }
 
         try NFKMLXDepthAnything.fineTune(net, examples: { _ in (images, depth, valid) }, steps: 1)
@@ -11970,7 +11970,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         let after64 = try scalar("loss_after_step64")
         let stepFloor = abs(try scalar("loss_after_step") - after64)
         print("PARITY depth-metric-training: loss after one step \(lossAfter) vs \(try scalar("loss_after_step")) (float64 \(after64))")
-        XCTAssertEqual(lossAfter, after64, accuracy: max(abs(after64) * 1e-4, 2 * stepFloor))
+        XCTAssertEqual(lossAfter, after64, accuracy: 2 * stepFloor)
     }
 
     // The SIGGRAPH-17 colorizer's regression phase against richzhang/colorization-pytorch at 66a1cb2: the

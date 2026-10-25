@@ -11,7 +11,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   518×518 (so `pos_embed` matches without interpolation) and the map resizes back. `loadWeights(into:from:remap:)`
   loads a **safetensors** checkpoint; the DPT key layout is intricate, so `Tools/depth-anything-to-safetensors/convert.py`
   is self-validating (matches every key against the module's expected layout, reports mismatches).
-  Reference parity across all three released sizes: Small 0.9999962 (encoder seam 0.99999999999744),
+  Reference parity across all three released sizes: Small 0.9999962 (encoder seam 0.99999999999752),
   Base 0.9999964, Large 0.9999963, on the min-max-normalized depth map. The map is compared through the
   8-bit image the backend returns, whose quantization alone leaves a mean difference of 9.8e-4 at every
   size. Three fixes found while porting the metric fine-tune (2026-10-02) raised these from 0.998: the
@@ -43,10 +43,14 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     the loop resets after each update, so update `k` runs at `(1 − (k − 1)/T)^0.9` and the first at the base
     rate. `fineTune(mirrors:)` is the loop's coin-flip mirror of the image, depth, and mask together.
   - Measured on the Small release's encoder and a head as `torch.manual_seed(0)` initializes it, two
-    518-pixel images: the prediction within 9.4e-8 of float64 (the reference's float32 8.1e-8), SiLog
-    0.43176848 vs 0.43176848, every gradient at the reference's float32 floor (encoder 1.3e-5 to 5.3e-5,
-    head 1.9e-6 to 4.1e-5), the global norm 0.75300413 vs 0.7530015, and the loss after one AdamW step
-    0.41793087 vs 0.41793084.
+    518-pixel images: the prediction within 9.5e-8 of float64 (the reference's float32 8.0e-8), SiLog
+    0.43176848 vs 0.43176848, every gradient within 1.19× the reference's float32 distance from float64
+    (encoder 1.1e-5 to 5.3e-5, head 6.3e-7 to 3.7e-5), the global norm 0.7530037 vs 0.7530015 (float64
+    0.75300336), and the loss after one AdamW step 0.41793093 vs 0.41793084 (float64 0.4179309). Each is
+    held to twice the reference's float32 distance, with no absolute minimum.
+  - The head's 1×1 output convolution sums its weight gradient one image row at a time
+    (`NFKMLXStagedReduction.pointwiseConvolution`). MLX's one-product gradient over the 536,648 positions
+    left `output_conv2.2.weight` at 3.59× the reference's float32 distance; summed by row it lands at 1.19×.
   - The relative release's distillation recipe is not published, so the relative head trains only as a
     caller's own objective drives it.
 - `NFKMLXDepthAnything3` (`@objc`) — Depth Anything 3 monocular depth and camera estimation (DA3-SMALL).

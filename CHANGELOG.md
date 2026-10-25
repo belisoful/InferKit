@@ -1589,6 +1589,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Depth Anything V2's metric training holds every figure to twice the reference's float32 distance
+
+- The head's 1×1 output convolution sums its weight gradient one image row at a time
+  (`NFKMLXStagedReduction.pointwiseConvolution`). MLX's one-product gradient over the 518-pixel map landed 3.6
+  times as far from float64 as the reference's float32 gradient, and the row-staged one lands 1.19 times as
+  far. The prediction and the inference path are unchanged bit for bit.
+- The training parity test drops its absolute minimums: the prediction, the loss, the global norm, each recorded
+  gradient, and the loss after one step are held to twice the reference's float32 distance from float64.
+
 #### Every exact GELU computes torch's error function
 
 - Each model's exact GELU takes `NFKReferenceRounding.gelu`. A float32 input runs the error function of torch's

@@ -49,6 +49,31 @@ enum NFKMLXStagedReduction {
         return broadcast(weight.reshaped(shape), like: x) * x + broadcast(bias.reshaped(shape), like: x)
     }
 
+    /// A 1×1 convolution of NHWC `x` whose weight gradient sums each image row, then sums the rows.
+    ///
+    /// MLX computes a 1×1 convolution's weight gradient as one matrix product over all `B·H·W` positions,
+    /// and that product's split-K slices add their terms in order into float32. On Depth Anything's
+    /// 518-pixel map (536,648 positions) its gradient lands 3.6 times as far from float64 as torch's. Summed
+    /// row by row it lands at a fifth of torch's distance. The value and the input gradient are MLX's own.
+    static func pointwiseConvolution(_ convolution: Conv2d, _ x: MLXArray) -> MLXArray {
+        precondition(convolution.weight.dim(1) == 1 && convolution.weight.dim(2) == 1 && convolution.groups == 1
+                     && convolution.stride == (1, 1) && convolution.padding == (0, 0),
+                     "a pointwise convolution has a 1×1 kernel, unit stride, no padding, and one group")
+        let function = CustomFunction {
+            Forward { inputs in [conv2d(inputs[0], inputs[1])] }
+            VJP { primals, cotangents in
+                let (x, weight, cotangent) = (primals[0], primals[1], cotangents[0])
+                let rows = x.dim(0) * x.dim(1)
+                let inputGradient = vjp({ [conv2d($0[0], weight)] }, primals: [x], cotangents: [cotangent]).1[0]
+                let weightGradient = matmul(cotangent.reshaped([rows, x.dim(2), -1]).swappedAxes(1, 2),
+                                            x.reshaped([rows, x.dim(2), -1])).sum(axis: 0)
+                return [inputGradient, weightGradient.reshaped(weight.shape)]
+            }
+        }
+        let y = function([x, convolution.weight])[0]
+        return convolution.bias.map { y + $0 } ?? y
+    }
+
     /// Broadcasts `statistic` (`[1, …, 1, C]`) across every axis of `x` but the last two, first axis first.
     /// The arithmetic that consumes the result broadcasts the remaining axis.
     static func broadcast(_ statistic: MLXArray, like x: MLXArray) -> MLXArray {

@@ -858,6 +858,13 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     `torchTrainableGELU`, and a half-precision input takes `torchGELU`. MLXNN's `gelu`, a `GELU` module's
     call, and a bare `gelu(` appear nowhere else in the sources, and `NFKMLXReferenceGELUTests` holds the
     sources to it. The tanh forms (`geluTanh`, `geluNew`) and `quickGELU` call no error function.
+  - **A 1×1 convolution's weight gradient over a large map loses digits.** MLX computes it as one matrix
+    product over every position, whose split-K slices add in order into float32. At 536,648 positions (two
+    518-pixel maps) it lands 3.0 to 4.2 times as far from float64 as torch's CPU gradient.
+    `NFKMLXStagedReduction.pointwiseConvolution` sums each image row, then the rows, and lands at a fifth of
+    torch's distance on synthetic maps of that size. On Depth Anything's metric fine-tune it takes the head's
+    output gradient from 3.59 to 1.19 times the reference's float32 distance. A 3×3 convolution's weight
+    gradient at the same size lands at 2.7e-7, where torch's CPU lands at 8.1e-6.
   - **MLX's `expm1` carries the same reduction.** It reads 25 to 155 units of 2⁻²³ high (relative) wherever
     `|x|` exceeds `ln 2 / 2`, by an emulation of the kernel that reproduces the error-function readings above
     bin for bin. The one array call is MetricGAN+'s `expm1(mask * features)`.
