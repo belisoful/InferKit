@@ -132,7 +132,11 @@ final class NFKMLXHTDemucsTrainingTests: XCTestCase {
 
     func testEveryWeightReceivesAGradientThroughBothBranches() throws {
         try requireMLXRuntime()
-        let net = NFKMLXHTDemucs.makeNet(NFKMLXHTDemucsTests.tinyConfiguration())
+        // Sixteen channels give each dilated branch a hidden width of 2. At width 1 the bias ahead of the branch's
+        // one-group norm is removed whole, and its gradient is zero.
+        var configuration = NFKMLXHTDemucsTests.tinyConfiguration()
+        configuration.channels = 16
+        let net = NFKMLXHTDemucs.makeNet(configuration)
         let batch = NFKMLXDemucsTrainingTests.stems(batch: 2, length: 4096)
         net.train(true)
         // The residual branches start scaled by 1e-3 and 1e-4, so a first Adam step can round away on the

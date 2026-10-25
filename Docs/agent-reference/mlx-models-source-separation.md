@@ -41,7 +41,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     stem count, and channels from the file, so a checkpoint trained at another size loads.
 - `NFKMLXHTDemucs` / `NFKMLXHTDemucsBackend` (`@objc`) — Demucs v4 (Hybrid Transformer Demucs), at
   reference parity on the released `htdemucs` checkpoint (separated stems cosine
-  0.9999999999996, mean |difference| 7.7e-8), every parameter covered on the first triage run and
+  0.9999999999997, mean |difference| 5.6e-8), every parameter covered on the first triage run and
   every stage seam exact on the first numeric run. Two branches run **in parallel**: a spectrogram
   branch over a complex-as-channels STFT (`nFFT` 4096, hop 1024, `torch.stft(normalized:)`, so the
   real and imaginary parts of each audio channel are two feature channels) and a waveform branch over
@@ -78,8 +78,8 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `htdemucs_ft` is a **bag**: four checkpoints of the base geometry, each fine-tuned for one stem,
   combined by per-source weights as the reference's `BagOfModels` does (`NFKMLXHTDemucsBag`, one-hot
   weights so each stem comes from its own model; `backendWithFineTunedWeightsURLs:error:`;
-  `run_reference.py htdemucs_bag` drives the same four files). Separated stems 0.99999999999949 (6s)
-  and 0.99999999999958 (ft).
+  `run_reference.py htdemucs_bag` drives the same four files). Separated stems 0.99999999999975 (6s)
+  and 0.99999999999975 (ft).
   **Customization ships** at `full` (`NFKMLXHTDemucsTraining.swift`), measured against demucs 4.0.1's `solver.py`
   (`run_reference.py htdemucs_training`) on `htdemucs_ft`'s drums model with its dropout at zero.
   - `NFKMLXHTDemucs.fineTune` trains every parameter through both branches. `NFKMLXHTDemucsNet.estimate(_:)`
@@ -88,6 +88,11 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     error. MLX's direct 4,096-point GPU transform carries 6.9e-7, and the gradients through the spectrogram
     branch carried that difference: the first self-attention's input projection stood at 2.5 times the reference
     float32's distance from float64.
+  - The GELUs compute torch's error function and return torch's closed-form gradient
+    (`NFKReferenceRounding.torchTrainableGELU`). MLX's GPU error function reads high from 0.93 to 2
+    (`mlx-runtime-gotchas.md`). Behind MLXNN's GELU, on a random network saved at float16, the bias ahead of
+    the first dilated branch's norm stood at 4.9 times the reference float32's distance from float64, and 21
+    of 533 gradients past twice it. With these GELUs, 3 are.
   - `NFKMLXHTDemucsTrainingRecipe` holds the two recipes the releases' `training_args` record. `htdemucs` is
     Adam at 3e-4 with every augmentation. `htdemucsFineTune` is AdamW at 1e-4 with 0.05 decay on the
     cross-transformer, the gradient clipped at 5, and the crop and flips alone, with
@@ -95,12 +100,13 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   - The releases store their tensors at float16. The loader copies them into float32 parameters, as
     `load_state_dict` does. A float16 parameter returns its gradient at float16, which left the attention
     projections' small gradients 29% off.
-  - Measured on two one-second clips, each figure against float64: the estimate within 5.00e-7 (reference
+  - Measured on two one-second clips, each figure against float64: the estimate within 4.77e-7 (reference
     float32 4.80e-7), the drums and equally weighted losses equal to every printed digit, and the global
     gradient norm 0.061118927 vs 0.061118916.
   - Ten gradients across both branches, the transformer, and the spectrogram branch's last decoder land within
-    7.13e-6 of float64. The widest is the first self-attention's input projection, against the reference
-    float32's 5.98e-6. The loss after one step of the fine-tune's AdamW is 0.09660634, float64's to every
+    6.57e-6 of float64. The widest is the first self-attention's input projection, against the reference
+    float32's 5.98e-6. Each lands within 1.62 times the reference float32's distance, the time branch's first
+    convolution the nearest to that bound. The loss after one step of the fine-tune's AdamW is 0.09660634, float64's to every
     printed digit.
   - The augmentation chain, replayed from the reference's draws, is exact.
   - The transformer drops activations at the releases' 0.02 in training. A new network starts at the

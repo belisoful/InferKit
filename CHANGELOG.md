@@ -1548,6 +1548,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   carried the difference.
 - The loader copies the releases' float16 tensors into float32 parameters, as the reference's
   `load_state_dict` does. A half-precision parameter returned its gradient at half precision.
+- The GELUs compute torch's error function and return torch's closed-form gradient,
+  `dy · (x · φ(x) + Φ(x))`. MLX's GPU error function reads up to 13 units high for arguments from 0.93 to 2,
+  and the bias added up in the gradients summed over every position behind a GELU.
 - A new network's attention projections, layer scales, and residual-branch widths start at the reference's
   values: Xavier-uniform projections, scales of 1e-4 and 1e-3, and branches compressed by 8.
 - `NFKMLXHTDemucs.network(weightsURL:configuration:)` builds the network, and a checkpoint `NFKMLXWeights` saved

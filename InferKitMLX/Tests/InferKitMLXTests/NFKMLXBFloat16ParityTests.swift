@@ -2964,8 +2964,8 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     // torch's exact GELU at bf16 and float16 over every finite value (`run_reference.py gelu_rounding`) of
     // magnitude at least twice the least normal float32, so `x · 0.5` is normal: the GPU flushes a subnormal
     // product to zero, and torch's CPU keeps it. The kernel fuses torch's multiply-adds and takes Sleef's
-    // exponential, and matches every input in either arithmetic. MLX's own error function, faithfully rounded,
-    // rounds hundreds apart, which the record tells from torch's.
+    // exponential, and matches every input in either arithmetic. MLX's own error function rounds hundreds
+    // apart, which the record tells from torch's.
     func testHalfGELUComputesTorchsErrorFunction() throws {
         try requireMLXRuntime()
         let record = try self.record("gelu_rounding.safetensors")
@@ -2997,6 +2997,39 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         XCTAssertGreaterThan(differing(exp(input)), 100, "the grid tells MLX's exp from torch's")
         let edges = NFKReferenceRounding.torchExp(MLXArray([-Float.infinity, -104.5, 89, Float.infinity]))
         XCTAssertEqual(edges.asArray(Float.self), [0, 0, .infinity, .infinity])
+    }
+
+    // The float32 GELU a trained network takes, at x = (i − 4096)/1024 for i in 0..<8192, against float64 formed on
+    // the host: the forward and torch's closed-form gradient each stay within 1e-7 of it. MLX's GPU error function
+    // reads 9 units high on average from 0.9375 to 1.25, and MLXNN's GELU gradient lands 1.6e-7 away.
+    func testTrainableGELUHoldsFloat32Accuracy() throws {
+        try requireMLXRuntime()
+        let values = (0 ..< 8192).map { Float($0 - 4096) / 1024 }
+        let x = MLXArray(values)
+        func distances(_ gelu: @escaping (MLXArray) -> MLXArray) -> (forward: Double, gradient: Double) {
+            let (y, dx) = vjp({ [gelu($0[0])] }, primals: [x], cotangents: [MLXArray.ones([values.count])])
+            let forward = y[0].asArray(Float.self), gradient = dx[0].asArray(Float.self)
+            var sums = (0.0, 0.0, 0.0, 0.0)
+            for (index, value) in values.enumerated() {
+                let t = Double(value), cdf = 0.5 * (1 + Foundation.erf(t / 2.0.squareRoot()))
+                let exact = t * cdf, slope = cdf + t * Foundation.exp(-t * t / 2) / (2 * Double.pi).squareRoot()
+                sums.0 += pow(Double(forward[index]) - exact, 2)
+                sums.1 += exact * exact
+                sums.2 += pow(Double(gradient[index]) - slope, 2)
+                sums.3 += slope * slope
+            }
+            return ((sums.0 / sums.1).squareRoot(), (sums.2 / sums.3).squareRoot())
+        }
+        let trainable = distances { NFKReferenceRounding.torchTrainableGELU($0) }
+        XCTAssertLessThan(trainable.forward, 1e-7)
+        XCTAssertLessThan(trainable.gradient, 1e-7)
+        XCTAssertGreaterThan(distances { MLXNN.gelu($0) }.gradient, 1.4e-7, "the grid tells MLXNN's GELU apart")
+
+        let errorFunction = erf(x).asArray(Float.self)
+        let biased = values.indices.filter { values[$0] >= 0.9375 && values[$0] < 1.25 }
+        let meanError = biased.map { (Double(errorFunction[$0]) - Foundation.erf(Double(values[$0]))) * 0x1p24 }
+            .reduce(0, +) / Double(biased.count)
+        XCTAssertGreaterThan(meanError, 4, "MLX's GPU error function reads high where its expm1f reduces by ln 2's high part")
     }
 
     // torch's `layer_norm` over float16, bf16, and float32 rows of 320, 1,001, and 7 (whole vectors, a

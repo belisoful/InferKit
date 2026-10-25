@@ -6,6 +6,7 @@
 import Foundation
 import MLX
 import MLXFast
+import MLXNN
 
 // PyTorch's CPU arithmetic for the operations ``NFKMLXArithmetic/reference`` selects, as Metal kernels that
 // match torch bit for bit: each computes its operation in torch's order, with a fused multiply-add where
@@ -98,6 +99,17 @@ extension NFKReferenceRounding {
     static func torchGELU(_ x: MLXArray) -> MLXArray {
         guard NFKMLXDevice.currentType == .gpu, x.size > 0 else { return geluOperations([x])[0] }
         return torchGELUFunction([x])[0]
+    }
+
+    /// torch's `gelu` of a float32 `x` with torch's own gradient: the forward of ``torchGELU(_:)`` and the
+    /// backward of torch's vectorized `GeluBackward`, `dy · (x · φ(x) + Φ(x))`, with `Φ` from the same error
+    /// function and `φ` from Sleef's exponential. MLX's GPU error function reads up to 13 units high for
+    /// arguments from 0.93 to 2, where its `expm1f` reduces by the high part of `ln 2` alone; the bias adds up
+    /// in a gradient summed over many positions. On the CPU stream it takes MLXNN's `gelu`, whose error
+    /// function is torch's polynomial.
+    static func torchTrainableGELU(_ x: MLXArray) -> MLXArray {
+        guard NFKMLXDevice.currentType == .gpu, x.size > 0 else { return MLXNN.gelu(x) }
+        return torchTrainableGELUFunction([x])[0]
     }
 
     /// torch's `silu` of a bfloat16 or float16 `x`, `x / (1 + exp(−x))` formed in float32 with Sleef's
@@ -286,6 +298,18 @@ extension NFKReferenceRounding {
         VJP { primals, cotangents in vjp(geluOperations, primals: primals, cotangents: cotangents).1 }
     }
 
+    private static let torchTrainableGELUFunction = CustomFunction {
+        Forward { inputs in
+            torchGELUKernel([inputs[0]], template: [("T", inputs[0].dtype)], grid: (inputs[0].size, 1, 1),
+                            threadGroup: (256, 1, 1), outputShapes: [inputs[0].shape], outputDTypes: [inputs[0].dtype])
+        }
+        VJP { primals, cotangents in
+            torchGELUBackwardKernel([primals[0], cotangents[0]], template: [("T", primals[0].dtype)],
+                                    grid: (primals[0].size, 1, 1), threadGroup: (256, 1, 1),
+                                    outputShapes: [primals[0].shape], outputDTypes: [primals[0].dtype])
+        }
+    }
+
     private static let torchSiLUFunction = CustomFunction {
         Forward { inputs in
             torchSiLUKernel([inputs[0]], template: [("T", inputs[0].dtype)], grid: (inputs[0].size, 1, 1),
@@ -461,6 +485,38 @@ extension NFKReferenceRounding {
             const float half_value = value * 0.5f;
             const float sum = 1.0f + erf_value;
             out[index] = T(half_value * sum);
+        """,
+        header: torchExpHeader)
+
+    // torch's vectorized `GeluBackward`: the forward's error function, then `0.5 · (1 + erf)` and
+    // `(1/√(2π)) · exp(x · x · −0.5)`, each step rounding.
+    private static let torchGELUBackwardKernel = MLXFast.metalKernel(
+        name: "nfk_torch_gelu_backward",
+        inputNames: ["x", "dy"],
+        outputNames: ["dx"],
+        source: """
+            uint index = thread_position_in_grid.x;
+            const float value = float(x[index]);
+            const float y = value * 0.70710678118654752440f;
+            const float magnitude_y = metal::abs(y);
+            const float t = metal::precise::divide(1.0f, fma(0.3275911f, magnitude_y, 1.0f));
+            float r = fma(1.061405429f, t, -1.453152027f);
+            r = fma(r, t, 1.421413741f);
+            r = fma(r, t, -0.284496736f);
+            r = fma(r, t, 0.254829592f);
+            const float square_y = y * y;
+            const float decay = -nfk_torch_expf(-square_y);
+            const float scaled = t * decay;
+            const float magnitude = fma(scaled, r, 1.0f);
+            const float erf_value = as_type<float>(as_type<uint>(magnitude) ^ (as_type<uint>(y) & 0x80000000u));
+            const float sum = 1.0f + erf_value;
+            const float cdf = 0.5f * sum;
+            const float square = value * value;
+            const float exponent = square * -0.5f;
+            const float pdf = 0.39894228040143267794f * nfk_torch_expf(exponent);
+            const float tangent = value * pdf;
+            const float slope = tangent + cdf;
+            dx[index] = T(float(dy[index]) * slope);
         """,
         header: torchExpHeader)
 

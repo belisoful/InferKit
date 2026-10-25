@@ -836,3 +836,21 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   after a warm-up; past 30 s it fails naming the cache, the footprint, and the unowned bytes. Any
   footprint measurement taken after freeing large MLX arrays needs the same check. Its printed line adds
   the start's bytes beside MLX's own.
+- **MLX's GPU error function reads high for arguments from 0.93 to 2 (2026-10-24, mlx-swift's mlx 0.32).**
+  The Metal `erf` takes Norbert Juffa's polynomial and finishes with `-expm1f(r)`. That `expm1f`
+  (`kernels/expm1f.h`) reduces its argument as `fma(j, -6.93145752e-1f, a)`, the high part of `ln 2` alone,
+  and drops the low-part step `fma(j, -1.42860677e-6f, f)`. The remainder is off by `|j| · 1.4e-6`.
+  - **The readings, in units of 2⁻²⁴ against float64 on a 400,001-point grid.** Mean error +9.0 from 0.928 to
+    1.25, +5.2 to 1.5, +2.3 to 2, under 1 elsewhere. torch's float32 `erf` stays within ±2.1 mean in every bin.
+    The CPU stream computes the Abramowitz–Stegun polynomial torch's vectorized kernels use. On a float64
+    array the CPU `erf` still evaluates that polynomial in float32, so it is no float64 reference.
+  - **What it does to a gradient.** MLXNN's `gelu` lands 2.0e-7 from float64 on standard-normal inputs and
+    its gradient 1.6e-7, against torch's 8.8e-8 and 9.9e-8. The error is a bias, so a gradient summed over
+    many positions behind a GELU collects it. HT Demucs's dilated branches sum over every frame and
+    frequency: the bias ahead of each branch's norm stood at 2.7 times the reference float32's distance
+    from float64 in one isolated branch.
+  - **The fix for a trained float32 GELU is `NFKReferenceRounding.torchTrainableGELU`.** The forward is the
+    torch-polynomial kernel `torchGELU` uses. The backward is torch's `GeluBackward`,
+    `dy · (x · φ(x) + Φ(x))`, in a second kernel, since the polynomial's own derivative lands 3.7e-7 away.
+    Both land at torch's distance (`testTrainableGELUHoldsFloat32Accuracy`, which also probes the bias).
+  - **Rule.** A training parity gap behind a GELU, `erf`, or `expm1` is checked against this bias first.

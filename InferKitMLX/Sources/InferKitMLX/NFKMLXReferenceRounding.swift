@@ -78,8 +78,7 @@ enum NFKReferenceRounding {
 
     /// torch's exact `gelu`, `x · 0.5 · (1 + erf(x · √½))`. A half-precision input takes ``torchGELU(_:)``, formed
     /// in float32 with the error function torch's CPU kernels compute and rounded once. MLX's own error function
-    /// is faithfully rounded, so its GELU rounds apart from torch's at float16. A float32 input takes MLXNN's
-    /// `gelu`.
+    /// rounds apart from torch's, and at float16 so does its GELU. A float32 input takes MLXNN's `gelu`.
     static func gelu(_ x: MLXArray) -> MLXArray {
         guard isReduced(x) else { return MLXNN.gelu(x) }
         return torchGELU(x)

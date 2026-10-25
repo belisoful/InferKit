@@ -198,7 +198,7 @@ final class NFKHTDConvBlock: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let compressed = gelu(normIn(convIn(x)))
+        let compressed = NFKReferenceRounding.torchTrainableGELU(normIn(convIn(x)))
         return layerScale(glu(normOut(convOut(compressed)), axis: -1))
     }
 }
@@ -242,7 +242,7 @@ final class NFKHTFrequencyEncoder: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        var y = gelu(conv(x))                                   // [batch, frequency, frame, channel]
+        var y = NFKReferenceRounding.torchTrainableGELU(conv(x))                                   // [batch, frequency, frame, channel]
         let shape = y.shape
         y = dconv(y.reshaped([shape[0] * shape[1], shape[2], shape[3]])).reshaped(shape)
         return glu(rewrite(y), axis: -1)
@@ -272,7 +272,7 @@ final class NFKHTTimeEncoder: Module {
         if remainder != 0 {
             input = padded(input, widths: [.init((0, 0)), .init((0, stride - remainder)), .init((0, 0))])
         }
-        let y = dconv(gelu(conv(input)))
+        let y = dconv(NFKReferenceRounding.torchTrainableGELU(conv(input)))
         return glu(rewrite(y), axis: -1)
     }
 }
@@ -305,7 +305,7 @@ final class NFKHTFrequencyDecoder: Module {
         y = dconv(y.reshaped([shape[0] * shape[1], shape[2], shape[3]])).reshaped(shape)
         var z = convTr(y)
         z = z[0..., trim ..< (z.shape[1] - trim), 0..., 0...]
-        return (last ? z : gelu(z), y)
+        return (last ? z : NFKReferenceRounding.torchTrainableGELU(z), y)
     }
 }
 
@@ -334,7 +334,7 @@ final class NFKHTTimeDecoder: Module {
         let y = dconv(glu(rewrite(x + skip), axis: -1))
         var z = convTr(y)
         z = z[0..., trim ..< (trim + length), 0...]
-        return last ? z : gelu(z)
+        return last ? z : NFKReferenceRounding.torchTrainableGELU(z)
     }
 }
 
@@ -471,7 +471,7 @@ final class NFKHTSelfLayer: Module {
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let normed = norm1(x)
         var out = x + gamma1(dropout1(attn(normed, normed)))
-        out = out + gamma2(dropout2(linear2(dropout(gelu(linear1(norm2(out)))))))
+        out = out + gamma2(dropout2(linear2(dropout(NFKReferenceRounding.torchTrainableGELU(linear1(norm2(out)))))))
         return normOut(out)
     }
 }
@@ -508,7 +508,7 @@ final class NFKHTCrossLayer: Module {
 
     func callAsFunction(_ query: MLXArray, _ memory: MLXArray) -> MLXArray {
         var out = query + gamma1(dropout1(attn(norm1(query), norm2(memory))))
-        out = out + gamma2(dropout2(linear2(dropout(gelu(linear1(norm3(out)))))))
+        out = out + gamma2(dropout2(linear2(dropout(NFKReferenceRounding.torchTrainableGELU(linear1(norm3(out)))))))
         return normOut(out)
     }
 }

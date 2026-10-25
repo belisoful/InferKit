@@ -12364,7 +12364,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                 let floor = distance(try array(prefix + name), try array(prefix + "f64::" + name))
                 let error = distance(ours, try array(prefix + "f64::" + name))
                 print("PARITY zero-dce-plus-training: scale \(scale) \(name) from float64 \(error) (reference float32 \(floor))")
-                XCTAssertLessThan(error, max(1e-6, 2 * floor), "\(name) at scale \(scale)")
+                XCTAssertLessThan(error, max(1e-7, 2 * floor), "\(name) at scale \(scale)")
             }
 
             let terms = [objective.smoothnessWeight * NFKMLXZeroDCELoss.illuminationSmoothness(curve),
@@ -12397,7 +12397,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
                 let floor = distance(theirs, theirs64)
                 print("PARITY zero-dce-plus-training: scale \(scale) \(name) gradient relative error \(distance(ours, theirs)); "
                       + "from float64: ours \(distance(ours, theirs64)), reference float32 \(floor)")
-                XCTAssertLessThan(distance(ours, theirs64), max(1e-5, 2 * floor), "\(name) at scale \(scale)")
+                XCTAssertLessThan(distance(ours, theirs64), max(1e-7, 2 * floor), "\(name) at scale \(scale)")
             }
 
             try NFKMLXZeroDCEPlus.fineTune(net, photos: { _ in photos }, objective: objective, steps: 1)
@@ -12434,7 +12434,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         let estimateFloor = distance(try array("estimate"), try array("f64::estimate"))
         let estimateError = distance(stemsFirst, try array("f64::estimate"))
         print("PARITY demucs-training: estimate from float64 \(estimateError) (reference float32 \(estimateFloor))")
-        XCTAssertLessThan(estimateError, max(1e-6, 2 * estimateFloor))
+        XCTAssertLessThan(estimateError, max(1e-7, 2 * estimateFloor))
 
         let loss = objective(net, stems).item(Float.self)
         let loss32 = try values("loss")[0], loss64 = try values("f64::loss")[0]
@@ -12468,7 +12468,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
             let floor = distance(theirs, theirs64)
             print("PARITY demucs-training: \(name) gradient from float64: ours \(distance(ours, theirs64)), "
                   + "reference float32 \(floor)")
-            XCTAssertLessThan(distance(ours, theirs64), max(1e-5, 2 * floor), name)
+            XCTAssertLessThan(distance(ours, theirs64), max(1e-7, 2 * floor), name)
         }
 
         try NFKMLXDemucs.fineTune(net, stems: { _ in stems }, augmentation: nil, steps: 1)
@@ -12517,7 +12517,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         let estimateFloor = distance(try array("estimate"), try array("f64::estimate"))
         let estimateError = distance(estimate, try array("f64::estimate"))
         print("PARITY htdemucs-training: estimate from float64 \(estimateError) (reference float32 \(estimateFloor))")
-        XCTAssertLessThan(estimateError, max(1e-6, 2 * estimateFloor))
+        XCTAssertLessThan(estimateError, max(1e-7, 2 * estimateFloor))
 
         for (key, ours) in [("loss", objective.loss(estimate: estimate, sources: stems)),
                             ("loss_equal", NFKMLXDemucsObjective().loss(estimate: estimate, sources: stems))] {
@@ -12555,7 +12555,7 @@ final class NFKMLXReferenceParityTests: XCTestCase {
             let floor = distance(theirs, theirs64)
             print("PARITY htdemucs-training: \(name) gradient from float64: ours \(distance(ours, theirs64)), "
                   + "reference float32 \(floor)")
-            XCTAssertLessThan(distance(ours, theirs64), max(1e-5, 2 * floor), name)
+            XCTAssertLessThan(distance(ours, theirs64), max(1e-7, 2 * floor), name)
         }
 
         var recipe = NFKMLXHTDemucsTrainingRecipe.htdemucsFineTune

@@ -246,8 +246,8 @@ byte-identical.
 - A diffusers pipeline combines classifier-free guidance at the transformer's type with a Python-float
   scale (`guided`).
 - torch's exact `gelu` on a half input forms in float32 with the error function of its vectorized CPU kernels,
-  the Abramowitz–Stegun 7.1.26 polynomial, and rounds once. MLX's error function is faithfully rounded, and
-  widened it rounds 277 of all finite float16 inputs apart from torch. `NFKReferenceRounding.gelu` computes
+  the Abramowitz–Stegun 7.1.26 polynomial, and rounds once. MLX's error function is its own (and on the GPU reads
+  high from 0.93 to 2, `mlx-runtime-gotchas.md`), and widened it rounds 277 of all finite float16 inputs apart from torch. `NFKReferenceRounding.gelu` computes
   torch's polynomial in one kernel (`torchGELU`), with torch's fused multiply-adds and Sleef's exponential, and
   no input rounds apart at either type (`run_reference.py gelu_rounding`). The record is held where `x · 0.5`
   is a normal float32, `|x|` at least twice the least normal: the GPU flushes a subnormal float32 result to
