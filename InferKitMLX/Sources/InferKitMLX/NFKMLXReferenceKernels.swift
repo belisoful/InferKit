@@ -104,7 +104,8 @@ extension NFKReferenceRounding {
 
     /// torch's exact `gelu` of a bfloat16 or float16 `x`, `x · 0.5 · (1 + erf(x · √½))` formed in float32 and
     /// rounded once, with the error function of torch's vectorized kernels: the Abramowitz–Stegun 7.1.26
-    /// polynomial with its multiply-adds fused and Sleef's exponential. Its gradient is torch's `GeluBackward`,
+    /// polynomial with its multiply-adds fused and torch 2.13's exponential (`exp_u20`, Sleef's `expf` for a
+    /// 4-lane group holding an argument beyond 87.34). Its gradient is torch's `GeluBackward`,
     /// formed in float32 and rounded once to `x`'s type. On the CPU stream it takes MLX operations, which round
     /// each multiply-add.
     static func torchGELU(_ x: MLXArray) -> MLXArray {
@@ -397,8 +398,13 @@ extension NFKReferenceRounding {
         VJP { primals, cotangents in vjp(layerNormOperations, primals: primals, cotangents: cotangents).1 }
     }
 
+    /// Turns off Metal's fusing of a multiply and an add written in one expression. Each reference kernel rounds
+    /// every step torch's vector code rounds and fuses only through `fma`; a fused `x · pdf + cdf` in GELU's
+    /// gradient rounds 966 of 8,192 values apart from torch's.
+    static let metalContractOff = "#pragma METAL fp contract(off)\n"
+
     /// Sleef's `expf` in Metal, shared by the kernels that exponentiate.
-    private static let torchExpHeader = """
+    private static let torchExpHeader = metalContractOff + """
         inline float nfk_torch_expf(const float value) {
             const float n = rint(value * 1.442695040888963407359924681001892137426645954152985934135449406931f);
             float s = fma(n, -0.693145751953125f, value);
@@ -418,6 +424,40 @@ extension NFKReferenceRounding {
             if (value > 88.72283935546875f) { u = INFINITY; }
             if (value < -104.0f) { u = 0.0f; }
             return u;
+        }
+        """
+
+    /// torch's `Vectorized<float>::exp_u20` on NEON, the exponential inside its float32 error function from
+    /// torch 2.13 on: `n = round(x / ln 2)` half away from zero, the remainder reduced by both parts of `ln 2`, a
+    /// degree-5 polynomial in two fused halves, and `2ⁿ · (1 + p)` as one fused multiply-add. torch takes Sleef's
+    /// `expf` for a whole 4-lane vector when any lane's magnitude exceeds 87.34, so a kernel passes whether its
+    /// aligned group of four holds such an argument.
+    private static let torchErfExpHeader = """
+        inline float nfk_torch_exp_u20(const float value, const bool special_group) {
+            if (special_group) { return nfk_torch_expf(value); }
+            const float n = metal::round(value * 1.4426950216293335f);
+            float r = fma(-n, 0.693145751953125f, value);
+            r = fma(-n, 1.428606765330187e-06f, r);
+            const float scale = as_type<float>((int(n) << 23) + 0x3f800000);
+            const float r2 = r * r;
+            float p = fma(r, 0.008247390389442444f, 0.04189976677298546f);
+            float q = fma(r, 0.16668395698070526f, 0.4999912679195404f);
+            q = fma(p, r2, q);
+            p = 0.9999994039535522f * r;
+            const float poly = fma(q, r2, p);
+            return fma(poly, scale, scale);
+        }
+        template <typename X>
+        inline bool nfk_torch_erf_group_special(const device X* x, const uint index, const uint count) {
+            const uint first = index & ~3u;
+            const uint last = metal::min(first + 4u, count);
+            bool special = false;
+            for (uint lane = first; lane < last; lane++) {
+                const float y = float(x[lane]) * 0.70710678118654752440f;
+                const float square = y * y;
+                special = special || metal::abs(-square) > 87.34195709228516f;
+            }
+            return special;
         }
         """
 
@@ -466,7 +506,7 @@ extension NFKReferenceRounding {
     /// Sleef's `expm1f` in Metal: `exp(a)` in double-float arithmetic (`expk2f`), `a` reduced by
     /// `q = rint(a / ln 2)` in two parts, a polynomial whose last three terms carry double-float, `2^q` applied to
     /// both halves, then the 1 subtracted in double-float and the halves added.
-    private static let torchExpm1Header = """
+    private static let torchExpm1Header = metalContractOff + """
         inline float2 nfk_df_add2(const float2 x, const float y) {
             const float s = x.x + y;
             const float v = s - x.x;
@@ -539,13 +579,15 @@ extension NFKReferenceRounding {
         """,
         header: torchExpHeader)
 
-    // torch's `Vectorized<float>::erf` on NEON: `fmadd` is a fused multiply-add, and every other step rounds.
+    // torch's `Vectorized<float>::erf` on NEON: `fmadd` is a fused multiply-add, every other step rounds, and the
+    // exponential is `exp_u20` over 4-lane groups.
     private static let torchGELUKernel = MLXFast.metalKernel(
         name: "nfk_torch_gelu",
         inputNames: ["x"],
         outputNames: ["out"],
         source: """
             uint index = thread_position_in_grid.x;
+            const bool special_group = nfk_torch_erf_group_special(x, index, threads_per_grid.x);
             const float value = float(x[index]);
             const float y = value * 0.70710678118654752440f;
             const float magnitude_y = metal::abs(y);
@@ -555,7 +597,7 @@ extension NFKReferenceRounding {
             r = fma(r, t, -0.284496736f);
             r = fma(r, t, 0.254829592f);
             const float square = y * y;
-            const float decay = -nfk_torch_expf(-square);
+            const float decay = -nfk_torch_exp_u20(-square, special_group);
             const float scaled = t * decay;
             const float magnitude = fma(scaled, r, 1.0f);
             const float erf_value = as_type<float>(as_type<uint>(magnitude) ^ (as_type<uint>(y) & 0x80000000u));
@@ -563,7 +605,7 @@ extension NFKReferenceRounding {
             const float sum = 1.0f + erf_value;
             out[index] = T(half_value * sum);
         """,
-        header: torchExpHeader)
+        header: torchExpHeader + torchErfExpHeader)
 
     // torch's vectorized `GeluBackward`: the forward's error function, then `0.5 · (1 + erf)` and
     // `(1/√(2π)) · exp(x · x · −0.5)`, each step rounding.
@@ -573,6 +615,7 @@ extension NFKReferenceRounding {
         outputNames: ["dx"],
         source: """
             uint index = thread_position_in_grid.x;
+            const bool special_group = nfk_torch_erf_group_special(x, index, threads_per_grid.x);
             const float value = float(x[index]);
             const float y = value * 0.70710678118654752440f;
             const float magnitude_y = metal::abs(y);
@@ -582,7 +625,7 @@ extension NFKReferenceRounding {
             r = fma(r, t, -0.284496736f);
             r = fma(r, t, 0.254829592f);
             const float square_y = y * y;
-            const float decay = -nfk_torch_expf(-square_y);
+            const float decay = -nfk_torch_exp_u20(-square_y, special_group);
             const float scaled = t * decay;
             const float magnitude = fma(scaled, r, 1.0f);
             const float erf_value = as_type<float>(as_type<uint>(magnitude) ^ (as_type<uint>(y) & 0x80000000u));
@@ -595,7 +638,7 @@ extension NFKReferenceRounding {
             const float slope = tangent + cdf;
             dx[index] = T(float(dy[index]) * slope);
         """,
-        header: torchExpHeader)
+        header: torchExpHeader + torchErfExpHeader)
 
     private static let torchSiLUKernel = MLXFast.metalKernel(
         name: "nfk_torch_silu",
@@ -983,5 +1026,6 @@ extension NFKReferenceRounding {
                 }
                 Y[k] = T(value);
             }
-        """)
+        """,
+        header: metalContractOff)
 }

@@ -401,7 +401,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
 - `NFKMLXPhi4MM` (`@objc`) / `NFKMLXPhi4MMBackend` (`@objc`) — **Phi-4-multimodal** (Microsoft, MIT)
   transcribes as one of its modes: audio alone runs the speech LoRA on its Phi-4-mini decoder over a
   Conformer speech tower with a T5 relative bias. At reference parity on the released weights (encoder
-  0.9999999999982836, fused logits 0.9999999999995182, transcription exact), with SpeechLib's
+  0.9999999999982836, fused logits 0.9999999999995001, transcription exact), with SpeechLib's
   filterbank and the reference's sample-rate handling reproduced at 16, 44.1, 48, 8, and 11.025 kHz.
   Several clips encode as one masked batch, and a clip past 40 s unfolds into the encoder's 500-frame
   windows, both as the reference computes them. The full entry, with the image and text modes, is in

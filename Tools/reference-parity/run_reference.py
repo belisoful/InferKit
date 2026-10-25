@@ -11,6 +11,9 @@ Protocol: this script writes ONE safetensors file per model containing both
     input_image   the raw RGB plate, [H, W, 3] float32 in 0...1 (no preprocessing applied)
     output        the reference implementation's result
 
+and names the torch release that wrote it in its safetensors metadata (`torch`): torch's CPU kernels round
+differently between releases (2.13 changed the float32 error function's exponential).
+
 InferKit's `NFKMLXReferenceParityTests` reads the same file, feeds `input_image` to the MLX model, and
 compares against `output`. Sharing the input tensor rather than an image file keeps image decoding out of
 the comparison, while each side still applies its own preprocessing — so a missing normalization shows up
@@ -25996,8 +25999,9 @@ def main():
         if half is not None and not torch.equal(half.float(), seam.float()):
             print(f"no {name}: the hooked module's half output is not the recorded seam")
             del record[name]
-    save_file(record, args.output)
-    print(f"wrote {args.output}: input {tuple(image.shape)}, reference output {tuple(result.shape)}")
+    save_file(record, args.output, metadata={"torch": torch.__version__})
+    print(f"wrote {args.output} (torch {torch.__version__}): input {tuple(image.shape)}, "
+          f"reference output {tuple(result.shape)}")
 
 
 if __name__ == "__main__":

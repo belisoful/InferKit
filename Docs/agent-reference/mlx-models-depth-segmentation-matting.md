@@ -44,13 +44,13 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     rate. `fineTune(mirrors:)` is the loop's coin-flip mirror of the image, depth, and mask together.
   - Measured on the Small release's encoder and a head as `torch.manual_seed(0)` initializes it, two
     518-pixel images: the prediction within 9.5e-8 of float64 (the reference's float32 8.0e-8), SiLog
-    0.43176848 vs 0.43176848, every gradient within 1.19× the reference's float32 distance from float64
-    (encoder 1.1e-5 to 5.3e-5, head 6.3e-7 to 3.7e-5), the global norm 0.7530037 vs 0.7530015 (float64
-    0.75300336), and the loss after one AdamW step 0.41793093 vs 0.41793084 (float64 0.4179309). Each is
+    0.43176848 vs 0.43176848, every gradient within 1.3× the reference's float32 distance from float64
+    (encoder 1.0e-5 to 5.3e-5, head 6.8e-7 to 2.2e-5), the global norm 0.75300324 vs 0.7530015 (float64
+    0.75300336), and the loss after one AdamW step 0.41793087 vs 0.41793084 (float64 0.4179309). Each is
     held to twice the reference's float32 distance, with no absolute minimum.
   - The head's 1×1 output convolution sums its weight gradient one image row at a time
     (`NFKMLXStagedReduction.pointwiseConvolution`). MLX's one-product gradient over the 536,648 positions
-    left `output_conv2.2.weight` at 3.59× the reference's float32 distance; summed by row it lands at 1.19×.
+    left `output_conv2.2.weight` at 3.59× the reference's float32 distance; summed by row it lands at 1.3×.
   - The relative release's distillation recipe is not published, so the relative head trains only as a
     caller's own objective drives it.
 - `NFKMLXDepthAnything3` (`@objc`) — Depth Anything 3 monocular depth and camera estimation (DA3-SMALL).
@@ -330,9 +330,9 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   own 512-wide `text_projection` is CLIP's contrastive head, which SAM 3 never calls, and the
   detector's 1024 → 256 projection reaches EVERY token rather than the pooled end-of-text one.
   Reference parity against transformers' `Sam3VisionModel` and `CLIPTextModelWithProjection` on the
-  released weights, both on the first numeric run: the ViT 0.999999999981684 and the FPN levels
-  0.9999999999928996 / 0.9999999999856068 / 0.999999999988148 / 0.9999999999896584; the text tower
-  0.9999999999998852 and the projected prompt 0.9999999999993548. The vision parity runs at 504
+  released weights, both on the first numeric run: the ViT 0.9999999999837803 and the FPN levels
+  0.9999999999926099 / 0.99999999998491 / 0.9999999999874365 / 0.9999999999885818; the text tower
+  0.9999999999998906 and the projected prompt 0.9999999999993533. The vision parity runs at 504
   pixels rather than the released 1008, which is what exercises both edges the full size hides: the
   position grid is tiled and cropped because 36 patches is not 24, and 36 is not a whole number of
   24-wide windows, so a windowed layer pads and unpads.
@@ -355,7 +355,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   Detector parity against `Sam3Model` on the released weights, driven from the reference's own FPN
   levels and projected prompt: boxes 0.9999999999942162, per-query logits 0.9999999999956046, the
   presence logit exact, masks 0.9999999999608558, the semantic map 0.99999999999742. Chained end to
-  end from the plate and the token ids: masks 0.9999999984118023, boxes 0.9999999998511425.
+  end from the plate and the token ids: masks 0.9999999986973005, boxes 0.9999999999089304.
   **Customization is a HEAD RETARGET and it ships** (`NFKMLXSAM3Training.swift`): the detector trains
   against a consumer's own boxes with the ViT and the text tower frozen, about 25M parameters against
   the release's 850M. Because the encoders are separate modules their output is computed ONCE per

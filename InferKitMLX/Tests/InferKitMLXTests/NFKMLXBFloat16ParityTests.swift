@@ -2995,13 +2995,13 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     // torch's GELU gradient under a cotangent of ones at bf16 and float16, over every finite value of magnitude at
     // least twice the least normal float32 and above −13, against the SHA-256 of torch's `GeluBackward`. Below −13
     // the gradient is a subnormal float32, which the GPU flushes to zero. torch 2.2 to 2.14 agree on every bf16
-    // gradient. The float16 digest is torch 2.2 to 2.8's: torch 2.13 and later round 3 of these inputs apart,
-    // because their float32 error function takes another exponential.
+    // gradient. The float16 digest is torch 2.13 and 2.14's: torch 2.2 to 2.8 round 3 of these inputs apart,
+    // because their float32 error function takes Sleef's exponential.
     func testHalfGELUGradientIsTorchsGeluBackward() throws {
         try requireMLXRuntime()
         let cases: [(DType, String)] = [
             (.bfloat16, "40e2b3b0e6010a31b3154adfa5ba045b94bf6c6bb895a677c784f56b96985ffd"),
-            (.float16, "a2e12c23216d4e69fae120ef1c8a85a0cc7362d7926df4f71d7ac70eb6790abd"),
+            (.float16, "b89c727b69896f1d037b39918cce28430be1ffbd928cd20b1f38feba3521ce05"),
         ]
         for (dtype, expected) in cases {
             let input = MLXArray((0 ..< 1 << 16).map { UInt16($0) }).view(dtype: dtype)

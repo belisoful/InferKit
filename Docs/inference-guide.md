@@ -1984,7 +1984,7 @@ alternatives.
     character-animation DiT, which adds an image cross-attention branch and an in-context reference
     mechanism — one pass stores the reference latents' keys and values, each denoising pass attends
     over them per frame. Reference parity across both passes at a tiny configuration (reference pass
-    0.9999999999999774, generation 0.999999999999981, a chunked generation 0.9999999999999815), and
+    0.9999999999999781, generation 0.99999999999998, a chunked generation 0.9999999999999801), and
     the released 14B file held to the module by shape (1303 tensors, nothing missing or unaccounted).
     Its 32.8 GB of weights exceed a 32 GiB workstation, so there is no pipeline and no backend.
 

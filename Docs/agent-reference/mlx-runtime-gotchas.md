@@ -863,15 +863,19 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     518-pixel maps) it lands 3.0 to 4.2 times as far from float64 as torch's CPU gradient.
     `NFKMLXStagedReduction.pointwiseConvolution` sums each image row, then the rows, and lands at a fifth of
     torch's distance on synthetic maps of that size. On Depth Anything's metric fine-tune it takes the head's
-    output gradient from 3.59 to 1.19 times the reference's float32 distance. A 3×3 convolution's weight
+    output gradient from 3.59 to 1.3 times the reference's float32 distance. A 3×3 convolution's weight
     gradient at the same size lands at 2.7e-7, where torch's CPU lands at 8.1e-6.
   - **MLX's `expm1` carries the same reduction.** It reads 25 to 155 units of 2⁻²³ high (relative) wherever
     `|x|` exceeds `ln 2 / 2`, by an emulation of the kernel that reproduces the error-function readings above
     bin for bin. The one array call, MetricGAN+'s `expm1(mask * features)`, takes `torchExpm1`, Sleef's
     `expm1f` as torch computes it. Reported upstream as ml-explore/mlx#4765.
   - **torch 2.13 changed its float32 error function.** From 2.13 on, the exponential inside
-    `Vectorized<float>::erf` on NEON is `vexpq_f32_u20` instead of Sleef's `expf`. The GELU kernels take
-    Sleef's, as torch 2.2 to 2.8 do. They hold torch's float32 distance from float64 (7.6e-8 forward and
-    8.4e-8 gradient on x = (i − 4096)/1024, where torch 2.14 lands 7.6e-8 and 8.4e-8) without matching any
-    torch release bit for bit at float32. Every bf16 result matches torch 2.2 to 2.14. At float16, torch 2.13
-    and later round 3 gradients apart.
+    `Vectorized<float>::erf` on NEON is `vexpq_f32_u20` instead of Sleef's `expf`, and a 4-lane vector holding
+    an argument beyond 87.34 takes Sleef's for all four lanes. The GELU kernels take torch 2.13's exponential
+    with the same 4-lane fallback, and their GELU and gradient match torch 2.14 bit for bit at float32 and on
+    every bf16 and float16 input. torch 2.2 to 2.8 round about 7% of float32 values one or two units apart at
+    the same distance from float64, and 3 float16 gradients. Every record `run_reference.py` writes names its
+    torch release in the safetensors metadata (`torch`).
+  - **Metal fuses `a * b + c` written in one expression.** Each reference kernel compiles under
+    `#pragma METAL fp contract(off)` (`NFKReferenceRounding.metalContractOff`), so a multiply and an add fuse
+    only through `fma`, as torch's vector code fuses them.

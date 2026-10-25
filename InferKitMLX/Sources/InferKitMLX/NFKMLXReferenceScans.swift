@@ -256,7 +256,7 @@ extension NFKReferenceRounding {
     /// torch's float32 sum orders: the outer-axis cascade (`multi_row_sum`), `row_sum`, the outer sum that picks
     /// between them by column, and the inner-axis sum (`vectorized_inner_sum`). Each term is its own statement, so
     /// the compiler fuses no multiply into an add torch rounds.
-    private static let torchSumHeader = """
+    private static let torchSumHeader = NFKReferenceRounding.metalContractOff + """
         template <typename Term>
         inline float nfk_outer_cascade(const int size, thread const Term& term) {
             int bits = 0;

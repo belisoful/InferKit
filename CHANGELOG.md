@@ -1589,6 +1589,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### The exact GELU takes torch 2.13's error-function exponential
+
+- The GELU kernels' error function takes torch's `exp_u20`, with Sleef's `expf` for a 4-lane group that holds an
+  argument beyond 87.34, as torch 2.13 and later compute it. A float32 GELU and its gradient match torch 2.14 bit
+  for bit; torch 2.2 to 2.8 round about 7% of values one or two units apart at the same accuracy.
+- Every reference kernel compiles with Metal's multiply-add fusing off, so a multiply and an add fuse only where
+  the kernel writes `fma`.
+- `run_reference.py` names the torch release in each record's safetensors metadata.
+
 #### A half-precision GELU returns torch's gradient, and MetricGAN+ computes torch's `expm1`
 
 - `NFKReferenceRounding.gelu` over bf16 and float16 returns torch's `GeluBackward` gradient, formed in float32 and
@@ -1600,7 +1609,7 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 - The head's 1×1 output convolution sums its weight gradient one image row at a time
   (`NFKMLXStagedReduction.pointwiseConvolution`). MLX's one-product gradient over the 518-pixel map landed 3.6
-  times as far from float64 as the reference's float32 gradient, and the row-staged one lands 1.19 times as
+  times as far from float64 as the reference's float32 gradient, and the row-staged one lands 1.3 times as
   far. The prediction and the inference path are unchanged bit for bit.
 - The training parity test drops its absolute minimums: the prediction, the loss, the global norm, each recorded
   gradient, and the loss after one step are held to twice the reference's float32 distance from float64.

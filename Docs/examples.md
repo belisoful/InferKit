@@ -1038,7 +1038,7 @@ through a sigmoid, which is a relevance between 0 and 1. The pooled position dif
 releases because their tokenizer files differ: the embedding release appends `<|endoftext|>` to every
 encoding and the reranker release does not. Reference parity against each release's own script on the
 released 2B weights: the prompts tokenize to the reference's ids exactly, the text embedding cosine is
-0.9999999999866735, the image embedding 0.9999999999324511, and the reranker's scores agree to 2.4e-6.
+0.9999999999866735, the image embedding 0.9999999999310225, and the reranker's scores agree to 2.4e-6.
 
 ### Vision-language (`NFKMLXSmolVLM`)
 
