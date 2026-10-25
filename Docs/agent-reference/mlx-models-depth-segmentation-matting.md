@@ -326,9 +326,9 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   own 512-wide `text_projection` is CLIP's contrastive head, which SAM 3 never calls, and the
   detector's 1024 → 256 projection reaches EVERY token rather than the pooled end-of-text one.
   Reference parity against transformers' `Sam3VisionModel` and `CLIPTextModelWithProjection` on the
-  released weights, both on the first numeric run: the ViT 0.9999999999787388 and the FPN levels
-  0.999999999991736 / 0.9999999999829633 / 0.9999999999852291 / 0.9999999999862851; the text tower
-  0.9999999999997959 and the projected prompt 0.9999999999990974. The vision parity runs at 504
+  released weights, both on the first numeric run: the ViT 0.999999999981684 and the FPN levels
+  0.9999999999928996 / 0.9999999999856068 / 0.999999999988148 / 0.9999999999896584; the text tower
+  0.9999999999998852 and the projected prompt 0.9999999999993548. The vision parity runs at 504
   pixels rather than the released 1008, which is what exercises both edges the full size hides: the
   position grid is tiled and cropped because 36 patches is not 24, and 36 is not a whole number of
   24-wide windows, so a windowed layer pads and unpads.
@@ -351,7 +351,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   Detector parity against `Sam3Model` on the released weights, driven from the reference's own FPN
   levels and projected prompt: boxes 0.9999999999942162, per-query logits 0.9999999999956046, the
   presence logit exact, masks 0.9999999999608558, the semantic map 0.99999999999742. Chained end to
-  end from the plate and the token ids: masks 0.9999999962068635, boxes 0.999999999821788.
+  end from the plate and the token ids: masks 0.9999999984118023, boxes 0.9999999998511425.
   **Customization is a HEAD RETARGET and it ships** (`NFKMLXSAM3Training.swift`): the detector trains
   against a consumer's own boxes with the ViT and the text tower frozen, about 25M parameters against
   the release's 850M. Because the encoders are separate modules their output is computed ONCE per

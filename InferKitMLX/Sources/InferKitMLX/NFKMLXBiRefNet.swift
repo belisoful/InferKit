@@ -171,7 +171,7 @@ final class NFKSwinMlp: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        fc2(gelu(fc1(x)))
+        fc2(NFKReferenceRounding.gelu(fc1(x)))
     }
 }
 

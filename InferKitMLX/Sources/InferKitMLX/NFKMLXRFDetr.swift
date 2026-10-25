@@ -433,7 +433,7 @@ final class NFKRFDetrDinov2MLP: Module {
         _fc1.wrappedValue = Linear(config.backboneHiddenSize, hidden)
         _fc2.wrappedValue = Linear(hidden, config.backboneHiddenSize)
     }
-    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(gelu(fc1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(NFKReferenceRounding.gelu(fc1(x))) }
 }
 
 /// One DINOv2 block. A `global_attention` layer unpartitions the window-batched sequences into one

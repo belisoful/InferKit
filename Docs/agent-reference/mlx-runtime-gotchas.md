@@ -854,3 +854,10 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     `dy · (x · φ(x) + Φ(x))`, in a second kernel, since the polynomial's own derivative lands 3.7e-7 away.
     Both land at torch's distance (`testTrainableGELUHoldsFloat32Accuracy`, which also probes the bias).
   - **Rule.** A training parity gap behind a GELU, `erf`, or `expm1` is checked against this bias first.
+  - **Every erf GELU in the package is `NFKReferenceRounding.gelu`.** A float32 input takes
+    `torchTrainableGELU`, and a half-precision input takes `torchGELU`. MLXNN's `gelu`, a `GELU` module's
+    call, and a bare `gelu(` appear nowhere else in the sources, and `NFKMLXReferenceGELUTests` holds the
+    sources to it. The tanh forms (`geluTanh`, `geluNew`) and `quickGELU` call no error function.
+  - **MLX's `expm1` carries the same reduction.** It reads 25 to 155 units of 2⁻²³ high (relative) wherever
+    `|x|` exceeds `ln 2 / 2`, by an emulation of the kernel that reproduces the error-function readings above
+    bin for bin. The one array call is MetricGAN+'s `expm1(mask * features)`.

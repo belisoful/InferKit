@@ -221,7 +221,7 @@ final class NFKVitPoseMLP: Module {
         _fc2.wrappedValue = Linear(c.hiddenSize * c.mlpRatio, c.hiddenSize, bias: true)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(gelu(fc1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(NFKReferenceRounding.gelu(fc1(x))) }
 }
 
 /// One pre-norm transformer block.

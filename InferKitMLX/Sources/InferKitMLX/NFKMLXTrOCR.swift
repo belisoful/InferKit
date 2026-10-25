@@ -177,7 +177,7 @@ final class NFKTrOCRLayer: Module {
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let h = x + attention(layerNormBefore(x))
-        return h + output(gelu(intermediate(layerNormAfter(h))))
+        return h + output(NFKReferenceRounding.gelu(intermediate(layerNormAfter(h))))
     }
 }
 

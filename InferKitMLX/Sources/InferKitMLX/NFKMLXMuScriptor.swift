@@ -316,7 +316,7 @@ final class NFKMuScriptorLayer: Module {
 
     func callAsFunction(_ x: MLXArray, cache: NFKMuScriptorLayerCache?, mask: MLXArray?) -> MLXArray {
         var x = x + attention(norm1(x), cache: cache, mask: mask)
-        x = x + linear2(gelu(linear1(norm2(x))))
+        x = x + linear2(NFKReferenceRounding.gelu(linear1(norm2(x))))
         return x
     }
 }

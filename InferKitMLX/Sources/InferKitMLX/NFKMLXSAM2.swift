@@ -879,7 +879,7 @@ final class NFKSAM2ConvNeXtBlock: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        let out = pwconv2(gelu(pwconv1(norm(dwconv(x)))))
+        let out = pwconv2(NFKReferenceRounding.gelu(pwconv1(norm(dwconv(x)))))
         return x + gamma * out
     }
 }
@@ -920,7 +920,7 @@ final class NFKMLXSAM2MemoryEncoderNet: Module {
     func callAsFunction(features: MLXArray, maskInput: MLXArray) -> MLXArray {
         var mask = maskInput
         for (conv, norm) in zip(maskConvs, maskNorms) {
-            mask = gelu(norm(conv(mask)))
+            mask = NFKReferenceRounding.gelu(norm(conv(mask)))
         }
         mask = maskOut(mask)
 

@@ -181,7 +181,7 @@ public final class NFKMLXOpenJevDeBERTaNet: Module {
                                       to: [batch, questions, options, width])
         var x = concatenated([questionMeans, optionMeans, questionMeans * optionMeans], axis: -1)
         x = (head[0] as! Linear)(x)
-        x = gelu(x)
+        x = NFKReferenceRounding.gelu(x)
         x = (head[2] as! Linear)(x).squeezed(axis: -1)
         return which(optionMask, x, MLXArray(-Float.infinity))
     }

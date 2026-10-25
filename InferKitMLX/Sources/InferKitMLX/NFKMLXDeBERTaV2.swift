@@ -279,7 +279,7 @@ final class NFKDeBERTaLayer: Module {
         let attended = attention.output(attention.attention(x, mask: mask, positions: positions,
                                                             relativeEmbeddings: relativeEmbeddings),
                                         residual: x)
-        return output(gelu(intermediate.dense(attended)), residual: attended)
+        return output(NFKReferenceRounding.gelu(intermediate.dense(attended)), residual: attended)
     }
 }
 

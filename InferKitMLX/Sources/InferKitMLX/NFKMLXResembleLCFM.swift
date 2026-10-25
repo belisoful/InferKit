@@ -15,7 +15,7 @@ import MLXNN
 
 /// A GELU marker (exact erf GELU, `nn.GELU()`), holding no parameters.
 final class NFKResembleGELU: Module, UnaryLayer {
-    func callAsFunction(_ x: MLXArray) -> MLXArray { gelu(x) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { NFKReferenceRounding.gelu(x) }
 }
 
 /// A Tanh marker.
@@ -43,7 +43,7 @@ final class NFKResembleResBlock: Module, UnaryLayer {
         var h = x
         for i in 0 ..< 4 {
             h = norms[i](h)
-            h = gelu(h)
+            h = NFKReferenceRounding.gelu(h)
             h = convs[i](h)
         }
         return x + h

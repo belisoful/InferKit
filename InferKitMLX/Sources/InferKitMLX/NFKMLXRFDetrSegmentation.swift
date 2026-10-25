@@ -37,7 +37,7 @@ final class NFKRFDetrSegmentationBlock: Module {
 
     /// - Parameter x: `[1, H, W, C]`.
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        x + gelu(pointwise(norm(depthwise(x))))
+        x + NFKReferenceRounding.gelu(pointwise(norm(depthwise(x))))
     }
 }
 
@@ -53,7 +53,7 @@ final class NFKRFDetrSegmentationMLPBlock: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        x + layers[1](gelu(layers[0](norm(x))))
+        x + layers[1](NFKReferenceRounding.gelu(layers[0](norm(x))))
     }
 }
 

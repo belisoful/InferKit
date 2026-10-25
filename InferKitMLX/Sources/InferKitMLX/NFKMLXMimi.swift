@@ -295,7 +295,7 @@ final class NFKMimiMLP: Module {
         _fc2.wrappedValue = Linear(config.intermediateSize, config.hiddenSize, bias: false)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(gelu(fc1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(NFKReferenceRounding.gelu(fc1(x))) }
 }
 
 /// The Transformer that contextualizes the SEANet latents (encoder and decoder sides share this class).

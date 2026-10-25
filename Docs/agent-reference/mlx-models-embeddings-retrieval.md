@@ -206,9 +206,9 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `preprocessor_config.json` rather than carrying one release's constants.
   Reference parity on the released weights against each repo's own script (`run_reference.py
   qwen3vl_embedding` and `qwen3vl_reranker`, the `llm` oracle): the port's prompt tokenizes to the
-  reference's ids exactly, text embedding cosine 0.9999999999866735, vision tower 0.9999999997925626,
-  image embedding 0.9999999999305262; reranker scores 0.7347071466634647 vs 0.7347047924995422
-  (relevant), 0.052644203261412975 vs 0.052642300724983215 (irrelevant), and 0.48971297489501875 vs
+  reference's ids exactly, text embedding cosine 0.9999999999866735, vision tower 0.9999999997926359,
+  image embedding 0.9999999999324511; reranker scores 0.7347071466634647 vs 0.7347047924995422
+  (relevant), 0.052644203261412975 vs 0.052642300724983215 (irrelevant), and 0.489712021624422 vs
   0.4897109866142273 (an image document). The 8B pair is the same architecture at the deeper 27-block
   tower, held to the module by shape against its released headers (749 and 750 tensors consumed, 0
   missing, 0 mismatched, 0 unaccounted). The 8B reranker ships `lm_head.weight` although its config
@@ -310,8 +310,8 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   meanings, over a 130-token string state and a record state): every prompt token for token and marker
   for marker on all three variants; the isolation harness exact (every layer and the decision head at
   1.0000000000, a few mid-stack layers of the large encoder at 0.9999999999); worst logit cosine over the
-  reference's ids 0.9999999999903213 (root), 0.9999999999915642 (typed-decisions),
-  0.9999999999988376 (multilingual); worst calibrated-probability gap 1.9669533e-06, 6.556511e-07, and
+  reference's ids 0.9999999999774579 (root), 0.9999999999927369 (typed-decisions),
+  0.9999999999987144 (multilingual); worst calibrated-probability gap 2.6226044e-06, 6.556511e-07, and
   1.4603138e-06; the act probability within 2e-3. Customization is a **head fine-tune** (`.head`: the
   decision head, the type embedding, and the scorer; `.all` adds the encoder, which is how the reference
   trains; the act head and the temperature buffer stay frozen because the act head's cost-weighted

@@ -525,7 +525,7 @@ final class NFKRTDetrEncoderLayer: Module {
         var x = hidden + selfAttn(hidden, position: position)
         x = selfAttnNorm(x)
         let residual = x
-        x = fc2(gelu(fc1(x)))
+        x = fc2(NFKReferenceRounding.gelu(fc1(x)))
         return finalNorm(residual + x)
     }
 }

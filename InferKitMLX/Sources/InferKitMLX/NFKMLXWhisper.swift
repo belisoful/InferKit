@@ -427,8 +427,7 @@ final class NFKWhisperBlock: Module {
     }
 
     private func feedForward(_ h: MLXArray) -> MLXArray {
-        let activation = mlp[1] as! GELU
-        return (mlp[2] as! Linear)(NFKReferenceRounding.wide((mlp[0] as! Linear)(mlpLN(h))) { activation($0) })
+        (mlp[2] as! Linear)(NFKReferenceRounding.gelu((mlp[0] as! Linear)(mlpLN(h))))
     }
 }
 

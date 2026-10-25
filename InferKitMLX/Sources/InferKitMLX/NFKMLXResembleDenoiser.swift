@@ -24,7 +24,7 @@ final class NFKResembleUNetResBlock: Module, UnaryLayer {
         var h = x
         for i in 0 ..< 2 {
             h = norms[i](h)
-            h = gelu(h)
+            h = NFKReferenceRounding.gelu(h)
             h = convs[i](h)
         }
         return x + h

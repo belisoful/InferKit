@@ -154,7 +154,7 @@ final class NFKSegFormerMixFFN: Module {
         var h = fc1(x)
         let hidden = h.shape[2]
         h = dwconv(h.reshaped([1, height, width, hidden])).reshaped([1, height * width, hidden])
-        return fc2(gelu(h))
+        return fc2(NFKReferenceRounding.gelu(h))
     }
 }
 

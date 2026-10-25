@@ -241,7 +241,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `backendWithDirectoryURL:` loads. `NFKMLXTrainer.train(_:optimizer:steps:arrays:loss:)` is the
   trainer's form for three arrays a step. Measured on Florence-2-base-ft (`run_reference.py
   florence2_loss`, `IK_PARITY_FLORENCE2_BASE_FT_LOSS`) on the release's own caption, *"A man in a space
-  suit holding a helmet."*: the loss on its logits 0.4842829 and the port's forward 0.4842833 against the
+  suit holding a helmet."*: the loss on its logits 0.4842829 and the port's forward 0.48428378 against the
   criterion in float64, 0.48428318 (the release's float32 value, 0.48423862, is the rounding of a
   log-sum-exp over 51k logits). `NFKMLXFlorence2TrainingTests` holds the parity and a LoRA run that
   trains only the decoder adapters, lowers the loss, and reloads merged through the factory with the
@@ -260,7 +260,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   early stopping off, but the language model's `generate` reads `text_config` (early stopping on), and
   the port's token-exact match on all five tasks confirms it. The `-ft` directories carry the repos'
   own remote code, so the oracle loads them in place (`FLORENCE2_REPO=<dir>`). Seams: base-ft projector
-  0.99999946, encoder 0.9999991, logits 1.0000001; large-ft projector 1.0, encoder 0.99999994, logits
+  1.0000001, encoder 1.0000004, logits 0.99999994; large-ft projector 1.0, encoder 0.99999994, logits
   1.0000004. Generation is token-exact on all five tasks, the 16-token cut, and constrained greedy for
   all four releases.
 
@@ -634,7 +634,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     two tests (`testEveryQwenVLReleaseAnswersThroughTheBackend`); the parity test's footprint is about
     22.5 GB, and the bfloat16 backend's MLX peak 12.6 GB. `IK_SA2VA_ONLY=<name>` selects one release.
   - `Sa2VA-Qwen3-VL-4B-SAM3` (SAM 3 grounding at 1008): vision tower 1.0, deepstack 0.9999999 /
-    0.9999996 / 0.99999964, decoder 0.9999959, `[SEG]` 0.9999995, mask 1.0000004 (IoU 1.0), greedy
+    0.9999996 / 0.99999964, decoder 0.9999966, `[SEG]` 0.9999995, mask 1.0000004 (IoU 1.0), greedy
     generation token for token, and the backend answers `Sure, the segmentation result is [SEG].<|im_end|>`,
     the reference's text, with a mask. The first real-weight measurement of `NFKSa2VASAM3GroundingEncoder`.
     The parity test runs in two phases (`NFKMLXSa2VAQwenNet.load(directoryURL:parts:)`): the tower and
@@ -677,7 +677,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
     when the conversation has no system turn (`NFKMLXSa2VAQwenNet.promptText`). Qwen3-VL's template
     has no default system turn.
   - `Sa2VA-LLaVA-1.5-7B` (Vicuna, four layers): processor max abs 0.0, CLIP tower 1.0000002,
-    projected features 0.99999994, fusion 1.0, decoder 1.0000005, logits 1.0000002, `[SEG]`
+    projected features 0.9999998, fusion 1.0, decoder 1.0000002, logits 1.0000001, `[SEG]`
     0.9999997, mask 1.0000002; prompt ids and the answer's decode exact. IoU 0.9993932: one of the
     low-resolution mask's pixels flips, and its reference logit is 7.1e-6 from zero, so the decision
     difference is float rounding. `NFKMLXSa2VATests.maskFlips` reports the flipped count and that
@@ -711,10 +711,10 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   of LoRAs. At reference parity on the released weights (5.6 billion parameters, float32) against the
   release's own remote code, in all four modes it serves. Text: logits 0.9999999999965636, continuation
   exact (*"The capital of France is Paris. It is not only the"*). Speech: encoder 0.9999999999982836;
-  projector 0.9999999999969423; logits 0.9999999999994174; transcription exact (*"The quick brown fox
-  jumps over the lazy dog."*). Vision: SigLIP 0.9999999999468102; projector 0.9999999999585922; logits
-  0.9999999999986776; caption exact. A 900×500 picture that pads into a 2×3 crop grid: SigLIP
-  0.9999999999281103; projector 0.9999999999470011; logits 0.9999999999979092; caption exact. Through
+  projector 0.9999999999970496; logits 0.9999999999995182; transcription exact (*"The quick brown fox
+  jumps over the lazy dog."*). Vision: SigLIP 0.9999999999468102; projector 0.9999999999585523; logits
+  0.9999999999988285; caption exact. A 900×500 picture that pads into a 2×3 crop grid: SigLIP
+  0.9999999999281103; projector 0.9999999999470738; logits 0.9999999999973072; caption exact. Through
   the assembled model from raw inputs: text 0.9999999999996578, speech 0.9999999999994575, vision
   0.9999999999987333, vision with speech 0.9999999999993611, every greedy answer exact, and the backend
   transcribes the validation WAV and captions the photo as the reference does.

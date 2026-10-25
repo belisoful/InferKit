@@ -256,7 +256,7 @@ final class NFKCFTransformerLayer: Module {
         let attended = matmul(attention, values).transposed(1, 0, 2).reshaped([tokens, dimensions])
         let afterAttention = x + outProj(attended)
 
-        return afterAttention + linear2(gelu(linear1(norm2(afterAttention))))
+        return afterAttention + linear2(NFKReferenceRounding.gelu(linear1(norm2(afterAttention))))
     }
 }
 

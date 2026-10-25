@@ -773,7 +773,7 @@ extension NFKMLXSeq2SeqConfiguration {
         switch activation {
         case .swish: return silu(x)
         case .relu: return relu(x)
-        case .gelu: return gelu(x)
+        case .gelu: return NFKReferenceRounding.gelu(x)
         }
     }
 }

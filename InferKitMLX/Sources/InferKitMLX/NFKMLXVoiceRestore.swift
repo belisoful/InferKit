@@ -183,7 +183,7 @@ final class NFKVRFeedForward: Module {
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let parts = split(projIn(x), parts: 2, axis: -1)
-        return projOut(parts[0] * gelu(parts[1]))
+        return projOut(parts[0] * NFKReferenceRounding.gelu(parts[1]))
     }
 }
 

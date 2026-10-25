@@ -218,7 +218,7 @@ final class NFKDA3MLP: Module {
         fc1 = Linear(inputDimensions, hidden, bias: true)
         fc2 = Linear(hidden, outputDimensions, bias: true)
     }
-    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(gelu(fc1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(NFKReferenceRounding.gelu(fc1(x))) }
 }
 
 /// One transformer block: norm → attention → scale (residual), norm → MLP → scale (residual).

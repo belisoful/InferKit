@@ -140,7 +140,7 @@ final class NFKDinoMLP: Module {
         fc1 = Linear(dimensions, hidden, bias: true)
         fc2 = Linear(hidden, dimensions, bias: true)
     }
-    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(gelu(fc1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(NFKReferenceRounding.gelu(fc1(x))) }
 }
 
 /// The DINOv2 patch-embedding convolution (`patch_embed.proj`).

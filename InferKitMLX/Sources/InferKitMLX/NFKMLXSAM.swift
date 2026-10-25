@@ -203,7 +203,7 @@ final class NFKSAMViTBlock: Module {
             attended = Self.unpartition(attended, windowSize, padded: padded, original: (h, w))
         }
         let residual = x + attended
-        return residual + lin2(gelu(lin1(norm2(residual))))
+        return residual + lin2(NFKReferenceRounding.gelu(lin1(norm2(residual))))
     }
 
     /// Partitions `[B, H, W, C]` into `[B·nH·nW, ws, ws, C]`, zero-padding to a multiple of `ws`.
@@ -287,7 +287,7 @@ final class NFKSAMMaskEmbedding: Module {
     }
 
     func callAsFunction(_ mask: MLXArray) -> MLXArray {
-        convOut(gelu(norm2(conv2(gelu(norm1(conv1(mask)))))))
+        convOut(NFKReferenceRounding.gelu(norm2(conv2(NFKReferenceRounding.gelu(norm1(conv1(mask)))))))
     }
 }
 
@@ -515,8 +515,8 @@ final class NFKSAMMaskDecoder: Module {
         let iouOut = iouHead(queries[0..., 0])
         let maskTokenOut = queries[0..., 1 ..< (1 + numMaskTokens)]
 
-        var upscaled = gelu(upLN(up1(keys.reshaped([1, grid, grid, dim]))))
-        upscaled = gelu(up2(upscaled))                          // [1, 4·grid, 4·grid, dim/8]
+        var upscaled = NFKReferenceRounding.gelu(upLN(up1(keys.reshaped([1, grid, grid, dim]))))
+        upscaled = NFKReferenceRounding.gelu(up2(upscaled))                          // [1, 4·grid, 4·grid, dim/8]
         let (uh, uw, uc) = (upscaled.shape[1], upscaled.shape[2], upscaled.shape[3])
 
         var perMask = [MLXArray]()

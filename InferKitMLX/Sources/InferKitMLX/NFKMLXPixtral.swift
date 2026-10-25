@@ -261,7 +261,7 @@ public final class NFKMLXPixtralConnector: Module {
         super.init()
     }
 
-    public func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(gelu(linear1(x))) }
+    public func callAsFunction(_ x: MLXArray) -> MLXArray { linear2(NFKReferenceRounding.gelu(linear1(x))) }
 }
 
 /// Building and loading Pixtral 12B.

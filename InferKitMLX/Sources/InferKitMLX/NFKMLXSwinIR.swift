@@ -359,7 +359,7 @@ final class NFKSwinLayer: Module {
         var merged = NFKSwinOps.reverse(attended, windowSize: windowSize, height: h, width: w)
         merged = NFKSwinOps.unroll(merged, shift: shift)
         let afterAttention = shortcut + merged.reshaped([1, h * w, dimensions])
-        return afterAttention + fc2(gelu(fc1(norm2(afterAttention))))
+        return afterAttention + fc2(NFKReferenceRounding.gelu(fc1(norm2(afterAttention))))
     }
 }
 

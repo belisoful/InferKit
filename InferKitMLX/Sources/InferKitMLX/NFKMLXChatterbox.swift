@@ -267,7 +267,7 @@ final class NFKS3Block: Module {
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         var x = x + attention(attentionNorm(x))
         let first = mlp[0] as! Linear, last = mlp[2] as! Linear
-        x = x + last(gelu(first(mlpNorm(x))))
+        x = x + last(NFKReferenceRounding.gelu(first(mlpNorm(x))))
         return x
     }
 }
@@ -292,8 +292,8 @@ final class NFKS3Encoder: Module {
 
     /// `[batch, frames, mels]` → `[batch, frames / 4, state]`.
     func callAsFunction(_ mel: MLXArray) -> MLXArray {
-        var x = gelu(conv1(mel))
-        x = gelu(conv2(x))
+        var x = NFKReferenceRounding.gelu(conv1(mel))
+        x = NFKReferenceRounding.gelu(conv2(x))
         for block in blocks {
             x = block(x)
         }

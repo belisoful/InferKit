@@ -285,7 +285,7 @@ private func runLayaSequence(_ layers: [Module], _ input: MLXArray) -> MLXArray 
         switch layer {
         case let linear as Linear: x = linear(x)
         case let norm as LayerNorm: x = norm(x)
-        case is NFKLayaGELU: x = gelu(x)
+        case is NFKLayaGELU: x = NFKReferenceRounding.gelu(x)
         default: break
         }
     }

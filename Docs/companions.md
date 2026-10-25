@@ -264,7 +264,7 @@ weights:
   sigmoid. `embeddingForText:` / `embeddingForImage:text:instruction:` and
   `scoresForQuery:documents:` / `rankedIndicesForQuery:documents:` are the entry points. Reference
   parity against each release's own script on the released 2B weights: prompt ids exact, text
-  embedding cosine 0.9999999999866735, image embedding 0.9999999999305262, and the reranker's scores
+  embedding cosine 0.9999999999866735, image embedding 0.9999999999324511, and the reranker's scores
   to 2.4e-6. A consumer customizes either on their own corpus by training a small probe over the
   frozen backbone, against the objectives sentence-transformers trains these releases with.
 - **`NFKMLXSmolVLM`** — a vision-language model (SmolVLM2-500M): an image and a question in, an answer
@@ -625,7 +625,7 @@ models.
 - **`NFKMLXRFDetrSegmentation`** — real instance segmentation under Apache-2.0 (RF-DETR segmentation,
   the seven released `Roboflow/rf-detr-seg-*` sizes; `NFKMLXRFDetrSegmentationVariant`): the RF-DETR
   detector with a mask head over its decoder; no non-max suppression. `rf-detr-seg`; at parity on the
-  released seg-nano (masks 0.9999999998673923, logits 0.9999999999925121, boxes 0.9999999998186787).
+  released seg-nano (masks 0.9999999998673923, logits 0.9999999999984286, boxes 0.999999999978507).
   The backend returns the instances under `NFKOutputDetections` and their combined mask under
   `NFKOutputMask`.
 - **`NFKMLXTableTransformer`** — table detection and table-structure recognition under MIT (Table

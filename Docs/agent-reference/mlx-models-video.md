@@ -169,7 +169,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   CLIP 4.8, VAE 0.8), so it does not run on a 32 GiB machine and the path is DeepSeek V4's: numeric
   parity at a tiny random configuration, plus the released file held to the module by shape. Reference
   parity against diffusers' `WanAnimate2Transformer3DModel` across both passes — cached reference keys
-  0.9999999999999837, reference pass 0.9999999999999781, generation pass 0.9999999999999792, chunked
+  0.9999999999999837, reference pass 0.9999999999999774, generation pass 0.999999999999981, chunked
   generation pass 0.9999999999999815 — and the released `wan_animate_2_bf16.safetensors` header holds
   exactly: 1303 tensors consumed, none missing, none mismatched, none unaccounted.
   `moduleKey(forRelease:)` and `releaseKey(forModule:)` convert the original Wan naming the release

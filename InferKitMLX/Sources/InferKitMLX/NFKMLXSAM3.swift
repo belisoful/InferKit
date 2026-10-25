@@ -203,7 +203,7 @@ final class NFKSAM3MLP: Module {
         _fc2.wrappedValue = Linear(configuration.intermediateSize, configuration.hiddenSize)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(gelu(fc1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(NFKReferenceRounding.gelu(fc1(x))) }
 }
 
 /// Splitting a feature map into attention windows and putting it back, padding to a whole number of
@@ -359,7 +359,7 @@ final class NFKSAM3FPNLayer: Module {
         var out = x
         switch scaleFactor {
         case 4:
-            out = gelu((scaleLayers[0] as! ConvTransposed2d)(out))
+            out = NFKReferenceRounding.gelu((scaleLayers[0] as! ConvTransposed2d)(out))
             out = (scaleLayers[2] as! ConvTransposed2d)(out)
         case 2:
             out = (scaleLayers[0] as! ConvTransposed2d)(out)
@@ -538,7 +538,7 @@ final class NFKSAM3TextMLP: Module {
         _fc2.wrappedValue = Linear(intermediate, width)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(gelu(fc1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(NFKReferenceRounding.gelu(fc1(x))) }
 }
 
 /// The CLIP text transformer.

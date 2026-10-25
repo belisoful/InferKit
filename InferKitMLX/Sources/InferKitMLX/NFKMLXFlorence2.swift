@@ -124,7 +124,7 @@ final class NFKFlorence2MLP: Module {
         super.init()
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(gelu(fc1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(NFKReferenceRounding.gelu(fc1(x))) }
 }
 
 // MARK: - Windowed spatial attention

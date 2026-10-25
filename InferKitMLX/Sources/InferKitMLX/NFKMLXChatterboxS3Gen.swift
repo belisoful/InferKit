@@ -700,7 +700,7 @@ final class NFKS3TransformerBlock: Module {
     }
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         var x = x + attention(norm1(x))
-        x = x + ffOut(gelu(ffProj(norm3(x))))
+        x = x + ffOut(NFKReferenceRounding.gelu(ffProj(norm3(x))))
         return x
     }
 }

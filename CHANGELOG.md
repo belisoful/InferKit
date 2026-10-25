@@ -1589,6 +1589,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Every exact GELU computes torch's error function
+
+- Each model's exact GELU takes `NFKReferenceRounding.gelu`. A float32 input runs the error function of torch's
+  vectorized kernels and returns the gradient of torch's `GeluBackward` formula, at torch's distance from float64
+  (8.8e-8 forward, 9.9e-8 gradient).
+  MLXNN's `gelu` reads 2.0e-7 and 1.6e-7, because MLX's GPU error function reads up to 13 units high for
+  arguments from 0.93 to 2. A half-precision input forms in float32 and rounds once, as torch rounds it.
+- The models that called MLXNN's `gelu` directly take it as well: All-In-One, BiRefNet, Chatterbox, CodeFormer,
+  DDColor, DeBERTa-v2, Depth Anything V2 and 3, Florence-2, HAT, Laya, ModernBERT, Mimi, MuScriptor,
+  open-jev-deberta, Pixtral, RF-DETR, RT-DETR, Resemble Enhance, SAM, SAM 2, SAM 3, SegFormer, SwinIR, TrOCR,
+  V-JEPA 2, ViTPose, VoiceRestore, wav2vec 2.0, and Whisper.
+
 #### A reply with no token limit runs to the room its context leaves
 
 - The language, Qwen3.5 and Qwen4, Granite, Nemotron, Mamba, Gemma, Gemma 3, 3n, and Gemma 4 multimodal, DeepSeek,

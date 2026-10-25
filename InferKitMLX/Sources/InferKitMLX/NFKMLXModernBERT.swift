@@ -149,7 +149,7 @@ final class NFKModernBertMLP: Module {
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let projected = wi(x)
         let parts = projected.split(parts: 2, axis: -1)
-        return wo(gelu(parts[0]) * parts[1])
+        return wo(NFKReferenceRounding.gelu(parts[0]) * parts[1])
     }
 }
 
@@ -261,7 +261,7 @@ final class NFKModernBertHead: Module {
         super.init()
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { norm(gelu(dense(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { norm(NFKReferenceRounding.gelu(dense(x))) }
 }
 
 /// The cross-encoder reranker: the ModernBERT encoder, a mean pool over the pair, the prediction head,

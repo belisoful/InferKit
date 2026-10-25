@@ -165,7 +165,7 @@ final class NFKWav2Vec2ConvLayer: Module {
         } else if let groupNorm = norm as? NFKGroupNorm {
             y = groupNorm(y)
         }
-        return gelu(y)
+        return NFKReferenceRounding.gelu(y)
     }
 }
 
@@ -277,7 +277,7 @@ final class NFKWav2Vec2PositionalConv: Module {
         if dropsTrailingFrame {
             y = y[0..., ..<(y.dim(1) - 1), 0...]
         }
-        return gelu(y)
+        return NFKReferenceRounding.gelu(y)
     }
 }
 
@@ -318,7 +318,7 @@ final class NFKWav2Vec2FeedForward: Module {
         super.init()
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { output(gelu(intermediate(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { output(NFKReferenceRounding.gelu(intermediate(x))) }
 }
 
 /// One encoder layer. Post-norm (`Wav2Vec2EncoderLayer`) normalizes after each residual sum; pre-norm

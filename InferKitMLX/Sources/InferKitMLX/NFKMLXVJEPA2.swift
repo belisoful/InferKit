@@ -189,7 +189,7 @@ final class NFKVJEPA2MLP: Module {
         _fc2.wrappedValue = Linear(hidden, c.hiddenSize)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(gelu(fc1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(NFKReferenceRounding.gelu(fc1(x))) }
 }
 
 /// One pre-norm transformer block: `x + attn(norm1(x))` then `x + mlp(norm2(x))`.

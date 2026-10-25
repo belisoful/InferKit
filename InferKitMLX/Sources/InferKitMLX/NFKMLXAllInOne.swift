@@ -427,7 +427,8 @@ final class NFKAllInOneLayer: Module {
             hiddenStates = outputs[0]
             residual = outputs[0]
         }
-        return residual + dropPath(hiddenDropout(output(gelu(intermediate(normAfter(hiddenStates))))))
+        let activated = NFKReferenceRounding.gelu(intermediate(normAfter(hiddenStates)))
+        return residual + dropPath(hiddenDropout(output(activated)))
     }
 }
 

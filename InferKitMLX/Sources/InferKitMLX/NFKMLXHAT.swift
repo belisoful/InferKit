@@ -130,7 +130,7 @@ final class NFKHATConvBlock: Module {
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         guard let compress = cab[0] as? Conv2d, let expand = cab[2] as? Conv2d,
               let attention = cab[3] as? NFKHATChannelAttention else { return x }
-        return attention(expand(gelu(compress(x))))
+        return attention(expand(NFKReferenceRounding.gelu(compress(x))))
     }
 }
 
@@ -144,7 +144,7 @@ final class NFKHATMlp: Module {
         _fc2.wrappedValue = Linear(hidden, dimensions)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(gelu(fc1(x))) }
+    func callAsFunction(_ x: MLXArray) -> MLXArray { fc2(NFKReferenceRounding.gelu(fc1(x))) }
 }
 
 /// A Hybrid Attention Block: window self-attention and the channel-attention convolution branch,

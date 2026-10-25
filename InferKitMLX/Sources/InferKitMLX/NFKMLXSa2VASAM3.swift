@@ -289,7 +289,7 @@ enum NFKSAM3Autocast {
         var out = x
         switch level.scaleFactor {
         case 4:
-            out = gelu(convTransposed(level.scaleLayers[0] as! ConvTransposed2d, out))
+            out = NFKReferenceRounding.gelu(convTransposed(level.scaleLayers[0] as! ConvTransposed2d, out))
             out = convTransposed(level.scaleLayers[2] as! ConvTransposed2d, out)
         case 2:
             out = convTransposed(level.scaleLayers[0] as! ConvTransposed2d, out)
@@ -393,8 +393,9 @@ enum NFKSAM3Autocast {
 
         var upscaled = convTransposed(decoder.upscale1, image.reshaped([1, height, width, channels]))
             + conv(decoder.convS1, highResolution[1])
-        upscaled = gelu(layerNorm2d(decoder.upscaleNorm, upscaled))
-        upscaled = gelu(convTransposed(decoder.upscale2, upscaled) + conv(decoder.convS0, highResolution[0]))
+        upscaled = NFKReferenceRounding.gelu(layerNorm2d(decoder.upscaleNorm, upscaled))
+        upscaled = NFKReferenceRounding.gelu(convTransposed(decoder.upscale2, upscaled)
+                                             + conv(decoder.convS0, highResolution[0]))
         let hyperIn = concatenated((0 ..< decoder.maskCount).map { index in
             perceptron(decoder.hyper[index], maskOut[0..., index]).reshaped([1, 1, -1])
         }, axis: 1)

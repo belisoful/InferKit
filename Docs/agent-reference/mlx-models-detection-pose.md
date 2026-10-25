@@ -346,7 +346,7 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   the block's 1×1-projected output, and adds a scalar bias. One set of masks per decoder layer; the
   reference's prediction is the LAST. Reference parity on the released seg-nano on the first numeric
   run: masks 0.9999999999502163 / 0.9999999999478614 / 0.999999999908166 / 0.9999999998673923 by layer,
-  logits 0.9999999999925121, boxes 0.9999999998186787 (`run_reference.py rf_detr_seg`,
+  logits 0.9999999999984286, boxes 0.999999999978507 (`run_reference.py rf_detr_seg`,
   `IK_PARITY_RF_DETR_SEG`). **Three details were load-bearing.** The activation is the EXACT
   error-function gelu, which is what the config's `gelu` names; the tanh approximation is a different
   function (`gelu_pytorch_tanh`) and costs real digits. The head's query feed-forward is a PyTorch

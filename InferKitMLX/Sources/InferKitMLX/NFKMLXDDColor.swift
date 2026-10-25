@@ -88,7 +88,7 @@ final class NFKDDColorConvNeXtBlock: Module {
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         // The reference permutes to channels-last for the norm and the pointwise pair, which is where
         // NHWC already is.
-        x + gamma * pointwise2(gelu(pointwise1(norm(depthwise(x)))))
+        x + gamma * pointwise2(NFKReferenceRounding.gelu(pointwise1(norm(depthwise(x)))))
     }
 }
 
