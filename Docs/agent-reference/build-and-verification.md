@@ -216,7 +216,7 @@ method assigns the out-parameter after the block has run. A sweep of every `.m` 
 
    ```
    xcodebuild test -scheme InferKitMLXTests        …    # 2939 — the model and API suite
-   xcodebuild test -scheme InferKitMLXExamples     …    #  148 — the Swift documented snippets
+   xcodebuild test -scheme InferKitMLXExamples     …    #  149 — the Swift documented snippets
    xcodebuild test -scheme InferKitMLXObjCExamples …    #   58 — the Objective-C ones
    ```
 
