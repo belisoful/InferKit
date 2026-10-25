@@ -2992,6 +2992,33 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         }
     }
 
+    // torch's GELU gradient under a cotangent of ones at bf16 and float16, over every finite value of magnitude at
+    // least twice the least normal float32 and above −13, against the SHA-256 of torch's `GeluBackward`. Below −13
+    // the gradient is a subnormal float32, which the GPU flushes to zero. torch 2.2 to 2.14 agree on every bf16
+    // gradient. The float16 digest is torch 2.2 to 2.8's: torch 2.13 and later round 3 of these inputs apart,
+    // because their float32 error function takes another exponential.
+    func testHalfGELUGradientIsTorchsGeluBackward() throws {
+        try requireMLXRuntime()
+        let cases: [(DType, String)] = [
+            (.bfloat16, "40e2b3b0e6010a31b3154adfa5ba045b94bf6c6bb895a677c784f56b96985ffd"),
+            (.float16, "a2e12c23216d4e69fae120ef1c8a85a0cc7362d7926df4f71d7ac70eb6790abd"),
+        ]
+        for (dtype, expected) in cases {
+            let input = MLXArray((0 ..< 1 << 16).map { UInt16($0) }).view(dtype: dtype)
+            let values = input.asType(.float32).asArray(Float.self)
+            let kept = values.indices.filter {
+                values[$0].isFinite && abs(values[$0]) >= 2 * Float.leastNormalMagnitude && values[$0] > -13
+            }
+            let cotangent = MLXArray.ones(input.shape, dtype: dtype)
+            let gradient = vjp({ [NFKReferenceRounding.gelu($0[0])] }, primals: [input], cotangents: [cotangent]).1[0]
+            let words = gradient.view(dtype: .uint16).asArray(UInt16.self)
+            let selected = kept.map { words[$0] }
+            let digest = SHA256.hash(data: selected.withUnsafeBufferPointer { Data(buffer: $0) })
+                .map { String(format: "%02x", $0) }.joined()
+            XCTAssertEqual(digest, expected, "\(dtype)")
+        }
+    }
+
     // torch's float32 `exp`, Sleef's `expf`, at x = −15i/512 for i in 0..<1024. The kernel matches every one.
     // MLX operations round each multiply-add Sleef fuses and leave 9 one unit apart; MLX's own `exp` leaves 230.
     func testReferenceArithmeticComputesTorchsExp() throws {
@@ -3004,6 +3031,29 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         XCTAssertGreaterThan(differing(exp(input)), 100, "the grid tells MLX's exp from torch's")
         let edges = NFKReferenceRounding.torchExp(MLXArray([-Float.infinity, -104.5, 89, Float.infinity]))
         XCTAssertEqual(edges.asArray(Float.self), [0, 0, .infinity, .infinity])
+    }
+
+    // torch's float32 `expm1`, Sleef's `expm1f`, at x = (i − 4096)/1024 and (i − 4096)/64 for i in 0..<8192,
+    // against the SHA-256 of torch's output (torch 2.6 to 2.14 agree), and at its edges. MLX's GPU `expm1` rounds
+    // thousands of these apart.
+    func testReferenceArithmeticComputesTorchsExpm1() throws {
+        try requireMLXRuntime()
+        let cases: [(Float, String)] = [
+            (1024, "bb201abc4c818c0ea14d4fb8c7ba5175cfee3618afd66c31ed504f7c6e3668a6"),
+            (64, "8abbd1fe6155508c52c5f6fa411d29629d7a17e0cd34e0d9d911a52773e7ca89"),
+        ]
+        for (scale, expected) in cases {
+            let input = MLXArray((0 ..< 8192).map { Float($0 - 4096) / scale })
+            func digest(_ y: MLXArray) -> String {
+                SHA256.hash(data: y.asArray(Float.self).withUnsafeBufferPointer { Data(buffer: $0) })
+                    .map { String(format: "%02x", $0) }.joined()
+            }
+            XCTAssertEqual(digest(NFKReferenceRounding.torchExpm1(input)), expected, "x / \(scale)")
+            XCTAssertNotEqual(digest(expm1(input)), expected, "x / \(scale): the grid tells MLX's expm1 from torch's")
+        }
+        let edges = NFKReferenceRounding.torchExpm1(MLXArray([89, -17, -0.0, 88.72283] as [Float])).asArray(Float.self)
+        XCTAssertEqual(edges, [.infinity, -1, 0, 3.4027985e38])
+        XCTAssertEqual(edges[2].sign, .minus)
     }
 
     // The float32 GELU a trained network takes, at x = (i − 4096)/1024 for i in 0..<8192, against float64 formed on

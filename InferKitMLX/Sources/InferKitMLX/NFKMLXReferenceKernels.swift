@@ -86,6 +86,16 @@ extension NFKReferenceRounding {
         return torchExpFunction([wide])[0]
     }
 
+    /// torch's `expm1` of `x` in `x`'s type: Sleef's `expm1f` (`Sleef_expm1f4_u10`), formed in float32 and
+    /// rounded once. `exp(x)` is evaluated in double-float arithmetic with `x` reduced by both parts of `ln 2`,
+    /// and the 1 comes off in double-float before the one rounding. A subnormal `x` gives 0, where torch keeps
+    /// `x`. MLX's GPU `expm1` reduces by the high part of `ln 2` alone and reads up to 336 units high. On the CPU
+    /// stream it takes MLX's `expm1`.
+    static func torchExpm1(_ x: MLXArray) -> MLXArray {
+        guard NFKMLXDevice.currentType == .gpu, x.size > 0 else { return expm1(x) }
+        return torchExpm1Function([x])[0]
+    }
+
     /// `exp(x)` in `x`'s type, as ``NFKMLXHalfPrecision/arithmetic`` selects: torch's vectorized exponential
     /// (``torchExp(_:)``, rounded once to `x`'s type) or MLX's `exp`.
     static func exponential(_ x: MLXArray) -> MLXArray {
@@ -94,8 +104,9 @@ extension NFKReferenceRounding {
 
     /// torch's exact `gelu` of a bfloat16 or float16 `x`, `x · 0.5 · (1 + erf(x · √½))` formed in float32 and
     /// rounded once, with the error function of torch's vectorized kernels: the Abramowitz–Stegun 7.1.26
-    /// polynomial with its multiply-adds fused and Sleef's exponential. On the CPU stream it takes MLX
-    /// operations, which round each multiply-add.
+    /// polynomial with its multiply-adds fused and Sleef's exponential. Its gradient is torch's `GeluBackward`,
+    /// formed in float32 and rounded once to `x`'s type. On the CPU stream it takes MLX operations, which round
+    /// each multiply-add.
     static func torchGELU(_ x: MLXArray) -> MLXArray {
         guard NFKMLXDevice.currentType == .gpu, x.size > 0 else { return geluOperations([x])[0] }
         return torchGELUFunction([x])[0]
@@ -109,7 +120,7 @@ extension NFKReferenceRounding {
     /// function is torch's polynomial.
     static func torchTrainableGELU(_ x: MLXArray) -> MLXArray {
         guard NFKMLXDevice.currentType == .gpu, x.size > 0 else { return MLXNN.gelu(x) }
-        return torchTrainableGELUFunction([x])[0]
+        return torchGELUFunction([x])[0]
     }
 
     /// torch's `silu` of a bfloat16 or float16 `x`, `x / (1 + exp(−x))` formed in float32 with Sleef's
@@ -243,7 +254,7 @@ extension NFKReferenceRounding {
         return which(x .< underflow, MLXArray(Float(0)), u)
     }
 
-    /// torch's exact `gelu` of `[x]` from MLX operations: the gradient of the GELU kernel.
+    /// torch's exact `gelu` of `[x]` from MLX operations: ``torchGELU(_:)`` on the CPU stream.
     private static func geluOperations(_ inputs: [MLXArray]) -> [MLXArray] {
         let wide = inputs[0].asType(.float32)
         let y = wide * Float(0.5.squareRoot())
@@ -295,19 +306,19 @@ extension NFKReferenceRounding {
             torchGELUKernel([inputs[0]], template: [("T", inputs[0].dtype)], grid: (inputs[0].size, 1, 1),
                             threadGroup: (256, 1, 1), outputShapes: [inputs[0].shape], outputDTypes: [inputs[0].dtype])
         }
-        VJP { primals, cotangents in vjp(geluOperations, primals: primals, cotangents: cotangents).1 }
-    }
-
-    private static let torchTrainableGELUFunction = CustomFunction {
-        Forward { inputs in
-            torchGELUKernel([inputs[0]], template: [("T", inputs[0].dtype)], grid: (inputs[0].size, 1, 1),
-                            threadGroup: (256, 1, 1), outputShapes: [inputs[0].shape], outputDTypes: [inputs[0].dtype])
-        }
         VJP { primals, cotangents in
             torchGELUBackwardKernel([primals[0], cotangents[0]], template: [("T", primals[0].dtype)],
                                     grid: (primals[0].size, 1, 1), threadGroup: (256, 1, 1),
                                     outputShapes: [primals[0].shape], outputDTypes: [primals[0].dtype])
         }
+    }
+
+    private static let torchExpm1Function = CustomFunction {
+        Forward { inputs in
+            torchExpm1Kernel([inputs[0]], template: [("T", inputs[0].dtype)], grid: (inputs[0].size, 1, 1),
+                             threadGroup: (256, 1, 1), outputShapes: [inputs[0].shape], outputDTypes: [inputs[0].dtype])
+        }
+        VJP { primals, cotangents in [cotangents[0] * exp(primals[0])] }
     }
 
     private static let torchSiLUFunction = CustomFunction {
@@ -451,6 +462,72 @@ extension NFKReferenceRounding {
             return r;
         }
         """
+
+    /// Sleef's `expm1f` in Metal: `exp(a)` in double-float arithmetic (`expk2f`), `a` reduced by
+    /// `q = rint(a / ln 2)` in two parts, a polynomial whose last three terms carry double-float, `2^q` applied to
+    /// both halves, then the 1 subtracted in double-float and the halves added.
+    private static let torchExpm1Header = """
+        inline float2 nfk_df_add2(const float2 x, const float y) {
+            const float s = x.x + y;
+            const float v = s - x.x;
+            return float2(s, ((x.x - (s - v)) + (y - v)) + x.y);
+        }
+        inline float2 nfk_df_add2(const float2 x, const float2 y) {
+            const float s = x.x + y.x;
+            const float v = s - x.x;
+            return float2(s, ((x.x - (s - v)) + (y.x - v)) + (x.y + y.y));
+        }
+        inline float2 nfk_df_add(const float x, const float2 y) {
+            const float s = x + y.x;
+            return float2(s, ((x - s) + y.x) + y.y);
+        }
+        inline float2 nfk_df_mul(const float2 x, const float y) {
+            const float s = x.x * y;
+            return float2(s, fma(x.y, y, fma(x.x, y, -s)));
+        }
+        inline float2 nfk_df_mul(const float2 x, const float2 y) {
+            const float s = x.x * y.x;
+            return float2(s, fma(x.x, y.y, fma(x.y, y.x, fma(x.x, y.x, -s))));
+        }
+        inline float2 nfk_df_square(const float2 x) {
+            const float s = x.x * x.x;
+            return float2(s, fma(x.x + x.x, x.y, fma(x.x, x.x, -s)));
+        }
+        inline float nfk_ldexp2(const float d, const int e) {
+            return d * as_type<float>(((e >> 1) + 127) << 23) * as_type<float>(((e - (e >> 1)) + 127) << 23);
+        }
+        inline float nfk_torch_expm1f(const float a) {
+            const int q = int(rint(a * 1.442695040888963407359924681001892137426645954152985934135449406931f));
+            float2 s = nfk_df_add2(float2(a, 0.0f), float(q) * -0.693145751953125f);
+            s = nfk_df_add2(s, float(q) * -1.428606765330187045e-06f);
+            float u = 0.1980960224e-3f;
+            u = fma(u, s.x, 0.1394256484e-2f);
+            u = fma(u, s.x, 0.8333456703e-2f);
+            u = fma(u, s.x, 0.4166637361e-1f);
+            float2 t = nfk_df_add2(nfk_df_mul(s, u), 0.166666659414234244790680580464e+0f);
+            t = nfk_df_add2(nfk_df_mul(s, t), 0.5f);
+            t = nfk_df_add2(s, nfk_df_mul(nfk_df_square(s), t));
+            t = nfk_df_add(1.0f, t);
+            t = float2(nfk_ldexp2(t.x, q), nfk_ldexp2(t.y, q));
+            if (a < -104.0f) { t = float2(0.0f); }
+            const float2 d = nfk_df_add2(t, -1.0f);
+            float r = d.x + d.y;
+            if (a > 88.72283172607421875f) { r = INFINITY; }
+            if (a < -16.635532333438687426013570f) { r = -1.0f; }
+            if (as_type<uint>(a) == 0x80000000u) { r = -0.0f; }
+            return r;
+        }
+        """
+
+    private static let torchExpm1Kernel = MLXFast.metalKernel(
+        name: "nfk_torch_expm1",
+        inputNames: ["x"],
+        outputNames: ["y"],
+        source: """
+            uint index = thread_position_in_grid.x;
+            y[index] = T(nfk_torch_expm1f(float(x[index])));
+        """,
+        header: torchExpm1Header)
 
     private static let torchExpKernel = MLXFast.metalKernel(
         name: "nfk_torch_exp",

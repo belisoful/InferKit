@@ -1589,6 +1589,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### A half-precision GELU returns torch's gradient, and MetricGAN+ computes torch's `expm1`
+
+- `NFKReferenceRounding.gelu` over bf16 and float16 returns torch's `GeluBackward` gradient, formed in float32 and
+  rounded once. It matches torch 2.2 to 2.14 on every bf16 input whose gradient is a normal float32.
+- MetricGAN+'s enhanced magnitude takes `torchExpm1`, Sleef's `expm1f` as torch computes it. MLX's GPU `expm1`
+  reads up to 336 units high, because its argument reduction drops the low part of `ln 2`.
+
 #### Depth Anything V2's metric training holds every figure to twice the reference's float32 distance
 
 - The head's 1×1 output convolution sums its weight gradient one image row at a time

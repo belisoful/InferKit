@@ -155,7 +155,7 @@ public final class NFKMLXMetricGANPlusBackend: NSObject, NFKInferenceBackend {
         let configuration = net.configuration
         let (features, phase) = features(samples, configuration: configuration)
         let mask = net(features)
-        let magnitude = expm1(mask * features).transposed(0, 2, 1)
+        let magnitude = NFKReferenceRounding.torchExpm1(mask * features).transposed(0, 2, 1)
         let waveform = stft(configuration).inverse(magnitude: magnitude, phase: phase, length: samples.count)
         let peak = abs(waveform).max()
         return waveform / (peak + 1e-14)

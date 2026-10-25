@@ -334,7 +334,8 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   and the roadmap's "plumbing smoke test" for it: a magnitude-mask enhancer whose generator is a
   two-layer bidirectional LSTM (257 → 200 per direction) over `log1p(|X|)` frames, then Linear 400→300,
   LeakyReLU(0.3), Linear 300→257, and a per-bin learnable sigmoid `1.2 · sigmoid(slope · x)`. The
-  enhanced magnitude is `expm1(mask · features)` under the noisy phase, inverted, then peak-normalized
+  enhanced magnitude is `expm1(mask · features)` (`torchExpm1`, Sleef's `expm1f` as torch computes it)
+  under the noisy phase, inverted, then peak-normalized
   (`x / (max|x| + 1e-14)`). At reference parity on the released weights on the first numeric run
   against speechbrain's own `SpectralMaskEnhancement` (`run_reference.py metricgan`, the `llm` env plus
   the `speechbrain` package, `IK_PARITY_METRICGAN` + `IK_VAL_METRICGAN`): features 1.0, mask 1.0000001,

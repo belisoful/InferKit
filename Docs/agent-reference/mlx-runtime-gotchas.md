@@ -867,4 +867,11 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     gradient at the same size lands at 2.7e-7, where torch's CPU lands at 8.1e-6.
   - **MLX's `expm1` carries the same reduction.** It reads 25 to 155 units of 2⁻²³ high (relative) wherever
     `|x|` exceeds `ln 2 / 2`, by an emulation of the kernel that reproduces the error-function readings above
-    bin for bin. The one array call is MetricGAN+'s `expm1(mask * features)`.
+    bin for bin. The one array call, MetricGAN+'s `expm1(mask * features)`, takes `torchExpm1`, Sleef's
+    `expm1f` as torch computes it. Reported upstream as ml-explore/mlx#4765.
+  - **torch 2.13 changed its float32 error function.** From 2.13 on, the exponential inside
+    `Vectorized<float>::erf` on NEON is `vexpq_f32_u20` instead of Sleef's `expf`. The GELU kernels take
+    Sleef's, as torch 2.2 to 2.8 do. They hold torch's float32 distance from float64 (7.6e-8 forward and
+    8.4e-8 gradient on x = (i − 4096)/1024, where torch 2.14 lands 7.6e-8 and 8.4e-8) without matching any
+    torch release bit for bit at float32. Every bf16 result matches torch 2.2 to 2.14. At float16, torch 2.13
+    and later round 3 gradients apart.
