@@ -13,6 +13,7 @@
 #import <InferKit/NFKVideoAsset.h>
 #import <InferKit/NFKAudioSegment.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteTransportPrivate.h"
 #import <AVFoundation/AVFoundation.h>
 #import <ImageIO/ImageIO.h>
 
@@ -27,8 +28,7 @@ static NSDictionary<NSString *, NSString *> *NFKServedChatParameterNames(void)
 				   @"top_p": NFKParameterTopP,
 				   @"top_k": NFKParameterTopK,
 				   @"repetition_penalty": NFKParameterRepetitionPenalty,
-				   @"repeat_penalty": NFKParameterRepetitionPenalty,
-				   @"prompt_cache_key": NFKParameterConversationKey };
+				   @"repeat_penalty": NFKParameterRepetitionPenalty };
 	});
 	return names;
 }
@@ -273,7 +273,8 @@ static NSString *NFKServedExtensionForMediaType(NSString * _Nullable mediaType, 
 	NSMutableDictionary<NSString *, id> *parameters = [NSMutableDictionary dictionary];
 	NSSet<NSString *> *consumed = [NSSet setWithArray:@[ @"model", @"messages", @"stream", @"stream_options", @"n",
 														 @"modalities", @"audio", @"tools", @"response_format",
-														 @"stop", @"reasoning_effort" ]];
+														 @"stop", @"reasoning_effort", @"prompt_cache_key",
+														 @"prompt_cache_retention", @"prompt_cache_options" ]];
 	NSDictionary<NSString *, NSString *> *renamed = NFKServedChatParameterNames();
 	for (NSString *key in body) {
 		if (renamed[key] != nil) {
@@ -282,6 +283,7 @@ static NSString *NFKServedExtensionForMediaType(NSString * _Nullable mediaType, 
 			parameters[key] = body[key];
 		}
 	}
+	[parameters addEntriesFromDictionary:NFKRemotePromptCacheParameters(body)];
 	id stop = body[@"stop"];
 	if ([stop isKindOfClass:NSString.class]) {
 		parameters[NFKParameterStopSequences] = @[ stop ];

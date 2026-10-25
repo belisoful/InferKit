@@ -457,13 +457,14 @@
 	];
 	NSArray<NSString *> *parameters = @[
 		NFKParameterSeed, NFKParameterSteps, NFKParameterGuidanceScale, NFKParameterStrength, NFKParameterWidth,
-		NFKParameterHeight, NFKParameterTools, NFKParameterMCPServers, NFKParameterJSONSchema,
+		NFKParameterHeight, NFKParameterTools, NFKParameterMCPServers, NFKParameterSkills, NFKParameterJSONSchema,
 		NFKParameterOutputFormat, NFKParameterChoices, NFKParameterVideoFrameCount, NFKParameterAudioOutput,
 		NFKParameterSampleCount, NFKParameterFrameCount, NFKParameterFramesPerSecond, NFKParameterDurationSeconds,
 		NFKParameterAspectRatio, NFKParameterResolution, NFKParameterGenerateAudio, NFKParameterVideoOperation,
 		NFKParameterSourceVideoIdentifier, NFKParameterSpeakerDiarization, NFKParameterWordTimestamps,
 		NFKParameterVocabulary, NFKParameterCitations, NFKParameterPreviousResponseIdentifier,
-		NFKParameterConversationKey, NFKParameterMotionScale, NFKParameterSampleRate, NFKParameterChannelCount,
+		NFKParameterConversationKey, NFKParameterPromptCacheRetention, NFKParameterPromptCacheTTL,
+		NFKParameterPromptCacheMode, NFKParameterPromptCachePrewarm, NFKParameterMotionScale, NFKParameterSampleRate, NFKParameterChannelCount,
 		NFKParameterSourceLanguage, NFKParameterTargetLanguage, NFKParameterTemperature, NFKParameterTopP,
 		NFKParameterTopK, NFKParameterMaxTokens, NFKParameterRepetitionPenalty, NFKParameterStopSequences,
 		NFKParameterReasoningEffort,
@@ -476,7 +477,7 @@
 		NFKOutputClassifications, NFKOutputSegments, NFKOutputMIDI, NFKOutputBeats, NFKOutputTempo,
 		NFKOutputAnswers, NFKOutputReasoning, NFKOutputUsage,
 	];
-	XCTAssertEqual(inputs.count + parameters.count + outputs.count, (NSUInteger)86);
+	XCTAssertEqual(inputs.count + parameters.count + outputs.count, (NSUInteger)91);
 	for (NSString *key in [inputs arrayByAddingObjectsFromArray:parameters]) {
 		XCTAssertNotNil(NFKModelValueTypeForKey(key), @"%@ has no value type", key);
 	}

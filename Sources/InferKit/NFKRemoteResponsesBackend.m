@@ -18,6 +18,7 @@
 #import <InferKit/NFKToolMessages.h>
 #import <InferKit/NFKRemoteFileStore.h>
 #import "NFKRemoteTransportPrivate.h"
+#import "NFKRemoteBatchPrivate.h"
 #import "NFKJobGuard.h"
 
 /*! The contract keys this backend translates; every other parameter goes out under its own name. */
@@ -26,9 +27,11 @@ static NSSet<NSString *> *NFKResponsesMappedParameters(void)
 	static NSSet<NSString *> *mapped;
 	static dispatch_once_t once;
 	dispatch_once(&once, ^{
-		mapped = [NSSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema, NFKParameterReasoningEffort,
-										NFKParameterMaxTokens, NFKParameterTemperature, NFKParameterTopP,
-										NFKParameterPreviousResponseIdentifier, NFKParameterMCPServers ]];
+		NSMutableArray<NSString *> *keys = [@[ NFKParameterTools, NFKParameterJSONSchema, NFKParameterReasoningEffort,
+											   NFKParameterMaxTokens, NFKParameterTemperature, NFKParameterTopP,
+											   NFKParameterPreviousResponseIdentifier, NFKParameterMCPServers, NFKParameterSkills ] mutableCopy];
+		[keys addObjectsFromArray:NFKRemotePromptCacheParameterKeys()];
+		mapped = [NSSet setWithArray:keys];
 	});
 	return mapped;
 }
@@ -55,11 +58,13 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 								  modelName:(nullable NSString *)modelName
 {
 	NSArray<NSString *> *serving = @[ @"openai", @"xai", @"groq", @"deepseek", @"openrouter",
-									  @"opencode", @"opencode-go", @"lmstudio", @"ollama", @"vllm", @"llamacpp" ];
+									  @"opencode", @"opencode-go", @"lmstudio", @"ollama", @"vllm", @"llamacpp", @"perplexity" ];
 	if (![serving containsObject:provider.identifier]) {
 		return nil;
 	}
-	NFKRemoteResponsesBackend *backend = [self backendWithEndpointURL:[provider URLForPath:@"responses"]];
+	BOOL agent = provider.apiStyle == NFKRemoteAPIStylePerplexityAgent;
+	NFKRemoteResponsesBackend *backend = [self backendWithEndpointURL:[provider URLForPath:agent ? @"agent" : @"responses"]];
+	backend.dialect = agent ? NFKRemoteResponsesDialectPerplexityAgent : NFKRemoteResponsesDialectStandard;
 	NSURLSession *pinned = NFKRemotePinnedSessionForProvider(provider);
 	if (pinned != nil) {
 		backend.session = pinned;
@@ -447,18 +452,26 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 		body[@"tools"] = wire;
 	}
 	[self addMCPServersOf:parameters to:body];
+	BOOL perplexity = self.dialect == NFKRemoteResponsesDialectPerplexityAgent;
 	NSDictionary *schema = parameters[NFKParameterJSONSchema];
-	if ([schema isKindOfClass:NSDictionary.class]) {
+	if ([schema isKindOfClass:NSDictionary.class] && perplexity) {
+		body[@"response_format"] = @{ @"type": @"json_schema", @"json_schema": @{ @"name": @"response", @"schema": schema } };
+	} else if ([schema isKindOfClass:NSDictionary.class]) {
 		body[@"text"] = @{ @"format": @{ @"type": @"json_schema", @"name": @"response", @"schema": schema } };
 	}
 	NSString *effort = [parameters[NFKParameterReasoningEffort] isKindOfClass:NSString.class] ? parameters[NFKParameterReasoningEffort] : nil;
 	if (effort != nil) {
 		NSDictionary<NSString *, NSString *> *levels = @{ NFKReasoningEffortLight: @"low", NFKReasoningEffortModerate: @"medium",
 														  NFKReasoningEffortDeep: @"high" };
-		body[@"reasoning"] = @{ @"effort": levels[effort] ?: effort, @"summary": @"auto" };
+		body[@"reasoning"] = perplexity ? @{ @"effort": levels[effort] ?: effort }
+										: @{ @"effort": levels[effort] ?: effort, @"summary": @"auto" };
 	}
 	body[@"max_output_tokens"] = parameters[NFKParameterMaxTokens];
 	body[@"previous_response_id"] = parameters[NFKParameterPreviousResponseIdentifier];
+	[body addEntriesFromDictionary:NFKRemotePromptCacheFields(parameters, YES)];
+	if (perplexity) {
+		[self addPerplexitySkillsOf:parameters to:body];
+	}
 	// OpenAI's reasoning families refuse sampling unless the effort is none, and their default is not.
 	BOOL reasoningFamily = NO;
 	for (NSString *prefix in @[ @"gpt-5", @"gpt-6", @"o1", @"o3", @"o4" ]) {
@@ -476,6 +489,89 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 	}
 }
 
+/*! Perplexity's skills: a custom skill as {type: custom, id, version?}, and an entry that carries a
+	type (a builtin or inline skill) as written. */
+- (void)addPerplexitySkillsOf:(NSDictionary *)parameters to:(NSMutableDictionary *)body
+{
+	NSArray *entries = [parameters[NFKParameterSkills] isKindOfClass:NSArray.class] ? parameters[NFKParameterSkills] : @[];
+	NSMutableArray *skills = [NSMutableArray array];
+	for (NSDictionary *entry in entries) {
+		if (![entry isKindOfClass:NSDictionary.class]) {
+			continue;
+		}
+		if (entry[@"type"] != nil) {
+			[skills addObject:entry];
+		} else if ([entry[@"id"] isKindOfClass:NSString.class]) {
+			NSMutableDictionary *skill = [NSMutableDictionary dictionaryWithObjectsAndKeys:@"custom", @"type", entry[@"id"], @"id", nil];
+			skill[@"version"] = [entry[@"version"] isKindOfClass:NSString.class] ? entry[@"version"] : nil;
+			[skills addObject:skill];
+		}
+	}
+	if (skills.count > 0) {
+		body[@"skills"] = skills;
+	}
+}
+
+#pragma mark Output files
+
+- (nullable NSArray<NFKRemoteFile *> *)outputFilesForResponseIdentifier:(NSString *)responseIdentifier
+																  error:(NSError * _Nullable *)outError
+{
+	NSURL *url = [[self.endpointURL URLByAppendingPathComponent:responseIdentifier] URLByAppendingPathComponent:@"files"];
+	NSDictionary *list = [self JSONForRequest:[self getRequestForURL:url] error:outError];
+	if (list == nil) {
+		return nil;
+	}
+	NSMutableArray<NFKRemoteFile *> *files = [NSMutableArray array];
+	for (NSDictionary *entry in [list[@"data"] isKindOfClass:NSArray.class] ? list[@"data"] : @[]) {
+		if (![entry isKindOfClass:NSDictionary.class] || ![entry[@"id"] isKindOfClass:NSString.class]) {
+			continue;
+		}
+		NSNumber *bytes = [entry[@"bytes"] isKindOfClass:NSNumber.class] ? entry[@"bytes"] : nil;
+		NSNumber *created = [entry[@"created_at"] isKindOfClass:NSNumber.class] ? entry[@"created_at"] : nil;
+		[files addObject:[[NFKRemoteFile alloc] initWithIdentifier:entry[@"id"]
+														  filename:[entry[@"filename"] isKindOfClass:NSString.class] ? entry[@"filename"] : nil
+														 byteCount:bytes.longLongValue
+														  mimeType:nil
+														   purpose:nil
+														 createdAt:created != nil ? [NSDate dateWithTimeIntervalSince1970:created.doubleValue] : nil
+														 expiresAt:nil
+															   uri:nil
+															 state:nil
+													  downloadable:YES
+															   raw:entry]];
+	}
+	return files;
+}
+
+- (nullable NSData *)contentsOfOutputFileWithIdentifier:(NSString *)fileIdentifier
+									 responseIdentifier:(NSString *)responseIdentifier
+												  error:(NSError * _Nullable *)outError
+{
+	NSURL *url = [[[[self.endpointURL URLByAppendingPathComponent:responseIdentifier] URLByAppendingPathComponent:@"files"]
+				   URLByAppendingPathComponent:fileIdentifier] URLByAppendingPathComponent:@"content"];
+	NSHTTPURLResponse *response = nil;
+	NSError *sendError = nil;
+	NSData *data = [self sendRequest:[self getRequestForURL:url] response:&response error:&sendError];
+	NSError *failure = data == nil ? sendError : [NFKRemoteTransport errorForResponse:response data:data];
+	if (failure != nil || data == nil) {
+		if (outError != NULL) {
+			*outError = failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the file download failed"];
+		}
+		return nil;
+	}
+	return data;
+}
+
+- (NSURLRequest *)getRequestForURL:(NSURL *)url
+{
+	NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:url];
+	request.HTTPMethod = @"GET";
+	request.timeoutInterval = self.timeout;
+	[NFKRemoteTransport authorizeRequest:request apiKey:self.apiKey style:NFKRemoteAPIStyleOpenAIChat];
+	return request;
+}
+
 - (BOOL)expectsStructured:(NFKInferenceRequest *)request
 {
 	return [request.parameters[NFKParameterJSONSchema] isKindOfClass:NSDictionary.class];
@@ -484,11 +580,7 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 - (NSURLRequest *)pollRequestForReply:(NSDictionary *)reply
 {
 	NSString *identifier = [reply[@"id"] isKindOfClass:NSString.class] ? reply[@"id"] : @"";
-	NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[self.endpointURL URLByAppendingPathComponent:identifier]];
-	request.HTTPMethod = @"GET";
-	request.timeoutInterval = self.timeout;
-	[NFKRemoteTransport authorizeRequest:request apiKey:self.apiKey style:NFKRemoteAPIStyleOpenAIChat];
-	return request;
+	return [self getRequestForURL:[self.endpointURL URLByAppendingPathComponent:identifier]];
 }
 
 - (nullable NSDictionary *)JSONForRequest:(NSURLRequest *)request error:(NSError * _Nullable *)outError
@@ -564,6 +656,14 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 			entry[@"name"] = type;
 			entry[@"input"] = item[@"action"] ?: item[@"code"] ?: item[@"queries"] ?: item[@"arguments"];
 			entry[@"output"] = item[@"results"] ?: item[@"outputs"] ?: item[@"output"];
+			[serverTools addObject:entry];
+		} else if ([type hasSuffix:@"_results"] || [type isEqualToString:@"tool_search_output"]) {
+			// Perplexity's Agent API reports a tool's run as its result item alone: search_results,
+			// fetch_url_results, sandbox_results, and their kin.
+			NSMutableDictionary *entry = [NSMutableDictionary dictionaryWithObject:item forKey:@"raw"];
+			entry[@"name"] = type;
+			entry[@"input"] = item[@"queries"] ?: item[@"code"] ?: item[@"urls"];
+			entry[@"output"] = item[@"results"] ?: item[@"stdout"] ?: item[@"output"];
 			[serverTools addObject:entry];
 		}
 	}
@@ -665,6 +765,29 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 		*outError = [NFKRemoteTransport errorWithCode:code reason:reason];
 	}
 	return nil;
+}
+
+@end
+
+#pragma mark - Batches
+
+@implementation NFKRemoteResponsesBackend (NFKRemoteBatch)
+
+- (nullable NSString *)batchModelName
+{
+	return self.modelName;
+}
+
+- (nullable NSURLRequest *)batchURLRequestForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
+	return [self urlRequestForRequest:request streaming:NO error:outError];
+}
+
+- (nullable NFKInferenceResult *)batchResultForReply:(NSDictionary *)reply
+											 request:(NFKInferenceRequest *)request
+											   error:(NSError * _Nullable *)outError
+{
+	return [self resultFromReply:reply expectsStructured:[self expectsStructured:request] error:outError];
 }
 
 @end

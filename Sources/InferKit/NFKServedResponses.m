@@ -6,6 +6,7 @@
 #import "NFKServedResponses.h"
 #import "NFKServedOpenAI.h"
 #import "NFKInferenceServerPrivate.h"
+#import "NFKRemoteTransportPrivate.h"
 #import "NFKServedRequestChecks.h"
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKInferenceTool.h>
@@ -67,7 +68,8 @@ static NSDictionary<NSString *, NSString *> *NFKServedResponsesFields(void)
 	return @{ @"model": @"string", @"input": @"string|array", @"instructions": @"string", @"stream": @"boolean",
 			  @"stream_options": @"object", @"tools": @"array", @"tool_choice": @"string|object", @"temperature": @"number",
 			  @"top_p": @"number", @"max_output_tokens": @"integer", @"reasoning": @"object", @"text": @"object",
-			  @"prompt_cache_key": @"string", @"previous_response_id": @"string", @"conversation": @"string|object",
+			  @"prompt_cache_key": @"string", @"prompt_cache_retention": @"string", @"prompt_cache_options": @"object",
+			  @"previous_response_id": @"string", @"conversation": @"string|object",
 			  @"store": @"boolean", @"include": @"array", @"background": @"boolean", @"metadata": @"object", @"user": @"string",
 			  @"safety_identifier": @"string", @"service_tier": @"string", @"truncation": @"string",
 			  @"parallel_tool_calls": @"boolean", @"max_tool_calls": @"integer", @"top_logprobs": @"integer" };
@@ -79,6 +81,8 @@ static NSError * _Nullable NFKServedResponsesNestedTypeError(NSDictionary *body)
 	NSError *error = NFKServedFieldTypeError(body[@"reasoning"], @{ @"effort": @"string", @"summary": @"string" }, @"reasoning");
 	error = error ?: NFKServedFieldTypeError(body[@"text"], @{ @"format": @"object", @"verbosity": @"string" }, @"text");
 	error = error ?: NFKServedFieldTypeError(body[@"text"][@"format"], @{ @"type": @"string", @"schema": @"object" }, @"text.format");
+	error = error ?: NFKServedFieldTypeError(body[@"prompt_cache_options"], @{ @"mode": @"string", @"ttl": @"string", @"prewarm": @"boolean" },
+											 @"prompt_cache_options");
 	NSArray *tools = [body[@"tools"] isKindOfClass:NSArray.class] ? body[@"tools"] : @[];
 	for (NSUInteger index = 0; error == nil && index < tools.count; index++) {
 		error = NFKServedFieldTypeError(tools[index], @{ @"type": @"string", @"name": @"string", @"description": @"string",
@@ -476,7 +480,8 @@ static NSError * _Nullable NFKServedResponsesItemTypeError(id item, NSString *pa
 	NSMutableDictionary<NSString *, id> *parameters = [NSMutableDictionary dictionary];
 	NSSet<NSString *> *consumed = [NSSet setWithArray:@[ @"model", @"input", @"instructions", @"stream", @"stream_options", @"tools",
 														 @"tool_choice", @"temperature", @"top_p", @"max_output_tokens", @"reasoning",
-														 @"text", @"prompt_cache_key", @"previous_response_id", @"conversation", @"store",
+														 @"text", @"prompt_cache_key", @"prompt_cache_retention", @"prompt_cache_options",
+														 @"previous_response_id", @"conversation", @"store",
 														 @"include", @"background", @"metadata", @"user", @"safety_identifier",
 														 @"service_tier", @"truncation" ]];
 	for (NSString *key in body) {
@@ -491,7 +496,7 @@ static NSError * _Nullable NFKServedResponsesItemTypeError(id item, NSString *pa
 			parameters[renamed[key]] = body[key];
 		}
 	}
-	parameters[NFKParameterConversationKey] = NFKServedResponsesValue(body, @"prompt_cache_key", NSString.class);
+	[parameters addEntriesFromDictionary:NFKRemotePromptCacheParameters(body)];
 	NSString *effort = NFKServedResponsesValue(NFKServedResponsesValue(body, @"reasoning", NSDictionary.class), @"effort", NSString.class);
 	if (effort != nil) {
 		NSDictionary<NSString *, NSString *> *levels = @{ @"low": NFKReasoningEffortLight, @"medium": NFKReasoningEffortModerate,

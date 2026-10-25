@@ -366,6 +366,75 @@ NFK_STAGED_TRANSPORT
 	XCTAssertNil(body[@"tools"]);
 }
 
+#pragma mark Skills
+
+- (NSArray<NSDictionary *> *)skillReferences
+{
+	return @[ @{ @"id": @"skill_01Abc", @"source": @"custom" },
+			  @{ @"id": @"pdf", @"source": @"anthropic", @"version": @"20251013" },
+			  @{ @"type": @"builtin", @"name": @"office/pdf" } ];
+}
+
+// Claude runs a skill in a container, which the code-execution tool provides; a request that names
+// its own code-execution tool keeps it.
+- (void)testClaudeLoadsSkillsInAContainerWithTheCodeExecutionTool
+{
+	NFKConversationAnthropicStub *anthropic = self.anthropicStub;
+	anthropic.staged = [NSMutableArray arrayWithObject:@"{\"content\":[{\"type\":\"text\",\"text\":\"Done.\"}]}"];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Make a report." }
+															   parameters:@{ NFKParameterSkills: self.skillReferences }
+														   outputModality:NFKModalityText];
+	NSError *error = nil;
+	XCTAssertNotNil([anthropic runInferenceForRequest:request error:&error], @"%@", error);
+	NSDictionary *body = [anthropic bodyAt:0];
+	NSArray *skills = @[ @{ @"type": @"custom", @"skill_id": @"skill_01Abc", @"version": @"latest" },
+						 @{ @"type": @"anthropic", @"skill_id": @"pdf", @"version": @"20251013" },
+						 @{ @"type": @"builtin", @"name": @"office/pdf" } ];
+	XCTAssertEqualObjects(body[@"container"], @{ @"skills": skills });
+	XCTAssertEqualObjects(body[@"tools"], (@[ @{ @"type": @"code_execution_20260521", @"name": @"code_execution" } ]));
+	XCTAssertNil(body[NFKParameterSkills]);
+
+	NFKConversationAnthropicStub *ownTool = self.anthropicStub;
+	ownTool.staged = [NSMutableArray arrayWithObject:@"{\"content\":[{\"type\":\"text\",\"text\":\"Done.\"}]}"];
+	NSDictionary *older = @{ @"type": @"code_execution_20250825", @"name": @"code_execution" };
+	NFKInferenceRequest *withTool = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Make a report." }
+																parameters:@{ NFKParameterSkills: self.skillReferences, NFKParameterTools: @[ older ] }
+															outputModality:NFKModalityText];
+	[ownTool runInferenceForRequest:withTool error:NULL];
+	XCTAssertEqualObjects([ownTool bodyAt:0][@"tools"], @[ older ]);
+}
+
+- (void)testPerplexitysAgentNamesACustomSkillByIdAndPassesABuiltinThrough
+{
+	NFKConversationResponsesStub *agent = [NFKConversationResponsesStub backendWithEndpointURL:[NSURL URLWithString:@"https://api.perplexity.ai/v1/agent"]];
+	agent.dialect = NFKRemoteResponsesDialectPerplexityAgent;
+	agent.modelName = @"openai/gpt-5.5";
+	agent.staged = [NSMutableArray arrayWithObject:@"{\"status\":\"completed\",\"output\":[]}"];
+	NSArray *references = @[ @{ @"id": @"skill_9", @"version": @"rev_2" }, @{ @"type": @"builtin", @"name": @"office/pdf" } ];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Make a report." }
+															   parameters:@{ NFKParameterSkills: references }
+														   outputModality:NFKModalityText];
+	XCTAssertNotNil([agent runInferenceForRequest:request error:NULL]);
+	XCTAssertEqualObjects([agent bodyAt:0][@"skills"], (@[ @{ @"type": @"custom", @"id": @"skill_9", @"version": @"rev_2" },
+														   @{ @"type": @"builtin", @"name": @"office/pdf" } ]));
+
+	NFKConversationResponsesStub *openAI = [NFKConversationResponsesStub backendWithEndpointURL:[NSURL URLWithString:@"https://api.openai.com/v1/responses"]];
+	openAI.modelName = @"gpt-5.6-sol";
+	openAI.staged = [NSMutableArray arrayWithObject:@"{\"status\":\"completed\",\"output\":[]}"];
+	[openAI runInferenceForRequest:request error:NULL];
+	XCTAssertNil([openAI bodyAt:0][@"skills"], @"OpenAI's Responses API takes no skills");
+}
+
+- (void)testAChatBackendSendsNothingForTheSkills
+{
+	NFKConversationChatStub *chat = [self chatStubAt:@"https://api.openai.com/v1/chat/completions"];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x" }
+															   parameters:@{ NFKParameterSkills: self.skillReferences }
+														   outputModality:NFKModalityText];
+	XCTAssertNotNil([chat runInferenceForRequest:request error:NULL]);
+	XCTAssertNil([chat bodyAt:0][NFKParameterSkills], @"the key is not folded in by name");
+}
+
 #pragma mark Gemini Interactions
 
 - (void)testInteractionsTakesCallsAsStepsNamesTheirResultsAndReplaysItsOwnSteps

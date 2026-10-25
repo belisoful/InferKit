@@ -78,6 +78,10 @@
 #import <InferKit/NFKVideoSampling.h>
 #import <InferKit/NFKRemoteVideoBackend.h>
 #import <InferKit/NFKRemoteReranker.h>
+#import <InferKit/NFKRemoteWebSearch.h>
+#import <InferKit/NFKRemoteSkillStore.h>
+#import <InferKit/NFKRemoteBatch.h>
+#import <InferKit/NFKMistralConversationsBackend.h>
 #import <InferKit/NFKRemoteCompletionBackend.h>
 #import <InferKit/NFKRemoteOCRBackend.h>
 #import <InferKit/NFKRemoteTokenCounter.h>

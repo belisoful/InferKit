@@ -13,6 +13,7 @@
 #import <InferKit/NFKInferenceJob.h>
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteBatchPrivate.h"
 #import "NFKRemoteTransportPrivate.h"
 #import "NFKJobGuard.h"
 
@@ -554,6 +555,44 @@ static NSInteger NFKImageGreatestCommonDivisor(NSInteger a, NSInteger b)
 		*outError = [NFKRemoteTransport errorWithCode:code reason:reason];
 	}
 	return nil;
+}
+
+@end
+
+#pragma mark - Batches
+
+@implementation NFKRemoteImageBackend (NFKRemoteBatch)
+
+- (nullable NSString *)batchModelName
+{
+	return self.modelName;
+}
+
+// A batched OpenAI edit carries no file part, so it goes as the JSON edit body OpenAI's GPT image models
+// take: the sources as images[] of {image_url} data URLs and the mask as {image_url}.
+- (nullable NSURLRequest *)batchURLRequestForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
+	NFKImageSources *sources = self.apiStyle == NFKRemoteImageAPIStyleOpenAI ? [self sourcesForRequest:request error:outError] : nil;
+	if (sources.images.count == 0 || request.prompt.length == 0 || self.editsURL == nil) {
+		return [self urlRequestForRequest:request streaming:NO error:outError];
+	}
+	NSMutableDictionary<NSString *, id> *fields = [self fieldsForPrompt:request.prompt request:request sources:sources];
+	NSMutableArray *images = [NSMutableArray array];
+	for (NSData *png in sources.images) {
+		[images addObject:@{ @"image_url": [@"data:image/png;base64," stringByAppendingString:[png base64EncodedStringWithOptions:0]] }];
+	}
+	fields[@"images"] = images;
+	if (sources.mask != nil) {
+		fields[@"mask"] = @{ @"image_url": [@"data:image/png;base64," stringByAppendingString:[sources.mask base64EncodedStringWithOptions:0]] };
+	}
+	return [self JSONRequestToURL:self.editsURL fields:fields error:outError];
+}
+
+- (nullable NFKInferenceResult *)batchResultForReply:(NSDictionary *)reply
+											 request:(NFKInferenceRequest *)request
+											   error:(NSError * _Nullable *)outError
+{
+	return [self resultFromBody:reply error:outError];
 }
 
 @end

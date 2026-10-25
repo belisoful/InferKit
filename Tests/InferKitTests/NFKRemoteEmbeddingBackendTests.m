@@ -235,6 +235,95 @@
 
 	XCTAssertNil([NFKRemoteEmbeddingBackend backendForProvider:NFKRemoteProvider.anthropic apiKey:@"k" modelName:@"m"],
 				 @"Anthropic serves no embeddings endpoint");
+	XCTAssertEqualObjects([NFKRemoteEmbeddingBackend backendForProvider:NFKRemoteProvider.perplexity apiKey:@"k" modelName:@"pplx-embed-v1-4b"].endpointURL.absoluteString,
+						  @"https://api.perplexity.ai/v1/embeddings");
+}
+
+#pragma mark Base64 vectors
+
+- (NSData *)replyWithEmbedding:(NSString *)encoded
+{
+	return [[NSString stringWithFormat:@"{\"object\":\"list\",\"data\":[{\"object\":\"embedding\",\"index\":0,\"embedding\":\"%@\"}]}", encoded]
+			dataUsingEncoding:NSUTF8StringEncoding];
+}
+
+// Perplexity's default is base64_int8: the bytes are the signed values.
+- (void)testABase64Int8VectorIsReadAsItsSignedValues
+{
+	const int8_t values[] = { 1, -2, 127, -128 };
+	self.backend.stagedData = [self replyWithEmbedding:[[NSData dataWithBytes:values length:4] base64EncodedStringWithOptions:0]];
+	NFKInferenceResult *result = [self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x" }] error:NULL];
+	XCTAssertEqualObjects([result outputForKey:NFKOutputEmbedding], (@[ @1, @-2, @127, @-128 ]));
+}
+
+// base64_binary packs a bit per dimension, least significant bit first.
+- (void)testABase64BinaryVectorIsReadLeastSignificantBitFirst
+{
+	const uint8_t bits[] = { 0x05, 0x80 };
+	self.backend.stagedData = [self replyWithEmbedding:[[NSData dataWithBytes:bits length:2] base64EncodedStringWithOptions:0]];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x" } parameters:@{ @"encoding_format": @"base64_binary" }];
+	NSArray *vector = [[self.backend runInferenceForRequest:request error:NULL] outputForKey:NFKOutputEmbedding];
+	XCTAssertEqualObjects(vector, (@[ @1, @0, @1, @0, @0, @0, @0, @0, @0, @0, @0, @0, @0, @0, @0, @1 ]));
+	XCTAssertEqualObjects([self.backend decodedRequestBody][@"encoding_format"], @"base64_binary");
+}
+
+// OpenAI's base64 is little-endian float32.
+- (void)testABase64FloatVectorIsReadAsFloat32
+{
+	const float values[] = { 0.5f, -1.25f };
+	self.backend.stagedData = [self replyWithEmbedding:[[NSData dataWithBytes:values length:sizeof(values)] base64EncodedStringWithOptions:0]];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"x" } parameters:@{ @"encoding_format": @"base64" }];
+	XCTAssertEqualObjects([[self.backend runInferenceForRequest:request error:NULL] outputForKey:NFKOutputEmbedding], (@[ @0.5, @-1.25 ]));
+}
+
+// Runs against Perplexity's embeddings when a key is present; the paths answer 401 without one.
+- (void)testALivePerplexityEmbeddingIsItsDimensionsLong
+{
+	NSString *key = NSProcessInfo.processInfo.environment[@"INFERKIT_PERPLEXITY_API_KEY"];
+	if (key.length == 0) {
+		XCTSkip("set INFERKIT_PERPLEXITY_API_KEY to exercise the live path");
+	}
+	NFKRemoteEmbeddingBackend *embedder = [NFKRemoteEmbeddingBackend backendForProvider:NFKRemoteProvider.perplexity apiKey:key modelName:@"pplx-embed-v1-0.6b"];
+	NSError *error = nil;
+	NSArray *vectors = [embedder embeddingsForTexts:@[ @"one", @"two" ] error:&error];
+	XCTAssertEqual(vectors.count, 2u, @"%@", error);
+	XCTAssertEqual([vectors.firstObject count], 1024u);
+	embedder.modelName = @"pplx-embed-context-v1-0.6b";
+	NSArray *documents = [embedder contextualizedEmbeddingsForDocuments:@[ @[ @"intro", @"body" ] ] error:&error];
+	XCTAssertEqual([documents.firstObject count], 2u, @"%@", error);
+}
+
+#pragma mark Contextualized embeddings
+
+- (void)testDocumentsOfChunksGoToTheContextualizedEndpointAndComeBackInOrder
+{
+	self.backend.endpointURL = [NSURL URLWithString:@"https://api.perplexity.ai/v1/embeddings"];
+	self.backend.modelName = @"pplx-embed-context-v1-0.6b";
+	const int8_t a[] = { 1, 2 }, b[] = { 3, 4 }, c[] = { 5, 6 };
+	NSString *(^encode)(const int8_t *) = ^NSString *(const int8_t *v) { return [[NSData dataWithBytes:v length:2] base64EncodedStringWithOptions:0]; };
+	self.backend.stagedData = [[NSString stringWithFormat:@"{\"object\":\"list\",\"data\":["
+								"{\"index\":1,\"data\":[{\"index\":0,\"embedding\":\"%@\"}]},"
+								"{\"index\":0,\"data\":[{\"index\":1,\"embedding\":\"%@\"},{\"index\":0,\"embedding\":\"%@\"}]}]}",
+								encode(c), encode(b), encode(a)] dataUsingEncoding:NSUTF8StringEncoding];
+	NSError *error = nil;
+	NSArray *vectors = [self.backend contextualizedEmbeddingsForDocuments:@[ @[ @"intro", @"body" ], @[ @"other" ] ] error:&error];
+	XCTAssertEqualObjects(vectors, (@[ @[ @[ @1, @2 ], @[ @3, @4 ] ], @[ @[ @5, @6 ] ] ]), @"%@", error);
+	XCTAssertEqualObjects(self.backend.lastRequest.URL.absoluteString, @"https://api.perplexity.ai/v1/contextualizedembeddings");
+	XCTAssertEqualObjects([self.backend decodedRequestBody][@"input"], (@[ @[ @"intro", @"body" ], @[ @"other" ] ]));
+	XCTAssertEqualObjects([self.backend decodedRequestBody][@"model"], @"pplx-embed-context-v1-0.6b");
+}
+
+- (void)testARequestToAContextualizedModelSendsItsTextAsADocumentOfOneChunk
+{
+	self.backend.endpointURL = [NSURL URLWithString:@"https://api.perplexity.ai/v1/embeddings"];
+	self.backend.modelName = @"pplx-embed-context-v1-4b";
+	const int8_t a[] = { 9, -9 };
+	self.backend.stagedData = [[NSString stringWithFormat:@"{\"data\":[{\"index\":0,\"data\":[{\"index\":0,\"embedding\":\"%@\"}]}]}",
+								[[NSData dataWithBytes:a length:2] base64EncodedStringWithOptions:0]] dataUsingEncoding:NSUTF8StringEncoding];
+	NFKInferenceResult *result = [self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"one chunk" }] error:NULL];
+	XCTAssertEqualObjects([result outputForKey:NFKOutputEmbedding], (@[ @9, @-9 ]));
+	XCTAssertEqualObjects([self.backend decodedRequestBody][@"input"], (@[ @[ @"one chunk" ] ]));
+	XCTAssertEqualObjects(self.backend.lastRequest.URL.lastPathComponent, @"contextualizedembeddings");
 }
 
 #pragma mark A live local runner

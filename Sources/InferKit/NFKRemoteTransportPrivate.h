@@ -35,6 +35,19 @@ NSString * _Nullable NFKFinishReasonForProviderValue(id _Nullable value);
 	is. */
 NFKInferenceResult * _Nullable NFKResultWithFinishReason(NFKInferenceResult * _Nullable result, id _Nullable value);
 
+/*! The contract keys OpenAI's prompt-cache fields carry: NFKParameterConversationKey and the four
+	NFKParameterPromptCache keys. */
+NSArray<NSString *> *NFKRemotePromptCacheParameterKeys(void);
+
+/*! OpenAI's prompt-cache fields for a request's parameters: NFKParameterConversationKey as
+	prompt_cache_key, NFKParameterPromptCacheRetention as prompt_cache_retention, and the TTL, mode, and
+	prewarm as prompt_cache_options. Prewarm goes out only when responsesRoute is YES, since chat
+	completions has no such field. A key that is unset, or set to a value of another type, sends nothing. */
+NSDictionary<NSString *, id> *NFKRemotePromptCacheFields(NSDictionary<NSString *, id> *parameters, BOOL responsesRoute);
+
+/*! The inverse, for a served route: the contract parameters a body's prompt-cache fields name. */
+NSDictionary<NSString *, id> *NFKRemotePromptCacheParameters(NSDictionary *body);
+
 @interface NFKRemoteTransport (NFKPrivate)
 
 /*! One attempt, with no retry, for a caller that answers a busy server by going elsewhere. A failure

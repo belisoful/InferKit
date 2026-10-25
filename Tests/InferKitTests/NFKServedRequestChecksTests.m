@@ -274,8 +274,9 @@
 		@"reasoning_effort": @"string", @"max_tokens": @"integer", @"max_completion_tokens": @"integer",
 		@"temperature": @"number", @"top_p": @"number", @"top_k": @"integer", @"seed": @"integer",
 		@"repetition_penalty": @"number", @"repeat_penalty": @"number", @"presence_penalty": @"number",
-		@"frequency_penalty": @"number", @"prompt_cache_key": @"string", @"user": @"string", @"logprobs": @"boolean",
-		@"top_logprobs": @"integer", @"metadata": @"object", @"store": @"boolean" } anthropic:NO];
+		@"frequency_penalty": @"number", @"prompt_cache_key": @"string", @"prompt_cache_retention": @"string",
+		@"prompt_cache_options": @"object", @"user": @"string", @"logprobs": @"boolean", @"top_logprobs": @"integer",
+		@"metadata": @"object", @"store": @"boolean" } anthropic:NO];
 	[self fuzzPath:@"/v1/embeddings" base:@{ @"model": @"served", @"input": @"hi" } fields:@{
 		@"model": @"string", @"input": @"string|array", @"encoding_format": @"string", @"dimensions": @"integer",
 		@"user": @"string" } anthropic:NO];
@@ -303,7 +304,8 @@
 	NSDictionary *responses = @{ @"model": @"string", @"input": @"string|array", @"instructions": @"string", @"stream": @"boolean",
 								 @"stream_options": @"object", @"tools": @"array", @"tool_choice": @"string|object", @"temperature": @"number",
 								 @"top_p": @"number", @"max_output_tokens": @"integer", @"reasoning": @"object", @"text": @"object",
-								 @"prompt_cache_key": @"string", @"previous_response_id": @"string", @"conversation": @"string|object",
+								 @"prompt_cache_key": @"string", @"prompt_cache_retention": @"string", @"prompt_cache_options": @"object",
+								 @"previous_response_id": @"string", @"conversation": @"string|object",
 								 @"store": @"boolean", @"include": @"array", @"background": @"boolean", @"metadata": @"object",
 								 @"user": @"string", @"safety_identifier": @"string", @"service_tier": @"string", @"truncation": @"string",
 								 @"parallel_tool_calls": @"boolean", @"max_tool_calls": @"integer", @"top_logprobs": @"integer" };

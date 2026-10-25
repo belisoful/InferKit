@@ -16,6 +16,9 @@ preset was added (a 401 or 405 without credentials is what confirms the path).
   `NFKRemoteInferKitBackend`.
 - **`typesafe`** (TypeSafe AI's System One API, which serves Jev) has its own backend,
   `NFKTypeSafeBackend`, because it does not generate text: see "Typed decisions" below.
+- **`perplexity`** serves a model on its Agent API (`/agent`, the Responses shape, so
+  `NFKRemoteResponsesBackend` in a Perplexity dialect) and a `pplx-decider` model on its Decisions API
+  (`/decisions`, System One's request, so `NFKTypeSafeBackend`): see "Perplexity" below.
 - **`anthropic`** is the other exception and has its own backend, `NFKAnthropicBackend`. Four differences a
   URL swap cannot cover: the key is an `x-api-key` header rather than a Bearer token, an
   `anthropic-version` header is required, `max_tokens` is required rather than optional, and a system
@@ -61,8 +64,8 @@ OpenAI-compatible backend is ready with an endpoint alone, which **llama.cpp dep
 answers for whatever model it has loaded.
 
 A preset carries one address, `baseURL`, and derives the rest (`endpointURL` = base +
-`/chat/completions`, `/messages` for Anthropic, `/systemone` for TypeSafe, or `/inferkit/run` for an
-InferKit server; `modelsURL` = base + `/models`; `URLForPath:` for
+`/chat/completions`, `/messages` for Anthropic, `/systemone` for TypeSafe, `/agent` and `/decisions` for
+Perplexity, or `/inferkit/run` for an InferKit server; `modelsURL` = base + `/models`; `URLForPath:` for
 anything else, joining with exactly one slash). The bases differ per provider in ways a caller should
 not have to know (Gemini's is `/v1beta/openai`, Groq's `/openai/v1`, OpenRouter's `/api/v1`), and the
 derivation reproduces the literals the presets carried before, asserted by
@@ -93,7 +96,7 @@ list, and an app shows "start Ollama" on that code. It is measured against a ref
 discard port (`testTheTransportReportsARefusedConnectionAsUnreachable`), not stubbed.
 
 `NFKRemoteEmbeddingBackend` is the embeddings counterpart (`POST /embeddings`; openai, gemini,
-mistral, together, openrouter, the four local runners, and an InferKit server): `NFKInputPrompt` or joined `NFKInputMessages` → `NFKOutputEmbedding`, the key the MLX
+mistral, together, openrouter, perplexity, the four local runners, and an InferKit server): `NFKInputPrompt` or joined `NFKInputMessages` → `NFKOutputEmbedding`, the key the MLX
 embedders answer with, so a consumer's search code is engine-agnostic. `embeddingsForTexts:error:`
 batches, ordered by the provider's `index` rather than by arrival (measured: a stub returning
 index 1 before index 0 comes back in text order). `backendForProvider:apiKey:modelName:` answers nil
@@ -317,6 +320,35 @@ shapes:
 Unknown-field rejection (`top_k`, `repetition_penalty`, `repeat_penalty`) is undocumented for Gemini,
 xAI, Mistral, DeepSeek, and Together; those go out only when a caller sets them.
 
+**OpenAI's prompt cache (2026-10-23).** The fields come from OpenAI's prompt-caching guide
+(`developers.openai.com/api/docs/guides/prompt-caching`) and the openai-python SDK's generated types
+(v3.37.0, `completion_create_params.py`, `response_create_params.py`, and the text-part params):
+- `prompt_cache_key` (string) routes related requests to one cache on the models before GPT-5.6 and
+  separates cache accounting on GPT-5.6 and later. Both routes take it.
+- `prompt_cache_retention` (`in_memory` or `24h`) is for the models before GPT-5.6. GPT-5.5 and
+  GPT-5.5 Pro take `24h` only. Without the field, an organization without Zero Data Retention gets
+  `24h`, one with it `in_memory`. The SDK marks it deprecated in favor of `prompt_cache_options.ttl`.
+- `prompt_cache_options` is for GPT-5.6 and later: `mode` (`implicit`, the default, places one
+  breakpoint at the end of the latest eligible message; `explicit` writes only the caller's
+  breakpoints, and none means no caching), `ttl` (`30m`, the default, or `12h`, which the guide calls
+  Responses-only), and `prewarm` (Responses only: prepares the cache without generating). The chat
+  SDK type has `mode` and `ttl` alone.
+- `prompt_cache_breakpoint {mode: explicit, ttl?}` sits on a content part: `input_text` on the
+  Responses route, `text` on chat. Top-level `instructions` takes none. A request writes at most
+  four breakpoints, one of them the implicit one when the mode is implicit.
+- The usage reports `input_tokens_details.cached_tokens` (reads) and `cache_write_tokens` with
+  `cache_write_tokens_details.ttl_30m_tokens` / `ttl_12h_tokens`.
+
+The contract carries them as `NFKParameterConversationKey` → `prompt_cache_key`,
+`NFKParameterPromptCacheRetention` → `prompt_cache_retention`, and `NFKParameterPromptCacheMode`,
+`NFKParameterPromptCacheTTL`, `NFKParameterPromptCachePrewarm` → `prompt_cache_options`. The private
+`NFKRemotePromptCacheFields` (`NFKRemoteTransport.m`) writes them for `NFKRemoteBackend` and
+`NFKRemoteResponsesBackend`, each only when set; the chat backend leaves out `prewarm`. A breakpoint
+has no key: a caller writes it on its own content part, which both backends pass through. The served
+chat and Responses routes read the fields back through `NFKRemotePromptCacheParameters` and
+type-check `prompt_cache_options`. `NFKGeminiGenerateContentBackend` consumes the keys and sends
+nothing. The usage's cache-write counts are not read into `NFKOutputUsage`.
+
 **Media and retrieval backends audit (2026-09-22).** Every `backendForProvider:` factory below returns
 nil for a preset that does not serve the path.
 - **Video (`NFKRemoteVideoBackend`):** OpenAI removes the Videos API and `sora-2` / `sora-2-pro` on
@@ -333,8 +365,9 @@ nil for a preset that does not serve the path.
   `gpt-transcribe` (same path, no documented `verbose_json` / `segments[]`) or `gpt-live-transcribe`
   (Realtime only). `whisper-1` is also OpenAI's only `/audio/translations` model. Groq `whisper-large-v3`
   (+ turbo, no translations) returns the verbose shape with `avg_logprob`; Together's segments lack
-  `avg_logprob` (confidence reads 1); Mistral `voxtral-mini-latest` has no `response_format` field and
-  returns `segments[]` with `speaker`. xAI transcribes on `/v1/stt` and Gemini's layer has no audio path.
+  `avg_logprob` (confidence reads 1); Mistral's Voxtral 3 models (`voxtral-mini-transcribe-3-0`,
+  `voxtral-small-transcribe-3-0`) take no `response_format` field and return `segments[]` with
+  `speaker_id` and `score` (see "Mistral Voxtral 3" below). xAI transcribes on `/v1/stt` and Gemini's layer has no audio path.
 - **Speech:** OpenAI `gpt-4o-mini-tts` (13 voices, `instructions`), `tts-1` / `tts-1-hd` (9 voices);
   `wav` works everywhere it is served. Groq Orpheus (`canopylabs/orpheus-v1-english`) is wav-only and
   caps input at 200 characters. xAI speaks on `/v1/tts`.
@@ -371,6 +404,19 @@ shape the way the video backend does, and their factories return nil for a prese
   Groq's 200-character cap is `maximumInputLength`; pieces are cut with
   `NSStringEnumerationBySentences`, which needs a capitalized next sentence to see a break. Voice
   listing: xAI `/v1/tts/voices`, Mistral `/v1/audio/voices`, Together `/v1/voices?model=`.
+- **Mistral Voxtral 3 (2026-10-23).** The API ids are `voxtral-mini-transcribe-3-0`,
+  `voxtral-small-transcribe-3-0` (transcription only at launch), `voxtral-mini-transcribe-realtime-3-0`,
+  `voxtral-mini-tts-3-0`, and `voxtral-mini-tts-realtime-3-0`, all Premier and none open-weight;
+  Mistral's quickstart also spells `voxtral-mini-transcribe-3`. The preset carries no model listing,
+  so its catalog is Mistral's `GET /v1/models`. The mistralai SDK (v3.4.0) transcription request still
+  names `diarize`, `context_bias`, and `timestamp_granularities` (`segment`, `word`), which the Mistral
+  style sends, and its segments `speaker_id` and `score`, which it reads. It adds `speaker_references`
+  (a map of speaker name to reference audio, with `diarize` true), which the backend does not send.
+  The speech request adds `expressiveness` (at least 1.0), `phoneme_hints`, and
+  `conversation_history`, each of which folds in under its own name. Mistral's model page serves
+  `voxtral-mini-tts-realtime-3-0` on `/v1/audio/speech`, where the speech backend's stream reads
+  `speech.audio.delta {audio_data}` and ends at `speech.audio.done`; for the realtime websocket, see
+  "Realtime sessions" below.
 - **Images** (`NFKRemoteImageAPIStyle`): OpenAI (openai; gemini with no edits URL), xAI (JSON edits,
   `image` for one source and `images[]` for several, `{url: data URI}`, ratio from the size,
   `response_format: b64_json`), Together (edits on the generations path, `width` / `height`,
@@ -572,7 +618,17 @@ event ending `audio.delta` (not a transcript) or `conversation.item.audio_output
 deltas are sorted into response text, output transcript, and input transcript (partial or final,
 including xAI's `transcript.partial.is_final`); `response.function_call_arguments.done` and Gemini
 `toolCall.functionCalls` become tool calls with parsed arguments; `response.done`, `audio.done`,
-`transcription.done`, and Gemini `turnComplete` end a turn. Gemini frames may arrive binary; both are
+`transcription.done`, and Gemini `turnComplete` end a turn. Mistral realtime speech has no style
+(2026-10-23): neither Mistral's documentation (whose "Stream text as it's written" section is empty)
+nor the mistralai SDK (v3.4.0) publishes a speech socket, and every path under `api.mistral.ai/v1/audio/`
+answers 401 without a key, a nonexistent one included, so a probe confirms nothing. A draft LiveKit
+plugin (livekit/agents#8061) describes `wss://…/v1/audio/speech/realtime?model=`, `session.update`,
+`input_text.append`, `input_text.flush`, and float32 `speech.audio.delta {audio_data}` ending at
+`speech.audio.done`, and reports that the realtime names answered 403 on the public API on 2026-10-22.
+That shape is the lead and is unconfirmed; no keyed probe was made, because no Mistral key was set.
+The gap reopens when Mistral publishes a reference or an SDK client for the socket, or when a keyed
+request to that path answers with something other than 403 (a 403 means the path exists and is
+withheld, a 404 that it does not exist). Gemini frames may arrive binary; both are
 parsed as JSON.
 
 Gemini Live, 2026-10-13 audit (`ai.google.dev/api/live` updated 2026-10-09, the thinking,
@@ -873,6 +929,351 @@ during the preview (eesel AI, 2026-10-01/02). That body reaches the caller throu
 `NFKRemoteTransport`'s error. The answer shape is asserted live only by
 `-[NFKOpenAIDecisionsBackendTests testALiveEndpointAnswersATypedDecision]`, gated on
 `INFERKIT_OPENAI_API_KEY`.
+
+**Perplexity (the `perplexity` preset, 2026-10-23).** One key reaches Perplexity's Agent, Decisions,
+Search, and Embeddings APIs at `https://api.perplexity.ai`. The preset's style is
+`NFKRemoteAPIStylePerplexityAgent`, and `modelPrefixAPIStyles` sends `pplx-decider` and
+`perplexity/pplx-decider` names to `NFKRemoteAPIStylePerplexityDecisions`, the one preset with a
+prefix route, because the Agent API's model names (`provider/model`) are too many for a table. The
+facts come from each API's reference under `docs.perplexity.ai/api-reference/`.
+
+*The Decisions API.* Perplexity serves its decision models at `POST /v1/decisions` with a Bearer
+token; an `x-api-key` header answers 401. The request is System One's `{model, state, questions}` and
+the answer System One's `{model, answers, usage}`, so the Decisions style builds an
+`NFKTypeSafeBackend` at that path (`decisions-post`):
+- Models: `pplx-decider-v1.2` (27B, $0.02 per million input tokens) and `pplx-decider-flash-v1.2` (4B,
+  $0.01), aliased `pplx-decider-latest` and `pplx-decider-flash-latest`. The `perplexity/`-prefixed
+  forms are accepted, and the legacy `pplx-decider-v1.1-27b` and `pplx-decider-v1-27b` route to v1.2.
+  Output tokens are free.
+- `state` is a string, object, or array; `null` answers 400. `questions` is a map of 1 to 128 named
+  questions: `noul` (`criteria {true?, false?}`; instructions or criteria required), `choice`
+  (criteria a map of 1 to 255 options), or `score` (criteria an array of 1 to 10 levels, index 0
+  lowest). An unknown top-level field answers 400, so a parameter that folds into the body must be
+  one the service names.
+- Answers: `noul` → `noul`; `choice` → `choice`, `confidence`, `probabilities` (a map by option);
+  `score` → `score` (probability-weighted index), `confidence`, `legend` and `probabilities` (maps by
+  level index as a string). `NFKDecisionAnswer` reads them as Jev's.
+- Images are `{type: image_url, image_url: {url}}` parts holding PNG, JPEG, or WebP data URLs, as array
+  items, object values at any depth, or the whole state; an http(s) URL answers 400. At most 8 images
+  a question, each at most 2,048 tiles of 32×32 pixels (a larger one times out with 504).
+- Limits: under 256K input tokens for the state, its images, and each question; a 32 MiB body (413
+  past it); 10 requests a second per organization across both models; 15M (v1.2) and 4M (Flash)
+  tokens a minute. Errors: 400, 401, 404 (a wrong path, a trailing slash included), 405, 413, 429 with
+  `Retry-After`, and 500, 502, 503, 504, each with an `error {message, type, code?, param?}` body.
+- `GET /v1/models` lists the Agent API's models and no decision model, so `NFKRemoteModelCatalog`
+  follows that list with the two published models, each entry's `alias` naming its `-latest`
+  alias. `GET /v1/models/{id}` answers 404 without a key while `/v1/models` answers 401, so no
+  single-model route exists: `modelWithIdentifier:error:` matches a decision model by either name
+  without a request and finds any other in the list.
+- No preset carries a default model, this one included, so a decision request names its model.
+- Decider for Mac runs the Flash model on the device and serves the same API at
+  `http://127.0.0.1:8080/v1/decisions`, which is this preset re-pointed with `providerWithBaseURL:`.
+
+Probed 2026-10-23 without a key: `POST /v1/decisions` answers 401 with `{"error": {"type":
+"invalid_api_key"}}`, while `/v1/decisionsx` and `/v1/decisions/` answer 404, so the 401 confirms the
+path. The answer shape is asserted live only by
+`-[NFKTypeSafeBackendTests testALivePerplexityEndpointAnswersATypedDecision]`, gated on
+`INFERKIT_PERPLEXITY_API_KEY`.
+
+*The Agent API* (`agent-post`, `agent-get`, `agent-cancel-post`, `agent-files-get`,
+`agent-file-content-get`). `POST /v1/agent` takes the Responses API's request with its own fields and
+answers the Responses API's reply, so `NFKRemoteResponsesBackend` serves it in
+`NFKRemoteResponsesDialectPerplexityAgent`:
+- Request: `input` (a string or items: `message` with `input_text`, `input_image {image_url}`,
+  `input_file {file_data | file_url, filename}`, up to 30 documents and 50 MiB inline; and the
+  function and MCP items), `model` as `provider/model`, or `models` (a fallback chain of 1 to 5), or
+  `effort` (`name`, `name@latest`, `name@<version>`, the presets that replaced Sonar), or `profile`.
+  Also `instructions`, `language_preference`, `max_output_tokens` (required for `anthropic/*`),
+  `max_steps` (1 to 100), `reasoning {effort: minimal|low|medium|high|xhigh|max}`, `response_format
+  {type: json_schema, json_schema: {name, schema, description?, strict?}}`, `tools`, `tool_choice`,
+  `skills`, `background`, `previous_response_id`, `store`, `stream`, `temperature`, `top_p`.
+- The dialect writes `NFKParameterJSONSchema` as that `response_format` (not `text.format`), the
+  reasoning effort without `summary`, and `NFKParameterSkills` as `skills` (see "Skills" below).
+  `effort`, `models`, `max_steps`, and `language_preference` fold in by name; a request with `effort` and no model is ready, since the endpoint alone
+  makes the backend ready.
+- Tools by wire shape: `web_search` (filters, `search_type: web|fast`, `max_results` 1 to 50,
+  `max_tokens`, `max_tokens_per_page`, `user_location`), `image_search`, `finance_search`,
+  `people_search`, `fetch_url` (`max_urls` 1 to 10), `function`, `sandbox`, `mcp` (OpenAI's fields
+  plus `authorization`, `headers`, `defer_loading`), and `connector`. `NFKParameterMCPServers` goes
+  out as OpenAI's `mcp` tools.
+- Reply: `output` items `message` (`output_text` with `url_citation` annotations), `function_call`,
+  `mcp_*`, and a result item per built-in tool: `search_results`, `image_search_results`,
+  `fetch_url_results`, `finance_results`, `people_search_results`, `sandbox_results {code, stdout,
+  stderr, exit_code}`, `tool_search_output`. Those come back under `NFKOutputServerToolResults`, with
+  `input` from `queries` / `code` / `urls` and `output` from `results` / `stdout`. `usage` adds
+  `input_tokens_details.cache_read_input_tokens` and a `cost` breakdown, which are not read.
+- Streaming is the Responses event set (`response.output_text.delta`, `response.completed`) plus
+  `response.reasoning.*` progress events that carry no delta.
+- A background job (`background: true`) is polled at `GET /v1/agent/{id}` and cancelled with
+  `POST /v1/agent/{id}/cancel` (200 `{response_id, status: cancelling}`, 400 once terminal), both
+  derived from the endpoint as on OpenAI. The `background` field's description names
+  `GET /v1/responses/{id}`, which also answers 401, but the retrieve reference names `/v1/agent/{id}`.
+- A sandbox's files: `GET /v1/agent/{id}/files` lists `{id, object: file, filename, bytes,
+  created_at}` and `GET /v1/agent/{id}/files/{file_id}/content` answers the bytes;
+  `outputFilesForResponseIdentifier:error:` and `contentsOfOutputFileWithIdentifier:responseIdentifier:error:`
+  call them, the list as `NFKRemoteFile`s.
+
+*Embeddings* (`embeddings-post`, `contextualized-embeddings-post`). `POST /v1/embeddings` takes `input`
+(a string, or 1 to 512 strings; 32K tokens each, 120,000 in all), `model` (`pplx-embed-v1-0.6b`, 1024
+dimensions, or `pplx-embed-v1-4b`, 2560), `dimensions` (Matryoshka, 128 up to the model's size), and
+`encoding_format` (`base64_int8`, the default, or `base64_binary`; there is no float). The reply is the
+OpenAI envelope with each `embedding` a base64 string. `POST /v1/contextualizedembeddings` takes
+`input` as documents of chunks (512 documents, 16,000 chunks, 32K tokens a document, 120,000 in all)
+for `pplx-embed-context-v1-0.6b` / `-4b` and answers `data` per document, each with `data` per chunk.
+Perplexity's best-practices page reads int8 as signed values compared by cosine (the vectors are not
+normalized) and binary as packed bits, least significant bit first, compared by Hamming distance.
+`NFKRemoteEmbeddingBackend` decodes a string vector by the request's `encoding_format` (OpenAI's
+`base64` as little-endian float32, `base64_binary` as 0/1 per dimension, otherwise int8), serves the
+contextualized route through `contextualizedEmbeddingsForDocuments:error:`, and sends a request to a
+`pplx-embed-context` model there as a document of one chunk.
+
+*Search* (`search-post`). `POST https://api.perplexity.ai/search`, at the host's root rather than under
+`/v1`, takes `query` (a string or a list) and `search_type` (`web`, `fast`, `people`), `max_results`
+(default 10; above 20 only for `people`), `max_tokens`, `max_tokens_per_page`, `country`,
+`search_language_filter`, `search_domain_filter` (20 each), `search_recency_filter`
+(`hour|day|week|month|year`), and the four date filters (`MM/DD/YYYY` in, `YYYY-MM-DD` out). It
+answers `{id, server_time, results: [{title, url, snippet, date?, last_updated?}]}` and 422 with a
+`detail` list for a bad field. The reference shows no multi-query reply; the quickstart reads one
+flat list. `NFKRemoteWebSearch` is a query object like `NFKRemoteReranker`, answering
+`NFKWebSearchResult`s and reading a nested list in order as well.
+
+Probed 2026-10-23 without a key: `POST /v1/agent`, `POST /search`, `POST /v1/embeddings`, and
+`POST /v1/contextualizedembeddings` answer 401 while `/v1/agentx`, `/searchx`, `/v1/embeddingsx`, and
+`/v1/contextualizedembeddingsx` answer 404, which confirms those four. Every path under
+`/v1/agent/{id}/` answers 401, a nonexistent one included, so the retrieve, cancel, and file routes are
+the references' and are not confirmed by a probe. The live shapes are asserted only by the tests gated on
+`INFERKIT_PERPLEXITY_API_KEY`: `testALivePerplexityAgentAnswers`,
+`testALivePerplexityEmbeddingIsItsDimensionsLong`, and `testALiveSearchAnswersRankedPages`.
+
+*Files and batches.* The Files API (`/v1/files`, OpenAI's shape) takes `purpose: batch` alone, and
+the Batch API (`/v1/batches`) takes Agent API requests at `/v1/responses` alone, one model a batch; both
+are in "Batches" below. *Left out.* `POST /generate_auth_token` mints a new
+long-lived API key (shown once, with no expiry or scope) and `revoke_auth_token` revokes one, which is
+key management, outside the read-only account scope; the Computer analytics are account
+administration. Sonar Chat Completions support ended 2026-09-27:
+`POST /chat/completions` and `/v1/sonar` still answer 401, synchronous and streamed requests are being
+reformulated as Agent API requests, and the migration guide maps Sonar and Sonar Pro to effort
+`fast`, Sonar Reasoning Pro to `low`, and Sonar Deep Research to `high`. The Router API (Perplexity's
+OpenAI-compatible orchestrator at `https://api.perplexity.ai/router/v1`: chat completions, responses,
+messages, and a model list) is a private preview. Its probe does not confirm a path: every path under
+`/router/v1`, a nonexistent one included, answers 401.
+
+**Skills (`NFKRemoteSkillStore`, 2026-10-23).** Anthropic and Perplexity keep Agent Skills bundles
+(the open format at agentskills.io): one top-level folder holding `SKILL.md`, whose YAML frontmatter
+carries `name` and `description` and whose body is the instructions, beside reference files and
+scripts the model runs in its sandbox. The model sees each skill's name and description and loads the
+rest when it applies. Both read the name and description from the file; the uploads differ:
+- Anthropic (the Python SDK v2.3.0's `types/skill*.py` and `resources/skills/`, and the skills
+  guide; GA, no beta header): `POST /v1/skills` multipart with `files[]` parts named by their path
+  under the folder (or one zip) and an optional `display_name`, answering `{type: skill, id,
+  display_name, latest_version_id, source: {type: custom|anthropic|anthropic_example|plugin},
+  created_at, updated_at}`. `GET /v1/skills?limit=&page=&source=` pages with `next_page`. `GET`
+  and `DELETE /v1/skills/{id}` (a delete takes every version). `POST /v1/skills/{id}/versions` adds a
+  whole snapshot (its `SKILL.md` name must match), `GET …/versions` lists `{type: skill_version, id
+  (skver_…), name, description, skill_id, created_at}`, and `GET` / `DELETE …/versions/{version}`.
+  Frontmatter `name` is at most 64 lowercase letters, digits, and hyphens, without "anthropic" or
+  "claude"; `description` at most 1,024 characters; an upload under 30 MB. No bundle download.
+- Perplexity (`skills-*` references and the skills guide): `POST /v1/skills` multipart with one zip
+  under `file` (201), answering `{skill_id, name, description, revision, latest_revision,
+  created_at, updated_at}`. `GET /v1/skills?limit=&page_token=` pages `skills` with
+  `next_page_token`; `GET /v1/skills/{id}?revision=`; `PUT /v1/skills/{id}?expected_revision=`
+  replaces the bundle and `DELETE /v1/skills/{id}?expected_revision=` (204) removes the skill, both
+  409 when the skill moved past that revision; `GET …/revisions` lists `{revision, name, created_at}`;
+  `GET …/download?revision=` answers a short-lived `download_url`. No single revision deletes. Limits:
+  32 MiB, 100 files, one top-level folder, 500 custom skills a Project (409 past it).
+
+`NFKRemoteSkillStore` speaks both (`NFKRemoteSkillStoreAPIStyleAnthropic` / `…Perplexity`, from
+`skillStoreForProvider:apiKey:`), as `NFKRemoteSkill` and `NFKRemoteSkillVersion`. A folder on disk goes
+to Anthropic file by file and to Perplexity zipped through `NSFileCoordinatorReadingForUploading`, which
+writes the folder at the archive's root. A Perplexity write without an expected revision reads the
+skill's latest first, which gives up the concurrency guard. A call a style does not serve (an Anthropic
+download, a Perplexity version delete) fails with `kNFKError_InferenceUnsupported`.
+
+A request names skills under `NFKParameterSkills`, a JSON list of `{id, version?, source?}`
+(`NFKRemoteSkill.skillReference` writes one); an entry with a `type` is the service's own shape and
+passes through, which is how a built-in skill is named. JSON, so a backend that folds unknown
+parameters can serialize it. `NFKAnthropicBackend` sends `container: {skills: [{type: anthropic |
+custom, skill_id, version: latest}]}` (at most 20 a request) and adds `{type: code_execution_20260521,
+name: code_execution}` when the request names no code-execution tool; the files a skill writes come
+back as `file_id`s in the code-execution result for `NFKRemoteFileStore`. Perplexity's Agent dialect
+sends `skills: [{type: custom, id, version?}]` (at most 16; built-in `office`, `office/docx`,
+`office/pdf`, `office/pptx`, `office/xlsx`, and `inline {name, description, instructions}` by wire
+shape), and a skill turns on the sandbox. Chat completions, OpenAI's Responses API, and the Gemini
+backends send nothing for the key. `NFKAnthropicBackend` passes a tool that carries a `type` (a server
+tool such as `{type: web_search_20260209, name: web_search}`, or the caller's own code-execution
+version) through as written, beside one that carries an `input_schema`.
+
+Probed 2026-10-23 without a key: `GET /v1/skills` answers 401 on both hosts and `/v1/skillsx` 404.
+Every path under a skill id answers 401 on Perplexity, a nonexistent one included, so those are the
+references'. The live listing is `-[NFKRemoteSkillStoreTests testALiveStoreListsItsSkills]`, gated on
+`INFERKIT_ANTHROPIC_API_KEY` or `INFERKIT_PERPLEXITY_API_KEY`.
+
+**Batches (`NFKRemoteBatch`, 2026-10-23).** Ten presets run many requests as one hosted job, most at a
+discount and within a day. The shapes come from each service's reference and its SDK's generated types
+(openai-python, groq-python, together-py, anthropic-sdk-python, python-genai, mistralai client-python,
+xai-proto, Perplexity's, OpenRouter's, and DashScope's references), read 2026-10-23:
+- OpenAI style (openai, groq, modelstudio, perplexity): a JSONL file of `{custom_id, method: POST,
+  url, body}` uploaded with `purpose: batch`, `POST /batches {input_file_id, endpoint,
+  completion_window: 24h}`, a batch of `{id, status (validating, in_progress, finalizing, completed,
+  failed, expired, cancelling, cancelled), request_counts {total, completed, failed}, output_file_id,
+  error_file_id}`, Unix-second times, and output lines `{custom_id, response: {status_code,
+  request_id, body}, error}` in no order, error lines `{response: null, error: {code, message}}`.
+  `GET /batches?after=&limit=`, `POST /batches/{id}/cancel`. OpenAI batches chat, Responses,
+  embeddings, completions, moderations, and images (its SDK still lists videos, which answer 404), 50,000 lines and 200 MB a file, at half
+  price. Groq batches chat (audio by its guide) over a 24h–7d window and pages by `cursor` /
+  `paging.next_cursor`. Model Studio batches chat and embeddings over 24h–336h, 500 MB a file.
+  Perplexity batches `/v1/responses` alone: one model on every line, no `models`, no streaming, no
+  function or connector tools, `max_output_tokens` for `anthropic/*`; 50,000 lines, 200 MB, 4 MB a
+  line, 30-day files, a 48-hour deadline, a 403 under zero data retention, and no discount beyond
+  OpenAI models' flex tier.
+- Together: `POST /v1/files/upload` with `purpose: batch-api` and `file_name`, lines `{custom_id,
+  body}`, `POST /v1/batches {endpoint, input_file_id}` answering `{job, warning}`, a job of `{id,
+  status (VALIDATING, IN_PROGRESS, COMPLETED, FAILED, EXPIRED, CANCELLED), progress, output_file_id,
+  error_file_id}` with RFC 3339 times and no request counts, and `GET /v1/batches` as a bare array.
+- Anthropic: `POST /v1/messages/batches {requests: [{custom_id, params}]}` (100,000 requests or
+  256 MB; `custom_id` of `[a-zA-Z0-9_-]{1,64}`), a batch of `{id, processing_status (in_progress,
+  canceling, ended), request_counts {processing, succeeded, errored, canceled, expired}, results_url,
+  created_at, ended_at, expires_at, cancel_initiated_at}`, results as JSONL from `results_url` with
+  the key, `{custom_id, result: {type: succeeded | errored | canceled | expired, message | error}}`,
+  in no order. `GET ?after_id=&limit=`, `POST …/cancel`, and `DELETE` once ended. No beta header;
+  half price; `stream`, `speed`, `fallbacks`, and `max_tokens: 0` are refused.
+- Gemini: `POST /v1beta/models/{model}:batchGenerateContent {batch: {displayName, inputConfig:
+  {requests: {requests: [{request, metadata: {key}}]}}}}` (inline under 20 MB; a JSONL file to 2 GB),
+  answering an operation `{name: batches/…, metadata: {state (BATCH_STATE_PENDING, RUNNING, SUCCEEDED,
+  FAILED, CANCELLED, EXPIRED), batchStats {requestCount, successfulRequestCount, failedRequestCount}
+  as int64 strings}, response}`. The guide reads the inlined responses under `response`, the SDK under
+  `metadata.output`, so both are read; `{metadata, response | error}` comes in input order, so an entry
+  without its key is named by position. A `responsesFile` downloads from
+  `/download/v1beta/{file}:download?alt=media`. `GET /v1beta/batches?pageSize=&pageToken=`, `POST
+  …:cancel`, `DELETE`. Half price; 48-hour expiry.
+- Mistral: `POST /v1/batch/jobs {endpoint, model, requests: [{custom_id, body}] (to 10,000) |
+  input_files}`, a job of `{id, status (QUEUED, RUNNING, SUCCESS, FAILED, TIMEOUT_EXCEEDED,
+  CANCELLATION_REQUESTED, CANCELLED), total_requests, succeeded_requests, failed_requests,
+  output_file, error_file}`, output lines in OpenAI's shape. `GET ?page=&page_size=` with `total`,
+  `POST …/cancel`, `DELETE`. Half price; ten endpoints, of which chat and embeddings are reachable here.
+- OpenRouter: `POST /api/v1/batches {endpoint, model, requests: [{custom_id, body}]}` (202; every
+  other field must precede `requests`, so the body is written with sorted keys), results inline in the
+  finished batch in OpenAI's line shape, no cancel, `DELETE` once finished.
+- xAI: `POST /v1/batches {name}`, `POST /v1/batches/{id}/requests {batch_requests: [{batch_request_id,
+  batch_request: {chat_get_completion | responses: body}}]}` (25 MB a call), a batch of `{batch_id,
+  state {num_requests, num_pending, num_success, num_error, num_cancelled}, cancel_time}` with no status
+  (pending > 0 runs), `GET /v1/batches/{id}/results?limit=&pagination_token=` of `{batch_request_id,
+  batch_result: {response: {…: body}} | {error}}`, and `POST /v1/batches/{id}:cancel`. 20% off listed
+  Grok models.
+- No batch API: DeepSeek (off-peak pricing instead), and the local runners.
+
+The third round (2026-10-24):
+- OpenAI images: `/v1/images/generations` lines carry the generation's JSON body, and `/v1/images/edits`
+  lines the JSON edit body the OpenAPI spec (`openai/openai-openapi`, `EditImageBodyJsonParam`)
+  documents for GPT image models: `images` (1 to 16 `ImageRefParam`s, each `{image_url}` — a URL or a
+  data URL up to 20 MB — or `{file_id}`, never both), `mask` in the same shape, and the generation
+  fields. A run still posts an edit as multipart. The batch guide names `gpt-image-2.5-flare` and
+  `-sunburst` (and their `2026-09-08` snapshots) for batched generation and editing; `gpt-image-1`
+  shut down 2026-10-23. `/v1/videos`, which the SDK's endpoint enum still lists, answers 404 to an
+  unauthenticated POST like a nonexistent path, and the guide omits it: no video batch.
+- Mistral conversations: a `/v1/conversations` line carries the start body
+  `NFKMistralConversationsBackend` sends (see "Mistral's Conversations API" below); a request that
+  continues or restarts a conversation names `/v1/conversations/{id}`, which no batch route takes, and
+  is refused.
+
+The second round (2026-10-24):
+- Gemini file input: past 19 MB of inline JSON the lines `{key, request}` go as a file through the
+  resumable upload under the MIME type `jsonl` (the guide's), and `inputConfig: {fileName}`. The
+  responses come as `responsesFile`, downloaded from `/download/v1beta/{file}:download?alt=media`, of
+  `{key, response | error}` lines; the SDK reads `metadata.output`, the guide `response`, and both are
+  read, `metadata.output` first.
+- Gemini embeddings: `POST /v1beta/models/{model}:asyncBatchEmbedContent` with the same envelope; each
+  request is the `embedContent` body the native embedding style sends (`content`, `outputDimensionality`,
+  `taskType`; no `model`, as the SDK sends it), each response `{embedding: {values}}` (a file line adds
+  `tokenCount`).
+- xAI media: `image_generation` and `image_edit` carry the JSON `/images/generations` and `/images/edits`
+  bodies, and answer `{data: [{url | b64_json}]}`; `video_generation` carries a generation or, with
+  `video`, an edit, and `video_extension` an extension; a video answers the finished `{video: {url,
+  duration}}`, which the video backend downloads as a run does. Media URLs expire after an hour. Which
+  key an edit's or an extension's result comes back under is unconfirmed; the first value under
+  `response` is read.
+- Groq audio: a line names `/v1/audio/transcriptions` or `/translations` and carries the clip as `url`
+  (no file part in a batch), while the batch names `/v1/chat/completions`, the only value Groq's
+  endpoint takes. Transcription: `whisper-large-v3` and `-turbo`; translation: `whisper-large-v3`.
+- Mistral: FIM (`/v1/fim/completions`), OCR, `/v1/moderations` and `/v1/chat/moderations`,
+  `/v1/classifications` and `/v1/chat/classifications`, and `/v1/audio/transcriptions` with `file_url`,
+  each line the endpoint's JSON body. `/v1/conversations` has no backend here.
+- A transcription goes as a JSON body built from the multipart fields a run sends (a repeated name or
+  one with `[]` becomes a list, `true` / `false` booleans, a temperature a number), with the clip's URL
+  under the style's URL field; a clip without a URL is refused.
+
+`NFKRemoteBatch` takes the requests as custom identifier → `NFKInferenceRequest` and the backend that
+would run one: the chat, Messages, Responses, generateContent, embedding, completion, OCR, moderation,
+classifier, transcription, image, and video backends. The private seam `NFKRemoteBatchableBackend`
+(`NFKRemoteBatchPrivate.h`) answers each backend's unstreamed request, whose URL names the line's route
+(the path's ending: Groq's `/openai/v1` and Perplexity's `/agent` map to the routes a batch names;
+Gemini's `:generateContent` and `:embedContent`) and whose JSON body is the line's body; a batch whose
+requests name two routes is refused. The seam reads a reply into the result a run would answer, so a schema,
+tools, and the finish reason read as in a run; `resultsOfBatchWithIdentifier:requests:backend:error:`
+takes the submitted requests for that. The lines go in identifier order. A Messages request's
+`anthropic-beta` headers ride on the batch. An Anthropic request takes its own `max_tokens` or the
+fallback, since a batch never asks the Models API. Embeddings batch text through the OpenAI style alone.
+`NFKRemoteBatchRecord` maps every status onto `NFKRemoteBatchStatus`, and `NFKRemoteBatchResult` carries a
+failed line's status mapped as `NFKRemoteTransport` maps a response (a 400 is
+`kNFKError_InferenceRefused`). `NFKRemoteFileStore` gained perplexity and modelstudio, purpose `batch`.
+
+Probed 2026-10-23 without a key, each beside a nonexistent sibling: OpenAI, Groq, Together,
+Perplexity, xAI, and OpenRouter `/batches` and Anthropic `/v1/messages/batches` answer 401 beside a
+404, and Gemini's routes 403 beside a 404. Every path under Together's and Perplexity's `/batches/`
+and under Mistral's `/v1/batch` answers 401, a nonexistent one included, so those are the
+references'. DashScope's paths are confirmed only by OPTIONS (200 beside a 404). Unconfirmed: Groq's audio batch
+endpoint values, Together's and Mistral's error-line shapes, the exact place of Gemini's inlined
+responses (both are read), and xAI's single-result route. The live listing is
+`-[NFKRemoteBatchTests testALiveListingAnswers]`, gated on `INFERKIT_OPENAI_API_KEY`,
+`INFERKIT_ANTHROPIC_API_KEY`, or `INFERKIT_PERPLEXITY_API_KEY`.
+
+**Mistral's Conversations API (`NFKMistralConversationsBackend`, 2026-10-24).** The shapes come from the
+mistralai client-python SDK (`docs/models/conversation*.md`, `*entry.md`, `*event.md`, the tool models,
+`docs/sdks/conversations/README.md`), which is generated from Mistral's OpenAPI spec.
+- `POST /v1/conversations {inputs, model | agent_id (+ agent_version), instructions, tools,
+  completion_args, guardrails, store, handoff_execution, name, description, metadata, stream}`;
+  `inputs` is a string or a list of entries.
+- Entries carry `{object: entry, type, id, created_at, completed_at}` and: `message.input {role:
+  user | assistant, content, prefix}`, `message.output {role: assistant, content, model, agent_id}`,
+  `function.call {tool_call_id, name, arguments (a string or an object), confirmation_status}`,
+  `function.result {tool_call_id, result}`, `tool.execution {name, arguments, info}`, `agent.handoff
+  {previous_agent_id/name, next_agent_id/name}`. Every kind is also an input, so a turn's outputs
+  replay verbatim.
+- Content is a string or chunks: `text`, `image_url`, `document_url`, `thinking {thinking: [text
+  chunks]}`, `tool_reference {tool, title, url, favicon, description}`, `tool_file {tool, file_id,
+  file_name, file_type}`.
+- Tools: `function {function}`, `web_search`, `web_search_premium`, `code_interpreter`,
+  `image_generation`, `document_library {library_ids}`, `connector {connector_id, authorization}`,
+  each with an optional `tool_configuration`.
+- `completion_args`: `stop, presence_penalty, frequency_penalty, temperature, top_p, max_tokens,
+  random_seed, prediction, response_format, tool_choice, reasoning_effort`.
+- The reply `{object: conversation.response, conversation_id, outputs, usage {prompt_tokens,
+  completion_tokens, total_tokens, connector_tokens, connectors}, guardrails}`.
+- `POST /v1/conversations/{id}` appends `{inputs, store, handoff_execution, completion_args,
+  tool_confirmations}`, so the model, instructions, and tools stay as they began;
+  `POST …/{id}/restart` adds `from_entry_id`, `guardrails`, `metadata`, `agent_version`;
+  `GET /v1/conversations`, `GET` and `DELETE …/{id}`, `GET …/{id}/history` (`entries`), and
+  `GET …/{id}/messages`.
+- The stream (`stream: true`, server-sent events): `conversation.response.started {conversation_id}`,
+  `message.output.delta {content}`, `function.call.delta {tool_call_id, name, arguments}` in pieces,
+  `tool.execution.started / delta / done {name, info}`, `agent.handoff.started / done`,
+  `conversation.response.done {usage}`, and `conversation.response.error {message, code}`.
+
+The backend maps the contract onto it: a lone prompt goes as a string, and messages as entries (the
+system turn → `instructions`, a tool answer → `function.result`, a turn this endpoint wrote → its own
+entries under `NFKProviderTurnFormatMistralConversations`, another assistant turn's calls →
+`function.call`), images as `image_url` chunks on the last user turn. The sampling keys, the limit, the
+stop sequences, the seed (`random_seed`), the effort (light, moderate, deep → low, medium, high), and a
+schema (`response_format: json_schema`) go under `completion_args`. `NFKParameterPreviousResponseIdentifier`
+continues a conversation, a `from_entry_id` parameter restarts it. The reply's `tool_reference` chunks
+are citations, `tool.execution` and `agent.handoff` entries and `tool_file` chunks server tool
+results, and an image-generation file downloads from `GET /v1/files/{id}/content` into
+`NFKOutputImage` (`downloadsImages`). A function call sets the finish reason to `tool_calls`. Saved
+agents run by `agentIdentifier`; creating them (`/v1/agents`) is agent management, outside the scope.
+
+`POST /v1/conversations` answers 401 without a key and `/v1/conversationsx` 404 (probed 2026-10-24).
+The answer shape is asserted live only by
+`-[NFKMistralConversationsBackendTests testALiveConversationAnswers]`, gated on `INFERKIT_MISTRAL_API_KEY`.
 
 **Gemini's voice library (`NFKGeminiVoiceLibrary`).** The Voices API shipped on 2026-09-22 beside the
 Gemini 3.8 Flash TTS models. The field names come from the google-genai Python SDK's generated types

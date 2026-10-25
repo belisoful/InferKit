@@ -36,6 +36,7 @@ static NSDictionary<NSString *, NSNumber *> *NFKModelAPIStyles(NSDictionary<NSNu
 @property (nonatomic, copy, readwrite) NSURL *baseURL;
 @property (nonatomic, assign, readwrite) NFKRemoteAPIStyle apiStyle;
 @property (nonatomic, copy, readwrite) NSDictionary<NSString *, NSNumber *> *modelAPIStyles;
+@property (nonatomic, copy, readwrite) NSDictionary<NSString *, NSNumber *> *modelPrefixAPIStyles;
 @property (nonatomic, assign, readwrite) BOOL requiresAPIKey;
 @property (nonatomic, copy, readwrite) NSDictionary<NSString *, NSString *> *advertisedProperties;
 @property (nonatomic, copy, readwrite, nullable) NSString *pinnedCertificateSHA256;
@@ -70,6 +71,7 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 	if (self != nil) {
 		_advertisedProperties = @{};
 		_modelAPIStyles = @{};
+		_modelPrefixAPIStyles = @{};
 	}
 	return self;
 }
@@ -87,6 +89,7 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 	provider.baseURL = baseURL;
 	provider.apiStyle = self.apiStyle;
 	provider.modelAPIStyles = self.modelAPIStyles;
+	provider.modelPrefixAPIStyles = self.modelPrefixAPIStyles;
 	provider.requiresAPIKey = self.requiresAPIKey;
 	return provider;
 }
@@ -112,6 +115,13 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 - (NFKRemoteAPIStyle)apiStyleForModelName:(nullable NSString *)modelName
 {
 	NSNumber *style = modelName != nil ? self.modelAPIStyles[modelName] : nil;
+	NSString *longest = nil;
+	for (NSString *prefix in self.modelPrefixAPIStyles) {
+		if (style == nil && [modelName hasPrefix:prefix] && prefix.length > longest.length) {
+			longest = prefix;
+		}
+	}
+	style = style ?: (longest != nil ? self.modelPrefixAPIStyles[longest] : nil);
 	return style != nil ? (NFKRemoteAPIStyle)style.integerValue : self.apiStyle;
 }
 
@@ -130,6 +140,7 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 		   [self.baseURL isEqual:other.baseURL] &&
 		   self.apiStyle == other.apiStyle &&
 		   [self.modelAPIStyles isEqualToDictionary:other.modelAPIStyles] &&
+		   [self.modelPrefixAPIStyles isEqualToDictionary:other.modelPrefixAPIStyles] &&
 		   self.requiresAPIKey == other.requiresAPIKey &&
 		   (self.comparablePin == other.comparablePin || [self.comparablePin isEqualToString:other.comparablePin]);
 }
@@ -170,6 +181,8 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 	switch (apiStyle) {
 		case NFKRemoteAPIStyleAnthropicMessages: return [self URLForPath:@"messages"];
 		case NFKRemoteAPIStyleSystemOne: return [self URLForPath:@"systemone"];
+		case NFKRemoteAPIStylePerplexityDecisions: return [self URLForPath:@"decisions"];
+		case NFKRemoteAPIStylePerplexityAgent: return [self URLForPath:@"agent"];
 		case NFKRemoteAPIStyleInferKit: return [self URLForPath:@"inferkit/run"];
 		case NFKRemoteAPIStyleOpenAIResponses: return [self URLForPath:@"responses"];
 		case NFKRemoteAPIStyleGeminiGenerateContent:
@@ -255,6 +268,18 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 	return [self providerWithIdentifier:@"typesafe" displayName:@"TypeSafe AI"
 								   base:@"https://api.typesafe.ai/v1"
 								  style:NFKRemoteAPIStyleSystemOne requiresKey:YES];
+}
+
+// Perplexity's Agent API reference and Decisions API reference, read 2026-10-23. The Decisions API
+// takes the perplexity/-prefixed names too.
++ (NFKRemoteProvider *)perplexity
+{
+	NFKRemoteProvider *provider = [self providerWithIdentifier:@"perplexity" displayName:@"Perplexity"
+														  base:@"https://api.perplexity.ai/v1"
+														 style:NFKRemoteAPIStylePerplexityAgent requiresKey:YES];
+	provider.modelPrefixAPIStyles = @{ @"pplx-decider": @(NFKRemoteAPIStylePerplexityDecisions),
+									   @"perplexity/pplx-decider": @(NFKRemoteAPIStylePerplexityDecisions) };
+	return provider;
 }
 
 + (NFKRemoteProvider *)modelStudio
@@ -355,8 +380,8 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 + (NSArray<NFKRemoteProvider *> *)allProviders
 {
 	return @[ self.openAI, self.anthropic, self.xAI, self.googleGemini, self.groq, self.mistral,
-			  self.deepSeek, self.together, self.openRouter, self.typeSafe, self.openCodeZen, self.openCodeGo,
-			  self.modelStudio, self.ollama, self.lmStudio, self.llamaCpp, self.vLLM, self.inferKit ];
+			  self.deepSeek, self.together, self.openRouter, self.typeSafe, self.perplexity, self.openCodeZen,
+			  self.openCodeGo, self.modelStudio, self.ollama, self.lmStudio, self.llamaCpp, self.vLLM, self.inferKit ];
 }
 
 + (nullable NFKRemoteProvider *)providerWithIdentifier:(NSString *)identifier
@@ -568,16 +593,19 @@ static NFKPinnedServers *NFKRemoteDiscoveryPinnedServers = nil;
 		backend.modelName = modelName;
 		return backend;
 	}
-	if (apiStyle == NFKRemoteAPIStyleSystemOne) {
+	if (apiStyle == NFKRemoteAPIStyleSystemOne || apiStyle == NFKRemoteAPIStylePerplexityDecisions) {
 		NFKTypeSafeBackend *backend = [NFKTypeSafeBackend backendWithEndpointURL:endpointURL];
 		backend.apiKey = apiKey;
 		backend.modelName = modelName;
 		return backend;
 	}
-	if (apiStyle == NFKRemoteAPIStyleOpenAIResponses) {
+	if (apiStyle == NFKRemoteAPIStyleOpenAIResponses || apiStyle == NFKRemoteAPIStylePerplexityAgent) {
 		NFKRemoteResponsesBackend *backend = [NFKRemoteResponsesBackend backendWithEndpointURL:endpointURL];
 		backend.apiKey = apiKey;
 		backend.modelName = modelName;
+		if (apiStyle == NFKRemoteAPIStylePerplexityAgent) {
+			backend.dialect = NFKRemoteResponsesDialectPerplexityAgent;
+		}
 		return backend;
 	}
 	if (apiStyle == NFKRemoteAPIStyleGeminiGenerateContent) {

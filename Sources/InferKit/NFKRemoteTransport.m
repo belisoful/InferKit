@@ -307,6 +307,49 @@ static NSError *NFKRemoteUnreachableError(NSURL * _Nullable url, NSError * _Null
 	return [NSError errorWithDomain:NFKInferenceErrorDomain code:kNFKError_RemoteUnreachable userInfo:userInfo];
 }
 
+#pragma mark - Prompt cache
+
+NSArray<NSString *> *NFKRemotePromptCacheParameterKeys(void)
+{
+	return @[ NFKParameterConversationKey, NFKParameterPromptCacheRetention, NFKParameterPromptCacheTTL,
+			  NFKParameterPromptCacheMode, NFKParameterPromptCachePrewarm ];
+}
+
+static id _Nullable NFKRemoteValueOfClass(NSDictionary *dictionary, NSString *key, Class class)
+{
+	id value = [dictionary isKindOfClass:NSDictionary.class] ? dictionary[key] : nil;
+	return [value isKindOfClass:class] ? value : nil;
+}
+
+NSDictionary<NSString *, id> *NFKRemotePromptCacheFields(NSDictionary<NSString *, id> *parameters, BOOL responsesRoute)
+{
+	NSMutableDictionary<NSString *, id> *fields = [NSMutableDictionary dictionary];
+	fields[@"prompt_cache_key"] = NFKRemoteValueOfClass(parameters, NFKParameterConversationKey, NSString.class);
+	fields[@"prompt_cache_retention"] = NFKRemoteValueOfClass(parameters, NFKParameterPromptCacheRetention, NSString.class);
+	NSMutableDictionary<NSString *, id> *options = [NSMutableDictionary dictionary];
+	options[@"mode"] = NFKRemoteValueOfClass(parameters, NFKParameterPromptCacheMode, NSString.class);
+	options[@"ttl"] = NFKRemoteValueOfClass(parameters, NFKParameterPromptCacheTTL, NSString.class);
+	if (responsesRoute) {
+		options[@"prewarm"] = NFKRemoteValueOfClass(parameters, NFKParameterPromptCachePrewarm, NSNumber.class);
+	}
+	if (options.count > 0) {
+		fields[@"prompt_cache_options"] = options;
+	}
+	return fields;
+}
+
+NSDictionary<NSString *, id> *NFKRemotePromptCacheParameters(NSDictionary *body)
+{
+	NSMutableDictionary<NSString *, id> *parameters = [NSMutableDictionary dictionary];
+	parameters[NFKParameterConversationKey] = NFKRemoteValueOfClass(body, @"prompt_cache_key", NSString.class);
+	parameters[NFKParameterPromptCacheRetention] = NFKRemoteValueOfClass(body, @"prompt_cache_retention", NSString.class);
+	NSDictionary *options = NFKRemoteValueOfClass(body, @"prompt_cache_options", NSDictionary.class);
+	parameters[NFKParameterPromptCacheMode] = NFKRemoteValueOfClass(options, @"mode", NSString.class);
+	parameters[NFKParameterPromptCacheTTL] = NFKRemoteValueOfClass(options, @"ttl", NSString.class);
+	parameters[NFKParameterPromptCachePrewarm] = NFKRemoteValueOfClass(options, @"prewarm", NSNumber.class);
+	return parameters;
+}
+
 #pragma mark - Transport
 
 NSString *NFKFinishReasonForProviderValue(id value)

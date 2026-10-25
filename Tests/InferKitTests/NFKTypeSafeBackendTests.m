@@ -293,6 +293,40 @@
 	XCTAssertEqualObjects(behindGateway.endpointURL.absoluteString, @"http://gateway.test/typesafe/v1/systemone");
 }
 
+// Perplexity's Decisions API takes System One's request at /v1/decisions, and Decider for Mac serves
+// the same API on the device, which is the preset re-pointed.
+- (void)testThePerplexityPresetHandsBackThisBackendAtItsDecisionsEndpoint
+{
+	NFKTypeSafeBackend *decider = (NFKTypeSafeBackend *)[NFKRemoteProvider backendForProvider:NFKRemoteProvider.perplexity
+																					   apiKey:@"pplx-key" modelName:@"pplx-decider-latest"];
+	XCTAssertTrue([decider isKindOfClass:NFKTypeSafeBackend.class]);
+	XCTAssertEqualObjects(decider.endpointURL.absoluteString, @"https://api.perplexity.ai/v1/decisions");
+	XCTAssertEqualObjects(decider.modelName, @"pplx-decider-latest");
+	XCTAssertTrue(decider.isReady);
+
+	NFKRemoteProvider *onDevice = [NFKRemoteProvider.perplexity providerWithBaseURL:[NSURL URLWithString:@"http://127.0.0.1:8080/v1"]];
+	NFKTypeSafeBackend *local = (NFKTypeSafeBackend *)[NFKRemoteProvider backendForProvider:onDevice apiKey:nil modelName:@"pplx-decider-flash-latest"];
+	XCTAssertEqualObjects(local.endpointURL.absoluteString, @"http://127.0.0.1:8080/v1/decisions");
+}
+
+// Perplexity reads an image as an OpenAI-style image_url part holding a data URL, anywhere in the
+// state, so a state that carries one goes out as written beside a Bearer key.
+- (void)testAPerplexityStateCarryingAnImagePartGoesOutAsWritten
+{
+	self.backend.endpointURL = [NFKRemoteProvider.perplexity endpointURLForModelName:@"pplx-decider-flash-v1.2"];
+	self.backend.modelName = @"pplx-decider-flash-v1.2";
+	NSArray *state = @[ @"Is this receipt legible?",
+						@{ @"type": @"image_url", @"image_url": @{ @"url": @"data:image/png;base64,iVBORw0KGgo=" } } ];
+	NSError *error = nil;
+	XCTAssertNotNil([self.backend answersForState:state questions:[self threeQuestions] error:&error], @"%@", error);
+	XCTAssertEqualObjects(self.backend.lastRequest.URL.absoluteString, @"https://api.perplexity.ai/v1/decisions");
+	XCTAssertEqualObjects([self.backend.lastRequest valueForHTTPHeaderField:@"Authorization"], @"Bearer ts-key");
+	NSDictionary *body = [self decodedRequestBody];
+	XCTAssertEqualObjects(body[@"model"], @"pplx-decider-flash-v1.2");
+	XCTAssertEqualObjects(body[@"state"], state);
+	XCTAssertEqual([body[@"questions"] count], 3u);
+}
+
 #pragma mark Live
 
 // Runs against the hosted endpoint when a key is present. The endpoint answers 403 to a request
@@ -308,6 +342,24 @@
 	NSError *error = nil;
 	NSDictionary<NSString *, NFKDecisionAnswer *> *answers = [jev answersForState:@"Help! My payouts have been failing for 3 days."
 																		questions:[self threeQuestions] error:&error];
+	XCTAssertNotNil(answers, @"%@", error);
+	XCTAssertEqualObjects(answers[@"department"].choice, @"technical");
+	XCTAssertGreaterThan(answers[@"urgent"].probability, 0.5);
+}
+
+// Runs against Perplexity's Decisions API when a key is present. The endpoint answers 401 to a
+// request without a key, and 404 to a path beside it, so the path is verified to exist.
+- (void)testALivePerplexityEndpointAnswersATypedDecision
+{
+	NSString *key = NSProcessInfo.processInfo.environment[@"INFERKIT_PERPLEXITY_API_KEY"];
+	if (key.length == 0) {
+		XCTSkip("set INFERKIT_PERPLEXITY_API_KEY to exercise the live path");
+	}
+	NFKTypeSafeBackend *decider = (NFKTypeSafeBackend *)[NFKRemoteProvider backendForProvider:NFKRemoteProvider.perplexity
+																					   apiKey:key modelName:@"pplx-decider-flash-latest"];
+	NSError *error = nil;
+	NSDictionary<NSString *, NFKDecisionAnswer *> *answers = [decider answersForState:@"Help! My payouts have been failing for 3 days."
+																			questions:[self threeQuestions] error:&error];
 	XCTAssertNotNil(answers, @"%@", error);
 	XCTAssertEqualObjects(answers[@"department"].choice, @"technical");
 	XCTAssertGreaterThan(answers[@"urgent"].probability, 0.5);

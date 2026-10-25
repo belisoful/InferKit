@@ -234,6 +234,46 @@
 	XCTAssertNil(body[NFKParameterConversationKey]);
 }
 
+// Retention goes to the models before GPT-5.6, the options object to GPT-5.6 and later. Chat
+// completions has no prewarm, so that key alone sends nothing here.
+- (void)testThePromptCacheControlsGoOutInOpenAIsFieldsOnlyWhenSet
+{
+	self.backend.stagedData = [@"{\"choices\":[]}" dataUsingEncoding:NSUTF8StringEncoding];
+	NFKInferenceRequest *request =
+		[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello" }
+									parameters:@{ NFKParameterPromptCacheRetention: @"24h", NFKParameterPromptCacheTTL: @"30m",
+												  NFKParameterPromptCacheMode: @"explicit", NFKParameterPromptCachePrewarm: @YES }];
+	[self.backend runInferenceForRequest:request error:NULL];
+	NSDictionary *body = [self.backend decodedRequestBody];
+	XCTAssertEqualObjects(body[@"prompt_cache_retention"], @"24h");
+	XCTAssertEqualObjects(body[@"prompt_cache_options"], (@{ @"mode": @"explicit", @"ttl": @"30m" }));
+	for (NSString *key in @[ NFKParameterPromptCacheRetention, NFKParameterPromptCacheTTL, NFKParameterPromptCacheMode,
+							 NFKParameterPromptCachePrewarm ]) {
+		XCTAssertNil(body[key], @"%@ folded in under its own name", key);
+	}
+
+	[self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello" } parameters:@{}] error:NULL];
+	body = [self.backend decodedRequestBody];
+	XCTAssertNil(body[@"prompt_cache_key"]);
+	XCTAssertNil(body[@"prompt_cache_retention"]);
+	XCTAssertNil(body[@"prompt_cache_options"]);
+	XCTAssertTrue([self.backend.supportedParameterKeys containsObject:NFKParameterPromptCacheTTL]);
+	XCTAssertFalse([self.backend.supportedParameterKeys containsObject:NFKParameterPromptCachePrewarm]);
+}
+
+// An explicit breakpoint rides on a content part the caller writes, which passes through.
+- (void)testACacheBreakpointOnACallersContentPartPassesThrough
+{
+	self.backend.stagedData = [@"{\"choices\":[]}" dataUsingEncoding:NSUTF8StringEncoding];
+	NSDictionary *part = @{ @"type": @"text", @"text": @"A long shared preamble.",
+							@"prompt_cache_breakpoint": @{ @"mode": @"explicit", @"ttl": @"12h" } };
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputMessages: @[ @{ @"role": @"user", @"content": @[ part ] } ] }
+															   parameters:@{ NFKParameterPromptCacheMode: @"explicit" }];
+	[self.backend runInferenceForRequest:request error:NULL];
+	NSDictionary *body = [self.backend decodedRequestBody];
+	XCTAssertEqualObjects([body[@"messages"] firstObject][@"content"], @[ part ]);
+}
+
 // A caller who writes the endpoint's own name keeps what they wrote: the translation runs first and
 // the fold runs after it.
 - (void)testAnExplicitWireNameOutranksTheTranslatedCoreKey

@@ -108,6 +108,15 @@ extern NSString * const NFKParameterTools;
 	comes back under NFKOutputServerToolResults. A backend without a connector ignores the key.
 	Introduced in InferKit 0.4.0. */
 extern NSString * const NFKParameterMCPServers;
+/*! The skills a hosted agent may load while answering (NSArray of NSDictionary), each {id, version?,
+	source?}: a skill's identifier from NFKRemoteSkillStore (NFKRemoteSkill.skillReference writes the
+	entry), the version to pin (the newest when absent), and anthropic for one of Anthropic's own (custom
+	when absent). An entry that carries a type is already in its service's shape and passes through,
+	which is how a built-in skill is named ({type: anthropic, skill_id: xlsx} on Anthropic,
+	{type: builtin, name: office/pdf} on Perplexity). NFKAnthropicBackend sends them as container.skills
+	with a code-execution tool when the request names none, and NFKRemoteResponsesBackend in its
+	Perplexity dialect as skills. A backend without skills ignores the key. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterSkills;
 /*! A JSON Schema (NSDictionary) the text reply must conform to. The backend asks the provider for it
 	in the provider's way and returns the parsed reply under NFKOutputStructured. Introduced in
 	InferKit 0.3.0. */
@@ -175,9 +184,26 @@ extern NSString * const NFKParameterCitations;
 extern NSString * const NFKParameterPreviousResponseIdentifier;
 /*! A caller-chosen name for the conversation the request belongs to (NSString). NFKBalancedBackend
 	sends a conversation's requests to one server, where a backend that keeps its prompt between
-	requests reuses it. OpenAI-compatible services read it as prompt_cache_key, and NFKInferenceServer's
-	chat route reads prompt_cache_key into it. Introduced in InferKit 0.4.0. */
+	requests reuses it. OpenAI-compatible services and the Responses API read it as prompt_cache_key,
+	and NFKInferenceServer's chat and Responses routes read prompt_cache_key into it. Introduced in
+	InferKit 0.4.0. */
 extern NSString * const NFKParameterConversationKey;
+/*! The longest a service keeps the request's cached prompt prefix (NSString): OpenAI's
+	prompt_cache_retention, in_memory or 24h, on both its chat and Responses routes for the models
+	before GPT-5.6. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterPromptCacheRetention;
+/*! The least time each cache breakpoint the request writes lives (NSString): OpenAI's
+	prompt_cache_options.ttl, 30m (the default) or 12h, the latter on the Responses route only, for
+	GPT-5.6 and later. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterPromptCacheTTL;
+/*! Whether the service places a cache breakpoint itself (NSString): OpenAI's prompt_cache_options.mode,
+	implicit (the default) or explicit, which writes only the breakpoints the request's content parts
+	carry as prompt_cache_breakpoint. GPT-5.6 and later. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterPromptCacheMode;
+/*! Whether the request only writes its prompt prefix into the cache and generates nothing (NSNumber,
+	BOOL): OpenAI's prompt_cache_options.prewarm, on the Responses route only, for GPT-5.6 and later.
+	Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterPromptCachePrewarm;
 
 /*! Edits the source clip according to the prompt. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKVideoOperationEdit;

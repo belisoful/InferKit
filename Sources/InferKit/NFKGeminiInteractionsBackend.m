@@ -32,7 +32,7 @@ static NSSet<NSString *> *NFKInteractionsMappedParameters(void)
 										NFKParameterPreviousResponseIdentifier, NFKParameterAspectRatio,
 										NFKParameterResolution, NFKParameterOutputFormat, NFKParameterSpeakerDiarization,
 										NFKParameterWordTimestamps, NFKParameterVocabulary, NFKParameterSourceLanguage,
-										NFKParameterVideoFrameCount, NFKParameterMCPServers, @"voice", @"speakers",
+										NFKParameterVideoFrameCount, NFKParameterMCPServers, NFKParameterSkills, @"voice", @"speakers",
 										@"processing" ]];
 	});
 	return mapped;

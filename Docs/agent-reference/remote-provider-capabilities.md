@@ -7,9 +7,9 @@ file, not to AGENTS.md / CLAUDE.md. Keep the Documentation Style rules. -->
 Every inference mode each preset serves, as input → output, set against the backend that reaches it.
 Surveyed 2026-09-22 from each provider's official documentation (five research passes; field-level
 detail per mode lives in the provider's reference, linked at the end of each section). Account
-management, batch, fine-tuning, and agent-management APIs are out of scope; a hosted agent run as a
+management, fine-tuning, and agent-management APIs are out of scope; a hosted agent run as a
 request with a result (Gemini's Deep Research and Antigravity) is in scope. Files, retrieval stores,
-and usage reports ship (phase 5). The request shapes
+and usage reports ship (phase 5), and batches (2026-10-23). The request shapes
 the backends already speak are in `remote-providers.md`; this file is the coverage map and the build
 order for what is missing.
 
@@ -24,6 +24,7 @@ misshapes part of it), **gap** (nothing reaches it).
 |---|---|---|
 | text + image + audio + PDF → text / audio | `/chat/completions` | covered (`NFKRemoteBackend`) |
 | text + image + file → text, built-in tools, reasoning summaries, background jobs | `/responses` | covered (`NFKRemoteResponsesBackend`) |
+| prompt-cache controls: key, retention, options (mode, TTL, prewarm), per-part breakpoints | `/chat/completions`, `/responses` | covered (2026-10-23); prewarm and the 12-hour TTL are Responses-only; the cache-write usage counts are not read |
 | text + image → image inside Responses | `image_generation` tool | covered |
 | text → image, image(s) + mask → image | `/images/generations`, `/images/edits` | covered (multi-image `image[]`, streamed partial images) |
 | text → speech | `/audio/speech` | covered (`stream_format: sse`); a custom voice object goes by name |
@@ -35,6 +36,7 @@ misshapes part of it), **gap** (nothing reaches it).
 | text + image → video | `/videos` | covered; shuts down 2026-09-24 |
 | speech ↔ speech, realtime transcription, realtime translation | `wss …/v1/realtime`, `…/realtime/translations` | covered (`NFKRealtimeSession`) |
 | full-duplex voice | `/v1/live/sessions` (WebRTC SDP) | gap; WebRTC is outside the core's dependency rule |
+| batches of chat, Responses, embedding, completion, moderation, and image (generate; edit as JSON) requests | `/v1/files` (`purpose: batch`) + `/v1/batches` | covered (`NFKRemoteBatch`, OpenAI style, 2026-10-23; images 2026-10-24); no video batch, since `/v1/videos` answers 404 (the Videos API was removed 2026-09-24) |
 
 ### Anthropic (`anthropic`)
 
@@ -43,9 +45,11 @@ misshapes part of it), **gap** (nothing reaches it).
 | text + image + PDF → text, tools, thinking | `/messages` | covered (`NFKAnthropicBackend`) |
 | plain-text documents; custom-content documents and Files API `file_id` sources | `/messages` | covered: plain text, and `file_id` sources through `NFKRemoteFileStore` |
 | citations on the reply | `/messages` | covered (`NFKParameterCitations`, `NFKOutputCitations`) |
-| server tools: web search, web fetch, code execution (file outputs) | `/messages` | covered: the caller passes the tool by wire shape; calls and results come back under `NFKOutputServerToolResults` |
+| server tools: web search, web fetch, code execution (file outputs) | `/messages` | covered: the caller passes the tool by wire shape (any entry with a `type`); calls and results come back under `NFKOutputServerToolResults` |
 | token count | `/messages/count_tokens` | covered (`NFKRemoteTokenCounter`) |
+| skills: create, version, list, delete; load in a request | `/v1/skills`, Messages `container.skills` + code execution | covered (`NFKRemoteSkillStore`, `NFKParameterSkills`, 2026-10-23) |
 | audio, image output, embeddings | — | not offered |
+| batches of Messages requests | `/v1/messages/batches` (inline) | covered (`NFKRemoteBatch`, Anthropic style, 2026-10-23) |
 
 ### Google Gemini (`gemini`)
 
@@ -79,6 +83,7 @@ The Interactions API (`POST /v1beta/interactions`, GA 2026-06) is Google's recom
 | live avatar video | Live `avatarConfig` | Vertex AI only; frames reach `mediaHandler` |
 | 3D or document output | — | not offered (2026-10-13: no model; `document` is a usage-breakdown modality) |
 | Imagen | — | shut down |
+| batches of generateContent requests | `/v1beta/models/{id}:batchGenerateContent` (inline, under 20 MB) | covered (`NFKRemoteBatch`, Gemini style, 2026-10-23); file input past 19 MB and embedding batches (`:asyncBatchEmbedContent`) 2026-10-24 |
 
 ### xAI (`xai`)
 
@@ -95,6 +100,7 @@ Chat Completions is marked legacy; new features ship on `/v1/responses` first.
 | speech ↔ speech | `wss /v1/realtime` | covered (`NFKRealtimeSession`) |
 | tokenize | `POST /v1/tokenize-text` | covered |
 | embeddings, moderation, rerank | — | not offered (embeddings unconfirmed) |
+| batches of chat, Responses, image (generate, edit), and video (generate, edit, extend) requests | `/v1/batches` (named; requests added; paged results) | covered (`NFKRemoteBatch`, xAI style, 2026-10-23; media 2026-10-24) |
 
 ### Mistral (`mistral`)
 
@@ -105,12 +111,15 @@ Chat Completions is marked legacy; new features ship on `/v1/responses` first.
 | code infill | `POST /v1/fim/completions` | covered (`NFKRemoteCompletionBackend`) |
 | text / chat → moderation | `/moderations`, `/chat/moderations` | covered |
 | text / chat → classification | `/classifications`, `/chat/classifications` | covered (`NFKRemoteClassifierBackend`) |
-| audio → text (diarize, context bias, word times, SSE) | `/audio/transcriptions` | covered |
+| audio → text (diarize, context bias, word times, SSE) | `/audio/transcriptions` | covered (Voxtral 3 checked 2026-10-23); `speaker_references` is not sent |
 | realtime audio → text | `wss /v1/audio/transcriptions/realtime` | covered (`NFKRealtimeSession`) |
-| text → speech, voice cloning by reference clip | `/audio/speech` → JSON `{audio_data}` | covered |
+| text → speech, voice cloning by reference clip | `/audio/speech` → JSON `{audio_data}` | covered, the realtime TTS model's streamed reply included |
+| realtime text → speech (`voxtral-mini-tts-realtime-3-0`) | not published | gap (2026-10-23): Mistral documents no speech socket, and the probe cannot confirm one; reopens on a published reference or a keyed answer other than 403 (lead and detail in `remote-providers.md`, "Realtime sessions") |
 | voices | `/audio/voices` | covered (listing) |
 | text → embedding (`output_dimension`, `output_dtype`) | `/embeddings` | covered (fields by name) |
-| image generation | agents tool only | not a standalone endpoint |
+| text + image → text with built-in tools (web search, premium web search, code interpreter, image generation, document libraries, custom connectors), function tools, guardrails, server-kept conversations (continue, restart, history, delete) | `/v1/conversations` | covered (`NFKMistralConversationsBackend`, 2026-10-24); saved agents run by `agent_id`, while creating and managing them (`/v1/agents`) is out of scope |
+| image generation | the Conversations API's `image_generation` tool | covered (`NFKMistralConversationsBackend`; the tool's file downloads as `NFKOutputImage`) |
+| batches of chat, embedding, FIM, OCR, moderation, classification, transcription, and conversation requests | `/v1/batch/jobs` (inline to 10,000, else a file) | covered (`NFKRemoteBatch`, Mistral style, 2026-10-23; all but chat and embeddings 2026-10-24, transcription by `file_url`) |
 
 ### DeepSeek (`deepseek`)
 
@@ -121,6 +130,7 @@ Chat Completions is marked legacy; new features ship on `/v1/responses` first.
 | code infill / raw completion | `/beta/completions` (`suffix`) | covered |
 | prefix completion | `/beta/chat/completions` (`prefix: true`) | by endpoint and message shape through `NFKRemoteBackend` |
 | audio, embeddings, moderation | — | not offered |
+| batches | — | not offered (no batch API; off-peak pricing instead) |
 
 ### Groq (`groq`)
 
@@ -130,6 +140,7 @@ Chat Completions is marked legacy; new features ship on `/v1/responses` first.
 | audio → text / English | `/audio/transcriptions`, `/audio/translations` | covered |
 | text → speech | `/audio/speech` (Orpheus, WAV, 200-character input) | covered (200-character pieces, WAV joined) |
 | embeddings, moderation, rerank, images, video | — | not offered |
+| batches of chat requests | `/openai/v1/files` + `/openai/v1/batches` (window 24h–7d, cursor paging) | covered (`NFKRemoteBatch`, OpenAI style, 2026-10-23); audio transcription and translation by URL 2026-10-24 |
 
 ### Together (`together`)
 
@@ -143,6 +154,7 @@ Chat Completions is marked legacy; new features ship on `/v1/responses` first.
 | audio → text with diarization | `/audio/transcriptions` | covered (`diarize`, speakers on segments) |
 | realtime STT / TTS | `wss /v1/realtime`, `wss /v1/audio/speech/websocket` | covered (`NFKRealtimeSession`) |
 | rerank | `/rerank` (dedicated endpoints) | covered |
+| batches of chat requests | `/v1/files/upload` (`purpose: batch-api`) + `/v1/batches` | covered (`NFKRemoteBatch`, Together style, 2026-10-23); no request counts reported |
 
 ### OpenRouter (`openrouter`)
 
@@ -155,6 +167,7 @@ Chat Completions is marked legacy; new features ship on `/v1/responses` first.
 | multimodal embeddings | `/embeddings` | covered (image and audio parts) |
 | rerank, video | `/rerank`, `/videos` | covered |
 | web search tool | `openrouter:web_search` | by wire shape; `url_citation` annotations under `NFKOutputCitations` |
+| batches of chat, Responses, Messages, or embedding requests | `/api/v1/batches` (inline; results inline; no cancel) | covered (`NFKRemoteBatch`, OpenRouter style, 2026-10-23) |
 
 ### OpenCode Zen (`opencode`)
 
@@ -195,6 +208,27 @@ Model Studio").
 | model list | `/compatible-mode/v1/models` | covered if it answers OpenAI's `data[].id`; unconfirmed. Native `/api/v1/models` is a gap |
 | text → embedding | `/compatible-mode/v1/embeddings` | gap (exists by probe) |
 | audio → text, realtime speech, image, video | native routes | gap; not yet surveyed |
+| batches of chat or embedding requests | `/compatible-mode/v1/files` + `/batches` (window 24h–336h) | covered (`NFKRemoteBatch`, OpenAI style, 2026-10-23) |
+
+### Perplexity (`perplexity`)
+
+Added 2026-10-23. Detail in `remote-providers.md` ("Perplexity"). No live call has been made (no key);
+every shape is stub-tested.
+
+| Mode | Endpoint | Status |
+|---|---|---|
+| text + image + file → text, tools (web, image, finance, people search, fetch, sandbox, function, MCP), structured output, background jobs | `POST /v1/agent` | covered (`NFKRemoteResponsesBackend`, `NFKRemoteResponsesDialectPerplexityAgent`) |
+| sandbox output files | `GET /v1/agent/{id}/files`, `…/files/{file_id}/content` | covered (`outputFilesForResponseIdentifier:error:`, `contentsOfOutputFileWithIdentifier:responseIdentifier:error:`) |
+| state + images → typed decisions (noul, choice, score) | `POST /v1/decisions` | covered (`NFKTypeSafeBackend`, by the `pplx-decider` prefix route) |
+| text → embedding (int8 or binary) | `POST /v1/embeddings` | covered (`NFKRemoteEmbeddingBackend`, base64 decoded) |
+| document chunks → contextualized embeddings | `POST /v1/contextualizedembeddings` | covered (`contextualizedEmbeddingsForDocuments:error:`) |
+| query → ranked web pages | `POST /search` | covered (`NFKRemoteWebSearch`) |
+| model list | `GET /v1/models` + published | covered: the Agent API's list, then the two decision models; no single-model route |
+| Sonar chat completions | `/chat/completions`, `/v1/sonar` | support ended 2026-09-27; reformulated as Agent API requests |
+| skills: create, replace, list, revisions, download, delete; load in a request | `/v1/skills`, Agent `skills` | covered (`NFKRemoteSkillStore`, `NFKParameterSkills`) |
+| batches of Agent API requests, and the files they read and write | `/v1/files` (`purpose: batch`), `/v1/batches` (`/v1/responses` only) | covered (`NFKRemoteBatch`, OpenAI style; `NFKRemoteFileStore`, 2026-10-23) |
+| auth tokens, Computer analytics | `/generate_auth_token`, `/revoke_auth_token`, analytics | out of scope: minting keys is key management, analytics account administration |
+| OpenAI-compatible chat, responses, and messages | Router API, `https://api.perplexity.ai/router/v1` | private preview; no preset |
 
 ### Local servers
 

@@ -15,6 +15,7 @@
 #import <InferKit/NFKInferenceJob.h>
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
+#import <InferKit/NFKRemoteFileStore.h>
 
 @interface NFKStubResponsesBackend : NFKRemoteResponsesBackend
 @property (nonatomic, strong) NSMutableArray<NSURLRequest *> *requests;
@@ -91,6 +92,120 @@
 	XCTAssertNotNil([NFKRemoteResponsesBackend backendForProvider:NFKRemoteProvider.deepSeek apiKey:@"k" modelName:@"m"]);
 	XCTAssertNil([NFKRemoteResponsesBackend backendForProvider:NFKRemoteProvider.anthropic apiKey:@"k" modelName:@"m"]);
 	XCTAssertNil([NFKRemoteResponsesBackend backendForProvider:NFKRemoteProvider.mistral apiKey:@"k" modelName:@"m"]);
+	XCTAssertEqual([NFKRemoteResponsesBackend backendForProvider:NFKRemoteProvider.openAI apiKey:@"k" modelName:@"m"].dialect,
+				   NFKRemoteResponsesDialectStandard);
+}
+
+#pragma mark Perplexity's Agent API
+
+- (NFKStubResponsesBackend *)perplexityAgent
+{
+	NFKStubResponsesBackend *agent = [NFKStubResponsesBackend backendWithEndpointURL:[NSURL URLWithString:@"https://api.perplexity.ai/v1/agent"]];
+	agent.dialect = NFKRemoteResponsesDialectPerplexityAgent;
+	agent.modelName = @"openai/gpt-5.5";
+	agent.pollInterval = 0;
+	return agent;
+}
+
+- (void)testThePerplexityPresetReachesTheAgentAPIInItsDialect
+{
+	NFKRemoteResponsesBackend *agent = [NFKRemoteResponsesBackend backendForProvider:NFKRemoteProvider.perplexity apiKey:@"pplx" modelName:@"openai/gpt-5.5"];
+	XCTAssertEqualObjects(agent.endpointURL.absoluteString, @"https://api.perplexity.ai/v1/agent");
+	XCTAssertEqual(agent.dialect, NFKRemoteResponsesDialectPerplexityAgent);
+	XCTAssertEqualObjects(agent.modelName, @"openai/gpt-5.5");
+}
+
+// Perplexity spells the schema as response_format and takes the reasoning effort alone; a preset
+// effort without a model folds in under its own name.
+- (void)testThePerplexityDialectSpellsTheSchemaAndTheReasoningItsWay
+{
+	NFKStubResponsesBackend *agent = [self perplexityAgent];
+	agent.modelName = nil;
+	agent.stagedBodies = [@[ @"{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[]}" ] mutableCopy];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Who won?" }
+															   parameters:@{ NFKParameterJSONSchema: @{ @"type": @"object" },
+																			 NFKParameterReasoningEffort: NFKReasoningEffortDeep,
+																			 @"effort": @"fast",
+																			 NFKParameterTools: @[ @{ @"type": @"web_search", @"max_results": @5 } ] }];
+	XCTAssertNotNil([agent runInferenceForRequest:request error:NULL]);
+	NSDictionary *body = [agent bodyAt:0];
+	XCTAssertEqualObjects(agent.requests[0].URL.absoluteString, @"https://api.perplexity.ai/v1/agent");
+	XCTAssertEqualObjects(body[@"response_format"], (@{ @"type": @"json_schema", @"json_schema": @{ @"name": @"response", @"schema": @{ @"type": @"object" } } }));
+	XCTAssertNil(body[@"text"]);
+	XCTAssertEqualObjects(body[@"reasoning"], (@{ @"effort": @"high" }));
+	XCTAssertEqualObjects(body[@"effort"], @"fast");
+	XCTAssertNil(body[@"model"]);
+	XCTAssertEqualObjects(body[@"tools"], (@[ @{ @"type": @"web_search", @"max_results": @5 } ]));
+}
+
+- (void)testPerplexitysToolResultItemsComeBackAsServerToolResults
+{
+	NFKStubResponsesBackend *agent = [self perplexityAgent];
+	agent.stagedBodies = [@[ (@"{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":["
+							   "{\"type\":\"search_results\",\"queries\":[\"who won\"],\"results\":[{\"title\":\"T\",\"url\":\"https://a.test\"}]},"
+							   "{\"type\":\"sandbox_results\",\"code\":\"print(1)\",\"stdout\":\"1\\n\",\"exit_code\":0},"
+							   "{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"A won.\","
+							   "\"annotations\":[{\"type\":\"url_citation\",\"url\":\"https://a.test\",\"title\":\"T\",\"start_index\":0,\"end_index\":6}]}]}],"
+							   "\"usage\":{\"input_tokens\":30,\"output_tokens\":4}}") ] mutableCopy];
+	NFKInferenceResult *result = [agent runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Who won?" }] error:NULL];
+	XCTAssertEqualObjects(result.text, @"A won.");
+	NSArray<NSDictionary *> *tools = [result outputForKey:NFKOutputServerToolResults];
+	XCTAssertEqual(tools.count, 2u);
+	XCTAssertEqualObjects(tools[0][@"name"], @"search_results");
+	XCTAssertEqualObjects(tools[0][@"input"], (@[ @"who won" ]));
+	XCTAssertEqualObjects(tools[0][@"output"][0][@"url"], @"https://a.test");
+	XCTAssertEqualObjects(tools[1][@"name"], @"sandbox_results");
+	XCTAssertEqualObjects(tools[1][@"input"], @"print(1)");
+	XCTAssertEqualObjects(tools[1][@"output"], @"1\n");
+	XCTAssertEqualObjects([[result outputForKey:NFKOutputCitations] firstObject][@"url"], @"https://a.test");
+}
+
+- (void)testAPerplexityBackgroundJobPollsUnderTheAgentPath
+{
+	NFKStubResponsesBackend *agent = [self perplexityAgent];
+	agent.runsInBackground = YES;
+	agent.stagedBodies = [@[ @"{\"id\":\"resp_7\",\"status\":\"queued\"}",
+							 @"{\"id\":\"resp_7\",\"status\":\"completed\",\"output\":[]}" ] mutableCopy];
+	XCTAssertNotNil([agent runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Research." }] error:NULL]);
+	XCTAssertEqualObjects(agent.requests[1].URL.absoluteString, @"https://api.perplexity.ai/v1/agent/resp_7");
+	XCTAssertEqualObjects(agent.requests[1].HTTPMethod, @"GET");
+}
+
+// Runs against Perplexity's Agent API when a key is present. POST /v1/agent answers 401 without a
+// key and /v1/agentx 404, so the path is verified to exist; the reply shape is verified only here.
+- (void)testALivePerplexityAgentAnswers
+{
+	NSString *key = NSProcessInfo.processInfo.environment[@"INFERKIT_PERPLEXITY_API_KEY"];
+	if (key.length == 0) {
+		XCTSkip("set INFERKIT_PERPLEXITY_API_KEY to exercise the live path");
+	}
+	NFKRemoteResponsesBackend *agent = [NFKRemoteResponsesBackend backendForProvider:NFKRemoteProvider.perplexity apiKey:key modelName:nil];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Reply with the word ready." }
+															   parameters:@{ @"effort": @"fast" }];
+	NSError *error = nil;
+	NFKInferenceResult *result = [agent runInferenceForRequest:request error:&error];
+	XCTAssertGreaterThan(result.text.length, 0u, @"%@", error);
+}
+
+- (void)testTheSandboxsFilesAreListedAndDownloaded
+{
+	NFKStubResponsesBackend *agent = [self perplexityAgent];
+	agent.apiKey = @"pplx";
+	agent.stagedBodies = [@[ (@"{\"object\":\"list\",\"data\":[{\"id\":\"file_1\",\"object\":\"file\","
+							   "\"filename\":\"report.docx\",\"bytes\":2048,\"created_at\":1793000000}]}"), @"PK-bytes" ] mutableCopy];
+	NSError *error = nil;
+	NSArray<NFKRemoteFile *> *files = [agent outputFilesForResponseIdentifier:@"resp_7" error:&error];
+	XCTAssertEqual(files.count, 1u, @"%@", error);
+	XCTAssertEqualObjects(files[0].identifier, @"file_1");
+	XCTAssertEqualObjects(files[0].filename, @"report.docx");
+	XCTAssertEqual(files[0].byteCount, 2048);
+	XCTAssertEqualObjects(files[0].createdAt, [NSDate dateWithTimeIntervalSince1970:1793000000]);
+	XCTAssertEqualObjects(agent.requests[0].URL.absoluteString, @"https://api.perplexity.ai/v1/agent/resp_7/files");
+	XCTAssertEqualObjects([agent.requests[0] valueForHTTPHeaderField:@"Authorization"], @"Bearer pplx");
+
+	NSData *content = [agent contentsOfOutputFileWithIdentifier:@"file_1" responseIdentifier:@"resp_7" error:&error];
+	XCTAssertEqualObjects(content, [@"PK-bytes" dataUsingEncoding:NSUTF8StringEncoding], @"%@", error);
+	XCTAssertEqualObjects(agent.requests[1].URL.absoluteString, @"https://api.perplexity.ai/v1/agent/resp_7/files/file_1/content");
 }
 
 - (void)testTheRequestCarriesInstructionsInputItemsToolsSchemaAndReasoning
@@ -123,6 +238,52 @@
 	XCTAssertEqualObjects(body[@"previous_response_id"], @"resp_0");
 	XCTAssertNil(body[@"temperature"], @"a GPT-5 family model refuses sampling beside reasoning");
 	CGImageRelease(square);
+}
+
+// The Responses API reads the conversation key as prompt_cache_key, retention for the models before
+// GPT-5.6, and prompt_cache_options, prewarm included, for GPT-5.6 and later.
+- (void)testThePromptCacheControlsGoOutInOpenAIsFields
+{
+	self.backend.stagedBodies = [@[ @"{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[]}" ] mutableCopy];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello" }
+															   parameters:@{ NFKParameterConversationKey: @"tenant-4",
+																			 NFKParameterPromptCacheRetention: @"in_memory",
+																			 NFKParameterPromptCacheTTL: @"12h",
+																			 NFKParameterPromptCacheMode: @"implicit",
+																			 NFKParameterPromptCachePrewarm: @YES }];
+	XCTAssertNotNil([self.backend runInferenceForRequest:request error:NULL]);
+	NSDictionary *body = [self.backend bodyAt:0];
+	XCTAssertEqualObjects(body[@"prompt_cache_key"], @"tenant-4");
+	XCTAssertEqualObjects(body[@"prompt_cache_retention"], @"in_memory");
+	XCTAssertEqualObjects(body[@"prompt_cache_options"], (@{ @"mode": @"implicit", @"ttl": @"12h", @"prewarm": @YES }));
+	XCTAssertNil(body[NFKParameterConversationKey]);
+	XCTAssertNil(body[NFKParameterPromptCachePrewarm]);
+}
+
+- (void)testAnUnsetPromptCacheControlSendsNothing
+{
+	self.backend.stagedBodies = [@[ @"{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[]}" ] mutableCopy];
+	XCTAssertNotNil([self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello" } parameters:@{}]
+												   error:NULL]);
+	NSDictionary *body = [self.backend bodyAt:0];
+	XCTAssertNil(body[@"prompt_cache_key"]);
+	XCTAssertNil(body[@"prompt_cache_retention"]);
+	XCTAssertNil(body[@"prompt_cache_options"]);
+}
+
+// A breakpoint rides on an input_text part the caller writes, which passes through.
+- (void)testACacheBreakpointOnACallersInputTextPartPassesThrough
+{
+	self.backend.stagedBodies = [@[ @"{\"id\":\"resp_1\",\"status\":\"completed\",\"output\":[]}" ] mutableCopy];
+	NSDictionary *part = @{ @"type": @"input_text", @"text": @"A long shared preamble.",
+							@"prompt_cache_breakpoint": @{ @"mode": @"explicit", @"ttl": @"12h" } };
+	NSArray *messages = @[ @{ @"role": @"developer", @"content": @[ part ] }, @{ @"role": @"user", @"content": @"Go." } ];
+	XCTAssertNotNil([self.backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputMessages: messages }
+																					 parameters:@{ NFKParameterPromptCacheMode: @"explicit" }]
+												   error:NULL]);
+	NSDictionary *body = [self.backend bodyAt:0];
+	XCTAssertEqualObjects(body[@"input"][0][@"content"], @[ part ]);
+	XCTAssertEqualObjects(body[@"prompt_cache_options"], (@{ @"mode": @"explicit" }));
 }
 
 - (void)testEveryOutputItemKindIsReadBack

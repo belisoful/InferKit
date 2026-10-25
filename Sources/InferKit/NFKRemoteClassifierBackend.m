@@ -12,6 +12,7 @@
 #import <InferKit/NFKInferenceResult.h>
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteBatchPrivate.h"
 #import "NFKRemoteTransportPrivate.h"
 
 @implementation NFKRemoteClassifierBackend
@@ -78,32 +79,10 @@
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 												  error:(NSError * _Nullable *)outError
 {
-	if (self.endpointURL == nil) {
-		return [self failWithCode:kNFKError_InferenceNotReady reason:@"no endpoint URL is set" error:outError];
+	NSMutableURLRequest *urlRequest = [self urlRequestForRequest:request error:outError];
+	if (urlRequest == nil) {
+		return nil;
 	}
-	NSMutableDictionary *body = [NSMutableDictionary dictionary];
-	body[@"model"] = self.modelName;
-	NSURL *url = self.endpointURL;
-	BOOL conversation = self.apiStyle == NFKRemoteClassifierAPIStyleMistral && request.prompt.length == 0 && request.messages.count > 0;
-	if (conversation) {
-		url = [[self.endpointURL.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"chat"] URLByAppendingPathComponent:@"classifications"];
-		body[@"input"] = @{ @"messages": request.messages };
-	} else if (request.prompt.length > 0) {
-		body[@"input"] = request.prompt;
-	} else {
-		return [self failWithCode:kNFKError_InferenceMissingInput reason:@"the request carries neither a prompt nor messages" error:outError];
-	}
-	for (NSString *key in request.parameters) {
-		body[key] = request.parameters[key];
-	}
-
-	NSMutableURLRequest *urlRequest = [NSMutableURLRequest requestWithURL:url];
-	urlRequest.HTTPMethod = @"POST";
-	urlRequest.timeoutInterval = self.timeout;
-	urlRequest.HTTPBody = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
-	[urlRequest setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
-	[NFKRemoteTransport authorizeRequest:urlRequest apiKey:self.apiKey style:NFKRemoteAPIStyleOpenAIChat];
-
 	NSHTTPURLResponse *response = nil;
 	NSError *sendError = nil;
 	NSData *data = [self sendRequest:urlRequest response:&response error:&sendError];
@@ -118,9 +97,46 @@
 	if (![reply isKindOfClass:NSDictionary.class]) {
 		return [self failWithCode:kNFKError_InferenceBackendFailure reason:@"the response is not a JSON object" error:outError];
 	}
+	return [self resultFromReply:reply];
+}
+
+- (NFKInferenceResult *)resultFromReply:(NSDictionary *)reply
+{
 	NSArray<NFKClassification *> *classifications = self.apiStyle == NFKRemoteClassifierAPIStyleVLLM
 		? [self vLLMClassificationsIn:reply] : [self mistralClassificationsIn:reply];
 	return [NFKInferenceResult resultWithOutputs:@{ NFKOutputClassifications: classifications, NFKRemoteBackendRawKey: reply }];
+}
+
+- (nullable NSMutableURLRequest *)urlRequestForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
+	if (self.endpointURL == nil) {
+		[self failWithCode:kNFKError_InferenceNotReady reason:@"no endpoint URL is set" error:outError];
+		return nil;
+	}
+	NSMutableDictionary *body = [NSMutableDictionary dictionary];
+	body[@"model"] = self.modelName;
+	NSURL *url = self.endpointURL;
+	BOOL conversation = self.apiStyle == NFKRemoteClassifierAPIStyleMistral && request.prompt.length == 0 && request.messages.count > 0;
+	if (conversation) {
+		url = [[self.endpointURL.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"chat"] URLByAppendingPathComponent:@"classifications"];
+		body[@"input"] = @{ @"messages": request.messages };
+	} else if (request.prompt.length > 0) {
+		body[@"input"] = request.prompt;
+	} else {
+		[self failWithCode:kNFKError_InferenceMissingInput reason:@"the request carries neither a prompt nor messages" error:outError];
+		return nil;
+	}
+	for (NSString *key in request.parameters) {
+		body[key] = request.parameters[key];
+	}
+
+	NSMutableURLRequest *urlRequest = [NSMutableURLRequest requestWithURL:url];
+	urlRequest.HTTPMethod = @"POST";
+	urlRequest.timeoutInterval = self.timeout;
+	urlRequest.HTTPBody = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
+	[urlRequest setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
+	[NFKRemoteTransport authorizeRequest:urlRequest apiKey:self.apiKey style:NFKRemoteAPIStyleOpenAIChat];
+	return urlRequest;
 }
 
 #pragma mark Response
@@ -197,6 +213,29 @@
 		*outError = [NFKRemoteTransport errorWithCode:code reason:reason];
 	}
 	return nil;
+}
+
+@end
+
+#pragma mark - Batches
+
+@implementation NFKRemoteClassifierBackend (NFKRemoteBatch)
+
+- (nullable NSString *)batchModelName
+{
+	return self.modelName;
+}
+
+- (nullable NSURLRequest *)batchURLRequestForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
+	return [self urlRequestForRequest:request error:outError];
+}
+
+- (nullable NFKInferenceResult *)batchResultForReply:(NSDictionary *)reply
+											 request:(NFKInferenceRequest *)request
+											   error:(NSError * _Nullable *)outError
+{
+	return [self resultFromReply:reply];
 }
 
 @end

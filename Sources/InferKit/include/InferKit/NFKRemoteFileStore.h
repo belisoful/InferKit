@@ -83,7 +83,8 @@ NS_ASSUME_NONNULL_BEGIN
 	@abstract   The wire shape of a hosted Files API.
 	@constant   NFKRemoteFileStoreAPIStyleOpenAI POST /files multipart with a purpose; GET /files,
 				/files/{id}, /files/{id}/content; DELETE /files/{id}. OpenAI, Mistral, xAI, DeepSeek,
-				Groq, Together (upload at /files/upload), and OpenRouter.
+				Groq, Together (upload at /files/upload), OpenRouter, Perplexity, and Alibaba Model
+				Studio.
 	@constant   NFKRemoteFileStoreAPIStyleAnthropic Anthropic's /files: no purpose, next_page paging,
 				and only tool-created files downloadable.
 	@constant   NFKRemoteFileStoreAPIStyleGemini Gemini's resumable upload at /upload/v1beta/files,
@@ -104,7 +105,9 @@ typedef NS_ENUM(NSInteger, NFKRemoteFileStoreAPIStyle) {
 				model without riding in each request, and how a tool's output file is fetched.
 				What each service keeps a file for differs: OpenAI, Anthropic, Gemini, Mistral (OCR),
 				xAI, DeepSeek (images), and OpenRouter take files for prompts; Together and Groq take
-				them for fine-tuning and batch jobs. Every call blocks; run it off the main thread.
+				them for fine-tuning and batch jobs, and Perplexity and Alibaba Model Studio for batch
+				jobs, the purpose Perplexity's Files API takes alone (NFKRemoteBatch uploads its input
+				and downloads its output through a store). Every call blocks; run it off the main thread.
 				Introduced in InferKit 0.4.0.
 */
 @interface NFKRemoteFileStore : NSObject
@@ -119,7 +122,8 @@ typedef NS_ENUM(NSInteger, NFKRemoteFileStoreAPIStyle) {
 @property (nonatomic, copy, nullable) NSString *apiKey;
 
 /*! The purpose an upload names when the call gives none (user_data on OpenAI and DeepSeek, assistants
-	on xAI, ocr on Mistral, batch on Groq, fine-tune on Together). backendForProvider sets it. */
+	on xAI, ocr on Mistral, batch on Groq, Perplexity, and Alibaba Model Studio, fine-tune on Together).
+	backendForProvider sets it. */
 @property (nonatomic, copy, nullable) NSString *defaultPurpose;
 
 /*! The upload path under the endpoint (upload on Together, which posts to /files/upload), or nil. */
@@ -132,7 +136,7 @@ typedef NS_ENUM(NSInteger, NFKRemoteFileStoreAPIStyle) {
 @property (nonatomic, strong) NSURLSession *session;
 
 /*! A store for the provider's Files API: openai, anthropic, gemini, mistral, xai, deepseek, together,
-	openrouter, and groq serve one; every other preset returns nil. */
+	openrouter, groq, perplexity, and modelstudio serve one; every other preset returns nil. */
 + (nullable instancetype)fileStoreForProvider:(NFKRemoteProvider *)provider apiKey:(nullable NSString *)apiKey;
 
 /*! Uploads bytes under a name. purpose nil takes defaultPurpose; expiresAfter 0 keeps the service's

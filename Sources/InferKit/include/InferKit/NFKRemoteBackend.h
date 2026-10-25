@@ -61,7 +61,12 @@ typedef NS_ENUM(NSInteger, NFKRemoteChatDialect) {
 				spelling: NFKParameterMaxTokens becomes max_tokens, NFKParameterTopP becomes top_p,
 				NFKParameterTopK becomes top_k, NFKParameterStopSequences becomes stop, and
 				NFKParameterRepetitionPenalty becomes both repetition_penalty and repeat_penalty,
-				the two names the servers use for it. NFKParameterTools becomes the endpoint's
+				the two names the servers use for it. NFKParameterConversationKey becomes
+				prompt_cache_key, NFKParameterPromptCacheRetention prompt_cache_retention, and
+				NFKParameterPromptCacheMode and NFKParameterPromptCacheTTL prompt_cache_options;
+				chat completions has no prewarm, so NFKParameterPromptCachePrewarm sends nothing. A
+				cache breakpoint is a prompt_cache_breakpoint on a content part the caller writes,
+				which passes through. NFKParameterTools becomes the endpoint's
 				function tools and what the model called comes back under NFKOutputToolCalls, and
 				NFKParameterJSONSchema becomes a json_schema response format whose parsed reply
 				comes back under NFKOutputStructured. Every other parameter folds into the body

@@ -46,6 +46,14 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	/*! Google's native POST /models/{model}:generateContent with an x-goog-api-key header, served by
 		NFKGeminiGenerateContentBackend. Introduced in InferKit 0.4.0. */
 	NFKRemoteAPIStyleGeminiGenerateContent = 5,
+	/*! POST /decisions with a Bearer token: Perplexity's Decisions API, which takes System One's
+		request and answers with its typed answers, served by NFKTypeSafeBackend. Introduced in
+		InferKit 0.4.0. */
+	NFKRemoteAPIStylePerplexityDecisions = 6,
+	/*! POST /agent with a Bearer token: Perplexity's Agent API, the Responses API's request and reply
+		with Perplexity's own spellings, served by NFKRemoteResponsesBackend in its
+		NFKRemoteResponsesDialectPerplexityAgent dialect. Introduced in InferKit 0.4.0. */
+	NFKRemoteAPIStylePerplexityAgent = 7,
 };
 
 /*!
@@ -89,6 +97,12 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 	routes OpenCode documents; providerWithAPIStyle:forModelName: adds or replaces one. Introduced in
 	InferKit 0.4.0. */
 @property (nonatomic, copy, readonly) NSDictionary<NSString *, NSNumber *> *modelAPIStyles;
+
+/*! The protocol for every model whose name begins with a key, each value an NFKRemoteAPIStyle, for a
+	family whose names a table cannot list. An exact entry in modelAPIStyles wins, and of two
+	prefixes the longer wins. The perplexity preset routes its pplx-decider names to the Decisions
+	API this way. Empty for every other preset. Introduced in InferKit 0.4.0. */
+@property (nonatomic, copy, readonly) NSDictionary<NSString *, NSNumber *> *modelPrefixAPIStyles;
 
 /*! Whether a key is required. A local server does not need one. */
 @property (nonatomic, assign, readonly) BOOL requiresAPIKey;
@@ -161,7 +175,8 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 /*!
 	@method     apiStyleForModelName:
 	@abstract   The protocol this provider serves a model on.
-	@discussion The model's entry in modelAPIStyles, or apiStyle for a model without one and for nil.
+	@discussion The model's entry in modelAPIStyles, else the entry of the longest prefix in
+				modelPrefixAPIStyles the name begins with, else apiStyle, which also answers for nil.
 				backendForProvider:apiKey:modelName: builds the backend this names. Introduced in
 				InferKit 0.4.0.
 */
@@ -319,6 +334,15 @@ typedef NS_ENUM(NSInteger, NFKRemoteAPIStyle) {
 /*! TypeSafe AI's System One API, which serves Jev: typed decisions about a state rather than text.
 	Served by NFKTypeSafeBackend. Introduced in InferKit 0.4.0. */
 @property (class, nonatomic, readonly) NFKRemoteProvider *typeSafe;
+/*! Perplexity at https://api.perplexity.ai/v1. A model goes to the Agent API (POST /agent, served by
+	NFKRemoteResponsesBackend in its Perplexity dialect), and a pplx-decider model to the Decisions
+	API (POST /decisions, System One's typed decisions, served by NFKTypeSafeBackend), through
+	modelPrefixAPIStyles. The model list is Perplexity's GET /v1/models, which names the Agent API's
+	models, followed by the two decision models Perplexity publishes. NFKRemoteEmbeddingBackend and
+	NFKRemoteWebSearch reach its embeddings and its search. Decider for Mac serves the Decisions API on
+	the device, so this preset re-pointed with providerWithBaseURL: at http://127.0.0.1:8080/v1
+	reaches it. Introduced in InferKit 0.4.0. */
+@property (class, nonatomic, readonly) NFKRemoteProvider *perplexity;
 /*! OpenCode Zen, the pay-as-you-go gateway of the OpenCode console, at
 	https://opencode.ai/inference/v1. One key (OPENCODE_API_KEY in OpenCode's own tools) reaches models
 	from many makers, each on its maker's protocol: modelAPIStyles routes the GPT, Grok, and Muse

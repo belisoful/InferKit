@@ -13,6 +13,7 @@
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKVideoAsset.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteBatchPrivate.h"
 #import "NFKRemoteMediaSupport.h"
 #import "NFKRemoteTransportPrivate.h"
 
@@ -876,6 +877,40 @@ static NSInteger NFKRemoteVideoGreatestCommonDivisor(NSInteger a, NSInteger b)
 						   error:(NSError * _Nullable *)outError
 {
 	return [NFKRemoteTransport sendRequest:request session:self.session response:outResponse error:outError];
+}
+
+@end
+
+#pragma mark - Batches
+
+@implementation NFKRemoteVideoBackend (NFKRemoteBatch)
+
+- (nullable NSString *)batchModelName
+{
+	return self.modelName;
+}
+
+// xAI alone batches video, and its batch answers the finished clip, downloaded as a run downloads it.
+- (nullable NSURLRequest *)batchURLRequestForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
+	if (self.apiStyle != NFKRemoteVideoAPIStyleXAI) {
+		if (outError != NULL) {
+			*outError = [NFKRemoteTransport errorWithCode:kNFKError_InferenceUnsupported reason:@"a batch takes video requests on xAI's style alone"];
+		}
+		return nil;
+	}
+	return [self submitRequestForRequest:request];
+}
+
+- (nullable NFKInferenceResult *)batchResultForReply:(NSDictionary *)reply
+											 request:(NFKInferenceRequest *)request
+											   error:(NSError * _Nullable *)outError
+{
+	NFKInferenceResult *result = [self resultFromStatusResponse:reply outputModality:request.outputModality];
+	if (result == nil && outError != NULL) {
+		*outError = [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the reply names no clip that downloads"];
+	}
+	return result;
 }
 
 @end

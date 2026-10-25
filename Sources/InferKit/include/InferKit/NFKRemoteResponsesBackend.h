@@ -12,6 +12,25 @@
 NS_ASSUME_NONNULL_BEGIN
 
 @class NFKRemoteProvider;
+@class NFKRemoteFile;
+
+/*!
+	@enum       NFKRemoteResponsesDialect
+	@abstract   How a service spells the parts of the Responses shape it renames.
+	@constant   NFKRemoteResponsesDialectStandard OpenAI's spelling, which every other service
+				follows.
+	@constant   NFKRemoteResponsesDialectPerplexityAgent Perplexity's Agent API (POST /v1/agent): a
+				schema goes as response_format {type: json_schema, json_schema: {name, schema}},
+				reasoning carries its effort alone, and a background job polls and cancels under
+				/v1/agent/{id}. NFKParameterSkills goes out as skills, a custom skill as {type: custom,
+				id}. Its search, fetch, and sandbox result items come back under
+				NFKOutputServerToolResults.
+	@discussion Introduced in InferKit 0.4.0.
+*/
+typedef NS_ENUM(NSInteger, NFKRemoteResponsesDialect) {
+	NFKRemoteResponsesDialectStandard = 0,
+	NFKRemoteResponsesDialectPerplexityAgent = 1,
+};
 
 /*!
 	@class      NFKRemoteResponsesBackend
@@ -28,8 +47,13 @@ NS_ASSUME_NONNULL_BEGIN
 				{type: code_interpreter}, or {type: image_generation}. NFKParameterJSONSchema becomes
 				text.format, NFKParameterReasoningEffort reasoning.effort with a summary asked for,
 				NFKParameterMaxTokens max_output_tokens, and NFKParameterPreviousResponseIdentifier
-				previous_response_id, which continues a conversation the service keeps. Every other
-				parameter goes out under its own name.
+				previous_response_id, which continues a conversation the service keeps.
+				NFKParameterConversationKey becomes prompt_cache_key, NFKParameterPromptCacheRetention
+				prompt_cache_retention, and NFKParameterPromptCacheMode, NFKParameterPromptCacheTTL,
+				and NFKParameterPromptCachePrewarm prompt_cache_options. A cache breakpoint is a
+				prompt_cache_breakpoint on an input_text part the caller writes, which passes
+				through; the instructions take none, so a cached preamble goes in a developer turn
+				whose content is parts. Every other parameter goes out under its own name.
 
 				The reply's text comes back under NFKOutputText, its reasoning summaries under
 				NFKOutputReasoning, function calls under NFKOutputToolCalls, a parsed schema reply
@@ -55,6 +79,11 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The model name sent in the request body. */
 @property (nonatomic, copy, nullable) NSString *modelName;
 
+/*! The service's spelling. Defaults to NFKRemoteResponsesDialectStandard;
+	backendForProvider:apiKey:modelName: sets it for the perplexity preset. Introduced in InferKit
+	0.4.0. */
+@property (nonatomic, assign) NFKRemoteResponsesDialect dialect;
+
 /*! Runs the request as a background job the backend polls, rather than holding the connection open.
 	Off by default. */
 @property (nonatomic, assign) BOOL runsInBackground;
@@ -77,11 +106,32 @@ NS_ASSUME_NONNULL_BEGIN
 	@discussion openai, xai, groq, deepseek, openrouter, opencode, opencode-go, lmstudio, ollama,
 				vllm, and llamacpp serve one; anthropic, gemini, mistral, together, and typesafe return
 				nil. OpenCode answers this route only for the models it routes to Responses (see
-				NFKRemoteProvider's modelAPIStyles).
+				NFKRemoteProvider's modelAPIStyles). perplexity answers with its Agent API at /agent in
+				the NFKRemoteResponsesDialectPerplexityAgent dialect, where a request names a model as
+				provider/model, or names none and sets Perplexity's effort parameter.
 */
 + (nullable instancetype)backendForProvider:(NFKRemoteProvider *)provider
 									 apiKey:(nullable NSString *)apiKey
 								  modelName:(nullable NSString *)modelName;
+
+/*!
+	@method     outputFilesForResponseIdentifier:error:
+	@abstract   The files a finished response's sandbox wrote, or nil with an error.
+	@discussion GET {endpoint}/{id}/files, which Perplexity's Agent API serves. Each file's
+				identifier names it to contentsOfOutputFileWithIdentifier:responseIdentifier:error:.
+				Blocks. Introduced in InferKit 0.4.0.
+*/
+- (nullable NSArray<NFKRemoteFile *> *)outputFilesForResponseIdentifier:(NSString *)responseIdentifier
+																  error:(NSError * _Nullable *)outError;
+
+/*!
+	@method     contentsOfOutputFileWithIdentifier:responseIdentifier:error:
+	@abstract   The bytes of one file a response's sandbox wrote, or nil with an error.
+	@discussion GET {endpoint}/{id}/files/{file_id}/content. Blocks. Introduced in InferKit 0.4.0.
+*/
+- (nullable NSData *)contentsOfOutputFileWithIdentifier:(NSString *)fileIdentifier
+									 responseIdentifier:(NSString *)responseIdentifier
+												  error:(NSError * _Nullable *)outError;
 
 /*! Streams the reply into the job's partialResult, or, with runsInBackground, polls the background
 	job; cancelling the job closes the connection or cancels the background job. */

@@ -16,6 +16,7 @@ NSString * const NFKProviderTurnFormatAnthropicMessages	= @"anthropic-messages";
 NSString * const NFKProviderTurnFormatOpenAIResponses		= @"openai-responses";
 NSString * const NFKProviderTurnFormatGeminiInteractions	= @"gemini-interactions";
 NSString * const NFKProviderTurnFormatGeminiGenerateContent	= @"gemini-generatecontent";
+NSString * const NFKProviderTurnFormatMistralConversations	= @"mistral-conversations";
 
 static NSString * const NFKMetadataFormatKey	= @"format";
 static NSString * const NFKMetadataSourceKey	= @"source";

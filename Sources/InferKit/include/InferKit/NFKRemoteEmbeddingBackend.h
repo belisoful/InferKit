@@ -38,6 +38,15 @@ typedef NS_ENUM(NSInteger, NFKRemoteEmbeddingAPIStyle) {
 				dimensions or encoding_format by name. embeddingsForTexts:error: embeds a batch in
 				one call, which is how a corpus is indexed.
 
+				A vector the service writes as base64 is decoded by the request's encoding_format:
+				OpenAI's base64 → float32 values; Perplexity's base64_int8, its default → the signed
+				int8 values, which Perplexity compares by cosine; base64_binary → one 0 or 1 per
+				dimension, least significant bit first, which it compares by Hamming distance.
+				Perplexity's contextualized models (pplx-embed-context-v1-*) embed each chunk with its
+				document's context through POST /contextualizedembeddings beside the endpoint:
+				contextualizedEmbeddingsForDocuments:error: sends the documents, and a request to one
+				of those models sends its text as a document of one chunk.
+
 				An image (NFKInputImage, NFKInputImages) or audio (NFKInputAudio) beside the text is
 				embedded with it where the service reads media: OpenRouter's content parts, and
 				Gemini's native style, which also reads NFKInputVideo and a PDF under
@@ -77,9 +86,9 @@ typedef NS_ENUM(NSInteger, NFKRemoteEmbeddingAPIStyle) {
 /*!
 	@method     backendForProvider:apiKey:modelName:
 	@abstract   A backend pointed at the provider's embeddings endpoint.
-	@discussion openai, gemini, mistral, together (dedicated endpoints), openrouter, the local
-				runners, and an InferKit server serve one; anthropic, xai, groq, deepseek, and typesafe
-				return nil. The local runners answer for any embedding model they have.
+	@discussion openai, gemini, mistral, together (dedicated endpoints), openrouter, perplexity, the
+				local runners, and an InferKit server serve one; anthropic, xai, groq, deepseek, and
+				typesafe return nil. The local runners answer for any embedding model they have.
 */
 + (nullable instancetype)backendForProvider:(NFKRemoteProvider *)provider
 									 apiKey:(nullable NSString *)apiKey
@@ -93,6 +102,17 @@ typedef NS_ENUM(NSInteger, NFKRemoteEmbeddingAPIStyle) {
 */
 - (nullable NSArray<NSArray<NSNumber *> *> *)embeddingsForTexts:(NSArray<NSString *> *)texts
 														  error:(NSError * _Nullable *)outError;
+
+/*!
+	@method     contextualizedEmbeddingsForDocuments:error:
+	@abstract   Embeds each document's chunks in the context of the whole document.
+	@discussion POST /contextualizedembeddings with input as a list of documents, each a list of
+				chunk texts, which Perplexity serves for its pplx-embed-context-v1-* models. The
+				result holds one list of chunk vectors per document, both in the order given.
+				Blocks. Introduced in InferKit 0.4.0.
+*/
+- (nullable NSArray<NSArray<NSArray<NSNumber *> *> *> *)contextualizedEmbeddingsForDocuments:(NSArray<NSArray<NSString *> *> *)documents
+																						 error:(NSError * _Nullable *)outError;
 
 /*!
 	@method     sendRequest:response:error:

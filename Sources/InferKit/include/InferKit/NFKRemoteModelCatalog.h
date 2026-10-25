@@ -23,6 +23,13 @@ NS_ASSUME_NONNULL_BEGIN
 				chat endpoint rejects. NFKRemoteModel.raw keeps each entry for a caller that reads
 				the provider's own fields.
 
+				The perplexity preset's GET /v1/models lists the Agent API's models and none of the
+				decision models its Decisions API serves, so the catalog follows the list with the
+				two Perplexity publishes, pplx-decider-v1.2 and pplx-decider-flash-v1.2. Each of
+				those entries' raw alias names the -latest alias that tracks it. Perplexity serves no
+				GET /v1/models/{id}, so modelWithIdentifier:error: finds a decision model by either
+				name without a request and any other model in the list.
+
 				A local runner that is not running fails with kNFKError_RemoteUnreachable rather than
 				returning an empty list, because nothing installed and nothing running are different
 				answers. A server that answers with an error fails with

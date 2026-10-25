@@ -18,10 +18,14 @@
 #import <InferKit/NFKRemoteFileStore.h>
 #import "NFK_ARC.h"
 #import "NFKAnthropicBackendPrivate.h"
+#import "NFKRemoteBatchPrivate.h"
 #import "NFKJobGuard.h"
 
 /*! The tool a schema is asked for through: the API has no response format, so the reply is
 	forced into a tool whose input schema is the caller's. */
+/*! The code-execution tool a skill runs in, Anthropic's current version (2026-10-23). A request that
+	names its own code-execution tool keeps it. */
+static NSString * const NFKAnthropicCodeExecutionToolType = @"code_execution_20260521";
 static NSString * const NFKAnthropicStructuredToolName = @"structured_output";
 
 /*! The beta Claude's MCP connector is served under. */
@@ -178,7 +182,7 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 	return [NSSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema, NFKParameterTemperature,
 								  NFKParameterMaxTokens, NFKParameterTopP, NFKParameterTopK,
 								  NFKParameterStopSequences, NFKParameterAudioOutput,
-								  NFKParameterReasoningEffort, NFKParameterMCPServers ]];
+								  NFKParameterReasoningEffort, NFKParameterMCPServers, NFKParameterSkills ]];
 }
 
 - (NSSet<NSString *> *)supportedInputKeys
@@ -603,6 +607,40 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 	return urlRequest;
 }
 
+/*! The request's skills as container.skills, {type: anthropic | custom, skill_id, version}, with the
+	code-execution tool the container runs them in when the request names no code-execution tool. An
+	entry that carries a type passes through. */
+- (void)addSkillsOf:(NFKInferenceRequest *)request toBody:(NSMutableDictionary *)body tools:(NSMutableArray *)tools
+{
+	NSArray *entries = [request.parameters[NFKParameterSkills] isKindOfClass:NSArray.class] ? request.parameters[NFKParameterSkills] : @[];
+	NSMutableArray *skills = [NSMutableArray array];
+	for (NSDictionary *entry in entries) {
+		if (![entry isKindOfClass:NSDictionary.class]) {
+			continue;
+		}
+		if (entry[@"type"] != nil) {
+			[skills addObject:entry];
+			continue;
+		}
+		if (![entry[@"id"] isKindOfClass:NSString.class]) {
+			continue;
+		}
+		[skills addObject:@{ @"type": [entry[@"source"] isEqual:@"anthropic"] ? @"anthropic" : @"custom",
+							 @"skill_id": entry[@"id"],
+							 @"version": [entry[@"version"] isKindOfClass:NSString.class] ? entry[@"version"] : @"latest" }];
+	}
+	if (skills.count == 0) {
+		return;
+	}
+	body[@"container"] = @{ @"skills": skills };
+	for (NSDictionary *tool in tools) {
+		if ([tool isKindOfClass:NSDictionary.class] && [tool[@"type"] isKindOfClass:NSString.class] && [tool[@"type"] hasPrefix:@"code_execution"]) {
+			return;
+		}
+	}
+	[tools addObject:@{ @"type": NFKAnthropicCodeExecutionToolType, @"name": @"code_execution" }];
+}
+
 /*! Builds the Messages request body: a system message lifted into the top-level field, media
 	attached to the last user turn, tools in the API's shape, and a schema as a forced tool. */
 - (nullable NSMutableDictionary *)bodyForRequest:(NFKInferenceRequest *)request attachments:(NFKRemoteAttachments *)attachments
@@ -682,6 +720,7 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 		outputConfig[@"format"] = @{ @"type": @"json_schema", @"schema": schema };
 	}
 	[self addMCPServersOf:request toBody:body tools:tools];
+	[self addSkillsOf:request toBody:body tools:tools];
 	if (tools.count > 0) {
 		body[@"tools"] = tools;
 	}
@@ -814,9 +853,11 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 	}
 }
 
+// A server tool (web search, code execution) carries its type, and a tool already in the wire shape
+// its input_schema; both pass through.
 - (NSDictionary *)wireToolForTool:(NSDictionary *)tool
 {
-	if (tool[@"input_schema"] != nil) {
+	if (tool[@"input_schema"] != nil || tool[@"type"] != nil) {
 		return tool;
 	}
 	NSMutableDictionary *wire = [NSMutableDictionary dictionary];
@@ -1271,6 +1312,40 @@ static NSArray<NSString *> *NFKAnthropicContextErrorFamilies(void)
 									userInfo:@{ NSLocalizedDescriptionKey: description }];
 	}
 	return nil;
+}
+
+@end
+
+#pragma mark - Batches
+
+@implementation NFKAnthropicBackend (NFKRemoteBatch)
+
+- (nullable NSString *)batchModelName
+{
+	return self.modelName;
+}
+
+// A batch never asks the Models API for the model's maximum, so a request without its own limit takes
+// the fallback limit.
+- (nullable NSURLRequest *)batchURLRequestForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
+	NSInteger maxTokens = [self maxTokensForRequest:request lookingUp:NO modelMaximum:NULL];
+	return [self urlRequestForRequest:request streaming:NO maxTokens:maxTokens modelMaximum:NO error:outError];
+}
+
+- (nullable NFKInferenceResult *)batchResultForReply:(NSDictionary *)reply
+											 request:(NFKInferenceRequest *)request
+											   error:(NSError * _Nullable *)outError
+{
+	if ([reply[@"stop_reason"] isEqual:@"refusal"]) {
+		return [self failWithCode:kNFKError_InferenceRefused description:@"the model declined to answer" error:outError];
+	}
+	NSArray *content = [reply[@"content"] isKindOfClass:NSArray.class] ? reply[@"content"] : @[];
+	return NFKResultWithFinishReason([self resultForContentBlocks:content
+															usage:[self usageInMessageBody:reply]
+															  raw:reply
+												expectsStructured:[self requestExpectsStructuredReply:request]],
+									 reply[@"stop_reason"]);
 }
 
 @end

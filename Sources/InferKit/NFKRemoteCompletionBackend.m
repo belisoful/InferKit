@@ -12,6 +12,7 @@
 #import <InferKit/NFKInferenceJob.h>
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteBatchPrivate.h"
 #import "NFKRemoteTransportPrivate.h"
 #import "NFKJobGuard.h"
 
@@ -108,9 +109,13 @@
 	if (![body isKindOfClass:NSDictionary.class]) {
 		return [self failWithCode:kNFKError_InferenceBackendFailure reason:@"the response is not a JSON object" error:outError];
 	}
-	NSString *text = [self textInBody:body];
+	return [self resultFromBody:body];
+}
+
+- (NFKInferenceResult *)resultFromBody:(NSDictionary *)body
+{
 	NSMutableDictionary<NSString *, id> *outputs = [NSMutableDictionary dictionaryWithObject:body forKey:NFKRemoteBackendRawKey];
-	outputs[NFKOutputText] = text;
+	outputs[NFKOutputText] = [self textInBody:body];
 	return [NFKInferenceResult resultWithOutputs:outputs];
 }
 
@@ -278,6 +283,29 @@
 		*outError = [NFKRemoteTransport errorWithCode:code reason:reason];
 	}
 	return nil;
+}
+
+@end
+
+#pragma mark - Batches
+
+@implementation NFKRemoteCompletionBackend (NFKRemoteBatch)
+
+- (nullable NSString *)batchModelName
+{
+	return self.modelName;
+}
+
+- (nullable NSURLRequest *)batchURLRequestForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
+	return [self urlRequestForRequest:request streaming:NO error:outError];
+}
+
+- (nullable NFKInferenceResult *)batchResultForReply:(NSDictionary *)reply
+											 request:(NFKInferenceRequest *)request
+											   error:(NSError * _Nullable *)outError
+{
+	return [self resultFromBody:reply];
 }
 
 @end

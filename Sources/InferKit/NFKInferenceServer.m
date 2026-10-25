@@ -206,8 +206,9 @@ static NSDictionary<NSString *, NSString *> *NFKServedChatFields(void)
 			  @"max_completion_tokens": @"integer", @"temperature": @"number", @"top_p": @"number",
 			  @"top_k": @"integer", @"seed": @"integer", @"repetition_penalty": @"number",
 			  @"repeat_penalty": @"number", @"presence_penalty": @"number", @"frequency_penalty": @"number",
-			  @"prompt_cache_key": @"string", @"user": @"string", @"logprobs": @"boolean",
-			  @"top_logprobs": @"integer", @"metadata": @"object", @"store": @"boolean" };
+			  @"prompt_cache_key": @"string", @"prompt_cache_retention": @"string", @"prompt_cache_options": @"object",
+			  @"user": @"string", @"logprobs": @"boolean", @"top_logprobs": @"integer", @"metadata": @"object",
+			  @"store": @"boolean" };
 }
 
 static NSDictionary<NSString *, NSString *> *NFKServedEmbeddingFields(void)
@@ -4118,6 +4119,8 @@ static BOOL NFKHostNamesLoopback(NSString * _Nullable host)
 		return;
 	}
 	NSError *error = NFKServedFieldTypeError(body[@"stream_options"], @{ @"include_usage": @"boolean" }, @"stream_options");
+	error = error ?: NFKServedFieldTypeError(body[@"prompt_cache_options"], @{ @"mode": @"string", @"ttl": @"string" },
+											 @"prompt_cache_options");
 	NFKServedTarget *target = error == nil ? [self modelNamed:body[@"model"] error:&error] : nil;
 	NSMutableArray<NSURL *> *files = [NSMutableArray array];
 	NFKInferenceRequest *inference = target != nil ? [NFKServedOpenAI chatRequestFromBody:body temporaryFiles:files error:&error] : nil;

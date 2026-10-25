@@ -28,6 +28,10 @@ NS_ASSUME_NONNULL_BEGIN
 				parameters carry this API's spelling: NFKParameterMaxTokens becomes max_tokens,
 				NFKParameterTemperature temperature, NFKParameterTopP top_p, NFKParameterTopK top_k,
 				and NFKParameterStopSequences stop_sequences. The API has no repetition penalty.
+				NFKParameterSkills becomes container.skills, with the code_execution_20260521 tool the
+				container runs them in when the request names no code-execution tool; the files a skill
+				writes come back as file ids in the code-execution result, which NFKRemoteFileStore
+				downloads.
 
 				The request shape follows the model generation named by modelName:
 

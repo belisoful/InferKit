@@ -18,6 +18,7 @@
 #import "NFKRemoteMediaSupport.h"
 #import "NFKToolMessageSupport.h"
 #import "NFKRemoteTransportPrivate.h"
+#import "NFKRemoteBatchPrivate.h"
 #import "NFKJobGuard.h"
 
 /*! The contract keys this backend translates or has no field for; every other parameter goes into
@@ -31,7 +32,9 @@ static NSSet<NSString *> *NFKGenerateContentMappedParameters(void)
 										NFKParameterMaxTokens, NFKParameterTemperature, NFKParameterTopP,
 										NFKParameterTopK, NFKParameterSeed, NFKParameterStopSequences,
 										NFKParameterRepetitionPenalty, NFKParameterConversationKey,
-										NFKParameterMCPServers, NFKParameterCitations, NFKParameterOutputFormat,
+										NFKParameterPromptCacheRetention, NFKParameterPromptCacheTTL,
+										NFKParameterPromptCacheMode, NFKParameterPromptCachePrewarm,
+										NFKParameterMCPServers, NFKParameterSkills, NFKParameterCitations, NFKParameterOutputFormat,
 										NFKParameterPreviousResponseIdentifier, NFKParameterVideoFrameCount ]];
 	});
 	return mapped;
@@ -881,6 +884,29 @@ static const NSUInteger NFKGenerateContentHopLimit = 64;
 		*outError = [NFKRemoteTransport errorWithCode:code reason:reason];
 	}
 	return nil;
+}
+
+@end
+
+#pragma mark - Batches
+
+@implementation NFKGeminiGenerateContentBackend (NFKRemoteBatch)
+
+- (nullable NSString *)batchModelName
+{
+	return self.modelName;
+}
+
+- (nullable NSURLRequest *)batchURLRequestForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
+	return [self urlRequestForRequest:request streaming:NO error:outError];
+}
+
+- (nullable NFKInferenceResult *)batchResultForReply:(NSDictionary *)reply
+											 request:(NFKInferenceRequest *)request
+											   error:(NSError * _Nullable *)outError
+{
+	return [self resultFromReply:reply request:request error:outError];
 }
 
 @end

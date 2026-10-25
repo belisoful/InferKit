@@ -14,6 +14,37 @@
 #import "NFKRemoteMediaSupport.h"
 #import <InferKit/NFKRemoteFileStore.h>
 #import "NFKRemoteTransportPrivate.h"
+#import "NFKRemoteBatchPrivate.h"
+
+/*! A vector a service wrote as base64, decoded by the encoding_format the request named: OpenAI's
+	base64 is little-endian float32, Perplexity's base64_binary is packed bits, least significant bit
+	first, each a 0 or 1, and Perplexity's base64_int8, which is also its default, is signed int8. */
+static NSArray<NSNumber *> * _Nullable NFKRemoteEmbeddingDecodedVector(NSString *encoded, NSString * _Nullable format)
+{
+	NSData *data = [[NSData alloc] initWithBase64EncodedString:encoded options:NSDataBase64DecodingIgnoreUnknownCharacters];
+	if (data == nil) {
+		return nil;
+	}
+	const uint8_t *bytes = data.bytes;
+	NSMutableArray<NSNumber *> *vector = [NSMutableArray array];
+	if ([format isEqualToString:@"base64"]) {
+		for (NSUInteger offset = 0; offset + sizeof(float) <= data.length; offset += sizeof(float)) {
+			uint32_t bits = OSReadLittleInt32(bytes, offset);
+			float value;
+			memcpy(&value, &bits, sizeof(value));
+			[vector addObject:@(value)];
+		}
+	} else if ([format isEqualToString:@"base64_binary"]) {
+		for (NSUInteger index = 0; index < data.length * 8; index++) {
+			[vector addObject:@((bytes[index / 8] >> (index % 8)) & 1)];
+		}
+	} else {
+		for (NSUInteger index = 0; index < data.length; index++) {
+			[vector addObject:@((int8_t)bytes[index])];
+		}
+	}
+	return vector;
+}
 
 @implementation NFKRemoteEmbeddingBackend
 
@@ -30,7 +61,7 @@
 									 apiKey:(nullable NSString *)apiKey
 								  modelName:(nullable NSString *)modelName
 {
-	NSArray<NSString *> *serving = @[ @"openai", @"gemini", @"mistral", @"together", @"openrouter",
+	NSArray<NSString *> *serving = @[ @"openai", @"gemini", @"mistral", @"together", @"openrouter", @"perplexity",
 									  @"ollama", @"lmstudio", @"llamacpp", @"vllm", @"inferkit" ];
 	if (![serving containsObject:provider.identifier]) {
 		return nil;
@@ -99,11 +130,15 @@
 	if (input == nil) {
 		return nil;
 	}
-	NSDictionary *body = [self responseForInput:input parameters:request.parameters error:outError];
+	BOOL contextualized = self.isContextualizedModel && [input isKindOfClass:NSString.class];
+	NSDictionary *body = [self responseForInput:contextualized ? @[ @[ input ] ] : input parameters:request.parameters
+											URL:contextualized ? self.contextualizedEndpointURL : self.endpointURL error:outError];
 	if (body == nil) {
 		return nil;
 	}
-	NSArray<NSArray<NSNumber *> *> *vectors = [self vectorsInBody:body error:outError];
+	NSString *format = request.parameters[@"encoding_format"];
+	NSArray<NSArray<NSNumber *> *> *vectors = contextualized ? [self documentVectorsInBody:body encoding:format error:outError].firstObject
+															 : [self vectorsInBody:body encoding:format error:outError];
 	if (vectors == nil) {
 		return nil;
 	}
@@ -118,11 +153,11 @@
 		[self failWithCode:kNFKError_InferenceMissingInput reason:@"no texts to embed" error:outError];
 		return nil;
 	}
-	NSDictionary *body = [self responseForInput:texts parameters:nil error:outError];
+	NSDictionary *body = [self responseForInput:texts parameters:nil URL:self.endpointURL error:outError];
 	if (body == nil) {
 		return nil;
 	}
-	NSArray<NSArray<NSNumber *> *> *vectors = [self vectorsInBody:body error:outError];
+	NSArray<NSArray<NSNumber *> *> *vectors = [self vectorsInBody:body encoding:nil error:outError];
 	if (vectors != nil && vectors.count != texts.count) {
 		[self failWithCode:kNFKError_InferenceBackendFailure
 					reason:[NSString stringWithFormat:@"%lu texts were sent and %lu vectors came back",
@@ -131,6 +166,38 @@
 		return nil;
 	}
 	return vectors;
+}
+
+- (nullable NSArray<NSArray<NSArray<NSNumber *> *> *> *)contextualizedEmbeddingsForDocuments:(NSArray<NSArray<NSString *> *> *)documents
+																						 error:(NSError * _Nullable *)outError
+{
+	if (documents.count == 0) {
+		[self failWithCode:kNFKError_InferenceMissingInput reason:@"no documents to embed" error:outError];
+		return nil;
+	}
+	NSDictionary *body = [self responseForInput:documents parameters:nil URL:self.contextualizedEndpointURL error:outError];
+	if (body == nil) {
+		return nil;
+	}
+	NSArray<NSArray<NSArray<NSNumber *> *> *> *vectors = [self documentVectorsInBody:body encoding:nil error:outError];
+	if (vectors != nil && vectors.count != documents.count) {
+		[self failWithCode:kNFKError_InferenceBackendFailure
+					reason:[NSString stringWithFormat:@"%lu documents were sent and %lu came back",
+							(unsigned long)documents.count, (unsigned long)vectors.count]
+					 error:outError];
+		return nil;
+	}
+	return vectors;
+}
+
+- (BOOL)isContextualizedModel
+{
+	return [self.modelName hasPrefix:@"pplx-embed-context"] || [self.modelName hasPrefix:@"perplexity/pplx-embed-context"];
+}
+
+- (nullable NSURL *)contextualizedEndpointURL
+{
+	return [self.endpointURL.URLByDeletingLastPathComponent URLByAppendingPathComponent:@"contextualizedembeddings"];
 }
 
 #pragma mark Request and response
@@ -247,9 +314,10 @@
 
 - (nullable NSDictionary *)responseForInput:(id)input
 								 parameters:(nullable NSDictionary<NSString *, id> *)parameters
+										URL:(nullable NSURL *)url
 									  error:(NSError * _Nullable *)outError
 {
-	if (self.endpointURL == nil) {
+	if (url == nil) {
 		[self failWithCode:kNFKError_InferenceNotReady reason:@"no endpoint URL is set" error:outError];
 		return nil;
 	}
@@ -272,7 +340,7 @@
 			if (outError != NULL) { *outError = encodeError; }
 			return nil;
 		}
-		urlRequest = [NSMutableURLRequest requestWithURL:self.endpointURL];
+		urlRequest = [NSMutableURLRequest requestWithURL:url];
 		urlRequest.HTTPBody = payload;
 		[NFKRemoteTransport authorizeRequest:urlRequest apiKey:self.apiKey style:NFKRemoteAPIStyleOpenAIChat];
 	}
@@ -302,7 +370,41 @@
 
 // The envelope is data[] of {index, embedding}; the vectors are ordered by index, not by position.
 // Gemini's is embedding.values for one content and embeddings[].values for a batch, in order.
-- (nullable NSArray<NSArray<NSNumber *> *> *)vectorsInBody:(NSDictionary *)body error:(NSError * _Nullable *)outError
+/*! Contextualized embeddings: data holds one entry per document, each with a data entry per chunk,
+	both ordered here by their index. */
+- (nullable NSArray<NSArray<NSArray<NSNumber *> *> *> *)documentVectorsInBody:(NSDictionary *)body
+																	 encoding:(nullable NSString *)format
+																		error:(NSError * _Nullable *)outError
+{
+	NSArray *documents = [body[@"data"] isKindOfClass:NSArray.class] ? body[@"data"] : nil;
+	if (documents.count == 0) {
+		[self failWithCode:kNFKError_InferenceBackendFailure reason:@"the response carries no embeddings" error:outError];
+		return nil;
+	}
+	NSMutableArray<NSArray<NSArray<NSNumber *> *> *> *vectors = [NSMutableArray array];
+	for (NSDictionary *document in [self entriesOrderedByIndex:documents]) {
+		NSArray<NSArray<NSNumber *> *> *chunks = [document isKindOfClass:NSDictionary.class]
+			? [self vectorsInBody:document encoding:format error:outError] : nil;
+		if (chunks == nil) {
+			return nil;
+		}
+		[vectors addObject:chunks];
+	}
+	return vectors;
+}
+
+- (NSArray *)entriesOrderedByIndex:(NSArray *)entries
+{
+	return [entries sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+		NSNumber *left = [a isKindOfClass:NSDictionary.class] ? a[@"index"] : nil;
+		NSNumber *right = [b isKindOfClass:NSDictionary.class] ? b[@"index"] : nil;
+		return [(left ?: @0) compare:(right ?: @0)];
+	}];
+}
+
+- (nullable NSArray<NSArray<NSNumber *> *> *)vectorsInBody:(NSDictionary *)body
+												  encoding:(nullable NSString *)format
+													 error:(NSError * _Nullable *)outError
 {
 	if ([body[@"embedding"] isKindOfClass:NSDictionary.class] && [body[@"embedding"][@"values"] isKindOfClass:NSArray.class]) {
 		return @[ body[@"embedding"][@"values"] ];
@@ -324,14 +426,12 @@
 		[self failWithCode:kNFKError_InferenceBackendFailure reason:@"the response carries no embeddings" error:outError];
 		return nil;
 	}
-	NSArray *ordered = [entries sortedArrayUsingComparator:^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
-		NSNumber *left = [a isKindOfClass:NSDictionary.class] ? a[@"index"] : nil;
-		NSNumber *right = [b isKindOfClass:NSDictionary.class] ? b[@"index"] : nil;
-		return [(left ?: @0) compare:(right ?: @0)];
-	}];
 	NSMutableArray<NSArray<NSNumber *> *> *vectors = [NSMutableArray array];
-	for (NSDictionary *entry in ordered) {
-		NSArray *vector = [entry isKindOfClass:NSDictionary.class] ? entry[@"embedding"] : nil;
+	for (NSDictionary *entry in [self entriesOrderedByIndex:entries]) {
+		id vector = [entry isKindOfClass:NSDictionary.class] ? entry[@"embedding"] : nil;
+		if ([vector isKindOfClass:NSString.class]) {
+			vector = NFKRemoteEmbeddingDecodedVector(vector, [format isKindOfClass:NSString.class] ? format : nil);
+		}
 		if (![vector isKindOfClass:NSArray.class]) {
 			[self failWithCode:kNFKError_InferenceBackendFailure reason:@"an embedding entry carries no vector" error:outError];
 			return nil;
@@ -358,6 +458,55 @@
 		*outError = [NFKRemoteTransport errorWithCode:code reason:reason];
 	}
 	return nil;
+}
+
+@end
+
+#pragma mark - Batches
+
+@implementation NFKRemoteEmbeddingBackend (NFKRemoteBatch)
+
+- (nullable NSString *)batchModelName
+{
+	return self.modelName;
+}
+
+// A batched embedding is one text: the media parts and the contextualized route are runs of their own.
+// Gemini's native style batches the embedContent request it sends for one text.
+- (nullable NSURLRequest *)batchURLRequestForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
+	if (self.isContextualizedModel) {
+		[self failWithCode:kNFKError_InferenceUnsupported reason:@"a batch embeds no contextualized documents" error:outError];
+		return nil;
+	}
+	NSString *text = [self textForRequest:request];
+	if (text == nil) {
+		[self failWithCode:kNFKError_InferenceMissingInput reason:@"the request carries no text" error:outError];
+		return nil;
+	}
+	if (self.apiStyle == NFKRemoteEmbeddingAPIStyleGeminiNative) {
+		return [self geminiRequestForInput:text parameters:request.parameters];
+	}
+	NSMutableDictionary<NSString *, id> *body = [NSMutableDictionary dictionaryWithDictionary:request.parameters];
+	body[@"model"] = self.modelName;
+	body[@"input"] = text;
+	NSData *payload = [NSJSONSerialization isValidJSONObject:body] ? [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL] : nil;
+	if (payload == nil) {
+		[self failWithCode:kNFKError_InferenceMissingInput reason:@"the parameters are not JSON-serializable" error:outError];
+		return nil;
+	}
+	NSMutableURLRequest *urlRequest = [NSMutableURLRequest requestWithURL:self.endpointURL ?: [NSURL URLWithString:@"embeddings"]];
+	urlRequest.HTTPMethod = @"POST";
+	urlRequest.HTTPBody = payload;
+	return urlRequest;
+}
+
+- (nullable NFKInferenceResult *)batchResultForReply:(NSDictionary *)reply
+											 request:(NFKInferenceRequest *)request
+											   error:(NSError * _Nullable *)outError
+{
+	NSArray<NSArray<NSNumber *> *> *vectors = [self vectorsInBody:reply encoding:request.parameters[@"encoding_format"] error:outError];
+	return vectors != nil ? [NFKInferenceResult resultWithOutputs:@{ NFKOutputEmbedding: vectors.firstObject, NFKRemoteBackendRawKey: reply }] : nil;
 }
 
 @end

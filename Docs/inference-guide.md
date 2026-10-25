@@ -660,6 +660,25 @@ name the provider does not know, so it is the cheap check before a request carri
   request on the `openai` preset, through `NFKOpenAIDecisionsBackend`, which
   `[NFKOpenAIDecisionsBackend backendForProvider:NFKRemoteProvider.openAI apiKey:key modelName:@"gpt-6-luna"]`
   builds.
+- **`perplexity`**: one key reaches four APIs.
+  - A model named `provider/model` (`openai/gpt-5.5`) goes to the Agent API (`/v1/agent`) through
+    `NFKRemoteResponsesBackend` in its Perplexity dialect; a request with no model sets Perplexity's
+    `effort` parameter (`fast` through `xhigh`) instead. Built-in tools go by wire shape
+    (`{type: web_search}`, `fetch_url`, `sandbox`), and their results come back under
+    `NFKOutputServerToolResults`. `outputFilesForResponseIdentifier:error:` lists what a sandbox wrote.
+  - A `pplx-decider` model goes to the Decisions API (`/v1/decisions`) through `NFKTypeSafeBackend`,
+    which takes Jev's request and answers with the same `NFKDecisionAnswer`s: `pplx-decider-latest` or
+    `pplx-decider-flash-latest`, the aliases of `pplx-decider-v1.2` and `pplx-decider-flash-v1.2`. An
+    image goes in the state as an `image_url` part holding a data URL. Decider for Mac serves the same
+    API on the device, at the preset re-pointed with `providerWithBaseURL:` to `http://127.0.0.1:8080/v1`.
+  - `NFKRemoteEmbeddingBackend` embeds with `pplx-embed-v1-*` and decodes the int8 or binary vectors;
+    `contextualizedEmbeddingsForDocuments:error:` embeds document chunks with `pplx-embed-context-v1-*`.
+  - `NFKRemoteWebSearch` searches the web and answers ranked `NFKWebSearchResult`s.
+  - `NFKRemoteBatch` runs Agent API requests as one batch, through the batch-only Files API.
+  - `NFKRemoteSkillStore` uploads and versions Agent Skills bundles (a folder with a `SKILL.md`), and
+    `NFKParameterSkills` loads them in an Agent API request. The same store and key serve Anthropic's
+    Skills API, where `NFKAnthropicBackend` loads them in its code-execution container.
+  - `modelsWithAPIKey:error:` lists the Agent API's models and then the two decision models.
 - **`opencode`** (OpenCode Zen) and **`opencode-go`** (OpenCode Go): gateways that serve each model
   on its maker's protocol behind one key. `modelAPIStyles` holds the routes OpenCode publishes, and
   `backendForProvider:apiKey:modelName:` follows the model's route:

@@ -40,6 +40,86 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### Perplexity
+
+- `NFKRemoteProvider.perplexity` reaches Perplexity's Agent, Decisions, Search, and Embeddings APIs with one key.
+  A model goes to the Agent API (`POST /v1/agent`, the new `NFKRemoteAPIStylePerplexityAgent`) and a `pplx-decider`
+  model to the Decisions API (`POST /v1/decisions`, the new `NFKRemoteAPIStylePerplexityDecisions`), routed by the
+  new `modelPrefixAPIStyles`, a provider's protocol for every model whose name begins with a prefix.
+- `NFKRemoteResponsesBackend` speaks the Agent API in `NFKRemoteResponsesDialectPerplexityAgent` (the new `dialect`
+  property): a schema goes as `response_format`, reasoning carries its effort alone, and a background job polls and
+  cancels under `/v1/agent/{id}`. Perplexity's tool result items (`search_results`, `fetch_url_results`,
+  `sandbox_results`, and their kin) come back under `NFKOutputServerToolResults`.
+  `outputFilesForResponseIdentifier:error:` and `contentsOfOutputFileWithIdentifier:responseIdentifier:error:` list
+  and download the files a sandbox wrote.
+- The Decisions API takes System One's request and answers, so `NFKTypeSafeBackend` serves it. An image is an
+  `image_url` part holding a data URL anywhere in the state. Decider for Mac serves the same API on the device, which
+  the preset re-pointed at `http://127.0.0.1:8080/v1` reaches.
+- `NFKRemoteEmbeddingBackend` serves `pplx-embed-v1-*` and decodes a vector a service writes as base64 by the
+  request's `encoding_format`: OpenAI's `base64` as float32, Perplexity's `base64_int8` (its default) as the signed
+  values, and `base64_binary` as one 0 or 1 per dimension. `contextualizedEmbeddingsForDocuments:error:` embeds
+  document chunks through `/contextualizedembeddings` for the `pplx-embed-context-v1-*` models.
+- `NFKRemoteWebSearch` searches the web through Perplexity's `POST /search` and answers ranked `NFKWebSearchResult`s
+  (title, URL, snippet, and dates).
+- The model catalog lists the Agent API's models and then the two decision models Perplexity publishes,
+  `pplx-decider-v1.2` and `pplx-decider-flash-v1.2`, each entry naming its `-latest` alias. Perplexity serves no
+  single-model route, so `modelWithIdentifier:error:` finds a model in the list.
+
+#### Mistral's Conversations API
+
+- `NFKMistralConversationsBackend` calls `POST /v1/conversations`, which runs a model or a saved agent (`agentIdentifier`)
+  with Mistral's built-in tools: web search, the code interpreter, image generation, document libraries, and custom
+  connectors, named by wire shape under `NFKParameterTools` beside function tools. The sampling keys, the limit, the
+  stop sequences, the seed, the effort, and a JSON schema go under `completion_args`.
+- `NFKParameterPreviousResponseIdentifier` continues a conversation the service keeps, and a `from_entry_id` parameter
+  restarts it from an entry; `historyOfConversationWithIdentifier:error:` and `deleteConversationWithIdentifier:error:`
+  read and remove one.
+- The reply's thinking, function calls, tool references (as citations), tool runs, handoffs, and the files the tools
+  wrote come back under the contract's keys, and an image the image-generation tool wrote downloads into
+  `NFKOutputImage`. `submitInferenceJobForRequest:` streams the text.
+
+#### Batches
+
+- `NFKRemoteBatch` runs many requests as one hosted batch on openai, groq, modelstudio, perplexity, together,
+  anthropic, gemini, mistral, openrouter, and xai, each through its own wire shape (`NFKRemoteBatchAPIStyle`). It takes
+  requests keyed by the caller's identifiers and the backend that would run one: `NFKRemoteBackend`,
+  `NFKAnthropicBackend`, `NFKRemoteResponsesBackend`, `NFKGeminiGenerateContentBackend`, or `NFKRemoteEmbeddingBackend`.
+  Each request goes out as that backend's body, and each result is read the way that backend reads a reply.
+- `NFKRemoteBatchRecord` reports a batch in one vocabulary (`NFKRemoteBatchStatus`) with its counts and times, and
+  `NFKRemoteBatchResult` carries each request's result or error. Batches list, cancel, delete where the service serves
+  it, and poll until they finish.
+- `NFKRemoteFileStore` serves Perplexity's Files API and Alibaba Model Studio's, both with purpose `batch`.
+- A batch also takes Gemini embedding requests (`:asyncBatchEmbedContent`) and goes as a file past Gemini's 20 MB inline
+  limit; xAI image and video requests; Groq transcriptions and translations; and Mistral's FIM, OCR, moderation,
+  classification, and transcription requests. `NFKRemoteCompletionBackend`, `NFKRemoteOCRBackend`,
+  `NFKRemoteModerationBackend`, `NFKRemoteClassifierBackend`, `NFKRemoteTranscriptionBackend` (a clip by its URL),
+  `NFKRemoteImageBackend`, and `NFKRemoteVideoBackend` submit them. A batch whose requests name two routes is refused.
+- OpenAI image generations batch, and image edits batch as the JSON edit body (sources and mask as data URLs). Mistral
+  conversations batch through `NFKMistralConversationsBackend`.
+
+#### Skills
+
+- `NFKRemoteSkillStore` uploads, versions, lists, downloads, and deletes Agent Skills bundles (one folder holding a
+  `SKILL.md` with its `name` and `description`) on Anthropic's and Perplexity's Skills APIs, as `NFKRemoteSkill` and
+  `NFKRemoteSkillVersion`. A bundle is a zip or a folder on disk; Perplexity receives the folder zipped. Perplexity's
+  replace and delete name the revision they expect.
+- `NFKParameterSkills` loads skills in a request: `NFKAnthropicBackend` sends them as `container.skills` with the
+  code-execution tool when the request names none, and `NFKRemoteResponsesBackend` in its Perplexity dialect as
+  `skills`. `NFKRemoteSkill.skillReference` writes an entry, and an entry in a service's own shape passes through.
+- `NFKAnthropicBackend` passes a tool that carries a `type`, such as a web search or code-execution server tool, through
+  as written.
+
+#### OpenAI's prompt-cache controls
+
+- `NFKParameterPromptCacheRetention` is `prompt_cache_retention` (`in_memory` or `24h`) for the models before
+  GPT-5.6. `NFKParameterPromptCacheTTL`, `NFKParameterPromptCacheMode`, and `NFKParameterPromptCachePrewarm` are
+  `prompt_cache_options` (`ttl`, `mode`, and `prewarm`) for GPT-5.6 and later. `NFKRemoteBackend` and
+  `NFKRemoteResponsesBackend` send each only when it is set, and chat completions takes no prewarm.
+- `NFKRemoteResponsesBackend` sends `NFKParameterConversationKey` as `prompt_cache_key`, as the chat backend does.
+- A `prompt_cache_breakpoint` on a content part the caller writes passes through both backends.
+- `NFKInferenceServer`'s chat and Responses routes read `prompt_cache_retention` and `prompt_cache_options` into the
+  same keys and check their types.
+
 #### A download fetches the optional files its catalog lists later
 
 - `NFKDownloadStatus.uncheckedOptionalPaths` lists a catalog source's optional files that are not cached and that

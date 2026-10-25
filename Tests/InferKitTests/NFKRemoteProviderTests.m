@@ -226,7 +226,7 @@ static const uint16_t NFKDeadPort = 9;
 {
 	for (NSString *identifier in @[ @"openai", @"anthropic", @"xai", @"gemini", @"groq",
 									@"mistral", @"deepseek", @"together", @"openrouter", @"typesafe",
-									@"opencode", @"opencode-go", @"modelstudio" ]) {
+									@"perplexity", @"opencode", @"opencode-go", @"modelstudio" ]) {
 		NFKRemoteProvider *provider = [NFKRemoteProvider providerWithIdentifier:identifier];
 		XCTAssertNotNil(provider, @"%@ is missing", identifier);
 		XCTAssertTrue(provider.requiresAPIKey, @"%@ is hosted", identifier);
@@ -254,6 +254,7 @@ static const uint16_t NFKDeadPort = 9;
 		@"groq": @"https://api.groq.com/openai/v1",
 		@"openrouter": @"https://openrouter.ai/api/v1",
 		@"typesafe": @"https://api.typesafe.ai/v1",
+		@"perplexity": @"https://api.perplexity.ai/v1",
 		@"opencode": @"https://opencode.ai/inference/v1",
 		@"opencode-go": @"https://opencode.ai/inference/go/v1",
 		@"modelstudio": @"https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
@@ -261,7 +262,9 @@ static const uint16_t NFKDeadPort = 9;
 	};
 	NSDictionary<NSNumber *, NSString *> *pathsByStyle = @{ @(NFKRemoteAPIStyleOpenAIChat): @"/chat/completions",
 															@(NFKRemoteAPIStyleAnthropicMessages): @"/messages",
-															@(NFKRemoteAPIStyleSystemOne): @"/systemone" };
+															@(NFKRemoteAPIStyleSystemOne): @"/systemone",
+															@(NFKRemoteAPIStylePerplexityDecisions): @"/decisions",
+															@(NFKRemoteAPIStylePerplexityAgent): @"/agent" };
 	for (NSString *identifier in bases) {
 		NFKRemoteProvider *provider = [NFKRemoteProvider providerWithIdentifier:identifier];
 		XCTAssertEqualObjects(provider.baseURL.absoluteString, bases[identifier], @"%@", identifier);
@@ -333,6 +336,30 @@ static const uint16_t NFKDeadPort = 9;
 }
 
 #pragma mark Per-model routes
+
+// Perplexity serves a model on its Agent API and a pplx-decider model on its Decisions API, a family
+// routed by prefix, which a re-pointed preset keeps.
+- (void)testPerplexityRoutesTheDecisionModelsByPrefixAndEveryOtherToTheAgentAPI
+{
+	NFKRemoteProvider *perplexity = NFKRemoteProvider.perplexity;
+	XCTAssertEqual(perplexity.apiStyle, NFKRemoteAPIStylePerplexityAgent);
+	XCTAssertEqual([perplexity apiStyleForModelName:@"pplx-decider-latest"], NFKRemoteAPIStylePerplexityDecisions);
+	XCTAssertEqual([perplexity apiStyleForModelName:@"perplexity/pplx-decider-flash-v1.2"], NFKRemoteAPIStylePerplexityDecisions);
+	XCTAssertEqual([perplexity apiStyleForModelName:@"openai/gpt-5.5"], NFKRemoteAPIStylePerplexityAgent);
+	XCTAssertEqual([perplexity apiStyleForModelName:nil], NFKRemoteAPIStylePerplexityAgent);
+	XCTAssertEqualObjects([perplexity endpointURLForModelName:@"pplx-decider-latest"].absoluteString, @"https://api.perplexity.ai/v1/decisions");
+	XCTAssertEqualObjects([perplexity endpointURLForModelName:@"openai/gpt-5.5"].absoluteString, @"https://api.perplexity.ai/v1/agent");
+
+	id<NFKInferenceBackend> agent = [NFKRemoteProvider backendForProvider:perplexity apiKey:@"k" modelName:@"anthropic/claude-sonnet-5-5"];
+	XCTAssertTrue([agent isKindOfClass:NFKRemoteResponsesBackend.class]);
+	XCTAssertEqual([(NFKRemoteResponsesBackend *)agent dialect], NFKRemoteResponsesDialectPerplexityAgent);
+	XCTAssertTrue([[NFKRemoteProvider backendForProvider:perplexity apiKey:@"k" modelName:@"pplx-decider-latest"] isKindOfClass:NFKTypeSafeBackend.class]);
+
+	NFKRemoteProvider *onDevice = [perplexity providerWithBaseURL:[NSURL URLWithString:@"http://127.0.0.1:8080/v1"]];
+	XCTAssertEqualObjects(onDevice.modelPrefixAPIStyles, perplexity.modelPrefixAPIStyles);
+	XCTAssertEqualObjects([onDevice endpointURLForModelName:@"pplx-decider-flash-latest"].absoluteString, @"http://127.0.0.1:8080/v1/decisions");
+	XCTAssertEqualObjects(NFKRemoteProvider.openAI.modelPrefixAPIStyles, @{});
+}
 
 - (void)testASingleProtocolProviderRoutesEveryModelToItsOwnStyle
 {

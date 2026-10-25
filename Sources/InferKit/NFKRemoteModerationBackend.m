@@ -12,6 +12,7 @@
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKClassification.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteBatchPrivate.h"
 #import "NFKRemoteTransportPrivate.h"
 
 @implementation NFKRemoteModerationBackend
@@ -80,13 +81,48 @@
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 												  error:(NSError * _Nullable *)outError
 {
+	NSMutableURLRequest *urlRequest = [self urlRequestForRequest:request error:outError];
+	if (urlRequest == nil) {
+		return nil;
+	}
+	NSHTTPURLResponse *response = nil;
+	NSError *sendError = nil;
+	NSData *data = [self sendRequest:urlRequest response:&response error:&sendError];
+	if (data == nil) {
+		if (outError != NULL) { *outError = sendError; }
+		return nil;
+	}
+	NSError *statusError = [NFKRemoteTransport errorForResponse:response data:data];
+	if (statusError != nil) {
+		if (outError != NULL) { *outError = statusError; }
+		return nil;
+	}
+	id object = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+	return [self resultFromReply:[object isKindOfClass:NSDictionary.class] ? object : @{} error:outError];
+}
+
+- (nullable NFKInferenceResult *)resultFromReply:(NSDictionary *)reply error:(NSError * _Nullable *)outError
+{
+	NSArray *results = reply[@"results"];
+	NSDictionary *verdict = [results isKindOfClass:NSArray.class] && results.count > 0 ? results.firstObject : nil;
+	if (![verdict isKindOfClass:NSDictionary.class]) {
+		return [self failWithCode:kNFKError_InferenceBackendFailure reason:@"the response carries no moderation result" error:outError];
+	}
+	return [NFKInferenceResult resultWithOutputs:@{ NFKOutputClassifications: [self classificationsInVerdict:verdict],
+													NFKOutputStructured: [self verdictWithFlag:verdict] }];
+}
+
+- (nullable NSMutableURLRequest *)urlRequestForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
 	if (self.endpointURL == nil) {
-		return [self failWithCode:kNFKError_InferenceNotReady reason:@"no endpoint URL is set" error:outError];
+		[self failWithCode:kNFKError_InferenceNotReady reason:@"no endpoint URL is set" error:outError];
+		return nil;
 	}
 	NSString *text = [self textForRequest:request];
 	id image = [request inputForKey:NFKInputImage];
 	if (text == nil && image == nil) {
-		return [self failWithCode:kNFKError_InferenceMissingInput reason:@"the request carries neither text nor an image" error:outError];
+		[self failWithCode:kNFKError_InferenceMissingInput reason:@"the request carries neither text nor an image" error:outError];
+		return nil;
 	}
 
 	NSMutableDictionary<NSString *, id> *body = [NSMutableDictionary dictionary];
@@ -105,8 +141,9 @@
 	} else {
 		NSString *dataURL = [NFKImageCoding dataURLForImage:image];
 		if (dataURL == nil) {
-			return [self failWithCode:kNFKError_InferenceMissingInput
-							   reason:@"the image under NFKInputImage is not a CGImage, CVPixelBuffer, or BGRA/RGBA texture" error:outError];
+			[self failWithCode:kNFKError_InferenceMissingInput
+						reason:@"the image under NFKInputImage is not a CGImage, CVPixelBuffer, or BGRA/RGBA texture" error:outError];
+			return nil;
 		}
 		NSMutableArray *parts = [NSMutableArray array];
 		if (text != nil) {
@@ -131,27 +168,7 @@
 	urlRequest.HTTPBody = payload;
 	[urlRequest setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
 	[NFKRemoteTransport authorizeRequest:urlRequest apiKey:self.apiKey style:NFKRemoteAPIStyleOpenAIChat];
-
-	NSHTTPURLResponse *response = nil;
-	NSError *sendError = nil;
-	NSData *data = [self sendRequest:urlRequest response:&response error:&sendError];
-	if (data == nil) {
-		if (outError != NULL) { *outError = sendError; }
-		return nil;
-	}
-	NSError *statusError = [NFKRemoteTransport errorForResponse:response data:data];
-	if (statusError != nil) {
-		if (outError != NULL) { *outError = statusError; }
-		return nil;
-	}
-	id object = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
-	NSArray *results = [object isKindOfClass:NSDictionary.class] ? object[@"results"] : nil;
-	NSDictionary *verdict = [results isKindOfClass:NSArray.class] && results.count > 0 ? results.firstObject : nil;
-	if (![verdict isKindOfClass:NSDictionary.class]) {
-		return [self failWithCode:kNFKError_InferenceBackendFailure reason:@"the response carries no moderation result" error:outError];
-	}
-	return [NFKInferenceResult resultWithOutputs:@{ NFKOutputClassifications: [self classificationsInVerdict:verdict],
-													NFKOutputStructured: [self verdictWithFlag:verdict] }];
+	return urlRequest;
 }
 
 // Mistral's verdict carries the per-category booleans without the flag OpenAI adds, so the flag is
@@ -225,6 +242,29 @@
 		*outError = [NFKRemoteTransport errorWithCode:code reason:reason];
 	}
 	return nil;
+}
+
+@end
+
+#pragma mark - Batches
+
+@implementation NFKRemoteModerationBackend (NFKRemoteBatch)
+
+- (nullable NSString *)batchModelName
+{
+	return self.modelName;
+}
+
+- (nullable NSURLRequest *)batchURLRequestForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
+	return [self urlRequestForRequest:request error:outError];
+}
+
+- (nullable NFKInferenceResult *)batchResultForReply:(NSDictionary *)reply
+											 request:(NFKInferenceRequest *)request
+											   error:(NSError * _Nullable *)outError
+{
+	return [self resultFromReply:reply error:outError];
 }
 
 @end

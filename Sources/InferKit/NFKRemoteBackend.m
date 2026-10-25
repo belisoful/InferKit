@@ -17,6 +17,7 @@
 #import "NFKToolMessageSupport.h"
 #import "NFKJobGuard.h"
 #import "NFKRemoteTransportPrivate.h"
+#import "NFKRemoteBatchPrivate.h"
 
 /*! The endpoint's spelling for each core text parameter the contract names. The core keys are
 	camelCase and an OpenAI-compatible service reads underscored names, so the key is renamed and the
@@ -31,8 +32,7 @@ static NSDictionary<NSString *, NSArray<NSString *> *> *NFKRemoteWireNames(void)
 				   NFKParameterTopP: @[ @"top_p" ],
 				   NFKParameterTopK: @[ @"top_k" ],
 				   NFKParameterStopSequences: @[ @"stop" ],
-				   NFKParameterRepetitionPenalty: @[ @"repetition_penalty", @"repeat_penalty" ],
-				   NFKParameterConversationKey: @[ @"prompt_cache_key" ] };
+				   NFKParameterRepetitionPenalty: @[ @"repetition_penalty", @"repeat_penalty" ] };
 	});
 	return names;
 }
@@ -181,6 +181,8 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 																   NFKParameterTemperature, NFKParameterSeed,
 																   NFKParameterReasoningEffort ]];
 	[keys addObjectsFromArray:NFKRemoteWireNames().allKeys];
+	[keys addObjectsFromArray:NFKRemotePromptCacheParameterKeys()];
+	[keys removeObject:NFKParameterPromptCachePrewarm];
 	return keys;
 }
 
@@ -401,6 +403,8 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 		}
 	}
 
+	[body addEntriesFromDictionary:NFKRemotePromptCacheFields(request.parameters, NO)];
+
 	// The reasoning effort is renamed and its value translated, so the contract's levels reach a
 	// service that names its own.
 	NSString *effort = request.parameters[NFKParameterReasoningEffort];
@@ -408,11 +412,13 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 		body[@"reasoning_effort"] = NFKRemoteReasoningEfforts()[effort] ?: effort;
 	}
 
-	// Chat Completions has no MCP connector, so the servers a request names go nowhere here.
+	// Chat Completions has no MCP connector and no skills, so the servers and skills a request names go
+	// nowhere here.
 	NSMutableSet<NSString *> *translated = [NSMutableSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema,
 																		 NFKParameterAudioOutput, NFKParameterVideoFrameCount,
-																		   NFKParameterReasoningEffort, NFKParameterMCPServers ]];
+																		   NFKParameterReasoningEffort, NFKParameterMCPServers, NFKParameterSkills ]];
 	[translated addObjectsFromArray:wireNames.allKeys];
+	[translated addObjectsFromArray:NFKRemotePromptCacheParameterKeys()];
 	for (NSString *key in request.parameters) {
 		if (![translated containsObject:key]) {
 			body[key] = request.parameters[key];
@@ -1145,6 +1151,30 @@ NSString * const NFKRemoteBackendRawKey		= @"raw";
 												  code:kNFKError_InferenceBackendFailure
 											  userInfo:@{ NSLocalizedDescriptionKey: @"the remote call failed" }];
 	return NO;
+}
+
+@end
+
+#pragma mark - Batches
+
+@implementation NFKRemoteBackend (NFKRemoteBatch)
+
+- (nullable NSString *)batchModelName
+{
+	return self.modelName;
+}
+
+- (nullable NSURLRequest *)batchURLRequestForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
+	return [self urlRequestForRequest:request streaming:NO error:outError];
+}
+
+- (nullable NFKInferenceResult *)batchResultForReply:(NSDictionary *)reply
+											 request:(NFKInferenceRequest *)request
+											   error:(NSError * _Nullable *)outError
+{
+	NSData *data = [NSJSONSerialization dataWithJSONObject:reply options:0 error:outError];
+	return data != nil ? [self resultFromResponseData:data request:request error:outError] : nil;
 }
 
 @end

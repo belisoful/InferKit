@@ -21,6 +21,16 @@ static NSString *NFKGeminiBareModelName(NSString *name)
 	return [name hasPrefix:@"models/"] ? [name substringFromIndex:7] : name;
 }
 
+/*! Perplexity's decision models as its Decisions API reference names them (2026-10-23), each with
+	the alias that tracks it. Its GET /v1/models lists the Agent API's models alone. */
+static NSArray<NSDictionary<NSString *, id> *> *NFKPerplexityDecisionModelEntries(void)
+{
+	return @[ @{ @"id": @"pplx-decider-v1.2", @"object": @"model", @"owned_by": @"perplexity",
+				 @"alias": @"pplx-decider-latest" },
+			  @{ @"id": @"pplx-decider-flash-v1.2", @"object": @"model", @"owned_by": @"perplexity",
+				 @"alias": @"pplx-decider-flash-latest" } ];
+}
+
 @implementation NFKRemoteModelCatalog
 
 @synthesize session = _session;
@@ -78,6 +88,7 @@ static NSString *NFKGeminiBareModelName(NSString *name)
 		}
 		afterIdentifier = [self nextPageIdentifierIn:page];
 	} while (afterIdentifier != nil);
+	[models addObjectsFromArray:self.publishedModels];
 	return [self modelsWithGeminiLimits:models];
 }
 
@@ -93,6 +104,9 @@ static NSString *NFKGeminiBareModelName(NSString *name)
 - (nullable NFKRemoteModel *)modelWithIdentifier:(NSString *)identifier
 										   error:(NSError * _Nullable *)outError
 {
+	if (self.provider.apiStyle == NFKRemoteAPIStylePerplexityAgent) {
+		return [self listedModelWithIdentifier:identifier error:outError];
+	}
 	// A colon is legal in a path segment and is how Ollama spells a tag (llama3.2:latest), though
 	// Foundation's path set would encode it.
 	NSMutableCharacterSet *allowed = [NSCharacterSet.URLPathAllowedCharacterSet mutableCopy];
@@ -129,6 +143,52 @@ static NSString *NFKGeminiBareModelName(NSString *name)
 		*outError = error;
 	}
 	return NO;
+}
+
+#pragma mark Published lists
+
+/*! The models a provider publishes in its reference and its GET /models leaves out: Perplexity's
+	decision models. Empty for every other provider. */
+- (NSArray<NFKRemoteModel *> *)publishedModels
+{
+	if (self.provider.apiStyle != NFKRemoteAPIStylePerplexityAgent) {
+		return @[];
+	}
+	NSMutableArray<NFKRemoteModel *> *models = [NSMutableArray array];
+	for (NSDictionary *entry in NFKPerplexityDecisionModelEntries()) {
+		[models addObject:[NFKRemoteModel modelWithEntry:entry]];
+	}
+	return models;
+}
+
+/*! The listed model with the identifier or the alias, for a provider that serves no GET /models/{id}.
+	A published model answers without a request. */
+- (nullable NFKRemoteModel *)listedModelWithIdentifier:(NSString *)identifier error:(NSError * _Nullable *)outError
+{
+	NFKRemoteModel *published = [self modelWithIdentifier:identifier among:self.publishedModels];
+	if (published != nil) {
+		return published;
+	}
+	NSArray<NFKRemoteModel *> *models = [self modelsWithError:outError];
+	if (models == nil) {
+		return nil;
+	}
+	NFKRemoteModel *listed = [self modelWithIdentifier:identifier among:models];
+	if (listed == nil && outError != NULL) {
+		*outError = [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure
+											   reason:[NSString stringWithFormat:@"the provider lists no model named %@", identifier]];
+	}
+	return listed;
+}
+
+- (nullable NFKRemoteModel *)modelWithIdentifier:(NSString *)identifier among:(NSArray<NFKRemoteModel *> *)models
+{
+	for (NFKRemoteModel *model in models) {
+		if ([model.identifier isEqualToString:identifier] || [model.raw[@"alias"] isEqual:identifier]) {
+			return model;
+		}
+	}
+	return nil;
 }
 
 #pragma mark Gemini's limits

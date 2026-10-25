@@ -12,6 +12,7 @@
 #import <InferKit/NFKInferenceResult.h>
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
+#import "NFKRemoteBatchPrivate.h"
 #import <InferKit/NFKRemoteFileStore.h>
 #import "NFKRemoteTransportPrivate.h"
 
@@ -80,8 +81,32 @@
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 												  error:(NSError * _Nullable *)outError
 {
+	NSMutableURLRequest *urlRequest = [self urlRequestForRequest:request error:outError];
+	if (urlRequest == nil) {
+		return nil;
+	}
+	NSHTTPURLResponse *response = nil;
+	NSError *sendError = nil;
+	NSData *data = [self sendRequest:urlRequest response:&response error:&sendError];
+	NSError *failure = data == nil ? sendError : [NFKRemoteTransport errorForResponse:response data:data];
+	if (failure != nil || data == nil) {
+		if (outError != NULL) {
+			*outError = failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the OCR call failed"];
+		}
+		return nil;
+	}
+	id reply = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+	if (![reply isKindOfClass:NSDictionary.class]) {
+		return [self failWithCode:kNFKError_InferenceBackendFailure reason:@"the response is not a JSON object" error:outError];
+	}
+	return [self resultFromReply:reply];
+}
+
+- (nullable NSMutableURLRequest *)urlRequestForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
 	if (self.endpointURL == nil) {
-		return [self failWithCode:kNFKError_InferenceNotReady reason:@"no endpoint URL is set" error:outError];
+		[self failWithCode:kNFKError_InferenceNotReady reason:@"no endpoint URL is set" error:outError];
+		return nil;
 	}
 	NSDictionary *document = [self documentForRequest:request error:outError];
 	if (document == nil) {
@@ -101,29 +126,13 @@
 			body[key] = request.parameters[key];
 		}
 	}
-
 	NSMutableURLRequest *urlRequest = [NSMutableURLRequest requestWithURL:self.endpointURL];
 	urlRequest.HTTPMethod = @"POST";
 	urlRequest.timeoutInterval = self.timeout;
 	urlRequest.HTTPBody = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
 	[urlRequest setValue:@"application/json" forHTTPHeaderField:@"Content-Type"];
 	[NFKRemoteTransport authorizeRequest:urlRequest apiKey:self.apiKey style:NFKRemoteAPIStyleOpenAIChat];
-
-	NSHTTPURLResponse *response = nil;
-	NSError *sendError = nil;
-	NSData *data = [self sendRequest:urlRequest response:&response error:&sendError];
-	NSError *failure = data == nil ? sendError : [NFKRemoteTransport errorForResponse:response data:data];
-	if (failure != nil || data == nil) {
-		if (outError != NULL) {
-			*outError = failure ?: [NFKRemoteTransport errorWithCode:kNFKError_InferenceBackendFailure reason:@"the OCR call failed"];
-		}
-		return nil;
-	}
-	id reply = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
-	if (![reply isKindOfClass:NSDictionary.class]) {
-		return [self failWithCode:kNFKError_InferenceBackendFailure reason:@"the response is not a JSON object" error:outError];
-	}
-	return [self resultFromReply:reply];
+	return urlRequest;
 }
 
 // A PDF goes as a document_url (a hosted URL as it stands, local bytes as a data URI); an image as
@@ -209,6 +218,29 @@
 		*outError = [NFKRemoteTransport errorWithCode:code reason:reason];
 	}
 	return nil;
+}
+
+@end
+
+#pragma mark - Batches
+
+@implementation NFKRemoteOCRBackend (NFKRemoteBatch)
+
+- (nullable NSString *)batchModelName
+{
+	return self.modelName;
+}
+
+- (nullable NSURLRequest *)batchURLRequestForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
+	return [self urlRequestForRequest:request error:outError];
+}
+
+- (nullable NFKInferenceResult *)batchResultForReply:(NSDictionary *)reply
+											 request:(NFKInferenceRequest *)request
+											   error:(NSError * _Nullable *)outError
+{
+	return [self resultFromReply:reply];
 }
 
 @end

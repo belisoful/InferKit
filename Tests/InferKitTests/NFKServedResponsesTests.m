@@ -217,6 +217,7 @@
 							@"tools": @[ shell, patch, @{ @"type": @"web_search" } ],
 							@"tool_choice": @{ @"type": @"function", @"name": @"shell" },
 							@"temperature": @0.2, @"top_p": @0.8, @"max_output_tokens": @512, @"prompt_cache_key": @"session-1",
+							@"prompt_cache_retention": @"24h", @"prompt_cache_options": @{ @"mode": @"explicit", @"ttl": @"12h", @"prewarm": @NO },
 							@"reasoning": @{ @"effort": @"high", @"summary": @"auto" }, @"metadata": @{ @"origin": @"test" },
 							@"text": @{ @"format": @{ @"type": @"json_schema", @"name": @"reply", @"schema": @{ @"type": @"object" } } },
 							@"stopSequences": @[ @"END" ],
@@ -270,6 +271,11 @@
 	XCTAssertEqualObjects([received parameterForKey:NFKParameterTopP], @0.8);
 	XCTAssertEqualObjects([received parameterForKey:NFKParameterMaxTokens], @512);
 	XCTAssertEqualObjects([received parameterForKey:NFKParameterConversationKey], @"session-1");
+	XCTAssertEqualObjects([received parameterForKey:NFKParameterPromptCacheRetention], @"24h");
+	XCTAssertEqualObjects([received parameterForKey:NFKParameterPromptCacheMode], @"explicit");
+	XCTAssertEqualObjects([received parameterForKey:NFKParameterPromptCacheTTL], @"12h");
+	XCTAssertEqualObjects([received parameterForKey:NFKParameterPromptCachePrewarm], @NO);
+	XCTAssertNil([received parameterForKey:@"prompt_cache_options"]);
 	XCTAssertEqualObjects([received parameterForKey:NFKParameterReasoningEffort], NFKReasoningEffortDeep);
 	XCTAssertEqualObjects([received parameterForKey:NFKParameterJSONSchema], (@{ @"type": @"object" }));
 	XCTAssertEqualObjects([received parameterForKey:NFKParameterStopSequences], (@[ @"END" ]), @"a contract key the client sends under its own name passes through");

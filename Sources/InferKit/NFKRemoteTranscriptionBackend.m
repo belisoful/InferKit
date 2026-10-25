@@ -13,6 +13,7 @@
 #import "NFKAudioAsset.h"
 #import "NFKAudioSegment.h"
 #import "NFKErrors.h"
+#import "NFKRemoteBatchPrivate.h"
 #import "NFKRemoteTransportPrivate.h"
 #import "NFKJobGuard.h"
 
@@ -581,6 +582,58 @@ static NSSet<NSString *> *NFKTranscriptionMappedParameters(void)
 												  code:kNFKError_InferenceBackendFailure
 											  userInfo:@{ NSLocalizedDescriptionKey: @"the transcription call failed" }];
 	return NO;
+}
+
+@end
+
+#pragma mark - Batches
+
+@implementation NFKRemoteTranscriptionBackend (NFKRemoteBatch)
+
+- (nullable NSString *)batchModelName
+{
+	return self.modelName;
+}
+
+// A batched request carries no file part, so the clip goes by its URL in a JSON body built from the
+// fields a run sends: a repeated name, or one spelled with [], is a list; true and false are booleans;
+// a temperature is a number.
+- (nullable NSURLRequest *)batchURLRequestForRequest:(NFKInferenceRequest *)request error:(NSError * _Nullable *)outError
+{
+	NFKTranscriptionAudio *audio = [self audioForRequest:request];
+	if (audio.remoteURL == nil || self.audioURLFieldName == nil) {
+		[self setError:outError code:kNFKError_InferenceMissingInput reason:@"a batched transcription reads its audio from a URL under NFKInputAudio"];
+		return nil;
+	}
+	NSMutableDictionary<NSString *, id> *body = [NSMutableDictionary dictionary];
+	NSMutableSet<NSString *> *lists = [NSMutableSet set];
+	for (NSArray<NSString *> *field in [self fieldsForRequest:request streaming:NO]) {
+		BOOL bracketed = [field[0] hasSuffix:@"[]"];
+		NSString *name = bracketed ? [field[0] substringToIndex:field[0].length - 2] : field[0];
+		id value = [field[1] isEqualToString:@"true"] ? @YES : [field[1] isEqualToString:@"false"] ? @NO
+				 : [name isEqualToString:@"temperature"] ? @(field[1].doubleValue) : field[1];
+		if (bracketed || body[name] != nil || [lists containsObject:name]) {
+			NSMutableArray *list = [body[name] isKindOfClass:NSArray.class] ? [body[name] mutableCopy]
+								 : body[name] != nil ? [NSMutableArray arrayWithObject:body[name]] : [NSMutableArray array];
+			[list addObject:value];
+			body[name] = list;
+			[lists addObject:name];
+		} else {
+			body[name] = value;
+		}
+	}
+	body[self.audioURLFieldName] = audio.remoteURL.absoluteString;
+	NSMutableURLRequest *urlRequest = [NSMutableURLRequest requestWithURL:[self requestURL]];
+	urlRequest.HTTPMethod = @"POST";
+	urlRequest.HTTPBody = [NSJSONSerialization dataWithJSONObject:body options:0 error:NULL];
+	return urlRequest;
+}
+
+- (nullable NFKInferenceResult *)batchResultForReply:(NSDictionary *)reply
+											 request:(NFKInferenceRequest *)request
+											   error:(NSError * _Nullable *)outError
+{
+	return [self resultFromBody:reply];
 }
 
 @end

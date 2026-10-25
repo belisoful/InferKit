@@ -250,6 +250,38 @@
 	XCTAssertEqual(catalog.requests.count, 1u);
 }
 
+#pragma mark Published lists
+
+// Perplexity's GET /v1/models lists its Agent API models, so the decision models its Decisions API
+// reference publishes follow them.
+- (void)testPerplexityListsItsAgentModelsAndThenItsPublishedDecisionModels
+{
+	NFKStubModelCatalog *catalog = [self catalogFor:NFKRemoteProvider.perplexity pages:@[ @"{\"data\":[{\"id\":\"perplexity/sonar\"},{\"id\":\"openai/gpt-5.5\"}]}" ]];
+	NSError *error = nil;
+	NSArray<NFKRemoteModel *> *models = [catalog modelsWithError:&error];
+	XCTAssertEqualObjects([models valueForKey:@"identifier"],
+						  (@[ @"perplexity/sonar", @"openai/gpt-5.5", @"pplx-decider-v1.2", @"pplx-decider-flash-v1.2" ]), @"%@", error);
+	XCTAssertEqualObjects(models[2].ownedBy, @"perplexity");
+	XCTAssertEqualObjects(models.lastObject.raw[@"alias"], @"pplx-decider-flash-latest");
+	XCTAssertEqualObjects(catalog.requests.firstObject.URL.absoluteString, @"https://api.perplexity.ai/v1/models");
+}
+
+// Perplexity serves no GET /v1/models/{id}: a decision model answers without a request, and any other
+// is found in the list.
+- (void)testOnePerplexityModelIsFoundWithoutTheMissingSingleModelRoute
+{
+	NFKStubModelCatalog *catalog = [self catalogFor:NFKRemoteProvider.perplexity pages:@[ @"{\"data\":[{\"id\":\"openai/gpt-5.5\"}]}",
+																						@"{\"data\":[{\"id\":\"openai/gpt-5.5\"}]}" ]];
+	XCTAssertEqualObjects([catalog modelWithIdentifier:@"pplx-decider-latest" error:NULL].identifier, @"pplx-decider-v1.2",
+						  @"an alias finds the model it tracks");
+	XCTAssertEqual(catalog.requests.count, 0u);
+	NSError *error = nil;
+	XCTAssertEqualObjects([catalog modelWithIdentifier:@"openai/gpt-5.5" error:&error].identifier, @"openai/gpt-5.5", @"%@", error);
+	XCTAssertEqualObjects(catalog.requests.lastObject.URL.absoluteString, @"https://api.perplexity.ai/v1/models");
+	XCTAssertNil([catalog modelWithIdentifier:@"sonar" error:&error]);
+	XCTAssertEqual(error.code, kNFKError_InferenceBackendFailure);
+}
+
 #pragma mark The two failures a caller tells apart
 
 - (void)testARunnerThatIsNotRunningIsUnreachableNotEmpty
