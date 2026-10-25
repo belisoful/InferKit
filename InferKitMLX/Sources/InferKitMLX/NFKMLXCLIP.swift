@@ -306,11 +306,23 @@ enum NFKCLIPInit {
 
     /// A deterministic small-magnitude parameter, so a random-weights model runs without a non-zero
     /// requirement on a random source. A loaded checkpoint overwrites it.
+    ///
+    /// The value at index `i` depends on `i` only through `i % 2003`, so one period of 2003 values fills the
+    /// array by block copies. A loop over every element takes about 2.7 s per 20 million elements in the
+    /// debug build `swift test` runs, and a CLIP tower holds tens of millions.
     static func parameter(_ shape: [Int]) -> MLXArray {
         let count = shape.reduce(1, *)
-        var values = [Float](repeating: 0, count: count)
-        for i in 0 ..< count {
-            values[i] = (Float((i * 733) % 2003) / 2003.0 - 0.5) * 0.04       // roughly ±0.02, varied
+        let period = (0 ..< 2003).map { (Float(($0 * 733) % 2003) / 2003.0 - 0.5) * 0.04 }   // roughly ±0.02
+        let values = [Float](unsafeUninitializedCapacity: count) { buffer, initialized in
+            period.withUnsafeBufferPointer { period in
+                var start = 0
+                while start < count {
+                    let length = min(period.count, count - start)
+                    (buffer.baseAddress! + start).initialize(from: period.baseAddress!, count: length)
+                    start += length
+                }
+            }
+            initialized = count
         }
         return values.withUnsafeBufferPointer { MLXArray($0, shape) }
     }
