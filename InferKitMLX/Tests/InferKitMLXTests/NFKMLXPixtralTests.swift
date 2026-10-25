@@ -14,6 +14,7 @@
 //
 
 import XCTest
+import Accelerate
 import InferKit
 import MLX
 import MLXNN
@@ -34,17 +35,43 @@ final class NFKMLXPixtralTests: XCTestCase {
         super.tearDown()
     }
 
+    // The comparisons widen with vDSP and sum in `while` loops over buffer pointers that read each element
+    // once. In the debug build `swift test` runs, a `for` over a range calls a generic iterator per element
+    // and each subscript is a call. The sums stay sequential in index order, which the recorded figures
+    // depend on.
+
+    /// `array`'s values in float32, widened exactly to Double.
+    private func doubles(_ array: MLXArray) -> [Double] {
+        let values = array.reshaped([-1]).asType(.float32).asArray(Float.self)
+        return [Double](unsafeUninitializedCapacity: values.count) { widened, count in
+            values.withUnsafeBufferPointer {
+                if let source = $0.baseAddress, let target = widened.baseAddress {
+                    vDSP_vspdp(source, 1, target, 1, vDSP_Length($0.count))
+                }
+            }
+            count = values.count
+        }
+    }
+
+    /// The dot product of `a` and `b` and their squared norms, over the shorter of the two.
+    private func sums(_ a: UnsafeBufferPointer<Double>,
+                      _ b: UnsafeBufferPointer<Double>) -> (dot: Double, aa: Double, bb: Double) {
+        var dot = 0.0, aa = 0.0, bb = 0.0
+        let count = min(a.count, b.count)
+        var i = 0
+        while i < count {
+            let x = a[i], y = b[i]
+            dot += x * y; aa += x * x; bb += y * y
+            i += 1
+        }
+        return (dot, aa, bb)
+    }
+
     private func cosine(_ mine: MLXArray, _ reference: MLXArray) -> Float {
         eval(mine)
-        let a = mine.reshaped([-1]).asType(.float32).asArray(Float.self)
-        let b = reference.reshaped([-1]).asType(.float32).asArray(Float.self)
-        let n = min(a.count, b.count)
-        var dot = 0.0, na = 0.0, nb = 0.0
-        for i in 0 ..< n {
-            let x = Double(a[i]), y = Double(b[i])
-            dot += x * y; na += x * x; nb += y * y
-        }
-        return Float(dot / (na.squareRoot() * nb.squareRoot() + 1e-300))
+        let a = doubles(mine), b = doubles(reference)
+        let s = a.withUnsafeBufferPointer { a in b.withUnsafeBufferPointer { b in sums(a, b) } }
+        return Float(s.dot / (s.aa.squareRoot() * s.bb.squareRoot() + 1e-300))
     }
 
     /// Casts a module's parameters to float32 for a high-precision comparison against the fp32 oracle.
@@ -233,8 +260,8 @@ final class NFKMLXPixtralTests: XCTestCase {
         let embeddings = NFKMLXPixtral.fusedInput(decoder: decoder, inputIds: inputIds,
                                                   features: projected[0].asType(.bfloat16)).embeddings
         let layers = decoder.configuration.layerCount
-        let targets = (0 ..< layers).map { rowsOf(exact["hidden.\($0)"]!) }
-        let targetLogits = exact["output"]!.reshaped([-1]).asArray(Float.self).map(Double.init)
+        let targets = (0 ..< layers).map { doubles(exact["hidden.\($0)"]!) }
+        let targetLogits = doubles(exact["output"]!)
 
         var ours = [[Double]](repeating: [], count: layers + 1), theirs = ours
         for seed in 1 ... 20 {
@@ -245,7 +272,7 @@ final class NFKMLXPixtralTests: XCTestCase {
                 ours[index].append(worstRowDistance(states[index][0], targets[index]))
                 theirs[index].append(Double(twins["twin\(seed).distance"]![index].max().item(Float.self)))
             }
-            ours[layers].append(distance(logits.reshaped([-1]).asArray(Float.self).map(Double.init), targetLogits))
+            ours[layers].append(distance(doubles(logits), targetLogits))
             theirs[layers].append(Double(twins["twin\(seed).logit_distance"]![0].item(Float.self)))
         }
         try decoder.verifyStream()
@@ -274,21 +301,35 @@ final class NFKMLXPixtralTests: XCTestCase {
             .reshaped(embeddings.shape)
     }
 
-    private func rowsOf(_ array: MLXArray) -> [[Double]] {
-        let width = array.dim(-1)
-        let values = array.asType(.float32).reshaped([-1]).asArray(Float.self).map(Double.init)
-        return stride(from: 0, to: values.count, by: width).map { Array(values[$0 ..< $0 + width]) }
+    /// The largest `1 - cosine` between a row of `state` and the same row of `target`, `target`'s rows laid
+    /// out flat at `state`'s width, in Double.
+    private func worstRowDistance(_ state: MLXArray, _ target: [Double]) -> Double {
+        let width = state.dim(-1), values = doubles(state)
+        var worst: Double?
+        values.withUnsafeBufferPointer { values in
+            target.withUnsafeBufferPointer { target in
+                let count = min(values.count, target.count)
+                var start = 0
+                while start + width <= count {
+                    let row = distance(UnsafeBufferPointer(rebasing: values[start ..< start + width]),
+                                       UnsafeBufferPointer(rebasing: target[start ..< start + width]))
+                    if worst == nil || worst! < row {
+                        worst = row
+                    }
+                    start += width
+                }
+            }
+        }
+        return worst!
     }
 
-    /// The largest `1 - cosine` between a row of `state` and the same row of `target`, in Double.
-    private func worstRowDistance(_ state: MLXArray, _ target: [[Double]]) -> Double {
-        zip(rowsOf(state), target).map { distance($0, $1) }.max()!
+    private func distance(_ a: UnsafeBufferPointer<Double>, _ b: UnsafeBufferPointer<Double>) -> Double {
+        let s = sums(a, b)
+        return 1 - s.dot / (s.aa.squareRoot() * s.bb.squareRoot())
     }
 
     private func distance(_ a: [Double], _ b: [Double]) -> Double {
-        var dot = 0.0, na = 0.0, nb = 0.0
-        for i in 0 ..< min(a.count, b.count) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i] }
-        return 1 - dot / (na.squareRoot() * nb.squareRoot())
+        a.withUnsafeBufferPointer { a in b.withUnsafeBufferPointer { b in distance(a, b) } }
     }
 
     private func median(_ values: [Double]) -> Double {

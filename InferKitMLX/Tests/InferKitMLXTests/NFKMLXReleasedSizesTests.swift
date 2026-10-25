@@ -15,6 +15,7 @@
 //
 
 import XCTest
+import Accelerate
 import Foundation
 import CoreGraphics
 import InferKit
@@ -52,16 +53,42 @@ final class NFKMLXReleasedSizesTests: XCTestCase {
         try loadArrays(url: URL(fileURLWithPath: try path(key)))
     }
 
+    // The comparisons widen with vDSP and sum in `while` loops over buffer pointers that read each element
+    // once. In the debug build `swift test` runs, a `for` over a range calls a generic iterator per element
+    // and each subscript is a call. The sums stay sequential in index order, which the recorded figures
+    // depend on.
     private func cosine(_ a: [Double], _ b: [Double]) -> Double {
         var dot = 0.0, na = 0.0, nb = 0.0
-        for i in 0 ..< min(a.count, b.count) { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i] }
+        a.withUnsafeBufferPointer { a in
+            b.withUnsafeBufferPointer { b in
+                let count = min(a.count, b.count)
+                var i = 0
+                while i < count {
+                    let x = a[i], y = b[i]
+                    dot += x * y; na += x * x; nb += y * y
+                    i += 1
+                }
+            }
+        }
         return dot / (na.squareRoot() * nb.squareRoot() + 1e-12)
+    }
+
+    /// `array`'s values in float32, widened exactly to Double.
+    private func doubles(_ array: MLXArray) -> [Double] {
+        let values = array.reshaped([-1]).asType(.float32).asArray(Float.self)
+        return [Double](unsafeUninitializedCapacity: values.count) { widened, count in
+            values.withUnsafeBufferPointer {
+                if let source = $0.baseAddress, let target = widened.baseAddress {
+                    vDSP_vspdp(source, 1, target, 1, vDSP_Length($0.count))
+                }
+            }
+            count = values.count
+        }
     }
 
     private func cosine(_ a: MLXArray, _ b: MLXArray) -> Double {
         eval(a)
-        return cosine(a.reshaped([-1]).asType(.float32).asArray(Float.self).map(Double.init),
-                      b.reshaped([-1]).asType(.float32).asArray(Float.self).map(Double.init))
+        return cosine(doubles(a), doubles(b))
     }
 
     // MARK: - Structure against the released safetensors headers

@@ -31,12 +31,24 @@ final class NFKMLXSa2VATests: XCTestCase {
                       "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
+    // The element loops below are `while` loops over buffer pointers that read each element once. In the
+    // debug build `swift test` runs, a `for` over a range calls a generic iterator per element and each
+    // subscript is a call. The sums stay sequential in index order, which the recorded figures depend on.
     private func cosine(_ mine: MLXArray, _ reference: MLXArray) -> Float {
         let a = mine.asType(.float32).reshaped([-1]).asArray(Float.self)
         let b = reference.asType(.float32).reshaped([-1]).asArray(Float.self)
-        let n = min(a.count, b.count)
         var dot: Float = 0, na: Float = 0, nb: Float = 0
-        for i in 0 ..< n { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i] }
+        a.withUnsafeBufferPointer { a in
+            b.withUnsafeBufferPointer { b in
+                let count = min(a.count, b.count)
+                var i = 0
+                while i < count {
+                    let x = a[i], y = b[i]
+                    dot += x * y; na += x * x; nb += y * y
+                    i += 1
+                }
+            }
+        }
         return dot / (sqrtf(na) * sqrtf(nb) + 1e-20)
     }
 
@@ -663,10 +675,20 @@ final class NFKMLXInternLM2Tests: XCTestCase {
         let ids = rec["_ids"]!.asArray(Int32.self)
         let hidden = net.hiddenStates(fromEmbeddings: net.embed(MLXArray(ids).reshaped([1, ids.count])))
         let logits = net.logits(fromHidden: hidden)
+        // A `while` loop that reads each element once: the debug build's `for` over a range runs far slower.
         func cosine(_ a: MLXArray, _ b: MLXArray) -> Float {
             let x = a.reshaped([-1]).asArray(Float.self), y = b.reshaped([-1]).asArray(Float.self)
             var dot: Float = 0, nx: Float = 0, ny: Float = 0
-            for i in 0 ..< x.count { dot += x[i] * y[i]; nx += x[i] * x[i]; ny += y[i] * y[i] }
+            x.withUnsafeBufferPointer { x in
+                y.withUnsafeBufferPointer { y in
+                    var i = 0
+                    while i < x.count {
+                        let u = x[i], v = y[i]
+                        dot += u * v; nx += u * u; ny += v * v
+                        i += 1
+                    }
+                }
+            }
             return dot / (nx.squareRoot() * ny.squareRoot())
         }
         let seams = [("hidden", cosine(hidden[0], rec["output"]!)), ("logits", cosine(logits[0], rec["_logits"]!))]
@@ -782,12 +804,22 @@ final class NFKMLXSa2VAQwenTests: XCTestCase {
     }
 
 
+    // A `while` loop that reads each element once: the debug build's `for` over a range runs far slower.
     private func cosine(_ mine: MLXArray, _ reference: MLXArray) -> Float {
         let a = mine.asType(.float32).reshaped([-1]).asArray(Float.self)
         let b = reference.asType(.float32).reshaped([-1]).asArray(Float.self)
-        let n = min(a.count, b.count)
         var dot: Float = 0, na: Float = 0, nb: Float = 0
-        for i in 0 ..< n { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i] }
+        a.withUnsafeBufferPointer { a in
+            b.withUnsafeBufferPointer { b in
+                let count = min(a.count, b.count)
+                var i = 0
+                while i < count {
+                    let x = a[i], y = b[i]
+                    dot += x * y; na += x * x; nb += y * y
+                    i += 1
+                }
+            }
+        }
         return dot / (sqrtf(na) * sqrtf(nb) + 1e-20)
     }
 
@@ -1065,10 +1097,20 @@ final class NFKMLXSa2VALLaVATests: XCTestCase {
     }
 
 
+    // A `while` loop that reads each element once: the debug build's `for` over a range runs far slower.
     private func cosine(_ mine: MLXArray, _ reference: MLXArray) -> Float {
         let a = mine.reshaped([-1]).asArray(Float.self), b = reference.reshaped([-1]).asArray(Float.self)
         var dot: Float = 0, na: Float = 0, nb: Float = 0
-        for i in 0 ..< a.count { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i] }
+        a.withUnsafeBufferPointer { a in
+            b.withUnsafeBufferPointer { b in
+                var i = 0
+                while i < a.count {
+                    let x = a[i], y = b[i]
+                    dot += x * y; na += x * x; nb += y * y
+                    i += 1
+                }
+            }
+        }
         return dot / (na.squareRoot() * nb.squareRoot())
     }
 

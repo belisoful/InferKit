@@ -123,10 +123,21 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         return (value as! CGImage)
     }
 
+    // The loop is a `while` over buffer pointers that reads each element once. In the debug build
+    // `swift test` runs, a `for` over a range calls a generic iterator per element and each subscript is a
+    // call. The sums stay sequential in index order, which the recorded figures depend on.
     private func cosine(_ a: [Double], _ b: [Double]) -> Double {
         var dot = 0.0, na = 0.0, nb = 0.0
-        for i in 0 ..< min(a.count, b.count) {
-            dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]
+        a.withUnsafeBufferPointer { a in
+            b.withUnsafeBufferPointer { b in
+                let count = min(a.count, b.count)
+                var i = 0
+                while i < count {
+                    let x = a[i], y = b[i]
+                    dot += x * y; na += x * x; nb += y * y
+                    i += 1
+                }
+            }
         }
         return (na > 0 && nb > 0) ? dot / (na.squareRoot() * nb.squareRoot()) : 0
     }

@@ -22,12 +22,24 @@ final class NFKMLXTranslationTests: XCTestCase {
                       "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
+    // The element loops below are `while` loops over buffer pointers that read each element once. In the
+    // debug build `swift test` runs, a `for` over a range calls a generic iterator per element and each
+    // subscript is a call. The sums stay sequential in index order, which the recorded figures depend on.
     private func cosine(_ mine: MLXArray, _ reference: MLXArray) -> Float {
         eval(mine)
         let a = mine.reshaped([-1]).asArray(Float.self), b = reference.reshaped([-1]).asArray(Float.self)
-        let n = min(a.count, b.count)
         var dot: Float = 0, na: Float = 0, nb: Float = 0
-        for i in 0 ..< n { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i] }
+        a.withUnsafeBufferPointer { a in
+            b.withUnsafeBufferPointer { b in
+                let count = min(a.count, b.count)
+                var i = 0
+                while i < count {
+                    let x = a[i], y = b[i]
+                    dot += x * y; na += x * x; nb += y * y
+                    i += 1
+                }
+            }
+        }
         return dot / (sqrtf(na) * sqrtf(nb) + 1e-20)
     }
 

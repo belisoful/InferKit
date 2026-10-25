@@ -32,6 +32,7 @@
 
 import CryptoKit
 import XCTest
+import Accelerate
 import InferKit
 import Foundation
 import MLX
@@ -73,16 +74,18 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         return try loadArrays(url: URL(fileURLWithPath: path))
     }
 
-    // The element loops below are `while` loops over buffer pointers. In the debug build `swift test` runs, a `for`
-    // over a range calls a generic iterator per element and runs about 25 times slower. The sums stay sequential in
-    // index order, which the recorded figures depend on.
+    // The values widen with vDSP, and the element loops below are `while` loops over buffer pointers that
+    // read each element once. In the debug build `swift test` runs, a `for` over a range calls a generic
+    // iterator per element and each subscript is a call. The sums stay sequential in index order, which the
+    // recorded figures depend on.
 
     private func floats(_ array: MLXArray) -> [Double] {
         let values = array.reshaped([-1]).asType(.float32).asArray(Float.self)
         return [Double](unsafeUninitializedCapacity: values.count) { widened, count in
-            values.withUnsafeBufferPointer { values in
-                var i = 0
-                while i < values.count { widened[i] = Double(values[i]); i += 1 }
+            values.withUnsafeBufferPointer {
+                if let source = $0.baseAddress, let target = widened.baseAddress {
+                    vDSP_vspdp(source, 1, target, 1, vDSP_Length($0.count))
+                }
             }
             count = values.count
         }
@@ -94,7 +97,11 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
             b.withUnsafeBufferPointer { b in
                 let count = min(a.count, b.count)
                 var i = 0
-                while i < count { dot += a[i] * b[i]; na += a[i] * a[i]; nb += b[i] * b[i]; i += 1 }
+                while i < count {
+                    let x = a[i], y = b[i]
+                    dot += x * y; na += x * x; nb += y * y
+                    i += 1
+                }
             }
         }
         return 1 - dot / (na.squareRoot() * nb.squareRoot() + 1e-30)
