@@ -222,6 +222,14 @@ the companion. Two measured facts shape it.
   framework does not report `unsupported`; it reports nothing. The backend checks both codes against
   the published `supportedLanguages` before it puts a pair to the system, so an unknown code is
   refused with `kNFKError_InferenceUnsupported` rather than waiting.
+- **A session detects no source language.** `TranslationSession(installedSource:target:)` takes a
+  concrete source; the "und" the backend once passed for an absent one failed every call with "Unable to
+  Translate" (2026-10-26). The backend detects the source with `NLLanguageRecognizer`. A short text
+  misreads ("Hi" reads as Catalan), so a detected language outside `supportedLanguages` is detected again
+  with `languageConstraints` set to the supported codes, plus `zh-Hans` and `zh-Hant` for `zh`, since
+  NaturalLanguage names Chinese by script. A detected language equivalent to the target
+  (`Locale.Language.isEquivalent(to:)`) returns the text unchanged; an undetectable text is refused
+  before any framework call.
 
 The three outcomes stay distinct: a pair the system will not translate is `unsupported`, a pair whose
 model is not installed is `notReady`, and silence is also `notReady`. The tests reflect what this

@@ -164,6 +164,30 @@ final class NFKAppleSwiftBackendTests: XCTestCase {
         }
     }
 
+    func testTheSourceLanguageIsDetectedFromTheText() {
+        XCTAssertEqual(NFKTranslationBackend.detectedLanguage(of: "The weather is lovely today, so let's walk to the harbor."), "en")
+        XCTAssertEqual(NFKTranslationBackend.detectedLanguage(of: "Le temps est magnifique aujourd'hui, alors allons-y à pied."), "fr")
+        XCTAssertNil(NFKTranslationBackend.detectedLanguage(of: "12345 67890"))
+        XCTAssertEqual(NFKTranslationBackend.detectedLanguage(of: "Hi"), "ca", "a short text can read as a language Apple does not translate")
+        let constrained = NFKTranslationBackend.detectedLanguage(of: "Hi", among: ["en", "fr", "de"])
+        XCTAssertTrue(["en", "fr", "de"].contains(constrained ?? ""), "the answer is among the languages given: \(constrained ?? "nil")")
+    }
+
+    func testATextWithNoDetectableLanguageAndNoSourceIsRefused() {
+        let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "12345 67890"],
+                                          parameters: [NFKParameterTargetLanguage: "fr"])
+        XCTAssertThrowsError(try NFKTranslationBackend().runInference(for: request)) { error in
+            XCTAssertEqual((error as NSError).code, NFKInferenceError.error_InferenceMissingInput.rawValue)
+            XCTAssertTrue(error.localizedDescription.contains("NFKParameterSourceLanguage"), error.localizedDescription)
+        }
+    }
+
+    func testATextAlreadyInTheTargetLanguageComesBackUnchanged() throws {
+        let text = "Le temps est magnifique aujourd'hui, alors allons-y à pied jusqu'au port."
+        let request = NFKInferenceRequest(inputs: [NFKInputPrompt: text], parameters: [NFKParameterTargetLanguage: "fr"])
+        XCTAssertEqual(try NFKTranslationBackend().runInference(for: request).text, text)
+    }
+
     func testAnUnknownLanguageIsAnsweredRatherThanHung() {
         // Apple's Translation framework answers nothing at all in a test bundle: asked about a
         // language, it neither reports the pair nor refuses it. The bound on the wait is what turns

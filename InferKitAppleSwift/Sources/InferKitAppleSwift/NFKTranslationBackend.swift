@@ -5,6 +5,7 @@
 
 import Foundation
 import InferKit
+import NaturalLanguage
 import Translation
 
 /// Translates text with Apple's Translation framework, on device, with no key and no model to ship.
@@ -15,8 +16,9 @@ import Translation
 ///
 /// - Input: the text under `NFKInputPrompt`.
 /// - Parameters: `NFKParameterTargetLanguage`, a BCP-47 tag, required. `NFKParameterSourceLanguage`,
-///   also BCP-47, optional: without it Apple detects the language.
-/// - Output: the translation under `NFKOutputText`.
+///   also BCP-47, optional: without it ``detectedLanguage(of:)`` names the text's dominant language.
+/// - Output: the translation under `NFKOutputText`. A text already in the target language comes back
+///   unchanged.
 ///
 /// A language pair needs its model installed. `prepare()` asks the system to fetch it, which shows
 /// the person a prompt the first time, and `isReady` answers from what `prepare()` found because the
@@ -27,9 +29,28 @@ public final class NFKTranslationBackend: NSObject, NFKInferenceBackend {
     /// The language to translate into, BCP-47. A request's `NFKParameterTargetLanguage` overrides it.
     @objc public var targetLanguage: String?
 
-    /// The language to translate from, BCP-47. nil detects it. A request's
+    /// The language to translate from, BCP-47. nil detects it from each request's text. A request's
     /// `NFKParameterSourceLanguage` overrides it.
     @objc public var sourceLanguage: String?
+
+    /// The BCP-47 tag of the text's dominant language as NaturalLanguage recognizes it, such as "en" or
+    /// "zh-Hans", or nil when it cannot tell. `languages`, when given, limits the answer to those tags.
+    /// A translation session takes an installed source language and detects none itself, so a request
+    /// without a source language is translated from this one. A short text can read as a language
+    /// Apple does not translate ("Hi" reads as Catalan), so such a request detects again among the
+    /// languages Apple translates. Introduced in InferKit 0.4.0.
+    @objc(detectedLanguageOfText:amongLanguages:)
+    public static func detectedLanguage(of text: String, among languages: [String]? = nil) -> String? {
+        let recognizer = NLLanguageRecognizer()
+        if let languages {
+            recognizer.languageConstraints = languages.map { NLLanguage(rawValue: $0) }
+        }
+        recognizer.processString(text)
+        guard let language = recognizer.dominantLanguage, language != .undetermined else {
+            return nil
+        }
+        return language.rawValue
+    }
 
     /// The languages Apple can translate on this machine.
     @objc public static func supportedLanguages(completionHandler handler: @escaping ([String]) -> Void) {
@@ -51,7 +72,7 @@ public final class NFKTranslationBackend: NSObject, NFKInferenceBackend {
         super.init()
     }
 
-    /// A backend for one pair. A nil source means Apple detects it.
+    /// A backend for one pair. A nil source detects it from each request's text.
     @objc public convenience init(sourceLanguage: String?, targetLanguage: String) {
         self.init()
         self.sourceLanguage = sourceLanguage
@@ -109,13 +130,20 @@ public final class NFKTranslationBackend: NSObject, NFKInferenceBackend {
             throw Self.error(.error_InferenceMissingInput,
                              "NFKParameterTargetLanguage names the language to translate into")
         }
-        let source = (request.parameter(forKey: NFKParameterSourceLanguage) as? String) ?? sourceLanguage
+        let named = (request.parameter(forKey: NFKParameterSourceLanguage) as? String) ?? sourceLanguage
+        guard let source = named ?? Self.detectedLanguage(of: text) else {
+            throw Self.error(.error_InferenceMissingInput,
+                             "the text's language could not be detected; set NFKParameterSourceLanguage")
+        }
+        if Self.isSameLanguage(source, target) {
+            return NFKInferenceResult(outputs: [NFKOutputText: text])
+        }
 
         let outcome = NFKAppleOutcome<String>()
         let semaphore = DispatchSemaphore(value: 0)
         Task.detached(priority: .userInitiated) {
             do {
-                outcome.succeed(try await Self.translate(text, from: source, to: target))
+                outcome.succeed(try await Self.translate(text, from: source, detected: named == nil, to: target))
             } catch {
                 outcome.fail(error)
             }
@@ -127,11 +155,35 @@ public final class NFKTranslationBackend: NSObject, NFKInferenceBackend {
 
     // MARK: Translating
 
-    private static func translate(_ text: String, from source: String?, to target: String) async throws -> String {
+    private static func isSameLanguage(_ source: String, _ target: String) -> Bool {
+        Locale.Language(identifier: source).isEquivalent(to: Locale.Language(identifier: target))
+    }
+
+    private static func translate(_ text: String, from named: String, detected: Bool, to target: String) async throws -> String {
+        var source = named
+        if detected {
+            let known = await knownLanguageCodes()
+            if !known.contains(Locale.Language(identifier: source).languageCode?.identifier ?? "") {
+                // NaturalLanguage names Chinese by its script.
+                let tags = known.contains("zh") ? known.union(["zh-Hans", "zh-Hant"]) : known
+                guard let redetected = detectedLanguage(of: text, among: tags.sorted()) else {
+                    throw error(.error_InferenceUnsupported,
+                                "the text reads as \(source), which Apple does not translate; set NFKParameterSourceLanguage")
+                }
+                source = redetected
+            }
+            if isSameLanguage(source, target) {
+                return text
+            }
+        }
         try await ensureInstalled(source: source, target: target)
-        let session = TranslationSession(installedSource: Locale.Language(identifier: source ?? "und"),
+        let session = TranslationSession(installedSource: Locale.Language(identifier: source),
                                          target: Locale.Language(identifier: target))
         return try await session.translate(text).targetText
+    }
+
+    private static func knownLanguageCodes() async -> Set<String> {
+        Set(await LanguageAvailability().supportedLanguages.compactMap { $0.languageCode?.identifier })
     }
 
     /// Bounds every wait on the framework. `LanguageAvailability` does not always answer: asked about
@@ -153,7 +205,7 @@ public final class NFKTranslationBackend: NSObject, NFKInferenceBackend {
 
         // Asking about a language the system does not know never returns, so the codes are checked
         // against the list it publishes before any pair is put to it.
-        let known = Set(await availability.supportedLanguages.compactMap { $0.languageCode?.identifier })
+        let known = await knownLanguageCodes()
         for identifier in [source, target].compactMap({ $0 }) {
             let code = Locale.Language(identifier: identifier).languageCode?.identifier
             guard let code, known.contains(code) else {
@@ -162,7 +214,7 @@ public final class NFKTranslationBackend: NSObject, NFKInferenceBackend {
         }
 
         guard let source else {
-            return   // Apple detects the source, and checks the pair itself when it does.
+            return   // prepare() without a source; each request names or detects one.
         }
         let status = await availability.status(from: Locale.Language(identifier: source), to: targetLanguage)
         switch status {

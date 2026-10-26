@@ -50,7 +50,8 @@ Swift module with no `VN*` header, and the Translation framework is Swift-only t
 
 - `NFKTranslationBackend` translates on device. Text arrives under `NFKInputPrompt`,
   `NFKParameterTargetLanguage` names the language to translate into, `NFKParameterSourceLanguage` is
-  optional because Apple detects it, and the translation comes back under `NFKOutputText`. A pair the
+  optional because NaturalLanguage detects the text's language, and the translation comes back under
+  `NFKOutputText`. A text already in the target language comes back unchanged. A pair the
   system will not translate reports `kNFKError_InferenceUnsupported`; a pair whose model is not
   installed reports `kNFKError_InferenceNotReady`. Every wait on the framework is bounded by
   `responseTimeout`, because it does not always answer.

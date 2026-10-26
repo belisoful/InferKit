@@ -106,7 +106,7 @@ module_of() {                           # module_of <package>
 frameworks_of() {                       # frameworks_of <package>
     case "$1" in
         foundation-models) echo "-framework FoundationModels";;
-        apple-swift)       echo "-framework Speech -framework Vision -framework AVFoundation -framework Translation";;
+        apple-swift)       echo "-framework Speech -framework Vision -framework AVFoundation -framework Translation -framework NaturalLanguage";;
     esac
 }
 

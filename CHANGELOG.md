@@ -21,6 +21,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   the script after the dynamic framework, and `verify-companions.sh` opens each companion in an
   app-shaped layout and builds its engines through the catalog.
 
+#### The translator detects the source language
+
+- A request without `NFKParameterSourceLanguage` translates from the language NaturalLanguage detects
+  in the text. A detected language Apple does not translate, as a short text can read, is detected again
+  among the languages Apple translates. A text whose language cannot be detected is refused with
+  `kNFKError_InferenceMissingInput`, naming the parameter to set, and a text already in the target
+  language comes back unchanged. Before, every such request failed with "Unable to Translate", because a
+  translation session detects no source language itself.
+
 #### The translator requires its target language
 
 - `apple-translation`'s `targetLanguage` option is required, so the model's MCP tool lists it under
@@ -52,8 +61,9 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKMLXWhisperProvider` and the core's own recognizer.
 - `NFKTranslationBackend` translates on device through Apple's Translation framework, which is
   Swift-only. Text arrives under `NFKInputPrompt`, `NFKParameterTargetLanguage` names the language to
-  translate into, and `NFKParameterSourceLanguage` is optional because Apple detects it. The
-  translation comes back under `NFKOutputText`. A pair Apple does not translate reports
+  translate into, and `NFKParameterSourceLanguage` is optional: without it NaturalLanguage detects the
+  text's language (`detectedLanguage(of:among:)`), and a text already in the target language comes back
+  unchanged. The translation comes back under `NFKOutputText`. A pair Apple does not translate reports
   `kNFKError_InferenceUnsupported`, and a pair whose model is not installed reports
   `kNFKError_InferenceNotReady`, which are different answers.
 - `NFKTranslationProvider` answers `NFKCapabilityTranslation`, behind `NFKMLXTranslationProvider` in

@@ -31,6 +31,7 @@ let package = Package(
                 .linkedFramework("Vision"),
                 .linkedFramework("AVFoundation"),
                 .linkedFramework("Translation"),
+                .linkedFramework("NaturalLanguage"),
             ]),
         .testTarget(
             name: "InferKitAppleSwiftTests",
