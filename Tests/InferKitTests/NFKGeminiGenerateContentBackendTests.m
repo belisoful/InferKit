@@ -19,6 +19,7 @@
 #import <InferKit/NFKInferenceTool.h>
 #import <InferKit/NFKToolMessages.h>
 #import <InferKit/NFKErrors.h>
+#import <InferKit/NFKModelDescriptor.h>
 
 @interface NFKStubGenerateContentBackend : NFKGeminiGenerateContentBackend
 @property (nonatomic, strong) NSMutableArray<NSURLRequest *> *requests;
@@ -172,6 +173,24 @@
 	XCTAssertNil(generation[NFKParameterRepetitionPenalty], @"a contract key without a field here is dropped");
 	XCTAssertNotNil(body[@"safetySettings"], @"safetySettings belongs to the request's top level");
 	XCTAssertNil(generation[@"safetySettings"]);
+}
+
+// The contract keys generateContent has no field for are not offered.
+- (void)testTheDescriptorOffersTheInputsAndParametersTheRouteReads
+{
+	NFKModelDescriptor *descriptor = [NFKModelDescriptor descriptorWithIdentifier:@"m" derivedFromBackend:self.backend];
+	NSSet *expected = [NSSet setWithArray:@[ NFKInputPrompt, NFKInputMessages, NFKInputImage, NFKInputImages, NFKInputVideo,
+											 NFKInputAudio, NFKInputDocument, NFKInputDocuments ]];
+	XCTAssertEqualObjects([NSSet setWithArray:[descriptor.inputs valueForKey:@"key"]], expected);
+	NSSet *options = [NSSet setWithArray:[descriptor.options valueForKey:@"key"]];
+	for (NSString *key in @[ NFKParameterTools, NFKParameterJSONSchema, NFKParameterReasoningEffort, NFKParameterMaxTokens,
+							 NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterSeed,
+							 NFKParameterStopSequences ]) {
+		XCTAssertTrue([options containsObject:key], @"%@", key);
+	}
+	for (NSString *key in @[ NFKParameterMCPServers, NFKParameterSkills, NFKParameterRepetitionPenalty, NFKParameterConversationKey ]) {
+		XCTAssertFalse([options containsObject:key], @"%@", key);
+	}
 }
 
 - (void)testANumericEffortIsAThinkingBudget

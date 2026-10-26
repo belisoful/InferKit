@@ -16,6 +16,9 @@
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKErrors.h>
 #import <InferKit/NFKRemoteFileStore.h>
+#import <InferKit/NFKModelDescriptor.h>
+#import <InferKit/NFKVideoAsset.h>
+#import "NFKTestClip.h"
 
 @interface NFKStubResponsesBackend : NFKRemoteResponsesBackend
 @property (nonatomic, strong) NSMutableArray<NSURLRequest *> *requests;
@@ -94,6 +97,44 @@
 	XCTAssertNil([NFKRemoteResponsesBackend backendForProvider:NFKRemoteProvider.mistral apiKey:@"k" modelName:@"m"]);
 	XCTAssertEqual([NFKRemoteResponsesBackend backendForProvider:NFKRemoteProvider.openAI apiKey:@"k" modelName:@"m"].dialect,
 				   NFKRemoteResponsesDialectStandard);
+}
+
+- (void)testTheDescriptorOffersTheInputsAndParametersEachDialectReads
+{
+	id<NFKInferenceBackend> routed = [NFKRemoteProvider backendForProvider:NFKRemoteProvider.perplexity apiKey:nil modelName:@"sonar-pro"];
+	XCTAssertTrue([(NSObject *)routed isKindOfClass:NFKRemoteResponsesBackend.class]);
+	NFKModelDescriptor *agent = [NFKModelDescriptor descriptorWithIdentifier:@"remote:perplexity/sonar-pro" derivedFromBackend:routed];
+	NSSet *expectedInputs = [NSSet setWithArray:@[ NFKInputPrompt, NFKInputMessages, NFKInputImage, NFKInputImages,
+												   NFKInputVideo, NFKInputDocument, NFKInputDocuments ]];
+	XCTAssertEqualObjects([NSSet setWithArray:[agent.inputs valueForKey:@"key"]], expectedInputs);
+	NSSet *agentOptions = [NSSet setWithArray:[agent.options valueForKey:@"key"]];
+	for (NSString *key in @[ NFKParameterTools, NFKParameterJSONSchema, NFKParameterReasoningEffort, NFKParameterMaxTokens,
+							 NFKParameterTemperature, NFKParameterTopP, NFKParameterMCPServers, NFKParameterSkills,
+							 NFKParameterPreviousResponseIdentifier, NFKParameterVideoFrameCount ]) {
+		XCTAssertTrue([agentOptions containsObject:key], @"%@", key);
+	}
+	NFKModelDescriptor *standard = [NFKModelDescriptor descriptorWithIdentifier:@"m" derivedFromBackend:self.backend];
+	XCTAssertEqualObjects([NSSet setWithArray:[standard.inputs valueForKey:@"key"]], expectedInputs);
+	NSSet *standardOptions = [NSSet setWithArray:[standard.options valueForKey:@"key"]];
+	XCTAssertTrue([standardOptions containsObject:NFKParameterMCPServers]);
+	XCTAssertFalse([standardOptions containsObject:NFKParameterSkills]);
+}
+
+- (void)testAVideoGoesAsSampledFramesAndItsFrameCountStaysOffTheWire
+{
+	NSError *error = nil;
+	NSURL *clip = [NFKTestClip writeClipWithColors:@[ @[ @1, @0, @0 ], @[ @0, @0, @1 ] ] error:&error];
+	XCTAssertNotNil(clip, @"%@", error);
+	self.backend.stagedBodies = [@[ @"{\"id\":\"r\",\"status\":\"completed\",\"output\":[]}" ] mutableCopy];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"What changes?",
+																			  NFKInputVideo: [NFKVideoAsset videoAssetWithFileURL:clip] }
+															   parameters:@{ NFKParameterVideoFrameCount: @2 }];
+	XCTAssertNotNil([self.backend runInferenceForRequest:request error:&error], @"%@", error);
+	NSDictionary *body = [self.backend bodyAt:0];
+	NSArray *parts = body[@"input"][0][@"content"];
+	XCTAssertEqualObjects([parts valueForKey:@"type"], (@[ @"input_text", @"input_image", @"input_image" ]));
+	XCTAssertNil(body[NFKParameterVideoFrameCount]);
+	[NSFileManager.defaultManager removeItemAtURL:clip error:NULL];
 }
 
 #pragma mark Perplexity's Agent API

@@ -180,6 +180,21 @@ static const NSUInteger NFKGenerateContentHopLimit = 64;
 	return @"gemini-generatecontent";
 }
 
+// The mapped keys without a field (the repetition penalty, the prompt cache, MCP servers, skills,
+// citations, the output format, a previous response) are left out.
+- (NSSet<NSString *> *)supportedParameterKeys
+{
+	return [NSSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema, NFKParameterReasoningEffort,
+								  NFKParameterMaxTokens, NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK,
+								  NFKParameterSeed, NFKParameterStopSequences, NFKParameterVideoFrameCount ]];
+}
+
+- (NSSet<NSString *> *)supportedInputKeys
+{
+	return [NSSet setWithArray:@[ NFKInputPrompt, NFKInputMessages, NFKInputImage, NFKInputImages, NFKInputVideo,
+								  NFKInputAudio, NFKInputDocument, NFKInputDocuments ]];
+}
+
 - (NSSet<NSString *> *)supportedOutputKeys
 {
 	return [NSSet setWithArray:@[ NFKOutputText, NFKOutputStructured, NFKOutputReasoning, NFKOutputImage,

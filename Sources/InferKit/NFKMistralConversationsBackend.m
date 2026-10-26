@@ -31,7 +31,7 @@ static NSSet<NSString *> *NFKConversationsMappedParameters(void)
 										NFKParameterStopSequences, NFKParameterSeed, NFKParameterPreviousResponseIdentifier,
 										NFKParameterMCPServers, NFKParameterSkills, NFKParameterConversationKey,
 										NFKParameterPromptCacheRetention, NFKParameterPromptCacheTTL,
-										NFKParameterPromptCacheMode, NFKParameterPromptCachePrewarm ]];
+										NFKParameterPromptCacheMode, NFKParameterPromptCachePrewarm, NFKParameterVideoFrameCount ]];
 	});
 	return mapped;
 }
@@ -143,7 +143,13 @@ static NSString * _Nullable NFKConversationsString(id value)
 {
 	return [NSSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema, NFKParameterReasoningEffort, NFKParameterMaxTokens,
 								  NFKParameterTemperature, NFKParameterTopP, NFKParameterStopSequences, NFKParameterSeed,
-								  NFKParameterPreviousResponseIdentifier ]];
+								  NFKParameterPreviousResponseIdentifier, NFKParameterVideoFrameCount ]];
+}
+
+// A video arrives as sampled frames; the endpoint reads no audio or documents.
+- (NSSet<NSString *> *)supportedInputKeys
+{
+	return [NSSet setWithArray:@[ NFKInputPrompt, NFKInputMessages, NFKInputImage, NFKInputImages, NFKInputVideo ]];
 }
 
 - (NSSet<NSString *> *)supportedOutputKeys

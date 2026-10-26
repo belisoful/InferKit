@@ -120,6 +120,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKInferenceServer`'s chat and Responses routes read `prompt_cache_retention` and `prompt_cache_options` into the
   same keys and check their types.
 
+#### The Responses, generateContent, Interactions, and Conversations clients declare what they read
+
+- `NFKRemoteResponsesBackend`, `NFKGeminiGenerateContentBackend`, and `NFKGeminiInteractionsBackend` declare
+  `supportedInputKeys` and `supportedParameterKeys`, and `NFKMistralConversationsBackend` declares
+  `supportedInputKeys`. A descriptor derived from one of them lists the inputs and options its request reads.
+  Before, it listed outputs alone.
+- The Responses backend offers `NFKParameterSkills` in its Perplexity dialect only. The generateContent backend
+  leaves out the contract keys its route has no field for.
+- The Responses and Conversations backends sample a video's frames by `NFKParameterVideoFrameCount` and no longer
+  send the key to the service as a field of its own.
+- The Interactions backend sends `NFKParameterTopP` as `generation_config.top_p`. Before, it went as `topP`.
+
 #### A download fetches the optional files its catalog lists later
 
 - `NFKDownloadStatus.uncheckedOptionalPaths` lists a catalog source's optional files that are not cached and that

@@ -18,6 +18,9 @@
 #import <InferKit/NFKInferenceKeys.h>
 #import <InferKit/NFKToolMessages.h>
 #import <InferKit/NFKErrors.h>
+#import <InferKit/NFKModelDescriptor.h>
+#import <InferKit/NFKVideoAsset.h>
+#import "NFKTestClip.h"
 #import <CoreGraphics/CoreGraphics.h>
 
 @interface NFKStubConversationsBackend : NFKMistralConversationsBackend
@@ -130,6 +133,31 @@
 	XCTAssertEqualObjects(args[@"response_format"][@"type"], @"json_schema");
 	XCTAssertEqualObjects(body[@"store"], @NO, @"an unnamed parameter folds in by name");
 	XCTAssertNil(body[NFKParameterTemperature]);
+}
+
+- (void)testTheDescriptorOffersTheInputsTheEndpointReads
+{
+	NFKModelDescriptor *descriptor = [NFKModelDescriptor descriptorWithIdentifier:@"m" derivedFromBackend:self.backend];
+	NSSet *expected = [NSSet setWithArray:@[ NFKInputPrompt, NFKInputMessages, NFKInputImage, NFKInputImages, NFKInputVideo ]];
+	XCTAssertEqualObjects([NSSet setWithArray:[descriptor.inputs valueForKey:@"key"]], expected);
+	XCTAssertTrue([[descriptor.options valueForKey:@"key"] containsObject:NFKParameterVideoFrameCount]);
+}
+
+- (void)testAVideoGoesAsSampledFramesAndItsFrameCountStaysOffTheWire
+{
+	NSError *error = nil;
+	NSURL *clip = [NFKTestClip writeClipWithColors:@[ @[ @1, @0, @0 ], @[ @0, @0, @1 ] ] error:&error];
+	XCTAssertNotNil(clip, @"%@", error);
+	[self.backend stage:[self textReply:@"Red, then blue."]];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"What changes?",
+																			  NFKInputVideo: [NFKVideoAsset videoAssetWithFileURL:clip] }
+															   parameters:@{ NFKParameterVideoFrameCount: @2 }];
+	XCTAssertNotNil([self.backend runInferenceForRequest:request error:&error], @"%@", error);
+	NSDictionary *body = [self.backend bodyAt:0];
+	NSArray *chunks = body[@"inputs"][0][@"content"];
+	XCTAssertEqualObjects([chunks valueForKey:@"type"], (@[ @"text", @"image_url", @"image_url" ]));
+	XCTAssertNil(body[NFKParameterVideoFrameCount]);
+	[NSFileManager.defaultManager removeItemAtURL:clip error:NULL];
 }
 
 - (void)testALonePromptGoesAsAStringAndAnImageAsAChunk

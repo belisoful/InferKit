@@ -29,7 +29,8 @@ static NSSet<NSString *> *NFKResponsesMappedParameters(void)
 	dispatch_once(&once, ^{
 		NSMutableArray<NSString *> *keys = [@[ NFKParameterTools, NFKParameterJSONSchema, NFKParameterReasoningEffort,
 											   NFKParameterMaxTokens, NFKParameterTemperature, NFKParameterTopP,
-											   NFKParameterPreviousResponseIdentifier, NFKParameterMCPServers, NFKParameterSkills ] mutableCopy];
+											   NFKParameterPreviousResponseIdentifier, NFKParameterMCPServers, NFKParameterSkills,
+											   NFKParameterVideoFrameCount ] mutableCopy];
 		[keys addObjectsFromArray:NFKRemotePromptCacheParameterKeys()];
 		mapped = [NSSet setWithArray:keys];
 	});
@@ -102,6 +103,22 @@ static BOOL NFKResponsesIsTerminalStatus(id status)
 - (NSString *)backendIdentifier
 {
 	return @"remote-responses";
+}
+
+// Skills are Perplexity's alone; the standard dialect leaves them out.
+- (NSSet<NSString *> *)supportedParameterKeys
+{
+	NSMutableSet<NSString *> *keys = [NFKResponsesMappedParameters() mutableCopy];
+	if (self.dialect != NFKRemoteResponsesDialectPerplexityAgent) {
+		[keys removeObject:NFKParameterSkills];
+	}
+	return keys;
+}
+
+- (NSSet<NSString *> *)supportedInputKeys
+{
+	return [NSSet setWithArray:@[ NFKInputPrompt, NFKInputMessages, NFKInputImage, NFKInputImages,
+								  NFKInputVideo, NFKInputDocument, NFKInputDocuments ]];
 }
 
 - (NSSet<NSString *> *)supportedOutputKeys

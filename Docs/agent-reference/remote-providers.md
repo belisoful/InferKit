@@ -441,6 +441,10 @@ Anthropic reads `citations[]` on text blocks (and `citations_delta` when streame
 `embeddingsForTexts:error:`, `dimensions` → `outputDimensionality`, `task_type` → `taskType`.
 
 **Responses, Interactions, and the single-purpose backends (2026-09-22).**
+- Every client declares `supportedInputKeys` and `supportedParameterKeys` as the keys its request builder
+  reads (2026-10-25). `NFKModelDescriptor`'s `derivedFromBackend:` builds a model's inputs and options from
+  them, so a client that declares none offers an app no option fields. A key a client samples or translates
+  (`NFKParameterVideoFrameCount`) is in its mapped set, or it also leaks to the service under its own name.
 - `NFKRemoteResponsesBackend` (`/responses`; openai, xai, groq, deepseek, openrouter, lmstudio, ollama,
   vllm, llamacpp): a leading system turn → `instructions`; turns → `{role, content: [input_text |
   output_text]}` with `input_image` (data URL) and `input_file {filename, file_data}` on the last user
@@ -470,7 +474,7 @@ Anthropic reads `citations[]` on text blocks (and `citations_delta` when streame
     `responseSchema` and `_responseJsonSchema` deprecated in favor of `responseFormat`.
     `safetySettings`, `toolConfig`, `cachedContent`, `labels`, `serviceTier`, and `store` go to the
     top level; the contract keys without a field (repetition penalty, conversation key, MCP servers)
-    are dropped.
+    are dropped and left out of `supportedParameterKeys`.
   - Reply: `candidates[0].content.parts[]`. A `thought: true` part is a summary, a `functionCall`
     `{id?, name, args}` a call (one without an id gets `gemini-call-N`, and its answer goes back
     without an id), an image `inlineData` an image output. `usageMetadata` `promptTokenCount`,
@@ -505,8 +509,8 @@ Anthropic reads `citations[]` on text blocks (and `citations_delta` when streame
   (`mime_type: application/json`, `schema`). Transcription: `transcription_config {language_codes,
   custom_vocabulary, mode: {type: verbatim, diarization_mode: speaker, timestamp_granularities:
   [word]}}`, read back from `word_info` annotations (`start_offset` / `end_offset` as `"1.2s"` strings
-  or numbers). `thinking_level` + `thinking_summaries: auto`; everything else goes into
-  `generation_config`. Reply steps: `thought` → reasoning, `function_call` (`id`, `name`, object
+  or numbers). `thinking_level` + `thinking_summaries: auto`, `NFKParameterTopP` as `top_p`; everything else goes
+  into `generation_config`. Reply steps: `thought` → reasoning, `function_call` (`id`, `name`, object
   `arguments`), `model_output` blocks → text / image / audio (PCM wrapped in a 24 kHz mono WAV unless
   the MIME type names mp3 or wav) / video (`uri` fetched with the key on Google's host); other step types
   → server tool results. Usage fields are `total_input_tokens`, `total_cached_tokens`,

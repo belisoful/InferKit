@@ -28,7 +28,7 @@ static NSSet<NSString *> *NFKInteractionsMappedParameters(void)
 	static dispatch_once_t once;
 	dispatch_once(&once, ^{
 		mapped = [NSSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema, NFKParameterReasoningEffort,
-										NFKParameterMaxTokens, NFKParameterSeed, NFKParameterStopSequences,
+										NFKParameterMaxTokens, NFKParameterTopP, NFKParameterSeed, NFKParameterStopSequences,
 										NFKParameterPreviousResponseIdentifier, NFKParameterAspectRatio,
 										NFKParameterResolution, NFKParameterOutputFormat, NFKParameterSpeakerDiarization,
 										NFKParameterWordTimestamps, NFKParameterVocabulary, NFKParameterSourceLanguage,
@@ -141,6 +141,23 @@ static double NFKInteractionsSeconds(id offset)
 - (NSString *)backendIdentifier
 {
 	return @"gemini-interactions";
+}
+
+// Temperature goes into generation_config under its own name. Skills have no field and are left out.
+- (NSSet<NSString *> *)supportedParameterKeys
+{
+	return [NSSet setWithArray:@[ NFKParameterTools, NFKParameterJSONSchema, NFKParameterReasoningEffort,
+								  NFKParameterMaxTokens, NFKParameterTemperature, NFKParameterTopP, NFKParameterSeed,
+								  NFKParameterStopSequences, NFKParameterPreviousResponseIdentifier, NFKParameterAspectRatio,
+								  NFKParameterResolution, NFKParameterOutputFormat, NFKParameterSpeakerDiarization,
+								  NFKParameterWordTimestamps, NFKParameterVocabulary, NFKParameterSourceLanguage,
+								  NFKParameterVideoFrameCount, NFKParameterMCPServers ]];
+}
+
+- (NSSet<NSString *> *)supportedInputKeys
+{
+	return [NSSet setWithArray:@[ NFKInputPrompt, NFKInputMessages, NFKInputImage, NFKInputImages, NFKInputVideo,
+								  NFKInputAudio, NFKInputDocument, NFKInputDocuments ]];
 }
 
 - (NSSet<NSString *> *)supportedOutputKeys
@@ -560,6 +577,7 @@ static double NFKInteractionsSeconds(id offset)
 		generation[@"thinking_summaries"] = @"auto";
 	}
 	generation[@"max_output_tokens"] = parameters[NFKParameterMaxTokens];
+	generation[@"top_p"] = parameters[NFKParameterTopP];
 	generation[@"seed"] = parameters[NFKParameterSeed];
 	generation[@"stop_sequences"] = parameters[NFKParameterStopSequences];
 	NSSet<NSString *> *mapped = NFKInteractionsMappedParameters();

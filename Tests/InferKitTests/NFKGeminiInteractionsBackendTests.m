@@ -17,6 +17,7 @@
 #import <InferKit/NFKAudioSegment.h>
 #import <InferKit/NFKVideoAsset.h>
 #import <InferKit/NFKErrors.h>
+#import <InferKit/NFKModelDescriptor.h>
 #import "NFKTestClip.h"
 
 @interface NFKStubInteractionsBackend : NFKGeminiInteractionsBackend
@@ -142,6 +143,33 @@
 	XCTAssertEqualObjects([result outputForKey:NFKOutputReasoning], @"Looking at the square.");
 	XCTAssertEqualObjects([result outputForKey:NFKOutputUsage][NFKUsageReasoningTokens], @9);
 	XCTAssertEqualObjects([result outputForKey:NFKOutputResponseIdentifier], @"v1_a");
+}
+
+- (void)testTheDescriptorOffersTheInputsAndParametersTheAPIReads
+{
+	NFKModelDescriptor *descriptor = [NFKModelDescriptor descriptorWithIdentifier:@"m" derivedFromBackend:self.backend];
+	NSSet *expected = [NSSet setWithArray:@[ NFKInputPrompt, NFKInputMessages, NFKInputImage, NFKInputImages, NFKInputVideo,
+											 NFKInputAudio, NFKInputDocument, NFKInputDocuments ]];
+	XCTAssertEqualObjects([NSSet setWithArray:[descriptor.inputs valueForKey:@"key"]], expected);
+	NSSet *options = [NSSet setWithArray:[descriptor.options valueForKey:@"key"]];
+	for (NSString *key in @[ NFKParameterTools, NFKParameterJSONSchema, NFKParameterReasoningEffort, NFKParameterTemperature,
+							 NFKParameterTopP, NFKParameterMCPServers, NFKParameterAspectRatio, NFKParameterSpeakerDiarization ]) {
+		XCTAssertTrue([options containsObject:key], @"%@", key);
+	}
+	XCTAssertFalse([options containsObject:NFKParameterSkills]);
+}
+
+- (void)testTopPGoesIntoTheGenerationConfigurationInTheAPIsSpelling
+{
+	[self.backend stage:@"{\"id\":\"v1_p\",\"status\":\"completed\",\"steps\":[]}"];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello" }
+															   parameters:@{ NFKParameterTopP: @0.9, NFKParameterTemperature: @0.4 }];
+	NSError *error = nil;
+	XCTAssertNotNil([self.backend runInferenceForRequest:request error:&error], @"%@", error);
+	NSDictionary *generation = [self.backend bodyAt:0][@"generation_config"];
+	XCTAssertEqualObjects(generation[@"top_p"], @0.9);
+	XCTAssertEqualObjects(generation[@"temperature"], @0.4);
+	XCTAssertNil(generation[NFKParameterTopP]);
 }
 
 - (void)testAnImageRequestAsksForAnImageAndDecodesIt
