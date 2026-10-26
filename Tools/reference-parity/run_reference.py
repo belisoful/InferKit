@@ -5919,6 +5919,86 @@ def run_nemotron_h_real(image, checkpoint):
     return logits.contiguous()
 
 
+def _nemotron_h_record(model, ids, steps=12):
+    """`run_nemotron_h_real`'s record from `model`: the hidden states, the prefill logits, and the
+    `steps`-token greedy continuation, decoded without a cache by one uncached pass per token."""
+    import torch
+
+    with torch.no_grad():
+        out = model(ids, output_hidden_states=True, use_cache=False)
+        logits = out.logits[0].float()
+        sequence = torch.cat([ids, out.logits[:, -1].argmax(-1, keepdim=True)], dim=1)
+        for _ in range(steps - 1):
+            following = model(sequence, use_cache=False).logits[:, -1].argmax(-1, keepdim=True)
+            sequence = torch.cat([sequence, following], dim=1)
+    extra = {"tokens": ids[0].to(torch.int32).contiguous(),
+             "continuation": sequence[0, ids.shape[1]:].to(torch.int32).contiguous()}
+    for index, hidden in enumerate(out.hidden_states):
+        extra[f"hidden.{index}"] = hidden[0].float().contiguous()
+    return logits.contiguous(), extra
+
+
+def run_nemotron_h_layerwise(image, checkpoint):
+    """Nemotron Nano 2 at float32 for a release too large to hold whole (the 9B: 35.6 GB), from
+    transformers' own `NemotronHForCausalLM` built on the meta device, every tensor outside the blocks read
+    once (the release's `backbone.*` read as the model's `model.*`, `mtp.*` left unread as `from_pretrained`
+    leaves it) and each block read as the forward reaches it (`_read_layers_in_turn`). Precision from
+    NEMOTRON_DTYPE (default float32).
+
+    The record is `run_nemotron_h_real`'s, on its ids: every hidden state, the prefill logits, and the
+    12-token greedy continuation, here decoded by one uncached pass per token, since a cache over meta
+    modules cannot be built. `NEMOTRON_CHECK=1` also loads a release small enough to hold whole through
+    `from_pretrained` and requires the two records to agree bit for bit. Runs under the env
+    `run_nemotron_h_real` runs under (transformers >= 5).
+    """
+    import torch
+    from transformers import AutoConfig, AutoModelForCausalLM
+
+    dtype = getattr(torch, os.environ.get("NEMOTRON_DTYPE", "float32"))
+    config = AutoConfig.from_pretrained(checkpoint, trust_remote_code=False)
+    with torch.device("meta"):
+        model = AutoModelForCausalLM.from_config(config, trust_remote_code=False).eval()
+    entries, read, close = _layerwise_release(checkpoint, dtype)
+    try:
+        def module_key(key):
+            return "model." + key[len("backbone."):] if key.startswith("backbone.") else key
+
+        outside = {module_key(k): read(k) for k in entries
+                   if not k.startswith("backbone.layers.") and not k.startswith("mtp.")}
+        missing, unexpected = model.load_state_dict(outside, strict=False, assign=True)
+        missing = [k for k in missing if not k.startswith("model.layers.")]
+        if missing or unexpected:
+            raise ValueError(f"outside the blocks: missing {missing}, unexpected {unexpected}")
+        _read_layers_in_turn(model.model.layers, "backbone.", entries, read)
+        unread = [k for k in entries if k.startswith("backbone.layers.")
+                  and k.split(".", 3)[3] not in model.model.layers[int(k.split(".")[2])].state_dict()]
+        if unread:
+            raise ValueError(f"block tensors the model does not hold: {unread[:8]}")
+        ids = torch.tensor([[1602, 4934, 322, 1148, 42, 7, 55]], dtype=torch.long)
+        logits, extra = _nemotron_h_record(model, ids)
+    finally:
+        close()
+    del model
+
+    if os.environ.get("NEMOTRON_CHECK") == "1":
+        whole, loading = AutoModelForCausalLM.from_pretrained(checkpoint, dtype=dtype, trust_remote_code=False,
+                                                              output_loading_info=True)
+        assert not loading["missing_keys"], loading["missing_keys"]
+        whole_logits, whole_extra = _nemotron_h_record(whole.eval(), ids)
+        del whole
+        if set(whole_extra) != set(extra):
+            raise ValueError(f"the records differ in keys: {sorted(set(whole_extra) ^ set(extra))}")
+        for name in sorted(extra):
+            if not torch.equal(extra[name], whole_extra[name]):
+                raise ValueError(f"{name} differs from the whole load")
+        if not torch.equal(logits, whole_logits):
+            raise ValueError(f"the logits differ from the whole load by {(logits - whole_logits).abs().max()}")
+        print("NEMOTRON_CHECK: every state, the logits and the continuation equal the whole load bit for bit")
+
+    print("states", len([k for k in extra if k.startswith("hidden.")]), "continuation", extra["continuation"].tolist())
+    globals()["_extra"] = extra
+    return logits
+
 def run_granite_speech(image, checkpoint):
     """Granite Speech 3.3-2B (`GraniteSpeechForConditionalGeneration`, IBM) at a tiny random config: a
     Conformer CTC encoder, a BLIP-2 Q-former projector, and a dense Granite decoder. Seams recorded so a
@@ -24964,6 +25044,7 @@ def run_sd35_layerwise(image, checkpoint):
 
 
 CHECKPOINT_MODELS["sd35_layerwise"] = run_sd35_layerwise
+CHECKPOINT_MODELS["nemotron_h_layerwise"] = run_nemotron_h_layerwise
 
 
 

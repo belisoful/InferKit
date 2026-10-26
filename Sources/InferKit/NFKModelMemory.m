@@ -321,7 +321,7 @@ static NSString * const NFKModelScopedBudgetKey = @"NFKModelScopedBudget";
 static NSArray<NSString *> *NFKModelStageFactsFields(void)
 {
 	return @[ @"id", @"title", @"bytesByPrecision", @"quantizableElements", @"pageableBytesByPrecision", @"layerCount",
-			  @"largestLayerBytesByPrecision", @"widenedPrecision" ];
+			  @"largestLayerBytesByPrecision", @"layerBytesByPrecision", @"widenedPrecision" ];
 }
 
 @implementation NFKModelStageFacts
@@ -338,6 +338,7 @@ static NSArray<NSString *> *NFKModelStageFactsFields(void)
 	  pageableByteCountByPrecision:(nullable NSDictionary<NSString *, NSNumber *> *)pageableByteCountByPrecision
 						layerCount:(NSInteger)layerCount
   largestLayerByteCountByPrecision:(nullable NSDictionary<NSString *, NSNumber *> *)largestLayerByteCountByPrecision
+		 layerByteCountByPrecision:(nullable NSDictionary<NSString *, NSNumber *> *)layerByteCountByPrecision
 				  widenedPrecision:(nullable NSString *)widenedPrecision
 						extensions:(nullable NSDictionary<NSString *, id> *)extensions
 {
@@ -350,6 +351,7 @@ static NSArray<NSString *> *NFKModelStageFactsFields(void)
 		_pageableByteCountByPrecision = [pageableByteCountByPrecision copy] ?: @{};
 		_layerCount = MIN(MAX(layerCount, 0), NFKModelMaximumLayerCount);
 		_largestLayerByteCountByPrecision = [largestLayerByteCountByPrecision copy] ?: @{};
+		_layerByteCountByPrecision = [layerByteCountByPrecision copy] ?: @{};
 		_widenedPrecision = [widenedPrecision copy];
 		_extensions = NFKModelExtensionsWithout(extensions, NFKModelStageFactsFields());
 	}
@@ -361,7 +363,7 @@ static NSArray<NSString *> *NFKModelStageFactsFields(void)
 {
 	return [[self alloc] initWithIdentifier:identifier title:nil byteCountByPrecision:byteCountByPrecision
 					quantizableElementCount:0 pageableByteCountByPrecision:nil layerCount:0
-		   largestLayerByteCountByPrecision:nil widenedPrecision:nil extensions:nil];
+		   largestLayerByteCountByPrecision:nil layerByteCountByPrecision:nil widenedPrecision:nil extensions:nil];
 }
 
 + (nullable instancetype)stageWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error
@@ -373,7 +375,7 @@ static NSArray<NSString *> *NFKModelStageFactsFields(void)
 {
 	NFKModelFieldReader *reader = [NFKModelFieldReader readerWithObject:object path:path error:error];
 	NSString *identifier = nil, *title = nil, *widenedPrecision = nil;
-	NSDictionary<NSString *, NSNumber *> *bytes = nil, *pageable = nil, *largestLayer = nil;
+	NSDictionary<NSString *, NSNumber *> *bytes = nil, *pageable = nil, *largestLayer = nil, *layers = nil;
 	NSNumber *quantizable = nil, *layerCount = nil;
 	if (reader == nil
 		|| ![reader readString:@"id" required:YES into:&identifier error:error]
@@ -383,6 +385,7 @@ static NSArray<NSString *> *NFKModelStageFactsFields(void)
 		|| ![reader readNumberDictionary:@"pageableBytesByPrecision" into:&pageable error:error]
 		|| ![reader readNumber:@"layerCount" into:&layerCount error:error]
 		|| ![reader readNumberDictionary:@"largestLayerBytesByPrecision" into:&largestLayer error:error]
+		|| ![reader readNumberDictionary:@"layerBytesByPrecision" into:&layers error:error]
 		|| ![reader readString:@"widenedPrecision" required:NO into:&widenedPrecision error:error]) {
 		return nil;
 	}
@@ -399,7 +402,7 @@ static NSArray<NSString *> *NFKModelStageFactsFields(void)
 	return [[self alloc] initWithIdentifier:identifier title:title byteCountByPrecision:bytes
 					quantizableElementCount:quantizable.integerValue pageableByteCountByPrecision:pageable
 								 layerCount:layerCount.integerValue largestLayerByteCountByPrecision:largestLayer
-						   widenedPrecision:widenedPrecision
+				  layerByteCountByPrecision:layers widenedPrecision:widenedPrecision
 								 extensions:[reader extensionsWithoutFields:NFKModelStageFactsFields()]];
 }
 
@@ -420,6 +423,9 @@ static NSArray<NSString *> *NFKModelStageFactsFields(void)
 	}
 	if (self.largestLayerByteCountByPrecision.count > 0) {
 		dictionary[@"largestLayerBytesByPrecision"] = self.largestLayerByteCountByPrecision;
+	}
+	if (self.layerByteCountByPrecision.count > 0) {
+		dictionary[@"layerBytesByPrecision"] = self.layerByteCountByPrecision;
 	}
 	dictionary[@"widenedPrecision"] = self.widenedPrecision;
 	return [dictionary copy];
@@ -1563,6 +1569,7 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 @property (nonatomic) NSInteger pageable;
 @property (nonatomic) NSInteger layerCount;
 @property (nonatomic) NSInteger largestLayer;
+@property (nonatomic) NSInteger layerTotal;
 @property (nonatomic, copy, nullable) NSNumber *widenedWeights;
 @property (nonatomic) NSInteger extra;
 @end
@@ -1572,17 +1579,37 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 - (NFKModelStageFootprint *)footprint
 {
 	NSInteger bytes = self.weights + self.extra;
-	NSMutableArray<NSNumber *> *layers = [NSMutableArray array];
-	NSInteger layer = self.largestLayer;
-	if (self.layerCount > 0 && layer > 0) {
-		layer = MIN(layer, self.weights / self.layerCount);
-		for (NSInteger index = 0; index < self.layerCount; index += 1) {
-			[layers addObject:@(layer)];
-		}
-	}
 	NSNumber *widened = self.widenedWeights != nil ? @(self.widenedWeights.integerValue + self.extra) : nil;
 	return [[NFKModelStageFootprint alloc] initWithByteCount:bytes pageableByteCount:MIN(self.pageable, self.weights)
-											widenedByteCount:widened layerByteCounts:layers];
+											widenedByteCount:widened layerByteCounts:[self layerByteCounts]];
+}
+
+// Each repeated layer's bytes. A stated layer total is split over the layers, the first two at the
+// largest layer's size, so the two layers in flight are never undercounted and the bytes outside the
+// layers are what the stage holds besides them. Without a total, every layer is the largest one.
+- (NSArray<NSNumber *> *)layerByteCounts
+{
+	NSInteger count = self.layerCount;
+	NSInteger stated = MIN(self.layerTotal, self.weights);
+	NSInteger largest = MIN(self.largestLayer, stated > 0 ? stated : self.weights);
+	if (count <= 0 || largest <= 0) {
+		return @[];
+	}
+	NSMutableArray<NSNumber *> *layers = [NSMutableArray arrayWithCapacity:(NSUInteger)count];
+	if (self.layerTotal <= 0) {
+		NSInteger layer = MIN(largest, self.weights / count);
+		for (NSInteger index = 0; index < count; index += 1) {
+			[layers addObject:@(layer)];
+		}
+		return layers;
+	}
+	NSInteger remaining = stated;
+	for (NSInteger index = 0; index < count; index += 1) {
+		NSInteger layer = index < 2 ? MIN(largest, remaining) : MIN(largest, remaining / (count - index));
+		[layers addObject:@(layer)];
+		remaining -= layer;
+	}
+	return layers;
 }
 
 @end
@@ -1777,6 +1804,8 @@ static NSString *NFKModelChoiceStatusName(NFKModelChoiceStatus status)
 	load.layerCount = stage.layerCount;
 	load.largestLayer = (NSInteger)((double)NFKModelBytesAtPrecision(stage.largestLayerByteCountByPrecision, precision,
 																	 checkpointPrecision) * scale);
+	load.layerTotal = (NSInteger)((double)NFKModelBytesAtPrecision(stage.layerByteCountByPrecision, precision,
+																   checkpointPrecision) * scale);
 	if (stage.widenedPrecision != nil && !quantizes && ![stage.widenedPrecision isEqualToString:precision]) {
 		load.widenedWeights = @(NFKModelBytesAtPrecision(stage.byteCountByPrecision, stage.widenedPrecision, checkpointPrecision));
 	}

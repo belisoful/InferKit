@@ -296,6 +296,19 @@ public final class NFKMLXNemotronHNet: Module {
     @ModuleInfo(key: "model") var model: NFKMLXNemotronModel
     @ModuleInfo(key: "lm_head") var lmHead: Linear
 
+    /// The reader of the blocks a streamed load leaves in the release, read in their turn on every pass;
+    /// nil where every block is held. Introduced in InferKit 0.4.0.
+    public internal(set) var layerStream: NFKMLXLayerStream?
+
+    /// Throws the first failed read of a streamed block. Every pass after a failed read skips every
+    /// block, so a caller holding a streamed decoder checks after each pass. Nothing is thrown where
+    /// every block is held. Introduced in InferKit 0.4.0.
+    public func verifyStream() throws {
+        if let failure = layerStream?.readFailure {
+            throw failure
+        }
+    }
+
     public init(_ config: NFKMLXNemotronHConfiguration) {
         self.config = config
         _model.wrappedValue = NFKMLXNemotronModel(config)
@@ -308,8 +321,12 @@ public final class NFKMLXNemotronHNet: Module {
     public func blockStates(_ tokens: MLXArray) -> [MLXArray] {
         var hidden = model.embeddings(tokens)
         var states = [hidden]
-        for layer in model.layers {
-            hidden = layer(hidden)
+        for (index, layer) in model.layers.enumerated() {
+            guard let next = NFKMLXLayerStream.run(layerStream, layer: layer, index: index, { layer(hidden) },
+                                                   keeping: { [$0] }) else {
+                continue
+            }
+            hidden = next
             states.append(hidden)
         }
         return states
@@ -345,15 +362,69 @@ public final class NFKMLXNemotronH: NSObject {
     /// tensors a release carries are skipped, as transformers skips them.
     public static func loadWeights(into net: NFKMLXNemotronHNet, fromDirectory directory: URL,
                                    precision: NFKMLXWeightPrecision = .checkpoint) throws {
-        let read = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: { key in
-            if key.hasPrefix("mtp.") || key.hasPrefix("model.mtp") { return nil }
-            return key.hasPrefix("backbone.") ? "model." + key.dropFirst("backbone.".count) : key
-        })
+        try loadWeights(into: net, fromDirectory: directory, precision: precision, remap: moduleKey(of:))
+    }
+
+    private static func loadWeights(into net: NFKMLXNemotronHNet, fromDirectory directory: URL,
+                                    precision: NFKMLXWeightPrecision, remap: (String) -> String?,
+                                    adding placeholders: [(String, MLXArray)] = []) throws {
+        let read = try NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: remap)
         let merged = read.map { name, value in
             (name, name.hasSuffix("conv1d.weight") && value.ndim == 3
                  ? value.reshaped([value.dim(0), value.dim(2)]) : value)
         }
-        try NFKMLXWeights.apply(merged, to: net)
+        try NFKMLXWeights.apply(merged + placeholders, to: net, verifyShapes: !placeholders.isEmpty)
+    }
+
+    /// The module key a release tensor loads into: `backbone.` read as `model.`, and nil for a
+    /// multi-token prediction (`mtp.*`) tensor.
+    static func moduleKey(of key: String) -> String? {
+        if key.hasPrefix("mtp.") || key.hasPrefix("model.mtp") { return nil }
+        return key.hasPrefix("backbone.") ? "model." + key.dropFirst("backbone.".count) : key
+    }
+
+    /// The block a release tensor belongs to and its name inside the block, or nil outside the blocks.
+    static func block(ofKey key: String) -> (layer: Int, name: String)? {
+        moduleKey(of: key).flatMap { name in
+            name.hasPrefix("model.") ? NFKMLXLayerStream.layer(ofDecoderName: String(name.dropFirst("model.".count))) : nil
+        }
+    }
+
+    /// The blocks a release's load leaves in the release under `residency`, as
+    /// ``NFKMLXLayerStream/plannedLayers(residency:budget:footprint:fitsWhole:)`` plans them; empty where it
+    /// holds them all.
+    static func streamedLayers(directory: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                               budget: Int = NFKMLXResidencyBudget.current()) throws -> Set<Int> {
+        try NFKMLXLayerStream.plannedLayers(residency: residency, budget: budget, footprint: {
+            try NFKMLXLayerStream.footprint(directory: directory, precision: precision,
+                                            includes: { moduleKey(of: $0) != nil }, layerOf: { block(ofKey: $0)?.layer })
+        }, fitsWhole: {
+            try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: precision)
+        })
+    }
+
+    /// Loads a released decoder with the blocks `residency` plans to leave in the release read in their
+    /// turn on every pass (``NFKMLXNemotronHNet/layerStream``), and every other tensor held. Under
+    /// ``NFKMLXResidency/automatic`` a release that fits loads whole, as
+    /// ``loadWeights(into:fromDirectory:precision:)`` loads it. Only a caller that checks
+    /// ``NFKMLXNemotronHNet/verifyStream()`` after each pass loads a streamed decoder.
+    static func loadWeights(into net: NFKMLXNemotronHNet, fromDirectory directory: URL,
+                            precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
+                            budget: Int = NFKMLXResidencyBudget.current()) throws {
+        let streamed = try streamedLayers(directory: directory, precision: precision, residency: residency, budget: budget)
+        guard let vacated = try NFKMLXLayerStream.vacating(
+            streamed, of: net.model.layers, prefix: "model.layers.", directory: directory, precision: precision,
+            layerOf: block(ofKey:), shaping: { name, shape in
+                name.hasSuffix("conv1d.weight") && shape.count == 3 ? [shape[0], shape[2]] : shape
+            }) else {
+            try loadWeights(into: net, fromDirectory: directory, precision: precision)
+            return
+        }
+        try loadWeights(into: net, fromDirectory: directory, precision: precision, remap: { key in
+            block(ofKey: key).map { streamed.contains($0.layer) } == true ? nil : moduleKey(of: key)
+        }, adding: vacated.placeholders)
+        net.layerStream = vacated.stream
+        vacated.stream.prime()
     }
 }
 

@@ -361,7 +361,7 @@ static const NSInteger NFKBuildTestGiB = (NSInteger)1 << 30;
 														  byteCountByPrecision:@{ NFKModelPrecisionCheckpoint: @(stored) }
 													   quantizableElementCount:0
 												  pageableByteCountByPrecision:@{ NFKModelPrecisionCheckpoint: @(stored - ((NSInteger)1 << 30)) }
-																	layerCount:0 largestLayerByteCountByPrecision:nil
+																	layerCount:0 largestLayerByteCountByPrecision:nil layerByteCountByPrecision:nil
 															  widenedPrecision:nil extensions:nil];
 	NFKModelMemoryFacts *facts = [[NFKModelMemoryFacts alloc] initWithStages:@[ stage ] keyValueByteCountPerToken:nil
 													boundedKeyValueByteCount:nil maximumContextLength:nil vocabularySize:nil

@@ -139,8 +139,8 @@ method assigns the out-parameter after the block has run. A sweep of every `.m` 
 `Tests/`, and `Examples/` found that one instance.
 
 1. `swift build` + `swift test` on the host — **0 warnings**, all tests green. Grep the log for
-   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 1874 tests
-   (2026-10-24): the Objective-C `- (void)test` methods under `Tests/` (1756) and in
+   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 1875 tests
+   (2026-10-25): the Objective-C `- (void)test` methods under `Tests/` (1757) and in
    `Examples/NFKExamples.m` (62, the `InferKitExamples` target), plus the `func test` methods in
    `SwiftExamples/` (56).
 2. `xcodebuild build` for a `generic/platform=iOS` destination (cross-platform compile), and for tvOS
@@ -215,7 +215,7 @@ method assigns the out-parameter after the block has run. A sweep of every `.m` 
    -skipPackagePluginValidation` throughout):
 
    ```
-   xcodebuild test -scheme InferKitMLXTests        …    # 2949 — the model and API suite
+   xcodebuild test -scheme InferKitMLXTests        …    # 2955 — the model and API suite
    xcodebuild test -scheme InferKitMLXExamples     …    #  149 — the Swift documented snippets
    xcodebuild test -scheme InferKitMLXObjCExamples …    #   58 — the Objective-C ones
    ```

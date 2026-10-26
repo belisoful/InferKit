@@ -410,6 +410,8 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
         let layers = try XCTUnwrap(structure.layers())
         XCTAssertEqual(layers.count, 2)
         XCTAssertEqual(layers.largestBytes, ["BF16": 37_056 * 2 + 1024])
+        XCTAssertEqual(layers.totalBytes, ["BF16": Int64(Self.tensors.filter { $0.0.contains(".layers.") }
+            .reduce(0) { $0 + $1.1.reduce(1, *) * 2 }) + 1024])
     }
 
     func testTheGeometryReadsANestedDecoderConfiguration() throws {
@@ -658,6 +660,7 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
         XCTAssertEqual(measured.quantizableElements, recorded.quantizableElements)
         XCTAssertEqual(measured.layers[""]?.count, recorded.layers[""]?.count)
         XCTAssertEqual(measured.layers[""]?.largestBytes, recorded.layers[""]?.largestBytes)
+        XCTAssertEqual(measured.layers[""]?.totalBytes, recorded.layers[""]?.totalBytes)
         XCTAssertEqual(measured.geometry?.layerCount, recorded.geometry?.layerCount)
         XCTAssertEqual(measured.geometry?.keyValueHeads, recorded.geometry?.keyValueHeads)
         XCTAssertEqual(measured.geometry?.headDimension, recorded.geometry?.headDimension)

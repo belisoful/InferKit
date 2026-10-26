@@ -11098,6 +11098,11 @@
                   "checkpoint" : 448297984,
                   "float32" : 896595968
                 },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 21518303232,
+                  "checkpoint" : 21518303232,
+                  "float32" : 43036606464
+                },
                 "layerCount" : 48,
                 "title" : "decoder"
               }
@@ -11404,6 +11409,11 @@
                   "bfloat16" : 53684224,
                   "checkpoint" : 53684224,
                   "float32" : 107368448
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 1395789824,
+                  "checkpoint" : 1395789824,
+                  "float32" : 2791579648
                 },
                 "layerCount" : 26,
                 "title" : "decoder"
@@ -11713,6 +11723,11 @@
                   "bfloat16" : 11147264,
                   "checkpoint" : 11147264,
                   "float32" : 22294528
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 200650752,
+                  "checkpoint" : 200650752,
+                  "float32" : 401301504
                 },
                 "layerCount" : 18,
                 "title" : "decoder"
@@ -12025,6 +12040,11 @@
                   "checkpoint" : 825797120,
                   "float32" : 1651594240
                 },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 51199421440,
+                  "checkpoint" : 51199421440,
+                  "float32" : 102398842880
+                },
                 "layerCount" : 62,
                 "title" : "decoder"
               }
@@ -12332,6 +12352,11 @@
                   "bfloat16" : 188765184,
                   "checkpoint" : 188765184,
                   "float32" : 377530368
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 6418016256,
+                  "checkpoint" : 6418016256,
+                  "float32" : 12836032512
                 },
                 "layerCount" : 34,
                 "title" : "decoder"
@@ -13051,8 +13076,8 @@
             },
             {
               "memory" : {
-                "peakBytes" : 3339583496,
-                "residentBytes" : 3339583496
+                "peakBytes" : 6170820616,
+                "residentBytes" : 6170820616
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -13268,6 +13293,11 @@
                   "bfloat16" : 483688450,
                   "checkpoint" : 483688450,
                   "float32" : 967376900
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 21801427040,
+                  "checkpoint" : 21801427040,
+                  "float32" : 43602854080
                 },
                 "layerCount" : 48,
                 "title" : "decoder"
@@ -13809,8 +13839,8 @@
             },
             {
               "memory" : {
-                "peakBytes" : 4169745226,
-                "residentBytes" : 4169745226
+                "peakBytes" : 12212219080,
+                "residentBytes" : 12212219080
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -14035,6 +14065,11 @@
                   "checkpoint" : 1068019714,
                   "float32" : 2136039428
                 },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 58576107640,
+                  "checkpoint" : 58576107640,
+                  "float32" : 117152215280
+                },
                 "layerCount" : 60,
                 "title" : "decoder"
               }
@@ -14254,8 +14289,8 @@
             },
             {
               "memory" : {
-                "peakBytes" : 11044945672,
-                "residentBytes" : 11044945672
+                "peakBytes" : 13536419592,
+                "residentBytes" : 13536419592
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -14378,6 +14413,11 @@
                   "bfloat16" : 143148034,
                   "checkpoint" : 143148034,
                   "float32" : 286296068
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 3764444230,
+                  "checkpoint" : 3764444230,
+                  "float32" : 7528888460
                 },
                 "layerCount" : 35,
                 "title" : "decoder"
@@ -14601,8 +14641,8 @@
             },
             {
               "memory" : {
-                "peakBytes" : 14995486472,
-                "residentBytes" : 14995486472
+                "peakBytes" : 16830566152,
+                "residentBytes" : 16830566152
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -14810,6 +14850,11 @@
                   "bfloat16" : 212364290,
                   "checkpoint" : 212364290,
                   "float32" : 424728580
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 8001760340,
+                  "checkpoint" : 8001760340,
+                  "float32" : 16003520680
                 },
                 "layerCount" : 42,
                 "title" : "decoder"
@@ -24286,6 +24331,11 @@
                   "checkpoint" : 1111511040,
                   "float32" : 2223022080
                 },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 44460441600,
+                  "checkpoint" : 44460441600,
+                  "float32" : 88920883200
+                },
                 "layerCount" : 40,
                 "quantizableElements" : 22900899840,
                 "title" : "decoder"
@@ -26528,6 +26578,10 @@
         "restrictsCommercialUse" : false,
         "url" : "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/"
       },
+      "memoryModel" : {
+        "precision" : "precision",
+        "residency" : "residency"
+      },
       "modelTypes" : [
         "nemotron_h"
       ],
@@ -26633,6 +26687,64 @@
           "kind" : "choice",
           "stage" : "request",
           "title" : "Tool-call format"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 17776454656,
+                "residentBytes" : 17776454656
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2938621696,
+                "residentBytes" : 2938621696
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 17776454656,
+                "residentBytes" : 17776454656
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 35552909312,
+                "residentBytes" : 35552909312
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
         }
       ],
       "outputModalities" : [
@@ -26677,6 +26789,17 @@
           "valueType" : "text"
         }
       ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
       "registryName" : "nemotron-nano-2",
       "requirements" : {
         "minimumMemoryBytes" : 25966378768,
@@ -26687,7 +26810,8 @@
         "requiresAppleSilicon" : true
       },
       "residencies" : [
-        "resident"
+        "resident",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "NVIDIA Nemotron Nano 2, a hybrid Mamba-2, attention, and MLP decoder that writes text and calls tools.",
@@ -26710,8 +26834,19 @@
                   "checkpoint" : 17776454656,
                   "float32" : 35552909312
                 },
-                "id" : "model",
-                "title" : "model"
+                "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 294901248,
+                  "checkpoint" : 294901248,
+                  "float32" : 589802496
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 15427635456,
+                  "checkpoint" : 15427635456,
+                  "float32" : 30855270912
+                },
+                "layerCount" : 56,
+                "title" : "decoder"
               }
             ],
             "vocabularySize" : 131072
@@ -29894,6 +30029,11 @@
                   "checkpoint" : 545280000,
                   "float32" : 1090560000
                 },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 21811200000,
+                  "checkpoint" : 21811200000,
+                  "float32" : 43622400000
+                },
                 "layerCount" : 40,
                 "title" : "decoder"
               }
@@ -32495,6 +32635,11 @@
                   "checkpoint" : 31461888,
                   "float32" : 62923776
                 },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 880932864,
+                  "checkpoint" : 880932864,
+                  "float32" : 1761865728
+                },
                 "layerCount" : 28,
                 "quantizableElements" : 595984384,
                 "title" : "decoder"
@@ -33384,6 +33529,11 @@
                   "bfloat16" : 100672000,
                   "checkpoint" : 100672000,
                   "float32" : 201344000
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 2818816000,
+                  "checkpoint" : 2818816000,
+                  "float32" : 5637632000
                 },
                 "layerCount" : 28,
                 "quantizableElements" : 1720451072,
@@ -34289,6 +34439,11 @@
                   "bfloat16" : 660623872,
                   "checkpoint" : 660623872,
                   "float32" : 1321247744
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 26424954880,
+                  "checkpoint" : 26424954880,
+                  "float32" : 52849909760
                 },
                 "layerCount" : 40,
                 "quantizableElements" : 13989969920,
@@ -36004,6 +36159,11 @@
                   "checkpoint" : 975196672,
                   "float32" : 1950393344
                 },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 62412587008,
+                  "checkpoint" : 62412587008,
+                  "float32" : 124825174016
+                },
                 "layerCount" : 64,
                 "quantizableElements" : 31983534080,
                 "title" : "decoder"
@@ -36901,6 +37061,11 @@
                   "checkpoint" : 201861632,
                   "float32" : 403723264
                 },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 7267018752,
+                  "checkpoint" : 7267018752,
+                  "float32" : 14534037504
+                },
                 "layerCount" : 36,
                 "quantizableElements" : 3633315840,
                 "title" : "decoder"
@@ -37304,6 +37469,11 @@
                   "bfloat16" : 100672000,
                   "checkpoint" : 100672000,
                   "float32" : 201344000
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 2818816000,
+                  "checkpoint" : 2818816000,
+                  "float32" : 5637632000
                 },
                 "layerCount" : 28,
                 "title" : "decoder"
@@ -37758,6 +37928,11 @@
                   "checkpoint" : 975196672,
                   "float32" : 1950393344
                 },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 62412587008,
+                  "checkpoint" : 62412587008,
+                  "float32" : 124825174016
+                },
                 "layerCount" : 64,
                 "title" : "decoder"
               }
@@ -37996,6 +38171,11 @@
                   "bfloat16" : 385892864,
                   "checkpoint" : 385892864,
                   "float32" : 771785728
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 13892143104,
+                  "checkpoint" : 13892143104,
+                  "float32" : 27784286208
                 },
                 "layerCount" : 36,
                 "title" : "decoder"
@@ -48376,6 +48556,11 @@
                   "checkpoint" : 203013888,
                   "float32" : 406027776
                 },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 4447389952,
+                  "checkpoint" : 4447389952,
+                  "float32" : 8894779904
+                },
                 "layerCount" : 24,
                 "title" : "transformer, vae"
               }
@@ -49148,6 +49333,11 @@
                   "checkpoint" : 169961472,
                   "float32" : 339922944
                 },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 4017702912,
+                  "checkpoint" : 4017702912,
+                  "float32" : 8035405824
+                },
                 "layerCount" : 24,
                 "title" : "transformer, vae"
               }
@@ -49514,6 +49704,11 @@
                   "checkpoint" : 425999360,
                   "float32" : 851998720
                 },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 16034146816,
+                  "checkpoint" : 16034146816,
+                  "float32" : 32068293632
+                },
                 "layerCount" : 38,
                 "title" : "transformer, vae"
               }
@@ -49867,6 +50062,11 @@
                   "bfloat16" : 425999360,
                   "checkpoint" : 425999360,
                   "float32" : 851998720
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 16034146816,
+                  "checkpoint" : 16034146816,
+                  "float32" : 32068293632
                 },
                 "layerCount" : 38,
                 "title" : "transformer, vae"
@@ -51093,6 +51293,11 @@
                   "checkpoint" : 436224000,
                   "float32" : 872448000
                 },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 13959168000,
+                  "checkpoint" : 13959168000,
+                  "float32" : 27918336000
+                },
                 "layerCount" : 32,
                 "quantizableElements" : 7246663680,
                 "title" : "decoder"
@@ -51161,6 +51366,11 @@
                   "bfloat16" : 436224000,
                   "checkpoint" : 436224000,
                   "float32" : 872448000
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 13959168000,
+                  "checkpoint" : 13959168000,
+                  "float32" : 27918336000
                 },
                 "layerCount" : 32,
                 "quantizableElements" : 7246663680,
@@ -58561,6 +58771,11 @@
                   "checkpoint" : 188765184,
                   "float32" : 377530368
                 },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 6418016256,
+                  "checkpoint" : 6418016256,
+                  "float32" : 12836032512
+                },
                 "layerCount" : 34,
                 "title" : "decoder"
               }
@@ -58658,6 +58873,11 @@
                   "checkpoint" : 448297984,
                   "float32" : 896595968
                 },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 21518303232,
+                  "checkpoint" : 21518303232,
+                  "float32" : 43036606464
+                },
                 "layerCount" : 48,
                 "title" : "decoder"
               }
@@ -58754,6 +58974,11 @@
                   "bfloat16" : 825797120,
                   "checkpoint" : 825797120,
                   "float32" : 1651594240
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 51199421440,
+                  "checkpoint" : 51199421440,
+                  "float32" : 102398842880
                 },
                 "layerCount" : 62,
                 "title" : "decoder"

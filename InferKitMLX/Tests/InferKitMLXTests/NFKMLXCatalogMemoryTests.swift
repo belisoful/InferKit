@@ -86,12 +86,13 @@ final class NFKMLXCatalogMemoryTests: XCTestCase {
         let geometry = NFKMLXMeasuredGeometry(layerCount: 2, attentionHeads: 4, keyValueHeads: 2, headDimension: 8,
                                               maximumPositions: 1024, vocabularySize: 50)
         let row = measurement(tensorBytes: ["": ["BF16": 1000]],
-                              layers: ["": NFKMLXMeasuredLayers(count: 2, largestBytes: ["BF16": 400])],
+                              layers: ["": NFKMLXMeasuredLayers(count: 2, largestBytes: ["BF16": 400], totalBytes: ["BF16": 700])],
                               expertBytes: ["": ["BF16": 600]], quantizableElements: ["": 300], geometry: geometry)
         let bare = try XCTUnwrap(NFKMLXVariantFacts(row, plan: .stored, converted: false, recipe: NFKMLXFactsRecipe(),
                                                     estimatesStoredBytes: false)).facts
         XCTAssertEqual(bare.stages[0].quantizableElementCount, 0)
         XCTAssertEqual(bare.stages[0].layerCount, 0)
+        XCTAssertTrue(bare.stages[0].layerByteCountByPrecision.isEmpty)
         XCTAssertTrue(bare.stages[0].pageableByteCountByPrecision.isEmpty)
         XCTAssertNil(bare.keyValueByteCountPerToken)
         XCTAssertEqual(bare.vocabularySize?.intValue, 50)
@@ -105,10 +106,19 @@ final class NFKMLXCatalogMemoryTests: XCTestCase {
         XCTAssertEqual(stage.quantizableElementCount, 300)
         XCTAssertEqual(stage.layerCount, 2)
         XCTAssertEqual(stage.largestLayerByteCountByPrecision[NFKModelPrecisionFloat32]?.intValue, 800)
+        XCTAssertEqual(stage.layerByteCountByPrecision[NFKModelPrecisionFloat32]?.intValue, 1400)
         XCTAssertEqual(stage.pageableByteCountByPrecision[NFKModelPrecisionCheckpoint]?.intValue, 600)
         // Two layers, two key-value heads of eight elements, keys and values at 16 bits.
         XCTAssertEqual(full.keyValueByteCountPerToken?.intValue, 2 * 2 * 2 * 8 * 2)
         XCTAssertEqual(full.maximumContextLength?.intValue, 1024)
+    }
+
+    func testNemotronsStreamedEstimateHoldsItsEmbeddingAndOutputProjection() throws {
+        let estimate = try descriptor(NFKMLXNemotronH.nemotronModelName).estimatedMemory(
+            forOptions: [NFKModelLoadOptionResidency: NFKModelResidencyStreamed])
+        // The untied embedding and output projection, 131,072 × 4,480 at bfloat16 each, stay outside the blocks.
+        XCTAssertGreaterThanOrEqual(estimate.residentByteCount, 2 * 131_072 * 4_480 * 2)
+        XCTAssertEqual(estimate.residency, NFKModelResidencyStreamed)
     }
 
     // MARK: Key-value geometry

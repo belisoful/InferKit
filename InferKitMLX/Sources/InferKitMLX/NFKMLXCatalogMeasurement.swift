@@ -68,10 +68,12 @@ struct NFKMLXMeasuredVariant {
     var geometry: NFKMLXMeasuredGeometry? = nil
 }
 
-/// The repeated layers of one directory: how many, and the bytes of the largest as stored, by dtype.
+/// The repeated layers of one directory: how many, the bytes of the largest as stored, and the bytes of
+/// them all as stored, by dtype. A measurement made before the total was recorded leaves it empty.
 struct NFKMLXMeasuredLayers {
     let count: Int
     let largestBytes: [String: Int64]
+    var totalBytes: [String: Int64] = [:]
 }
 
 /// The fields of a release's `config.json` the key-value cache follows, read from its root and from
@@ -455,11 +457,15 @@ struct NFKMLXVariantFacts {
                 ? Self.bytesByPrecision(loads, tensors: measurement.expertBytes, opaque: [:]) : [:]
             var layerCount = 0
             var largestLayer = [String: NSNumber]()
+            var layerTotal = [String: NSNumber]()
             if recipe.streamsLayers, recipe.streamedStage.map({ $0 == split.identifier }) ?? true,
                let (directory, layers) = loads.compactMap({ load in measurement.layers[load.0].map { (load, $0) } })
                 .max(by: { $0.1.count < $1.1.count }) {
                 layerCount = layers.count
                 largestLayer = Self.bytesByPrecision([directory], tensors: [directory.0: layers.largestBytes], opaque: [:])
+                if !layers.totalBytes.isEmpty {
+                    layerTotal = Self.bytesByPrecision([directory], tensors: [directory.0: layers.totalBytes], opaque: [:])
+                }
             }
             let quantizable = recipe.quantizes ? split.directories.reduce(Int64(0)) {
                 $0 + (measurement.quantizableElements[$1] ?? 0)
@@ -468,6 +474,7 @@ struct NFKMLXVariantFacts {
                                              byteCountByPrecision: bytes, quantizableElementCount: Int(quantizable),
                                              pageableByteCountByPrecision: pageable, layerCount: layerCount,
                                              largestLayerByteCountByPrecision: largestLayer,
+                                             layerByteCountByPrecision: layerTotal,
                                              widenedPrecision: recipe.widenedStages[split.identifier], extensions: nil))
         }
         let geometry = measurement.geometry

@@ -631,7 +631,8 @@ struct NFKMLXTensorStructure {
         }
     }
 
-    /// The count and the largest layer's bytes by dtype of the container holding the most bytes.
+    /// The count, the largest layer's bytes by dtype, and every layer's bytes by dtype, of the container
+    /// holding the most bytes.
     func layers() -> NFKMLXMeasuredLayers? {
         func total(_ layers: [Int: [String: Int64]]) -> Int64 {
             layers.values.reduce(0) { $0 + $1.values.reduce(0, +) }
@@ -643,7 +644,10 @@ struct NFKMLXTensorStructure {
               }) else {
             return nil
         }
-        return NFKMLXMeasuredLayers(count: layers.count, largestBytes: largest)
+        let every = layers.values.reduce(into: [String: Int64]()) { sums, layer in
+            sums.merge(layer, uniquingKeysWith: +)
+        }
+        return NFKMLXMeasuredLayers(count: layers.count, largestBytes: largest, totalBytes: every)
     }
 }
 

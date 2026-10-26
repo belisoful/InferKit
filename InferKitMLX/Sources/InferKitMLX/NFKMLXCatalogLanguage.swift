@@ -839,7 +839,7 @@ extension NFKMLXCatalogLanguage {
                                                          optional: NFKMLXNemotronH.optionalFiles,
                                                          weights: NFKMLXNemotronH.weightFiles))],
             license: license(repository), readsReasoning: false, outputs: toolCallingOutputs + [usageOutput, finishReasonOutput],
-            parameters: toolDecoderOptions())
+            parameters: toolDecoderOptions(), residencies: streamedResidencies)
         entry.modelTypes = ["nemotron_h"]
         return entry
     }

@@ -13,12 +13,14 @@ import Foundation
 import MLX
 import MLXNN
 
-/// One tensor of a streamed layer: its name inside the layer's module and where the release stores it.
+/// One tensor of a streamed layer: its name inside the layer's module, where the release stores it, and
+/// the shape the module holds it in, which has the stored element count.
 struct NFKMLXStreamedTensor {
     let name: String
     let file: Int
     let entry: NFKMLXSafetensorsEntry
     let dtype: DType
+    let shape: [Int]
 }
 
 /// A tensor read out of the release into memory of its own, before MLX wraps it.
@@ -299,7 +301,7 @@ public final class NFKMLXLayerStream: @unchecked Sendable {
         if lead > 0 {
             memmove(pointer, pointer + lead, count)
         }
-        return NFKMLXStreamedBuffer(name: tensor.name, pointer: pointer, shape: tensor.entry.shape, dtype: tensor.dtype)
+        return NFKMLXStreamedBuffer(name: tensor.name, pointer: pointer, shape: tensor.shape, dtype: tensor.dtype)
     }
 }
 
@@ -340,9 +342,12 @@ extension NFKMLXLayerStream {
     ///   - conversion: as ``init(files:tensors:precision:converting:)``.
     ///   - layerOf: a checkpoint key's layer index and its name inside the layer's module, or nil for a
     ///     key outside the repeated layers.
+    ///   - shaping: the shape a tensor, by its name inside the layer, takes from its stored shape, for a
+    ///     module that holds it with its unit axes dropped; the stored shape by default.
     static func streaming(directory: URL, layers streamed: Set<Int>, precision: NFKMLXWeightPrecision,
                           converting conversion: DType? = nil,
-                          layerOf: (String) -> (layer: Int, name: String)?) throws -> NFKMLXLayerStream {
+                          layerOf: (String) -> (layer: Int, name: String)?,
+                          shaping: (String, [Int]) -> [Int] = { $1 }) throws -> NFKMLXLayerStream {
         let files = try NFKMLXReleaseWeights.files(inDirectory: directory)
         var tensors = [Int: [NFKMLXStreamedTensor]]()
         for (fileIndex, url) in files.enumerated() {
@@ -353,8 +358,13 @@ extension NFKMLXLayerStream {
                     throw NFKMLXError.unsupportedConfiguration(
                         "\(url.lastPathComponent) stores \(key) as \(entry.dtype), which a stream cannot read")
                 }
+                let shape = shaping(name, entry.shape)
+                guard shape.reduce(1, *) == entry.shape.reduce(1, *) else {
+                    throw NFKMLXError.unsupportedConfiguration(
+                        "\(key) is stored \(entry.shape), which does not hold the \(shape) its layer reads")
+                }
                 tensors[layer, default: []].append(
-                    NFKMLXStreamedTensor(name: name, file: fileIndex, entry: entry, dtype: dtype))
+                    NFKMLXStreamedTensor(name: name, file: fileIndex, entry: entry, dtype: dtype, shape: shape))
             }
         }
         for layer in streamed where tensors[layer] == nil {
@@ -434,11 +444,12 @@ extension NFKMLXLayerStream {
     /// streamed ones were built with are never materialized.
     static func vacating(_ streamed: Set<Int>, of layers: [Module], prefix: String, directory: URL,
                          precision: NFKMLXWeightPrecision, converting conversion: DType? = nil,
-                         layerOf: (String) -> (layer: Int, name: String)?) throws
+                         layerOf: (String) -> (layer: Int, name: String)?,
+                         shaping: (String, [Int]) -> [Int] = { $1 }) throws
         -> (stream: NFKMLXLayerStream, placeholders: [(String, MLXArray)])? {
         guard !streamed.isEmpty else { return nil }
         let stream = try streaming(directory: directory, layers: streamed, precision: precision,
-                                   converting: conversion, layerOf: layerOf)
+                                   converting: conversion, layerOf: layerOf, shaping: shaping)
         var placeholders = [(String, MLXArray)]()
         for index in streamed.sorted() {
             stream.vacate(index, module: layers[index])

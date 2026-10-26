@@ -345,6 +345,7 @@ budget's reserve covers it.
 | `pageableBytesByPrecision` | object of integer | no | The routed-expert bytes a paged load leaves in the release. |
 | `layerCount` | integer | no | The repeated layers a streamed load may leave in the release, from 0 to 4096 (`NFKModelStageFacts.maximumLayerCount`). A stage with more is malformed. |
 | `largestLayerBytesByPrecision` | object of integer | no | The bytes of the largest repeated layer. |
+| `layerBytesByPrecision` | object of integer | no | The bytes of every repeated layer together. The stage's bytes outside its layers are its `bytesByPrecision` less these; without them every layer counts as the largest. |
 | `widenedPrecision` | string | no | A wider precision the stage takes where the budget holds it, such as a text encoder stored at bfloat16 and run at float32. |
 
 A precision a stage does not list converts from its `checkpoint` bytes by the ratio of element sizes,
@@ -1035,7 +1036,7 @@ A model's `requirements.minimumMemoryBytes` is the least of its variants' figure
 
 | Measured | Where it comes from |
 |---|---|
-| Repeated layers | The tensor names under `layers.N.`, `h.N.`, `blocks.N.`, or `transformer_blocks.N.`: the count and the largest layer's bytes, of the container that holds the most bytes in each top-level directory. |
+| Repeated layers | The tensor names under `layers.N.`, `h.N.`, `blocks.N.`, or `transformer_blocks.N.`: the count, the largest layer's bytes, and every layer's bytes together, of the container that holds the most bytes in each top-level directory. |
 | Routed experts | The bytes of the tensors whose names hold `.experts.`. |
 | Quantizable elements | The elements of each rank-2 `.weight` whose input width divides 64, outside the embeddings and the norms. |
 | Geometry | `num_hidden_layers`, `num_attention_heads`, `num_key_value_heads`, `head_dim`, `hidden_size`, `max_position_embeddings`, `sliding_window`, `sliding_window_pattern`, `num_kv_shared_layers`, `global_head_dim`, `num_global_key_value_heads`, `vocab_size`, and the layer kinds (`layer_types`, `layers_block_type`, or `hybrid_override_pattern`), from the root of `config.json` and from `text_config`. A gated repository refuses the file without an accepted token, and its geometry stays unmeasured. |
@@ -1071,7 +1072,8 @@ A variant's memory facts carry only what its loader acts on:
   different precisions states its loaded bytes under `"loaded"`, and the memory model's
   `stagePrecisions` names it. A stage the budget may widen states `widenedPrecision`.
 - `quantizableElements` where the factory quantizes, `pageableBytesByPrecision` where the model pages its
-  routed experts, and `layerCount` and `largestLayerBytesByPrecision` where it streams its layers.
+  routed experts, and `layerCount`, `largestLayerBytesByPrecision`, and `layerBytesByPrecision` where it
+  streams its layers.
 - `keyValueBytesPerToken` where a context-length option sets the cache: the Qwen3, Mistral, and mixture
   decoders and gpt-oss, every layer at the key-value head count. gpt-oss keeps every key of its sliding
   layers and masks the window. A family whose backend reads no cache parameter declares no cache option

@@ -193,6 +193,16 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 @property (class, nonatomic, readonly) NSInteger maximumLayerCount;
 /*! The bytes of the largest repeated layer, per precision. */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, NSNumber *> *largestLayerByteCountByPrecision;
+/*!
+	@abstract   The bytes of every repeated layer together, per precision. Empty where the stage does not
+				state them.
+	@discussion A stage whose layers differ in size, such as a hybrid stack of recurrent, feed-forward,
+				and attention layers, states them, so its bytes outside the layers are the stage's bytes
+				less these. Without them the planner sizes every layer as the largest one, which counts a
+				smaller layer's difference as layer bytes and understates what a streamed load holds.
+				Introduced in InferKit 0.4.0.
+*/
+@property (nonatomic, readonly, copy) NSDictionary<NSString *, NSNumber *> *layerByteCountByPrecision;
 /*! A wider precision the stage takes where the budget holds it, such as a text encoder stored at
 	bfloat16 and run at float32. nil for a stage with one precision. */
 @property (nonatomic, readonly, copy, nullable) NSString *widenedPrecision;
@@ -207,6 +217,7 @@ extern NSString * const NFKModelMemoryFittingEstimateKey;
 	  pageableByteCountByPrecision:(nullable NSDictionary<NSString *, NSNumber *> *)pageableByteCountByPrecision
 						layerCount:(NSInteger)layerCount
   largestLayerByteCountByPrecision:(nullable NSDictionary<NSString *, NSNumber *> *)largestLayerByteCountByPrecision
+		 layerByteCountByPrecision:(nullable NSDictionary<NSString *, NSNumber *> *)layerByteCountByPrecision
 				  widenedPrecision:(nullable NSString *)widenedPrecision
 						extensions:(nullable NSDictionary<NSString *, id> *)extensions NS_DESIGNATED_INITIALIZER;
 

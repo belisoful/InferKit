@@ -42,7 +42,7 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 														  byteCountByPrecision:@{ NFKModelPrecisionCheckpoint: @2000000000,
 																				  NFKModelPrecisionFloat32: @4000000000 }
 													   quantizableElementCount:900000000 pageableByteCountByPrecision:nil
-																	layerCount:0 largestLayerByteCountByPrecision:nil
+																	layerCount:0 largestLayerByteCountByPrecision:nil layerByteCountByPrecision:nil
 															  widenedPrecision:nil extensions:nil];
 	NFKModelMemoryFacts *facts = [[NFKModelMemoryFacts alloc] initWithStages:@[ stage ] keyValueByteCountPerToken:@100000
 													boundedKeyValueByteCount:@1000000 maximumContextLength:@32768
@@ -94,7 +94,7 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 														  byteCountByPrecision:@{ NFKModelPrecisionCheckpoint: @(stored) }
 													   quantizableElementCount:0
 												  pageableByteCountByPrecision:@{ NFKModelPrecisionCheckpoint: @(32 * NFKTestGiB) }
-																	layerCount:0 largestLayerByteCountByPrecision:nil
+																	layerCount:0 largestLayerByteCountByPrecision:nil layerByteCountByPrecision:nil
 															  widenedPrecision:nil extensions:nil];
 	NFKModelMemoryFacts *facts = [[NFKModelMemoryFacts alloc] initWithStages:@[ stage ] keyValueByteCountPerToken:nil
 													boundedKeyValueByteCount:nil maximumContextLength:nil vocabularySize:nil
@@ -119,6 +119,46 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 																			  cacheStage:nil draftStage:nil
 																		 stagePrecisions:nil extensions:nil];
 	return [[NFKModelDescriptor alloc] initWithIdentifier:@"test.moe" displayName:nil family:@"test" summary:nil
+												   engine:NFKModelEnginePlugin registryName:nil providerClassName:nil
+													tasks:nil inputModalities:nil outputModalities:nil inputs:nil outputs:nil
+												  options:@[ residency ] variants:@[ variant ] license:nil requirements:nil
+											  residencies:nil memoryModel:model presets:nil standIn:NO
+										introducedVersion:nil extensions:nil];
+}
+
+// One stage of 20 GiB with ten repeated layers, the largest 2 GiB, and a residency option that streams.
+// Where the stage states its layers' total, 16 GiB, the other 4 GiB lie outside the layers.
+- (NFKModelDescriptor *)layeredStackStatingItsLayerTotal:(BOOL)statesTotal
+{
+	NFKModelStageFacts *stage = [[NFKModelStageFacts alloc]
+			initWithIdentifier:@"decoder" title:nil
+		  byteCountByPrecision:@{ NFKModelPrecisionCheckpoint: @(20 * NFKTestGiB) }
+	   quantizableElementCount:0 pageableByteCountByPrecision:nil layerCount:10
+	largestLayerByteCountByPrecision:@{ NFKModelPrecisionCheckpoint: @(2 * NFKTestGiB) }
+	   layerByteCountByPrecision:statesTotal ? @{ NFKModelPrecisionCheckpoint: @(16 * NFKTestGiB) } : nil
+			  widenedPrecision:nil extensions:nil];
+	NFKModelMemoryFacts *facts = [[NFKModelMemoryFacts alloc] initWithStages:@[ stage ] keyValueByteCountPerToken:nil
+													boundedKeyValueByteCount:nil maximumContextLength:nil vocabularySize:nil
+													   loadOverheadByteCount:0 basis:nil extensions:nil];
+	NFKModelVariant *variant = [[NFKModelVariant alloc] initWithIdentifier:@"base" displayName:nil isDefault:YES
+															  registryName:nil source:nil downloadByteCount:nil
+														 residentByteCount:nil peakByteCount:nil parameterCount:nil
+																 precision:NFKModelPrecisionBFloat16 minimumMemoryByteCount:nil
+																   license:nil memoryFacts:facts extensions:nil];
+	NFKModelOption *residency = [self loadOptionWithKey:NFKModelLoadOptionResidency kind:NFKModelOptionKindChoice
+												  title:@"Residency" defaultValue:NFKModelResidencyAutomatic
+												choices:@[ [self choice:NFKModelResidencyAutomatic title:@"Automatic"],
+														   [self choice:NFKModelResidencyResident title:@"Resident"],
+														   [self choice:NFKModelResidencyStreamed title:@"Streamed"] ]
+												minimum:nil maximum:nil step:nil];
+	NFKModelMemoryModel *model = [[NFKModelMemoryModel alloc] initWithPrecisionOptionKey:nil quantizationBitsOptionKey:nil
+														  quantizationGroupSizeOptionKey:nil contextLengthOptionKey:nil
+																	  cacheBitsOptionKey:nil cacheGroupSizeOptionKey:nil
+																		  draftOptionKey:nil draftBitsOptionKey:nil
+																	  residencyOptionKey:NFKModelLoadOptionResidency
+																			  cacheStage:nil draftStage:nil
+																		 stagePrecisions:nil extensions:nil];
+	return [[NFKModelDescriptor alloc] initWithIdentifier:@"test.hybrid" displayName:nil family:@"test" summary:nil
 												   engine:NFKModelEnginePlugin registryName:nil providerClassName:nil
 													tasks:nil inputModalities:nil outputModalities:nil inputs:nil outputs:nil
 												  options:@[ residency ] variants:@[ variant ] license:nil requirements:nil
@@ -337,7 +377,7 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 							 NFKModelPrecisionBFloat16: @2100000000 };
 	NFKModelStageFacts *stage = [[NFKModelStageFacts alloc] initWithIdentifier:@"model" title:nil byteCountByPrecision:bytes
 													   quantizableElementCount:0 pageableByteCountByPrecision:nil
-																	layerCount:0 largestLayerByteCountByPrecision:nil
+																	layerCount:0 largestLayerByteCountByPrecision:nil layerByteCountByPrecision:nil
 															  widenedPrecision:nil extensions:nil];
 	NFKModelMemoryFacts *facts = [[NFKModelMemoryFacts alloc] initWithStages:@[ stage ] keyValueByteCountPerToken:nil
 													boundedKeyValueByteCount:nil maximumContextLength:nil vocabularySize:nil
@@ -683,7 +723,7 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 					  @{ @"id": @"transformer", @"title": @"transformer", @"bytesByPrecision": @{ @"checkpoint": @1000 },
 						 @"quantizableElements": @400, @"pageableBytesByPrecision": @{ @"checkpoint": @600 },
 						 @"layerCount": @8, @"largestLayerBytesByPrecision": @{ @"checkpoint": @110 },
-						 @"x-note": @"kept" } ],
+						 @"layerBytesByPrecision": @{ @"checkpoint": @800 }, @"x-note": @"kept" } ],
 		@"keyValueBytesPerToken": @4096, @"boundedKeyValueBytes": @0, @"maximumContextLength": @40960,
 		@"vocabularySize": @151936, @"loadOverheadBytes": @0, @"basis": NFKModelMemoryBasisStoredDType,
 	};
@@ -693,6 +733,7 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 	XCTAssertEqualObjects(facts.dictionaryRepresentation, dictionary);
 	XCTAssertEqualObjects([facts stageWithIdentifier:@"transformer"].extensions, (@{ @"x-note": @"kept" }));
 	XCTAssertEqual([facts stageWithIdentifier:@"transformer"].layerCount, 8);
+	XCTAssertEqualObjects([facts stageWithIdentifier:@"transformer"].layerByteCountByPrecision, (@{ @"checkpoint": @800 }));
 
 	XCTAssertNil([NFKModelMemoryFacts factsWithDictionary:@{ @"stages": @[ @{ @"id": @"x" } ] } error:&error]);
 	XCTAssertEqualObjects(error.localizedDescription, @"memoryFacts.stages[0].bytesByPrecision is missing");
@@ -742,7 +783,7 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 		return [[NFKModelStageFacts alloc] initWithIdentifier:@"decoder" title:nil
 										 byteCountByPrecision:@{ NFKModelPrecisionCheckpoint: @1000 }
 									  quantizableElementCount:0 pageableByteCountByPrecision:nil layerCount:layerCount
-							 largestLayerByteCountByPrecision:nil widenedPrecision:nil extensions:nil];
+							 largestLayerByteCountByPrecision:nil layerByteCountByPrecision:nil widenedPrecision:nil extensions:nil];
 	};
 	XCTAssertEqual(stage(1000000000000).layerCount, NFKModelStageFacts.maximumLayerCount);
 	XCTAssertEqual(stage(-5).layerCount, 0);
@@ -1008,6 +1049,16 @@ static const NSInteger NFKTestGiB = (NSInteger)1 << 30;
 	XCTAssertTrue([plan streamsStageAtIndex:0]);
 	XCTAssertEqualObjects(plan.streamedStageByteCounts[@0], @(18 * NFKTestGiB));
 	XCTAssertTrue(NSEqualRanges([plan heldLayerRangeOfStageAtIndex:0 footprint:dense], NSMakeRange(0, 4)));
+}
+
+- (void)testAStreamedEstimateCountsTheBytesOutsideTheLayersAStageStates
+{
+	NSDictionary *streamed = @{ NFKModelLoadOptionResidency: NFKModelResidencyStreamed };
+	NFKModelMemoryEstimate *stated = [self estimateOf:[self layeredStackStatingItsLayerTotal:YES] options:streamed];
+	XCTAssertEqualObjects(stated.residency, NFKModelResidencyStreamed);
+	XCTAssertEqual(stated.residentByteCount, 8 * NFKTestGiB, @"4 GiB outside the layers and the two in flight");
+	NFKModelMemoryEstimate *unstated = [self estimateOf:[self layeredStackStatingItsLayerTotal:NO] options:streamed];
+	XCTAssertEqual(unstated.residentByteCount, 4 * NFKTestGiB, @"every layer sized as the largest");
 }
 
 - (void)testAStageWidensWhereTheWiderPrecisionFits

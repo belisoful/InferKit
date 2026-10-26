@@ -803,7 +803,7 @@ The measurement:
 Memory facts, load options, and presets (`NFKMLXCatalogOptions.swift`, 2026-10-15):
 
 - `measure.py` also writes, per top-level directory, the repeated layers of the largest layer container
-  (`NFKMLXMeasuredLayers`), the `.experts.` bytes, the quantizable elements (rank-2 `.weight`, input
+  (`NFKMLXMeasuredLayers`: the count, the largest, and their total), the `.experts.` bytes, the quantizable elements (rank-2 `.weight`, input
   width divisible by 64, no embedding or norm), and the `config.json` geometry (`NFKMLXMeasuredGeometry`,
   root and `text_config`). The fields default to empty, so a row the script wrote before them still
   compiles. A gated repository refuses `config.json` without a token: Gemma 3, Gemma 3n, TranslateGemma,

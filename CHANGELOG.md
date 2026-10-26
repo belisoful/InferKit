@@ -696,6 +696,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NSUnderlyingErrorKey`.
 - A stage's `layerCount` is at most `NFKModelStageFacts.maximumLayerCount` (4096). A manifest with more
   is malformed, and the initializer clamps the count to that range.
+- `NFKModelStageFacts.layerByteCountByPrecision` (JSON `layerBytesByPrecision`) states the bytes of a
+  stage's repeated layers together, and a streamed estimate counts the stage's bytes outside its layers
+  as its bytes less these. Before, every layer counted as the largest one, which understated a stage
+  whose layers differ in size: Nemotron Nano 2's streamed estimate read 1.85 GB against the 2.94 GB its
+  embedding, output projection, and two layers in flight hold. The designated initializer takes
+  `layerByteCountByPrecision:`. The MLX catalog's measurements record the total for every variant with
+  repeated layers.
 
 #### Load options, memory estimates, and building from the catalog
 

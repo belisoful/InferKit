@@ -11,8 +11,8 @@ names). For a Hugging Face source the script reads the repository's file tree
 records, and, through `/api/models/{repo}/revision/{revision}`, the commit the revision resolves to.
 It reads each safetensors file's header by two HTTP range requests (`shapes.header`) to sum the
 tensor bytes by dtype and count the elements, and from the tensor names and shapes it takes, per
-top-level directory, the repeated layers and the largest of them, the routed-expert bytes, and the
-elements a runtime weight quantization packs. It reads the repository's `config.json` for the
+top-level directory, the repeated layers with the largest of them and their total, the routed-expert
+bytes, and the elements a runtime weight quantization packs. It reads the repository's `config.json` for the
 geometry the key-value cache follows. A URL source gets a HEAD request for its Content-Length. A Google Drive folder or a release page serves no size and is recorded as
 unmeasurable. `HF_TOKEN` is sent when set; a repository that refuses the listing without it is
 recorded as gated.
@@ -259,14 +259,19 @@ class Structure:
             self.quantizable += count
 
     def layers(self):
-        """(count, the largest layer's bytes by dtype) of the container holding the most bytes, or None."""
+        """(count, the largest layer's bytes by dtype, every layer's bytes by dtype) of the container
+        holding the most bytes, or None."""
         if not self.containers:
             return None
         def total(layers):
             return sum(sum(dtypes.values()) for dtypes in layers.values())
         _, layers = max(self.containers.items(), key=lambda item: (total(item[1]), item[0]))
         largest = max(layers.values(), key=lambda dtypes: (sum(dtypes.values()), sorted(dtypes.items())))
-        return len(layers), largest
+        every = {}
+        for dtypes in layers.values():
+            for dtype, nbytes in dtypes.items():
+                every[dtype] = every.get(dtype, 0) + nbytes
+        return len(layers), largest, every
 
 
 # MARK: - Configuration geometry
@@ -562,8 +567,8 @@ def swift_structure(m):
     parts = []
     if m.layers:
         rows = ", ".join(f"{swift_string(directory)}: NFKMLXMeasuredLayers(count: {count}, "
-                         f"largestBytes: {swift_int_dictionary(largest)})"
-                         for directory, (count, largest) in sorted(m.layers.items()))
+                         f"largestBytes: {swift_int_dictionary(largest)}, totalBytes: {swift_int_dictionary(every)})"
+                         for directory, (count, largest, every) in sorted(m.layers.items()))
         parts.append(f"layers: [{rows}]")
     if m.expert_bytes:
         parts.append(f"expertBytes: {swift_nested_dictionary(m.expert_bytes)}")
