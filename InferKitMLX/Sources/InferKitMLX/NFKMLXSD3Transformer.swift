@@ -400,6 +400,10 @@ public final class NFKMLXSD3TransformerNet: Module {
 
     public let config: NFKMLXSD3Configuration
 
+    /// The reader of the blocks a streamed load leaves in the release, read in their turn on every pass;
+    /// nil where every block is held.
+    var layerStream: NFKMLXLayerStream?
+
     public init(_ config: NFKMLXSD3Configuration) {
         self.config = config
         _posEmbed.wrappedValue = NFKSD3PatchEmbed(config)
@@ -422,34 +426,60 @@ public final class NFKMLXSD3TransformerNet: Module {
     /// byte-identical).
     public func callAsFunction(_ hiddenStates: MLXArray, encoderHidden: MLXArray, pooled: MLXArray,
                                timestep: MLXArray, blockControlnetHiddenStates: [MLXArray]? = nil) -> MLXArray {
+        velocities(hiddenStates, conditions: [(encoderHidden, pooled)], timestep: timestep,
+                   blockControlnetHiddenStates: blockControlnetHiddenStates)[0]
+    }
+
+    /// The velocity of `hiddenStates` under each of `conditions`, each the value
+    /// ``callAsFunction(_:encoderHidden:pooled:timestep:blockControlnetHiddenStates:)`` gives it alone.
+    /// Each block runs every condition in turn, so a streamed block is read once for all of them.
+    func velocities(_ hiddenStates: MLXArray, conditions: [(encoder: MLXArray, pooled: MLXArray)],
+                    timestep: MLXArray, blockControlnetHiddenStates: [MLXArray]? = nil) -> [MLXArray] {
         let height = hiddenStates.dim(2), width = hiddenStates.dim(3)
-        var image = posEmbed(hiddenStates)                                 // [B, Si, inner]
-        let temb = timeTextEmbed(timestep: timestep, pooled: pooled)       // [B, inner]
-        var context: MLXArray? = contextEmbedder(encoderHidden)            // [B, L, inner]
+        let patches = posEmbed(hiddenStates)                               // [B, Si, inner]
+        var images = conditions.map { _ in patches }
+        let tembs = conditions.map { timeTextEmbed(timestep: timestep, pooled: $0.pooled) }   // [B, inner]
+        var contexts: [MLXArray?] = conditions.map { contextEmbedder($0.encoder) }           // [B, L, inner]
 
         for (index, block) in transformerBlocks.enumerated() {
-            let (newContext, newImage) = block(image, encoder: context!, temb: temb)
-            image = newImage
-            context = newContext                                           // nil after the pre-only block
-            if let residuals = blockControlnetHiddenStates, !block.contextPreOnly {
-                let interval = Double(transformerBlocks.count) / Double(residuals.count)
-                image = image + residuals[Int(Double(index) / interval)]
+            guard let outputs = NFKMLXLayerStream.run(layerStream, layer: block, index: index, {
+                conditions.indices.map { block(images[$0], encoder: contexts[$0]!, temb: tembs[$0]) }
+            }, keeping: { outputs in outputs.flatMap { [$0.image] + ($0.context.map { [$0] } ?? []) } }) else {
+                continue
+            }
+            for (condition, output) in outputs.enumerated() {
+                images[condition] = output.image
+                contexts[condition] = output.context                       // nil after the pre-only block
+                if let residuals = blockControlnetHiddenStates, !block.contextPreOnly {
+                    let interval = Double(transformerBlocks.count) / Double(residuals.count)
+                    images[condition] = images[condition] + residuals[Int(Double(index) / interval)]
+                }
             }
         }
 
-        // Final adaptive norm and projection to patches.
-        let modulation = normOut(temb)                                     // [B, 2·inner]: scale, shift
-        let dim = config.innerDim
-        let scale = modulation[0..., 0 ..< dim][0..., .newAxis, 0...]
-        let shift = modulation[0..., dim ..< 2 * dim][0..., .newAxis, 0...]
-        image = sd3AffineFreeLayerNorm(image) * (1 + scale) + shift
-        image = projOut(image)                                             // [B, Si, p·p·out]
+        return zip(images, tembs).map { image, temb in
+            // Final adaptive norm and projection to patches.
+            let modulation = normOut(temb)                                 // [B, 2·inner]: scale, shift
+            let dim = config.innerDim
+            let scale = modulation[0..., 0 ..< dim][0..., .newAxis, 0...]
+            let shift = modulation[0..., dim ..< 2 * dim][0..., .newAxis, 0...]
+            let projected = projOut(sd3AffineFreeLayerNorm(image) * (1 + scale) + shift)   // [B, Si, p·p·out]
 
-        // Unpatchify: [B, H/p, W/p, p, p, out] → einsum nhwpqc->nchpwq → [B, out, H, W].
-        let p = config.patchSize, oc = config.outChannels
-        let hp = height / p, wp = width / p
-        let reshaped = image.reshaped([image.dim(0), hp, wp, p, p, oc])
-        return reshaped.transposed(0, 5, 1, 3, 2, 4).reshaped([image.dim(0), oc, height, width])
+            // Unpatchify: [B, H/p, W/p, p, p, out] → einsum nhwpqc->nchpwq → [B, out, H, W].
+            let p = config.patchSize, oc = config.outChannels
+            let hp = height / p, wp = width / p
+            let reshaped = projected.reshaped([projected.dim(0), hp, wp, p, p, oc])
+            return reshaped.transposed(0, 5, 1, 3, 2, 4).reshaped([projected.dim(0), oc, height, width])
+        }
+    }
+
+    /// Throws the first failed read of a streamed block, and clears it so the next pass reads every
+    /// block again. Every pass after a failed read skips every block, so a caller holding a streamed
+    /// transformer checks after each image. Nothing is thrown where every block is held.
+    func verifyStream() throws {
+        guard let stream = layerStream, let failure = stream.readFailure else { return }
+        stream.clearFailure()
+        throw failure
     }
 
     /// The geometry of a released SD3 / SD3.5 transformer, from its `transformer/config.json`.
@@ -486,5 +516,40 @@ public final class NFKMLXSD3TransformerNet: Module {
             (name, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
         }
         try NFKMLXWeights.apply(weights, to: net)
+    }
+
+    /// The block a released transformer key belongs to and its name inside the block, or nil for a key
+    /// outside `transformer_blocks`.
+    static func block(ofKey key: String) -> (layer: Int, name: String)? {
+        NFKMLXLayerStream.layer(ofDecoderName: key, layersKey: "transformer_blocks")
+    }
+
+    /// What a released transformer directory holds at `precision`, or with every floating tensor at
+    /// `conversion` where it is given, each block counted as a repeated layer.
+    static func footprint(directory: URL, precision: NFKMLXWeightPrecision,
+                          converting conversion: DType? = nil) throws -> NFKMLXStageFootprint {
+        try NFKMLXLayerStream.footprint(directory: directory, precision: precision, converting: conversion,
+                                        includes: { _ in true }, layerOf: { block(ofKey: $0)?.layer })
+    }
+
+    /// Loads a released transformer directory into `net`, leaving the `streamed` blocks in the release
+    /// to be read in their turn on every pass (``layerStream``). Every floating tensor takes
+    /// `conversion` where it is given, and otherwise the type `precision` says.
+    static func loadWeights(into net: NFKMLXSD3TransformerNet, from directory: URL, precision: NFKMLXWeightPrecision,
+                            converting conversion: DType? = nil, streamed: Set<Int>) throws {
+        let vacated = try NFKMLXLayerStream.vacating(streamed, of: net.transformerBlocks, prefix: "transformer_blocks.",
+                                                     directory: directory, precision: precision,
+                                                     converting: conversion, layerOf: block(ofKey:))
+        let held: (String) -> String? = { key in
+            block(ofKey: key).map { streamed.contains($0.layer) } == true ? nil : key
+        }
+        let arrays = try conversion.map { try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: $0, remap: held) }
+            ?? NFKMLXReleaseWeights.materializedArrays(inDirectory: directory, precision: precision, remap: held)
+        let weights = arrays.map { name, value -> (String, MLXArray) in
+            (name, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value)
+        }
+        try NFKMLXWeights.apply(weights + (vacated?.placeholders ?? []), to: net, verifyShapes: true)
+        net.layerStream = vacated?.stream
+        vacated?.stream.prime()
     }
 }

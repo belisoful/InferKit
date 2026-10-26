@@ -397,15 +397,19 @@ struct NFKMLXFactsRecipe {
     var streamsLayers = false
     var keyValue: NFKMLXKeyValueRule? = nil
     var widenedStages: [String: String] = [:]
+    /// The one stage that streams its layers, or nil where every stage with layers does.
+    var streamedStage: String? = nil
 
     init(stageIdentifier: String = "model", quantizes: Bool = false, pagesExperts: Bool = false,
-         streamsLayers: Bool = false, keyValue: NFKMLXKeyValueRule? = nil, widenedStages: [String: String] = [:]) {
+         streamsLayers: Bool = false, keyValue: NFKMLXKeyValueRule? = nil, widenedStages: [String: String] = [:],
+         streamedStage: String? = nil) {
         self.stageIdentifier = stageIdentifier
         self.quantizes = quantizes
         self.pagesExperts = pagesExperts
         self.streamsLayers = streamsLayers
         self.keyValue = keyValue
         self.widenedStages = widenedStages
+        self.streamedStage = streamedStage
     }
 
     init(entry: NFKMLXCatalogEntry, profile: NFKMLXLoadProfile?) {
@@ -415,6 +419,7 @@ struct NFKMLXFactsRecipe {
         streamsLayers = profile != nil && entry.residencies.contains(NFKModelResidencyStreamed)
         keyValue = profile?.contextLength != nil ? profile?.keyValue : nil
         widenedStages = profile?.widenedStages ?? [:]
+        streamedStage = profile?.streamedStage
     }
 }
 
@@ -450,7 +455,7 @@ struct NFKMLXVariantFacts {
                 ? Self.bytesByPrecision(loads, tensors: measurement.expertBytes, opaque: [:]) : [:]
             var layerCount = 0
             var largestLayer = [String: NSNumber]()
-            if recipe.streamsLayers,
+            if recipe.streamsLayers, recipe.streamedStage.map({ $0 == split.identifier }) ?? true,
                let (directory, layers) = loads.compactMap({ load in measurement.layers[load.0].map { (load, $0) } })
                 .max(by: { $0.1.count < $1.1.count }) {
                 layerCount = layers.count

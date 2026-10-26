@@ -112,6 +112,9 @@ struct NFKMLXLoadProfile {
     var drafts = false
     /// The stages that take a wider precision where the budget holds it, keyed by stage identifier.
     var widenedStages: [String: String] = [:]
+    /// The one stage whose repeated layers a streamed load leaves in the release, or nil where every
+    /// stage with repeated layers streams.
+    var streamedStage: String? = nil
     /// The identifier of the single stage of a model that does not stage.
     var stageIdentifier = "model"
     /// True where a suggested preset halves the sampling steps.
@@ -153,9 +156,10 @@ struct NFKMLXLoadProfile {
     /// precision from its load plan, and the stages that widen. `precisions` offers a choice for
     /// `precisionStage` alone.
     static func diffusionPipeline(widenedStages: [String: String] = [:], precisions: [String] = [],
-                                  precisionStage: String? = nil) -> NFKMLXLoadProfile {
+                                  precisionStage: String? = nil, streamedStage: String? = nil) -> NFKMLXLoadProfile {
         NFKMLXLoadProfile(precisions: precisions, defaultPrecision: NFKModelPrecisionCheckpoint,
-                          precisionStage: precisionStage, widenedStages: widenedStages, halvesSteps: true)
+                          precisionStage: precisionStage, widenedStages: widenedStages, streamedStage: streamedStage,
+                          halvesSteps: true)
     }
 
     /// A model of one stage whose precision is a choice.
@@ -236,7 +240,7 @@ struct NFKMLXLoadProfile {
         // The text encoder and umT5 widen to float32 where the budget holds them.
         "flux2": [.diffusionPipeline(widenedStages: ["text_encoder": NFKModelPrecisionFloat32])],
         "wan": [.diffusionPipeline(widenedStages: ["text_encoder": NFKModelPrecisionFloat32])],
-        "stable-diffusion-3": [.diffusionPipeline()],
+        "stable-diffusion-3": [.diffusionPipeline(streamedStage: "transformer")],
         "sana": [.diffusionPipeline()],
         "z-image": [.diffusionPipeline()],
         "qwen-image": [.diffusionPipeline()],

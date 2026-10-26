@@ -48282,6 +48282,14 @@
               },
               "title" : "Staged",
               "value" : "staged"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12797861888,
+                "residentBytes" : 12797861888
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
             }
           ],
           "default" : "automatic",
@@ -48327,7 +48335,8 @@
       },
       "residencies" : [
         "resident",
-        "staged"
+        "staged",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "A multimodal diffusion transformer that draws an image from a prompt.",
@@ -48362,6 +48371,12 @@
                   "loaded" : 5274606604
                 },
                 "id" : "transformer",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 203013888,
+                  "checkpoint" : 203013888,
+                  "float32" : 406027776
+                },
+                "layerCount" : 24,
                 "title" : "transformer, vae"
               }
             ]
@@ -49039,6 +49054,14 @@
               },
               "title" : "Staged",
               "value" : "staged"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12797861888,
+                "residentBytes" : 12797861888
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
             }
           ],
           "default" : "automatic",
@@ -49084,7 +49107,8 @@
       },
       "residencies" : [
         "resident",
-        "staged"
+        "staged",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "A multimodal diffusion transformer that draws an image from a prompt.",
@@ -49119,6 +49143,12 @@
                   "loaded" : 4505180940
                 },
                 "id" : "transformer",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 169961472,
+                  "checkpoint" : 169961472,
+                  "float32" : 339922944
+                },
+                "layerCount" : 24,
                 "title" : "transformer, vae"
               }
             ]
@@ -49390,6 +49420,14 @@
               },
               "title" : "Staged",
               "value" : "staged"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12797861888,
+                "residentBytes" : 12797861888
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
             }
           ],
           "default" : "automatic",
@@ -49435,7 +49473,8 @@
       },
       "residencies" : [
         "resident",
-        "staged"
+        "staged",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "A multimodal diffusion transformer that draws an image from a prompt.",
@@ -49470,6 +49509,12 @@
                   "loaded" : 16627840268
                 },
                 "id" : "transformer",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 425999360,
+                  "checkpoint" : 425999360,
+                  "float32" : 851998720
+                },
+                "layerCount" : 38,
                 "title" : "transformer, vae"
               }
             ]
@@ -49740,6 +49785,14 @@
               },
               "title" : "Staged",
               "value" : "staged"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 12797861888,
+                "residentBytes" : 12797861888
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
             }
           ],
           "default" : "automatic",
@@ -49774,7 +49827,8 @@
       },
       "residencies" : [
         "resident",
-        "staged"
+        "staged",
+        "streamed"
       ],
       "standIn" : false,
       "summary" : "A multimodal diffusion transformer distilled to draw an image from a prompt in four steps without guidance.",
@@ -49809,6 +49863,12 @@
                   "loaded" : 16627840268
                 },
                 "id" : "transformer",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 425999360,
+                  "checkpoint" : 425999360,
+                  "float32" : 851998720
+                },
+                "layerCount" : 38,
                 "title" : "transformer, vae"
               }
             ]

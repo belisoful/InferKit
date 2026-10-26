@@ -22272,21 +22272,22 @@ def run_translategemma_layerwise(image, checkpoint):
         close()
 
 
-def _layerwise_release(checkpoint, dtype):
+def _layerwise_release(checkpoint, dtype, stem="model"):
     """A release, sharded or single-file, opened for reading one tensor at a time: each shard's header, and a `read(key)`
     that reads the tensor's bytes uncached (`F_NOCACHE`, which a release larger than memory could not
-    use) and converts them to `dtype`. Returns the entries by key, `read`, and a `close` for the shards."""
+    use) and converts them to `dtype`. Returns the entries by key, `read`, and a `close` for the shards.
+    `stem` names the weight files: `model` for transformers, `diffusion_pytorch_model` for diffusers."""
     import fcntl
     import struct
 
     stored = {"BF16": torch.bfloat16, "F16": torch.float16, "F32": torch.float32}
     entries, descriptors = {}, {}
-    index = os.path.join(checkpoint, "model.safetensors.index.json")
+    index = os.path.join(checkpoint, f"{stem}.safetensors.index.json")
     if os.path.exists(index):
         with open(index) as handle:
             shards = sorted(set(json.load(handle)["weight_map"].values()))
     else:
-        shards = ["model.safetensors"]
+        shards = [f"{stem}.safetensors"]
     for shard in shards:
         path = os.path.join(checkpoint, shard)
         descriptor = os.open(path, os.O_RDONLY)
@@ -22318,14 +22319,14 @@ def _layerwise_release(checkpoint, dtype):
     return entries, read, close
 
 
-def _read_layers_in_turn(layers, prefix, entries, read):
-    """Hooks each of a meta-device model's decoder `layers` to read its tensors (`prefix` + `layers.<i>.`)
+def _read_layers_in_turn(layers, prefix, entries, read, layers_key="layers"):
+    """Hooks each of a meta-device model's decoder `layers` to read its tensors (`prefix` + `<layers_key>.<i>.`)
     as the forward reaches it and to return to the meta device after it, so every pass reads every layer.
     A tensor the layer does not hold is left unread, as `from_pretrained` leaves it: Gemma 4 E-series
     layers that share another layer's keys and values carry no key or value projection, which the
     release still stores."""
     for index, layer in enumerate(layers):
-        layer_prefix = f"{prefix}layers.{index}."
+        layer_prefix = f"{prefix}{layers_key}.{index}."
         held = set(layer.state_dict())
         keys = [k for k in entries if k.startswith(layer_prefix) and k[len(layer_prefix):] in held]
 
@@ -24872,6 +24873,97 @@ def run_sd35_release(image, checkpoint):
 
 
 CHECKPOINT_MODELS["sd35_release"] = run_sd35_release
+
+
+def _sd35_inputs():
+    """`run_sd35_release`'s transformer inputs, drawn in its order from its seed."""
+    generator = torch.Generator().manual_seed(35)
+    latent = torch.randn(1, 16, 64, 64, generator=generator)
+    encoder = torch.randn(1, 333, 4096, generator=generator) * 0.25
+    pooled = torch.randn(1, 2048, generator=generator)
+    timestep = torch.tensor([float(os.environ.get("IK_SD35_TIMESTEP", "750"))])
+    return latent, encoder, pooled, timestep
+
+
+def _sd35_seams(transformer, latent, encoder, pooled, timestep):
+    """The velocity of `transformer` on the inputs, with the patch embedding and both streams after every
+    block (the text stream ends at the `context_pre_only` block)."""
+    seams = {}
+    handles = [transformer.pos_embed.register_forward_hook(
+        lambda m, i, o: seams.__setitem__("patch", o.detach()[0].clone()))]
+    for index, block in enumerate(transformer.transformer_blocks):
+        def hook(m, i, o, index=index):
+            context, hidden = o
+            seams[f"block{index}.image"] = hidden.detach()[0].clone()
+            if context is not None:
+                seams[f"block{index}.text"] = context.detach()[0].clone()
+        handles.append(block.register_forward_hook(hook))
+    with torch.no_grad():
+        velocity = transformer(hidden_states=latent, encoder_hidden_states=encoder, pooled_projections=pooled,
+                               timestep=timestep, return_dict=False)[0]
+    for handle in handles:
+        handle.remove()
+    return velocity, seams
+
+
+def run_sd35_layerwise(image, checkpoint):
+    """A released SD 3.5 transformer too large to hold whole at float32 (SD3.5 Large, 8B: 32.6 GB), from
+    diffusers' own `SD3Transformer2DModel` built on the meta device, every tensor outside
+    `transformer_blocks` read once and each block read as the forward reaches it (`_read_layers_in_turn`),
+    the stored bf16 weights widened to float32 as `run_sd35_release` widens them. `--checkpoint` is the
+    diffusers directory; only its `transformer/` is read.
+
+    The inputs are `run_sd35_release`'s: a 512-pixel latent, a 333-token joint text sequence, and a pooled
+    projection from seed 35, at timestep 750. The record is its transformer half with every block's seams:
+    the patch embedding, both streams after each block (`block<i>.image`, `block<i>.text`, the text stream
+    ending at the `context_pre_only` block), and the velocity (the output). `SD35_CHECK=1` also loads a
+    transformer small enough to hold whole through `from_pretrained` and requires every seam and the
+    velocity to agree bit for bit. Runs under the `qwenimage` oracle env.
+    """
+    from diffusers import SD3Transformer2DModel
+
+    directory = os.path.join(checkpoint, "transformer")
+    with torch.device("meta"):
+        transformer = SD3Transformer2DModel.from_config(SD3Transformer2DModel.load_config(directory)).eval()
+    entries, read, close = _layerwise_release(directory, torch.float32, stem="diffusion_pytorch_model")
+    try:
+        outside = {k: read(k) for k in entries if not k.startswith("transformer_blocks.")}
+        missing, unexpected = transformer.load_state_dict(outside, strict=False, assign=True)
+        missing = [k for k in missing if not k.startswith("transformer_blocks.")]
+        if missing or unexpected:
+            raise ValueError(f"outside the blocks: missing {missing}, unexpected {unexpected}")
+        _read_layers_in_turn(transformer.transformer_blocks, "", entries, read, layers_key="transformer_blocks")
+        latent, encoder, pooled, timestep = _sd35_inputs()
+        velocity, seams = _sd35_seams(transformer, latent, encoder, pooled, timestep)
+    finally:
+        close()
+    del transformer
+
+    if os.environ.get("SD35_CHECK") == "1":
+        whole = SD3Transformer2DModel.from_pretrained(checkpoint, subfolder="transformer",
+                                                      torch_dtype=torch.float32).eval()
+        whole_velocity, whole_seams = _sd35_seams(whole, latent, encoder, pooled, timestep)
+        del whole
+        if set(whole_seams) != set(seams):
+            raise ValueError(f"the seams differ: {sorted(set(whole_seams) ^ set(seams))}")
+        for name in sorted(seams):
+            if not torch.equal(seams[name], whole_seams[name]):
+                raise ValueError(f"{name} differs from the whole load by {(seams[name] - whole_seams[name]).abs().max()}")
+        if not torch.equal(velocity, whole_velocity):
+            raise ValueError(f"the velocity differs from the whole load by {(velocity - whole_velocity).abs().max()}")
+        print("SD35_CHECK: every seam and the velocity equal the whole load bit for bit", len(seams), "seams")
+
+    count = len([k for k in seams if k.endswith(".image")])
+    extra = {"latent": latent.contiguous(), "encoder": encoder.contiguous(), "pooled": pooled.contiguous(),
+             "timestep": timestep.contiguous(), "block_indices": torch.arange(count, dtype=torch.int64)}
+    for name, value in seams.items():
+        extra[name] = value.contiguous()
+    print("blocks", count, "seams", len(seams), "velocity", tuple(velocity.shape))
+    globals()["_extra"] = extra
+    return velocity[0].contiguous()
+
+
+CHECKPOINT_MODELS["sd35_layerwise"] = run_sd35_layerwise
 
 
 

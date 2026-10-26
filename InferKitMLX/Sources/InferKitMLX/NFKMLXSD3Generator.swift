@@ -32,13 +32,13 @@ enum NFKMLXSD3Release {
             shiftTerminal: (json["shift_terminal"] as? NSNumber)?.floatValue, useDynamicShifting: dynamic)
     }
 
-    /// Loads a release's `transformer/` weights at `dtype`. The patch-embed convolution is stored
-    /// `[out, in, h, w]` and loads as MLX's `[out, h, w, in]`.
+    /// Loads a release's `transformer/` weights at `dtype`, leaving the `streamed` blocks in the release
+    /// to be read in their turn on every pass. The patch-embed convolution is stored `[out, in, h, w]`
+    /// and loads as MLX's `[out, h, w, in]`.
     static func loadTransformer(into net: NFKMLXSD3TransformerNet, fromDirectory directory: URL,
-                                dtype: DType) throws {
-        let arrays = try NFKMLXReleaseWeights.arrays(inDirectory: directory, converting: dtype)
-        try NFKMLXWeights.apply(arrays.map { key, value in (key, value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value) },
-                                to: net, verifyShapes: true)
+                                dtype: DType, streamed: Set<Int> = []) throws {
+        try NFKMLXSD3TransformerNet.loadWeights(into: net, from: directory, precision: .checkpoint, converting: dtype,
+                                                streamed: streamed)
     }
 }
 
@@ -132,6 +132,14 @@ public final class NFKMLXSD3Generator: NSObject {
     /// the float32 encoder. False also where the release ships no T5.
     @objc public internal(set) var encodesInFloat32 = true
 
+    /// How many transformer blocks the model leaves in the release, read in their turn on every pass; 0
+    /// where every block is held. Introduced in InferKit 0.4.0.
+    @objc public internal(set) var streamedLayerCount = 0
+
+    /// The bytes each transformer pass reads from the release for the streamed blocks; 0 where every
+    /// block is held. A guided step runs both of its passes on one read. Introduced in InferKit 0.4.0.
+    @objc public internal(set) var streamedBytesPerPass = 0
+
     init(resident: Bool, tokenizerL: NFKMLXSDPromptTokenizer, tokenizerG: NFKMLXSDPromptTokenizer,
          segmenter: NFKMLXSentencePieceSegmenter?, t5Length: Int = NFKMLXSD3Generator.maximumSequenceLength,
          loadTextEncoders: @escaping () throws -> NFKSD3TextStage,
@@ -180,9 +188,18 @@ public final class NFKMLXSD3Generator: NSObject {
     /// type the releases are published to run at. A release without `text_encoder_3/` conditions on zeros
     /// in T5's place, as the reference does. A machine that cannot hold the two stages together stages
     /// under ``NFKMLXResidency/automatic``. The release has no routed experts, so
-    /// ``NFKMLXResidency/paged`` holds it as ``NFKMLXResidency/staged`` does.
+    /// ``NFKMLXResidency/paged`` holds it as ``NFKMLXResidency/staged`` does. Where the transformer and
+    /// the autoencoder do not fit together, ``NFKMLXResidency/automatic`` and
+    /// ``NFKMLXResidency/streamed`` hold the first transformer blocks that fit and read the others from
+    /// the release on every pass (``streamedLayerCount``). SD3.5 Large streams where Metal recommends a
+    /// working set below about 24.6 GB.
     @objc(generatorWithDirectoryURL:residency:error:)
     public static func generator(directoryURL: URL, residency: NFKMLXResidency) throws -> NFKMLXSD3Generator {
+        try generator(directoryURL: directoryURL, residency: residency, budget: NFKMLXResidencyBudget.current())
+    }
+
+    /// ``generator(directoryURL:residency:)`` planned against `budget` bytes.
+    static func generator(directoryURL: URL, residency: NFKMLXResidency, budget: Int) throws -> NFKMLXSD3Generator {
         let directory = { (name: String) in directoryURL.appendingPathComponent(name) }
         let tokenizerL = try NFKMLXSDPromptTokenizer(directoryURL: directory("tokenizer"))
         let tokenizerG = try NFKMLXSDPromptTokenizer(directoryURL: directory("tokenizer_2"))
@@ -209,12 +226,18 @@ public final class NFKMLXSD3Generator: NSObject {
         let clipBytes = try NFKMLXStageWeights.bytes(inDirectory: directory("text_encoder"), holding: .float32)
             + NFKMLXStageWeights.bytes(inDirectory: directory("text_encoder_2"), holding: .float32)
         let t5Bytes = { (dtype: DType) in hasT5 ? try NFKMLXStageWeights.bytes(inDirectory: t5Directory, holding: dtype) : 0 }
+        let transformer = try NFKMLXSD3TransformerNet.footprint(directory: directory("transformer"), precision: .checkpoint,
+                                                                converting: .bfloat16)
+        let pipelineFootprint = NFKMLXStageFootprint(
+            bytes: transformer.bytes + (try NFKMLXStageWeights.bytes(inDirectory: directory("vae"), holding: .float32)),
+            layerBytes: transformer.layerBytes)
         let plan = try NFKMLXResidencyBudget.plan(
             [NFKMLXStageFootprint(bytes: clipBytes + (try t5Bytes(.bfloat16)),
                                   widenedBytes: hasT5 ? clipBytes + (try t5Bytes(.float32)) : nil),
-             NFKMLXStageFootprint(bytes: try NFKMLXStageWeights.bytes(inDirectory: directory("transformer"), holding: .bfloat16)
-                                     + NFKMLXStageWeights.bytes(inDirectory: directory("vae"), holding: .float32))],
-            residency: residency, budget: NFKMLXResidencyBudget.current())
+             pipelineFootprint],
+            residency: residency, budget: budget)
+        let streamed = plan.streams(1)
+            ? Set(plan.heldLayers(1, of: pipelineFootprint).upperBound ..< transformer.layerBytes.count) : []
         let t5InFloat32 = plan.widens(0)
         let generator = NFKMLXSD3Generator(
             resident: plan.holdsStagesResident, tokenizerL: tokenizerL, tokenizerG: tokenizerG, segmenter: segmenter,
@@ -234,12 +257,14 @@ public final class NFKMLXSD3Generator: NSObject {
             loadPipeline: {
                 let transformer = NFKMLXSD3TransformerNet(configuration)
                 try NFKMLXSD3Release.loadTransformer(into: transformer, fromDirectory: directory("transformer"),
-                                                     dtype: .bfloat16)
+                                                     dtype: .bfloat16, streamed: streamed)
                 let vae = NFKMLXSDAutoencoder(configuration: vaeConfiguration)
                 try NFKMLXStableDiffusionModels.loadVAEWeights(into: vae, from: vaeURL, precision: .float32)
                 return NFKMLXSD3Pipeline(transformer: transformer, vae: vae, schedule: schedule)
             })
         generator.encodesInFloat32 = t5InFloat32
+        generator.streamedLayerCount = streamed.count
+        generator.streamedBytesPerPass = streamed.reduce(0) { $0 + transformer.layerBytes[$1] }
         if plan.holdsStagesResident {
             try generator.loadResident()
         }
@@ -340,6 +365,7 @@ public final class NFKMLXSD3Generator: NSObject {
                     negativeEmbeds: guides ? embeddings[2] : nil, negativePooled: guides ? embeddings[3] : nil,
                     latentHeight: height / pipeline.pixelsPerLatent, latentWidth: width / pipeline.pixelsPerLatent,
                     steps: steps, guidance: guidance, seed: seed)
+                try pipeline.verifyStream()
                 return clip(image[0].asType(.float32) / 2 + 0.5, min: 0, max: 1)
             }
         }

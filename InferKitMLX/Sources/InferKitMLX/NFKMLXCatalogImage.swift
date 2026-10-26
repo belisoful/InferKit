@@ -1598,6 +1598,9 @@ enum NFKMLXCatalogImage {
     /// The generation residencies: the stages load together, or each loads for its turn.
     static let stagedResidencies = [NFKModelResidencyResident, NFKModelResidencyStaged]
 
+    /// The residencies of a generator whose transformer streams the blocks it cannot hold.
+    static let streamedStageResidencies = stagedResidencies + [NFKModelResidencyStreamed]
+
     static var promptInput: NFKModelPort {
         .input(NFKInputPrompt, required: true, title: "Prompt", help: "What to draw.")
     }
@@ -1926,7 +1929,7 @@ enum NFKMLXCatalogImage {
                                                    : "The classifier-free guidance weight. The distillation runs at 0; above 1 the image guides against the negative prompt."),
                   license: release.license,
                   source: hubRelease(release.repository, components: NFKMLXSD3Generator.releaseComponents),
-                  residencies: stagedResidencies)
+                  residencies: streamedStageResidencies)
         }
     }
 

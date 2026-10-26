@@ -2603,6 +2603,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   one pass of the release scores them all. The draft is held at 4 bits, embeddings included, and the
   catalog's dense Gemma 4 entries offer it as their draft model. At temperature 0 the reply is the
   release's greedy reply.
+- The SD3 transformer streams its blocks the same way, so SD3.5 Large draws where Metal recommends a
+  working set below about 24.6 GB, the room its 16.3 GB transformer needs beside the autoencoder and the
+  reserve. Under `.automatic` and `.streamed`, `NFKMLXSD3Generator` holds the first blocks that fit and
+  reads the others on every pass, and a guided step runs its two predictions through each block while it
+  is held, so one read serves both. The generator reports `streamedLayerCount` and
+  `streamedBytesPerPass`, a failed read fails the image, and the catalog's Stable Diffusion 3 entries offer
+  the streamed residency. The whole 8B transformer streamed at float32 (19 of 38 blocks) matches diffusers
+  reading one block at a time: every seam at 0.9999999999948 or above, the velocity 0.99999999999879.
 - Pixtral 12B's released fused decoder is measured streamed, given the recorded projected image features:
   at float32 it matches the reference at every position after every layer, and at bfloat16 each layer
   stays inside its block floor and the whole pass ranks within torch's own jittered bfloat16 runs. The

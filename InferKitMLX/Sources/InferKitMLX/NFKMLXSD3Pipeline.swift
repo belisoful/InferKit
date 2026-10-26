@@ -82,15 +82,26 @@ public final class NFKMLXSD3Pipeline {
             let t = MLXArray([scheduler.timesteps[index]])
             let input = latent.asType(dtype)
             // diffusers combines the two predictions at the transformer's type.
-            var prediction = holder.transformer(input, encoderHidden: cond, pooled: condPooled, timestep: t)
-            if let uncond, let uncondPooled {
-                let unconditioned = holder.transformer(input, encoderHidden: uncond, pooled: uncondPooled, timestep: t)
-                prediction = NFKReferenceRounding.guided(unconditioned, prediction, scale: guidance)
+            let unguided = uncond.flatMap { uncond in uncondPooled.map { (uncond, $0) } }
+            let predictions = holder.transformer.velocities(input, conditions: [(cond, condPooled)] + (unguided.map { [$0] } ?? []),
+                                                            timestep: t)
+            var prediction = predictions[0]
+            if predictions.count > 1 {
+                prediction = NFKReferenceRounding.guided(predictions[1], prediction, scale: guidance)
             }
             latent = scheduler.step(velocity: prediction.asType(.float32), sample: latent, index: index)
             eval(latent)
+            if holder.transformer.layerStream?.readFailure != nil {
+                break
+            }
         }
         return latent
+    }
+
+    /// Throws the first failed read of a streamed transformer block since the last check, and clears it.
+    /// A denoising loop stops at the step that met it, so the image it returns is not the prompt's.
+    func verifyStream() throws {
+        try holder.transformer.verifyStream()
     }
 
     /// Decodes a latent `[1, C, H, W]` into an image `[1, H, W, 3]` in `[-1, 1]` at ``pixelsPerLatent``,

@@ -283,7 +283,11 @@ enum NFKMLXOptionRegistrations {
         registerDirectoryModels(registryNames(families: ["stable-diffusion-3"], where: lists(NFKModelTaskTextToImage)),
                                 consumes: residency) { url, _, options in
             let generator = try NFKMLXSD3Generator.generator(directoryURL: url, residency: options.residency)
-            report(generator.holdsStagesResident, to: options)
+            if generator.streamedLayerCount > 0 {
+                options.reportResidency(.streamed)
+            } else {
+                report(generator.holdsStagesResident, to: options)
+            }
             return generator.inferenceBackend()
         }
         registerDirectoryModels(registryNames(families: ["stable-diffusion-3"], where: lists(NFKModelTaskControlNet)),

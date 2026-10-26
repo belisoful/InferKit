@@ -532,6 +532,20 @@ arithmetic as before.
   guidance of 0, which the registry sets on the generator; the scheduler's four-step sigmas over
   its own ramp under the static shift are 1, 0.8576, 0.6021, 0.0089
   (`NFKMLXFlowMatchSchedulerTests`).
+  The transformer streams its blocks (`NFKMLXSD3TransformerNet.loadWeights(into:from:precision:converting:streamed:)`,
+  `layerStream`). The generator plans its pipeline stage with the 38 blocks as the stage's layers, so
+  SD3.5 Large streams where Metal recommends a working set below about 24.6 GB (16.3 GB of bf16
+  transformer, 0.34 GB of float32 autoencoder, and the 4 GiB reserve, over the 0.85 working-set share);
+  a 32 GB machine (26.8 GB recommended) holds it whole. `velocities(_:conditions:timestep:)` runs a
+  guided step's two predictions through each block in turn, each the value its own pass computes, so a
+  streamed block is read once per step. The pipeline stops at the step that met a failed read, and the
+  generator throws it. The catalog counts the layers of the transformer stage only
+  (`NFKMLXLoadProfile.streamedStage`); the text encoders stage whole. Measured on the whole 8B at float32,
+  streamed (19 of 38 blocks, 7.94 GB read per pass), against diffusers built on the meta device with each
+  block read as its forward reaches it (`run_reference.py sd35_layerwise`; `SD35_CHECK=1` holds the
+  four-block cut bit-identical to a whole load), `IK_VAL_SD35_LARGE_RELEASE` /
+  `IK_PARITY_SD35_LARGE_LAYERWISE`: patch 0.99999999999983; block 0 image / text 0.99999999999985 / 0.99999999999954; block 37 image 0.99999999999595; worst seam block 35 text 0.99999999999481; velocity 0.99999999999879. The four-block cut streams to its held velocity
+  exactly.
 - `NFKMLXFluxTransformerNet` — the FLUX.1 transformer (`FluxTransformer2DModel`, Black Forest Labs), the
   seventh DiT family. Two block kinds. The double-stream blocks (`transformer_blocks`) are MMDiT
   joint-attention blocks like SD3's, but concatenate `[text, image]` (text first, the opposite of SD3)

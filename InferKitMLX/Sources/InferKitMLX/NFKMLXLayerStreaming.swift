@@ -378,15 +378,19 @@ extension NFKMLXLayerStream {
     }
 
     /// One stage's footprint read from a release's shard headers, at the bytes `precision` holds each
-    /// tensor in: a tensor `layerOf` places in a repeated layer counts toward that layer, and every other
-    /// tensor `includes` keeps counts once.
-    static func footprint(directory: URL, precision: NFKMLXWeightPrecision, includes: (String) -> Bool,
-                          layerOf: (String) -> Int?) throws -> NFKMLXStageFootprint {
+    /// tensor in, or `conversion` holds each floating tensor in where it is given: a tensor `layerOf`
+    /// places in a repeated layer counts toward that layer, and every other tensor `includes` keeps
+    /// counts once.
+    static func footprint(directory: URL, precision: NFKMLXWeightPrecision, converting conversion: DType? = nil,
+                          includes: (String) -> Bool, layerOf: (String) -> Int?) throws -> NFKMLXStageFootprint {
         var layers = [Int: Int]()
         var fixed = 0
         for url in try NFKMLXReleaseWeights.files(inDirectory: directory) {
             for (key, entry) in try NFKMLXSafetensors.entries(inFile: url) where includes(key) {
-                let bytes = NFKMLXExpertInventory.residentBytes(entry, precision: precision)
+                let stored = NFKMLXSafetensors.dtype(entry.dtype)
+                let bytes = conversion.flatMap { target in
+                    stored.flatMap { $0.isFloatingPoint ? entry.byteCount / $0.size * target.size : nil }
+                } ?? NFKMLXExpertInventory.residentBytes(entry, precision: precision)
                 if let layer = layerOf(key) {
                     layers[layer, default: 0] += bytes
                 } else {
