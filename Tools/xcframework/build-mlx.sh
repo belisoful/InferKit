@@ -51,6 +51,7 @@
 #   Tools/xcframework/build-mlx.sh --slices macos,ios     # macos | ios | iossim (default all three)
 #   Tools/xcframework/build-mlx.sh --no-swift-interfaces  # dynamic only, ~13 MB a slice
 #   Tools/xcframework/build-mlx.sh --no-release           # skip release/ (the zips and release.json)
+#   Tools/xcframework/build-mlx.sh --companions           # also the macOS 26 companions (build-companions.sh)
 #
 # A build that writes release/ checks the version first, before compiling anything: release.sh's rule,
 # inferkit_check_release_version in inferkit-version.sh. The frameworks' CFBundleShortVersionString and
@@ -77,6 +78,7 @@ VERIFY=no
 VARIANT=both
 INTERFACES=yes
 RELEASE=yes
+COMPANIONS=no
 SLICES="macos ios iossim"
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -86,6 +88,7 @@ while [ $# -gt 0 ]; do
         --slices) SLICES="$(echo "$2" | tr ',' ' ')"; shift 2;;
         --no-swift-interfaces) INTERFACES=no; shift;;
         --no-release) RELEASE=no; shift;;
+        --companions) COMPANIONS=yes; shift;;
         *) echo "unknown argument: $1"; exit 2;;
     esac
 done
@@ -94,6 +97,9 @@ case "$VARIANT" in
     static|dynamic|both) ;;
     *) echo "--variant takes static, dynamic, or both"; exit 2;;
 esac
+if [ "$COMPANIONS" = yes ] && [ "$VARIANT" = static ]; then
+    echo "--companions links against the dynamic framework, so it needs --variant dynamic or both"; exit 2
+fi
 for requested in $SLICES; do
     case "$requested" in
         macos|ios|iossim) ;;
@@ -401,6 +407,13 @@ fi
 if [ "$VERIFY" = yes ]; then
     echo "==> verifying that what was built actually evaluates on the GPU"
     "$ROOT/Tools/xcframework/verify-mlx.sh" "$OUTPUT" || exit 1
+fi
+
+if [ "$COMPANIONS" = yes ]; then
+    companion_arguments=(--output "$OUTPUT" --slices "$(echo $SLICES | tr ' ' ',')")
+    [ "$INTERFACES" = yes ] || companion_arguments+=(--no-swift-interfaces)
+    [ "$VERIFY" = yes ] && companion_arguments+=(--verify)
+    "$ROOT/Tools/xcframework/build-companions.sh" "${companion_arguments[@]}" || exit 1
 fi
 
 if wants dynamic && [ "$RELEASE" = yes ]; then

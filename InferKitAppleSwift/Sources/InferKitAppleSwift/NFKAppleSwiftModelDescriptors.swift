@@ -59,6 +59,24 @@ public final class NFKAppleSwiftModelDescriptors: NSObject, NFKModelDescriptorPr
         engines.first { $0.identifier == registryName }?.build()
     }
 
+    /// The backend the catalog's build entry asks for: ``backend(named:)`` of the variant's registry name,
+    /// else the descriptor's, with the request's property options set on it.
+    ///
+    /// - Throws: `NFKModelCatalogErrorUnknownModel` for a name this registry does not know, and
+    ///   `NFKModelCatalogErrorInvalidOptions` when the backend has no property a property option names.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc(backendForBuildRequest:error:)
+    public static func backend(for request: NFKModelBuildRequest) throws -> any NFKInferenceBackend {
+        let name = request.variant?.registryName ?? request.descriptor.registryName ?? request.descriptor.identifier
+        guard let backend = backend(named: name) else {
+            throw NSError(domain: NFKModelCatalogErrorDomain, code: NFKModelCatalogError.Code.unknownModel.rawValue,
+                          userInfo: [NSLocalizedDescriptionKey: "The Apple Swift engines have no backend named \"\(name)\"."])
+        }
+        try request.applyPropertyOptions(toBackend: backend)
+        return backend
+    }
+
     /// The descriptors of this package's engines, sorted by identifier.
     @objc public static func modelDescriptors() -> [NFKModelDescriptor] {
         engines.sorted { $0.identifier < $1.identifier }.map(descriptor(of:))

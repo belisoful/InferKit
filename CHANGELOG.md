@@ -11,6 +11,22 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitAppleSwift (companion)
 
+#### A framework beside the dynamic InferKitMLX
+
+- `Tools/xcframework/build-companions.sh` builds `InferKitAppleSwift.xcframework` and
+  `InferKitFoundationModels.xcframework`, each a dynamic framework with a macOS 26 / iOS 26 minimum that
+  links the core from `InferKitMLX.framework`. A host embeds the companions beside it, so the process
+  holds one copy of every `NFK` class. A host with a lower floor opens a companion with `dlopen` on
+  macOS 26 or later and adds its descriptors by provider class name. `build-mlx.sh --companions` runs
+  the script after the dynamic framework, and `verify-companions.sh` opens each companion in an
+  app-shaped layout and builds its engines through the catalog.
+
+#### The catalog builds every engine
+
+- `NFKAppleSwiftModelDescriptors` answers `+backendForBuildRequest:error:`, so
+  `backendForModelIdentifier:options:error:` builds `vision-document` and `vision-smudge`, which name no
+  provider class. Before, their build failed with `NFKModelCatalogErrorNoBuilder`.
+
 #### The Swift-only engines in the catalog
 
 - `NFKAppleSwiftModelDescriptors` describes SpeechAnalyzer, Translation, document reading, and lens-smudge
@@ -4500,6 +4516,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   sigmas for all three presets.
 
 ### InferKitFoundationModels (companion)
+
+#### A framework beside the dynamic InferKitMLX
+
+- `Tools/xcframework/build-companions.sh` builds `InferKitFoundationModels.xcframework`, a dynamic
+  framework that links the core from `InferKitMLX.framework`; see the InferKitAppleSwift entry.
 
 #### The system language model counts tokens
 

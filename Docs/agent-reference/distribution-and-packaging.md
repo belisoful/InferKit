@@ -319,6 +319,50 @@ An Objective-C client keeps `@import InferKitMLX;`.
 compiler's loaded-module trace names no `InferKitMLX` or `MLX` Swift module, and `nm -u` lists no
 `$s11InferKitMLX` symbol. It runs with and without `--no-swift-interfaces`.
 
+## Packaging the macOS 26 companions as frameworks
+
+`Tools/xcframework/build-companions.sh` builds InferKitFoundationModels and InferKitAppleSwift as dynamic
+frameworks that link the core from `InferKitMLX.framework` (2026-10-25). `build-mlx.sh --companions`
+runs it after the dynamic framework; `--against <InferKitMLXDynamic.xcframework>` builds against one
+already built. Output: `InferKitFoundationModels.xcframework` and `InferKitAppleSwift.xcframework`, one
+`<Module>.framework` per slice, with the slices the framework it links against holds unless `--slices`
+names fewer.
+
+- One core. Each package's SwiftPM build compiles the core too, because the target depends on the
+  `InferKit` product. The framework binary is linked from the companion target's objects alone
+  (`<Module>.build/Objects-normal`), with `-framework InferKitMLX`, so every core symbol binds to
+  `InferKitMLX.framework` at load. A core symbol the framework does not export fails the link, since
+  undefined symbols are an error. The script then fails when the companion defines an Objective-C class
+  `InferKitMLX.framework` also defines, or does not name `@rpath/InferKitMLX.framework/InferKitMLX`.
+- The floor. The frameworks' minimum is macOS 26 / iOS 26, the packages' floor, against InferKitMLX's
+  14 / 17. A host with the lower floor embeds them and opens them with `dlopen` only at 26 or later. The
+  descriptors already state `minimumOSVersions` 26.0 for both systems.
+- The run path is the directory that holds the framework: `@loader_path/../../..` on macOS, inside a
+  versioned bundle, and `@loader_path/..` on iOS. An app embeds `InferKitMLX.framework` beside the
+  companions, and a companion opened before anything loaded InferKitMLX still finds it.
+- Discovery. The provider classes are `NFKFoundationModelsDescriptors` and
+  `NFKAppleSwiftModelDescriptors`, both in `NFKModelCatalog.providerClassNames`. The shared catalog lists
+  them by itself when the companion is open before its first use; otherwise the host calls
+  `addDescriptorsFromProviderClassName:`. `NFKAppleSwiftModelDescriptors` answers
+  `backendForBuildRequest:error:`, because `vision-document` and `vision-smudge` name no provider class
+  and the `apple-swift` engine has no builder. The speech analyzer, the translator, and the Foundation
+  Models backend build through their provider classes.
+- Contents: the binary, `Resources/Info.plist` (`MinimumOSVersion` 26.0, the release and API versions),
+  `Headers/<Module>-Swift.h`, `Modules/module.modulemap` (`framework module <Module>`), and
+  `Modules/<Module>.swiftmodule` unless `--no-swift-interfaces`. The generated header imports the core's
+  module, which a consumer finds through `-I InferKitMLX.framework/Headers`.
+- `verify-companions.sh` (and `--verify`) lays the frameworks out as an app embeds them, side by side in
+  `Contents/Frameworks`. A C probe that links nothing opens each companion, which proves the companion's
+  own run path. An Objective-C host linked to `InferKitMLX.framework` alone opens both, adds their
+  descriptors to a catalog by provider class name, and checks that `NFKModelDescriptor` resolves to
+  `InferKitMLX.framework`'s image, that each descriptor is that class and states the macOS 26 floor,
+  that the catalog builds every engine, and that `vision-smudge` answers an image. Vision logs its model
+  loading to standard output without a newline, so each report line starts on a new line.
+- Measured 2026-10-25 (macOS and iOS device slices, Swift interfaces included): InferKitFoundationModels
+  1.4 MB and InferKitAppleSwift 772 KB, against InferKitMLX's 33 MB macOS binary. The Foundation Models
+  binary binds 15 core classes to `InferKitMLX.framework` and defines none of its 563. `release/` does
+  not carry the companions.
+
 ## Release manifest
 
 `Tools/xcframework/release.sh` writes `<output>/release/`, and `build-mlx.sh` runs it after any build

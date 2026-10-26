@@ -103,6 +103,7 @@ that was not built is reported as skipped. A dynamic framework that carries the 
 | several plug-ins in one host | `InferKitMLXDynamic.xcframework` | they share one copy instead of one each |
 | anything in Swift | `InferKitMLXDynamic.xcframework` | it carries the `InferKitMLXObjC` module and the Swift module interfaces of InferKitMLX and MLX; the static library carries neither |
 | the core alone, no MLX | `InferKit.xcframework` | 4.7 MB, no MLX runtime at all |
+| Foundation Models or the Swift-only Apple engines beside the dynamic framework | `InferKitFoundationModels.xcframework`, `InferKitAppleSwift.xcframework` | dynamic, macOS 26 / iOS 26, they link the core from `InferKitMLX.framework`; see [The macOS 26 companions](#the-macos-26-companions) |
 
 Both MLX artifacts are arm64 only, with macOS, iOS device, and iOS simulator slices. **Do not add
 `InferKit.xcframework` or the InferKit source package beside an MLX artifact**: the core travels inside
@@ -183,6 +184,32 @@ pass `Modules`: clang also reads a search path's own `module.modulemap`, and `Mo
 is the framework's, which clang then refuses from the wrong directory. Do not add a second `InferKit`
 module, such as the `CoreHeaders` folder earlier builds shipped, on another search path: two maps for
 one module fail with "redefinition of module".
+
+### The macOS 26 companions
+
+`Tools/xcframework/build-companions.sh`, or `build-mlx.sh --variant dynamic --companions`, builds
+InferKitFoundationModels and InferKitAppleSwift as dynamic frameworks against
+`InferKitMLXDynamic.xcframework`. Each links the core from `InferKitMLX.framework` and carries none of
+its own, so a process holds one copy of every `NFK` class.
+
+1. Embed `InferKitMLX.framework` and the companions side by side, as **Embed & Sign** (an app's
+   `Contents/Frameworks`). A companion's run path is the directory that holds it.
+2. With a floor of macOS 26 / iOS 26, link a companion like any framework. With a lower floor, do not
+   link it: open it on macOS 26 or later and add its descriptors.
+
+```objc
+if (@available(macOS 26.0, *)) {
+	NSString *frameworks = NSBundle.mainBundle.privateFrameworksPath;
+	NSString *binary = [frameworks stringByAppendingPathComponent:@"InferKitAppleSwift.framework/InferKitAppleSwift"];
+	if (dlopen(binary.fileSystemRepresentation, RTLD_NOW) != NULL) {
+		[NFKModelCatalog.sharedCatalog addDescriptorsFromProviderClassName:@"NFKAppleSwiftModelDescriptors"];
+	}
+}
+```
+
+The provider classes are `NFKFoundationModelsDescriptors` and `NFKAppleSwiftModelDescriptors`. Each
+descriptor states its macOS 26 / iOS 26 minimum in `requirements`, and the catalog builds every engine
+by identifier. `--verify` opens both companions in an app-shaped layout and builds their engines.
 
 ### Swift: InferKitMLXObjC or InferKitMLX
 

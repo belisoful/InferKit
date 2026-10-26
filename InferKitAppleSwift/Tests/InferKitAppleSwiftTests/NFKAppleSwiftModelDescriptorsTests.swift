@@ -61,4 +61,11 @@ final class NFKAppleSwiftModelDescriptorsTests: XCTestCase {
         let translators = NFKModelCatalog.shared.descriptors(forTask: NFKModelTaskTranslation).map(\.identifier)
         XCTAssertTrue(translators.contains("apple-translation"))
     }
+
+    func testTheCatalogBuildsEveryEngineByItsIdentifier() throws {
+        for identifier in NFKAppleSwiftModelDescriptors.registryNames {
+            let backend = try NFKModelCatalog.shared.backend(forModelIdentifier: identifier, options: nil)
+            XCTAssertEqual(backend.backendIdentifier, identifier)
+        }
+    }
 }

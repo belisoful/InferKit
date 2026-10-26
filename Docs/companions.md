@@ -59,6 +59,10 @@ Every type is `@objc`, which is the package's purpose. Linking it puts `NFKSpeec
 ahead of the core's own recognizer for `NFKCapabilityTranscription`, and `NFKTranslationProvider`
 behind any MLX translator for `NFKCapabilityTranslation`.
 
+Both macOS 26 companions also build as dynamic frameworks that link the core from the dynamic
+`InferKitMLX.framework`, for an app that embeds them beside it and opens them on macOS 26 or later; see
+[The macOS 26 companions](installation.md#the-macos-26-companions).
+
 ## InferKitMLX (optional companion)
 
 `InferKitMLX/` is a separate SwiftPM package (Apple Silicon, macOS 14 / iOS 17) that keeps MLX out
