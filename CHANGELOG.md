@@ -2630,6 +2630,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `streamedBytesPerPass`, a failed read fails the image, and the catalog's Stable Diffusion 3 entries offer
   the streamed residency. The whole 8B transformer streamed at float32 (19 of 38 blocks) matches diffusers
   reading one block at a time: every seam at 0.9999999999948 or above, the velocity 0.99999999999879.
+- Nemotron Nano 2 streams its blocks the same way, so the 9B runs at float32 on a 32 GB machine.
+  `NFKMLXNemotronH.backend(directoryURL:precision:residency:)` takes the choice, reached from Objective-C
+  through `nemotronBackendWithDirectoryURL:precision:residency:error:`; `NFKMLXNemotronBackend` reports
+  `streamedLayerCount` and `streamedBytesPerPass`, and a failed read fails the request. The catalog's
+  `nemotron-nano-2` entry offers the residency and the precision. A stream reshapes a tensor its block
+  holds with a unit axis dropped, such as the Mamba convolution stored `[C, 1, K]`. The 9B streamed at
+  float32 (33 of 56 blocks) matches transformers reading one block at a time: the worst block state
+  0.99999999996990, the logits 0.99999999997890, the greedy continuation 12 of 12 tokens.
 - Pixtral 12B's released fused decoder is measured streamed, given the recorded projected image features:
   at float32 it matches the reference at every position after every layer, and at bfloat16 each layer
   stays inside its block floor and the whole pass ranks within torch's own jittered bfloat16 runs. The

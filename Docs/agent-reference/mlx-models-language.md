@@ -1403,9 +1403,11 @@ attention and feed-forward.
   run (`run_reference.py nemotron_h_real`, both sides bf16, since the 9B does not fit float32 on a 32 GB
   machine) reads a worst block seam of 0.99984145 and a logit cosine of 0.9997359 against transformers
   at bf16, and the greedy continuation matches 12 of 12 tokens. Each side rounds independently, so these
-  cosines measure two bf16 runs against each other. No float32 reference of the full 56 layers fits this
-  machine, so the floor for that distance is unmeasured; the fifteen-layer cut below measures the
-  rounding placement against the reference's own bf16-versus-float32 distance. The oracle loads
+  cosines measure two bf16 runs against each other. The reference's own bf16 run, against its float32
+  run read one block at a time (below), sits at 0.99990524 at its worst block state (state 43) and
+  0.99990642 at the logits, and its greedy continuation leaves float32's at the twelfth token. The
+  fifteen-layer cut below measures the rounding placement against the reference's own
+  bf16-versus-float32 distance. The oracle loads
   transformers' own `NemotronHForCausalLM`, because the release's `auto_map` names a remote
   `modeling_nemotron_h.py` the directory does not carry, and it asserts that no weight is missing. Two
   facts are load-bearing. **The released checkpoint uses the original
@@ -1431,6 +1433,17 @@ attention and feed-forward.
   layers run the shared mixer's, and every layer on the reference's own bf16 input reads at most
   0.0054 of the reference's bf16-versus-float32 distance. The release sets `residual_in_fp32` false,
   so its residual stays in the weights' type.
+  The decoder streams its blocks (`NFKMLXNemotronH.loadWeights(into:fromDirectory:precision:residency:budget:)`,
+  `NFKMLXNemotronHNet.layerStream`). Generation reruns the growing sequence each step, so no recurrent
+  state outlives a pass. The stream reads each Mamba convolution `[C, 1, K]` as the block's `[C, K]`
+  (`NFKMLXLayerStream.streaming(…shaping:)`). Under `.automatic` the bf16 9B (17.8 GB) loads whole on a
+  32 GB machine and the float32 9B (35.6 GB) streams. The whole 9B at float32, streamed (33 of 56 blocks,
+  9.15 GB read per pass, 1.74 GB/s), against transformers built on the meta device with each block read
+  as its forward reaches it (`run_reference.py nemotron_h_layerwise`; `NEMOTRON_CHECK=1` holds the
+  fifteen-layer cut bit-identical to a whole load), `IK_VAL_NEMOTRON_H` / `IK_PARITY_NEMOTRON_H_LAYERWISE`:
+  worst block state 0.99999999996990 (state 32), logits 0.99999999997890, greedy continuation 12 of 12.
+  No draft is wired: `nvidia/Nemotron-H-4B-Instruct-128K` shares the 9B's `tokenizer.json` byte for byte
+  and could draft for it.
 - `NFKMLXChatTemplateRenderer` (`NFKMLXChatTemplate.swift` / `…Engine.swift` / `…Expr.swift`) — a
   native Jinja renderer for the release's `chat_template`, so the language backend reproduces an
   instruct model's trained input instead of the hand-coded ChatML approximation. Rendering the template

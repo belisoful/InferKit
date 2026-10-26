@@ -491,7 +491,8 @@ layers' bytes).
   the repeated layers that fit and reads each of the others from the release in its turn, on every pass
   (`NFKMLXLayerStreaming.swift`). Gemma 3, TranslateGemma, MADLAD-400's T5 encoder-decoder, the
   dense `NFKMLXLanguageNet` (Qwen3, Mistral Small, and the Qwen3-VL and Pixtral decoders), the dense
-  Gemma 4 decoders (the E-series, the 31B, and the 12B unified), and the SD3 transformer's blocks stream.
+  Gemma 4 decoders (the E-series, the 31B, and the 12B unified), Nemotron Nano 2, and the SD3
+  transformer's blocks stream.
 
 The cases: `.resident` holds everything and throws where it is known not to fit; `.staged` stages and
 never pages; `.paged` stages and pages; `.streamed` stages and streams each stage with layers that is
