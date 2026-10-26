@@ -174,6 +174,7 @@ a boolean as `NFKParameterCitations` and JSON as `NFKOutputCitations`.
 | `requires` | [requirements](#requirements) | no | What a machine needs to use the option. |
 | `property` | string | no | On a load option, the backend property the build sets to the value by key-value coding, after the backend is constructed and before it prepares. A load option without one is a construction argument the engine's builder reads. |
 | `memoryBytesPerUnit` | integer | no | On an integer option, the bytes each unit adds to the model's memory, such as one context position's key-value cache. |
+| `required` | boolean | no | `true` when the backend refuses a request that leaves the option out, as a translator refuses one without a target language. A tool's schema lists it as required unless a default covers it. Option resolution does not enforce it. A writer leaves the field out when it is `false`. |
 
 `loadOptions` lists the load-stage options, the derived `variant` option first, and `requestOptions`
 the request-stage ones. The memory model's context length, cache bits, and cache group size are

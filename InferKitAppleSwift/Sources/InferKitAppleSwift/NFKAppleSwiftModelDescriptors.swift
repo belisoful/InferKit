@@ -26,6 +26,7 @@ public final class NFKAppleSwiftModelDescriptors: NSObject, NFKModelDescriptorPr
         let summary: String
         let tasks: [String]
         let providerClassName: String?
+        var requiredOptions: Set<String> = []
         let build: () -> any NFKInferenceBackend
     }
 
@@ -37,6 +38,7 @@ public final class NFKAppleSwiftModelDescriptors: NSObject, NFKModelDescriptorPr
         Engine(identifier: "apple-translation", displayName: "Apple Translation", family: "apple-translation",
                summary: "Translates text on device with Apple's Translation framework.",
                tasks: [NFKModelTaskTranslation], providerClassName: "NFKTranslationProvider",
+               requiredOptions: [NFKParameterTargetLanguage],
                build: { NFKTranslationBackend() }),
         Engine(identifier: "vision-document", displayName: "Vision Documents", family: "apple-vision",
                summary: "Reads a document's text with its paragraphs, lists, and tables.",
@@ -90,7 +92,7 @@ public final class NFKAppleSwiftModelDescriptors: NSObject, NFKModelDescriptorPr
         let inputs = inputKeys.sorted().map { NFKModelPort(key: $0, required: inputKeys.count == 1) }
         // Every engine here writes each key it declares on every result.
         let outputs = outputKeys.sorted().map { NFKModelPort.outputPort(withKey: $0, required: true) }
-        let options = parameterKeys.sorted().map { NFKModelOption(key: $0) }
+        let options = parameterKeys.sorted().map { NFKModelOption(key: $0, required: engine.requiredOptions.contains($0)) }
         let source = NFKModelSource(kind: NFKModelSourceKindSystem, repository: nil, revision: nil, url: nil,
                                     layout: NFKModelSourceLayoutNone, files: nil, requiresConversion: false,
                                     extensions: nil)

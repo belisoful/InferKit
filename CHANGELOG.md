@@ -21,6 +21,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   the script after the dynamic framework, and `verify-companions.sh` opens each companion in an
   app-shaped layout and builds its engines through the catalog.
 
+#### The translator requires its target language
+
+- `apple-translation`'s `targetLanguage` option is required, so the model's MCP tool lists it under
+  `required`.
+
 #### The catalog builds every engine
 
 - `NFKAppleSwiftModelDescriptors` answers `+backendForBuildRequest:error:`, so
@@ -55,6 +60,21 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   the core's default chain.
 
 ### Core (`InferKit`)
+
+#### A hosted model's MCP tool reads its descriptor
+
+- `addToolForModelName:outputModality:purpose:error:` builds the tool of a model hosted from the catalog
+  from its descriptor. Each input port and request-stage option is an argument, with each option's kind,
+  choices, bounds, default, and help. A preset's or alias's default replaces the descriptor's. Required
+  inputs, and required options no default covers, are listed under `required`. The description names the
+  model's tasks and summary and what it returns. Before, every model took a language model's prompt and
+  system instruction, so a translator that needs a target language could not be called.
+- A file argument is a `data:` URL or the native route's tagged form with its bytes. A path on the
+  server's machine is refused. The decoded files are removed before the caller hears the answer.
+- A model added with `addBackend:forModelName:` keeps the generic schema.
+- `NFKModelOption.required` states that the backend refuses a request without the option, read from and
+  written to the manifest field `required`. `+optionWithKey:required:` builds one. Option resolution
+  does not enforce it.
 
 #### Perplexity
 

@@ -578,7 +578,7 @@ static id _Nullable NFKModelReadRequirements(id element, NSString *elementPath, 
 static NSArray<NSString *> *NFKModelOptionFields(void)
 {
 	return @[ @"key", @"kind", @"title", @"help", @"default", @"minimum", @"maximum", @"step", @"choices",
-			  @"stage", @"group", @"requires", @"property", @"memoryBytesPerUnit" ];
+			  @"stage", @"group", @"requires", @"property", @"memoryBytesPerUnit", @"required" ];
 }
 
 @implementation NFKModelOption
@@ -597,6 +597,7 @@ static NSArray<NSString *> *NFKModelOptionFields(void)
 			   requirements:(nullable NFKModelRequirements *)requirements
 			propertyKeyPath:(nullable NSString *)propertyKeyPath
 		 memoryBytesPerUnit:(nullable NSNumber *)memoryBytesPerUnit
+				   required:(BOOL)required
 				 extensions:(nullable NSDictionary<NSString *, id> *)extensions
 {
 	self = [super init];
@@ -615,6 +616,7 @@ static NSArray<NSString *> *NFKModelOptionFields(void)
 		_requirements = [requirements copy];
 		_propertyKeyPath = [propertyKeyPath copy];
 		_memoryBytesPerUnit = [memoryBytesPerUnit copy];
+		_required = required;
 		_extensions = NFKModelExtensionsWithout(extensions, NFKModelOptionFields());
 	}
 	return self;
@@ -635,7 +637,28 @@ static NSArray<NSString *> *NFKModelOptionFields(void)
 {
 	return [self initWithKey:key kind:kind title:title help:help defaultValue:defaultValue minimum:minimum
 					 maximum:maximum step:step choices:choices stage:stage group:group requirements:nil
-			 propertyKeyPath:nil memoryBytesPerUnit:nil extensions:extensions];
+			 propertyKeyPath:nil memoryBytesPerUnit:nil required:NO extensions:extensions];
+}
+
+- (instancetype)initWithKey:(NSString *)key
+					   kind:(NSString *)kind
+					  title:(nullable NSString *)title
+					   help:(nullable NSString *)help
+			   defaultValue:(nullable id)defaultValue
+					minimum:(nullable NSNumber *)minimum
+					maximum:(nullable NSNumber *)maximum
+					   step:(nullable NSNumber *)step
+					choices:(nullable NSArray<NFKModelOptionChoice *> *)choices
+					  stage:(nullable NSString *)stage
+					  group:(nullable NSString *)group
+			   requirements:(nullable NFKModelRequirements *)requirements
+			propertyKeyPath:(nullable NSString *)propertyKeyPath
+		 memoryBytesPerUnit:(nullable NSNumber *)memoryBytesPerUnit
+				 extensions:(nullable NSDictionary<NSString *, id> *)extensions
+{
+	return [self initWithKey:key kind:kind title:title help:help defaultValue:defaultValue minimum:minimum
+					 maximum:maximum step:step choices:choices stage:stage group:group requirements:requirements
+			 propertyKeyPath:propertyKeyPath memoryBytesPerUnit:memoryBytesPerUnit required:NO extensions:extensions];
 }
 
 - (nullable NFKModelOptionChoice *)choiceWithValue:(id)value
@@ -665,6 +688,13 @@ static NSArray<NSString *> *NFKModelOptionFields(void)
 	return [self optionWithKey:key kind:NFKModelOptionKindForValueType(NFKModelValueTypeForKey(key))];
 }
 
++ (instancetype)optionWithKey:(NSString *)key required:(BOOL)required
+{
+	return [[self alloc] initWithKey:key kind:NFKModelOptionKindForValueType(NFKModelValueTypeForKey(key)) title:nil
+								help:nil defaultValue:nil minimum:nil maximum:nil step:nil choices:nil stage:nil group:nil
+						requirements:nil propertyKeyPath:nil memoryBytesPerUnit:nil required:required extensions:nil];
+}
+
 + (nullable instancetype)optionWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error
 {
 	return [self optionFromObject:dictionary path:@"option" error:error];
@@ -677,6 +707,7 @@ static NSArray<NSString *> *NFKModelOptionFields(void)
 	NSNumber *minimum = nil, *maximum = nil, *step = nil, *memoryBytesPerUnit = nil;
 	NSArray *choices = nil;
 	id requirements = nil;
+	BOOL required = NO;
 	NFKModelElementReader requirementsReader = ^id (id element, NSString *elementPath, NSError **elementError) {
 		return NFKModelReadRequirements(element, elementPath, elementError);
 	};
@@ -696,7 +727,8 @@ static NSArray<NSString *> *NFKModelOptionFields(void)
 		|| ![reader readString:@"group" required:NO into:&group error:error]
 		|| ![reader readObject:@"requires" withReader:requirementsReader into:&requirements error:error]
 		|| ![reader readString:@"property" required:NO into:&property error:error]
-		|| ![reader readNumber:@"memoryBytesPerUnit" into:&memoryBytesPerUnit error:error]) {
+		|| ![reader readNumber:@"memoryBytesPerUnit" into:&memoryBytesPerUnit error:error]
+		|| ![reader readBoolean:@"required" into:&required error:error]) {
 		return nil;
 	}
 	id defaultValue = reader.dictionary[@"default"];
@@ -712,12 +744,14 @@ static NSArray<NSString *> *NFKModelOptionFields(void)
 							 minimum:minimum
 							 maximum:maximum
 								step:step
-							 choices:choices								   stage:stage
-								   group:group
-							requirements:requirements
-						 propertyKeyPath:property
-					  memoryBytesPerUnit:memoryBytesPerUnit
-							  extensions:[reader extensionsWithoutFields:NFKModelOptionFields()]];
+							 choices:choices
+							   stage:stage
+							   group:group
+						requirements:requirements
+					 propertyKeyPath:property
+				  memoryBytesPerUnit:memoryBytesPerUnit
+							required:required
+						  extensions:[reader extensionsWithoutFields:NFKModelOptionFields()]];
 }
 
 + (BOOL)isDefaultValue:(id)value
@@ -748,6 +782,9 @@ static NSArray<NSString *> *NFKModelOptionFields(void)
 	dictionary[@"requires"] = self.requirements.dictionaryRepresentation;
 	dictionary[@"property"] = self.propertyKeyPath;
 	dictionary[@"memoryBytesPerUnit"] = self.memoryBytesPerUnit;
+	if (self.isRequired) {
+		dictionary[@"required"] = @YES;
+	}
 	return [dictionary copy];
 }
 

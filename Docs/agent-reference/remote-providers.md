@@ -2434,6 +2434,23 @@ serves them under `model@preset` names and aliases.
   model whose tool name is already a served tool's is refused with `NameConflict`, a re-add for the same
   model replaces its tool, and `addTool:` or `removeToolNamed:` of that name drops the entry. A model
   is not a tool until one is added; hosting alone lists nothing over MCP.
+  - A model hosted from the catalog (its `NFKServedModel.descriptor` set) gets a schema, a description,
+    and a `requestBuilder` from `NFKServedModelTool.m` (2026-10-26). Input ports and request-stage options
+    become properties; a `file-or-folder` option is left out. The target's `requestDefaults` (a
+    preset's or an alias's) replace an option's default and keep a required option out of `required`.
+    Option arguments resolve through `resolvedOptions:stage:` (request stage), and only the keys the
+    call names reach the request, so an option it leaves out takes the model's or the preset's default
+    in `fillDefaultsOf:target:`.
+  - File arguments decode from a `data:` URL (`NFKServedDataURLBytes`; an image to a pixel buffer, other
+    files to a temporary file read by `NFKValueCoding valueOfType:fromFileURL:`) or the tagged form
+    through an inline `NFKInferenceWireCoding`. A plain string is refused as a possible path. A tagged
+    file value must carry its bytes: its file has to be one the decoder wrote, because a tagged entry
+    with only a `path` decodes to an asset without reading anything.
+  - The backend keeps each request's decoded files in a weak-key, identity map table until the run
+    takes them. Both call paths (`runRequest:onModelNamed:temporaryFiles:error:` for an in-process
+    invoke, `startModelTool:` for `tools/call`) remove them before the caller hears the answer.
+    `NFKServedRun.temporaryFiles` removes them only after the completion handler, which let a caller see
+    them still present.
 - Routes: `GET /v1/inferkit/catalog` writes `manifestDataWithError:` of a catalog of `modelCatalog`'s
   descriptors plus each hosted model's descriptor from another catalog. `POST /v1/inferkit/estimate`
   takes `{model, options}`: a hosted catalog model starts from the load-stage subset of its given

@@ -139,8 +139,8 @@ method assigns the out-parameter after the block has run. A sweep of every `.m` 
 `Tests/`, and `Examples/` found that one instance.
 
 1. `swift build` + `swift test` on the host — **0 warnings**, all tests green. Grep the log for
-   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 1882 tests
-   (2026-10-25): the Objective-C `- (void)test` methods under `Tests/` (1764) and in
+   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 1891 tests
+   (2026-10-26): the Objective-C `- (void)test` methods under `Tests/` (1773) and in
    `Examples/NFKExamples.m` (62, the `InferKitExamples` target), plus the `func test` methods in
    `SwiftExamples/` (56).
 2. `xcodebuild build` for a `generic/platform=iOS` destination (cross-platform compile), and for tvOS
@@ -256,7 +256,7 @@ method assigns the out-parameter after the block has run. A sweep of every `.m` 
    them, since this package evaluates under `swift test`; they exist so an Xcode run cannot quietly
    cover less than the command line does.
 6. `InferKitAppleSwift/` `swift build` + `swift test` when a change touches that companion. That covers
-   all 31 tests across its three test targets (21 / 6 / 4), one of which skips without an installed
+   all 32 tests across its three test targets (22 / 6 / 4), one of which skips without an installed
    translation model. The package carries no per-target shared schemes, so `swift test` is the run that
    covers all three targets.
 

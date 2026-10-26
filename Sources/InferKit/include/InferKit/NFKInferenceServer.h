@@ -899,8 +899,19 @@ NS_SWIFT_SENDABLE
 	@abstract   Serves a model as an MCP tool named NFKModelToolName(modelName).
 	@discussion modelName is any name a request can name: a hosted model, an alias, or base@preset. Each
 				call resolves the name as a request does and waits in the model's queue, so the tool shares
-				the model's backend, limits, and preset defaults. The tool has NFKBackendTool's default
-				description and schema for outputModality, and purpose completes "Use it when …". The
+				the model's backend, limits, and preset defaults. A model hosted from the catalog takes
+				its schema and description from its descriptor:
+				- each input port is an argument of its value type, and a file (image, mask, audio,
+				  video, document, or a list of them) is a data: URL or the native route's tagged form,
+				  never a path on this machine;
+				- each request-stage option is an argument with its kind, choices, bounds, default, and
+				  help, a preset's or alias's default replacing the descriptor's;
+				- a required port, and a required option no default covers, is in "required";
+				- an option argument resolves as the descriptor resolves options, and any other argument
+				  becomes the parameter of its name;
+				- the description names the model's tasks and summary and what it returns.
+				Any other model takes NFKBackendTool's default description and schema for
+				outputModality. purpose completes "Use it when …". The
 				server keeps a table from each such tool's name to its model name (modelNameForToolName:).
 				Two model names can map to one tool name, as "a@b" and "a__b" do; adding a tool whose name
 				an added tool already has is refused with NFKInferenceServerErrorNameConflict, unless that

@@ -30,6 +30,7 @@
 #import "NFKServerObservationPrivate.h"
 #import "NFKServedRequestChecks.h"
 #import "NFKServedGemini.h"
+#import "NFKServedModelTool.h"
 #import <CommonCrypto/CommonDigest.h>
 #import <unistd.h>
 #import <arpa/inet.h>
@@ -1363,15 +1364,50 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 @interface NFKServedModelToolBackend : NSObject <NFKInferenceBackend>
 @property (nonatomic, weak) NFKInferenceServer *server;
 @property (nonatomic, copy) NSString *modelName;
+/*! The files a request builder decoded for each request it built, until its run takes them; the keys
+	are weak and compared by identity, and the table is guarded by itself. */
+@property (nonatomic, strong) NSMapTable<NFKInferenceRequest *, NSArray<NSURL *> *> *temporaryFiles;
+- (void)keepTemporaryFiles:(NSArray<NSURL *> *)files forRequest:(NFKInferenceRequest *)request;
+- (NSArray<NSURL *> *)takeTemporaryFilesForRequest:(NFKInferenceRequest *)request;
 @end
 
 @interface NFKInferenceServer ()
 - (nullable NFKInferenceResult *)runRequest:(NFKInferenceRequest *)request
 							   onModelNamed:(NSString *)modelName
+							 temporaryFiles:(NSArray<NSURL *> *)temporaryFiles
 									  error:(NSError * _Nullable *)error;
 @end
 
 @implementation NFKServedModelToolBackend
+
+- (instancetype)init
+{
+	self = [super init];
+	if (self != nil) {
+		_temporaryFiles = [[NSMapTable alloc] initWithKeyOptions:NSPointerFunctionsWeakMemory | NSPointerFunctionsObjectPointerPersonality
+													valueOptions:NSPointerFunctionsStrongMemory capacity:0];
+	}
+	return self;
+}
+
+- (void)keepTemporaryFiles:(NSArray<NSURL *> *)files forRequest:(NFKInferenceRequest *)request
+{
+	if (files.count == 0) {
+		return;
+	}
+	@synchronized (self.temporaryFiles) {
+		[self.temporaryFiles setObject:files forKey:request];
+	}
+}
+
+- (NSArray<NSURL *> *)takeTemporaryFilesForRequest:(NFKInferenceRequest *)request
+{
+	@synchronized (self.temporaryFiles) {
+		NSArray<NSURL *> *files = [self.temporaryFiles objectForKey:request] ?: @[];
+		[self.temporaryFiles removeObjectForKey:request];
+		return files;
+	}
+}
 
 - (BOOL)isReady
 {
@@ -1392,7 +1428,8 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 		}
 		return nil;
 	}
-	return [server runRequest:request onModelNamed:self.modelName error:error];
+	return [server runRequest:request onModelNamed:self.modelName temporaryFiles:[self takeTemporaryFilesForRequest:request]
+						error:error];
 }
 
 @end
@@ -1675,15 +1712,33 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 										 purpose:(nullable NSString *)purpose
 										   error:(NSError * _Nullable *)error
 {
-	if ([self modelNamed:modelName error:error] == nil) {
+	NFKServedTarget *target = [self modelNamed:modelName error:error];
+	if (target == nil) {
 		return nil;
 	}
 	NSString *toolName = NFKModelToolName(modelName);
 	NFKServedModelToolBackend *backend = [[NFKServedModelToolBackend alloc] init];
 	backend.server = self;
 	backend.modelName = modelName;
-	NFKBackendTool *tool = [NFKBackendTool toolWithBackend:backend name:toolName outputModality:outputModality
-												 modelName:modelName purpose:purpose];
+	NFKModelDescriptor *descriptor = target.model.descriptor;
+	NFKBackendTool *tool = nil;
+	if (descriptor == nil) {
+		tool = [NFKBackendTool toolWithBackend:backend name:toolName outputModality:outputModality modelName:modelName purpose:purpose];
+	} else {
+		tool = [[NFKBackendTool alloc] initWithBackend:backend name:toolName
+										   description:NFKServedModelToolDescription(descriptor, modelName, purpose)
+											parameters:NFKServedModelToolParameters(descriptor, target.requestDefaults)
+										outputModality:outputModality];
+		__weak NFKServedModelToolBackend *weakBackend = backend;
+		tool.requestBuilder = ^NFKInferenceRequest *(NSDictionary<NSString *, id> *arguments, NSError **builderError) {
+			NSMutableArray<NSURL *> *files = [NSMutableArray array];
+			NFKInferenceRequest *request = NFKServedModelToolRequest(arguments, descriptor, outputModality, files, builderError);
+			if (request != nil) {
+				[weakBackend keepTemporaryFiles:files forRequest:request];
+			}
+			return request;
+		};
+	}
 	@synchronized (self.servedTools) {
 		NSString *holder = self.modelToolNames[toolName];
 		BOOL taken = [self.servedTools indexOfObjectPassingTest:^BOOL(NFKInferenceTool *served, NSUInteger index, BOOL *stop) {
@@ -1714,10 +1769,12 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 /*! Runs a model tool's request in the model's queue, as a request on the MCP route, and waits for it. */
 - (nullable NFKInferenceResult *)runRequest:(NFKInferenceRequest *)request
 							   onModelNamed:(NSString *)modelName
+							 temporaryFiles:(NSArray<NSURL *> *)temporaryFiles
 									  error:(NSError * _Nullable *)error
 {
 	NFKServedTarget *target = [self modelNamed:modelName error:error];
 	if (target == nil) {
+		[self removeFiles:temporaryFiles];
 		return nil;
 	}
 	NFKServedRun *run = [[NFKServedRun alloc] init];
@@ -1735,6 +1792,7 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	[target.model enqueue:run];
 	// A queued run always finishes: it runs, fails with its build, or is failed when its model is removed.
 	dispatch_semaphore_wait(finished, DISPATCH_TIME_FOREVER);
+	[self removeFiles:temporaryFiles];
 	if (result == nil && error != NULL) {
 		*error = failure;
 	}
@@ -1812,10 +1870,12 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	NSError *error = nil;
 	NFKBackendToolRequestBuilder builder = backendTool.requestBuilder;
 	NFKInferenceRequest *inference = builder != nil ? builder(arguments, &error) : [backendTool defaultRequestForArguments:arguments];
+	NSArray<NSURL *> *temporaryFiles = inference != nil ? [backend takeTemporaryFilesForRequest:inference] : @[];
 	inference = inference != nil ? NFKServedRequestWithoutNullContractValues(inference) : nil;
 	NFKServedTarget *target = inference != nil ? [self modelNamed:backend.modelName error:&error] : nil;
 	error = target != nil ? NFKServedContractTypeError(inference.inputs, inference.parameters) : error;
 	if (target == nil || error != nil) {
+		[self removeFiles:temporaryFiles];
 		fail(error.localizedDescription ?: @"the tool reported no reason");
 		return ^{};
 	}
@@ -1825,7 +1885,10 @@ static NSString *NFKServedResidencyName(NFKServerModelResidency residency)
 	run.clientAddress = request.clientAddress ?: @"";
 	run.keyName = request.keyName;
 	NFKBackendToolResultDescriber describer = backendTool.resultDescriber;
+	__weak NFKInferenceServer *weakSelf = self;
 	run.completionHandler = ^(NFKInferenceResult *result, NSError *runError) {
+		// Before the reply, so a client that hears the answer finds the decoded files gone.
+		[weakSelf removeFiles:temporaryFiles];
 		if (result == nil) {
 			fail(runError.localizedDescription ?: @"the tool reported no reason");
 			return;

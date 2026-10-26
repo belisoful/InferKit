@@ -62,6 +62,12 @@ final class NFKAppleSwiftModelDescriptorsTests: XCTestCase {
         XCTAssertTrue(translators.contains("apple-translation"))
     }
 
+    func testTheTranslatorRequiresItsTargetLanguage() throws {
+        let translator = try XCTUnwrap(NFKAppleSwiftModelDescriptors.modelDescriptors().first { $0.identifier == "apple-translation" })
+        XCTAssertEqual(translator.option(withKey: NFKParameterTargetLanguage)?.isRequired, true)
+        XCTAssertEqual(translator.option(withKey: NFKParameterSourceLanguage)?.isRequired, false)
+    }
+
     func testTheCatalogBuildsEveryEngineByItsIdentifier() throws {
         for identifier in NFKAppleSwiftModelDescriptors.registryNames {
             let backend = try NFKModelCatalog.shared.backend(forModelIdentifier: identifier, options: nil)

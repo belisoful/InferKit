@@ -1084,6 +1084,19 @@ An MCP client reaches a hosted model as a tool once `addToolForModelName:outputM
 adds one. The tool's name is `NFKModelToolName` of the model's name (`qwen3@q4` is `qwen3__q4`), and a
 second model whose tool name an existing tool already has is refused.
 
+A model hosted from the catalog takes its tool's schema and description from its descriptor:
+
+- each input port is an argument of its value type;
+- a file input (an image, mask, audio, video, or document, or a list of them) is a `data:` URL or the
+  native route's tagged form, and a path on the server's machine is refused;
+- each request-stage option is an argument with its kind, choices, bounds, default, and help, and a
+  preset's or alias's default replaces the descriptor's;
+- a required input, and a required option no default covers, is listed under `required`;
+- the description names the model's tasks and summary and what it returns.
+
+A model added with `addBackend:forModelName:` takes the generic schema, a prompt and a system
+instruction.
+
 ### The app's own routes
 
 An app serves its own requests on the server's port with `addRouteForPathPrefix:handler:error:`. The

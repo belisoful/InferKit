@@ -191,6 +191,10 @@ NS_ASSUME_NONNULL_BEGIN
 	bytes of one context position. nil for an option whose memory is not linear. Introduced in
 	InferKit 0.4.0. */
 @property (nonatomic, readonly, copy, nullable) NSNumber *memoryBytesPerUnit;
+/*! YES when the backend refuses a request that leaves the option out, as a translator refuses one that
+	names no target language. The descriptor states it for a caller, such as a tool's schema; option
+	resolution does not enforce it. Introduced in InferKit 0.4.0. */
+@property (nonatomic, readonly, getter=isRequired) BOOL required;
 /*! The fields of the option's dictionary this version does not read, written back as they came. */
 @property (nonatomic, readonly, copy) NSDictionary<NSString *, id> *extensions;
 
@@ -209,7 +213,25 @@ NS_ASSUME_NONNULL_BEGIN
 			   requirements:(nullable NFKModelRequirements *)requirements
 			propertyKeyPath:(nullable NSString *)propertyKeyPath
 		 memoryBytesPerUnit:(nullable NSNumber *)memoryBytesPerUnit
+				   required:(BOOL)required
 				 extensions:(nullable NSDictionary<NSString *, id> *)extensions NS_DESIGNATED_INITIALIZER;
+
+/*! An option with every field but required, which is NO. A nil stage is NFKModelOptionStageRequest. */
+- (instancetype)initWithKey:(NSString *)key
+					   kind:(NSString *)kind
+					  title:(nullable NSString *)title
+					   help:(nullable NSString *)help
+			   defaultValue:(nullable id)defaultValue
+					minimum:(nullable NSNumber *)minimum
+					maximum:(nullable NSNumber *)maximum
+					   step:(nullable NSNumber *)step
+					choices:(nullable NSArray<NFKModelOptionChoice *> *)choices
+					  stage:(nullable NSString *)stage
+					  group:(nullable NSString *)group
+			   requirements:(nullable NFKModelRequirements *)requirements
+			propertyKeyPath:(nullable NSString *)propertyKeyPath
+		 memoryBytesPerUnit:(nullable NSNumber *)memoryBytesPerUnit
+				 extensions:(nullable NSDictionary<NSString *, id> *)extensions;
 
 /*! An option with no requirements, no property, and no linear memory. A nil stage is
 	NFKModelOptionStageRequest. */
@@ -238,13 +260,17 @@ NS_ASSUME_NONNULL_BEGIN
 	type or an unknown key gives NFKModelOptionKindJSON. */
 + (instancetype)optionWithKey:(NSString *)key;
 
+/*! A request-stage option of the kind optionWithKey: gives the key, which every request must set when
+	required is YES. Introduced in InferKit 0.4.0. */
++ (instancetype)optionWithKey:(NSString *)key required:(BOOL)required;
+
 /*! Reads an option from its manifest dictionary. An absent kind follows the key as optionWithKey:
 	does. Returns nil and sets error when key is missing or a field has the wrong type. */
 + (nullable instancetype)optionWithDictionary:(NSDictionary<NSString *, id> *)dictionary error:(NSError **)error;
 
 /*! The option as its manifest dictionary: key, kind, stage, and each field that is present (the
-	default under "default", choices only when there are some, the requirements under "requires", and
-	the property key path under "property"), with the extensions beside them. */
+	default under "default", choices only when there are some, the requirements under "requires", the
+	property key path under "property", and "required" only when YES), with the extensions beside them. */
 - (NSDictionary<NSString *, id> *)dictionaryRepresentation;
 
 - (instancetype)init NS_UNAVAILABLE;
