@@ -108,6 +108,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### A catalog download fetches the shards its index names
+
+- `-downloadModelSource:progressHandler:completionHandler:` reads a listed shard index
+  (`model.safetensors.index.json` and the like) and fetches every shard its `weight_map` names, as
+  required files. Before, a sharded release such as Qwen3 1.7B downloaded its index alone and read
+  complete with no weights.
+- `-downloadStatusForModelSource:` counts the shards a cached index names, so a release cached with its
+  index and without its shards reads partial and names them in `missingPaths`; the next download fetches
+  only those. `-removalPlanForModelSource:error:` removes the shards with the index.
+- An index that names a file the repository lacks fails the plan with `NFKDownloadErrorNotFound`.
+
 #### A triangle mesh value type
 
 - `NFKMesh` is the core's triangle mesh: packed float32 positions, optional normals, vertex colors, and

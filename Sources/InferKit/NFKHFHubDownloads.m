@@ -56,6 +56,37 @@ static BOOL NFKHFHubGlobMatches(NSString *pattern, NSString *path)
 	return fnmatch(pattern.fileSystemRepresentation, path.fileSystemRepresentation, 0) == 0;
 }
 
+/*! YES for a shard index (`model.safetensors.index.json` and the like), whose weight_map names the
+	files that hold the weights. */
+static BOOL NFKHFHubIsShardIndex(NSString *path)
+{
+	return [path hasSuffix:@".index.json"];
+}
+
+/*! The files a shard index names, as paths beside the index, in order; nil when the data is not an
+	index or names an unsafe path. */
+static NSArray<NSString *> * _Nullable NFKHFHubShardPaths(NSData *data, NSString *indexPath)
+{
+	id json = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+	NSDictionary *map = [json isKindOfClass:NSDictionary.class] ? json[@"weight_map"] : nil;
+	if (![map isKindOfClass:NSDictionary.class]) {
+		return nil;
+	}
+	NSString *directory = indexPath.stringByDeletingLastPathComponent;
+	NSMutableOrderedSet<NSString *> *paths = [NSMutableOrderedSet orderedSet];
+	for (id name in map.allValues) {
+		if (![name isKindOfClass:NSString.class]) {
+			return nil;
+		}
+		NSString *path = directory.length > 0 ? [directory stringByAppendingPathComponent:name] : name;
+		if (NFKHFHubUnsafePathError(path, @"shard index entry", YES) != nil) {
+			return nil;
+		}
+		[paths addObject:path];
+	}
+	return [paths.array sortedArrayUsingSelector:@selector(compare:)];
+}
+
 static NSString *NFKHFHubHexDigest(NSData *data)
 {
 	unsigned char digest[CC_SHA256_DIGEST_LENGTH];
@@ -264,6 +295,29 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 		}
 	}
 
+	if (requiredPaths != nil) {
+		for (NSString *indexPath in chosen.array.copy) {
+			if (!NFKHFHubIsShardIndex(indexPath)) {
+				continue;
+			}
+			NSArray<NSString *> *shards = [self shardPathsOfIndex:indexPath inRepo:repo revision:normalized
+														   entry:entriesByPath[indexPath] error:outError];
+			if (shards == nil) {
+				return nil;
+			}
+			for (NSString *shard in shards) {
+				if (entriesByPath[shard] == nil) {
+					NSString *reason = [NSString stringWithFormat:@"%@ at %@ names %@ in %@ and has no such file", repo,
+										normalized, shard, indexPath];
+					[self propagateError:[NFKDownload errorWithCode:NFKDownloadErrorNotFound reason:reason] to:outError];
+					return nil;
+				}
+				[chosen addObject:shard];
+				[optionalChosen removeObject:shard];
+			}
+		}
+	}
+
 	NSMutableArray<NFKDownloadPlanFile *> *files = [NSMutableArray arrayWithCapacity:chosen.count];
 	for (NSDictionary *entry in entries) {
 		NSString *path = entry[@"path"];
@@ -286,6 +340,58 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 		plan.absentOptionalFiles = @[ @{ @"repository": repo, @"revision": normalized, @"paths": absentOptional } ];
 	}
 	return plan;
+}
+
+/*! The shards a repository's shard index names: read from the cached index when it is whole, and
+	from the repository otherwise. */
+- (nullable NSArray<NSString *> *)shardPathsOfIndex:(NSString *)indexPath
+											 inRepo:(NSString *)repo
+										   revision:(NSString *)revision
+											  entry:(NSDictionary *)entry
+											  error:(NSError **)outError
+{
+	NFKDownloadPlanFile *planned = [self planFileForRepo:repo revision:revision entry:entry listing:nil optional:NO];
+	NSData *data = planned.cached ? [NSData dataWithContentsOfURL:planned.localURL] : nil;
+	if (data == nil) {
+		NSHTTPURLResponse *response = nil;
+		data = [self fetchMetadataFromURL:planned.remoteURL HTTPMethod:@"GET" response:&response error:outError];
+		if (data == nil) {
+			return nil;
+		}
+		NSInteger status = response != nil ? response.statusCode : 200;
+		if (status < 200 || status >= 300) {
+			NSString *subject = [NSString stringWithFormat:@"%@ in %@ at %@", indexPath, repo, revision];
+			BOOL hadToken = [[self requestForURL:planned.remoteURL] valueForHTTPHeaderField:@"Authorization"] != nil;
+			[self propagateError:[NFKHFHubTransfer errorForHTTPStatus:status subject:subject hadToken:hadToken] to:outError];
+			return nil;
+		}
+	}
+	NSArray<NSString *> *shards = NFKHFHubShardPaths(data, indexPath);
+	if (shards == nil) {
+		NSString *reason = [NSString stringWithFormat:@"%@ in %@ at %@ is not a shard index", indexPath, repo, revision];
+		[self propagateError:[NFKDownload errorWithCode:NFKDownloadErrorHTTPStatus reason:reason] to:outError];
+	}
+	return shards;
+}
+
+/*! The shards the cached shard indexes among paths name in the snapshot, which a complete download
+	holds beside them. */
+- (NSArray<NSString *> *)shardPathsNamedByCachedIndexes:(NSArray<NSString *> *)paths
+										  inSnapshotURL:(nullable NSURL *)snapshotURL
+{
+	if (snapshotURL == nil) {
+		return @[];
+	}
+	NSMutableOrderedSet<NSString *> *shards = [NSMutableOrderedSet orderedSet];
+	for (NSString *path in paths) {
+		if (!NFKHFHubIsShardIndex(path)) {
+			continue;
+		}
+		NSData *data = [NSData dataWithContentsOfURL:[snapshotURL URLByAppendingPathComponent:path]];
+		NSArray<NSString *> *named = data != nil ? NFKHFHubShardPaths(data, path) : nil;
+		[shards addObjectsFromArray:named ?: @[]];
+	}
+	return shards.array;
 }
 
 - (nullable NFKDownloadPlan *)planDownloadOfRepo:(NSString *)repo
@@ -1214,6 +1320,13 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	}
 	if (part.URL == nil) {
 		NSURL *snapshotURL = [self snapshotURLForRepo:part.repository revision:part.revision];
+		for (NSString *shard in [self shardPathsNamedByCachedIndexes:[required arrayByAddingObjectsFromArray:optional]
+													   inSnapshotURL:snapshotURL]) {
+			[optional removeObject:shard];
+			if (![required containsObject:shard]) {
+				[required addObject:shard];
+			}
+		}
 		NFKDownloadStatus *status = [self statusInSnapshotURL:snapshotURL requiredPaths:required optionalPaths:optional
 													 localURL:nil];
 		NSArray<NSString *> *unchecked = [self uncheckedPaths:optional ofStatus:status inSnapshotURL:snapshotURL];
@@ -1275,10 +1388,24 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 		NSURL *localURL = [self localURLOfURLPart:part error:NULL];
 		return localURL != nil ? [NSSet setWithObject:localURL.lastPathComponent] : [NSSet set];
 	}
+	NSArray<NSString *> *paths = [self pathsOfRepositoryPart:part];
+	return paths != nil ? [NSSet setWithArray:paths] : nil;
+}
+
+/*! The paths a repository part holds in its snapshot: its listed files and the shards their cached
+	shard indexes name; nil for a part that names the whole repository. */
+- (nullable NSArray<NSString *> *)pathsOfRepositoryPart:(NFKHFHubSourcePart *)part
+{
 	if (part.files == nil) {
 		return nil;
 	}
-	return [NSSet setWithArray:[part.files valueForKey:@"path"]];
+	NSArray<NSString *> *listed = [part.files valueForKey:@"path"];
+	NSArray<NSString *> *shards = [self shardPathsNamedByCachedIndexes:listed
+														 inSnapshotURL:[self snapshotURLForRepo:part.repository
+																					   revision:part.revision]];
+	NSMutableOrderedSet<NSString *> *paths = [NSMutableOrderedSet orderedSetWithArray:listed];
+	[paths addObjectsFromArray:shards];
+	return paths.array;
 }
 
 /*! YES when part's files cache in the target's snapshot. */
@@ -1620,8 +1747,7 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 - (NFKHFHubRemovalTarget *)removalTargetForPart:(NFKHFHubSourcePart *)part
 {
 	if (part.URL == nil) {
-		NSArray<NSString *> *paths = part.files != nil ? [part.files valueForKey:@"path"] : nil;
-		return [self removalTargetForRepo:part.repository revision:part.revision paths:paths];
+		return [self removalTargetForRepo:part.repository revision:part.revision paths:[self pathsOfRepositoryPart:part]];
 	}
 	NFKHFHubRemovalTarget *target = [self removalTargetForURL:part.URL paths:nil];
 	NSError *refusal = nil;

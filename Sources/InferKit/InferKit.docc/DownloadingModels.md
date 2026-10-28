@@ -119,6 +119,13 @@ such as an adapter published apart from its base model, is fetched from there an
 repository's snapshot, where the base model's own download finds it. The plan, the status, and the
 removal cover every repository a source's files come from.
 
+A shard index the source lists, such as `model.safetensors.index.json`, names the shards that hold the
+weights in its `weight_map`. The plan reads the index, from the cache when it is whole and from the
+repository otherwise, and fetches each shard as a required file. The status counts a cached index's
+shards as required, so a download that holds the index without its shards reads partial, and a removal
+takes the shards with it. An index that names a file the repository lacks fails with
+`NFKDownloadErrorNotFound`.
+
 ### Downloaded or not, and removal
 
 `-downloadStatusForModelSource:` reads the cache alone and answers complete, partial, or absent, with

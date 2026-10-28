@@ -529,7 +529,9 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 				for any catalog model.
 	@discussion Pass a variant's source (NFKModelVariant.source). A source with no files completes at
 				once with a nil localURL. A page source fails with NFKDownloadErrorManualDownload, and
-				a source that requires conversion fails with NFKDownloadErrorRequiresConversion.
+				a source that requires conversion fails with NFKDownloadErrorRequiresConversion. A
+				shard index the source lists (`model.safetensors.index.json` and the like) brings the
+				shards its weight_map names, which the download fetches as required files.
 */
 - (NFKDownload *)downloadModelSource:(NFKModelSource *)source
 					 progressHandler:(nullable NFKDownloadProgressHandler)progressHandler

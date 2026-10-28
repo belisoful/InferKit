@@ -705,6 +705,89 @@ static NSString * const NFKTestRepo = @"org/model";
 	XCTAssertEqual([self.hub downloadStatusForModelSource:later].presence, NFKDownloadPresenceComplete);
 }
 
+/*! Serves a release whose weights are two shards a shard index names, and answers its source: the
+	configuration, the index, and the single-file name, the two weight candidates optional. */
+- (NFKModelSource *)serveAShardedRelease
+{
+	NSData *index = [@"{\"metadata\": {}, \"weight_map\": {\"a\": \"model-00001-of-00002.safetensors\", "
+					 "\"b\": \"model-00002-of-00002.safetensors\", \"c\": \"model-00001-of-00002.safetensors\"}}"
+					 dataUsingEncoding:NSUTF8StringEncoding];
+	NSDictionary *files = @{ @"config.json": self.config, @"model.safetensors.index.json": index,
+							 @"model-00001-of-00002.safetensors": self.weights,
+							 @"model-00002-of-00002.safetensors": [self.weights subdataWithRange:NSMakeRange(0, 64)] };
+	NSSet *lfs = [NSSet setWithArray:@[ @"model-00001-of-00002.safetensors", @"model-00002-of-00002.safetensors" ]];
+	[NFKStubHubProtocol serveRepo:NFKTestRepo revision:@"main" files:files lfsPaths:lfs];
+	NFKModelFile *indexFile = [[NFKModelFile alloc] initWithPath:@"model.safetensors.index.json" byteCount:nil sha256:nil
+															 role:NFKModelFileRoleWeights optional:YES extensions:nil];
+	NFKModelFile *single = [[NFKModelFile alloc] initWithPath:@"model.safetensors" byteCount:nil sha256:nil
+														 role:NFKModelFileRoleWeights optional:YES extensions:nil];
+	return [self sourceWithFiles:@[ [NFKModelFile fileWithPath:@"config.json" role:NFKModelFileRoleConfig], indexFile, single ]
+			  requiresConversion:NO];
+}
+
+- (void)testASourceDownloadFetchesTheShardsItsIndexNames
+{
+	NFKModelSource *source = [self serveAShardedRelease];
+	NSError *error = nil;
+	NFKDownloadPlan *plan = [self.hub planDownloadOfModelSource:source error:&error];
+	XCTAssertNotNil(plan, @"%@", error);
+	NSArray<NSString *> *planned = [[plan.files valueForKey:@"path"] sortedArrayUsingSelector:@selector(compare:)];
+	NSArray<NSString *> *expected = @[ @"config.json", @"model-00001-of-00002.safetensors", @"model-00002-of-00002.safetensors",
+									   @"model.safetensors.index.json" ];
+	XCTAssertEqualObjects(planned, expected);
+	XCTAssertFalse([plan fileAtPath:@"model-00002-of-00002.safetensors"].optional, @"a shard the index names is required");
+
+	XCTestExpectation *done = [self expectationWithDescription:@"download"];
+	[self.hub downloadModelSource:source progressHandler:nil completionHandler:^(NSURL *localURL, NSError *downloadError) {
+		XCTAssertNil(downloadError);
+		[done fulfill];
+	}];
+	[self waitForExpectations:@[ done ] timeout:20];
+	NSURL *shard = [self.hub localURLForRepo:NFKTestRepo revision:nil path:@"model-00002-of-00002.safetensors"];
+	XCTAssertEqualObjects([NSData dataWithContentsOfURL:shard], [self.weights subdataWithRange:NSMakeRange(0, 64)]);
+	XCTAssertEqual([self.hub downloadStatusForModelSource:source].presence, NFKDownloadPresenceComplete);
+
+	NFKRemovalPlan *removal = [self.hub removalPlanForModelSource:source error:&error];
+	NSArray<NSString *> *removed = [removal.removedFiles valueForKey:@"path"];
+	XCTAssertTrue([removed containsObject:@"org/model/main/model-00001-of-00002.safetensors"], @"%@", removed);
+	XCTAssertTrue([removed containsObject:@"org/model/main/model-00002-of-00002.safetensors"], @"%@", removed);
+}
+
+- (void)testACachedIndexWithoutItsShardsIsNotComplete
+{
+	NFKModelSource *source = [self serveAShardedRelease];
+	XCTestExpectation *done = [self expectationWithDescription:@"download"];
+	[self.hub downloadModelSource:source progressHandler:nil completionHandler:^(NSURL *localURL, NSError *error) {
+		XCTAssertNil(error);
+		[done fulfill];
+	}];
+	[self waitForExpectations:@[ done ] timeout:20];
+	NSURL *shard = [self.hub localURLForRepo:NFKTestRepo revision:nil path:@"model-00001-of-00002.safetensors"];
+	XCTAssertTrue([NSFileManager.defaultManager removeItemAtURL:shard error:NULL]);
+
+	NFKDownloadStatus *status = [self.hub downloadStatusForModelSource:source];
+	XCTAssertEqual(status.presence, NFKDownloadPresencePartial);
+	NSArray<NSString *> *missing = @[ @"model-00001-of-00002.safetensors" ];
+	XCTAssertEqualObjects(status.missingPaths, missing);
+	NFKDownloadPlan *plan = [self.hub planDownloadOfModelSource:source error:NULL];
+	XCTAssertEqual(plan.remainingByteCount, (long long)self.weights.length, @"only the missing shard is fetched");
+}
+
+- (void)testAnIndexNamingAShardTheRepositoryLacksIsRefused
+{
+	NSData *index = [@"{\"weight_map\": {\"a\": \"model-00001-of-00002.safetensors\"}}" dataUsingEncoding:NSUTF8StringEncoding];
+	[NFKStubHubProtocol serveRepo:NFKTestRepo revision:@"main"
+							files:@{ @"config.json": self.config, @"model.safetensors.index.json": index } lfsPaths:[NSSet set]];
+	NFKModelFile *indexFile = [[NFKModelFile alloc] initWithPath:@"model.safetensors.index.json" byteCount:nil sha256:nil
+															 role:NFKModelFileRoleWeights optional:YES extensions:nil];
+	NFKModelSource *source = [self sourceWithFiles:@[ [NFKModelFile fileWithPath:@"config.json" role:NFKModelFileRoleConfig],
+													  indexFile ] requiresConversion:NO];
+	NSError *error = nil;
+	XCTAssertNil([self.hub planDownloadOfModelSource:source error:&error]);
+	XCTAssertEqual(error.code, NFKDownloadErrorNotFound);
+	XCTAssertTrue([error.localizedDescription containsString:@"model-00001-of-00002.safetensors"], @"%@", error);
+}
+
 - (void)testASourceThatRequiresConversionIsRefused
 {
 	NFKModelSource *source = [self sourceWithFiles:@[] requiresConversion:YES];
