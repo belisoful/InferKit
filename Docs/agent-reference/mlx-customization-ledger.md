@@ -44,22 +44,22 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 60 |
+| `ships` | 61 |
 | `trainable`, no recipe yet | 42 |
 | `offline` | 40 |
 | `uncertain` | 0 |
 | `untrainable` | 13 |
 | Shared infrastructure, no objective of its own | 1 |
-| Total rows | 156 |
+| Total rows | 157 |
 
 A row that rules on two parts or sizes of one model, such as `trainable (T3) / offline (HiFT)` or
 `ships at 2B and 4B, offline at 27B`, counts under its first outcome.
 
-The model entries become 156 rows because a few entries take one ruling for several symbols: the
+The model entries become 157 rows because a few entries take one ruling for several symbols: the
 generation pipelines share a row, the schedulers share a row, and Gemma's parameter-free adapters
 share a row.
 
-Sixty rows ship a recipe and 42 models are trainable with none written. That is the size of
+Sixty-one rows ship a recipe and 42 models are trainable with none written. That is the size of
 the work the rule creates.
 
 The largest single finding: **the detector losses are published and portable.** ultralytics ships
@@ -365,7 +365,7 @@ unimplemented; a later DC-Gen commit that implements it reopens the row.
 These are `trainable` on the architecture and the entry's own prose. The level is settled and the
 reference's optimizer, rate, and loss weights are not, which item 3 and item 5 of the minimum shipped
 set both need: `NFKMLXU2Net`, `NFKMLXBiRefNet`, `NFKMLXRVM`, `NFKMLXMODNet`, `NFKMLXBiSeNetV2`,
-`NFKMLXPose`, `NFKMLXVitPose`, `NFKMLXNAFNet`.
+`NFKMLXPose`, `NFKMLXVitPose`.
 
 ## Corrections this triage found
 

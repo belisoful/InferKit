@@ -985,7 +985,7 @@ models.
   with clipping, gradient accumulation, half precision, validation, early stop, and checkpoints that
   resume with the optimizer's state. `NFKMLXLoRA` adapts attention blocks and merges the result back
   into plain weights. `NFKMLXEmbeddingProbe` trains a classifier over frozen CLIP or SigLIP 2
-  embeddings. Forty-one models ship a recipe, and [model parity](model-parity.md) ("Training objectives
+  embeddings. Sixty-one models ship a recipe, and [model parity](model-parity.md) ("Training objectives
   and the checkpoint path") lists each recipe's measured objective. The Whisper objective is not
   measured against a reference. A fine-tuned file loads through the model's ordinary factory.
 - **`NFKMLXDiffusionBackend`** — a bring-your-own MLX diffusion model, for the iterative-sampler
