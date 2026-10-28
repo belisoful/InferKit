@@ -11,6 +11,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitAppleSwift (companion)
 
+#### The Vision document and smudge readers bound their waits
+
+- `NFKVisionDocumentBackend` and `NFKVisionSmudgeBackend` take a `responseTimeout`, 60 seconds by default.
+  A Vision request that has not answered by then is cancelled and reported as
+  `kNFKError_InferenceBackendFailure`. Before, a request that never answered held the calling thread
+  for the life of the process. No wait in the package is now unbounded.
+
 #### The speech analyzer takes its locale from a request
 
 - `NFKSpeechAnalyzerBackend` reads the language to transcribe from `NFKParameterSourceLanguage`, a locale

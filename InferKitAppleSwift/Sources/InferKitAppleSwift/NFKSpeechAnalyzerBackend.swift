@@ -143,8 +143,8 @@ public final class NFKSpeechAnalyzerBackend: NSObject, NFKInferenceBackend {
             }
             semaphore.signal()
         }
-        try Self.wait(semaphore, seconds: assetInstallTimeout, cancelling: task, code: .error_InferenceNotReady,
-                      reason: "the speech assets for \(locale.identifier) did not install")
+        try NFKAppleWait.wait(semaphore, seconds: assetInstallTimeout, cancelling: task, code: .error_InferenceNotReady,
+                              reason: "the speech assets for \(locale.identifier) did not install")
         _ = try outcome.value()
         lock.withLock { _ = preparedLocales.insert(locale.identifier) }
     }
@@ -168,19 +168,9 @@ public final class NFKSpeechAnalyzerBackend: NSObject, NFKInferenceBackend {
             }
             semaphore.signal()
         }
-        try Self.wait(semaphore, seconds: transcriptionTimeout, cancelling: task, code: .error_InferenceBackendFailure,
-                      reason: "the speech analyzer did not finish")
+        try NFKAppleWait.wait(semaphore, seconds: transcriptionTimeout, cancelling: task,
+                              code: .error_InferenceBackendFailure, reason: "the speech analyzer did not finish")
         return try outcome.value()
-    }
-
-    /// Bounds a wait on the analyzer: a stalled asset download or analysis would otherwise hang the calling
-    /// thread for the life of the process. Reaching the deadline cancels the task and reports `code`.
-    static func wait(_ semaphore: DispatchSemaphore, seconds: TimeInterval, cancelling task: Task<Void, Never>?,
-                     code: NFKInferenceError, reason: String) throws {
-        if semaphore.wait(timeout: .now() + seconds) == .timedOut {
-            task?.cancel()
-            throw error(code, "\(reason) within \(Int(seconds)) seconds")
-        }
     }
 
     // MARK: Transcribing
@@ -238,6 +228,21 @@ public final class NFKSpeechAnalyzerBackend: NSObject, NFKInferenceBackend {
         NSError(domain: NFKInferenceErrorDomain,
                 code: code.rawValue,
                 userInfo: [NSLocalizedDescriptionKey: reason])
+    }
+}
+
+/// Bounds a synchronous caller's wait on an asynchronous framework. A framework that stalls, or does not
+/// answer at all, would otherwise hang the calling thread for the life of the process.
+enum NFKAppleWait {
+    /// Waits up to `seconds` for `semaphore`. Reaching the deadline cancels `task` and throws `code` with
+    /// `reason`.
+    static func wait(_ semaphore: DispatchSemaphore, seconds: TimeInterval, cancelling task: Task<Void, Never>?,
+                     code: NFKInferenceError, reason: String) throws {
+        if semaphore.wait(timeout: .now() + seconds) == .timedOut {
+            task?.cancel()
+            throw NSError(domain: NFKInferenceErrorDomain, code: code.rawValue,
+                          userInfo: [NSLocalizedDescriptionKey: "\(reason) within \(Int(seconds)) seconds"])
+        }
     }
 }
 

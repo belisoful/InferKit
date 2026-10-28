@@ -24,6 +24,10 @@ import Vision
 @objc(NFKVisionDocumentBackend)
 public final class NFKVisionDocumentBackend: NSObject, NFKInferenceBackend {
 
+    /// How long a request waits for Vision, in seconds. Reaching it is reported as
+    /// `kNFKError_InferenceBackendFailure`. Default 60. Introduced in InferKit 0.4.0.
+    @objc public var responseTimeout: TimeInterval = 60
+
     @objc public override init() {
         super.init()
     }
@@ -45,7 +49,7 @@ public final class NFKVisionDocumentBackend: NSObject, NFKInferenceBackend {
 
         let outcome = NFKAppleOutcome<NFKInferenceResult>()
         let semaphore = DispatchSemaphore(value: 0)
-        Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             do {
                 let observations = try await RecognizeDocumentsRequest().perform(on: image)
                 outcome.succeed(Self.result(for: observations))
@@ -54,7 +58,8 @@ public final class NFKVisionDocumentBackend: NSObject, NFKInferenceBackend {
             }
             semaphore.signal()
         }
-        semaphore.wait()
+        try NFKAppleWait.wait(semaphore, seconds: responseTimeout, cancelling: task,
+                              code: .error_InferenceBackendFailure, reason: "Vision did not finish reading the document")
         return try outcome.value()
     }
 

@@ -70,6 +70,25 @@ final class NFKAppleSwiftBackendTests: XCTestCase {
 
     // MARK: The smudge reader
 
+    // Each Vision request waits up to its responseTimeout; a deadline of 0 is reached before Vision answers.
+    func testEveryVisionWaitHasADeadline() throws {
+        let plate = try image(width: 64, height: 64)
+        let request = NFKInferenceRequest(inputs: [NFKInputImage: plate])
+        let document = NFKVisionDocumentBackend()
+        let smudge = NFKVisionSmudgeBackend()
+        XCTAssertEqual(document.responseTimeout, 60)
+        XCTAssertEqual(smudge.responseTimeout, 60)
+        document.responseTimeout = 0
+        smudge.responseTimeout = 0
+        for backend in [document, smudge] as [any NFKInferenceBackend] {
+            XCTAssertThrowsError(try backend.runInference(for: request), backend.backendIdentifier) { error in
+                XCTAssertEqual((error as NSError).code, NFKInferenceError.error_InferenceBackendFailure.rawValue)
+                XCTAssertTrue((error as NSError).localizedDescription.contains("within 0 seconds"),
+                              (error as NSError).localizedDescription)
+            }
+        }
+    }
+
     func testACleanRenderIsNotJudgedSmudged() throws {
         let sharp = try image(width: 320, height: 240) { context in
             context.setFillColor(red: 0, green: 0, blue: 0, alpha: 1)
@@ -139,8 +158,8 @@ final class NFKAppleSwiftBackendTests: XCTestCase {
         XCTAssertEqual(backend.assetInstallTimeout, 600)
         XCTAssertEqual(backend.transcriptionTimeout, 600)
         let stalled = Task<Void, Never>.detached { try? await Task.sleep(nanoseconds: 60_000_000_000) }
-        XCTAssertThrowsError(try NFKSpeechAnalyzerBackend.wait(DispatchSemaphore(value: 0), seconds: 0.05,
-                                                               cancelling: stalled, code: .error_InferenceNotReady,
+        XCTAssertThrowsError(try NFKAppleWait.wait(DispatchSemaphore(value: 0), seconds: 0.05,
+                                                    cancelling: stalled, code: .error_InferenceNotReady,
                                                                reason: "the assets did not install")) { error in
             XCTAssertEqual((error as NSError).code, NFKInferenceError.error_InferenceNotReady.rawValue)
             XCTAssertTrue((error as NSError).localizedDescription.contains("within 0 seconds"),
@@ -150,7 +169,7 @@ final class NFKAppleSwiftBackendTests: XCTestCase {
         // A semaphore freed below its starting value traps in libdispatch, so it starts at 0 and is signalled.
         let answered = DispatchSemaphore(value: 0)
         answered.signal()
-        XCTAssertNoThrow(try NFKSpeechAnalyzerBackend.wait(answered, seconds: 0.05, cancelling: nil,
+        XCTAssertNoThrow(try NFKAppleWait.wait(answered, seconds: 0.05, cancelling: nil,
                                                            code: .error_InferenceBackendFailure, reason: "unused"))
     }
 

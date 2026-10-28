@@ -37,7 +37,14 @@ host, at macOS 26 / iOS 26, and every type it adds is `@objc`.
   locale already installed costs a nil install request. `isReady` answers for the default locale. Both
   waits are bounded, as the package rule requires: `assetInstallTimeout` (600 s, `NotReady`) on the
   install, which is a download the first time a request names a locale, and `transcriptionTimeout`
-  (600 s, `BackendFailure`) on the analysis. Reaching either cancels the detached task. Its
+  (600 s, `BackendFailure`) on the analysis. Reaching either cancels the detached task.
+- **No wait in the package is unbounded (2026-10-28).** `NFKAppleWait.wait(_:seconds:cancelling:code:reason:)`,
+  beside `NFKAppleOutcome`, bounds a synchronous caller's wait, cancels the detached task when the
+  deadline passes, and reports it. The analyzer and both Swift Vision backends use it:
+  `NFKVisionDocumentBackend` and `NFKVisionSmudgeBackend` each take a `responseTimeout` (60 s,
+  `BackendFailure`). The translator keeps its own `responseTimeout` wait, which reports `NotReady`.
+  `testEveryVisionWaitHasADeadline` sets a deadline of 0 and expects it reported, since Vision cannot
+  answer before the wait starts. Its
   descriptor option has the analyzer's own title and help through the engine table's
   `optionDescriptions`, because the shared description is the translator's.
 - The Swift Vision API performs with `try await request.perform(on: cgImage)`, so each backend hops a
