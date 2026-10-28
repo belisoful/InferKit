@@ -105,6 +105,7 @@ NSString * const NFKOutputLanguage			= @"language";
 NSString * const NFKOutputMIDI				= @"midi";
 NSString * const NFKOutputBeats				= @"beats";
 NSString * const NFKOutputTempo				= @"tempo";
+NSString * const NFKOutputMesh				= @"mesh";
 NSString * const NFKOutputReasoning			= @"reasoning";
 NSString * const NFKOutputAnswers			= @"answers";
 NSString * const NFKOutputUsage				= @"usage";

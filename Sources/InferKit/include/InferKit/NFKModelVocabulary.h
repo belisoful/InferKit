@@ -72,6 +72,8 @@ extern NSString * const NFKModelValueTypeWords;
 extern NSString * const NFKModelValueTypeMIDI;
 /*! The beats of a track (NSArray of NFKMusicBeat). Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelValueTypeBeats;
+/*! A triangle mesh (NFKMesh). Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelValueTypeMesh;
 /*! Typed questions for a decision model (NSDictionary of NFKDecisionQuestion). Introduced in
 	InferKit 0.4.0. */
 extern NSString * const NFKModelValueTypeQuestions;
@@ -161,6 +163,8 @@ extern NSString * const NFKModelTaskMusicGeneration;
 extern NSString * const NFKModelTaskMusicTranscription;
 /*! The beats and sections of a track. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelTaskMusicStructure;
+/*! Making a 3D object from one image. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKModelTaskImageTo3D;
 
 #pragma mark Engines
 

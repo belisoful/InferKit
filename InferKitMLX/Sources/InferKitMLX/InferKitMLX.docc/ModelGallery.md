@@ -53,6 +53,15 @@ configuration preset behind each registered name, and a construction line to cop
 
 Each writes its result under `NFKOutputImage`.
 
+### Image → 3D object
+
+`NFKMLXTripoSR` reconstructs an object from one image and emits an `NFKMesh` under `NFKOutputMesh`:
+positions, triangles, and a color per vertex, written as OBJ, PLY, or GLB.
+
+| Model | Name | Task |
+| --- | --- | --- |
+| ``NFKMLXTripoSR`` | `triposr` | single-image 3D reconstruction (vertex-colored mesh) |
+
 ### Image → map
 
 `NFKMLXDepthAnything`, `NFKMLXDepthAnything3`, and `NFKMLXMarigold` emit a grayscale depth map, and

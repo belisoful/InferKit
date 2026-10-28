@@ -397,6 +397,14 @@ models.
   hands Swift callers the six-channel Plücker ray map beside its confidence. At reference parity against
   the authors' `depth_anything_3` package, with every released tensor loaded; the released safetensors
   loads directly (`depth-anything-3-small` / `-base` / `-large`, `NFKMLXDepth3Variant`).
+- **`NFKMLXTripoSR`** — TripoSR, a reconstructor of a textured object from one image: a DINO ViT-B/16
+  image tokenizer, a 16-block transformer that turns a learned bank of triplane tokens into three
+  feature planes by cross-attending to the image, a transposed-convolution upsampler, and a 9-layer
+  MLP that reads density and color from the planes. The backend returns an `NFKMesh` under
+  `NFKOutputMesh` (marching cubes over the density grid, the decoder's color at each vertex), which
+  writes itself as OBJ, PLY, or GLB. The release's `model.ckpt` loads directly; the grid resolution,
+  the density threshold, the foreground framing of an image with alpha, and the vertex colors are
+  request parameters (`NFKMLXTripoSRParameterKey`).
 - **`NFKMLXU2Net`** — a real single-forward background remover: the U²-Net nested-U saliency network
   in MLXNN, run through the matting backend (plate → foreground + alpha cutout). Full `u2net` + light `u2netp`.
 - **`NFKMLXBiRefNet`** — high-resolution background removal (MIT): a Swin-v1-L backbone, a neck that

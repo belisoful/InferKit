@@ -12,6 +12,7 @@
 #import <InferKit/NFKVideoAsset.h>
 #import <InferKit/NFKImageCoding.h>
 #import <InferKit/NFKMIDISequence.h>
+#import <InferKit/NFKMesh.h>
 #import <InferKit/NFKDecisionQuestion.h>
 #import <InferKit/NFKErrors.h>
 #import <AVFoundation/AVFoundation.h>
@@ -149,6 +150,9 @@ static NSString * _Nullable NFKValueCodingSingular(NSString *valueType)
 	if ([valueType isEqualToString:NFKModelValueTypeMIDI]) {
 		return [NFKMIDISequence sequenceWithContentsOfURL:url error:error];
 	}
+	if ([valueType isEqualToString:NFKModelValueTypeMesh]) {
+		return [NFKMesh meshWithContentsOfURL:url error:error];
+	}
 	NSData *data = [NSData dataWithContentsOfURL:url options:0 error:error];
 	if (data == nil) {
 		return nil;
@@ -275,6 +279,10 @@ static NSString * _Nullable NFKValueCodingSingular(NSString *valueType)
 	}
 	if ([valueType isEqualToString:NFKModelValueTypeMIDI]) {
 		return [JSONValue isKindOfClass:NSDictionary.class] ? [self valueObjectTagged:@"midiSequence" entry:JSONValue valueType:valueType error:error]
+															 : NFKValueCodingFail(error, valueType, @"the JSON is not an object");
+	}
+	if ([valueType isEqualToString:NFKModelValueTypeMesh]) {
+		return [JSONValue isKindOfClass:NSDictionary.class] ? [self valueObjectTagged:@"mesh" entry:JSONValue valueType:valueType error:error]
 															 : NFKValueCodingFail(error, valueType, @"the JSON is not an object");
 	}
 	if ([valueType isEqualToString:NFKModelValueTypeQuestions] || [valueType isEqualToString:NFKModelValueTypeAnswers]) {

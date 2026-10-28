@@ -22,7 +22,7 @@ enum NFKMLXCatalogImage {
     /// The image models' entries, in the order ``NFKMLXModelDescriptors`` lists them.
     static var entries: [NFKMLXCatalogEntry] {
         upscalers + restorers + colorizers + stylizers + depthEstimators + segmenters + matters
-            + promptSegmenters + detectors + poseEstimators + embedders + readers + generators
+            + promptSegmenters + detectors + poseEstimators + embedders + readers + generators + reconstructors
     }
 
     /// Registers the image models that have a factory and no registry name, under the names their entries
@@ -1629,6 +1629,32 @@ enum NFKMLXCatalogImage {
     }
 
     // MARK: - Image generation
+
+    // MARK: - 3D reconstruction
+
+    static var reconstructors: [NFKMLXCatalogEntry] {
+        [model(NFKMLXTripoSR.modelName, "TripoSR", family: "triposr",
+               summary: "A reconstructor of a textured object from one image.",
+               tasks: [NFKModelTaskImageTo3D],
+               inputs: [imageInput("The object to reconstruct, on a plain background. An image with alpha is cropped to its foreground and framed on gray.")],
+               outputs: [.output(NFKOutputMesh, required: true, title: "Mesh",
+                                 help: "The object as a triangle mesh with vertex colors, in a cube of half-side 0.87.")],
+               parameters: [
+                   .option(NFKMLXTripoSRParameterKey.resolution, kind: NFKModelOptionKindInteger, title: "Resolution",
+                           help: "The side of the marching-cubes grid. Memory and time grow with its cube.",
+                           defaultValue: 256, minimum: 16, maximum: 512, step: 16),
+                   .option(NFKMLXTripoSRParameterKey.threshold, kind: NFKModelOptionKindNumber, title: "Density threshold",
+                           help: "The density the surface is drawn at.", defaultValue: 25, minimum: 0),
+                   .option(NFKMLXTripoSRParameterKey.foregroundRatio, kind: NFKModelOptionKindNumber, title: "Foreground ratio",
+                           help: "The share of the side the object fills when the image carries alpha.",
+                           defaultValue: 0.85, minimum: 0.05, maximum: 1),
+                   .option(NFKMLXTripoSRParameterKey.vertexColors, kind: NFKModelOptionKindBoolean, title: "Vertex colors",
+                           help: "Color each vertex from the decoder.", defaultValue: true),
+               ],
+               license: .mit(url: "https://github.com/VAST-AI-Research/TripoSR/blob/main/LICENSE"),
+               source: hubFile("stabilityai/TripoSR", "model.ckpt", revision: "5b521936b01fbe1890f6f9baed0254ab6351c04a",
+                               requiresConversion: false))]
+    }
 
     static var generators: [NFKMLXCatalogEntry] {
         stableDiffusionEntries + sd3Entries + fluxEntries + flux2Entries + [fluxControlNet, sd3ControlNet]

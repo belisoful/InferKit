@@ -331,6 +331,12 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
     for modules a load adds. A test that needs a non-degenerate output from random weights compares an
     unclamped quantity: RVM's recurrence test reads the foreground with the alpha.
 
+- **A quantization group size other than 32, 64, or 128 kills the process (2026-10-28).** MLX's
+  `quantize` aborts with "The requested group size 16 is not supported" through its fatal error handler;
+  nothing throws. `NFKMLXQuantization.quantize` passes the group size through, so a factory that takes
+  `NFKModelLoadOptionQuantizationGroupSize` validates it first and throws
+  `NFKMLXError.unsupportedConfiguration`, as `NFKMLXTripoSR.network` does. The same bound applies to a tiny
+  test configuration: a backbone a group size does not divide is skipped, one narrower than 32 cannot pack at all.
 - **A tensor addressed to an absent optional module kills the process.** `Module.update(parameters:)`
   ignores a key the module does not declare, but a key under an optional `@ModuleInfo` that is nil
   reaches the item `.none`, whose case falls to `default` and throws `incompatibleItems`; the

@@ -366,7 +366,8 @@ the "Model gallery" section of `Docs/examples.md`). Exhaustive per-model forward
   `mlx-models-language.md`, `mlx-models-gemma.md`, `mlx-models-vision-language.md`, `mlx-models-translation.md`,
   `mlx-models-speech-recognition.md`, `mlx-models-text-to-speech.md`,
   `mlx-models-source-separation.md`, `mlx-models-speech-restoration.md`,
-  `mlx-models-audio-codecs-music.md`, `mlx-models-music-transcription-structure.md`.
+  `mlx-models-audio-codecs-music.md`, `mlx-models-music-transcription-structure.md`,
+  `mlx-models-3d-reconstruction.md`.
 - InferKitFoundationModels: `foundation-models-companion.md`,
   `xcode27-foundation-models-and-neural-accelerators.md`.
 - InferKitAppleSwift: covered by `apple-framework-backends.md`, which holds every Apple-framework

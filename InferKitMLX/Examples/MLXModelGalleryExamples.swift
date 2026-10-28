@@ -85,6 +85,19 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertNotNil(hinted.output(forKey: NFKOutputImage), "a hinted colorization")
     }
 
+    // MARK: 3D reconstruction (image → mesh)
+
+    func testReconstructionModels() throws {
+        try requireMLXRuntime()
+        let triposr = try NFKMLXTripoSR.backend(weightsURL: nil)
+        XCTAssertEqual(triposr.backendIdentifier, "triposr")
+        // A coarse grid keeps the random-weight run short; the release defaults to 256.
+        let request = NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(64)],
+                                          parameters: [NFKMLXTripoSRParameterKey.resolution: 16])
+        let result = try triposr.runInference(for: request)
+        XCTAssertNotNil(result.mesh, "a mesh with vertex colors under NFKOutputMesh")
+    }
+
     // MARK: Depth (image → grayscale depth)
 
     func testDepthModels() throws {

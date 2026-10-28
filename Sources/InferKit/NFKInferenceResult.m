@@ -6,6 +6,7 @@
 #import "NFKInferenceResult.h"
 #import "NFKInferenceKeys.h"
 #import "NFKMIDISequence.h"
+#import "NFKMesh.h"
 #import "NFK_ARC.h"
 
 @implementation NFKInferenceResult
@@ -93,6 +94,12 @@
 {
 	id value = _outputs[NFKOutputBeats];
 	return [value isKindOfClass:NSArray.class] ? value : nil;
+}
+
+- (nullable NFKMesh *)mesh
+{
+	id value = _outputs[NFKOutputMesh];
+	return [value isKindOfClass:NFKMesh.class] ? value : nil;
 }
 
 - (nullable NSDictionary<NSString *, NFKDecisionAnswer *> *)answers

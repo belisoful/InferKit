@@ -11,6 +11,7 @@
 #import <InferKit/NFKKeypoint.h>
 #import <InferKit/NFKMIDINote.h>
 #import <InferKit/NFKMIDISequence.h>
+#import <InferKit/NFKMesh.h>
 #import <InferKit/NFKMusicBeat.h>
 #import <InferKit/NFKQuadrilateral.h>
 
@@ -19,6 +20,19 @@
 static NSString * const NFKWireValueTag = @"$nfk";
 
 #pragma mark - Writing
+
+/*! A mesh's JSON object: its counts and attribute flags, with its binary PLY base64 under "ply" when
+	inline is set. The file form writes the PLY beside the object instead and names it under "path". */
+NSDictionary *NFKWireMeshJSON(NFKMesh *mesh, BOOL inlineBytes)
+{
+	NSMutableDictionary *entry = [@{ NFKWireValueTag: @"mesh", @"vertexCount": @(mesh.vertexCount), @"faceCount": @(mesh.faceCount),
+									 @"normals": @(mesh.normals != nil), @"colors": @(mesh.colors != nil),
+									 @"textureCoordinates": @(mesh.textureCoordinates != nil) } mutableCopy];
+	if (inlineBytes) {
+		entry[@"ply"] = [mesh.PLYData base64EncodedStringWithOptions:0];
+	}
+	return entry;
+}
 
 static id NFKWireFigure(double value)
 {
@@ -151,6 +165,9 @@ NSDictionary<NSString *, id> * _Nullable NFKWireJSONForValueObject(id value)
 				  @"beatsPerBar": @(sequence.beatsPerBar), @"beatUnit": @(sequence.beatUnit),
 				  @"ticksPerQuarterNote": @(sequence.ticksPerQuarterNote), @"durationSeconds": NFKWireFigure(sequence.durationSeconds) };
 	}
+	if ([value isKindOfClass:NFKMesh.class]) {
+		return NFKWireMeshJSON(value, YES);
+	}
 	if ([value isKindOfClass:NFKMusicBeat.class]) {
 		NFKMusicBeat *beat = value;
 		return @{ NFKWireValueTag: @"musicBeat", @"timeSeconds": NFKWireFigure(beat.timeSeconds),
@@ -181,7 +198,7 @@ BOOL NFKWireIsValueObjectTag(NSString *tag)
 	static dispatch_once_t once;
 	dispatch_once(&once, ^{
 		tags = [NSSet setWithArray:@[ @"detection", @"keypoint", @"classification", @"audioSegment", @"midiNote",
-									  @"midiSequence", @"musicBeat", @"quadrilateral", @"decisionAnswer" ]];
+									  @"midiSequence", @"musicBeat", @"quadrilateral", @"decisionAnswer", @"mesh" ]];
 	});
 	return [tags containsObject:tag];
 }
@@ -357,6 +374,16 @@ id _Nullable NFKWireValueObjectFromJSON(NSString *tag, NSDictionary<NSString *, 
 										  beatsPerBar:NFKWireOptionalInteger(entry[@"beatsPerBar"], 4)
 											 beatUnit:NFKWireOptionalInteger(entry[@"beatUnit"], 4)
 								  ticksPerQuarterNote:NFKWireOptionalInteger(entry[@"ticksPerQuarterNote"], 480)];
+	}
+	if ([tag isEqualToString:@"mesh"]) {
+		NSString *encoded = [entry[@"ply"] isKindOfClass:NSString.class] ? entry[@"ply"] : nil;
+		NSData *ply = encoded != nil ? [[NSData alloc] initWithBase64EncodedString:encoded options:0] : nil;
+		if (ply == nil) {
+			return NFKWireFail(outReason, @"a mesh needs its PLY bytes under ply");
+		}
+		NSError *readError = nil;
+		NFKMesh *mesh = [NFKMesh meshWithPLYData:ply error:&readError];
+		return mesh ?: NFKWireFail(outReason, readError.localizedDescription ?: @"a mesh's PLY bytes are malformed");
 	}
 	if ([tag isEqualToString:@"musicBeat"]) {
 		double time = 0;

@@ -34,6 +34,10 @@ NSDictionary<NSString *, id> * _Nullable NFKWireJSONForValueObject(id value);
 /*! Whether tag names one of the value classes NFKWireJSONForValueObject writes. */
 BOOL NFKWireIsValueObjectTag(NSString *tag);
 
+@class NFKMesh;
+/*! A mesh's JSON object, with its PLY bytes inline when `inlineBytes` is set (see NFKWireJSONForValueObject). */
+NSDictionary *NFKWireMeshJSON(NFKMesh *mesh, BOOL inlineBytes);
+
 /*! The value an entry of a value-class tag describes, or nil with a reason when a required field is
 	missing or of the wrong type. */
 id _Nullable NFKWireValueObjectFromJSON(NSString *tag, NSDictionary<NSString *, id> *entry, NSString * _Nullable * _Nullable outReason);

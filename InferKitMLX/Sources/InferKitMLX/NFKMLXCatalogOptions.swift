@@ -246,6 +246,10 @@ struct NFKMLXLoadProfile {
         "siglip2": [.imageModule(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionBFloat16],
                                  tasks: [NFKModelTaskImageEmbedding])],
         "stable-diffusion": [.imageModule(property: "precision", halvesSteps: true, tasks: [NFKModelTaskTextToImage])],
+        // The float32 release converts to bfloat16 where asked, and its linear layers pack to 2 to 8 bits.
+        "triposr": [NFKMLXLoadProfile(tasks: [NFKModelTaskImageTo3D],
+                                      precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionBFloat16],
+                                      defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true)],
         "flux": [.diffusionPipeline()],
         // The text encoder and umT5 widen to float32 where the budget holds them.
         "flux2": [.diffusionPipeline(widenedStages: ["text_encoder": NFKModelPrecisionFloat32])],

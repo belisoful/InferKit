@@ -20,9 +20,11 @@ NS_ASSUME_NONNULL_BEGIN
 				object tagged under "$nfk": images, pixel buffers, and textures; PCM buffers; audio, video,
 				and other files; Core ML multi-arrays; packed float arrays; and InferKit's value classes
 				(NFKDetection, NFKKeypoint, NFKClassification, NFKAudioSegment, NFKMIDISequence,
-				NFKMIDINote, NFKMusicBeat, NFKQuadrilateral, NFKDecisionAnswer, NFKDecisionQuestion, tool
-				results, and tool invocations). The value classes are written as JSON objects of their
-				fields. A value the form does not carry fails the encode, naming its key and class.
+				NFKMIDINote, NFKMusicBeat, NFKMesh, NFKQuadrilateral, NFKDecisionAnswer,
+				NFKDecisionQuestion, tool results, and tool invocations). The value classes are written
+				as JSON objects of their fields; a mesh's object carries its counts and its binary PLY as
+				base64 under "ply". A value the form does not carry fails the encode, naming its key and
+				class.
 
 				Two forms:
 				- init → the inline form. Every value's bytes travel inside the JSON, base64 where they are
@@ -36,6 +38,7 @@ NS_ASSUME_NONNULL_BEGIN
 				  - a PCM buffer → a WAV of 16- or 32-bit integer or 32- or 64-bit float samples;
 				  - an audio, video, or other file → that file, copied in when it lies outside;
 				  - an NFKMIDISequence → its JSON object, beside a Standard MIDI File of it;
+				  - an NFKMesh → its JSON object naming a binary PLY of it in place of the base64;
 				  - data, a float array, or a multi-array above inlineByteLimit → a .bin, or a NumPy .npy.
 				  Files are named after their key, such as "image.png" and "image-2.png". Decoding reads
 				  them in place and refuses an absolute path or one that leaves the directory.
@@ -61,7 +64,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, copy, nullable) NSURL *directoryURL;
 
 /*! The largest data, float array, or multi-array the file form keeps in the JSON, in bytes. Defaults to
-	65536. Images, PCM buffers, files, and MIDI sequences are written to files whatever their size.
+	65536. Images, PCM buffers, files, MIDI sequences, and meshes are written to files whatever their size.
 	Introduced in InferKit 0.4.0. */
 @property (nonatomic, assign) NSUInteger inlineByteLimit;
 
@@ -105,6 +108,7 @@ NS_ASSUME_NONNULL_BEGIN
 				- number, integer, boolean → the file's text read as one.
 				- embedding → a vector .npy of floats, as an array of numbers.
 				- midi → an NFKMIDISequence read from a Standard MIDI File.
+				- mesh → an NFKMesh read from an OBJ, PLY, or GLB file.
 				Any other type takes JSON only. A file that is not of the type fails with
 				kNFKError_InferenceUnsupported in NFKInferenceErrorDomain. Introduced in InferKit 0.4.0.
 */
@@ -120,7 +124,7 @@ NS_ASSUME_NONNULL_BEGIN
 				- embedding → an array of numbers.
 				- detections, keypoints, classifications, segments, words, beats → an array of the value
 				  class, each from the JSON object of its fields; midi → an NFKMIDISequence from its
-				  object.
+				  object; mesh → an NFKMesh from its object's "ply" bytes.
 				- questions → NFKDecisionQuestion values from their dictionaries, by name; answers →
 				  NFKDecisionAnswer values from their objects, by name.
 				- messages, json, structured, tool-calls → the JSON as it is.

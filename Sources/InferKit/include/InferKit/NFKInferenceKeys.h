@@ -354,6 +354,10 @@ extern NSString * const NFKOutputBeats;
     InferKit 0.4.0. */
 extern NSString * const NFKOutputTempo;
 
+/*! A generated object (NFKMesh), for a 3D-generation backend that turns an image or a prompt into a
+    triangle mesh. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKOutputMesh;
+
 /*! A decision model's typed answers (NSDictionary of NFKDecisionAnswer keyed as NFKInputQuestions
 	was), for a backend that judges a state rather than generating text. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKOutputAnswers;

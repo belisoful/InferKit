@@ -58,6 +58,12 @@ entry is listed so it is a known gap rather than an implied API.
 | BiSeNet V1 | `NFKMLXBiSeNet` | `NFKMLXBiSeNetNet` | `NFKMLXBiSeNetConfiguration.base` (ResNet-18 context path); `network(weightsURL:configuration:)` for a custom head | `bisenet` | `let backend = try NFKMLXBiSeNet.backend(weightsURL: url)`<br>`[NFKMLXBiSeNet backendWithWeightsURL:url error:&error]`<br>custom classes: `try NFKMLXBiSeNet.network(weightsURL: url, configuration: NFKMLXBiSeNetConfiguration(classCount: 4))` | `NFKMLXModuleBackend` |
 | BiSeNet V2 | `NFKMLXBiSeNetV2` | `NFKMLXBiSeNetV2Net` | fixed geometry (older pixel-shuffle head) | `bisenet-v2` | `let backend = try NFKMLXBiSeNetV2.backend(weightsURL: url)`<br>`[NFKMLXBiSeNetV2 backendWithWeightsURL:url error:&error]` | `NFKMLXModuleBackend` |
 
+## Image to 3D
+
+| Model | Entry class | Network | Configuration for the released weights | Registered name | Copy-and-paste (Swift · Objective-C) | Base backend |
+| --- | --- | --- | --- | --- | --- | --- |
+| TripoSR | `NFKMLXTripoSR` | `NFKMLXTripoSRNet` | `NFKMLXTripoSRConfiguration.released`; `network(weightsURL:configuration:)` builds it | `triposr` | `let backend = try NFKMLXTripoSR.backend(weightsURL: url)`<br>`[NFKMLXTripoSR backendWithWeightsURL:url error:&error]`<br>the result's `mesh` (`NFKMesh`) under `NFKOutputMesh`; `NFKMLXTripoSRParameterKey.resolution` / `.threshold` / `.foregroundRatio` / `.vertexColors` | `NFKMLXTripoSRBackend` |
+
 ## Matting, segmentation, and faces
 
 | Model | Entry class | Network | Configuration for the released weights | Registered name | Copy-and-paste (Swift · Objective-C) | Base backend |

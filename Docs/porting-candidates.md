@@ -382,7 +382,7 @@ networks, and TRELLIS.2 loads TRELLIS's sparse-structure decoder unchanged.
 
 | Model | Vendor | Download | License | Reuses or needs | Revision |
 |-------|--------|----------|---------|-----------------|----------|
-| **TripoSR** | Stability AI and Tripo | 1.68 GB, one checkpoint | MIT | DINO ViT-B/16 image tokenizer, a 16-layer transformer over 3×32×32 triplane tokens with cross-attention, a transposed-convolution upsampler, a 9-layer NeRF MLP, marching cubes. Vertex colors, no UV texture. The reference runs on the CPU | `5b521936` |
+| **TripoSR** — **SHIPPED** (`NFKMLXTripoSR`, 2026-10-28, at reference parity) | Stability AI and Tripo | 1.68 GB, one checkpoint | MIT | DINO ViT-B/16 image tokenizer, a 16-layer transformer over 3×32×32 triplane tokens with cross-attention, a transposed-convolution upsampler, a 9-layer NeRF MLP, marching cubes. Vertex colors, no UV texture. The reference runs on the CPU | `5b521936` |
 | **Stable Fast 3D** | Stability AI | 4.02 GB, one checkpoint; gated=auto | Stability Community (free under $1M revenue) | TripoSR's triplane lineage with a larger transformer, marching tetrahedra, material and illumination heads (the material head reads OpenCLIP features), a box-projection UV unwrapper, and a texture baker. The reference supports MPS with Metal baking kernels and runs in about 6 GB | `f0c9a8ff` |
 | **SPAR3D** | Stability AI | 7.33 GB, one checkpoint; gated=auto | Stability Community | Stable Fast 3D conditioned on a point cloud that a point-diffusion stage samples from the image. The point cloud is editable before meshing | `5699918c` |
 | **TRELLIS image-large** | Microsoft | 3.3 GB repo; 2.66 GB for the mesh path, plus DINOv2 ViT-L/14 with registers (1.22 GB, Apache-2.0) | MIT | Stage 1: a 24-block flow transformer over a dense 16³ latent, decoded by a Conv3d VAE to a 64³ occupancy grid. Stage 2: a 24-block flow transformer over the occupied voxels with sparse-convolution input and output blocks. Decoders: sparse Swin transformers to a mesh (FlexiCubes), to 3D Gaussians, and to a radiance field. 25 Euler steps a stage | `25e0d31f` |
@@ -479,8 +479,8 @@ entry either derives the objective from the paper or rules the path out in writi
 
 ### Order
 
-1. **TripoSR.** The smallest permissive model. It forces the core mesh type, marching cubes, and the
-   writers, which every later port uses.
+1. **TripoSR.** Shipped: `NFKMLXTripoSR`, with the core `NFKMesh`, marching cubes, and the OBJ, PLY, and
+   GLB writers every later port uses.
 2. **Stable Fast 3D**, once the gate is accepted. It reuses TripoSR's lineage, adds UV-textured PBR
    output, and its reference already runs on Apple GPUs.
 3. **TRELLIS image-large and text.** The sparse-voxel infrastructure and the first generative 3D model,

@@ -147,7 +147,12 @@ def tree(repo, revision):
         for entry in entries:
             if entry.get("type") == "file":
                 lfs = entry.get("lfs") or {}
-                files[entry["path"]] = (int(entry.get("size") or lfs.get("size") or 0), lfs.get("oid"))
+                # The Hub masks an LFS checksum it will not disclose to the caller as a run of asterisks
+                # (seen on unauthenticated listings in October 2026); an unknown checksum stays nil.
+                oid = lfs.get("oid")
+                if oid is not None and set(oid) == {"*"}:
+                    oid = None
+                files[entry["path"]] = (int(entry.get("size") or lfs.get("size") or 0), oid)
         url = None
         for part in (headers.get("Link") or "").split(","):
             if 'rel="next"' in part:

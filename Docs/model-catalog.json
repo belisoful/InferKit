@@ -8819,16 +8819,14 @@
                 "optional" : false,
                 "path" : "vae/diffusion_pytorch_model.safetensors",
                 "repository" : "black-forest-labs/FLUX.1-dev",
-                "role" : "weights",
-                "sha256" : "****************************************************************"
+                "role" : "weights"
               },
               {
                 "bytes" : 246144352,
                 "optional" : false,
                 "path" : "text_encoder/model.safetensors",
                 "repository" : "black-forest-labs/FLUX.1-dev",
-                "role" : "weights",
-                "sha256" : "****************************************************************"
+                "role" : "weights"
               },
               {
                 "optional" : true,
@@ -8876,8 +8874,7 @@
                 "optional" : false,
                 "path" : "tokenizer_2/spiece.model",
                 "repository" : "black-forest-labs/FLUX.1-dev",
-                "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "role" : "tokenizer"
               }
             ],
             "kind" : "huggingface",
@@ -9082,15 +9079,13 @@
                 "bytes" : 167666902,
                 "optional" : false,
                 "path" : "vae/diffusion_pytorch_model.safetensors",
-                "role" : "weights",
-                "sha256" : "****************************************************************"
+                "role" : "weights"
               },
               {
                 "bytes" : 246144352,
                 "optional" : false,
                 "path" : "text_encoder/model.safetensors",
-                "role" : "weights",
-                "sha256" : "****************************************************************"
+                "role" : "weights"
               },
               {
                 "optional" : true,
@@ -9131,8 +9126,7 @@
                 "bytes" : 791656,
                 "optional" : false,
                 "path" : "tokenizer_2/spiece.model",
-                "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "role" : "tokenizer"
               }
             ],
             "kind" : "huggingface",
@@ -9338,15 +9332,13 @@
                 "bytes" : 167666902,
                 "optional" : false,
                 "path" : "vae/diffusion_pytorch_model.safetensors",
-                "role" : "weights",
-                "sha256" : "****************************************************************"
+                "role" : "weights"
               },
               {
                 "bytes" : 246144352,
                 "optional" : false,
                 "path" : "text_encoder/model.safetensors",
-                "role" : "weights",
-                "sha256" : "****************************************************************"
+                "role" : "weights"
               },
               {
                 "optional" : true,
@@ -9387,8 +9379,7 @@
                 "bytes" : 791656,
                 "optional" : false,
                 "path" : "tokenizer_2/spiece.model",
-                "role" : "tokenizer",
-                "sha256" : "****************************************************************"
+                "role" : "tokenizer"
               }
             ],
             "kind" : "huggingface",
@@ -18742,17 +18733,17 @@
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 4077031424,
+                "residentBytes" : 4077031424
               },
               "memoryByVariant" : {
                 "hy-mt1.5-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 4077031424,
+                  "residentBytes" : 4077031424
                 },
                 "hy-mt1.5-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 16059080704,
+                  "residentBytes" : 16059080704
                 }
               },
               "title" : "Resident",
@@ -18760,17 +18751,17 @@
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 1182700544,
+                "residentBytes" : 1182700544
               },
               "memoryByVariant" : {
                 "hy-mt1.5-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 1182700544,
+                  "residentBytes" : 1182700544
                 },
                 "hy-mt1.5-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 2972345344,
+                  "residentBytes" : 2972345344
                 }
               },
               "title" : "Streamed",
@@ -18789,17 +18780,17 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 4077031424,
+                "residentBytes" : 4077031424
               },
               "memoryByVariant" : {
                 "hy-mt1.5-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 4077031424,
+                  "residentBytes" : 4077031424
                 },
                 "hy-mt1.5-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 16059080704,
+                  "residentBytes" : 16059080704
                 }
               },
               "title" : "As published",
@@ -18807,17 +18798,17 @@
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 8154062848,
+                "residentBytes" : 8154062848
               },
               "memoryByVariant" : {
                 "hy-mt1.5-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 8154062848,
+                  "residentBytes" : 8154062848
                 },
                 "hy-mt1.5-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 32118161408,
+                  "residentBytes" : 32118161408
                 }
               },
               "title" : "Float32",
@@ -18836,17 +18827,17 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 4077031424,
+                "residentBytes" : 4077031424
               },
               "memoryByVariant" : {
                 "hy-mt1.5-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 4077031424,
+                  "residentBytes" : 4077031424
                 },
                 "hy-mt1.5-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 16059080704,
+                  "residentBytes" : 16059080704
                 }
               },
               "title" : "None",
@@ -18854,17 +18845,17 @@
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 2398025984,
+                "residentBytes" : 2398025984
               },
               "memoryByVariant" : {
                 "hy-mt1.5-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 2398025984,
+                  "residentBytes" : 2398025984
                 },
                 "hy-mt1.5-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 9023805184,
+                  "residentBytes" : 9023805184
                 }
               },
               "title" : "8-bit",
@@ -18872,17 +18863,17 @@
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 1950291200,
+                "residentBytes" : 1950291200
               },
               "memoryByVariant" : {
                 "hy-mt1.5-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 1950291200,
+                  "residentBytes" : 1950291200
                 },
                 "hy-mt1.5-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 7147731712,
+                  "residentBytes" : 7147731712
                 }
               },
               "title" : "6-bit",
@@ -18890,17 +18881,17 @@
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 1726423808,
+                "residentBytes" : 1726423808
               },
               "memoryByVariant" : {
                 "hy-mt1.5-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 1726423808,
+                  "residentBytes" : 1726423808
                 },
                 "hy-mt1.5-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 6209694976,
+                  "residentBytes" : 6209694976
                 }
               },
               "title" : "5-bit",
@@ -18908,17 +18899,17 @@
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 1502556416,
+                "residentBytes" : 1502556416
               },
               "memoryByVariant" : {
                 "hy-mt1.5-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 1502556416,
+                  "residentBytes" : 1502556416
                 },
                 "hy-mt1.5-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 5271658240,
+                  "residentBytes" : 5271658240
                 }
               },
               "title" : "4-bit",
@@ -18926,17 +18917,17 @@
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 1278689024,
+                "residentBytes" : 1278689024
               },
               "memoryByVariant" : {
                 "hy-mt1.5-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 1278689024,
+                  "residentBytes" : 1278689024
                 },
                 "hy-mt1.5-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 4333621504,
+                  "residentBytes" : 4333621504
                 }
               },
               "title" : "3-bit",
@@ -18944,17 +18935,17 @@
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 1054821632,
+                "residentBytes" : 1054821632
               },
               "memoryByVariant" : {
                 "hy-mt1.5-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 1054821632,
+                  "residentBytes" : 1054821632
                 },
                 "hy-mt1.5-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 3395584768,
+                  "residentBytes" : 3395584768
                 }
               },
               "title" : "2-bit",
@@ -18995,6 +18986,7 @@
       ],
       "registryName" : "hy-mt1.5",
       "requirements" : {
+        "minimumMemoryBytes" : 9593015116,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -19013,27 +19005,65 @@
       "variants" : [
         {
           "displayName" : "HY-MT1.5 1.8B",
+          "downloadBytes" : 4086767449,
           "id" : "hy-mt1.5-1.8b",
           "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 4077031424,
+                  "checkpoint" : 4077031424,
+                  "float32" : 8154062848
+                },
+                "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 96477696,
+                  "checkpoint" : 96477696,
+                  "float32" : 192955392
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 3087286272,
+                  "checkpoint" : 3087286272,
+                  "float32" : 6174572544
+                },
+                "layerCount" : 32,
+                "quantizableElements" : 1790939136,
+                "title" : "decoder"
+              }
+            ],
+            "vocabularySize" : 120818
+          },
+          "minimumMemoryBytes" : 9593015116,
+          "parameterCount" : 2038515712,
+          "peakBytes" : 4077031424,
+          "precision" : "bfloat16",
           "registryName" : "hy-mt1.5",
+          "residentBytes" : 4077031424,
           "source" : {
             "files" : [
               {
+                "bytes" : 1342,
                 "optional" : false,
                 "path" : "config.json",
                 "role" : "config"
               },
               {
+                "bytes" : 9527287,
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 165815,
                 "optional" : false,
                 "path" : "tokenizer_config.json",
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 221,
                 "optional" : true,
                 "path" : "generation_config.json",
                 "role" : "config"
@@ -19044,45 +19074,88 @@
                 "role" : "weights"
               },
               {
+                "bytes" : 4077072784,
                 "optional" : true,
                 "path" : "model.safetensors",
-                "role" : "weights"
+                "role" : "weights",
+                "sha256" : "07736f560253d8c991616060fb2d855420957c268fa7d32fa8593df2f83b21ab"
               }
             ],
             "kind" : "huggingface",
             "layout" : "directory",
+            "measuredRevision" : "dbad03788f49709801014c95d481a514c272ca52",
             "repository" : "tencent/HY-MT1.5-1.8B",
             "requiresConversion" : false
           }
         },
         {
           "displayName" : "HY-MT1.5 7B",
+          "downloadBytes" : 16075579564,
           "id" : "hy-mt1.5-7b",
           "isDefault" : false,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 16059080704,
+                  "checkpoint" : 16059080704,
+                  "float32" : 32118161408
+                },
+                "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 436224512,
+                  "checkpoint" : 436224512,
+                  "float32" : 872449024
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 13959184384,
+                  "checkpoint" : 13959184384,
+                  "float32" : 27918368768
+                },
+                "layerCount" : 32,
+                "quantizableElements" : 7504293888,
+                "title" : "decoder"
+              }
+            ],
+            "vocabularySize" : 128167
+          },
+          "minimumMemoryBytes" : 23945938824,
+          "parameterCount" : 8029540352,
+          "peakBytes" : 16059080704,
+          "precision" : "bfloat16",
           "registryName" : "hy-mt1.5",
+          "residentBytes" : 16059080704,
           "source" : {
             "files" : [
               {
+                "bytes" : 1349,
                 "optional" : false,
                 "path" : "config.json",
                 "role" : "config"
               },
               {
+                "bytes" : 16388221,
                 "optional" : false,
                 "path" : "tokenizer.json",
-                "role" : "tokenizer"
+                "role" : "tokenizer",
+                "sha256" : "4185389a69284fdd3ebf737c6120bbeee36cbed9763151fa5bac5986a39e05d4"
               },
               {
+                "bytes" : 37763,
                 "optional" : false,
                 "path" : "tokenizer_config.json",
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 217,
                 "optional" : true,
                 "path" : "generation_config.json",
                 "role" : "config"
               },
               {
+                "bytes" : 29790,
                 "optional" : true,
                 "path" : "model.safetensors.index.json",
                 "role" : "weights"
@@ -19095,6 +19168,7 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
+            "measuredRevision" : "397085d46158ad0b437ffd74228499e8c2a35c76",
             "repository" : "tencent/HY-MT1.5-7B",
             "requiresConversion" : false
           }
@@ -19193,17 +19267,17 @@
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 4077031424,
+                "residentBytes" : 4077031424
               },
               "memoryByVariant" : {
                 "hy-mt2-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 4077031424,
+                  "residentBytes" : 4077031424
                 },
                 "hy-mt2-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 16059080704,
+                  "residentBytes" : 16059080704
                 }
               },
               "title" : "Resident",
@@ -19211,17 +19285,17 @@
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 1182700544,
+                "residentBytes" : 1182700544
               },
               "memoryByVariant" : {
                 "hy-mt2-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 1182700544,
+                  "residentBytes" : 1182700544
                 },
                 "hy-mt2-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 2972345344,
+                  "residentBytes" : 2972345344
                 }
               },
               "title" : "Streamed",
@@ -19240,17 +19314,17 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 4077031424,
+                "residentBytes" : 4077031424
               },
               "memoryByVariant" : {
                 "hy-mt2-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 4077031424,
+                  "residentBytes" : 4077031424
                 },
                 "hy-mt2-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 16059080704,
+                  "residentBytes" : 16059080704
                 }
               },
               "title" : "As published",
@@ -19258,17 +19332,17 @@
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 8154062848,
+                "residentBytes" : 8154062848
               },
               "memoryByVariant" : {
                 "hy-mt2-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 8154062848,
+                  "residentBytes" : 8154062848
                 },
                 "hy-mt2-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 32118161408,
+                  "residentBytes" : 32118161408
                 }
               },
               "title" : "Float32",
@@ -19287,17 +19361,17 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 4077031424,
+                "residentBytes" : 4077031424
               },
               "memoryByVariant" : {
                 "hy-mt2-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 4077031424,
+                  "residentBytes" : 4077031424
                 },
                 "hy-mt2-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 16059080704,
+                  "residentBytes" : 16059080704
                 }
               },
               "title" : "None",
@@ -19305,17 +19379,17 @@
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 2398025984,
+                "residentBytes" : 2398025984
               },
               "memoryByVariant" : {
                 "hy-mt2-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 2398025984,
+                  "residentBytes" : 2398025984
                 },
                 "hy-mt2-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 9023805184,
+                  "residentBytes" : 9023805184
                 }
               },
               "title" : "8-bit",
@@ -19323,17 +19397,17 @@
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 1950291200,
+                "residentBytes" : 1950291200
               },
               "memoryByVariant" : {
                 "hy-mt2-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 1950291200,
+                  "residentBytes" : 1950291200
                 },
                 "hy-mt2-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 7147731712,
+                  "residentBytes" : 7147731712
                 }
               },
               "title" : "6-bit",
@@ -19341,17 +19415,17 @@
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 1726423808,
+                "residentBytes" : 1726423808
               },
               "memoryByVariant" : {
                 "hy-mt2-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 1726423808,
+                  "residentBytes" : 1726423808
                 },
                 "hy-mt2-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 6209694976,
+                  "residentBytes" : 6209694976
                 }
               },
               "title" : "5-bit",
@@ -19359,17 +19433,17 @@
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 1502556416,
+                "residentBytes" : 1502556416
               },
               "memoryByVariant" : {
                 "hy-mt2-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 1502556416,
+                  "residentBytes" : 1502556416
                 },
                 "hy-mt2-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 5271658240,
+                  "residentBytes" : 5271658240
                 }
               },
               "title" : "4-bit",
@@ -19377,17 +19451,17 @@
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 1278689024,
+                "residentBytes" : 1278689024
               },
               "memoryByVariant" : {
                 "hy-mt2-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 1278689024,
+                  "residentBytes" : 1278689024
                 },
                 "hy-mt2-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 4333621504,
+                  "residentBytes" : 4333621504
                 }
               },
               "title" : "3-bit",
@@ -19395,17 +19469,17 @@
             },
             {
               "memory" : {
-                "peakBytes" : 0,
-                "residentBytes" : 0
+                "peakBytes" : 1054821632,
+                "residentBytes" : 1054821632
               },
               "memoryByVariant" : {
                 "hy-mt2-1.8b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 1054821632,
+                  "residentBytes" : 1054821632
                 },
                 "hy-mt2-7b" : {
-                  "peakBytes" : 0,
-                  "residentBytes" : 0
+                  "peakBytes" : 3395584768,
+                  "residentBytes" : 3395584768
                 }
               },
               "title" : "2-bit",
@@ -19446,6 +19520,7 @@
       ],
       "registryName" : "hy-mt2",
       "requirements" : {
+        "minimumMemoryBytes" : 9593015116,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -19464,27 +19539,65 @@
       "variants" : [
         {
           "displayName" : "Hy-MT2 1.8B",
+          "downloadBytes" : 4086767455,
           "id" : "hy-mt2-1.8b",
           "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 4077031424,
+                  "checkpoint" : 4077031424,
+                  "float32" : 8154062848
+                },
+                "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 96477696,
+                  "checkpoint" : 96477696,
+                  "float32" : 192955392
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 3087286272,
+                  "checkpoint" : 3087286272,
+                  "float32" : 6174572544
+                },
+                "layerCount" : 32,
+                "quantizableElements" : 1790939136,
+                "title" : "decoder"
+              }
+            ],
+            "vocabularySize" : 120818
+          },
+          "minimumMemoryBytes" : 9593015116,
+          "parameterCount" : 2038515712,
+          "peakBytes" : 4077031424,
+          "precision" : "bfloat16",
           "registryName" : "hy-mt2",
+          "residentBytes" : 4077031424,
           "source" : {
             "files" : [
               {
+                "bytes" : 1348,
                 "optional" : false,
                 "path" : "config.json",
                 "role" : "config"
               },
               {
+                "bytes" : 9527287,
                 "optional" : false,
                 "path" : "tokenizer.json",
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 165815,
                 "optional" : false,
                 "path" : "tokenizer_config.json",
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 221,
                 "optional" : true,
                 "path" : "generation_config.json",
                 "role" : "config"
@@ -19495,45 +19608,88 @@
                 "role" : "weights"
               },
               {
+                "bytes" : 4077072784,
                 "optional" : true,
                 "path" : "model.safetensors",
-                "role" : "weights"
+                "role" : "weights",
+                "sha256" : "29e9117a44c79f81857613601968ff482d8a23c2d6736a1710bba9e5ca4762e5"
               }
             ],
             "kind" : "huggingface",
             "layout" : "directory",
+            "measuredRevision" : "9a341cd1b679d3efd23b46e847b01745a71ed792",
             "repository" : "tencent/Hy-MT2-1.8B",
             "requiresConversion" : false
           }
         },
         {
           "displayName" : "Hy-MT2 7B",
+          "downloadBytes" : 16075579596,
           "id" : "hy-mt2-7b",
           "isDefault" : false,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 16059080704,
+                  "checkpoint" : 16059080704,
+                  "float32" : 32118161408
+                },
+                "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 436224512,
+                  "checkpoint" : 436224512,
+                  "float32" : 872449024
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 13959184384,
+                  "checkpoint" : 13959184384,
+                  "float32" : 27918368768
+                },
+                "layerCount" : 32,
+                "quantizableElements" : 7504293888,
+                "title" : "decoder"
+              }
+            ],
+            "vocabularySize" : 128167
+          },
+          "minimumMemoryBytes" : 23945938824,
+          "parameterCount" : 8029540352,
+          "peakBytes" : 16059080704,
+          "precision" : "bfloat16",
           "registryName" : "hy-mt2",
+          "residentBytes" : 16059080704,
           "source" : {
             "files" : [
               {
+                "bytes" : 1349,
                 "optional" : false,
                 "path" : "config.json",
                 "role" : "config"
               },
               {
+                "bytes" : 16388221,
                 "optional" : false,
                 "path" : "tokenizer.json",
-                "role" : "tokenizer"
+                "role" : "tokenizer",
+                "sha256" : "4185389a69284fdd3ebf737c6120bbeee36cbed9763151fa5bac5986a39e05d4"
               },
               {
+                "bytes" : 37763,
                 "optional" : false,
                 "path" : "tokenizer_config.json",
                 "role" : "tokenizer"
               },
               {
+                "bytes" : 217,
                 "optional" : true,
                 "path" : "generation_config.json",
                 "role" : "config"
               },
               {
+                "bytes" : 29790,
                 "optional" : true,
                 "path" : "model.safetensors.index.json",
                 "role" : "weights"
@@ -19546,6 +19702,7 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
+            "measuredRevision" : "9b0eb4e8f001def3e5ff6469a0ac96fdb39ec223",
             "repository" : "tencent/Hy-MT2-7B",
             "requiresConversion" : false
           }
@@ -25419,7 +25576,7 @@
             ],
             "kind" : "huggingface",
             "layout" : "directory",
-            "measuredRevision" : "fbdf52fbaaca799592917417eb05f1899f1255ec",
+            "measuredRevision" : "1b525ccb685ae809f33027c51c351eeb5833cf72",
             "repository" : "MiniMaxAI/MiniMax-Music3",
             "requiresConversion" : false
           }
@@ -27652,8 +27809,7 @@
                 "bytes" : 5465642136,
                 "optional" : false,
                 "path" : "model.safetensors",
-                "role" : "weights",
-                "sha256" : "****************************************************************"
+                "role" : "weights"
               }
             ],
             "kind" : "huggingface",
@@ -27772,8 +27928,7 @@
                 "bytes" : 411888600,
                 "optional" : false,
                 "path" : "model.safetensors",
-                "role" : "weights",
-                "sha256" : "****************************************************************"
+                "role" : "weights"
               }
             ],
             "kind" : "huggingface",
@@ -61773,6 +61928,240 @@
             "measuredRevision" : "7d10f0b72f89a2d0f268cea30727d8b77c0d25c2",
             "repository" : "google/translategemma-27b-it",
             "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "TripoSR",
+      "engine" : "mlx",
+      "family" : "triposr",
+      "id" : "triposr",
+      "inputModalities" : [
+        "image"
+      ],
+      "inputs" : [
+        {
+          "help" : "The object to reconstruct, on a plain background. An image with alpha is cropped to its foreground and framed on gray.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Image",
+          "valueType" : "image"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "MIT",
+        "name" : "MIT License",
+        "restrictsCommercialUse" : false,
+        "url" : "https://github.com/VAST-AI-Research/TripoSR/blob/main/LICENSE"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits"
+      },
+      "options" : [
+        {
+          "default" : 256,
+          "help" : "The side of the marching-cubes grid. Memory and time grow with its cube.",
+          "key" : "NFKMLXParameterMeshResolution",
+          "kind" : "integer",
+          "maximum" : 512,
+          "minimum" : 16,
+          "stage" : "request",
+          "step" : 16,
+          "title" : "Resolution"
+        },
+        {
+          "default" : 25,
+          "help" : "The density the surface is drawn at.",
+          "key" : "NFKMLXParameterDensityThreshold",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Density threshold"
+        },
+        {
+          "default" : 0.84999999999999998,
+          "help" : "The share of the side the object fills when the image carries alpha.",
+          "key" : "NFKMLXParameterForegroundRatio",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0.050000000000000003,
+          "stage" : "request",
+          "title" : "Foreground ratio"
+        },
+        {
+          "default" : true,
+          "help" : "Color each vertex from the decoder.",
+          "key" : "NFKMLXParameterVertexColors",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Vertex colors"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 1677246742,
+                "residentBytes" : 1677246742
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1677246742,
+                "residentBytes" : 1677246742
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 1677246742,
+                "residentBytes" : 1677246742
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1677246742,
+                "residentBytes" : 1677246742
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1677246742,
+                "residentBytes" : 1677246742
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1677246742,
+                "residentBytes" : 1677246742
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1677246742,
+                "residentBytes" : 1677246742
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1677246742,
+                "residentBytes" : 1677246742
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1677246742,
+                "residentBytes" : 1677246742
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "mesh"
+      ],
+      "outputs" : [
+        {
+          "help" : "The object as a triangle mesh with vertex colors, in a cube of half-side 0.87.",
+          "key" : "mesh",
+          "required" : true,
+          "title" : "Mesh",
+          "valueType" : "mesh"
+        }
+      ],
+      "registryName" : "triposr",
+      "requirements" : {
+        "minimumMemoryBytes" : 3946462923,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident"
+      ],
+      "standIn" : false,
+      "summary" : "A reconstructor of a textured object from one image.",
+      "tasks" : [
+        "image-to-3d"
+      ],
+      "variants" : [
+        {
+          "displayName" : "TripoSR",
+          "downloadBytes" : 1677246742,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 1677246742
+                },
+                "id" : "model",
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 3946462923,
+          "peakBytes" : 1677246742,
+          "registryName" : "triposr",
+          "residentBytes" : 1677246742,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 1677246742,
+                "optional" : false,
+                "path" : "model.ckpt",
+                "role" : "weights",
+                "sha256" : "429e2c6b22a0923967459de24d67f05962b235f79cde6b032aa7ed2ffcd970ee"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "file",
+            "repository" : "stabilityai/TripoSR",
+            "requiresConversion" : false,
+            "revision" : "5b521936b01fbe1890f6f9baed0254ab6351c04a"
           }
         }
       ]

@@ -21,6 +21,7 @@ See also the [inference guide](inference-guide.md) for the concepts behind these
 - [Text → image and image → image](#text--image-and-image--image) — MLX Stable Diffusion
 - [Image → image](#image--image) — bring-your-own MLX, Core ML
 - [Image → image + mask](#image--image--mask) — matting
+- [Image → 3D object](#image--3d-object) — TripoSR, `NFKMesh`
 - [Many tensors in and out](#many-tensors-in-and-out)
 - [Diffusion: upscale, depth, inpaint](#diffusion-upscale-depth-inpaint) — bring-your-own MLX diffusion
 - [Text → video](#text--video) — LTX-Video and Wan, staged
@@ -60,6 +61,7 @@ the following cells; each links to its example.
 | text + image | image | `NFKMLXBackend` (image-to-image) | [Image → image](#text--image-and-image--image) |
 | image | image | `NFKMLXModuleBackend`, `NFKMLXRealESRGAN` (upscale), `NFKMLXDepthAnything` (depth), `NFKMLXNAFNet` (restore), `NFKCoreMLBackend` | [Image → image](#image--image) |
 | image (+ hint) | image + mask | `NFKMLXMattingBackend`, `NFKMLXU2Net` (bg removal), `NFKMLXSAM` (segment) | [Image → image + mask](#image--image--mask) |
+| image | mesh | `NFKMLXTripoSR` (one image to a 3D object) | [Image → 3D object](#image--3d-object) |
 | image + mask | image | `NFKMLXLaMa` (inpaint) | [LaMa inpainting](#lama-inpainting-mtimlxlama-a-shipped-mlx-model) |
 | image(s) | image(s) | `NFKMLXTensorBackend`, `NFKMLXRIFE` (frame interpolation), `NFKMLXRAFT` (optical flow) | [Many tensors](#many-tensors-in-and-out) |
 | image (+ mask) | image | `NFKMLXDiffusionBackend` (upscale, depth, inpaint) | [Diffusion](#diffusion-upscale-depth-inpaint) |
@@ -2221,6 +2223,40 @@ before the system terminates it, which is the ceiling that actually applies ther
 Every reading degrades rather than throwing: an unknown chip reports an empty name and zero counts, so
 a profile is still usable on a machine this was never run on.
 
+## Image → 3D object
+
+TripoSR (`NFKMLXTripoSR`) reconstructs an object from one image in a single forward and returns it as
+an `NFKMesh` under `NFKOutputMesh`: positions, triangle indices, and a color per vertex. The mesh is a
+core value type, so a consumer reads it, and writes it as OBJ, PLY, or GLB, without linking InferKitMLX.
+The release's `model.ckpt` loads directly.
+
+```swift
+let triposr = try NFKMLXTripoSR.backend(weightsURL: checkpointURL)
+let request = NFKInferenceRequest(inputs: [NFKInputImage: photo],
+                                  parameters: [NFKMLXTripoSRParameterKey.resolution: 256])
+let mesh = try triposr.runInference(for: request).mesh!
+try mesh.write(to: outputDirectory.appendingPathComponent("object.glb"))
+```
+
+<!-- objc-check: given NSURL *outputDirectory; -->
+```objc
+id<NFKInferenceBackend> triposr = [NFKMLXTripoSR backendWithWeightsURL:checkpointURL error:&error];
+NFKInferenceResult *result = [triposr runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputImage: (__bridge id)photo }] error:&error];
+NFKMesh *mesh = result.mesh;
+[mesh writeToURL:[outputDirectory URLByAppendingPathComponent:@"object.obj"] error:&error];
+```
+
+The model expects the object on a plain background. An image with alpha is prepared the way the
+reference demo prepares it: cropped to its foreground, framed so the object fills
+`NFKMLXTripoSRParameterKey.foregroundRatio` of a square (0.85), and composited on mid-gray; an opaque
+image is used as it is. `.resolution` is the side of the marching-cubes grid (256; its cube sets the
+time and memory of the surface pass), `.threshold` the density the surface is drawn at (25), and
+`.vertexColors` turns the per-vertex color off. Positions lie in a cube of half-side 0.87, y up.
+
+`NFKMesh` reads the three formats it writes (`meshWithContentsOfURL:error:`), exposes each attribute as a
+packed float32 array with typed accessors (`positionAtIndex:`, `colorAtIndex:`, `faceAtIndex:`), and
+crosses the plugin and server wire as its PLY bytes.
+
 ## Image → image + mask
 
 `NFKMLXMattingBackend` runs a bring-your-own MLX matting model (a keyer, a background remover). The
@@ -4231,6 +4267,9 @@ let faceRestore = try NFKMLXCodeFormer.backend(weightsURL: nil)                /
 
 // Depth (image → grayscale depth)
 let depth = try NFKMLXDepthAnything.backend(variant: .small, weightsURL: nil)  // "depth-anything-v2-small"
+
+// 3D reconstruction (image → NFKMesh under NFKOutputMesh)
+let triposr = try NFKMLXTripoSR.backend(weightsURL: nil)                      // "triposr"; .resolution / .threshold / .foregroundRatio / .vertexColors under NFKMLXTripoSRParameterKey
 
 // Matting (plate → foreground image + alpha under NFKOutputMask)
 let cutout   = try NFKMLXU2Net.backend(variant: .full, weightsURL: nil)        // "u2net"

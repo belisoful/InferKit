@@ -121,6 +121,15 @@ The figures have three limits:
 - ``NFKMLXStableDiffusionInpaint``
 - ``NFKMLXTAESD``
 
+### Image → 3D object
+
+- ``NFKMLXTripoSR``
+- ``NFKMLXTripoSRBackend``
+- ``NFKMLXTripoSRNet``
+- ``NFKMLXTripoSRConfiguration``
+- ``NFKMLXTripoSRParameterKey``
+- ``NFKMLXTripoSROptions``
+
 ### Image → map (depth & segmentation)
 
 - ``NFKMLXDepthAnything``

@@ -91,6 +91,7 @@ Demucs, and HT Demucs ship.
 | `NFKMLXBiSeNetV2` | trainable | head-retarget | internal | Same repository. Its four auxiliary heads the port neither builds nor loads, and the release's pixel-shuffle heads predate the repository's training code, which now interpolates; a recipe pins the older heads' code first. |
 | `NFKMLXDepthAnything` | ships | full | public | `metric_depth/train.py`'s fine-tune: SiLog within float32 rounding of the reference, every gradient at its float32 floor, over the released relative encoder at 5e-6 and a fresh Sigmoid × `max_depth` head at ten times the rate. The relative release's distillation recipe is not published. |
 | `NFKMLXDepthAnything3` | untrainable | — | internal | The repository at 3d835ec carries inference, benchmark, and streaming code only, with no loss and no training script. |
+| `NFKMLXTripoSR` | untrainable | — | public | The repository at 107cefd carries inference code only; the paper's rendering loss has no published training script to measure against. `network(weightsURL:configuration:)` is public for an offline recipe. |
 | `NFKMLXResNetBackbone` | n/a | — | internal | A shared backbone with no objective of its own. |
 
 ## Detection and pose

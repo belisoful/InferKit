@@ -5432,6 +5432,38 @@
         "IK_PARITY_SD35_LARGE_LAYERWISE": "records/sd35-large-layerwise.safetensors"
       },
       "note": "SD3.5-large in diffusers layout (Stability AI Community License, gated: HF_TOKEN must be set to fetch it), ~28 GB, for NFKMLXSD3StreamingTests. It lives in the InferKit tree on the InferKit Models volume; IK_VAL_SD35_LARGE stays on the four-block cut. Record (qwenimage env): the whole 8B transformer at float32 with each block read as its forward reaches it (the patch embedding, both streams after every block, and the velocity), `run_reference.py sd35_layerwise <validation root>/records/sd35-large-layerwise.safetensors --checkpoint <dir>`; `SD35_CHECK=1` on the cut requires a whole load to agree bit for bit. Keyed IK_PARITY_SD35_LARGE_LAYERWISE."
+    },
+    {
+      "key": "TRIPOSR",
+      "repo": "stabilityai/TripoSR",
+      "revision": "5b521936b01fbe1890f6f9baed0254ab6351c04a",
+      "directory": "triposr",
+      "files": [
+        "README.md",
+        "config.yaml",
+        "model.ckpt"
+      ],
+      "config": {
+        "IK_VAL_TRIPOSR": "",
+        "IK_PARITY_TRIPOSR": "triposr/triposr-reference.safetensors"
+      },
+      "note": "TripoSR (stabilityai/TripoSR, Stability AI and Tripo, MIT), 1.68 GB float32: one checkpoint holding the DINO ViT-B/16 image tokenizer, the triplane token bank, the backbone, the upsampler, and the decoder. `NFKMLXTripoSR` reads `model.ckpt` directly through the native torch reader, drops the pooler, and resizes the position embeddings to the 512-pixel grid at load. The parity record comes from `run_reference.py triposr --plate subject --size 320 --checkpoint <this directory>` under the `triposr` oracle environment, which reads the DINO_VITB16 release for the ViT configuration."
+    },
+    {
+      "key": "DINO_VITB16",
+      "repo": "facebook/dino-vitb16",
+      "revision": "f205d5d8e640a89a2b8ef0369670dfc37cc07fc2",
+      "directory": "dino-vitb16",
+      "files": [
+        "README.md",
+        "config.json",
+        "preprocessor_config.json",
+        "pytorch_model.bin"
+      ],
+      "config": {
+        "IK_VAL_DINO_VITB16": ""
+      },
+      "note": "DINO ViT-B/16 (facebook/dino-vitb16, Meta, Apache-2.0), 0.34 GB. The TripoSR oracle builds transformers' `ViTModel` from this `config.json` before the TripoSR checkpoint overwrites its weights. The port reads nothing from it: the TripoSR checkpoint carries the tokenizer's weights."
     }
   ],
   "oracle_environments": {
@@ -5900,6 +5932,14 @@
       "modes": [
         "open_jev_deberta",
         "open_jev_deberta_budget"
+      ]
+    },
+    "triposr": {
+      "interpreter": "~/.inferkit-validation/triposrvenv/bin/python3",
+      "why": "TripoSR's `tsr` package (IK_TRIPOSR_SRC, the repository at 107cefd under ~/.inferkit-validation/src/triposr-107cefd) needs omegaconf, einops, trimesh, and torchmcubes, which compiles against the installed torch and needs pybind11's CMake files on CMAKE_PREFIX_PATH. The script stubs the package's `rembg` and `imageio` imports, which the recorded path never calls. transformers stays below 5 (4.57.6 recorded): 5.x renames ViT's internals (`encoder.layer.N.attention.attention.query` becomes `layers.N.attention.q_proj`), so a 5.x `ViTModel` refuses the checkpoint's 4.x keys; 4.57 interpolates the position embeddings with `size=`, the form the port reproduces.",
+      "rebuild": "python3.12 -m venv ~/.inferkit-validation/triposrvenv && ~/.inferkit-validation/triposrvenv/bin/pip install torch torchvision 'transformers<5' omegaconf einops trimesh safetensors huggingface-hub pillow numpy 'pybind11[global]' scikit-build-core ninja cmake && CMAKE_PREFIX_PATH=\"$(~/.inferkit-validation/triposrvenv/bin/python3 -c 'import torch,pybind11;print(torch.utils.cmake_prefix_path+\";\"+pybind11.get_cmake_dir())')\" ~/.inferkit-validation/triposrvenv/bin/pip install --no-build-isolation 'git+https://github.com/tatsy/torchmcubes.git'",
+      "modes": [
+        "triposr"
       ]
     }
   },

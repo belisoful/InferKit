@@ -124,6 +124,12 @@ measured on float tensors sit at 1e-7.
 The Depth Anything map cosines near 0.998 are the recorded values for this family; its encoder seam at
 0.9999924 shows the transformer is exact and the residual is the DPT head's bilinear resampling.
 
+## Image → 3D
+
+| Model | Class | Reference | Weights | Measured |
+| --- | --- | --- | --- | --- |
+| TripoSR | `NFKMLXTripoSR` | VAST-AI-Research/TripoSR at 107cefd (`run_reference.py triposr`, the `triposr` environment) | released `model.ckpt` (float32) | preparation 1.0; conditioning 0.99999999999996; position embeddings 0.99999999999989; image tokens 0.9999999999940; scene codes 0.99999999999941; 32³ density 0.99999999997716; color 0.99999999999965; the 64³ mesh 10,328 faces on both sides, vertices 1.03e-5 of a cell apart; the ladder against the same record: scene codes 0.99992145 at the bfloat16 cast, 0.99184 at 4 bits |
+
 ## Matting, segmentation, and faces
 
 | Model | Class | Reference | Weights | Measured |

@@ -244,7 +244,8 @@ The loaders below read one release, or a model type no judge can tell apart, and
   (fixed geometry), DeepSeek V4 (one release per version, FP8 block scales), Pixtral, Phi-4-multimodal,
   Florence-2, Voxtral, Granite Speech, Qwen4-Exp, Qwen3.5, MADLAD-400 (`t5` with the gated-GELU fixed),
   the Qwen3-VL embedder and reranker, ModernBERT, DeBERTa and Open-Jev, Table Transformer, V-JEPA 2, SAM 3,
-  Sa2VA, ViTPose, and Seed-X (a `mistral` release prompted by its model card over 28 languages).
+  Sa2VA, ViTPose, Seed-X (a `mistral` release prompted by its model card over 28 languages), and TripoSR
+  (one release, whose geometry is a `config.yaml` with no `model_type`).
 - The diffusers pipelines state `_class_name`, not `model_type`, so no repository matches them by type.
 
 `testEveryStoredReleaseIsReadByItsOwnFamilysJudgment` judges each shipped release whose directory the

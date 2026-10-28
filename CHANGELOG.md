@@ -89,6 +89,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### A triangle mesh value type
+
+- `NFKMesh` is the core's triangle mesh: packed float32 positions, optional normals, vertex colors, and
+  texture coordinates, and uint32 triangle indices, with typed accessors per vertex and face. It writes
+  itself as a Wavefront OBJ, a binary PLY, or a glTF binary (GLB), and reads each of the three.
+- A 3D-generation backend returns one under `NFKOutputMesh`, which `NFKInferenceResult.mesh` reads. The
+  catalog names the value type `NFKModelValueTypeMesh` and the task `NFKModelTaskImageTo3D`.
+- On the wire, a mesh is a JSON object of its counts with its PLY bytes inline, or, in the file form,
+  beside the JSON as a `.ply`; `NFKValueCoding` reads a mesh from an OBJ, PLY, or GLB file.
+
 #### The resolver's Core ML and local-server entries declare their sampling
 
 - A Core ML language package's descriptor declares every parameter `NFKCoreMLLanguageBackend` reads, at
@@ -1749,6 +1759,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### TripoSR reconstructs an object from one image
+
+- `NFKMLXTripoSR` (`triposr`) is the toolkit's first 3D-generation model: a DINO ViT-B/16 image
+  tokenizer, a 16-block transformer that turns a learned bank of triplane tokens into three feature
+  planes by cross-attending to the image, a transposed-convolution upsampler, and a 9-layer MLP that
+  reads density and color from the planes. Marching cubes over the density grid gives the mesh and the
+  decoder colors its vertices; the result is an `NFKMesh` under `NFKOutputMesh`.
+- The release's `model.ckpt` loads directly. `NFKMLXTripoSRParameterKey` sets the grid resolution, the
+  density threshold, the foreground framing of an image with alpha (the reference demo's preparation),
+  and whether vertices are colored.
 
 #### A tool call whose arguments do not read is still a call
 

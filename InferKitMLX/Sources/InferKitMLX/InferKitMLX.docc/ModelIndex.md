@@ -171,6 +171,22 @@ let backend = try NFKMLXBiSeNetV2.backend(weightsURL: url)
 ```
 
 
+### Image to 3D
+
+| Model | Entry class | Network | Configuration for the released weights | Registered name | Base backend |
+| --- | --- | --- | --- | --- | --- |
+| TripoSR | ``NFKMLXTripoSR`` | ``NFKMLXTripoSRNet`` | `NFKMLXTripoSRConfiguration.released`; `network(weightsURL:configuration:)` builds it | `triposr` | ``NFKMLXTripoSRBackend`` |
+
+```swift
+let backend = try NFKMLXTripoSR.backend(weightsURL: url)
+let mesh = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: image])).mesh   // NFKMesh under NFKOutputMesh
+```
+
+```objc
+[NFKMLXTripoSR backendWithWeightsURL:url error:&error]
+// NFKMLXTripoSRParameterKey.resolution / .threshold / .foregroundRatio / .vertexColors set the grid, the surface, the framing, and the colors
+```
+
 ### Matting, segmentation, and faces
 
 

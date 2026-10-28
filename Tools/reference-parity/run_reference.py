@@ -26591,6 +26591,103 @@ def run_stable_audio_loss(image):
 MODELS["stable_audio_loss"] = run_stable_audio_loss
 
 
+def _triposr_model(checkpoint):
+    """`TSR.from_pretrained` on the release directory (`config.yaml` + `model.ckpt`), with the DINO ViT
+    configuration read from the local `facebook/dino-vitb16` copy IK_VAL_DINO_VITB16 names instead of the
+    Hub. The `tsr` package comes from IK_TRIPOSR_SRC (the repository at 107cefd); its `rembg` and
+    `imageio` imports are stubbed, since neither the background removal nor the video writer runs here."""
+    import importlib
+    import types
+    source = os.environ.get("IK_TRIPOSR_SRC") or os.path.join(VALIDATION_ROOT, "src", "triposr-107cefd")
+    if source not in sys.path:
+        sys.path.insert(0, source)
+    for name in ("rembg", "imageio"):
+        if name not in sys.modules:
+            try:
+                importlib.import_module(name)
+            except ImportError:
+                sys.modules[name] = types.ModuleType(name)
+    image_module = importlib.import_module("tsr.models.tokenizers.image")
+    dino = os.environ.get("IK_VAL_DINO_VITB16") or os.path.join(VALIDATION_ROOT, "dino-vitb16")
+
+    def local_download(repo_id, filename, **kwargs):
+        return os.path.join(dino, filename)
+
+    image_module.hf_hub_download = local_download
+    from tsr.system import TSR
+    directory = checkpoint if os.path.isdir(checkpoint) else os.path.dirname(checkpoint)
+    model = TSR.from_pretrained(directory, config_name="config.yaml", weight_name="model.ckpt")
+    model.renderer.set_chunk_size(8192)
+    return model.eval()
+
+
+def run_triposr(image, checkpoint):
+    """TripoSR end to end, seam by seam, on the subject plate given an alpha that cuts out its ellipse.
+
+    The record holds the demo's preparation (`resize_foreground` at 0.85, composited on mid-gray) as
+    `prepared`, the model's own antialiased resize to 512 as `conditioning`, the ViT's position embeddings
+    at that size, the image tokens, the backbone's tokens, the scene codes (the `output`, channels last),
+    the density and color on the 32³ marching-cubes grid, and the mesh `extract_mesh` draws at 64³.
+    """
+    from PIL import Image
+
+    torch.manual_seed(0)
+    model = _triposr_model(checkpoint)           # puts the `tsr` package on the path
+    from tsr.utils import resize_foreground, scale_tensor
+    height, width = image.shape[:2]
+    y, x = np.mgrid[0:height, 0:width].astype(np.float32)
+    inside = (((y - height / 2) / (height * 0.3)) ** 2 + ((x - width / 2) / (width * 0.22)) ** 2) <= 1.0
+    alpha = inside.astype(np.float32)
+    rgba = np.concatenate([image, alpha[..., None]], axis=-1)
+    pil = Image.fromarray((rgba * 255.0).astype(np.uint8))
+    framed = np.array(resize_foreground(pil, 0.85)).astype(np.float32) / 255.0
+    prepared = framed[:, :, :3] * framed[:, :, 3:4] + (1 - framed[:, :, 3:4]) * 0.5
+    prepared = prepared.astype(np.float32)
+
+    with torch.no_grad():
+        conditioning = model.image_processor(prepared, model.cfg.cond_image_size)       # [1, 512, 512, 3]
+        rgb_cond = conditioning[:, None]
+        vit = model.image_tokenizer.model
+        positions = vit.embeddings.interpolate_pos_encoding(
+            torch.zeros(1, (model.cfg.cond_image_size // vit.config.patch_size) ** 2 + 1, vit.config.hidden_size),
+            model.cfg.cond_image_size, model.cfg.cond_image_size)
+        image_tokens = model.image_tokenizer(rgb_cond.permute(0, 1, 4, 2, 3))          # [1, 1, 768, 1025]
+        image_tokens = image_tokens[:, 0].permute(0, 2, 1)                              # [1, 1025, 768]
+        tokens = model.backbone(model.tokenizer(1), encoder_hidden_states=image_tokens)  # [1, 1024, 3072]
+        scene_codes = model.post_processor(model.tokenizer.detokenize(tokens))           # [1, 3, 40, 64, 64]
+        direct = model([prepared], device="cpu")
+        assert torch.allclose(direct, scene_codes), "the staged forward differs from model.forward"
+
+        model.set_marching_cubes_resolution(32)
+        grid = scale_tensor(model.isosurface_helper.grid_vertices, model.isosurface_helper.points_range,
+                            (-model.renderer.cfg.radius, model.renderer.cfg.radius))
+        queried = model.renderer.query_triplane(model.decoder, grid, scene_codes[0])
+        density_32 = queried["density_act"][..., 0]
+        color_32 = queried["color"]
+        meshes = model.extract_mesh(scene_codes, False, resolution=64, threshold=25.0)
+
+    extra = {
+        "input_alpha": torch.from_numpy(alpha),
+        "prepared": torch.from_numpy(prepared),
+        "conditioning": conditioning[0],
+        "position_embeddings": positions[0],
+        "image_tokens": image_tokens[0],
+        "backbone_tokens": tokens[0].permute(1, 0),
+        "density_32": density_32.reshape(-1),
+        "color_32": color_32,
+        "mesh_resolution": torch.tensor([64.0]),
+    }
+    mesh = meshes[0]
+    if len(mesh.faces) > 0:
+        extra["mesh_vertices"] = torch.from_numpy(np.asarray(mesh.vertices, dtype=np.float32))
+        extra["mesh_faces"] = torch.from_numpy(np.asarray(mesh.faces, dtype=np.int64))
+    globals()["_extra"] = {k: v.detach().contiguous().clone() for k, v in extra.items()}
+    return scene_codes[0].permute(0, 2, 3, 1).contiguous()
+
+
+CHECKPOINT_MODELS["triposr"] = run_triposr
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("model", choices=sorted(MODELS) + sorted(CHECKPOINT_MODELS), help="which reference to run")
