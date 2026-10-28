@@ -215,6 +215,10 @@ extern NSString * const NFKParameterMotionScale;
 extern NSString * const NFKParameterSampleRate;
 /*! The output audio channel count (NSNumber), e.g. 1 for mono, 2 for stereo. */
 extern NSString * const NFKParameterChannelCount;
+/*! The voice a speech model speaks in (NSString): an identifier from the model's own voice list, which
+	its `voice` option's choices give where the model lists its voices. A remote speech service takes
+	its own voice name. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKParameterVoice;
 
 /*! The language the input is in (NSString, a BCP-47 tag such as "en", "de", or "pt-BR"). Absent
 	means the engine detects it, which every translator here can do. Introduced in InferKit 0.4.0. */

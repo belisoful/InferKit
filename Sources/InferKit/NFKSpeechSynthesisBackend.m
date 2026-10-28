@@ -11,6 +11,22 @@
 #import "NFKErrors.h"
 #import <AVFoundation/AVFoundation.h>
 
+NSString * const NFKSpeechSynthesisParameterRate	= @"rate";
+NSString * const NFKSpeechSynthesisParameterPitch	= @"pitch";
+NSString * const NFKSpeechSynthesisParameterVolume	= @"volume";
+
+/*! What one request speaks with: the backend's properties, overridden by the request's parameters. */
+@interface NFKSpeechSynthesisSettings : NSObject
+@property (nonatomic, copy, nullable) NSString *voiceIdentifier;
+@property (nonatomic, copy, nullable) NSString *language;
+@property (nonatomic) double rate;
+@property (nonatomic) double pitch;
+@property (nonatomic) double volume;
+@end
+
+@implementation NFKSpeechSynthesisSettings
+@end
+
 @implementation NFKSpeechSynthesisBackend
 
 + (instancetype)backend
@@ -57,6 +73,12 @@
 	return [NSSet setWithObject:NFKOutputAudio];
 }
 
+- (NSSet<NSString *> *)supportedParameterKeys
+{
+	return [NSSet setWithObjects:NFKParameterVoice, NFKParameterSourceLanguage, NFKSpeechSynthesisParameterRate,
+			NFKSpeechSynthesisParameterPitch, NFKSpeechSynthesisParameterVolume, nil];
+}
+
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 												  error:(NSError **)outError
 {
@@ -68,7 +90,11 @@
 		return nil;
 	}
 
-	AVSpeechSynthesisVoice *voice = [self chosenVoice];
+	NFKSpeechSynthesisSettings *settings = [self settingsForRequest:request error:outError];
+	if (settings == nil) {
+		return nil;
+	}
+	AVSpeechSynthesisVoice *voice = [self voiceForSettings:settings];
 	if (voice == nil) {
 		[self failWithError:outError
 					   code:kNFKError_InferenceUnsupported
@@ -78,11 +104,11 @@
 
 	AVSpeechUtterance *utterance = [AVSpeechUtterance speechUtteranceWithString:text];
 	utterance.voice = voice;
-	if (self.rate > 0.0) {
-		utterance.rate = (float)self.rate;
+	if (settings.rate > 0.0) {
+		utterance.rate = (float)settings.rate;
 	}
-	utterance.pitchMultiplier = (float)self.pitch;
-	utterance.volume = (float)self.volume;
+	utterance.pitchMultiplier = (float)settings.pitch;
+	utterance.volume = (float)settings.volume;
 
 	NSURL *url = [self temporaryFileURL];
 	if (![self writeUtterance:utterance toURL:url error:outError]) {
@@ -93,13 +119,56 @@
 	return [NFKInferenceResult resultWithOutputs:@{ NFKOutputAudio: asset }];
 }
 
-- (nullable AVSpeechSynthesisVoice *)chosenVoice
+- (nullable NFKSpeechSynthesisSettings *)settingsForRequest:(NFKInferenceRequest *)request error:(NSError **)outError
 {
-	if (self.voiceIdentifier.length > 0) {
-		return [AVSpeechSynthesisVoice voiceWithIdentifier:self.voiceIdentifier];
+	NFKSpeechSynthesisSettings *settings = [[NFKSpeechSynthesisSettings alloc] init];
+	settings.voiceIdentifier = self.voiceIdentifier;
+	settings.language = self.language;
+	settings.rate = self.rate;
+	settings.pitch = self.pitch;
+	settings.volume = self.volume;
+	NSDictionary<NSString *, id> *parameters = request.parameters;
+	for (NSString *key in @[ NFKParameterVoice, NFKParameterSourceLanguage ]) {
+		id value = parameters[key];
+		if (value != nil && ![value isKindOfClass:NSString.class]) {
+			[self failWithError:outError code:kNFKError_InferenceUnsupported
+						 reason:[NSString stringWithFormat:@"\"%@\" is a string", key]];
+			return nil;
+		}
 	}
-	if (self.language.length > 0) {
-		return [AVSpeechSynthesisVoice voiceWithLanguage:self.language];
+	if (parameters[NFKParameterVoice] != nil) {
+		settings.voiceIdentifier = parameters[NFKParameterVoice];
+	}
+	if (parameters[NFKParameterSourceLanguage] != nil) {
+		settings.language = parameters[NFKParameterSourceLanguage];
+	}
+	NSDictionary<NSString *, NSArray<NSNumber *> *> *ranges = @{ NFKSpeechSynthesisParameterRate: @[ @0, @1 ],
+																 NFKSpeechSynthesisParameterPitch: @[ @0.5, @2 ],
+																 NFKSpeechSynthesisParameterVolume: @[ @0, @1 ] };
+	for (NSString *key in ranges) {
+		id value = parameters[key];
+		if (value == nil) {
+			continue;
+		}
+		double number = [value isKindOfClass:NSNumber.class] ? [value doubleValue] : NAN;
+		if (!(number >= ranges[key][0].doubleValue && number <= ranges[key][1].doubleValue)) {
+			[self failWithError:outError code:kNFKError_InferenceUnsupported
+						 reason:[NSString stringWithFormat:@"\"%@\" is a number from %@ to %@", key, ranges[key][0], ranges[key][1]]];
+			return nil;
+		}
+		// Each key names the settings property it overrides.
+		[settings setValue:@(number) forKey:key];
+	}
+	return settings;
+}
+
+- (nullable AVSpeechSynthesisVoice *)voiceForSettings:(NFKSpeechSynthesisSettings *)settings
+{
+	if (settings.voiceIdentifier.length > 0) {
+		return [AVSpeechSynthesisVoice voiceWithIdentifier:settings.voiceIdentifier];
+	}
+	if (settings.language.length > 0) {
+		return [AVSpeechSynthesisVoice voiceWithLanguage:settings.language];
 	}
 	// Writing to buffers needs a named voice. An utterance that leaves the voice unset is spoken
 	// aloud with the system default, and through writeUtterance: it produces no buffers at all,

@@ -11,6 +11,14 @@
 
 NS_ASSUME_NONNULL_BEGIN
 
+/*! The speaking rate of one request (NSNumber), AVFoundation's scale from 0 to 1, where 0.5 is the
+	system's default rate and 0 leaves the default in place. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKSpeechSynthesisParameterRate;
+/*! The pitch multiplier of one request (NSNumber), 0.5 to 2. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKSpeechSynthesisParameterPitch;
+/*! The volume of one request (NSNumber), 0 to 1. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKSpeechSynthesisParameterVolume;
+
 /*!
 	@class      NFKSpeechSynthesisBackend
 	@abstract   Speaks text with the system's own voices, through AVFoundation.
@@ -25,7 +33,10 @@ NS_ASSUME_NONNULL_BEGIN
 				`voiceIdentifier` names a voice; `availableVoices` lists what the machine has, each
 				entry an identifier a caller can set. Without one, the voice follows `language`, and
 				without that, the user's own setting. `rate`, `pitch`, and `volume` are AVFoundation's
-				own scales.
+				own scales. The properties are the defaults a request overrides: NFKParameterVoice,
+				NFKParameterSourceLanguage, and the NFKSpeechSynthesisParameter* keys set them for that
+				request alone. A value of the wrong type or outside its range is refused with
+				kNFKError_InferenceUnsupported.
 
 				A chosen voice, a cloned voice, or a voice the machine does not have is Kokoro or
 				Chatterbox in InferKitMLX. Personal Voice belongs to the person, so the system only

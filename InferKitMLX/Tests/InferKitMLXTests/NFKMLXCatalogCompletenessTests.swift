@@ -151,6 +151,8 @@ final class NFKMLXCatalogCompletenessTests: XCTestCase {
     }
 
     func testTheCommittedSnapshotIsTheCatalogsManifest() throws {
+        NFKAppleModelDescriptors.includesMachineChoices = false
+        defer { NFKAppleModelDescriptors.includesMachineChoices = true }
         let catalog = NFKModelCatalog()
         for provider in Self.snapshotProviders {
             XCTAssertTrue(catalog.addDescriptors(fromProviderClassName: provider), provider)

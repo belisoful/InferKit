@@ -428,7 +428,53 @@
         "restrictsCommercialUse" : false
       },
       "options" : [
-
+        {
+          "help" : "The voice to speak in. Without one, the voice follows the language, and without that, the user's setting. The choices are the voices this machine had when the catalog was built: a voice installed later in the system's Spoken Content settings is listed once the catalog is built again.",
+          "key" : "voice",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Voice"
+        },
+        {
+          "help" : "The language to choose a voice for, a BCP-47 tag such as en-US, when no voice is chosen. Without one, the user's setting.",
+          "key" : "sourceLanguage",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Language"
+        },
+        {
+          "default" : 0.5,
+          "help" : "How fast the voice speaks, from 0 to 1. 0.5 is the system's default rate.",
+          "key" : "rate",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Rate"
+        },
+        {
+          "default" : 1,
+          "help" : "The pitch multiplier, from 0.5 to 2.",
+          "key" : "pitch",
+          "kind" : "number",
+          "maximum" : 2,
+          "minimum" : 0.5,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Pitch"
+        },
+        {
+          "default" : 1,
+          "help" : "The volume, from 0 to 1.",
+          "key" : "volume",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Volume"
+        }
       ],
       "outputModalities" : [
         "audio"

@@ -45,6 +45,12 @@ NS_ASSUME_NONNULL_BEGIN
 /*! The descriptors of the core's Apple-framework engines, sorted by identifier. */
 + (NSArray<NFKModelDescriptor *> *)modelDescriptors;
 
+/*! Whether a descriptor lists the choices this machine has, such as the voices apple-speech-synthesis
+	offers. YES by default, and each call to modelDescriptors reads them again. A manifest written for
+	every machine, such as the catalog snapshot, sets NO, and those options list no choices.
+	Introduced in InferKit 0.4.0. */
+@property (class, nonatomic) BOOL includesMachineChoices;
+
 /*! The registry names backendNamed: builds, sorted. */
 @property (class, nonatomic, readonly, copy) NSArray<NSString *> *registryNames;
 

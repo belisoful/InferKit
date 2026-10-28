@@ -24,6 +24,8 @@
 #import "NFKSpeechSynthesisBackend.h"
 #import "NFKSoundClassificationBackend.h"
 #import "NFKTextEmbeddingBackend.h"
+#import "NFKInferenceKeys.h"
+#import <AVFoundation/AVFoundation.h>
 
 /*! One engine the registry builds and the catalog describes. */
 @interface NFKAppleEngine : NSObject
@@ -36,12 +38,27 @@
 @property (nonatomic, copy) NSDictionary<NSString *, NSString *> *minimumOSVersions;
 @property (nonatomic, assign) BOOL requiresAppleSilicon;
 @property (nonatomic, copy) id<NFKInferenceBackend> (^builder)(void);
+/*! The engine's options, described for a user interface; nil states each parameter key the backend
+	declares by its key alone. */
+@property (nonatomic, copy, nullable) NSArray<NFKModelOption *> * (^options)(void);
 @end
 
 @implementation NFKAppleEngine
 @end
 
 @implementation NFKAppleModelDescriptors
+
+static BOOL NFKAppleIncludesMachineChoices = YES;
+
++ (BOOL)includesMachineChoices
+{
+	return NFKAppleIncludesMachineChoices;
+}
+
++ (void)setIncludesMachineChoices:(BOOL)includesMachineChoices
+{
+	NFKAppleIncludesMachineChoices = includesMachineChoices;
+}
 
 #pragma mark Engines
 
@@ -201,12 +218,7 @@
 				 minimumOSVersions:@{ @"macOS": @"11.0", @"iOS": @"14.0" } builder:^id<NFKInferenceBackend> {
 			return [NFKSpeechRecognitionBackend backend];
 		}],
-		[self engineWithIdentifier:@"apple-speech-synthesis" displayName:@"Apple Voices" family:@"apple-avfoundation"
-						   summary:@"Speaks text aloud with the system's voices."
-							 tasks:@[ NFKModelTaskSpeechSynthesis ] providerClassName:nil
-				 minimumOSVersions:floor builder:^id<NFKInferenceBackend> {
-			return [NFKSpeechSynthesisBackend backend];
-		}],
+		[self speechSynthesisEngine],
 		[self engineWithIdentifier:@"sound-analysis" displayName:@"Sound Analysis" family:@"apple-sound-analysis"
 						   summary:@"Labels the sounds in a recording from Apple's built-in taxonomy, window by window."
 							 tasks:@[ NFKModelTaskClassification ] providerClassName:nil
@@ -222,6 +234,80 @@
 			return [NFKTextEmbeddingBackend backend];
 		}],
 	];
+}
+
++ (NFKAppleEngine *)speechSynthesisEngine
+{
+	NFKAppleEngine *engine = [self engineWithIdentifier:@"apple-speech-synthesis" displayName:@"Apple Voices"
+												 family:@"apple-avfoundation"
+												summary:@"Speaks text aloud with the system's voices."
+												  tasks:@[ NFKModelTaskSpeechSynthesis ] providerClassName:nil
+									  minimumOSVersions:[self coreFloor] builder:^id<NFKInferenceBackend> {
+		return [NFKSpeechSynthesisBackend backend];
+	}];
+	engine.options = ^NSArray<NFKModelOption *> *{
+		return [NFKAppleModelDescriptors speechSynthesisOptions];
+	};
+	return engine;
+}
+
+/*! The voice, language, rate, pitch, and volume a request sets, with AVFoundation's ranges and defaults. */
++ (NSArray<NFKModelOption *> *)speechSynthesisOptions
+{
+	NSString *voiceHelp = @"The voice to speak in. Without one, the voice follows the language, and without that, the "
+		@"user's setting. The choices are the voices this machine had when the catalog was built: a voice installed "
+		@"later in the system's Spoken Content settings is listed once the catalog is built again.";
+	NFKModelOption *voice = [[NFKModelOption alloc] initWithKey:NFKParameterVoice kind:NFKModelOptionKindChoice title:@"Voice"
+														   help:voiceHelp defaultValue:nil minimum:nil maximum:nil step:nil
+														choices:[self installedVoiceChoices] stage:nil group:nil extensions:nil];
+	NFKModelOption *language = [[NFKModelOption alloc] initWithKey:NFKParameterSourceLanguage kind:NFKModelOptionKindText
+															 title:@"Language"
+															  help:@"The language to choose a voice for, a BCP-47 tag such as en-US, when no voice is chosen. "
+																   @"Without one, the user's setting."
+													  defaultValue:nil minimum:nil maximum:nil step:nil choices:nil stage:nil
+															 group:nil extensions:nil];
+	NFKModelOption *rate = [[NFKModelOption alloc] initWithKey:NFKSpeechSynthesisParameterRate kind:NFKModelOptionKindNumber
+														 title:@"Rate"
+														  help:@"How fast the voice speaks, from 0 to 1. 0.5 is the system's default rate."
+												  defaultValue:@(AVSpeechUtteranceDefaultSpeechRate) minimum:@0 maximum:@1 step:@0.05
+													   choices:nil stage:nil group:nil extensions:nil];
+	NFKModelOption *pitch = [[NFKModelOption alloc] initWithKey:NFKSpeechSynthesisParameterPitch kind:NFKModelOptionKindNumber
+														  title:@"Pitch"
+														   help:@"The pitch multiplier, from 0.5 to 2."
+												   defaultValue:@1 minimum:@0.5 maximum:@2 step:@0.05
+														choices:nil stage:nil group:nil extensions:nil];
+	NFKModelOption *volume = [[NFKModelOption alloc] initWithKey:NFKSpeechSynthesisParameterVolume kind:NFKModelOptionKindNumber
+														   title:@"Volume"
+															help:@"The volume, from 0 to 1."
+													defaultValue:@1 minimum:@0 maximum:@1 step:@0.05
+														 choices:nil stage:nil group:nil extensions:nil];
+	return @[ voice, language, rate, pitch, volume ];
+}
+
+/*! The machine's voices, by language then name, each titled with its name, language, and a quality above
+	the default; none when includesMachineChoices is NO. */
++ (NSArray<NFKModelOptionChoice *> *)installedVoiceChoices
+{
+	if (!self.includesMachineChoices) {
+		return @[];
+	}
+	NSArray<AVSpeechSynthesisVoice *> *voices = [AVSpeechSynthesisVoice.speechVoices sortedArrayUsingComparator:
+		^NSComparisonResult(AVSpeechSynthesisVoice *first, AVSpeechSynthesisVoice *second) {
+		NSComparisonResult language = [first.language compare:second.language];
+		return language != NSOrderedSame ? language : [first.name localizedCompare:second.name];
+	}];
+	NSMutableArray<NFKModelOptionChoice *> *choices = [NSMutableArray arrayWithCapacity:voices.count];
+	for (AVSpeechSynthesisVoice *voice in voices) {
+		NSString *quality = voice.quality == AVSpeechSynthesisVoiceQualityEnhanced ? @", enhanced" : @"";
+		if (@available(macOS 13.0, iOS 16.0, tvOS 16.0, *)) {
+			if (voice.quality == AVSpeechSynthesisVoiceQualityPremium) {
+				quality = @", premium";
+			}
+		}
+		NSString *title = [NSString stringWithFormat:@"%@ (%@%@)", voice.name, voice.language, quality];
+		[choices addObject:[NFKModelOptionChoice choiceWithValue:voice.identifier title:title]];
+	}
+	return choices;
 }
 
 /*! Every engine, keyed by registry name. */
@@ -303,8 +389,12 @@
 		[outputs addObject:[NFKModelPort outputPortWithKey:key required:YES]];
 	}
 	NSMutableArray<NFKModelOption *> *options = [NSMutableArray array];
-	for (NSString *key in [parameterKeys.allObjects sortedArrayUsingSelector:@selector(compare:)]) {
-		[options addObject:[NFKModelOption optionWithKey:key]];
+	if (engine.options != nil) {
+		[options addObjectsFromArray:engine.options()];
+	} else {
+		for (NSString *key in [parameterKeys.allObjects sortedArrayUsingSelector:@selector(compare:)]) {
+			[options addObject:[NFKModelOption optionWithKey:key]];
+		}
 	}
 
 	NFKModelSource *source = [[NFKModelSource alloc] initWithKind:NFKModelSourceKindSystem repository:nil revision:nil

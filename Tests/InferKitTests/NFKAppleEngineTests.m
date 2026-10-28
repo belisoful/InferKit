@@ -120,6 +120,69 @@
 					 [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"One." }] error:&error], @"%@", error);
 }
 
+/*! The loudest sample of a spoken file, or a negative number when it cannot be read. */
+- (float)peakOfAudioAt:(NSURL *)fileURL
+{
+	AVAudioFile *file = [[AVAudioFile alloc] initForReading:fileURL commonFormat:AVAudioPCMFormatFloat32 interleaved:NO
+													  error:NULL];
+	AVAudioPCMBuffer *buffer = [[AVAudioPCMBuffer alloc] initWithPCMFormat:file.processingFormat
+															  frameCapacity:(AVAudioFrameCount)file.length];
+	if (file == nil || buffer == nil || ![file readIntoBuffer:buffer error:NULL]) {
+		return -1;
+	}
+	float peak = 0;
+	for (AVAudioFrameCount frame = 0; frame < buffer.frameLength; frame++) {
+		peak = MAX(peak, fabsf(buffer.floatChannelData[0][frame]));
+	}
+	return peak;
+}
+
+// A hosted backend is reached through its requests alone, so a request's voice and volume override the
+// backend's properties for that request.
+- (void)testARequestSetsTheVoiceAndTheVolume
+{
+	NSString *identifier = NFKSpeechSynthesisBackend.availableVoices.firstObject;
+	if (identifier == nil) {
+		return;
+	}
+	NFKSpeechSynthesisBackend *backend = [NFKSpeechSynthesisBackend backend];
+	backend.voiceIdentifier = @"com.example.no-such-voice";
+	NSError *error = nil;
+	NFKInferenceResult *spoken = [backend runInferenceForRequest:
+		[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello there." }
+									parameters:@{ NFKParameterVoice: identifier }] error:&error];
+	XCTAssertNotNil(spoken, @"%@", error);
+	XCTAssertGreaterThan([self peakOfAudioAt:[[spoken outputForKey:NFKOutputAudio] fileURL]], 0.01f);
+
+	NFKInferenceResult *silent = [backend runInferenceForRequest:
+		[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello there." }
+									parameters:@{ NFKParameterVoice: identifier, NFKSpeechSynthesisParameterVolume: @0 }]
+														   error:&error];
+	XCTAssertNotNil(silent, @"%@", error);
+	XCTAssertEqual([self peakOfAudioAt:[[silent outputForKey:NFKOutputAudio] fileURL]], 0.0f);
+	XCTAssertEqualObjects(backend.voiceIdentifier, @"com.example.no-such-voice", @"the request leaves the property as it was");
+}
+
+- (void)testARequestsSpeechSettingsAreChecked
+{
+	NFKSpeechSynthesisBackend *backend = [NFKSpeechSynthesisBackend backend];
+	NSArray<NSDictionary<NSString *, id> *> *refused = @[ @{ NFKParameterVoice: @3 }, @{ NFKParameterSourceLanguage: @YES },
+														  @{ NFKSpeechSynthesisParameterRate: @1.5 },
+														  @{ NFKSpeechSynthesisParameterPitch: @0.1 },
+														  @{ NFKSpeechSynthesisParameterVolume: @"loud" },
+														  @{ NFKParameterVoice: @"com.example.no-such-voice" } ];
+	for (NSDictionary<NSString *, id> *parameters in refused) {
+		NSError *error = nil;
+		XCTAssertNil([backend runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"One." }
+																				  parameters:parameters] error:&error],
+					 @"%@", parameters);
+		XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceUnsupported, @"%@", parameters);
+	}
+	NSSet *keys = [NSSet setWithObjects:NFKParameterVoice, NFKParameterSourceLanguage, NFKSpeechSynthesisParameterRate,
+				   NFKSpeechSynthesisParameterPitch, NFKSpeechSynthesisParameterVolume, nil];
+	XCTAssertEqualObjects(backend.supportedParameterKeys, keys);
+}
+
 - (void)testSpeakingNeedsText
 {
 	NSError *error = nil;

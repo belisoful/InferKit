@@ -87,6 +87,8 @@ if arguments.first == "--output" {
     fail(usage)
 }
 
+// The snapshot describes every machine, so it lists none of this machine's voices.
+NFKAppleModelDescriptors.includesMachineChoices = false
 NFKMLXReferenceModels.registerAll()
 let catalog = NFKModelCatalog.shared
 do {

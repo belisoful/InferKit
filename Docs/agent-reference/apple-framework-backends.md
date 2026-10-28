@@ -203,6 +203,13 @@ the documentation, and each one alone is enough to yield silence.
   `voiceWithLanguage:AVSpeechSynthesisVoice.currentLanguageCode`, then the first of `speechVoices`.
   A named voice or language that does not resolve fails with `kNFKError_InferenceUnsupported`
   instead of writing an empty file.
+- **A request overrides the properties.** `NFKParameterVoice`, `NFKParameterSourceLanguage`, and the
+  `NFKSpeechSynthesisParameter*` keys apply to one request, so a catalog-built backend hosted by
+  `NFKInferenceServer` is configurable at all. The descriptor's voice choices are read from
+  `AVSpeechSynthesisVoice.speechVoices` each time `modelDescriptors` runs; the catalog snapshot sets
+  `NFKAppleModelDescriptors.includesMachineChoices` to NO so it does not depend on the machine.
+  `NFKAppleEngineTests` checks the volume through the written samples: a request at volume 0 writes a
+  file whose peak is 0.
 
 `NFKAppleEngineTests` covers this live: the three conditions together took the suite from 12 tests
 with 8 failures in 361 seconds, all of them deadlines, to 12 green in 2.1 seconds.

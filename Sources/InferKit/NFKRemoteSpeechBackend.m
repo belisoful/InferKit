@@ -306,7 +306,7 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 
 - (nullable NSString *)voiceForRequest:(NFKInferenceRequest *)request
 {
-	id voice = request.parameters[@"voice"] ?: request.parameters[@"voice_id"];
+	id voice = request.parameters[NFKParameterVoice] ?: request.parameters[@"voice_id"];
 	if ([voice isKindOfClass:NSString.class] && [voice length] > 0) {
 		return voice;
 	}
@@ -391,7 +391,7 @@ static void NFKSpeechAppendUInt32(NSMutableData *data, uint32_t value)
 	}
 	NSSet<NSString *> *mapped = NFKSpeechMappedParameters();
 	for (NSString *key in parameters) {
-		if (![mapped containsObject:key] && ![key isEqualToString:@"voice"] && ![key isEqualToString:@"response_format"]) {
+		if (![mapped containsObject:key] && ![key isEqualToString:NFKParameterVoice] && ![key isEqualToString:@"response_format"]) {
 			NSString *name = self.apiStyle == NFKRemoteSpeechAPIStyleModelStudio ? NFKModelStudioSpeechOptionName(key) : key;
 			options[name] = parameters[key];
 		}

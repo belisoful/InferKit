@@ -71,6 +71,20 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### Apple's voices take their voice, language, rate, pitch, and volume from a request
+
+- `NFKSpeechSynthesisBackend` reads `NFKParameterVoice`, `NFKParameterSourceLanguage`, and the new
+  `NFKSpeechSynthesisParameterRate`, `NFKSpeechSynthesisParameterPitch`, and
+  `NFKSpeechSynthesisParameterVolume` from each request, with its properties as the defaults, and
+  refuses a value of the wrong type or outside its range with `kNFKError_InferenceUnsupported`.
+- The `apple-speech-synthesis` descriptor declares the five as request options with AVFoundation's
+  ranges and defaults. The voice option's choices are the voices the machine has when the catalog is
+  built, each titled with its name, language, and quality.
+  `NFKAppleModelDescriptors.includesMachineChoices` set to NO leaves them out, as the catalog
+  snapshot does.
+- `NFKParameterVoice` (`"voice"`) is the core's key for a speech voice. `NFKRemoteSpeechBackend`
+  reads it, as it read the same name before.
+
 #### A release page is a source kind of its own
 
 - `NFKModelSourceKindPage` (`"page"`) names a source whose files a person downloads from the page its

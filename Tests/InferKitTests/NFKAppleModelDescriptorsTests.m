@@ -4,6 +4,7 @@
 //
 
 #import <XCTest/XCTest.h>
+#import <AVFoundation/AVFoundation.h>
 #import <InferKit/InferKit.h>
 
 @interface NFKAppleModelDescriptorsTests : XCTestCase
@@ -140,6 +141,31 @@
 	NFKModelCatalog *read = [[NFKModelCatalog alloc] init];
 	XCTAssertTrue([read addDescriptorsFromManifestData:manifest error:&error], @"%@", error);
 	XCTAssertEqualObjects([read manifestDataWithError:NULL], manifest);
+}
+
+#pragma mark Speech options
+
+- (void)testTheSpeechOptionsListTheMachinesVoices
+{
+	NFKModelDescriptor *descriptor = [self descriptorNamed:@"apple-speech-synthesis"];
+	NFKModelOption *voice = [descriptor optionWithKey:NFKParameterVoice];
+	XCTAssertEqualObjects(voice.kind, NFKModelOptionKindChoice);
+	XCTAssertEqualObjects([NSSet setWithArray:[voice.choices valueForKey:@"value"]],
+						  [NSSet setWithArray:NFKSpeechSynthesisBackend.availableVoices]);
+	XCTAssertNil(voice.defaultValue, @"no voice follows the language");
+	XCTAssertEqualObjects([descriptor optionWithKey:NFKParameterSourceLanguage].kind, NFKModelOptionKindText);
+	NFKModelOption *rate = [descriptor optionWithKey:NFKSpeechSynthesisParameterRate];
+	XCTAssertEqualObjects(rate.minimum, @0);
+	XCTAssertEqualObjects(rate.maximum, @1);
+	XCTAssertEqualWithAccuracy([rate.defaultValue doubleValue], AVSpeechUtteranceDefaultSpeechRate, 1e-6);
+	XCTAssertEqualObjects([descriptor optionWithKey:NFKSpeechSynthesisParameterPitch].minimum, @0.5);
+	XCTAssertEqualObjects([descriptor optionWithKey:NFKSpeechSynthesisParameterVolume].defaultValue, @1);
+
+	NFKAppleModelDescriptors.includesMachineChoices = NO;
+	NFKModelOption *portable = [[self descriptorNamed:@"apple-speech-synthesis"] optionWithKey:NFKParameterVoice];
+	NFKAppleModelDescriptors.includesMachineChoices = YES;
+	XCTAssertEqualObjects(portable.kind, NFKModelOptionKindChoice);
+	XCTAssertEqual(portable.choices.count, (NSUInteger)0, @"a manifest for every machine lists no voices");
 }
 
 #pragma mark Declared outputs

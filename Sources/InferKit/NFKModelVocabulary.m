@@ -197,6 +197,7 @@ static NSDictionary<NSString *, NSString *> *NFKRequestKeyValueTypes(void)
 			NFKParameterMotionScale:				NFKModelValueTypeNumber,
 			NFKParameterSampleRate:					NFKModelValueTypeInteger,
 			NFKParameterChannelCount:				NFKModelValueTypeInteger,
+			NFKParameterVoice:						NFKModelValueTypeText,
 			NFKParameterSourceLanguage:				NFKModelValueTypeText,
 			NFKParameterTargetLanguage:				NFKModelValueTypeText,
 			NFKParameterTemperature:				NFKModelValueTypeNumber,
