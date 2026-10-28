@@ -90,6 +90,38 @@ Upscaling, denoising, inpainting, stylization, low-light, colorization, face res
   the border, because the instance norms are global and carry a border approximation into every pixel.
   Names match the reference, so `Tools/style-transfer-to-safetensors/convert.py` only drops the
   deprecated InstanceNorm running-stats keys.
+  **Customization ships** at `full` (`NFKMLXStyleTransferTraining.swift`), measured against the PyTorch
+  examples' `fast_neural_style/neural_style` at acc295dc (`run_reference.py style_transfer_training`) on
+  torchvision's VGG-16 weights.
+  - `NFKMLXStyleTransfer.network(weightsURL:)` builds the public `NFKMLXStyleTransferNet`. Nil weights train
+    from scratch, as the reference does for every style; a fresh network draws its convolution biases
+    uniform within `±1/√fan_in`, as `torch.nn.Conv2d` does, where MLX starts them at zero.
+  - `NFKMLXStyleTransfer.fineTune` trains every parameter with `NFKMLXStyleTransferObjective`: a content term
+    over VGG-16's relu2_2 at 1e5 and a style term over the Gram matrices of relu1_2, relu2_2, relu3_3, and
+    relu4_3 at 1e10, each a mean squared error, a Gram matrix divided by its channels times its positions.
+    Images arrive in `0...1` and scale to `0...255` as `ToTensor().mul(255)` does; each side is divided by
+    255 and standardized by ImageNet's statistics. The optimizer is Adam at 1e-3 with no schedule.
+  - The reference resizes COCO 2014 to 256 on the shorter side and center-crops it to 256 × 256, four to a
+    batch, for two epochs; the resize and crop are the caller's.
+  - A bias whose constant reaches an instance norm through linear layers alone has a gradient of zero up to
+    rounding, in the reference as here: every convolution's but the last, and each residual block's second
+    norm's. The record leaves them out.
+  - A fresh network's float32 gradient is a coin flip at its kinks. Its output is nearly flat, so VGG's
+    max-pools sit on near-ties (the closest gap 1.49e-8 of its layer's scale), and three in5 ReLU inputs sit
+    3.43e-7 from zero, inside float32's rounding. torch's NCHW forward lands every one of them on float64's
+    side (the ten gradients upstream of in5 1.7e-4 to 2.7e-4 from float64); torch's channels-last forward
+    and MLX's flip two, and the instance norms amplify each flip, to 3.5e-3 to 6.1e-3. A forward four times as accurate as torch's
+    still flips. The record therefore holds two states.
+  - Both states run in float64 on MLX's CPU, which has no float64 convolution, so a float64 input takes one
+    matrix product per kernel tap. Each matches the reference's float64 within 5.4e-12: the stylized output,
+    both terms, thirteen gradients, and the global norm.
+  - The `trained` state is the network after 300 of the reference's updates, on a 32-pixel image drawn
+    until its float64 forward keeps every transformer ReLU input 2e-5 from zero and every VGG ReLU input and
+    max-pool gap 5e-6 of its layer's scale from a tie (2.76e-5, 1.27e-5, and 4.06e-5 measured). There the
+    float32 step lands the stylized output within 1.03e-6 of float64 (reference float32 1.98e-6), and the
+    thirteen gradients within 2.54e-6, each within 0.51 times the reference float32's own distance. The
+    terms are 9483167.0 and 5.3206502e8 against float64's 9483167.0 and 5.320652e8, the global gradient
+    norm 1.3877896e10 against 1.3877896e10, and the loss after one step 2.9374547e8 against 2.9374586e8.
 - `NFKMLXAdaIN` (`@objc`) — arbitrary style transfer (naoto0804's `pytorch-AdaIN`), the successor to
   the one-style-per-checkpoint `NFKMLXStyleTransfer`. A normalized VGG-19 truncated after relu4_1
   encodes both images, adaptive instance normalization moves the content features onto the style's
@@ -106,6 +138,28 @@ Upscaling, denoising, inpainting, stylization, low-light, colorization, face res
   default correction is 1, so a population variance shifts every feature by `sqrt(n / (n − 1))`.
   Reference parity throughout (content features 0.9999999999987861, style features 0.9999999999989787,
   normalized 0.9999999999989898, decoded image 0.9999999999997728).
+  **Customization ships** at `full` over the decoder (`NFKMLXAdaINTraining.swift`), measured against
+  naoto0804/pytorch-AdaIN at 47950d0 (`run_reference.py adain_training`) on the released VGG and decoder.
+  - `NFKMLXAdaIN.network(encoderURL:decoderURL:)` builds the public `NFKMLXAdaINNet`, `NFKMLXAdaINEncoder`,
+    and `NFKMLXAdaINDecoder`. A nil decoder trains from scratch with `torch.nn.Conv2d`'s bias draw. The
+    decoder loader also reads a decoder saved from this module, whose keys carry the `layers` array's name.
+  - `NFKMLXAdaIN.fineTune` trains the decoder with the encoder frozen, as `train.py` does. The encoder is
+    also the loss network: `intermediates(_:)` returns relu1_1, relu2_1, relu3_1, and relu4_1, the reference
+    `Net`'s `enc_1` to `enc_4` slices.
+  - `NFKMLXAdaINObjective` is `net.Net.forward`: a content term between the decoded image's relu4_1
+    features and the normalized features it was decoded from, and a style term summing, over the four
+    activations, the mean squared error between the per-channel means and between the deviations, each the
+    square root of the unbiased variance plus 1e-5. The factors are 1 and 10.
+  - The optimizer is Adam at 1e-4 over the decoder, divided by `1 + 5e-5 · i` before update `i`
+    (`adjust_learning_rate`, `NFKMLXLearningRateSchedule.inverseTime`). `NFKMLXAdaINAugmentation` is the
+    training transform's `RandomCrop(256)`, each image drawing its own top and left; the `Resize((512, 512))`
+    before it is the caller's.
+  - Measured on two 64-pixel content images and two style images, each figure against float64: the decoded
+    image within 5.03e-6 (reference float32 5.17e-6), the content term 29.964052 vs 29.964008, the style
+    term 231.6912 vs 231.6911, and the global gradient norm 54379.06 vs 54378.863.
+  - The weight and bias gradients of all nine decoder convolutions land within 1.69e-3 of float64, each
+    within 1.004 times the reference float32's own distance. The loss after one step is 1638.9376 vs
+    1639.0297, the reference float32 1638.939. The crops, replayed from torchvision's draws, are exact.
 - `NFKMLXCodeFormer` (`@objc`) — real face restoration: the reference CodeFormer (sczhou) in `MLXNN` —
   a VQGAN encoder and generator built as the reference's flat heterogeneous `blocks` list (residual
   blocks with a 1×1 skip projection where the width changes, single-head spatial attention at

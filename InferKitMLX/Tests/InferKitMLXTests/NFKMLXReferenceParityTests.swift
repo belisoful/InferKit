@@ -12748,6 +12748,221 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         XCTAssertTrue(draws.values.isEmpty, "every recorded draw is consumed")
     }
 
+    // Fast style transfer's training against the PyTorch examples' own `neural_style.py train` (acc295dc) on
+    // torchvision's VGG-16 and a 72×80 style image, in two states of `TransformerNet`. `fresh` is the network
+    // the reference's seed draws, on two 64-pixel content images. `trained` is that network after 300 of the
+    // reference's updates, on one 32-pixel image whose float64 forward keeps every ReLU input and max-pool gap
+    // clear of a tie. Both states run in float64 on the CPU and match the reference's float64 to 1e-10: the
+    // stylized output, both weighted terms, thirteen gradients, and the global norm. A fresh network's output
+    // is nearly flat, so VGG's max-pools sit on near-ties that float32 resolves by chance, and its float32
+    // figures are printed. The trained state holds each float32 figure to float64's within twice the
+    // reference's own float32 distance, the loss after one step of the reference's Adam included.
+    func testStyleTransferTrainingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_STYLE_TRANSFER_TRAINING"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_STYLE_TRANSFER_TRAINING to a record from run_reference.py style_transfer_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        let vggURL = try weights("IK_VAL_VGG16")
+        for state in ["fresh", "trained"] {
+            try checkStyleTransferTrainingInFloat64(arrays, state: state, vggURL: vggURL)
+            try checkStyleTransferTrainingInFloat32(arrays, state: state, vggURL: vggURL, asserting: state == "trained")
+        }
+        for kind in ["transformer", "vgg_relu", "vgg_pool"] {
+            let margin = try XCTUnwrap(arrays["trained::margin::" + kind]).item(Float.self)
+            let fresh = try XCTUnwrap(arrays["fresh::margin::" + kind]).item(Float.self)
+            print("PARITY style-transfer-training: trained \(kind) margin \(margin) (fresh \(fresh))")
+            XCTAssertGreaterThan(margin, kind == "transformer" ? 2e-5 : 5e-6, "the trained record keeps every \(kind) kink clear")
+        }
+    }
+
+    /// The gradients the style transfer record carries. A bias whose constant reaches an instance norm
+    /// through linear layers alone is left out, the convolutions' and each residual block's second norm's:
+    /// the norm subtracts it back out, so its gradient is rounding residue in both implementations.
+    static let styleTransferTrainingGradients = [
+        "conv1.conv2d.weight", "in1.weight", "in1.bias", "conv3.conv2d.weight", "res2.conv1.conv2d.weight",
+        "res4.in2.weight", "res5.in1.bias", "deconv1.conv2d.weight", "in4.bias", "deconv2.conv2d.weight",
+        "in5.weight", "deconv3.conv2d.weight", "deconv3.conv2d.bias",
+    ]
+
+    /// The record's network for `state`, its parameters moved into this module's layout and `dtype`.
+    private func styleTransferNetwork(_ arrays: [String: MLXArray], state: String, dtype: DType) throws -> NFKMLXStyleTransferNet {
+        let prefix = state + "::init::"
+        let net = NFKMLXStyleTransferNet()
+        try NFKMLXWeights.apply(arrays.compactMap { key, value in
+            key.hasPrefix(prefix) ? (String(key.dropFirst(prefix.count)), Self.styleTransferLayout(value).asType(dtype)) : nil
+        }, to: net, verifyShapes: true)
+        return net
+    }
+
+    /// A torch convolution kernel `[O, I, kH, kW]` as MLX's `[O, kH, kW, I]`; any other tensor as it is.
+    private static func styleTransferLayout(_ value: MLXArray) -> MLXArray {
+        value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value
+    }
+
+    private func checkStyleTransferTrainingInFloat64(_ arrays: [String: MLXArray], state: String, vggURL: URL) throws {
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        try Device.withDefaultDevice(.cpu) {
+            func exact(_ key: String) throws -> MLXArray {
+                try array("\(state)::f64::\(key)").asType(.float64) + array("\(state)::f64lo::\(key)").asType(.float64)
+            }
+            func distance(_ a: MLXArray, _ b: MLXArray) -> Double {
+                sqrt(square(a - b).sum()).item(Double.self) / sqrt(square(b).sum()).item(Double.self)
+            }
+            let net = try styleTransferNetwork(arrays, state: state, dtype: .float64)
+            let trunk = try NFKMLXVGG16Features(weightsURL: vggURL)
+            trunk.update(parameters: ModuleParameters.unflattened(trunk.parameters().flattened().map { ($0.0, $0.1.asType(.float64)) }))
+            let objective = NFKMLXStyleTransferObjective(perceptualNetwork: trunk, styleImage: try array("style"))
+            // The reference scales its float32 pixels by 255 before it widens them.
+            let pixels = (try array(state + "::content") * 255).asType(.float64)
+
+            var worst = distance(net(pixels), try exact("stylized"))
+            let terms = objective.components(stylized: net(pixels), content: pixels)
+            for (name, term) in [("content_loss", terms.content), ("style_loss", terms.style)] {
+                worst = max(worst, distance(term.reshaped([1]), try exact(name)))
+            }
+            // mlx's `vjp` copies an already evaluated primal on its own default device, the GPU, which has no
+            // float64; the scope above does not reach it. A primal produced here, on the CPU, is copied here.
+            let parameters = net.trainableParameters().flattened()
+            let (_, seeded) = vjp({ arrays in
+                net.update(parameters: ModuleParameters.unflattened(Array(zip(parameters.map(\.0), arrays))))
+                return [objective.loss(stylized: net(pixels), content: pixels)]
+            }, primals: parameters.map { $0.1 * 1 }, cotangents: [MLXArray(1.0, dtype: .float64)])
+            let gradients = Dictionary(uniqueKeysWithValues: zip(parameters.map(\.0), seeded))
+            let norm = sqrt(gradients.values.map { square($0).sum() }.reduce(MLXArray(0.0, dtype: .float64), +))
+            worst = max(worst, distance(norm.reshaped([1]), try exact("gradient_norm")))
+            for name in Self.styleTransferTrainingGradients {
+                let ours = try XCTUnwrap(gradients[name], name)
+                worst = max(worst, distance(ours, Self.styleTransferLayout(try exact("grad::" + name))))
+            }
+            print("PARITY style-transfer-training: \(state) float64 on the CPU, worst distance from the reference's float64 \(worst)")
+            XCTAssertLessThan(worst, 1e-10, "the \(state) state's float64 step is the reference's")
+        }
+    }
+
+    private func checkStyleTransferTrainingInFloat32(_ arrays: [String: MLXArray], state: String, vggURL: URL,
+                                                    asserting: Bool) throws {
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays["\(state)::\(key)"], key) }
+        func value(_ key: String) throws -> Float { try array(key).item(Float.self) }
+        func distance(_ a: MLXArray, _ b: MLXArray) -> Float {
+            sqrt(square(a - b).sum()).item(Float.self) / sqrt(square(b).sum()).item(Float.self)
+        }
+        let net = try styleTransferNetwork(arrays, state: state, dtype: .float32)
+        let objective = try NFKMLXStyleTransferObjective(vggWeightsURL: vggURL, styleImage: try XCTUnwrap(arrays["style"]))
+        let content = try array("content")
+        let pixels = content * 255
+
+        let stylized = net(pixels)
+        let stylizedFloor = distance(try array("stylized"), try array("f64::stylized"))
+        let stylizedError = distance(stylized, try array("f64::stylized"))
+        print("PARITY style-transfer-training: \(state) stylized from float64 \(stylizedError) (reference float32 \(stylizedFloor))")
+        if asserting { XCTAssertLessThan(stylizedError, max(1e-7, 2 * stylizedFloor)) }
+
+        let terms = objective.components(stylized: stylized, content: pixels)
+        for (name, term) in [("content_loss", terms.content), ("style_loss", terms.style)] {
+            let ours = term.item(Float.self), theirs = try value(name), theirs64 = try value("f64::" + name)
+            print("PARITY style-transfer-training: \(state) \(name) \(ours) vs \(theirs) (float64 \(theirs64))")
+            if asserting { XCTAssertEqual(ours, theirs64, accuracy: max(abs(theirs64) * 1e-6, 2 * abs(theirs - theirs64)), name) }
+        }
+
+        let gradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, inputs in
+            [objective(net, inputs[0])]
+        }(net, [content]).1.flattened())
+        let norm = sqrt(gradients.values.map { square($0).sum() }.reduce(MLXArray(Float(0)), +)).item(Float.self)
+        let norm32 = try value("gradient_norm"), norm64 = try value("f64::gradient_norm")
+        print("PARITY style-transfer-training: \(state) global gradient norm \(norm) vs \(norm32) (float64 \(norm64))")
+        if asserting { XCTAssertEqual(norm, norm64, accuracy: max(norm64 * 1e-6, 2 * abs(norm32 - norm64))) }
+        for name in Self.styleTransferTrainingGradients {
+            let ours = try XCTUnwrap(gradients[name], name)
+            let theirs = Self.styleTransferLayout(try array("grad::" + name))
+            let theirs64 = Self.styleTransferLayout(try array("f64::grad::" + name))
+            let floor = distance(theirs, theirs64)
+            print("PARITY style-transfer-training: \(state) \(name) gradient from float64: ours \(distance(ours, theirs64)), "
+                  + "reference float32 \(floor)")
+            if asserting { XCTAssertLessThan(distance(ours, theirs64), max(1e-7, 2 * floor), name) }
+        }
+
+        try NFKMLXStyleTransfer.fineTune(net, contentImages: { _ in content }, objective: objective, steps: 1)
+        let lossAfter = objective(net, content).item(Float.self)
+        let after32 = try value("loss_after_step"), after64 = try value("f64::loss_after_step")
+        print("PARITY style-transfer-training: \(state) loss after one step \(lossAfter) vs \(after32) (float64 \(after64))")
+        if asserting { XCTAssertEqual(lossAfter, after64, accuracy: max(abs(after64) * 1e-6, 2 * abs(after32 - after64))) }
+    }
+
+    // AdaIN's training against naoto0804's own `train.py` (47950d0) on the released normalized VGG and
+    // decoder: the decoded image, `net.Net.forward`'s content and style terms, the global gradient norm and
+    // the gradient of every decoder convolution, then the loss after one step of the reference's Adam at
+    // its first rate, each held to float64's within twice the reference's own float32 distance. The random
+    // crops replay torchvision's draws.
+    func testAdaINTrainingMatchesTheReference() throws {
+        try requireMLXRuntime()
+        guard let path = config["IK_PARITY_ADAIN_TRAINING"], FileManager.default.fileExists(atPath: path) else {
+            throw XCTSkip("set IK_PARITY_ADAIN_TRAINING to a record from run_reference.py adain_training")
+        }
+        let arrays = try loadArrays(url: URL(fileURLWithPath: path))
+        func array(_ key: String) throws -> MLXArray { try XCTUnwrap(arrays[key], key) }
+        func values(_ key: String) throws -> [Float] { try array(key).asArray(Float.self) }
+        func distance(_ a: MLXArray, _ b: MLXArray) -> Float {
+            sqrt(square(a - b).sum()).item(Float.self) / sqrt(square(b).sum()).item(Float.self)
+        }
+        let net = try NFKMLXAdaIN.network(encoderURL: weights("IK_VAL_ADAIN_VGG"), decoderURL: weights("IK_VAL_ADAIN_DECODER"))
+        let content = try array("content"), style = try array("style")
+        let objective = NFKMLXAdaINObjective()
+
+        let target = NFKMLXAdaINNet.adaptiveInstanceNormalization(content: net.encoder.features(content),
+                                                                  style: net.encoder.features(style))
+        let decoded = net.decoder(target)
+        let decodedFloor = distance(try array("decoded"), try array("f64::decoded"))
+        let decodedError = distance(decoded, try array("f64::decoded"))
+        print("PARITY adain-training: decoded from float64 \(decodedError) (reference float32 \(decodedFloor))")
+        XCTAssertLessThan(decodedError, max(1e-7, 2 * decodedFloor))
+
+        let terms = objective.components(net, content: content, style: style)
+        for (name, term) in [("loss_content", terms.content), ("loss_style", terms.style)] {
+            let ours = term.item(Float.self), theirs = try values(name)[0], theirs64 = try values("f64::" + name)[0]
+            print("PARITY adain-training: \(name) \(ours) vs \(theirs) (float64 \(theirs64))")
+            XCTAssertEqual(ours, theirs64, accuracy: max(abs(theirs64) * 1e-6, 2 * abs(theirs - theirs64)), name)
+        }
+
+        net.encoder.freeze()
+        let gradients = Dictionary(uniqueKeysWithValues: valueAndGrad(model: net) { net, arrays in
+            [objective(net, arrays[0], arrays[1])]
+        }(net, [content, style]).1.flattened())
+        XCTAssertEqual(gradients.count, 18, "the decoder's nine convolutions, and nothing of the encoder")
+        let norm = sqrt(gradients.values.map { square($0).sum() }.reduce(MLXArray(Float(0)), +)).item(Float.self)
+        let norm32 = try values("gradient_norm")[0], norm64 = try values("f64::gradient_norm")[0]
+        print("PARITY adain-training: global gradient norm \(norm) vs \(norm32) (float64 \(norm64))")
+        XCTAssertEqual(norm, norm64, accuracy: max(norm64 * 1e-6, 2 * abs(norm32 - norm64)))
+        for index in [1, 5, 8, 11, 14, 18, 21, 25, 28] {
+            for kind in ["weight", "bias"] {
+                let reference = "\(index).\(kind)"
+                let ours = try XCTUnwrap(gradients["decoder.layers.\(reference)"], reference)
+                func layout(_ value: MLXArray) -> MLXArray { value.ndim == 4 ? value.transposed(0, 2, 3, 1) : value }
+                let theirs = layout(try array("grad::" + reference)), theirs64 = layout(try array("f64::grad::" + reference))
+                let floor = distance(theirs, theirs64)
+                print("PARITY adain-training: decoder \(reference) gradient from float64: ours \(distance(ours, theirs64)), "
+                      + "reference float32 \(floor)")
+                XCTAssertLessThan(distance(ours, theirs64), max(1e-7, 2 * floor), reference)
+            }
+        }
+
+        try NFKMLXAdaIN.fineTune(net, examples: { _ in (content, style) }, augmentation: nil, steps: 1)
+        let lossAfter = objective(net, content, style).item(Float.self)
+        let after32 = try values("loss_after_step")[0], after64 = try values("f64::loss_after_step")[0]
+        print("PARITY adain-training: loss after one step \(lossAfter) vs \(after32) (float64 \(after64))")
+        XCTAssertEqual(lossAfter, after64, accuracy: max(abs(after64) * 1e-6, 2 * abs(after32 - after64)))
+
+        var draws = NFKDenoiserReplayedDraws(values: try values("augment::draws").map(Double.init),
+                                             permutationValues: [], offsetValues: [])
+        let (croppedContent, croppedStyle) = NFKMLXAdaINAugmentation(patchSize: 32)
+            .apply(content: try array("augment::content"), style: try array("augment::style"), draws: &draws)
+        let cropDifference = max(abs(croppedContent - (try array("augment::out_content"))).max().item(Float.self),
+                                 abs(croppedStyle - (try array("augment::out_style"))).max().item(Float.self))
+        print("PARITY adain-training: crop worst \(cropDifference); \(draws.values.count) draws left")
+        XCTAssertEqual(cropDifference, 0)
+        XCTAssertTrue(draws.values.isEmpty, "every recorded draw is consumed")
+    }
+
     // Conv-TasNet's objective against asteroid v0.5.2's own `PITLossWrapper(pairwise_neg_sisdr)`, on
     // estimates that are the sources crossed, scaled, shifted, and noised: the pairwise matrix and the
     // loss under the best assignment.

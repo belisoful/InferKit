@@ -5754,7 +5754,9 @@
         "audio_tagger_training",
         "demucs_training",
         "htdemucs_training",
-        "nafnet_training"
+        "nafnet_training",
+        "style_transfer_training",
+        "adain_training"
       ]
     },
     "basic_pitch": {
@@ -6917,6 +6919,18 @@
       "record": "reference/nafnet-training-reference.safetensors",
       "environment": "ultralytics",
       "command": "IK_NAFNET_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/sources/refsrc/nafnet_train\" nafnet_training --checkpoint \"/Volumes/InferKit Models/InferKit/validation/raw/nafnet_sidd_width32.pth\""
+    },
+    {
+      "key": "IK_PARITY_STYLE_TRANSFER_TRAINING",
+      "record": "reference/style-transfer-training-reference.safetensors",
+      "environment": "ultralytics",
+      "command": "IK_STYLE_TRANSFER_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/sources/refsrc/fast_neural_style_train\" style_transfer_training --checkpoint \"/Volumes/InferKit Models/InferKit/validation/vgg16/model.safetensors\""
+    },
+    {
+      "key": "IK_PARITY_ADAIN_TRAINING",
+      "record": "reference/adain-training-reference.safetensors",
+      "environment": "ultralytics",
+      "command": "IK_ADAIN_TRAIN_SRC=\"/Volumes/InferKit Models/inferkit-validation/sources/refsrc/adain_train\" IK_ADAIN_VGG=\"/Volumes/InferKit Models/inferkit-validation/adain/vgg_normalised.pth\" adain_training --checkpoint \"/Volumes/InferKit Models/inferkit-validation/adain/decoder.pth\""
     },
     {
       "key": "IK_PARITY_STABLE_AUDIO_LOSS",

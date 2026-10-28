@@ -255,9 +255,9 @@ final class NFKMLXTorchParityTests: XCTestCase {
         let raw = try filePath("IK_RAW_STYLE", fallbackFile: "style_transfer_seeded.pth")
         let converted = try filePath("IK_VAL_STYLE_SEEDED", fallbackFile: "style-transfer-seeded.safetensors",
                                      directory: "converted")
-        let rawNet = NFKStyleTransferNet()
+        let rawNet = NFKMLXStyleTransferNet()
         try NFKMLXStyleTransfer.loadWeights(into: rawNet, from: raw)
-        let convertedNet = NFKStyleTransferNet()
+        let convertedNet = NFKMLXStyleTransferNet()
         try NFKMLXStyleTransfer.loadWeights(into: convertedNet, from: converted)
         assertIdenticalParameters(rawNet, convertedNet)
     }

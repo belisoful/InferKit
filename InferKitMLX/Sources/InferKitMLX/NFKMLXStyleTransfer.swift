@@ -34,7 +34,7 @@ final class NFKStyleConvLayer: Module {
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
-        conv2d(NFKMLXResample.reflectPadded(x, reflectionPad))
+        NFKFloat64Convolution.apply(conv2d, NFKMLXResample.reflectPadded(x, reflectionPad))
     }
 }
 
@@ -54,7 +54,7 @@ final class NFKStyleUpsampleConvLayer: Module {
 
     func callAsFunction(_ x: MLXArray) -> MLXArray {
         let scaled = upsample > 1 ? NFKMLXResample.upsampleNearest(x, scale: upsample) : x
-        return conv2d(NFKMLXResample.reflectPadded(scaled, reflectionPad))
+        return NFKFloat64Convolution.apply(conv2d, NFKMLXResample.reflectPadded(scaled, reflectionPad))
     }
 }
 
@@ -79,10 +79,12 @@ final class NFKStyleResidualBlock: Module {
     }
 }
 
-/// The image transformation network. `base: 32` matches the reference `TransformerNet`; downsampling
-/// runs at `base`, `2·base`, then `4·base`, where the five residual blocks operate. Input `[H, W, 3]`
-/// stylizes to `[H, W, 3]` at the same size.
-final class NFKStyleTransferNet: Module {
+/// The image transformation network, the reference `TransformerNet`. `base: 32` matches the reference;
+/// downsampling runs at `base`, `2·base`, then `4·base`, where the five residual blocks operate. Images
+/// `[N, H, W, 3]` in `0...255` stylize to `[N, H, W, 3]` in the same range at the same size.
+///
+/// Introduced in InferKit 0.4.0.
+public final class NFKMLXStyleTransferNet: Module {
 
     let conv1: NFKStyleConvLayer
     let in1: InstanceNorm
@@ -105,7 +107,7 @@ final class NFKStyleTransferNet: Module {
     let in5: InstanceNorm
     let deconv3: NFKStyleConvLayer
 
-    init(base: Int = 32) {
+    public init(base: Int = 32) {
         conv1 = NFKStyleConvLayer(inChannels: 3, outChannels: base, kernelSize: 9, stride: 1)
         in1 = InstanceNorm(dimensions: base, affine: true)
         conv2 = NFKStyleConvLayer(inChannels: base, outChannels: base * 2, kernelSize: 3, stride: 2)
@@ -126,7 +128,7 @@ final class NFKStyleTransferNet: Module {
         deconv3 = NFKStyleConvLayer(inChannels: base, outChannels: 3, kernelSize: 9, stride: 1)
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray {
+    public func callAsFunction(_ x: MLXArray) -> MLXArray {
         var y = relu(in1(conv1(x)))
         y = relu(in2(conv2(y)))
         y = relu(in3(conv3(y)))
@@ -148,13 +150,13 @@ final class NFKStyleTransferNet: Module {
 /// Holds the network for capture in the backend's `@Sendable` forward closure. Inference is serialized
 /// per job and MLX evaluation is internally synchronized, so shared read access to the weights is safe.
 private final class NFKStyleTransferHolder: @unchecked Sendable {
-    let net: NFKStyleTransferNet
-    init(_ net: NFKStyleTransferNet) { self.net = net }
+    let net: NFKMLXStyleTransferNet
+    init(_ net: NFKMLXStyleTransferNet) { self.net = net }
 }
 
 /// Fast neural style transfer as an InferKit backend, and its registration for the Objective-C path.
 ///
-/// `NFKStyleTransferNet` is the real image transformation network, not a stand-in. Random weights run
+/// `NFKMLXStyleTransferNet` is the real image transformation network, not a stand-in. Random weights run
 /// (proving the pipeline); a trained checkpoint bakes in a style. Load a **safetensors** checkpoint
 /// whose parameter names match the reference `TransformerNet` (`conv1.conv2d.*`, `in1.*`,
 /// `res1.conv1.conv2d.*`, `deconv3.conv2d.*`); the loader transposes 4-D PyTorch convolution weights
@@ -170,7 +172,7 @@ public final class NFKMLXStyleTransfer: NSObject {
     /// Run inference off the render thread.
     @objc(backendWithWeightsURL:error:)
     public static func backend(weightsURL: URL?) throws -> any NFKInferenceBackend {
-        let net = NFKStyleTransferNet()
+        let net = NFKMLXStyleTransferNet()
         if let weightsURL {
             try loadWeights(into: net, from: weightsURL)
         }
@@ -199,6 +201,24 @@ public final class NFKMLXStyleTransfer: NSObject {
                                completionHandler: completionHandler)
     }
 
+    /// Builds the image transformation network itself, ready to train, rather than a backend wrapping it.
+    ///
+    /// A nil `weightsURL` is training from scratch, which is how the reference trains every style: each
+    /// convolution's bias is drawn as `torch.nn.Conv2d` draws it, uniform within `±1/√fan_in`, beside
+    /// weights MLX already draws within the same bound. A released or fine-tuned checkpoint loads through
+    /// the same path as ``backend(weightsURL:)``.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static func network(weightsURL: URL?) throws -> NFKMLXStyleTransferNet {
+        let net = NFKMLXStyleTransferNet()
+        if let weightsURL {
+            try loadWeights(into: net, from: weightsURL)
+        } else {
+            NFKTorchInitialization.drawConvolutionBiases(in: net)
+        }
+        return net
+    }
+
     /// Registers fast style transfer (`fast-style-transfer`) with `NFKMLXModelRegistry`, delegating to
     /// `backend(weightsURL:)`.
     @objc public static func register() {
@@ -208,8 +228,9 @@ public final class NFKMLXStyleTransfer: NSObject {
     }
 
     /// Loads a safetensors checkpoint into `net`, transposing 4-D convolution weights from PyTorch's
-    /// `[out, in, kH, kW]` to MLX's channels-last `[out, kH, kW, in]`.
-    static func loadWeights(into net: NFKStyleTransferNet, from url: URL) throws {
+    /// `[out, in, kH, kW]` to MLX's channels-last `[out, kH, kW, in]`. A checkpoint written by fine-tuning
+    /// is already in the module's layout and skips the transpose.
+    static func loadWeights(into net: NFKMLXStyleTransferNet, from url: URL) throws {
         let checkpoint = try NFKMLXWeights.materializedCheckpoint(url: url)
         let raw = checkpoint.arrays
         let mapped = raw.map { key, value in

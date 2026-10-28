@@ -44,8 +44,8 @@ and a row answers the first. The `Reach` column answers the second.
 
 | Outcome | Rows |
 | --- | --- |
-| `ships` | 58 |
-| `trainable`, no recipe yet | 44 |
+| `ships` | 60 |
+| `trainable`, no recipe yet | 42 |
 | `offline` | 40 |
 | `uncertain` | 0 |
 | `untrainable` | 13 |
@@ -59,7 +59,7 @@ The model entries become 156 rows because a few entries take one ruling for seve
 generation pipelines share a row, the schedulers share a row, and Gemma's parameter-free adapters
 share a row.
 
-Fifty-eight rows ship a recipe and 44 models are trainable with none written. That is the size of
+Sixty rows ship a recipe and 42 models are trainable with none written. That is the size of
 the work the rule creates.
 
 The largest single finding: **the detector losses are published and portable.** ultralytics ships
@@ -113,8 +113,8 @@ Demucs, and HT Demucs ship.
 | --- | --- | --- | --- | --- |
 | `NFKMLXZeroDCE` | ships | zero-reference | public | Four `Myloss.py` losses measured by `run_reference.py zero_dce_losses`. |
 | `NFKMLXNAFNet` | ships | full | public | basicsr's `PSNRLoss`, AdamW with the 0.01 clip, and the cosine schedule, one recipe per release's option file, measured by `run_reference.py nafnet_training` on the SIDD width-32 release. |
-| `NFKMLXStyleTransfer` | trainable | full | internal | 1.7M parameters. The VGG-16 perceptual and Gram loss needs `NFKMLXVGG16Features`, which already ships publicly. |
-| `NFKMLXAdaIN` | trainable | full (decoder) | internal | The encoder stays frozen and the loss network is the model's own ported VGG-19 encoder. |
+| `NFKMLXStyleTransfer` | ships | full | public | `neural_style.py train`'s VGG-16 content and Gram style terms and its Adam, from scratch, measured by `run_reference.py style_transfer_training` in float64 at a fresh and a trained state and in float32 at the trained one. |
+| `NFKMLXAdaIN` | ships | full (decoder) | public | `train.py`'s content and per-channel statistics terms over the frozen VGG-19 encoder, its Adam and inverse decay, and its random crop, measured by `run_reference.py adain_training` on the released VGG and decoder. |
 | `NFKMLXZeroDCEPlus` | ships | zero-reference | public | `lowlight_train.py`'s four `Myloss.py` losses with smoothness at 1600 over the shared curve map, its Adam, and the clip at 0.1, at the script's scale factor 1 and the released 12, measured by `run_reference.py zero_dce_plus_training`. |
 | `NFKMLXSwinIR` | trainable / offline | full | internal | Classical and lightweight train on L1. The two real-world releases are GANs whose discriminator is not ported. |
 | `NFKMLXHAT` | trainable / offline | full | internal | `.base` and `.large` are reconstruction networks. `.realWorld` carries an adversarial recipe. |
@@ -346,6 +346,8 @@ the recipe detail.
 | `NFKMLXDenoiser` | trainable, full | facebookresearch/denoiser at 8afd7c1, `solver.py` and `stft_loss.py`. |
 | `NFKMLXDemucs` | ships, full | facebookresearch/demucs `v2` branch at 64ed2cb, `train.py` and `augment.py`. |
 | `NFKMLXNAFNet` | ships, full | megvii-research/NAFNet at 2b4af71, basicsr's `ImageRestorationModel`, losses, transforms, and `options/train`. |
+| `NFKMLXStyleTransfer` | ships, full | pytorch/examples at acc295dc, `fast_neural_style/neural_style`'s `neural_style.py`, `vgg.py`, and `utils.py`. |
+| `NFKMLXAdaIN` | ships, full (decoder) | naoto0804/pytorch-AdaIN at 47950d0, `train.py`, `net.py`, `function.py`, and `sampler.py`. |
 | `NFKMLXHTDemucs` | ships, full | facebookresearch/demucs v4.0.1 at ef66d25, `solver.py`, `augment.py`, `train.py`, and `conf/`, with each release's `training_args`. |
 | `NFKMLXSNAC` | untrainable | hubertsiuzdak/snac at 8f79a71, the whole tree. |
 | `NFKMLXStableAudioDiTNet` / `NFKMLXStableAudioProjectionNet` | trainable, LoRA | Stability-AI/stable-audio-tools at 3241adb, `training/diffusion.py`, `training/utils.py`, and `models/lora/`; the release's `model_config.json` for the optimizer. |

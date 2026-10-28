@@ -4862,6 +4862,39 @@ try NFKMLXWeights.save(net, to: tuned)
 let denoiser = try NFKMLXNAFNet.backend(variant: .sidd, weightsURL: tuned)  // Objective-C: backendWithVariant:weightsURL:error:
 ```
 
+### Training fast style transfer on your own style
+
+Fast style transfer bakes one style into a network, and the reference trains each style from scratch:
+a style image, a stream of content photos, a content term over VGG-16's relu2_2, and a style term over
+the Gram matrices of four of its activations. Content images arrive as `[N, H, W, 3]` in `0...1`; the
+reference crops them to 256 × 256. The objective takes torchvision's VGG-16 weights and the style image.
+
+```swift
+let objective = try NFKMLXStyleTransferObjective(vggWeightsURL: vgg16Weights, styleImage: myStyle)
+let net = try NFKMLXStyleTransfer.network(weightsURL: nil)
+try NFKMLXStyleTransfer.fineTune(net, contentImages: { step in myPhotos[step % myPhotos.count] },
+                                 objective: objective, steps: 40_000)
+
+try NFKMLXWeights.save(net, to: tuned)
+let stylizer = try NFKMLXStyleTransfer.backend(weightsURL: tuned)  // Objective-C: backendWithWeightsURL:error:
+```
+
+### Training AdaIN's decoder
+
+AdaIN's decoder trains on pairs of content and style images with the released VGG-19 encoder frozen,
+which is also the loss network. Each step takes both batches as `[N, H, W, 3]` in `0...1`; the recipe
+takes a random 256-pixel crop of each image, so supply them at 512 × 512 as the reference does.
+
+```swift
+let net = try NFKMLXAdaIN.network(encoderURL: releasedEncoder, decoderURL: releasedDecoder)
+try NFKMLXAdaIN.fineTune(net, examples: { step in (myPhotos[step % myPhotos.count], myStyles[step % myStyles.count]) },
+                         steps: 10_000)
+
+try NFKMLXWeights.save(net.decoder, to: tunedDecoder)
+let stylizer = try NFKMLXAdaIN.backend(encoderURL: releasedEncoder, decoderURL: tunedDecoder)
+// Objective-C: backendWithEncoderURL:decoderURL:error:
+```
+
 ### Teaching bandwidth extension your own audio
 
 NU-Wave 2 restores the high band of a narrow-band recording. Fine-tuning it on wide-band audio of the

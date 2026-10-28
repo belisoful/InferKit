@@ -2689,6 +2689,292 @@ def run_nafnet_training(image, checkpoint):
     return extra["loss"].clone()
 
 
+def run_style_transfer_training(image, checkpoint):
+    """Fast style transfer's training objective and one optimizer step, from the PyTorch examples' own
+    `fast_neural_style/neural_style` (IK_STYLE_TRANSFER_TRAIN_SRC holds its `transformer_net.py`, `vgg.py`,
+    and `utils.py` at acc295dc): `train()`'s loop body over `utils.normalize_batch` and `utils.gram_matrix`.
+    `--checkpoint` is torchvision's VGG-16 ImageNet weights as `timm/vgg16.tv_in1k` republishes them,
+    loaded into the `models.vgg16` that `vgg.Vgg16` builds in place of its download.
+
+    Two states, each under its own prefix with its parameters under `init::`:
+    - `fresh::`, `TransformerNet()` drawn after `train()`'s own `torch.manual_seed(42)`, on two 64-pixel
+      content images. A fresh network's output is nearly flat, so VGG's max-pools sit on near-ties that
+      float32 resolves by chance.
+    - `trained::`, the same network after 300 updates of `train()`'s loop on sixteen smoothed noise images,
+      on one 32-pixel content image drawn until the float64 forward keeps every transformer ReLU input
+      2e-5 from zero and every VGG ReLU input and max-pool gap 5e-6 of its layer's root mean square away
+      from a tie, about five times VGG's float32 forward error. The margins are recorded under `margin::`.
+    Each records, on one 72x80 style image, the stylized output, the weighted content and style terms, the
+    global gradient norm, thirteen gradients, and the loss after one step of `Adam(lr=1e-3)`, at float32
+    and at float64 from the same float32 inputs. A float64 value is stored as `f64::` plus the float32
+    remainder under `f64lo::`.
+    """
+    import copy
+    import importlib.util
+    import types
+    import torchvision
+    from safetensors.torch import load_file
+    from torchvision import transforms
+
+    source = os.environ["IK_STYLE_TRANSFER_TRAIN_SRC"]
+
+    def load(name, relative):
+        spec = importlib.util.spec_from_file_location(name, os.path.join(source, relative))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    transformer_net = load("fast_neural_style_transformer_net", "transformer_net.py")
+    style_utils = load("fast_neural_style_utils", "utils.py")
+    style_vgg = load("fast_neural_style_vgg", "vgg.py")
+    weights = load_file(checkpoint)
+
+    def vgg16():
+        model = torchvision.models.vgg16(weights=None)
+        model.features.load_state_dict({k[len("features."):]: v.float() for k, v in weights.items()
+                                        if k.startswith("features.")})
+        return model
+
+    style_vgg.models = types.SimpleNamespace(vgg16=lambda weights=None: vgg16(),
+                                             VGG16_Weights=torchvision.models.VGG16_Weights)
+    to_tensor = transforms.ToTensor()
+    mse_loss = torch.nn.MSELoss()
+
+    np.random.seed(42)
+    torch.manual_seed(42)
+    base = transformer_net.TransformerNet()
+
+    generator = np.random.default_rng(83)
+    sy, sx = np.mgrid[0:72, 0:80]
+    style = np.stack([128 + 120 * np.sign(np.sin(0.45 * sx + 0.3 * sy + 2.1 * c)) * np.cos(0.21 * sy - 0.5 * c)
+                      for c in range(3)], -1)
+    style = (style + 20 * generator.standard_normal(style.shape)).clip(0, 255).astype(np.uint8)
+    style01 = to_tensor(style)
+    style32 = style01.mul(255)                                  # `transforms.Lambda(lambda x: x.mul(255))`
+    extra = {"style": style01.permute(1, 2, 0).contiguous()}
+
+    def content_images(seed, size, batch, edge):
+        draws = np.random.default_rng(seed)
+        y, x = np.mgrid[0:size, 0:size] / size
+        images = np.stack([np.stack([110 + 90 * np.sin(7 * x + 1.7 * c + b) * np.cos(5 * y - 0.9 * c + 2 * b)
+                                     for c in range(3)], -1) for b in range(batch)])
+        if edge:
+            images[0, size * 5 // 16:size * 11 // 16, size * 3 // 16:size * 15 // 32, :] = [230, 40, 60]
+        images = (images + 12 * draws.standard_normal(images.shape)).clip(0, 255).astype(np.uint8)
+        return torch.stack([to_tensor(image) for image in images])
+
+    def losses(transformer, vgg, gram_style, x):
+        n_batch = len(x)
+        y = transformer(x)
+        stylized = y.detach().clone()
+        y = style_utils.normalize_batch(y)
+        x = style_utils.normalize_batch(x)
+        features_y = vgg(y)
+        features_x = vgg(x)
+        content_loss = 1e5 * mse_loss(features_y.relu2_2, features_x.relu2_2)
+        style_loss = 0.
+        for ft_y, gm_s in zip(features_y, gram_style):
+            gm_y = style_utils.gram_matrix(ft_y)
+            style_loss += mse_loss(gm_y, gm_s[:n_batch, :, :])
+        style_loss *= 1e10
+        return stylized, content_loss, style_loss
+
+    def style_grams(vgg, dtype):
+        return [style_utils.gram_matrix(y) for y in vgg(style_utils.normalize_batch(style32.to(dtype).repeat(4, 1, 1, 1)))]
+
+    vgg32 = style_vgg.Vgg16(requires_grad=False)
+    trained = copy.deepcopy(base)
+    trained.train()
+    optimizer = torch.optim.Adam(trained.parameters(), 1e-3)
+    noise = np.random.default_rng(7).integers(0, 256, (16, 3, 48, 48)).astype(np.float32)
+    training_images = torch.nn.functional.avg_pool2d(torch.from_numpy(noise), 3, 1, 1)[:, :, 8:40, 8:40].contiguous()
+    gram_style32 = style_grams(vgg32, torch.float32)
+    for step in range(300):
+        optimizer.zero_grad()
+        start = (step * 4) % 16
+        _, content_loss, style_loss = losses(trained, vgg32, gram_style32, training_images[start:start + 4].clone())
+        (content_loss + style_loss).backward()
+        optimizer.step()
+
+    relu_norms = ["in1", "in2", "in3"] + [f"res{k}.in1" for k in range(1, 6)] + ["in4", "in5"]
+    features64 = copy.deepcopy(vgg16().features[:23]).double()
+
+    def margins(network, content01):
+        transformer = copy.deepcopy(network).double()
+        found = {"transformer": [], "vgg_relu": [], "vgg_pool": []}
+        hooks = [transformer.get_submodule(name).register_forward_hook(
+            lambda module, inputs, output: found["transformer"].append(output.abs().min().item())) for name in relu_norms]
+        with torch.no_grad():
+            h = style_utils.normalize_batch(transformer(content01.mul(255).double()))
+            for layer in features64:
+                scale = h.pow(2).mean().sqrt()
+                if isinstance(layer, torch.nn.ReLU):
+                    found["vgg_relu"].append((h.abs().min() / scale).item())
+                if isinstance(layer, torch.nn.MaxPool2d):
+                    n, c, rows, columns = h.shape
+                    windows = h.reshape(n, c, rows // 2, 2, columns // 2, 2).permute(0, 1, 2, 4, 3, 5).reshape(n, c, rows // 2, columns // 2, 4)
+                    top = windows.topk(2, dim=-1).values
+                    gaps = (top[..., 0] - top[..., 1])[top[..., 0] > 0]
+                    found["vgg_pool"].append((gaps.min() / scale).item())
+                h = layer(h)
+        for hook in hooks:
+            hook.remove()
+        return {kind: min(values) for kind, values in found.items()}
+
+    for seed in range(10000):
+        trained_content = content_images(1000 + seed, 32, 1, False)
+        trained_margins = margins(trained, trained_content)
+        if (trained_margins["transformer"] > 2e-5 and trained_margins["vgg_relu"] > 5e-6
+                and trained_margins["vgg_pool"] > 5e-6):
+            break
+    else:
+        raise SystemExit("no 32-pixel content image keeps the trained network's float64 forward clear of every kink")
+
+    names = ["conv1.conv2d.weight", "in1.weight", "in1.bias", "conv3.conv2d.weight", "res2.conv1.conv2d.weight",
+             "res4.in2.weight", "res5.in1.bias", "deconv1.conv2d.weight", "in4.bias", "deconv2.conv2d.weight",
+             "in5.weight", "deconv3.conv2d.weight", "deconv3.conv2d.bias"]
+
+    def store(key, value, prefix):
+        value = value.detach()
+        if prefix.endswith("f64::"):
+            high = value.float()
+            extra[key] = high.contiguous()
+            extra[key.replace("f64::", "f64lo::", 1)] = (value - high.double()).float().contiguous()
+        else:
+            extra[key] = value.float().contiguous()
+
+    def run(network, content01, state, dtype, prefix):
+        transformer = copy.deepcopy(network).to(dtype)
+        transformer.train()
+        vgg = style_vgg.Vgg16(requires_grad=False).to(dtype)
+        optimizer = torch.optim.Adam(transformer.parameters(), 1e-3)
+        gram_style = style_grams(vgg, dtype)
+        content32 = content01.mul(255)
+        optimizer.zero_grad()
+        stylized, content_loss, style_loss = losses(transformer, vgg, gram_style, content32.to(dtype).clone())
+        store(f"{state}::{prefix}stylized", stylized.permute(0, 2, 3, 1), prefix)
+        store(f"{state}::{prefix}content_loss", content_loss.reshape(1), prefix)
+        store(f"{state}::{prefix}style_loss", style_loss.reshape(1), prefix)
+        (content_loss + style_loss).backward()
+        named = dict(transformer.named_parameters())
+        for name in names:
+            store(f"{state}::{prefix}grad::{name}", named[name].grad, prefix)
+        norm = torch.linalg.vector_norm(torch.stack([p.grad.detach().norm() for p in transformer.parameters()]))
+        store(f"{state}::{prefix}gradient_norm", norm.reshape(1), prefix)
+        optimizer.step()
+        with torch.no_grad():
+            _, content_loss, style_loss = losses(transformer, vgg, gram_style, content32.to(dtype).clone())
+            store(f"{state}::{prefix}loss_after_step", (content_loss + style_loss).reshape(1), prefix)
+
+    fresh_content = content_images(83, 64, 2, True)
+    for state, network, content01 in [("fresh", base, fresh_content), ("trained", trained, trained_content)]:
+        extra.update({f"{state}::init::{name}": value.detach().float().clone() for name, value in network.state_dict().items()})
+        extra[f"{state}::content"] = content01.permute(0, 2, 3, 1).contiguous()
+        for kind, value in margins(network, content01).items():
+            extra[f"{state}::margin::{kind}"] = torch.tensor([value])
+        run(network, content01, state, torch.float32, "")
+        run(network, content01, state, torch.float64, "f64::")
+    globals()["_extra"] = extra
+    return extra["trained::content_loss"].clone()
+
+
+def run_adain_training(image, checkpoint):
+    """AdaIN's training objective, random crop, and one optimizer step, from naoto0804's own `train.py`
+    (IK_ADAIN_TRAIN_SRC holds `net.py`, `function.py`, and `train.py` at 47950d0): `net.Net` over the
+    released normalized VGG sliced to `[:31]` (IK_ADAIN_VGG) and the released decoder (`--checkpoint`),
+    `Adam(decoder.parameters(), lr=1e-4)` at `adjust_learning_rate`'s first rate, and `train_transform`'s
+    `RandomCrop`.
+
+    Records, on two 64-pixel content images and two style images, each as `ToTensor` produces it:
+    - the decoded image, `net.Net.forward`'s two terms before their factors, the global gradient norm, and
+      the gradient of every decoder convolution;
+    - the loss after one step at the reference's factors, content 1 and style 10;
+    - all of it again at float64, from the same float32 inputs;
+    - two 40x48 content and two 44x36 style images cropped to 32 by `RandomCrop`, with every draw.
+    """
+    import copy
+    from torchvision import transforms
+
+    sys.path.insert(0, os.environ["IK_ADAIN_TRAIN_SRC"])
+    import net as adain_net
+    from function import adaptive_instance_normalization
+
+    vgg = adain_net.vgg
+    vgg.load_state_dict(torch.load(os.environ["IK_ADAIN_VGG"], map_location="cpu", weights_only=True))
+    vgg = torch.nn.Sequential(*list(vgg.children())[:31])
+    decoder = adain_net.decoder
+    state = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    decoder.load_state_dict({k[len("net."):] if k.startswith("net.") else k: v for k, v in state.items()})
+    base = adain_net.Net(vgg, decoder)
+
+    generator = np.random.default_rng(89)
+    y, x = np.mgrid[0:64, 0:64] / 64
+    content = np.stack([np.stack([120 + 80 * np.sin(6 * x + 1.3 * c + b) * np.cos(4 * y - 0.7 * c) for c in range(3)], -1)
+                        for b in range(2)])
+    content[1, 16:40, 24:52, :] = [40, 200, 90]
+    style = np.stack([np.stack([128 + 110 * np.sign(np.sin(19 * x + 11 * y * (b + 1) + 2.1 * c)) for c in range(3)], -1)
+                      for b in range(2)])
+    content = (content + 10 * generator.standard_normal(content.shape)).clip(0, 255).astype(np.uint8)
+    style = (style + 25 * generator.standard_normal(style.shape)).clip(0, 255).astype(np.uint8)
+    to_tensor = transforms.ToTensor()
+    content32 = torch.stack([to_tensor(image) for image in content])
+    style32 = torch.stack([to_tensor(image) for image in style])
+    extra = {"content": content32.permute(0, 2, 3, 1).contiguous(), "style": style32.permute(0, 2, 3, 1).contiguous()}
+
+    def run(dtype, prefix):
+        network = copy.deepcopy(base).to(dtype)
+        network.train()
+        optimizer = torch.optim.Adam(network.decoder.parameters(), lr=1e-4)
+        for group in optimizer.param_groups:                    # `adjust_learning_rate(optimizer, 0)`
+            group["lr"] = 1e-4 / (1.0 + 5e-5 * 0)
+        content, style = content32.to(dtype), style32.to(dtype)
+        with torch.no_grad():
+            target = adaptive_instance_normalization(network.encode(content), network.encode(style))
+            extra[prefix + "decoded"] = network.decoder(target).float().permute(0, 2, 3, 1).contiguous()
+        loss_c, loss_s = network(content, style)
+        extra[prefix + "loss_content"] = torch.tensor([loss_c.item()])
+        extra[prefix + "loss_style"] = torch.tensor([loss_s.item()])
+        loss = 1.0 * loss_c + 10.0 * loss_s
+        optimizer.zero_grad()
+        loss.backward()
+        for name, parameter in network.decoder.named_parameters():
+            extra[f"{prefix}grad::{name}"] = parameter.grad.detach().float().clone()
+        norm = torch.linalg.vector_norm(torch.stack([p.grad.detach().norm() for p in network.decoder.parameters()]))
+        extra[prefix + "gradient_norm"] = torch.tensor([float(norm)])
+        optimizer.step()
+        with torch.no_grad():
+            loss_c, loss_s = network(content, style)
+            extra[prefix + "loss_after_step"] = torch.tensor([(1.0 * loss_c + 10.0 * loss_s).item()])
+
+    run(torch.float32, "")
+    run(torch.float64, "f64::")
+
+    draws = []
+    original = transforms.RandomCrop.get_params
+
+    def recording(img, output_size):
+        i, j, h, w = original(img, output_size)
+        draws.extend([i, j])
+        return i, j, h, w
+
+    transforms.RandomCrop.get_params = staticmethod(recording)
+    torch.manual_seed(5)
+    crop_generator = np.random.default_rng(97)
+    crop_content = crop_generator.random((2, 40, 48, 3)).astype(np.float32)
+    crop_style = crop_generator.random((2, 44, 36, 3)).astype(np.float32)
+    crop = transforms.RandomCrop(32)
+    outputs = {name: torch.stack([crop(torch.from_numpy(image).permute(2, 0, 1)).permute(1, 2, 0) for image in images])
+               for name, images in [("content", crop_content), ("style", crop_style)]}
+    transforms.RandomCrop.get_params = original
+    extra.update({
+        "augment::content": torch.from_numpy(crop_content), "augment::style": torch.from_numpy(crop_style),
+        "augment::out_content": outputs["content"].contiguous(), "augment::out_style": outputs["style"].contiguous(),
+        "augment::draws": torch.tensor(draws, dtype=torch.float32),
+    })
+    globals()["_extra"] = extra
+    return extra["loss_content"].clone()
+
+
 def _reference_source():
     """The directory holding the single-file reference implementations, from IK_REF_SRC."""
     import os
@@ -24300,7 +24586,7 @@ CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,
                      "audio_tagger": run_audio_tagger, "raft": run_raft, "rvm": run_rvm,
                      "depth": run_depth, "depth_encoder": run_depth_encoder, "depth3": run_depth3,
-                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "smolvlm_tokenizer": run_smolvlm_tokenizer, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "denoiser_training": run_denoiser_training, "frcrn_training": run_frcrn_training, "mossformer2_training": run_mossformer2_training, "retinaface_training": run_retinaface_training, "depth_anything_metric_training": run_depth_anything_metric_training, "siggraph17_training": run_siggraph17_training, "eccv16_training": run_eccv16_training, "rife_v4_training": run_rife_v4_training, "zero_dce_plus_training": run_zero_dce_plus_training, "nafnet_training": run_nafnet_training, "demucs_training": run_demucs_training, "htdemucs_training": run_htdemucs_training, "qwen3_loss": run_qwen3_loss, "qwen3_5_loss": run_qwen3_5_loss, "gemma3_loss": run_gemma3_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
+                     "videosr": run_videosr, "yolo": run_yolo, "yolo_generation": run_yolo_generation, "nafnet": run_nafnet, "rife": run_rife, "rife_v4": run_rife_v4, "modnet": run_modnet, "bisenet": run_bisenet, "bisenetv2": run_bisenetv2, "siggraph17": run_siggraph17, "whisper": run_whisper, "lama": run_lama, "yolo_detections": run_yolo_detections, "codeformer": run_codeformer, "retinaface": run_retinaface, "qwen3": run_qwen3, "qwen3_embedding": run_qwen3_embedding, "embeddinggemma": run_embeddinggemma, "modernbert_reranker": run_modernbert_reranker, "smolvlm": run_smolvlm, "smolvlm_tokenizer": run_smolvlm_tokenizer, "qwen3vl": run_qwen3vl, "qwen3vl_embedding": run_qwen3vl_embedding, "qwen3vl_reranker": run_qwen3vl_reranker, "gguf": run_gguf, "gguf_lm": run_gguf_lm, "qwen3_moe": run_qwen3_moe, "mixtral": run_mixtral, "mamba2": run_mamba2, "mamba2_real": run_mamba2_real, "granite_hybrid": run_granite_hybrid, "granite_hybrid_moe": run_granite_hybrid_moe, "granite_hybrid_loss": run_granite_hybrid_loss, "granite_hybrid_real": run_granite_hybrid_real, "nemotron_h": run_nemotron_h, "nemotron_h_loss": run_nemotron_h_loss, "denoiser_training": run_denoiser_training, "frcrn_training": run_frcrn_training, "mossformer2_training": run_mossformer2_training, "retinaface_training": run_retinaface_training, "depth_anything_metric_training": run_depth_anything_metric_training, "siggraph17_training": run_siggraph17_training, "eccv16_training": run_eccv16_training, "rife_v4_training": run_rife_v4_training, "zero_dce_plus_training": run_zero_dce_plus_training, "nafnet_training": run_nafnet_training, "style_transfer_training": run_style_transfer_training, "adain_training": run_adain_training, "demucs_training": run_demucs_training, "htdemucs_training": run_htdemucs_training, "qwen3_loss": run_qwen3_loss, "qwen3_5_loss": run_qwen3_5_loss, "gemma3_loss": run_gemma3_loss, "nemotron_h_real": run_nemotron_h_real, "granite_speech": run_granite_speech, "granite_speech_real": run_granite_speech_real, "voxtral": run_voxtral, "voxtral_real": run_voxtral_real, "qwen2_moe": run_qwen2_moe, "gpt_oss": run_gpt_oss, "gemma4": run_gemma4, "gemma3": run_gemma3, "gemma3n": run_gemma3n, "gemma3n_conditional_real": run_gemma3n_conditional_real, "gemma3n_vision_real": run_gemma3n_vision_real, "gemma3n_audio_real": run_gemma3n_audio_real, "gemma3n_mel": run_gemma3n_mel, "gemma3_vision_real": run_gemma3_vision_real, "gemma3_conditional_real": run_gemma3_conditional_real, "gemma4_moe": run_gemma4_moe, "gemma4_unified": run_gemma4_unified, "gemma4_vision": run_gemma4_vision, "gemma4_audio": run_gemma4_audio, "gemma4_mel": run_gemma4_mel, "gemma4_embedder": run_gemma4_embedder, "gemma4_audio_real": run_gemma4_audio_real, "gemma4_conditional_real": run_gemma4_conditional_real, "gemma4_vision_real": run_gemma4_vision_real, "qwen3_5": run_qwen3_5, "deepseek_v41_tokens": run_deepseek_v41_tokens, "deepseek_v41_quant": run_deepseek_v41_quant, "deepseek_quant": run_deepseek_quant, "gpt_oss_quant": run_gpt_oss_quant, "metricgan": run_metricgan, "cmgan": run_cmgan, "frcrn": run_frcrn, "mossformer2_sr": run_mossformer2_sr, "nuwave2": run_nuwave2, "nuwave2_loss": run_nuwave2_loss, "apollo": run_apollo, "deepseek_v4": run_deepseek_v4, "hifigan": run_hifigan, "fastspeech2": run_fastspeech2, "music_vocoder": run_music_vocoder, "music_depth": run_music_depth, "music_condition": run_music_condition, "music_dit": run_music_dit, "music_ar": run_music_ar, "music_tokenizer": run_music_tokenizer,
                      "zero_dce": run_zero_dce, "style_transfer": run_style_transfer,
                      "realesrgan": run_realesrgan, "colorizer": run_colorizer, "rtdetr_real": run_rtdetr_real, "rtdetr_v2_real": run_rtdetr_v2_real, "vitpose": run_vitpose, "ddcolor": run_ddcolor, "realesrgan_compact": run_realesrgan_compact, "zero_dce_plus": run_zero_dce_plus, "rf_detr_real": run_rf_detr_real, "ip_adapter_unet": run_ip_adapter_unet, "kokoro": run_kokoro, "parakeet": run_parakeet, "canary": run_canary, "phi4mm": run_phi4mm, "phi4mm_bf16": run_phi4mm_bf16, "phi4mm_conversation": run_phi4mm_conversation,"table_transformer": run_table_transformer, "table_transformer_loss": run_table_transformer_loss, "vjepa2": run_vjepa2, "sa2va": run_sa2va, "cosmos_tokenizer": run_cosmos_tokenizer, "cosmos_tokenizer_loss": run_cosmos_tokenizer_loss,
                      "chatterbox_voice": run_chatterbox_voice,

@@ -20,8 +20,8 @@ final class NFKMLXStyleTransferTests: XCTestCase {
                       "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
     }
 
-    private func smallNet() -> NFKStyleTransferNet {
-        NFKStyleTransferNet(base: 4)
+    private func smallNet() -> NFKMLXStyleTransferNet {
+        NFKMLXStyleTransferNet(base: 4)
     }
 
     // MARK: Parameter names

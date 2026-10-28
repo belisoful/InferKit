@@ -731,6 +731,13 @@ The figures have three limits:
 - ``NFKMLXNAFNetObjective``
 - ``NFKMLXNAFNetAugmentation``
 - ``NFKMLXNAFNetTrainingRecipe``
+- ``NFKMLXStyleTransferNet``
+- ``NFKMLXStyleTransferObjective``
+- ``NFKMLXAdaINNet``
+- ``NFKMLXAdaINEncoder``
+- ``NFKMLXAdaINDecoder``
+- ``NFKMLXAdaINObjective``
+- ``NFKMLXAdaINAugmentation``
 - ``NFKMLXDemucsObjective``
 - ``NFKMLXDemucsAugmentation``
 - ``NFKMLXHTDemucsNet``

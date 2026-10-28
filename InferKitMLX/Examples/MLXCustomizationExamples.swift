@@ -1109,6 +1109,58 @@ final class MLXCustomizationExamples: XCTestCase {
         XCTAssertEqual(denoiser.backendIdentifier, NFKMLXNAFNet.modelName)
     }
 
+    // Docs/examples.md: Training fast style transfer on your own style
+    func testExampleTrainingFastStyleTransfer() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tuned = FileManager.default.temporaryDirectory
+            .appendingPathComponent("style-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tuned) }
+
+        // A real run reads torchvision's VGG-16 weights and 256-pixel photos; a randomly initialized
+        // trunk and 32-pixel images stand in.
+        let vgg16Weights: URL? = nil
+        let styleValues: [Float] = (0 ..< 40 * 40 * 3).map { Float(($0 * 7) % 31) / 31 }
+        let photoValues: [Float] = (0 ..< 2 * 32 * 32 * 3).map { Float($0 % 53) / 53 }
+        let myStyle = MLXArray(styleValues, [40, 40, 3])
+        let myPhotos = [MLXArray(photoValues, [2, 32, 32, 3])]
+        let objective = try NFKMLXStyleTransferObjective(vggWeightsURL: vgg16Weights, styleImage: myStyle)
+        let net = try NFKMLXStyleTransfer.network(weightsURL: nil)
+        let history = try NFKMLXStyleTransfer.fineTune(net, contentImages: { step in myPhotos[step % myPhotos.count] },
+                                                       objective: objective, steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXWeights.save(net, to: tuned)
+        let stylizer = try NFKMLXStyleTransfer.backend(weightsURL: tuned)
+        XCTAssertEqual(stylizer.backendIdentifier, NFKMLXStyleTransfer.modelName)
+    }
+
+    // Docs/examples.md: Training AdaIN's decoder
+    func testExampleTrainingAdaINsDecoder() throws {
+        try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,
+                      "no Metal library for MLX; run Tools/mlx-metallib.sh or xcodebuild")
+        let tunedDecoder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("adain-decoder-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: tunedDecoder) }
+
+        // A real run loads the released encoder and decoder and crops 512-pixel images to 256; random
+        // networks and 48-pixel images cropped to 32 stand in.
+        let releasedEncoder: URL? = nil, releasedDecoder: URL? = nil
+        let photoValues: [Float] = (0 ..< 2 * 48 * 48 * 3).map { Float($0 % 53) / 53 }
+        let styleValues: [Float] = (0 ..< 2 * 48 * 48 * 3).map { Float(($0 * 7) % 31) / 31 }
+        let myPhotos = [MLXArray(photoValues, [2, 48, 48, 3])]
+        let myStyles = [MLXArray(styleValues, [2, 48, 48, 3])]
+        let net = try NFKMLXAdaIN.network(encoderURL: releasedEncoder, decoderURL: releasedDecoder)
+        let history = try NFKMLXAdaIN.fineTune(
+            net, examples: { step in (myPhotos[step % myPhotos.count], myStyles[step % myStyles.count]) },
+            augmentation: NFKMLXAdaINAugmentation(patchSize: 32), steps: 2)
+        XCTAssertEqual(history.count, 2)
+
+        try NFKMLXWeights.save(net.decoder, to: tunedDecoder)
+        let stylizer = try NFKMLXAdaIN.backend(encoderURL: releasedEncoder, decoderURL: tunedDecoder)
+        XCTAssertEqual(stylizer.backendIdentifier, NFKMLXAdaIN.modelName)
+    }
+
     // Docs/examples.md: Fine-tuning the colorizers
     func testExampleFineTuningTheColorizers() throws {
         try XCTSkipIf(NFKMLXGPU.metalLibraryURL == nil,

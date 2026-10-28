@@ -1838,6 +1838,30 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - The catalog's Maximum tokens option declares no default for these models. The image-question backends keep their
   128-token answers.
 
+#### Fast style transfer trains a new style as the PyTorch examples train it
+
+- `NFKMLXStyleTransfer.fineTune` trains `TransformerNet` as `neural_style.py train` does: every parameter from a fresh
+  draw, a content term over VGG-16's relu2_2 at 1e5, a style term over the Gram matrices of relu1_2, relu2_2,
+  relu3_3, and relu4_3 at 1e10, and Adam at 1e-3 with no schedule.
+- `NFKMLXStyleTransferObjective` is the loss. It takes torchvision's VGG-16 weights and the style image, whose Gram
+  matrices it computes once.
+- `NFKMLXStyleTransferNet` is public, and `NFKMLXStyleTransfer.network(weightsURL:)` builds it. A fresh network
+  draws its convolution biases as `torch.nn.Conv2d` does.
+- `NFKMLXVGG16Features` stops at the last activation an objective reads.
+- `NFKMLXStyleTransferNet`, `NFKMLXVGG16Features`, and the objective run in float64 on MLX's CPU, which has no
+  float64 convolution: a float64 input takes one matrix product per kernel tap.
+
+#### AdaIN's decoder trains as naoto0804's `train.py` trains it
+
+- `NFKMLXAdaIN.fineTune` trains the decoder with the normalized VGG-19 encoder frozen: a content term between the
+  decoded image's relu4_1 features and the normalized features, a style term over the per-channel means and
+  deviations of relu1_1 through relu4_1 at 10, and Adam at 1e-4 divided by `1 + 5e-5 · i` before update `i`.
+- `NFKMLXAdaINObjective` is the loss, and `NFKMLXAdaINAugmentation` the training transform's random 256-pixel crop.
+- `NFKMLXAdaINNet`, `NFKMLXAdaINEncoder`, and `NFKMLXAdaINDecoder` are public, and
+  `NFKMLXAdaIN.network(encoderURL:decoderURL:)` builds them. The encoder returns relu1_1 through relu4_1 through
+  `intermediates(_:)`. The decoder loader reads a decoder saved after fine-tuning.
+- `NFKMLXLearningRateSchedule.inverseTime(decay:)` divides the rate by `1 + decay · k`.
+
 #### NAFNet fine-tunes on degraded and clean pairs as its option files train it
 
 - `NFKMLXNAFNet.fineTune` trains NAFNet as megvii-research's basicsr `ImageRestorationModel` does: every parameter,

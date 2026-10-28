@@ -34,6 +34,14 @@ public struct NFKMLXLearningRateSchedule {
         }
     }
 
+    /// The base rate divided by `1 + decay · k` at zero-based step `k`, the decay AdaIN's
+    /// `adjust_learning_rate` applies before each update.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static func inverseTime(decay: Float) -> NFKMLXLearningRateSchedule {
+        NFKMLXLearningRateSchedule { step in 1 / (1 + decay * Float(step)) }
+    }
+
     /// torch's `MultiStepLR`: the base rate times `gamma` once for every milestone at or before the
     /// zero-based step.
     ///

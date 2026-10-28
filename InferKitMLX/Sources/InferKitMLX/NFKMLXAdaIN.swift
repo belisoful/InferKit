@@ -63,13 +63,19 @@ enum NFKAdaINLayer {
 
 /// The normalized VGG-19 the reference encodes with, truncated after relu4_1 (index 30). The first
 /// 1×1 convolution carries the input normalization, which is why the plate reaches it unnormalized.
-final class NFKMLXAdaINEncoder: Module {
+///
+/// Introduced in InferKit 0.4.0.
+public final class NFKMLXAdaINEncoder: Module {
     @ModuleInfo(key: "layers") var layers: [Module]
 
     /// The reference slices the released VGG to `[:31]`, so relu4_1 is the last layer that runs.
     static let outputIndex = 30
 
-    override init() {
+    /// The last index of each of the training network's `enc_1` … `enc_4` slices: relu1_1, relu2_1,
+    /// relu3_1, and relu4_1.
+    static let intermediateIndices = [3, 10, 17, 30]
+
+    public override init() {
         typealias L = NFKAdaINLayer
         func block(_ inChannels: Int, _ outChannels: Int) -> [Module] {
             [L.Pad(), Conv2d(inputChannels: inChannels, outputChannels: outChannels, kernelSize: 3), L.Activation()]
@@ -82,17 +88,32 @@ final class NFKMLXAdaINEncoder: Module {
         _layers.wrappedValue = stack
     }
 
-    /// The relu4_1 features, `[1, H/8, W/8, 512]`.
-    func features(_ x: MLXArray) -> MLXArray {
+    /// The relu4_1 features, `[N, H/8, W/8, 512]`.
+    public func features(_ x: MLXArray) -> MLXArray {
         NFKAdaINLayer.forward(layers, x, through: Self.outputIndex)
+    }
+
+    /// The relu1_1, relu2_1, relu3_1, and relu4_1 features, the reference's `encode_with_intermediate`.
+    public func intermediates(_ x: MLXArray) -> [MLXArray] {
+        var outputs = [MLXArray]()
+        var h = x
+        var start = 0
+        for index in Self.intermediateIndices {
+            h = NFKAdaINLayer.forward(Array(layers[start ... index]), h)
+            outputs.append(h)
+            start = index + 1
+        }
+        return outputs
     }
 }
 
 /// The mirrored decoder that inverts relu4_1 features back to an image.
-final class NFKMLXAdaINDecoder: Module {
+///
+/// Introduced in InferKit 0.4.0.
+public final class NFKMLXAdaINDecoder: Module {
     @ModuleInfo(key: "layers") var layers: [Module]
 
-    override init() {
+    public override init() {
         typealias L = NFKAdaINLayer
         func block(_ inChannels: Int, _ outChannels: Int, activates: Bool = true) -> [Module] {
             var stack: [Module] = [L.Pad(), Conv2d(inputChannels: inChannels, outputChannels: outChannels, kernelSize: 3)]
@@ -106,15 +127,18 @@ final class NFKMLXAdaINDecoder: Module {
         _layers.wrappedValue = stack
     }
 
-    func callAsFunction(_ x: MLXArray) -> MLXArray { NFKAdaINLayer.forward(layers, x) }
+    /// Decodes relu4_1 features `[N, h, w, 512]` to images `[N, 8h, 8w, 3]`.
+    public func callAsFunction(_ x: MLXArray) -> MLXArray { NFKAdaINLayer.forward(layers, x) }
 }
 
 /// The encoder, the decoder, and the normalization between them.
-final class NFKMLXAdaINNet: Module {
-    let encoder: NFKMLXAdaINEncoder
-    let decoder: NFKMLXAdaINDecoder
+///
+/// Introduced in InferKit 0.4.0.
+public final class NFKMLXAdaINNet: Module {
+    public let encoder: NFKMLXAdaINEncoder
+    public let decoder: NFKMLXAdaINDecoder
 
-    override init() {
+    public override init() {
         encoder = NFKMLXAdaINEncoder()
         decoder = NFKMLXAdaINDecoder()
     }
@@ -229,6 +253,27 @@ public final class NFKMLXAdaIN: NSObject {
         }
     }
 
+    /// Builds the encoder and the decoder themselves, ready to train, rather than a backend wrapping them.
+    ///
+    /// Training needs the released normalized VGG as `encoderURL`: the encoder stays frozen and is the
+    /// loss network as well. A nil `decoderURL` is the reference's training from scratch, with each
+    /// convolution's bias drawn as `torch.nn.Conv2d` draws it; a released or fine-tuned decoder loads
+    /// through the same path as ``backend(encoderURL:decoderURL:)``.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    public static func network(encoderURL: URL?, decoderURL: URL?) throws -> NFKMLXAdaINNet {
+        let net = NFKMLXAdaINNet()
+        if let encoderURL {
+            try loadEncoderWeights(into: net.encoder, from: encoderURL)
+        }
+        if let decoderURL {
+            try loadDecoderWeights(into: net.decoder, from: decoderURL)
+        } else {
+            NFKTorchInitialization.drawConvolutionBiases(in: net.decoder)
+        }
+        return net
+    }
+
     /// Registers `adain` with `NFKMLXModelRegistry`. The registry hands over one URL, which is the
     /// decoder: the encoder is the released normalized VGG and is named through the download factory.
     @objc public static func register() {
@@ -243,7 +288,8 @@ public final class NFKMLXAdaIN: NSObject {
         try loadStack(into: encoder, from: url)
     }
 
-    /// Loads the released decoder, whose keys are the same flat indices.
+    /// Loads the released decoder, whose keys are the same flat indices, or one saved from
+    /// ``NFKMLXAdaINNet/decoder`` after fine-tuning.
     static func loadDecoderWeights(into decoder: NFKMLXAdaINDecoder, from url: URL) throws {
         try loadStack(into: decoder, from: url)
     }
@@ -252,8 +298,12 @@ public final class NFKMLXAdaIN: NSObject {
         let checkpoint = try NFKMLXWeights.loadCheckpoint(url: url)
         let truncatesAt = module is NFKMLXAdaINEncoder ? NFKMLXAdaINEncoder.outputIndex : Int.max
         let mapped = checkpoint.arrays.compactMap { key, value -> (String, MLXArray)? in
-            // A decoder trained through a wrapper module carries that attribute name on every key.
-            let stripped = key.hasPrefix("net.") ? String(key.dropFirst("net.".count)) : key
+            // A decoder trained through a wrapper module carries that attribute name on every key, and one
+            // saved from this module after fine-tuning carries the `layers` array's.
+            var stripped = key.hasPrefix("net.") ? String(key.dropFirst("net.".count)) : key
+            if stripped.hasPrefix("layers.") {
+                stripped = String(stripped.dropFirst("layers.".count))
+            }
             // The released VGG carries all 19 layers; only the truncated prefix has a home here.
             guard let index = Int(stripped.split(separator: ".").first.map(String.init) ?? ""),
                   index <= truncatesAt else { return nil }

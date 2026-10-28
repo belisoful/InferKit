@@ -82,11 +82,16 @@ public final class NFKMLXVGG16Features: Module {
 
     /// The five tapped activations of images `[N, H, W, 3]` already normalized for VGG.
     public func callAsFunction(_ x: MLXArray) -> [MLXArray] {
+        activations(x, taps: Self.taps.count)
+    }
+
+    /// The first `taps` tapped activations, running the trunk no further than the last of them.
+    func activations(_ x: MLXArray, taps count: Int) -> [MLXArray] {
         var h = x
         var tapped: [MLXArray] = []
-        for index in 0 ..< 30 {
+        for index in 0 ..< 30 where tapped.count < count {
             if let convolution = features[index] as? Conv2d {
-                h = convolution(h)
+                h = NFKFloat64Convolution.apply(convolution, h)
             } else if Self.pools.contains(index) {
                 let s = h.shape
                 h = h[0..., 0 ..< (s[1] / 2 * 2), 0 ..< (s[2] / 2 * 2)]
