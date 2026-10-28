@@ -50,6 +50,15 @@ public final class NFKSpeechAnalyzerBackend: NSObject, NFKInferenceBackend {
         }
     }
 
+    /// How long preparing a locale waits for its assets, in seconds. The first install is a download.
+    /// Reaching it is reported as `kNFKError_InferenceNotReady`. Default 600. Introduced in InferKit 0.4.0.
+    @objc public var assetInstallTimeout: TimeInterval = 600
+
+    /// How long a transcription waits for the analyzer to finish, in seconds. Reaching it is reported as
+    /// `kNFKError_InferenceBackendFailure`; a caller transcribing long recordings raises it. Default 600.
+    /// Introduced in InferKit 0.4.0.
+    @objc public var transcriptionTimeout: TimeInterval = 600
+
     private let lock = NSLock()
     private var explicitLocale: Locale?
     /// The identifiers of the locales whose assets this backend has reserved and installed.
@@ -112,7 +121,7 @@ public final class NFKSpeechAnalyzerBackend: NSObject, NFKInferenceBackend {
     private func installAssets(for locale: Locale) throws {
         let outcome = NFKAppleOutcome<Bool>()
         let semaphore = DispatchSemaphore(value: 0)
-        Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             do {
                 guard SpeechTranscriber.isAvailable else {
                     throw Self.error(.error_InferenceUnsupported, "this machine has no speech analyzer")
@@ -134,7 +143,8 @@ public final class NFKSpeechAnalyzerBackend: NSObject, NFKInferenceBackend {
             }
             semaphore.signal()
         }
-        semaphore.wait()
+        try Self.wait(semaphore, seconds: assetInstallTimeout, cancelling: task, code: .error_InferenceNotReady,
+                      reason: "the speech assets for \(locale.identifier) did not install")
         _ = try outcome.value()
         lock.withLock { _ = preparedLocales.insert(locale.identifier) }
     }
@@ -150,7 +160,7 @@ public final class NFKSpeechAnalyzerBackend: NSObject, NFKInferenceBackend {
         }
         let outcome = NFKAppleOutcome<NFKInferenceResult>()
         let semaphore = DispatchSemaphore(value: 0)
-        Task.detached(priority: .userInitiated) {
+        let task = Task.detached(priority: .userInitiated) {
             do {
                 outcome.succeed(try await Self.transcribe(url: url, locale: locale))
             } catch {
@@ -158,8 +168,19 @@ public final class NFKSpeechAnalyzerBackend: NSObject, NFKInferenceBackend {
             }
             semaphore.signal()
         }
-        semaphore.wait()
+        try Self.wait(semaphore, seconds: transcriptionTimeout, cancelling: task, code: .error_InferenceBackendFailure,
+                      reason: "the speech analyzer did not finish")
         return try outcome.value()
+    }
+
+    /// Bounds a wait on the analyzer: a stalled asset download or analysis would otherwise hang the calling
+    /// thread for the life of the process. Reaching the deadline cancels the task and reports `code`.
+    static func wait(_ semaphore: DispatchSemaphore, seconds: TimeInterval, cancelling task: Task<Void, Never>?,
+                     code: NFKInferenceError, reason: String) throws {
+        if semaphore.wait(timeout: .now() + seconds) == .timedOut {
+            task?.cancel()
+            throw error(code, "\(reason) within \(Int(seconds)) seconds")
+        }
     }
 
     // MARK: Transcribing

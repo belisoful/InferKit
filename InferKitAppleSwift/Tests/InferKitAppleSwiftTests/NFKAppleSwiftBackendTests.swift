@@ -133,6 +133,27 @@ final class NFKAppleSwiftBackendTests: XCTestCase {
         }
     }
 
+    // Every wait on the analyzer is bounded: a stalled download or analysis reports its deadline.
+    func testTheAnalyzerBoundsEveryWait() throws {
+        let backend = NFKSpeechAnalyzerBackend()
+        XCTAssertEqual(backend.assetInstallTimeout, 600)
+        XCTAssertEqual(backend.transcriptionTimeout, 600)
+        let stalled = Task<Void, Never>.detached { try? await Task.sleep(nanoseconds: 60_000_000_000) }
+        XCTAssertThrowsError(try NFKSpeechAnalyzerBackend.wait(DispatchSemaphore(value: 0), seconds: 0.05,
+                                                               cancelling: stalled, code: .error_InferenceNotReady,
+                                                               reason: "the assets did not install")) { error in
+            XCTAssertEqual((error as NSError).code, NFKInferenceError.error_InferenceNotReady.rawValue)
+            XCTAssertTrue((error as NSError).localizedDescription.contains("within 0 seconds"),
+                          (error as NSError).localizedDescription)
+        }
+        XCTAssertTrue(stalled.isCancelled, "reaching the deadline cancels the task")
+        // A semaphore freed below its starting value traps in libdispatch, so it starts at 0 and is signalled.
+        let answered = DispatchSemaphore(value: 0)
+        answered.signal()
+        XCTAssertNoThrow(try NFKSpeechAnalyzerBackend.wait(answered, seconds: 0.05, cancelling: nil,
+                                                           code: .error_InferenceBackendFailure, reason: "unused"))
+    }
+
     func testTheAnalyzerNeedsAudio() {
         XCTAssertThrowsError(try NFKSpeechAnalyzerBackend().runInference(for: NFKInferenceRequest(inputs: [:]))) { error in
             XCTAssertEqual((error as NSError).code, NFKInferenceError.error_InferenceMissingInput.rawValue)

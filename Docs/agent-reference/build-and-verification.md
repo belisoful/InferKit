@@ -256,7 +256,7 @@ method assigns the out-parameter after the block has run. A sweep of every `.m` 
    them, since this package evaluates under `swift test`; they exist so an Xcode run cannot quietly
    cover less than the command line does.
 6. `InferKitAppleSwift/` `swift build` + `swift test` when a change touches that companion. That covers
-   all 37 tests across its three test targets (27 / 6 / 4), one of which skips without an installed
+   all 38 tests across its three test targets (28 / 6 / 4), one of which skips without an installed
    translation model. The package carries no per-target shared schemes, so `swift test` is the run that
    covers all three targets.
 

@@ -16,7 +16,11 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKSpeechAnalyzerBackend` reads the language to transcribe from `NFKParameterSourceLanguage`, a locale
   identifier, with `locale` as the default. A request naming a locale the backend has not prepared
   reserves and installs that locale's assets before it transcribes. The `apple-speech-analyzer`
-  descriptor declares the option. Before, only the `locale` property chose the language, so a backend the
+  descriptor declares the option.
+- Every wait on the analyzer has a deadline: `assetInstallTimeout` (600 seconds) bounds an asset install,
+  reported as `kNFKError_InferenceNotReady`, and `transcriptionTimeout` (600 seconds) bounds a
+  transcription, reported as `kNFKError_InferenceBackendFailure`. Before, a stalled download or analysis
+  held the calling thread for the life of the process. Before, only the `locale` property chose the language, so a backend the
   catalog built or a server hosted transcribed in the user's current locale alone.
 
 #### The translator's options describe themselves

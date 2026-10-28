@@ -34,7 +34,10 @@ host, at macOS 26 / iOS 26, and every type it adds is `@objc`.
   `NFKParameterSourceLanguage`, a locale identifier, with `locale` as the default. Its assets are
   reserved and installed per locale, so the backend records each locale it has prepared, and a request
   naming one it has not runs the same reserve-and-install step `prepare()` runs before it transcribes; a
-  locale already installed costs a nil install request. `isReady` answers for the default locale. Its
+  locale already installed costs a nil install request. `isReady` answers for the default locale. Both
+  waits are bounded, as the package rule requires: `assetInstallTimeout` (600 s, `NotReady`) on the
+  install, which is a download the first time a request names a locale, and `transcriptionTimeout`
+  (600 s, `BackendFailure`) on the analysis. Reaching either cancels the detached task. Its
   descriptor option has the analyzer's own title and help through the engine table's
   `optionDescriptions`, because the shared description is the translator's.
 - The Swift Vision API performs with `try await request.perform(on: cgImage)`, so each backend hops a
