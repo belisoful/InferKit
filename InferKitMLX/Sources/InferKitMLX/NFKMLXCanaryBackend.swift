@@ -27,8 +27,10 @@ final class NFKCanaryBackendHolder: @unchecked Sendable {
     }
 }
 
-/// A speech-to-text backend over Canary-1B-v2: audio under `NFKInputAudio` is transcribed; the language
-/// (or a `src>tgt` translation pair) comes from `NFKInputPrompt` (default `en`).
+/// A speech-to-text backend over Canary-1B-v2: audio under `NFKInputAudio` is transcribed in the language
+/// `NFKParameterSourceLanguage` names (`en` by default), or translated when `NFKParameterTargetLanguage`
+/// names another. Each is one of ``NFKMLXCanary/supportedLanguages``, and a translation has English on one
+/// side.
 @objc(NFKMLXCanaryBackend)
 public final class NFKMLXCanaryBackend: NSObject, NFKInferenceBackend {
     private let holder: NFKCanaryBackendHolder
@@ -42,8 +44,8 @@ public final class NFKMLXCanaryBackend: NSObject, NFKInferenceBackend {
 
     @objc public var isReady: Bool { true }
     @objc public var backendIdentifier: String { identifier }
-    @objc public var supportedInputKeys: Set<String> { [NFKInputAudio, NFKInputPrompt] }
-    @objc public var supportedParameterKeys: Set<String> { [] }
+    @objc public var supportedInputKeys: Set<String> { [NFKInputAudio] }
+    @objc public var supportedParameterKeys: Set<String> { [NFKParameterSourceLanguage, NFKParameterTargetLanguage] }
 
     /// The result keys the backend writes. Introduced in InferKit 0.4.0.
     @objc public var supportedOutputKeys: Set<String> { [NFKOutputText] }
@@ -63,9 +65,9 @@ public final class NFKMLXCanaryBackend: NSObject, NFKInferenceBackend {
     public func submitInferenceJob(for request: NFKInferenceRequest) -> NFKInferenceJob {
         let job = NFKInferenceJob()
         let holder = self.holder
-        let (source, target) = Self.languages(from: request)
         Task.detached(priority: .userInitiated) {
             do {
+                let (source, target) = try Self.languages(from: request)
                 guard let (samples, rate) = Self.audio(from: request) else { throw NFKMLXError.unsupportedInput }
                 let matched = NFKMLXAudioRate.matched(samples, from: rate, to: holder.net.configuration.sampleRate)
                 let prompt = holder.tokenizer.transcriptionPrompt(source: source, target: target, punctuation: true)
@@ -79,14 +81,23 @@ public final class NFKMLXCanaryBackend: NSObject, NFKInferenceBackend {
         return job
     }
 
-    /// `NFKInputPrompt` is a language code (`en`, transcribe) or a `src>tgt` pair (`en>de`, translate).
-    private static func languages(from request: NFKInferenceRequest) -> (source: String, target: String) {
-        guard let prompt = request.input(forKey: NFKInputPrompt) as? String, !prompt.isEmpty else {
-            return ("en", "en")
+    /// The request's source language, `en` by default, and its target, the source by default. Throws for
+    /// a language Canary does not read and for a translation with English on neither side.
+    static func languages(from request: NFKInferenceRequest) throws -> (source: String, target: String) {
+        func language(_ key: String) throws -> String? {
+            guard let value = request.parameter(forKey: key) else { return nil }
+            guard let code = (value as? String)?.lowercased(), NFKMLXCanary.supportedLanguages.contains(code) else {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "\(key) is one of Canary's languages: \(NFKMLXCanary.supportedLanguages.joined(separator: ", "))")
+            }
+            return code
         }
-        let parts = prompt.split(separator: ">", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
-        if parts.count == 2 { return (parts[0], parts[1]) }
-        return (parts[0], parts[0])
+        let source = try language(NFKParameterSourceLanguage) ?? "en"
+        let target = try language(NFKParameterTargetLanguage) ?? source
+        guard source == target || source == "en" || target == "en" else {
+            throw NFKMLXError.unsupportedConfiguration("Canary translates to and from English, not \(source) to \(target)")
+        }
+        return (source, target)
     }
 
     private static func audio(from request: NFKInferenceRequest) -> (samples: [Float], sampleRate: Int)? {

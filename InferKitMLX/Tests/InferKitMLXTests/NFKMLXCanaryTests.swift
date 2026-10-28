@@ -135,4 +135,23 @@ final class NFKMLXCanaryTests: XCTestCase {
         print("VALIDATION PARITY canary-backend: \(result.text.debugDescription)")
         XCTAssertEqual(result.text, "The quick brown fox jumps over the lazy dog.")
     }
+
+    // A request's target language translates the English clip; the same request without it transcribes.
+    func testCanaryTranslatesToTheTargetARequestNames() throws {
+        try requireMLXRuntime()
+        let env = NFKMLXValidationConfig.environment
+        guard let directory = env["IK_VAL_CANARY"], let audio = env["IK_VAL_AUDIO"] ?? env["IK_SPEECH_WAV"],
+              FileManager.default.fileExists(atPath: directory) else {
+            throw XCTSkip("set IK_VAL_CANARY + IK_VAL_AUDIO")
+        }
+        let backend = try NFKMLXCanary.backend(directoryURL: URL(fileURLWithPath: directory))
+        XCTAssertEqual(backend.supportedParameterKeys, [NFKParameterSourceLanguage, NFKParameterTargetLanguage])
+        let asset = NFKAudioAsset(fileURL: URL(fileURLWithPath: audio), durationSeconds: 3.47, sampleRate: 16000, channelCount: 1)
+        let german = try backend.runInference(for: NFKInferenceRequest(
+            inputs: [NFKInputAudio: asset], parameters: [NFKParameterTargetLanguage: "de"])).text ?? ""
+        print("VALIDATION canary-translate en>de: \(german.debugDescription)")
+        XCTAssertFalse(german.isEmpty)
+        XCTAssertNotEqual(german, "The quick brown fox jumps over the lazy dog.", "the clip is translated, not transcribed")
+        XCTAssertTrue(german.lowercased().contains("fuchs"), "the fox is translated: \(german)")
+    }
 }

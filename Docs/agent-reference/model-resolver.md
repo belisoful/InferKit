@@ -132,7 +132,16 @@ The descriptor is engine `local-server` with a source of kind `none`: nothing do
 Its `localServer` extension names the preset, the address the resolver asked (`baseURL`), and the
 model, and its registry name is the model. The action carries the same address, and its `provider` is the
 preset re-pointed there, so the build and a pull reach the server the resolver read. Where
-the size is known, its memory facts are one stage of the model's bytes.
+the size is known, its memory facts are one stage of the model's bytes. Its options (2026-10-27) are the
+text keys the server's OpenAI-compatible backend reads: the token limit, temperature, top-p, top-k, the
+repetition penalty, the seed, the stop sequences, a JSON schema, and tools, with titles and ranges and no
+defaults, since the server applies its own.
+
+A Core ML package's descriptor declares every parameter `NFKCoreMLLanguageBackend` reads, at the defaults
+it applies (temperature 1, top-p 1, top-k 0, repetition penalty 1, seed 0, 256 tokens bounded by the
+package's context), plus the output format and choices. Before, it declared the token limit alone, so a
+catalog build refused a sampling setting as an unknown option. `NFKModelResolverSamplingOptions` holds
+the six sampling options both routes share.
 
 The core registers a builder for each engine in its builder registry (`NFKModelEngineBuilders.m`):
 `NFKCoreMLEngineBuilder` builds `NFKCoreMLLanguageBackend` from the located directory, and

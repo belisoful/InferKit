@@ -11,6 +11,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitAppleSwift (companion)
 
+#### The translator's options describe themselves
+
+- `apple-translation`'s `sourceLanguage` and `targetLanguage` options carry a title and help, so a user
+  interface and a model's MCP tool describe them. They list no choices, because the framework lists its
+  languages only asynchronously.
+
 #### A framework beside the dynamic InferKitMLX
 
 - `Tools/xcframework/build-companions.sh` builds `InferKitAppleSwift.xcframework` and
@@ -69,7 +75,32 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - `NFKTranslationProvider` answers `NFKCapabilityTranslation`, behind `NFKMLXTranslationProvider` in
   the core's default chain.
 
+### InferKitFoundationModels (companion)
+
+#### The system model's settings are catalog options
+
+- The `foundation-models` descriptor gives each request option a title, help, and the range the framework
+  takes: temperature, the token limit, top-k, top-p, the seed, a JSON schema, choices, tools, and on
+  macOS 27 the reasoning level, whose choices are light, moderate, and deep.
+- Three load options set the backend's `model`, `useCase`, and `guardrails` when the catalog builds it,
+  each a choice of the enum's values. Private Cloud Compute is a choice that needs macOS 27 / iOS 27, and
+  the catalog refuses it below. Before, a catalog-built backend ran the on-device model at its general use
+  case and default guardrails, whatever the caller needed.
+
 ### Core (`InferKit`)
+
+#### The resolver's Core ML and local-server entries declare their sampling
+
+- A Core ML language package's descriptor declares every parameter `NFKCoreMLLanguageBackend` reads, at
+  the defaults it applies: temperature, top-p, top-k, the repetition penalty, the seed, the stop sequences,
+  the output format, and choices, beside the token limit. Before, it declared the token limit alone, so a
+  catalog build refused a temperature as an unknown option.
+- A local server's descriptor declares the text options its OpenAI-compatible backend reads: the token
+  limit, the sampling keys, a JSON schema, and tools, without defaults, since the server applies its own.
+  Before, it declared none.
+- `NFKParameterEmbeddingDimensions` (`"dimensions"`) is the core's key for an embedding's width: a
+  Matryoshka embedding is truncated to it and normalized again. It is the field an OpenAI-compatible
+  embeddings endpoint reads, so a remote embedder and the server's embeddings route carry it as is.
 
 #### Apple's engines declare their settings as catalog options
 
@@ -1731,6 +1762,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
     object. A tool loop answers such a call with an error, and the model can write it again.
   - A call is read whatever tool it names, and the caller answers a name it did not declare. A span
     with no name to read stays in the text.
+
+#### A request sets an embedding's width and Canary's languages
+
+- Qwen3-Embedding, EmbeddingGemma, and Qwen3-VL-Embedding read `NFKParameterEmbeddingDimensions`: the
+  embedding is truncated to that width and normalized again, as the `outputDimensions:` factories build
+  it. The catalog declares it within each model card's range: 32 to 1024 for Qwen3-Embedding 0.6B, 64 to
+  2048 for Qwen3-VL-Embedding 2B, and 768, 512, 256, or 128 for EmbeddingGemma.
+- Breaking: Canary reads the spoken language under `NFKParameterSourceLanguage` (default `en`) and a
+  translation's target under `NFKParameterTargetLanguage`, and no longer reads a language or a `src>tgt`
+  pair from `NFKInputPrompt`. Each is one of `NFKMLXCanary.supportedLanguages`, the 25 codes the model
+  card lists, and a translation has English on one side; a request outside these is refused. The catalog
+  declares both as choices.
 
 #### A request sets the detectors' thresholds and the readers' output length
 

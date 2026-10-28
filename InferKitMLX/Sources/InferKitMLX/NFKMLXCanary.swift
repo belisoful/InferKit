@@ -334,6 +334,12 @@ public final class NFKMLXCanary: NSObject {
     /// The registry name.
     @objc public static let modelName = "canary-1b-v2"
 
+    /// The 25 languages Canary-1B-v2 transcribes, by ISO 639-1 code, from its model card. It translates
+    /// between English and each of the other 24. Introduced in InferKit 0.4.0.
+    @objc public static let supportedLanguages = ["bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de", "el",
+                                                  "hu", "it", "lv", "lt", "mt", "pl", "pt", "ro", "sk", "sl", "es",
+                                                  "sv", "ru", "uk"]
+
     /// Renames NeMo's `EncDecMultiTaskModel` keys onto the module. The FastConformer encoder keys match
     /// `NFKParakeetEncoder` already; the Transformer decoder is `transf_decoder._decoder.layers.N` with
     /// three sub-layers (self-attention `first_sub_layer`, cross-attention `second_sub_layer`,

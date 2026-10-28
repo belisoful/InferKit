@@ -219,6 +219,11 @@ extern NSString * const NFKParameterChannelCount;
 	its `voice` option's choices give where the model lists its voices. A remote speech service takes
 	its own voice name. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKParameterVoice;
+/*! The width an embedding is returned at (NSNumber, an integer): a Matryoshka embedding is truncated to
+	it and normalized again. Absent means the model's full width. Its string is "dimensions", the name an
+	OpenAI-compatible embeddings endpoint reads, so a remote embedder sends it as is. Introduced in
+	InferKit 0.4.0. */
+extern NSString * const NFKParameterEmbeddingDimensions;
 
 /*! The language the input is in (NSString, a BCP-47 tag such as "en", "de", or "pt-BR"). Absent
 	means the engine detects it, which every translator here can do. Introduced in InferKit 0.4.0. */

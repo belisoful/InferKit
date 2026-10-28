@@ -1614,7 +1614,7 @@ alternatives.
     FastConformer encoder (reused from Parakeet) feeding a Transformer attention encoder-decoder, at
     reference parity against NeMo's `EncDecMultiTaskModel` on the released weights (1475 base tensors,
     encoder/decoder seam cosine ~1.0, greedy decode transcribes the validation clip exactly). The backend
-    reads `NFKInputAudio` and a language code or a `src>tgt` pair under `NFKInputPrompt`.
+    reads `NFKInputAudio`, with its languages under `NFKParameterSourceLanguage` and `NFKParameterTargetLanguage`.
   - `Phi-4-multimodal` — **SHIPPED** (`NFKMLXPhi4MM`): image, speech, and text in one Phi-4-mini
     decoder whose per-modality LoRAs run as a mixture, fed by a SigLIP image tower in dynamic-HD crops and
     a Conformer speech tower. At reference parity against the release's own code on the released weights

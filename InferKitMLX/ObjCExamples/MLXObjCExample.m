@@ -1924,6 +1924,24 @@
 	XCTAssertEqualObjects([trocr optionWithKey:NFKParameterMaxTokens].defaultValue, @64);
 }
 
+// A request sets an embedding's width and Canary's languages, each a catalog option.
+- (void)testObjectiveCSetsAnEmbeddingWidthAndCanarysLanguages
+{
+	NFKInferenceRequest *narrow = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"A query." }
+															  parameters:@{ NFKParameterEmbeddingDimensions: @256 }];
+	XCTAssertEqualObjects(narrow.parameters[@"dimensions"], @256, @"the OpenAI field");
+	NFKModelDescriptor *gemma = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"embeddinggemma-300m"];
+	XCTAssertEqual([gemma optionWithKey:NFKParameterEmbeddingDimensions].choices.count, (NSUInteger)4);
+
+	XCTAssertTrue([NFKMLXCanary.supportedLanguages containsObject:@"de"]);
+	NFKInferenceRequest *translate = [NFKInferenceRequest requestWithInputs:@{}
+																 parameters:@{ NFKParameterSourceLanguage: @"en",
+																			   NFKParameterTargetLanguage: @"de" }];
+	XCTAssertEqualObjects(translate.parameters[NFKParameterTargetLanguage], @"de");
+	NFKModelDescriptor *canary = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"canary-1b-v2"];
+	XCTAssertEqualObjects([canary optionWithKey:NFKParameterSourceLanguage].defaultValue, @"en");
+}
+
 // A small opaque plate, for the examples that hand a model an image without running it.
 - (CGImageRef)examplePlate CF_RETURNS_RETAINED
 {

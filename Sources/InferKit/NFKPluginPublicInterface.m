@@ -101,6 +101,7 @@ static const void *const NFKPluginPublicInterface[] = {
 	(const void *)&NFKParameterSampleRate,
 	(const void *)&NFKParameterChannelCount,
 	(const void *)&NFKParameterVoice,
+	(const void *)&NFKParameterEmbeddingDimensions,
 	(const void *)&NFKParameterSourceLanguage,
 	(const void *)&NFKParameterTargetLanguage,
 	(const void *)&NFKParameterTemperature,

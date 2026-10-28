@@ -300,8 +300,12 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   clones so both tensors save independently. The tokenizer is the release's `tokenizer.json`, a
   **Metaspace BPE** (`NFKMLXCanaryTokenizer`: the `▁` word marker, control tokens dropped from decoded
   text), read for the task prompt and to decode the ids. `NFKMLXCanary.backend(directoryURL:)` (`@objc
-  backendWithDirectoryURL:error:`) reads `NFKInputAudio` (resampled to 16 kHz) and a language code or a
-  `src>tgt` pair under `NFKInputPrompt` (default `en`), and transcribes the validation clip to "The
+  backendWithDirectoryURL:error:`) reads `NFKInputAudio` (resampled to 16 kHz), the spoken language under
+  `NFKParameterSourceLanguage` (default `en`), and a translation's target under
+  `NFKParameterTargetLanguage` (2026-10-27; the `src>tgt` prompt form is gone). Each is one of the 25
+  codes in `NFKMLXCanary.supportedLanguages`, from the model card; the release tokenizer holds a token
+  for every ISO 639-1 code, so it cannot say which the model reads. A translation needs English on one
+  side, and a request outside these is refused. The backend transcribes the validation clip to "The
   quick brown fox jumps over the lazy dog." **Customization is trainable at LoRA, with no recipe
   written yet.** NeMo publishes `transf_loss` with a prompt loss mask, and a 1B encoder-decoder trains
   on `(audio, transcript)` pairs the way the shipped Whisper recipe does. The release directory holds

@@ -240,7 +240,7 @@ turn the audio into embeddings that scatter into a dense Granite decoder's promp
 
 Voxtral-Mini 3B transcribes through `NFKMLXVoxtral.backend(directoryURL:)` (`voxtralBackendWithDirectoryURL:error:`): the Whisper encoder and a projector feed a Llama decoder. Pass the clip under `NFKInputAudio` and a language code (default `en`) under `NFKInputPrompt`; the transcript comes back under `NFKOutputText`.
 
-Canary-1B-v2 transcribes and translates through `NFKMLXCanary.backend(directoryURL:)` (`backendWithDirectoryURL:error:`): the biased FastConformer encoder feeds a Transformer attention encoder-decoder. Pass the clip under `NFKInputAudio` and, under `NFKInputPrompt`, a language code (default `en`, transcribe) or a `src>tgt` pair (`en>de`, translate); the transcript comes back under `NFKOutputText`.
+Canary-1B-v2 transcribes and translates through `NFKMLXCanary.backend(directoryURL:)` (`backendWithDirectoryURL:error:`): the biased FastConformer encoder feeds a Transformer attention encoder-decoder. Pass the clip under `NFKInputAudio`, the spoken language under `NFKParameterSourceLanguage` (default `en`), and, to translate, the other under `NFKParameterTargetLanguage` (English on one side); the transcript or translation comes back under `NFKOutputText`. `NFKMLXCanary.supportedLanguages` lists the 25 codes.
 
 Wav2Vec2 and HuBERT read the raw waveform through `NFKMLXWav2Vec2.backend(directoryURL:)` (`backendWithDirectoryURL:error:`), any size from a release directory. A CTC release (`facebook/wav2vec2-base-960h`, `-large-960h`, `facebook/hubert-large-ls960-ft`) returns the transcript under `NFKOutputText`; every release returns the mean of its frame features under `NFKOutputEmbedding`, the speech representation downstream classifiers read. W2V-BERT 2.0 (`NFKMLXWav2Vec2Bert.backend(directoryURL:)`) is the multilingual encoder behind Seamless; it reads the clip's filterbanks and returns the same embedding.
 
@@ -745,7 +745,9 @@ NSArray<NSNumber *> *embedding = result.embedding;                 // 1024 float
 ```
 
 `backendWithDirectoryURL:outputDimensions:error:` truncates each embedding to a smaller Matryoshka
-width before normalizing, trading accuracy for storage with no second model. A Swift caller that has
+width before normalizing, trading accuracy for storage with no second model. A request sets the width
+for itself under `NFKParameterEmbeddingDimensions` (the OpenAI `dimensions` field), which is how a
+catalog-built or server-hosted embedder takes it. A Swift caller that has
 token ids already reads them straight through `embedding(forTokens:)`; the request path needs the
 tokenizer the backend was built with.
 

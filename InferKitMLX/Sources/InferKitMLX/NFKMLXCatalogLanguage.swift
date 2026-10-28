@@ -1041,7 +1041,10 @@ extension NFKMLXCatalogLanguage {
             identifier: name, displayName: release.displayName, family: "gemma3",
             summary: "EmbeddingGemma 300M, a bidirectional Gemma 3 encoder that embeds text for retrieval.",
             registryName: name, tasks: [NFKModelTaskEmbedding],
-            inputs: embeddingInputs, outputs: embeddingOutputs, parameters: [],
+            inputs: embeddingInputs, outputs: embeddingOutputs,
+            parameters: [.option(NFKParameterEmbeddingDimensions, kind: NFKModelOptionKindChoice, title: "Dimensions",
+                                 help: "The width of the embedding. The smaller widths are the full embedding truncated and normalized again, as the model was trained to be read.",
+                                 defaultValue: 768, choices: [768, 512, 256, 128].map { ($0, "\($0)") })],
             variants: [variant(release, files: releaseFiles(required: NFKMLXEmbeddingGemma.requiredFiles,
                                                             optional: NFKMLXEmbeddingGemma.optionalFiles,
                                                             weights: NFKMLXEmbeddingGemma.weightFiles))],
@@ -1225,6 +1228,14 @@ extension NFKMLXCatalogLanguage {
 
 extension NFKMLXCatalogLanguage {
 
+    /// The embedding width a Matryoshka-trained model takes, from the range its model card states up to its
+    /// full width, the default.
+    fileprivate static func matryoshkaWidth(minimum: Int, maximum: Int) -> NFKModelOption {
+        .option(NFKParameterEmbeddingDimensions, kind: NFKModelOptionKindInteger, title: "Dimensions",
+                help: "The width of the embedding. A smaller width is the full embedding truncated and normalized again, as the model was trained to be read.",
+                defaultValue: maximum, minimum: NSNumber(value: minimum), maximum: NSNumber(value: maximum), step: 1)
+    }
+
     fileprivate static var qwen3EmbeddingEntry: NFKMLXCatalogEntry {
         let release = NFKMLXLanguageRelease(name: NFKMLXQwen3Embedding.modelName, displayName: "Qwen3-Embedding 0.6B",
                                             repository: "Qwen/Qwen3-Embedding-0.6B")
@@ -1232,7 +1243,8 @@ extension NFKMLXCatalogLanguage {
             identifier: release.name, displayName: release.displayName, family: "qwen3",
             summary: "Qwen3-Embedding 0.6B, the Qwen3 decoder pooled at its last token into a text embedding for retrieval.",
             registryName: release.name, tasks: [NFKModelTaskEmbedding],
-            inputs: embeddingInputs, outputs: embeddingOutputs, parameters: [],
+            inputs: embeddingInputs, outputs: embeddingOutputs,
+            parameters: [matryoshkaWidth(minimum: 32, maximum: 1024)],
             variants: [variant(release, files: releaseFiles(required: NFKMLXQwen3Embedding.requiredFiles,
                                                             optional: NFKMLXQwen3Embedding.optionalFiles,
                                                             weights: NFKMLXQwen3Embedding.weightFiles))],
@@ -1246,7 +1258,8 @@ extension NFKMLXCatalogLanguage {
             identifier: release.name, displayName: release.displayName, family: "qwen3-vl",
             summary: "Qwen3-VL-Embedding 2B, which embeds text and images in one space. The backend embeds text.",
             registryName: release.name, tasks: [NFKModelTaskEmbedding],
-            inputs: embeddingInputs, outputs: embeddingOutputs, parameters: [],
+            inputs: embeddingInputs, outputs: embeddingOutputs,
+            parameters: [matryoshkaWidth(minimum: 64, maximum: 2048)],
             variants: [variant(release, files: releaseFiles(required: NFKMLXQwen3VLEmbedder.requiredFiles,
                                                             optional: NFKMLXQwen3VLEmbedder.optionalFiles,
                                                             weights: NFKMLXQwen3VLEmbedder.weightFiles))],

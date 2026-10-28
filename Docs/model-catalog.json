@@ -1256,8 +1256,7 @@
       "family" : "canary",
       "id" : "canary-1b-v2",
       "inputModalities" : [
-        "audio",
-        "text"
+        "audio"
       ],
       "inputs" : [
         {
@@ -1266,13 +1265,6 @@
           "required" : true,
           "title" : "Audio",
           "valueType" : "audio"
-        },
-        {
-          "help" : "A language code such as en, which transcribes, or a source>target pair such as en>de, which translates. English when absent.",
-          "key" : "prompt",
-          "required" : false,
-          "title" : "Languages",
-          "valueType" : "text"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -1285,7 +1277,225 @@
         "url" : "https://creativecommons.org/licenses/by/4.0/"
       },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "title" : "Bulgarian (bg)",
+              "value" : "bg"
+            },
+            {
+              "title" : "Croatian (hr)",
+              "value" : "hr"
+            },
+            {
+              "title" : "Czech (cs)",
+              "value" : "cs"
+            },
+            {
+              "title" : "Danish (da)",
+              "value" : "da"
+            },
+            {
+              "title" : "Dutch (nl)",
+              "value" : "nl"
+            },
+            {
+              "title" : "English (en)",
+              "value" : "en"
+            },
+            {
+              "title" : "Estonian (et)",
+              "value" : "et"
+            },
+            {
+              "title" : "Finnish (fi)",
+              "value" : "fi"
+            },
+            {
+              "title" : "French (fr)",
+              "value" : "fr"
+            },
+            {
+              "title" : "German (de)",
+              "value" : "de"
+            },
+            {
+              "title" : "Greek (el)",
+              "value" : "el"
+            },
+            {
+              "title" : "Hungarian (hu)",
+              "value" : "hu"
+            },
+            {
+              "title" : "Italian (it)",
+              "value" : "it"
+            },
+            {
+              "title" : "Latvian (lv)",
+              "value" : "lv"
+            },
+            {
+              "title" : "Lithuanian (lt)",
+              "value" : "lt"
+            },
+            {
+              "title" : "Maltese (mt)",
+              "value" : "mt"
+            },
+            {
+              "title" : "Polish (pl)",
+              "value" : "pl"
+            },
+            {
+              "title" : "Portuguese (pt)",
+              "value" : "pt"
+            },
+            {
+              "title" : "Romanian (ro)",
+              "value" : "ro"
+            },
+            {
+              "title" : "Slovak (sk)",
+              "value" : "sk"
+            },
+            {
+              "title" : "Slovenian (sl)",
+              "value" : "sl"
+            },
+            {
+              "title" : "Spanish (es)",
+              "value" : "es"
+            },
+            {
+              "title" : "Swedish (sv)",
+              "value" : "sv"
+            },
+            {
+              "title" : "Russian (ru)",
+              "value" : "ru"
+            },
+            {
+              "title" : "Ukrainian (uk)",
+              "value" : "uk"
+            }
+          ],
+          "default" : "en",
+          "help" : "The language spoken in the recording.",
+          "key" : "sourceLanguage",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Language"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Bulgarian (bg)",
+              "value" : "bg"
+            },
+            {
+              "title" : "Croatian (hr)",
+              "value" : "hr"
+            },
+            {
+              "title" : "Czech (cs)",
+              "value" : "cs"
+            },
+            {
+              "title" : "Danish (da)",
+              "value" : "da"
+            },
+            {
+              "title" : "Dutch (nl)",
+              "value" : "nl"
+            },
+            {
+              "title" : "English (en)",
+              "value" : "en"
+            },
+            {
+              "title" : "Estonian (et)",
+              "value" : "et"
+            },
+            {
+              "title" : "Finnish (fi)",
+              "value" : "fi"
+            },
+            {
+              "title" : "French (fr)",
+              "value" : "fr"
+            },
+            {
+              "title" : "German (de)",
+              "value" : "de"
+            },
+            {
+              "title" : "Greek (el)",
+              "value" : "el"
+            },
+            {
+              "title" : "Hungarian (hu)",
+              "value" : "hu"
+            },
+            {
+              "title" : "Italian (it)",
+              "value" : "it"
+            },
+            {
+              "title" : "Latvian (lv)",
+              "value" : "lv"
+            },
+            {
+              "title" : "Lithuanian (lt)",
+              "value" : "lt"
+            },
+            {
+              "title" : "Maltese (mt)",
+              "value" : "mt"
+            },
+            {
+              "title" : "Polish (pl)",
+              "value" : "pl"
+            },
+            {
+              "title" : "Portuguese (pt)",
+              "value" : "pt"
+            },
+            {
+              "title" : "Romanian (ro)",
+              "value" : "ro"
+            },
+            {
+              "title" : "Slovak (sk)",
+              "value" : "sk"
+            },
+            {
+              "title" : "Slovenian (sl)",
+              "value" : "sl"
+            },
+            {
+              "title" : "Spanish (es)",
+              "value" : "es"
+            },
+            {
+              "title" : "Swedish (sv)",
+              "value" : "sv"
+            },
+            {
+              "title" : "Russian (ru)",
+              "value" : "ru"
+            },
+            {
+              "title" : "Ukrainian (uk)",
+              "value" : "uk"
+            }
+          ],
+          "help" : "The language to translate into, with English on one side. Without one, the recording is transcribed.",
+          "key" : "targetLanguage",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Translate to"
+        }
       ],
       "outputModalities" : [
         "text"
@@ -7373,7 +7583,32 @@
         "url" : "https://ai.google.dev/gemma/terms"
       },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "title" : "768",
+              "value" : 768
+            },
+            {
+              "title" : "512",
+              "value" : 512
+            },
+            {
+              "title" : "256",
+              "value" : 256
+            },
+            {
+              "title" : "128",
+              "value" : 128
+            }
+          ],
+          "default" : 768,
+          "help" : "The width of the embedding. The smaller widths are the full embedding truncated and normalized again, as the model was trained to be read.",
+          "key" : "dimensions",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Dimensions"
+        }
       ],
       "outputModalities" : [
         "embedding"
@@ -39273,7 +39508,17 @@
         }
       },
       "options" : [
-
+        {
+          "default" : 1024,
+          "help" : "The width of the embedding. A smaller width is the full embedding truncated and normalized again, as the model was trained to be read.",
+          "key" : "dimensions",
+          "kind" : "integer",
+          "maximum" : 1024,
+          "minimum" : 32,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Dimensions"
+        }
       ],
       "outputModalities" : [
         "embedding"
@@ -40377,7 +40622,17 @@
         }
       },
       "options" : [
-
+        {
+          "default" : 2048,
+          "help" : "The width of the embedding. A smaller width is the full embedding truncated and normalized again, as the model was trained to be read.",
+          "key" : "dimensions",
+          "kind" : "integer",
+          "maximum" : 2048,
+          "minimum" : 64,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Dimensions"
+        }
       ],
       "outputModalities" : [
         "embedding"

@@ -126,7 +126,13 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   prepends `model.` and drops the absent projection (the shared `NFKMLXLanguage.loadedRelease` loader
   expects the prefix and would reject it, which is exactly what the first parity run reported). ObjC
   reaches it through `backendWithDirectoryURL:error:` and `backendWithDirectoryURL:outputDimensions:error:`
-  (0 = full width); the `*Configuration` structs stay Swift-only, per the parity rule, and a Swift
+  (0 = full width). A request sets the width under `NFKParameterEmbeddingDimensions` (2026-10-27, core key
+  `"dimensions"`, the OpenAI field, so the server's embeddings route passes it through):
+  `NFKMLXTextEmbeddingBackend.embedding(_:for:)` truncates the normalized vector and normalizes it again,
+  which equals truncating before the normalization. `NFKMLXDescriptorOptionsTests` measures a request's
+  256 against the factory's 256 on Qwen3-Embedding and EmbeddingGemma. The catalog bounds it by each
+  model card: 32–1024 for Qwen3-Embedding 0.6B, 64–2048 for Qwen3-VL-Embedding 2B, and the choices 768,
+  512, 256, and 128 for EmbeddingGemma; the `*Configuration` structs stay Swift-only, per the parity rule, and a Swift
   caller with token ids reads them through `embedding(forTokens:)`. `NFKMLXLanguage.releaseTokenizer(inDirectory:)`
   was extracted from `loadedRelease` so the embedder and the tokenizer-agreement test build the release
   tokenizer without loading the 1.2 GB of weights.

@@ -13,8 +13,11 @@ import InferKit
 /// `NFKFoundationModelsProvider`, and its inputs, options, and outputs are the key sets of
 /// `NFKFoundationModelsBackend` on the running OS: the image inputs, the reasoning level, and the
 /// reasoning and usage outputs appear on macOS 27 / iOS 27, where the framework takes and reports
-/// them. Its one variant's source is `NFKModelSourceKindSystem`, because the model is part of the
-/// operating system. Introduced in InferKit 0.4.0.
+/// them. Each request option has a title, help, and the range the framework takes. The load options
+/// `model`, `useCase`, and `guardrails` set the backend properties of the same names; Private Cloud
+/// Compute is a choice that needs macOS 27 / iOS 27. Its one variant's source is
+/// `NFKModelSourceKindSystem`, because the model is part of the operating system. Introduced in
+/// InferKit 0.4.0.
 @objc(NFKFoundationModelsDescriptors)
 public final class NFKFoundationModelsDescriptors: NSObject, NFKModelDescriptorProvider {
 
@@ -30,7 +33,7 @@ public final class NFKFoundationModelsDescriptors: NSObject, NFKModelDescriptorP
         let backend = NFKFoundationModelsBackend()
         let inputs = backend.supportedInputKeys.sorted().map { NFKModelPort(key: $0, required: false) }
         let outputs = backend.supportedOutputKeys.sorted().map { NFKModelPort.outputPort(withKey: $0, required: false) }
-        let options = backend.supportedParameterKeys.sorted().map { NFKModelOption(key: $0) }
+        let options = backend.supportedParameterKeys.sorted().map(requestOption(_:)) + loadOptions
         var tasks = [NFKModelTaskTextGeneration]
         if backend.supportedInputKeys.contains(NFKInputImage) {
             tasks.append(NFKModelTaskVisionQuestionAnswering)
@@ -71,4 +74,80 @@ public final class NFKFoundationModelsDescriptors: NSObject, NFKModelDescriptorP
                                   introducedVersion: "0.4.0",
                                   extensions: nil)
     }
+
+    /// A request option the backend reads, described for a user interface. The framework applies its own
+    /// value where a request sets none, so the options state no defaults.
+    static func requestOption(_ key: String) -> NFKModelOption {
+        func option(_ kind: String, _ title: String, _ help: String, minimum: NSNumber? = nil, maximum: NSNumber? = nil,
+                    step: NSNumber? = nil, choices: [NFKModelOptionChoice]? = nil,
+                    requirements: NFKModelRequirements? = nil) -> NFKModelOption {
+            NFKModelOption(key: key, kind: kind, title: title, help: help, defaultValue: nil, minimum: minimum,
+                           maximum: maximum, step: step, choices: choices, stage: nil, group: nil,
+                           requirements: requirements, propertyKeyPath: nil, memoryBytesPerUnit: nil, extensions: nil)
+        }
+        switch key {
+        case NFKParameterTemperature:
+            return option(NFKModelOptionKindNumber, "Temperature", "The sampling temperature. 0 is greedy decoding.",
+                          minimum: 0, step: 0.05)
+        case NFKParameterMaxTokens:
+            return option(NFKModelOptionKindInteger, "Maximum tokens", "The most tokens the reply runs to.",
+                          minimum: 1, step: 1)
+        case NFKParameterTopK:
+            return option(NFKModelOptionKindInteger, "Top-k", "Samples among the k most likely tokens.",
+                          minimum: 1, step: 1)
+        case NFKParameterTopP:
+            return option(NFKModelOptionKindNumber, "Top-p", "Samples from the smallest set of tokens holding this probability mass.",
+                          minimum: 0, maximum: 1, step: 0.05)
+        case NFKParameterSeed:
+            return option(NFKModelOptionKindInteger, "Seed", "The seed of the sampling, with top-k or top-p.",
+                          minimum: 0, step: 1)
+        case NFKParameterJSONSchema:
+            return option(NFKModelOptionKindJSON, "JSON schema", "A JSON Schema the reply is generated to match.")
+        case NFKParameterChoices:
+            return option(NFKModelOptionKindTextList, "Choices", "The strings the reply must be one of.")
+        case NFKParameterTools:
+            return option(NFKModelOptionKindJSON, "Tools", "The tools the model may call, as function declarations.")
+        case NFKParameterReasoningEffort:
+            let levels = [(NFKReasoningEffortLight, "Light"), (NFKReasoningEffortModerate, "Moderate"),
+                          (NFKReasoningEffortDeep, "Deep")]
+            return option(NFKModelOptionKindChoice, "Reasoning", "How much the model reasons before it answers.",
+                          choices: levels.map { NFKModelOptionChoice(value: $0.0, title: $0.1) },
+                          requirements: macOS27)
+        default:
+            return NFKModelOption(key: key)
+        }
+    }
+
+    /// The load options that set the backend's `model`, `useCase`, and `guardrails`, each a choice of the
+    /// property's integer values with the property's default first.
+    static var loadOptions: [NFKModelOption] {
+        func choices(_ values: [(Int, String, NFKModelRequirements?)]) -> [NFKModelOptionChoice] {
+            values.map { NFKModelOptionChoice(value: NSNumber(value: $0.0), title: $0.1, requirements: $0.2, memory: nil,
+                                              memoryByVariant: nil, extensions: nil) }
+        }
+        func option(_ property: String, _ title: String, _ help: String,
+                    _ values: [(Int, String, NFKModelRequirements?)]) -> NFKModelOption {
+            NFKModelOption(key: property, kind: NFKModelOptionKindChoice, title: title, help: help,
+                           defaultValue: NSNumber(value: values[0].0), minimum: nil, maximum: nil, step: nil,
+                           choices: choices(values), stage: NFKModelOptionStageLoad, group: nil, requirements: nil,
+                           propertyKeyPath: property, memoryBytesPerUnit: nil, extensions: nil)
+        }
+        return [
+            option("model", "Model", "The on-device model, or Apple's larger model on Private Cloud Compute, where the request leaves the device and counts against a quota.",
+                   [(NFKFoundationModel.onDevice.rawValue, "On device", nil),
+                    (NFKFoundationModel.privateCloudCompute.rawValue, "Private Cloud Compute", macOS27)]),
+            option("useCase", "Use case", "The on-device model's specialization. Private Cloud Compute ignores it.",
+                   [(NFKFoundationModelUseCase.general.rawValue, "General", nil),
+                    (NFKFoundationModelUseCase.contentTagging.rawValue, "Content tagging", nil)]),
+            option("guardrails", "Guardrails", "The on-device model's content guardrails. Private Cloud Compute ignores them.",
+                   [(NFKFoundationModelGuardrails.default.rawValue, "Default", nil),
+                    (NFKFoundationModelGuardrails.permissiveContentTransformations.rawValue,
+                     "Permissive content transformations", nil)]),
+        ]
+    }
+
+    /// What Private Cloud Compute and the reasoning level need.
+    private static let macOS27 = NFKModelRequirements(minimumOSVersions: ["macOS": "27.0", "iOS": "27.0"],
+                                                      requiresAppleSilicon: true, minimumMemoryByteCount: nil,
+                                                      extensions: nil)
 }

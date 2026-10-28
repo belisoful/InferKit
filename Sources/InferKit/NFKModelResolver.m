@@ -533,6 +533,24 @@ static NFKModelResolutionActionKind NFKModelResolutionActionKindNamed(id name)
 
 #pragma mark - NFKModelResolver
 
+/*! The sampling options a text generator reads beside its token limit, without defaults: temperature,
+	top-p, top-k, the repetition penalty, the seed, and the stop sequences. */
+static NSArray<NSDictionary *> *NFKModelResolverSamplingOptions(void)
+{
+	return @[ @{ @"key": NFKParameterTemperature, @"title": @"Temperature", @"minimum": @0, @"step": @0.05,
+				 @"help": @"The sampling temperature. 0 picks the most likely token at every step." },
+			  @{ @"key": NFKParameterTopP, @"title": @"Top-p", @"minimum": @0, @"maximum": @1, @"step": @0.05,
+				 @"help": @"The probability mass sampling draws from." },
+			  @{ @"key": NFKParameterTopK, @"title": @"Top-k", @"minimum": @0, @"step": @1,
+				 @"help": @"The most likely tokens sampling draws from. 0 draws from all of them." },
+			  @{ @"key": NFKParameterRepetitionPenalty, @"title": @"Repetition penalty", @"minimum": @0, @"step": @0.05,
+				 @"help": @"The penalty on tokens already generated. 1 applies none." },
+			  @{ @"key": NFKParameterSeed, @"title": @"Seed", @"minimum": @0, @"step": @1,
+				 @"help": @"The seed of the sampling." },
+			  @{ @"key": NFKParameterStopSequences, @"title": @"Stop sequences",
+				 @"help": @"Strings that end the reply where it reaches one." } ];
+}
+
 @implementation NFKModelResolver
 
 - (instancetype)init
@@ -1179,14 +1197,34 @@ static BOOL NFKModelResolutionIsReadFailure(NSError *error)
 										   @"revision": listed.revision },
 	} mutableCopy];
 	object[@"license"] = listed.license.dictionaryRepresentation;
-	// The reply runs to the room the package's context leaves, which NFKCoreMLLanguageBackend bounds.
-	NSNumber *context = facts[@"maximumContextLength"];
-	if (context.integerValue > 0) {
-		object[@"options"] = @[ @{ @"key": NFKParameterMaxTokens, @"title": @"Maximum tokens",
-								   @"help": @"The most tokens the reply runs to.", @"default": @256, @"minimum": @1,
-								   @"maximum": context } ];
-	}
+	object[@"options"] = [self coreMLLanguageOptionsWithContextLength:facts[@"maximumContextLength"]];
 	return [NFKModelDescriptor descriptorWithDictionary:object error:error];
+}
+
+/*! The request options NFKCoreMLLanguageBackend reads, at the defaults it applies. The reply runs to the
+	room the package's context leaves, which the backend bounds, so the token limit's maximum is the
+	context length where the package states one. */
+- (NSArray<NSDictionary *> *)coreMLLanguageOptionsWithContextLength:(nullable NSNumber *)context
+{
+	NSMutableDictionary *maxTokens = [@{ @"key": NFKParameterMaxTokens, @"title": @"Maximum tokens",
+										 @"help": @"The most tokens the reply runs to.", @"default": @256,
+										 @"minimum": @1 } mutableCopy];
+	if (context.integerValue > 0) {
+		maxTokens[@"maximum"] = context;
+	}
+	NSDictionary *defaults = @{ NFKParameterTemperature: @1, NFKParameterTopP: @1, NFKParameterTopK: @0,
+								NFKParameterRepetitionPenalty: @1, NFKParameterSeed: @0 };
+	NSMutableArray<NSDictionary *> *options = [NSMutableArray arrayWithObject:maxTokens];
+	for (NSDictionary *option in NFKModelResolverSamplingOptions()) {
+		NSMutableDictionary *defaulted = [option mutableCopy];
+		defaulted[@"default"] = defaults[option[@"key"]];
+		[options addObject:defaulted];
+	}
+	[options addObject:@{ @"key": NFKParameterOutputFormat, @"title": @"Output format",
+						  @"help": @"\"json\" constrains the reply to a JSON value." }];
+	[options addObject:@{ @"key": NFKParameterChoices, @"title": @"Choices",
+						  @"help": @"The strings the reply must be one of." }];
+	return options;
 }
 
 #pragma mark Local-server route
@@ -1294,6 +1332,7 @@ static BOOL NFKModelResolutionIsReadFailure(NSError *error)
 		@"localServer": server,
 	} mutableCopy];
 	object[@"license"] = listed.license.dictionaryRepresentation;
+	object[@"options"] = [self localServerOptions];
 	NSError *descriptorError = nil;
 	NFKModelDescriptor *descriptor = [NFKModelDescriptor descriptorWithDictionary:object error:&descriptorError];
 	if (descriptor == nil) {
@@ -1306,6 +1345,21 @@ static BOOL NFKModelResolutionIsReadFailure(NSError *error)
 	return [self resolutionOfRepository:listed.repository revision:listed.revision route:NFKModelRouteLocalServer
 						   verification:NFKModelVerificationExternal descriptor:descriptor
 								variant:descriptor.defaultVariant reasons:reasons action:action];
+}
+
+/*! The request options a local server's OpenAI-compatible backend reads for text, without defaults,
+	because the server applies its own. */
+- (NSArray<NSDictionary *> *)localServerOptions
+{
+	NSMutableArray<NSDictionary *> *options = [NSMutableArray arrayWithObject:
+		@{ @"key": NFKParameterMaxTokens, @"title": @"Maximum tokens", @"minimum": @1, @"step": @1,
+		   @"help": @"The most tokens the reply runs to. Without it, the server's limit." }];
+	[options addObjectsFromArray:NFKModelResolverSamplingOptions()];
+	[options addObject:@{ @"key": NFKParameterJSONSchema, @"title": @"JSON schema",
+						  @"help": @"A JSON Schema the reply must match, where the server enforces one." }];
+	[options addObject:@{ @"key": NFKParameterTools, @"title": @"Tools",
+						  @"help": @"The tools the model may call, as function declarations." }];
+	return options;
 }
 
 /*! The model a server holds for the repository: its own name for it, the repository's name, or a

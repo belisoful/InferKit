@@ -603,6 +603,30 @@ static NSUInteger NFKResolverToyAskCount;
 	XCTAssertEqualObjects(maxTokens.maximum, @2048, @"a reply runs at most to the package's context");
 }
 
+// The entry declares every parameter its backend reads, so a catalog build takes a sampling setting.
+- (void)testACoreMLPackageDeclaresTheSamplingItsBackendReads
+{
+	self.resolver.allowsUnverifiedRoutes = YES;
+	[self serveRepo:@"org/qwen-coreml" files:[self packageFilesWithManifest:[self packageManifest]] card:nil];
+	NFKModelDescriptor *descriptor = [self resolve:@"org/qwen-coreml" revision:nil].descriptor;
+	NSSet *declared = [NSSet setWithArray:[descriptor.options valueForKey:@"key"]];
+	if (@available(macOS 15.0, iOS 18.0, tvOS 18.0, *)) {
+		XCTAssertEqualObjects(declared, [NFKCoreMLLanguageBackend backendWithModelDirectoryURL:nil].supportedParameterKeys);
+	}
+	XCTAssertEqualObjects([descriptor optionWithKey:NFKParameterTemperature].defaultValue, @1);
+	XCTAssertEqualObjects([descriptor optionWithKey:NFKParameterTopK].defaultValue, @0);
+	XCTAssertEqualObjects([descriptor optionWithKey:NFKParameterStopSequences].kind, NFKModelOptionKindTextList);
+
+	NFKModelCatalog *catalog = [[NFKModelCatalog alloc] init];
+	[catalog addDescriptor:descriptor];
+	NSError *error = nil;
+	NFKModelBuildRequest *request = [catalog buildRequestForModelIdentifier:descriptor.identifier
+																	 options:@{ NFKParameterTemperature: @0.2, NFKParameterTopP: @0.9 }
+																	location:[NSURL fileURLWithPath:@"/tmp"] error:&error];
+	XCTAssertNotNil(request, @"%@", error);
+	XCTAssertEqualObjects(request.requestDefaults[NFKParameterTemperature], @0.2);
+}
+
 - (void)testACoreMLPackageWaitsForTheOptIn
 {
 	[self serveRepo:@"org/qwen-coreml" files:[self packageFilesWithManifest:[self packageManifest]] card:nil];
@@ -685,6 +709,20 @@ static NSUInteger NFKResolverToyAskCount;
 	XCTAssertEqualObjects(resolution.descriptor.extensions[@"localServer"][@"model"], @"hf.co/org/name-GGUF:Q4_K_M");
 	XCTAssertEqualObjects(resolution.descriptor.extensions[@"localServer"][@"baseURL"], @"http://hub.test/v1");
 	XCTAssertEqualObjects(resolution.variant.source.kind, NFKModelSourceKindNone);
+
+	// The server's backend reads every option the entry declares; the server applies its own defaults.
+	NSSet *declared = [NSSet setWithArray:[resolution.descriptor.options valueForKey:@"key"]];
+	NSSet *expected = [NSSet setWithArray:@[ NFKParameterMaxTokens, NFKParameterTemperature, NFKParameterTopP,
+											 NFKParameterTopK, NFKParameterRepetitionPenalty, NFKParameterSeed,
+											 NFKParameterStopSequences, NFKParameterJSONSchema, NFKParameterTools ]];
+	XCTAssertEqualObjects(declared, expected);
+	id<NFKInferenceBackend> backend = [NFKRemoteProvider backendForProvider:resolution.action.provider apiKey:nil
+																  modelName:resolution.action.model];
+	XCTAssertTrue([declared isSubsetOfSet:backend.supportedParameterKeys], @"%@", backend.supportedParameterKeys);
+	for (NFKModelOption *option in resolution.descriptor.options) {
+		XCTAssertNil(option.defaultValue, @"%@", option.key);
+		XCTAssertNotNil(option.title, @"%@", option.key);
+	}
 }
 
 - (void)testAModelTheServerHoldsResolvesToUse

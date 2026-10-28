@@ -27,6 +27,10 @@ host, at macOS 26 / iOS 26, and every type it adds is `@objc`.
   found rather than probing. The locale lists are exposed as completion-handler class methods, which
   is also their Objective-C shape. Preparing twice is cheap: `assetInstallationRequest` is nil when
   nothing needs installing.
+- **Option descriptions.** The translator's `sourceLanguage` and `targetLanguage` options carry a title
+  and help (2026-10-27) and no choices: `supportedLanguages` is asynchronous and the framework answers
+  nothing in a test bundle, so the descriptor cannot wait on it. The speech analyzer's `locale` is a
+  property only, because its assets are installed per locale in `prepare()`.
 - The Swift Vision API performs with `try await request.perform(on: cgImage)`, so each backend hops a
   detached task and waits on a semaphore, the same shape `NFKFoundationModelsBackend` uses for its
   own asynchronous reads.

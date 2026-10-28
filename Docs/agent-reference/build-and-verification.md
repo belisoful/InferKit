@@ -139,8 +139,8 @@ method assigns the out-parameter after the block has run. A sweep of every `.m` 
 `Tests/`, and `Examples/` found that one instance.
 
 1. `swift build` + `swift test` on the host — **0 warnings**, all tests green. Grep the log for
-   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 1913 tests
-   (2026-10-27): the Objective-C `- (void)test` methods under `Tests/` (1795) and in
+   `warning:` without a `tail`; a tail has hidden warnings before. The core suite has 1914 tests
+   (2026-10-27): the Objective-C `- (void)test` methods under `Tests/` (1796) and in
    `Examples/NFKExamples.m` (62, the `InferKitExamples` target), plus the `func test` methods in
    `SwiftExamples/` (56).
 2. `xcodebuild build` for a `generic/platform=iOS` destination (cross-platform compile), and for tvOS
@@ -215,9 +215,9 @@ method assigns the out-parameter after the block has run. A sweep of every `.m` 
    -skipPackagePluginValidation` throughout):
 
    ```
-   xcodebuild test -scheme InferKitMLXTests        …    # 3028 — the model and API suite
-   xcodebuild test -scheme InferKitMLXExamples     …    #  150 — the Swift documented snippets
-   xcodebuild test -scheme InferKitMLXObjCExamples …    #   60 — the Objective-C ones
+   xcodebuild test -scheme InferKitMLXTests        …    # 3034 — the model and API suite
+   xcodebuild test -scheme InferKitMLXExamples     …    #  152 — the Swift documented snippets
+   xcodebuild test -scheme InferKitMLXObjCExamples …    #   61 — the Objective-C ones
    ```
 
    Without the library, `swift test` must still exit 0, with the MLX-dependent tests reported as
@@ -249,10 +249,10 @@ method assigns the out-parameter after the block has run. A sweep of every `.m` 
    package declares, so the core (step 1's count), `InferKitFoundationModels` (100), and `InferKitAppleSwift`
    (30) are covered by steps 1, 5, and 6 whatever Xcode does with their schemes.
 5. `InferKitFoundationModels/` `swift build` + `swift test` when a change touches that companion. That
-   covers all 100 tests across its three test targets. Through Xcode it collapses the same way MLX does
-   — the generated `InferKitFoundationModels` scheme runs 80 and skips the 20 in the two examples
+   covers all 102 tests across its three test targets. Through Xcode it collapses the same way MLX does
+   — the generated `InferKitFoundationModels` scheme runs 82 and skips the 20 in the two examples
    targets — so it carries the same per-target shared schemes
-   (`InferKitFoundationModelsTests` / `…Examples` / `…ObjCExamples`, 80 / 11 / 9). Nothing here needs
+   (`InferKitFoundationModelsTests` / `…Examples` / `…ObjCExamples`, 82 / 11 / 9). Nothing here needs
    them, since this package evaluates under `swift test`; they exist so an Xcode run cannot quietly
    cover less than the command line does.
 6. `InferKitAppleSwift/` `swift build` + `swift test` when a change touches that companion. That covers

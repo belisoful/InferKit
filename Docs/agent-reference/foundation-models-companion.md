@@ -229,5 +229,10 @@ Models floor; the model itself needs Apple Intelligence enabled). It depends onl
   `NFKFoundationModelsProvider`, one `system` variant with source `system`, license "Apple system
   framework", and requirements macOS 26 / iOS 26 with `requiresAppleSilicon` set, because Apple
   Intelligence runs only on Apple silicon. Its ports and options are read off a fresh
-  `NFKFoundationModelsBackend`, so they follow the running OS; `vision-question-answering` joins
+  `NFKFoundationModelsBackend`, so they follow the running OS. Each request option has a title, help,
+  and the range the framework takes, and no default, because the framework applies its own; the
+  reasoning level's choices are light, moderate, and deep, and it needs macOS 27. Three load options,
+  `model`, `useCase`, and `guardrails` (2026-10-27), set the backend properties of the same names
+  through the provider path, each a choice of the enum's integer values; Private Cloud Compute is a
+  choice that needs macOS 27 / iOS 27, so the catalog refuses it below; `vision-question-answering` joins
   `text-generation` in its tasks where the backend takes `NFKInputImage`.

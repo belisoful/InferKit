@@ -186,7 +186,7 @@ weights:
   similarity. A query carries a one-sentence task instruction and a document carries none.
   `NFKMLXTextEmbeddingBackend` returns the vector under `NFKOutputEmbedding` for semantic search,
   retrieval, clustering, and reranking; `backendWithDirectoryURL:outputDimensions:error:` truncates to
-  a smaller Matryoshka width. Reference parity against the model card's own transformers recipe on the
+  a smaller Matryoshka width, and a request does the same under `NFKParameterEmbeddingDimensions`. Reference parity against the model card's own transformers recipe on the
   released 0.6B weights (query and document embedding cosine 0.99999999999, retrieval score to 1e-6).
 - **`NFKMLXEmbeddingGemma`** — a second text embedder over a second architecture: the bidirectional
   Gemma 3 encoder (no causal mask, sandwich normalization, dual RoPE, QK-norm, GeGLU), mean-pooled over
@@ -958,8 +958,9 @@ models.
 - **`NFKMLXCanary`** — Canary-1B-v2 (NVIDIA NeMo, CC-by-4.0), a multitask speech model that transcribes
   and translates: the biased FastConformer encoder (reused from Parakeet) and a Transformer attention
   encoder-decoder that generates from a task prompt of control tokens.
-  `NFKMLXCanary.backend(directoryURL:)` (`backendWithDirectoryURL:error:`) reads `NFKInputAudio` and a
-  language code or a `src>tgt` pair under `NFKInputPrompt`; the tokenizer is the release's Metaspace
+  `NFKMLXCanary.backend(directoryURL:)` (`backendWithDirectoryURL:error:`) reads `NFKInputAudio`, the
+  spoken language under `NFKParameterSourceLanguage`, and a translation's target under
+  `NFKParameterTargetLanguage`; the tokenizer is the release's Metaspace
   BPE. At reference parity against NeMo's `EncDecMultiTaskModel`: the released model matches by shape
   across all 1475 base tensors and reproduces the encoder and decoder seams, and the backend transcribes
   the validation clip exactly.

@@ -50,6 +50,23 @@ public final class NFKAppleSwiftModelDescriptors: NSObject, NFKModelDescriptorPr
                build: { NFKVisionSmudgeBackend() }),
     ]
 
+    /// The title and help each parameter an engine reads shows a user interface. The languages take no
+    /// choices: the Translation framework lists them only asynchronously.
+    private static let optionDescriptions: [String: (title: String, help: String)] = [
+        NFKParameterSourceLanguage: ("Source language",
+                                     "The language the text is in, a BCP-47 tag such as en. Without one, the language NaturalLanguage detects in the text."),
+        NFKParameterTargetLanguage: ("Target language", "The language to translate into, a BCP-47 tag such as de."),
+    ]
+
+    private static func option(for key: String, required: Bool) -> NFKModelOption {
+        let kind = NFKModelOption(key: key).kind
+        let description = optionDescriptions[key]
+        return NFKModelOption(key: key, kind: kind, title: description?.title, help: description?.help,
+                              defaultValue: nil, minimum: nil, maximum: nil, step: nil, choices: nil, stage: nil,
+                              group: nil, requirements: nil, propertyKeyPath: nil, memoryBytesPerUnit: nil,
+                              required: required, extensions: nil)
+    }
+
     /// The registry names `backend(named:)` builds, sorted.
     @objc public static var registryNames: [String] {
         engines.map(\.identifier).sorted()
@@ -92,7 +109,7 @@ public final class NFKAppleSwiftModelDescriptors: NSObject, NFKModelDescriptorPr
         let inputs = inputKeys.sorted().map { NFKModelPort(key: $0, required: inputKeys.count == 1) }
         // Every engine here writes each key it declares on every result.
         let outputs = outputKeys.sorted().map { NFKModelPort.outputPort(withKey: $0, required: true) }
-        let options = parameterKeys.sorted().map { NFKModelOption(key: $0, required: engine.requiredOptions.contains($0)) }
+        let options = parameterKeys.sorted().map { option(for: $0, required: engine.requiredOptions.contains($0)) }
         let source = NFKModelSource(kind: NFKModelSourceKindSystem, repository: nil, revision: nil, url: nil,
                                     layout: NFKModelSourceLayoutNone, files: nil, requiresConversion: false,
                                     extensions: nil)

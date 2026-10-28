@@ -173,8 +173,9 @@ public final class NFKMLXTextEmbeddingBackend: NSObject, NFKInferenceBackend {
     @objc public var isReady: Bool { true }
     @objc public var backendIdentifier: String { identifier }
 
-    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
-    @objc public var supportedParameterKeys: Set<String> { [] }
+    /// The request parameters the backend reads: the Matryoshka width, under
+    /// `NFKParameterEmbeddingDimensions`. Introduced in InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> { [NFKParameterEmbeddingDimensions] }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputPrompt, NFKInputMessages] }
@@ -299,7 +300,7 @@ public final class NFKMLXTextEmbeddingBackend: NSObject, NFKInferenceBackend {
                     throw NFKMLXError.unsupportedConfiguration(
                         "text embedding needs a tokenizer; build the backend with one")
                 }
-                let embedding = Self.numbers(holder.embed(tokens: tokenize(text)))
+                let embedding = Self.numbers(try Self.embedding(holder.embed(tokens: tokenize(text)), for: request))
                 job.finish(with: NFKInferenceResult(outputs: [NFKOutputEmbedding: embedding]))
             } catch {
                 job.finish(withError: error as NSError)
@@ -312,6 +313,23 @@ public final class NFKMLXTextEmbeddingBackend: NSObject, NFKInferenceBackend {
     /// backend's reader so the two agree on how a request carries text.
     private static func text(from request: NFKInferenceRequest) -> String? {
         NFKMLXLanguageBackend.prompt(from: request)
+    }
+
+    /// `embedding` truncated to the request's `NFKParameterEmbeddingDimensions` and normalized again, as a
+    /// Matryoshka embedding is read at a smaller width. A width at or above the embedding's own returns it
+    /// whole.
+    static func embedding(_ embedding: MLXArray, for request: NFKInferenceRequest) throws -> MLXArray {
+        guard let requested = NFKMLXGenerationBackend.number(request, NFKParameterEmbeddingDimensions)?.intValue else {
+            return embedding
+        }
+        guard requested >= 1 else {
+            throw NFKMLXError.unsupportedConfiguration("\(NFKParameterEmbeddingDimensions) is a width of at least 1")
+        }
+        guard requested < embedding.dim(0) else {
+            return embedding
+        }
+        let truncated = embedding[0 ..< requested]
+        return truncated / sqrt((truncated * truncated).sum())
     }
 
     private static func numbers(_ embedding: MLXArray) -> [NSNumber] {

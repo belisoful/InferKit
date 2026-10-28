@@ -240,15 +240,30 @@ extension NFKMLXCatalogAudio {
         model(NFKMLXCanary.modelName, displayName: "Canary-1B-v2", family: "canary",
               summary: "NVIDIA's multitask speech model, which transcribes speech and translates it between English and 24 European languages.",
               tasks: [NFKModelTaskTranscription, NFKModelTaskTranslation],
-              inputs: [audioInput("A WAV recording of speech. The backend resamples it to 16 kHz."),
-                       .input(NFKInputPrompt, title: "Languages",
-                              help: "A language code such as en, which transcribes, or a source>target pair such as en>de, which translates. English when absent.")],
+              inputs: [audioInput("A WAV recording of speech. The backend resamples it to 16 kHz.")],
               outputs: [.output(NFKOutputText, required: true, title: "Text", help: "The transcript or the translation.")],
+              parameters: [.option(NFKParameterSourceLanguage, kind: NFKModelOptionKindChoice, title: "Language",
+                                   help: "The language spoken in the recording.", defaultValue: "en",
+                                   choices: canaryLanguageChoices),
+                           .option(NFKParameterTargetLanguage, kind: NFKModelOptionKindChoice, title: "Translate to",
+                                   help: "The language to translate into, with English on one side. Without one, the recording is transcribed.",
+                                   choices: canaryLanguageChoices)],
               license: ccBy4,
               release: "1b-v2",
               source: .hub("nvidia/canary-1b-v2",
                            files: files(required: NFKMLXCanary.requiredFiles, optional: NFKMLXCanary.optionalFiles,
                                         weights: NFKMLXCanary.weightFiles)))
+    }
+
+    /// Canary's languages, each titled with its English name as the model card gives it. The names are
+    /// fixed here so the catalog snapshot does not follow the OS's localization data.
+    static var canaryLanguageChoices: [(value: Any, title: String)] {
+        let names = ["bg": "Bulgarian", "hr": "Croatian", "cs": "Czech", "da": "Danish", "nl": "Dutch", "en": "English",
+                     "et": "Estonian", "fi": "Finnish", "fr": "French", "de": "German", "el": "Greek", "hu": "Hungarian",
+                     "it": "Italian", "lv": "Latvian", "lt": "Lithuanian", "mt": "Maltese", "pl": "Polish",
+                     "pt": "Portuguese", "ro": "Romanian", "sk": "Slovak", "sl": "Slovenian", "es": "Spanish",
+                     "sv": "Swedish", "ru": "Russian", "uk": "Ukrainian"]
+        return NFKMLXCanary.supportedLanguages.map { code in (code, "\(names[code] ?? code) (\(code))") }
     }
 
     static var voxtral: NFKMLXCatalogEntry {

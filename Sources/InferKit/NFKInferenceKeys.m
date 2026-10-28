@@ -63,6 +63,7 @@ NSString * const NFKVideoOperationExtend	= @"extend";
 NSString * const NFKParameterSampleRate		= @"sampleRate";
 NSString * const NFKParameterChannelCount	= @"channelCount";
 NSString * const NFKParameterVoice			= @"voice";
+NSString * const NFKParameterEmbeddingDimensions	= @"dimensions";
 
 NSString * const NFKParameterSourceLanguage	= @"sourceLanguage";
 NSString * const NFKParameterTargetLanguage	= @"targetLanguage";
