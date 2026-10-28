@@ -879,3 +879,21 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   - **Metal fuses `a * b + c` written in one expression.** Each reference kernel compiles under
     `#pragma METAL fp contract(off)` (`NFKReferenceRounding.metalContractOff`), so a multiply and an add fuse
     only through `fma`, as torch's vector code fuses them.
+- **Float64 on the CPU: a gradient copies its evaluated inputs on the GPU (2026-10-27, mlx-swift's mlx 0.32).**
+  MLX's CPU computes float64 for matrix products, reductions, `rsqrt`, `sqrt`, `var`, `take`, and their
+  gradients. It has no float64 convolution, so a float64 convolution is one matrix product per kernel tap
+  (`NFKFloat64Convolution`). `Device.withDefaultDevice(.cpu)` is a Swift task-local value: every operation
+  Swift issues takes it, and the C++ core never sees it.
+  - **The failure.** `vjp` and `grad` pass each primal through `make_tracer`, which copies it on the stream of
+    the operation that produced it, or, for an array with none, on `default_stream(default_device())`, the GPU.
+    A module's parameters are evaluated arrays with no producing operation, so `valueAndGrad(model:)` and
+    `vjp` over float64 parameters abort the process with "float64 is not supported on the GPU" (`closure.cpp`,
+    `transforms.cpp`). A float64 forward runs; only the gradient fails. An explicit float64 cotangent alone
+    does not help.
+  - **The fix.** Pass primals produced inside the CPU scope, `parameters.map { $0.1 * 1 }`, so each copy takes
+    the CPU stream of its multiply, and call `vjp` with a float64 cotangent.
+    `testStyleTransferTrainingMatchesTheReference` takes the style network's float64 gradients this way and
+    lands within 5.4e-12 of torch's float64.
+  - **Probing it from Python.** `mx.array` of a float64 NumPy array rounds to float32 unless `dtype=mx.float64`
+    is passed, and an operation without `stream=` (a slice, `mx.ones`) runs on the default GPU. Either makes a
+    CPU probe read wrong.
