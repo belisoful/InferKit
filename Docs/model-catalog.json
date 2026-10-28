@@ -7453,14 +7453,12 @@
           "displayName" : "Fast Neural Style",
           "id" : "default",
           "isDefault" : true,
-          "measurement" : "unmeasurable",
-          "measurementNote" : "https://github.com/pytorch/examples/tree/main/fast_neural_style serves no size",
           "registryName" : "fast-style-transfer",
           "source" : {
             "files" : [
 
             ],
-            "kind" : "url",
+            "kind" : "page",
             "layout" : "file",
             "requiresConversion" : true,
             "url" : "https://github.com/pytorch/examples/tree/main/fast_neural_style"
@@ -17244,14 +17242,12 @@
           "displayName" : "HAT ×4",
           "id" : "default",
           "isDefault" : true,
-          "measurement" : "unmeasurable",
-          "measurementNote" : "https://github.com/XPixelGroup/HAT serves no size",
           "registryName" : "hat-x4",
           "source" : {
             "files" : [
 
             ],
-            "kind" : "url",
+            "kind" : "page",
             "layout" : "file",
             "requiresConversion" : false,
             "url" : "https://github.com/XPixelGroup/HAT"
@@ -25292,14 +25288,12 @@
           "displayName" : "MODNet (photographic portrait)",
           "id" : "default",
           "isDefault" : true,
-          "measurement" : "unmeasurable",
-          "measurementNote" : "https://github.com/ZHKKKe/MODNet serves no size",
           "registryName" : "modnet",
           "source" : {
             "files" : [
 
             ],
-            "kind" : "url",
+            "kind" : "page",
             "layout" : "file",
             "requiresConversion" : true,
             "url" : "https://github.com/ZHKKKe/MODNet"
@@ -28219,6 +28213,7 @@
       ],
       "registryName" : "nuwave2",
       "requirements" : {
+        "minimumMemoryBytes" : 49148153,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -28236,19 +28231,39 @@
       "variants" : [
         {
           "displayName" : "NU-Wave 2",
+          "downloadBytes" : 20887965,
           "id" : "official",
           "isDefault" : true,
-          "measurement" : "unmeasurable",
-          "measurementNote" : "https://drive.google.com/file/d/11t0cQYx6ZadKQjmfGnqxUUH2UEk5Yzk7/view serves no size",
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "checkpoint" : 20887965
+                },
+                "id" : "model",
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 49148153,
+          "peakBytes" : 20887965,
           "registryName" : "nuwave2",
+          "residentBytes" : 20887965,
           "source" : {
             "files" : [
-
+              {
+                "bytes" : 20887965,
+                "optional" : false,
+                "path" : "nuwave2_02_16_13_epoch=629.ckpt",
+                "role" : "weights"
+              }
             ],
             "kind" : "url",
             "layout" : "file",
             "requiresConversion" : false,
-            "url" : "https://drive.google.com/file/d/11t0cQYx6ZadKQjmfGnqxUUH2UEk5Yzk7/view"
+            "url" : "https://drive.usercontent.google.com/download?id=11t0cQYx6ZadKQjmfGnqxUUH2UEk5Yzk7&export=download"
           }
         }
       ]
@@ -42510,14 +42525,12 @@
           "displayName" : "RIFE v4.13",
           "id" : "default",
           "isDefault" : true,
-          "measurement" : "unmeasurable",
-          "measurementNote" : "https://github.com/hzwer/Practical-RIFE serves no size",
           "registryName" : "rife-v4",
           "source" : {
             "files" : [
 
             ],
-            "kind" : "url",
+            "kind" : "page",
             "layout" : "file",
             "requiresConversion" : true,
             "url" : "https://github.com/hzwer/Practical-RIFE"
@@ -57073,14 +57086,12 @@
           "displayName" : "StoRM",
           "id" : "storm",
           "isDefault" : true,
-          "measurement" : "unmeasurable",
-          "measurementNote" : "https://drive.google.com/drive/folders/1ExFm97obaXTYFoBApWjbK_ypxTP-Cgdq serves no size",
           "registryName" : "storm",
           "source" : {
             "files" : [
 
             ],
-            "kind" : "url",
+            "kind" : "page",
             "layout" : "file",
             "requiresConversion" : true,
             "url" : "https://drive.google.com/drive/folders/1ExFm97obaXTYFoBApWjbK_ypxTP-Cgdq"
@@ -61353,14 +61364,12 @@
           "displayName" : "U²-NetP",
           "id" : "default",
           "isDefault" : true,
-          "measurement" : "unmeasurable",
-          "measurementNote" : "https://github.com/xuebinqin/U-2-Net serves no size",
           "registryName" : "u2netp",
           "source" : {
             "files" : [
 
             ],
-            "kind" : "url",
+            "kind" : "page",
             "layout" : "file",
             "requiresConversion" : true,
             "url" : "https://github.com/xuebinqin/U-2-Net"

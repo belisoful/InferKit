@@ -440,6 +440,13 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 /*! A source the hub refuses to plan or download, with the reason; nil for one it takes. */
 - (nullable NSError *)refusalForModelSource:(NFKModelSource *)source
 {
+	if ([source.kind isEqualToString:NFKModelSourceKindPage]) {
+		NSString *page = source.URL.absoluteString ?: @"the page that describes the release";
+		NSString *reason = [NSString stringWithFormat:@"the files are downloaded by hand from %@", page];
+		NSMutableDictionary<NSString *, id> *userInfo = [@{ NSLocalizedDescriptionKey: reason } mutableCopy];
+		userInfo[NSURLErrorKey] = source.URL;
+		return [NSError errorWithDomain:NFKDownloadErrorDomain code:NFKDownloadErrorManualDownload userInfo:userInfo];
+	}
 	if (source.requiresConversion) {
 		NSString *name = source.repository ?: source.URL.absoluteString ?: @"the source";
 		NSString *reason = [NSString stringWithFormat:@"%@ needs a converter before InferKit loads it", name];
@@ -501,7 +508,7 @@ static NSString *NFKHFHubHexDigest(NSData *data)
 	place of its own. */
 - (NSArray<NFKHFHubSourcePart *> *)partsOfModelSource:(NFKModelSource *)source
 {
-	if ([self modelSourceHoldsNoFiles:source]) {
+	if ([self modelSourceHoldsNoFiles:source] || [source.kind isEqualToString:NFKModelSourceKindPage]) {
 		return @[];
 	}
 	if ([source.kind isEqualToString:NFKModelSourceKindURL]) {

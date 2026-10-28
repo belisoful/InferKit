@@ -63,6 +63,10 @@ typedef NS_ERROR_ENUM(NFKDownloadErrorDomain, NFKDownloadError) {
 	/*! The download was paused. The file in flight keeps its bytes, which a later download of the
 		same source continues. */
 	NFKDownloadErrorPaused						= 14,
+	/*! The source is a page that describes the release (NFKModelSourceKindPage). A person downloads its
+		files from the page, which the error names under NSURLErrorKey, and passes their location to
+		the build. */
+	NFKDownloadErrorManualDownload				= 15,
 };
 
 /*!

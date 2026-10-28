@@ -785,8 +785,9 @@ The measurement:
   gated repository lists its files without a token, so its sizes and digests are measured; its shard
   index and tensor headers are refused, so the shards come from the file names beside the index and the
   safetensors bytes count as opaque (no parameter count). A repository that refuses the listing is
-  `gated`; a release page or a Google Drive folder is `unmeasurable`; a required file the repository
-  does not serve is `missing`.
+  `gated`; a URL on a host that serves no size (a Google Drive page) is `unmeasurable`; a required file
+  the repository does not serve is `missing`. A page source (`NFKModelSourceKindPage`) is not measured,
+  since its files are downloaded by hand.
 - `residentBytes` follows `NFKMLXLoadPlan.plan(for:)`: the precision each family's registered loader
   holds its weights at, read from the loaders. The default is stored, which is where the decoders held
   to their bfloat16 references load by default: Gemma 3, Gemma 3n, and the `NFKMLXLanguage` families

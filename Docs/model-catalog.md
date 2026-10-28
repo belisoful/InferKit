@@ -237,7 +237,7 @@ a fine-tune.
 | `kind` | string | yes | Where the files come from: a [source kind](#source-kinds). |
 | `repository` | string | no | The repository of a Hugging Face source, such as `"org/name"`. |
 | `revision` | string | no | The commit or tag the files are read at. A commit makes the download reproducible. |
-| `url` | string | no | The download URL of a URL source, or the page that describes the release. |
+| `url` | string | no | The download URL of a `url` source, or the page that describes the release of a `page` source. |
 | `layout` | string | no | How the model loads its files: a [source layout](#source-layouts). `"none"` when absent. |
 | `files` | array of [file](#file) | no | The files the source holds. |
 | `requiresConversion` | boolean | no | True when the original release needs a converter before InferKit loads it. |
@@ -247,8 +247,11 @@ reports whether it is downloaded (`downloadStatusForModelSource:`), and removes 
 (`removalPlanForModelSource:error:`, `removeFilesInPlan:error:`). A `huggingface` source that lists
 files fetches those, an `optional` one only when the repository holds it; one that lists none fetches
 the whole repository. A `url` source caches its file under the name its first file gives. A `system`
-or `none` source holds no files. A source with `requiresConversion` is refused with
-`NFKDownloadErrorRequiresConversion`. The [examples](examples.md#downloading-with-progress-then-removing-nfkdownload)
+or `none` source holds no files. A `page` source is refused with `NFKDownloadErrorManualDownload`
+before any request, and the error names the page under `NSURLErrorKey`: a person downloads the files
+from the page, and the app passes their location to the build. A catalog build of a `page` source
+without a location fails with `NFKModelCatalogErrorNotDownloaded`, naming the page. A source with
+`requiresConversion` is refused with `NFKDownloadErrorRequiresConversion`. The [examples](examples.md#downloading-with-progress-then-removing-nfkdownload)
 show the calls.
 
 ## File
@@ -974,6 +977,7 @@ The keys an engine's load options share, so an app configures every engine the s
 |---|---|---|
 | `huggingface` | `NFKModelSourceKindHuggingFace` | A Hugging Face repository. |
 | `url` | `NFKModelSourceKindURL` | A download URL. |
+| `page` | `NFKModelSourceKindPage` | A web page that describes the release. A person downloads the files from it; `NFKHFHub` does not. |
 | `system` | `NFKModelSourceKindSystem` | The operating system. |
 | `none` | `NFKModelSourceKindNone` | Nowhere: the model needs no files, or the app supplies them. |
 
@@ -1025,7 +1029,7 @@ A measured variant can carry these extension fields:
 | `measuredRevision` | source | The commit the source's revision resolved to when it was measured. The file digests are that commit's. |
 | `note` | source | A sentence a user should read about the source, such as a release that needs a converter none ships yet. |
 | `publiclyServed` | source | `false` for a repository its publisher no longer serves to the public. A local copy of the release still builds the model; the measurement records it as `"unmeasurable"`. |
-| `measurement` | variant | `"gated"` (the repository refused the listing), `"unmeasurable"` (a release page or a host that serves no size), or `"missing"` (a required file is not served). Absent for a measured variant. |
+| `measurement` | variant | `"gated"` (the repository refused the listing), `"unmeasurable"` (a host that serves no size), or `"missing"` (a required file is not served). Absent for a measured variant and for a `page` source, which is not measured. |
 | `measurementNote` | variant | Why a measurement is incomplete, such as the tensor headers a gated repository refused. |
 | `residentEstimate` | variant | `"stored-dtype"` where `residentBytes` counts the stored bytes because the loader's precision or the stored type is not known. |
 

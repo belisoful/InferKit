@@ -158,9 +158,9 @@ enum NFKMLXCatalogImage {
     }
 
     /// A single checkpoint the publisher serves from no direct download address: `page` is where its
-    /// release is described.
+    /// release is described, and a person downloads the file from it.
     static func releasePage(_ page: String, requiresConversion: Bool) -> NFKModelSource {
-        NFKModelSource(kind: NFKModelSourceKindURL, repository: nil, revision: nil, url: URL(string: page),
+        NFKModelSource(kind: NFKModelSourceKindPage, repository: nil, revision: nil, url: URL(string: page),
                        layout: NFKModelSourceLayoutFile, files: [], requiresConversion: requiresConversion,
                        extensions: nil)
     }

@@ -304,6 +304,7 @@ static const void *const NFKPluginPublicInterface[] = {
 	(const void *)&NFKModelFileRoleOther,
 	(const void *)&NFKModelSourceKindHuggingFace,
 	(const void *)&NFKModelSourceKindURL,
+	(const void *)&NFKModelSourceKindPage,
 	(const void *)&NFKModelSourceKindSystem,
 	(const void *)&NFKModelSourceKindNone,
 	(const void *)&NFKModelSourceLayoutFile,

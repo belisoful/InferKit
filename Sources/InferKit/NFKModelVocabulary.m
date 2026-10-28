@@ -128,6 +128,7 @@ NSString * const NFKModelFileRoleOther				= @"other";
 
 NSString * const NFKModelSourceKindHuggingFace		= @"huggingface";
 NSString * const NFKModelSourceKindURL				= @"url";
+NSString * const NFKModelSourceKindPage				= @"page";
 NSString * const NFKModelSourceKindSystem			= @"system";
 NSString * const NFKModelSourceKindNone				= @"none";
 

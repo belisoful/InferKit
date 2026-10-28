@@ -581,10 +581,8 @@ extension NFKMLXCatalogAudio {
               outputs: [enhancedAudio],
               license: .mit(url: "https://github.com/sp-uhh/storm/blob/master/LICENSE"),
               release: "storm",
-              source: NFKModelSource(kind: NFKModelSourceKindURL, repository: nil, revision: nil,
-                                     url: URL(string: "https://drive.google.com/drive/folders/1ExFm97obaXTYFoBApWjbK_ypxTP-Cgdq"),
-                                     layout: NFKModelSourceLayoutFile, files: nil, requiresConversion: true,
-                                     extensions: nil))
+              source: NFKMLXCatalogImage.releasePage("https://drive.google.com/drive/folders/1ExFm97obaXTYFoBApWjbK_ypxTP-Cgdq",
+                                                     requiresConversion: true))
     }
 
     static var voiceRestore: NFKMLXCatalogEntry {
@@ -625,10 +623,8 @@ extension NFKMLXCatalogAudio {
               license: .license("BSD-3-Clause", name: "BSD 3-Clause License",
                                 url: "https://github.com/maum-ai/nuwave2/blob/master/LICENSE"),
               release: "official",
-              source: NFKModelSource(kind: NFKModelSourceKindURL, repository: nil, revision: nil,
-                                     url: URL(string: "https://drive.google.com/file/d/11t0cQYx6ZadKQjmfGnqxUUH2UEk5Yzk7/view"),
-                                     layout: NFKModelSourceLayoutFile, files: nil, requiresConversion: false,
-                                     extensions: nil))
+              source: urlSource("https://drive.usercontent.google.com/download?id=11t0cQYx6ZadKQjmfGnqxUUH2UEk5Yzk7&export=download",
+                                fileName: "nuwave2_02_16_13_epoch=629.ckpt", requiresConversion: false))
     }
 
     static var apollo: NFKMLXCatalogEntry {

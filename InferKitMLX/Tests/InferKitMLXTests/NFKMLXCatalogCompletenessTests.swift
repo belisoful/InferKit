@@ -23,13 +23,6 @@ final class NFKMLXCatalogCompletenessTests: XCTestCase {
     private static let unsizedSources: [String: String] = [
         "stable-diffusion-2-1-base/default":
             "the publisher no longer serves stabilityai/stable-diffusion-2-1-base publicly; a local copy still builds",
-        "fast-style-transfer/default": "a GitHub project page, which serves no file size",
-        "hat-x4/default": "a GitHub project page, which serves no file size",
-        "modnet/default": "a GitHub project page, which serves no file size",
-        "nuwave2/official": "a Google Drive file, which serves no size",
-        "rife-v4/default": "a GitHub project page, which serves no file size",
-        "storm/storm": "a Google Drive folder, which serves no size",
-        "u2netp/default": "a GitHub project page, which serves no file size",
     ]
 
     /// The provider classes `swift run inferkit-catalog export` links: the core's Apple engines and this
@@ -55,7 +48,8 @@ final class NFKMLXCatalogCompletenessTests: XCTestCase {
         for descriptor in descriptors {
             for variant in descriptor.variants {
                 guard let source = variant.source, source.layout != NFKModelSourceLayoutNone,
-                      [NFKModelSourceKindHuggingFace, NFKModelSourceKindURL].contains(source.kind) else { continue }
+                      [NFKModelSourceKindHuggingFace, NFKModelSourceKindURL, NFKModelSourceKindPage].contains(source.kind)
+                else { continue }
                 // A descriptor with one variant declares no variant option; its default is the variant built.
                 let choosesVariant = descriptor.option(withKey: NFKModelLoadOptionVariant) != nil
                 guard choosesVariant || variant.identifier == descriptor.defaultVariant?.identifier else { continue }
@@ -74,6 +68,19 @@ final class NFKMLXCatalogCompletenessTests: XCTestCase {
             }
         }
         XCTAssertGreaterThan(refused, 300, "the shipped variants with files")
+    }
+
+    // A page source is downloaded by hand, so it names the page and lists no file the hub would fetch.
+    func testEveryPageSourceNamesItsPageAndNoFile() {
+        var pages = 0
+        for descriptor in descriptors {
+            for variant in descriptor.variants where variant.source?.kind == NFKModelSourceKindPage {
+                pages += 1
+                XCTAssertNotNil(variant.source?.url, "\(descriptor.identifier)/\(variant.identifier)")
+                XCTAssertEqual(variant.source?.files.count, 0, "\(descriptor.identifier)/\(variant.identifier)")
+            }
+        }
+        XCTAssertGreaterThan(pages, 0)
     }
 
     func testTheRegistryAndTheCatalogNameTheSameModels() {

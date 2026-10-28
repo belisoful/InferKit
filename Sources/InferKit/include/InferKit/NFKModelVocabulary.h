@@ -245,6 +245,10 @@ extern NSString * const NFKModelFileRoleOther;
 extern NSString * const NFKModelSourceKindHuggingFace;
 /*! A download URL. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelSourceKindURL;
+/*! A web page that describes the release, named by the source's URL. A person downloads the files
+	from the page and passes their location to the build; NFKHFHub does not download it. Introduced in
+	InferKit 0.4.0. */
+extern NSString * const NFKModelSourceKindPage;
 /*! A model the operating system provides. Introduced in InferKit 0.4.0. */
 extern NSString * const NFKModelSourceKindSystem;
 /*! No download: the model needs no files, or the app supplies them. Introduced in InferKit 0.4.0. */

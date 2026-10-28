@@ -722,6 +722,32 @@ static NSString * const NFKTestRepo = @"org/model";
 	XCTAssertEqual(NFKStubHubProtocol.requests.count, (NSUInteger)0);
 }
 
+// A page's files are downloaded by hand, so the hub refuses the source before it requests the page, and
+// names the page. The refusal comes first even where the release also needs a converter.
+- (void)testAPageSourceIsRefusedWithItsPage
+{
+	[NFKStubHubProtocol setResponse:[NFKStubHubResponse responseWithStatus:200 body:[@"<html></html>" dataUsingEncoding:NSUTF8StringEncoding]]
+							forPath:@"/release"];
+	NSURL *page = [NSURL URLWithString:@"http://hub.test/release"];
+	NFKModelSource *source = [[NFKModelSource alloc] initWithKind:NFKModelSourceKindPage repository:nil revision:nil URL:page
+														   layout:NFKModelSourceLayoutFile files:@[] requiresConversion:YES extensions:nil];
+	NSError *error = nil;
+	XCTAssertNil([self.hub planDownloadOfModelSource:source error:&error]);
+	XCTAssertEqual(error.code, NFKDownloadErrorManualDownload);
+	XCTAssertEqualObjects(error.userInfo[NSURLErrorKey], page);
+	XCTAssertTrue([error.localizedDescription containsString:page.absoluteString], @"%@", error);
+
+	XCTestExpectation *done = [self expectationWithDescription:@"download"];
+	[self.hub downloadModelSource:source progressHandler:nil completionHandler:^(NSURL *localURL, NSError *downloadError) {
+		XCTAssertEqual(downloadError.code, NFKDownloadErrorManualDownload);
+		[done fulfill];
+	}];
+	[self waitForExpectations:@[ done ] timeout:10];
+	XCTAssertEqual(NFKStubHubProtocol.requests.count, (NSUInteger)0);
+	XCTAssertEqual([self.hub downloadStatusForModelSource:source].presence, NFKDownloadPresenceAbsent);
+	XCTAssertNil([self.hub removalPlanForModelSource:source error:NULL]);
+}
+
 - (void)testASourceWithNoFilesCompletesAtOnce
 {
 	NFKModelSource *source = [[NFKModelSource alloc] initWithKind:NFKModelSourceKindSystem repository:nil revision:nil URL:nil

@@ -414,7 +414,7 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, copy, nullable) NSString *repository;
 /*! The commit or tag the files are read at. */
 @property (nonatomic, readonly, copy, nullable) NSString *revision;
-/*! The download URL for a URL source, or the page that describes the release. */
+/*! The download URL for a URL source, or the page that describes the release for a page source. */
 @property (nonatomic, readonly, copy, nullable) NSURL *URL;
 /*! How the model loads its files, one of the NFKModelSourceLayout* strings. NFKModelSourceLayoutNone
 	when not given. */

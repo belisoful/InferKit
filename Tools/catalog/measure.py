@@ -13,8 +13,8 @@ It reads each safetensors file's header by two HTTP range requests (`shapes.head
 tensor bytes by dtype and count the elements, and from the tensor names and shapes it takes, per
 top-level directory, the repeated layers with the largest of them and their total, the routed-expert
 bytes, and the elements a runtime weight quantization packs. It reads the repository's `config.json` for the
-geometry the key-value cache follows. A URL source gets a HEAD request for its Content-Length. A Google Drive folder or a release page serves no size and is recorded as
-unmeasurable. `HF_TOKEN` is sent when set; a repository that refuses the listing without it is
+geometry the key-value cache follows. A URL source gets a HEAD request for its Content-Length. A Google Drive page serves no size and is recorded as
+unmeasurable; a page source, whose files are downloaded by hand, is not measured. `HF_TOKEN` is sent when set; a repository that refuses the listing without it is
 recorded as gated.
 
 The download a variant makes is the one the package's download code makes: every required file,

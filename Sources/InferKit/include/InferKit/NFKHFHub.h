@@ -528,8 +528,8 @@ extern const long long NFKHFHubUnlimitedCacheSize;
 	@abstract   Plans and downloads a catalog model source into the cache, the one call an app makes
 				for any catalog model.
 	@discussion Pass a variant's source (NFKModelVariant.source). A source with no files completes at
-				once with a nil localURL. A source that requires conversion fails with
-				NFKDownloadErrorRequiresConversion.
+				once with a nil localURL. A page source fails with NFKDownloadErrorManualDownload, and
+				a source that requires conversion fails with NFKDownloadErrorRequiresConversion.
 */
 - (NFKDownload *)downloadModelSource:(NFKModelSource *)source
 					 progressHandler:(nullable NFKDownloadProgressHandler)progressHandler

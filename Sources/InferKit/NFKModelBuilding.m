@@ -346,13 +346,19 @@ static BOOL NFKModelSourceListsNoRequiredFile(NFKModelSource *source)
 	return YES;
 }
 
-// A source that lists its files downloads through NFKHFHub. A URL source without a file list names a page
-// whose files a person fetches, so the reason names the page.
+// A page source's files are downloaded by hand, so a build without their location cannot run.
+static BOOL NFKModelSourceIsPage(NFKModelSource * _Nullable source)
+{
+	return [source.kind isEqualToString:NFKModelSourceKindPage];
+}
+
+// A hub or URL source downloads through NFKHFHub. A page source's files are downloaded by hand, so the reason
+// names the page.
 static NSString *NFKModelNotDownloadedReason(NFKModelDescriptor *descriptor, NFKModelSource *source)
 {
 	NSString *name = descriptor.displayName ?: descriptor.identifier;
-	if ([source.kind isEqualToString:NFKModelSourceKindURL] && source.files.count == 0) {
-		return [NSString stringWithFormat:@"%@'s files are not located. Fetch them from %@ and pass their location.",
+	if (NFKModelSourceIsPage(source)) {
+		return [NSString stringWithFormat:@"%@'s files are not located. Download them by hand from %@ and pass their location.",
 				name, source.URL.absoluteString];
 	}
 	return [NSString stringWithFormat:@"%@'s files are not downloaded. Download them with "
@@ -522,7 +528,8 @@ static NSString *NFKModelNotDownloadedReason(NFKModelDescriptor *descriptor, NFK
 	}
 	// A plugin fetches and keeps its own weights.
 	BOOL pluginKeepsFiles = [descriptor.engine isEqualToString:NFKModelEnginePlugin];
-	if (located == nil && NFKModelSourceDownloadsFiles(variant.source) && !pluginKeepsFiles) {
+	BOOL needsFiles = NFKModelSourceDownloadsFiles(variant.source) || NFKModelSourceIsPage(variant.source);
+	if (located == nil && needsFiles && !pluginKeepsFiles) {
 		if (error != NULL) {
 			*error = NFKModelBuildError(NFKModelCatalogErrorNotDownloaded, NFKModelNotDownloadedReason(descriptor, variant.source));
 		}

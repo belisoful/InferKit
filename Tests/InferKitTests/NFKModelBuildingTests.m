@@ -630,12 +630,12 @@ static const NSInteger NFKBuildTestGiB = (NSInteger)1 << 30;
 						  config.URLByDeletingLastPathComponent.standardizedURL);
 }
 
-// A URL source that lists no file names a page whose files a person fetches: its refusal names the page.
-// A plugin keeps its own weights and is not refused.
+// A page source's files are downloaded by hand: its refusal names the page. A plugin keeps its own weights
+// and is not refused.
 - (void)testAPageSourceNamesItsPageAndAPluginModelIsNotRefused
 {
 	self.catalog.locator = [NFKModelCatalog hubCacheLocatorForCacheDirectoryURL:[self scratchCache]];
-	NFKModelSource *page = [[NFKModelSource alloc] initWithKind:NFKModelSourceKindURL repository:nil revision:nil
+	NFKModelSource *page = [[NFKModelSource alloc] initWithKind:NFKModelSourceKindPage repository:nil revision:nil
 															URL:[NSURL URLWithString:@"https://example.test/model"]
 														 layout:NFKModelSourceLayoutFile files:@[] requiresConversion:NO
 													 extensions:nil];

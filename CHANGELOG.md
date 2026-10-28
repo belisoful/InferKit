@@ -71,6 +71,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### A release page is a source kind of its own
+
+- `NFKModelSourceKindPage` (`"page"`) names a source whose files a person downloads from the page its
+  URL names. `NFKHFHub` refuses it before any request with `NFKDownloadErrorManualDownload`, which
+  names the page under `NSURLErrorKey`, and a catalog build without the files' location fails with
+  `NFKModelCatalogErrorNotDownloaded`, naming the page. Before, a release page was a `url` source with
+  no files, which a manifest reader could not tell from a direct download, and the hub fetched the
+  page's HTML when the release needed no converter.
+
 #### A hosted model's MCP tool reads its descriptor
 
 - `addToolForModelName:outputModality:purpose:error:` builds the tool of a model hosted from the catalog
@@ -1664,6 +1673,12 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   job ends generation at the next token. Before, a job ran the whole generation with no partial result
   and kept generating after it was cancelled, so `NFKInferenceServer` streamed nothing for these models
   until the reply was finished.
+
+#### Release pages are page sources, and NU-Wave 2 downloads
+
+- HAT ×4, MODNet, U²-NetP, RIFE v4.13, Fast Neural Style, and StoRM name their release pages as
+  `NFKModelSourceKindPage` sources. NU-Wave 2 downloads the release's checkpoint from Google Drive's
+  direct address (20,887,965 bytes), so it has a download size and downloads through `NFKHFHub`.
 
 #### The exact GELU takes torch 2.13's error-function exponential
 

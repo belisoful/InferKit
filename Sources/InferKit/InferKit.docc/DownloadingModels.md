@@ -111,8 +111,10 @@ cancelled, and the companion packages' asynchronous factories carry it to their 
 ### Catalog models
 
 `-downloadModelSource:progressHandler:completionHandler:` plans and downloads a catalog variant's
-source, so an app fetches every catalog model the same way. A source that needs a converter fails
-with `NFKDownloadErrorRequiresConversion`. A file that names its own repository, revision, or URL,
+source, so an app fetches every catalog model the same way. A page source, whose files a person
+downloads from the page its URL names, fails with `NFKDownloadErrorManualDownload` before any request;
+the app passes the files' location to the build instead. A source that needs a converter fails with
+`NFKDownloadErrorRequiresConversion`. A file that names its own repository, revision, or URL,
 such as an adapter published apart from its base model, is fetched from there and caches in that
 repository's snapshot, where the base model's own download finds it. The plan, the status, and the
 removal cover every repository a source's files come from.
