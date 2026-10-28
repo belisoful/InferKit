@@ -1300,6 +1300,13 @@
 	XCTAssertTrue([NFKMLXGemma3 respondsToSelector:@selector(backendWithDirectoryURL:draftDirectoryURL:precision:residency:error:)]);
 	XCTAssertTrue([NFKMLXTranslateGemma respondsToSelector:@selector(backendWithDirectoryURL:draftDirectoryURL:precision:residency:error:)]);
 	XCTAssertTrue([NFKMLXGemma3Backend instancesRespondToSelector:@selector(hasDraftModel)]);
+	// Nemotron 3 Nano 4B drafts for Nemotron Nano 9B v2 the same way:
+	//   id<NFKInferenceBackend> nemotron = [NFKMLXNemotronH nemotronBackendWithDirectoryURL:dir draftDirectoryURL:smallDir
+	//                                                                              precision:NFKMLXWeightPrecisionCheckpoint
+	//                                                                              residency:NFKMLXResidencyAutomatic error:&error];
+	XCTAssertTrue([NFKMLXNemotronH respondsToSelector:@selector(nemotronBackendWithDirectoryURL:draftDirectoryURL:precision:residency:error:)]);
+	XCTAssertTrue([NFKMLXNemotronBackend instancesRespondToSelector:@selector(hasDraftModel)]);
+	XCTAssertTrue([NFKMLXNemotronBackend instancesRespondToSelector:@selector(streamedLayerCount)]);
 	XCTAssertTrue([NFKMLXGemma3 instancesRespondToSelector:@selector(hasDraftModel)]);
 
 	NSError *error = nil;

@@ -204,7 +204,18 @@ sizes add a routed mixture of experts.
 The Nemotron Nano 2 hybrid decoder loads through `NFKMLXNemotronH.backend(directoryURL:)`
 (`nemotronBackendWithDirectoryURL:error:`); its layers interleave the Mamba-2 scan, a ReLU-squared
 feed-forward, and grouped-query attention with no positional embedding, one mixer per block from the
-release's `hybrid_override_pattern`, so it too runs prefill-only.
+release's `hybrid_override_pattern`, so it too runs prefill-only. Nemotron 3 Nano 4B shares the 9B's
+vocabulary and drafts for it: each round the 4B proposes a few tokens and one pass of the 9B scores them.
+Measured on the 9B streamed beside the 4B at 4 bits: its 16-token greedy reply in 8 passes of the 9B.
+
+<!-- objc-check: given NSURL *draftDirectory; -->
+```objc
+id<NFKInferenceBackend> drafted = [NFKMLXNemotronH nemotronBackendWithDirectoryURL:releaseDirectory
+                                                                 draftDirectoryURL:draftDirectory
+                                                                         precision:NFKMLXWeightPrecisionCheckpoint
+                                                                         residency:NFKMLXResidencyAutomatic
+                                                                             error:&error];
+```
 
 The Qwen3.5 hybrid decoder (the Qwen3.5, 3.6, and 3.8 releases) loads through
 `NFKMLXHybridLanguage.backend(directoryURL:)`, and Qwen3.8-Flash-Next, the Qwen4-Exp architecture,

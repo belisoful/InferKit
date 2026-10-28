@@ -1442,8 +1442,25 @@ attention and feed-forward.
   as its forward reaches it (`run_reference.py nemotron_h_layerwise`; `NEMOTRON_CHECK=1` holds the
   fifteen-layer cut bit-identical to a whole load), `IK_VAL_NEMOTRON_H` / `IK_PARITY_NEMOTRON_H_LAYERWISE`:
   worst block state 0.99999999996990 (state 32), logits 0.99999999997890, greedy continuation 12 of 12.
-  No draft is wired: `nvidia/Nemotron-H-4B-Instruct-128K` shares the 9B's `tokenizer.json` byte for byte
-  and could draft for it.
+  Nemotron 3 Nano 4B (`nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16`, NVIDIA Nemotron Open Model License,
+  `nemotron-3-nano-4b`) is the same decoder at 42 blocks of width 3136 (21 Mamba with 96 heads, 17
+  feed-forward, 4 attention) and a `chunk_size` of 256. Its vocabulary is the 9B's; ids 10 to 17, which
+  the 9B reserves, are named chat markers. Held whole at float32 against the same oracle
+  (`IK_VAL_NEMOTRON3_NANO_4B` / `IK_PARITY_NEMOTRON3_NANO_4B`): worst block state 0.99999999999469
+  (state 41), logits 0.99999999999437, greedy continuation 12 of 12.
+  The 4B drafts for the 9B (`backend(directoryURL:draftDirectoryURL:precision:residency:draftBits:)`).
+  The draft loads first and is quantized to 4 bits, its embeddings included, and the 9B is planned
+  against what it leaves. Each round the draft proposes `draftTokens` tokens and one pass of the 9B
+  scores them, through the prefill-only loop Gemma 4 shares (`NFKMLXPrefillDrafting`). Streamed (37 of 56
+  blocks) beside the 4-bit draft, the 9B's 16-token greedy reply comes in 8 passes of the 9B, 8 of 24
+  proposals kept, token-exact to its undrafted reply. `nvidia/Nemotron-H-4B-Instruct-128K` also shares the
+  9B's tokenizer, under a research-only license, and is not offered.
+  At bf16, each release is held against transformers at bf16 with eager attention and at float32, both
+  read one block at a time from the same ids (`NEMOTRON_DTYPE=bfloat16 run_reference.py
+  nemotron_h_layerwise`). The 9B's blocks alone on the reference's input read at most 0.0030 of the
+  reference's bf16-versus-float32 distance (layer 41, Mamba), and its logits sit at 9.527e-05 from
+  float32 against the reference's own 8.737e-05. The 4B's read at most 0.0081 (layer 2, Mamba), and its
+  logits 3.155e-05 against 4.168e-05.
 - `NFKMLXChatTemplateRenderer` (`NFKMLXChatTemplate.swift` / `…Engine.swift` / `…Expr.swift`) — a
   native Jinja renderer for the release's `chat_template`, so the language backend reproduces an
   instruct model's trained input instead of the hand-coded ChatML approximation. Rendering the template

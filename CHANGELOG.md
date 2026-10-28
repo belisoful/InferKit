@@ -2710,6 +2710,20 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   holds with a unit axis dropped, such as the Mamba convolution stored `[C, 1, K]`. The 9B streamed at
   float32 (33 of 56 blocks) matches transformers reading one block at a time: the worst block state
   0.99999999996990, the logits 0.99999999997890, the greedy continuation 12 of 12 tokens.
+- Nemotron Nano 9B v2 drafts with Nemotron 3 Nano 4B (`nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16`, NVIDIA
+  Nemotron Open Model License), a Nemotron-H release of its vocabulary that the catalog ships as
+  `nemotron-3-nano-4b`. `NFKMLXNemotronH.backend(directoryURL:draftDirectoryURL:precision:residency:draftBits:)`
+  takes the draft, reached from Objective-C through
+  `nemotronBackendWithDirectoryURL:draftDirectoryURL:precision:residency:error:`. The draft is held at 4
+  bits by default, and the release is planned against what it leaves. `NFKMLXNemotronBackend` reports
+  `hasDraftModel` and reads `NFKMLXGenerationParameterKey.draftTokens`, and the catalog's `nemotron-nano-2`
+  entry offers the 4B as its draft model. At temperature 0 the reply is the release's greedy reply: on the
+  9B, 16 tokens in 8 passes of the release. Gemma 4 and Nemotron-H draft through one prefill-only loop.
+- Nemotron 3 Nano 4B matches transformers at float32, the worst block state 0.99999999999469. The 9B and
+  the 4B hold at bf16 against float32 references read one block at a time: each block alone reads at most
+  0.0081 of the reference's own bf16 rounding, and the logits sit within 1.1 times the reference's own
+  bf16 distance from float32. A Nemotron download fetches `chat_template.jinja` and
+  `generation_config.json`, which the backend reads.
 - Pixtral 12B's released fused decoder is measured streamed, given the recorded projected image features:
   at float32 it matches the reference at every position after every layer, and at bfloat16 each layer
   stays inside its block floor and the whole pass ranks within torch's own jittered bfloat16 runs. The

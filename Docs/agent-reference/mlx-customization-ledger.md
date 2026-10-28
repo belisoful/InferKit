@@ -233,7 +233,7 @@ largest size this machine holds at float32.
 | Model | Outcome | Level | Reach | What decides it |
 | --- | --- | --- | --- | --- |
 | `NFKMLXGraniteHybrid` | ships | LoRA | public | The reference's `labels=` loss within 1e-3. The 1B release fits float32. |
-| `NFKMLXNemotronH` | ships | LoRA | public | Matches within 1e-3. The only release is 9B at ~17.8 GB bfloat16, and the recipe takes no `precision:` argument. |
+| `NFKMLXNemotronH` | ships | LoRA | public | Matches within 1e-3. The recipe serves both releases, the 9B at ~17.8 GB bfloat16 and Nemotron 3 Nano 4B at ~7.9 GB, and takes no `precision:` argument. |
 | `NFKMLXLanguage` (dense) | ships to 4B, offline above | LoRA | public | The `labels=` loss of `Qwen3ForCausalLM` within 1e-5, prompt masked and not, and through the forward on the reference's weights. LoRA on `q_proj` and `v_proj`, PEFT's default. A 4B release is ~16 GB at float32. |
 | `NFKMLXHybridLanguage` | ships at 2B and 4B, offline at 27B | LoRA | public | The `labels=` loss of `Qwen3_5ForCausalLM` within 1e-5. LoRA on Open-Jev's released target set, attention and recurrence projections. Qwen3.8-27B is ~54 GB. |
 | `NFKMLXGemma2Net` | trainable at 2B, offline at 9B and 27B | LoRA | public | The 2B release runs at float32 in the entry's own layer probe. |

@@ -134,7 +134,10 @@ weights:
   against transformers' `NemotronHForCausalLM`: the tiny config reaches logit cosine 1.0, and the
   released Nemotron-Nano-9B-v2 matches by shape across all 341 tensors (its `backbone.*` naming remapped
   to `model.*`). Adapts to a consumer's own text with LoRA on the attention projections through
-  `NFKMLXNemotronH.fineTune`.
+  `NFKMLXNemotronH.fineTune`. Nemotron 3 Nano 4B (`nemotron-3-nano-4b`) is the same decoder at 42 layers
+  with the 9B's vocabulary. It runs on its own and drafts for the 9B
+  (`backend(directoryURL:draftDirectoryURL:precision:residency:draftBits:)`), which keeps the 9B's greedy
+  reply in fewer passes. Both releases stream the blocks they cannot hold.
 - **`NFKMLXGemmaBackend`** — text generation for the Gemma 4 decoders (`NFKMLXGemmaLanguage.backend(directoryURL:)`
   / `gemmaBackendWithDirectoryURL:error:`), dispatching on a release's config model type across the
   E-series, the 26B-A4B mixture, and the 12B unified decoder. Gemma runs prefill-only, so generation

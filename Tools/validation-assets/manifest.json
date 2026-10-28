@@ -1806,7 +1806,26 @@
       "config": {
         "IK_VAL_NEMOTRON_H": ""
       },
-      "note": "Nemotron Nano 2 (NemotronHForCausalLM, NVIDIA, NVIDIA Open Model License), the hybrid Mamba-attention decoder behind Nemotron Nano 2, reusing the Codestral SSD mixer. Nano-9B-v2 is a DENSE hybrid: 56 layers = 27 Mamba (linear_attention) + 25 ReLU-squared MLP + 4 NoPE grouped-query attention (from hybrid_override_pattern), no scalar multipliers, a single pre-norm per block, untied lm_head. The RELEASED checkpoint carries the original `backbone.*` naming (the module tree and the tiny oracle follow the transformers-integrated `model.*` naming), so the directory loader remaps `backbone.` -> `model.` and squeezes the depthwise conv `[C,1,K]` -> `[C,K]`; it also drops any `mtp.*` multi-token-prediction tensors. The Mamba mixer's gated output norm is GROUPED by n_groups (HF Zamba2RMSNormGated), the one numeric departure from the ungrouped Codestral/Granite mixer; its dt clamps its lower bound at time_step_min. Records: run_reference.py nemotron_h (tiny random hybrid, n_groups 2 so the grouped gated norm is exercised, dummy --checkpoint) -> IK_PARITY_NEMOTRON_H_TINY; run_reference.py nemotron_h_loss (the causal-LM loss for the fine-tune objective) -> IK_PARITY_NEMOTRON_H_LOSS; structural shapes via Tools/validation-assets/shapes.py nvidia/NVIDIA-Nemotron-Nano-9B-v2 -> IK_SHAPES_NEMOTRON_H / IK_CONFIG_NEMOTRON_H (341 tensors, no weight download). The released bf16 numeric run (run_reference.py nemotron_h_real --checkpoint this directory) -> IK_PARITY_NEMOTRON_H_REAL, recorded 2026-10-01 (run nemotron-h-real-1); the oracle loads transformers' native class, as the directory carries no remote modeling file. The tiny/loss/real modes use the MUSIC oracle interpreter (musicvenv, transformers >= 5, which carries NemotronHForCausalLM; the 4.57.6 llm oracle does not)."
+      "note": "Nemotron Nano 2 (NemotronHForCausalLM, NVIDIA, NVIDIA Open Model License), the hybrid Mamba-attention decoder behind Nemotron Nano 2, reusing the Codestral SSD mixer. Nano-9B-v2 is a DENSE hybrid: 56 layers = 27 Mamba (linear_attention) + 25 ReLU-squared MLP + 4 NoPE grouped-query attention (from hybrid_override_pattern), no scalar multipliers, a single pre-norm per block, untied lm_head. The RELEASED checkpoint carries the original `backbone.*` naming (the module tree and the tiny oracle follow the transformers-integrated `model.*` naming), so the directory loader remaps `backbone.` -> `model.` and squeezes the depthwise conv `[C,1,K]` -> `[C,K]`; it also drops any `mtp.*` multi-token-prediction tensors. The Mamba mixer's gated output norm is GROUPED by n_groups (HF Zamba2RMSNormGated), the one numeric departure from the ungrouped Codestral/Granite mixer; its dt clamps its lower bound at time_step_min. Records: run_reference.py nemotron_h (tiny random hybrid, n_groups 2 so the grouped gated norm is exercised, dummy --checkpoint) -> IK_PARITY_NEMOTRON_H_TINY; run_reference.py nemotron_h_loss (the causal-LM loss for the fine-tune objective) -> IK_PARITY_NEMOTRON_H_LOSS; structural shapes via Tools/validation-assets/shapes.py nvidia/NVIDIA-Nemotron-Nano-9B-v2 -> IK_SHAPES_NEMOTRON_H / IK_CONFIG_NEMOTRON_H (341 tensors, no weight download). The released bf16 numeric run (run_reference.py nemotron_h_real --checkpoint this directory) -> IK_PARITY_NEMOTRON_H_REAL, recorded 2026-10-01 (run nemotron-h-real-1); the oracle loads transformers' native class, as the directory carries no remote modeling file. Float32 and bf16 records read one block at a time (run_reference.py nemotron_h_layerwise --checkpoint this directory, NEMOTRON_DTYPE=bfloat16 for the bf16 one, eager attention) -> IK_PARITY_NEMOTRON_H_LAYERWISE (records/nemotron-h-layerwise.safetensors) and records/nemotron-h-layerwise-bf16.safetensors, 2026-10-25 and 2026-10-27. The tiny/loss/real modes use the MUSIC oracle interpreter (musicvenv, transformers >= 5, which carries NemotronHForCausalLM; the 4.57.6 llm oracle does not)."
+    },
+    {
+      "key": "NEMOTRON3_NANO_4B",
+      "repo": "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+      "revision": "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f",
+      "directory": "NVIDIA-Nemotron-3-Nano-4B-BF16",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "model.safetensors",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "chat_template.jinja"
+      ],
+      "config": {
+        "IK_VAL_NEMOTRON3_NANO_4B": ""
+      },
+      "note": "Nemotron 3 Nano 4B (NemotronHForCausalLM, NVIDIA, NVIDIA Nemotron Open Model License), the Nemotron-H decoder at 42 blocks (21 Mamba, 17 MLP, 4 attention) with Nemotron Nano 9B v2's vocabulary; it ships as nemotron-3-nano-4b and drafts for the 9B. Records: run_reference.py nemotron_h_layerwise --checkpoint this directory -> IK_PARITY_NEMOTRON3_NANO_4B (records/nemotron3-nano-4b-layerwise.safetensors, float32, NEMOTRON_CHECK=1 bit-identical to a whole load), and with NEMOTRON_DTYPE=bfloat16 -> records/nemotron3-nano-4b-layerwise-bf16.safetensors (eager attention), 2026-10-27, musicvenv."
     },
     {
       "key": "GRANITE_SPEECH",
@@ -6194,6 +6213,16 @@
       "records": "qwen4_exp_cut4_bf16 / _f32",
       "environment": "qwenimage",
       "command": "hf_layer_probe --checkpoint <cuts>/qwen3.8-flash-next-cut4 with the cut4 entry's environment (IK_PROBE_DTYPE=bfloat16 IK_PROBE_ROUTES=1 | IK_PROBE_STREAM_F32=1), then trimmed to tokens, 3.self_attn.indexer.{in,out}, indexer.3.scores, 3.self_attn.{in,out}"
+    },
+    {
+      "records": "nemotron-h-layerwise-bf16 / nemotron-h-layerwise",
+      "environment": "music",
+      "command": "nemotron_h_layerwise --checkpoint <releases>/nemotron-nano-9b-v2 (NEMOTRON_DTYPE=bfloat16 | the float32 default), each block read as its forward reaches it"
+    },
+    {
+      "records": "nemotron3-nano-4b-layerwise-bf16 / nemotron3-nano-4b-layerwise",
+      "environment": "music",
+      "command": "nemotron_h_layerwise --checkpoint <releases>/NVIDIA-Nemotron-3-Nano-4B-BF16 (NEMOTRON_DTYPE=bfloat16 | the float32 default)"
     }
   ],
   "training_records_comment": "The training-objective records a recipe's parity test reads. Each is an oracle output, not a download, so fetch.py neither fetches nor points at it: the record lives at `record`, a path under the validation root or an absolute path for a record kept outside it, its key is registered in ~/.inferkit-validation.json by hand, and it regenerates with `python3 run_reference.py <command> <record>` under the named oracle environment, with each source variable pointing at the reference the record was measured against.",
