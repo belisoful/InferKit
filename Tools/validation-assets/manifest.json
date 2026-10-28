@@ -4447,6 +4447,94 @@
       "note": "Seed-X Instruct 7B (ByteDance Seed, OpenMDW-1.0), the instruction-tuned release, the same geometry and tokenizer as the PPO release. Parity record: `run_reference.py seedx <out> --checkpoint <this directory>` (llmvenv, bfloat16) → IK_PARITY_SEEDX_INSTRUCT (records/seedx-instruct-bf16.safetensors)."
     },
     {
+      "key": "HYMT15_1_8B",
+      "directory": "hy-mt1.5-1.8b",
+      "repo": "tencent/HY-MT1.5-1.8B",
+      "revision": "dbad03788f49709801014c95d481a514c272ca52",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "chat_template.jinja",
+        "model.safetensors",
+        "License.txt"
+      ],
+      "config": {
+        "IK_VAL_HYMT15_1_8B": ""
+      },
+      "note": "HY-MT1.5 1.8B (Tencent, Tencent HY Community License, which excludes the EU, UK, and South Korea), a hunyuan_v1_dense translation model, 4.1 GB of bfloat16. NFKMLXHYMT.translator(directoryURL:release:precision:) loads it through the language family. Parity records under llmvenv (transformers 4.57.6, `HunYuanDenseV1ForCausalLM`), English to German unless noted: `run_reference.py hymt <out> --checkpoint <this directory>` (bfloat16) → IK_PARITY_HYMT15_1_8B (records/hymt15-1.8b-bf16.safetensors); `HYMT_DTYPE=float32` → IK_PARITY_HYMT15_1_8B_F32 (records/hymt15-1.8b-f32.safetensors); `HYMT_DTYPE=float32 TRANSLATION_SOURCE_LANG=zh TRANSLATION_TARGET_LANG=en`, the Chinese instruction → IK_PARITY_HYMT15_1_8B_ZH (records/hymt15-1.8b-zh-en-f32.safetensors); `HYMT_DTYPE=float32 HYMT_ASSISTANT=0`, the user turn closed by <｜hy_place▁holder▁no▁8｜> → IK_PARITY_HYMT15_1_8B_CLOSED (records/hymt15-1.8b-closed-f32.safetensors). The tokenizer's ids through the tokenizers library (0.22.2): `run_reference.py hymt_tokenizer <out> --checkpoint <this directory>` → IK_PARITY_HYMT_TOKENIZER_1_8B (records/hymt-tokenizer-1.8b.safetensors)."
+    },
+    {
+      "key": "HYMT15_7B",
+      "directory": "hy-mt1.5-7b",
+      "repo": "tencent/HY-MT1.5-7B",
+      "revision": "397085d46158ad0b437ffd74228499e8c2a35c76",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "chat_template.jinja",
+        "model-00001-of-00004.safetensors",
+        "model-00002-of-00004.safetensors",
+        "model-00003-of-00004.safetensors",
+        "model-00004-of-00004.safetensors",
+        "model.safetensors.index.json",
+        "License.txt"
+      ],
+      "config": {
+        "IK_VAL_HYMT15_7B": ""
+      },
+      "note": "HY-MT1.5 7B (Tencent, Tencent HY Community License), 16.1 GB of bfloat16 in four shards. Parity records under llmvenv (transformers 4.57.6, `HunYuanDenseV1ForCausalLM`): `run_reference.py hymt <out> --checkpoint <this directory>` (bfloat16) → IK_PARITY_HYMT15_7B (records/hymt15-7b-bf16.safetensors), and `HYMT_DTYPE=float32 HYMT_LAYERWISE=1`, each layer read as the forward reaches it → IK_PARITY_HYMT15_7B_F32 (records/hymt15-7b-f32.safetensors); the test streams the decoder at float32. The tokenizer's ids: `run_reference.py hymt_tokenizer <out> --checkpoint <this directory>` → IK_PARITY_HYMT_TOKENIZER_7B (records/hymt-tokenizer-7b.safetensors)."
+    },
+    {
+      "key": "HYMT2_1_8B",
+      "directory": "hy-mt2-1.8b",
+      "repo": "tencent/Hy-MT2-1.8B",
+      "revision": "9a341cd1b679d3efd23b46e847b01745a71ed792",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "chat_template.jinja",
+        "model.safetensors",
+        "LICENSE.txt"
+      ],
+      "config": {
+        "IK_VAL_HYMT2_1_8B": ""
+      },
+      "note": "Hy-MT2 1.8B (Tencent, Apache-2.0), HY-MT1.5 1.8B's geometry, tokenizer, and template, 4.1 GB of bfloat16. Parity records under llmvenv (transformers 4.57.6, `HunYuanDenseV1ForCausalLM`): `HYMT_RELEASE=2 run_reference.py hymt <out> --checkpoint <this directory>` (bfloat16) → IK_PARITY_HYMT2_1_8B (records/hymt2-1.8b-bf16.safetensors), and the four-beam search under transformers' `generate`: `HYMT_RELEASE=2 HYMT_DTYPE=float32 run_reference.py hymt_beam <out> --checkpoint <this directory>` → IK_PARITY_HYMT2_1_8B_BEAM (records/hymt2-1.8b-beam-f32.safetensors)."
+    },
+    {
+      "key": "HYMT2_7B",
+      "directory": "hy-mt2-7b",
+      "repo": "tencent/Hy-MT2-7B",
+      "revision": "9b0eb4e8f001def3e5ff6469a0ac96fdb39ec223",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "chat_template.jinja",
+        "model-00001-of-00004.safetensors",
+        "model-00002-of-00004.safetensors",
+        "model-00003-of-00004.safetensors",
+        "model-00004-of-00004.safetensors",
+        "model.safetensors.index.json",
+        "LICENSE.txt"
+      ],
+      "config": {
+        "IK_VAL_HYMT2_7B": ""
+      },
+      "note": "Hy-MT2 7B (Tencent, Apache-2.0), HY-MT1.5 7B's geometry, tokenizer, and template, 16.1 GB of bfloat16 in four shards. Parity record under llmvenv (transformers 4.57.6, `HunYuanDenseV1ForCausalLM`): `HYMT_RELEASE=2 run_reference.py hymt <out> --checkpoint <this directory>` (bfloat16) → IK_PARITY_HYMT2_7B (records/hymt2-7b-bf16.safetensors)."
+    },
+    {
       "key": "TRANSLATEGEMMA_4B",
       "directory": "translategemma-4b-it",
       "repo": "google/translategemma-4b-it",
@@ -5187,7 +5275,10 @@
         "madlad_layerwise",
         "seedx",
         "seedx_beam",
-        "seedx_beam_scores"
+        "seedx_beam_scores",
+        "hymt",
+        "hymt_beam",
+        "hymt_tokenizer"
       ]
     },
     "voicerestore": {

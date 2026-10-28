@@ -3,8 +3,9 @@
 //  InferKitMLX
 //
 //  The translators' judgments of another repository: Marian, M2M-100 (and SMaLL-100), and NLLB-200, each
-//  read by the shared encoder-decoder reader and its family's tokenizer files. M2M-100 and NLLB-200 share
-//  the `m2m_100` model type, so each judge takes only its own tokenizer.
+//  read by the shared encoder-decoder reader and its family's tokenizer files, and HY-MT, read by the
+//  language decoder's readers. M2M-100 and NLLB-200 share the `m2m_100` model type, so each judge takes
+//  only its own tokenizer.
 //
 //  Introduced in InferKit 0.4.0.
 //
@@ -56,6 +57,40 @@ extension NFKMLXFamilyJudge {
             try verifyTokenizerClass(of: repository, among: ["NllbTokenizer", "NllbTokenizerFast"], required: true)
             return Reading()
         })
+
+    /// HY-MT (`hunyuan_v1_dense`), read by the language decoder's configuration reader and tokenizer, with
+    /// one of the two chat templates' markers among `tokenizer.json`'s added tokens. A repository reads
+    /// through Hy-MT2's entry, whose instruction is the current generation's; the two generations share
+    /// their tokenizers and templates.
+    static let hymt = NFKMLXFamilyJudge(
+        reads: { $0.family == "hy-mt" && !$0.modelTypes.isEmpty },
+        template: { _, template in
+            NFKMLXModelDescriptors.entries.first { $0.identifier == NFKMLXHYMTRelease.hyMT2.modelName } ?? template
+        },
+        verify: { repository, template in
+            let configuration = repository.configuration
+            let name = repository.repository
+            _ = try NFKMLXRepositoryJudgment.reading(repository, template: template) {
+                try NFKMLXLanguage.configuration(fromJSON: configuration)
+            }
+            try NFKMLXRepositoryJudgment.verifyUnreadFields(of: configuration, repository: name)
+            let quantization = try NFKMLXRepositoryJudgment.verifyQuantization(of: configuration, repository: name)
+            try NFKMLXRepositoryJudgment.verifyTokenizer(of: repository)
+            let tokenizer = try repository.jsonObjectOfFile(atPath: "tokenizer.json") as? [String: Any]
+            let added = Set(((tokenizer?["added_tokens"] as? [[String: Any]]) ?? []).compactMap { $0["content"] as? String })
+            guard hymtTemplateMarkers.contains(where: added.isSuperset(of:)) else {
+                throw NFKMLXRepositoryJudgment.refusal(.unsupportedTokenizer,
+                    "the tokenizer of \(name) holds neither HY-MT chat template's markers")
+            }
+            return Reading(quantization: quantization)
+        })
+
+    /// The markers each HY-MT chat template opens and closes a user turn with: the 1.8B releases', then the
+    /// 7B releases'.
+    static let hymtTemplateMarkers: [Set<String>] = [
+        ["<｜hy_begin▁of▁sentence｜>", "<｜hy_User｜>", "<｜hy_Assistant｜>", "<｜hy_place▁holder▁no▁8｜>"],
+        ["<|startoftext|>", "<|extra_0|>"],
+    ]
 
     /// The checks every encoder-decoder translator shares: float weights, the files its tokenizer reads,
     /// the shared reader, and the fields that reader does not read.

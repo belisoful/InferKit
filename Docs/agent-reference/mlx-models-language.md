@@ -196,6 +196,14 @@ attention and feed-forward.
   `.prependedMetaspace`: every run of text between added tokens takes a `▁`, even one that opens with a
   space, where Metaspace's `prepend_scheme: "first"` puts one before the opening run only and none
   before a run already opening with `▁`.
+  A `hunyuan_v1_dense` release (HY-MT, `mlx-models-translation.md`) is Llama's block with one addition:
+  each head's queries and keys are RMS-normalized after the rotary embedding
+  (`normalizesRotatedQueryAndKey`, the checkpoint's `query_layernorm` / `key_layernorm`), so the cache
+  holds normalized keys. Qwen3's `q_norm` / `k_norm` precede the rotation, and a norm weight that is not
+  constant does not commute with it. Its `rope_scaling` is `dynamic` with an `alpha`, which transformers
+  reads as a raised base, `rope_theta · alpha^(d / (d − 2))` (11,158,840 for θ 10⁴, α 1000, d 128),
+  rounded to float32 once; the dynamic rescaling applies only past `max_position_embeddings` (262,144).
+  The reader refuses `use_cla`, which shares keys and values across layers.
   `NFKMLXDenseStreamingTests` holds a streamed load to the held one element for element on a tiny
   release, tied and untied, through a plain, a quantized, and a windowed cache and a draft, and on the
   released Qwen3-4B at bfloat16 with half its layers streamed. The whole releases are measured

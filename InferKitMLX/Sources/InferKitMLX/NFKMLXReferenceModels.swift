@@ -41,6 +41,7 @@ public final class NFKMLXReferenceModels: NSObject {
         NFKMLXMADLAD.register()
         NFKMLXTranslateGemma.register()
         NFKMLXSeedX.register()
+        NFKMLXHYMT.register()
         NFKMLXTranslationProvider.register()
         NFKMLXDemucs.register()
         NFKMLXHTDemucs.register()

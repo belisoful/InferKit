@@ -134,6 +134,9 @@ public enum NFKMLXModelSizing {
         if c.normalizesQueryAndKey {
             perLayer += 2 * c.headDimensions                    // q_norm, k_norm
         }
+        if c.normalizesRotatedQueryAndKey {
+            perLayer += 2 * c.headDimensions                    // query_layernorm, key_layernorm
+        }
 
         var total = c.vocabularySize * c.hiddenSize             // embed_tokens
             + c.layerCount * perLayer

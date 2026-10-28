@@ -638,6 +638,9 @@ NFKMLXTranslateGemma.backend(directoryURL:, precision: .checkpoint)
 // Seed-X, at the checkpoint's bfloat16, or by variant
 NFKMLXSeedX.backend(directoryURL:, precision: .checkpoint)
 NFKMLXSeedX.backend(variant: .ppo, revision: nil, cacheDirectoryURL: nil, precision: .checkpoint)
+// HY-MT1.5 or Hy-MT2, at the checkpoint's bfloat16, or by variant
+NFKMLXHYMT.backend(release: .hyMT2, directoryURL:, precision: .checkpoint)
+NFKMLXHYMT.backend(variant: .hyMT2_1_8B, revision: nil, cacheDirectoryURL: nil, precision: .checkpoint)
 // Fine-tuning
 // The release directory supplies its geometry from its config.json
 NFKMLXMarian.network(directoryURL:) / NFKMLXM2M100.network(directoryURL:) / NFKMLXNLLB.network(directoryURL:) / NFKMLXMADLAD.network(directoryURL:)
@@ -661,6 +664,9 @@ NFKMLXMarian.network(directoryURL:) / NFKMLXM2M100.network(directoryURL:) / NFKM
 // Seed-X, at the checkpoint's bfloat16, or by variant
 [NFKMLXSeedX backendWithDirectoryURL:dir precision:NFKMLXWeightPrecisionCheckpoint error:&error]
 [NFKMLXSeedX backendWithVariant:NFKMLXSeedXVariantPpo revision:nil cacheDirectoryURL:nil precision:NFKMLXWeightPrecisionCheckpoint error:&error]
+// HY-MT1.5 or Hy-MT2, at the checkpoint's bfloat16, or by variant
+[NFKMLXHYMT backendWithRelease:NFKMLXHYMTReleaseHyMT2 directoryURL:dir precision:NFKMLXWeightPrecisionCheckpoint error:&error]
+[NFKMLXHYMT backendWithVariant:NFKMLXHYMTVariantHyMT2_1_8B revision:nil cacheDirectoryURL:nil precision:NFKMLXWeightPrecisionCheckpoint error:&error]
 ```
 
 ### Video

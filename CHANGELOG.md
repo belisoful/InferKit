@@ -80,6 +80,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   no files, which a manifest reader could not tell from a direct download, and the hub fetched the
   page's HTML when the release needed no converter.
 
+#### Byte-level BPE: HY-MT's three Splits
+
+- `NFKByteLevelBPETokenizer` takes a `hunyuan` pre-tokenization, the three Splits HY-MT 1.8B's
+  `tokenizer.json` states, applied in turn: digits in runs of at most three, then runs of CJK
+  ideographs and kana, then a word pattern. Each stage keeps the text between its matches as pieces of
+  their own, since the word pattern does not cover every character.
+
 #### A hosted model's MCP tool reads its descriptor
 
 - `addToolForModelName:outputModality:purpose:error:` builds the tool of a model hosted from the catalog
@@ -1679,6 +1686,20 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 - HAT ×4, MODNet, U²-NetP, RIFE v4.13, Fast Neural Style, and StoRM name their release pages as
   `NFKModelSourceKindPage` sources. NU-Wave 2 downloads the release's checkpoint from Google Drive's
   direct address (20,887,965 bytes), so it has a download size and downloads through `NFKHFHub`.
+
+#### HY-MT1.5 and Hy-MT2 translate 38 languages
+
+- `NFKMLXHYMT` translates with Tencent's HY-MT1.5 (Tencent HY Community License) and Hy-MT2 (Apache-2.0),
+  1.8B and 7B each, prompted with each model card's instruction inside the release's chat template: the
+  shipped language decoder underneath, the `hy-mt1.5` and `hy-mt2` registry names, the `@objc`
+  factories by directory and `NFKMLXHYMTRelease` and by `NFKMLXHYMTVariant`, a LoRA recipe over the
+  language family's, and reference parity against transformers.
+- The language decoder reads Hunyuan's dense configuration (`hunyuan_v1_dense`):
+  `normalizesRotatedQueryAndKey` normalizes each head's queries and keys after the rotary embedding,
+  and a `dynamic` `rope_scaling` that states `alpha` raises the rotary base. Cross-layer attention is
+  refused. The release tokenizer reader takes the 1.8B releases' three-Split pre-tokenization.
+- The resolver's `hymt` judge reads a `hunyuan_v1_dense` repository whose tokenizer carries one of the
+  HY-MT chat templates' markers, through Hy-MT2's entry.
 
 #### The exact GELU takes torch 2.13's error-function exponential
 

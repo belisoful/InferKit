@@ -96,7 +96,7 @@ struct NFKMLXFamilyJudge {
 
     /// The judges, in the order they are asked.
     static let judges: [NFKMLXFamilyJudge] = [.language, .wav2Vec2, .w2vBert, .timesFM, .gemma3, .gemma3n, .gemma4,
-                                               .qwen3VL, .smolVLM, .marian, .m2m100, .nllb, .trocr, .graniteH,
+                                               .qwen3VL, .smolVLM, .marian, .m2m100, .nllb, .hymt, .trocr, .graniteH,
                                                .nemotronH, .pplxDecider]
 
     /// The judge for an entry, or nil where no loader of the entry reads another repository.

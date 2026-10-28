@@ -323,6 +323,39 @@
 	XCTAssertEqualObjects([gpt2 encode:@"a 12"], expectedGPT2);
 }
 
+// Hunyuan's Splits run in turn: digits in threes, then CJK runs, then the word pattern, so "中" leaves
+// the Latin word it follows ("ä¸Ń" is its byte-level spelling), where Llama 3's single pattern keeps one
+// letter run.
+- (void)testTheHunyuanPretokenizationIsolatesIdeographRuns
+{
+	NSDictionary<NSString *, NSNumber *> *vocab = @{
+		@"1": @0, @"2": @1, @"3": @2, @"4": @3, @"12": @4, @"123": @5, @"a": @6, @"B": @7, @"aB": @8,
+		@"\u00e4": @9, @"\u00b8": @10, @"\u0143": @11, @"\u00e4\u00b8": @12, @"\u00e4\u00b8\u0143": @13,
+		@"aB\u00e4\u00b8\u0143": @14,
+	};
+	NSData *vocabData = [NSJSONSerialization dataWithJSONObject:vocab options:0 error:NULL];
+	[vocabData writeToURL:[_directory URLByAppendingPathComponent:@"hunyuan-vocab.json"] atomically:YES];
+	NSString *merges = @"#version: 0.2\n1 2\n12 3\na B\n\u00e4 \u00b8\n\u00e4\u00b8 \u0143\naB \u00e4\u00b8\u0143\n";
+	[merges writeToURL:[_directory URLByAppendingPathComponent:@"hunyuan-merges.txt"]
+			atomically:YES
+			  encoding:NSUTF8StringEncoding
+				 error:NULL];
+	NSError *error = nil;
+	NFKTokenizer *hunyuan = [NFKTokenizer tokenizerForManifest:@{ @"tokenizer": @{
+		@"type": @"bpe-bytelevel", @"vocab": @"hunyuan-vocab.json", @"merges": @"hunyuan-merges.txt",
+		@"pretokenizer": @"hunyuan",
+	} } directory:_directory error:&error];
+	XCTAssertNotNil(hunyuan, @"%@", error);
+	NFKTokenizer *llama3 = [NFKTokenizer tokenizerForManifest:@{ @"tokenizer": @{
+		@"type": @"bpe-bytelevel", @"vocab": @"hunyuan-vocab.json", @"merges": @"hunyuan-merges.txt",
+		@"pretokenizer": @"llama3",
+	} } directory:_directory error:&error];
+	NSArray *expectedHunyuan = @[@5, @3, @8, @13];
+	NSArray *expectedLlama3 = @[@5, @3, @14];
+	XCTAssertEqualObjects([hunyuan encode:@"1234aB\u4e2d"], expectedHunyuan);
+	XCTAssertEqualObjects([llama3 encode:@"1234aB\u4e2d"], expectedLlama3);
+}
+
 // With ignore_merges a pretoken the vocabulary holds whole is that token, though no merge reaches it.
 - (void)testIgnoringMergesTakesAWholePretokenFromTheVocabulary
 {

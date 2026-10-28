@@ -1844,6 +1844,80 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
                             f32: record("qwen3_06b_f32.safetensors"))
     }
 
+    // HY-MT's Hunyuan decoders (per-head query and key norms after the rotary embedding) at bf16 against
+    // transformers built at bf16 (`hf_layer_probe`, `IK_PROBE_DTYPE=bfloat16 IK_PROBE_LAYERS=0,16,31`, the
+    // release's translation prompt in `IK_PROBE_PROMPT_FILE`), the reference's float32 run on the same
+    // prompt as the floor; the 7B's float32 run is streamed from its bf16 load (`IK_PROBE_STREAM_F32=1`).
+    func testHYMTInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        var measured = 0
+        for (name, key) in [("hymt15_1_8b", "IK_VAL_HYMT15_1_8B"), ("hymt2_1_8b", "IK_VAL_HYMT2_1_8B"),
+                            ("hymt15_7b", "IK_VAL_HYMT15_7B")] {
+            guard let path = config[key], FileManager.default.fileExists(atPath: path),
+                  let bf16 = try? record("\(name)_bf16_probe.safetensors"),
+                  let f32 = try? record("\(name)_f32_probe.safetensors") else { continue }
+            try autoreleasepool { try languageDecoder(name, directory: URL(fileURLWithPath: path), bf16: bf16, f32: f32) }
+            Memory.clearCache()
+            measured += 1
+        }
+        if measured == 0 { throw XCTSkip("set IK_VAL_HYMT15_1_8B, IK_VAL_HYMT2_1_8B, or IK_VAL_HYMT15_7B with its probe records") }
+    }
+
+    // Each piece of a probed HY-MT1.5 1.8B block on the reference's own bf16 input, so a rounding placed
+    // differently counts at the one seam that places it: the rotary embedding turns the projected heads, and
+    // the norms read the rotated heads.
+    func testHYMTBlockPiecesMatchTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_HYMT15_1_8B"], "IK_VAL_HYMT15_1_8B"))
+        let probe = try record("hymt15_1_8b_bf16_probe.safetensors")
+        let geometry = try NFKMLXLanguage.configuration(fromHuggingFace: directory.appendingPathComponent("config.json"))
+        let net = NFKMLXLanguage.makeNet(geometry)
+        try NFKMLXLanguage.loadWeights(into: net, fromDirectory: directory, precision: .checkpoint)
+        func input(_ key: String) throws -> MLXArray {
+            try XCTUnwrap(probe[key], "no \(key)").asType(.bfloat16).expandedDimensions(axis: 0)
+        }
+        let length = try XCTUnwrap(probe["tokens"]).shape[0]
+        let mask = NFKMLXLanguageNet.causalMask(length, offset: 0).asType(.bfloat16)
+        var lines = [String]()
+        for layer in 0 ..< geometry.layerCount where probe["\(layer).block.in.whole"] != nil || probe["\(layer).input_layernorm.in"] != nil {
+            let block = net.model.layers[layer], attention = block.attention
+            let feedForward = try XCTUnwrap(block.feedForward as? NFKLMFeedForward)
+            let p = "\(layer)."
+            lines.append("layer \(layer)")
+            lines.append(try piece("input_layernorm", block.attentionNorm(input(p + "input_layernorm.in")), probe, p + "input_layernorm.out"))
+            for (name, projection) in [("q_proj", attention.queryProjection), ("k_proj", attention.keyProjection),
+                                       ("v_proj", attention.valueProjection)] {
+                lines.append(try piece(name, projection(input(p + "self_attn.\(name).in")), probe, p + "self_attn.\(name).out"))
+            }
+            func heads(_ key: String, _ count: Int) throws -> MLXArray {
+                try input(key).reshaped([1, length, count, attention.headDimensions]).transposed(0, 2, 1, 3)
+            }
+            lines.append(try piece("rotary q", attention.rope(heads(p + "self_attn.q_proj.out", attention.heads), offset: 0),
+                                   probe, p + "self_attn.query_layernorm.in"))
+            lines.append(try piece("rotary k", attention.rope(heads(p + "self_attn.k_proj.out", attention.keyValueHeads), offset: 0),
+                                   probe, p + "self_attn.key_layernorm.in"))
+            lines.append(try piece("query_layernorm", try XCTUnwrap(attention.rotatedQueryNorm)(input(p + "self_attn.query_layernorm.in")),
+                                   probe, p + "self_attn.query_layernorm.out"))
+            lines.append(try piece("key_layernorm", try XCTUnwrap(attention.rotatedKeyNorm)(input(p + "self_attn.key_layernorm.in")),
+                                   probe, p + "self_attn.key_layernorm.out"))
+            let attended = NFKReferenceRounding.attention(queries: try input(p + "attn.q"), keys: try input(p + "attn.k"),
+                                                          values: try input(p + "attn.v"), scale: attention.scale, mask: mask)
+            lines.append(try piece("attention", attended[0].transposed(1, 0, 2), probe, p + "attn.out"))
+            lines.append(try piece("o_proj", attention.outputProjection(input(p + "self_attn.o_proj.in")), probe, p + "self_attn.o_proj.out"))
+            lines.append(try piece("self_attn", attention(input(p + "input_layernorm.out"), mask: mask, cache: nil, layer: layer),
+                                   probe, p + "self_attn.out"))
+            lines.append(try piece("post_attention_layernorm", block.feedForwardNorm(input(p + "post_attention_layernorm.in")),
+                                   probe, p + "post_attention_layernorm.out"))
+            lines.append(try piece("gate_proj", feedForward.gate(input(p + "mlp.gate_proj.in")), probe, p + "mlp.gate_proj.out"))
+            lines.append(try piece("up_proj", feedForward.up(input(p + "mlp.up_proj.in")), probe, p + "mlp.up_proj.out"))
+            lines.append(try piece("silu", NFKReferenceRounding.silu(input(p + "mlp.act_fn.in")), probe, p + "mlp.act_fn.out"))
+            lines.append(try piece("down_proj", feedForward.down(input(p + "mlp.down_proj.in")), probe, p + "mlp.down_proj.out"))
+            lines.append(try piece("mlp", feedForward(input(p + "mlp.in")), probe, p + "mlp.out"))
+        }
+        XCTAssertFalse(lines.isEmpty, "the record probes no layer")
+        print("VALIDATION bf16 hy-mt1.5-1.8b pieces:\n" + lines.joined(separator: "\n"))
+    }
+
     // The Qwen3 sizes too large for float32 here, cut to their first four layers
     // (`Tools/validation-assets/truncate.py`, `IK_VAL_QWEN3_14B_CUT4` / `IK_VAL_QWEN3_32B_CUT4`): every
     // hidden state at float32 against transformers' float32, then bf16 against bf16.

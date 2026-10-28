@@ -3,8 +3,8 @@
 //  InferKitMLXTests
 //
 //  The translators' judgments of another repository, from files placed in a hub cache: Marian, M2M-100
-//  and SMaLL-100, and NLLB-200, the last two telling their shared `m2m_100` model type apart by tokenizer.
-//  Nothing here reaches MLX.
+//  and SMaLL-100, and NLLB-200, the last two telling their shared `m2m_100` model type apart by tokenizer,
+//  and HY-MT, a Hunyuan decoder whose tokenizer carries a chat template's markers. Nothing here reaches MLX.
 //
 
 import XCTest
@@ -136,6 +136,73 @@ final class NFKMLXRepositoryMatchingTranslationTests: XCTestCase {
         try NFKMLXRepositoryFixture.assertRefusal(.unsupportedConfiguration,
                                                   try repository(configuration, files: Self.marianFiles),
                                                   template: NFKMLXMarian.modelName)
+    }
+
+    // MARK: HY-MT
+
+    /// A two-layer Hunyuan decoder, 64 wide, two query heads and one key-value head of 32, as the HY-MT
+    /// releases state theirs.
+    private static var hunyuanConfiguration: [String: Any] {
+        ["model_type": "hunyuan_v1_dense", "architectures": ["HunYuanDenseV1ForCausalLM"], "hidden_size": 64,
+         "num_hidden_layers": 2, "num_attention_heads": 2, "num_key_value_heads": 1, "head_dim": 32,
+         "intermediate_size": 128, "vocab_size": 256, "max_position_embeddings": 262_144, "tie_word_embeddings": true,
+         "rope_theta": 10_000, "rope_scaling": ["type": "dynamic", "alpha": 1000, "factor": 1],
+         "rms_norm_eps": 1e-5, "hidden_act": "silu", "mlp_bias": false, "attention_bias": false, "use_qk_norm": true,
+         "use_cla": false, "norm_type": "rms", "torch_dtype": "bfloat16"]
+    }
+
+    private static var hunyuanTensors: [(String, [Int])] {
+        var tensors: [(String, [Int])] = [("model.embed_tokens.weight", [256, 64]), ("model.norm.weight", [64])]
+        for layer in 0 ..< 2 {
+            let prefix = "model.layers.\(layer)."
+            tensors += [
+                (prefix + "self_attn.q_proj.weight", [64, 64]), (prefix + "self_attn.k_proj.weight", [32, 64]),
+                (prefix + "self_attn.v_proj.weight", [32, 64]), (prefix + "self_attn.o_proj.weight", [64, 64]),
+                (prefix + "self_attn.query_layernorm.weight", [32]), (prefix + "self_attn.key_layernorm.weight", [32]),
+                (prefix + "mlp.gate_proj.weight", [128, 64]), (prefix + "mlp.up_proj.weight", [128, 64]),
+                (prefix + "mlp.down_proj.weight", [64, 128]), (prefix + "input_layernorm.weight", [64]),
+                (prefix + "post_attention_layernorm.weight", [64]),
+            ]
+        }
+        return tensors
+    }
+
+    /// The 7B releases' tokenizer form: Qwen2's Split under a byte-level BPE, and `markers` added.
+    private static func hunyuanTokenizer(markers: [String]) -> [String: Any] {
+        let qwen2 = NFKMLXLanguage.pretokenizationPatterns.first { $0.value == "qwen2" }?.key ?? ""
+        return ["model": ["type": "BPE", "vocab": [String: Int](), "merges": [String](), "ignore_merges": true],
+                "pre_tokenizer": ["type": "Sequence", "pretokenizers": [
+                    ["type": "Split", "pattern": ["Regex": qwen2], "behavior": "Isolated", "invert": false],
+                    ["type": "ByteLevel", "add_prefix_space": false, "trim_offsets": true, "use_regex": false]]],
+                "decoder": ["type": "ByteLevel"],
+                "added_tokens": markers.enumerated().map { ["id": 250 + $0.offset, "content": $0.element, "special": true] }]
+    }
+
+    private func hunyuanRepository(configuration: [String: Any] = hunyuanConfiguration,
+                                   markers: [String] = ["<|startoftext|>", "<|eos|>", "<|extra_0|>"]) throws -> NFKModelRepository {
+        let files: [String: Data] = [
+            "config.json": NFKMLXRepositoryFixture.json(configuration),
+            "tokenizer.json": NFKMLXRepositoryFixture.json(Self.hunyuanTokenizer(markers: markers)),
+            "tokenizer_config.json": NFKMLXRepositoryFixture.json(["eos_token": "<|eos|>"]),
+            "model.safetensors": NFKMLXRepositoryFixture.safetensors(Self.hunyuanTensors),
+        ]
+        return try fixture.repository("org/hunyuan-mt-tiny", files: files, configuration: configuration, license: nil)
+    }
+
+    func testAnHYMTRepositoryIsReadThroughHyMT2sEntry() throws {
+        let descriptor = try descriptor(try hunyuanRepository(), template: NFKMLXHYMTRelease.hyMT15.modelName)
+        XCTAssertEqual(descriptor.family, "hy-mt")
+        XCTAssertEqual(descriptor.registryName, NFKMLXHYMTRelease.hyMT2.modelName,
+                       "a repository reads through the current generation's prompt")
+    }
+
+    func testAnHYMTRepositoryWithoutATemplatesMarkersIsRefused() throws {
+        try NFKMLXRepositoryFixture.assertRefusal(.unsupportedTokenizer, try hunyuanRepository(markers: ["<|eos|>"]),
+                                                  template: NFKMLXHYMTRelease.hyMT2.modelName)
+        var shared = Self.hunyuanConfiguration
+        shared["use_cla"] = true
+        try NFKMLXRepositoryFixture.assertRefusal(.unsupportedConfiguration, try hunyuanRepository(configuration: shared),
+                                                  template: NFKMLXHYMTRelease.hyMT2.modelName)
     }
 
     func testATranslatorWithoutItsTokenizerFilesIsRefused() throws {

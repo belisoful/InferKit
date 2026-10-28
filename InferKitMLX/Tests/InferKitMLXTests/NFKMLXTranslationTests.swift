@@ -1250,6 +1250,318 @@ final class NFKMLXTranslationTests: XCTestCase {
         return found + [best.score]
     }
 
+    // MARK: HY-MT
+
+    /// The two template forms the HY-MT releases come in: the 1.8B releases' `<｜hy_…｜>` markers under
+    /// the three-Split pre-tokenization, and the 7B releases' `<|…|>` markers under Qwen2's.
+    private enum TinyHYMTForm { case small, large }
+
+    /// A tiny HY-MT translator: a random two-layer Hunyuan-geometry decoder and a byte-level tokenizer with
+    /// no merges, written as a release directory so the reader, the markers, and the end tokens are read
+    /// as a release's are. Ids 0-255 are the bytes; the markers follow from 256.
+    private func tinyHYMT(_ form: TinyHYMTForm, release: NFKMLXHYMTRelease = .hyMT15) throws -> NFKMLXHYMTTranslator {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("hymt-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var vocabulary = [String: Int]()
+        var shifted = 0
+        for byte in 0 ..< 256 {
+            let printable = (33 ... 126).contains(byte) || (161 ... 172).contains(byte) || (174 ... 255).contains(byte)
+            let scalar = try XCTUnwrap(Unicode.Scalar(UInt32(printable ? byte : 256 + shifted)))
+            if !printable { shifted += 1 }
+            vocabulary[String(Character(scalar))] = byte
+        }
+        let byteLevel: [String: Any] = ["type": "ByteLevel", "add_prefix_space": false, "trim_offsets": true, "use_regex": false]
+        let markers: [String], ends: Any, splits: [[String: Any]]
+        switch form {
+        case .small:
+            markers = ["<｜hy_begin▁of▁sentence｜>", "<｜hy_place▁holder▁no▁2｜>", "<｜hy_User｜>", "<｜hy_Assistant｜>",
+                       "<｜hy_place▁holder▁no▁8｜>"]
+            ends = 257
+            splits = NFKMLXLanguage.hunyuanPretokenizationPatterns.map {
+                ["type": "Split", "pattern": ["Regex": $0 ?? ""], "behavior": "Isolated", "invert": false]
+            }
+        case .large:
+            markers = ["<|startoftext|>", "<|eos|>", "<|extra_0|>", "<|extra_5|>"]
+            ends = [257, 259]
+            let qwen2 = try XCTUnwrap(NFKMLXLanguage.pretokenizationPatterns.first { $0.value == "qwen2" }?.key)
+            splits = [["type": "Split", "pattern": ["Regex": qwen2], "behavior": "Isolated", "invert": false]]
+        }
+        let tokenizer: [String: Any] = [
+            "model": ["type": "BPE", "vocab": vocabulary, "merges": [] as [Any], "ignore_merges": form == .large],
+            "pre_tokenizer": ["type": "Sequence", "pretokenizers": splits + [byteLevel]],
+            "decoder": ["type": "ByteLevel", "add_prefix_space": true, "trim_offsets": true, "use_regex": true],
+            "added_tokens": markers.enumerated().map { ["id": 256 + $0.offset, "content": $0.element, "special": true] },
+        ]
+        func write(_ object: Any, _ name: String) throws {
+            try JSONSerialization.data(withJSONObject: object).write(to: directory.appendingPathComponent(name))
+        }
+        try write(tokenizer, "tokenizer.json")
+        try write(["eos_token": markers[1]], "tokenizer_config.json")
+        try write(["eos_token_id": ends], "generation_config.json")
+        var configuration = NFKMLXLanguageConfiguration(
+            hiddenSize: 64, layerCount: 2, headCount: 4, keyValueHeadCount: 2, headDimensions: 16, intermediateSize: 96,
+            vocabularySize: 264, ropeTheta: 10_000, rmsEpsilon: 1e-5, tiesWordEmbeddings: true, normalizesQueryAndKey: false)
+        configuration.normalizesRotatedQueryAndKey = true
+        return try NFKMLXHYMTTranslator(net: NFKMLXLanguage.makeNet(configuration),
+                                        tokenizer: try NFKMLXLanguage.readTokenizer(inDirectory: directory),
+                                        release: release, directory: directory)
+    }
+
+    func testHYMTRendersEachCardsPromptInItsTemplate() throws {
+        try requireMLXRuntime()
+        let small = try tinyHYMT(.small)
+        XCTAssertEqual(small.prompt(text: "Hi", sourceCode: "en", targetCode: "de"),
+                       "Translate the following segment into German, without additional explanation.\nHi")
+        XCTAssertEqual(small.prompt(text: "你好", sourceCode: "zh", targetCode: "en"),
+                       "将以下文本翻译为英语，注意只需要输出翻译后的结果，不要额外解释：\n你好")
+        XCTAssertEqual(small.prompt(text: "Hi", sourceCode: nil, targetCode: "zh-Hant"),
+                       "将以下文本翻译为繁体中文，注意只需要输出翻译后的结果，不要额外解释：\nHi")
+        let second = try tinyHYMT(.small, release: .hyMT2)
+        XCTAssertEqual(second.identifier, "hy-mt2")
+        XCTAssertEqual(second.prompt(text: "Hi", sourceCode: "en", targetCode: "de"),
+                       "Translate the following text into German. Note that you should only output the translated "
+                       + "result without any additional explanation:\n\nHi")
+        XCTAssertEqual(second.prompt(text: "Hi", sourceCode: "en", targetCode: "zh"),
+                       "将以下文本翻译为中文，注意只需要输出翻译后的结果，不要额外解释：\n\nHi")
+
+        let ids = small.promptTokens(text: "Hi", sourceCode: "en", targetCode: "de")
+        XCTAssertEqual(Array(ids.prefix(2)), [256, 258], "<｜hy_begin▁of▁sentence｜><｜hy_User｜>")
+        XCTAssertEqual(ids.last, 259, "the user turn ends by opening the assistant turn")
+        XCTAssertEqual(Array(ids.dropFirst(2).dropLast()),
+                       small.tokenizer.encode(small.prompt(text: "Hi", sourceCode: "en", targetCode: "de")).map(\.intValue))
+        small.opensAssistantTurn = false
+        XCTAssertEqual(small.promptTokens(text: "Hi", sourceCode: "en", targetCode: "de").last, 260,
+                       "<｜hy_place▁holder▁no▁8｜>")
+        XCTAssertEqual(small.targetTokens(translation: "Hallo").last, 257, "a target ends with <｜hy_place▁holder▁no▁2｜>")
+
+        let large = try tinyHYMT(.large)
+        let largeIds = large.promptTokens(text: "Hi", sourceCode: "en", targetCode: "de")
+        XCTAssertEqual(largeIds.first, 256, "<|startoftext|>")
+        XCTAssertEqual(largeIds.last, 258, "<|extra_0|>")
+        large.opensAssistantTurn = false
+        XCTAssertEqual(large.promptTokens(text: "Hi", sourceCode: "en", targetCode: "de"), largeIds,
+                       "the 7B template ends the user turn one way")
+        XCTAssertEqual(large.targetTokens(translation: "Hallo").last, 257, "a target ends with <|eos|>")
+    }
+
+    func testHYMTResolvesLanguageTagsToTheReleasesThirtyEight() throws {
+        try requireMLXRuntime()
+        let translator = try tinyHYMT(.small)
+        XCTAssertEqual(NFKMLXHYMTTranslator.languages.count, 38)
+        XCTAssertEqual(translator.code(for: "zh"), "zh")
+        XCTAssertEqual(translator.code(for: "zh-Hans-CN"), "zh")
+        XCTAssertEqual(translator.code(for: "zh-TW"), "zh-Hant")
+        XCTAssertEqual(translator.code(for: "zh_Hant"), "zh-Hant")
+        XCTAssertEqual(translator.code(for: "yue-HK"), "yue")
+        XCTAssertEqual(translator.code(for: "fil"), "tl")
+        XCTAssertEqual(translator.code(for: "pt-BR"), "pt")
+        XCTAssertNil(translator.code(for: "la"), "Latin is not among the releases' languages")
+        var decoding = translator.defaultDecoding
+        decoding.maxTokens = 2
+        XCTAssertThrowsError(try translator.translate("Hi", from: "en", to: "la", decoding: decoding))
+        XCTAssertNoThrow(try translator.translate("Hi", from: nil, to: "de", decoding: decoding),
+                         "the prompt names the target alone")
+    }
+
+    func testHYMTGeneratesGreedilyToItsEndTokens() throws {
+        try requireMLXRuntime()
+        let small = try tinyHYMT(.small)
+        XCTAssertEqual(small.defaultDecoding.endToken, 257)
+        XCTAssertEqual(small.defaultDecoding.additionalEndTokens, [])
+        let translator = try tinyHYMT(.large)
+        XCTAssertEqual(translator.defaultDecoding.endToken, 257)
+        XCTAssertEqual(translator.defaultDecoding.additionalEndTokens, [259], "the generation config's second end token")
+        let ids = translator.promptTokens(text: "Hi", sourceCode: "en", targetCode: "de")
+        let produced = try translator.generate(promptTokens: ids, maxTokens: 6)
+        XCTAssertLessThanOrEqual(produced.count, 6)
+        XCTAssertFalse(produced.contains(257) || produced.contains(259), "the continuation stops before an end token")
+        XCTAssertEqual(produced, try translator.generate(promptTokens: ids, maxTokens: 6), "greedy decoding repeats")
+        XCTAssertEqual(translator.translation(of: [256, 72, 105, 258, 257]), "Hi", "the text leaves out every marker")
+        XCTAssertEqual(NFKMLXTranslationBackend(translator: translator).streamedLayerCount, 0)
+    }
+
+    func testHYMTSearchesBeamsWhenAskedForMoreThanOne() throws {
+        try requireMLXRuntime()
+        let translator = try tinyHYMT(.large)
+        var decoding = translator.defaultDecoding
+        decoding.beams = 3
+        decoding.maxTokens = 6
+        let ids = translator.promptTokens(text: "Hi", sourceCode: "en", targetCode: "de")
+        let produced = try translator.beamSearch(promptTokens: ids, decoding: decoding)
+        XCTAssertLessThanOrEqual(produced.count, 6)
+        XCTAssertFalse(produced.contains(257) || produced.contains(259), "the search ends before an end token")
+        XCTAssertEqual(produced, try translator.net.beamSearch(prompt: ids, decoding: decoding))
+        XCTAssertEqual(try translator.translate("Hi", from: "en", to: "de", decoding: decoding), translator.translation(of: produced))
+    }
+
+    func testHYMTFineTuningAdaptsTheAttentionAndReloads() throws {
+        try requireMLXRuntime()
+        let translator = try tinyHYMT(.small)
+        let net = translator.net
+        let prompt = translator.promptTokens(text: "Hi", sourceCode: "en", targetCode: "de")
+        let target = translator.targetTokens(translation: "Hallo")
+        let tokens = MLXArray((prompt + target).map { Int32($0) })
+        let before = NFKMLXCausalLanguageObjective()(net, tokens, promptLength: prompt.count).item(Float.self)
+        let losses = try NFKMLXHYMT.fineTune(net, examples: { _ in (prompt, target) }, rank: 2, steps: 10)
+        XCTAssertEqual(losses.count, 10)
+        XCTAssertLessThan(losses.last!, before)
+        let adapted = net.leafModules().flattened().filter { $0.1 is NFKMLXLoRALinear }.map(\.0)
+        XCTAssertFalse(adapted.isEmpty)
+        XCTAssertTrue(adapted.allSatisfy { $0.contains(".self_attn.") && ($0.hasSuffix(".q_proj") || $0.hasSuffix(".v_proj")) })
+        try NFKMLXLoRA.merge(into: net)
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("hymt-\(UUID().uuidString).safetensors")
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        try NFKMLXWeights.save(net, to: scratch)
+        let reloaded = try NFKMLXLanguage.network(weightsURL: scratch, configuration: net.configuration)
+        let input = tokens.reshaped([1, tokens.dim(0)])
+        XCTAssertLessThan(abs(net(input) - reloaded(input)).max().item(Float.self), 1e-5)
+    }
+
+    func testHYMT15BF16MatchesTheBFloat16Reference() throws {
+        try checkHYMT(weightsKey: "IK_VAL_HYMT15_1_8B", recordKey: "IK_PARITY_HYMT15_1_8B", release: .hyMT15,
+                      precision: .checkpoint, name: "hy-mt1.5-1.8b")
+    }
+
+    func testHYMT15AtFloat32MatchesTheReference() throws {
+        try checkHYMT(weightsKey: "IK_VAL_HYMT15_1_8B", recordKey: "IK_PARITY_HYMT15_1_8B_F32", release: .hyMT15,
+                      precision: .float32, name: "hy-mt1.5-1.8b-f32")
+    }
+
+    /// Chinese to English takes the Chinese instruction (`TRANSLATION_SOURCE_LANG=zh TRANSLATION_TARGET_LANG=en
+    /// run_reference.py hymt`), and the 1.8B tokenizer's CJK Split cuts the source.
+    func testHYMT15ChineseToEnglishMatchesTheReference() throws {
+        try checkHYMT(weightsKey: "IK_VAL_HYMT15_1_8B", recordKey: "IK_PARITY_HYMT15_1_8B_ZH", release: .hyMT15,
+                      precision: .float32, source: "zh", target: "en", name: "hy-mt1.5-1.8b-zh-en")
+    }
+
+    /// The 1.8B template's user turn closed without opening the assistant turn, as the HY-MT1.5 model card's
+    /// example renders it (`HYMT_ASSISTANT=0 run_reference.py hymt`).
+    func testHYMT15ClosedUserTurnMatchesTheReference() throws {
+        try checkHYMT(weightsKey: "IK_VAL_HYMT15_1_8B", recordKey: "IK_PARITY_HYMT15_1_8B_CLOSED", release: .hyMT15,
+                      precision: .float32, opensAssistantTurn: false, name: "hy-mt1.5-1.8b-closed")
+    }
+
+    func testHYMT2BF16MatchesTheBFloat16Reference() throws {
+        try checkHYMT(weightsKey: "IK_VAL_HYMT2_1_8B", recordKey: "IK_PARITY_HYMT2_1_8B", release: .hyMT2,
+                      precision: .checkpoint, name: "hy-mt2-1.8b")
+    }
+
+    func testHYMT15SevenBBF16MatchesTheBFloat16Reference() throws {
+        try checkHYMT(weightsKey: "IK_VAL_HYMT15_7B", recordKey: "IK_PARITY_HYMT15_7B", release: .hyMT15,
+                      precision: .checkpoint, name: "hy-mt1.5-7b")
+    }
+
+    func testHYMT2SevenBBF16MatchesTheBFloat16Reference() throws {
+        try checkHYMT(weightsKey: "IK_VAL_HYMT2_7B", recordKey: "IK_PARITY_HYMT2_7B", release: .hyMT2,
+                      precision: .checkpoint, name: "hy-mt2-7b")
+    }
+
+    /// The 7B at float32 is 32 GB, which this machine holds on neither side: the reference reads each layer
+    /// as its forward reaches it (`HYMT_DTYPE=float32 HYMT_LAYERWISE=1 run_reference.py hymt`), and the port
+    /// streams the layers `.automatic` cannot hold.
+    func testHYMT15SevenBStreamedAtFloat32MatchesTheReference() throws {
+        try checkHYMT(weightsKey: "IK_VAL_HYMT15_7B", recordKey: "IK_PARITY_HYMT15_7B_F32", release: .hyMT15,
+                      precision: .float32, name: "hy-mt1.5-7b-f32")
+    }
+
+    /// Hy-MT2 1.8B's beam search against transformers' `generate` at float32 (`HYMT_RELEASE=2 HYMT_DTYPE=float32
+    /// run_reference.py hymt_beam`), the release's repetition penalty off.
+    func testHYMT2BeamSearchMatchesTheReference() throws {
+        try requireMLXRuntime()
+        let (directory, record) = try release("IK_VAL_HYMT2_1_8B", "IK_PARITY_HYMT2_1_8B_BEAM")
+        let translator = try NFKMLXHYMT.translator(directoryURL: directory, release: .hyMT2, precision: .float32)
+        let scores = try checkBeamSearch(record: record, name: "hy-mt2-1.8b", decoding: translator.defaultDecoding,
+                                         prompt: { translator.promptTokens(text: $0, sourceCode: "en", targetCode: "de") },
+                                         search: { try translator.net.beamHypothesis(prompt: $0, decoding: $1) },
+                                         text: { translator.translation(of: $0) })
+        let reference = record["output"]!.asArray(Float.self) + [record["beam_cut_score"]!.item(Float.self)]
+        for (index, (mine, value)) in zip(scores, reference).enumerated() {
+            XCTAssertEqual(mine, value, accuracy: 1e-3, "score \(index)")
+        }
+        print("hy-mt2-1.8b beam scores: worst distance \(zip(scores, reference).map { abs($0 - $1) }.max()!)")
+    }
+
+    /// Both HY-MT tokenizers against the `tokenizers` library (`run_reference.py hymt_tokenizer`), on text
+    /// that separates the 1.8B release's three Splits.
+    func testHYMTTokenizersEncodeAsTokenizersDoes() throws {
+        try requireMLXRuntime()
+        var checked = [String]()
+        for (weightsKey, recordKey, scheme) in [("IK_VAL_HYMT15_1_8B", "IK_PARITY_HYMT_TOKENIZER_1_8B", "hunyuan"),
+                                                ("IK_VAL_HYMT15_7B", "IK_PARITY_HYMT_TOKENIZER_7B", "qwen2")] {
+            guard let (directory, record) = try? release(weightsKey, recordKey) else { continue }
+            let tokenizerJSON = try XCTUnwrap(JSONSerialization.jsonObject(
+                with: Data(contentsOf: directory.appendingPathComponent("tokenizer.json"))) as? [String: Any])
+            XCTAssertEqual(try NFKMLXLanguage.tokenizerScheme(tokenizerJSON: tokenizerJSON, tokenizerConfiguration: nil),
+                           .byteLevel(pretokenization: scheme, composes: false, ignoresMerges: scheme == "qwen2"))
+            let tokenizer = try NFKMLXLanguage.readTokenizer(inDirectory: directory)
+            var index = 0
+            while let ids = record["ids_\(index)"], let utf8 = record["text_\(index)"] {
+                let text = String(decoding: utf8.asArray(Int32.self).map { UInt8($0) }, as: UTF8.self)
+                XCTAssertEqual(tokenizer.encode(text).map(\.intValue), ints(ids), "\(weightsKey): \(text.debugDescription)")
+                index += 1
+            }
+            XCTAssertGreaterThan(index, 0)
+            checked.append("\(scheme) \(index) cases")
+        }
+        try XCTSkipIf(checked.isEmpty, "set IK_VAL_HYMT15_1_8B with IK_PARITY_HYMT_TOKENIZER_1_8B, or the 7B pair")
+        print("VALIDATION structure hy-mt-tokenizers: \(checked.joined(separator: ", ")) encode as tokenizers does")
+    }
+
+    private func checkHYMT(weightsKey: String, recordKey: String, release generation: NFKMLXHYMTRelease,
+                           precision: NFKMLXWeightPrecision, source: String = "en", target: String = "de",
+                           opensAssistantTurn: Bool = true, name: String) throws {
+        try requireMLXRuntime()
+        let (directory, record) = try release(weightsKey, recordKey)
+        let translator = try NFKMLXHYMT.translator(directoryURL: directory, release: generation, precision: precision)
+        translator.opensAssistantTurn = opensAssistantTurn
+        let stream = translator.net.layerStream
+        let sentences = Self.probes[source] ?? Self.sentences
+        for (index, sentence) in sentences.enumerated() {
+            XCTAssertEqual(translator.promptTokens(text: sentence, sourceCode: source, targetCode: target),
+                           ints(record["tokens_\(index)"]!), "the prompt ids of \(sentence)")
+        }
+        let ids = translator.promptTokens(text: sentences[1], sourceCode: source, targetCode: target)
+        XCTAssertEqual(ids, ints(record["tokens"]!))
+        let endTokens = Set(ints(record["end_tokens"]!))
+        XCTAssertEqual(Set([translator.defaultDecoding.endToken] + translator.defaultDecoding.additionalEndTokens), endTokens)
+        let input = MLXArray(ids.map { Int32($0) }).reshaped([1, ids.count])
+        let logits = translator.net(input)[0]
+        let logitCosine = cosine(logits, record["output"]!)
+        // A float32 load reproduces the reference to float error; a .checkpoint load compares bfloat16
+        // against a bfloat16 reference, where the two accumulation orders drift apart over the stack.
+        XCTAssertGreaterThan(logitCosine, precision == .float32 ? 0.999 : 0.995)
+        let argmax = logits.argMax(axis: -1).asArray(Int32.self)
+        let agreeing = zip(argmax, record["output"]!.argMax(axis: -1).asArray(Int32.self)).filter { $0 == $1 }.count
+        let states = translator.net.layerStates(input)
+        var worst: (layer: Int, cosine: Float) = (-1, 1)
+        for (index, state) in states.enumerated() {
+            guard let reference = record["hidden_last.\(index)"] else { continue }
+            let layerCosine = cosine(state[0, ids.count - 1], reference)
+            if layerCosine < worst.cosine { worst = (index, layerCosine) }
+        }
+        XCTAssertGreaterThan(worst.cosine, precision == .float32 ? 0.999 : 0.99, "a layer diverges beyond precision drift")
+        let produced = try translator.generate(promptTokens: ids, maxTokens: 64)
+        XCTAssertEqual(produced, ints(record["continuation"]!).filter { !endTokens.contains($0) }, "greedy continuation")
+        let text = translator.translation(of: produced)
+        let referenceText = String(decoding: record["greedy_text"]!.asArray(Int32.self).map { UInt8($0) }, as: UTF8.self)
+        XCTAssertEqual(text, referenceText.trimmingCharacters(in: .whitespacesAndNewlines), "the translation's text")
+        let targetIds = ints(record["target_ids"]!)
+        let tokens = MLXArray((ids + targetIds).map { Int32($0) })
+        let loss = NFKMLXCausalLanguageObjective()(translator.net, tokens, promptLength: ids.count).item(Float.self)
+        XCTAssertEqual(loss, record["loss"]!.asArray(Float.self)[0], accuracy: precision == .float32 ? 1e-2 : 0.1,
+                       "fine-tuning loss")
+        try translator.net.verifyStream()
+        print("\(name): \(text) | logit cosine \(logitCosine); argmax \(agreeing)/\(argmax.count); "
+              + "worst layer \(worst.cosine) at \(worst.layer); loss mine \(loss) reference \(record["loss"]!.asArray(Float.self)[0])")
+        if let stream {
+            let (bytes, seconds) = stream.readStatistics
+            print("\(name): \(stream.layers.count) of \(translator.net.configuration.layerCount) layers streamed, "
+                  + String(format: "%.1f GB read at %.2f GB/s", Double(bytes) / 1e9, Double(bytes) / 1e9 / max(seconds, 1e-9))
+                  + Self.memoryReading)
+        }
+    }
+
     // MARK: Language probes
 
     /// One probe set per source language, the table `run_reference.py` records (`TRANSLATION_PROBES`);

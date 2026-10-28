@@ -10,7 +10,9 @@
 import XCTest
 import InferKit
 import MLX
+import MLXFast
 import MLXNN
+import MLXRandom
 @testable import InferKitMLX
 
 final class NFKMLXLanguageModelTests: XCTestCase {
@@ -777,6 +779,78 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         """#))
         XCTAssertFalse(try configuration(#"{"architectures":["Qwen3ForCausalLM"],"model_type":"qwen3"}"#)
                            .isMixtureOfExperts)
+    }
+
+    func testAHunyuanDenseConfigurationIsRead() throws {
+        func configuration(_ json: String) throws -> NFKMLXLanguageConfiguration {
+            try NFKMLXLanguage.configuration(fromJSON: try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]))
+        }
+        let hymt = try configuration(#"""
+        {"architectures":["HunYuanDenseV1ForCausalLM"],"model_type":"hunyuan_v1_dense","hidden_size":2048,
+         "num_hidden_layers":32,"num_attention_heads":16,"num_key_value_heads":4,"head_dim":128,
+         "intermediate_size":6144,"vocab_size":120818,"rope_theta":10000.0,"rms_norm_eps":1e-05,
+         "tie_word_embeddings":true,"use_qk_norm":true,"use_cla":false,"norm_type":"rms",
+         "max_position_embeddings":262144,"rope_scaling":{"alpha":1000.0,"beta_fast":32,"beta_slow":1,
+         "factor":1.0,"mscale":1.0,"mscale_all_dim":1.0,"type":"dynamic"}}
+        """#)
+        XCTAssertTrue(hymt.normalizesRotatedQueryAndKey)
+        XCTAssertFalse(hymt.normalizesQueryAndKey, "the norms follow the rotary embedding")
+        XCTAssertNil(hymt.ropeScaling, "alpha raises the base; no rescaling applies within the window")
+        XCTAssertEqual(hymt.ropeTheta, Float(10_000 * pow(1000.0, 128.0 / 126.0)))
+        XCTAssertEqual(hymt.ropeTheta, 11_158_840, accuracy: 1)
+        XCTAssertTrue(hymt.tiesWordEmbeddings)
+        XCTAssertEqual(hymt.maximumPositions, 262_144)
+        XCTAssertThrowsError(try configuration(#"""
+        {"architectures":["HunYuanDenseV1ForCausalLM"],"model_type":"hunyuan_v1_dense","use_cla":true}
+        """#), "cross-layer attention")
+        XCTAssertThrowsError(try configuration(#"""
+        {"architectures":["HunYuanDenseV1ForCausalLM"],"model_type":"hunyuan_v1_dense","rope_scaling":{"type":"dynamic","factor":2.0}}
+        """#), "dynamic scaling without alpha")
+    }
+
+    // The norms that follow the rotary embedding see the rotated heads, which is what separates them from
+    // Qwen3's norms that precede it: a norm weight that is not constant does not commute with the rotation.
+    // The layer is rebuilt by hand from its own modules, and the cached decode reads normalized keys.
+    func testRotatedQueryAndKeyNormsFollowTheRotaryEmbedding() throws {
+        try requireMLXRuntime()
+        var configuration = NFKMLXLanguageConfiguration(
+            hiddenSize: 64, layerCount: 1, headCount: 4, keyValueHeadCount: 2, headDimensions: 16, intermediateSize: 96,
+            vocabularySize: 64, ropeTheta: 10_000, rmsEpsilon: 1e-5, tiesWordEmbeddings: true, normalizesQueryAndKey: false)
+        configuration.normalizesRotatedQueryAndKey = true
+        let net = NFKMLXLanguage.makeNet(configuration)
+        let attention = net.model.layers[0].attention
+        let queryNorm = try XCTUnwrap(attention.rotatedQueryNorm), keyNorm = try XCTUnwrap(attention.rotatedKeyNorm)
+        queryNorm.update(parameters: ModuleParameters.unflattened(["weight": MLXRandom.uniform(0.5 ..< 1.5, [16])]))
+        keyNorm.update(parameters: ModuleParameters.unflattened(["weight": MLXRandom.uniform(0.5 ..< 1.5, [16])]))
+        XCTAssertNil(attention.queryNorm)
+
+        let x = MLXRandom.normal([1, 5, 64])
+        func heads(_ projection: Linear, _ count: Int) -> MLXArray {
+            projection(x).reshaped([1, 5, count, 16]).transposed(0, 2, 1, 3)
+        }
+        let queries = queryNorm(MLXFast.RoPE(heads(attention.queryProjection, 4), dimensions: 16, traditional: false,
+                                             base: 10_000, scale: 1, offset: 0))
+        let keys = keyNorm(MLXFast.RoPE(heads(attention.keyProjection, 2), dimensions: 16, traditional: false,
+                                        base: 10_000, scale: 1, offset: 0))
+        let attended = MLXFast.scaledDotProductAttention(queries: queries, keys: keys, values: heads(attention.valueProjection, 2),
+                                                         scale: 1 / sqrt(16), mask: .causal)
+        let expected = attention.outputProjection(attended.transposed(0, 2, 1, 3).reshaped([1, 5, 64]))
+        let mask = MLXArray.tri(5, k: 0).asType(.bool)
+        let actual = attention(x, mask: MLX.where(mask, MLXArray(Float(0)), MLXArray(-Float.infinity)), cache: nil, layer: 0)
+        XCTAssertLessThan(abs(actual - expected).max().item(Float.self), 1e-4)
+
+        let tokens = [Int(3), 9, 17, 4]
+        var options = NFKMLXGenerationOptions()
+        options.temperature = 0
+        options.maxTokens = 3
+        let cached = net.generate(prompt: tokens, options: options)
+        var uncached = tokens
+        for _ in 0 ..< 3 {
+            let input = MLXArray(uncached.map { Int32($0) }).reshaped([1, uncached.count])
+            uncached.append(Int(net(input)[0, uncached.count - 1].argMax().item(Int32.self)))
+        }
+        XCTAssertEqual(cached, Array(uncached.dropFirst(tokens.count)), "the cache holds the normalized keys")
     }
 
     func testAMistralWindowBandsEveryLayer() throws {

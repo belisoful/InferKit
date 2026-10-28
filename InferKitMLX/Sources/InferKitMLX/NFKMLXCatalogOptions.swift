@@ -204,6 +204,13 @@ struct NFKMLXLoadProfile {
                      defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true, contextLength: nil, keyValue: nil,
                      tasks: [NFKModelTaskTranslation]),
         ],
+        // HY-MT's decoders take the language family's runtime quantization; the translation backend reads no
+        // cache parameter, and the 1.8B and 7B releases hold different vocabularies, so neither drafts.
+        "hy-mt": [
+            .decoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
+                     defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true, contextLength: nil, keyValue: nil,
+                     tasks: [NFKModelTaskTranslation]),
+        ],
         "madlad": [
             .streamedDecoder(precisions: [NFKModelPrecisionBFloat16, NFKModelPrecisionFloat32],
                              defaultPrecision: NFKModelPrecisionBFloat16, contextLength: nil, keyValue: nil,

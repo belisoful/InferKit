@@ -292,6 +292,10 @@ The figures have three limits:
 - ``NFKMLXSeedX``
 - ``NFKMLXSeedXTranslator``
 - ``NFKMLXSeedXVariant``
+- ``NFKMLXHYMT``
+- ``NFKMLXHYMTTranslator``
+- ``NFKMLXHYMTRelease``
+- ``NFKMLXHYMTVariant``
 - ``NFKMLXTranslationBackend``
 - ``NFKMLXTranslationParameterKey``
 - ``NFKMLXTranslator``

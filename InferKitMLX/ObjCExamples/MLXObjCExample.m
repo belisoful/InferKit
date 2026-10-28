@@ -312,6 +312,7 @@
 	[NFKMLXMADLAD register];
 	[NFKMLXTranslateGemma register];
 	[NFKMLXSeedX register];
+	[NFKMLXHYMT register];
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"opus-mt"]);
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"m2m100"]);
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"small100"]);
@@ -326,6 +327,15 @@
 	XCTAssertTrue([NFKMLXSeedX respondsToSelector:@selector(backendWithDirectoryURL:precision:residency:error:)]);
 	XCTAssertTrue([NFKMLXSeedX respondsToSelector:@selector(backendWithVariant:revision:cacheDirectoryURL:precision:error:)]);
 	XCTAssertNotEqual(NFKMLXSeedXVariantPpo, NFKMLXSeedXVariantInstruct);
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"hy-mt1.5"]);
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"hy-mt2"]);
+	// HY-MT downloads any of its four releases by variant, at the precision named:
+	//   id<NFKInferenceBackend> hymt = [NFKMLXHYMT backendWithVariant:NFKMLXHYMTVariantHyMT2_1_8B revision:nil
+	//                                                cacheDirectoryURL:nil precision:NFKMLXWeightPrecisionCheckpoint
+	//                                                            error:&error];
+	XCTAssertTrue([NFKMLXHYMT respondsToSelector:@selector(backendWithRelease:directoryURL:precision:residency:error:)]);
+	XCTAssertTrue([NFKMLXHYMT respondsToSelector:@selector(backendWithVariant:revision:cacheDirectoryURL:precision:error:)]);
+	XCTAssertNotEqual(NFKMLXHYMTReleaseHyMT15, NFKMLXHYMTReleaseHyMT2);
 	XCTAssertEqualObjects([NFKMLXMarian repoWithSourceLanguage:@"en" targetLanguage:@"de"], @"Helsinki-NLP/opus-mt-en-de");
 	NSError *error = nil;
 	id<NFKInferenceBackend> translator = [NFKMLXModelRegistry backendNamed:@"opus-mt" weightsURL:nil error:&error];

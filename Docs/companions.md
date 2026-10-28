@@ -798,6 +798,12 @@ models.
   underneath, bfloat16 by default and streamed at float32, greedy decoding, LoRA on the decoder;
   `seed-x`; at reference parity against transformers' `MistralForCausalLM` (prompt ids, logits, and the
   greedy translation exact).
+- **`NFKMLXHYMT`** — HY-MT1.5 and Hy-MT2 (1.8B and 7B each; the Tencent HY Community License and
+  Apache-2.0), Tencent's dense Hunyuan decoders trained to translate among 38 languages, prompted with
+  each model card's instruction inside the release's chat template; the shipped language decoder
+  underneath, which reads Hunyuan's per-head norms after the rotary embedding, bfloat16 by default and
+  streamed at float32, greedy decoding, LoRA on the decoder; `hy-mt1.5`, `hy-mt2`; at reference parity
+  against transformers' `HunYuanDenseV1ForCausalLM` (prompt ids, logits, and the greedy translation exact).
 - **`NFKMLXWhisper`** — real speech-to-text: the Whisper encoder-decoder at every released size (tiny, base, small, medium, large-v1/v2, large-v3, large-v3-turbo)
   with the reference's suppression rules and timestamped decoding (`emitsTimestamps` → segments);
   `whisper-tiny`; exact token matches against openai-whisper. Also the core's `transcription`

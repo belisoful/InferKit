@@ -22677,9 +22677,10 @@ def _seedx_prompt(text, source, target):
             f"{text} <{target}>")
 
 
-def _decoder_beam_record(model, tokenizer, prompts, max_new_tokens, pad_token_id, beams=4):
+def _decoder_beam_record(model, tokenizer, prompts, max_new_tokens, pad_token_id, beams=4, **generation):
     """A decoder-only translator's beam search under transformers' own `generate` (`num_beams` `beams`,
-    `do_sample=False`, the release's length penalty and end tokens): for each prompt its ids (`tokens_<i>`),
+    `do_sample=False`, the release's length penalty and end tokens, and any `generation` overrides): for
+    each prompt its ids (`tokens_<i>`),
     the best hypothesis's continuation as `generate` returns it, its end token included (`beam_<i>`), its
     text without special tokens (`beam_text_<i>`), and its score (`sequences_scores`, the output); and for
     prompt 1 the same search cut at 6 new tokens (`beam_cut`, `beam_cut_score`), where the limit ends every
@@ -22688,7 +22689,7 @@ def _decoder_beam_record(model, tokenizer, prompts, max_new_tokens, pad_token_id
         input_ids = torch.tensor([ids])
         out = model.generate(input_ids=input_ids, attention_mask=torch.ones_like(input_ids), max_new_tokens=limit,
                              num_beams=beams, do_sample=False, return_dict_in_generate=True, output_scores=True,
-                             pad_token_id=pad_token_id)
+                             pad_token_id=pad_token_id, **generation)
         return out.sequences[0, len(ids):], out.sequences_scores[0].float()
 
     extra = {"beams": torch.tensor([beams], dtype=torch.int32),
@@ -22834,6 +22835,171 @@ def run_seedx_beam_scores(image, checkpoint):
         close()
     globals()["_extra"] = {"record_scores": torch.cat([record["output"], record["beam_cut_score"]]).float()}
     return torch.stack(scores).float().contiguous()
+
+
+HYMT_LANGUAGES = {
+    "zh": ("Chinese", "\u4e2d\u6587"), "en": ("English", "\u82f1\u8bed"), "de": ("German", "\u5fb7\u8bed"),
+    "ja": ("Japanese", "\u65e5\u8bed"), "fr": ("French", "\u6cd5\u8bed"), "ko": ("Korean", "\u97e9\u8bed"),
+    "zh-Hant": ("Traditional Chinese", "\u7e41\u4f53\u4e2d\u6587"),
+}
+
+
+def _hymt_prompt(text, source, target):
+    """The model card's default instruction for HYMT_RELEASE (`1.5`, the default, or `2`) and two tags: the
+    Chinese instruction naming the target's Chinese name when either side is Chinese, the English one
+    otherwise; HY-MT1.5's template puts one line break before the text, Hy-MT2's two."""
+    second = os.environ.get("HYMT_RELEASE", "1.5") == "2"
+    english, chinese = HYMT_LANGUAGES[target]
+    separator = "\n\n" if second else "\n"
+    if source in ("zh", "zh-Hant") or target in ("zh", "zh-Hant"):
+        return (f"\u5c06\u4ee5\u4e0b\u6587\u672c\u7ffb\u8bd1\u4e3a{chinese}\uff0c\u6ce8\u610f\u53ea\u9700\u8981"
+                f"\u8f93\u51fa\u7ffb\u8bd1\u540e\u7684\u7ed3\u679c\uff0c\u4e0d\u8981\u989d\u5916\u89e3\u91ca\uff1a"
+                f"{separator}{text}")
+    if second:
+        return (f"Translate the following text into {english}. Note that you should only output the translated result "
+                f"without any additional explanation:{separator}{text}")
+    return f"Translate the following segment into {english}, without additional explanation.{separator}{text}"
+
+
+def _hymt_ids(tokenizer, text, source, target):
+    """The prompt's ids through the release's own chat template, one user message. HYMT_ASSISTANT picks
+    `add_generation_prompt` (default `1`); the 7B template ignores it."""
+    ids = tokenizer.apply_chat_template([{"role": "user", "content": _hymt_prompt(text, source, target)}],
+                                        add_generation_prompt=os.environ.get("HYMT_ASSISTANT", "1") == "1",
+                                        tokenize=True)
+    return list(ids["input_ids"] if isinstance(ids, dict) else ids)
+
+
+def _hymt_model(checkpoint):
+    """An HY-MT release's `HunYuanDenseV1ForCausalLM`, its tokenizer, and a function that closes what it
+    reads. HYMT_DTYPE picks the precision (default bfloat16, the release's). HYMT_LAYERWISE=1 builds the
+    model on the meta device and reads each decoder layer as the forward reaches it, as `_seedx_model`
+    does, for the 7B at float32 (32 GB); the embedding, which the head shares, and the final norm are read
+    once and the rotary table is built on the CPU."""
+    from transformers import AutoConfig, AutoTokenizer, GenerationConfig, HunYuanDenseV1ForCausalLM
+
+    dtype = getattr(torch, os.environ.get("HYMT_DTYPE", "bfloat16"))
+    tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    if os.environ.get("HYMT_LAYERWISE") != "1":
+        return HunYuanDenseV1ForCausalLM.from_pretrained(checkpoint, dtype=dtype).eval(), tokenizer, lambda: None
+    config = AutoConfig.from_pretrained(checkpoint)
+    entries, read, close = _layerwise_release(checkpoint, dtype)
+    with torch.device("meta"):
+        model = HunYuanDenseV1ForCausalLM._from_config(config, dtype=dtype, attn_implementation="sdpa")
+    model.eval()
+    model.generation_config = GenerationConfig.from_pretrained(checkpoint)
+    embed = torch.nn.Embedding(config.vocab_size, config.hidden_size, config.pad_token_id)
+    embed.weight = torch.nn.Parameter(read("model.embed_tokens.weight"), requires_grad=False)
+    model.model.embed_tokens = embed
+    model.lm_head.weight = embed.weight
+    model.model.norm.weight = torch.nn.Parameter(read("model.norm.weight"), requires_grad=False)
+    model.model.rotary_emb = type(model.model.rotary_emb)(config=config)
+    _read_layers_in_turn(model.model.layers, "model.", entries, read)
+    return model, tokenizer, close
+
+
+def _hymt_end_tokens(model):
+    ends = model.generation_config.eos_token_id
+    return list(ends) if isinstance(ends, (list, tuple)) else [ends]
+
+
+def run_hymt(image, checkpoint):
+    """HY-MT (tencent/HY-MT1.5-1.8B, -7B, Hy-MT2-1.8B, -7B; `HunYuanDenseV1ForCausalLM`) on a release
+    directory, English to German by default (TRANSLATION_SOURCE_LANG / TRANSLATION_TARGET_LANG), from the
+    model `_hymt_model` builds: the prompt of `_hymt_ids` for every probe sentence (`tokens_<i>`) and
+    sentence 1 (`tokens`); the logits at every prompt position; the last prompt position's state after
+    every layer but the last (`hidden_last.<i>`, entering the stack at 0); the greedy continuation to an
+    end token of the release's generation config (`continuation`, `greedy_text`), with the release's
+    sampling and repetition penalty off; and the fine-tuning loss of the target sentence as the assistant
+    turn, its pieces and then the first end token, the prompt masked (`target_ids`, `loss`). `image`
+    unused."""
+    model, tokenizer, close = _hymt_model(checkpoint)
+    source, target = _translation_languages()
+    sentences = TRANSLATION_PROBES[source]
+    ends = _hymt_end_tokens(model)
+    try:
+        ids = torch.tensor([_hymt_ids(tokenizer, sentences[1], source, target)])
+        target_ids = tokenizer(TRANSLATION_TARGETS[target], add_special_tokens=False).input_ids + [ends[0]]
+        with torch.no_grad():
+            out = model(input_ids=ids, output_hidden_states=True)
+            generated = model.generate(input_ids=ids, attention_mask=torch.ones_like(ids), max_new_tokens=64,
+                                       do_sample=False, num_beams=1, repetition_penalty=1.0,
+                                       pad_token_id=model.generation_config.pad_token_id)
+            full = torch.tensor([ids[0].tolist() + target_ids])
+            labels = full.clone()
+            labels[0, : ids.shape[1]] = -100
+            loss = model(input_ids=full, labels=labels).loss
+    finally:
+        close()
+    continuation = generated[0, ids.shape[1]:]
+    greedy_text = tokenizer.decode(continuation, skip_special_tokens=True)
+    print("greedy:", greedy_text)
+    extra = {
+        "tokens": ids[0].to(torch.int32).contiguous(),
+        "continuation": continuation.to(torch.int32).contiguous(),
+        "greedy_text": _utf8(greedy_text),
+        "end_tokens": torch.tensor(ends, dtype=torch.int32),
+        "target_ids": torch.tensor(target_ids, dtype=torch.int32),
+        "loss": loss.reshape(1).float().contiguous(),
+    }
+    for index, sentence in enumerate(sentences):
+        extra[f"tokens_{index}"] = torch.tensor(_hymt_ids(tokenizer, sentence, source, target), dtype=torch.int32)
+    for index, state in enumerate(out.hidden_states[:-1]):
+        extra[f"hidden_last.{index}"] = state[0, -1].float().contiguous()
+    globals()["_extra"] = extra
+    return out.logits[0].float().contiguous()
+
+
+def run_hymt_beam(image, checkpoint):
+    """HY-MT's beam search on a release directory, four beams, English to German: `_decoder_beam_record`
+    over `_hymt_ids` for every probe sentence, at HYMT_DTYPE (default bfloat16, the release's), 64 new
+    tokens as the greedy record, the release's repetition penalty off. `image` unused."""
+    model, tokenizer, close = _hymt_model(checkpoint)
+    source, target = _translation_languages()
+    try:
+        prompts = [_hymt_ids(tokenizer, sentence, source, target) for sentence in TRANSLATION_PROBES[source]]
+        return _decoder_beam_record(model, tokenizer, prompts, 64, model.generation_config.pad_token_id,
+                                    repetition_penalty=1.0)
+    finally:
+        close()
+
+
+def run_hymt_tokenizer(image, checkpoint):
+    """An HY-MT release's tokenizer (`checkpoint`, its directory) through the `tokenizers` library, as
+    `Tokenizer.from_file(tokenizer.json).encode(text, add_special_tokens=False)`, on HYMT_TOKENIZER_CASES:
+    each case's ids (`ids_<i>`) and its text (`text_<i>`). The output is the case count. `image` unused."""
+    from tokenizers import Tokenizer
+
+    tokenizer = Tokenizer.from_file(os.path.join(checkpoint, "tokenizer.json"))
+    extra = {}
+    for index, text in enumerate(HYMT_TOKENIZER_CASES):
+        ids = tokenizer.encode(text, add_special_tokens=False).ids
+        print(index, ids)
+        extra[f"ids_{index}"] = torch.tensor(ids, dtype=torch.int32)
+        extra[f"text_{index}"] = _utf8(text)
+    globals()["_extra"] = extra
+    return torch.tensor([len(HYMT_TOKENIZER_CASES)], dtype=torch.float32)
+
+
+# The release tokenizer test's cases, then text that separates the 1.8B release's three Splits: digit runs
+# against letters, CJK and kana runs inside and beside Latin words, punctuation leading Latin and
+# non-Latin words, symbols, and full-width forms.
+HYMT_TOKENIZER_CASES = [
+    "In 2024, 12345 apples cost $1,299.99.",
+    "I'll DON'T we've 's 'RE",
+    "  leading spaces\n\nand newlines\t tabs\r\n",
+    "naïve café — résumé 日本語テキスト 🚀",
+    "e\u0301 decomposed a\u0308",
+    "CamelCaseWord ALLCAPS MiXeD",
+    "def f(x):\n    return x**2  # square\n",
+    "'hello' (world) /path/to/file.txt",
+    "<s>Hello</s>",
+    "abc中文def かなカナ漢字mix 123中4567",
+    "\u4eca\u5929\u5929\u6c14\u771f\u597d\u3002\u5c06\u4ee5\u4e0b\u6587\u672c\u7ffb\u8bd1\u4e3a\u82f1\u8bed\uff0c\u6ce8\u610f\uff1a",
+    "-Wort .Ébène ,naïve «quote» @user #tag €100 ±5%",
+    "\uff21\uff22\uff23\uff11\uff12\uff13 \u3000\u5168\u89d2",
+    "\u0e2a\u0e38\u0e19\u0e31\u0e02 \u0928\u092e\u0938\u094d\u0924\u0947 \ud55c\uad6d\uc5b4 \u0645\u0631\u062d\u0628\u0627",
+]
 
 
 def run_trocr_loss(image, checkpoint):
@@ -24119,7 +24285,7 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
           "snac": run_snac, "siglip2_probe": run_siglip2_probe, "clip_probe": run_clip_probe, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "glue_rounding": run_glue_rounding, "gelu_rounding": run_gelu_rounding, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
           "gemma4_shared_kv": run_gemma4_shared_kv}
-CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "clip_text_probe": run_clip_text_probe, "sd_vae_probe": run_sd_vae_probe, "gemma3n_audio_probe": run_gemma3n_audio_probe, "sd_unet_probe": run_sd_unet_probe, "z_image_release_probe": run_z_image_release_probe, "wan_release_probe": run_wan_release_probe, "sa2va_llava_probe": run_sa2va_llava_probe, "whisper_f16_probe": run_whisper_f16_probe, "t5_seq2seq_probe": run_t5_seq2seq_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "pplx_decider": run_pplx_decider, "pplx_decider_tiny": run_pplx_decider_tiny, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "dense_layerwise": run_dense_layerwise, "pixtral_fused_layerwise": run_pixtral_fused_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "seedx": run_seedx, "madlad_layerwise": run_madlad_layerwise, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_qwen_generate": run_sa2va_qwen_generate, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
+CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "clip_text_probe": run_clip_text_probe, "sd_vae_probe": run_sd_vae_probe, "gemma3n_audio_probe": run_gemma3n_audio_probe, "sd_unet_probe": run_sd_unet_probe, "z_image_release_probe": run_z_image_release_probe, "wan_release_probe": run_wan_release_probe, "sa2va_llava_probe": run_sa2va_llava_probe, "whisper_f16_probe": run_whisper_f16_probe, "t5_seq2seq_probe": run_t5_seq2seq_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "pplx_decider": run_pplx_decider, "pplx_decider_tiny": run_pplx_decider_tiny, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "dense_layerwise": run_dense_layerwise, "pixtral_fused_layerwise": run_pixtral_fused_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "seedx": run_seedx, "hymt": run_hymt, "hymt_beam": run_hymt_beam, "hymt_tokenizer": run_hymt_tokenizer, "madlad_layerwise": run_madlad_layerwise, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_qwen_generate": run_sa2va_qwen_generate, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,

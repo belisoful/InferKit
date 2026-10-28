@@ -37,7 +37,10 @@ factory is the public entry, so a new type needs no header change.
   - `"llama3"`, Qwen2's pattern with digits in runs of at most three, which Llama 3, Mistral's Tekken
     (Mistral-Small 3, Pixtral, FLUX.2's text encoder), and Granite 4.0 ship;
   - `"nemotron"`, o200k's case-pattern words without the contraction, and single digits;
-  - `"smollm"`, GPT-2's pattern after each digit is isolated, in two stages.
+  - `"smollm"`, GPT-2's pattern after each digit is isolated, in two stages;
+  - `"hunyuan"`, HY-MT 1.8B's three Splits in turn: digits in runs of at most three, then runs of CJK
+    ideographs and kana, then a word pattern that does not cover every character, so each stage keeps
+    the text between its matches as pieces of their own (a digit run is one pretoken).
   The choice
   is load-bearing: a merge cannot cross a pretoken boundary, so a Qwen vocabulary encoded
   under the GPT-2 pattern produces different, valid-looking ids for the same text ("-pop" is one

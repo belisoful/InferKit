@@ -222,6 +222,7 @@ The judgment is a shared core and one judge per family:
 | `marian` | `…Translation.swift` | OPUS-MT | `marian` |
 | `m2m100` | `…Translation.swift` | M2M-100 and SMaLL-100 | `m2m_100` |
 | `nllb` | `…Translation.swift` | NLLB-200 | `m2m_100` |
+| `hymt` | `…Translation.swift` | HY-MT1.5 and Hy-MT2, read through Hy-MT2's entry | `hunyuan_v1_dense`, with an HY-MT chat template's markers among the tokenizer's added tokens |
 | `graniteH` | `…Hybrid.swift` | Granite 4.0-H | `granitemoehybrid` |
 | `nemotronH` | `…Hybrid.swift` | Nemotron-H | `nemotron_h` |
 | `pplxDecider` | `…Decision.swift` | pplx-decider v1.2 | `qwen3_5`, architecture `Qwen3_5Model` with `decision_config.json`, `joint_config.json`, and `readout.safetensors` |
@@ -240,7 +241,7 @@ The loaders below read one release, or a model type no judge can tell apart, and
 `testEveryStoredReleaseIsReadByItsOwnFamilysJudgment` judges each shipped release whose directory the
 validation store holds with safetensors weights against its own entry: the Qwen3 sizes, gpt-oss,
 Wav2Vec2, HuBERT, W2V-BERT, both TimesFM 2.5 layouts, Gemma 3, 3n, and 4, Qwen3-VL, SmolVLM2, SMaLL-100,
-TrOCR, Granite 4.0-H, Nemotron Nano 2, and pplx-decider Flash and 27B. Each family's hermetic judgments are in
+TrOCR, Granite 4.0-H, Nemotron Nano 2, pplx-decider Flash and 27B, and the four HY-MT releases. Each family's hermetic judgments are in
 `NFKMLXRepositoryMatching{Audio,Forecasting,Gemma,Vision,Translation,Hybrid,Decision}Tests`.
 
 ### The language decoders

@@ -20,7 +20,7 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
 - The decode is tuned per request through `NFKMLXTranslationParameterKey`: `beamCount`
   (`NFKMLXParameterBeamCount`), `lengthPenalty`, and `splitsSentences`. The defaults are each release's
   own generation config (Marian 4 beams with `renormalize_logits`, M2M-100 5 beams with early stopping,
-  MADLAD, NLLB, Seed-X, and TranslateGemma greedy). `NFKParameterMaxTokens` caps the output.
+  MADLAD, NLLB, Seed-X, TranslateGemma, and HY-MT greedy). `NFKParameterMaxTokens` caps the output.
 - Input is translated paragraph by paragraph (split on line breaks, separators kept), or sentence by
   sentence under `splitsSentences` (`NLTokenizer`). Off by default so the parity path is one sequence.
 - `NFKMLXTranslationProvider` registers ahead of the core's default chain for `NFKCapabilityTranslation`
@@ -244,6 +244,61 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   translation token-exact ("Der schnelle braune Fuchs springt über den faulen Hund."), and the loss
   0.84905034 against 0.8545502.
 
+- `NFKMLXHYMT` (`@objc`) / `NFKMLXHYMTTranslator` — HY-MT (Tencent; HY-MT1.5 under the Tencent HY Community
+  License, which does not cover the European Union, the United Kingdom, or South Korea, and Hy-MT2 under
+  Apache-2.0; 1.8B and 7B each, `NFKMLXHYMTVariant`, the generation `NFKMLXHYMTRelease`):
+  `HunYuanDenseV1ForCausalLM` decoders (`hunyuan_v1_dense`; the 1.8B 32 layers at 2048 with 4 key-value heads
+  and a 120,818-piece vocabulary, the 7B 32 layers at 4096 with 8 key-value heads and 128,167 pieces, both
+  with tied embeddings) trained to translate among 38 languages. The two generations share their geometry,
+  tokenizers, and chat templates byte for byte and differ in the instruction their cards prompt with. It
+  loads through the language family, which reads Hunyuan's per-head query and key norms after the rotary
+  embedding and its `alpha`-raised rotary base (`mlx-models-language.md`), and generates greedily, where the
+  release's generation config samples (temperature 0.7, top-k 20, top-p 0.8, repetition penalty 1.05);
+  `beamCount` above 1 runs `NFKMLXLanguageNet.beamSearch(prompt:decoding:)`. The prompt is the card's default
+  instruction, which names the target alone: the Chinese one with the target's Chinese name when either
+  side is Chinese (`zh`, `zh-Hant`, `yue`), the English one with its English name otherwise, so an undetected
+  source takes the English instruction. HY-MT1.5's template puts one line break before the text and Hy-MT2's
+  two. The instruction goes inside the release's chat template, rendered in Swift: the 1.8B form
+  `<｜hy_begin▁of▁sentence｜><｜hy_User｜>…<｜hy_Assistant｜>` and the 7B form `<|startoftext|>…<|extra_0|>`.
+  HY-MT1.5's card renders the 1.8B prompt with `add_generation_prompt=False`, which closes the user turn
+  with `<｜hy_place▁holder▁no▁8｜>`; the template's fine-tuning layout opens the assistant turn instead, so
+  the translator does too (`opensAssistantTurn`), and the two forms translate the probe alike. Decoding
+  stops at the end tokens `generation_config.json` names (the 7B names two). A BCP-47 tag resolves by its
+  primary subtag, Chinese by its script (`zh-TW` → `zh-Hant`), and `fil` reads as `tl`. The 1.8B tokenizer
+  splits in three stages, digits in runs of at most three, then CJK and kana runs, then a word pattern
+  (the core's `hunyuan` pre-tokenization); the 7B's is Qwen2's split with `ignore_merges`. Registered as
+  `hy-mt1.5` and `hy-mt2`, loaded at the release's bfloat16 (4.1 GB and 16.1 GB); a `.float32` 7B is 32 GB
+  and streams. It takes the language family's residencies, the precision ladder, and runtime weight
+  quantization; the translation backend reads no cache parameter, and the 1.8B cannot draft for the 7B,
+  whose vocabulary differs. Every figure below is English to German against transformers 4.57.6 unless
+  noted, with the prompt ids exact on the five probe sentences and the greedy translation token-exact.
+  HY-MT1.5-1.8B at float32: logit cosine 0.99999994 with argmax 24/24, worst last-position layer state
+  0.9999997 at layer 3, and the fine-tuning loss 0.073117785 against 0.07311491 ("Der schnelle braune Fuchs
+  springt über den trägen Hund."). Chinese to English at float32, the Chinese instruction and the CJK
+  split: 0.99999964 with argmax 29/29, worst layer 0.9999996 at layer 24, loss 0.86784077 against
+  0.8678408 ("The agile brown fox jumped over the lazy dog."). The closed user turn at float32: argmax
+  24/24, worst layer 0.99999964 at layer 4, loss 0.07896699 against 0.07896289, the same translation.
+  At bfloat16 against bfloat16 (the reference's default SDPA attention): HY-MT1.5-1.8B logit cosine
+  0.9993807 with argmax 23/24, worst layer 0.9998556 at layer 18, loss 0.07741504 against 0.07265944;
+  Hy-MT2-1.8B 0.9993057 with argmax 33/34, worst layer 0.99989164 at layer 19, loss 0.016963959 against
+  0.015993766 ("Der schnelle braune Fuchs springt über den faulen Hund."); HY-MT1.5-7B 0.99981064 with
+  argmax 23/23, worst layer 0.9999002 at layer 31, loss 0.310143 against 0.31012538 ("Die schnelle braune
+  Füchsin springt über den faulen Hund."); Hy-MT2-7B argmax 33/33, worst layer 0.999898 at layer 31, loss
+  0.0030132532 against 0.0028200727. A bfloat16 stream against another diverges past its first flipped
+  element: the reference's eager and SDPA runs sit 2.9e-4 apart in `1 - cosine` at the logits, more than
+  either sits from float32 (1.8e-4), so the bfloat16 rounding is held by `NFKMLXBFloat16ParityTests`
+  against eager attention instead (`model-parity.md`, "Half precision against the half-precision
+  reference"): every block alone at most 0.024 of the accumulated floor and 0.142 of its own block floor, the logits 1.07 to 1.34 times the reference's
+  own distance from float32, and each piece of layers 0, 16, and 31 of the 1.8B, the rotary embedding and
+  the norms after it included, within 2.2e-9 of the reference on its own input. HY-MT1.5-7B at float32
+  against a reference that reads each layer as its forward reaches it: logit cosine 1.0 with argmax 23/23,
+  worst layer 0.9999996 at layer 25, loss 0.30692232 against 0.30692142; 16 of 32 layers streamed, 146.6 GB
+  read at 3.84 GB/s, an MLX peak of 17.5 GB. Hy-MT2-1.8B's four-beam search against transformers'
+  `generate(num_beams=4)` at float32: the best hypothesis token-exact and text-exact on the five probe
+  sentences and on the search cut at six tokens, every score within 5.3e-5 of the reference's. Both
+  tokenizers encode 14 cases as the tokenizers library does, among them CJK and kana runs beside Latin
+  words, digit runs, full-width forms, and punctuation leading Latin and non-Latin words.
+
 ## Customization
 
 All three ship LoRA on the decoder's query and value projections (`decoder.layers.N.*.q_proj` /
@@ -265,7 +320,10 @@ through `NFKMLXSeedX.fineTune`, the language family's `NFKMLXLanguage.fineTune` 
 target's, its pieces and `</s>`, as the release's `RM_demo.py` concatenates a pair, and only the target
 is scored, which is the reference's `labels=-100` over the prompt. The merged decoder reloads through
 `NFKMLXLanguage.network(weightsURL:configuration:)`, and `translator(decoder:directoryURL:)` puts the
-release's tokenizer back.
+release's tokenizer back. HY-MT adapts the same way through `NFKMLXHYMT.fineTune`: the example is the
+prompt's ids, the assistant turn opened, and the target's pieces closed by the release's first end token,
+as the chat template closes an assistant turn; `translator(decoder:directoryURL:release:)` puts the
+release's tokenizer and template back.
 
 ## Oracle and validation
 
@@ -288,6 +346,24 @@ default); `SEEDX_LAYERWISE=1` builds `MistralForCausalLM` on the meta device and
 as the forward reaches it (`_layerwise_release`, which reads a single-file release too), for float32.
 Keys `IK_VAL_SEEDX_PPO` / `IK_PARITY_SEEDX_PPO` / `IK_PARITY_SEEDX_PPO_F32` and `IK_VAL_SEEDX_INSTRUCT` /
 `IK_PARITY_SEEDX_INSTRUCT`.
+
+`run_reference.py hymt --checkpoint <release directory>` (llmvenv) records the HY-MT seams as `seedx`
+records Seed-X's, the prompt rendered through the release's own `apply_chat_template` from an instruction
+the oracle writes from the card, and the greedy decode run with the release's sampling and repetition
+penalty off (transformers applies `repetition_penalty` under `do_sample=False`). `HYMT_RELEASE` picks the
+generation's instruction (`1.5` by default, or `2`), `HYMT_ASSISTANT=0` closes the 1.8B user turn without
+opening the assistant turn, `HYMT_DTYPE` picks the precision (bfloat16 by default), and `HYMT_LAYERWISE=1`
+reads each layer as the forward reaches it, the head taking the embedding it ties to. `hymt_beam` records
+the four-beam search through `_decoder_beam_record`, which now passes `generate` overrides through, here
+`repetition_penalty=1.0`, and `hymt_tokenizer` records the tokenizers library's ids for
+`HYMT_TOKENIZER_CASES`. Keys `IK_VAL_HYMT15_1_8B`, `IK_VAL_HYMT15_7B`, `IK_VAL_HYMT2_1_8B`, `IK_VAL_HYMT2_7B`;
+records `IK_PARITY_HYMT15_1_8B` (and `_F32`, `_ZH`, `_CLOSED`), `IK_PARITY_HYMT2_1_8B` (and `_BEAM`),
+`IK_PARITY_HYMT15_7B` (and `_F32`), `IK_PARITY_HYMT2_7B`, and `IK_PARITY_HYMT_TOKENIZER_1_8B` / `_7B`. The
+bfloat16 harness reads `hf_layer_probe` records under `records/` (`hymt15_1_8b`, `hymt2_1_8b`, and
+`hymt15_7b`, `_bf16_probe` and `_f32_probe`), made with the release's translation prompt in
+`IK_PROBE_PROMPT_FILE`. transformers 4.57.6 warns of "an incorrect regex pattern" when it loads Hy-MT2's
+tokenizer: the warning follows the `transformers_version` a release's `config.json` names (4.57.6 lies in
+the window it checks) and leaves the tokenizer unchanged, and the two generations' ids are identical.
 
 `run_reference.py seedx_beam` (llmvenv, `SEEDX_DTYPE`, bfloat16 by default) and `translategemma_beam`
 (gemma interpreter, `TRANSLATEGEMMA_DTYPE`, float32 by default) record the beam search through
@@ -396,7 +472,9 @@ not block a port. Each entry below names the port cost, not a bar.
   medium port; the whole model is a large one.
 - TowerInstruct 7B / 13B (CC-BY-NC-4.0, Llama-2 decoders) and Tower+ 9B (Gemma 2 decoder): the
   decoder is shipped, so each is a chat template over `NFKMLXLanguageNet`, the TranslateGemma pattern.
-- Hunyuan-MT 7B (Tencent Hunyuan license, Hunyuan dense decoder): the same template-over-decoder
-  pattern once the decoder's reader exists.
+- Hunyuan-MT 7B and Hunyuan-MT-Chimera 7B (Tencent, September 2025): `hunyuan_v1_dense` with HY-MT 7B's
+  tokenizer file, so the `hymt` judge reads them through Hy-MT2's entry. Neither is measured, and
+  Chimera's own prompt is not rendered.
+- Hy-MT2-30B-A3B (Apache-2.0, `hy_v3`, a mixture of experts, 60 GB): a new architecture.
 - TranslateGemma is gated: a machine whose token has not accepted the Gemma terms on the model page
   gets a `403` on `config.json`, which is what the download factory surfaces.

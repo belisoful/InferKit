@@ -46,13 +46,25 @@ static NSString * const kNFKNemotronBPEPattern =
 	@"|[^\\r\\n\\p{L}\\p{N}]?[\\p{Lu}\\p{Lt}\\p{Lm}\\p{Lo}\\p{M}]+[\\p{Ll}\\p{Lm}\\p{Lo}\\p{M}]*"
 	@"|\\p{N}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n/]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
 
+// Hunyuan pre-tokenization (HY-MT 1.8B), from the released tokenizer.json: three Splits in turn, each
+// keeping what lies between its matches as pieces of their own. Digits split first in runs of at most
+// THREE, then runs of CJK ideographs and kana, then this pattern: one ASCII punctuation character
+// leading a Latin word, a letter-and-mark run optionally led by one character that is no letter,
+// punctuation, symbol, or line break, a punctuation-and-symbol run absorbing trailing newlines, and
+// whitespace runs ending in a newline held together.
+static NSString * const kNFKHunyuanDigitPattern = @"\\p{N}{1,3}";
+static NSString * const kNFKHunyuanCJKPattern = @"[\\u4e00-\\u9fa5\\u3040-\\u309f\\u30a0-\\u30ff]+";
+static NSString * const kNFKHunyuanBPEPattern =
+	@"[!\"#$%&'()*+,\\-./:;<=>?@\\[\\\\\\]^_`{|}~][A-Za-z]+|[^\\r\\n\\p{L}\\p{P}\\p{S}]?[\\p{L}\\p{M}]+"
+	@"| ?[\\p{P}\\p{S}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+";
+
 @implementation NFKByteLevelBPETokenizer
 {
 	NSDictionary<NSString *, NSNumber *> *_encoder;			// token string -> id
 	NSDictionary<NSNumber *, NSString *> *_decoder;			// id -> token string
 	NSDictionary<NSString *, NSNumber *> *_ranks;			// "first\nsecond" -> merge rank
 	NSDictionary<NSString *, NSNumber *> *_specialTokens;	// literal -> id
-	NSString *_pretokenization;								// "gpt2" (nil), "qwen2", "qwen35", "o200k", "llama3", "nemotron", or "smollm"
+	NSString *_pretokenization;								// "gpt2" (nil), "qwen2", "qwen35", "o200k", "llama3", "nemotron", "smollm", or "hunyuan"
 	BOOL _composesText;										// NFC before splitting
 	BOOL _ignoresMerges;									// a pretoken in the vocabulary is one token
 	NSRegularExpression *_pattern;
@@ -109,7 +121,8 @@ static NSString * const kNFKNemotronBPEPattern =
 	if (self == nil) {
 		return nil;
 	}
-	NSArray<NSString *> *pretokenizations = @[@"gpt2", @"qwen2", @"qwen35", @"o200k", @"llama3", @"nemotron", @"smollm"];
+	NSArray<NSString *> *pretokenizations = @[@"gpt2", @"qwen2", @"qwen35", @"o200k", @"llama3", @"nemotron", @"smollm",
+											   @"hunyuan"];
 	if (pretokenization != nil && ![pretokenizations containsObject:pretokenization]) {
 		[NFKTokenizer setError:outError code:kNFKError_InferenceUnsupported
 						reason:[NSString stringWithFormat:@"unknown pretokenization \"%@\"", pretokenization]];
@@ -238,6 +251,9 @@ static NSString * const kNFKNemotronBPEPattern =
 	if ([_pretokenization isEqualToString:@"nemotron"]) {
 		return kNFKNemotronBPEPattern;
 	}
+	if ([_pretokenization isEqualToString:@"hunyuan"]) {
+		return kNFKHunyuanBPEPattern;
+	}
 	return kNFKBPEPattern;
 }
 
@@ -285,7 +301,53 @@ static NSString * const kNFKNemotronBPEPattern =
 		[self encodeIsolatingDigits:text into:ids];
 		return;
 	}
+	if ([_pretokenization isEqualToString:@"hunyuan"]) {
+		[self encodeHunyuanSegment:text into:ids];
+		return;
+	}
 	[self encodeRun:text into:ids];
+}
+
+// Hunyuan's three Splits, each applied to every piece the one before it left. A piece no pattern
+// matches, such as a digit run, is a pretoken of its own.
+- (void)encodeHunyuanSegment:(NSString *)text into:(NSMutableArray<NSNumber *> *)ids
+{
+	static NSRegularExpression *digits;
+	static NSRegularExpression *ideographs;
+	static dispatch_once_t once;
+	dispatch_once(&once, ^{
+		digits = [NSRegularExpression regularExpressionWithPattern:kNFKHunyuanDigitPattern options:0 error:NULL];
+		ideographs = [NSRegularExpression regularExpressionWithPattern:kNFKHunyuanCJKPattern options:0 error:NULL];
+	});
+	for (NSString *numbered in [self piecesOfText:text isolatingMatchesOf:digits]) {
+		for (NSString *scripted in [self piecesOfText:numbered isolatingMatchesOf:ideographs]) {
+			for (NSString *piece in [self piecesOfText:scripted isolatingMatchesOf:_pattern]) {
+				[self encodePretoken:piece into:ids];
+			}
+		}
+	}
+}
+
+// The pieces an Isolated Split leaves: each match, and each non-empty stretch between matches.
+- (NSArray<NSString *> *)piecesOfText:(NSString *)text isolatingMatchesOf:(NSRegularExpression *)pattern
+{
+	NSMutableArray<NSString *> *pieces = [NSMutableArray array];
+	__block NSUInteger cursor = 0;
+	[pattern enumerateMatchesInString:text options:0 range:NSMakeRange(0, text.length)
+						   usingBlock:^(NSTextCheckingResult *match, NSMatchingFlags flags, BOOL *stop) {
+		if (match.range.length == 0) {
+			return;
+		}
+		if (match.range.location > cursor) {
+			[pieces addObject:[text substringWithRange:NSMakeRange(cursor, match.range.location - cursor)]];
+		}
+		[pieces addObject:[text substringWithRange:match.range]];
+		cursor = NSMaxRange(match.range);
+	}];
+	if (cursor < text.length) {
+		[pieces addObject:[text substringFromIndex:cursor]];
+	}
+	return pieces;
 }
 
 // SmolLM's pre-tokenization isolates each digit, then splits each run between digits by the GPT-2
@@ -317,17 +379,22 @@ static NSString * const kNFKNemotronBPEPattern =
 	NSArray<NSTextCheckingResult *> *matches =
 		[_pattern matchesInString:text options:0 range:NSMakeRange(0, text.length)];
 	for (NSTextCheckingResult *match in matches) {
-		NSString *piece = [self byteStringForPiece:[text substringWithRange:match.range]];
-		NSNumber *whole = _ignoresMerges ? _encoder[piece] : nil;
-		if (whole != nil) {
-			[ids addObject:whole];
-			continue;
-		}
-		for (NSString *token in [self mergedTokensForWord:piece]) {
-			NSNumber *tokenId = _encoder[token];
-			if (tokenId != nil) {
-				[ids addObject:tokenId];
-			}
+		[self encodePretoken:[text substringWithRange:match.range] into:ids];
+	}
+}
+
+- (void)encodePretoken:(NSString *)pretoken into:(NSMutableArray<NSNumber *> *)ids
+{
+	NSString *piece = [self byteStringForPiece:pretoken];
+	NSNumber *whole = _ignoresMerges ? _encoder[piece] : nil;
+	if (whole != nil) {
+		[ids addObject:whole];
+		return;
+	}
+	for (NSString *token in [self mergedTokensForWord:piece]) {
+		NSNumber *tokenId = _encoder[token];
+		if (tokenId != nil) {
+			[ids addObject:tokenId];
 		}
 	}
 }

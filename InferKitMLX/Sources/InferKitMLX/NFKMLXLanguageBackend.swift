@@ -1285,6 +1285,10 @@ public final class NFKMLXLanguage: NSObject {
         if modelType == "mistral", let window = (json["sliding_window"] as? NSNumber)?.intValue, window > 0 {
             configuration.slidingWindows = Array(repeating: window, count: configuration.layerCount)
         }
+        if modelType == NFKMLXHunyuanDense.modelType {
+            try NFKMLXHunyuanDense.read(json, into: &configuration)
+            return configuration
+        }
         // A release that extended its window says so here. An unimplemented kind throws rather than
         // loading under the wrong rotary, which would run and be wrong.
         configuration.ropeScaling = try NFKMLXRoPEScaling.read(
@@ -2143,6 +2147,20 @@ public final class NFKMLXLanguage: NSObject {
         #"[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]*[\p{Ll}\p{Lm}\p{Lo}\p{M}]+|[^\r\n\p{L}\p{N}]?[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{M}]+[\p{Ll}\p{Lm}\p{Lo}\p{M}]*|\p{N}| ?[^\s\p{L}\p{N}]+[\r\n/]*|\s*[\r\n]+|\s+(?!\S)|\s+"#: "nemotron",
     ]
 
+    /// HY-MT 1.8B's three `Split` patterns, applied in turn, as its `tokenizer.json` states them.
+    static let hunyuanPretokenizationPatterns: [String?] = [
+        #"\p{N}{1,3}"#,
+        "[\u{4e00}-\u{9fa5}\u{3040}-\u{309f}\u{30a0}-\u{30ff}]+",
+        ##"[!"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~][A-Za-z]+|[^\##r\##n\p{L}\p{P}\p{S}]?[\p{L}\p{M}]+| ?[\p{P}\p{S}]+[\##r\##n]*|\s*[\##r\##n]+|\s+(?!\S)|\s+"##,
+    ]
+
+    /// The regex of a `Split` that keeps its matches as pieces (Isolated, not inverted), or nil.
+    private static func isolatingPattern(_ step: [String: Any]) -> String? {
+        guard step["type"] as? String == "Split", step["behavior"] as? String == "Isolated",
+              !((step["invert"] as? NSNumber)?.boolValue ?? false) else { return nil }
+        return (step["pattern"] as? [String: Any])?["Regex"] as? String
+    }
+
     /// The scheme a release's parsed `tokenizer.json` and `tokenizer_config.json` describe, read strictly:
     /// every field that changes the ids must hold a value this package reproduces.
     ///
@@ -2217,6 +2235,10 @@ public final class NFKMLXLanguage: NSObject {
         if steps.count == 2, steps[0]["type"] as? String == "Digits",
            (steps[0]["individual_digits"] as? NSNumber)?.boolValue == true, byteLevel(steps[1], splits: true) {
             return "smollm"
+        }
+        if steps.count == 4, byteLevel(steps[3], splits: false),
+           steps.prefix(3).map(isolatingPattern) == hunyuanPretokenizationPatterns {
+            return "hunyuan"
         }
         guard steps.count == 2, steps[0]["type"] as? String == "Split", byteLevel(steps[1], splits: false) else {
             let types = steps.map { $0["type"] as? String ?? "?" }.joined(separator: ", ")

@@ -50,6 +50,10 @@ public struct NFKMLXLanguageConfiguration: Sendable {
     /// Whether queries and keys are RMS-normalized per head before the rotary embedding, which Qwen3
     /// does and Llama does not. A checkpoint carries `q_norm`/`k_norm` weights exactly when it applies.
     public var normalizesQueryAndKey: Bool
+    /// Whether queries and keys are RMS-normalized per head AFTER the rotary embedding, which Hunyuan's
+    /// dense decoder does under the checkpoint names `query_layernorm` and `key_layernorm`. Introduced in
+    /// InferKit 0.4.0.
+    public var normalizesRotatedQueryAndKey: Bool = false
     /// Whether the attention projections carry biases (Qwen2 does; Qwen3 does not).
     public var attentionBias: Bool
     /// The rotary scaling the release declares, or `nil` for none. Read from the checkpoint's own
@@ -889,6 +893,8 @@ final class NFKLMAttention: Module {
     @ModuleInfo(key: "o_proj") var outputProjection: Linear
     @ModuleInfo(key: "q_norm") var queryNorm: RMSNorm?
     @ModuleInfo(key: "k_norm") var keyNorm: RMSNorm?
+    @ModuleInfo(key: "query_layernorm") var rotatedQueryNorm: RMSNorm?
+    @ModuleInfo(key: "key_layernorm") var rotatedKeyNorm: RMSNorm?
     /// One learned sink logit per head (gpt-oss), or nil.
     @ParameterInfo(key: "sinks") var sinks: MLXArray?
 
@@ -922,6 +928,10 @@ final class NFKLMAttention: Module {
         _queryNorm.wrappedValue = c.normalizesQueryAndKey
             ? RMSNorm(dimensions: c.headDimensions, eps: c.rmsEpsilon) : nil
         _keyNorm.wrappedValue = c.normalizesQueryAndKey
+            ? RMSNorm(dimensions: c.headDimensions, eps: c.rmsEpsilon) : nil
+        _rotatedQueryNorm.wrappedValue = c.normalizesRotatedQueryAndKey
+            ? RMSNorm(dimensions: c.headDimensions, eps: c.rmsEpsilon) : nil
+        _rotatedKeyNorm.wrappedValue = c.normalizesRotatedQueryAndKey
             ? RMSNorm(dimensions: c.headDimensions, eps: c.rmsEpsilon) : nil
         super.init()
     }
@@ -969,6 +979,9 @@ final class NFKLMAttention: Module {
             queries = rope(queries, offset: offset)
             keys = rope(keys, offset: offset)
         }
+        // Hunyuan normalizes each head after the rotary embedding, so the cache holds normalized keys.
+        if let rotatedQueryNorm { queries = rotatedQueryNorm(queries) }
+        if let rotatedKeyNorm { keys = rotatedKeyNorm(keys) }
 
         if let cache {
             (keys, values) = cache.update(layer: layer, keys: keys, values: values)

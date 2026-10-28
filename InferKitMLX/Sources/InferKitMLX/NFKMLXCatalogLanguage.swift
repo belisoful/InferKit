@@ -37,6 +37,7 @@ enum NFKMLXCatalogLanguage {
             + [pixtralEntry, phi4MMEntry]
             + [opusMTEntry] + NFKMLXM2M100Variant.allCases.map(m2m100Entry) + NFKMLXNLLBVariant.allCases.map(nllbEntry)
             + madladReleases.map(madladEntry) + [translateGemmaEntry, seedXEntry]
+            + [NFKMLXHYMTRelease.hyMT15, .hyMT2].map(hymtEntry)
             + [qwen3EmbeddingEntry, embeddingGemmaEntry, qwen3VLEmbeddingEntry]
             + [modernBERTRerankerEntry, qwen3VLRerankerEntry]
             + NFKMLXLayaVariant.allCases.map(layaEntry) + NFKMLXOpenJevVariant.allCases.map(openJevEntry)
@@ -433,6 +434,10 @@ extension NFKMLXCatalogLanguage {
             return .mit(url: modelCardURL(repository))
         case NFKMLXSeedXVariant.ppo.repository, NFKMLXSeedXVariant.instruct.repository:
             return .license(nil, name: "OpenMDW License Agreement 1.0", url: repositoryLicenseURL(repository))
+        case NFKMLXHYMTVariant.hyMT15_1_8B.repository, NFKMLXHYMTVariant.hyMT15_7B.repository:
+            return .license(nil, name: "Tencent HY Community License Agreement",
+                            url: "https://huggingface.co/\(repository)/blob/main/License.txt", restrictsCommercialUse: true,
+                            note: "The license does not cover the European Union, the United Kingdom, or South Korea. A licensee whose products passed 100 million monthly active users on the release date requests a license from Tencent.")
         default:
             break
         }
@@ -1002,6 +1007,29 @@ extension NFKMLXCatalogLanguage {
             ],
             license: license(NFKMLXSeedXVariant.ppo.repository), residencies: streamedResidencies)
         entry.outputTokenLimit = 32_768     // the Mistral configuration's max_position_embeddings
+        return entry
+    }
+
+    /// One HY-MT generation's translator, its 1.8B release the default and its 7B the other variant.
+    fileprivate static func hymtEntry(_ release: NFKMLXHYMTRelease) -> NFKMLXCatalogEntry {
+        let name = release.modelName
+        let files = releaseFiles(required: NFKMLXHYMT.requiredFiles, optional: NFKMLXHYMT.optionalFiles,
+                                 weights: NFKMLXHYMT.weightFiles)
+        let (small, large): (NFKMLXHYMTVariant, NFKMLXHYMTVariant) = release == .hyMT15
+            ? (.hyMT15_1_8B, .hyMT15_7B) : (.hyMT2_1_8B, .hyMT2_7B)
+        let generation = release == .hyMT15 ? "HY-MT1.5" : "Hy-MT2"
+        var entry = NFKMLXCatalogEntry(
+            identifier: name, displayName: generation, family: "hy-mt",
+            summary: "\(generation), dense Hunyuan decoders trained to translate among 38 languages.",
+            registryName: name, tasks: [NFKModelTaskTranslation],
+            inputs: translationInputs, outputs: translationOutputs, parameters: translationOptions(beams: 1),
+            variants: [
+                familyVariant(name, small.repository, displayName: "\(generation) 1.8B", isDefault: true, files: files),
+                familyVariant(name, large.repository, displayName: "\(generation) 7B", files: files),
+            ],
+            license: license(small.repository), residencies: streamedResidencies,
+            modelTypes: [NFKMLXHunyuanDense.modelType])
+        entry.outputTokenLimit = 262_144    // the Hunyuan configuration's max_position_embeddings
         return entry
     }
 

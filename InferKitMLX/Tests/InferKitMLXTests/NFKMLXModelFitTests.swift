@@ -57,12 +57,19 @@ final class NFKMLXModelFitTests: XCTestCase {
         grouped.keyValueHeadCount = 2
         geometries.append(grouped)
 
+        // Hunyuan's per-head norms after the rotary embedding.
+        var rotatedNorms = NFKMLXLanguageConfiguration.tiny
+        rotatedNorms.normalizesQueryAndKey = false
+        rotatedNorms.normalizesRotatedQueryAndKey = true
+        geometries.append(rotatedNorms)
+
         for geometry in geometries {
             let net = NFKMLXLanguage.makeNet(geometry)
             let built = net.parameters().flattened().reduce(0) { $0 + $1.1.size }
             let counted = NFKMLXModelSizing.parameterCount(of: geometry)
             XCTAssertEqual(counted, built,
                            "tied=\(geometry.tiesWordEmbeddings) qkNorm=\(geometry.normalizesQueryAndKey) "
+                           + "rotatedNorm=\(geometry.normalizesRotatedQueryAndKey) "
                            + "bias=\(geometry.attentionBias) heads=\(geometry.headCount)/\(geometry.keyValueHeadCount)")
         }
     }
