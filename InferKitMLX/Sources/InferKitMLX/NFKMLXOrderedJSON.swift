@@ -19,6 +19,12 @@ enum NFKJinjaOrderedJSON {
         return reader.atEnd ? value : nil
     }
 
+    /// The first whole JSON value at the start of `text`, whatever follows it.
+    static func parseLeading(_ text: String) -> Any? {
+        var reader = Reader(Array(text.unicodeScalars))
+        return reader.value()
+    }
+
     private struct Reader {
         let scalars: [Unicode.Scalar]
         var i = 0

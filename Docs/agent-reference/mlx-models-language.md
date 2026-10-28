@@ -1547,6 +1547,14 @@ attention and feed-forward.
   which missed the real template; `testEveryReleaseTemplateIsReadAsItsFamilysSyntax` now runs the
   detection over every store template.
 
+  A call whose name reads is a call, whatever tool it names. A JSON call that is not one whole value
+  (a 0.6B Qwen3 dropped its closing brace after a nested `lines` array) is read from its `name`, when
+  the name precedes the arguments, and the first whole value after its `arguments` key
+  (`NFKJinjaOrderedJSON.parseLeading`). Arguments that do not read as an object leave `arguments`
+  empty and keep the model's text in `Call.unreadArguments`, which `outputs` reports as
+  `argumentsJSON`, the core's shape for a provider's unreadable arguments. The turn renders back with
+  empty arguments. A span with no name stays in the text.
+
   The calls are read after the reasoning split, from the answer. The reply's turn comes back under
   `NFKOutputAssistantMessage`, with record format `mlx-chat-template` and source the backend's
   identifier.

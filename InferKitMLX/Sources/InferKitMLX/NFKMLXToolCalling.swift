@@ -104,14 +104,22 @@ public final class NFKMLXToolCallFormat: NSObject, @unchecked Sendable {
     // MARK: Reading calls
 
     /// One call read from a reply: the tool's name and its arguments, an `NFKJinjaOrderedObject` in
-    /// the order the model wrote them.
+    /// the order the model wrote them. A call whose arguments do not read has empty arguments and
+    /// keeps the model's text of them in `unreadArguments`.
     struct Call {
         let name: String
         let arguments: NFKJinjaOrderedObject
+        var unreadArguments: String? = nil
     }
 
     /// The reply's text with the calls taken out, and the calls. `tools` are the declarations the
     /// request offered, whose schemas type the values of a syntax that writes them as text.
+    ///
+    /// @discussion A call is read whatever tool it names; the caller answers a name it did not
+    /// declare. A call whose name reads and whose arguments do not is still a call, with its
+    /// arguments as written. A JSON call that is not one whole value, such as one missing its closing
+    /// brace, is read from its `name` and the first whole value after its `arguments` key. A span
+    /// with no name to read stays in the text.
     func read(_ reply: String, tools: [[String: Any]]) -> (content: String, calls: [Call]) {
         switch self {
         case .qwenXML: return readQwenXML(reply, tools: tools)
@@ -123,8 +131,9 @@ public final class NFKMLXToolCallFormat: NSObject, @unchecked Sendable {
         case .llama: return readLlama(reply)
         case .nemotron:
             return readSpans(reply, open: "<TOOLCALL>", close: "</TOOLCALL>") { body in
-                (NFKJinjaOrderedJSON.parse(body.trimmingCharacters(in: .whitespacesAndNewlines)) as? [Any])?
-                    .compactMap { call(fromJSON: $0) }.nilIfEmpty
+                let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+                return (NFKJinjaOrderedJSON.parse(trimmed) as? [Any])?.compactMap { call(fromJSON: $0) }.nilIfEmpty
+                    ?? call(fromUnreadJSON: trimmed).map { [$0] }
             }
         default: return readHermes(reply)
         }
@@ -141,6 +150,31 @@ public final class NFKMLXToolCallFormat: NSObject, @unchecked Sendable {
             return Call(name: name, arguments: parsed)
         }
         return Call(name: name, arguments: NFKJinjaOrderedObject(pairs: []))
+    }
+
+    /// The call in JSON text that is not one whole value: its `name`, written before its arguments,
+    /// and the first whole value after its `arguments` (or `parameters`) key. Arguments that do not
+    /// read as an object are kept as written. Nil when no name precedes the arguments.
+    private func call(fromUnreadJSON text: String) -> Call? {
+        guard let nameMatch = try? Regex(#""name"\s*:\s*("(?:[^"\\]|\\.)*")"#).firstMatch(in: text),
+              let literal = nameMatch.output[1].substring,
+              let name = NFKJinjaOrderedJSON.parse(String(literal)) as? String else { return nil }
+        guard let key = try? Regex(#""(?:arguments|parameters)"\s*:"#).firstMatch(in: text) else {
+            return Call(name: name, arguments: NFKJinjaOrderedObject(pairs: []))
+        }
+        guard nameMatch.range.lowerBound < key.range.lowerBound else { return nil }
+        let written = String(text[key.range.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        return Self.call(name, arguments: NFKJinjaOrderedJSON.parseLeading(written), written: written)
+    }
+
+    /// A call to `name` with `value` as its arguments: an object, or the JSON text of one. Any other
+    /// value leaves the arguments empty and keeps `written`.
+    private static func call(_ name: String, arguments value: Any?, written: String) -> Call {
+        if let arguments = value as? NFKJinjaOrderedObject { return Call(name: name, arguments: arguments) }
+        if let text = value as? String, let arguments = NFKJinjaOrderedJSON.parse(text) as? NFKJinjaOrderedObject {
+            return Call(name: name, arguments: arguments)
+        }
+        return Call(name: name, arguments: NFKJinjaOrderedObject(pairs: []), unreadArguments: written)
     }
 
     /// Each `open` … `close` span, the last one allowed to run to the end of a reply cut off at its
@@ -168,7 +202,8 @@ public final class NFKMLXToolCallFormat: NSObject, @unchecked Sendable {
 
     private func readHermes(_ reply: String) -> (content: String, calls: [Call]) {
         readSpans(reply, open: "<tool_call>", close: "</tool_call>") { body in
-            call(fromJSON: NFKJinjaOrderedJSON.parse(body.trimmingCharacters(in: .whitespacesAndNewlines))).map { [$0] }
+            let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (call(fromJSON: NFKJinjaOrderedJSON.parse(trimmed)) ?? call(fromUnreadJSON: trimmed)).map { [$0] }
         }
     }
 
@@ -249,7 +284,9 @@ public final class NFKMLXToolCallFormat: NSObject, @unchecked Sendable {
             guard body.hasPrefix("call:"), let brace = body.firstIndex(of: "{") else { return nil }
             let name = String(body[body.index(body.startIndex, offsetBy: 5)..<brace])
             var reader = NFKGemmaArgumentReader(String(body[brace...]))
-            guard let arguments = reader.object() else { return nil }
+            guard let arguments = reader.object() else {
+                return [Call(name: name, arguments: NFKJinjaOrderedObject(pairs: []), unreadArguments: String(body[brace...]))]
+            }
             return [Call(name: name, arguments: arguments)]
         }
     }
@@ -267,10 +304,8 @@ public final class NFKMLXToolCallFormat: NSObject, @unchecked Sendable {
             guard let message = afterAddress.range(of: "<|message|>") else { break }
             let body = afterAddress[message.upperBound...]
             let end = body.range(of: "<|call|>") ?? body.range(of: "<|end|>")
-            let argumentsText = String(end.map { body[..<$0.lowerBound] } ?? body)
-            let arguments = NFKJinjaOrderedJSON.parse(argumentsText.trimmingCharacters(in: .whitespacesAndNewlines))
-                as? NFKJinjaOrderedObject ?? NFKJinjaOrderedObject(pairs: [])
-            calls.append(Call(name: name, arguments: arguments))
+            let argumentsText = String(end.map { body[..<$0.lowerBound] } ?? body).trimmingCharacters(in: .whitespacesAndNewlines)
+            calls.append(Self.call(name, arguments: NFKJinjaOrderedJSON.parse(argumentsText), written: argumentsText))
             let spanStart = rest[..<address.lowerBound].range(of: "<|start|>", options: .backwards)?.lowerBound
                 ?? rest[..<address.lowerBound].range(of: "<|channel|>", options: .backwards)?.lowerBound
                 ?? address.lowerBound
@@ -296,9 +331,8 @@ public final class NFKMLXToolCallFormat: NSObject, @unchecked Sendable {
                 argumentsText = String(argumentsText[newline...])
                     .replacingOccurrences(of: "```json", with: "").replacingOccurrences(of: "```", with: "")
             }
-            let arguments = NFKJinjaOrderedJSON.parse(argumentsText.trimmingCharacters(in: .whitespacesAndNewlines))
-                as? NFKJinjaOrderedObject ?? NFKJinjaOrderedObject(pairs: [])
-            return [Call(name: name, arguments: arguments)]
+            let written = argumentsText.trimmingCharacters(in: .whitespacesAndNewlines)
+            return [Self.call(name, arguments: NFKJinjaOrderedJSON.parse(written), written: written)]
         }.calls
         guard !calls.isEmpty else { return (reply.trimmingCharacters(in: .whitespacesAndNewlines), []) }
         let firstMarker = ["<｜tool▁calls▁begin｜>", begin].compactMap { reply.range(of: $0)?.lowerBound }.min()!
@@ -312,11 +346,15 @@ public final class NFKMLXToolCallFormat: NSObject, @unchecked Sendable {
         for segment in reply[first.upperBound...].components(separatedBy: "[TOOL_CALLS]") {
             let trimmed = segment.trimmingCharacters(in: .whitespacesAndNewlines)
             if trimmed.hasPrefix("[") {
-                calls += (NFKJinjaOrderedJSON.parse(trimmed) as? [Any] ?? []).compactMap { call(fromJSON: $0) }
+                if let list = NFKJinjaOrderedJSON.parse(trimmed) as? [Any] {
+                    calls += list.compactMap { call(fromJSON: $0) }
+                } else if let call = call(fromUnreadJSON: trimmed) {
+                    calls.append(call)
+                }
             } else if let args = trimmed.range(of: "[ARGS]") {
                 let name = String(trimmed[..<args.lowerBound])
-                let arguments = NFKJinjaOrderedJSON.parse(String(trimmed[args.upperBound...])) as? NFKJinjaOrderedObject
-                calls.append(Call(name: name, arguments: arguments ?? NFKJinjaOrderedObject(pairs: [])))
+                let written = String(trimmed[args.upperBound...])
+                calls.append(Self.call(name, arguments: NFKJinjaOrderedJSON.parse(written), written: written))
             }
         }
         return (content, calls)
@@ -327,14 +365,14 @@ public final class NFKMLXToolCallFormat: NSObject, @unchecked Sendable {
         let listText = String(reply[start.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
         let parsed = NFKJinjaOrderedJSON.parse(listText)
         let entries = parsed as? [Any] ?? (parsed.map { [$0] } ?? [])
-        let calls = entries.compactMap { call(fromJSON: $0) }
+        let calls = parsed == nil ? call(fromUnreadJSON: listText).map { [$0] } ?? [] : entries.compactMap { call(fromJSON: $0) }
         guard !calls.isEmpty else { return (reply.trimmingCharacters(in: .whitespacesAndNewlines), []) }
         return (String(reply[..<start.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines), calls)
     }
 
     private func readLlama(_ reply: String) -> (content: String, calls: [Call]) {
         let body = reply.replacingOccurrences(of: "<|python_tag|>", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard body.hasPrefix("{"), let call = call(fromJSON: NFKJinjaOrderedJSON.parse(body)) else {
+        guard body.hasPrefix("{"), let call = call(fromJSON: NFKJinjaOrderedJSON.parse(body)) ?? call(fromUnreadJSON: body) else {
             return (reply.trimmingCharacters(in: .whitespacesAndNewlines), [])
         }
         return ("", [call])
@@ -610,7 +648,7 @@ enum NFKMLXToolCalling {
                     return ["id": identifier,
                             "name": call.name,
                             "arguments": foundation(call.arguments),
-                            "argumentsJSON": NFKJinjaJSON.encode(arguments)]
+                            "argumentsJSON": call.unreadArguments ?? NFKJinjaJSON.encode(arguments)]
                 }
             }
         }

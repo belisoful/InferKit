@@ -95,6 +95,44 @@ final class NFKMLXToolCallingTests: XCTestCase {
         XCTAssertEqual(content, reply)
     }
 
+    func testACallMissingItsClosingBraceIsReadFromItsNameAndArguments() {
+        let reply = "<tool_call>\n{\"name\": \"haiku-writer\", \"arguments\": {\"title\": \"Sea\", \"lines\": [{\"line\": \"Tides ripple.\"}]}\n</tool_call>"
+        let (content, calls) = NFKMLXToolCallFormat.hermes.read(reply, tools: weather)
+        XCTAssertEqual(content, "")
+        XCTAssertEqual(calls.map(\.name), ["haiku-writer"], "a tool the request did not declare is read too")
+        XCTAssertNil(calls[0].unreadArguments)
+        XCTAssertEqual(arguments(calls[0])["title"] as? String, "Sea")
+        XCTAssertEqual((arguments(calls[0])["lines"] as? [Any])?.count, 1)
+
+        let llama = NFKMLXToolCallFormat.llama.read("<|python_tag|>{\"name\": \"get_weather\", \"parameters\": {\"city\": \"Cork\"}", tools: weather)
+        XCTAssertEqual(arguments(try! XCTUnwrap(llama.calls.first))["city"] as? String, "Cork")
+        let nemotron = NFKMLXToolCallFormat.nemotron.read("<TOOLCALL>[{\"name\": \"get_weather\", \"arguments\": {\"city\": \"Bern\"}}</TOOLCALL>", tools: weather)
+        XCTAssertEqual(arguments(try! XCTUnwrap(nemotron.calls.first))["city"] as? String, "Bern")
+        let mistral = NFKMLXToolCallFormat.mistral.read("[TOOL_CALLS][{\"name\": \"get_weather\", \"arguments\": {\"city\": \"Nice\"}}", tools: weather)
+        XCTAssertEqual(arguments(try! XCTUnwrap(mistral.calls.first))["city"] as? String, "Nice")
+    }
+
+    func testACallWhoseArgumentsDoNotReadKeepsThemAsWritten() {
+        let replies: [(NFKMLXToolCallFormat, String, String)] = [
+            (.hermes, "<tool_call>{\"name\": \"get_weather\", \"arguments\": {\"city\": \"Paris\"</tool_call>", "{\"city\": \"Paris\""),
+            (.gemma, "<|tool_call>call:get_weather{city:<|\"|>Oslo}<tool_call|>", "{city:<|\"|>Oslo}"),
+            (.harmony, "<|start|>assistant<|channel|>commentary to=functions.get_weather <|constrain|>json<|message|>{\"city\": <|call|>", "{\"city\":"),
+            (.deepSeek, "<｜tool▁calls▁begin｜><｜tool▁call▁begin｜>get_weather<｜tool▁sep｜>{\"city\"<｜tool▁call▁end｜><｜tool▁calls▁end｜>", "{\"city\""),
+            (.mistral, "[TOOL_CALLS]get_weather[ARGS]{\"city\": ", "{\"city\":"),
+            (.granite, "<|tool_call|>[{\"name\": \"get_weather\", \"arguments\": {\"city\": [}}]", "{\"city\": [}}]"),
+        ]
+        for (format, reply, written) in replies {
+            let (content, calls) = format.read(reply, tools: weather)
+            XCTAssertEqual(content, "", format.name)
+            XCTAssertEqual(calls.map(\.name), ["get_weather"], format.name)
+            XCTAssertEqual(calls.first?.unreadArguments, written, format.name)
+            XCTAssertEqual(calls.first?.arguments.pairs.count, 0, format.name)
+        }
+        let unnamed = "<tool_call>{\"arguments\": {\"name\": \"x\"}</tool_call>"
+        XCTAssertEqual(NFKMLXToolCallFormat.hermes.read(unnamed, tools: weather).content, unnamed,
+                       "a name inside the arguments does not name the call")
+    }
+
     func testQwenXMLValuesAreReadByTheirSchemaType() {
         let reply = "<tool_call>\n<function=get_weather>\n<parameter=city>\nNew York\n</parameter>\n<parameter=days>\n3\n</parameter>\n"
             + "<parameter=metric>\nfalse\n</parameter>\n<parameter=where>\n{\"lat\": 40.7}\n</parameter>\n<parameter=note>\n42\n</parameter>\n</function>\n</tool_call>"
@@ -237,6 +275,14 @@ final class NFKMLXToolCallingTests: XCTestCase {
         XCTAssertEqual(NFKToolMessages.toolCalls(ofAssistantMessage: turn).first?["id"] as? String, calls[0]["id"] as? String)
         XCTAssertEqual((NFKToolMessages.record(ofMessage: turn, format: NFKMLXToolCalling.recordFormat, source: "qwen") as? [String: Any])?["reasoning"] as? String,
                        "Need the tool.")
+
+        let unread = NFKMLXToolCalling.outputs(answer: "<tool_call>{\"name\": \"get_weather\", \"arguments\": {\"city\": </tool_call>",
+                                               reasoning: "", request: request, format: .hermes, source: "qwen")
+        let unreadCalls = try XCTUnwrap(unread[NFKOutputToolCalls] as? [[String: Any]])
+        XCTAssertEqual(unreadCalls[0]["name"] as? String, "get_weather")
+        XCTAssertEqual(unreadCalls[0]["argumentsJSON"] as? String, "{\"city\":", "the model's text, as written")
+        XCTAssertEqual((unreadCalls[0]["arguments"] as? [String: Any])?.count, 0)
+        XCTAssertEqual(unread[NFKOutputText] as? String, "")
 
         let untooled = NFKMLXToolCalling.outputs(answer: "<tool_call>{\"name\": \"x\"}</tool_call>", reasoning: "",
                                                  request: NFKInferenceRequest(inputs: [NFKInputPrompt: "x"]), format: .hermes, source: "qwen")

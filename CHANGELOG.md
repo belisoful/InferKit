@@ -1719,6 +1719,19 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### A tool call whose arguments do not read is still a call
+
+- A call whose name reads comes back under `NFKOutputToolCalls`, with finish reason `tool_calls`, in
+  every tool-call format. Before, a call whose JSON did not read stayed in `NFKOutputText` as markup,
+  with finish reason `stop`.
+  - A JSON call that is not one whole value, such as one missing its closing brace, is read from its
+    `name` and the first whole value after its `arguments` key.
+  - Arguments that do not read as an object leave `arguments` empty and keep the model's text under
+    `argumentsJSON`, the shape the core gives a remote provider's call whose arguments are not an
+    object. A tool loop answers such a call with an error, and the model can write it again.
+  - A call is read whatever tool it names, and the caller answers a name it did not declare. A span
+    with no name to read stays in the text.
+
 #### A request sets the detectors' thresholds and the readers' output length
 
 - `NFKMLXDetectionParameterKey.confidenceThreshold` sets the score a detection must reach, and

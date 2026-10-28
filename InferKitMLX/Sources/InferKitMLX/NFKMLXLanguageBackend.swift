@@ -464,9 +464,10 @@ public extension NFKMLXLanguageNet {
 ///
 /// Tools: `NFKParameterTools` renders into the release's chat template, and the calls the model
 /// writes come back under `NFKOutputToolCalls`, read in the syntax ``NFKMLXToolCallFormat`` names,
-/// with the text around them under `NFKOutputText`. A tool conversation in the chat shape renders
-/// back through the template, so the backend is the model of an `NFKToolLoop`. A tool request on a
-/// backend built without a chat template renders the release's own.
+/// with the text around them under `NFKOutputText`. A call whose arguments do not read is still a
+/// call, with empty `arguments` and the model's text under `argumentsJSON`. A tool conversation in
+/// the chat shape renders back through the template, so the backend is the model of an
+/// `NFKToolLoop`. A tool request on a backend built without a chat template renders the release's own.
 ///
 /// A reasoning model's chain comes back under `NFKOutputReasoning`, so `NFKOutputText` holds the
 /// answer alone; the markers come from the release's chat template, or from
