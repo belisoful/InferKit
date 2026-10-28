@@ -8663,11 +8663,10 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         }
     }
 
-    // The next released size, measured at the precision it ships in. E4B's 16 GB of bf16 weights
-    // would double past this machine's RAM at float32, so BOTH sides run bf16 — the oracle under
-    // IK_GEMMA_DTYPE=bfloat16, this side at `.checkpoint` — and the thresholds are half-precision
-    // ones. The structural claim (42 layers, 2 KV heads, kv-shared 18, doubled widths) is what this
-    // measures; the E2B float32 record is what pins the arithmetic to more digits.
+    // The next released size, measured at the precision it ships in: this side loads at `.checkpoint`
+    // (bf16) against the reference at float32 (`run_reference.py gemma4`), so the thresholds are
+    // half-precision ones. The structural claim (42 layers, 2 KV heads, kv-shared 18, doubled widths) is
+    // what this measures; the E2B float32 record is what pins the arithmetic to more digits.
     func testGemma4E4BMatchesTheReferenceLogits() throws {
         try requireMLXRuntime()
         guard let path = config["IK_PARITY_GEMMA4_E4B"], let directory = config["IK_VAL_GEMMA4_E4B"] else {

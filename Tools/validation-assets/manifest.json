@@ -3422,9 +3422,10 @@
         "model.safetensors"
       ],
       "config": {
-        "IK_VAL_GEMMA4_E4B": ""
+        "IK_VAL_GEMMA4_E4B": "",
+        "IK_PARITY_GEMMA4_E4B": "reference/gemma4-e4b-reference.safetensors"
       },
-      "note": "The next dense Gemma 4 size: 42 layers, hidden 2560, 2 KV heads, kv-shared 18. 16 GB of bf16, which doubles past this machine's RAM at float32 - so its oracle runs under IK_GEMMA_DTYPE=bfloat16 and the Swift side loads at .checkpoint precision."
+      "note": "The next dense Gemma 4 size: 42 layers, hidden 2560, 2 KV heads, kv-shared 18. 16 GB of bf16, which doubles to 32 GB at float32. Record (gemma env): the float32 reference, `run_reference.py gemma4 <validation root>/reference/gemma4-e4b-reference.safetensors --checkpoint <this directory>`, which holds the whole model at float32 and pages on a 32 GB machine -> IK_PARITY_GEMMA4_E4B. Its `hidden.0` equals the release's embedding rows times √2560 at float32 bit for bit (2026-10-27). The Swift side loads at .checkpoint precision and holds half-precision thresholds."
     },
     {
       "key": "DEEPSEEK_V4_PRO",
