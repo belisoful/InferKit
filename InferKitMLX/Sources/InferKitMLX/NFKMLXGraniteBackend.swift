@@ -8,7 +8,8 @@
 //
 //  The tokenizer is Granite's byte-level BPE (the GPT-2 family), read from the release's `tokenizer.json`
 //  through the shared release-tokenizer reader. A raw prompt is encoded after the begin-of-sequence
-//  marker the tokenizer defines; generation stops at the end-of-sequence marker.
+//  marker the tokenizer defines; generation stops at the end-of-sequence marker. A message list renders
+//  through the release's chat template, which the instruct releases ship as `chat_template.jinja`.
 //
 
 import Foundation
@@ -35,7 +36,7 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
     private let identifier: String
     private let beginOfSequence: Int?
     private let stopTokens: Set<Int>
-    /// The release's chat template, which a tool request renders through.
+    /// The release's chat template, which a message list renders through.
     private let chatTemplate: String?
     /// What ends a turn the template opened: the end-of-sequence id and every id the generation
     /// config lists.
@@ -100,7 +101,7 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
             seed = value.uint64Value
         }
 
-        if let (promptTokens, format) = try toolPrompt(for: request) {
+        if let (promptTokens, format) = try templatePrompt(for: request) {
             let (produced, limit) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens, seed: seed,
                                     stops: templateStopTokens)
             var outputs = NFKMLXToolCalling.outputs(answer: holder.tokenizer.decode(produced.map { NSNumber(value: $0) }),
@@ -121,8 +122,8 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
         ])
     }
 
-    /// The prompt as token ids: the begin-of-sequence marker, then the encoded text. A message list is
-    /// joined into plain text (the base decoder carries no chat template).
+    /// The prompt as token ids: the begin-of-sequence marker, then the encoded text. A message list on a
+    /// release without a chat template is joined into plain text.
     private func tokens(for request: NFKInferenceRequest) throws -> [Int] {
         var ids = [Int]()
         if let bos = beginOfSequence { ids.append(bos) }
@@ -136,27 +137,30 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
         return ids
     }
 
-    /// The input tokens a run of the request costs: a tool request's prompt rendered through the
-    /// release's template, or the joined prompt, tokenized as a run tokenizes it. Runs no model.
-    /// Introduced in InferKit 0.4.0.
+    /// The input tokens a run of the request costs: a message list rendered through the release's
+    /// template, or the prompt, tokenized as a run tokenizes it. Runs no model. Introduced in InferKit 0.4.0.
     @objc(tokenCountForRequest:error:)
     public func tokenCount(for request: NFKInferenceRequest) throws -> NSNumber {
-        if let (promptTokens, _) = try toolPrompt(for: request) {
+        if let (promptTokens, _) = try templatePrompt(for: request) {
             return NSNumber(value: promptTokens.count)
         }
         return NSNumber(value: try tokens(for: request).count)
     }
 
-    /// A tool request's prompt as token ids and the syntax its calls are read in, or nil for a request
-    /// that offers no tools. A tool request renders the release's own template, which is what the
-    /// model's tool format was trained on; a plain chat keeps the joined prompt. A reasoning effort is
-    /// refused here, since the backend has no way to apply it.
-    private func toolPrompt(for request: NFKInferenceRequest) throws -> ([Int], NFKMLXToolCallFormat?)? {
+    /// A message list's prompt as token ids, rendered through the release's own template, and the
+    /// syntax a tool request's calls are read in. Nil for a raw prompt, and for a release without a
+    /// template, whose messages are joined. An instruct release answers only the turns its template
+    /// writes: given the joined text, Granite 4.0-H 1B ends its reply before its first token. A
+    /// reasoning effort is refused here, since the backend has no way to apply it.
+    private func templatePrompt(for request: NFKInferenceRequest) throws -> ([Int], NFKMLXToolCallFormat?)? {
         try NFKMLXUsage.refuseReasoningEffort(in: request, model: identifier)
-        guard let (text, format) = try NFKMLXToolCalling.toolPrompt(for: request, template: chatTemplate, source: identifier) else {
-            return nil
+        if let (text, format) = try NFKMLXToolCalling.toolPrompt(for: request, template: chatTemplate, source: identifier) {
+            return (holder.tokenizer.encode(text).map(\.intValue), format)
         }
-        return (holder.tokenizer.encode(text).map(\.intValue), format)
+        guard let chatTemplate, let messages = request.messages else { return nil }
+        let text = try NFKMLXChatTemplateRenderer.render(
+            chatTemplate, messages: NFKMLXToolCalling.templateMessages(messages, format: nil, source: identifier))
+        return (holder.tokenizer.encode(text).map(\.intValue), nil)
     }
 
     /// Prefill-only generation: the whole growing sequence runs through the decoder each step.
@@ -218,13 +222,15 @@ public extension NFKMLXGraniteHybrid {
     }
 
     internal static let requiredFiles = ["config.json", "tokenizer.json", "tokenizer_config.json"]
-    internal static let optionalFiles = ["vocab.json", "merges.txt", "added_tokens.json"]
+    internal static let optionalFiles = ["vocab.json", "merges.txt", "added_tokens.json", "chat_template.jinja",
+                                         "generation_config.json"]
     internal static let weightFiles = ["model.safetensors.index.json", "model.safetensors"]
 
     /// Downloads a Granite 4.0-H release and builds its text-generation backend.
     ///
     /// @discussion The download fetches `config.json`, `tokenizer.json`, `tokenizer_config.json`,
-    /// whichever of `vocab.json`, `merges.txt`, and `added_tokens.json` the repo serves, and the
+    /// whichever of `vocab.json`, `merges.txt`, `added_tokens.json`, `chat_template.jinja`, and
+    /// `generation_config.json` the repo serves, and the
     /// weights (a single `model.safetensors` or every shard a `model.safetensors.index.json` names)
     /// into the hub cache under `cacheDirectoryURL`, or the default cache when nil. A cached file is
     /// not fetched again. The call blocks on the network; call it off the render thread. It serves

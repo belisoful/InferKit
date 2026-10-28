@@ -108,7 +108,12 @@ final class NFKMLXTokenCountTests: XCTestCase {
         let nemotron = NFKMLXNemotronBackend(logits: { net($0) }, tokenizer: try byteLevelTokenizer(), identifier: "nemotron",
                                              releaseDirectoryURL: release)
         let (plain, withTools) = toolRequests(templateParameter: false)
-        XCTAssertEqual(try granite.tokenCount(for: plain).intValue, try runInputTokens(granite, plain), "a plain chat is joined")
+        XCTAssertEqual(try granite.tokenCount(for: plain).intValue, try runInputTokens(granite, plain))
+        XCTAssertEqual(try granite.tokenCount(for: plain).intValue, try byteLevelTokenizer().encode("hello hello ").count,
+                       "a plain chat renders through the release's template")
+        let untemplated = NFKMLXGraniteBackend(logits: { net($0) }, tokenizer: try byteLevelTokenizer(), identifier: "granite")
+        XCTAssertEqual(try untemplated.tokenCount(for: plain).intValue, try byteLevelTokenizer().encode("hello hello").count,
+                       "a release without a template joins the chat")
         XCTAssertEqual(try granite.tokenCount(for: withTools).intValue, try runInputTokens(granite, withTools),
                        "a tool request renders through the release's template")
         XCTAssertEqual(try nemotron.tokenCount(for: plain).intValue, try runInputTokens(nemotron, plain), "a plain chat is joined")

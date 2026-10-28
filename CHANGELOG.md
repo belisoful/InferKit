@@ -1760,6 +1760,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Granite 4.0-H answers a chat
+
+- A message list renders through the release's chat template, plain chats as well as tool requests,
+  and the reply stops at the generation config's end markers. Before, a plain chat was joined into
+  text, and Granite 4.0-H 1B, an instruct release, ended its reply before its first token.
+- The download fetches `chat_template.jinja` and `generation_config.json`, which the Granite releases
+  ship beside the tokenizer. Before, a downloaded release had no template, so a tool request's tools
+  never reached the prompt. A release downloaded before reads partial until the next download fetches
+  them.
+- A raw `NFKInputPrompt` is read verbatim, as before, and a release without a template joins the
+  messages.
+
 #### TripoSR reconstructs an object from one image
 
 - `NFKMLXTripoSR` (`triposr`) is the toolkit's first 3D-generation model: a DINO ViT-B/16 image

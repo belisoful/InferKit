@@ -16490,7 +16490,7 @@
       "variants" : [
         {
           "displayName" : "Granite 4.0-H 1B",
-          "downloadBytes" : 2930301445,
+          "downloadBytes" : 2930308010,
           "id" : "granite-4.0-h-1b",
           "isDefault" : true,
           "memoryFacts" : {
@@ -16549,6 +16549,18 @@
                 "optional" : true,
                 "path" : "added_tokens.json",
                 "role" : "tokenizer"
+              },
+              {
+                "bytes" : 6418,
+                "optional" : true,
+                "path" : "chat_template.jinja",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 147,
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
               },
               {
                 "optional" : true,
@@ -16809,7 +16821,7 @@
       "variants" : [
         {
           "displayName" : "Granite 4.0-H Tiny",
-          "downloadBytes" : 13888294816,
+          "downloadBytes" : 13888301381,
           "id" : "granite-4.0-h-tiny",
           "isDefault" : true,
           "memoryFacts" : {
@@ -16870,6 +16882,18 @@
                 "optional" : true,
                 "path" : "added_tokens.json",
                 "role" : "tokenizer"
+              },
+              {
+                "bytes" : 6418,
+                "optional" : true,
+                "path" : "chat_template.jinja",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 147,
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
               },
               {
                 "bytes" : 48924,

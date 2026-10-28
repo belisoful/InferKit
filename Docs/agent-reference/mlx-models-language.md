@@ -27,7 +27,8 @@ attention and feed-forward.
   | `NFKMLXDecoderBackend` (the hybrid decoder, Qwen4-Exp) | `prompt(for:)` | yes |
   | `NFKMLXGemmaBackend` | `toolPrompt(for:)`, then `tokens(for:)` | yes |
   | `NFKMLXGemma3Backend` | `promptTokens(for:)` | yes |
-  | `NFKMLXGraniteBackend`, `NFKMLXNemotronBackend` | `toolPrompt(for:)`, then `tokens(for:)` | yes |
+  | `NFKMLXGraniteBackend` | `templatePrompt(for:)`, then `tokens(for:)` | yes |
+  | `NFKMLXNemotronBackend` | `toolPrompt(for:)`, then `tokens(for:)` | yes |
   | `NFKMLXDeepSeekBackend` | `preparedPrompt(for:)`, the picture's span expanded by `images.expanded` (the vision tower's graph is built, not evaluated) | yes |
   | `NFKMLXMambaBackend` | `prompt(for:)` | no: needs a Mistral tokenizer |
   | `NFKMLXGemma3nBackend` | `prompt(for:)` (fixed soft-token runs for an image or a clip) | no: no small build |
@@ -1372,7 +1373,10 @@ attention and feed-forward.
   `tokenizers` fast library; the release ships no `bos_token`, so the backend prepends none, matching the
   reference's raw-id generation. `NFKMLXGraniteHybrid.backend(directoryURL:)` (`@objc
   graniteBackendWithDirectoryURL:error:`) builds a prefill-only text-generation backend that stops at the
-  end-of-sequence marker. **Customization ships** (the first on-device language-decoder fine-tune):
+  end-of-sequence marker. A message list renders through the release's `chat_template.jinja`, which
+  the download fetches; a raw prompt is read verbatim. Given the joined text instead, the 1B instruct
+  release ends its reply before its first token (0 tokens out, measured 2026-10-28), and with the
+  template it answers. A release without a template joins the messages. **Customization ships** (the first on-device language-decoder fine-tune):
   `NFKMLXGraniteHybrid.fineTune` adapts the attention query and value projections with LoRA, the Mamba
   layers and everything else frozen, over `NFKMLXGraniteObjective` (causal language-model teacher
   forcing, the reference's `labels=` loss, measured within 1e-3: 4.854839 vs 4.8548384 on identical
@@ -1563,9 +1567,10 @@ attention and feed-forward.
   `NFKMLXDecoderBackend`, and `NFKMLXDeepSeekBackend`. A tool request on a backend whose options name
   no template renders the release's own `chat_template`, because the directory factory leaves the
   template unset and a plain chat stays flattened. The backends that build their turns by hand
-  (Gemma 4, Granite 4, Nemotron-H) render the release template for a tool request only, stopping on
-  the generation config's ids, and on Gemma 4's `<turn|>` and `<|tool_response>`. Their plain chats
-  are unchanged, so their measured outputs stand. Gemma 3, Gemma 3n, Mamba, and Phi-4-multimodal ship
+  (Gemma 4, Nemotron-H) render the release template for a tool request only, stopping on the
+  generation config's ids, and on Gemma 4's `<turn|>` and `<|tool_response>`. Their plain chats are
+  unchanged, so their measured outputs stand. Granite 4.0-H renders every message list through the
+  release template, since its instruct releases answer nothing given the joined text. Gemma 3, Gemma 3n, Mamba, and Phi-4-multimodal ship
   no tool format the toolkit reads.
 
   Two fixes came with this:
