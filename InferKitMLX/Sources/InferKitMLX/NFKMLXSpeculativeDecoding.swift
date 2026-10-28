@@ -8,6 +8,7 @@
 
 import Foundation
 import MLX
+import MLXRandom
 
 public extension NFKMLXLanguageNet {
 
@@ -180,4 +181,68 @@ public struct NFKMLXSpeculativeReport: Sendable {
 
     /// The fraction of proposals kept, which is what the speedup follows.
     public var acceptanceRate: Double { proposed > 0 ? Double(accepted) / Double(proposed) : 0 }
+}
+
+/// Drafted generation for a decoder that runs prefill-only, without a key-value cache: Gemma 4 and
+/// Nemotron-H, whose every pass reads the whole growing sequence.
+enum NFKMLXPrefillDrafting {
+
+    /// Up to `limit` tokens after `prompt`, sampled as `sampling` says. Each round `draft` proposes up to
+    /// `count` tokens, one pass of its own over the growing sequence each, and one pass of `target` over the
+    /// sequence and every proposal scores them all: the leading proposals it agrees with are kept, with the
+    /// target's own token after them, so a round yields up to `count` + 1 tokens for one pass of the target.
+    /// `verify` runs after each pass of the target, and what it throws ends the generation. At temperature 0
+    /// the tokens are the target's greedy tokens.
+    static func generate(prompt: [Int], draft: (MLXArray) -> MLXArray, target: (MLXArray) -> MLXArray,
+                         verify: () throws -> Void, proposals count: Int, sampling: NFKMLXStepSampling, limit: Int,
+                         seed: UInt64?, stops: Set<Int>, report: inout NFKMLXSpeculativeReport) throws -> [Int] {
+        var options = NFKMLXGenerationOptions()
+        options.temperature = sampling.temperature
+        options.topP = sampling.topP
+        options.topK = sampling.topK
+        let temperature = sampling.temperature
+        if let seed { MLXRandom.seed(seed) }
+        func input(_ sequence: [Int]) -> MLXArray { MLXArray(sequence.map(Int32.init)).reshaped([1, sequence.count]) }
+
+        var tokens = prompt
+        var produced = [Int]()
+        while produced.count < limit {
+            var proposals = [Int]()
+            var distributions = [MLXArray]()
+            var drafted = tokens
+            // The round's last token is the target's own, so the draft proposes no more than the reply has room for.
+            while proposals.count < Swift.min(count, limit - produced.count - 1) {
+                let row = draft(input(drafted))[0, drafted.count - 1]
+                let token: Int
+                if temperature > 0 {
+                    let distribution = NFKMLXLanguageNet.probabilities(of: row, options: options)
+                    distributions.append(distribution)
+                    token = MLXRandom.categorical(log(distribution)).item(Int.self)
+                } else {
+                    token = row.argMax().item(Int.self)
+                }
+                proposals.append(token)
+                drafted.append(token)
+                if stops.contains(token) { break }
+            }
+            // Row j predicts what follows the j-th proposal's predecessor, so row j judges proposal j and
+            // the last row gives the token after the final proposal.
+            let rows = target(input(tokens + proposals))[0, (tokens.count - 1)...]
+            eval(rows)
+            try verify()
+            let (accepted, following) = temperature > 0
+                ? NFKMLXLanguageNet.verifyBySampling(rows: rows, proposals: proposals,
+                                                     proposalDistributions: distributions, options: options)
+                : NFKMLXLanguageNet.verifyGreedily(rows: rows, proposals: proposals)
+            report.rounds += 1
+            report.proposed += proposals.count
+            report.accepted += accepted
+            for token in proposals.prefix(accepted) + [following] {
+                guard produced.count < limit, !stops.contains(token) else { return produced }
+                produced.append(token)
+                tokens.append(token)
+            }
+        }
+        return produced
+    }
 }

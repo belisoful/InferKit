@@ -219,7 +219,7 @@ struct NFKMLXLoadProfile {
         "granite-4.0-h": [.pagedMixture()],
         "nemotron-h": [.streamedDecoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],
                                         defaultPrecision: NFKModelPrecisionCheckpoint, contextLength: nil, keyValue: nil,
-                                        tasks: [NFKModelTaskTextGeneration])],
+                                        drafts: true, tasks: [NFKModelTaskTextGeneration])],
         // A dense Qwen3-VL or Pixtral decoder streams the layers it cannot hold, so its precision sets what a
         // pass reads. The Qwen3-VL mixture keeps its own paged profile on its entry.
         "qwen3-vl": [.streamedDecoder(precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionFloat32],

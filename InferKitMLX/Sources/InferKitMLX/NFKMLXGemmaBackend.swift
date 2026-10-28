@@ -304,56 +304,11 @@ public final class NFKMLXGemmaBackend: NSObject, NFKInferenceBackend {
     /// distributed as the decoder alone samples it (``NFKMLXLanguageNet/verifyBySampling(rows:proposals:proposalDistributions:options:)``).
     private func speculate(_ promptTokens: [Int], draft: (MLXArray) -> MLXArray, proposals count: Int,
                            sampling: NFKMLXStepSampling, limit: Int, seed: UInt64?, stops: Set<Int>) throws -> [Int] {
-        var options = NFKMLXGenerationOptions()
-        options.temperature = sampling.temperature
-        options.topP = sampling.topP
-        options.topK = sampling.topK
-        let temperature = sampling.temperature
-        if let seed { MLXRandom.seed(seed) }
-        func input(_ sequence: [Int]) -> MLXArray { MLXArray(sequence.map(Int32.init)).reshaped([1, sequence.count]) }
-
         var report = NFKMLXSpeculativeReport()
         defer { lastSpeculativeReport = report }
-        var tokens = promptTokens
-        var produced = [Int]()
-        while produced.count < limit {
-            var proposals = [Int]()
-            var distributions = [MLXArray]()
-            var drafted = tokens
-            // The round's last token is the decoder's own, so the draft proposes no more than the reply has room for.
-            while proposals.count < Swift.min(count, limit - produced.count - 1) {
-                let row = draft(input(drafted))[0, drafted.count - 1]
-                let token: Int
-                if temperature > 0 {
-                    let distribution = NFKMLXLanguageNet.probabilities(of: row, options: options)
-                    distributions.append(distribution)
-                    token = MLXRandom.categorical(log(distribution)).item(Int.self)
-                } else {
-                    token = row.argMax().item(Int.self)
-                }
-                proposals.append(token)
-                drafted.append(token)
-                if stops.contains(token) { break }
-            }
-            // Row j predicts what follows the j-th proposal's predecessor, so row j judges proposal j and
-            // the last row gives the token after the final proposal.
-            let rows = holder.logits(input(tokens + proposals))[0, (tokens.count - 1)...]
-            eval(rows)
-            try verifyStream()
-            let (accepted, following) = temperature > 0
-                ? NFKMLXLanguageNet.verifyBySampling(rows: rows, proposals: proposals,
-                                                     proposalDistributions: distributions, options: options)
-                : NFKMLXLanguageNet.verifyGreedily(rows: rows, proposals: proposals)
-            report.rounds += 1
-            report.proposed += proposals.count
-            report.accepted += accepted
-            for token in proposals.prefix(accepted) + [following] {
-                guard produced.count < limit, !stops.contains(token) else { return produced }
-                produced.append(token)
-                tokens.append(token)
-            }
-        }
-        return produced
+        return try NFKMLXPrefillDrafting.generate(prompt: promptTokens, draft: draft, target: holder.logits,
+                                                  verify: verifyStream, proposals: count, sampling: sampling,
+                                                  limit: limit, seed: seed, stops: stops, report: &report)
     }
 }
 

@@ -29,7 +29,7 @@ enum NFKMLXCatalogLanguage {
     /// The language models' entries, in the order ``NFKMLXModelDescriptors`` lists them.
     static var entries: [NFKMLXCatalogEntry] {
         languageReleases.map(languageEntry) + [ggufEntry]
-            + [hybridEntry, qwen4ExpEntry] + graniteEntries + [nemotronEntry, mambaEntry]
+            + [hybridEntry, qwen4ExpEntry] + graniteEntries + [nemotronEntry, nemotron3NanoEntry, mambaEntry]
             + gemma3Releases.map(gemma3Entry) + gemma3nReleases.map(gemma3nEntry) + gemma4Releases.map(gemma4Entry)
             + [gemma4MultimodalEntry]
             + deepSeekReleases.map(deepSeekEntry)
@@ -62,6 +62,10 @@ enum NFKMLXCatalogLanguage {
             NFKMLXGenerationBackend.registerDirectoryModel(release.name) {
                 try NFKMLXGemma3.backend(directoryURL: $0, precision: .float32, residency: .automatic)
             }
+        }
+        NFKMLXGenerationBackend.registerDirectoryModel(NFKMLXNemotronH.nemotron3NanoModelName) {
+            try NFKMLXNemotronH.backend(directoryURL: $0, precision: .checkpoint, residency: .automatic,
+                                        budget: NFKMLXResidencyBudget.current(), identifier: NFKMLXNemotronH.nemotron3NanoModelName)
         }
         for release in gemma3nReleases {
             NFKMLXGenerationBackend.registerDirectoryModel(release.name) {
@@ -422,6 +426,9 @@ extension NFKMLXCatalogLanguage {
         case "nvidia/NVIDIA-Nemotron-Nano-9B-v2":
             return .license(nil, name: "NVIDIA Open Model License",
                             url: "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/")
+        case NFKMLXNemotronH.nemotron3NanoRepository:
+            return .license(nil, name: "NVIDIA Nemotron Open Model License",
+                            url: "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/")
         case "facebook/m2m100_418M", "facebook/m2m100_1.2B", "alirezamsh/small100":
             return .mit(url: modelCardURL(repository))
         case NFKMLXSeedXVariant.ppo.repository, NFKMLXSeedXVariant.instruct.repository:
@@ -835,6 +842,22 @@ extension NFKMLXCatalogLanguage {
             name: name, displayName: "Nemotron Nano 2", family: "nemotron-h",
             summary: "NVIDIA Nemotron Nano 2, a hybrid Mamba-2, attention, and MLP decoder that writes text and calls tools.",
             variants: [familyVariant(name, repository, displayName: "Nemotron Nano 9B v2", isDefault: true,
+                                     files: releaseFiles(required: NFKMLXNemotronH.requiredFiles,
+                                                         optional: NFKMLXNemotronH.optionalFiles,
+                                                         weights: NFKMLXNemotronH.weightFiles))],
+            license: license(repository), readsReasoning: false, outputs: toolCallingOutputs + [usageOutput, finishReasonOutput],
+            parameters: toolDecoderOptions(), residencies: streamedResidencies)
+        entry.modelTypes = ["nemotron_h"]
+        return entry
+    }
+
+    fileprivate static var nemotron3NanoEntry: NFKMLXCatalogEntry {
+        let name = NFKMLXNemotronH.nemotron3NanoModelName
+        let repository = NFKMLXNemotronH.nemotron3NanoRepository
+        var entry = decoderEntry(
+            name: name, displayName: "Nemotron 3 Nano 4B", family: "nemotron-h",
+            summary: "NVIDIA Nemotron 3 Nano 4B, a hybrid Mamba-2, attention, and MLP decoder that writes text and calls tools.",
+            variants: [familyVariant(name, repository, displayName: "Nemotron 3 Nano 4B", isDefault: true,
                                      files: releaseFiles(required: NFKMLXNemotronH.requiredFiles,
                                                          optional: NFKMLXNemotronH.optionalFiles,
                                                          weights: NFKMLXNemotronH.weightFiles))],

@@ -5125,10 +5125,40 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
     func testNemotronHPrefixMatchesTheReferenceAtBothPrecisions() throws {
         try requireMLXRuntime()
         let directory = URL(fileURLWithPath: try existing(config["IK_VAL_NEMOTRON_CUT15"], "IK_VAL_NEMOTRON_CUT15"))
-        let bf16 = try record("nemotron_cut15_bf16.safetensors"), f32 = try record("nemotron_cut15_f32.safetensors")
+        try assertNemotronRoundingPlacement("nemotron-cut15", directory: directory,
+                                            bf16: try record("nemotron_cut15_bf16.safetensors"),
+                                            f32: try record("nemotron_cut15_f32.safetensors"), checksFloat32: true)
+    }
+
+    // The released Nemotron Nano 9B v2 and Nemotron 3 Nano 4B at bf16, the precision their backend loads by
+    // default, against transformers at bf16 with eager attention and at float32, each read one block at a
+    // time from the same ids (`NEMOTRON_DTYPE=bfloat16 run_reference.py nemotron_h_layerwise` and the float32
+    // record the streamed and held float32 tests read).
+    func testNemotronNano9BInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_NEMOTRON_H"], "IK_VAL_NEMOTRON_H"))
+        try assertNemotronRoundingPlacement("nemotron-nano-9b-v2", directory: directory,
+                                            bf16: try record("nemotron-h-layerwise-bf16.safetensors"),
+                                            f32: try record("nemotron-h-layerwise.safetensors"), checksFloat32: false)
+    }
+
+    func testNemotron3Nano4BInBFloat16MatchesTheBFloat16Reference() throws {
+        try requireMLXRuntime()
+        let directory = URL(fileURLWithPath: try existing(config["IK_VAL_NEMOTRON3_NANO_4B"], "IK_VAL_NEMOTRON3_NANO_4B"))
+        try assertNemotronRoundingPlacement("nemotron-3-nano-4b", directory: directory,
+                                            bf16: try record("nemotron3-nano-4b-layerwise-bf16.safetensors"),
+                                            f32: try record("nemotron3-nano-4b-layerwise.safetensors"), checksFloat32: false)
+    }
+
+    /// The release at `directory` at bf16 against the `bf16` and `f32` records of `run_reference.py`'s Nemotron
+    /// oracles: end to end, the state entering each block, the last one normalized, then the logits; and each
+    /// block alone on the reference's own bf16 input. `checksFloat32` also runs the release at float32 against
+    /// `f32`, for a release that fits whole at float32.
+    private func assertNemotronRoundingPlacement(_ name: String, directory: URL, bf16: [String: MLXArray],
+                                                 f32: [String: MLXArray], checksFloat32: Bool,
+                                                 file: StaticString = #filePath, line: UInt = #line) throws {
         let configuration = try NFKMLXNemotronH.configuration(fromDirectory: directory)
         let tokens = MLXArray(try XCTUnwrap(f32["tokens"]).asArray(Int32.self)).reshaped([1, -1])
-        // The state entering each block, the last one normalized, then the logits.
         func states(_ precision: NFKMLXWeightPrecision) throws -> (NFKMLXNemotronHNet, [MLXArray]) {
             let net = NFKMLXNemotronH.makeNet(configuration)
             try NFKMLXNemotronH.loadWeights(into: net, fromDirectory: directory, precision: precision)
@@ -5138,8 +5168,11 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
             eval(states)
             return (net, states)
         }
-        let (_, exact) = try states(.float32)
-        try assertFloat32("nemotron-cut15", states: exact, f32: f32)
+        if checksFloat32 {
+            let (_, exact) = try states(.float32)
+            try assertFloat32(name, states: exact, f32: f32)
+            NFKMLXGPU.clearCache()
+        }
 
         let (net, reduced) = try states(.checkpoint)
         let labelled = reduced.enumerated().map { index, state in
@@ -5147,7 +5180,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         }
         let keys = (0 ..< reduced.count - 1).map { "hidden.\($0)" } + ["output"]
         let rows = try seams(labelled, bf16: bf16, f32: f32, keys: keys)
-        report("nemotron-cut15", rows)
+        report(name, rows)
         var isolated = [(String, MLXArray)]()
         for (index, layer) in net.model.layers.enumerated() {
             let input = try XCTUnwrap(bf16["hidden.\(index)"]).asType(.bfloat16).expandedDimensions(axis: 0)
@@ -5157,8 +5190,8 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         }
         eval(isolated.map(\.1))
         let isolatedRows = try seams(isolated, bf16: bf16, f32: f32, keys: isolated.indices.map { "hidden.\($0 + 1)" })
-        report("nemotron-cut15 isolated", isolatedRows)
-        assertRoundingPlacement("nemotron-cut15", endToEnd: rows, isolated: isolatedRows)
+        report("\(name) isolated", isolatedRows)
+        assertRoundingPlacement(name, endToEnd: rows, isolated: isolatedRows, file: file, line: line)
     }
 
     // MARK: Granite 4.0-H

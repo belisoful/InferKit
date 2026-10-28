@@ -26547,6 +26547,387 @@
       ]
     },
     {
+      "displayName" : "Nemotron 3 Nano 4B",
+      "engine" : "mlx",
+      "family" : "nemotron-h",
+      "id" : "nemotron-3-nano-4b",
+      "inputModalities" : [
+        "text",
+        "messages"
+      ],
+      "inputs" : [
+        {
+          "help" : "The text the model answers. A request carries it or a conversation.",
+          "key" : "prompt",
+          "required" : false,
+          "title" : "Prompt",
+          "valueType" : "text"
+        },
+        {
+          "help" : "A conversation in the OpenAI message shape, rendered through the release's chat template.",
+          "key" : "messages",
+          "required" : false,
+          "title" : "Conversation",
+          "valueType" : "messages"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "name" : "NVIDIA Nemotron Open Model License",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-nemotron-open-model-license/"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "residency" : "residency"
+      },
+      "modelTypes" : [
+        "nemotron_h"
+      ],
+      "options" : [
+        {
+          "default" : 0,
+          "help" : "0 decodes greedily. A higher value divides the logits before sampling.",
+          "key" : "temperature",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Temperature"
+        },
+        {
+          "default" : 1,
+          "help" : "Samples from the smallest set of tokens whose probability passes this. Ignored at temperature 0.",
+          "key" : "topP",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Top P"
+        },
+        {
+          "default" : 0,
+          "help" : "Samples from this many of the most probable tokens. 0 keeps every token. Ignored at temperature 0.",
+          "key" : "topK",
+          "kind" : "integer",
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Top K"
+        },
+        {
+          "help" : "The most tokens the reply runs to. Unset, the reply runs to the room the context leaves.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 262144,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        },
+        {
+          "help" : "The seed of a sampled run. The same seed repeats the run.",
+          "key" : "seed",
+          "kind" : "integer",
+          "stage" : "request",
+          "title" : "Seed"
+        },
+        {
+          "help" : "The tools the model may call, each a name, a description, and a JSON Schema of its parameters.",
+          "key" : "tools",
+          "kind" : "json",
+          "stage" : "request",
+          "title" : "Tools"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "hermes",
+              "value" : "hermes"
+            },
+            {
+              "title" : "qwen-xml",
+              "value" : "qwen-xml"
+            },
+            {
+              "title" : "gemma",
+              "value" : "gemma"
+            },
+            {
+              "title" : "harmony",
+              "value" : "harmony"
+            },
+            {
+              "title" : "deepseek",
+              "value" : "deepseek"
+            },
+            {
+              "title" : "mistral",
+              "value" : "mistral"
+            },
+            {
+              "title" : "granite",
+              "value" : "granite"
+            },
+            {
+              "title" : "llama",
+              "value" : "llama"
+            },
+            {
+              "title" : "nemotron",
+              "value" : "nemotron"
+            },
+            {
+              "title" : "none",
+              "value" : "none"
+            }
+          ],
+          "help" : "The syntax the model writes a tool call in. Without it the format comes from the release's chat template.",
+          "key" : "NFKMLXParameterToolCallFormat",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Tool-call format"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 7947113664,
+                "residentBytes" : 7947113664
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1960320512,
+                "residentBytes" : 1960320512
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 7947113664,
+                "residentBytes" : 7947113664
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 15894227328,
+                "residentBytes" : 15894227328
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        }
+      ],
+      "outputModalities" : [
+        "text",
+        "tool-calls",
+        "json"
+      ],
+      "outputs" : [
+        {
+          "help" : "The model's reply.",
+          "key" : "text",
+          "required" : true,
+          "title" : "Reply",
+          "valueType" : "text"
+        },
+        {
+          "help" : "The tools the model called, where a request offers tools.",
+          "key" : "toolCalls",
+          "required" : false,
+          "title" : "Tool calls",
+          "valueType" : "tool-calls"
+        },
+        {
+          "help" : "The assistant turn carrying the tool calls, ready to append to the conversation.",
+          "key" : "assistantMessage",
+          "required" : false,
+          "title" : "Assistant turn",
+          "valueType" : "json"
+        },
+        {
+          "help" : "The prompt and reply token counts.",
+          "key" : "usage",
+          "required" : true,
+          "title" : "Usage",
+          "valueType" : "json"
+        },
+        {
+          "help" : "Why the reply stopped: stop at the end of its turn, length at its token limit, or tool_calls.",
+          "key" : "finishReason",
+          "required" : false,
+          "title" : "Finish reason",
+          "valueType" : "text"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "nemotron-3-nano-4b",
+      "requirements" : {
+        "minimumMemoryBytes" : 14402448189,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "NVIDIA Nemotron 3 Nano 4B, a hybrid Mamba-2, attention, and MLP decoder that writes text and calls tools.",
+      "tasks" : [
+        "text-generation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Nemotron 3 Nano 4B",
+          "downloadBytes" : 7964420263,
+          "id" : "nvidia-nemotron-3-nano-4b-bf16",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 7947113664,
+                  "checkpoint" : 7947113664,
+                  "float32" : 15894227328
+                },
+                "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 158073536,
+                  "checkpoint" : 158073536,
+                  "float32" : 316147072
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 6302940224,
+                  "checkpoint" : 6302940224,
+                  "float32" : 12605880448
+                },
+                "layerCount" : 42,
+                "title" : "decoder"
+              }
+            ],
+            "vocabularySize" : 131072
+          },
+          "minimumMemoryBytes" : 14402448189,
+          "parameterCount" : 3973556832,
+          "peakBytes" : 7947113664,
+          "precision" : "bfloat16",
+          "registryName" : "nemotron-3-nano-4b",
+          "residentBytes" : 7947113664,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 1430,
+                "optional" : false,
+                "path" : "config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 17077484,
+                "optional" : false,
+                "path" : "tokenizer.json",
+                "role" : "tokenizer",
+                "sha256" : "623c34567aebb18582765289fbe23d901c62704d6518d71866e0e58db892b5b7"
+              },
+              {
+                "bytes" : 188034,
+                "optional" : false,
+                "path" : "tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "optional" : true,
+                "path" : "vocab.json",
+                "role" : "tokenizer"
+              },
+              {
+                "optional" : true,
+                "path" : "merges.txt",
+                "role" : "tokenizer"
+              },
+              {
+                "optional" : true,
+                "path" : "added_tokens.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 10504,
+                "optional" : true,
+                "path" : "chat_template.jinja",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 171,
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : true,
+                "path" : "model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "bytes" : 7947142640,
+                "optional" : true,
+                "path" : "model.safetensors",
+                "role" : "weights",
+                "sha256" : "55d4e2519456c4a9bddf596b0748d630e3b2ce6ff6f4c2b7ed3e07e2b00dad42"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f",
+            "repository" : "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
       "displayName" : "Nemotron Nano 2",
       "engine" : "mlx",
       "family" : "nemotron-h",
@@ -26579,6 +26960,8 @@
         "url" : "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/"
       },
       "memoryModel" : {
+        "draft" : "draftModel",
+        "draftBits" : "draftBits",
         "precision" : "precision",
         "residency" : "residency"
       },
@@ -26745,6 +27128,91 @@
           "kind" : "choice",
           "stage" : "load",
           "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 25723568320,
+                "residentBytes" : 25723568320
+              },
+              "title" : "Nemotron 3 Nano 4B",
+              "value" : "nemotron-3-nano-4b"
+            }
+          ],
+          "group" : "Loading",
+          "help" : "A smaller model of the same family and vocabulary that proposes tokens for speculative decoding. None decodes without one.",
+          "key" : "draftModel",
+          "kind" : "model-reference",
+          "stage" : "load",
+          "title" : "Draft model"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 17776454656,
+                "residentBytes" : 17776454656
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 17776454656,
+                "residentBytes" : 17776454656
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 17776454656,
+                "residentBytes" : 17776454656
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 17776454656,
+                "residentBytes" : 17776454656
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 17776454656,
+                "residentBytes" : 17776454656
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 17776454656,
+                "residentBytes" : 17776454656
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 17776454656,
+                "residentBytes" : 17776454656
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the draft model's weights to 2 to 8 bits as it loads. Every width approximates the published weights.",
+          "key" : "draftBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Draft quantization"
         }
       ],
       "outputModalities" : [
@@ -26821,7 +27289,7 @@
       "variants" : [
         {
           "displayName" : "Nemotron Nano 9B v2",
-          "downloadBytes" : 17793780518,
+          "downloadBytes" : 17793780676,
           "id" : "nvidia-nemotron-nano-9b-v2",
           "isDefault" : true,
           "memoryFacts" : {
@@ -26892,6 +27360,17 @@
                 "optional" : true,
                 "path" : "added_tokens.json",
                 "role" : "tokenizer"
+              },
+              {
+                "optional" : true,
+                "path" : "chat_template.jinja",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 158,
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
               },
               {
                 "bytes" : 26843,

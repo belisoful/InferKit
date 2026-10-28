@@ -6,8 +6,9 @@
 //  a sharded bfloat16 release in the released layout (`backbone.*`, the convolution stored `[C, 1, K]`, a
 //  multi-token prediction tensor beside it), and the same release loaded with every block held and with
 //  its blocks streamed must compute the same values, element for element. On released weights,
-//  Nemotron Nano 9B v2 streamed at float32 matches `run_reference.py nemotron_h_layerwise`
-//  (`IK_VAL_NEMOTRON_H`, `IK_PARITY_NEMOTRON_H_LAYERWISE`).
+//  Nemotron Nano 9B v2 streamed at float32 and Nemotron 3 Nano 4B held at float32 match
+//  `run_reference.py nemotron_h_layerwise` (`IK_VAL_NEMOTRON_H` / `IK_PARITY_NEMOTRON_H_LAYERWISE`,
+//  `IK_VAL_NEMOTRON3_NANO_4B` / `IK_PARITY_NEMOTRON3_NANO_4B`).
 //
 
 import XCTest
@@ -180,18 +181,32 @@ final class NFKMLXNemotronStreamingTests: XCTestCase {
     // MARK: Released weights
 
     func testTheStreamedNemotronNano9BMatchesItsReferenceAtFloat32() throws {
+        try checkFloat32Release("nemotron-nano-9b-v2", release: "IK_VAL_NEMOTRON_H", record: "IK_PARITY_NEMOTRON_H_LAYERWISE",
+                                streams: true)
+    }
+
+    func testNemotron3Nano4BMatchesItsReferenceAtFloat32() throws {
+        try checkFloat32Release("nemotron-3-nano-4b", release: "IK_VAL_NEMOTRON3_NANO_4B",
+                                record: "IK_PARITY_NEMOTRON3_NANO_4B", streams: false)
+    }
+
+    /// The release `releaseKey` names, loaded at float32 under ``NFKMLXResidency/automatic``, against the
+    /// `run_reference.py nemotron_h_layerwise` record `recordKey` names: every block state, the logits, and
+    /// the greedy continuation. `streams` is whether the float32 release is too large to hold whole here.
+    private func checkFloat32Release(_ name: String, release releaseKey: String, record recordKey: String,
+                                     streams: Bool) throws {
         try requireMLXRuntime()
         let environment = NFKMLXValidationConfig.environment
-        guard let directoryPath = environment["IK_VAL_NEMOTRON_H"], let recordPath = environment["IK_PARITY_NEMOTRON_H_LAYERWISE"],
+        guard let directoryPath = environment[releaseKey], let recordPath = environment[recordKey],
               FileManager.default.fileExists(atPath: recordPath) else {
-            throw XCTSkip("set IK_VAL_NEMOTRON_H and IK_PARITY_NEMOTRON_H_LAYERWISE (run_reference.py nemotron_h_layerwise)")
+            throw XCTSkip("set \(releaseKey) and \(recordKey) (run_reference.py nemotron_h_layerwise)")
         }
         let directory = URL(fileURLWithPath: directoryPath)
         let record = try NFKMLXWeights.loadCheckpoint(url: URL(fileURLWithPath: recordPath)).arrays
         let configuration = try NFKMLXNemotronH.configuration(fromDirectory: directory)
         let net = NFKMLXNemotronH.makeNet(configuration)
         try NFKMLXNemotronH.loadWeights(into: net, fromDirectory: directory, precision: .float32, residency: .automatic)
-        let stream = try XCTUnwrap(net.layerStream, "the float32 9B does not fit whole, so it streams")
+        XCTAssertEqual(net.layerStream != nil, streams, "the float32 release streams where it does not fit whole")
 
         let tokens = try XCTUnwrap(record["tokens"]).asType(.int32).reshaped([1, -1])
         let started = Date()
@@ -216,10 +231,13 @@ final class NFKMLXNemotronStreamingTests: XCTestCase {
             produced.append(next.item(Int32.self))
             sequence = concatenated([sequence, MLXArray([produced.last!]).reshaped([1, 1])], axis: 1)
         }
-        let (bytes, readSeconds) = stream.readStatistics
-        print("VALIDATION PARITY nemotron-nano-9b-v2 streamed float32: \(stream.layers.count) of \(configuration.layerCount) "
-              + "blocks streamed, \(stream.bytesPerPass) bytes per pass, first pass \(Int(seconds)) s, read \(bytes) bytes "
-              + "in \(readSeconds) s; worst block state \(worst.similarity) (state \(worst.index)), logits \(logits), "
+        let streaming = net.layerStream.map { stream -> String in
+            let (bytes, readSeconds) = stream.readStatistics
+            return "\(stream.layers.count) of \(configuration.layerCount) blocks streamed, \(stream.bytesPerPass) bytes per pass, "
+                + "read \(bytes) bytes in \(readSeconds) s"
+        } ?? "every block held"
+        print("VALIDATION PARITY \(name) float32: \(streaming), first pass \(Int(seconds)) s; worst block state "
+              + "\(worst.similarity) (state \(worst.index)), logits \(logits), "
               + "greedy \(zip(produced, reference).filter { $0 == $1 }.count)/\(reference.count)")
         XCTAssertGreaterThan(worst.similarity, 0.99999, "block state \(worst.index) diverges")
         XCTAssertGreaterThan(logits, 0.99999, "the logits diverge")

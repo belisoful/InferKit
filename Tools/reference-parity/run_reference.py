@@ -5943,7 +5943,8 @@ def run_nemotron_h_layerwise(image, checkpoint):
     transformers' own `NemotronHForCausalLM` built on the meta device, every tensor outside the blocks read
     once (the release's `backbone.*` read as the model's `model.*`, `mtp.*` left unread as `from_pretrained`
     leaves it) and each block read as the forward reaches it (`_read_layers_in_turn`). Precision from
-    NEMOTRON_DTYPE (default float32).
+    NEMOTRON_DTYPE (default float32). NEMOTRON_ATTENTION names the attention implementation; a bfloat16 run
+    defaults to eager, whose roundings a bf16 port is held to, and a float32 run to transformers' own default.
 
     The record is `run_nemotron_h_real`'s, on its ids: every hidden state, the prefill logits, and the
     12-token greedy continuation, here decoded by one uncached pass per token, since a cache over meta
@@ -5956,6 +5957,9 @@ def run_nemotron_h_layerwise(image, checkpoint):
 
     dtype = getattr(torch, os.environ.get("NEMOTRON_DTYPE", "float32"))
     config = AutoConfig.from_pretrained(checkpoint, trust_remote_code=False)
+    attention = os.environ.get("NEMOTRON_ATTENTION", "eager" if dtype == torch.bfloat16 else None)
+    if attention:
+        config._attn_implementation = attention
     with torch.device("meta"):
         model = AutoModelForCausalLM.from_config(config, trust_remote_code=False).eval()
     entries, read, close = _layerwise_release(checkpoint, dtype)
@@ -5982,7 +5986,7 @@ def run_nemotron_h_layerwise(image, checkpoint):
 
     if os.environ.get("NEMOTRON_CHECK") == "1":
         whole, loading = AutoModelForCausalLM.from_pretrained(checkpoint, dtype=dtype, trust_remote_code=False,
-                                                              output_loading_info=True)
+                                                              attn_implementation=attention, output_loading_info=True)
         assert not loading["missing_keys"], loading["missing_keys"]
         whole_logits, whole_extra = _nemotron_h_record(whole.eval(), ids)
         del whole

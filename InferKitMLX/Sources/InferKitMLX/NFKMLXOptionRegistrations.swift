@@ -164,9 +164,12 @@ enum NFKMLXOptionRegistrations {
                                        residency: options.residency)
         }
         registerDirectoryModels(registryNames(families: ["nemotron-h"]),
-                                consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision]) { url, _, options in
+                                consumes: draftKeys.union([NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision])) {
+            url, name, options in
             try NFKMLXNemotronH.backend(directoryURL: url, precision: options.precision ?? .checkpoint,
-                                        residency: options.residency)
+                                        residency: options.residency, budget: NFKMLXResidencyBudget.current(),
+                                        identifier: name, draftDirectoryURL: options.draftURL,
+                                        draftBits: options.draftBits(orDefault: 4))
         }
         registerDirectoryModels(registryNames(families: ["granite-4.0-h"]),
                                 consumes: [NFKModelLoadOptionResidency, NFKModelLoadOptionPrecision]) { url, name, options in

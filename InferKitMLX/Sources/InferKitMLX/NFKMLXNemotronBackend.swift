@@ -23,9 +23,11 @@ import MLXRandom
 final class NFKNemotronBackendHolder: @unchecked Sendable {
     let logits: (MLXArray) -> MLXArray
     let tokenizer: NFKTokenizer
-    init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKTokenizer) {
+    let draft: ((MLXArray) -> MLXArray)?
+    init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKTokenizer, draft: ((MLXArray) -> MLXArray)? = nil) {
         self.logits = logits
         self.tokenizer = tokenizer
+        self.draft = draft
     }
 }
 
@@ -55,9 +57,18 @@ public final class NFKMLXNemotronBackend: NSObject, NFKInferenceBackend {
     /// Introduced in InferKit 0.4.0.
     @objc public var streamedBytesPerPass: Int { layerStream?.bytesPerPass ?? 0 }
 
+    /// Whether generation drafts with a smaller Nemotron-H release of the same vocabulary
+    /// (``NFKMLXNemotronH/backend(directoryURL:draftDirectoryURL:precision:residency:draftBits:)``).
+    /// Introduced in InferKit 0.4.0.
+    @objc public var hasDraftModel: Bool { holder.draft != nil }
+
+    /// The rounds, proposals, and kept proposals of the last drafted generation. Introduced in InferKit 0.4.0.
+    public private(set) var lastSpeculativeReport = NFKMLXSpeculativeReport()
+
     init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKTokenizer, identifier: String,
-         modules: [Module] = [], releaseDirectoryURL: URL? = nil, layerStream: NFKMLXLayerStream? = nil) {
-        self.holder = NFKNemotronBackendHolder(logits: logits, tokenizer: tokenizer)
+         modules: [Module] = [], releaseDirectoryURL: URL? = nil, layerStream: NFKMLXLayerStream? = nil,
+         draft: ((MLXArray) -> MLXArray)? = nil) {
+        self.holder = NFKNemotronBackendHolder(logits: logits, tokenizer: tokenizer, draft: draft)
         self.identifier = identifier
         self.layerStream = layerStream
         self.describedModules = modules
@@ -87,10 +98,15 @@ public final class NFKMLXNemotronBackend: NSObject, NFKInferenceBackend {
         }
     }
 
-    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
+    /// The request parameters the backend reads, with `NFKMLXGenerationParameterKey.draftTokens` where
+    /// a draft model proposes tokens. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
-        [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens, NFKParameterSeed, NFKParameterTools,
-         NFKMLXGenerationParameterKey.toolCallFormat]
+        var keys: Set<String> = [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens,
+                                 NFKParameterSeed, NFKParameterTools, NFKMLXGenerationParameterKey.toolCallFormat]
+        if hasDraftModel {
+            keys.insert(NFKMLXGenerationParameterKey.draftTokens)
+        }
+        return keys
     }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
@@ -111,10 +127,14 @@ public final class NFKMLXNemotronBackend: NSObject, NFKInferenceBackend {
         if let value = request.parameter(forKey: NFKParameterSeed) as? NSNumber {
             seed = value.uint64Value
         }
+        var draftTokens = hasDraftModel ? NFKMLXGenerationOptions().draftTokens : 0
+        if hasDraftModel, let value = request.parameter(forKey: NFKMLXGenerationParameterKey.draftTokens) as? NSNumber {
+            draftTokens = value.intValue
+        }
 
         if let (promptTokens, format) = try toolPrompt(for: request) {
             let (produced, limit) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens, seed: seed,
-                                    stops: templateStopTokens)
+                                    stops: templateStopTokens, draftTokens: draftTokens)
             var outputs = NFKMLXToolCalling.outputs(answer: holder.tokenizer.decode(produced.map { NSNumber(value: $0) }),
                                                     reasoning: "", request: request, format: format, source: identifier)
             outputs[NFKOutputFinishReason] = NFKMLXContextRoom.finishReason(produced: produced.count, limit: limit, outputs: outputs)
@@ -124,7 +144,7 @@ public final class NFKMLXNemotronBackend: NSObject, NFKInferenceBackend {
         }
         let promptTokens = try tokens(for: request)
         let (produced, limit) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens, seed: seed,
-                                stops: stopTokens)
+                                stops: stopTokens, draftTokens: draftTokens)
         return NFKInferenceResult(outputs: [
             NFKOutputText: holder.tokenizer.decode(produced.map { NSNumber(value: $0) }),
             NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
@@ -168,13 +188,22 @@ public final class NFKMLXNemotronBackend: NSObject, NFKInferenceBackend {
         return (holder.tokenizer.encode(text).map(\.intValue), format)
     }
 
-    /// Prefill-only generation: the whole growing sequence runs through the decoder each step.
+    /// Prefill-only generation: the whole growing sequence runs through the decoder each step, or, with
+    /// a draft and `draftTokens` above 0, each round of proposals (``NFKMLXPrefillDrafting``).
     private func generate(_ promptTokens: [Int], sampling: NFKMLXStepSampling, maxTokens: Int?, seed: UInt64?,
-                          stops: Set<Int>) throws -> (tokens: [Int], limit: Int) {
+                          stops: Set<Int>, draftTokens: Int) throws -> (tokens: [Int], limit: Int) {
         var tokens = promptTokens
         var produced = [Int]()
         let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: promptTokens.count,
                                                   contextLength: contextLength, source: identifier)
+        if let draft = holder.draft, draftTokens > 0 {
+            var report = NFKMLXSpeculativeReport()
+            defer { lastSpeculativeReport = report }
+            return (try NFKMLXPrefillDrafting.generate(prompt: promptTokens, draft: draft, target: holder.logits,
+                                                       verify: verifyStream, proposals: draftTokens, sampling: sampling,
+                                                       limit: max(limit, 0), seed: seed, stops: stops, report: &report),
+                    limit)
+        }
         for step in 0 ..< max(limit, 0) {
             let input = MLXArray(tokens.map(Int32.init)).reshaped([1, tokens.count])
             let logits = holder.logits(input)[0, tokens.count - 1]
@@ -219,15 +248,64 @@ public extension NFKMLXNemotronH {
                     budget: NFKMLXResidencyBudget.current())
     }
 
+    /// Builds a text-generation backend from a Nemotron-H release with a smaller Nemotron-H release of the
+    /// same vocabulary drafting for it: Nemotron Nano 9B v2 drafted by Nemotron 3 Nano 4B, for instance.
+    ///
+    /// @discussion The decoder runs prefill-only, so each token of a plain run is one pass of the release.
+    /// With a draft, a round is one pass of the draft per proposal and one pass of the release over every
+    /// proposal (`NFKMLXGenerationParameterKey.draftTokens` a round, 4 by default, 0 to decode without it).
+    /// At temperature 0 the reply is the release's greedy reply. The draft loads at its release's own
+    /// precision and is quantized to `draftBits` (4 by default; nil keeps it at `precision`), its embeddings
+    /// included, since a draft's precision moves how many proposals are kept and never the reply. The
+    /// release is held as `residency` plans it against what the draft leaves of the working set.
+    /// Introduced in InferKit 0.4.0.
+    static func backend(directoryURL: URL, draftDirectoryURL: URL, precision: NFKMLXWeightPrecision = .checkpoint,
+                        residency: NFKMLXResidency = .automatic, draftBits: Int? = 4) throws -> NFKMLXNemotronBackend {
+        try backend(directoryURL: directoryURL, precision: precision, residency: residency,
+                    budget: NFKMLXResidencyBudget.current(), draftDirectoryURL: draftDirectoryURL, draftBits: draftBits)
+    }
+
+    /// The Objective-C entry for a release with a smaller release drafting for it, the draft at 4 bits; see
+    /// ``backend(directoryURL:draftDirectoryURL:precision:residency:draftBits:)``. Introduced in InferKit 0.4.0.
+    @objc(nemotronBackendWithDirectoryURL:draftDirectoryURL:precision:residency:error:)
+    static func nemotronBackend(directoryURL: URL, draftDirectoryURL: URL, precision: NFKMLXWeightPrecision,
+                                residency: NFKMLXResidency) throws -> any NFKInferenceBackend {
+        try backend(directoryURL: directoryURL, draftDirectoryURL: draftDirectoryURL, precision: precision,
+                    residency: residency)
+    }
+
     internal static func backend(directoryURL: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
-                                 budget: Int) throws -> NFKMLXNemotronBackend {
+                                 budget: Int, identifier: String = nemotronModelName, draftDirectoryURL: URL? = nil,
+                                 draftBits: Int? = 4) throws -> NFKMLXNemotronBackend {
         guard let tokenizer = NFKMLXLanguage.releaseTokenizer(inDirectory: directoryURL) else {
             throw NFKMLXError.unsupportedConfiguration("the Nemotron release has no readable tokenizer")
         }
-        let net = makeNet(try configuration(fromDirectory: directoryURL))
-        try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency, budget: budget)
-        return NFKMLXNemotronBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: nemotronModelName,
-                                     modules: [net], releaseDirectoryURL: directoryURL, layerStream: net.layerStream)
+        let configuration = try configuration(fromDirectory: directoryURL)
+        var draft: NFKMLXNemotronHNet?
+        if let draftDirectoryURL {
+            let draftNet = makeNet(try self.configuration(fromDirectory: draftDirectoryURL))
+            guard draftNet.config.vocabularySize == configuration.vocabularySize else {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "the draft's vocabulary has \(draftNet.config.vocabularySize) entries where the model's has "
+                    + "\(configuration.vocabularySize); a draft must share the model's vocabulary")
+            }
+            try loadWeights(into: draftNet, fromDirectory: draftDirectoryURL, precision: draftBits == nil ? precision : .checkpoint)
+            if let draftBits {
+                try NFKMLXQuantization.quantize(module: draftNet, bits: draftBits, includeEmbeddings: true)
+                // The weights the quantized ones replace go before the release is planned, which they would
+                // otherwise crowd.
+                eval(draftNet)
+                NFKMLXGPU.clearCache()
+            }
+            draft = draftNet
+        }
+        let draftBytes = draft.map { NFKMLXLanguage.heldBytes(of: $0) } ?? 0
+        let net = makeNet(configuration)
+        try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency,
+                        budget: budget > 0 ? Swift.max(budget - draftBytes, 1) : 0, reserving: draftBytes)
+        return NFKMLXNemotronBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: identifier,
+                                     modules: [net], releaseDirectoryURL: directoryURL, layerStream: net.layerStream,
+                                     draft: draft.map { draft in { draft($0) } })
     }
 
     /// The Objective-C entry: builds a Nemotron Nano 2 text-generation backend from a release directory.
@@ -244,22 +322,26 @@ public extension NFKMLXNemotronH {
     }
 
     internal static let requiredFiles = ["config.json", "tokenizer.json", "tokenizer_config.json"]
-    internal static let optionalFiles = ["vocab.json", "merges.txt", "added_tokens.json"]
+    internal static let optionalFiles = ["vocab.json", "merges.txt", "added_tokens.json", "chat_template.jinja",
+                                         "generation_config.json"]
     internal static let weightFiles = ["model.safetensors.index.json", "model.safetensors"]
 
     /// Downloads a Nemotron Nano 2 release and builds its text-generation backend.
     ///
     /// @discussion The download fetches `config.json`, `tokenizer.json`, `tokenizer_config.json`,
-    /// whichever of `vocab.json`, `merges.txt`, and `added_tokens.json` the repo serves, and every
-    /// shard the release's `model.safetensors.index.json` names into the hub cache under
-    /// `cacheDirectoryURL`, or the default cache when nil. A cached file is not fetched again. The
-    /// call blocks on the network; call it off the render thread. It serves
-    /// `nvidia/NVIDIA-Nemotron-Nano-9B-v2`, which is not gated. Introduced in InferKit 0.4.0.
+    /// whichever of `vocab.json`, `merges.txt`, `added_tokens.json`, `chat_template.jinja`, and
+    /// `generation_config.json` the repo serves, and the weights: every shard the release's
+    /// `model.safetensors.index.json` names, or its single `model.safetensors`, into the hub cache under
+    /// `cacheDirectoryURL`, or the default cache when nil. A cached file is not fetched again. The call
+    /// blocks on the network; call it off the render thread. It serves `nvidia/NVIDIA-Nemotron-Nano-9B-v2`
+    /// and `nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16`, neither of them gated. Introduced in InferKit 0.4.0.
     @objc(nemotronBackendWithRepo:revision:cacheDirectoryURL:error:)
     static func nemotronBackend(repo: String, revision: String?, cacheDirectoryURL: URL?) throws -> any NFKInferenceBackend {
         try backend(directoryURL: try NFKMLXReleaseDownload.directory(
-            repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-            required: requiredFiles, optional: optionalFiles, weights: weightFiles))
+                        repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
+                        required: requiredFiles, optional: optionalFiles, weights: weightFiles),
+                    precision: .checkpoint, residency: .automatic, budget: NFKMLXResidencyBudget.current(),
+                    identifier: repo == nemotron3NanoRepository ? nemotron3NanoModelName : nemotronModelName)
     }
 
     /// The asynchronous form of ``nemotronBackend(repo:revision:cacheDirectoryURL:)``. Introduced in
@@ -284,4 +366,11 @@ public extension NFKMLXNemotronH {
 
     /// The registry name a Nemotron Nano 2 backend reports.
     @objc static let nemotronModelName = "nemotron-nano-2"
+
+    /// The registry name of Nemotron 3 Nano 4B, a smaller Nemotron-H release of Nemotron Nano 2's vocabulary
+    /// that drafts for it. Introduced in InferKit 0.4.0.
+    @objc static let nemotron3NanoModelName = "nemotron-3-nano-4b"
+
+    /// The repository Nemotron 3 Nano 4B is released in.
+    static let nemotron3NanoRepository = "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
 }

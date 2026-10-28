@@ -394,12 +394,12 @@ public final class NFKMLXNemotronH: NSObject {
     /// ``NFKMLXLayerStream/plannedLayers(residency:budget:footprint:fitsWhole:)`` plans them; empty where it
     /// holds them all.
     static func streamedLayers(directory: URL, precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
-                               budget: Int = NFKMLXResidencyBudget.current()) throws -> Set<Int> {
+                               budget: Int = NFKMLXResidencyBudget.current(), reserving reserved: Int = 0) throws -> Set<Int> {
         try NFKMLXLayerStream.plannedLayers(residency: residency, budget: budget, footprint: {
             try NFKMLXLayerStream.footprint(directory: directory, precision: precision,
                                             includes: { moduleKey(of: $0) != nil }, layerOf: { block(ofKey: $0)?.layer })
         }, fitsWhole: {
-            try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: precision)
+            try NFKMLXReleaseWeights.verifyFits(inDirectory: directory, precision: precision, reserve: reserved)
         })
     }
 
@@ -407,11 +407,14 @@ public final class NFKMLXNemotronH: NSObject {
     /// turn on every pass (``NFKMLXNemotronHNet/layerStream``), and every other tensor held. Under
     /// ``NFKMLXResidency/automatic`` a release that fits loads whole, as
     /// ``loadWeights(into:fromDirectory:precision:)`` loads it. Only a caller that checks
-    /// ``NFKMLXNemotronHNet/verifyStream()`` after each pass loads a streamed decoder.
+    /// ``NFKMLXNemotronHNet/verifyStream()`` after each pass loads a streamed decoder. `reserved` is what
+    /// something held beside the decoder, such as a draft, takes from the check a whole load makes; `budget`
+    /// already leaves it out.
     static func loadWeights(into net: NFKMLXNemotronHNet, fromDirectory directory: URL,
                             precision: NFKMLXWeightPrecision, residency: NFKMLXResidency,
-                            budget: Int = NFKMLXResidencyBudget.current()) throws {
-        let streamed = try streamedLayers(directory: directory, precision: precision, residency: residency, budget: budget)
+                            budget: Int = NFKMLXResidencyBudget.current(), reserving reserved: Int = 0) throws {
+        let streamed = try streamedLayers(directory: directory, precision: precision, residency: residency, budget: budget,
+                                          reserving: reserved)
         guard let vacated = try NFKMLXLayerStream.vacating(
             streamed, of: net.model.layers, prefix: "model.layers.", directory: directory, precision: precision,
             layerOf: block(ofKey:), shaping: { name, shape in
