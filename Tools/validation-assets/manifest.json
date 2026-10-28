@@ -4308,9 +4308,20 @@
         "model.safetensors"
       ],
       "config": {
-        "IK_VAL_MADLAD": ""
+        "IK_VAL_MADLAD": "",
+        "IK_PARITY_MADLAD": "records/madlad.safetensors",
+        "IK_PARITY_MADLAD_AR_EN": "records/madlad-ar-en.safetensors",
+        "IK_PARITY_MADLAD_HI_EN": "records/madlad-hi-en.safetensors",
+        "IK_PARITY_MADLAD_JA_EN": "records/madlad-ja-en.safetensors",
+        "IK_PARITY_MADLAD_KO_EN": "records/madlad-ko-en.safetensors",
+        "IK_PARITY_MADLAD_TH_EN": "records/madlad-th-en.safetensors",
+        "IK_PARITY_MADLAD_VI_EN": "records/madlad-vi-en.safetensors",
+        "IK_PARITY_MADLAD_ZH_EN": "records/madlad-zh-en.safetensors",
+        "IK_PARITY_MADLAD_EN_JA": "records/madlad-en-ja.safetensors",
+        "IK_PARITY_MADLAD_EN_ZH": "records/madlad-en-zh.safetensors",
+        "IK_PARITY_MADLAD_EN_ZH_HANT": "records/madlad-en-zh-hant.safetensors"
       },
-      "note": "MADLAD-400 3B-MT (Google, Apache-2.0), 11.8 GB float32. NFKMLXMADLAD.translator(directoryURL:) reads config.json, spiece.model, and model.safetensors; tokenizer.json is for the oracle's fast tokenizer only. Parity record: `run_reference.py madlad <out> --checkpoint <this directory>` under llmvenv (the fast tokenizer; the slow one needs a protobuf build llmvenv lacks) → IK_PARITY_MADLAD (records/madlad.safetensors)."
+      "note": "MADLAD-400 3B-MT (Google, Apache-2.0), 11.8 GB float32. NFKMLXMADLAD.translator(directoryURL:) reads config.json, spiece.model, and model.safetensors; tokenizer.json is for the oracle's fast tokenizer only. Parity record: `run_reference.py madlad <out> --checkpoint <this directory>` under llmvenv (the fast tokenizer; the slow one needs a protobuf build llmvenv lacks) → IK_PARITY_MADLAD (records/madlad.safetensors). Probe-pair records, the same runner with the pair from the environment: `TRANSLATION_SOURCE_LANG=<source> TRANSLATION_TARGET_LANG=<target> run_reference.py madlad <out> --checkpoint <this directory>` (llmvenv), for ar, hi, ja, ko, th, vi, and zh into en and en into ja, zh, and zh-Hant → IK_PARITY_MADLAD_<SOURCE>_<TARGET> (records/madlad-<source>-<target>.safetensors; zh-Hant is ZH_HANT in the key and zh-hant in the file name), read by testMADLADProbePairsMatchTheReference."
     },
     {
       "key": "OPUS_MT_JA_EN",
@@ -4589,9 +4600,11 @@
         "model-00007-of-00007.safetensors"
       ],
       "config": {
-        "IK_VAL_MADLAD_7B": ""
+        "IK_VAL_MADLAD_7B": "",
+        "IK_PARITY_MADLAD_7B": "records/madlad-7b.safetensors",
+        "IK_PARITY_MADLAD_7B_F32": "records/madlad-7b-f32.safetensors"
       },
-      "note": "MADLAD-400 7B-MT (Google, Apache-2.0), 33 GB of float32 in 7 shards. NFKMLXMADLAD.translator(directoryURL:half: true) converts the shards to bfloat16 as they are read (about 15 GB resident). The reference runs at bfloat16: `MADLAD_DTYPE=bfloat16 run_reference.py madlad <out> --checkpoint <this directory>` (llmvenv); the test reads IK_PARITY_MADLAD_7B and holds bfloat16 tolerances. At float32 the reference reads each block as its forward reaches it: `MADLAD_HELD_DECODER_BLOCKS=32 run_reference.py madlad_layerwise <out> --checkpoint <this directory>` (llmvenv, about 15 GB) → IK_PARITY_MADLAD_7B_F32 (records/madlad-7b-f32.safetensors); the test streams the blocks .automatic cannot hold."
+      "note": "MADLAD-400 7B-MT (Google, Apache-2.0), 33 GB of float32 in 7 shards. NFKMLXMADLAD.translator(directoryURL:half: true) converts the shards to bfloat16 as they are read (about 15 GB resident). The reference runs at bfloat16: `MADLAD_DTYPE=bfloat16 run_reference.py madlad <out> --checkpoint <this directory>` (llmvenv); the test reads IK_PARITY_MADLAD_7B (records/madlad-7b.safetensors) and holds bfloat16 tolerances. At float32 the reference reads each block as its forward reaches it: `MADLAD_HELD_DECODER_BLOCKS=32 run_reference.py madlad_layerwise <out> --checkpoint <this directory>` (llmvenv, about 15 GB) → IK_PARITY_MADLAD_7B_F32 (records/madlad-7b-f32.safetensors); the test streams the blocks .automatic cannot hold."
     },
     {
       "key": "TRANSLATEGEMMA_27B",
