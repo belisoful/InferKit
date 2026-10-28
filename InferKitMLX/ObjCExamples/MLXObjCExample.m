@@ -1907,6 +1907,23 @@
 	XCTAssertEqualObjects([cloned inputForKey:NFKInputVoiceReference], clip);
 }
 
+// A request sets a detector's thresholds and a reader's length; the catalog lists each as an option.
+- (void)testObjectiveCSetsThresholdsAndLengths
+{
+	CGImageRef plate = [self examplePlate];
+	NFKInferenceRequest *strict = [NFKInferenceRequest requestWithInputs:@{ NFKInputImage: (__bridge id)plate }
+															  parameters:@{ NFKMLXDetectionParameterKey.confidenceThreshold: @0.6,
+																			NFKMLXDetectionParameterKey.overlapThreshold: @0.5 }];
+	CGImageRelease(plate);
+	XCTAssertEqualObjects(strict.parameters[NFKMLXDetectionParameterKey.confidenceThreshold], @0.6);
+	NFKModelDescriptor *yolo = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"yolo"];
+	XCTAssertEqualObjects([yolo optionWithKey:NFKMLXDetectionParameterKey.overlapThreshold].defaultValue, @0.7);
+	NFKModelDescriptor *silero = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"silero-vad"];
+	XCTAssertNotNil([silero optionWithKey:NFKMLXVoiceActivityParameterKey.speechThreshold]);
+	NFKModelDescriptor *trocr = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"trocr-base-printed"];
+	XCTAssertEqualObjects([trocr optionWithKey:NFKParameterMaxTokens].defaultValue, @64);
+}
+
 // A small opaque plate, for the examples that hand a model an image without running it.
 - (CGImageRef)examplePlate CF_RETURNS_RETAINED
 {

@@ -569,7 +569,9 @@ extension NFKMLXRetinaFace {
     /// Reads `NFKInputImage` and returns `NSArray<NFKDetection *>` under `NFKOutputDetections`, with
     /// boxes normalized 0…1 and the origin top-left, the same convention `NFKMLXYOLO` uses. The five
     /// landmarks are not carried by `NFKDetection`; use
-    /// ``detector(weightsURL:confidenceThreshold:suppressionThreshold:)`` when you need them.
+    /// ``detector(weightsURL:confidenceThreshold:suppressionThreshold:)`` when you need them. A request
+    /// sets the score threshold (0.8) under ``NFKMLXDetectionParameterKey/confidenceThreshold`` and the
+    /// suppression overlap (0.4) under ``NFKMLXDetectionParameterKey/overlapThreshold``.
     /// A nil `weightsURL` builds random weights. Run inference off the render thread.
     @objc(backendWithWeightsURL:error:)
     public static func backend(weightsURL: URL?) throws -> any NFKInferenceBackend {
@@ -578,8 +580,14 @@ extension NFKMLXRetinaFace {
             try loadWeights(into: net, from: weightsURL)
         }
         let holder = NFKRetinaHolder(net)
-        return NFKMLXDetectionBackend(identifier: modelName) { image in
-            detect(image, using: holder.net).map { face in
+        return NFKMLXDetectionBackend(identifier: modelName,
+                                      parameterKeys: [NFKMLXDetectionParameterKey.confidenceThreshold,
+                                                      NFKMLXDetectionParameterKey.overlapThreshold]) { image, request in
+            let confidence = NFKMLXDetectionParameterKey.threshold(request, NFKMLXDetectionParameterKey.confidenceThreshold,
+                                                                   default: 0.8)
+            let overlap = NFKMLXDetectionParameterKey.threshold(request, NFKMLXDetectionParameterKey.overlapThreshold,
+                                                                default: 0.4)
+            return detect(image, using: holder.net, confidenceThreshold: confidence, suppressionThreshold: overlap).map { face in
                 let box = CGRect(x: face.boundingBox.minX / CGFloat(image.width),
                                  y: face.boundingBox.minY / CGFloat(image.height),
                                  width: face.boundingBox.width / CGFloat(image.width),
@@ -622,10 +630,13 @@ extension NFKMLXRetinaFace {
 /// An image backend returning detections, for models whose output is a list of boxes.
 final class NFKMLXDetectionBackend: NSObject, NFKInferenceBackend {
     private let identifier: String
+    private let parameterKeys: Set<String>
     private let box: NFKMLXDetectionBox
 
-    init(identifier: String, detect: @escaping (CGImage) -> [NFKDetection]) {
+    /// A backend whose `detect` reads the request's parameters, which it declares as `parameterKeys`.
+    init(identifier: String, parameterKeys: Set<String>, detect: @escaping (CGImage, NFKInferenceRequest) -> [NFKDetection]) {
         self.identifier = identifier
+        self.parameterKeys = parameterKeys
         self.box = NFKMLXDetectionBox(detect)
         super.init()
     }
@@ -634,7 +645,7 @@ final class NFKMLXDetectionBackend: NSObject, NFKInferenceBackend {
     var backendIdentifier: String { identifier }
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
-    @objc var supportedParameterKeys: Set<String> { [] }
+    @objc var supportedParameterKeys: Set<String> { parameterKeys }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc var supportedInputKeys: Set<String> { [NFKInputImage] }
@@ -647,11 +658,11 @@ final class NFKMLXDetectionBackend: NSObject, NFKInferenceBackend {
               CFGetTypeID(value as CFTypeRef) == CGImage.typeID else {
             throw NFKMLXError.unsupportedInput
         }
-        return NFKInferenceResult(outputs: [NFKOutputDetections: box.detect(value as! CGImage)])
+        return NFKInferenceResult(outputs: [NFKOutputDetections: box.detect(value as! CGImage, request)])
     }
 }
 
 private final class NFKMLXDetectionBox: @unchecked Sendable {
-    let detect: (CGImage) -> [NFKDetection]
-    init(_ detect: @escaping (CGImage) -> [NFKDetection]) { self.detect = detect }
+    let detect: (CGImage, NFKInferenceRequest) -> [NFKDetection]
+    init(_ detect: @escaping (CGImage, NFKInferenceRequest) -> [NFKDetection]) { self.detect = detect }
 }

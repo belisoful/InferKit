@@ -397,7 +397,9 @@ public final class NFKMLXYOLONet: Module {
 
     /// Detects objects in a bridged image `[H, W, 3]` (`0...1`): predict, decode to normalized boxes,
     /// and non-max suppress. `labels` names classes when available.
-    func detect(_ image: MLXArray, labels: [String]?) -> [NFKDetection] {
+    func detect(_ image: MLXArray, labels: [String]?, confidenceThreshold: Float? = nil,
+                iouThreshold: Float? = nil) -> [NFKDetection] {
+        let confidenceThreshold = confidenceThreshold ?? configuration.confidenceThreshold
         let (predicted, box) = predictionsWithLetterbox(image.ndim == 3
             ? image.reshaped([1, image.shape[0], image.shape[1], image.shape[2]]) : image)
         eval(predicted)
@@ -417,7 +419,7 @@ public final class NFKMLXYOLONet: Module {
                     bestClass = k
                 }
             }
-            if bestScore < configuration.confidenceThreshold {
+            if bestScore < confidenceThreshold {
                 continue
             }
             // Undo the fitting: drop the padding, undo the scale, and normalize against the frame the
@@ -435,7 +437,7 @@ public final class NFKMLXYOLONet: Module {
             candidates.append((bestClass, bestScore, rect))
         }
 
-        return NFKMLXYOLONet.nonMaxSuppress(candidates, iouThreshold: configuration.iouThreshold).map { candidate in
+        return NFKMLXYOLONet.nonMaxSuppress(candidates, iouThreshold: iouThreshold ?? configuration.iouThreshold).map { candidate in
             let label = labels.flatMap { candidate.classIndex < $0.count ? $0[candidate.classIndex] : nil }
             return NFKDetection(label: label, classIndex: candidate.classIndex,
                                 confidence: Double(candidate.confidence), boundingBox: candidate.rect)
@@ -480,7 +482,8 @@ private final class NFKYOLOHolder: @unchecked Sendable {
 }
 
 /// An object-detection backend: an image under `NFKInputImage` produces detections under
-/// `NFKOutputDetections`.
+/// `NFKOutputDetections`. A request sets the score and overlap thresholds under
+/// ``NFKMLXDetectionParameterKey/confidenceThreshold`` and ``NFKMLXDetectionParameterKey/overlapThreshold``.
 @objc(NFKMLXYOLOBackend)
 public final class NFKMLXYOLOBackend: NSObject, NFKInferenceBackend {
 
@@ -497,7 +500,9 @@ public final class NFKMLXYOLOBackend: NSObject, NFKInferenceBackend {
     @objc public var backendIdentifier: String { identifier }
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
-    @objc public var supportedParameterKeys: Set<String> { [] }
+    @objc public var supportedParameterKeys: Set<String> {
+        [NFKMLXDetectionParameterKey.confidenceThreshold, NFKMLXDetectionParameterKey.overlapThreshold]
+    }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputImage] }
@@ -530,7 +535,13 @@ public final class NFKMLXYOLOBackend: NSObject, NFKInferenceBackend {
                     throw NFKMLXError.unsupportedInput
                 }
                 let image = try NFKMLXImageBridge.tensor(from: value, channels: 3, colorSpace: CGColorSpaceCreateDeviceRGB())
-                let detections = holder.net.detect(image, labels: holder.labels)
+                let configuration = holder.net.configuration
+                let detections = holder.net.detect(
+                    image, labels: holder.labels,
+                    confidenceThreshold: NFKMLXDetectionParameterKey.threshold(
+                        request, NFKMLXDetectionParameterKey.confidenceThreshold, default: configuration.confidenceThreshold),
+                    iouThreshold: NFKMLXDetectionParameterKey.threshold(
+                        request, NFKMLXDetectionParameterKey.overlapThreshold, default: configuration.iouThreshold))
                 job.finish(with: NFKInferenceResult(outputs: [NFKOutputDetections: detections]))
             } catch {
                 job.finish(withError: error as NSError)

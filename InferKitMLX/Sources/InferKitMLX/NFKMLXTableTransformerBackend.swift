@@ -210,7 +210,9 @@ public final class NFKMLXTableTransformer: NSObject {
     static let optionalFiles = ["preprocessor_config.json"]
     static let weightFiles = ["model.safetensors"]
 
-    /// The detection confidence threshold. The released model is confident on a clean table crop.
+    /// The detection confidence threshold a request that sets no
+    /// ``NFKMLXDetectionParameterKey/confidenceThreshold`` applies. The released model is confident on a
+    /// clean table crop.
     @objc public static var confidenceThreshold: Float = 0.6
 
     /// Builds a backend from a released Table Transformer directory (`model.safetensors` + `config.json`,
@@ -291,7 +293,8 @@ public final class NFKMLXTableTransformerBackend: NSObject, NFKInferenceBackend 
 
     @objc public var isReady: Bool { true }
     @objc public var backendIdentifier: String { NFKMLXTableTransformer.modelName }
-    @objc public var supportedParameterKeys: Set<String> { [] }
+    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> { [NFKMLXDetectionParameterKey.confidenceThreshold] }
     @objc public var supportedInputKeys: Set<String> { [NFKInputImage] }
 
     /// The result keys the backend writes. Introduced in InferKit 0.4.0.
@@ -319,7 +322,9 @@ public final class NFKMLXTableTransformerBackend: NSObject, NFKInferenceBackend 
                     throw NFKMLXError.unsupportedInput
                 }
                 let pixels = try NFKMLXTableTransformerProcessor.pixelValues(value, sizing: sizing)
-                let detections = holder.net.detect(pixels, threshold: NFKMLXTableTransformer.confidenceThreshold)
+                let threshold = NFKMLXDetectionParameterKey.threshold(request, NFKMLXDetectionParameterKey.confidenceThreshold,
+                                                                      default: NFKMLXTableTransformer.confidenceThreshold)
+                let detections = holder.net.detect(pixels, threshold: threshold)
                 job.finish(with: NFKInferenceResult(outputs: [NFKOutputDetections: detections]))
             } catch {
                 job.finish(withError: error as NSError)

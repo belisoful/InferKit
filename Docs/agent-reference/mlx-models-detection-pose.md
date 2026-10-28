@@ -507,3 +507,26 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   through an affine transform and a whole-image caller has no box (the Swift backend resizes for the same
   reason), and it records the prepared pixels, the backbone feature map, the heatmaps, the integer peaks,
   the DARK-refined keypoints, and the scores.
+
+## Thresholds a request sets
+
+`NFKMLXDetectionParameterKey` (2026-10-27) carries the two detection thresholds, read per request through
+`NFKMLXDetectionParameterKey.threshold(_:_:default:)` in the form `NFKMLXSAM3ParameterKey` set: a number or
+the model's own default, with no range check.
+- `confidenceThreshold`: YOLOv8 (its configuration's 0.25), the YOLO generations (0.25), RT-DETR and
+  RT-DETRv2 (0.3), RF-DETR and its segmentation (0.3), the Table Transformer
+  (`NFKMLXTableTransformer.confidenceThreshold`, 0.6), and RetinaFace (0.8).
+- `overlapThreshold`, the non-max suppression IoU: only where suppression runs. That is YOLOv8 (0.7),
+  YOLOv9, YOLO11, and YOLO12 (0.7), and RetinaFace (0.4). YOLOv10 and YOLO26 (`NFKYOLOGraphs.isEndToEnd`)
+  and the DETR family emit one box per query. Their backends and catalog entries leave the key out;
+  `NFKMLXYOLOGenerationBackend.parameterKeys(endToEnd:)` decides it for a generation.
+- Each catalog entry declares the keys its backend reads, at the backend's default.
+  `NFKMLXDetectionParameterKeyTests` runs every detector on random weights: one above 1 passes none, the
+  median score of what 0 passes keeps fewer, and an overlap of 0 suppresses more boxes than an overlap
+  of 1. A fixed cut such as 0.5 proves nothing there: on random weights the best of 80 class scores lies
+  above 0.5 at almost every anchor and query, so 0.5 kept all 1259 YOLO boxes and all 300 DETR queries.
+  `NFKMLXTableTransformerTests.testARequestSetsTheConfidenceThreshold` measures the released structure
+  model at 0 and at the middle of its own regions' scores. Its twelve regions on the validation table all
+  score above 0.95 and its other queries below 0.1, so 0.1, 0.6, and 0.95 return the same twelve.
+- `NFKMLXDetectionBackend`, RetinaFace's backend, hands its closure the request and declares the
+  `parameterKeys` it is built with.

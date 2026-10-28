@@ -291,8 +291,13 @@ public final class NFKMLXSa2VA: NSObject {
                                 "preprocessor_config.json"]
     static let weightFiles = ["model.safetensors", "model.safetensors.index.json"]
 
-    /// The maximum tokens generated after the prompt.
+    /// The maximum tokens generated after the prompt when a request sets no `NFKParameterMaxTokens`.
     @objc public static var maximumTokens = 256
+
+    /// The request's `NFKParameterMaxTokens`, at least 1, else ``maximumTokens``.
+    static func maximumTokens(for request: NFKInferenceRequest) -> Int {
+        NFKMLXGenerationBackend.number(request, NFKParameterMaxTokens).map { max($0.intValue, 1) } ?? maximumTokens
+    }
 
     /// Builds a backend from a released Sa2VA directory (weights + tokenizer + `config.json`). The
     /// configuration's `architectures` picks the family: `Sa2VAChatModel` is InternVL-based (the 1B, 4B,
@@ -400,6 +405,10 @@ public final class NFKMLXSa2VABackend: NSObject, NFKInferenceBackend {
 
     public var supportedInputKeys: Set<String> { [NFKInputImage, NFKInputPrompt] }
 
+    /// The request parameters the backend reads: the longest answer, under `NFKParameterMaxTokens`.
+    /// Introduced in InferKit 0.4.0.
+    public var supportedParameterKeys: Set<String> { [NFKParameterMaxTokens] }
+
     /// The result keys the backend writes: the answer, and the mask when the answer segments a region.
     /// Introduced in InferKit 0.4.0.
     public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputMask] }
@@ -425,10 +434,10 @@ public final class NFKMLXSa2VABackend: NSObject, NFKInferenceBackend {
         let prompt = (request.input(forKey: NFKInputPrompt) as? String)
             ?? "<image>Please segment the main object."
         if let qwen = holder.qwen {
-            return try runQwen(qwen, image: imageValue, prompt: prompt)
+            return try runQwen(qwen, image: imageValue, prompt: prompt, request: request)
         }
         if let llava = holder.llava {
-            return try runLLaVA(llava, image: imageValue, prompt: prompt)
+            return try runLLaVA(llava, image: imageValue, prompt: prompt, request: request)
         }
         guard let net = holder.net else { throw NFKMLXError.noOutput }
         let configuration = net.configuration
@@ -444,7 +453,7 @@ public final class NFKMLXSa2VABackend: NSObject, NFKInferenceBackend {
         let tokenizer = self.tokenizer
         let template = configuration.template
         let generated = net.generate(inputIds: inputIds, imageFeatures: features,
-                                     maximumTokens: NFKMLXSa2VA.maximumTokens, endToken: configuration.endTokenId,
+                                     maximumTokens: NFKMLXSa2VA.maximumTokens(for: request), endToken: configuration.endTokenId,
                                      stopsAfter: { tokens in
                                          template.stops(after: tokens) { tokenizer.decode($0.map { NSNumber(value: $0) }) }
                                      })
@@ -463,7 +472,8 @@ public final class NFKMLXSa2VABackend: NSObject, NFKInferenceBackend {
     /// The Qwen-VL releases' turn: the image at the reference's pixel bounds, the chat template's user
     /// turn (any `<image>` marker dropped, as `predict_forward` drops it), greedy generation to
     /// `<|im_end|>` or `<|endoftext|>`, and the first `[SEG]`'s mask.
-    private func runQwen(_ net: NFKMLXSa2VAQwenNet, image imageValue: Any, prompt: String) throws -> NFKInferenceResult {
+    private func runQwen(_ net: NFKMLXSa2VAQwenNet, image imageValue: Any, prompt: String,
+                         request: NFKInferenceRequest) throws -> NFKInferenceResult {
         let cf = imageValue as CFTypeRef
         guard CFGetTypeID(cf) == CGImage.typeID else {
             throw NFKMLXError.unsupportedConfiguration("the Qwen-VL Sa2VA releases read a CGImage")
@@ -474,7 +484,7 @@ public final class NFKMLXSa2VABackend: NSObject, NFKInferenceBackend {
                                   imageTokens: grid.h * grid.w / 4)
         let inputIds = tokenizer.encode(text).map { Int(truncating: $0) }
         let generated = net.generate(inputIds: inputIds, features: features, grid: grid,
-                                     maximumTokens: NFKMLXSa2VA.maximumTokens, endTokens: [151_645, 151_643])
+                                     maximumTokens: NFKMLXSa2VA.maximumTokens(for: request), endTokens: [151_645, 151_643])
         let answer = Self.answer(generated.tokens, ending: generated.ending, tokenizer: tokenizer)
         var outputs: [String: Any] = [NFKOutputText: answer]
         if let segHidden = generated.segmentationHiddenStates.first {
@@ -488,14 +498,15 @@ public final class NFKMLXSa2VABackend: NSObject, NFKInferenceBackend {
 
     /// The LLaVA release's turn: the image resized to 336 (PIL bicubic) and CLIP-normalized, the Vicuna
     /// instruction with 576 `<image>` tokens, greedy generation to `</s>`, and the first `[SEG]`'s mask.
-    private func runLLaVA(_ net: NFKMLXSa2VALLaVANet, image imageValue: Any, prompt: String) throws -> NFKInferenceResult {
+    private func runLLaVA(_ net: NFKMLXSa2VALLaVANet, image imageValue: Any, prompt: String,
+                          request: NFKInferenceRequest) throws -> NFKInferenceResult {
         let pixels = try NFKMLXSa2VALLaVA.pixelValues(imageValue, side: net.visionConfiguration.imageSize)
         let features = net.imageFeatures(pixels)
         let grid = net.visionConfiguration.grid
         let text = NFKMLXSa2VALLaVA.promptText(prompt, imageTokens: grid * grid)
         let inputIds = tokenizer.encode(text).map { Int(truncating: $0) }
         let generated = net.generate(inputIds: inputIds, imageFeatures: features,
-                                     maximumTokens: NFKMLXSa2VA.maximumTokens, endToken: tokenizer.eosTokenId)
+                                     maximumTokens: NFKMLXSa2VA.maximumTokens(for: request), endToken: tokenizer.eosTokenId)
         let answer = Self.answer(generated.tokens, ending: generated.ending, tokenizer: tokenizer)
         var outputs: [String: Any] = [NFKOutputText: answer]
         if let segHidden = generated.segmentationHiddenStates.first {

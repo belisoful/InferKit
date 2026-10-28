@@ -1050,7 +1050,8 @@ extension NFKMLXRTDetrNet {
     /// RT-DETR is a DETR-family detector, so there is NO non-max suppression — the one-to-one training
     /// makes the queries already distinct. The boxes are normalized in the resized frame, and the resize
     /// squashes the whole frame, so a normalized box maps to the original frame unchanged.
-    public func detect(_ image: MLXArray, labels: [String]?) -> [NFKDetection] {
+    public func detect(_ image: MLXArray, labels: [String]?, confidenceThreshold: Float? = nil) -> [NFKDetection] {
+        let confidenceThreshold = confidenceThreshold ?? config.confidenceThreshold
         let batched = image.ndim == 3
             ? image.reshaped([1, image.shape[0], image.shape[1], image.shape[2]]) : image
         let resized = NFKMLXResample.resizeBilinear(batched, height: config.inputResolution, width: config.inputResolution)
@@ -1073,7 +1074,7 @@ extension NFKMLXRTDetrNet {
                     bestClass = k
                 }
             }
-            if bestScore < config.confidenceThreshold { continue }
+            if bestScore < confidenceThreshold { continue }
             let cx = boxValues[query * 4], cy = boxValues[query * 4 + 1]
             let w = boxValues[query * 4 + 2], h = boxValues[query * 4 + 3]
             let minX = min(max(cx - w / 2, 0), 1), maxX = min(max(cx + w / 2, 0), 1)
@@ -1115,7 +1116,7 @@ public final class NFKMLXRTDetrBackend: NSObject, NFKInferenceBackend {
     @objc public var backendIdentifier: String { identifier }
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
-    @objc public var supportedParameterKeys: Set<String> { [] }
+    @objc public var supportedParameterKeys: Set<String> { [NFKMLXDetectionParameterKey.confidenceThreshold] }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputImage] }
@@ -1144,7 +1145,9 @@ public final class NFKMLXRTDetrBackend: NSObject, NFKInferenceBackend {
                     throw NFKMLXError.unsupportedInput
                 }
                 let image = try NFKMLXImageBridge.tensor(from: value, channels: 3, colorSpace: CGColorSpaceCreateDeviceRGB())
-                let detections = holder.net.detect(image, labels: holder.labels)
+                let threshold = NFKMLXDetectionParameterKey.threshold(request, NFKMLXDetectionParameterKey.confidenceThreshold,
+                                                                     default: holder.net.config.confidenceThreshold)
+                let detections = holder.net.detect(image, labels: holder.labels, confidenceThreshold: threshold)
                 job.finish(with: NFKInferenceResult(outputs: [NFKOutputDetections: detections]))
             } catch {
                 job.finish(withError: error as NSError)

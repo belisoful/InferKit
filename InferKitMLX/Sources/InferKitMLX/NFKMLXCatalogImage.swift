@@ -1129,6 +1129,7 @@ enum NFKMLXCatalogImage {
               tasks: [NFKModelTaskFaceDetection],
               inputs: [imageInput("The image to search for faces.")],
               outputs: [.output(NFKOutputDetections, required: true, title: "Faces", help: "A box around each face found.")],
+              parameters: [confidenceOption(0.8), overlapOption(0.4)],
               license: .mit(url: "https://github.com/xinntao/facexlib/blob/master/LICENSE"),
               source: download("https://github.com/xinntao/facexlib/releases/download/v0.1.0/detection_mobilenet0.25_Final.pth",
                                requiresConversion: true))
@@ -1142,12 +1143,28 @@ enum NFKMLXCatalogImage {
     }
 
     static func detectionEntry(_ name: String, _ displayName: String, family: String, summary: String,
-                               license: NFKModelLicense, source: NFKModelSource) -> NFKMLXCatalogEntry {
+                               parameters: [NFKModelOption], license: NFKModelLicense,
+                               source: NFKModelSource) -> NFKMLXCatalogEntry {
         model(name, displayName, family: family, summary: summary, tasks: [NFKModelTaskObjectDetection],
               inputs: [imageInput("The image to search.")],
               outputs: [.output(NFKOutputDetections, required: true, title: "Objects",
                                 help: "A box, a class, and a score for each object found.")],
-              license: license, source: source)
+              parameters: parameters, license: license, source: source)
+    }
+
+    /// The score a detection must reach to be returned, at the model's own default.
+    static func confidenceOption(_ defaultValue: Double) -> NFKModelOption {
+        .option(NFKMLXDetectionParameterKey.confidenceThreshold, kind: NFKModelOptionKindNumber,
+                title: "Confidence threshold", help: "The score a detection must reach to be returned.",
+                defaultValue: defaultValue, minimum: 0, maximum: 1, step: 0.05)
+    }
+
+    /// The overlap above which non-max suppression drops a box, at the model's own default.
+    static func overlapOption(_ defaultValue: Double) -> NFKModelOption {
+        .option(NFKMLXDetectionParameterKey.overlapThreshold, kind: NFKModelOptionKindNumber,
+                title: "Overlap threshold",
+                help: "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+                defaultValue: defaultValue, minimum: 0, maximum: 1, step: 0.05)
     }
 
     /// The YOLOv8 sizes other than the nano `yolo` builds, each under its own registry name.
@@ -1172,6 +1189,7 @@ enum NFKMLXCatalogImage {
             }
             return detectionEntry(yoloV8Name(variant), "YOLO" + stem.dropFirst(4), family: "yolo",
                                   summary: "A real-time detector of the 80 COCO object classes.",
+                                  parameters: [confidenceOption(0.25), overlapOption(0.7)],
                                   license: ultralytics,
                                   source: download("https://github.com/ultralytics/assets/releases/download/v8.3.0/\(stem).pt",
                                                    requiresConversion: true))
@@ -1182,10 +1200,14 @@ enum NFKMLXCatalogImage {
         (0 ... NFKMLXYOLORelease.v26ExtraLarge.rawValue).compactMap { raw in
             guard let release = NFKMLXYOLORelease(rawValue: raw) else { return nil }
             let stem = NFKMLXYOLOGenerations.modelName(for: release)
-            let tag = NFKMLXYOLOGenerations.specs(for: release).generation == .v26 ? "v8.4.0" : "v8.3.0"
+            let generation = NFKMLXYOLOGenerations.specs(for: release).generation
+            let tag = generation == .v26 ? "v8.4.0" : "v8.3.0"
+            // The end-to-end generations emit one box per object and suppress nothing.
+            let thresholds = NFKYOLOGraphs.isEndToEnd(generation)
+                ? [confidenceOption(0.25)] : [confidenceOption(0.25), overlapOption(0.7)]
             return detectionEntry(stem, "YOLO" + stem.dropFirst(4), family: "yolo",
                                   summary: "A real-time detector of the 80 COCO object classes.",
-                                  license: ultralytics,
+                                  parameters: thresholds, license: ultralytics,
                                   source: download("https://github.com/ultralytics/assets/releases/download/\(tag)/\(stem).pt",
                                                    requiresConversion: false))
         }
@@ -1210,6 +1232,7 @@ enum NFKMLXCatalogImage {
             }
             return detectionEntry(NFKMLXRTDetr.specs(for: variant).name, release.displayName, family: "rt-detr",
                                   summary: "A real-time transformer detector of the 80 COCO object classes.",
+                                  parameters: [confidenceOption(0.3)],
                                   license: .license("Apache-2.0", name: "Apache License 2.0",
                                                     url: "https://github.com/lyuwenyu/RT-DETR/blob/main/LICENSE"),
                                   source: hubFile(release.repository, "model.safetensors", requiresConversion: false))
@@ -1234,7 +1257,7 @@ enum NFKMLXCatalogImage {
             }
             return detectionEntry(NFKMLXRFDetr.specs(for: variant).name, "RF-DETR \(size.capitalized)", family: "rf-detr",
                                   summary: "A real-time transformer detector of the 80 COCO object classes.",
-                                  license: rfDetrLicense,
+                                  parameters: [confidenceOption(0.3)], license: rfDetrLicense,
                                   source: hubFile("Roboflow/rf-detr-\(size)", "model.safetensors", requiresConversion: false))
         }
     }
@@ -1265,6 +1288,7 @@ enum NFKMLXCatalogImage {
                                            help: "A box, a class, a score, and a mask for each object found."),
                                    .output(NFKOutputMask, title: "Mask",
                                            help: "The union of the objects' masks. Absent when nothing is found.")],
+                         parameters: [confidenceOption(0.3)],
                          license: rfDetrLicense,
                          source: hubFile("Roboflow/rf-detr-seg-\(size.stem)", "model.safetensors",
                                          requiresConversion: false))
@@ -1306,6 +1330,7 @@ enum NFKMLXCatalogImage {
                          inputs: [imageInput("The document page or table crop to read.")],
                          outputs: [.output(NFKOutputDetections, required: true, title: "Regions",
                                            help: "A box, a label from the release's own classes, and a score for each region.")],
+                         parameters: [confidenceOption(Double(NFKMLXTableTransformer.confidenceThreshold))],
                          license: .mit(url: "https://huggingface.co/\(release.repository)"),
                          source: hubRelease(release.repository, required: NFKMLXTableTransformer.requiredFiles,
                                             optional: NFKMLXTableTransformer.optionalFiles,
@@ -1517,12 +1542,20 @@ enum NFKMLXCatalogImage {
                   tasks: [NFKModelTaskTextRecognition],
                   inputs: [imageInput("A crop holding one line of text.")],
                   outputs: [.output(NFKOutputText, required: true, title: "Text", help: "The transcribed line.")],
+                  parameters: [maximumTokensOption(NFKMLXTrOCR.maximumTokens, help: "The most tokens the transcription runs to.")],
                   license: .mit(url: "https://huggingface.co/\(release.repository)"),
                   source: hubRelease(release.repository, required: NFKMLXTrOCR.requiredFiles,
                                      optional: NFKMLXTrOCR.optionalFiles, weights: NFKMLXTrOCR.weightFiles))
             entry.modelTypes = ["vision-encoder-decoder"]
+            entry.outputTokenLimit = trOCRDecoderPositions(release.name) - 1
             return entry
         }
+    }
+
+    /// A TrOCR release's decoder `max_position_embeddings`, read from each repository's `config.json`. The
+    /// start token takes one position, so a transcription runs to one fewer token.
+    static func trOCRDecoderPositions(_ name: String) -> Int {
+        ["trocr-base-stage1", "trocr-large-printed", "trocr-large-stage1"].contains(name) ? 1024 : 512
     }
 
     /// The Sa2VA releases.
@@ -1571,6 +1604,12 @@ enum NFKMLXCatalogImage {
         }
     }
 
+    /// The longest output under `NFKParameterMaxTokens`, at the backend's own default.
+    static func maximumTokensOption(_ defaultValue: Int, help: String) -> NFKModelOption {
+        .option(NFKParameterMaxTokens, kind: NFKModelOptionKindInteger, title: "Maximum tokens", help: help,
+                defaultValue: defaultValue, minimum: 1, step: 1)
+    }
+
     static var sa2VAEntries: [NFKMLXCatalogEntry] {
         sa2VAReleases.map { release in
             model(release.name, release.displayName, family: "sa2va",
@@ -1582,6 +1621,7 @@ enum NFKMLXCatalogImage {
                   outputs: [.output(NFKOutputText, required: true, title: "Answer", help: "The model's answer."),
                             .output(NFKOutputMask, title: "Mask",
                                     help: "The mask of what the answer's [SEG] token refers to. Absent when the answer has none.")],
+                  parameters: [maximumTokensOption(NFKMLXSa2VA.maximumTokens, help: "The most tokens the answer runs to.")],
                   license: sa2VALicense(release),
                   source: hubRelease(release.repository, required: NFKMLXSa2VA.requiredFiles,
                                      optional: NFKMLXSa2VA.optionalFiles, weights: NFKMLXSa2VA.weightFiles))

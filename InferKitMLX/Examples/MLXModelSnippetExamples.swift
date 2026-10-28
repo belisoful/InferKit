@@ -31,6 +31,20 @@ final class MLXModelSnippetExamples: XCTestCase {
         XCTAssertEqual(detector.backendIdentifier, "rf-detr-nano")
     }
 
+    // Docs/examples.md: thresholds and lengths a request sets. A random RF-DETR stands in for the release;
+    // nothing passes a threshold above 1.
+    func testExampleRequestThresholds() throws {
+        try requireMLXRuntime()
+        let detector = try NFKMLXRFDetr.backend(variant: .nano, weightsURL: nil, labels: nil)
+        let confident = NFKInferenceRequest(inputs: [NFKInputImage: Self.solid(64)],
+                                            parameters: [NFKMLXDetectionParameterKey.confidenceThreshold: 1.01])
+        XCTAssertEqual(try detector.runInference(for: confident).detections?.count, 0)
+        XCTAssertTrue(detector.supportedParameterKeys?.contains(NFKMLXDetectionParameterKey.confidenceThreshold) == true)
+        let speech = NFKInferenceRequest(inputs: [NFKInputPrompt: "unused"],
+                                         parameters: [NFKMLXVoiceActivityParameterKey.speechThreshold: 0.7])
+        XCTAssertEqual(speech.parameter(forKey: NFKMLXVoiceActivityParameterKey.speechThreshold) as? Double, 0.7)
+    }
+
     // Docs/examples.md: IP-Adapter image prompts. A tiny random Stable Diffusion model and an adapter
     // file written in the released layout stand in for the SD 1.5 release and ip-adapter_sd15.
     func testExampleIPAdapterImagePrompt() throws {

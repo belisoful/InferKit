@@ -145,15 +145,21 @@ public final class NFKMLXTrOCR: NSObject {
         }
     }
 
-    /// The maximum tokens generated after the start token.
+    /// The maximum tokens generated after the start token when a request sets no `NFKParameterMaxTokens`.
     @objc public static var maximumTokens = 64
+
+    /// The request's `NFKParameterMaxTokens`, at least 1, else ``maximumTokens``.
+    static func maximumTokens(for request: NFKInferenceRequest) -> Int {
+        NFKMLXGenerationBackend.number(request, NFKParameterMaxTokens).map { max($0.intValue, 1) } ?? maximumTokens
+    }
     /// The beam count for generation; greedy (1) matches the release's generation config.
     @objc public static var beams = 1
 }
 
 // MARK: - Backend
 
-/// The TrOCR inference backend: one image in, its transcription (`NFKOutputText`) out.
+/// The TrOCR inference backend: one image in, its transcription (`NFKOutputText`) out. A request sets the
+/// longest transcription under `NFKParameterMaxTokens`.
 @objc(NFKMLXTrOCRBackend)
 public final class NFKMLXTrOCRBackend: NSObject, NFKInferenceBackend {
     private let holder: Holder
@@ -169,6 +175,9 @@ public final class NFKMLXTrOCRBackend: NSObject, NFKInferenceBackend {
     }
 
     public var supportedInputKeys: Set<String> { [NFKInputImage] }
+
+    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
+    public var supportedParameterKeys: Set<String> { [NFKParameterMaxTokens] }
 
     /// The result keys the backend writes. Introduced in InferKit 0.4.0.
     public var supportedOutputKeys: Set<String> { [NFKOutputText] }
@@ -186,7 +195,7 @@ public final class NFKMLXTrOCRBackend: NSObject, NFKInferenceBackend {
         let memory = net.imageFeatures(pixels)
         let model = NFKTrOCRDecodeModel(net: net, memory: memory)
         let configuration = net.languageConfiguration
-        let decoding = NFKMLXSeq2SeqDecoding(beams: NFKMLXTrOCR.beams, maxTokens: NFKMLXTrOCR.maximumTokens,
+        let decoding = NFKMLXSeq2SeqDecoding(beams: NFKMLXTrOCR.beams, maxTokens: NFKMLXTrOCR.maximumTokens(for: request),
                                             startToken: configuration.decoderStartTokenId,
                                             endToken: configuration.eosTokenId)
         let ids = NFKMLXSeq2SeqDecoder.generate(model, source: [configuration.decoderStartTokenId], decoding: decoding)

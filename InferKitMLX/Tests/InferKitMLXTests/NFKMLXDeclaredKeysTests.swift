@@ -104,12 +104,11 @@ final class NFKMLXDeclaredKeysTests: XCTestCase {
         XCTAssertEqual(backend.supportedInputKeys?.contains(NFKInputImage), true)
     }
 
-    // A backend that reads one input and no parameters says so, which is a different answer from
-    // declaring nothing at all.
-    func testAnAudioBackendDeclaresItsAudioInputAndNoParameters() throws {
+    // A backend that reads one input and one parameter declares exactly those.
+    func testAnAudioBackendDeclaresItsAudioInputAndItsThreshold() throws {
         try requireMLXRuntime()
         let backend = try NFKMLXSileroVAD.backend(weightsURL: nil)
         XCTAssertEqual(backend.supportedInputKeys, [NFKInputAudio])
-        XCTAssertEqual(backend.supportedParameterKeys, [])
+        XCTAssertEqual(backend.supportedParameterKeys, [NFKMLXVoiceActivityParameterKey.speechThreshold])
     }
 }

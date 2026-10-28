@@ -1719,6 +1719,26 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### A request sets the detectors' thresholds and the readers' output length
+
+- `NFKMLXDetectionParameterKey.confidenceThreshold` sets the score a detection must reach, and
+  `NFKMLXDetectionParameterKey.overlapThreshold` the IoU above which non-max suppression drops a box,
+  for one request. Each defaults to the model's own value.
+  - YOLOv8, YOLOv9, YOLO11, and YOLO12 read both (0.25 and 0.7), and YOLOv10 and YOLO26, which suppress
+    nothing, read the confidence alone.
+  - RT-DETR, RT-DETRv2, RF-DETR, and RF-DETR segmentation read the confidence (0.3), and the Table
+    Transformer reads it with `NFKMLXTableTransformer.confidenceThreshold` (0.6) as the default.
+  - RetinaFace's backend reads both (0.8 and 0.4).
+- `NFKMLXVoiceActivityParameterKey.speechThreshold` sets the speech probability a frame must reach for
+  Silero VAD and the MarbleNet VAD (0.5).
+- TrOCR and Sa2VA read `NFKParameterMaxTokens`, with `NFKMLXTrOCR.maximumTokens` (64) and
+  `NFKMLXSa2VA.maximumTokens` (256) as the defaults. The option's maximum is the decoder's position limit:
+  511 or 1023 tokens for TrOCR, by release. Before, those process-wide values cut every long
+  line or answer short, and a request could not lengthen one.
+- Every catalog entry of these models declares the keys its backend reads, as request options at the
+  backend's default, and each backend lists them in `supportedParameterKeys`. Before, the thresholds
+  were fixed at build, so a backend the catalog built applied its defaults to every request.
+
 #### Kokoro speaks in any released voice, and Chatterbox clones the voice a request brings
 
 - Kokoro reads `NFKParameterVoice` from each request, naming one of the release's voicepacks, with the

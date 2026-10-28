@@ -238,6 +238,27 @@ final class NFKMLXTrOCRTests: XCTestCase {
                       "the backend reads the rendered line; got \(text)")
     }
 
+    // A request's NFKParameterMaxTokens ends the transcription early; the backend's 64 reads the whole line.
+    func testARequestSetsTheTranscriptionLength() throws {
+        try requireMLXRuntime()
+        let env = NFKMLXValidationConfig.environment
+        guard let directory = env["IK_VAL_TROCR"], let imagePath = env["IK_VAL_TROCR_IMAGE"],
+              let image = Self.loadImage(imagePath) else {
+            throw XCTSkip("set IK_VAL_TROCR and IK_VAL_TROCR_IMAGE")
+        }
+        let backend = try NFKMLXTrOCR.backend(directoryURL: URL(fileURLWithPath: directory))
+        XCTAssertEqual(backend.supportedParameterKeys, [NFKParameterMaxTokens])
+        func text(_ parameters: [String: Any]) throws -> String {
+            let request = NFKInferenceRequest(inputs: [NFKInputImage: image], parameters: parameters)
+            return (try backend.runInference(for: request).output(forKey: NFKOutputText) as? String) ?? ""
+        }
+        let whole = try text([:])
+        let short = try text([NFKParameterMaxTokens: 2])
+        XCTAssertTrue(whole.lowercased().contains("quick brown fox"), whole)
+        XCTAssertLessThan(short.count, whole.count, "two tokens read less of the line: \(short)")
+        XCTAssertTrue(whole.hasPrefix(short.trimmingCharacters(in: .whitespaces)), "\(short) begins \(whole)")
+    }
+
     static func loadImage(_ path: String) -> CGImage? {
         guard FileManager.default.fileExists(atPath: path),
               let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil) else { return nil }

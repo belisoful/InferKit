@@ -346,6 +346,7 @@ extension NFKMLXCatalogAudio {
               tasks: [NFKModelTaskVoiceActivityDetection],
               inputs: [audioInput("A WAV recording.")],
               outputs: [speechSpans],
+              parameters: [speechThreshold],
               license: .mit(url: "https://github.com/snakers4/silero-vad/blob/master/LICENSE"),
               release: "v6",
               source: urlSource("https://raw.githubusercontent.com/snakers4/silero-vad/master/src/silero_vad/data/silero_vad.jit",
@@ -358,12 +359,20 @@ extension NFKMLXCatalogAudio {
               tasks: [NFKModelTaskVoiceActivityDetection],
               inputs: [audioInput("A WAV recording.")],
               outputs: [speechSpans],
+              parameters: [speechThreshold],
               license: .license(nil, name: "NVIDIA Open Model License Agreement",
                                 url: "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license"),
               release: "v2.0",
               source: .hub("nvidia/Frame_VAD_Multilingual_MarbleNet_v2.0", layout: NFKModelSourceLayoutFile,
                            files: [NFKModelFile(path: "frame_vad_multilingual_marblenet_v2.0.nemo",
                                                 role: NFKModelFileRoleWeights)]))
+    }
+
+    /// The speech probability a frame must reach, the voice activity detectors' option.
+    static var speechThreshold: NFKModelOption {
+        .option(NFKMLXVoiceActivityParameterKey.speechThreshold, kind: NFKModelOptionKindNumber, title: "Speech threshold",
+                help: "The speech probability a frame must reach to count as speech. Consecutive such frames form one span.",
+                defaultValue: 0.5, minimum: 0, maximum: 1, step: 0.05)
     }
 
     static var audioTagger: NFKMLXCatalogEntry {

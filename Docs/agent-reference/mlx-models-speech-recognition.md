@@ -438,7 +438,9 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   times are computed at the model's rate, which is the caller's own seconds because resampling
   preserves duration. `detect` builds spans from the frames inside the encoder's valid length alone
   (`logitsAndLength`, NeMo's `encoded_len`) and clamps each span's end to the clip's duration, through
-  `NFKMLXSpeechSpans.merge`, which Silero VAD shares. `speechProbabilities` still returns every frame
+  `NFKMLXSpeechSpans.merge`, which Silero VAD shares. Both backends read the speech threshold per request
+  under `NFKMLXVoiceActivityParameterKey.speechThreshold` (2026-10-27), the configuration's 0.5 by default,
+  and the catalog declares it. `speechProbabilities` still returns every frame
   the forward emits, padding frames included, because the parity record holds all of them. The
   even-count padding adds one frame past the valid length whenever the valid mel count is even: a
   16000-sample clip yields 51 frames, 50 of them valid. On the parity clip the extra frame scores

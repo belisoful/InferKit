@@ -355,6 +355,14 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   tokenizer by converting the slow XLM-R one, and the `llm` environment pins 3.19.6 for
   `descript-audiotools`: `PYTHONPATH=<validation root>/protobuf-4` (protobuf 4.25.3, installed with
   `pip install --target`).
+- **The transcription length is a request option (2026-10-27).** `NFKParameterMaxTokens` sets the
+  tokens generated after the start token for one request; `NFKMLXTrOCR.maximumTokens` (64) is the default
+  and stays a process-wide setting. The catalog declares it on every TrOCR release, bounded by
+  `outputTokenLimit`: the decoder's `max_position_embeddings` less the start token's position (511, or
+  1023 for base-stage1, large-printed, and large-stage1). The measurement cannot read that bound, because
+  a `VisionEncoderDecoder` configuration nests it under `decoder`.
+  `NFKMLXTrOCRTests.testARequestSetsTheTranscriptionLength` reads two tokens of the validation line and
+  checks they begin the whole reading.
 
 ## Sa2VA
 
@@ -700,6 +708,9 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   - Apache-2.0 holds for `Sa2VA-1B` (Qwen2.5-0.5B-Instruct), `Sa2VA-InternVL3-2B` (Qwen2.5-1.5B),
     `Sa2VA-Qwen3-VL-2B`, and `Sa2VA-Qwen3-VL-4B` (Qwen3-VL Instruct, Apache-2.0), each over SAM 2
     (`facebook/sam2.1-hiera-large`, Apache-2.0).
+- **The answer length is a request option (2026-10-27).** `NFKParameterMaxTokens` sets the tokens
+  generated after the prompt for one request on all three paths (InternVL, Qwen-VL, LLaVA);
+  `NFKMLXSa2VA.maximumTokens` (256) is the default. The catalog declares it on every Sa2VA release.
 
 ## Phi-4-multimodal
 

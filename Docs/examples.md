@@ -2416,6 +2416,24 @@ let (found, masks) = net.segment(try NFKMLXTrainingData.tensor(photo), labels: c
 Every released `Roboflow/rf-detr-seg-*` size is a variant, `.nano` through `.extraExtraLarge`. A
 checkpoint fits only its own size.
 
+### Thresholds and lengths a request sets
+
+The detectors read their score threshold under `NFKMLXDetectionParameterKey.confidenceThreshold`, and
+the ones that run non-max suppression (YOLOv8, YOLOv9, YOLO11, YOLO12, RetinaFace) their overlap under
+`.overlapThreshold`. The voice activity detectors read `NFKMLXVoiceActivityParameterKey.speechThreshold`,
+and TrOCR and Sa2VA read their output length under `NFKParameterMaxTokens`. Each applies to one request,
+and the catalog declares each as an option at the model's default.
+
+```swift
+let confident = NFKInferenceRequest(inputs: [NFKInputImage: photo],
+                                    parameters: [NFKMLXDetectionParameterKey.confidenceThreshold: 0.6,
+                                                 NFKMLXDetectionParameterKey.overlapThreshold: 0.5])
+let boxes = try detector.runInference(for: confident).detections ?? []
+let speech = NFKInferenceRequest(inputs: [NFKInputAudio: clip],
+                                 parameters: [NFKMLXVoiceActivityParameterKey.speechThreshold: 0.7])
+let longLine = NFKInferenceRequest(inputs: [NFKInputImage: lineCrop], parameters: [NFKParameterMaxTokens: 128])
+```
+
 ### Arbitrary style transfer (`NFKMLXAdaIN`, a shipped MLX model)
 
 `NFKMLXAdaIN` stylizes a photograph with any style image, where `NFKMLXStyleTransfer` bakes one style

@@ -508,6 +508,26 @@ final class NFKMLXSa2VATests: XCTestCase {
         XCTAssertNotNil(result.output(forKey: NFKOutputMask), "the [SEG] answer produces a mask")
     }
 
+    /// A request's NFKParameterMaxTokens ends the answer early, through the public factory's 1B.
+    func testARequestSetsTheAnswerLength() throws {
+        try requireMLXRuntime()
+        let env = NFKMLXValidationConfig.environment
+        guard let directory = env["IK_VAL_SA2VA_1B"], FileManager.default.fileExists(atPath: directory) else {
+            throw XCTSkip("set IK_VAL_SA2VA_1B")
+        }
+        let backend = try NFKMLXSa2VA.backend(directoryURL: URL(fileURLWithPath: directory))
+        XCTAssertEqual(backend.supportedParameterKeys, [NFKParameterMaxTokens])
+        func answer(_ parameters: [String: Any]) throws -> String {
+            let request = NFKInferenceRequest(inputs: [NFKInputImage: Self.plate(),
+                                                       NFKInputPrompt: "<image>Please describe the image."],
+                                              parameters: parameters)
+            return (try backend.runInference(for: request).output(forKey: NFKOutputText) as? String) ?? ""
+        }
+        let whole = try answer([:])
+        let short = try answer([NFKParameterMaxTokens: 1])
+        XCTAssertLessThan(short.count, whole.count, "one token answers less: \(short) against \(whole)")
+    }
+
     /// The public factory's 4B at bf16, held to the float32 reference by
     /// ``checkBFloat16Generation(directory:float32Generation:name:)``.
     func testTheBFloat16BackendDivergesOnlyAtATieBelowItsPrecision() throws {

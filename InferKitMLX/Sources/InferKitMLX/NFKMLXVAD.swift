@@ -355,14 +355,14 @@ public final class NFKMLXVADNet: Module {
     }
 
     /// Detects speech spans in a mono waveform, merging consecutive above-threshold frames within the
-    /// encoder's valid length.
-    func detect(_ samples: [Float], sampleRate: Int) -> [NFKAudioSegment] {
+    /// encoder's valid length. A nil `threshold` is the configuration's.
+    func detect(_ samples: [Float], sampleRate: Int, threshold: Float? = nil) -> [NFKAudioSegment] {
         let (probabilities, validFrames) = speechProbabilitiesAndLength(samples, sampleRate: sampleRate)
         // The frames are produced from the resampled clip, so they are timed by the model's rate.
         // Resampling preserves duration, so the seconds this yields are the caller's own.
         let frameSeconds = Double(configuration.hopSamples * configuration.totalStride) / Double(configuration.sampleRate)
         return NFKMLXSpeechSpans.merge(probabilities.prefix(validFrames), frameSeconds: frameSeconds,
-                                       threshold: configuration.threshold,
+                                       threshold: threshold ?? configuration.threshold,
                                        duration: Double(samples.count) / Double(sampleRate))
     }
 }
@@ -413,7 +413,8 @@ private final class NFKVADHolder: @unchecked Sendable {
 }
 
 /// Voice activity detection as an InferKit backend. Reads `NFKInputAudio`; returns speech spans under
-/// `NFKOutputSegments`.
+/// `NFKOutputSegments`. A request sets the speech threshold under
+/// ``NFKMLXVoiceActivityParameterKey/speechThreshold``.
 @objc(NFKMLXVADBackend)
 public final class NFKMLXVADBackend: NSObject, NFKInferenceBackend {
 
@@ -430,7 +431,7 @@ public final class NFKMLXVADBackend: NSObject, NFKInferenceBackend {
     @objc public var backendIdentifier: String { identifier }
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
-    @objc public var supportedParameterKeys: Set<String> { [] }
+    @objc public var supportedParameterKeys: Set<String> { [NFKMLXVoiceActivityParameterKey.speechThreshold] }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputAudio] }
@@ -443,7 +444,9 @@ public final class NFKMLXVADBackend: NSObject, NFKInferenceBackend {
         guard let (samples, sampleRate) = Self.audio(from: request) else {
             throw NFKMLXError.unsupportedInput
         }
-        let segments = holder.net.detect(samples, sampleRate: sampleRate)
+        let threshold = NFKMLXDetectionParameterKey.threshold(request, NFKMLXVoiceActivityParameterKey.speechThreshold,
+                                                              default: holder.net.configuration.threshold)
+        let segments = holder.net.detect(samples, sampleRate: sampleRate, threshold: threshold)
         return NFKInferenceResult(outputs: [NFKOutputSegments: segments])
     }
 

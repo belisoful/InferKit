@@ -433,7 +433,8 @@ New request and result keys from the closure:
   (`median`, `mean`, `quantiles`, `quantileLevels`). `NFKMLXTimesFMParameterKey` carries TimesFM's options.
 - `NFKMLXControlNetParameterKey` (`conditioningScale`, `controlMode`), `NFKMLXSAM3ParameterKey`,
   `NFKMLXSAM2ParameterKey.box`, `NFKMLXChatterboxParameterKey.exaggeration`, `NFKMLXFlux2ParameterKey`,
-  `NFKMLXTextToImageInputKey.imageEmbedding`.
+  `NFKMLXTextToImageInputKey.imageEmbedding`, `NFKMLXDetectionParameterKey` (`confidenceThreshold`,
+  `overlapThreshold`), `NFKMLXVoiceActivityParameterKey.speechThreshold`.
 - `NFKMLXPhonemizing`: the Objective-C phonemizer protocol. `NFKMLXNeuralG2P` adopts it; a caller's own object
   can supply phonemes to the FastSpeech2 voice and the hand-chained TTS.
 

@@ -42452,7 +42452,28 @@
         "url" : "https://github.com/xinntao/facexlib/blob/master/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.80000000000000004,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.40000000000000002,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -42550,7 +42571,17 @@
         "url" : "https://github.com/roboflow/rf-detr/blob/develop/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -42653,7 +42684,17 @@
         "url" : "https://github.com/roboflow/rf-detr/blob/develop/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -42756,7 +42797,17 @@
         "url" : "https://github.com/roboflow/rf-detr/blob/develop/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -42859,7 +42910,17 @@
         "url" : "https://github.com/roboflow/rf-detr/blob/develop/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -42962,7 +43023,17 @@
         "url" : "https://github.com/roboflow/rf-detr/blob/develop/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections",
@@ -43074,7 +43145,17 @@
         "url" : "https://github.com/roboflow/rf-detr/blob/develop/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections",
@@ -43186,7 +43267,17 @@
         "url" : "https://github.com/roboflow/rf-detr/blob/develop/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections",
@@ -43298,7 +43389,17 @@
         "url" : "https://github.com/roboflow/rf-detr/blob/develop/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections",
@@ -43410,7 +43511,17 @@
         "url" : "https://github.com/roboflow/rf-detr/blob/develop/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections",
@@ -43522,7 +43633,17 @@
         "url" : "https://github.com/roboflow/rf-detr/blob/develop/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections",
@@ -43634,7 +43755,17 @@
         "url" : "https://github.com/roboflow/rf-detr/blob/develop/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections",
@@ -43746,7 +43877,17 @@
         "url" : "https://github.com/roboflow/rf-detr/blob/develop/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -44597,7 +44738,17 @@
         "url" : "https://github.com/lyuwenyu/RT-DETR/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -44700,7 +44851,17 @@
         "url" : "https://github.com/lyuwenyu/RT-DETR/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -44803,7 +44964,17 @@
         "url" : "https://github.com/lyuwenyu/RT-DETR/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -44906,7 +45077,17 @@
         "url" : "https://github.com/lyuwenyu/RT-DETR/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -45009,7 +45190,17 @@
         "url" : "https://github.com/lyuwenyu/RT-DETR/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -45112,7 +45303,17 @@
         "url" : "https://github.com/lyuwenyu/RT-DETR/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -45215,7 +45416,17 @@
         "url" : "https://github.com/lyuwenyu/RT-DETR/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -45318,7 +45529,17 @@
         "url" : "https://github.com/lyuwenyu/RT-DETR/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -45434,7 +45655,17 @@
         }
       },
       "options" : [
-
+        {
+          "default" : 256,
+          "help" : "The most tokens the answer runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 32768,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        }
       ],
       "outputModalities" : [
         "text",
@@ -45611,7 +45842,17 @@
         }
       },
       "options" : [
-
+        {
+          "default" : 256,
+          "help" : "The most tokens the answer runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 32768,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        }
       ],
       "outputModalities" : [
         "text",
@@ -45787,7 +46028,17 @@
         }
       },
       "options" : [
-
+        {
+          "default" : 256,
+          "help" : "The most tokens the answer runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 32768,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        }
       ],
       "outputModalities" : [
         "text",
@@ -45964,7 +46215,17 @@
         }
       },
       "options" : [
-
+        {
+          "default" : 256,
+          "help" : "The most tokens the answer runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 4096,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        }
       ],
       "outputModalities" : [
         "text",
@@ -46140,7 +46401,17 @@
         }
       },
       "options" : [
-
+        {
+          "default" : 256,
+          "help" : "The most tokens the answer runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 128000,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        }
       ],
       "outputModalities" : [
         "text",
@@ -46318,7 +46589,17 @@
         }
       },
       "options" : [
-
+        {
+          "default" : 256,
+          "help" : "The most tokens the answer runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 262144,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        }
       ],
       "outputModalities" : [
         "text",
@@ -46496,7 +46777,17 @@
         }
       },
       "options" : [
-
+        {
+          "default" : 256,
+          "help" : "The most tokens the answer runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 262144,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        }
       ],
       "outputModalities" : [
         "text",
@@ -46674,7 +46965,17 @@
         }
       },
       "options" : [
-
+        {
+          "default" : 256,
+          "help" : "The most tokens the answer runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 262144,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        }
       ],
       "outputModalities" : [
         "text",
@@ -55813,7 +56114,17 @@
         "url" : "https://github.com/snakers4/silero-vad/blob/master/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.5,
+          "help" : "The speech probability a frame must reach to count as speech. Consecutive such frames form one span.",
+          "key" : "NFKMLXParameterVoiceActivitySpeechThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Speech threshold"
+        }
       ],
       "outputModalities" : [
         "segments"
@@ -59694,7 +60005,17 @@
         "url" : "https://huggingface.co/microsoft/table-transformer-detection"
       },
       "options" : [
-
+        {
+          "default" : 0.60000002384185791,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -59809,7 +60130,17 @@
         "url" : "https://huggingface.co/microsoft/table-transformer-structure-recognition"
       },
       "options" : [
-
+        {
+          "default" : 0.60000002384185791,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -59924,7 +60255,17 @@
         "url" : "https://huggingface.co/microsoft/table-transformer-structure-recognition-v1.1-all"
       },
       "options" : [
-
+        {
+          "default" : 0.60000002384185791,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -60039,7 +60380,17 @@
         "url" : "https://huggingface.co/microsoft/table-transformer-structure-recognition-v1.1-fin"
       },
       "options" : [
-
+        {
+          "default" : 0.60000002384185791,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -60154,7 +60505,17 @@
         "url" : "https://huggingface.co/microsoft/table-transformer-structure-recognition-v1.1-pub"
       },
       "options" : [
-
+        {
+          "default" : 0.60000002384185791,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -61195,7 +61556,17 @@
         "vision-encoder-decoder"
       ],
       "options" : [
-
+        {
+          "default" : 64,
+          "help" : "The most tokens the transcription runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 511,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        }
       ],
       "outputModalities" : [
         "text"
@@ -61347,7 +61718,17 @@
         "vision-encoder-decoder"
       ],
       "options" : [
-
+        {
+          "default" : 64,
+          "help" : "The most tokens the transcription runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 511,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        }
       ],
       "outputModalities" : [
         "text"
@@ -61499,7 +61880,17 @@
         "vision-encoder-decoder"
       ],
       "options" : [
-
+        {
+          "default" : 64,
+          "help" : "The most tokens the transcription runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 1023,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        }
       ],
       "outputModalities" : [
         "text"
@@ -61646,7 +62037,17 @@
         "vision-encoder-decoder"
       ],
       "options" : [
-
+        {
+          "default" : 64,
+          "help" : "The most tokens the transcription runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 511,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        }
       ],
       "outputModalities" : [
         "text"
@@ -61788,7 +62189,17 @@
         "vision-encoder-decoder"
       ],
       "options" : [
-
+        {
+          "default" : 64,
+          "help" : "The most tokens the transcription runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 511,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        }
       ],
       "outputModalities" : [
         "text"
@@ -61935,7 +62346,17 @@
         "vision-encoder-decoder"
       ],
       "options" : [
-
+        {
+          "default" : 64,
+          "help" : "The most tokens the transcription runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 1023,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        }
       ],
       "outputModalities" : [
         "text"
@@ -62087,7 +62508,17 @@
         "vision-encoder-decoder"
       ],
       "options" : [
-
+        {
+          "default" : 64,
+          "help" : "The most tokens the transcription runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 1023,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        }
       ],
       "outputModalities" : [
         "text"
@@ -62234,7 +62665,17 @@
         "vision-encoder-decoder"
       ],
       "options" : [
-
+        {
+          "default" : 64,
+          "help" : "The most tokens the transcription runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 511,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        }
       ],
       "outputModalities" : [
         "text"
@@ -62376,7 +62817,17 @@
         "vision-encoder-decoder"
       ],
       "options" : [
-
+        {
+          "default" : 64,
+          "help" : "The most tokens the transcription runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 511,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        }
       ],
       "outputModalities" : [
         "text"
@@ -62523,7 +62974,17 @@
         "vision-encoder-decoder"
       ],
       "options" : [
-
+        {
+          "default" : 64,
+          "help" : "The most tokens the transcription runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 511,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        }
       ],
       "outputModalities" : [
         "text"
@@ -62670,7 +63131,17 @@
         "vision-encoder-decoder"
       ],
       "options" : [
-
+        {
+          "default" : 64,
+          "help" : "The most tokens the transcription runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 511,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        }
       ],
       "outputModalities" : [
         "text"
@@ -63015,7 +63486,17 @@
         "url" : "https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license"
       },
       "options" : [
-
+        {
+          "default" : 0.5,
+          "help" : "The speech probability a frame must reach to count as speech. Consecutive such frames form one span.",
+          "key" : "NFKMLXParameterVoiceActivitySpeechThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Speech threshold"
+        }
       ],
       "outputModalities" : [
         "segments"
@@ -73564,7 +74045,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -73663,7 +74165,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -73761,7 +74284,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -73859,7 +74403,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -73957,7 +74522,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -74055,7 +74641,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -74153,7 +74760,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -74251,7 +74879,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -74349,7 +74998,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -74447,7 +75117,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -74545,7 +75236,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -74643,7 +75355,17 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -74741,7 +75463,17 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -74839,7 +75571,17 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -74937,7 +75679,17 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -75035,7 +75787,17 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -75133,7 +75895,17 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -75231,7 +76003,17 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -75329,7 +76111,17 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -75427,7 +76219,17 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -75525,7 +76327,17 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -75623,7 +76435,17 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -75721,7 +76543,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -75820,7 +76663,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -75919,7 +76783,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -76018,7 +76903,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -76117,7 +77023,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -76215,7 +77142,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -76313,7 +77261,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -76411,7 +77380,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -76509,7 +77499,28 @@
         "url" : "https://github.com/ultralytics/ultralytics/blob/main/LICENSE"
       },
       "options" : [
-
+        {
+          "default" : 0.25,
+          "help" : "The score a detection must reach to be returned.",
+          "key" : "NFKMLXParameterDetectionConfidenceThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Confidence threshold"
+        },
+        {
+          "default" : 0.69999999999999996,
+          "help" : "The overlap, as intersection over union, above which the less confident of two boxes of the same class is dropped.",
+          "key" : "NFKMLXParameterDetectionOverlapThreshold",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "stage" : "request",
+          "step" : 0.050000000000000003,
+          "title" : "Overlap threshold"
+        }
       ],
       "outputModalities" : [
         "detections"

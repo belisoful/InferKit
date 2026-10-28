@@ -178,7 +178,9 @@ extension NFKMLXRFDetrSegmentationNet {
     /// per-query threshold, no non-max suppression — so the boxes and labels are the detector's.
     ///
     /// - Returns: the detections, and their masks `[K, h, w]` as probabilities at the mask resolution.
-    public func segment(_ image: MLXArray, labels: [String]?) -> (detections: [NFKDetection], masks: MLXArray) {
+    public func segment(_ image: MLXArray, labels: [String]?,
+                        confidenceThreshold: Float? = nil) -> (detections: [NFKDetection], masks: MLXArray) {
+        let confidenceThreshold = confidenceThreshold ?? config.confidenceThreshold
         let batched = image.ndim == 3
             ? image.reshaped([1, image.shape[0], image.shape[1], image.shape[2]]) : image
         let resized = NFKMLXResample.resizeBilinear(batched, height: config.inputResolution,
@@ -202,7 +204,7 @@ extension NFKMLXRFDetrSegmentationNet {
                 let score = scoreValues[query * classes + k]
                 if score > bestScore { bestScore = score; bestClass = k }
             }
-            if bestScore < config.confidenceThreshold { continue }
+            if bestScore < confidenceThreshold { continue }
             let cx = boxValues[query * 4], cy = boxValues[query * 4 + 1]
             let w = boxValues[query * 4 + 2], h = boxValues[query * 4 + 3]
             let minX = min(max(cx - w / 2, 0), 1), maxX = min(max(cx + w / 2, 0), 1)
@@ -272,7 +274,7 @@ public final class NFKMLXRFDetrSegmentationBackend: NSObject, NFKInferenceBacken
     @objc public var supportedOutputKeys: Set<String> { [NFKOutputDetections, NFKOutputMask] }
 
     /// The request parameters the backend reads.
-    @objc public var supportedParameterKeys: Set<String> { [] }
+    @objc public var supportedParameterKeys: Set<String> { [NFKMLXDetectionParameterKey.confidenceThreshold] }
 
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
@@ -296,7 +298,9 @@ public final class NFKMLXRFDetrSegmentationBackend: NSObject, NFKInferenceBacken
                 }
                 let image = try NFKMLXImageBridge.tensor(from: value, channels: 3,
                                                          colorSpace: CGColorSpaceCreateDeviceRGB())
-                let (detections, masks) = holder.net.segment(image, labels: holder.labels)
+                let threshold = NFKMLXDetectionParameterKey.threshold(request, NFKMLXDetectionParameterKey.confidenceThreshold,
+                                                                     default: holder.net.config.confidenceThreshold)
+                let (detections, masks) = holder.net.segment(image, labels: holder.labels, confidenceThreshold: threshold)
                 var outputs: [String: Any] = [NFKOutputDetections: detections]
                 if masks.dim(0) > 0 {
                     let combined = masks.max(axis: 0).expandedDimensions(axis: -1)

@@ -490,7 +490,9 @@ extension NFKMLXYOLOGenerationNet {
 }
 
 /// The detection backend for the generations after v8: an image under `NFKInputImage` produces
-/// detections under `NFKOutputDetections`.
+/// detections under `NFKOutputDetections`. A request sets the score threshold under
+/// ``NFKMLXDetectionParameterKey/confidenceThreshold``, and for a generation that suppresses, the overlap
+/// threshold under ``NFKMLXDetectionParameterKey/overlapThreshold``.
 @objc(NFKMLXYOLOGenerationBackend)
 public final class NFKMLXYOLOGenerationBackend: NSObject, NFKInferenceBackend {
 
@@ -506,8 +508,17 @@ public final class NFKMLXYOLOGenerationBackend: NSObject, NFKInferenceBackend {
     @objc public var isReady: Bool { true }
     @objc public var backendIdentifier: String { identifier }
 
-    /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
-    @objc public var supportedParameterKeys: Set<String> { [] }
+    /// The request parameters the backend reads: the score threshold, and the overlap threshold where the
+    /// generation suppresses. Introduced in InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> {
+        NFKMLXYOLOGenerationBackend.parameterKeys(endToEnd: holder.net.head.endToEnd)
+    }
+
+    /// The request parameters a generation's backend reads.
+    static func parameterKeys(endToEnd: Bool) -> Set<String> {
+        endToEnd ? [NFKMLXDetectionParameterKey.confidenceThreshold]
+            : [NFKMLXDetectionParameterKey.confidenceThreshold, NFKMLXDetectionParameterKey.overlapThreshold]
+    }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputImage] }
@@ -537,7 +548,12 @@ public final class NFKMLXYOLOGenerationBackend: NSObject, NFKInferenceBackend {
                 }
                 let image = try NFKMLXImageBridge.tensor(from: value, channels: 3,
                                                          colorSpace: CGColorSpaceCreateDeviceRGB())
-                let detections = holder.net.detect(image, labels: holder.labels)
+                let detections = holder.net.detect(
+                    image, labels: holder.labels,
+                    confidenceThreshold: NFKMLXDetectionParameterKey.threshold(
+                        request, NFKMLXDetectionParameterKey.confidenceThreshold, default: 0.25),
+                    iouThreshold: NFKMLXDetectionParameterKey.threshold(
+                        request, NFKMLXDetectionParameterKey.overlapThreshold, default: 0.7))
                 job.finish(with: NFKInferenceResult(outputs: [NFKOutputDetections: detections]))
             } catch {
                 job.finish(withError: error as NSError)

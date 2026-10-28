@@ -201,6 +201,34 @@ final class NFKMLXTableTransformerTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(labels.filter { $0 == "table column" }.count, 3, "several columns are detected")
     }
 
+    // A request's confidence threshold replaces the release default of 0.6 for that request.
+    func testARequestSetsTheConfidenceThreshold() throws {
+        try requireMLXRuntime()
+        let env = NFKMLXValidationConfig.environment
+        guard let directory = env["IK_VAL_TABLE_TRANSFORMER"], let imagePath = env["IK_VAL_TABLE_TRANSFORMER_IMAGE"],
+              let image = Self.loadImage(imagePath) else {
+            throw XCTSkip("set IK_VAL_TABLE_TRANSFORMER and IK_VAL_TABLE_TRANSFORMER_IMAGE")
+        }
+        let backend = try NFKMLXTableTransformer.backend(directoryURL: URL(fileURLWithPath: directory))
+        XCTAssertEqual(backend.supportedParameterKeys, [NFKMLXDetectionParameterKey.confidenceThreshold])
+        func regions(_ parameters: [String: Any]) throws -> [NFKDetection] {
+            let request = NFKInferenceRequest(inputs: [NFKInputImage: image], parameters: parameters)
+            return try XCTUnwrap(try backend.runInference(for: request).output(forKey: NFKOutputDetections) as? [NFKDetection])
+        }
+        // The released model scores its regions above 0.95 and its other queries far below 0.1, so the cuts
+        // are 0, where every query passes, and the middle of the released regions' own scores.
+        let key = NFKMLXDetectionParameterKey.confidenceThreshold
+        let released = try regions([:])
+        let every = try regions([key: 0])
+        let scores = released.map(\.confidence).sorted()
+        let middle = try XCTUnwrap(scores.isEmpty ? nil : scores[scores.count / 2])
+        let strict = try regions([key: middle])
+        XCTAssertGreaterThan(every.count, released.count, "a threshold of 0 returns every query")
+        XCTAssertLessThan(strict.count, released.count, "a threshold at the middle score returns fewer regions")
+        XCTAssertTrue(strict.allSatisfy { $0.confidence >= Double(Float(middle)) - 1e-6 })
+        XCTAssertEqual(try regions([key: NFKMLXTableTransformer.confidenceThreshold]).count, released.count)
+    }
+
     static func loadImage(_ path: String) -> CGImage? {
         guard FileManager.default.fileExists(atPath: path),
               let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: path) as CFURL, nil) else { return nil }

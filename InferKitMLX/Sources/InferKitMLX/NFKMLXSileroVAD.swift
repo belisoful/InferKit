@@ -198,11 +198,11 @@ public final class NFKMLXSileroVADNet: Module {
     /// Detects speech spans, merging consecutive above-threshold chunks. Each chunk spans
     /// `numSamples / sampleRate` seconds; resampling preserves duration, so the seconds are the caller's.
     /// The last chunk is zero-padded to a whole chunk, so a span ending there ends at the clip's end, as
-    /// the reference's `get_speech_timestamps` ends it.
-    func detect(_ samples: [Float], sampleRate: Int) -> [NFKAudioSegment] {
+    /// the reference's `get_speech_timestamps` ends it. A nil `threshold` is the configuration's.
+    func detect(_ samples: [Float], sampleRate: Int, threshold: Float? = nil) -> [NFKAudioSegment] {
         let probabilities = speechProbabilities(samples, sampleRate: sampleRate)
         return NFKMLXSpeechSpans.merge(probabilities[...], frameSeconds: configuration.chunkSeconds,
-                                       threshold: configuration.threshold,
+                                       threshold: threshold ?? configuration.threshold,
                                        duration: Double(samples.count) / Double(sampleRate))
     }
 }
@@ -214,7 +214,8 @@ private final class NFKSileroVADHolder: @unchecked Sendable {
 }
 
 /// Silero voice activity detection as an InferKit backend. Reads `NFKInputAudio`; returns speech spans
-/// under `NFKOutputSegments`.
+/// under `NFKOutputSegments`. A request sets the speech threshold under
+/// ``NFKMLXVoiceActivityParameterKey/speechThreshold``.
 @objc(NFKMLXSileroVADBackend)
 public final class NFKMLXSileroVADBackend: NSObject, NFKInferenceBackend {
 
@@ -231,7 +232,7 @@ public final class NFKMLXSileroVADBackend: NSObject, NFKInferenceBackend {
     @objc public var backendIdentifier: String { identifier }
 
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
-    @objc public var supportedParameterKeys: Set<String> { [] }
+    @objc public var supportedParameterKeys: Set<String> { [NFKMLXVoiceActivityParameterKey.speechThreshold] }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputAudio] }
@@ -244,7 +245,9 @@ public final class NFKMLXSileroVADBackend: NSObject, NFKInferenceBackend {
         guard let (samples, sampleRate) = Self.audio(from: request) else {
             throw NFKMLXError.unsupportedInput
         }
-        let segments = holder.net.detect(samples, sampleRate: sampleRate)
+        let threshold = NFKMLXDetectionParameterKey.threshold(request, NFKMLXVoiceActivityParameterKey.speechThreshold,
+                                                              default: holder.net.configuration.threshold)
+        let segments = holder.net.detect(samples, sampleRate: sampleRate, threshold: threshold)
         return NFKInferenceResult(outputs: [NFKOutputSegments: segments])
     }
 
