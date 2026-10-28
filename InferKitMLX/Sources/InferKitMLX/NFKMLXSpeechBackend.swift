@@ -45,6 +45,7 @@ public final class NFKMLXSpeechBackend: NSObject, NFKInferenceBackend {
     private let ready: Bool
     private let configuration: NFKMLXSpeechConfiguration
     private let requestParameterKeys: Set<String>
+    private let requestInputKeys: Set<String>
 
     public convenience init(identifier: String = "mlx-speech",
                             isReady: Bool = true,
@@ -62,6 +63,8 @@ public final class NFKMLXSpeechBackend: NSObject, NFKInferenceBackend {
     ///   - configuration: the output sample rate and file settings.
     ///   - parameterKeys: the request parameters `requestSynthesize` reads, which the backend declares beside
     ///     `NFKParameterSampleRate`.
+    ///   - inputKeys: the request inputs `requestSynthesize` reads, which the backend declares beside
+    ///     `NFKInputPrompt` and `NFKInputMessages`, such as `NFKInputVoiceReference`.
     ///   - requestSynthesize: maps the text, the sample rate, and the request to a mono waveform.
     ///
     /// Introduced in InferKit 0.4.0.
@@ -69,11 +72,13 @@ public final class NFKMLXSpeechBackend: NSObject, NFKInferenceBackend {
                 isReady: Bool = true,
                 configuration: NFKMLXSpeechConfiguration = NFKMLXSpeechConfiguration(),
                 parameterKeys: Set<String>,
+                inputKeys: Set<String> = [],
                 requestSynthesize: @escaping RequestSynthesize) {
         self.identifier = identifier
         self.ready = isReady
         self.configuration = configuration
         self.requestParameterKeys = parameterKeys
+        self.requestInputKeys = inputKeys
         self.lifecycle = NFKMLXLifecycle(requestSynthesize)
         super.init()
     }
@@ -88,7 +93,7 @@ public final class NFKMLXSpeechBackend: NSObject, NFKInferenceBackend {
     @objc public var supportedParameterKeys: Set<String> { requestParameterKeys.union([NFKParameterSampleRate]) }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
-    @objc public var supportedInputKeys: Set<String> { [NFKInputPrompt, NFKInputMessages] }
+    @objc public var supportedInputKeys: Set<String> { requestInputKeys.union([NFKInputPrompt, NFKInputMessages]) }
 
     /// The result keys the backend writes. Introduced in InferKit 0.4.0.
     @objc public var supportedOutputKeys: Set<String> { [NFKOutputAudio] }

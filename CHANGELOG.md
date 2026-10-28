@@ -1719,6 +1719,25 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Kokoro speaks in any released voice, and Chatterbox clones the voice a request brings
+
+- Kokoro reads `NFKParameterVoice` from each request, naming one of the release's voicepacks, with the
+  build's `voiceName` as the default. A voicepack is read from the release's `voices/` the first time a
+  request names it and kept. A name that is not a voicepack's, or that is not letters, digits, `_`, and
+  `-`, is refused.
+- `NFKMLXKokoro.releaseVoiceNames` lists the 54 voicepacks of the v1.0 release, and
+  `NFKMLXKokoro.defaultVoiceName` is `af_heart`. The `kokoro-82m` descriptor declares the voice as a
+  request option with every voicepack as a choice, titled with its language and voice.
+- The Kokoro download, through the catalog and through `kokoroBackendWithRepo:…`, fetches every
+  voicepack: the build's voice is required and the other 53 are optional, which adds 27.7 MB, about
+  360 MB in all. Before, only the build's voice was downloaded, so no other voice could be chosen.
+- Chatterbox reads a WAV clip under `NFKInputVoiceReference`, an `NFKAudioAsset` or its data, and speaks
+  that request in the clip's voice. The `chatterbox` descriptor declares the input. Before, a voice was
+  cloned only through the factory's `voiceURL`, which the catalog's build leaves nil, so a backend the
+  catalog built spoke only the release's built-in voice.
+- `NFKMLXSpeechBackend` takes `inputKeys:` beside `parameterKeys:`, the request inputs its closure reads,
+  and declares them in `supportedInputKeys`.
+
 #### The language models stream a submitted job and stop when it is cancelled
 
 - `NFKMLXLanguageBackend` and `NFKMLXDecoderBackend` implement `submitInferenceJobForRequest:`. Each

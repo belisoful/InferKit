@@ -155,6 +155,10 @@ final class MLXModelSnippetExamples: XCTestCase {
         XCTAssertTrue(NFKMLXKokoro.responds(to: NSSelectorFromString("kokoroBackendWithRepo:revision:cacheDirectoryURL:voiceName:error:")))
         XCTAssertThrowsError(try NFKMLXKokoro.backend(directoryURL: URL(fileURLWithPath: "/nonexistent-kokoro"),
                                                       voiceName: "af_heart"))
+        XCTAssertTrue(NFKMLXKokoro.releaseVoiceNames.contains("bm_george"), "a request may name any released voice")
+        let british = NFKInferenceRequest(inputs: [NFKInputPrompt: "həlˈoʊ wˈɜːld"],
+                                          parameters: [NFKParameterVoice: "bm_george"])
+        XCTAssertEqual(british.parameter(forKey: NFKParameterVoice) as? String, "bm_george")
         NFKMLXRandom.seed(19)
         var vocabulary = [String: Int]()
         for scalar in "həlˈoʊ".unicodeScalars { vocabulary[String(scalar)] = Int(scalar.value) % 170 + 1 }
@@ -175,6 +179,9 @@ final class MLXModelSnippetExamples: XCTestCase {
             "chatterboxBackendWithRepo:revision:cacheDirectoryURL:voiceURL:error:")))
         XCTAssertThrowsError(try NFKMLXChatterbox.backend(directoryURL: URL(fileURLWithPath: "/nonexistent-chatterbox"),
                                                           voiceURL: nil))
+        let clip = NFKAudioAsset(fileURL: URL(fileURLWithPath: "/path/to/voice.wav"))
+        let cloned = NFKInferenceRequest(inputs: [NFKInputPrompt: "Hello there.", NFKInputVoiceReference: clip])
+        XCTAssertTrue(cloned.input(forKey: NFKInputVoiceReference) is NFKAudioAsset)
     }
 
     /// Holds the network, voicepack, and vocabulary for capture in the speech backend's `@Sendable`

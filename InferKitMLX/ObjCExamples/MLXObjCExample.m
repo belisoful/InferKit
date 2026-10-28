@@ -1886,6 +1886,27 @@
 						  @"a backend reports the options it was built with");
 }
 
+// Kokoro speaks in the voicepack a request names, and Chatterbox in the voice of a clip a request carries.
+// The release's voices are the catalog option's choices.
+- (void)testObjectiveCChoosesAVoiceAndClonesOne
+{
+	XCTAssertEqual(NFKMLXKokoro.releaseVoiceNames.count, (NSUInteger)54);
+	XCTAssertTrue([NFKMLXKokoro.releaseVoiceNames containsObject:NFKMLXKokoro.defaultVoiceName]);
+	NFKModelOption *voice = [[NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"kokoro-82m"]
+							 optionWithKey:NFKParameterVoice];
+	XCTAssertEqualObjects([voice.choices valueForKey:@"value"], NFKMLXKokoro.releaseVoiceNames);
+	NFKInferenceRequest *british = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"həlˈoʊ" }
+															   parameters:@{ NFKParameterVoice: @"bm_george" }];
+	XCTAssertEqualObjects(british.parameters[NFKParameterVoice], @"bm_george");
+
+	NFKModelDescriptor *chatterbox = [NFKModelCatalog.sharedCatalog descriptorWithIdentifier:@"chatterbox"];
+	XCTAssertTrue([[chatterbox.inputs valueForKey:@"key"] containsObject:NFKInputVoiceReference]);
+	NFKAudioAsset *clip = [NFKAudioAsset audioAssetWithFileURL:[NSURL fileURLWithPath:@"/path/to/voice.wav"]];
+	NFKInferenceRequest *cloned = [NFKInferenceRequest requestWithInputs:@{ NFKInputPrompt: @"Hello there.",
+																			NFKInputVoiceReference: clip }];
+	XCTAssertEqualObjects([cloned inputForKey:NFKInputVoiceReference], clip);
+}
+
 // A small opaque plate, for the examples that hand a model an image without running it.
 - (CGImageRef)examplePlate CF_RETURNS_RETAINED
 {

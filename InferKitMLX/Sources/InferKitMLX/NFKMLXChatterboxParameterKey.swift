@@ -41,6 +41,21 @@ extension NFKMLXChatterbox {
         return conditionals
     }
 
+    /// The WAV bytes of the clip a request carries under `NFKInputVoiceReference`: an `NFKAudioAsset`'s
+    /// file, or the data itself. Nil when the request carries none.
+    static func referenceClip(of request: NFKInferenceRequest) throws -> Data? {
+        guard let value = request.input(forKey: NFKInputVoiceReference) else {
+            return nil
+        }
+        if let data = value as? Data {
+            return data
+        }
+        guard let url = (value as? NFKAudioAsset)?.fileURL else {
+            throw NFKMLXError.unsupportedConfiguration("\(NFKInputVoiceReference) is an NFKAudioAsset with a file, or WAV data")
+        }
+        return try Data(contentsOf: url)
+    }
+
     /// T3's sampling settings: the reference defaults, with the request's temperature, guidance weight,
     /// and seed where it sets them.
     static func samplingOptions(for request: NFKInferenceRequest) -> NFKMLXT3SamplingOptions {

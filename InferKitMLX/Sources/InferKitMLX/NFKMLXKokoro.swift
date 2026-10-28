@@ -1021,51 +1021,125 @@ extension NFKMLXKokoroNet {
     }
 }
 
-/// Holds the model, voice, and vocabulary for capture in the speech backend's `@Sendable` closure.
+/// Holds the model, the vocabulary, and the voicepacks read so far for capture in the speech backend's
+/// `@Sendable` closure.
 private final class NFKKokoroHolder: @unchecked Sendable {
     let net: NFKMLXKokoroNet
-    let voice: MLXArray
     let vocab: [String: Int]
-    init(_ net: NFKMLXKokoroNet, voice: MLXArray, vocab: [String: Int]) {
+    let directoryURL: URL
+    let defaultVoice: String
+    private let lock = NSLock()
+    private var voices: [String: MLXArray] = [:]
+
+    init(_ net: NFKMLXKokoroNet, vocab: [String: Int], directoryURL: URL, defaultVoice: String) throws {
         self.net = net
-        self.voice = voice
         self.vocab = vocab
+        self.directoryURL = directoryURL
+        self.defaultVoice = defaultVoice
+        _ = try voice(named: defaultVoice)
+    }
+
+    /// The voicepack the request names under `NFKParameterVoice`, else the default one.
+    func voice(for request: NFKInferenceRequest) throws -> MLXArray {
+        guard let value = request.parameter(forKey: NFKParameterVoice) else {
+            return try voice(named: defaultVoice)
+        }
+        guard let name = value as? String, NFKMLXKokoro.isVoiceName(name) else {
+            throw NFKMLXError.unsupportedConfiguration("\"\(NFKParameterVoice)\" names a voicepack, such as af_heart")
+        }
+        return try voice(named: name)
+    }
+
+    private func voice(named name: String) throws -> MLXArray {
+        lock.lock()
+        defer { lock.unlock() }
+        if let voice = voices[name] {
+            return voice
+        }
+        let voice = try NFKMLXKokoro.loadVoice(directoryURL: directoryURL, name: name)
+        voices[name] = voice
+        return voice
     }
 }
 
 extension NFKMLXKokoro {
-    /// Builds a text-to-speech backend from a Kokoro release directory and a voice name. The backend
-    /// reads a **phoneme** string under `NFKInputPrompt` (Kokoro's front end, misaki, is separate) and
-    /// returns a 24 kHz waveform. `voiceName` names a file under `voices/` (e.g. `af_heart`).
+    /// The voicepacks of the v1.0 release, `voices/<name>.pt`. A name's first letter is its language:
+    /// American (`a`) or British (`b`) English, Spanish (`e`), French (`f`), Hindi (`h`), Italian (`i`),
+    /// Japanese (`j`), Brazilian Portuguese (`p`), or Mandarin (`z`); its second is `f` or `m`.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc public static let releaseVoiceNames = [
+        "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica", "af_kore", "af_nicole", "af_nova",
+        "af_river", "af_sarah", "af_sky", "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael",
+        "am_onyx", "am_puck", "am_santa", "bf_alice", "bf_emma", "bf_isabella", "bf_lily", "bm_daniel", "bm_fable",
+        "bm_george", "bm_lewis", "ef_dora", "em_alex", "em_santa", "ff_siwis", "hf_alpha", "hf_beta", "hm_omega",
+        "hm_psi", "if_sara", "im_nicola", "jf_alpha", "jf_gongitsune", "jf_nezumi", "jf_tebukuro", "jm_kumo",
+        "pf_dora", "pm_alex", "pm_santa", "zf_xiaobei", "zf_xiaoni", "zf_xiaoxiao", "zf_xiaoyi", "zm_yunjian",
+        "zm_yunxi", "zm_yunxia", "zm_yunyang"
+    ]
+
+    /// The voice a backend speaks in when neither its build nor a request names one.
+    ///
+    /// Introduced in InferKit 0.4.0.
+    @objc public static let defaultVoiceName = "af_heart"
+
+    /// Whether `name` can name a voicepack file: letters, digits, `_`, and `-` only, so a request cannot
+    /// reach outside `voices/`.
+    static func isVoiceName(_ name: String) -> Bool {
+        !name.isEmpty && name.unicodeScalars.allSatisfy { CharacterSet.alphanumerics.contains($0) || $0 == "_" || $0 == "-" }
+    }
+
+    /// Loads the voicepack `voices/<name>.pt` of a release directory, or its converted `.safetensors`.
+    static func loadVoice(directoryURL: URL, name: String) throws -> MLXArray {
+        let url = directoryURL.appendingPathComponent("voices/\(name).pt")
+        let converted = url.deletingPathExtension().appendingPathExtension("safetensors")
+        guard FileManager.default.fileExists(atPath: url.path) || FileManager.default.fileExists(atPath: converted.path) else {
+            throw NFKMLXError.unsupportedConfiguration("the release directory has no voicepack voices/\(name).pt")
+        }
+        return try loadVoice(url: url)
+    }
+
+    /// Builds a text-to-speech backend from a Kokoro release directory. The backend reads a **phoneme**
+    /// string under `NFKInputPrompt` (Kokoro's front end, misaki, is separate) and returns a 24 kHz
+    /// waveform. `voiceName` names the voicepack under `voices/` it speaks in (e.g. `af_heart`); a request
+    /// names another under `NFKParameterVoice`, which is read from the directory on first use and kept.
     public static func speechBackend(directoryURL: URL, voiceName: String) throws -> NFKMLXSpeechBackend {
+        guard isVoiceName(voiceName) else {
+            throw NFKMLXError.unsupportedConfiguration("\(voiceName) does not name a voicepack")
+        }
         let net = NFKMLXKokoroNet(.v1)
         try loadWeights(into: net, from: directoryURL.appendingPathComponent("kokoro-v1_0.pth"))
-        let vocab = try loadVocab(directoryURL: directoryURL)
-        let voice = try loadVoice(url: directoryURL.appendingPathComponent("voices/\(voiceName).pt"))
-        let holder = NFKKokoroHolder(net, voice: voice, vocab: vocab)
-        return NFKMLXSpeechBackend(identifier: "kokoro",
-                                   configuration: NFKMLXSpeechConfiguration(sampleRate: 24000)) { phonemes, _ in
-            holder.net.synthesize(phonemes: phonemes, voice: holder.voice, vocab: holder.vocab)
+        let holder = try NFKKokoroHolder(net, vocab: try loadVocab(directoryURL: directoryURL),
+                                         directoryURL: directoryURL, defaultVoice: voiceName)
+        return NFKMLXSpeechBackend(identifier: "kokoro", configuration: NFKMLXSpeechConfiguration(sampleRate: 24000),
+                                   parameterKeys: [NFKParameterVoice]) { phonemes, _, request in
+            holder.net.synthesize(phonemes: phonemes, voice: try holder.voice(for: request), vocab: holder.vocab)
         }
     }
 
     /// The Objective-C entry: a phoneme string under `NFKInputPrompt` → a 24 kHz WAV under
-    /// `NFKOutputAudio`. `voiceName` names a `voices/<name>.pt` in the release directory.
+    /// `NFKOutputAudio`. `voiceName` names the `voices/<name>.pt` the backend speaks in; a request names
+    /// another under `NFKParameterVoice`.
     @objc(kokoroBackendWithDirectoryURL:voiceName:error:)
     public static func backend(directoryURL: URL, voiceName: String) throws -> NFKMLXSpeechBackend {
         try speechBackend(directoryURL: directoryURL, voiceName: voiceName)
     }
 
-    /// The release files a voice needs: the configuration and that voice's voicepack, then the weights.
-    static func releaseFiles(voiceName: String) -> (required: [String], weights: [String]) {
+    /// The release files a backend speaking in `voiceName` needs: its voicepack and the configuration,
+    /// the release's other voicepacks, which a request may name, and the weights.
+    static func releaseFiles(voiceName: String) -> (required: [String], optional: [String], weights: [String]) {
         // The configuration comes last: the download returns the folder of the last required file.
-        (["voices/\(voiceName).pt", "config.json"], ["kokoro-v1_0.pth"])
+        (["voices/\(voiceName).pt", "config.json"],
+         releaseVoiceNames.filter { $0 != voiceName }.map { "voices/\($0).pt" },
+         ["kokoro-v1_0.pth"])
     }
 
-    /// Downloads a Kokoro release's configuration, weights, and one voicepack into the hub cache and
-    /// builds the backend. `hexgrad/Kokoro-82M` (Apache-2.0) is the release; `voiceName` names one of
-    /// its `voices/` files, such as `af_heart`, and only that voice is fetched. About 330 MB. A cached
-    /// file is not fetched again. Blocks on the network; run it off the render thread.
+    /// Downloads a Kokoro release's configuration, weights, and voicepacks into the hub cache and builds
+    /// the backend. `hexgrad/Kokoro-82M` (Apache-2.0) is the release; `voiceName` names the voicepack the
+    /// backend speaks in, such as `af_heart`, which the download requires. The release's other voicepacks
+    /// download beside it so a request can name one, and a voicepack the download cannot fetch fails only
+    /// the request that names it. About 360 MB. A cached file is not fetched again. Blocks on the network;
+    /// run it off the render thread.
     ///
     /// Introduced in InferKit 0.4.0.
     @objc(kokoroBackendWithRepo:revision:cacheDirectoryURL:voiceName:error:)
@@ -1074,7 +1148,8 @@ extension NFKMLXKokoro {
         try NFKMLXBuildHolds.keeping {
             let files = releaseFiles(voiceName: voiceName)
             let directory = try NFKMLXReleaseDownload.directory(repo: repo, revision: revision, cacheDirectoryURL: cacheDirectoryURL,
-                                                                required: files.required, optional: [], weights: files.weights)
+                                                                required: files.required, optional: files.optional,
+                                                                weights: files.weights)
             return try speechBackend(directoryURL: directory, voiceName: voiceName)
         }
     }

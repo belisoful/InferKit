@@ -898,8 +898,9 @@ models.
   (`NFKMLXNeuralG2P`, or a system espeak-ng), an acoustic model, and a vocoder by hand.
 - **`NFKMLXKokoro`** — Kokoro-82M (StyleTTS2 / iSTFTNet), a second text-to-speech voice: a PL-BERT
   phoneme encoder, duration / F0 / energy predictors, and an iSTFTNet decoder with a harmonic sine
-  source. `backend(directoryURL:voiceName:)` takes a phoneme string under `NFKInputPrompt`; every
-  deterministic seam at parity, the waveform at 0.997.
+  source. `backend(directoryURL:voiceName:)` takes a phoneme string under `NFKInputPrompt`, and a
+  request names any of the release's 54 voicepacks under `NFKParameterVoice`; every deterministic seam
+  at parity, the waveform at 0.997.
 - **`NFKMLXMetricGANPlus`** — MetricGAN+ (`metricgan-plus`, speechbrain/metricgan-plus-voicebank,
   Apache-2.0), the smallest restoration model: a two-layer bidirectional LSTM magnitude mask over
   `log1p(|X|)` frames of a 512-point zero-padded Hamming STFT, with a per-bin learnable sigmoid, the
@@ -931,7 +932,8 @@ models.
   embedding and the S3 speech tokenizer read a reference voice, a T3 Llama (llama3 rope scaling, a
   Perceiver-resampled prompt) samples speech codes for the text, and S3Gen renders them through a
   conditional flow-matching decoder and the HiFT vocoder at 24 kHz. `speechBackend(directoryURL:voiceURL:)`
-  takes text under `NFKInputPrompt`; nil voice speaks the release's built-in `conds.pt`. Every stage at
+  takes text under `NFKInputPrompt`; nil voice speaks the release's built-in `conds.pt`, and a request's
+  WAV clip under `NFKInputVoiceReference` clones that voice. Every stage at
   reference parity on the released weights; the synthesized validation sentence transcribes back
   through Parakeet exactly.
 - **`NFKMLXParakeet`** — Parakeet-TDT 0.6B v2 (NVIDIA, CC-by-4.0), a second speech recognizer beside

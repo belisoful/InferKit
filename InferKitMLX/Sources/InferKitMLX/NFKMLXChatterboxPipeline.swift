@@ -148,9 +148,33 @@ public final class NFKMLXChatterboxTTS {
 private final class NFKChatterboxHolder: @unchecked Sendable {
     let tts: NFKMLXChatterboxTTS
     let conditionals: NFKMLXChatterboxConditionals
-    init(_ tts: NFKMLXChatterboxTTS, conditionals: NFKMLXChatterboxConditionals) {
+    let exaggeration: Float
+    private let lock = NSLock()
+    private var cloned: (clip: Data, conditionals: NFKMLXChatterboxConditionals)?
+
+    init(_ tts: NFKMLXChatterboxTTS, conditionals: NFKMLXChatterboxConditionals, exaggeration: Float) {
         self.tts = tts
         self.conditionals = conditionals
+        self.exaggeration = exaggeration
+    }
+
+    /// The voice of the clip the request carries under `NFKInputVoiceReference`, else the build's voice.
+    /// The last clip's conditionals are kept, so a run of requests in one cloned voice prepares it once.
+    func conditionals(for request: NFKInferenceRequest) throws -> NFKMLXChatterboxConditionals {
+        guard let clip = try NFKMLXChatterbox.referenceClip(of: request) else {
+            return conditionals
+        }
+        lock.lock()
+        defer { lock.unlock() }
+        if let cloned, cloned.clip == clip {
+            return cloned.conditionals
+        }
+        guard let voice = NFKMLXWaveFile.read(clip) else {
+            throw NFKMLXError.unsupportedConfiguration("the \(NFKInputVoiceReference) clip is not a readable WAV")
+        }
+        let prepared = tts.conditionals(voice: voice.samples, sampleRate: voice.sampleRate, exaggeration: exaggeration)
+        cloned = (clip, prepared)
+        return prepared
     }
 }
 
@@ -162,7 +186,8 @@ extension NFKMLXChatterbox {
     /// so seed it (`NFKMLXRandom.seed`) when a run must repeat. A request overrides `exaggeration` with
     /// ``NFKMLXChatterboxParameterKey/exaggeration``, and T3's temperature, guidance weight, and seed
     /// with `NFKParameterTemperature`, `NFKParameterGuidanceScale`, and `NFKParameterSeed`, for that
-    /// request only.
+    /// request only. A request that carries a WAV clip under `NFKInputVoiceReference`, an `NFKAudioAsset`
+    /// or its data, speaks in the clip's voice instead.
     public static func speechBackend(directoryURL: URL, voiceURL: URL? = nil,
                                      exaggeration: Float = 0.5) throws -> NFKMLXSpeechBackend {
         let tts = try NFKMLXChatterboxTTS(directoryURL: directoryURL)
@@ -176,17 +201,19 @@ extension NFKMLXChatterbox {
             conditionals = try tts.builtinConditionals(url: directoryURL.appendingPathComponent("conds.pt"),
                                                        exaggeration: exaggeration)
         }
-        let holder = NFKChatterboxHolder(tts, conditionals: conditionals)
+        let holder = NFKChatterboxHolder(tts, conditionals: conditionals, exaggeration: exaggeration)
         return NFKMLXSpeechBackend(identifier: "chatterbox",
                                    configuration: NFKMLXSpeechConfiguration(sampleRate: tts.sampleRate),
-                                   parameterKeys: requestParameterKeys) { text, _, request in
+                                   parameterKeys: requestParameterKeys, inputKeys: [NFKInputVoiceReference]) { text, _, request in
             MLXArray(holder.tts.synthesize(text: text,
-                                           conditionals: NFKMLXChatterbox.conditionals(holder.conditionals, for: request),
+                                           conditionals: NFKMLXChatterbox.conditionals(try holder.conditionals(for: request),
+                                                                                       for: request),
                                            t3Options: NFKMLXChatterbox.samplingOptions(for: request)))
         }
     }
 
-    /// The Objective-C entry: the release directory and an optional voice WAV.
+    /// The Objective-C entry: the release directory and an optional voice WAV, the voice a request speaks
+    /// in when it carries no clip under `NFKInputVoiceReference`.
     @objc(chatterboxBackendWithDirectoryURL:voiceURL:error:)
     public static func backend(directoryURL: URL, voiceURL: URL?) throws -> NFKMLXSpeechBackend {
         try speechBackend(directoryURL: directoryURL, voiceURL: voiceURL)

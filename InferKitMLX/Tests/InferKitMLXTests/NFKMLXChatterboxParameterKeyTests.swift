@@ -77,5 +77,31 @@ final class NFKMLXChatterboxParameterKeyTests: XCTestCase {
     func testAPlainSpeechBackendDeclaresOnlyTheSampleRate() throws {
         let backend = NFKMLXSpeechBackend(identifier: "plain-speech") { _, sampleRate in MLXArray.zeros([sampleRate]) }
         XCTAssertEqual(backend.supportedParameterKeys, [NFKParameterSampleRate])
+        XCTAssertEqual(backend.supportedInputKeys, [NFKInputPrompt, NFKInputMessages])
+    }
+
+    func testTheSpeechBackendDeclaresTheInputsItsClosureReads() {
+        let backend = NFKMLXSpeechBackend(identifier: "cloning-speech", parameterKeys: [],
+                                          inputKeys: [NFKInputVoiceReference]) { _, sampleRate, _ in
+            MLXArray.zeros([sampleRate])
+        }
+        XCTAssertEqual(backend.supportedInputKeys, [NFKInputPrompt, NFKInputMessages, NFKInputVoiceReference])
+    }
+
+    func testTheReferenceClipIsReadFromAnAssetOrItsData() throws {
+        let clip = Data("RIFF-clip".utf8)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("clip-\(UUID().uuidString).wav")
+        try clip.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let asset = NFKAudioAsset(fileURL: url, durationSeconds: 1, sampleRate: 16000, channelCount: 1)
+        func request(_ value: Any?) -> NFKInferenceRequest {
+            var inputs: [String: Any] = [NFKInputPrompt: "hello"]
+            inputs[NFKInputVoiceReference] = value
+            return NFKInferenceRequest(inputs: inputs)
+        }
+        XCTAssertEqual(try NFKMLXChatterbox.referenceClip(of: request(asset)), clip)
+        XCTAssertEqual(try NFKMLXChatterbox.referenceClip(of: request(clip)), clip)
+        XCTAssertNil(try NFKMLXChatterbox.referenceClip(of: request(nil)))
+        XCTAssertThrowsError(try NFKMLXChatterbox.referenceClip(of: request("clip.wav")))
     }
 }

@@ -1373,7 +1373,8 @@
       "id" : "chatterbox",
       "inputModalities" : [
         "text",
-        "messages"
+        "messages",
+        "audio"
       ],
       "inputs" : [
         {
@@ -1389,6 +1390,13 @@
           "required" : false,
           "title" : "Conversation",
           "valueType" : "messages"
+        },
+        {
+          "help" : "A WAV recording of the voice to speak in. The first six seconds prompt the speech tokens, the first ten the decoder, and the whole clip the speaker embedding. Without one, the release's built-in voice.",
+          "key" : "voiceReference",
+          "required" : false,
+          "title" : "Voice to clone",
+          "valueType" : "audio"
         }
       ],
       "introducedVersion" : "0.4.0",
@@ -1456,7 +1464,7 @@
       ],
       "outputs" : [
         {
-          "help" : "A mono WAV file in the release's built-in voice.",
+          "help" : "A mono WAV file in the cloned voice, or the release's built-in voice.",
           "key" : "audio",
           "required" : true,
           "title" : "Audio",
@@ -21413,6 +21421,232 @@
       },
       "options" : [
         {
+          "choices" : [
+            {
+              "title" : "af_alloy (American English, female)",
+              "value" : "af_alloy"
+            },
+            {
+              "title" : "af_aoede (American English, female)",
+              "value" : "af_aoede"
+            },
+            {
+              "title" : "af_bella (American English, female)",
+              "value" : "af_bella"
+            },
+            {
+              "title" : "af_heart (American English, female)",
+              "value" : "af_heart"
+            },
+            {
+              "title" : "af_jessica (American English, female)",
+              "value" : "af_jessica"
+            },
+            {
+              "title" : "af_kore (American English, female)",
+              "value" : "af_kore"
+            },
+            {
+              "title" : "af_nicole (American English, female)",
+              "value" : "af_nicole"
+            },
+            {
+              "title" : "af_nova (American English, female)",
+              "value" : "af_nova"
+            },
+            {
+              "title" : "af_river (American English, female)",
+              "value" : "af_river"
+            },
+            {
+              "title" : "af_sarah (American English, female)",
+              "value" : "af_sarah"
+            },
+            {
+              "title" : "af_sky (American English, female)",
+              "value" : "af_sky"
+            },
+            {
+              "title" : "am_adam (American English, male)",
+              "value" : "am_adam"
+            },
+            {
+              "title" : "am_echo (American English, male)",
+              "value" : "am_echo"
+            },
+            {
+              "title" : "am_eric (American English, male)",
+              "value" : "am_eric"
+            },
+            {
+              "title" : "am_fenrir (American English, male)",
+              "value" : "am_fenrir"
+            },
+            {
+              "title" : "am_liam (American English, male)",
+              "value" : "am_liam"
+            },
+            {
+              "title" : "am_michael (American English, male)",
+              "value" : "am_michael"
+            },
+            {
+              "title" : "am_onyx (American English, male)",
+              "value" : "am_onyx"
+            },
+            {
+              "title" : "am_puck (American English, male)",
+              "value" : "am_puck"
+            },
+            {
+              "title" : "am_santa (American English, male)",
+              "value" : "am_santa"
+            },
+            {
+              "title" : "bf_alice (British English, female)",
+              "value" : "bf_alice"
+            },
+            {
+              "title" : "bf_emma (British English, female)",
+              "value" : "bf_emma"
+            },
+            {
+              "title" : "bf_isabella (British English, female)",
+              "value" : "bf_isabella"
+            },
+            {
+              "title" : "bf_lily (British English, female)",
+              "value" : "bf_lily"
+            },
+            {
+              "title" : "bm_daniel (British English, male)",
+              "value" : "bm_daniel"
+            },
+            {
+              "title" : "bm_fable (British English, male)",
+              "value" : "bm_fable"
+            },
+            {
+              "title" : "bm_george (British English, male)",
+              "value" : "bm_george"
+            },
+            {
+              "title" : "bm_lewis (British English, male)",
+              "value" : "bm_lewis"
+            },
+            {
+              "title" : "ef_dora (Spanish, female)",
+              "value" : "ef_dora"
+            },
+            {
+              "title" : "em_alex (Spanish, male)",
+              "value" : "em_alex"
+            },
+            {
+              "title" : "em_santa (Spanish, male)",
+              "value" : "em_santa"
+            },
+            {
+              "title" : "ff_siwis (French, female)",
+              "value" : "ff_siwis"
+            },
+            {
+              "title" : "hf_alpha (Hindi, female)",
+              "value" : "hf_alpha"
+            },
+            {
+              "title" : "hf_beta (Hindi, female)",
+              "value" : "hf_beta"
+            },
+            {
+              "title" : "hm_omega (Hindi, male)",
+              "value" : "hm_omega"
+            },
+            {
+              "title" : "hm_psi (Hindi, male)",
+              "value" : "hm_psi"
+            },
+            {
+              "title" : "if_sara (Italian, female)",
+              "value" : "if_sara"
+            },
+            {
+              "title" : "im_nicola (Italian, male)",
+              "value" : "im_nicola"
+            },
+            {
+              "title" : "jf_alpha (Japanese, female)",
+              "value" : "jf_alpha"
+            },
+            {
+              "title" : "jf_gongitsune (Japanese, female)",
+              "value" : "jf_gongitsune"
+            },
+            {
+              "title" : "jf_nezumi (Japanese, female)",
+              "value" : "jf_nezumi"
+            },
+            {
+              "title" : "jf_tebukuro (Japanese, female)",
+              "value" : "jf_tebukuro"
+            },
+            {
+              "title" : "jm_kumo (Japanese, male)",
+              "value" : "jm_kumo"
+            },
+            {
+              "title" : "pf_dora (Brazilian Portuguese, female)",
+              "value" : "pf_dora"
+            },
+            {
+              "title" : "pm_alex (Brazilian Portuguese, male)",
+              "value" : "pm_alex"
+            },
+            {
+              "title" : "pm_santa (Brazilian Portuguese, male)",
+              "value" : "pm_santa"
+            },
+            {
+              "title" : "zf_xiaobei (Mandarin, female)",
+              "value" : "zf_xiaobei"
+            },
+            {
+              "title" : "zf_xiaoni (Mandarin, female)",
+              "value" : "zf_xiaoni"
+            },
+            {
+              "title" : "zf_xiaoxiao (Mandarin, female)",
+              "value" : "zf_xiaoxiao"
+            },
+            {
+              "title" : "zf_xiaoyi (Mandarin, female)",
+              "value" : "zf_xiaoyi"
+            },
+            {
+              "title" : "zm_yunjian (Mandarin, male)",
+              "value" : "zm_yunjian"
+            },
+            {
+              "title" : "zm_yunxi (Mandarin, male)",
+              "value" : "zm_yunxi"
+            },
+            {
+              "title" : "zm_yunxia (Mandarin, male)",
+              "value" : "zm_yunxia"
+            },
+            {
+              "title" : "zm_yunyang (Mandarin, male)",
+              "value" : "zm_yunyang"
+            }
+          ],
+          "default" : "af_heart",
+          "help" : "The voicepack to speak in. Each speaks the phonemes it is given; the misaki phonemes of its own language read most naturally.",
+          "key" : "voice",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Voice"
+        },
+        {
           "default" : 24000,
           "help" : "The sample rate the WAV file is written at, in hertz. The model generates at 24000 Hz, so another rate changes the pitch and the speed.",
           "key" : "sampleRate",
@@ -21428,7 +21662,7 @@
       ],
       "outputs" : [
         {
-          "help" : "A mono WAV file in the af_heart voice.",
+          "help" : "A mono WAV file in the chosen voice.",
           "key" : "audio",
           "required" : true,
           "title" : "Audio",
@@ -21455,7 +21689,7 @@
       "variants" : [
         {
           "displayName" : "Kokoro-82M",
-          "downloadBytes" : 327738002,
+          "downloadBytes" : 355479286,
           "id" : "v1.0",
           "isDefault" : true,
           "memoryFacts" : {
@@ -21489,6 +21723,377 @@
                 "optional" : false,
                 "path" : "config.json",
                 "role" : "config"
+              },
+              {
+                "bytes" : 523425,
+                "optional" : true,
+                "path" : "voices/af_alloy.pt",
+                "role" : "other",
+                "sha256" : "6d877149dd8b348fbad12e5845b7e43d975390e9f3b68a811d1d86168bef5aa3"
+              },
+              {
+                "bytes" : 523425,
+                "optional" : true,
+                "path" : "voices/af_aoede.pt",
+                "role" : "other",
+                "sha256" : "c03bd1a4c3716c2d8eaa3d50022f62d5c31cfbd6e15933a00b17fefe13841cc4"
+              },
+              {
+                "bytes" : 523425,
+                "optional" : true,
+                "path" : "voices/af_bella.pt",
+                "role" : "other",
+                "sha256" : "8cb64e02fcc8de0327a8e13817e49c76c945ecf0052ceac97d3081480e8e48d6"
+              },
+              {
+                "bytes" : 523435,
+                "optional" : true,
+                "path" : "voices/af_jessica.pt",
+                "role" : "other",
+                "sha256" : "cdfdccb8cc975aa34ee6b89642963b0064237675de0e41a30ae64cc958dd4e87"
+              },
+              {
+                "bytes" : 523420,
+                "optional" : true,
+                "path" : "voices/af_kore.pt",
+                "role" : "other",
+                "sha256" : "8bfbc512321c3db49dff984ac675fa5ac7eaed5a96cc31104d3a9080e179d69d"
+              },
+              {
+                "bytes" : 523430,
+                "optional" : true,
+                "path" : "voices/af_nicole.pt",
+                "role" : "other",
+                "sha256" : "c5561808bcf5250fe8c5f5de32caf2d94f27e57e95befdb098c5c85991d4c5da"
+              },
+              {
+                "bytes" : 523420,
+                "optional" : true,
+                "path" : "voices/af_nova.pt",
+                "role" : "other",
+                "sha256" : "e0233676ddc21908c37a1f102f6b88a59e4e5c1bd764983616eb9eda629dbcd2"
+              },
+              {
+                "bytes" : 523425,
+                "optional" : true,
+                "path" : "voices/af_river.pt",
+                "role" : "other",
+                "sha256" : "e149459bd9c084416b74756b9bd3418256a8b839088abb07d463730c369dab8f"
+              },
+              {
+                "bytes" : 523425,
+                "optional" : true,
+                "path" : "voices/af_sarah.pt",
+                "role" : "other",
+                "sha256" : "49bd364ea3be9eb3e9685e8f9a15448c4883112a7c0ff7ab139fa4088b08cef9"
+              },
+              {
+                "bytes" : 523351,
+                "optional" : true,
+                "path" : "voices/af_sky.pt",
+                "role" : "other",
+                "sha256" : "c799548aed06e0cb0d655a85a01b48e7f10484d71663f9a3045a5b9362e8512c"
+              },
+              {
+                "bytes" : 523420,
+                "optional" : true,
+                "path" : "voices/am_adam.pt",
+                "role" : "other",
+                "sha256" : "ced7e284aba12472891be1da3ab34db84cc05cc02b5889535796dbf2d8b0cb34"
+              },
+              {
+                "bytes" : 523420,
+                "optional" : true,
+                "path" : "voices/am_echo.pt",
+                "role" : "other",
+                "sha256" : "8bcfdc852bc985fb45c396c561e571ffb9183930071f962f1b50df5c97b161e8"
+              },
+              {
+                "bytes" : 523420,
+                "optional" : true,
+                "path" : "voices/am_eric.pt",
+                "role" : "other",
+                "sha256" : "ada66f0eefff34ec921b1d7474d7ac8bec00cd863c170f1c534916e9b8212aae"
+              },
+              {
+                "bytes" : 523430,
+                "optional" : true,
+                "path" : "voices/am_fenrir.pt",
+                "role" : "other",
+                "sha256" : "98e507eca1db08230ae3b6232d59c10aec9630022d19accac4f5d12fcec3c37a"
+              },
+              {
+                "bytes" : 523420,
+                "optional" : true,
+                "path" : "voices/am_liam.pt",
+                "role" : "other",
+                "sha256" : "c82550757ddb31308b97f30040dda8c2d609a9e2de6135848d0a948368138518"
+              },
+              {
+                "bytes" : 523435,
+                "optional" : true,
+                "path" : "voices/am_michael.pt",
+                "role" : "other",
+                "sha256" : "9a443b79a4b22489a5b0ab7c651a0bcd1a30bef675c28333f06971abbd47bd37"
+              },
+              {
+                "bytes" : 523420,
+                "optional" : true,
+                "path" : "voices/am_onyx.pt",
+                "role" : "other",
+                "sha256" : "e8452be16cd0f6da7b4579eaf7b1e4506e92524882053d86d72b96b9a7fed584"
+              },
+              {
+                "bytes" : 523420,
+                "optional" : true,
+                "path" : "voices/am_puck.pt",
+                "role" : "other",
+                "sha256" : "dd1d8973f4ce4b7d8ae407c77a435f485dabc052081b80ea75c4f30b84f36223"
+              },
+              {
+                "bytes" : 523425,
+                "optional" : true,
+                "path" : "voices/am_santa.pt",
+                "role" : "other",
+                "sha256" : "7f2f7582fa2b1f160e90aafe6d0b442a685e773608b6667e545d743b073e97a7"
+              },
+              {
+                "bytes" : 523425,
+                "optional" : true,
+                "path" : "voices/bf_alice.pt",
+                "role" : "other",
+                "sha256" : "d292651b6af6c0d81705c2580dcb4463fccc0ff7b8d618a471dbb4e45655b3f3"
+              },
+              {
+                "bytes" : 523420,
+                "optional" : true,
+                "path" : "voices/bf_emma.pt",
+                "role" : "other",
+                "sha256" : "d0a423deabf4a52b4f49318c51742c54e21bb89bbbe9a12141e7758ddb5da701"
+              },
+              {
+                "bytes" : 523440,
+                "optional" : true,
+                "path" : "voices/bf_isabella.pt",
+                "role" : "other",
+                "sha256" : "cdd4c37003805104d1d08fb1e05855c8fb2c68de24ca6e71f264a30aaa59eefd"
+              },
+              {
+                "bytes" : 523420,
+                "optional" : true,
+                "path" : "voices/bf_lily.pt",
+                "role" : "other",
+                "sha256" : "6e09c2e481e2d53004d7e5ae7d3a325369e130a6f45c35a6002de75084be9285"
+              },
+              {
+                "bytes" : 523430,
+                "optional" : true,
+                "path" : "voices/bm_daniel.pt",
+                "role" : "other",
+                "sha256" : "fc3fce4e9c12ed4dbc8fa9680cfe51ee190a96444ce7c3ad647549a30823fc5d"
+              },
+              {
+                "bytes" : 523425,
+                "optional" : true,
+                "path" : "voices/bm_fable.pt",
+                "role" : "other",
+                "sha256" : "d44935f3135257a9064df99f007fc1342ff1aa767552b4a4fa4c3b2e6e59079c"
+              },
+              {
+                "bytes" : 523430,
+                "optional" : true,
+                "path" : "voices/bm_george.pt",
+                "role" : "other",
+                "sha256" : "f1bc812213dc59774769e5c80004b13eeb79bd78130b11b2d7f934542dab811b"
+              },
+              {
+                "bytes" : 523425,
+                "optional" : true,
+                "path" : "voices/bm_lewis.pt",
+                "role" : "other",
+                "sha256" : "b5204750dcba01029d2ac9cec17aec3b20a6d64073c579d694a23cb40effbd0e"
+              },
+              {
+                "bytes" : 523420,
+                "optional" : true,
+                "path" : "voices/ef_dora.pt",
+                "role" : "other",
+                "sha256" : "d9d69b0f8a2b87a345f269d89639f89dfbd1a6c9da0c498ae36dd34afcf35530"
+              },
+              {
+                "bytes" : 523420,
+                "optional" : true,
+                "path" : "voices/em_alex.pt",
+                "role" : "other",
+                "sha256" : "5eac53f767c3f31a081918ba531969aea850bed18fe56419b804d642c6973431"
+              },
+              {
+                "bytes" : 523430,
+                "optional" : true,
+                "path" : "voices/em_santa.pt",
+                "role" : "other",
+                "sha256" : "aa8620cb96cec705823efca0d956a63e158e09ad41aca934d354b7f0778f63cb"
+              },
+              {
+                "bytes" : 523425,
+                "optional" : true,
+                "path" : "voices/ff_siwis.pt",
+                "role" : "other",
+                "sha256" : "8073bf2d2c4b9543a90f2f0fd2144de4ed157e2d4b79ddeb0d5123066171fbc9"
+              },
+              {
+                "bytes" : 523425,
+                "optional" : true,
+                "path" : "voices/hf_alpha.pt",
+                "role" : "other",
+                "sha256" : "06906fe05746d13a79c5c01e21fd7233b05027221a933c9ada650f5aafc8f044"
+              },
+              {
+                "bytes" : 523420,
+                "optional" : true,
+                "path" : "voices/hf_beta.pt",
+                "role" : "other",
+                "sha256" : "63c0a1a6272e98d43f4511bba40e30dd9c8ceaf5f39af869509b9f51a71c503e"
+              },
+              {
+                "bytes" : 523425,
+                "optional" : true,
+                "path" : "voices/hm_omega.pt",
+                "role" : "other",
+                "sha256" : "b55f02a8e8483fffe0afa566e7d22ed8013acf47ad4f6bbee2795a840155703e"
+              },
+              {
+                "bytes" : 523351,
+                "optional" : true,
+                "path" : "voices/hm_psi.pt",
+                "role" : "other",
+                "sha256" : "2f0f055cea4f1083f4ef127ece48d71606347f6557dbb961c0ca5740a2da485b"
+              },
+              {
+                "bytes" : 523425,
+                "optional" : true,
+                "path" : "voices/if_sara.pt",
+                "role" : "other",
+                "sha256" : "6c0b253b955fe32f1a1a86006aebe83d050ea95afd0e7be15182f087deedbf55"
+              },
+              {
+                "bytes" : 523341,
+                "optional" : true,
+                "path" : "voices/im_nicola.pt",
+                "role" : "other",
+                "sha256" : "234ed06648649f9bd874b37508ea17560b9c993ef85b4ddb3e3a71e062bd2c12"
+              },
+              {
+                "bytes" : 523425,
+                "optional" : true,
+                "path" : "voices/jf_alpha.pt",
+                "role" : "other",
+                "sha256" : "1bf4c9dc69e45ee46183b071f4db766349aac5592acbcfeaf051018048a5d787"
+              },
+              {
+                "bytes" : 523351,
+                "optional" : true,
+                "path" : "voices/jf_gongitsune.pt",
+                "role" : "other",
+                "sha256" : "1b171917f18f351e65f2bf9657700cd6bfec4e65589c297525b9cf3c20105770"
+              },
+              {
+                "bytes" : 523420,
+                "optional" : true,
+                "path" : "voices/jf_nezumi.pt",
+                "role" : "other",
+                "sha256" : "d83f007a7f01783b77014561a7d493d327a0210e143440e91c9b697590d27661"
+              },
+              {
+                "bytes" : 523435,
+                "optional" : true,
+                "path" : "voices/jf_tebukuro.pt",
+                "role" : "other",
+                "sha256" : "0d6917904438aec85f73a6fa1f7ac2be6481aae47c697834936930a91796c576"
+              },
+              {
+                "bytes" : 523425,
+                "optional" : true,
+                "path" : "voices/jm_kumo.pt",
+                "role" : "other",
+                "sha256" : "98340afd68b1cee84fe0cd95528cfa6d4b39e416aa75a9df64049d52c8b55896"
+              },
+              {
+                "bytes" : 523425,
+                "optional" : true,
+                "path" : "voices/pf_dora.pt",
+                "role" : "other",
+                "sha256" : "07e4ff987c5d5a8c3995efd15cc4f0db7c4c15e881b198d8ab7f67ecf51f5eb7"
+              },
+              {
+                "bytes" : 523425,
+                "optional" : true,
+                "path" : "voices/pm_alex.pt",
+                "role" : "other",
+                "sha256" : "cf0ba8c573c2480fc54123683a35cf1e2ae130428e441eb91f9149bdb188a526"
+              },
+              {
+                "bytes" : 523430,
+                "optional" : true,
+                "path" : "voices/pm_santa.pt",
+                "role" : "other",
+                "sha256" : "d42103169c5c872abbafb9129133af7e942bb9d272c3cc3b95c203e7d7198c29"
+              },
+              {
+                "bytes" : 523435,
+                "optional" : true,
+                "path" : "voices/zf_xiaobei.pt",
+                "role" : "other",
+                "sha256" : "9b76be63dab4f4f96962030acc0126a9aee9728608fbbe115e2b58a2bd504df6"
+              },
+              {
+                "bytes" : 523430,
+                "optional" : true,
+                "path" : "voices/zf_xiaoni.pt",
+                "role" : "other",
+                "sha256" : "95b49f169bf1640f4f43c25e13daa39f7b98d15d00823e83ef5c14b3ced59e49"
+              },
+              {
+                "bytes" : 523440,
+                "optional" : true,
+                "path" : "voices/zf_xiaoxiao.pt",
+                "role" : "other",
+                "sha256" : "cfaf6f2ded1ee56f1ff94fcd2b0e6cdf32e5b794bdc05b44e7439d44aef5887c"
+              },
+              {
+                "bytes" : 523430,
+                "optional" : true,
+                "path" : "voices/zf_xiaoyi.pt",
+                "role" : "other",
+                "sha256" : "b5235dbaeef85a4c613bf78af9a88ff63c25bac5f26ba77e36186d8b7ebf05e2"
+              },
+              {
+                "bytes" : 523435,
+                "optional" : true,
+                "path" : "voices/zm_yunjian.pt",
+                "role" : "other",
+                "sha256" : "76cbf8bad35901d011d9628a2fdceb7b4f1f127e7a3269cb393b3941eb7fc417"
+              },
+              {
+                "bytes" : 523425,
+                "optional" : true,
+                "path" : "voices/zm_yunxi.pt",
+                "role" : "other",
+                "sha256" : "dbe6e1ce7c3dbaf2f5667432947b638b1c6831ccbe154c4610dbcc44f431e27b"
+              },
+              {
+                "bytes" : 523430,
+                "optional" : true,
+                "path" : "voices/zm_yunxia.pt",
+                "role" : "other",
+                "sha256" : "bb2b03b08e84d64e1214440ce3b624987fac177f2eeb5bab8571799a3d980acd"
+              },
+              {
+                "bytes" : 523435,
+                "optional" : true,
+                "path" : "voices/zm_yunyang.pt",
+                "role" : "other",
+                "sha256" : "5238ac22e0c7f8b6cdd2eddd6e444b8a700b73c4674d9a047d59a94ff96379a2"
               },
               {
                 "bytes" : 327212226,

@@ -191,7 +191,9 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   download-only (configuration and tokenizer loaded, every shard present). One test reaches the network:
   `testKokoroDownloadsItsReleaseLive` (opt-in, `INFERKIT_LIVE_RELEASE_DOWNLOADS=1`, run through the LMC
   lock) fetches `hexgrad/Kokoro-82M` into a fresh cache and speaks; measured 2026-09-23, 18.5 s for the
-  first build (about 330 MB) and 0.1 s for the cached rebuild, with only the named voice fetched. Not every directory is a
+  first build (about 330 MB) and 0.1 s for the cached rebuild, with only the named voice fetched then. From
+  2026-10-27 the download also fetches the other 53 voicepacks as optional files (about 360 MB), and the
+  test checks that one of them arrives. Not every directory is a
   release: none is left without a download today, and Kokoro's became one when the native reader
   learned a bare-tensor root (`torch.save(tensor)`, its voicepacks). All
 - `NFKMLXModelRegistry` (`@objc`) — lets an Objective-C consumer build and run an MLX model without

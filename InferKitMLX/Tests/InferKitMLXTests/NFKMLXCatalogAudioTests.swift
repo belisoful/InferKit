@@ -126,6 +126,31 @@ final class NFKMLXCatalogAudioTests: XCTestCase {
         XCTAssertEqual(task.choices.map { $0.value as? String }, ["transcribe", "translate"])
     }
 
+    func testKokoroOffersEveryReleasedVoiceAndDownloadsThem() throws {
+        let descriptor = try entry(NFKMLXCatalogAudio.kokoroName).descriptor()
+        let voice = try XCTUnwrap(descriptor.option(withKey: NFKParameterVoice))
+        XCTAssertEqual(voice.kind, NFKModelOptionKindChoice)
+        XCTAssertEqual(voice.choices.map { $0.value as? String }, NFKMLXKokoro.releaseVoiceNames)
+        XCTAssertEqual(voice.defaultValue as? String, "af_heart")
+        XCTAssertEqual(voice.choices.first { ($0.value as? String) == "bm_george" }?.title,
+                       "bm_george (British English, male)")
+        XCTAssertEqual(NFKMLXKokoro.releaseVoiceNames.count, 54)
+
+        let files = try XCTUnwrap(descriptor.defaultVariant?.source?.files)
+        let required = files.filter { !$0.isOptional }.map(\.path)
+        let optional = files.filter(\.isOptional).map(\.path)
+        XCTAssertTrue(required.contains("voices/af_heart.pt"), "the default voice is required")
+        XCTAssertEqual(Set(optional), Set(NFKMLXKokoro.releaseVoiceNames.filter { $0 != "af_heart" }.map { "voices/\($0).pt" }))
+    }
+
+    func testAKokoroVoiceNameStaysInsideTheVoicesFolder() {
+        XCTAssertTrue(NFKMLXKokoro.isVoiceName("af_heart"))
+        XCTAssertTrue(NFKMLXKokoro.isVoiceName("my-voice_2"))
+        for name in ["", "../config", "voices/af_heart", "af heart", ".hidden"] {
+            XCTAssertFalse(NFKMLXKokoro.isVoiceName(name), name)
+        }
+    }
+
     func testTheDirectoryModelsRefuseANilURL() {
         NFKMLXReferenceModels.registerAll()
         for name in NFKMLXCatalogAudio.wav2Vec2Releases.map(\.name)
@@ -151,11 +176,11 @@ final class NFKMLXCatalogAudioTests: XCTestCase {
         }
         assertPorts(try entry(NFKMLXFastSpeech2.voiceModelName), inputs: NFKMLXFastSpeech2.voiceInputKeys,
                     outputs: [NFKOutputAudio], parameters: [])
-        assertPorts(try entry(NFKMLXCatalogAudio.chatterboxName), inputs: [NFKInputPrompt, NFKInputMessages],
-                    outputs: [NFKOutputAudio],
+        assertPorts(try entry(NFKMLXCatalogAudio.chatterboxName),
+                    inputs: [NFKInputPrompt, NFKInputMessages, NFKInputVoiceReference], outputs: [NFKOutputAudio],
                     parameters: NFKMLXChatterbox.requestParameterKeys.union([NFKParameterSampleRate]))
         assertPorts(try entry(NFKMLXCatalogAudio.kokoroName), inputs: [NFKInputPrompt, NFKInputMessages],
-                    outputs: [NFKOutputAudio], parameters: [NFKParameterSampleRate])
+                    outputs: [NFKOutputAudio], parameters: [NFKParameterSampleRate, NFKParameterVoice])
         assertPorts(try entry(NFKMLXConvTasNet.modelName),
                     outputs: Set(NFKMLXConvTasNetConfiguration.libri2Mix16k.speakerNames))
         let demucs = NFKMLXDemucsConfiguration()

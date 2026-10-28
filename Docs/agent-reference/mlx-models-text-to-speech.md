@@ -74,7 +74,13 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   `NFKMLXAudioRate.matched` — the reference's librosa/torchaudio resamplers are not bitwise, so the
   parity records take the recorded waveforms at each rate as inputs and the consumer path is a documented
   resampler approximation); `@objc chatterboxBackendWithDirectoryURL:voiceURL:error:` returns an
-  `NFKMLXSpeechBackend` (24 kHz WAV under `NFKOutputAudio`; nil voice = `conds.pt`). **Two oracle
+  `NFKMLXSpeechBackend` (24 kHz WAV under `NFKOutputAudio`; nil voice = `conds.pt`). A request's WAV
+  clip under `NFKInputVoiceReference` (an `NFKAudioAsset` or its data) replaces the build's voice for
+  that request (2026-10-27), so the catalog's `chatterbox`, built in `conds.pt`, clones any voice. The
+  backend keeps the last clip's conditionals and compares the clip's bytes, so a run of requests in one
+  voice prepares it once. `NFKMLXSpeechBackend` takes `inputKeys:` for this and declares them.
+  `testChatterboxClonesTheVoiceARequestCarries` measures the request path against the `voiceURL` factory
+  under one seed: equal to 1e-4. **Two oracle
   traps**: `solve_euler` calls `estimator.forward` Directly, so a forward hook never fires (wrap the
   method); and the prompt mel's frame count can be odd (173) while the codes are trimmed to `mel // 2`
   (86), so the generated mel is `2n − 1` frames rather than `2n`. Weights: `ResembleAI/chatterbox`
@@ -184,3 +190,14 @@ this subject to this file, not to AGENTS.md / CLAUDE.md. Keep the Documentation 
   the native reader will not interpret, so it converts to a single-`voice` safetensors offline (the
   `Tools/kokoro-voice-to-safetensors` treatment), which `loadVoice` reads. The weights are
   `hexgrad/Kokoro-82M` (327 MB `kokoro-v1_0.pth` + `config.json` + `voices/*.pt`).
+- **Kokoro voices (2026-10-27).** A request names its voicepack under `NFKParameterVoice`; the build's
+  `voiceName` is the default. The holder reads a named voicepack from `voices/` on first use and keeps
+  it. A name is letters, digits, `_`, and `-` only, so a request cannot reach outside `voices/`.
+  `NFKMLXKokoro.releaseVoiceNames` lists the release's 54 voicepacks (checked against the HF API tree at
+  `f3ff357`, 28,264,709 bytes in all); the catalog lists them as the voice option's choices, titled by
+  their prefix (language letter, then `f`/`m`). The download requires the default voicepack and fetches
+  the other 53 as optional files, so a voicepack the server does not serve fails only the request that
+  names it. Their measured sizes are in `NFKMLXCatalogMeasurements.swift`, and Kokoro's download is
+  355,479,286 bytes. The validation store's `IK_VAL_KOKORO/voices` holds all 54.
+  `testKokoroSpeaksTheVoiceARequestNames` checks exactly that naming the default voice changes nothing
+  and another voice speaks differently.

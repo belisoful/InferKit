@@ -913,8 +913,8 @@ let backend = try NFKMLXMimi.backend(weightsURL: url)
 | --- | --- | --- | --- | --- | --- |
 | FastSpeech2 conformer + paired HiFi-GAN | ``NFKMLXFastSpeech2`` (the backend factories), ``NFKMLXVoice`` | ``NFKMLXFastSpeech2Net``, `NFKMLXHiFiGANNet` | `NFKMLXFastSpeech2Configuration()` = espnet LJSpeech; `NFKMLXHiFiGANConfiguration()` = UNIVERSAL_V1 geometry (the paired `vocoder.` weights) | `fastspeech2-voice`; `voiceBackend(directoryURL:phonemizer:)`; `makeSpeechBackend(phonemize:)` | ``NFKMLXGenerationBackend``; `makeSpeechBackend(phonemize:)` returns an ``NFKMLXSpeechBackend`` |
 | HiFi-GAN | ``NFKMLXHiFiGAN`` | `NFKMLXHiFiGANNet` | `NFKMLXHiFiGANConfiguration()` (80 mel bins, 512 channels, rates 8/8/2/2) | — | mel → waveform object |
-| Kokoro-82M | ``NFKMLXKokoro`` | ``NFKMLXKokoroNet`` | `NFKMLXKokoroConfiguration.v1`; a voice from `loadVoice` | `backend(directoryURL:voiceName:)` | ``NFKMLXSpeechBackend`` (phonemes in) |
-| Chatterbox | ``NFKMLXChatterbox`` | ``NFKMLXChatterboxTTS`` (``NFKMLXChatterboxVoiceEncoderNet``, ``NFKMLXS3TokenizerNet``, ``NFKMLXT3Net``, ``NFKMLXS3GenNet``) | `.released` on the VoiceEncoder (3×256), the S3 tokenizer (6×1280), and T3 (Llama 520M with llama3 rope); S3Gen flow + HiFT takes no configuration | `chatterbox`; `speechBackend(directoryURL:voiceURL:)` | ``NFKMLXSpeechBackend`` (24 kHz WAV; text → cloned voice) |
+| Kokoro-82M | ``NFKMLXKokoro`` | ``NFKMLXKokoroNet`` | `NFKMLXKokoroConfiguration.v1`; a voice from `loadVoice`, or per request under `NFKParameterVoice` | `backend(directoryURL:voiceName:)` | ``NFKMLXSpeechBackend`` (phonemes in) |
+| Chatterbox | ``NFKMLXChatterbox`` | ``NFKMLXChatterboxTTS`` (``NFKMLXChatterboxVoiceEncoderNet``, ``NFKMLXS3TokenizerNet``, ``NFKMLXT3Net``, ``NFKMLXS3GenNet``) | `.released` on the VoiceEncoder (3×256), the S3 tokenizer (6×1280), and T3 (Llama 520M with llama3 rope); S3Gen flow + HiFT takes no configuration | `chatterbox`; `speechBackend(directoryURL:voiceURL:)`; a request's clip under `NFKInputVoiceReference` | ``NFKMLXSpeechBackend`` (24 kHz WAV; text → cloned voice) |
 | Phonemizers | ``NFKMLXNeuralG2P``, ``NFKMLXEspeakPhonemizer`` | `NFKMLXG2PNet` | ``NFKMLXG2PConfiguration`` | — | ``NFKMLXPhonemizing`` protocol (Objective-C and Swift); ``NFKMLXPhonemizer`` protocol (Swift) |
 | Hand-chained TTS | ``NFKMLXTTS`` | `NFKMLXAcousticNet` + `NFKMLXHiFiGANNet` | ``NFKMLXAcousticConfiguration`` | `ttsBackend(phonemizer:acousticURL:vocoderURL:symbols:)`; `makeSpeechBackend()` | ``NFKMLXGenerationBackend``; `makeSpeechBackend()` returns an ``NFKMLXSpeechBackend`` |
 | MiniMax Music 3 | ``NFKMLXMusic3`` | `NFKMusic3VocoderNet`, `NFKMusic3DepthDecoderNet`, `NFKMusic3ConditionEncoderNet`, `NFKMusic3DiTNet`, ``NFKMLXLanguageNet`` | the release directory (bf16 LM, float32 DiT); `quantizeRelease(at:to:bits:transformerBits:groupSize:)` for the 7.7 GiB copy | `minimax-music3`; `backend(directoryURL:)` | ``NFKMLXMusicBackend`` |
@@ -932,7 +932,8 @@ let voice = try NFKMLXVoice.voice(acousticURL: acousticURL, vocoderURL: vocoderU
 // no standalone public entry; the net is built and loaded inside NFKMLXVoice.voice(acousticURL:vocoderURL:vocabularyURL:) and NFKMLXTTS.loadWeights(acousticURL:vocoderURL:)
 // Kokoro-82M
 let backend = try NFKMLXKokoro.backend(directoryURL: dir, voiceName: "af_heart")
-// Chatterbox (a release directory; nil voice = the built-in conds.pt)
+// Kokoro per request: NFKParameterVoice names one of NFKMLXKokoro.releaseVoiceNames
+// Chatterbox (a release directory; nil voice = the built-in conds.pt; a request's WAV under NFKInputVoiceReference clones that voice)
 let backend = try NFKMLXChatterbox.speechBackend(directoryURL: dir, voiceURL: voiceWAV)
 // per request: NFKMLXChatterboxParameterKey.exaggeration (0.5) beside NFKParameterTemperature, NFKParameterGuidanceScale, and NFKParameterSeed
 // Phonemizers

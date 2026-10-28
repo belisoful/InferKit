@@ -150,10 +150,10 @@ enum NFKMLXCatalogAudio {
     /// The registry name of Kokoro-82M.
     static let kokoroName = "kokoro-82m"
 
-    /// The voicepack the registered Kokoro backend speaks in: the release's `voices/af_heart.pt`.
-    static let kokoroVoice = "af_heart"
+    /// The voicepack the registered Kokoro backend speaks in when a request names none.
+    static let kokoroVoice = NFKMLXKokoro.defaultVoiceName
 
-    /// The registry name of Chatterbox, which speaks in the release's built-in voice.
+    /// The registry name of Chatterbox, which speaks in the release's built-in voice or a request's clip.
     static let chatterboxName = "chatterbox"
 
     /// The Hugging Face repository of a SNAC release.
@@ -929,11 +929,30 @@ extension NFKMLXCatalogAudio {
                      summary: "A small StyleTTS 2 and iSTFTNet voice that speaks a phoneme string at 24 kHz.",
                      tasks: [NFKModelTaskSpeechSynthesis],
                      inputs: speechInputs(prompt: "The phonemes to speak, in the misaki phoneme alphabet Kokoro reads."),
-                     outputs: [synthesizedSpeech("A mono WAV file in the af_heart voice.")],
-                     parameters: [generatedSampleRate],
+                     outputs: [synthesizedSpeech("A mono WAV file in the chosen voice.")],
+                     parameters: [
+                        .option(NFKParameterVoice, kind: NFKModelOptionKindChoice, title: "Voice",
+                                help: "The voicepack to speak in. Each speaks the phonemes it is given; the misaki phonemes of its own language read most naturally.",
+                                defaultValue: kokoroVoice, choices: NFKMLXKokoro.releaseVoiceNames.map { ($0, kokoroVoiceTitle($0)) }),
+                        generatedSampleRate,
+                     ],
                      license: .apache2(),
                      release: "v1.0",
-                     source: .hub("hexgrad/Kokoro-82M", files: files(required: release.required, weights: release.weights)))
+                     source: .hub("hexgrad/Kokoro-82M",
+                                  files: files(required: release.required, optional: release.optional, weights: release.weights)))
+    }
+
+    /// A Kokoro voicepack's name with the language and voice its prefix states, such as "af_heart
+    /// (American English, female)".
+    static func kokoroVoiceTitle(_ name: String) -> String {
+        let languages: [Character: String] = ["a": "American English", "b": "British English", "e": "Spanish",
+                                              "f": "French", "h": "Hindi", "i": "Italian", "j": "Japanese",
+                                              "p": "Brazilian Portuguese", "z": "Mandarin"]
+        let prefix = Array(name.prefix(2))
+        guard prefix.count == 2, let language = languages[prefix[0]], prefix[1] == "f" || prefix[1] == "m" else {
+            return name
+        }
+        return "\(name) (\(language), \(prefix[1] == "f" ? "female" : "male"))"
     }
 
     static var chatterbox: NFKMLXCatalogEntry {
@@ -941,8 +960,10 @@ extension NFKMLXCatalogAudio {
         return model(chatterboxName, displayName: "Chatterbox", family: "chatterbox",
                      summary: "Resemble AI's English voice-cloning speech synthesizer: a Llama text-to-token model and a flow-matching token-to-speech decoder at 24 kHz.",
                      tasks: [NFKModelTaskSpeechSynthesis],
-                     inputs: speechInputs(prompt: "The text to speak."),
-                     outputs: [synthesizedSpeech("A mono WAV file in the release's built-in voice.")],
+                     inputs: speechInputs(prompt: "The text to speak.")
+                        + [.input(NFKInputVoiceReference, title: "Voice to clone",
+                                  help: "A WAV recording of the voice to speak in. The first six seconds prompt the speech tokens, the first ten the decoder, and the whole clip the speaker embedding. Without one, the release's built-in voice.")],
+                     outputs: [synthesizedSpeech("A mono WAV file in the cloned voice, or the release's built-in voice.")],
                      parameters: [
                         .option(NFKMLXChatterboxParameterKey.exaggeration, kind: NFKModelOptionKindNumber,
                                 title: "Exaggeration", help: "How strongly the voice's emotion is exaggerated.",

@@ -2935,7 +2935,7 @@ fetches the files the model reads, and nothing else, into the `NFKHFHub` cache, 
 snapshot folder. That covers the language models (`NFKMLXLanguage`, the Gemma family, Granite 4.0-H,
 Nemotron-H, Mamba), the vision-language models (SmolVLM2, Qwen3-VL, Pixtral, Florence-2, Sa2VA, TrOCR,
 Table Transformer, V-JEPA 2), the embedders and rerankers, the speech recognizers (Parakeet and Canary
-from their `.nemo` archives, Granite Speech, Voxtral), Kokoro (one voice), Chatterbox, VoiceRestore,
+from their `.nemo` archives, Granite Speech, Voxtral), Kokoro (every voice), Chatterbox, VoiceRestore,
 Resemble Enhance, MossFormer2 super-resolution, FLUX, FLUX.2, and MiniMax Music 3.
 
 ```objc
@@ -6264,13 +6264,17 @@ end (misaki) is a separate step.
 
 ```swift
 let kokoro = try NFKMLXKokoro.backend(repo: "hexgrad/Kokoro-82M", revision: nil, cacheDirectoryURL: nil,
-                                      voiceName: "af_heart")             // about 330 MB, one voice
+                                      voiceName: "af_heart")             // about 360 MB, every voice
 let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "həlˈoʊ wˈɜːld"])
 let audio = try kokoro.runInference(for: request).output(forKey: NFKOutputAudio) as? NFKAudioAsset
+let british = NFKInferenceRequest(inputs: [NFKInputPrompt: "həlˈoʊ wˈɜːld"],
+                                  parameters: [NFKParameterVoice: "bm_george"])   // another voice, this request
 ```
 
-`NFKMLXKokoro.backend(directoryURL:voiceName:)` builds from a release already on disk, and `voiceName`
-names a file under its `voices/`.
+`voiceName` is the voice the backend speaks in, and a request names another of
+`NFKMLXKokoro.releaseVoiceNames` under `NFKParameterVoice`. The download fetches every voicepack the
+release has. `NFKMLXKokoro.backend(directoryURL:voiceName:)` builds from a release already on disk and
+reads a voicepack from its `voices/` the first time a request names it.
 
 ### Chatterbox voice cloning (`NFKMLXChatterbox`)
 
@@ -6285,7 +6289,16 @@ let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "The quick brown fox 
 let audio = try chatterbox.runInference(for: request).output(forKey: NFKOutputAudio) as? NFKAudioAsset
 ```
 
-A nil `voiceURL` speaks in the release's built-in voice. T3 samples from a fixed seed. The flow's starting
+A nil `voiceURL` speaks in the release's built-in voice. A request that carries a WAV clip under
+`NFKInputVoiceReference` speaks in that clip's voice instead, so one backend clones any voice:
+
+```swift
+let clip = NFKAudioAsset(fileURL: otherVoiceWAV)
+let cloned = NFKInferenceRequest(inputs: [NFKInputPrompt: "Hello there.", NFKInputVoiceReference: clip])
+let voiced = try chatterbox.runInference(for: cloned).output(forKey: NFKOutputAudio) as? NFKAudioAsset
+```
+
+T3 samples from a fixed seed. The flow's starting
 noise and the vocoder's source noise come from MLX's global random state, so a run that must repeat calls
 `NFKMLXRandom.seed` first.
 

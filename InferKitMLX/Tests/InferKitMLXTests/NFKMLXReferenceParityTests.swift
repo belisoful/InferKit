@@ -3962,6 +3962,79 @@ final class NFKMLXReferenceParityTests: XCTestCase {
         print("VALIDATION PARITY chatterbox-backend: \(asset.durationSeconds) s at \(asset.sampleRate) Hz")
     }
 
+    /// The samples of the WAV a speech result carries.
+    private func spokenSamples(_ result: NFKInferenceResult) throws -> [Float] {
+        let asset = try XCTUnwrap(result.output(forKey: NFKOutputAudio) as? NFKAudioAsset)
+        let url = try XCTUnwrap(asset.fileURL)
+        defer { try? FileManager.default.removeItem(at: url) }
+        return try XCTUnwrap(NFKMLXWaveFile.read(try Data(contentsOf: url))).samples
+    }
+
+    // A request's clip under NFKInputVoiceReference clones the voice the voiceURL factory clones, so the
+    // catalog's backend, built in the built-in voice, speaks in any voice a request brings. The flow and
+    // vocoder noise come from MLX's global random state, so each run is seeded alike; the two backends
+    // load one after the other.
+    func testChatterboxClonesTheVoiceARequestCarries() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_CHATTERBOX"], let audio = config["IK_VAL_AUDIO"],
+              FileManager.default.fileExists(atPath: directory) else {
+            throw XCTSkip("set IK_VAL_CHATTERBOX + IK_VAL_AUDIO")
+        }
+        let release = URL(fileURLWithPath: directory), clipURL = URL(fileURLWithPath: audio)
+        let text = "The quick brown fox."
+        let seed: UInt64 = 20261027
+        var factory: NFKMLXSpeechBackend? = try NFKMLXChatterbox.backend(directoryURL: release, voiceURL: clipURL)
+        NFKMLXRandom.seed(seed)
+        let byFactory = try spokenSamples(try XCTUnwrap(factory).runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: text])))
+        factory?.unload()
+        factory = nil
+
+        let backend = try NFKMLXChatterbox.backend(directoryURL: release, voiceURL: nil)
+        XCTAssertTrue(backend.supportedInputKeys.contains(NFKInputVoiceReference))
+        let clip = NFKAudioAsset(fileURL: clipURL, durationSeconds: 0, sampleRate: 0, channelCount: 1)
+        let cloning = NFKInferenceRequest(inputs: [NFKInputPrompt: text, NFKInputVoiceReference: clip])
+        NFKMLXRandom.seed(seed)
+        let byRequest = try spokenSamples(try backend.runInference(for: cloning))
+        NFKMLXRandom.seed(seed)
+        let builtin = try spokenSamples(try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: text])))
+        print("VALIDATION PARITY chatterbox-clone: factory \(byFactory.count) samples, request \(byRequest.count), built-in \(builtin.count)")
+        XCTAssertEqual(byRequest.count, byFactory.count)
+        XCTAssertEqual(zip(byRequest, byFactory).map { abs($0 - $1) }.max() ?? 1, 0, accuracy: 1e-4,
+                       "the request's clip clones the voice the factory clones")
+        XCTAssertNotEqual(builtin, byRequest, "a request without a clip speaks in the built-in voice")
+
+        XCTAssertThrowsError(try backend.runInference(for: NFKInferenceRequest(
+            inputs: [NFKInputPrompt: text, NFKInputVoiceReference: Data("not a wave".utf8)])))
+    }
+
+    // MARK: Kokoro-82M (StyleTTS2 / iSTFTNet) — voices
+
+    // A request names its voicepack under NFKParameterVoice; naming the backend's own voice changes nothing,
+    // and Kokoro's synthesis is deterministic, so the comparison is exact.
+    func testKokoroSpeaksTheVoiceARequestNames() throws {
+        try requireMLXRuntime()
+        guard let directory = config["IK_VAL_KOKORO"],
+              FileManager.default.fileExists(atPath: "\(directory)/voices/bm_george.pt") else {
+            throw XCTSkip("set IK_VAL_KOKORO to a release with voices/bm_george.pt")
+        }
+        let backend = try NFKMLXKokoro.backend(directoryURL: URL(fileURLWithPath: directory), voiceName: "af_heart")
+        XCTAssertEqual(backend.supportedParameterKeys, [NFKParameterVoice, NFKParameterSampleRate])
+        let phonemes = "hˈɛloʊ wˈɜːld"
+        func spoken(_ parameters: [String: Any]) throws -> [Float] {
+            try spokenSamples(try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: phonemes],
+                                                                                parameters: parameters)))
+        }
+        let heart = try spoken([:])
+        XCTAssertEqual(try spoken([NFKParameterVoice: "af_heart"]), heart)
+        let george = try spoken([NFKParameterVoice: "bm_george"])
+        XCTAssertNotEqual(george, heart, "another voicepack speaks differently")
+        XCTAssertEqual(try spoken([NFKParameterVoice: "bm_george"]), george, "a voicepack read once is kept")
+        XCTAssertEqual(try spoken([:]), heart, "a request without a voice speaks in the backend's own")
+        for refused in ["zz_nobody", "../config", 3] as [Any] {
+            XCTAssertThrowsError(try spoken([NFKParameterVoice: refused]), "\(refused)")
+        }
+    }
+
     // MARK: Kokoro-82M (StyleTTS2 / iSTFTNet) — text path
 
     // Kokoro's text path on the RELEASED weights, against the vendored KModel, seam by seam: the PL-BERT

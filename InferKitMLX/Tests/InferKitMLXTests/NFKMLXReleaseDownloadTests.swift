@@ -86,22 +86,31 @@ final class NFKMLXReleaseDownloadTests: XCTestCase {
         XCTAssertEqual(a.asType(.float32).asArray(Float.self), b.asType(.float32).asArray(Float.self))
     }
 
-    // Kokoro downloads its configuration, weights, and one voice, and speaks from them.
+    // Kokoro downloads its configuration, weights, and voicepacks, and speaks from them in its own voice and
+    // in another a request names. The other voicepack is read on first use, so that request runs before the
+    // offline store removes its cache.
     func testKokoroBuildsFromItsReleaseOffline() throws {
         try requireMLXRuntime()
         guard let root = config["IK_VAL_KOKORO"] else { throw XCTSkip("set IK_VAL_KOKORO") }
+        let store = URL(fileURLWithPath: root)
+        guard FileManager.default.fileExists(atPath: store.appendingPathComponent("voices/bm_george.pt").path) else {
+            throw XCTSkip("the store's Kokoro release has no voices/bm_george.pt")
+        }
         let repo = "hexgrad/Kokoro-82M"
         let files = NFKMLXKokoro.releaseFiles(voiceName: "af_heart")
-        let backend = try NFKMLXReleaseStore.offline(store: URL(fileURLWithPath: root), repo: repo,
-                                                     required: files.required, optional: [], weights: files.weights) {
-            try NFKMLXKokoro.backend(repo: repo, revision: nil, cacheDirectoryURL: nil, voiceName: "af_heart")
+        let (result, george) = try NFKMLXReleaseStore.offline(store: store, repo: repo, required: files.required,
+                                                              optional: files.optional, weights: files.weights) {
+            let backend = try NFKMLXKokoro.backend(repo: repo, revision: nil, cacheDirectoryURL: nil, voiceName: "af_heart")
+            return (try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "hˈɛloʊ"])),
+                    try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "hˈɛloʊ"],
+                                                                      parameters: [NFKParameterVoice: "bm_george"])))
         }
-        let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "hˈɛloʊ"]))
         XCTAssertNotNil(result.output(forKey: NFKOutputAudio))
+        XCTAssertNotNil(george.output(forKey: NFKOutputAudio), "the optional voicepack is in the downloaded release")
     }
 
     // The one release download that reaches the network: Kokoro's factory fetches its configuration,
-    // weights, and one voice from Hugging Face into a fresh cache (about 330 MB) and speaks. A second
+    // weights, and every voicepack from Hugging Face into a fresh cache (about 360 MB) and speaks. A second
     // build reads the cache and fetches nothing. Opt-in, like the other live download.
     func testKokoroDownloadsItsReleaseLive() throws {
         try requireMLXRuntime()
@@ -118,8 +127,8 @@ final class NFKMLXReleaseDownloadTests: XCTestCase {
         for path in ["config.json", "kokoro-v1_0.pth", "voices/af_heart.pt"] {
             XCTAssertTrue(FileManager.default.fileExists(atPath: snapshot.appendingPathComponent(path).path), path)
         }
-        XCTAssertFalse(FileManager.default.fileExists(atPath: snapshot.appendingPathComponent("voices/af_bella.pt").path),
-                       "only the named voice is fetched")
+        XCTAssertTrue(FileManager.default.fileExists(atPath: snapshot.appendingPathComponent("voices/af_bella.pt").path),
+                      "the release's other voicepacks download beside the named one")
         let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: "hˈɛloʊ wˈɜːld"]))
         XCTAssertNotNil(result.output(forKey: NFKOutputAudio))
 
