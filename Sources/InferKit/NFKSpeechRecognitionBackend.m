@@ -75,6 +75,11 @@
 	return [NSSet setWithArray:@[ NFKOutputText, NFKOutputSegments ]];
 }
 
+- (NSSet<NSString *> *)supportedParameterKeys
+{
+	return [NSSet setWithObject:NFKParameterSourceLanguage];
+}
+
 + (BOOL)isAuthorized
 {
 #if NFK_HAS_SPEECH_RECOGNITION
@@ -141,12 +146,19 @@
 										  reason:@"no audio file is set under NFKInputAudio"]];
 		return job;
 	}
+	id language = request.parameters[NFKParameterSourceLanguage];
+	if (language != nil && ![language isKindOfClass:NSString.class]) {
+		[job finishWithError:[self errorWithCode:kNFKError_InferenceUnsupported
+										  reason:@"\"sourceLanguage\" is a locale identifier such as en-US"]];
+		return job;
+	}
 	if (!self.class.isAuthorized) {
 		[job finishWithError:[self errorWithCode:kNFKError_InferenceNotReady
 										  reason:@"speech recognition is not authorized; ask with requestAuthorizationWithCompletionHandler:"]];
 		return job;
 	}
-	SFSpeechRecognizer *recognizer = [self recognizer];
+	NSLocale *locale = language != nil ? [NSLocale localeWithLocaleIdentifier:language] : self.locale;
+	SFSpeechRecognizer *recognizer = [self recognizerForLocale:locale];
 	if (recognizer == nil || !recognizer.isAvailable) {
 		[job finishWithError:[self errorWithCode:kNFKError_InferenceNotReady
 										  reason:@"no recognizer is available for this locale"]];
@@ -194,7 +206,12 @@
 
 - (nullable SFSpeechRecognizer *)recognizer
 {
-	return [[SFSpeechRecognizer alloc] initWithLocale:self.locale];
+	return [self recognizerForLocale:self.locale];
+}
+
+- (nullable SFSpeechRecognizer *)recognizerForLocale:(NSLocale *)locale
+{
+	return [[SFSpeechRecognizer alloc] initWithLocale:locale];
 }
 
 // Recognition reads a file, so audio held in memory is written to one the caller never sees.

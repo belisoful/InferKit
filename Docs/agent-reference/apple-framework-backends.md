@@ -47,8 +47,9 @@ capability resolves at the core's floor.
 
 Every Apple engine declares `supportedOutputKeys` (2026-10-15), in the core and in InferKitAppleSwift.
 Each engine writes every key it declares on every result, so a descriptor marks its outputs required.
-Two sets follow configuration: the face backend's (`NFKOutputPose` only with `detectsLandmarks`) and
-the tracking backend's (by `kind`).
+Two sets follow configuration: the face backend's (`NFKOutputPose` only with `detectsLandmarks`, which
+`vision-face` marks optional because its `detectsLandmarks` load option can drop it) and the tracking
+backend's (by `kind`, one descriptor per kind).
 
 - The core's descriptors come from `NFKAppleModelDescriptors`, which the shared catalog loads first.
   The identifier is the `backendIdentifier`, except where one class runs tasks with different keys:
@@ -65,6 +66,30 @@ the tracking backend's (by `kind`).
   registration is `optical-flow`, and tracking and rectangles are `object-detection`.
 - `NFKAppleSwiftModelDescriptors` describes the companion's four engines the same way, engine
   `apple-swift`, at macOS 26 / iOS 26, with `+backendNamed:` as its registry.
+
+## Options
+
+Every setting that changes an engine's output is a descriptor option (2026-10-27), because a backend
+the catalog builds is reached through its options alone.
+- **Load options set properties.** `+engineOptions` maps each identifier to its options. A load
+  option's key is the property it sets through `propertyKeyPath`, and `+backendForBuildRequest:`
+  applies them. A load option's default is the property's default, because a build fills every
+  default; `maximumCount` on `vision-rectangle` declares none, since its default follows `kind` (16,
+  or 1 for a document page). `NFKAppleModelDescriptorsTests` builds every load option with a
+  non-default value and reads the property back.
+- An enumeration property's choices are its integer values, titled. A choice that needs a later OS
+  than the descriptor's floor carries the requirement, so the catalog refuses it on an older machine:
+  the subject mask and up to four people (macOS 14, iOS 17, tvOS 17), the people mask and the document
+  page (macOS 12, iOS 15, tvOS 15), the animal joints (macOS 14), and aesthetics (macOS 15, iOS 18,
+  tvOS 18).
+- **Request options are read per request**, with the properties as defaults: the voices'
+  five, the tracker's region, restart, and level, and the speech recognizer's
+  `NFKParameterSourceLanguage`, which a load option could not set because `locale` is an `NSLocale`.
+  `supportedParameterKeys` lists exactly the request options; the descriptor test compares the two.
+- **An output a load option switches off is optional.** `detectsLandmarks` NO drops
+  `NFKOutputPose`, so `vision-face` marks that port not required. Every other port stays required.
+- Engines with nothing to set declare no options: `vision-animal`, `vision-feature-print`, and
+  `videotoolbox-frame-interpolation`.
 
 ## Geometry: the flip that nothing in the type system catches
 
@@ -108,8 +133,12 @@ maps each point through the box before flipping it.
   made them shippable: aesthetics (`overallScore`, `isUtility`), the horizon (`angleRadians`,
   `transform`), contours, and registration. Their keys are the observation's own names.
 - `NFKVisionTrackingBackend` is the one backend in the toolkit that holds state, because Vision's
-  sequence requests need a handler that lives across frames. `startTrackingBoundingBox:` names the
-  region, each run advances it, and `reset` ends the sequence. Trajectory detection needs real
+  sequence requests need a handler that lives across frames. `startTrackingBoundingBox:` or
+  `NFKVisionTrackingParameterRegion` names the region, each run advances it, and `reset` or
+  `NFKVisionTrackingParameterRestart` ends the sequence. A request's region restarts the sequence only
+  when it differs from the region the sequence started from or the region was lost, so a catalog
+  build that sets the region as a request default follows it frame after frame; the test compares
+  that run's boxes with a run that names the region once and finds them equal. Trajectory detection needs real
   timestamps, so the backend builds `CMSampleBuffer`s with synthetic ones at `framesPerSecond`.
 - Registration answers a sparse or repeating image confidently and wrongly: a periodic test pattern
   produced a confident reading with the wrong sign. A test that measures alignment gives Vision a

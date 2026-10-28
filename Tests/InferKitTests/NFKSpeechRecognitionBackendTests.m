@@ -51,6 +51,18 @@
 #endif
 }
 
+- (void)testARequestNamesTheLanguage
+{
+	NFKSpeechRecognitionBackend *backend = [NFKSpeechRecognitionBackend backend];
+	XCTAssertEqualObjects(backend.supportedParameterKeys, [NSSet setWithObject:NFKParameterSourceLanguage]);
+	NFKAudioAsset *asset = [NFKAudioAsset audioAssetWithFileURL:[NSURL fileURLWithPath:@"/tmp/nfk-absent.wav"]];
+	NFKInferenceRequest *request = [NFKInferenceRequest requestWithInputs:@{ NFKInputAudio: asset }
+															   parameters:@{ NFKParameterSourceLanguage: @3 }];
+	NSError *error = nil;
+	XCTAssertNil([backend runInferenceForRequest:request error:&error]);
+	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceUnsupported, @"a language is a locale identifier");
+}
+
 - (void)testReadinessFollowsAuthorization
 {
 	NFKSpeechRecognitionBackend *backend = [NFKSpeechRecognitionBackend backend];

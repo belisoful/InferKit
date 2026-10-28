@@ -13,11 +13,17 @@
 #import <Vision/Vision.h>
 #import <simd/simd.h>
 
+NSString * const NFKVisionTrackingParameterRegion	= @"trackingRegion";
+NSString * const NFKVisionTrackingParameterLevel	= @"trackingLevel";
+NSString * const NFKVisionTrackingParameterRestart	= @"restartTracking";
+
 @interface NFKVisionTrackingBackend ()
 @property (nonatomic, strong, nullable) VNSequenceRequestHandler *sequence;
 @property (nonatomic, strong, nullable) VNDetectedObjectObservation *tracked;
 @property (nonatomic, strong, nullable) VNDetectTrajectoriesRequest *trajectories;
 @property (nonatomic) NSInteger submittedFrameCount;
+/*! The region a request started the sequence from, as the request gave it. */
+@property (nonatomic, copy, nullable) NSArray<NSNumber *> *requestedRegion;
 @end
 
 @implementation NFKVisionTrackingBackend
@@ -67,6 +73,15 @@
 	return [NSSet setWithObject:NFKOutputDetections];
 }
 
+- (NSSet<NSString *> *)supportedParameterKeys
+{
+	if (self.kind == NFKVisionTrackingKindTrajectory) {
+		return [NSSet setWithObject:NFKVisionTrackingParameterRestart];
+	}
+	return [NSSet setWithObjects:NFKVisionTrackingParameterRegion, NFKVisionTrackingParameterLevel,
+			NFKVisionTrackingParameterRestart, nil];
+}
+
 - (BOOL)isTracking
 {
 	return self.tracked != nil;
@@ -79,6 +94,7 @@
 	self.sequence = [[VNSequenceRequestHandler alloc] init];
 	self.tracked = [VNDetectedObjectObservation observationWithBoundingBox:visionBox];
 	self.trajectories = nil;
+	self.requestedRegion = nil;
 }
 
 - (void)reset
@@ -87,36 +103,115 @@
 	self.tracked = nil;
 	self.trajectories = nil;
 	self.submittedFrameCount = 0;
+	self.requestedRegion = nil;
 }
 
 - (nullable NFKInferenceResult *)runInferenceForRequest:(NFKInferenceRequest *)request
 												  error:(NSError **)outError
 {
+	NSDictionary<NSString *, id> *parameters = request.parameters;
+	NSNumber *level = [self trackingLevelForParameters:parameters error:outError];
+	if (level == nil || ![self startSequenceForParameters:parameters error:outError]) {
+		return nil;
+	}
 	CGImageRef image = [NFKVisionSupport imageForRequest:request key:NFKInputImage error:outError];
 	if (image == NULL) {
 		return nil;
 	}
 	NFKInferenceResult *result = (self.kind == NFKVisionTrackingKindTrajectory)
 		? [self advanceTrajectoriesWithImage:image error:outError]
-		: [self advanceTrackingWithImage:image error:outError];
+		: [self advanceTrackingWithImage:image level:level.integerValue error:outError];
 	CGImageRelease(image);
 	return result;
 }
 
+#pragma mark Request parameters
+
+- (nullable NSNumber *)trackingLevelForParameters:(NSDictionary<NSString *, id> *)parameters error:(NSError **)outError
+{
+	id value = parameters[NFKVisionTrackingParameterLevel];
+	if (value == nil) {
+		return @(self.trackingLevel);
+	}
+	NSDictionary<NSString *, NSNumber *> *levels = @{ @"accurate": @(NFKVisionTrackingLevelAccurate),
+													  @"fast": @(NFKVisionTrackingLevelFast) };
+	NSNumber *level = [value isKindOfClass:NSString.class] ? levels[value] : nil;
+	if (level == nil) {
+		[self failParameter:NFKVisionTrackingParameterLevel takes:@"\"accurate\" or \"fast\"" error:outError];
+	}
+	return level;
+}
+
+// A region equal to the one the sequence started from continues the sequence, so request defaults that
+// repeat the region on every frame follow it.
+- (BOOL)startSequenceForParameters:(NSDictionary<NSString *, id> *)parameters error:(NSError **)outError
+{
+	id restart = parameters[NFKVisionTrackingParameterRestart];
+	if (restart != nil && ![restart isKindOfClass:NSNumber.class]) {
+		return [self failParameter:NFKVisionTrackingParameterRestart takes:@"a boolean" error:outError];
+	}
+	id region = parameters[NFKVisionTrackingParameterRegion];
+	CGRect box = CGRectNull;
+	if (region != nil && ![self region:region asRect:&box]) {
+		return [self failParameter:NFKVisionTrackingParameterRegion
+							 takes:@"four numbers x, y, width, height, a region inside 0...1" error:outError];
+	}
+	if ([restart boolValue]) {
+		[self reset];
+	}
+	if (region == nil || (self.isTracking && [region isEqual:self.requestedRegion])) {
+		return YES;
+	}
+	[self startTrackingBoundingBox:box];
+	self.requestedRegion = region;
+	return YES;
+}
+
+- (BOOL)region:(id)value asRect:(CGRect *)rect
+{
+	if (![value isKindOfClass:NSArray.class] || [value count] != 4) {
+		return NO;
+	}
+	double numbers[4];
+	for (NSUInteger index = 0; index < 4; index++) {
+		id number = [value objectAtIndex:index];
+		if (![number isKindOfClass:NSNumber.class]) {
+			return NO;
+		}
+		numbers[index] = [number doubleValue];
+	}
+	BOOL inside = numbers[0] >= 0.0 && numbers[1] >= 0.0 && numbers[2] > 0.0 && numbers[3] > 0.0
+		&& numbers[0] + numbers[2] <= 1.0 && numbers[1] + numbers[3] <= 1.0;
+	if (!inside) {
+		return NO;
+	}
+	*rect = CGRectMake(numbers[0], numbers[1], numbers[2], numbers[3]);
+	return YES;
+}
+
+- (BOOL)failParameter:(NSString *)key takes:(NSString *)description error:(NSError **)outError
+{
+	NSString *reason = [NSString stringWithFormat:@"\"%@\" takes %@", key, description];
+	return [NFKVisionSupport failWithError:outError code:kNFKError_InferenceUnsupported reason:reason];
+}
+
 #pragma mark Object tracking
 
-- (nullable NFKInferenceResult *)advanceTrackingWithImage:(CGImageRef)image error:(NSError **)outError
+- (nullable NFKInferenceResult *)advanceTrackingWithImage:(CGImageRef)image
+													level:(NFKVisionTrackingLevel)level
+													error:(NSError **)outError
 {
 	VNDetectedObjectObservation *tracked = self.tracked;
 	if (tracked == nil || self.sequence == nil) {
 		[NFKVisionSupport failWithError:outError
 								   code:kNFKError_InferenceMissingInput
-								 reason:@"name the region with startTrackingBoundingBox: before the first frame"];
+								 reason:@"name the region under NFKVisionTrackingParameterRegion or with "
+										@"startTrackingBoundingBox: before the first frame"];
 		return nil;
 	}
 
 	VNTrackObjectRequest *track = [[VNTrackObjectRequest alloc] initWithDetectedObjectObservation:tracked];
-	track.trackingLevel = VNRequestTrackingLevelAccurate;
+	track.trackingLevel = level == NFKVisionTrackingLevelFast ? VNRequestTrackingLevelFast : VNRequestTrackingLevelAccurate;
 	NSError *trackError = nil;
 	if (![self.sequence performRequests:@[ track ] onCGImage:image error:&trackError]) {
 		NSString *reason = trackError.localizedDescription ?: @"the tracker failed on this frame";

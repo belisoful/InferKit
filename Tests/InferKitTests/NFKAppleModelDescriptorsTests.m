@@ -17,6 +17,12 @@
 	return [NSSet setWithArray:[ports valueForKey:@"key"]];
 }
 
+- (NSSet<NSString *> *)keysOfOptions:(NSArray<NFKModelOption *> *)options atStage:(NSString *)stage
+{
+	NSPredicate *atStage = [NSPredicate predicateWithFormat:@"stage == %@", stage];
+	return [NSSet setWithArray:[[options filteredArrayUsingPredicate:atStage] valueForKey:@"key"]];
+}
+
 - (NSSet<NSString *> *)declaredKeysOf:(id<NFKInferenceBackend>)backend selector:(SEL)selector
 {
 	if (![backend respondsToSelector:selector]) {
@@ -38,9 +44,82 @@
 							  [self declaredKeysOf:backend selector:@selector(supportedInputKeys)], @"%@", descriptor.identifier);
 		XCTAssertEqualObjects([self keysOfPorts:descriptor.outputs],
 							  [self declaredKeysOf:backend selector:@selector(supportedOutputKeys)], @"%@", descriptor.identifier);
-		XCTAssertEqualObjects([NSSet setWithArray:[descriptor.options valueForKey:@"key"]],
+		XCTAssertEqualObjects([self keysOfOptions:descriptor.options atStage:NFKModelOptionStageRequest],
 							  [self declaredKeysOf:backend selector:@selector(supportedParameterKeys)], @"%@", descriptor.identifier);
 		XCTAssertGreaterThan(descriptor.outputs.count, (NSUInteger)0, @"%@ declares what it writes", descriptor.identifier);
+	}
+}
+
+- (void)testEveryLoadOptionSetsAPropertyOfTheBackend
+{
+	for (NFKModelDescriptor *descriptor in [NFKAppleModelDescriptors modelDescriptors]) {
+		id backend = [NFKAppleModelDescriptors backendNamed:descriptor.registryName];
+		for (NFKModelOption *option in descriptor.options) {
+			if (![option.stage isEqualToString:NFKModelOptionStageLoad]) {
+				continue;
+			}
+			XCTAssertNotNil(option.propertyKeyPath, @"%@ %@", descriptor.identifier, option.key);
+			if (option.defaultValue == nil) {
+				continue;
+			}
+			XCTAssertNoThrow([backend setValue:option.defaultValue forKeyPath:option.propertyKeyPath], @"%@ %@",
+							 descriptor.identifier, option.key);
+			XCTAssertEqualObjects([backend valueForKeyPath:option.propertyKeyPath], option.defaultValue,
+								  @"%@ %@ defaults to the property's value", descriptor.identifier, option.key);
+		}
+	}
+}
+
+/*! A value other than the option's default, within its range and among its choices. */
+- (nullable id)otherValueOf:(NFKModelOption *)option
+{
+	NSString *kind = option.kind;
+	if ([kind isEqualToString:NFKModelOptionKindChoice]) {
+		return option.choices.lastObject.value;
+	}
+	if ([kind isEqualToString:NFKModelOptionKindBoolean]) {
+		return @(![option.defaultValue boolValue]);
+	}
+	if ([kind isEqualToString:NFKModelOptionKindInteger] || [kind isEqualToString:NFKModelOptionKindNumber]) {
+		return option.maximum ?: @([(option.defaultValue ?: option.minimum) doubleValue] + option.step.doubleValue);
+	}
+	if ([kind isEqualToString:NFKModelOptionKindTextList]) {
+		return @[ @"en-US" ];
+	}
+	if ([kind isEqualToString:NFKModelOptionKindText]) {
+		return @"en";
+	}
+	return nil;
+}
+
+- (void)testACatalogBuildSetsEveryLoadOption
+{
+	for (NFKModelDescriptor *descriptor in [NFKAppleModelDescriptors modelDescriptors]) {
+		for (NFKModelOption *option in descriptor.options) {
+			if (![option.stage isEqualToString:NFKModelOptionStageLoad]) {
+				continue;
+			}
+			id value = [self otherValueOf:option];
+			XCTAssertNotNil(value, @"%@ %@", descriptor.identifier, option.key);
+			XCTAssertNotEqualObjects(value, option.defaultValue, @"%@ %@", descriptor.identifier, option.key);
+			NSError *error = nil;
+			NFKModelBuildRequest *request = [NFKModelCatalog.sharedCatalog buildRequestForModelIdentifier:descriptor.identifier
+																								   options:@{ option.key: value }
+																								  location:nil error:&error];
+			XCTAssertNotNil(request, @"%@ %@: %@", descriptor.identifier, option.key, error);
+			id backend = [NFKAppleModelDescriptors backendForBuildRequest:request error:&error];
+			XCTAssertNotNil(backend, @"%@ %@: %@", descriptor.identifier, option.key, error);
+			XCTAssertEqualObjects([backend valueForKeyPath:option.propertyKeyPath], value, @"%@ %@",
+								  descriptor.identifier, option.key);
+		}
+	}
+}
+
+- (void)testTheFaceDescriptorsLandmarksAreOptional
+{
+	NFKModelDescriptor *faces = [self descriptorNamed:@"vision-face"];
+	for (NFKModelPort *port in faces.outputs) {
+		XCTAssertEqual(port.required, ![port.key isEqualToString:NFKOutputPose], @"%@", port.key);
 	}
 }
 
@@ -166,6 +245,45 @@
 	NFKAppleModelDescriptors.includesMachineChoices = YES;
 	XCTAssertEqualObjects(portable.kind, NFKModelOptionKindChoice);
 	XCTAssertEqual(portable.choices.count, (NSUInteger)0, @"a manifest for every machine lists no voices");
+}
+
+#pragma mark Tracking options
+
+- (void)testTheTrackingDescriptorsDeclareTheirRequestAndLoadOptions
+{
+	NFKModelDescriptor *object = [self descriptorNamed:@"vision-tracking"];
+	XCTAssertEqualObjects([object optionWithKey:NFKVisionTrackingParameterRegion].kind, NFKModelOptionKindJSON);
+	NFKModelOption *level = [object optionWithKey:NFKVisionTrackingParameterLevel];
+	XCTAssertEqualObjects([level.choices valueForKey:@"value"], (@[ @"accurate", @"fast" ]));
+	XCTAssertEqualObjects(level.defaultValue, @"accurate");
+	XCTAssertEqualObjects([object optionWithKey:NFKVisionTrackingParameterRestart].kind, NFKModelOptionKindBoolean);
+
+	NFKModelDescriptor *trajectory = [self descriptorNamed:@"vision-tracking-trajectory"];
+	NFKModelOption *length = [trajectory optionWithKey:@"trajectoryLength"];
+	XCTAssertEqualObjects(length.stage, NFKModelOptionStageLoad);
+	XCTAssertEqualObjects(length.minimum, @5);
+	XCTAssertEqualObjects([trajectory optionWithKey:@"framesPerSecond"].defaultValue, @30);
+	XCTAssertNil([trajectory optionWithKey:NFKVisionTrackingParameterRegion], @"a trajectory is found, not named");
+}
+
+- (void)testACatalogBuildSetsTheTrajectorySettings
+{
+	NSError *error = nil;
+	NFKModelBuildRequest *request = [NFKModelCatalog.sharedCatalog
+		buildRequestForModelIdentifier:@"vision-tracking-trajectory"
+							   options:@{ @"trajectoryLength": @8, @"framesPerSecond": @60 } location:nil error:&error];
+	XCTAssertNotNil(request, @"%@", error);
+	NFKVisionTrackingBackend *backend = (NFKVisionTrackingBackend *)[NFKAppleModelDescriptors backendForBuildRequest:request
+																											   error:&error];
+	XCTAssertTrue([backend isKindOfClass:NFKVisionTrackingBackend.class], @"%@", error);
+	XCTAssertEqual(backend.kind, NFKVisionTrackingKindTrajectory);
+	XCTAssertEqual(backend.trajectoryLength, 8);
+	XCTAssertEqual(backend.framesPerSecond, 60.0);
+
+	XCTAssertNil([NFKModelCatalog.sharedCatalog buildRequestForModelIdentifier:@"vision-tracking-trajectory"
+																	   options:@{ @"trajectoryLength": @3 } location:nil
+																		 error:&error], @"below Vision's minimum");
+	XCTAssertEqual(error.code, (NSInteger)NFKModelCatalogErrorInvalidOptions);
 }
 
 #pragma mark Declared outputs

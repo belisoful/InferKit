@@ -25,6 +25,31 @@ typedef NS_ENUM(NSInteger, NFKVisionTrackingKind) {
 };
 
 /*!
+	@enum       NFKVisionTrackingLevel
+	@abstract   How carefully object tracking follows its region.
+	@constant   NFKVisionTrackingLevelAccurate  Vision's accurate tracker, slower and steadier.
+	@constant   NFKVisionTrackingLevelFast  Vision's fast tracker.
+*/
+typedef NS_ENUM(NSInteger, NFKVisionTrackingLevel) {
+	NFKVisionTrackingLevelAccurate	= 0,
+	NFKVisionTrackingLevelFast		= 1,
+};
+
+/*! The region object tracking starts from (NSArray of four NSNumbers: x, y, width, height), normalized
+	0...1 with the origin at the top left. A request whose region differs from the one the sequence
+	started from starts a new sequence there before the frame is tracked. A request repeating that region
+	continues the sequence while the region is followed, so a region given as a request default on every
+	frame is followed rather than restarted. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKVisionTrackingParameterRegion;
+/*! The tracker object tracking runs for one request (NSString): "accurate" or "fast". The backend's
+	trackingLevel when absent. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKVisionTrackingParameterLevel;
+/*! YES ends the sequence before the request's frame (NSNumber, a boolean), as reset does. Object
+	tracking then needs NFKVisionTrackingParameterRegion on the same request; trajectory detection counts
+	its frames again from this one. Introduced in InferKit 0.4.0. */
+extern NSString * const NFKVisionTrackingParameterRestart;
+
+/*!
 	@class      NFKVisionTrackingBackend
 	@abstract   Follows something across frames through Apple's Vision framework.
 	@discussion This backend holds state, which the others do not. Vision's tracking requests are
@@ -32,8 +57,9 @@ typedef NS_ENUM(NSInteger, NFKVisionTrackingKind) {
 				backend keeps the sequence between calls. One instance follows one sequence, and a
 				caller wanting two at once makes two.
 
-				Object tracking: name the region with `startTrackingBoundingBox:`, then submit each
-				frame under NFKInputImage. Every run returns the region's new position as a single
+				Object tracking: name the region under NFKVisionTrackingParameterRegion on the first
+				request, or with `startTrackingBoundingBox:`, then submit each frame under
+				NFKInputImage. Every run returns the region's new position as a single
 				NFKDetection under NFKOutputDetections, labeled `tracked`, and the backend carries it
 				forward as the input for the next frame. `isTracking` is NO before the first call and
 				after the region is lost.
@@ -44,13 +70,18 @@ typedef NS_ENUM(NSInteger, NFKVisionTrackingKind) {
 				numbers of the parabola. Nothing is reported until `trajectoryLength` frames have
 				been seen, so early frames return an empty reading rather than an error.
 
-				`reset` ends the sequence and forgets the state, which is what a caller does when the
-				clip changes. Introduced in InferKit 0.4.0.
+				`reset`, or NFKVisionTrackingParameterRestart on a request, ends the sequence and forgets
+				the state, which is what a caller does when the clip changes. A backend reached only
+				through requests, such as one the catalog builds and a server hosts, is driven entirely
+				by the NFKVisionTrackingParameter* keys. Introduced in InferKit 0.4.0.
 */
 @interface NFKVisionTrackingBackend : NSObject <NFKInferenceBackend>
 
 /*! What to follow. An object by default. */
 @property (nonatomic) NFKVisionTrackingKind kind;
+
+/*! The tracker object tracking runs when a request names none. Accurate by default. */
+@property (nonatomic) NFKVisionTrackingLevel trackingLevel;
 
 /*! YES once a region is being followed and not yet lost. Object tracking only. */
 @property (nonatomic, readonly) BOOL isTracking;

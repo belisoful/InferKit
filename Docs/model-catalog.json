@@ -353,7 +353,38 @@
         "restrictsCommercialUse" : false
       },
       "options" : [
-
+        {
+          "help" : "The language to transcribe, a locale identifier such as en-US. Without one, the user's current locale.",
+          "key" : "sourceLanguage",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Language"
+        },
+        {
+          "default" : true,
+          "help" : "Refuses recognition that would send the audio off the machine.",
+          "key" : "requiresOnDeviceRecognition",
+          "kind" : "boolean",
+          "property" : "requiresOnDeviceRecognition",
+          "stage" : "load",
+          "title" : "On device only"
+        },
+        {
+          "default" : true,
+          "help" : "Punctuates the transcription.",
+          "key" : "addsPunctuation",
+          "kind" : "boolean",
+          "property" : "addsPunctuation",
+          "requires" : {
+            "minimumOS" : {
+              "iOS" : "16.0",
+              "macOS" : "13.0"
+            },
+            "requiresAppleSilicon" : false
+          },
+          "stage" : "load",
+          "title" : "Punctuation"
+        }
       ],
       "outputModalities" : [
         "segments",
@@ -18377,6 +18408,908 @@
       ]
     },
     {
+      "displayName" : "HY-MT1.5",
+      "engine" : "mlx",
+      "family" : "hy-mt",
+      "id" : "hy-mt1.5",
+      "inputModalities" : [
+        "text"
+      ],
+      "inputs" : [
+        {
+          "help" : "The text to translate, paragraph by paragraph.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Text",
+          "valueType" : "text"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "name" : "Tencent HY Community License Agreement",
+        "note" : "The license does not cover the European Union, the United Kingdom, or South Korea. A licensee whose products passed 100 million monthly active users on the release date requests a license from Tencent.",
+        "restrictsCommercialUse" : true,
+        "url" : "https://huggingface.co/tencent/HY-MT1.5-1.8B/blob/main/License.txt"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
+      },
+      "modelTypes" : [
+        "hunyuan_v1_dense"
+      ],
+      "options" : [
+        {
+          "help" : "The BCP-47 language of the text. Without it the language is detected.",
+          "key" : "sourceLanguage",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Source language"
+        },
+        {
+          "help" : "The BCP-47 language to translate into. Every request names it.",
+          "key" : "targetLanguage",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Target language"
+        },
+        {
+          "help" : "The most tokens one translated paragraph runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 262144,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        },
+        {
+          "default" : 1,
+          "help" : "The beams the decoder searches. 1 decodes greedily.",
+          "key" : "NFKMLXParameterBeamCount",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Beams"
+        },
+        {
+          "default" : 1,
+          "help" : "Divides a finished hypothesis's log-probability by its length to this power.",
+          "key" : "NFKMLXParameterLengthPenalty",
+          "kind" : "number",
+          "stage" : "request",
+          "title" : "Length penalty"
+        },
+        {
+          "default" : false,
+          "help" : "Translates each sentence on its own. Off translates each paragraph whole.",
+          "key" : "NFKMLXParameterSplitsSentences",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Split sentences"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt1.5-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt1.5-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt1.5-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt1.5-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt1.5-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt1.5-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt1.5-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt1.5-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt1.5-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt1.5-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt1.5-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt1.5-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt1.5-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt1.5-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt1.5-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt1.5-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt1.5-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt1.5-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt1.5-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt1.5-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt1.5-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt1.5-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "text"
+      ],
+      "outputs" : [
+        {
+          "help" : "The translated text.",
+          "key" : "text",
+          "required" : true,
+          "title" : "Translation",
+          "valueType" : "text"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "hy-mt1.5",
+      "requirements" : {
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "HY-MT1.5, dense Hunyuan decoders trained to translate among 38 languages.",
+      "tasks" : [
+        "translation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "HY-MT1.5 1.8B",
+          "id" : "hy-mt1.5-1.8b",
+          "isDefault" : true,
+          "registryName" : "hy-mt1.5",
+          "source" : {
+            "files" : [
+              {
+                "optional" : false,
+                "path" : "config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : false,
+                "path" : "tokenizer.json",
+                "role" : "tokenizer"
+              },
+              {
+                "optional" : false,
+                "path" : "tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : true,
+                "path" : "model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "optional" : true,
+                "path" : "model.safetensors",
+                "role" : "weights"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "tencent/HY-MT1.5-1.8B",
+            "requiresConversion" : false
+          }
+        },
+        {
+          "displayName" : "HY-MT1.5 7B",
+          "id" : "hy-mt1.5-7b",
+          "isDefault" : false,
+          "registryName" : "hy-mt1.5",
+          "source" : {
+            "files" : [
+              {
+                "optional" : false,
+                "path" : "config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : false,
+                "path" : "tokenizer.json",
+                "role" : "tokenizer"
+              },
+              {
+                "optional" : false,
+                "path" : "tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : true,
+                "path" : "model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "optional" : true,
+                "path" : "model.safetensors",
+                "role" : "weights"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "tencent/HY-MT1.5-7B",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "Hy-MT2",
+      "engine" : "mlx",
+      "family" : "hy-mt",
+      "id" : "hy-mt2",
+      "inputModalities" : [
+        "text"
+      ],
+      "inputs" : [
+        {
+          "help" : "The text to translate, paragraph by paragraph.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Text",
+          "valueType" : "text"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "Apache-2.0",
+        "name" : "Apache License 2.0",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
+      },
+      "modelTypes" : [
+        "hunyuan_v1_dense"
+      ],
+      "options" : [
+        {
+          "help" : "The BCP-47 language of the text. Without it the language is detected.",
+          "key" : "sourceLanguage",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Source language"
+        },
+        {
+          "help" : "The BCP-47 language to translate into. Every request names it.",
+          "key" : "targetLanguage",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Target language"
+        },
+        {
+          "help" : "The most tokens one translated paragraph runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 262144,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        },
+        {
+          "default" : 1,
+          "help" : "The beams the decoder searches. 1 decodes greedily.",
+          "key" : "NFKMLXParameterBeamCount",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Beams"
+        },
+        {
+          "default" : 1,
+          "help" : "Divides a finished hypothesis's log-probability by its length to this power.",
+          "key" : "NFKMLXParameterLengthPenalty",
+          "kind" : "number",
+          "stage" : "request",
+          "title" : "Length penalty"
+        },
+        {
+          "default" : false,
+          "help" : "Translates each sentence on its own. Off translates each paragraph whole.",
+          "key" : "NFKMLXParameterSplitsSentences",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Split sentences"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt2-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt2-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt2-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt2-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt2-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt2-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt2-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt2-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt2-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt2-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt2-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt2-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt2-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt2-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt2-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt2-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt2-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt2-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt2-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt2-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 0,
+                "residentBytes" : 0
+              },
+              "memoryByVariant" : {
+                "hy-mt2-1.8b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                },
+                "hy-mt2-7b" : {
+                  "peakBytes" : 0,
+                  "residentBytes" : 0
+                }
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "text"
+      ],
+      "outputs" : [
+        {
+          "help" : "The translated text.",
+          "key" : "text",
+          "required" : true,
+          "title" : "Translation",
+          "valueType" : "text"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "hy-mt2",
+      "requirements" : {
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "Hy-MT2, dense Hunyuan decoders trained to translate among 38 languages.",
+      "tasks" : [
+        "translation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Hy-MT2 1.8B",
+          "id" : "hy-mt2-1.8b",
+          "isDefault" : true,
+          "registryName" : "hy-mt2",
+          "source" : {
+            "files" : [
+              {
+                "optional" : false,
+                "path" : "config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : false,
+                "path" : "tokenizer.json",
+                "role" : "tokenizer"
+              },
+              {
+                "optional" : false,
+                "path" : "tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : true,
+                "path" : "model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "optional" : true,
+                "path" : "model.safetensors",
+                "role" : "weights"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "tencent/Hy-MT2-1.8B",
+            "requiresConversion" : false
+          }
+        },
+        {
+          "displayName" : "Hy-MT2 7B",
+          "id" : "hy-mt2-7b",
+          "isDefault" : false,
+          "registryName" : "hy-mt2",
+          "source" : {
+            "files" : [
+              {
+                "optional" : false,
+                "path" : "config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : false,
+                "path" : "tokenizer.json",
+                "role" : "tokenizer"
+              },
+              {
+                "optional" : false,
+                "path" : "tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
+              },
+              {
+                "optional" : true,
+                "path" : "model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "optional" : true,
+                "path" : "model.safetensors",
+                "role" : "weights"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "tencent/Hy-MT2-7B",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
       "displayName" : "Hyper-SD 1.5 unified",
       "engine" : "mlx",
       "family" : "stable-diffusion",
@@ -26540,7 +27473,14 @@
         "restrictsCommercialUse" : false
       },
       "options" : [
-
+        {
+          "help" : "The language to embed for, a BCP-47 tag such as en. Without one, each request's language is detected from its text.",
+          "key" : "language",
+          "kind" : "text",
+          "property" : "language",
+          "stage" : "load",
+          "title" : "Language"
+        }
       ],
       "outputModalities" : [
         "embedding"
@@ -55780,7 +56720,29 @@
         "restrictsCommercialUse" : false
       },
       "options" : [
-
+        {
+          "default" : 0.29999999999999999,
+          "help" : "Sounds below this confidence are dropped.",
+          "key" : "minimumConfidence",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "property" : "minimumConfidence",
+          "stage" : "load",
+          "step" : 0.050000000000000003,
+          "title" : "Minimum confidence"
+        },
+        {
+          "default" : 0,
+          "help" : "The window the classifier reads, in seconds. 0 uses the classifier's own window.",
+          "key" : "windowSeconds",
+          "kind" : "number",
+          "minimum" : 0,
+          "property" : "windowSeconds",
+          "stage" : "load",
+          "step" : 0.10000000000000001,
+          "title" : "Window"
+        }
       ],
       "outputModalities" : [
         "classifications",
@@ -61816,7 +62778,17 @@
         "restrictsCommercialUse" : false
       },
       "options" : [
-
+        {
+          "default" : 32,
+          "help" : "The motion a packed flow channel covers, in pixels: a channel reads 0.5 + component / (2 × scale).",
+          "key" : "flowScale",
+          "kind" : "number",
+          "minimum" : 1,
+          "property" : "flowScale",
+          "stage" : "load",
+          "step" : 1,
+          "title" : "Flow scale"
+        }
       ],
       "outputModalities" : [
         "image"
@@ -61885,7 +62857,17 @@
         "restrictsCommercialUse" : false
       },
       "options" : [
-
+        {
+          "default" : 0,
+          "help" : "The upscaling factor. 0 takes the smallest factor the machine offers; a factor it does not offer is refused by name.",
+          "key" : "scaleFactor",
+          "kind" : "integer",
+          "minimum" : 0,
+          "property" : "scaleFactor",
+          "stage" : "load",
+          "step" : 1,
+          "title" : "Scale factor"
+        }
       ],
       "outputModalities" : [
         "image"
@@ -62023,7 +63005,30 @@
         "restrictsCommercialUse" : false
       },
       "options" : [
-
+        {
+          "default" : 0.10000000000000001,
+          "help" : "Labels below this confidence are dropped.",
+          "key" : "minimumConfidence",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "property" : "minimumConfidence",
+          "stage" : "load",
+          "step" : 0.050000000000000003,
+          "title" : "Minimum confidence"
+        },
+        {
+          "default" : 0,
+          "help" : "Above 0, keeps the labels that reach this recall at the precision Vision measured, and ignores the minimum confidence.",
+          "key" : "minimumRecallForPrecision",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "property" : "minimumRecallForPrecision",
+          "stage" : "load",
+          "step" : 0.050000000000000003,
+          "title" : "Minimum recall"
+        }
       ],
       "outputModalities" : [
         "classifications"
@@ -62092,7 +63097,50 @@
         "restrictsCommercialUse" : false
       },
       "options" : [
-
+        {
+          "default" : 0.5,
+          "help" : "How finely to trace. Higher keeps more points.",
+          "key" : "detail",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "property" : "detail",
+          "stage" : "load",
+          "step" : 0.050000000000000003,
+          "title" : "Detail"
+        },
+        {
+          "default" : 2,
+          "help" : "The contrast applied before tracing.",
+          "key" : "contrastAdjustment",
+          "kind" : "number",
+          "maximum" : 3,
+          "minimum" : 0,
+          "property" : "contrastAdjustment",
+          "stage" : "load",
+          "step" : 0.10000000000000001,
+          "title" : "Contrast"
+        },
+        {
+          "default" : false,
+          "help" : "Traces dark shapes on a light field. Off, light shapes on a dark field.",
+          "key" : "detectsDarkOnLight",
+          "kind" : "boolean",
+          "property" : "detectsDarkOnLight",
+          "stage" : "load",
+          "title" : "Dark on light"
+        },
+        {
+          "default" : 0,
+          "help" : "The most points to report per contour. 0 reports them all.",
+          "key" : "maximumPointsPerContour",
+          "kind" : "integer",
+          "minimum" : 0,
+          "property" : "maximumPointsPerContour",
+          "stage" : "load",
+          "step" : 1,
+          "title" : "Most points per contour"
+        }
       ],
       "outputModalities" : [
         "structured"
@@ -62161,7 +63209,15 @@
         "restrictsCommercialUse" : false
       },
       "options" : [
-
+        {
+          "default" : true,
+          "help" : "Reads each face's landmarks under the pose output as well as its box.",
+          "key" : "detectsLandmarks",
+          "kind" : "boolean",
+          "property" : "detectsLandmarks",
+          "stage" : "load",
+          "title" : "Landmarks"
+        }
       ],
       "outputModalities" : [
         "detections",
@@ -62175,7 +63231,7 @@
         },
         {
           "key" : "pose",
-          "required" : true,
+          "required" : false,
           "valueType" : "keypoints"
         }
       ],
@@ -62307,7 +63363,33 @@
         "restrictsCommercialUse" : false
       },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "requires" : {
+                "minimumOS" : {
+                  "iOS" : "18.0",
+                  "macOS" : "15.0",
+                  "tvOS" : "18.0"
+                },
+                "requiresAppleSilicon" : false
+              },
+              "title" : "Aesthetics",
+              "value" : 0
+            },
+            {
+              "title" : "Horizon",
+              "value" : 1
+            }
+          ],
+          "default" : 0,
+          "help" : "The image's aesthetic score, or the angle of its horizon.",
+          "key" : "kind",
+          "kind" : "choice",
+          "property" : "kind",
+          "stage" : "load",
+          "title" : "Reading"
+        }
       ],
       "outputModalities" : [
         "structured"
@@ -62376,7 +63458,48 @@
         "restrictsCommercialUse" : false
       },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "title" : "Body",
+              "value" : 0
+            },
+            {
+              "title" : "Hand",
+              "value" : 1
+            },
+            {
+              "requires" : {
+                "minimumOS" : {
+                  "iOS" : "17.0",
+                  "macOS" : "14.0",
+                  "tvOS" : "17.0"
+                },
+                "requiresAppleSilicon" : false
+              },
+              "title" : "Animal",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "help" : "Nineteen joints per body, twenty-one per hand, or twenty-five per cat or dog.",
+          "key" : "kind",
+          "kind" : "choice",
+          "property" : "kind",
+          "stage" : "load",
+          "title" : "Joints"
+        },
+        {
+          "default" : 2,
+          "help" : "The most hands to find. The body and animal joints ignore it.",
+          "key" : "maximumHandCount",
+          "kind" : "integer",
+          "minimum" : 1,
+          "property" : "maximumHandCount",
+          "stage" : "load",
+          "step" : 1,
+          "title" : "Most hands"
+        }
       ],
       "outputModalities" : [
         "keypoints"
@@ -62446,7 +63569,79 @@
         "restrictsCommercialUse" : false
       },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "title" : "Rectangle",
+              "value" : 0
+            },
+            {
+              "requires" : {
+                "minimumOS" : {
+                  "iOS" : "15.0",
+                  "macOS" : "12.0",
+                  "tvOS" : "15.0"
+                },
+                "requiresAppleSilicon" : false
+              },
+              "title" : "Document page",
+              "value" : 1
+            },
+            {
+              "title" : "Barcode",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "help" : "Any rectangle, the page in a photograph, or a barcode, which is read as well as located.",
+          "key" : "kind",
+          "kind" : "choice",
+          "property" : "kind",
+          "stage" : "load",
+          "title" : "Shape"
+        },
+        {
+          "help" : "The most shapes to report. Without it, 16, and 1 for a document page.",
+          "key" : "maximumCount",
+          "kind" : "integer",
+          "minimum" : 1,
+          "property" : "maximumCount",
+          "stage" : "load",
+          "step" : 1,
+          "title" : "Most shapes"
+        },
+        {
+          "default" : 0.20000000000000001,
+          "help" : "The smallest side of a rectangle, as a fraction of the image.",
+          "key" : "minimumSize",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "property" : "minimumSize",
+          "stage" : "load",
+          "step" : 0.050000000000000003,
+          "title" : "Minimum size"
+        },
+        {
+          "default" : 30,
+          "help" : "How far from square a rectangle's corner may be, in degrees.",
+          "key" : "quadratureTolerance",
+          "kind" : "number",
+          "maximum" : 45,
+          "minimum" : 0,
+          "property" : "quadratureTolerance",
+          "stage" : "load",
+          "step" : 1,
+          "title" : "Corner tolerance"
+        },
+        {
+          "help" : "The barcode symbologies to look for, by Vision's names such as VNBarcodeSymbologyQR. Without them, every symbology the installed Vision reads.",
+          "key" : "symbologies",
+          "kind" : "text-list",
+          "property" : "symbologies",
+          "stage" : "load",
+          "title" : "Symbologies"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -62515,7 +63710,25 @@
         "restrictsCommercialUse" : false
       },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "title" : "Translation",
+              "value" : 0
+            },
+            {
+              "title" : "Homography",
+              "value" : 1
+            }
+          ],
+          "default" : 0,
+          "help" : "A shift, reported as an affine transform, or a homography of nine numbers.",
+          "key" : "kind",
+          "kind" : "choice",
+          "property" : "kind",
+          "stage" : "load",
+          "title" : "Alignment"
+        }
       ],
       "outputModalities" : [
         "structured"
@@ -62584,7 +63797,84 @@
         "restrictsCommercialUse" : false
       },
       "options" : [
-
+        {
+          "choices" : [
+            {
+              "requires" : {
+                "minimumOS" : {
+                  "iOS" : "17.0",
+                  "macOS" : "14.0",
+                  "tvOS" : "17.0"
+                },
+                "requiresAppleSilicon" : false
+              },
+              "title" : "Subject",
+              "value" : 0
+            },
+            {
+              "requires" : {
+                "minimumOS" : {
+                  "iOS" : "15.0",
+                  "macOS" : "12.0",
+                  "tvOS" : "15.0"
+                },
+                "requiresAppleSilicon" : false
+              },
+              "title" : "People",
+              "value" : 1
+            },
+            {
+              "title" : "Attention saliency",
+              "value" : 2
+            },
+            {
+              "title" : "Objectness saliency",
+              "value" : 3
+            },
+            {
+              "requires" : {
+                "minimumOS" : {
+                  "iOS" : "17.0",
+                  "macOS" : "14.0",
+                  "tvOS" : "17.0"
+                },
+                "requiresAppleSilicon" : false
+              },
+              "title" : "Up to four people",
+              "value" : 4
+            }
+          ],
+          "default" : 0,
+          "help" : "What the mask covers.",
+          "key" : "kind",
+          "kind" : "choice",
+          "property" : "kind",
+          "stage" : "load",
+          "title" : "Mask"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Accurate",
+              "value" : 0
+            },
+            {
+              "title" : "Balanced",
+              "value" : 1
+            },
+            {
+              "title" : "Fast",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "help" : "The person mask's quality, traded against speed. The other masks ignore it.",
+          "key" : "quality",
+          "kind" : "choice",
+          "property" : "quality",
+          "stage" : "load",
+          "title" : "Quality"
+        }
       ],
       "outputModalities" : [
         "mask"
@@ -62654,7 +63944,52 @@
         "restrictsCommercialUse" : false
       },
       "options" : [
-
+        {
+          "default" : true,
+          "help" : "Vision's accurate recognizer. Off, its faster one.",
+          "key" : "usesAccurateRecognition",
+          "kind" : "boolean",
+          "property" : "usesAccurateRecognition",
+          "stage" : "load",
+          "title" : "Accurate recognition"
+        },
+        {
+          "default" : true,
+          "help" : "Corrects the reading with a language model.",
+          "key" : "correctsLanguage",
+          "kind" : "boolean",
+          "property" : "correctsLanguage",
+          "stage" : "load",
+          "title" : "Language correction"
+        },
+        {
+          "help" : "The languages to read, BCP-47 tags such as en-US in order of preference. Without them, Vision's own order, which follows the user's preferred languages.",
+          "key" : "languages",
+          "kind" : "text-list",
+          "property" : "languages",
+          "stage" : "load",
+          "title" : "Languages"
+        },
+        {
+          "help" : "Words to add to the vocabulary, such as names and terms a general model corrects away.",
+          "key" : "customWords",
+          "kind" : "text-list",
+          "property" : "customWords",
+          "stage" : "load",
+          "title" : "Custom words"
+        },
+        {
+          "default" : 0,
+          "help" : "The smallest text to read, as a fraction of the image height. 0 uses Vision's default.",
+          "key" : "minimumTextHeight",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0,
+          "property" : "minimumTextHeight",
+          "stage" : "load",
+          "step" : 0.01,
+          "title" : "Minimum text height"
+        }
       ],
       "outputModalities" : [
         "detections",
@@ -62730,7 +64065,39 @@
         "restrictsCommercialUse" : false
       },
       "options" : [
-
+        {
+          "help" : "The region to follow, an array [x, y, width, height] normalized 0 to 1 with the origin at the top left. The first frame needs one. A different region starts following it from that frame; the same region continues.",
+          "key" : "trackingRegion",
+          "kind" : "json",
+          "stage" : "request",
+          "title" : "Region"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Accurate",
+              "value" : "accurate"
+            },
+            {
+              "title" : "Fast",
+              "value" : "fast"
+            }
+          ],
+          "default" : "accurate",
+          "help" : "Vision's accurate tracker, or its faster one.",
+          "key" : "trackingLevel",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Tracking level"
+        },
+        {
+          "default" : false,
+          "help" : "Ends the sequence before this frame, as when the clip changes.",
+          "key" : "restartTracking",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Restart"
+        }
       ],
       "outputModalities" : [
         "detections"
@@ -62799,7 +64166,37 @@
         "restrictsCommercialUse" : false
       },
       "options" : [
-
+        {
+          "default" : false,
+          "help" : "Ends the sequence before this frame, as when the clip changes.",
+          "key" : "restartTracking",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Restart"
+        },
+        {
+          "default" : 5,
+          "help" : "The frames a trajectory needs before it is reported. Vision's minimum is 5.",
+          "key" : "trajectoryLength",
+          "kind" : "integer",
+          "minimum" : 5,
+          "property" : "trajectoryLength",
+          "stage" : "load",
+          "step" : 1,
+          "title" : "Trajectory length"
+        },
+        {
+          "default" : 30,
+          "help" : "The rate the submitted frames are timed at, in frames per second. Vision times a trajectory, and a still frame carries no timestamp.",
+          "key" : "framesPerSecond",
+          "kind" : "number",
+          "maximum" : 240,
+          "minimum" : 1,
+          "property" : "framesPerSecond",
+          "stage" : "load",
+          "step" : 1,
+          "title" : "Frame rate"
+        }
       ],
       "outputModalities" : [
         "structured"

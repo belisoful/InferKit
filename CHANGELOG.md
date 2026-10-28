@@ -71,6 +71,41 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### Apple's engines declare their settings as catalog options
+
+- Every configurable Apple engine's descriptor declares its settings, so a backend the catalog builds,
+  and a server hosts, is set up through its options alone. A load option sets the backend property of
+  the same name, and an enumeration's choices are its integer values, titled, each choice that needs a
+  later OS than the core's floor naming it:
+  - `vision-text`: `usesAccurateRecognition`, `correctsLanguage`, `languages`, `customWords`,
+    `minimumTextHeight`.
+  - `vision-segmentation`: `kind` (subject, people, attention or objectness saliency, up to four
+    people) and `quality`.
+  - `vision-pose`: `kind` (body, hand, animal) and `maximumHandCount`.
+  - `vision-face`: `detectsLandmarks`. The descriptor marks its pose output optional.
+  - `vision-classification`: `minimumConfidence` and `minimumRecallForPrecision`.
+  - `vision-rectangle`: `kind` (rectangle, document page, barcode), `maximumCount`, `minimumSize`,
+    `quadratureTolerance`, `symbologies`.
+  - `vision-measurement`: `kind` (aesthetics, horizon). `vision-registration`: `kind` (translation,
+    homography).
+  - `vision-contour`: `detail`, `contrastAdjustment`, `detectsDarkOnLight`, `maximumPointsPerContour`.
+  - `vision-tracking-trajectory`: `trajectoryLength` and `framesPerSecond`.
+  - `apple-speech`: `requiresOnDeviceRecognition` and `addsPunctuation` (macOS 13, iOS 16).
+  - `sound-analysis`: `minimumConfidence` and `windowSeconds`. `natural-language-embedding`:
+    `language`.
+  - `videotoolbox-super-resolution`: `scaleFactor`. `videotoolbox-optical-flow`: `flowScale`.
+- `NFKVisionTrackingBackend` takes its region from a request, so `vision-tracking` runs when the
+  catalog builds it. Before, every request failed, because only `startTrackingBoundingBox:` named the
+  region. `NFKVisionTrackingParameterRegion` (`"trackingRegion"`) is `[x, y, width, height]` in the
+  contract's geometry. A region other than the one the sequence started from starts a new sequence;
+  the same region continues it, so a region set as a request default is followed.
+  `NFKVisionTrackingParameterRestart` (`"restartTracking"`) ends the sequence before the frame, and
+  `NFKVisionTrackingParameterLevel` (`"trackingLevel"`, `"accurate"` or `"fast"`) chooses Vision's
+  tracker over the new `trackingLevel` property, which was fixed at accurate. A malformed value is
+  refused with `kNFKError_InferenceUnsupported`.
+- `NFKSpeechRecognitionBackend` reads the language to transcribe from `NFKParameterSourceLanguage`, a
+  locale identifier, with `locale` as the default, and `apple-speech` declares it as a request option.
+
 #### Apple's voices take their voice, language, rate, pitch, and volume from a request
 
 - `NFKSpeechSynthesisBackend` reads `NFKParameterVoice`, `NFKParameterSourceLanguage`, and the new

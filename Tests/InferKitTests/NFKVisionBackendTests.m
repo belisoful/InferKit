@@ -564,6 +564,120 @@
 	}];
 }
 
+#pragma mark Catalog options
+
+- (id<NFKInferenceBackend>)catalogBackend:(NSString *)identifier options:(nullable NSDictionary<NSString *, id> *)options
+{
+	NSError *error = nil;
+	id<NFKInferenceBackend> backend = [NFKModelCatalog.sharedCatalog backendForModelIdentifier:identifier options:options
+																						  error:&error];
+	XCTAssertNotNil(backend, @"%@: %@", identifier, error);
+	return backend;
+}
+
+- (NFKInferenceResult *)resultOf:(id<NFKInferenceBackend>)backend image:(CGImageRef)image
+{
+	NSError *error = nil;
+	NFKInferenceResult *result = [backend runInferenceForRequest:[self requestWithImage:image] error:&error];
+	XCTAssertNotNil(result, @"%@", error);
+	return result;
+}
+
+- (void)testTheCatalogsShapeOptionReadsABarcode
+{
+	CGImageRef image = [self imageOfQRCodePayload:@"INFERKIT"];
+	NFKInferenceResult *read = [self resultOf:[self catalogBackend:@"vision-rectangle"
+														  options:@{ @"kind": @(NFKVisionRectangleKindBarcode) }]
+										image:image];
+	NFKInferenceResult *shapes = [self resultOf:[self catalogBackend:@"vision-rectangle" options:nil] image:image];
+	CGImageRelease(image);
+	XCTAssertEqualObjects(read.detections.firstObject.label, @"INFERKIT");
+	for (NFKDetection *shape in shapes.detections) {
+		XCTAssertNil(shape.label, @"a rectangle carries no payload");
+	}
+}
+
+- (void)testTheCatalogsAlignmentOptionSolvesForAHomography
+{
+	CGImageRef reference = [self texturedFrameShiftedBy:0];
+	CGImageRef moved = [self texturedFrameShiftedBy:40];
+	NFKInferenceRequest *request =
+		[NFKInferenceRequest requestWithInputs:@{ NFKInputImages: @[ (__bridge id)reference, (__bridge id)moved ] }];
+	NSError *error = nil;
+	NFKInferenceResult *homography = [[self catalogBackend:@"vision-registration"
+												  options:@{ @"kind": @(NFKVisionRegistrationKindHomographic) }]
+									  runInferenceForRequest:request error:&error];
+	CGImageRelease(reference);
+	CGImageRelease(moved);
+	XCTAssertNotNil(homography, @"%@", error);
+	XCTAssertEqual([homography.structured[@"warpTransform"] count], (NSUInteger)9);
+	XCTAssertNil(homography.structured[@"transform"]);
+}
+
+- (void)testTheCatalogsReadingOptionMeasuresTheHorizon
+{
+	CGImageRef image = [self imageOfWidth:320 height:240 drawing:nil];
+	NFKInferenceResult *horizon = [self resultOf:[self catalogBackend:@"vision-measurement"
+															 options:@{ @"kind": @(NFKVisionMeasurementKindHorizon) }]
+										   image:image];
+	NFKInferenceResult *aesthetics = [self resultOf:[self catalogBackend:@"vision-measurement" options:nil] image:image];
+	CGImageRelease(image);
+	XCTAssertEqualObjects(horizon.structured, @{}, @"a flat field has no horizon");
+	XCTAssertNotNil(aesthetics.structured[@"overallScore"]);
+}
+
+- (void)testTheCatalogsLandmarkOptionLeavesThePoseOut
+{
+	CGImageRef image = [self imageOfWidth:320 height:240 drawing:nil];
+	NFKInferenceResult *boxes = [self resultOf:[self catalogBackend:@"vision-face" options:@{ @"detectsLandmarks": @NO }]
+										 image:image];
+	NFKInferenceResult *landmarks = [self resultOf:[self catalogBackend:@"vision-face" options:nil] image:image];
+	CGImageRelease(image);
+	XCTAssertNil([boxes outputForKey:NFKOutputPose]);
+	XCTAssertNotNil([landmarks outputForKey:NFKOutputPose]);
+}
+
+- (void)testTheCatalogsPointLimitShortensEveryContour
+{
+	CGImageRef image = [self imageOfWidth:320 height:320 drawing:^(CGContextRef context) {
+		CGContextSetRGBFillColor(context, 0.0, 0.0, 0.0, 1.0);
+		CGContextFillEllipseInRect(context, CGRectMake(80, 80, 160, 160));
+	}];
+	NFKInferenceResult *limited = [self resultOf:[self catalogBackend:@"vision-contour"
+															 options:@{ @"detectsDarkOnLight": @YES,
+																		@"maximumPointsPerContour": @8 }]
+										   image:image];
+	NFKInferenceResult *full = [self resultOf:[self catalogBackend:@"vision-contour" options:@{ @"detectsDarkOnLight": @YES }]
+										image:image];
+	CGImageRelease(image);
+	NSArray<NSArray<NSNumber *> *> *contours = limited.structured[@"contours"];
+	XCTAssertGreaterThan(contours.count, (NSUInteger)0);
+	for (NSArray<NSNumber *> *contour in contours) {
+		XCTAssertLessThanOrEqual(contour.count, (NSUInteger)16, @"eight points, flattened");
+	}
+	NSUInteger longest = 0;
+	for (NSArray<NSNumber *> *contour in full.structured[@"contours"]) {
+		longest = MAX(longest, contour.count);
+	}
+	XCTAssertGreaterThan(longest, (NSUInteger)16, @"without the limit the circle keeps more points");
+}
+
+- (void)testTheCatalogsConfidenceFloorDropsLabels
+{
+	CGImageRef image = [self imageOfWidth:160 height:160 drawing:nil];
+	NFKInferenceResult *strict = [self resultOf:[self catalogBackend:@"vision-classification"
+															options:@{ @"minimumConfidence": @0.9 }]
+										  image:image];
+	NFKInferenceResult *everything = [self resultOf:[self catalogBackend:@"vision-classification"
+																options:@{ @"minimumConfidence": @0 }]
+											  image:image];
+	CGImageRelease(image);
+	XCTAssertGreaterThan(everything.classifications.count, strict.classifications.count);
+	for (NFKClassification *classification in strict.classifications) {
+		XCTAssertGreaterThanOrEqual(classification.confidence, 0.9);
+	}
+}
+
 #pragma mark Tracking, which holds state
 
 - (void)testATrackedRegionFollowsTheThingThatMoved
@@ -614,6 +728,117 @@
 	XCTAssertTrue(backend.isTracking);
 	[backend reset];
 	XCTAssertFalse(backend.isTracking);
+}
+
+- (NFKInferenceRequest *)requestWithImage:(CGImageRef)image parameters:(NSDictionary<NSString *, id> *)parameters
+{
+	return [NFKInferenceRequest requestWithInputs:@{ NFKInputImage: (__bridge id)image } parameters:parameters];
+}
+
+- (nullable NFKDetection *)trackedDetectionOf:(id<NFKInferenceBackend>)backend
+								  markerAtX:(CGFloat)x
+								 parameters:(NSDictionary<NSString *, id> *)parameters
+{
+	CGImageRef frame = [self frameWithMarkerAtX:x];
+	NSError *error = nil;
+	NFKInferenceResult *result = [backend runInferenceForRequest:[self requestWithImage:frame parameters:parameters]
+														   error:&error];
+	CGImageRelease(frame);
+	XCTAssertNotNil(result, @"%@", error);
+	return result.detections.firstObject;
+}
+
+// A catalog-built backend is reached through its requests alone, so the region arrives on the first one.
+- (void)testACatalogBuiltTrackerFollowsTheRegionItsRequestNames
+{
+	NSError *error = nil;
+	id<NFKInferenceBackend> backend = [NFKModelCatalog.sharedCatalog backendForModelIdentifier:@"vision-tracking"
+																						options:nil error:&error];
+	XCTAssertNotNil(backend, @"%@", error);
+	CGImageRef frame = [self frameWithMarkerAtX:40];
+	XCTAssertNil([backend runInferenceForRequest:[self requestWithImage:frame] error:&error]);
+	CGImageRelease(frame);
+	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceMissingInput);
+
+	NSArray<NSNumber *> *region = @[ @(40.0 / 320.0), @(120.0 / 320.0), @(80.0 / 320.0), @(80.0 / 320.0) ];
+	NFKDetection *first = [self trackedDetectionOf:backend markerAtX:40
+										parameters:@{ NFKVisionTrackingParameterRegion: region }];
+	XCTAssertNotNil(first);
+	XCTAssertEqualWithAccuracy(CGRectGetMidX(first.boundingBox), 0.25, 0.05);
+	XCTAssertEqualWithAccuracy(CGRectGetMidY(first.boundingBox), 0.5, 0.05);
+	XCTAssertNotNil([self trackedDetectionOf:backend markerAtX:80 parameters:@{}], @"the next frame continues the sequence");
+}
+
+- (void)testARepeatedRegionContinuesTheSequenceAndANewOneRestartsIt
+{
+	NSArray<NSNumber *> *region = @[ @(40.0 / 320.0), @(120.0 / 320.0), @(80.0 / 320.0), @(80.0 / 320.0) ];
+	NSDictionary<NSString *, id> *named = @{ NFKVisionTrackingParameterRegion: region };
+	NFKVisionTrackingBackend *once = [NFKVisionTrackingBackend backend];
+	NFKVisionTrackingBackend *repeated = [NFKVisionTrackingBackend backend];
+	[self trackedDetectionOf:once markerAtX:40 parameters:named];
+	[self trackedDetectionOf:repeated markerAtX:40 parameters:named];
+	for (CGFloat x = 60; x <= 100; x += 20) {
+		NFKDetection *followed = [self trackedDetectionOf:once markerAtX:x parameters:@{}];
+		NFKDetection *defaulted = [self trackedDetectionOf:repeated markerAtX:x parameters:named];
+		XCTAssertTrue(CGRectEqualToRect(followed.boundingBox, defaulted.boundingBox), @"frame at %.0f: x %f and %f", x,
+					  CGRectGetMinX(followed.boundingBox), CGRectGetMinX(defaulted.boundingBox));
+	}
+
+	NSArray<NSNumber *> *corner = @[ @0, @0, @0.25, @0.25 ];
+	NFKDetection *moved = [self trackedDetectionOf:repeated markerAtX:120
+										parameters:@{ NFKVisionTrackingParameterRegion: corner }];
+	// The continued sequence would report the square near x 0.5; a new one reports the corner or loses it.
+	XCTAssertTrue(moved == nil || CGRectGetMidX(moved.boundingBox) < 0.3, @"%f", CGRectGetMidX(moved.boundingBox));
+}
+
+- (void)testARestartNeedsANewRegion
+{
+	NFKVisionTrackingBackend *backend = [NFKVisionTrackingBackend backend];
+	[self trackedDetectionOf:backend markerAtX:40
+				  parameters:@{ NFKVisionTrackingParameterRegion: @[ @0.125, @0.375, @0.25, @0.25 ] }];
+	XCTAssertTrue(backend.isTracking);
+	CGImageRef frame = [self frameWithMarkerAtX:80];
+	NSError *error = nil;
+	XCTAssertNil([backend runInferenceForRequest:[self requestWithImage:frame
+														   parameters:@{ NFKVisionTrackingParameterRestart: @YES }]
+										   error:&error]);
+	CGImageRelease(frame);
+	XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceMissingInput);
+	XCTAssertFalse(backend.isTracking);
+}
+
+- (void)testTheFastTrackerFollowsTheRegion
+{
+	NFKVisionTrackingBackend *backend = [NFKVisionTrackingBackend backend];
+	NSDictionary<NSString *, id> *fast = @{ NFKVisionTrackingParameterRegion: @[ @0.125, @0.375, @0.25, @0.25 ],
+											NFKVisionTrackingParameterLevel: @"fast" };
+	XCTAssertNotNil([self trackedDetectionOf:backend markerAtX:40 parameters:fast]);
+	XCTAssertEqual(backend.trackingLevel, NFKVisionTrackingLevelAccurate, @"the request leaves the property as it was");
+}
+
+- (void)testARequestsTrackingSettingsAreChecked
+{
+	NSArray<NSDictionary<NSString *, id> *> *refused = @[
+		@{ NFKVisionTrackingParameterRegion: @[ @0.1, @0.1, @0.2 ] },
+		@{ NFKVisionTrackingParameterRegion: @[ @0.9, @0.1, @0.2, @0.2 ] },
+		@{ NFKVisionTrackingParameterRegion: @[ @0.1, @0.1, @0, @0.2 ] },
+		@{ NFKVisionTrackingParameterRegion: @"0.1, 0.1, 0.2, 0.2" },
+		@{ NFKVisionTrackingParameterLevel: @"slow" },
+		@{ NFKVisionTrackingParameterRestart: @"yes" } ];
+	NFKVisionTrackingBackend *backend = [NFKVisionTrackingBackend backend];
+	CGImageRef frame = [self frameWithMarkerAtX:40];
+	for (NSDictionary<NSString *, id> *parameters in refused) {
+		NSError *error = nil;
+		XCTAssertNil([backend runInferenceForRequest:[self requestWithImage:frame parameters:parameters] error:&error],
+					 @"%@", parameters);
+		XCTAssertEqual(error.code, (NSInteger)kNFKError_InferenceUnsupported, @"%@", parameters);
+	}
+	CGImageRelease(frame);
+	NSSet *objectKeys = [NSSet setWithObjects:NFKVisionTrackingParameterRegion, NFKVisionTrackingParameterLevel,
+						 NFKVisionTrackingParameterRestart, nil];
+	XCTAssertEqualObjects(backend.supportedParameterKeys, objectKeys);
+	backend.kind = NFKVisionTrackingKindTrajectory;
+	XCTAssertEqualObjects(backend.supportedParameterKeys, [NSSet setWithObject:NFKVisionTrackingParameterRestart]);
 }
 
 - (void)testEarlyFramesReportNoTrajectoryYet

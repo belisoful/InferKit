@@ -165,7 +165,7 @@ companion packages add engines the core cannot host, without raising the core's 
 | `NFKVisionContourBackend` | core | Apple's contour tracing | `contours` under `NFKOutputStructured`, each a normalized point list. |
 | `NFKVisionRegistrationBackend` | core | Apple's frame alignment | Two frames in, the translation or the homography under `NFKOutputStructured`. |
 | `NFKVisionCoreMLBackend` | core | A Core ML model through Vision | Vision resizes and crops the image the model's way; `NFKCoreMLBackend` is the path for tensors a caller builds. |
-| `NFKVisionTrackingBackend` | core | Apple's object tracking | Stateful: a box to start, a frame per run, the new position under `NFKOutputDetections`. |
+| `NFKVisionTrackingBackend` | core | Apple's object tracking | Stateful: a box to start, under `NFKVisionTrackingParameterRegion` or `startTrackingBoundingBox:`, a frame per run, the new position under `NFKOutputDetections`. |
 | `NFKSoundClassificationBackend` | core | Apple's everyday-sound classifier | A segment per window under `NFKOutputSegments`, the clip's best guesses under `NFKOutputClassifications`. |
 | `NFKSpeechSynthesisBackend` | core | Apple's speech voices | Text in, an `NFKAudioAsset` out, the contract the remote and MLX voices answer. |
 | `NFKTextEmbeddingBackend` | core | Apple's word and sentence vectors | `NFKOutputEmbedding` from NaturalLanguage, with no model to ship. |

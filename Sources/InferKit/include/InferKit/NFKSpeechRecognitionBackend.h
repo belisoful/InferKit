@@ -36,7 +36,8 @@ NS_ASSUME_NONNULL_BEGIN
 */
 @interface NFKSpeechRecognitionBackend : NSObject <NFKInferenceBackend>
 
-/*! The locale to transcribe. The user's current locale by default. Setting nil restores it. */
+/*! The locale to transcribe when a request names none under NFKParameterSourceLanguage. The user's
+	current locale by default. Setting nil restores it. */
 @property (nonatomic, copy, null_resettable) NSLocale *locale;
 
 /*! YES to refuse anything that would leave the machine. YES by default. */
