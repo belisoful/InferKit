@@ -1779,6 +1779,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Every MLX image input takes a pixel buffer
+
+- An MLX backend reads a `CVPixelBuffer` under an image key, as the core's contract has every taker
+  do, beside a `CGImage` and an `MTLTexture`. A pixel buffer is 32BGRA or 32RGBA, which is what
+  `NFKValueCoding` and `NFKImageCoding` make of an image file. Before, the image bridge refused it, so
+  TripoSR, the detectors, the segmenters, and every other backend reading through the bridge failed
+  on an image read from a file, and Face Alignment, RetinaFace, SigLIP 2, its probe, and the Qwen-VL
+  Sa2VA releases took a `CGImage` alone.
+
 #### Granite 4.0-H answers a chat
 
 - A message list renders through the release's chat template, plain chats as well as tool requests,

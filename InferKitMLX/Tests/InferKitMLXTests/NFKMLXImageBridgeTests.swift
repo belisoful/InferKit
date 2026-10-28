@@ -2,13 +2,15 @@
 //  NFKMLXImageBridgeTests.swift
 //  InferKitMLXTests
 //
-//  The byte-level halves of the bridge (CoreGraphics and Metal) hold no MLX and run here. The
+//  The byte-level halves of the bridge (CoreGraphics, CoreVideo, and Metal) hold no MLX and run here. The
 //  bytes <-> MLXArray step needs the MLX runtime and is covered by the gated backend tests.
 //
 
 import XCTest
 import CoreGraphics
+import CoreVideo
 import Metal
+import InferKit
 @testable import InferKitMLX
 
 final class NFKMLXImageBridgeTests: XCTestCase {
@@ -40,6 +42,17 @@ final class NFKMLXImageBridgeTests: XCTestCase {
         XCTAssertEqual([width, height], [2, 1])
         XCTAssertEqual(Array(bytes[0..<3]), [255, 0, 0])
         XCTAssertEqual(Array(bytes[4..<7]), [0, 255, 0])
+    }
+
+    func testAPixelBufferReadsAsTheImageItWasDrawnFrom() throws {
+        let source: [UInt8] = [255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 40, 80, 120, 255]
+        let image = try NFKMLXImageBridge.cgImage(rgba: source, width: 2, height: 2, options: NFKMLXImageOptions())
+        let buffer = try XCTUnwrap(NFKImageCoding.pixelBuffer(with: image))
+        let read = try NFKMLXImageBridge.rgbaBytes(from: buffer, colorSpace: CGColorSpaceCreateDeviceRGB())
+        XCTAssertEqual([read.width, read.height], [2, 2])
+        XCTAssertEqual(read.bytes, source, "a 32BGRA pixel buffer reads as the RGBA it holds")
+        XCTAssertEqual(try NFKMLXImageBridge.cgImage(fromValue: buffer).width, 2)
+        XCTAssertThrowsError(try NFKMLXImageBridge.cgImage(fromValue: "not an image"))
     }
 
     func testTheTextureBridgeRoundTripsRGBA() throws {

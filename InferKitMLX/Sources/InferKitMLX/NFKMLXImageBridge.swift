@@ -5,7 +5,9 @@
 
 import Foundation
 import CoreGraphics
+import CoreVideo
 import Metal
+import InferKit
 import MLX
 
 /// How the image bridge reads and writes pixels.
@@ -21,9 +23,10 @@ public struct NFKMLXImageOptions: @unchecked Sendable {
     }
 }
 
-/// Converts image values (a `CGImage` or an `MTLTexture`) to and from `MLXArray`, preserving the
-/// alpha channel. The byte-level halves — CoreGraphics and Metal — hold no MLX and are exercised
-/// directly; only the thin `bytes ↔ MLXArray` step needs the MLX runtime.
+/// Converts image values (a `CGImage`, a `CVPixelBuffer`, or an `MTLTexture`, the representations the
+/// core accepts wherever an image is taken) to and from `MLXArray`, preserving the alpha channel. The
+/// byte-level halves (CoreGraphics, CoreVideo, and Metal) hold no MLX and are exercised directly; only
+/// the thin `bytes ↔ MLXArray` step needs the MLX runtime.
 enum NFKMLXImageBridge {
 
     enum BridgeError: Error {
@@ -153,9 +156,26 @@ enum NFKMLXImageBridge {
         return (rgba, width, height)
     }
 
-    // MARK: Composed — a value (CGImage or MTLTexture) in, a value out
+    // MARK: Composed — a value (CGImage, CVPixelBuffer, or MTLTexture) in, a value out
 
-    /// Straight RGBA8 bytes + dimensions from a `CGImage` or an `MTLTexture` input value.
+    /// `value` as a `CGImage`: a `CGImage` as given, a `CVPixelBuffer` drawn by `NFKImageCoding`, and
+    /// an `MTLTexture` read back as 8-bit RGBA. A pixel buffer must be 32BGRA or 32RGBA, and a texture
+    /// BGRA8 or RGBA8.
+    static func cgImage(fromValue value: Any) throws -> CGImage {
+        let cf = value as CFTypeRef
+        if CFGetTypeID(cf) == CGImage.typeID {
+            return cf as! CGImage
+        }
+        if CFGetTypeID(cf) == CVPixelBufferGetTypeID() {
+            guard let image = NFKImageCoding.cgImage(forImage: value) else { throw BridgeError.unsupportedInput }
+            return image
+        }
+        let (bytes, width, height) = try rgbaBytes(from: value, colorSpace: CGColorSpaceCreateDeviceRGB())
+        return try cgImage(rgba: bytes, width: width, height: height, options: NFKMLXImageOptions())
+    }
+
+    /// Straight RGBA8 bytes + dimensions from a `CGImage`, a `CVPixelBuffer`, or an `MTLTexture` input
+    /// value.
     static func rgbaBytes(from value: Any, colorSpace: CGColorSpace) throws -> (bytes: [UInt8], width: Int, height: Int) {
         if let texture = value as? MTLTexture {
             return try rgbaBytes(from: texture)
@@ -163,6 +183,9 @@ enum NFKMLXImageBridge {
         let cf = value as CFTypeRef
         if CFGetTypeID(cf) == CGImage.typeID {
             return rgbaBytes(from: cf as! CGImage, colorSpace: colorSpace)
+        }
+        if CFGetTypeID(cf) == CVPixelBufferGetTypeID() {
+            return rgbaBytes(from: try cgImage(fromValue: value), colorSpace: colorSpace)
         }
         throw BridgeError.unsupportedInput
     }
@@ -174,14 +197,7 @@ enum NFKMLXImageBridge {
     /// converting to float first and back would round twice.
     static func rgbBytes(from value: Any, colorSpace: CGColorSpace) throws
         -> (bytes: [UInt8], width: Int, height: Int) {
-        let rgba: (bytes: [UInt8], width: Int, height: Int)
-        if let texture = value as? MTLTexture {
-            rgba = try rgbaBytes(from: texture)
-        } else {
-            let cf = value as CFTypeRef
-            guard CFGetTypeID(cf) == CGImage.typeID else { throw BridgeError.unsupportedInput }
-            rgba = rgbaBytes(from: cf as! CGImage, colorSpace: colorSpace)
-        }
+        let rgba = try rgbaBytes(from: value, colorSpace: colorSpace)
         var rgb = [UInt8](repeating: 0, count: rgba.width * rgba.height * 3)
         for pixel in 0 ..< (rgba.width * rgba.height) {
             rgb[pixel * 3] = rgba.bytes[pixel * 4]
@@ -192,16 +208,8 @@ enum NFKMLXImageBridge {
     }
 
     static func tensor(from value: Any, channels: Int, colorSpace: CGColorSpace) throws -> MLXArray {
-        if let texture = value as? MTLTexture {
-            let (bytes, width, height) = try rgbaBytes(from: texture)
-            return tensor(rgba: bytes, width: width, height: height, channels: channels)
-        }
-        let cf = value as CFTypeRef
-        if CFGetTypeID(cf) == CGImage.typeID {
-            let (bytes, width, height) = rgbaBytes(from: cf as! CGImage, colorSpace: colorSpace)
-            return tensor(rgba: bytes, width: width, height: height, channels: channels)
-        }
-        throw BridgeError.unsupportedInput
+        let (bytes, width, height) = try rgbaBytes(from: value, colorSpace: colorSpace)
+        return tensor(rgba: bytes, width: width, height: height, channels: channels)
     }
 
     static func cgImage(from array: MLXArray, options: NFKMLXImageOptions) throws -> CGImage {

@@ -194,17 +194,12 @@ extension NFKMLXGenerationBackend {
         number(request, NFKParameterSeed)?.uint64Value ?? 0
     }
 
-    /// `value` as a `CGImage`: a `CGImage` as given, an `MTLTexture` read back as 8-bit RGBA.
+    /// `value` as a `CGImage`: a `CGImage` as given, a `CVPixelBuffer` or an `MTLTexture` converted.
     static func cgImage(fromInput value: Any) throws -> CGImage {
-        let cf = value as CFTypeRef
-        if CFGetTypeID(cf) == CGImage.typeID {
-            return cf as! CGImage
-        }
-        let (bytes, width, height) = try NFKMLXImageBridge.rgbaBytes(from: value, colorSpace: CGColorSpaceCreateDeviceRGB())
-        return try NFKMLXImageBridge.cgImage(rgba: bytes, width: width, height: height, options: NFKMLXImageOptions())
+        try NFKMLXImageBridge.cgImage(fromValue: value)
     }
 
-    /// The image under `key` (a `CGImage` or an `MTLTexture`) as a `CGImage`, or nil.
+    /// The image under `key` (a `CGImage`, a `CVPixelBuffer`, or an `MTLTexture`) as a `CGImage`, or nil.
     static func image(_ request: NFKInferenceRequest, _ key: String) throws -> CGImage? {
         guard let value = request.input(forKey: key) else { return nil }
         return try cgImage(fromInput: value)

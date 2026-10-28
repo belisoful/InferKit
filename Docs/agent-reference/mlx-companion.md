@@ -152,9 +152,12 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   capability, so linking InferKitMLX makes `NFKDynamicBackend.stableDiffusionBackend()` return a working
   SD backend, built lazily. It returns SD 1.5: the ungated release, so the capability activates with
   no credential. See "Dynamic backend discovery" in `core-runtime-notes.md`.
-- `NFKMLXImageBridge` — shared `CGImage`/`MTLTexture` ↔ `MLXArray` conversion, preserving alpha, so a
-  matting model returns a cutout rather than three channels. Its CoreGraphics/Metal byte halves are
-  unit-tested.
+- `NFKMLXImageBridge` — shared image ↔ `MLXArray` conversion, preserving alpha, so a matting model
+  returns a cutout rather than three channels. It reads every representation the core accepts under an
+  image key: a `CGImage`, a 32BGRA or 32RGBA `CVPixelBuffer` (drawn through `NFKImageCoding`, which is
+  what `NFKValueCoding` makes of an image file), and a BGRA8 or RGBA8 `MTLTexture`. A backend that
+  needs a `CGImage` takes it from `cgImage(fromValue:)`, never from a `CGImage` type check of its own.
+  Its CoreGraphics, CoreVideo, and Metal byte halves are unit-tested.
 - Direct `@objc` factories (the primary ObjC path for shipped real models, no registry): every real
   model class exposes `+backendWith[Variant:]weightsURL:error:` (local weights, nil → random weights,
   `isReady` true) and a download companion `+backendWith[Variant:]repo:weightsPath:revision:cacheDirectoryURL:error:`
@@ -1184,6 +1187,6 @@ header. `references: [CGImage]` builds cleanly; the generated `InferKitMLX-Swift
 module's precompile fails. The Swift build is not the check for an `@objc` change; the generated
 header is. A method that takes several images declares them `[Any]`, which bridges to `NSArray *`,
 and reads each through `NFKMLXImageBridge.tensor(from:channels:colorSpace:)`, which already accepts a
-`CGImage` or an `MTLTexture` as `Any`. An Objective-C caller passes `@[(__bridge id)image]`. A single
+`CGImage`, a `CVPixelBuffer`, or an `MTLTexture` as `Any`. An Objective-C caller passes `@[(__bridge id)image]`. A single
 `CGImage` parameter is fine, since a lone `CGImageRef` is valid Objective-C
 (`NFKMLXFlux2.cgImage(forPrompt:negativePrompt:references:width:height:seed:)`).

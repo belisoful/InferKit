@@ -358,10 +358,11 @@ public final class NFKMLXSigLIP2Backend: NSObject, NFKInferenceBackend {
 
     @objc(runInferenceForRequest:error:)
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
-        guard let value = request.input(forKey: NFKInputImage), CFGetTypeID(value as CFTypeRef) == CGImage.typeID else {
+        guard let value = request.input(forKey: NFKInputImage),
+              let image = try? NFKMLXImageBridge.cgImage(fromValue: value) else {
             throw NFKMLXError.unsupportedInput
         }
-        let pixels = try NFKMLXSigLIP2.pixelValues(from: value as! CGImage, imageSize: holder.net.configuration.vision.imageSize)
+        let pixels = try NFKMLXSigLIP2.pixelValues(from: image, imageSize: holder.net.configuration.vision.imageSize)
         let embedding = holder.net.imageEmbedding(pixels)
         eval(embedding)
         let numbers = embedding.reshaped([-1]).asArray(Float.self).map { NSNumber(value: $0) }

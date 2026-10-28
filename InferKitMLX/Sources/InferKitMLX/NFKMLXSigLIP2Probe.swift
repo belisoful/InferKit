@@ -87,10 +87,10 @@ extension NFKMLXSigLIP2 {
         }
         let holder = self.holder
         return NFKMLXEmbeddingProbeBackend(probe: probe, identifier: "siglip2-probe", labels: labels) { value in
-            guard CFGetTypeID(value as CFTypeRef) == CGImage.typeID else {
+            guard let image = try? NFKMLXImageBridge.cgImage(fromValue: value) else {
                 throw NFKMLXError.unsupportedInput
             }
-            let pixels = try NFKMLXSigLIP2.pixelValues(from: value as! CGImage,
+            let pixels = try NFKMLXSigLIP2.pixelValues(from: image,
                                                        imageSize: holder.net.configuration.vision.imageSize)
             return holder.net.imageEmbedding(pixels)
         }

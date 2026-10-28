@@ -474,11 +474,10 @@ public final class NFKMLXSa2VABackend: NSObject, NFKInferenceBackend {
     /// `<|im_end|>` or `<|endoftext|>`, and the first `[SEG]`'s mask.
     private func runQwen(_ net: NFKMLXSa2VAQwenNet, image imageValue: Any, prompt: String,
                          request: NFKInferenceRequest) throws -> NFKInferenceResult {
-        let cf = imageValue as CFTypeRef
-        guard CFGetTypeID(cf) == CGImage.typeID else {
-            throw NFKMLXError.unsupportedConfiguration("the Qwen-VL Sa2VA releases read a CGImage")
+        guard let image = try? NFKMLXImageBridge.cgImage(fromValue: imageValue) else {
+            throw NFKMLXError.unsupportedInput
         }
-        let (pixelValues, grid) = net.imageProcessor.process(cf as! CGImage)
+        let (pixelValues, grid) = net.imageProcessor.process(image)
         let features = net.imageFeatures(pixelValues: pixelValues, grid: grid)
         let text = net.promptText(prompt.replacingOccurrences(of: "<image>", with: ""),
                                   imageTokens: grid.h * grid.w / 4)

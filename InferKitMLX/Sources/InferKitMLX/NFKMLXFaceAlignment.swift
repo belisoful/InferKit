@@ -303,10 +303,9 @@ public final class NFKMLXPhotoFaceBackend: NSObject, NFKInferenceBackend {
         guard let value = request.input(forKey: NFKInputImage) else {
             throw NFKMLXError.unsupportedInput
         }
-        guard CFGetTypeID(value as CFTypeRef) == CGImage.typeID else {
+        guard let image = try? NFKMLXImageBridge.cgImage(fromValue: value) else {
             throw NFKMLXError.unsupportedInput
         }
-        let image = value as! CGImage
         return NFKInferenceResult(outputs: [NFKOutputImage: try box.transform(image)])
     }
 }

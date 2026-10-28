@@ -655,10 +655,10 @@ final class NFKMLXDetectionBackend: NSObject, NFKInferenceBackend {
 
     func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
         guard let value = request.input(forKey: NFKInputImage),
-              CFGetTypeID(value as CFTypeRef) == CGImage.typeID else {
+              let image = try? NFKMLXImageBridge.cgImage(fromValue: value) else {
             throw NFKMLXError.unsupportedInput
         }
-        return NFKInferenceResult(outputs: [NFKOutputDetections: box.detect(value as! CGImage, request)])
+        return NFKInferenceResult(outputs: [NFKOutputDetections: box.detect(image, request)])
     }
 }
 
