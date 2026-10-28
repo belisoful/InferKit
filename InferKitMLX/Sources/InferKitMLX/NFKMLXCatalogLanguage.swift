@@ -437,7 +437,7 @@ extension NFKMLXCatalogLanguage {
         case NFKMLXHYMTVariant.hyMT15_1_8B.repository, NFKMLXHYMTVariant.hyMT15_7B.repository:
             return .license(nil, name: "Tencent HY Community License Agreement",
                             url: "https://huggingface.co/\(repository)/blob/main/License.txt", restrictsCommercialUse: true,
-                            note: "The license does not cover the European Union, the United Kingdom, or South Korea. A licensee whose products passed 100 million monthly active users on the release date requests a license from Tencent.")
+                            note: "The license does not cover the European Union, the United Kingdom, or South Korea. A licensee whose products passed 100 million monthly active users on the release date requests a license from Tencent. Neither the model nor its output may improve an AI model other than Tencent HY and its derivatives. Use follows Tencent's Acceptable Use Policy, and a distribution carries these use restrictions as an enforceable term.")
         default:
             break
         }

@@ -18686,7 +18686,7 @@
       "license" : {
         "gated" : false,
         "name" : "Tencent HY Community License Agreement",
-        "note" : "The license does not cover the European Union, the United Kingdom, or South Korea. A licensee whose products passed 100 million monthly active users on the release date requests a license from Tencent.",
+        "note" : "The license does not cover the European Union, the United Kingdom, or South Korea. A licensee whose products passed 100 million monthly active users on the release date requests a license from Tencent. Neither the model nor its output may improve an AI model other than Tencent HY and its derivatives. Use follows Tencent's Acceptable Use Policy, and a distribution carries these use restrictions as an enforceable term.",
         "restrictsCommercialUse" : true,
         "url" : "https://huggingface.co/tencent/HY-MT1.5-1.8B/blob/main/License.txt"
       },
