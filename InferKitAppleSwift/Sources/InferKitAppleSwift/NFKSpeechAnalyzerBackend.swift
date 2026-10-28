@@ -19,12 +19,17 @@ import Speech
 /// - Output: the transcription under `NFKOutputText`, and one `NFKAudioSegment` per reported range
 ///   under `NFKOutputSegments`.
 ///
+/// A request names the language to transcribe under `NFKParameterSourceLanguage`, a locale identifier
+/// such as `en-US`, and `locale` is the default. A request whose locale has not been prepared reserves
+/// and installs that locale's assets before it transcribes, which is a download the first time.
+///
 /// `isReady` reports whether the chosen locale is installed. `prepare()` reserves it and asks the
 /// system to install the assets, which is a download the first time. Introduced in InferKit 0.4.0.
 @objc(NFKSpeechAnalyzerBackend)
 public final class NFKSpeechAnalyzerBackend: NSObject, NFKInferenceBackend {
 
-    /// The locale to transcribe. The user's current locale by default. Setting nil restores it.
+    /// The locale to transcribe when a request names none under `NFKParameterSourceLanguage`. The user's
+    /// current locale by default. Setting nil restores it.
     @objc public var locale: Locale {
         get { lock.withLock { explicitLocale } ?? Locale.current }
         set { lock.withLock { explicitLocale = newValue } }
@@ -47,7 +52,8 @@ public final class NFKSpeechAnalyzerBackend: NSObject, NFKInferenceBackend {
 
     private let lock = NSLock()
     private var explicitLocale: Locale?
-    private var preparedLocale: Locale?
+    /// The identifiers of the locales whose assets this backend has reserved and installed.
+    private var preparedLocales: Set<String> = []
 
     @objc public override init() {
         super.init()
@@ -68,7 +74,7 @@ public final class NFKSpeechAnalyzerBackend: NSObject, NFKInferenceBackend {
     /// reports NO even where the assets happen to be installed already; preparing is cheap in that
     /// case, because the install request is nil when nothing needs installing.
     @objc public var isReady: Bool {
-        lock.withLock { preparedLocale != nil && preparedLocale == (explicitLocale ?? Locale.current) }
+        isPrepared(locale)
     }
 
     @objc public var backendIdentifier: String { "apple-speech-analyzer" }
@@ -77,11 +83,33 @@ public final class NFKSpeechAnalyzerBackend: NSObject, NFKInferenceBackend {
 
     @objc public var supportedOutputKeys: Set<String> { [NFKOutputText, NFKOutputSegments] }
 
+    /// The request parameters the backend reads: the language to transcribe. Introduced in InferKit 0.4.0.
+    @objc public var supportedParameterKeys: Set<String> { [NFKParameterSourceLanguage] }
+
     /// Reserves the locale and installs its assets, which is a download the first time. The call
     /// blocks until the install finishes, because a backend is prepared off the caller's thread.
     @objc(prepareWithError:)
     public func prepare() throws {
-        let locale = self.locale
+        try installAssets(for: locale)
+    }
+
+    /// The locale a request names under `NFKParameterSourceLanguage`, else `fallback`.
+    static func locale(for request: NFKInferenceRequest, default fallback: Locale) throws -> Locale {
+        guard let value = request.parameter(forKey: NFKParameterSourceLanguage) else {
+            return fallback
+        }
+        guard let identifier = value as? String, !identifier.isEmpty else {
+            throw error(.error_InferenceUnsupported, "NFKParameterSourceLanguage is a locale identifier such as en-US")
+        }
+        return Locale(identifier: identifier)
+    }
+
+    private func isPrepared(_ locale: Locale) -> Bool {
+        lock.withLock { preparedLocales.contains(locale.identifier) }
+    }
+
+    /// Reserves `locale` and installs its assets, then records it as prepared.
+    private func installAssets(for locale: Locale) throws {
         let outcome = NFKAppleOutcome<Bool>()
         let semaphore = DispatchSemaphore(value: 0)
         Task.detached(priority: .userInitiated) {
@@ -108,7 +136,7 @@ public final class NFKSpeechAnalyzerBackend: NSObject, NFKInferenceBackend {
         }
         semaphore.wait()
         _ = try outcome.value()
-        lock.withLock { preparedLocale = locale }
+        lock.withLock { _ = preparedLocales.insert(locale.identifier) }
     }
 
     @objc(runInferenceForRequest:error:)
@@ -116,9 +144,12 @@ public final class NFKSpeechAnalyzerBackend: NSObject, NFKInferenceBackend {
         guard let url = Self.audioURL(for: request) else {
             throw Self.error(.error_InferenceMissingInput, "no audio file is set under NFKInputAudio")
         }
+        let locale = try Self.locale(for: request, default: self.locale)
+        if !isPrepared(locale) {
+            try installAssets(for: locale)
+        }
         let outcome = NFKAppleOutcome<NFKInferenceResult>()
         let semaphore = DispatchSemaphore(value: 0)
-        let locale = self.locale
         Task.detached(priority: .userInitiated) {
             do {
                 outcome.succeed(try await Self.transcribe(url: url, locale: locale))

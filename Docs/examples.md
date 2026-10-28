@@ -1524,6 +1524,8 @@ read.structured?["paragraphs"]              // and the paragraphs and lists besi
 let speech = NFKSpeechAnalyzerBackend(locale: Locale(identifier: "en-US"))
 try speech.prepare()                        // reserves the locale and installs its assets
 let words = try speech.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: asset]))
+let swedish = try speech.runInference(for: NFKInferenceRequest(       // another locale, this request
+    inputs: [NFKInputAudio: asset], parameters: [NFKParameterSourceLanguage: "sv-SE"]))
 ```
 
 From Objective-C, which is why the package exists:

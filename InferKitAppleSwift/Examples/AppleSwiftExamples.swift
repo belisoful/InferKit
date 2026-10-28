@@ -40,6 +40,10 @@ final class AppleSwiftExamples: XCTestCase {
         // try backend.prepare()
         // let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputAudio: asset]))
         // result.text is the transcription; result.segments carries one entry per reported range.
+        // A request names another locale for itself, which installs that locale's assets the first time.
+        let swedish = NFKInferenceRequest(inputs: [:], parameters: [NFKParameterSourceLanguage: "sv-SE"])
+        XCTAssertEqual(swedish.parameter(forKey: NFKParameterSourceLanguage) as? String, "sv-SE")
+        XCTAssertTrue(backend.supportedParameterKeys.contains(NFKParameterSourceLanguage))
     }
 
     // Docs/examples.md: Discovery picks the best transcriber that is linked

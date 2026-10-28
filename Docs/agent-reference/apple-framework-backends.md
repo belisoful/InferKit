@@ -29,8 +29,14 @@ host, at macOS 26 / iOS 26, and every type it adds is `@objc`.
   nothing needs installing.
 - **Option descriptions.** The translator's `sourceLanguage` and `targetLanguage` options carry a title
   and help (2026-10-27) and no choices: `supportedLanguages` is asynchronous and the framework answers
-  nothing in a test bundle, so the descriptor cannot wait on it. The speech analyzer's `locale` is a
-  property only, because its assets are installed per locale in `prepare()`.
+  nothing in a test bundle, so the descriptor cannot wait on it.
+- **The analyzer's locale is a request option (2026-10-28).** `NFKSpeechAnalyzerBackend` reads
+  `NFKParameterSourceLanguage`, a locale identifier, with `locale` as the default. Its assets are
+  reserved and installed per locale, so the backend records each locale it has prepared, and a request
+  naming one it has not runs the same reserve-and-install step `prepare()` runs before it transcribes; a
+  locale already installed costs a nil install request. `isReady` answers for the default locale. Its
+  descriptor option has the analyzer's own title and help through the engine table's
+  `optionDescriptions`, because the shared description is the translator's.
 - The Swift Vision API performs with `try await request.perform(on: cgImage)`, so each backend hops a
   detached task and waits on a semaphore, the same shape `NFKFoundationModelsBackend` uses for its
   own asynchronous reads.

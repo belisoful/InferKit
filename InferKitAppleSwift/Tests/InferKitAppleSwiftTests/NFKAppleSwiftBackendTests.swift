@@ -115,6 +115,24 @@ final class NFKAppleSwiftBackendTests: XCTestCase {
         XCTAssertFalse(NFKSpeechAnalyzerBackend().isReady)
     }
 
+    // A request names its locale; a malformed one is refused before anything is installed.
+    func testTheAnalyzerReadsItsLocaleFromTheRequest() throws {
+        let backend = NFKSpeechAnalyzerBackend(locale: Locale(identifier: "en-US"))
+        XCTAssertEqual(backend.supportedParameterKeys, [NFKParameterSourceLanguage])
+        func locale(_ parameters: [String: Any]) throws -> Locale {
+            try NFKSpeechAnalyzerBackend.locale(for: NFKInferenceRequest(inputs: [:], parameters: parameters),
+                                                default: backend.locale)
+        }
+        XCTAssertEqual(try locale([:]).identifier, "en-US")
+        XCTAssertEqual(try locale([NFKParameterSourceLanguage: "sv-SE"]).identifier, "sv-SE")
+        XCTAssertEqual(backend.locale.identifier, "en-US", "the request leaves the property as it was")
+        let audio = NFKAudioAsset(fileURL: URL(fileURLWithPath: "/tmp/nfk-absent.wav"))
+        XCTAssertThrowsError(try backend.runInference(for: NFKInferenceRequest(
+            inputs: [NFKInputAudio: audio], parameters: [NFKParameterSourceLanguage: 3]))) { error in
+            XCTAssertEqual((error as NSError).code, NFKInferenceError.error_InferenceUnsupported.rawValue)
+        }
+    }
+
     func testTheAnalyzerNeedsAudio() {
         XCTAssertThrowsError(try NFKSpeechAnalyzerBackend().runInference(for: NFKInferenceRequest(inputs: [:]))) { error in
             XCTAssertEqual((error as NSError).code, NFKInferenceError.error_InferenceMissingInput.rawValue)

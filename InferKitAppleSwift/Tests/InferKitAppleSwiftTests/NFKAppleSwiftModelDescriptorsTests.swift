@@ -34,6 +34,15 @@ final class NFKAppleSwiftModelDescriptorsTests: XCTestCase {
         XCTAssertNil(NFKAppleSwiftModelDescriptors.backend(named: "no-such-engine"))
     }
 
+    func testTheAnalyzerDescribesItsLanguageAsALocale() throws {
+        let analyzer = try XCTUnwrap(NFKAppleSwiftModelDescriptors.modelDescriptors().first { $0.identifier == "apple-speech-analyzer" })
+        let language = try XCTUnwrap(analyzer.option(withKey: NFKParameterSourceLanguage))
+        XCTAssertEqual(language.title, "Language")
+        XCTAssertTrue(language.help?.contains("locale identifier") == true, language.help ?? "")
+        let translator = try XCTUnwrap(NFKAppleSwiftModelDescriptors.modelDescriptors().first { $0.identifier == "apple-translation" })
+        XCTAssertEqual(translator.option(withKey: NFKParameterSourceLanguage)?.title, "Source language")
+    }
+
     func testEveryDescriptorIsASystemModelOfThisPackage() {
         for descriptor in NFKAppleSwiftModelDescriptors.modelDescriptors() {
             XCTAssertEqual(descriptor.engine, NFKModelEngineAppleSwift)

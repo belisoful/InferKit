@@ -27,6 +27,8 @@ public final class NFKAppleSwiftModelDescriptors: NSObject, NFKModelDescriptorPr
         let tasks: [String]
         let providerClassName: String?
         var requiredOptions: Set<String> = []
+        /// The engine's own title and help for a parameter, where the shared description does not fit.
+        var optionDescriptions: [String: (title: String, help: String)] = [:]
         let build: () -> any NFKInferenceBackend
     }
 
@@ -34,6 +36,8 @@ public final class NFKAppleSwiftModelDescriptors: NSObject, NFKModelDescriptorPr
         Engine(identifier: "apple-speech-analyzer", displayName: "Apple Speech Analyzer", family: "apple-speech",
                summary: "Transcribes speech on device with Apple's speech analyzer, with a time range for each span.",
                tasks: [NFKModelTaskTranscription], providerClassName: "NFKSpeechAnalyzerProvider",
+               optionDescriptions: [NFKParameterSourceLanguage: (
+                   "Language", "The language to transcribe, a locale identifier such as en-US. Without one, the user's current locale. A locale used the first time installs its speech assets, which is a download.")],
                build: { NFKSpeechAnalyzerBackend() }),
         Engine(identifier: "apple-translation", displayName: "Apple Translation", family: "apple-translation",
                summary: "Translates text on device with Apple's Translation framework.",
@@ -58,9 +62,10 @@ public final class NFKAppleSwiftModelDescriptors: NSObject, NFKModelDescriptorPr
         NFKParameterTargetLanguage: ("Target language", "The language to translate into, a BCP-47 tag such as de."),
     ]
 
-    private static func option(for key: String, required: Bool) -> NFKModelOption {
+    private static func option(for key: String, required: Bool,
+                               description own: (title: String, help: String)?) -> NFKModelOption {
         let kind = NFKModelOption(key: key).kind
-        let description = optionDescriptions[key]
+        let description = own ?? optionDescriptions[key]
         return NFKModelOption(key: key, kind: kind, title: description?.title, help: description?.help,
                               defaultValue: nil, minimum: nil, maximum: nil, step: nil, choices: nil, stage: nil,
                               group: nil, requirements: nil, propertyKeyPath: nil, memoryBytesPerUnit: nil,
@@ -109,7 +114,9 @@ public final class NFKAppleSwiftModelDescriptors: NSObject, NFKModelDescriptorPr
         let inputs = inputKeys.sorted().map { NFKModelPort(key: $0, required: inputKeys.count == 1) }
         // Every engine here writes each key it declares on every result.
         let outputs = outputKeys.sorted().map { NFKModelPort.outputPort(withKey: $0, required: true) }
-        let options = parameterKeys.sorted().map { option(for: $0, required: engine.requiredOptions.contains($0)) }
+        let options = parameterKeys.sorted().map {
+            option(for: $0, required: engine.requiredOptions.contains($0), description: engine.optionDescriptions[$0])
+        }
         let source = NFKModelSource(kind: NFKModelSourceKindSystem, repository: nil, revision: nil, url: nil,
                                     layout: NFKModelSourceLayoutNone, files: nil, requiresConversion: false,
                                     extensions: nil)

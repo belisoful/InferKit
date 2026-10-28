@@ -11,6 +11,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitAppleSwift (companion)
 
+#### The speech analyzer takes its locale from a request
+
+- `NFKSpeechAnalyzerBackend` reads the language to transcribe from `NFKParameterSourceLanguage`, a locale
+  identifier, with `locale` as the default. A request naming a locale the backend has not prepared
+  reserves and installs that locale's assets before it transcribes. The `apple-speech-analyzer`
+  descriptor declares the option. Before, only the `locale` property chose the language, so a backend the
+  catalog built or a server hosted transcribed in the user's current locale alone.
+
 #### The translator's options describe themselves
 
 - `apple-translation`'s `sourceLanguage` and `targetLanguage` options carry a title and help, so a user
