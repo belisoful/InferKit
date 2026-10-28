@@ -475,8 +475,8 @@ public extension NFKMLXLanguageNet {
 /// `NFKOutputUsage` reports what the run cost: the prompt, what a retained prompt cache served, the
 /// reply, and the chain's share of it.
 ///
-/// Generation is many forward passes; run it off the render thread, or submit a job, which runs the
-/// whole generation and finishes with the result.
+/// Generation is many forward passes; run it off the render thread, or submit a job, which reports the
+/// reply as it generates and stops generating when it is cancelled.
 @objc(NFKMLXLanguageBackend)
 public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
 
@@ -792,7 +792,24 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         try lifecycle.withState { try run(request, holder: $0) }
     }
 
-    private func run(_ request: NFKInferenceRequest, holder: NFKLMHolder) throws -> NFKInferenceResult {
+    /// The shortest time between two partial results a job reports.
+    var partialResultInterval: TimeInterval = 0.05
+
+    /// Runs the request as a job that reports the reply as it generates.
+    ///
+    /// @discussion Each partial result holds the answer so far under `NFKOutputText` and a reasoning
+    /// model's chain so far under `NFKOutputReasoning`, split at the markers the finished result is split
+    /// at, and the progress is the share of the token limit produced. Cancelling the job ends generation
+    /// at the next token. Introduced in InferKit 0.4.0.
+    @objc(submitInferenceJobForRequest:)
+    public func submitInferenceJob(for request: NFKInferenceRequest) -> NFKInferenceJob {
+        NFKMLXGenerationJob.submit(partialResultInterval: partialResultInterval) { [self] job in
+            try lifecycle.withState { try run(request, holder: $0, job: job) }
+        }
+    }
+
+    private func run(_ request: NFKInferenceRequest, holder: NFKLMHolder,
+                     job: NFKMLXGenerationJob? = nil) throws -> NFKInferenceResult {
         guard let tokenizer = holder.tokenizer else {
             throw NFKMLXError.unsupportedConfiguration(
                 "text generation needs a tokenizer; build the backend with one")
@@ -801,13 +818,18 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         options.maxTokens = try NFKMLXContextRoom.bounded(options.chosenMaxTokens, promptTokens: tokens.count,
                                                           contextLength: holder.net.configuration.contextLength,
                                                           window: options.contextWindow, source: identifier)
-        let (produced, cached) = try generate(tokens, options: options, conversation: Self.conversation(of: request),
-                                              holder: holder)
         let reasoningFormat = Self.reasoningFormat(for: options)
         let markers = (reasoningFormat.map { [$0.opening, $0.closing, $0.answerPrefix] } ?? []) + (toolCallFormat?.markers ?? [])
         let decode = NFKMLXLanguage.replyDecoder(tokenizer,
                                                  skipping: NFKMLXLanguage.skippedSpecialTokens(releaseSpecialTokens,
                                                                                                keepingMarkers: markers))
+        let onToken = job.map { job in
+            Self.partialReporter(job, prompt: tokens, limit: options.maxTokens, format: reasoningFormat,
+                                 callMarkers: NFKMLXToolCalling.templateTools(for: request) != nil ? toolCallFormat?.markers ?? [] : [],
+                                 decode: decode)
+        }
+        let (produced, cached) = try generate(tokens, options: options, conversation: Self.conversation(of: request),
+                                              holder: holder, onToken: onToken)
         let reply = decode(produced)
 
         let (reasoning, answer, reasoningTokens) = NFKMLXUsage.split(reply, format: reasoningFormat,
@@ -881,6 +903,20 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             throw NFKMLXError.unsupportedInput
         }
         return (options, tokenizer.encode(text).map(\.intValue), toolCallFormat)
+    }
+
+    /// The token callback a job's run generates with: it reports each token to `job` with the reply so
+    /// far, and answers whether generation continues.
+    static func partialReporter(_ job: NFKMLXGenerationJob, prompt: [Int], limit: Int, format: NFKMLXReasoningFormat?,
+                                callMarkers: [String], decode: @escaping ([Int]) -> String) -> (Int) -> Bool {
+        let opensChain = NFKMLXPartialReply.opensChain(prompt, format: format, decode: decode)
+        var produced = [Int]()
+        return { token in
+            produced.append(token)
+            return job.proceed(produced: produced.count, limit: limit) {
+                NFKMLXPartialReply.outputs(decode(produced), format: format, opensChain: opensChain, callMarkers: callMarkers)
+            }
+        }
     }
 
     /// The reasoning markers a run's output carries: the ones the request named, or the ones the
@@ -974,9 +1010,9 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
     /// Runs the tokens through the plain or the speculative loop, against the conversation's prompt
     /// cache when the request names one, or the retained cache when the options ask for one.
     /// Answers the tokens produced and how many of the prompt's the cache already held, which is
-    /// the cached share a run reports.
-    private func generate(_ tokens: [Int], options requested: NFKMLXGenerationOptions,
-                          conversation: String?, holder: NFKLMHolder) throws -> (produced: [Int], cached: Int) {
+    /// the cached share a run reports. `onToken` sees each token, and answering false ends the run.
+    private func generate(_ tokens: [Int], options requested: NFKMLXGenerationOptions, conversation: String?,
+                          holder: NFKLMHolder, onToken: ((Int) -> Bool)? = nil) throws -> (produced: [Int], cached: Int) {
         generationLock.lock(); defer { generationLock.unlock() }
         let net = holder.net
         var options = requested
@@ -1001,9 +1037,9 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
         }
         let produced: [Int]
         if let draft = holder.draft, options.draftTokens > 0, options.constraint == nil {
-            produced = net.generate(prompt: tokens, options: options, draft: draft, promptCache: cache)
+            produced = net.generate(prompt: tokens, options: options, draft: draft, promptCache: cache, onToken: onToken)
         } else {
-            produced = net.generate(prompt: tokens, options: options, promptCache: cache)
+            produced = net.generate(prompt: tokens, options: options, promptCache: cache, onToken: onToken)
         }
         do {
             try net.verifyStream()

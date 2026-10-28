@@ -199,4 +199,71 @@ final class NFKMLXReasoningTests: XCTestCase {
         XCTAssertEqual(try NFKMLXChatTemplateRenderer.render(template, messages: []),
                        "Reasoning: medium")
     }
+
+    // MARK: A reply in progress
+
+    /// The partial outputs of every prefix of `reply`, in order.
+    private func partials(of reply: String, format: NFKMLXReasoningFormat?, opensChain: Bool = false,
+                          callMarkers: [String] = []) -> [(reasoning: String, text: String)] {
+        (0 ... reply.count).map { length in
+            let outputs = NFKMLXPartialReply.outputs(String(reply.prefix(length)), format: format,
+                                                     opensChain: opensChain, callMarkers: callMarkers)
+            return (outputs[NFKOutputReasoning] as? String ?? "", outputs[NFKOutputText] as? String ?? "")
+        }
+    }
+
+    /// Asserts that each partial extends the one before it, so a caller can send the difference.
+    private func assertEachExtendsTheLast(_ partials: [(reasoning: String, text: String)],
+                                          file: StaticString = #filePath, line: UInt = #line) {
+        for (earlier, later) in zip(partials, partials.dropFirst()) {
+            XCTAssertTrue(later.reasoning.hasPrefix(earlier.reasoning), "\(earlier.reasoning) → \(later.reasoning)",
+                          file: file, line: line)
+            XCTAssertTrue(later.text.hasPrefix(earlier.text), "\(earlier.text) → \(later.text)", file: file, line: line)
+        }
+    }
+
+    func testAReplyInProgressReportsTheChainThenTheAnswer() throws {
+        let reply = "<think>\nTwo plus two.\n</think>\n\nFour."
+        let steps = partials(of: reply, format: .thinkTags)
+        assertEachExtendsTheLast(steps)
+        XCTAssertTrue(steps.contains { $0.reasoning == "Two plus two." && $0.text.isEmpty }, "the chain comes first")
+        XCTAssertFalse(steps.contains { $0.reasoning.contains("<") || $0.text.contains("<") }, "no marker leaks")
+        let last = try XCTUnwrap(steps.last)
+        let finished = NFKMLXReasoningFormat.thinkTags.split(reply)
+        XCTAssertEqual(last.reasoning, finished.reasoning)
+        XCTAssertEqual(last.text, finished.answer)
+    }
+
+    func testAHarmonyReplyInProgressHoldsBackItsChannelHeaders() {
+        for reply in ["<|channel|>analysis<|message|>Check.<|end|><|start|>assistant<|channel|>final<|message|>Sunny.",
+                      "<|channel|>final<|message|>It is sunny."] {
+            let steps = partials(of: reply, format: .harmonyChannels)
+            assertEachExtendsTheLast(steps)
+            XCTAssertFalse(steps.contains { $0.text.contains("<|") }, reply)
+            XCTAssertEqual(steps.last?.text, NFKMLXReasoningFormat.harmonyChannels.split(reply).answer)
+        }
+    }
+
+    // A template that opens the chain leaves the model writing it without the opening marker.
+    func testAChainThePromptOpenedIsReasoningFromTheFirstToken() {
+        let steps = partials(of: "Two plus two.</think>Four.", format: .thinkTags, opensChain: true)
+        assertEachExtendsTheLast(steps)
+        XCTAssertEqual(steps[3].reasoning, "Two")
+        XCTAssertEqual(steps[3].text, "")
+        XCTAssertEqual(steps.last?.reasoning, "Two plus two.")
+        XCTAssertEqual(steps.last?.text, "Four.")
+    }
+
+    func testAnAnswerInProgressStopsAtACall() {
+        let steps = partials(of: "Let me look.<tool_call>{\"name\": \"lookup\"}</tool_call>", format: nil,
+                             callMarkers: NFKMLXToolCallFormat.hermes.markers)
+        assertEachExtendsTheLast(steps)
+        XCTAssertEqual(steps.last?.text, "Let me look.", "the calls come from the finished reply")
+    }
+
+    // A multi-byte character split across tokens decodes to a replacement character until it is whole.
+    func testAPartialCharacterIsHeldBack() {
+        XCTAssertEqual(NFKMLXPartialReply.outputs("Caf\u{FFFD}", format: nil, opensChain: false,
+                                                  callMarkers: [])[NFKOutputText] as? String, "Caf")
+    }
 }

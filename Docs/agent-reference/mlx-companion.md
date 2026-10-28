@@ -137,10 +137,15 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
     `NFKReasoningEffortLight` the same question costs 8 output tokens with no chain. A second
     request sharing a prefix reported 5 of its 6 input tokens as cached. gpt-oss is covered by the
     marker and detection tests only, not by a run.
-  - Correcting a doc claim found on the way: `NFKMLXLanguageBackend` has no
-    `submitInferenceJobForRequest:`, so its jobs go through the core's wrapper and report no
-    per-token partials. Its class comment said otherwise; it now says what the code does. The Gemma
-    backends do stream.
+  - `NFKMLXLanguageBackend` and `NFKMLXDecoderBackend` stream a submitted job through
+    `NFKMLXGenerationJob`: the generation loop's `onToken` reports each token, and answering false
+    ends the run at the next token once the job is cancelled. `NFKMLXPartialReply` splits the reply
+    so far at the run's reasoning markers, holds back a trailing piece of a marker or a trailing
+    replacement character so each partial extends the last (`NFKInferenceServer` sends the difference
+    and skips a partial that does not), and stops the answer at a call marker when the request offers
+    tools. A partial decodes the whole reply, so one is built at most every 50 ms
+    (`partialResultInterval`, 0 in the tests). A prompt that ends by opening the chain makes the
+    first tokens reasoning before any marker arrives.
 - `NFKStableDiffusionProvider` (`@objc`) — the bridge that lets the core activate the bundled
   `NFKMLXBackend` (Stable Diffusion) without depending on InferKitMLX. It conforms to the core's
   `NFKDynamicBackendProvider` and is named exactly the default the core tries for its `stable-diffusion`

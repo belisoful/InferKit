@@ -126,6 +126,26 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     }
 
     public func runInference(for request: NFKInferenceRequest) throws -> NFKInferenceResult {
+        try run(request)
+    }
+
+    /// The shortest time between two partial results a job reports.
+    var partialResultInterval: TimeInterval = 0.05
+
+    /// Runs the request as a job that reports the reply as it generates.
+    ///
+    /// @discussion Each partial result holds the answer so far under `NFKOutputText` and a reasoning
+    /// model's chain so far under `NFKOutputReasoning`, split at the markers the finished result is split
+    /// at, and the progress is the share of the token limit produced. Cancelling the job ends generation
+    /// at the next token. Introduced in InferKit 0.4.0.
+    @objc(submitInferenceJobForRequest:)
+    public func submitInferenceJob(for request: NFKInferenceRequest) -> NFKInferenceJob {
+        NFKMLXGenerationJob.submit(partialResultInterval: partialResultInterval) { [self] job in
+            try run(request, job: job)
+        }
+    }
+
+    private func run(_ request: NFKInferenceRequest, job: NFKMLXGenerationJob? = nil) throws -> NFKInferenceResult {
         var sampling = NFKMLXStepSampling(release: releaseSampling)
         sampling.read(request)
         var maximumTokens: Int?
@@ -138,9 +158,15 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
         }
 
         let (promptTokens, format) = try prompt(for: request)
-        let (produced, limit) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens, seed: seed)
         let decode: ([Int]) -> String = { [holder] in holder.tokenizer.decode($0.map { NSNumber(value: $0) }) }
         let reasoningFormat = request.messages != nil ? chatTemplate.flatMap(NFKMLXReasoningFormat.detected(inChatTemplate:)) : nil
+        let (produced, limit) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens, seed: seed) { limit in
+            job.map { job in
+                NFKMLXLanguageBackend.partialReporter(job, prompt: promptTokens, limit: limit, format: reasoningFormat,
+                                                      callMarkers: NFKMLXToolCalling.templateTools(for: request) != nil ? format?.markers ?? [] : [],
+                                                      decode: decode)
+            }
+        }
         let (reasoning, answer, reasoningTokens) = NFKMLXUsage.split(decode(produced), format: reasoningFormat,
                                                                      produced: produced, decode: decode)
         var outputs = NFKMLXToolCalling.outputs(answer: answer, reasoning: reasoning, request: request,
@@ -200,11 +226,14 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
     }
 
     /// Prefill-only generation: the whole growing sequence runs through the decoder each step.
-    private func generate(_ promptTokens: [Int], sampling: NFKMLXStepSampling, maxTokens: Int?, seed: UInt64?) throws -> (tokens: [Int], limit: Int) {
+    /// `onToken`, made for the run's token limit, sees each token, and answering false ends the run.
+    private func generate(_ promptTokens: [Int], sampling: NFKMLXStepSampling, maxTokens: Int?, seed: UInt64?,
+                          onToken makeOnToken: (Int) -> ((Int) -> Bool)?) throws -> (tokens: [Int], limit: Int) {
         var tokens = promptTokens
         var produced = [Int]()
         let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: promptTokens.count,
                                                   contextLength: contextLength, source: identifier)
+        let onToken = makeOnToken(limit)
         for step in 0 ..< max(limit, 0) {
             let input = MLXArray(tokens.map(Int32.init)).reshaped([1, tokens.count])
             let logits = holder.logits(input)[0, tokens.count - 1]
@@ -212,6 +241,7 @@ public final class NFKMLXDecoderBackend: NSObject, NFKInferenceBackend {
             if stopTokens.contains(next) { break }
             produced.append(next)
             tokens.append(next)
+            if let onToken, !onToken(next) { break }
         }
         return (produced, limit)
     }

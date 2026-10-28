@@ -129,16 +129,22 @@ public final class NFKMLXReasoningFormat: NSObject, @unchecked Sendable {
     /// final channel's header straight after the generation prompt's `<|start|>assistant`, so the
     /// header alone opens the reply.
     private func withoutAnswerPrefix(_ text: String) -> String {
-        guard !answerPrefix.isEmpty else { return text }
-        var candidates = [answerPrefix]
-        if let channel = answerPrefix.range(of: "<|channel|>") {
-            candidates.append(String(answerPrefix[channel.lowerBound...]))
-        }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        for candidate in candidates where trimmed.hasPrefix(candidate) {
+        for candidate in answerPrefixForms where trimmed.hasPrefix(candidate) {
             return String(trimmed.dropFirst(candidate.count))
         }
         return text
+    }
+
+    /// The forms the marker that opens the answer takes: the whole ``answerPrefix``, and the final
+    /// channel's header alone where the prefix holds one.
+    var answerPrefixForms: [String] {
+        guard !answerPrefix.isEmpty else { return [] }
+        var forms = [answerPrefix]
+        if let channel = answerPrefix.range(of: "<|channel|>") {
+            forms.append(String(answerPrefix[channel.lowerBound...]))
+        }
+        return forms
     }
 }
 

@@ -1654,6 +1654,17 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### The language models stream a submitted job and stop when it is cancelled
+
+- `NFKMLXLanguageBackend` and `NFKMLXDecoderBackend` implement `submitInferenceJobForRequest:`. Each
+  partial result holds the answer so far under `NFKOutputText` and a reasoning model's chain so far under
+  `NFKOutputReasoning`, split at the markers the finished result is split at, and each extends the one
+  before it. Text that may still become a marker is held back, and the answer stops at a call marker
+  when the request offers tools. The progress is the share of the token limit produced. Cancelling the
+  job ends generation at the next token. Before, a job ran the whole generation with no partial result
+  and kept generating after it was cancelled, so `NFKInferenceServer` streamed nothing for these models
+  until the reply was finished.
+
 #### The exact GELU takes torch 2.13's error-function exponential
 
 - The GELU kernels' error function takes torch's `exp_u20`, with Sleef's `expf` for a 4-lane group that holds an
