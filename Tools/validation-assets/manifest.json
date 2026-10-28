@@ -1804,9 +1804,10 @@
         "tokenizer_config.json"
       ],
       "config": {
-        "IK_VAL_NEMOTRON_H": ""
+        "IK_VAL_NEMOTRON_H": "",
+        "IK_TOK_NEMOTRON_H": "nemotron-nano-9b-v2-tokenizer"
       },
-      "note": "Nemotron Nano 2 (NemotronHForCausalLM, NVIDIA, NVIDIA Open Model License), the hybrid Mamba-attention decoder behind Nemotron Nano 2, reusing the Codestral SSD mixer. Nano-9B-v2 is a DENSE hybrid: 56 layers = 27 Mamba (linear_attention) + 25 ReLU-squared MLP + 4 NoPE grouped-query attention (from hybrid_override_pattern), no scalar multipliers, a single pre-norm per block, untied lm_head. The RELEASED checkpoint carries the original `backbone.*` naming (the module tree and the tiny oracle follow the transformers-integrated `model.*` naming), so the directory loader remaps `backbone.` -> `model.` and squeezes the depthwise conv `[C,1,K]` -> `[C,K]`; it also drops any `mtp.*` multi-token-prediction tensors. The Mamba mixer's gated output norm is GROUPED by n_groups (HF Zamba2RMSNormGated), the one numeric departure from the ungrouped Codestral/Granite mixer; its dt clamps its lower bound at time_step_min. Records: run_reference.py nemotron_h (tiny random hybrid, n_groups 2 so the grouped gated norm is exercised, dummy --checkpoint) -> IK_PARITY_NEMOTRON_H_TINY; run_reference.py nemotron_h_loss (the causal-LM loss for the fine-tune objective) -> IK_PARITY_NEMOTRON_H_LOSS; structural shapes via Tools/validation-assets/shapes.py nvidia/NVIDIA-Nemotron-Nano-9B-v2 -> IK_SHAPES_NEMOTRON_H / IK_CONFIG_NEMOTRON_H (341 tensors, no weight download). The released bf16 numeric run (run_reference.py nemotron_h_real --checkpoint this directory) -> IK_PARITY_NEMOTRON_H_REAL, recorded 2026-10-01 (run nemotron-h-real-1); the oracle loads transformers' native class, as the directory carries no remote modeling file. Float32 and bf16 records read one block at a time (run_reference.py nemotron_h_layerwise --checkpoint this directory, NEMOTRON_DTYPE=bfloat16 for the bf16 one, eager attention) -> IK_PARITY_NEMOTRON_H_LAYERWISE (records/nemotron-h-layerwise.safetensors) and records/nemotron-h-layerwise-bf16.safetensors, 2026-10-25 and 2026-10-27. The tiny/loss/real modes use the MUSIC oracle interpreter (musicvenv, transformers >= 5, which carries NemotronHForCausalLM; the 4.57.6 llm oracle does not)."
+      "note": "Nemotron Nano 2 (NemotronHForCausalLM, NVIDIA, NVIDIA Open Model License), the hybrid Mamba-attention decoder behind Nemotron Nano 2, reusing the Codestral SSD mixer. Nano-9B-v2 is a DENSE hybrid: 56 layers = 27 Mamba (linear_attention) + 25 ReLU-squared MLP + 4 NoPE grouped-query attention (from hybrid_override_pattern), no scalar multipliers, a single pre-norm per block, untied lm_head. The RELEASED checkpoint carries the original `backbone.*` naming (the module tree and the tiny oracle follow the transformers-integrated `model.*` naming), so the directory loader remaps `backbone.` -> `model.` and squeezes the depthwise conv `[C,1,K]` -> `[C,K]`; it also drops any `mtp.*` multi-token-prediction tensors. The Mamba mixer's gated output norm is GROUPED by n_groups (HF Zamba2RMSNormGated), the one numeric departure from the ungrouped Codestral/Granite mixer; its dt clamps its lower bound at time_step_min. Records: run_reference.py nemotron_h (tiny random hybrid, n_groups 2 so the grouped gated norm is exercised, dummy --checkpoint) -> IK_PARITY_NEMOTRON_H_TINY; run_reference.py nemotron_h_loss (the causal-LM loss for the fine-tune objective) -> IK_PARITY_NEMOTRON_H_LOSS; structural shapes via Tools/validation-assets/shapes.py nvidia/NVIDIA-Nemotron-Nano-9B-v2 -> IK_SHAPES_NEMOTRON_H / IK_CONFIG_NEMOTRON_H (341 tensors, no weight download). The released bf16 numeric run (run_reference.py nemotron_h_real --checkpoint this directory) -> IK_PARITY_NEMOTRON_H_REAL, recorded 2026-10-01 (run nemotron-h-real-1); the oracle loads transformers' native class, as the directory carries no remote modeling file. Float32 and bf16 records read one block at a time (run_reference.py nemotron_h_layerwise --checkpoint this directory, NEMOTRON_DTYPE=bfloat16 for the bf16 one, eager attention) -> IK_PARITY_NEMOTRON_H_LAYERWISE (records/nemotron-h-layerwise.safetensors) and records/nemotron-h-layerwise-bf16.safetensors, 2026-10-25 and 2026-10-27. IK_TOK_NEMOTRON_H is a tokenizer-only directory (tokenizer.json and tokenizer_config.json from the same repo) the tokenizer and drafting tests read without the weights. The tiny/loss/real modes use the MUSIC oracle interpreter (musicvenv, transformers >= 5, which carries NemotronHForCausalLM; the 4.57.6 llm oracle does not)."
     },
     {
       "key": "NEMOTRON3_NANO_4B",
@@ -2231,9 +2232,223 @@
         "IK_PARITY_PIXTRAL": "pixtral-12b/record.safetensors",
         "IK_PARITY_PIXTRAL_FUSED": "pixtral-12b/fused-layerwise-f32.safetensors",
         "IK_PARITY_PIXTRAL_FUSED_BF16": "pixtral-12b/fused-layerwise-bf16-eager-floors.safetensors",
-        "IK_PARITY_PIXTRAL_FUSED_TWINS": "pixtral-12b/fused-layerwise-bf16-eager-twins.safetensors"
+        "IK_PARITY_PIXTRAL_FUSED_TWINS": "pixtral-12b/fused-layerwise-bf16-eager-twins.safetensors",
+        "IK_PARITY_PIXTRAL_TEXT": "pixtral-12b/text-dense-layerwise.safetensors"
       },
-      "note": "Pixtral 12B (mistral-experimental/pixtral-12b, formerly mistral-community/pixtral-12b, which redirects there; Apache-2.0), ~24 GB. LlavaForConditionalGeneration: a from-scratch PixtralVisionModel 2D-rotary ViT (hidden 1024, 24 layers, 16 heads, patch 16, rope_theta 10000, image_size 1024) + a multi_modal_projector (two biased Linears around exact GELU) + a Mistral-Nemo dense decoder (hidden 5120, 40 layers, head_dim 128, 32 heads, 8 kv heads, rope_theta 1e9). image_token_index 10. The text_config omits num_attention_heads; the transformers MistralConfig default (32) applies, which decoderConfiguration sets. Vision seams recorded in float32, the fused logits in bfloat16: `run_reference.py pixtral --checkpoint <dir>` under the llmvenv oracle. IK_VAL_PIXTRAL is the release directory; IK_PARITY_PIXTRAL is the record written alongside it. The tiny full-pipeline oracle (`run_reference.py pixtral_tiny --checkpoint <writable-dir>`, keys IK_VAL_PIXTRAL_TINY / IK_PARITY_PIXTRAL_TINY) saves a tiny Llava release and measures vision + connector + fusion + Mistral decoder in float32; the 12B decoder's fused checks stream it against `run_reference.py pixtral_fused_layerwise` (llmvenv), given the record's float32 projected features: IK_PARITY_PIXTRAL_FUSED at float32 (`PIXTRAL_RECORD=<record> DENSE_DTYPE=float32`), IK_PARITY_PIXTRAL_FUSED_BF16 at bf16 with block floors (`DENSE_DTYPE=bfloat16 DENSE_ATTENTION=eager IK_PROBE_BLOCK_FLOOR=1`), and IK_PARITY_PIXTRAL_FUSED_TWINS, 20 bf16 jitter twins summarized against the float32 record (`DENSE_ATTENTION=eager PIXTRAL_F32=<float32 record> PIXTRAL_JITTERS=1-20`). The record's own fused logits come from the bf16 tower's features, not from `projected`."
+      "note": "Pixtral 12B (mistral-experimental/pixtral-12b, formerly mistral-community/pixtral-12b, which redirects there; Apache-2.0), ~24 GB. LlavaForConditionalGeneration: a from-scratch PixtralVisionModel 2D-rotary ViT (hidden 1024, 24 layers, 16 heads, patch 16, rope_theta 10000, image_size 1024) + a multi_modal_projector (two biased Linears around exact GELU) + a Mistral-Nemo dense decoder (hidden 5120, 40 layers, head_dim 128, 32 heads, 8 kv heads, rope_theta 1e9). image_token_index 10. The text_config omits num_attention_heads; the transformers MistralConfig default (32) applies, which decoderConfiguration sets. Vision seams recorded in float32, the fused logits in bfloat16: `run_reference.py pixtral --checkpoint <dir>` under the llmvenv oracle. IK_VAL_PIXTRAL is the release directory; IK_PARITY_PIXTRAL is the record written alongside it. The tiny full-pipeline oracle (`run_reference.py pixtral_tiny --checkpoint <writable-dir>`, keys IK_VAL_PIXTRAL_TINY / IK_PARITY_PIXTRAL_TINY) saves a tiny Llava release and measures vision + connector + fusion + Mistral decoder in float32; the 12B decoder's fused checks stream it against `run_reference.py pixtral_fused_layerwise` (llmvenv), given the record's float32 projected features: IK_PARITY_PIXTRAL_FUSED at float32 (`PIXTRAL_RECORD=<record> DENSE_DTYPE=float32`), IK_PARITY_PIXTRAL_FUSED_BF16 at bf16 with block floors (`DENSE_DTYPE=bfloat16 DENSE_ATTENTION=eager IK_PROBE_BLOCK_FLOOR=1`), and IK_PARITY_PIXTRAL_FUSED_TWINS, 20 bf16 jitter twins summarized against the float32 record (`DENSE_ATTENTION=eager PIXTRAL_F32=<float32 record> PIXTRAL_JITTERS=1-20`). The record's own fused logits come from the bf16 tower's features, not from `projected`. The decoder alone, text only (llm env): each decoder layer read as its forward reaches it (`run_reference.py dense_layerwise <out> --checkpoint <this directory>`, bfloat16 by default, `DENSE_DTYPE` to change it; `DENSE_CHECK=1` also requires a release small enough to hold whole to agree bit for bit) -> IK_PARITY_PIXTRAL_TEXT (pixtral-12b/text-dense-layerwise.safetensors)."
+    },
+    {
+      "key": "QWEN3_14B",
+      "repo": "Qwen/Qwen3-14B",
+      "revision": "40c069824f4251a91eefaf281ebe4c544efd3e18",
+      "directory": "qwen3-14B",
+      "files": [
+        "LICENSE",
+        "README.md",
+        "config.json",
+        "generation_config.json",
+        "merges.txt",
+        "model-00001-of-00008.safetensors",
+        "model-00002-of-00008.safetensors",
+        "model-00003-of-00008.safetensors",
+        "model-00004-of-00008.safetensors",
+        "model-00005-of-00008.safetensors",
+        "model-00006-of-00008.safetensors",
+        "model-00007-of-00008.safetensors",
+        "model-00008-of-00008.safetensors",
+        "model.safetensors.index.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json"
+      ],
+      "config": {
+        "IK_VAL_QWEN3_14B": "",
+        "IK_PARITY_QWEN3_14B": "reference/qwen3-14b-dense-layerwise.safetensors"
+      },
+      "note": "Qwen3 14B (Apache-2.0), the dense language decoder at 40 layers, ~29.5 GB at bf16. It streams the layers .automatic cannot hold. Record (llm env): the logits, the layer states, and the greedy continuation, each decoder layer read as its forward reaches it (`run_reference.py dense_layerwise <out> --checkpoint <this directory>`, bfloat16 by default, `DENSE_DTYPE` to change it; `DENSE_CHECK=1` also requires a release small enough to hold whole to agree bit for bit) -> IK_PARITY_QWEN3_14B (reference/qwen3-14b-dense-layerwise.safetensors)."
+    },
+    {
+      "key": "QWEN3_32B",
+      "repo": "Qwen/Qwen3-32B",
+      "revision": "9216db5781bf21249d130ec9da846c4624c16137",
+      "directory": "qwen3-32B",
+      "files": [
+        "LICENSE",
+        "README.md",
+        "config.json",
+        "generation_config.json",
+        "merges.txt",
+        "model-00001-of-00017.safetensors",
+        "model-00002-of-00017.safetensors",
+        "model-00003-of-00017.safetensors",
+        "model-00004-of-00017.safetensors",
+        "model-00005-of-00017.safetensors",
+        "model-00006-of-00017.safetensors",
+        "model-00007-of-00017.safetensors",
+        "model-00008-of-00017.safetensors",
+        "model-00009-of-00017.safetensors",
+        "model-00010-of-00017.safetensors",
+        "model-00011-of-00017.safetensors",
+        "model-00012-of-00017.safetensors",
+        "model-00013-of-00017.safetensors",
+        "model-00014-of-00017.safetensors",
+        "model-00015-of-00017.safetensors",
+        "model-00016-of-00017.safetensors",
+        "model-00017-of-00017.safetensors",
+        "model.safetensors.index.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "vocab.json"
+      ],
+      "config": {
+        "IK_VAL_QWEN3_32B": "",
+        "IK_PARITY_QWEN3_32B": "reference/qwen3-32b-dense-layerwise.safetensors"
+      },
+      "note": "Qwen3 32B (Apache-2.0), the dense language decoder at 64 layers, ~65.5 GB at bf16. It streams the layers .automatic cannot hold. Record (llm env): the logits, the layer states, and the greedy continuation, each decoder layer read as its forward reaches it (`run_reference.py dense_layerwise <out> --checkpoint <this directory>`, bfloat16 by default, `DENSE_DTYPE` to change it; `DENSE_CHECK=1` also requires a release small enough to hold whole to agree bit for bit) -> IK_PARITY_QWEN3_32B (reference/qwen3-32b-dense-layerwise.safetensors)."
+    },
+    {
+      "key": "MISTRAL_SMALL",
+      "repo": "mistralai/Mistral-Small-24B-Instruct-2501",
+      "revision": "9527884be6e5616bdd54de542f9ae13384489724",
+      "directory": "mistral-small-24b-instruct-2501",
+      "files": [
+        "README.md",
+        "SYSTEM_PROMPT.txt",
+        "config.json",
+        "generation_config.json",
+        "model-00001-of-00010.safetensors",
+        "model-00002-of-00010.safetensors",
+        "model-00003-of-00010.safetensors",
+        "model-00004-of-00010.safetensors",
+        "model-00005-of-00010.safetensors",
+        "model-00006-of-00010.safetensors",
+        "model-00007-of-00010.safetensors",
+        "model-00008-of-00010.safetensors",
+        "model-00009-of-00010.safetensors",
+        "model-00010-of-00010.safetensors",
+        "model.safetensors.index.json",
+        "params.json",
+        "special_tokens_map.json",
+        "tekken.json",
+        "tokenizer.json",
+        "tokenizer_config.json"
+      ],
+      "config": {
+        "IK_VAL_MISTRAL_SMALL": "",
+        "IK_PARITY_MISTRAL_SMALL": "reference/mistral-small-dense-layerwise.safetensors"
+      },
+      "note": "Mistral Small 24B Instruct 2501 (Apache-2.0), the dense language decoder at 40 layers, ~47.1 GB at bf16. It streams the layers .automatic cannot hold. Record (llm env): the logits, the layer states, and the greedy continuation, each decoder layer read as its forward reaches it (`run_reference.py dense_layerwise <out> --checkpoint <this directory>`, bfloat16 by default, `DENSE_DTYPE` to change it; `DENSE_CHECK=1` also requires a release small enough to hold whole to agree bit for bit) -> IK_PARITY_MISTRAL_SMALL (reference/mistral-small-dense-layerwise.safetensors)."
+    },
+    {
+      "key": "QWEN3_VL_8B",
+      "repo": "Qwen/Qwen3-VL-8B-Instruct",
+      "revision": "0c351dd01ed87e9c1b53cbc748cba10e6187ff3b",
+      "directory": "qwen3-vl-8b-instruct",
+      "files": [
+        "README.md",
+        "chat_template.json",
+        "config.json",
+        "generation_config.json",
+        "merges.txt",
+        "model-00001-of-00004.safetensors",
+        "model-00002-of-00004.safetensors",
+        "model-00003-of-00004.safetensors",
+        "model-00004-of-00004.safetensors",
+        "model.safetensors.index.json",
+        "preprocessor_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "video_preprocessor_config.json",
+        "vocab.json"
+      ],
+      "config": {
+        "IK_VAL_QWEN3_VL_8B": "",
+        "IK_PARITY_QWEN3_VL_8B": "reference/qwen3-vl-8b-dense-layerwise.safetensors"
+      },
+      "note": "Qwen3-VL 8B Instruct (Apache-2.0). Its dense decoder, ~17.5 GB at bf16, streams the layers .automatic cannot hold beside the vision tower. The record is text only. Record (llm env): the logits, the layer states, and the greedy continuation, each decoder layer read as its forward reaches it (`run_reference.py dense_layerwise <out> --checkpoint <this directory>`, bfloat16 by default, `DENSE_DTYPE` to change it; `DENSE_CHECK=1` also requires a release small enough to hold whole to agree bit for bit) -> IK_PARITY_QWEN3_VL_8B (reference/qwen3-vl-8b-dense-layerwise.safetensors)."
+    },
+    {
+      "key": "QWEN3_VL_32B",
+      "repo": "Qwen/Qwen3-VL-32B-Instruct",
+      "revision": "0cfaf48183f594c314753d30a4c4974bc75f3ccb",
+      "directory": "qwen3-vl-32b-instruct",
+      "files": [
+        "README.md",
+        "chat_template.json",
+        "config.json",
+        "generation_config.json",
+        "merges.txt",
+        "model-00001-of-00014.safetensors",
+        "model-00002-of-00014.safetensors",
+        "model-00003-of-00014.safetensors",
+        "model-00004-of-00014.safetensors",
+        "model-00005-of-00014.safetensors",
+        "model-00006-of-00014.safetensors",
+        "model-00007-of-00014.safetensors",
+        "model-00008-of-00014.safetensors",
+        "model-00009-of-00014.safetensors",
+        "model-00010-of-00014.safetensors",
+        "model-00011-of-00014.safetensors",
+        "model-00012-of-00014.safetensors",
+        "model-00013-of-00014.safetensors",
+        "model-00014-of-00014.safetensors",
+        "model.safetensors.index.json",
+        "preprocessor_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "video_preprocessor_config.json",
+        "vocab.json"
+      ],
+      "config": {
+        "IK_VAL_QWEN3_VL_32B": "",
+        "IK_PARITY_QWEN3_VL_32B": "reference/qwen3-vl-32b-dense-layerwise.safetensors"
+      },
+      "note": "Qwen3-VL 32B Instruct (Apache-2.0). Its dense decoder, ~66.7 GB at bf16, streams the layers .automatic cannot hold beside the vision tower. The record is text only. Record (llm env): the logits, the layer states, and the greedy continuation, each decoder layer read as its forward reaches it (`run_reference.py dense_layerwise <out> --checkpoint <this directory>`, bfloat16 by default, `DENSE_DTYPE` to change it; `DENSE_CHECK=1` also requires a release small enough to hold whole to agree bit for bit) -> IK_PARITY_QWEN3_VL_32B (reference/qwen3-vl-32b-dense-layerwise.safetensors)."
+    },
+    {
+      "key": "GEMMA4_12B",
+      "repo": "google/gemma-4-12B-it",
+      "revision": "707f0a3b8a3c7ad586ed01e27eafbad8a27dd0f7",
+      "directory": "gemma-4-12b",
+      "files": [
+        "README.md",
+        "chat_template.jinja",
+        "config.json",
+        "generation_config.json",
+        "model.safetensors",
+        "processor_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json"
+      ],
+      "config": {
+        "IK_VAL_GEMMA4_12B": "",
+        "IK_PARITY_GEMMA4_12B": "gemma-4-12b/dense-layerwise.safetensors"
+      },
+      "note": "Gemma 4 12B unified (Gemma 4 license), ~23.9 GB at bf16, text only. It streams the layers .automatic cannot hold. Its prompt opens with `<bos>`, which the oracle prepends. Record (gemma env): the logits, the layer states, and the greedy continuation, each decoder layer read as its forward reaches it (`run_reference.py dense_layerwise <out> --checkpoint <this directory>`, bfloat16 by default, `DENSE_DTYPE` to change it; `DENSE_CHECK=1` also requires a release small enough to hold whole to agree bit for bit) -> IK_PARITY_GEMMA4_12B (gemma-4-12b/dense-layerwise.safetensors)."
+    },
+    {
+      "key": "GEMMA4_31B",
+      "repo": "google/gemma-4-31B-it",
+      "revision": "842da3794eaa0b77d5f08bae87a17459d91ff475",
+      "directory": "gemma-4-31b",
+      "files": [
+        ".eval_results/mmmu_pro.yaml",
+        "README.md",
+        "chat_template.jinja",
+        "config.json",
+        "generation_config.json",
+        "model-00001-of-00002.safetensors",
+        "model-00002-of-00002.safetensors",
+        "model.safetensors.index.json",
+        "processor_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json"
+      ],
+      "config": {
+        "IK_VAL_GEMMA4_31B": "",
+        "IK_PARITY_GEMMA4_31B": "gemma-4-31b/dense-layerwise.safetensors"
+      },
+      "note": "Gemma 4 31B (Gemma 4 license), ~62.5 GB at bf16, text only. It streams the layers .automatic cannot hold, and Gemma 4 E2B at 4 bits drafts for it. Its prompt opens with `<bos>`, which the oracle prepends. Record (gemma env): the logits, the layer states, and the greedy continuation, each decoder layer read as its forward reaches it (`run_reference.py dense_layerwise <out> --checkpoint <this directory>`, bfloat16 by default, `DENSE_DTYPE` to change it; `DENSE_CHECK=1` also requires a release small enough to hold whole to agree bit for bit) -> IK_PARITY_GEMMA4_31B (gemma-4-31b/dense-layerwise.safetensors)."
     },
     {
       "key": "FLORENCE2",
@@ -5156,6 +5371,53 @@
         "IK_PARITY_SD35_MEDIUM": "records/sd35-medium.safetensors"
       },
       "note": "SD3.5-medium in diffusers layout (Stability AI Community License, gated: HF_TOKEN must be set to fetch it) for NFKMLXSD35ReleaseTests. It lives in the InferKit tree on the InferKit Models volume. Record (qwenimage env): `run_reference.py sd35_release <validation root>/records/sd35-medium.safetensors --checkpoint <dir>`."
+    },
+    {
+      "key": "SD35_LARGE",
+      "repo": "stabilityai/stable-diffusion-3.5-large",
+      "directory": "/Volumes/InferKit Models/InferKit/stable-diffusion-3.5-large",
+      "files": [
+        "LICENSE.md",
+        "README.md",
+        "model_index.json",
+        "scheduler/scheduler_config.json",
+        "text_encoder/config.json",
+        "text_encoder/model.fp16.safetensors",
+        "text_encoder/model.safetensors",
+        "text_encoder_2/config.json",
+        "text_encoder_2/model.fp16.safetensors",
+        "text_encoder_2/model.safetensors",
+        "text_encoder_3/config.json",
+        "text_encoder_3/model-00001-of-00002.safetensors",
+        "text_encoder_3/model-00002-of-00002.safetensors",
+        "text_encoder_3/model.fp16-00001-of-00002.safetensors",
+        "text_encoder_3/model.fp16-00002-of-00002.safetensors",
+        "text_encoder_3/model.safetensors.index.fp16.json",
+        "text_encoder_3/model.safetensors.index.json",
+        "tokenizer/merges.txt",
+        "tokenizer/special_tokens_map.json",
+        "tokenizer/tokenizer_config.json",
+        "tokenizer/vocab.json",
+        "tokenizer_2/merges.txt",
+        "tokenizer_2/special_tokens_map.json",
+        "tokenizer_2/tokenizer_config.json",
+        "tokenizer_2/vocab.json",
+        "tokenizer_3/special_tokens_map.json",
+        "tokenizer_3/spiece.model",
+        "tokenizer_3/tokenizer.json",
+        "tokenizer_3/tokenizer_config.json",
+        "transformer/config.json",
+        "transformer/diffusion_pytorch_model-00001-of-00002.safetensors",
+        "transformer/diffusion_pytorch_model-00002-of-00002.safetensors",
+        "transformer/diffusion_pytorch_model.safetensors.index.json",
+        "vae/config.json",
+        "vae/diffusion_pytorch_model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_SD35_LARGE_RELEASE": "",
+        "IK_PARITY_SD35_LARGE_LAYERWISE": "records/sd35-large-layerwise.safetensors"
+      },
+      "note": "SD3.5-large in diffusers layout (Stability AI Community License, gated: HF_TOKEN must be set to fetch it), ~28 GB, for NFKMLXSD3StreamingTests. It lives in the InferKit tree on the InferKit Models volume; IK_VAL_SD35_LARGE stays on the four-block cut. Record (qwenimage env): the whole 8B transformer at float32 with each block read as its forward reaches it (the patch embedding, both streams after every block, and the velocity), `run_reference.py sd35_layerwise <validation root>/records/sd35-large-layerwise.safetensors --checkpoint <dir>`; `SD35_CHECK=1` on the cut requires a whole load to agree bit for bit. Keyed IK_PARITY_SD35_LARGE_LAYERWISE."
     }
   ],
   "oracle_environments": {
