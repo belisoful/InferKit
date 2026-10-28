@@ -250,9 +250,13 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   `HunYuanDenseV1ForCausalLM` decoders (`hunyuan_v1_dense`; the 1.8B 32 layers at 2048 with 4 key-value heads
   and a 120,818-piece vocabulary, the 7B 32 layers at 4096 with 8 key-value heads and 128,167 pieces, both
   with tied embeddings) trained to translate among 38 languages. The two generations share their geometry,
-  tokenizers, and chat templates byte for byte and differ in the instruction their cards prompt with. It
-  loads through the language family, which reads Hunyuan's per-head query and key norms after the rotary
-  embedding and its `alpha`-raised rotary base (`mlx-models-language.md`), and generates greedily, where the
+  tokenizers, and chat templates byte for byte and differ in the instruction their cards prompt with.
+  Under HY-MT1.5's license, a licensee whose products passed 100 million monthly active users on the release
+  date requests a license from Tencent. Neither the model nor its output may improve an AI model other than
+  Tencent HY and its derivatives. Use follows Tencent's Acceptable Use Policy, and a distribution carries
+  these use restrictions as an enforceable term. It loads through the language family, which reads
+  Hunyuan's per-head query and key norms after the rotary embedding and its `alpha`-raised rotary base
+  (`mlx-models-language.md`), and generates greedily, where the
   release's generation config samples (temperature 0.7, top-k 20, top-p 0.8, repetition penalty 1.05);
   `beamCount` above 1 runs `NFKMLXLanguageNet.beamSearch(prompt:decoding:)`. The prompt is the card's default
   instruction, which names the target alone: the Chinese one with the target's Chinese name when either
