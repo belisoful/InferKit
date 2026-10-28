@@ -290,7 +290,15 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   against eager attention instead (`model-parity.md`, "Half precision against the half-precision
   reference"): every block alone at most 0.024 of the accumulated floor and 0.142 of its own block floor, the logits 1.07 to 1.34 times the reference's
   own distance from float32, and each piece of layers 0, 16, and 31 of the 1.8B, the rotary embedding and
-  the norms after it included, within 2.2e-9 of the reference on its own input. HY-MT1.5-7B at float32
+  the norms after it included, within 2.2e-9 of the reference on its own input. The eager bfloat16
+  references' losses are 0.07343672 (HY-MT1.5-1.8B), 0.015896598 (Hy-MT2-1.8B, float32 0.015820704), 0.30281726
+  (HY-MT1.5-7B), and 0.0027794037 (Hy-MT2-7B, float32 0.0029131889). At 7B the bfloat16 loss sits as far from
+  float32 as the references do (1.05 percent against their 1.34 and 1.04; 3.4 against 4.6 and 3.2). At 1.8B it sits 5.9 and 7.2 percent above float32 where both
+  references sit within 1.1 percent, and the whole difference is one target token: the " fa" that opens
+  "faulen", at probability 0.35 in HY-MT1.5 and 0.83 in Hy-MT2 beside " tr" ("trägen"). Its leading
+  competitor's bfloat16 logit stands one step (0.125) higher against the target's than in either reference,
+  which raises that token's cross-entropy by 0.074 to 0.085 (HY-MT1.5) and 0.019 to 0.024 (Hy-MT2) against
+  the three references. Every other target token is within 0.0045 of the eager reference. HY-MT1.5-7B at float32
   against a reference that reads each layer as its forward reaches it: logit cosine 1.0 with argmax 23/23,
   worst layer 0.9999996 at layer 25, loss 0.30692232 against 0.30692142; 16 of 32 layers streamed, 146.6 GB
   read at 3.84 GB/s, an MLX peak of 17.5 GB. Hy-MT2-1.8B's four-beam search against transformers'
@@ -350,9 +358,11 @@ Keys `IK_VAL_SEEDX_PPO` / `IK_PARITY_SEEDX_PPO` / `IK_PARITY_SEEDX_PPO_F32` and 
 `run_reference.py hymt --checkpoint <release directory>` (llmvenv) records the HY-MT seams as `seedx`
 records Seed-X's, the prompt rendered through the release's own `apply_chat_template` from an instruction
 the oracle writes from the card, and the greedy decode run with the release's sampling and repetition
-penalty off (transformers applies `repetition_penalty` under `do_sample=False`). `HYMT_RELEASE` picks the
+penalty off (transformers applies `repetition_penalty` under `do_sample=False`), and each target token's
+cross-entropy kept as `loss_tokens`. `HYMT_RELEASE` picks the
 generation's instruction (`1.5` by default, or `2`), `HYMT_ASSISTANT=0` closes the 1.8B user turn without
-opening the assistant turn, `HYMT_DTYPE` picks the precision (bfloat16 by default), and `HYMT_LAYERWISE=1`
+opening the assistant turn, `HYMT_DTYPE` picks the precision (bfloat16 by default), `HYMT_ATTENTION` the
+attention implementation (transformers' SDPA by default, or `eager`), and `HYMT_LAYERWISE=1`
 reads each layer as the forward reaches it, the head taking the embedding it ties to. `hymt_beam` records
 the four-beam search through `_decoder_beam_record`, which now passes `generate` overrides through, here
 `repetition_penalty=1.0`, and `hymt_tokenizer` records the tokenizers library's ids for

@@ -22872,7 +22872,9 @@ def _hymt_ids(tokenizer, text, source, target):
 
 def _hymt_model(checkpoint):
     """An HY-MT release's `HunYuanDenseV1ForCausalLM`, its tokenizer, and a function that closes what it
-    reads. HYMT_DTYPE picks the precision (default bfloat16, the release's). HYMT_LAYERWISE=1 builds the
+    reads. HYMT_DTYPE picks the precision (default bfloat16, the release's), and HYMT_ATTENTION the
+    attention implementation (default transformers' own, SDPA; `eager` for the one the bfloat16 harness
+    measures against). HYMT_LAYERWISE=1 builds the
     model on the meta device and reads each decoder layer as the forward reaches it, as `_seedx_model`
     does, for the 7B at float32 (32 GB); the embedding, which the head shares, and the final norm are read
     once and the rotary table is built on the CPU."""
@@ -22880,12 +22882,15 @@ def _hymt_model(checkpoint):
 
     dtype = getattr(torch, os.environ.get("HYMT_DTYPE", "bfloat16"))
     tokenizer = AutoTokenizer.from_pretrained(checkpoint)
+    attention = os.environ.get("HYMT_ATTENTION")
     if os.environ.get("HYMT_LAYERWISE") != "1":
-        return HunYuanDenseV1ForCausalLM.from_pretrained(checkpoint, dtype=dtype).eval(), tokenizer, lambda: None
+        options = {"attn_implementation": attention} if attention else {}
+        return (HunYuanDenseV1ForCausalLM.from_pretrained(checkpoint, dtype=dtype, **options).eval(), tokenizer,
+                lambda: None)
     config = AutoConfig.from_pretrained(checkpoint)
     entries, read, close = _layerwise_release(checkpoint, dtype)
     with torch.device("meta"):
-        model = HunYuanDenseV1ForCausalLM._from_config(config, dtype=dtype, attn_implementation="sdpa")
+        model = HunYuanDenseV1ForCausalLM._from_config(config, dtype=dtype, attn_implementation=attention or "sdpa")
     model.eval()
     model.generation_config = GenerationConfig.from_pretrained(checkpoint)
     embed = torch.nn.Embedding(config.vocab_size, config.hidden_size, config.pad_token_id)
@@ -22911,8 +22916,8 @@ def run_hymt(image, checkpoint):
     every layer but the last (`hidden_last.<i>`, entering the stack at 0); the greedy continuation to an
     end token of the release's generation config (`continuation`, `greedy_text`), with the release's
     sampling and repetition penalty off; and the fine-tuning loss of the target sentence as the assistant
-    turn, its pieces and then the first end token, the prompt masked (`target_ids`, `loss`). `image`
-    unused."""
+    turn, its pieces and then the first end token, the prompt masked (`target_ids`, `loss`, and each
+    target token's cross-entropy as `loss_tokens`). `image` unused."""
     model, tokenizer, close = _hymt_model(checkpoint)
     source, target = _translation_languages()
     sentences = TRANSLATION_PROBES[source]
@@ -22928,7 +22933,10 @@ def run_hymt(image, checkpoint):
             full = torch.tensor([ids[0].tolist() + target_ids])
             labels = full.clone()
             labels[0, : ids.shape[1]] = -100
-            loss = model(input_ids=full, labels=labels).loss
+            scored = model(input_ids=full, labels=labels)
+            loss = scored.loss
+            loss_tokens = torch.nn.functional.cross_entropy(scored.logits[0, ids.shape[1] - 1 : -1].float(),
+                                                            full[0, ids.shape[1]:], reduction="none")
     finally:
         close()
     continuation = generated[0, ids.shape[1]:]
@@ -22941,6 +22949,7 @@ def run_hymt(image, checkpoint):
         "end_tokens": torch.tensor(ends, dtype=torch.int32),
         "target_ids": torch.tensor(target_ids, dtype=torch.int32),
         "loss": loss.reshape(1).float().contiguous(),
+        "loss_tokens": loss_tokens.contiguous(),
     }
     for index, sentence in enumerate(sentences):
         extra[f"tokens_{index}"] = torch.tensor(_hymt_ids(tokenizer, sentence, source, target), dtype=torch.int32)
