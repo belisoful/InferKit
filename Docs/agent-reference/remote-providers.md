@@ -211,7 +211,11 @@ factory's `@discussion`. Vision is measured live (`testALocalVisionModelSeesTheI
 `INFERKIT_LIVE_VISION_MODEL`): Ollama `qwen3.5:27b` given a flat blue square answers "blue" through the
 content-parts shape, 23 s with the model load. `NFKImageCoding` is the public codec (ImageIO, now linked
 by the core in `Package.swift` And the podspec): CGImage / 32BGRA-32RGBA CVPixelBuffer / BGRA8-RGBA8
-MTLTexture → PNG or data URL; ImageIO-readable bytes → 32BGRA pixel buffer. Its private `CGImage…`
+MTLTexture → PNG or data URL; ImageIO-readable bytes → 32BGRA pixel buffer. A texture's bytes read as
+straight color (`kCGImageAlphaFirst` / `kCGImageAlphaLast`), the convention InferKitMLX's image bridge
+also follows, so a texture's PNG keeps every byte. The premultiplied tag the codec used before turned
+straight 200 under alpha 128 into 255 and cleared the color under zero alpha. A pixel buffer reads as
+premultiplied color, the form `pixelBufferWithCGImage:` draws. Its private `CGImage…`
 helpers must carry `CF_RETURNS_RETAINED` in a class extension — the public method promises +1 and the
 analyzer reported five RetainCount issues when the helpers it delegates to did not. Importer names the
 Swift examples pin: the class factories are failable initializers

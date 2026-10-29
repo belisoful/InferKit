@@ -8,6 +8,7 @@
 
 #import <XCTest/XCTest.h>
 #import <InferKit/NFKImageCoding.h>
+#import <ImageIO/ImageIO.h>
 #import <Metal/Metal.h>
 
 @interface NFKImageCodingTests : XCTestCase
@@ -112,6 +113,48 @@
 	CVPixelBufferRelease(decoded);
 	CVPixelBufferRelease(pixelBuffer);
 	CGImageRelease(source);
+}
+
+- (NSArray<NSNumber *> *)straightPNGPixelsOfTextureWithFormat:(MTLPixelFormat)format bytes:(const uint8_t *)bytes
+{
+	id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+	MTLTextureDescriptor *descriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:format width:2 height:1 mipmapped:NO];
+	id<MTLTexture> texture = [device newTextureWithDescriptor:descriptor];
+	[texture replaceRegion:MTLRegionMake2D(0, 0, 2, 1) mipmapLevel:0 withBytes:bytes bytesPerRow:8];
+
+	CGImageRef image = [NFKImageCoding CGImageForImage:texture];
+	XCTAssertTrue(image != NULL);
+	CGImageAlphaInfo alpha = CGImageGetAlphaInfo(image);
+	XCTAssertTrue(alpha == kCGImageAlphaFirst || alpha == kCGImageAlphaLast, @"a texture reads as straight color");
+	CGImageRelease(image);
+
+	NSData *png = [NFKImageCoding PNGDataForImage:texture];
+	CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)png, NULL);
+	CGImageRef decoded = CGImageSourceCreateImageAtIndex(source, 0, NULL);
+	CFRelease(source);
+	XCTAssertEqual(CGImageGetAlphaInfo(decoded), kCGImageAlphaLast);
+	CFDataRef data = CGDataProviderCopyData(CGImageGetDataProvider(decoded));
+	const uint8_t *pixels = CFDataGetBytePtr(data);
+	NSMutableArray<NSNumber *> *rgba = [NSMutableArray array];
+	for (size_t i = 0; i < 8; i++) {
+		[rgba addObject:@(pixels[i])];
+	}
+	CFRelease(data);
+	CGImageRelease(decoded);
+	return rgba;
+}
+
+- (void)testATranslucentTextureEncodesItsStraightColorToPNG
+{
+	if (MTLCreateSystemDefaultDevice() == nil) {
+		XCTSkip("no Metal device");
+	}
+	NSArray<NSNumber *> *expected = @[ @200, @100, @150, @128,   @10, @20, @30, @0 ];
+	const uint8_t bgra[8] = { 150, 100, 200, 128,   30, 20, 10, 0 };
+	XCTAssertEqualObjects([self straightPNGPixelsOfTextureWithFormat:MTLPixelFormatBGRA8Unorm bytes:bgra], expected,
+						  @"color under alpha 128 keeps its value, and color under zero alpha survives");
+	const uint8_t rgba[8] = { 200, 100, 150, 128,   10, 20, 30, 0 };
+	XCTAssertEqualObjects([self straightPNGPixelsOfTextureWithFormat:MTLPixelFormatRGBA8Unorm bytes:rgba], expected);
 }
 
 - (void)testTheDataURLIsBase64PNG

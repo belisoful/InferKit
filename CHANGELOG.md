@@ -108,6 +108,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### Core (`InferKit`)
 
+#### A texture's PNG keeps its straight color
+
+- `NFKImageCoding` reads a BGRA8 or RGBA8 `MTLTexture` as straight (unpremultiplied) color, the
+  convention InferKitMLX's image bridge reads and writes. Its PNG, data URL, and `CGImageForImage:`
+  keep every byte, including the color under zero alpha. Before, the codec read a texture as
+  premultiplied, so a straight 200 under alpha 128 encoded as 255 and color under zero alpha was lost.
+  A pixel buffer still reads as premultiplied, as `pixelBufferWithCGImage:` draws it.
+
 #### A catalog download fetches the shards its index names
 
 - `-downloadModelSource:progressHandler:completionHandler:` reads a listed shard index
@@ -1791,6 +1799,15 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### An image with alpha reads as straight color
+
+- Every MLX backend reads an input image's color unpremultiplied by its alpha, as Pillow decodes a PNG.
+  Before, a `CGImage` or `CVPixelBuffer` input was drawn into a premultiplied 8-bit context and its color
+  arrived multiplied by alpha: 200 under alpha 128 read as 100. TripoSR's framing, the matting backends,
+  and the detectors saw translucent edges darkened. The image is now drawn at 16 bits and divided back by
+  alpha, which recovers every 8-bit color under a nonzero alpha exactly. Opaque images read as before.
+  A pixel of zero alpha reads as zero color. An `MTLTexture` still reads as its bytes.
 
 #### TripoSR keeps an opaque picture's proportions
 

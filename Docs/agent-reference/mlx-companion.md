@@ -157,6 +157,16 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
   image key: a `CGImage`, a 32BGRA or 32RGBA `CVPixelBuffer` (drawn through `NFKImageCoding`, which is
   what `NFKValueCoding` makes of an image file), and a BGRA8 or RGBA8 `MTLTexture`. A backend that
   needs a `CGImage` takes it from `cgImage(fromValue:)`, never from a `CGImage` type check of its own.
+  Every read returns straight RGBA, the form Pillow decodes a PNG into:
+  - `CGImage` → drawn into a 16-bit premultiplied context and divided back by alpha. The 16 bits recover
+    every straight 8-bit value under nonzero alpha exactly (a 256 × 256 color-by-alpha sweep); the 8-bit
+    context read before returned premultiplied color (200 under alpha 128 read as 100), and dividing an
+    8-bit draw loses up to 127 levels at low alpha. Opaque pixels read as the 8-bit draw read them,
+    color matching included. Zero alpha reads as zero color.
+  - `CVPixelBuffer` → the premultiplied `CGImage` `NFKImageCoding` makes of it, divided back. A buffer
+    `NFKImageCoding.pixelBuffer(with:)` drew stores 8-bit premultiplied color, so 200 under alpha 128
+    reads back as 199.
+  - `MTLTexture` → its bytes as stored, read as straight, the form `texture(rgba:…)` writes by default.
   Its CoreGraphics, CoreVideo, and Metal byte halves are unit-tested.
 - Direct `@objc` factories (the primary ObjC path for shipped real models, no registry): every real
   model class exposes `+backendWith[Variant:]weightsURL:error:` (local weights, nil → random weights,

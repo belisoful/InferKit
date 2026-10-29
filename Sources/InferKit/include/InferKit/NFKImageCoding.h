@@ -21,7 +21,14 @@ NS_ASSUME_NONNULL_BEGIN
 				conversion between the two, over ImageIO. The three representations are accepted
 				wherever an image is taken; a texture must be BGRA8 or RGBA8, a pixel buffer 32BGRA
 				or 32RGBA, and anything else answers nil rather than a wrong picture. Decoding
-				accepts any format ImageIO reads. Introduced in InferKit 0.3.0.
+				accepts any format ImageIO reads.
+
+				Alpha:
+				- A texture holds straight (unpremultiplied) color, so its PNG keeps every byte,
+				  including the color under zero alpha.
+				- A pixel buffer holds premultiplied color, the form CoreVideo and Core Image use
+				  and the form pixelBufferWithCGImage: draws.
+				Introduced in InferKit 0.3.0.
 */
 @interface NFKImageCoding : NSObject
 

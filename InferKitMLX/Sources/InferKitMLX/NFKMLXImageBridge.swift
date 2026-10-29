@@ -24,7 +24,8 @@ public struct NFKMLXImageOptions: @unchecked Sendable {
 }
 
 /// Converts image values (a `CGImage`, a `CVPixelBuffer`, or an `MTLTexture`, the representations the
-/// core accepts wherever an image is taken) to and from `MLXArray`, preserving the alpha channel. The
+/// core accepts wherever an image is taken) to and from `MLXArray`, preserving the alpha channel. Every
+/// read returns straight (unpremultiplied) RGBA, the form Pillow decodes a PNG into. The
 /// byte-level halves (CoreGraphics, CoreVideo, and Metal) hold no MLX and are exercised directly; only
 /// the thin `bytes ↔ MLXArray` step needs the MLX runtime.
 enum NFKMLXImageBridge {
@@ -39,17 +40,24 @@ enum NFKMLXImageBridge {
 
     // MARK: CGImage <-> RGBA8 bytes (no MLX)
 
+    /// Straight RGBA8 bytes of `image`, color-matched into `colorSpace`.
+    ///
+    /// @discussion CoreGraphics draws only into premultiplied RGBA contexts, so the image is drawn at 16
+    /// bits per component and divided back by its alpha. At 16 bits the division recovers every straight
+    /// 8-bit value under a nonzero alpha exactly; at 8 bits it loses up to 127 levels where alpha is low.
+    /// An opaque pixel reads as the 8-bit draw reads it. A pixel of zero alpha reads as zero color.
     static func rgbaBytes(from image: CGImage, colorSpace: CGColorSpace) -> (bytes: [UInt8], width: Int, height: Int) {
         let width = image.width
         let height = image.height
-        var bytes = [UInt8](repeating: 0, count: width * height * 4)
-        bytes.withUnsafeMutableBytes { raw in
+        var premultiplied = [UInt16](repeating: 0, count: width * height * 4)
+        premultiplied.withUnsafeMutableBytes { raw in
             let context = CGContext(data: raw.baseAddress, width: width, height: height,
-                                    bitsPerComponent: 8, bytesPerRow: width * 4, space: colorSpace,
-                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+                                    bitsPerComponent: 16, bytesPerRow: width * 8, space: colorSpace,
+                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                                        | CGBitmapInfo.byteOrder16Little.rawValue)
             context?.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
         }
-        return (bytes, width, height)
+        return (unpremultiplied(premultiplied), width, height)
     }
 
     static func cgImage(rgba: [UInt8], width: Int, height: Int, options: NFKMLXImageOptions) throws -> CGImage {
@@ -176,6 +184,14 @@ enum NFKMLXImageBridge {
 
     /// Straight RGBA8 bytes + dimensions from a `CGImage`, a `CVPixelBuffer`, or an `MTLTexture` input
     /// value.
+    ///
+    /// @discussion Each representation reads by its own alpha convention:
+    /// - `CGImage` → its alpha info; premultiplied color is divided back by alpha.
+    /// - `CVPixelBuffer` → the premultiplied `CGImage` `NFKImageCoding` makes of it, divided back by
+    ///   alpha. A buffer `NFKImageCoding` drew holds 8-bit premultiplied color, so a translucent pixel
+    ///   comes back within that storage's rounding.
+    /// - `MTLTexture` → its bytes as stored, read as straight color, the form `texture(rgba:…)` writes
+    ///   unless its options premultiply.
     static func rgbaBytes(from value: Any, colorSpace: CGColorSpace) throws -> (bytes: [UInt8], width: Int, height: Int) {
         if let texture = value as? MTLTexture {
             return try rgbaBytes(from: texture)
@@ -232,6 +248,24 @@ enum NFKMLXImageBridge {
             out[index] = UInt8((Float(out[index]) * alpha).rounded())
             out[index + 1] = UInt8((Float(out[index + 1]) * alpha).rounded())
             out[index + 2] = UInt8((Float(out[index + 2]) * alpha).rounded())
+            index += 4
+        }
+        return out
+    }
+
+    /// Straight RGBA8 from premultiplied RGBA16, each channel rounded to the nearest 8-bit level.
+    static func unpremultiplied(_ rgba16: [UInt16]) -> [UInt8] {
+        var out = [UInt8](repeating: 0, count: rgba16.count)
+        var index = 0
+        while index < rgba16.count {
+            let alpha = UInt32(rgba16[index + 3])
+            if alpha > 0 {
+                for channel in 0 ..< 3 {
+                    let straight = min(65535, (UInt32(rgba16[index + channel]) * 65535 + alpha / 2) / alpha)
+                    out[index + channel] = UInt8((straight + 128) / 257)
+                }
+            }
+            out[index + 3] = UInt8((alpha + 128) / 257)
             index += 4
         }
         return out

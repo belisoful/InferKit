@@ -91,17 +91,18 @@
 	return [self CGImageWithBytes:bytes width:width height:height bytesPerRow:bytesPerRow bitmapInfo:bitmapInfo];
 }
 
+// A texture carries no alpha mode of its own; its color reads as straight.
 + (nullable CGImageRef)CGImageFromTexture:(id<MTLTexture>)texture
 {
 	CGBitmapInfo bitmapInfo;
 	switch (texture.pixelFormat) {
 		case MTLPixelFormatBGRA8Unorm:
 		case MTLPixelFormatBGRA8Unorm_sRGB:
-			bitmapInfo = kCGBitmapByteOrder32Little | kCGImageAlphaPremultipliedFirst;
+			bitmapInfo = kCGBitmapByteOrder32Little | kCGImageAlphaFirst;
 			break;
 		case MTLPixelFormatRGBA8Unorm:
 		case MTLPixelFormatRGBA8Unorm_sRGB:
-			bitmapInfo = kCGBitmapByteOrder32Big | kCGImageAlphaPremultipliedLast;
+			bitmapInfo = kCGBitmapByteOrder32Big | kCGImageAlphaLast;
 			break;
 		default:
 			return NULL;
