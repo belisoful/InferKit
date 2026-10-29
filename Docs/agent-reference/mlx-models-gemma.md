@@ -490,6 +490,8 @@ quarter of the floor.
   with `(-1, -1)` positions. The resize is CoreGraphics, not the reference's torchvision bicubic, so the
   patch pixels are a documented approximation (as SmolVLM's are); the resized dimensions, the patch
   layout, and the position ids are the reference's exactly, checked by `testGemma4ImageProcessorLayout`.
+  An image with alpha has it dropped and its stored color kept (`NFKMLXImageBridge.droppingAlpha`), as
+  the reference's `convert_to_rgb` converts it.
 - `NFKMLXGemma4AudioFeatureExtractor` (`NFKMLXGemma4AudioFeatureExtractor.swift`) — the audio **mel front
   end**: raw 16 kHz audio to the log-mel features `[frames, 128]` the subsampler reads. Semicausal
   framing (prepend `frameLength / 2` zeros, unfold `frameLength + 1` and drop the last sample), a

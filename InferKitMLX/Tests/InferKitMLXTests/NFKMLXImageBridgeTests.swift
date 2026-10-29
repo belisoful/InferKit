@@ -160,6 +160,72 @@ final class NFKMLXImageBridgeTests: XCTestCase {
         XCTAssertEqual(values[3], 128 / 255, accuracy: 1e-6)
     }
 
+    // MARK: Pillow's RGB conversions
+
+    /// Four pixels and what Pillow 11.3 makes of them, recorded from the `llm` oracle interpreter.
+    private static let pillowSource: [UInt8] = [200, 100, 150, 128, 10, 20, 30, 0, 37, 255, 1, 1, 90, 180, 250, 254]
+    private static let pillowOnWhite: [UInt8] = [227, 177, 202, 255, 255, 255, 254, 255, 254, 91, 180, 250]
+    private static let pillowConvertedRGB: [UInt8] = [200, 100, 150, 10, 20, 30, 37, 255, 1, 90, 180, 250]
+
+    private func opaqueImage(rgb: [UInt8], width: Int) throws -> CGImage {
+        var rgba = [UInt8]()
+        for pixel in stride(from: 0, to: rgb.count, by: 3) {
+            rgba += [rgb[pixel], rgb[pixel + 1], rgb[pixel + 2], 255]
+        }
+        return try image(rgba, width: width, alpha: .noneSkipLast)
+    }
+
+    private func rgb(of image: CGImage) -> [UInt8] {
+        let rgba = NFKMLXImageBridge.rgbaBytes(from: image, colorSpace: CGColorSpaceCreateDeviceRGB()).bytes
+        return stride(from: 0, to: rgba.count, by: 4).flatMap { rgba[$0 ..< $0 + 3] }
+    }
+
+    func testDroppingAlphaKeepsTheStoredColorAsPillowConvertsToRGB() throws {
+        let straight = try image(Self.pillowSource, width: 4, alpha: .last)
+        let dropped = NFKMLXImageBridge.droppingAlpha(straight)
+        XCTAssertFalse(NFKMLXImageBridge.hasAlpha(dropped))
+        XCTAssertEqual(rgb(of: dropped), Self.pillowConvertedRGB, "the color under zero alpha survives")
+
+        let premultiplied = try image([100, 100, 100, 128], width: 1, alpha: .premultipliedLast)
+        XCTAssertEqual(rgb(of: NFKMLXImageBridge.droppingAlpha(premultiplied)), [199, 199, 199])
+
+        let opaque = try opaqueImage(rgb: [1, 2, 3], width: 1)
+        XCTAssertTrue(NFKMLXImageBridge.droppingAlpha(opaque) === opaque)
+    }
+
+    func testCompositingOnWhiteMatchesPillow() throws {
+        let straight = try image(Self.pillowSource, width: 4, alpha: .last)
+        let composited = NFKMLXImageBridge.compositedOnWhite(straight)
+        let rgba = NFKMLXImageBridge.rgbaBytes(from: composited, colorSpace: CGColorSpaceCreateDeviceRGB()).bytes
+        XCTAssertTrue(stride(from: 3, to: rgba.count, by: 4).allSatisfy { rgba[$0] == 255 }, "the composite is opaque")
+        XCTAssertEqual(rgb(of: composited), Self.pillowOnWhite)
+
+        let opaqueWithAlphaChannel = try image([1, 2, 3, 255], width: 1, alpha: .last)
+        XCTAssertTrue(NFKMLXImageBridge.compositedOnWhite(opaqueWithAlphaChannel) === opaqueWithAlphaChannel,
+                      "an image whose every pixel is opaque is used as it is")
+    }
+
+    func testTheVisionProcessorsAndTheControlImageReadAlphaAsTheirReferences() throws {
+        try requireMLXRuntime()
+        let translucent = try image(Self.pillowSource, width: 4, alpha: .last)
+        let onWhite = try opaqueImage(rgb: Self.pillowOnWhite, width: 4)
+        let converted = try opaqueImage(rgb: Self.pillowConvertedRGB, width: 4)
+        func same(_ a: MLXArray, _ b: MLXArray, _ message: String) {
+            XCTAssertEqual(a.shape, b.shape, message)
+            XCTAssertEqual(abs(a - b).max().item(Float.self), 0, message)
+        }
+
+        let pixtral = NFKMLXPixtralImageProcessor(patchSize: 2, longestEdge: 8)
+        same(pixtral.process(translucent).pixelValues, pixtral.process(onWhite).pixelValues, "Pixtral pastes onto white")
+        same(NFKMLXSmolVLMImageProcessor.process(translucent, tileSize: 4, longestEdge: 4).pixelValues,
+             NFKMLXSmolVLMImageProcessor.process(onWhite, tileSize: 4, longestEdge: 4).pixelValues,
+             "SmolVLM composites onto white")
+        let gemma4 = NFKMLXGemma4ImageProcessor(patchSize: 2, poolingKernelSize: 1, maxSoftTokens: 8)
+        same(gemma4.process(translucent).pixelValues, gemma4.process(converted).pixelValues, "Gemma 4 drops alpha")
+        same(try NFKMLXControlImage.pixels(translucent, width: 4, height: 1),
+             try NFKMLXControlImage.pixels(converted, width: 4, height: 1), "a control image drops alpha")
+    }
+
     func testPremultipliedHelper() {
         XCTAssertEqual(NFKMLXImageBridge.premultiplied([255, 255, 255, 0]), [0, 0, 0, 0])
         XCTAssertEqual(NFKMLXImageBridge.premultiplied([100, 100, 100, 255]), [100, 100, 100, 255])

@@ -33,9 +33,10 @@ public final class NFKMLXControlNetParameterKey: NSObject {
 enum NFKMLXControlImage {
 
     /// `value` (a `CGImage` or a texture) resized to `width` × `height`, as `[1, height, width, 3]` in
-    /// `[-1, 1]`, which is how the reference pipelines' image processor hands it to the autoencoder.
+    /// `[-1, 1]`, which is how the reference pipelines' image processor hands it to the autoencoder. An
+    /// image with alpha has it dropped and its stored color kept, as the processor's `convert_to_rgb` does.
     static func pixels(_ value: Any, width: Int, height: Int) throws -> MLXArray {
-        let image = try NFKMLXGenerationBackend.cgImage(fromInput: value)
+        let image = NFKMLXImageBridge.droppingAlpha(try NFKMLXGenerationBackend.cgImage(fromInput: value))
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
         let drawn = bytes.withUnsafeMutableBytes { buffer -> Bool in
             guard let context = CGContext(data: buffer.baseAddress, width: width, height: height,

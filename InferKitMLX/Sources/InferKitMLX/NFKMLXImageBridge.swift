@@ -76,6 +76,98 @@ enum NFKMLXImageBridge {
         return image
     }
 
+    // MARK: CGImage -> opaque CGImage, as Pillow's RGB conversions make one (no MLX)
+
+    /// `image` with its alpha dropped and its stored color kept, as Pillow's `convert("RGB")` makes it.
+    ///
+    /// @discussion
+    /// - No alpha → `image` itself.
+    /// - Straight 8-bit RGBA → its own pixels re-read as opaque, so every stored byte survives, including
+    ///   the color under zero alpha.
+    /// - Any other layout → the straight color of ``rgbaBytes(from:colorSpace:)``, in which a premultiplied
+    ///   image has already lost the color under zero alpha.
+    static func droppingAlpha(_ image: CGImage) -> CGImage {
+        guard hasAlpha(image) else {
+            return image
+        }
+        if let opaque = reinterpretedAsOpaque(image) {
+            return opaque
+        }
+        let read = rgbaBytes(from: image, colorSpace: CGColorSpaceCreateDeviceRGB())
+        var bytes = read.bytes
+        guard !allOpaque(bytes) else {
+            return image
+        }
+        for alpha in stride(from: 3, to: bytes.count, by: 4) {
+            bytes[alpha] = 255
+        }
+        return (try? cgImage(rgba: bytes, width: read.width, height: read.height, options: NFKMLXImageOptions())) ?? image
+    }
+
+    /// `image` composited onto white, as Pillow's `alpha_composite` onto a white image and its alpha-masked
+    /// `paste` onto one both make it.
+    ///
+    /// @discussion Each channel is `(c·a + 255·(255 − a)) / 255` rounded to the nearest level, which equals
+    /// both Pillow paths at every color and alpha (a 256 × 256 sweep against Pillow 11.3). An image without
+    /// alpha, or one whose every pixel is opaque, is `image` itself.
+    static func compositedOnWhite(_ image: CGImage) -> CGImage {
+        guard hasAlpha(image) else {
+            return image
+        }
+        let read = rgbaBytes(from: image, colorSpace: CGColorSpaceCreateDeviceRGB())
+        var bytes = read.bytes
+        guard !allOpaque(bytes) else {
+            return image
+        }
+        var index = 0
+        while index < bytes.count {
+            let alpha = UInt32(bytes[index + 3])
+            for channel in 0 ..< 3 {
+                let blended = UInt32(bytes[index + channel]) * alpha + 255 * (255 - alpha) + 128
+                bytes[index + channel] = UInt8(((blended >> 8) + blended) >> 8)
+            }
+            bytes[index + 3] = 255
+            index += 4
+        }
+        return (try? cgImage(rgba: bytes, width: read.width, height: read.height, options: NFKMLXImageOptions())) ?? image
+    }
+
+    static func hasAlpha(_ image: CGImage) -> Bool {
+        switch image.alphaInfo {
+        case .none, .noneSkipFirst, .noneSkipLast:
+            return false
+        default:
+            return true
+        }
+    }
+
+    private static func allOpaque(_ rgba: [UInt8]) -> Bool {
+        stride(from: 3, to: rgba.count, by: 4).allSatisfy { rgba[$0] == 255 }
+    }
+
+    /// A straight 8-bit RGBA image's own provider under the matching skip-alpha layout, or nil for any
+    /// other layout.
+    private static func reinterpretedAsOpaque(_ image: CGImage) -> CGImage? {
+        let skip: CGImageAlphaInfo
+        switch image.alphaInfo {
+        case .last: skip = .noneSkipLast
+        case .first: skip = .noneSkipFirst
+        default: return nil
+        }
+        guard image.bitsPerComponent == 8, image.bitsPerPixel == 32,
+              !image.bitmapInfo.contains(.floatComponents),
+              let space = image.colorSpace, space.model == .rgb,
+              let provider = image.dataProvider else {
+            return nil
+        }
+        let byteOrder = image.bitmapInfo.rawValue & CGBitmapInfo.byteOrderMask.rawValue
+        return CGImage(width: image.width, height: image.height, bitsPerComponent: 8, bitsPerPixel: 32,
+                       bytesPerRow: image.bytesPerRow, space: space,
+                       bitmapInfo: CGBitmapInfo(rawValue: byteOrder | skip.rawValue), provider: provider,
+                       decode: image.decode, shouldInterpolate: image.shouldInterpolate,
+                       intent: image.renderingIntent)
+    }
+
     // MARK: MTLTexture <-> RGBA8 bytes (no MLX)
 
     static func rgbaBytes(from texture: MTLTexture) throws -> (bytes: [UInt8], width: Int, height: Int) {

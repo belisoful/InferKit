@@ -377,7 +377,8 @@ public final class NFKMLXSmolVLMNet {
 /// differ slightly and a caption may not be token-identical to the reference; the tile geometry and the
 /// prompt structure match exactly, and the network is at reference parity on the reference's own pixel
 /// values. The image's longest edge is scaled to 2048, split into `⌈h/512⌉ × ⌈w/512⌉` sub-tiles, and the
-/// whole image is resized to one 512×512 global tile appended last.
+/// whole image is resized to one 512×512 global tile appended last. An image with alpha is first
+/// composited onto white, as the reference's `convert_to_rgb` composites it.
 public enum NFKMLXSmolVLMImageProcessor {
     /// The 500M and 256M releases tile at 512 inside a 2048 frame; the 2.2B tiles at 384 inside 1536.
     /// A release states both in its `preprocessor_config.json` (`max_image_size` and `size`).
@@ -394,6 +395,7 @@ public enum NFKMLXSmolVLMImageProcessor {
     /// - Since: InferKit 0.3.1
     public static func process(_ image: CGImage, tileSize: Int,
                                longestEdge: Int) -> (pixelValues: MLXArray, rows: Int, cols: Int) {
+        let image = NFKMLXImageBridge.compositedOnWhite(image)
         let scale = Double(longestEdge) / Double(max(image.width, image.height))
         let resizedWidth = Swift.max(tileSize, Int((Double(image.width) * scale).rounded()))
         let resizedHeight = Swift.max(tileSize, Int((Double(image.height) * scale).rounded()))

@@ -1800,6 +1800,14 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### Vision processors treat alpha as their references do
+
+- Pixtral and SmolVLM2 composite an image with alpha onto white before resizing, as their reference
+  processors' `convert_to_rgb` does. Gemma 4 and the FLUX.1 and SD3 ControlNet control images drop
+  alpha and keep the stored color, as Pillow's `convert("RGB")` does. Before, each drew the image into
+  a premultiplied or opaque 8-bit context, which composited it onto black, so a transparent background
+  reached the model black. Opaque images read as before.
+
 #### An image with alpha reads as straight color
 
 - Every MLX backend reads an input image's color unpremultiplied by its alpha, as Pillow decodes a PNG.

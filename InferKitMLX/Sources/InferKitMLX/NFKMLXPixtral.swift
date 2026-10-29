@@ -584,8 +584,10 @@ public struct NFKMLXPixtralImageProcessor {
         return (toPatch(scaledHeight), toPatch(scaledWidth))
     }
 
-    /// The normalized pixels `[1, 3, height, width]` and the patch grid.
+    /// The normalized pixels `[1, 3, height, width]` and the patch grid. An image with alpha is first
+    /// composited onto white, as the reference's `convert_to_rgb` pastes it.
     public func process(_ image: CGImage) -> (pixelValues: MLXArray, gridH: Int, gridW: Int) {
+        let image = NFKMLXImageBridge.compositedOnWhite(image)
         let (height, width) = resize(height: image.height, width: image.width)
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
         let context = CGContext(data: &bytes, width: width, height: height, bitsPerComponent: 8,

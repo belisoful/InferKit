@@ -167,6 +167,19 @@ Backends there adopt the same `NFKInferenceBackend` protocol from Swift:
     `NFKImageCoding.pixelBuffer(with:)` drew stores 8-bit premultiplied color, so 200 under alpha 128
     reads back as 199.
   - `MTLTexture` → its bytes as stored, read as straight, the form `texture(rgba:…)` writes by default.
+  A processor whose reference makes an RGB image first takes the opaque `CGImage` it would make before
+  resizing. `droppingAlpha` is Pillow's `convert("RGB")`: a straight 8-bit image re-reads its own pixels
+  as opaque, so the color under zero alpha survives. `compositedOnWhite` is Pillow's `alpha_composite`
+  onto white and its alpha-masked `paste` onto white, which both round `(c·a + 255·(255 − a)) / 255` to
+  nearest (a 256 × 256 sweep against Pillow 11.3, 0 mismatches). Each returns an opaque input as it is,
+  so opaque pictures reach the processors unchanged. The readers:
+  - Pixtral (`PixtralImageProcessor`, slow) → onto white.
+  - SmolVLM2 (`SmolVLMImageProcessor`, slow) → onto white.
+  - Gemma 4 (transformers 5.16, torchvision backend) → alpha dropped.
+  - A ControlNet control image (diffusers `VaeImageProcessor`, `do_convert_rgb=True`) → alpha dropped.
+  The releases name the slow processors in `preprocessor_config.json`, and transformers 4.57 loads the
+  slow one when `use_fast` is unset. Both fast processors drop alpha instead. Face alignment's crop and
+  paste-back draw into contexts whose images keep their premultiplied tag, so they need neither.
   Its CoreGraphics, CoreVideo, and Metal byte halves are unit-tested.
 - Direct `@objc` factories (the primary ObjC path for shipped real models, no registry): every real
   model class exposes `+backendWith[Variant:]weightsURL:error:` (local weights, nil → random weights,

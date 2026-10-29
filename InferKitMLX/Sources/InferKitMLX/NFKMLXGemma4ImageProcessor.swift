@@ -56,8 +56,10 @@ public struct NFKMLXGemma4ImageProcessor {
     }
 
     /// The flattened patches `[maxPatches, 3·patchSize²]` in `0 … 1` and their positions
-    /// `[maxPatches, 2]`, ready for ``NFKMLXGemma4VisionNet``.
+    /// `[maxPatches, 2]`, ready for ``NFKMLXGemma4VisionNet``. An image with alpha has it dropped and its
+    /// stored color kept, as the reference's `convert_to_rgb` converts it.
     public func process(_ image: CGImage) -> (pixelValues: MLXArray, positionIds: MLXArray) {
+        let image = NFKMLXImageBridge.droppingAlpha(image)
         let (height, width) = resizedSize(width: image.width, height: image.height)
         var bytes = [UInt8](repeating: 0, count: width * height * 4)
         let context = CGContext(data: &bytes, width: width, height: height, bitsPerComponent: 8,
