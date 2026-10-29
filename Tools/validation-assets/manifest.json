@@ -5559,6 +5559,30 @@
       "note": "DINO ViT-B/16 (facebook/dino-vitb16, Meta, Apache-2.0), 0.34 GB. The TripoSR oracle builds transformers' `ViTModel` from this `config.json` before the TripoSR checkpoint overwrites its weights. The port reads nothing from it: the TripoSR checkpoint carries the tokenizer's weights."
     },
     {
+      "key": "SF3D",
+      "repo": "stabilityai/stable-fast-3d",
+      "revision": "f0c9a8ffd62cb1bbc8a7a53c9f87a0be1b6be778",
+      "directory": "sf3d",
+      "files": [
+        "LICENSE.md",
+        "README.md",
+        "config.yaml",
+        "model.safetensors"
+      ],
+      "inputs": [
+        {
+          "file": "160_tets.npz",
+          "url": "https://raw.githubusercontent.com/Stability-AI/stable-fast-3d/ff21fc491b4dc5314bf6734c7c0dabd86b5f5bb2/load/tets/160_tets.npz",
+          "bytes": 15408790
+        }
+      ],
+      "config": {
+        "IK_VAL_SF3D": "",
+        "IK_PARITY_SF3D": "sf3d/sf3d-reference.safetensors"
+      },
+      "note": "Stable Fast 3D (stabilityai/stable-fast-3d, Stability AI Community License, gated: accept the terms on Hugging Face), 4.02 GB float32: one checkpoint holding the camera embedder, the modulated DINOv2-large tokenizer, the triplane token bank, the two-stream backbone, the upsampler, the decoder heads, the OpenCLIP ViT-B/32 material estimator (with its unused text tower), and the illumination head. The tetrahedral grid `160_tets.npz` comes from the release's code repository at ff21fc4 (sha256 1f4be37efc604d28d55a1a78c2aabefeeab7e63149f541aa45f9dd858ee35bb9) and sits beside the checkpoint. The parity record comes from `run_reference.py sf3d --plate subject --size 512 --checkpoint <this directory>` under the `sf3d` oracle environment. `run_reference.py sf3d_twins` with the same arguments probes the reference's own sensitivity: its downstream from its scene code perturbed four times at 1.42e-6 relative, which moves 18 to 33 atlas faces."
+    },
+    {
       "key": "STABLE_AUDIO_OPEN",
       "repo": "stabilityai/stable-audio-open-1.0",
       "directory": "stable-audio-open-1.0",
@@ -6061,6 +6085,15 @@
       "rebuild": "python3.12 -m venv ~/.inferkit-validation/triposrvenv && ~/.inferkit-validation/triposrvenv/bin/pip install torch torchvision 'transformers<5' omegaconf einops trimesh safetensors huggingface-hub pillow numpy 'pybind11[global]' scikit-build-core ninja cmake && CMAKE_PREFIX_PATH=\"$(~/.inferkit-validation/triposrvenv/bin/python3 -c 'import torch,pybind11;print(torch.utils.cmake_prefix_path+\";\"+pybind11.get_cmake_dir())')\" ~/.inferkit-validation/triposrvenv/bin/pip install --no-build-isolation 'git+https://github.com/tatsy/torchmcubes.git'",
       "modes": [
         "triposr"
+      ]
+    },
+    "sf3d": {
+      "interpreter": "~/.inferkit-validation/sf3dvenv/bin/python3",
+      "why": "Stable Fast 3D's `sf3d` package (IK_SF3D_SRC, the repository at ff21fc4 under ~/.inferkit-validation/src/sf3d-ff21fc4) needs open_clip_torch 2.24.0, omegaconf, einops, jaxtyping, trimesh, scipy (trimesh's vertex normals take its sparse path, as in the release's environment, which pulls scipy in through gpytoolbox), and the repository's two C++ extensions, `texture_baker` and `uv_unwrapper`. The extensions are built for the CPU (USE_METAL=0) with `-ffp-contract=off`, so their float32 arithmetic is unfused as on an x86 build; the default Apple-silicon build fuses multiply-adds (536 fused instructions in uv_unwrapper alone). The script stubs `rembg`, `gpytoolbox`, and `pynanoinstantmeshes`, which the recorded path (no background removal, no remeshing) never calls, builds DINOv2-large from its configuration and the OpenCLIP tower without its laion2b weights (the strict `load_model` overwrites both from the release's checkpoint), and runs on the CPU (SF3D_USE_CPU=1). transformers stays below 5 (4.57.6 recorded) for the copied DINOv2's imports.",
+      "rebuild": "python3.12 -m venv ~/.inferkit-validation/sf3dvenv && ~/.inferkit-validation/sf3dvenv/bin/pip install torch==2.14.1 torchvision 'transformers<5' 'open_clip_torch==2.24.0' einops jaxtyping omegaconf trimesh scipy safetensors pillow numpy huggingface-hub setuptools wheel ninja && for extension in texture_baker uv_unwrapper; do cp -R ~/.inferkit-validation/src/sf3d-ff21fc4/$extension \"$TMPDIR/$extension\" && (cd \"$TMPDIR/$extension\" && CFLAGS=-ffp-contract=off CXXFLAGS=-ffp-contract=off USE_METAL=0 USE_CUDA=0 USE_NATIVE_ARCH=0 CPPFLAGS=-I/opt/homebrew/opt/libomp/include LDFLAGS='-L/opt/homebrew/opt/libomp/lib -Wl,-rpath,/opt/homebrew/opt/libomp/lib' ~/.inferkit-validation/sf3dvenv/bin/pip install --no-build-isolation .); done",
+      "modes": [
+        "sf3d",
+        "sf3d_twins"
       ]
     }
   },

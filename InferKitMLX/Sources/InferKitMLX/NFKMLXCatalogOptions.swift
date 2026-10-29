@@ -250,6 +250,9 @@ struct NFKMLXLoadProfile {
         "triposr": [NFKMLXLoadProfile(tasks: [NFKModelTaskImageTo3D],
                                       precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionBFloat16],
                                       defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true)],
+        "stable-fast-3d": [NFKMLXLoadProfile(tasks: [NFKModelTaskImageTo3D],
+                                             precisions: [NFKModelPrecisionCheckpoint, NFKModelPrecisionBFloat16],
+                                             defaultPrecision: NFKModelPrecisionCheckpoint, quantizes: true)],
         "flux": [.diffusionPipeline()],
         // The text encoder and umT5 widen to float32 where the budget holds them.
         "flux2": [.diffusionPipeline(widenedStages: ["text_encoder": NFKModelPrecisionFloat32])],

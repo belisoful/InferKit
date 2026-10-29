@@ -97,8 +97,8 @@ file listed here, never back into `AGENTS.md` / `CLAUDE.md`. The Documentation S
 - [mlx-models-music-transcription-structure.md](mlx-models-music-transcription-structure.md) — the
   audio → MIDI and music-structure survey, the core MIDI and beat value types, Basic Pitch,
   All-In-One, and the build order behind them.
-- [mlx-models-3d-reconstruction.md](mlx-models-3d-reconstruction.md) — the core mesh value type and
-  TripoSR, the first image → 3D model.
+- [mlx-models-3d-reconstruction.md](mlx-models-3d-reconstruction.md) — the core mesh and material value
+  types, TripoSR (the first image → 3D model), and Stable Fast 3D (the first textured one).
 
 ## InferKitFoundationModels
 

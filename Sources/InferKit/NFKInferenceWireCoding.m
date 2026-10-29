@@ -207,7 +207,7 @@ static NSArray<Class> *NFKWireArchivedClasses(void)
 {
 	return @[ NFKDetection.class, NFKKeypoint.class, NFKClassification.class, NFKAudioSegment.class,
 			  NFKMIDISequence.class, NFKMIDINote.class, NFKMusicBeat.class, NFKQuadrilateral.class,
-			  NFKDecisionAnswer.class, NFKMesh.class ];
+			  NFKDecisionAnswer.class, NFKMesh.class, NFKMeshMaterial.class, NFKMeshTexture.class ];
 }
 
 static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
@@ -410,8 +410,12 @@ static NSSet<Class> *NFKWireArchiveDecodingClasses(void)
 		return withFile;
 	}
 	if (self.encodesValueObjectsAsJSON && self.fileDirectoryURL != nil && [value isKindOfClass:NFKMesh.class]) {
-		// The PLY is the file; the object keeps the counts and names it, as a MIDI sequence's does.
-		return [self fileEntryAs:@"mesh" fields:NFKWireMeshJSON(value, NO) data:[value PLYData] extension:@"ply" key:key error:outError];
+		// The PLY, or the GLB of a mesh with a material, is the file; the object keeps the counts and names
+		// it, as a MIDI sequence's does.
+		NFKMesh *mesh = value;
+		BOOL binaryGLTF = mesh.material != nil;
+		return [self fileEntryAs:@"mesh" fields:NFKWireMeshJSON(mesh, NO) data:binaryGLTF ? mesh.GLBData : mesh.PLYData
+					   extension:binaryGLTF ? @"glb" : @"ply" key:key error:outError];
 	}
 	if (valueObject != nil) {
 		return valueObject;
@@ -1010,7 +1014,8 @@ static void NFKWireCopyMultiArrayElements(void *strided, NSArray<NSNumber *> *sh
 	}
 	if ([tag isEqualToString:@"mesh"]) {
 		NSError *readError = nil;
-		NFKMesh *mesh = [NFKMesh meshWithPLYData:data error:&readError];
+		BOOL binaryGLTF = [url.pathExtension.lowercaseString isEqualToString:@"glb"];
+		NFKMesh *mesh = binaryGLTF ? [NFKMesh meshWithGLBData:data error:&readError] : [NFKMesh meshWithPLYData:data error:&readError];
 		return mesh ?: [self failForKey:key reason:readError.localizedDescription ?: @"the mesh file could not be read" error:outError];
 	}
 	NSError *limitError = nil;
@@ -1404,7 +1409,8 @@ static AVAudioPCMBuffer * _Nullable NFKWirePCMBufferCopyingList(AVAudioFormat *f
 	if ([tag isEqualToString:@"toolInvocation"]) {
 		return [self toolInvocationFromEntry:entry key:key error:outError];
 	}
-	if ([tag isEqualToString:@"mesh"] && self.fileDirectoryURL != nil && [entry[@"path"] isKindOfClass:NSString.class] && entry[@"ply"] == nil) {
+	if ([tag isEqualToString:@"mesh"] && self.fileDirectoryURL != nil && [entry[@"path"] isKindOfClass:NSString.class] && entry[@"ply"] == nil
+		&& entry[@"glb"] == nil) {
 		return [self fileFormValueForTag:tag entry:entry key:key error:outError];
 	}
 	if (NFKWireIsValueObjectTag(tag)) {

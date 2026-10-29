@@ -4,6 +4,7 @@
 //
 
 #import "NFKMesh.h"
+#import "NFKMeshMaterial.h"
 #import "NFKErrors.h"
 #import <simd/simd.h>
 
@@ -160,6 +161,7 @@ static NSUInteger NFKPLYTypeSize(NFKPLYType type)
 @property (nonatomic, copy, nullable) NSData *colors;
 @property (nonatomic, copy, nullable) NSData *textureCoordinates;
 @property (nonatomic, copy) NSData *indices;
+@property (nonatomic, copy, nullable) NFKMeshMaterial *material;
 @end
 
 @implementation NFKMesh
@@ -176,6 +178,18 @@ static NSUInteger NFKPLYTypeSize(NFKPLYType type)
 									colors:(nullable NSData *)colors
 						textureCoordinates:(nullable NSData *)textureCoordinates
 								   indices:(NSData *)indices
+									 error:(NSError **)error
+{
+	return [self initWithPositions:positions normals:normals colors:colors textureCoordinates:textureCoordinates
+						   indices:indices material:nil error:error];
+}
+
+- (nullable instancetype)initWithPositions:(NSData *)positions
+								   normals:(nullable NSData *)normals
+									colors:(nullable NSData *)colors
+						textureCoordinates:(nullable NSData *)textureCoordinates
+								   indices:(NSData *)indices
+								  material:(nullable NFKMeshMaterial *)material
 									 error:(NSError **)error
 {
 	self = [super init];
@@ -211,6 +225,12 @@ static NSUInteger NFKPLYTypeSize(NFKPLYType type)
 			return nil;
 		}
 	}
+	BOOL textured = material.baseColorTexture != nil || material.normalTexture != nil || material.metallicRoughnessTexture != nil;
+	if (textured && textureCoordinates == nil) {
+		NFKMeshInvalid(error, @"the material has a texture and the mesh no texture coordinates to read it through");
+		return nil;
+	}
+	_material = material;
 	_positions = [positions copy];
 	_normals = [normals copy];
 	_colors = [colors copy];
@@ -340,7 +360,8 @@ static NFKMeshVector NFKMeshVectorFrom(simd_float3 v)
 		return (a == nil && b == nil) || [a isEqualToData:b];
 	};
 	return same(self.positions, other.positions) && same(self.normals, other.normals) && same(self.colors, other.colors)
-		&& same(self.textureCoordinates, other.textureCoordinates) && same(self.indices, other.indices);
+		&& same(self.textureCoordinates, other.textureCoordinates) && same(self.indices, other.indices)
+		&& ((self.material == nil && other.material == nil) || [self.material isEqual:other.material]);
 }
 
 - (NSUInteger)hash
@@ -350,9 +371,9 @@ static NFKMeshVector NFKMeshVectorFrom(simd_float3 v)
 
 - (NSString *)description
 {
-	return [NSString stringWithFormat:@"<%@ %lu vertices, %lu faces%@%@%@>", NSStringFromClass(self.class), (unsigned long)self.vertexCount,
+	return [NSString stringWithFormat:@"<%@ %lu vertices, %lu faces%@%@%@%@>", NSStringFromClass(self.class), (unsigned long)self.vertexCount,
 			(unsigned long)self.faceCount, self.normals != nil ? @", normals" : @"", self.colors != nil ? @", colors" : @"",
-			self.textureCoordinates != nil ? @", texture coordinates" : @""];
+			self.textureCoordinates != nil ? @", texture coordinates" : @"", self.material != nil ? @", material" : @""];
 }
 
 #pragma mark - Writing
@@ -493,16 +514,48 @@ static NFKMeshVector NFKMeshVectorFrom(simd_float3 v)
 							@"count": @(self.faceCount * 3), @"type": @"SCALAR" }];
 	NSNumber *indexAccessor = @(accessors.count - 1);
 
-	NSDictionary *document = @{
+	NSMutableDictionary *primitive = [@{ @"attributes": attributes, @"indices": indexAccessor, @"mode": @4 } mutableCopy];
+	NSMutableDictionary *document = [@{
 		@"asset": @{ @"version": @"2.0", @"generator": NFKMeshGLBGenerator },
 		@"scene": @0,
 		@"scenes": @[ @{ @"nodes": @[ @0 ] } ],
 		@"nodes": @[ @{ @"mesh": @0 } ],
-		@"meshes": @[ @{ @"primitives": @[ @{ @"attributes": attributes, @"indices": indexAccessor, @"mode": @4 } ] } ],
+		@"meshes": @[ @{ @"primitives": @[ primitive ] } ],
 		@"accessors": accessors,
 		@"bufferViews": bufferViews,
-		@"buffers": @[ @{ @"byteLength": @(binary.length) } ],
-	};
+	} mutableCopy];
+	NFKMeshMaterial *material = self.material;
+	if (material != nil) {
+		NSMutableArray<NSDictionary *> *images = [NSMutableArray array];
+		NSMutableArray<NSDictionary *> *textures = [NSMutableArray array];
+		NSDictionary *(^addTexture)(NFKMeshTexture *) = ^NSDictionary *(NFKMeshTexture *texture) {
+			[images addObject:@{ @"bufferView": addView(texture.data, nil), @"mimeType": texture.MIMEType }];
+			[textures addObject:@{ @"sampler": @0, @"source": @(images.count - 1) }];
+			return @{ @"index": @(textures.count - 1), @"texCoord": @0 };
+		};
+		NSMutableDictionary *pbr = [@{ @"baseColorFactor": material.baseColorFactor,
+									   @"metallicFactor": @(material.metallicFactor),
+									   @"roughnessFactor": @(material.roughnessFactor) } mutableCopy];
+		NSMutableDictionary *entry = [@{ @"pbrMetallicRoughness": pbr } mutableCopy];
+		if (material.baseColorTexture != nil) {
+			pbr[@"baseColorTexture"] = addTexture(material.baseColorTexture);
+		}
+		if (material.metallicRoughnessTexture != nil) {
+			pbr[@"metallicRoughnessTexture"] = addTexture(material.metallicRoughnessTexture);
+		}
+		if (material.normalTexture != nil) {
+			entry[@"normalTexture"] = addTexture(material.normalTexture);
+		}
+		document[@"materials"] = @[ entry ];
+		if (textures.count > 0) {
+			document[@"images"] = images;
+			document[@"textures"] = textures;
+			// Linear filtering with mipmaps, repeating, as glTF's defaults read.
+			document[@"samplers"] = @[ @{ @"magFilter": @9729, @"minFilter": @9987, @"wrapS": @10497, @"wrapT": @10497 } ];
+		}
+		primitive[@"material"] = @0;
+	}
+	document[@"buffers"] = @[ @{ @"byteLength": @(binary.length) } ];
 	NSMutableData *json = [[NSJSONSerialization dataWithJSONObject:document options:NSJSONWritingSortedKeys error:NULL] mutableCopy];
 	NFKMeshPadToFour(json, ' ');
 
@@ -937,6 +990,75 @@ static uint32_t NFKMeshReadUInt32(const uint8_t *bytes)
 	return CFSwapInt32LittleToHost(value);
 }
 
+/*! The image a glTF texture-info entry names, from the binary chunk, or nil when the entry, its texture,
+	its image, or the image's buffer view is missing or malformed, or the image is not PNG or JPEG. */
+static NFKMeshTexture *NFKMeshGLBTexture(NSDictionary *document, NSData *binary, id info)
+{
+	if (![info isKindOfClass:NSDictionary.class] || ![info[@"index"] isKindOfClass:NSNumber.class]) {
+		return nil;
+	}
+	NSArray *textures = document[@"textures"], *images = document[@"images"], *views = document[@"bufferViews"];
+	NSUInteger textureIndex = [info[@"index"] unsignedIntegerValue];
+	if (![textures isKindOfClass:NSArray.class] || textureIndex >= textures.count) {
+		return nil;
+	}
+	NSDictionary *texture = textures[textureIndex];
+	if (![texture isKindOfClass:NSDictionary.class] || ![texture[@"source"] isKindOfClass:NSNumber.class]) {
+		return nil;
+	}
+	NSUInteger imageIndex = [texture[@"source"] unsignedIntegerValue];
+	if (![images isKindOfClass:NSArray.class] || imageIndex >= images.count) {
+		return nil;
+	}
+	NSDictionary *image = images[imageIndex];
+	if (![image isKindOfClass:NSDictionary.class] || ![image[@"bufferView"] isKindOfClass:NSNumber.class]
+		|| ![image[@"mimeType"] isKindOfClass:NSString.class]) {
+		return nil;
+	}
+	NSUInteger viewIndex = [image[@"bufferView"] unsignedIntegerValue];
+	if (![views isKindOfClass:NSArray.class] || viewIndex >= views.count || ![views[viewIndex] isKindOfClass:NSDictionary.class]) {
+		return nil;
+	}
+	NSDictionary *view = views[viewIndex];
+	NSUInteger offset = [view[@"byteOffset"] unsignedIntegerValue], length = [view[@"byteLength"] unsignedIntegerValue];
+	if ([view[@"buffer"] unsignedIntegerValue] != 0 || offset + length > binary.length) {
+		return nil;
+	}
+	return [[NFKMeshTexture alloc] initWithData:[binary subdataWithRange:NSMakeRange(offset, length)]
+									   MIMEType:image[@"mimeType"] error:NULL];
+}
+
+/*! Material index of a glTF document as an NFKMeshMaterial, or nil when it is missing or malformed. A
+	factor outside 0...1 is clamped into it, and a texture this type cannot hold is left out. */
+static NFKMeshMaterial *NFKMeshGLBMaterial(NSDictionary *document, NSData *binary, NSUInteger index)
+{
+	NSArray *materials = document[@"materials"];
+	if (![materials isKindOfClass:NSArray.class] || index >= materials.count || ![materials[index] isKindOfClass:NSDictionary.class]) {
+		return nil;
+	}
+	NSDictionary *material = materials[index];
+	NSDictionary *pbr = [material[@"pbrMetallicRoughness"] isKindOfClass:NSDictionary.class] ? material[@"pbrMetallicRoughness"] : @{};
+	float (^factor)(id, float) = ^float(id value, float fallback) {
+		float number = [value isKindOfClass:NSNumber.class] ? [value floatValue] : fallback;
+		return fminf(fmaxf(number, 0), 1);
+	};
+	NSArray<NSNumber *> *baseColorFactor = nil;
+	if ([pbr[@"baseColorFactor"] isKindOfClass:NSArray.class] && [pbr[@"baseColorFactor"] count] == 4) {
+		NSMutableArray<NSNumber *> *components = [NSMutableArray arrayWithCapacity:4];
+		for (id component in pbr[@"baseColorFactor"]) {
+			[components addObject:@(factor(component, 1))];
+		}
+		baseColorFactor = components;
+	}
+	return [[NFKMeshMaterial alloc] initWithBaseColorTexture:NFKMeshGLBTexture(document, binary, pbr[@"baseColorTexture"])
+											   normalTexture:NFKMeshGLBTexture(document, binary, material[@"normalTexture"])
+									metallicRoughnessTexture:NFKMeshGLBTexture(document, binary, pbr[@"metallicRoughnessTexture"])
+											 baseColorFactor:baseColorFactor
+											  metallicFactor:factor(pbr[@"metallicFactor"], 1)
+											 roughnessFactor:factor(pbr[@"roughnessFactor"], 1)
+													   error:NULL];
+}
+
 + (nullable instancetype)meshWithGLBData:(NSData *)data error:(NSError **)error
 {
 	const uint8_t *bytes = data.bytes;
@@ -1048,8 +1170,12 @@ static uint32_t NFKMeshReadUInt32(const uint8_t *bytes)
 				}
 			}
 		};
+	NSNumber *materialIndex = nil;
 	for (NSDictionary *mesh in meshes) {
 		for (NSDictionary *primitive in [mesh[@"primitives"] isKindOfClass:NSArray.class] ? mesh[@"primitives"] : @[]) {
+			if (materialIndex == nil && [primitive[@"material"] isKindOfClass:NSNumber.class]) {
+				materialIndex = primitive[@"material"];
+			}
 			NSUInteger mode = primitive[@"mode"] != nil ? [primitive[@"mode"] unsignedIntegerValue] : 4;
 			if (mode != 4) {
 				NFKMeshReadFail(error, @"GLB", @"a primitive is not a triangle list");
@@ -1123,12 +1249,19 @@ static uint32_t NFKMeshReadUInt32(const uint8_t *bytes)
 			}
 		}
 	}
+	NSData *textureCoordinates = anyTextures && !missingTextures ? textures : nil;
+	NFKMeshMaterial *material = materialIndex != nil ? NFKMeshGLBMaterial(document, binary, materialIndex.unsignedIntegerValue) : nil;
+	BOOL textured = material.baseColorTexture != nil || material.normalTexture != nil || material.metallicRoughnessTexture != nil;
+	if (textured && textureCoordinates == nil) {
+		material = nil;
+	}
 	// An attribute some primitives lack is dropped rather than invented as zeros.
 	return [[self alloc] initWithPositions:positions
 								   normals:anyNormals && !missingNormals ? normals : nil
 									colors:anyColors && !missingColors ? colors : nil
-						textureCoordinates:anyTextures && !missingTextures ? textures : nil
+						textureCoordinates:textureCoordinates
 								   indices:indices
+								  material:material
 									 error:error];
 }
 
@@ -1146,6 +1279,7 @@ static uint32_t NFKMeshReadUInt32(const uint8_t *bytes)
 	[coder encodeObject:self.colors forKey:@"colors"];
 	[coder encodeObject:self.textureCoordinates forKey:@"textureCoordinates"];
 	[coder encodeObject:self.indices forKey:@"indices"];
+	[coder encodeObject:self.material forKey:@"material"];
 }
 
 - (nullable instancetype)initWithCoder:(NSCoder *)coder
@@ -1157,6 +1291,7 @@ static uint32_t NFKMeshReadUInt32(const uint8_t *bytes)
 							colors:[coder decodeObjectOfClass:NSData.class forKey:@"colors"]
 				textureCoordinates:[coder decodeObjectOfClass:NSData.class forKey:@"textureCoordinates"]
 						   indices:indices ?: [NSData data]
+						  material:[coder decodeObjectOfClass:NFKMeshMaterial.class forKey:@"material"]
 							 error:NULL];
 }
 

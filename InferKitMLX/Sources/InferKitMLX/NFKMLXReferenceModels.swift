@@ -52,6 +52,7 @@ public final class NFKMLXReferenceModels: NSObject {
         NFKMLXRealESRGAN.register()
         NFKMLXDepthAnything.register()
         NFKMLXTripoSR.register()
+        NFKMLXStableFast3D.register()
         NFKMLXDepthAnything3.register()
         NFKMLXU2Net.register()
         NFKMLXISNet.register()

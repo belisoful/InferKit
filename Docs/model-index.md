@@ -63,6 +63,7 @@ entry is listed so it is a known gap rather than an implied API.
 | Model | Entry class | Network | Configuration for the released weights | Registered name | Copy-and-paste (Swift · Objective-C) | Base backend |
 | --- | --- | --- | --- | --- | --- | --- |
 | TripoSR | `NFKMLXTripoSR` | `NFKMLXTripoSRNet` | `NFKMLXTripoSRConfiguration.released`; `network(weightsURL:configuration:)` builds it | `triposr` | `let backend = try NFKMLXTripoSR.backend(weightsURL: url)`<br>`[NFKMLXTripoSR backendWithWeightsURL:url error:&error]`<br>the result's `mesh` (`NFKMesh`) under `NFKOutputMesh`; `NFKMLXTripoSRParameterKey.resolution` / `.threshold` / `.foregroundRatio` / `.vertexColors` | `NFKMLXTripoSRBackend` |
+| Stable Fast 3D | `NFKMLXStableFast3D` | `NFKMLXStableFast3DNet` | `NFKMLXStableFast3DConfiguration.released`; `network(weightsURL:configuration:)` builds it | `stable-fast-3d` | `let backend = try NFKMLXStableFast3D.backend(directoryURL: url)`<br>`[NFKMLXStableFast3D backendWithDirectoryURL:url error:&error]`<br>the result's `mesh` (`NFKMesh`, with an `NFKMeshMaterial`) under `NFKOutputMesh`; `NFKMLXStableFast3DParameterKey.textureResolution` / `.threshold` / `.foregroundRatio` / `.textureFormat` / `.estimateIllumination` | `NFKMLXStableFast3DBackend` |
 
 ## Matting, segmentation, and faces
 

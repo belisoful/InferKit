@@ -7,6 +7,7 @@
 #define NFKMesh_h
 
 #import <Foundation/Foundation.h>
+#import <InferKit/NFKMeshMaterial.h>
 
 NS_ASSUME_NONNULL_BEGIN
 
@@ -41,7 +42,7 @@ NS_INLINE NFKMeshVector NFKMeshVectorMake(float x, float y, float z)
 /*!
 	@class      NFKMesh
 	@abstract   A triangle mesh: vertex positions and triangle indices, with optional normals, vertex
-				colors, and texture coordinates.
+				colors, texture coordinates, and a material.
 	@discussion A 3D-generation backend (an image or a prompt in, an object out) returns one of these
 				under NFKOutputMesh. Positions are in the backend's object space in glTF's frame:
 				right-handed, y up, and an object reconstructed from a picture facing +z, toward the
@@ -51,9 +52,13 @@ NS_INLINE NFKMeshVector NFKMeshVectorMake(float x, float y, float z)
 				coordinate (u, v with v up, the glTF and OBJ convention). The indices are three uint32 a
 				triangle, counter-clockwise seen from outside.
 
+				The material (NFKMeshMaterial) is glTF's metallic-roughness model, its textures read through
+				the texture coordinates.
+
 				The mesh writes itself as a Wavefront OBJ (text, vertex colors as the common "v x y z r g
 				b" extension), a binary little-endian PLY (colors as 8-bit red, green, blue), or a glTF
-				2.0 binary (GLB, one primitive, colors as COLOR_0 floats), and reads each of the three.
+				2.0 binary (GLB, one primitive, colors as COLOR_0 floats, the material and its textures
+				embedded), and reads each of the three. OBJ and PLY carry no material.
 				A PLY is read in its text and both binary forms; an OBJ's polygons are fanned into
 				triangles and its per-face attribute indices are resolved to one attribute set per vertex.
 
@@ -86,6 +91,9 @@ NS_INLINE NFKMeshVector NFKMeshVectorMake(float x, float y, float z)
 /*! The triangle indices, three uint32 a face, each below vertexCount. */
 @property (nonatomic, readonly, copy) NSData *indices;
 
+/*! The surface's material, or nil when the mesh carries none. */
+@property (nonatomic, readonly, copy, nullable) NFKMeshMaterial *material;
+
 /*! The smallest corner of the axis-aligned box around the positions, or zero for an empty mesh. */
 @property (nonatomic, readonly) NFKMeshVector boundingBoxMinimum;
 
@@ -110,6 +118,22 @@ NS_INLINE NFKMeshVector NFKMeshVectorMake(float x, float y, float z)
 									colors:(nullable NSData *)colors
 						textureCoordinates:(nullable NSData *)textureCoordinates
 								   indices:(NSData *)indices
+									 error:(NSError **)error;
+
+/*!
+	@method     initWithPositions:normals:colors:textureCoordinates:indices:material:error:
+	@abstract   A mesh from packed attribute arrays and a material.
+	@discussion The attributes follow initWithPositions:normals:colors:textureCoordinates:indices:error:.
+				A material with a texture needs texture coordinates to read it through: returns nil and
+				fills error with kNFKError_InferenceUnsupported in NFKInferenceErrorDomain when a material
+				names a texture and textureCoordinates is nil. Introduced in InferKit 0.4.0.
+*/
+- (nullable instancetype)initWithPositions:(NSData *)positions
+								   normals:(nullable NSData *)normals
+									colors:(nullable NSData *)colors
+						textureCoordinates:(nullable NSData *)textureCoordinates
+								   indices:(NSData *)indices
+								  material:(nullable NFKMeshMaterial *)material
 									 error:(NSError **)error NS_DESIGNATED_INITIALIZER;
 
 - (instancetype)init NS_UNAVAILABLE;

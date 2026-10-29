@@ -26847,6 +26847,332 @@ def run_triposr(image, checkpoint):
 CHECKPOINT_MODELS["triposr"] = run_triposr
 
 
+def _sf3d_model(checkpoint):
+    """`SF3D.from_pretrained` on the release directory (`config.yaml` + `model.safetensors`), on the CPU.
+
+    The `sf3d` package comes from IK_SF3D_SRC (the repository at ff21fc4 under
+    ~/.inferkit-validation/src/sf3d-ff21fc4). Its `rembg`, `gpytoolbox`, and `pynanoinstantmeshes` imports
+    are stubbed: background removal and the two remeshers do not run here. The tokenizer's
+    `Dinov2Model.from_pretrained("facebook/dinov2-large")` builds from facebook/dinov2-large's
+    configuration alone, and the material estimator's OpenCLIP tower is created without its laion2b
+    weights: the strict `load_model` that follows overwrites every tensor of both from the release's own
+    checkpoint, which carries them. The `texture_baker` and `uv_unwrapper` extensions are built for the
+    CPU with `-ffp-contract=off`, so their float32 arithmetic is unfused, as on an x86 build."""
+    import importlib
+    import types
+    os.environ["SF3D_USE_CPU"] = "1"
+    source = os.environ.get("IK_SF3D_SRC") or next(
+        (path for path in (os.path.join(VALIDATION_ROOT, "src", "sf3d-ff21fc4"),
+                           os.path.expanduser("~/.inferkit-validation/src/sf3d-ff21fc4")) if os.path.isdir(path)),
+        os.path.join(VALIDATION_ROOT, "src", "sf3d-ff21fc4"))
+    if source not in sys.path:
+        sys.path.insert(0, source)
+    for name in ("rembg", "gpytoolbox", "pynanoinstantmeshes"):
+        if name not in sys.modules:
+            sys.modules[name] = types.ModuleType(name)
+    from transformers.models.dinov2.configuration_dinov2 import Dinov2Config
+    dinov2 = importlib.import_module("sf3d.models.tokenizers.dinov2")
+    large = Dinov2Config(hidden_size=1024, num_hidden_layers=24, num_attention_heads=16, image_size=518,
+                         patch_size=14, layerscale_value=1.0, mlp_ratio=4, layer_norm_eps=1e-6,
+                         hidden_act="gelu", use_swiglu_ffn=False, qkv_bias=True)
+    dinov2.Dinov2Model.from_pretrained = classmethod(lambda cls, *args, **kwargs: cls(large))
+    import open_clip
+    create = open_clip.create_model_and_transforms
+
+    def untrained(name, pretrained=None, **kwargs):
+        return create(name, pretrained=None, **kwargs)
+
+    open_clip.create_model_and_transforms = untrained
+    from sf3d.system import SF3D
+    directory = checkpoint if os.path.isdir(checkpoint) else os.path.dirname(checkpoint)
+    model = SF3D.from_pretrained(directory, config_name="config.yaml", weight_name="model.safetensors")
+    return model.eval()
+
+
+def run_sf3d(image, checkpoint):
+    """Stable Fast 3D end to end, seam by seam, on the subject plate given an alpha that cuts out its
+    ellipse, following `run.py` and `SF3D.run_image` at a 1024 texture and no remeshing.
+
+    The record holds the demo's framing (`resize_foreground` at 0.85) and the model's own
+    `prepare_image` (Pillow's default resize to 512, then the mid-gray composite) and antialiased resize,
+    the camera embedding, the DINOv2 tokenizer's position embeddings and tokens, the backbone's triplane
+    tokens, the scene codes (the `output`, channels last), the decoder on the tetrahedral grid, the
+    marching-tetrahedra mesh, every stage of the box unwrapper, the rasterized atlas, the decoded
+    materials, both estimators, the float textures before and after the island padding, and the mesh
+    arrays the release hands trimesh after its two rotations and the winding flip.
+    """
+    from PIL import Image
+    import torch.nn.functional as F
+
+    torch.manual_seed(0)
+    model = _sf3d_model(checkpoint)           # puts the `sf3d` package on the path
+    from sf3d.utils import resize_foreground, default_cond_c2w, create_intrinsic_from_fov_deg
+    from sf3d.models.utils import scale_tensor, dilate_fill, normalize
+    height, width = image.shape[:2]
+    y, x = np.mgrid[0:height, 0:width].astype(np.float32)
+    inside = (((y - height / 2) / (height * 0.3)) ** 2 + ((x - width / 2) / (width * 0.22)) ** 2) <= 1.0
+    alpha = inside.astype(np.float32)
+    rgba = np.concatenate([image, alpha[..., None]], axis=-1)
+    pil = Image.fromarray((rgba * 255.0).astype(np.uint8))
+    framed_pil = resize_foreground(pil, 0.85)
+    framed = np.array(framed_pil).astype(np.float32) / 255.0
+    resized = np.array(framed_pil.resize((model.cfg.cond_image_size, model.cfg.cond_image_size)))
+    resized = resized.astype(np.float32) / 255.0
+    mask_cond, rgb_cond = model.prepare_image(framed_pil)
+    bake_resolution = 1024
+
+    with torch.no_grad():
+        c2w = default_cond_c2w(model.cfg.default_distance)
+        intrinsic, intrinsic_normed = create_intrinsic_from_fov_deg(
+            model.cfg.default_fovy_deg, model.cfg.cond_image_size, model.cfg.cond_image_size)
+        batch = {
+            "rgb_cond": rgb_cond, "mask_cond": mask_cond,
+            "c2w_cond": c2w.view(1, 1, 4, 4), "intrinsic_cond": intrinsic.view(1, 1, 3, 3),
+            "intrinsic_normed_cond": intrinsic_normed.view(1, 1, 3, 3),
+        }
+        batch["rgb_cond"] = model.image_processor(batch["rgb_cond"], model.cfg.cond_image_size)
+        batch["mask_cond"] = model.image_processor(batch["mask_cond"], model.cfg.cond_image_size)
+        conditioning = batch["rgb_cond"][0].clone()
+        conditioning_mask = batch["mask_cond"][0].clone()
+        for key in ("rgb_cond", "mask_cond", "c2w_cond", "intrinsic_cond", "intrinsic_normed_cond"):
+            if key in ("rgb_cond", "mask_cond"):
+                batch[key] = batch[key].unsqueeze(1)
+        camera = model.camera_embedder(**batch)                                        # [1, 1, 768]
+        tokenizer = model.image_tokenizer
+        dino = tokenizer.model
+        side = model.cfg.cond_image_size
+        patches = (side // dino.config.patch_size) ** 2
+        positions = dino.embeddings.interpolate_pos_encoding(
+            torch.zeros(1, patches + 1, dino.config.hidden_size), side, side)
+        image_tokens = tokenizer(batch["rgb_cond"].permute(0, 1, 4, 2, 3), modulation_cond=camera)
+        image_tokens = image_tokens.permute(0, 1, 3, 2).reshape(1, -1, dino.config.hidden_size)
+        backbone = model.backbone
+        triplane = model.tokenizer(1)
+        tokens = backbone(triplane, encoder_hidden_states=image_tokens, modulation_cond=None)
+        direct_codes = model.tokenizer.detokenize(tokens)                              # [1, 3, 1024, 96, 96]
+        scene_codes = model.post_processor(direct_codes)                               # [1, 3, 40, 384, 384]
+        staged, _ = model.get_scene_codes({k: v.clone() for k, v in batch.items()})
+        assert torch.allclose(staged, scene_codes), "the staged forward differs from get_scene_codes"
+
+        estimated = model.image_estimator(batch["rgb_cond"] * batch["mask_cond"])
+        clip_input = F.interpolate(
+            (batch["rgb_cond"] * batch["mask_cond"]).flatten(0, 1).permute(0, 3, 1, 2).contiguous(),
+            size=(224, 224), mode="bilinear", align_corners=False)
+        illumination = model.global_estimator(direct_codes)
+
+        helper = model.isosurface_helper
+        grid = scale_tensor(helper.grid_vertices, helper.points_range, model.bbox)
+        values = model.query_triplane(grid, scene_codes[0])
+        decoded = model.decoder(values, include=["vertex_offset", "density"])
+        mesh = model.triplane_to_meshes(scene_codes)[0]
+        extracted_positions = mesh.v_pos.clone()
+        extracted_faces = mesh.t_pos_idx.clone()
+        smooth_normals = mesh.v_nrm.clone()
+
+        unwrapper = mesh.unwrapper
+        aligned_positions, aligned_normals = unwrapper._align_mesh_with_main_axis(mesh.v_pos, mesh.v_nrm)
+        bounds = torch.stack([aligned_positions.min(dim=0).values, aligned_positions.max(dim=0).values], dim=0)
+        box_uv, box_index = unwrapper._box_assign_vertex_to_cube_face(
+            aligned_positions, aligned_normals, mesh.t_pos_idx, bounds)
+        rotated_uv = unwrapper._rotate_uv_slices_consistent_space(
+            aligned_positions, aligned_normals, mesh.t_pos_idx, box_uv.clone(), box_index)
+        atlas_index = unwrapper._assign_faces_uv_to_atlas_index(
+            aligned_positions, mesh.t_pos_idx, rotated_uv, box_index)
+        offset_x, offset_y, div_x, div_y = unwrapper._find_slice_offset_and_scale(atlas_index)
+        placed_uv = unwrapper._distribute_individual_uvs_in_atlas(
+            rotated_uv.clone(), atlas_index, offset_x, offset_y, div_x, div_y, 0.02)
+        unique_uv, uv_indices = unwrapper._get_unique_face_uv(placed_uv)
+        direct_uv, direct_indices = unwrapper(mesh.v_pos, mesh.v_nrm, mesh.t_pos_idx, 0.02)
+        assert torch.equal(direct_uv, unique_uv) and torch.equal(direct_indices, uv_indices), \
+            "the staged unwrap differs from Unwrapper.forward"
+
+        mesh.unwrap_uv()
+        rast = model.baker.rasterize(mesh.v_tex, mesh.t_pos_idx, bake_resolution)
+        bake_mask = model.baker.get_mask(rast)
+        pos_bake = model.baker.interpolate(mesh.v_pos, rast, mesh.t_pos_idx)
+        gb_pos = pos_bake[bake_mask]
+        tri_query = model.query_triplane(gb_pos, scene_codes[0])[0]
+        materials = model.decoder(tri_query, exclude=["density", "vertex_offset"])
+        nrm = model.baker.interpolate(mesh.v_nrm, rast, mesh.t_pos_idx)
+        gb_nrm = F.normalize(nrm[bake_mask], dim=-1)
+        tng = model.baker.interpolate(mesh.v_tng, rast, mesh.t_pos_idx)
+        gb_tng = F.normalize(tng[bake_mask], dim=-1)
+        gb_btng = F.normalize(torch.cross(gb_nrm, gb_tng, dim=-1), dim=-1)
+        normal = F.normalize(normalize(materials["perturb_normal"]), dim=-1)
+        tangent_matrix = torch.stack([gb_tng, gb_btng, gb_nrm], dim=-1)
+        normal_tangent = torch.bmm(tangent_matrix.transpose(1, 2), normal.unsqueeze(-1)).squeeze(-1)
+        normal_tangent = (normal_tangent * 0.5 + 0.5).clamp(0, 1)
+        albedo = torch.zeros(bake_resolution, bake_resolution, 3)
+        albedo[bake_mask] = materials["features"].view(-1, 3)
+        bump = torch.zeros(bake_resolution, bake_resolution, 3)
+        bump[bake_mask] = normal_tangent.view(-1, 3)
+
+        def uv_padding(texture):
+            return dilate_fill(texture.permute(2, 0, 1)[None].contiguous(), bake_mask[None, None],
+                               iterations=bake_resolution // 150)[0].permute(1, 2, 0).contiguous()
+
+        albedo_padded = uv_padding(albedo)
+        bump_padded = uv_padding(bump)
+
+    import trimesh
+    exported = trimesh.Trimesh(vertices=mesh.v_pos.numpy(), faces=mesh.t_pos_idx.numpy(), process=False)
+    exported.apply_transform(trimesh.transformations.rotation_matrix(np.radians(-90), [1, 0, 0]))
+    exported.apply_transform(trimesh.transformations.rotation_matrix(np.radians(90), [0, 1, 0]))
+    exported.invert()
+    # The release builds its trimesh with texture visuals and the default processing, which merges the
+    # vertices that share a position and a texture coordinate; the GLB holds that mesh and the normals
+    # trimesh computes for it.
+    released = trimesh.Trimesh(vertices=mesh.v_pos.numpy(), faces=mesh.t_pos_idx.numpy(),
+                               visual=trimesh.visual.texture.TextureVisuals(uv=mesh.v_tex.numpy()))
+    released.apply_transform(trimesh.transformations.rotation_matrix(np.radians(-90), [1, 0, 0]))
+    released.apply_transform(trimesh.transformations.rotation_matrix(np.radians(90), [0, 1, 0]))
+    released.invert()
+
+    extra = {
+        "input_alpha": torch.from_numpy(alpha),
+        "framed": torch.from_numpy(framed),
+        "resized": torch.from_numpy(resized),
+        "rgb_cond": rgb_cond,
+        "mask_cond": mask_cond,
+        "conditioning": conditioning,
+        "conditioning_mask": conditioning_mask,
+        "camera_embedding": camera.reshape(-1),
+        "position_embeddings": positions[0],
+        "image_tokens": image_tokens[0],
+        "triplane_tokens": tokens[0].permute(1, 0),
+        "clip_input": clip_input[0].permute(1, 2, 0),
+        "roughness": estimated["decoder_roughness"].reshape(-1),
+        "metallic": estimated["decoder_metallic"].reshape(-1),
+        "sg_amplitudes": illumination["sg_amplitudes"].reshape(-1),
+        "grid_density": decoded["density"].reshape(-1),
+        "grid_vertex_offset": decoded["vertex_offset"].reshape(-1, 3),
+        "extracted_positions": extracted_positions,
+        "extracted_faces": extracted_faces,
+        "smooth_normals": smooth_normals,
+        "aligned_positions": aligned_positions,
+        "box_uv": box_uv,
+        "box_index": box_index,
+        "rotated_uv": rotated_uv,
+        "atlas_index": atlas_index,
+        "placed_uv": placed_uv.reshape(-1, 3, 2),
+        "unique_uv": unique_uv,
+        "uv_indices": uv_indices,
+        "split_positions": mesh.v_pos,
+        "split_normals": mesh.v_nrm,
+        "split_tangents": mesh.v_tng,
+        "texture_coordinates": mesh.v_tex,
+        "rasterized": rast,
+        "baked_positions": gb_pos,
+        "albedo_texels": materials["features"],
+        "perturbed_normals": materials["perturb_normal"],
+        "tangent_normals": normal_tangent,
+        "albedo": albedo,
+        "bump": bump,
+        "albedo_padded": albedo_padded,
+        "bump_padded": bump_padded,
+        "exported_positions": torch.from_numpy(np.asarray(exported.vertices, dtype=np.float32)),
+        "exported_faces": torch.from_numpy(np.asarray(exported.faces, dtype=np.int64)),
+        "released_positions": torch.from_numpy(np.asarray(released.vertices, dtype=np.float32)),
+        "released_faces": torch.from_numpy(np.asarray(released.faces, dtype=np.int64)),
+        "released_uv": torch.from_numpy(np.asarray(released.visual.uv, dtype=np.float32)),
+        "released_normals": torch.from_numpy(np.asarray(released.vertex_normals, dtype=np.float32)),
+        "bake_resolution": torch.tensor([float(bake_resolution)]),
+    }
+    globals()["_extra"] = {k: v.detach().contiguous().clone() for k, v in extra.items()}
+    return scene_codes[0].permute(0, 2, 3, 1).contiguous()
+
+
+CHECKPOINT_MODELS["sf3d"] = run_sf3d
+
+
+def _sf3d_downstream(model, scene_code, bake_resolution=1024):
+    """The release's `generate_mesh` after the scene code, without the remeshers or the files: the
+    surface, the unwrap, the bake and its island padding, and the mesh trimesh's export holds. Returns
+    the released positions and faces, the atlas index, and the padded float textures."""
+    import torch.nn.functional as F
+    import trimesh
+    from sf3d.models.utils import dilate_fill, normalize
+    with torch.no_grad():
+        mesh = model.triplane_to_meshes(scene_code[None])[0]
+        captured = {}
+        unwrapper = mesh.unwrapper
+        assign = unwrapper._assign_faces_uv_to_atlas_index
+
+        def recording(*args):
+            captured["atlas"] = assign(*args)
+            return captured["atlas"]
+
+        unwrapper._assign_faces_uv_to_atlas_index = recording
+        mesh.unwrap_uv()
+        unwrapper._assign_faces_uv_to_atlas_index = assign
+        rast = model.baker.rasterize(mesh.v_tex, mesh.t_pos_idx, bake_resolution)
+        bake_mask = model.baker.get_mask(rast)
+        gb_pos = model.baker.interpolate(mesh.v_pos, rast, mesh.t_pos_idx)[bake_mask]
+        materials = model.decoder(model.query_triplane(gb_pos, scene_code)[0], exclude=["density", "vertex_offset"])
+        gb_nrm = F.normalize(model.baker.interpolate(mesh.v_nrm, rast, mesh.t_pos_idx)[bake_mask], dim=-1)
+        gb_tng = F.normalize(model.baker.interpolate(mesh.v_tng, rast, mesh.t_pos_idx)[bake_mask], dim=-1)
+        gb_btng = F.normalize(torch.cross(gb_nrm, gb_tng, dim=-1), dim=-1)
+        normal = F.normalize(normalize(materials["perturb_normal"]), dim=-1)
+        tangent_matrix = torch.stack([gb_tng, gb_btng, gb_nrm], dim=-1)
+        normal_tangent = torch.bmm(tangent_matrix.transpose(1, 2), normal.unsqueeze(-1)).squeeze(-1)
+        normal_tangent = (normal_tangent * 0.5 + 0.5).clamp(0, 1)
+        textures = {}
+        for name, values in (("albedo", materials["features"]), ("bump", normal_tangent)):
+            image = torch.zeros(bake_resolution, bake_resolution, 3)
+            image[bake_mask] = values.view(-1, 3)
+            textures[name] = dilate_fill(image.permute(2, 0, 1)[None].contiguous(), bake_mask[None, None],
+                                         iterations=bake_resolution // 150)[0].permute(1, 2, 0).contiguous()
+    released = trimesh.Trimesh(vertices=mesh.v_pos.numpy(), faces=mesh.t_pos_idx.numpy(),
+                               visual=trimesh.visual.texture.TextureVisuals(uv=mesh.v_tex.numpy()))
+    released.invert()
+    return {"positions": np.asarray(released.vertices, dtype=np.float32), "faces": np.asarray(released.faces),
+            "atlas": captured["atlas"].numpy(), "albedo": textures["albedo"].numpy(), "bump": textures["bump"].numpy()}
+
+
+def run_sf3d_twins(image, checkpoint):
+    """The reference's own sensitivity at the port's measured deviation: the scene code `run_sf3d`
+    records, then that code perturbed four times by Gaussian noise whose norm is 1.42e-6 of the code's
+    (the relative distance a scene-code cosine of 1 − 1e-12 leaves), each run through the release's
+    downstream. Each twin records its welded vertex count, whether its faces equal the unperturbed
+    run's, how many faces change atlas slot, and how many texture channels sit more than one 8-bit level
+    from the unperturbed run's `floor(256 · x)`, the metrics the port's end-to-end test reads."""
+    record = run_sf3d(image, checkpoint)                     # the scene code, channels last
+    model = _sf3d_model(checkpoint)
+    scene_code = record.permute(0, 3, 1, 2).contiguous()
+    base = _sf3d_downstream(model, scene_code)
+
+    def levels(texture):
+        return np.clip(np.floor(256.0 * texture), 0, 255).astype(np.int64)
+
+    base_albedo, base_bump = levels(base["albedo"]), levels(base["bump"])
+    generator = torch.Generator().manual_seed(1234)
+    vertex_counts, faces_equal, atlas_moved, albedo_apart, bump_apart = [], [], [], [], []
+    for _ in range(4):
+        noise = torch.randn(scene_code.shape, generator=generator)
+        twin = scene_code + noise * (1.42e-6 * scene_code.norm() / noise.norm())
+        result = _sf3d_downstream(model, twin)
+        vertex_counts.append(len(result["positions"]))
+        same = result["faces"].shape == base["faces"].shape and np.array_equal(result["faces"], base["faces"])
+        faces_equal.append(1 if same else 0)
+        atlas_moved.append(int((result["atlas"] != base["atlas"]).sum()) if len(result["atlas"]) == len(base["atlas"]) else -1)
+        albedo_apart.append(int((np.abs(levels(result["albedo"]) - base_albedo) > 1).sum()))
+        bump_apart.append(int((np.abs(levels(result["bump"]) - base_bump) > 1).sum()))
+    print(f"twins: vertices {vertex_counts} (base {len(base['positions'])}), faces equal {faces_equal}, "
+          f"atlas moved {atlas_moved}, albedo channels apart {albedo_apart}, bump channels apart {bump_apart}")
+    globals()["_extra"] = {
+        "twin_vertex_counts": torch.tensor(vertex_counts),
+        "base_vertex_count": torch.tensor([len(base["positions"])]),
+        "twin_faces_equal": torch.tensor(faces_equal),
+        "twin_atlas_moved": torch.tensor(atlas_moved),
+        "twin_albedo_apart": torch.tensor(albedo_apart),
+        "twin_bump_apart": torch.tensor(bump_apart),
+    }
+    return record[:1, :1, :1].contiguous()
+
+
+CHECKPOINT_MODELS["sf3d_twins"] = run_sf3d_twins
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("model", choices=sorted(MODELS) + sorted(CHECKPOINT_MODELS), help="which reference to run")

@@ -338,7 +338,7 @@ inline. Each buffer is `NFK_BUFFER_BYTES`, valid until `nfk_result_free`.
 | `midiSequence` | `notes` (of `midiNote`), `tempoBPM`, `beatsPerBar`, `beatUnit`, `ticksPerQuarterNote`, `durationSeconds` |
 | `midiNote` | `pitch`, `startSeconds`, `endSeconds`, `velocity`, `program`, `percussion`, `pitchBend` |
 | `musicBeat` | `timeSeconds`, `positionInBar`, `downbeat` |
-| `mesh` | `vertexCount`, `faceCount`, `normals`, `colors`, `textureCoordinates` (booleans), and `ply` (its binary PLY, base64) inline or `path` (that PLY beside the JSON) in the file form |
+| `mesh` | `vertexCount`, `faceCount`, `normals`, `colors`, `textureCoordinates`, `material` (booleans), and `ply` (its binary PLY, base64) inline or `path` (that PLY beside the JSON) in the file form; a mesh with a material carries `glb` (its GLB, base64, the textures embedded) instead, or names that GLB under `path` |
 | `quadrilateral` | `topLeft`, `topRight`, `bottomLeft`, `bottomRight`, `boundingBox` |
 | `decisionAnswer` | `type` (`choice`, `score`, `noul`), `choice`, `score`, `probability`, `confidence`, `probabilities`, `legend`, `raw`, `refused` |
 

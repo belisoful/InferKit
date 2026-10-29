@@ -60406,6 +60406,283 @@
       ]
     },
     {
+      "displayName" : "Stable Fast 3D",
+      "engine" : "mlx",
+      "family" : "stable-fast-3d",
+      "id" : "stable-fast-3d",
+      "inputModalities" : [
+        "image"
+      ],
+      "inputs" : [
+        {
+          "help" : "The object to reconstruct, cut out on transparency. An image with alpha is cropped to its foreground and framed on gray.",
+          "key" : "image",
+          "required" : true,
+          "title" : "Image",
+          "valueType" : "image"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : true,
+        "name" : "Stability AI Community License",
+        "note" : "Gated: accept the terms on Hugging Face. Free below US$1M in annual revenue; above it, Stability AI's enterprise license applies. The tetrahedral grid comes from the release's code repository, Stability-AI/stable-fast-3d, under the same license.",
+        "restrictsCommercialUse" : true,
+        "url" : "https://stability.ai/community-license-agreement"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits"
+      },
+      "options" : [
+        {
+          "default" : 1024,
+          "help" : "The side of the baked texture atlas in pixels.",
+          "key" : "NFKMLXParameterTextureResolution",
+          "kind" : "integer",
+          "maximum" : 4096,
+          "minimum" : 256,
+          "stage" : "request",
+          "step" : 256,
+          "title" : "Texture resolution"
+        },
+        {
+          "default" : 10,
+          "help" : "The density the surface is drawn at.",
+          "key" : "NFKMLXParameterDensityThreshold",
+          "kind" : "number",
+          "minimum" : 0,
+          "stage" : "request",
+          "title" : "Density threshold"
+        },
+        {
+          "default" : 0.84999999999999998,
+          "help" : "The share of the side the object fills when the image carries alpha.",
+          "key" : "NFKMLXParameterForegroundRatio",
+          "kind" : "number",
+          "maximum" : 1,
+          "minimum" : 0.050000000000000003,
+          "stage" : "request",
+          "title" : "Foreground ratio"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "PNG",
+              "value" : "image/png"
+            },
+            {
+              "title" : "JPEG",
+              "value" : "image/jpeg"
+            }
+          ],
+          "default" : "image/png",
+          "help" : "The textures' image type. The release writes JPEG.",
+          "key" : "NFKMLXParameterTextureFormat",
+          "kind" : "choice",
+          "stage" : "request",
+          "title" : "Texture format"
+        },
+        {
+          "default" : false,
+          "help" : "Also return the illumination head's light amplitudes.",
+          "key" : "NFKMLXParameterEstimateIllumination",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Estimate illumination"
+        },
+        {
+          "default" : false,
+          "help" : "Run the network on the CPU in the release's own float32 arithmetic, which reproduces its mesh exactly and takes longer.",
+          "key" : "NFKMLXParameterReferenceArithmetic",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Reference arithmetic"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 4039518538,
+                "residentBytes" : 4039518538
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2027463664,
+                "residentBytes" : 2027463664
+              },
+              "title" : "BFloat16",
+              "value" : "bfloat16"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 4039518538,
+                "residentBytes" : 4039518538
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1726202790,
+                "residentBytes" : 1726202790
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1529324854,
+                "residentBytes" : 1529324854
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1430885886,
+                "residentBytes" : 1430885886
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1332446918,
+                "residentBytes" : 1332446918
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1234007950,
+                "residentBytes" : 1234007950
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 1135568982,
+                "residentBytes" : 1135568982
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "mesh"
+      ],
+      "outputs" : [
+        {
+          "help" : "The object as a triangle mesh with texture coordinates and a material: a base color texture, a tangent-space normal texture, and the estimated roughness and metalness.",
+          "key" : "mesh",
+          "required" : true,
+          "title" : "Mesh",
+          "valueType" : "mesh"
+        },
+        {
+          "help" : "The 24 spherical-Gaussian light amplitudes the illumination head estimates, when asked for.",
+          "key" : "NFKMLXOutputIlluminationAmplitudes",
+          "required" : false,
+          "title" : "Illumination"
+        }
+      ],
+      "registryName" : "stable-fast-3d",
+      "requirements" : {
+        "minimumMemoryBytes" : 9504749502,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident"
+      ],
+      "standIn" : false,
+      "summary" : "A reconstructor of a UV-textured object with a PBR material from one image.",
+      "tasks" : [
+        "image-to-3d"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Stable Fast 3D",
+          "downloadBytes" : 4039698682,
+          "id" : "default",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 2027463664,
+                  "checkpoint" : 4039518538,
+                  "float32" : 4039518538
+                },
+                "id" : "model",
+                "quantizableElements" : 787511744,
+                "title" : "model"
+              }
+            ]
+          },
+          "minimumMemoryBytes" : 9504749502,
+          "peakBytes" : 4039518538,
+          "precision" : "float32",
+          "registryName" : "stable-fast-3d",
+          "residentBytes" : 4039518538,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 4024289892,
+                "optional" : false,
+                "path" : "model.safetensors",
+                "role" : "weights",
+                "sha256" : "a3416e1cf654e7d4f5e75f116cec2c3f0a14501a77d30c2f6068bbda178de388"
+              },
+              {
+                "bytes" : 15408790,
+                "optional" : false,
+                "path" : "160_tets.npz",
+                "role" : "weights",
+                "url" : "https://raw.githubusercontent.com/Stability-AI/stable-fast-3d/ff21fc491b4dc5314bf6734c7c0dabd86b5f5bb2/load/tets/160_tets.npz"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "repository" : "stabilityai/stable-fast-3d",
+            "requiresConversion" : false,
+            "revision" : "f0c9a8ffd62cb1bbc8a7a53c9f87a0be1b6be778"
+          }
+        }
+      ]
+    },
+    {
       "displayName" : "StoRM",
       "engine" : "mlx",
       "family" : "storm",

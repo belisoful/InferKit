@@ -129,6 +129,7 @@ The Depth Anything map cosines near 0.998 are the recorded values for this famil
 | Model | Class | Reference | Weights | Measured |
 | --- | --- | --- | --- | --- |
 | TripoSR | `NFKMLXTripoSR` | VAST-AI-Research/TripoSR at 107cefd (`run_reference.py triposr`, the `triposr` environment) | released `model.ckpt` (float32) | preparation 1.0; conditioning 0.99999999999996; position embeddings 0.99999999999989; image tokens 0.9999999999940; scene codes 0.99999999999941; 32³ density 0.99999999997716; color 0.99999999999965; the 64³ mesh 10,328 faces on both sides, vertices 1.03e-5 of a cell apart; the ladder against the same record: scene codes 0.99992145 at the bfloat16 cast, 0.99184 at 4 bits |
+| Stable Fast 3D | `NFKMLXStableFast3D` | stabilityai/stable-fast-3d at f0c9a8ff, code at ff21fc4 (`run_reference.py sf3d`, the `sf3d` environment) | released `model.safetensors` (float32) | reference arithmetic (`referenceArithmetic`): every seam 0 mismatches, from the conditioning through the image tokens, triplane tokens, scene code, grid density and offsets, and the baked albedo and normals; from the photo the release's own mesh (10,589 vertices, equal faces, positions 0 apart, textures within one dithered level); the GPU path: image tokens 0.99999999999366, scene code 0.99999999999900, grid density 0.99999999999983; the ladder: scene codes 0.99999851 at the bfloat16 cast, 0.99908074 at 4 bits |
 
 ## Matting, segmentation, and faces
 

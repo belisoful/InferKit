@@ -214,7 +214,9 @@ final class NFKCLIPVisionTransformer: Module {
 
     private let resolution: Int
 
-    init(_ c: NFKMLXCLIPConfiguration) {
+    /// The tower at `c`, its residual blocks using `activation`: OpenAI's QuickGELU, or the plain GELU of
+    /// an OpenCLIP tower built without `quick_gelu`.
+    init(_ c: NFKMLXCLIPConfiguration, activation: NFKCLIPActivation = .quickGELU) {
         resolution = c.imageResolution
         let grid = c.imageResolution / c.patchSize
         _conv1.wrappedValue = NFKConv2d(inputChannels: 3, outputChannels: c.visionWidth,
@@ -222,7 +224,8 @@ final class NFKCLIPVisionTransformer: Module {
         _classEmbedding.wrappedValue = NFKCLIPInit.parameter([c.visionWidth])
         _positionalEmbedding.wrappedValue = NFKCLIPInit.parameter([grid * grid + 1, c.visionWidth])
         _lnPre.wrappedValue = NFKLayerNorm(dimensions: c.visionWidth)
-        _transformer.wrappedValue = NFKCLIPTransformer(width: c.visionWidth, layers: c.visionLayers, heads: c.visionHeads)
+        _transformer.wrappedValue = NFKCLIPTransformer(width: c.visionWidth, layers: c.visionLayers, heads: c.visionHeads,
+                                                       activation: activation)
         _lnPost.wrappedValue = NFKLayerNorm(dimensions: c.visionWidth)
         _proj.wrappedValue = NFKCLIPInit.parameter([c.visionWidth, c.embedDimensions])
     }

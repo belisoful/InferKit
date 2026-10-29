@@ -270,11 +270,14 @@ public enum NFKMLXPhi4MMImageProcessor {
         return matmul(vertical, columns.transposed(1, 0)).transposed(1, 2, 0)           // [height, width, c]
     }
 
-    static func resampleMatrix(from inSize: Int, to outSize: Int) -> MLXArray {
+    /// torch's bicubic operator `[outSize, inSize]` (Keys' cubic, a = −0.75, half-pixel centers, edge taps
+    /// clamped). `scale` is the source step between output samples, the size ratio unless the caller
+    /// resizes by a `scale_factor`, whose reciprocal torch steps by instead.
+    static func resampleMatrix(from inSize: Int, to outSize: Int, scale step: Double? = nil) -> MLXArray {
         let a = -0.75
         func near(_ x: Double) -> Double { ((a + 2) * x - (a + 3)) * x * x + 1 }
         func far(_ x: Double) -> Double { ((a * x - 5 * a) * x + 8 * a) * x - 4 * a }
-        let scale = Double(inSize) / Double(outSize)
+        let scale = step ?? Double(inSize) / Double(outSize)
         var matrix = [Float](repeating: 0, count: outSize * inSize)
         for index in 0 ..< outSize {
             let source = (Double(index) + 0.5) * scale - 0.5
@@ -332,30 +335,32 @@ enum NFKMLXPILResample {
     private static let precisionBits = 32 - 8 - 2
 
     /// Resamples the width first, then the height, skipping an axis whose size does not change, as PIL
-    /// and torchvision's 8-bit resize both do.
+    /// and torchvision's 8-bit resize both do. `channels` interleaved bands a pixel, three or four; PIL
+    /// resamples an RGBA image's premultiplied form (`RGBa`), alpha with the same filter as the colors.
     static func resampled(_ pixels: [UInt8], width: Int, height: Int, toWidth: Int, toHeight: Int,
-                          filter: Filter = .bilinear, precision: Precision = .pil) -> [UInt8] {
+                          filter: Filter = .bilinear, precision: Precision = .pil, channels: Int = 3) -> [UInt8] {
         var image = pixels
         if toWidth != width {
-            image = pass(image, rows: height, columns: width, toColumns: toWidth, filter: filter, precision: precision)
+            image = pass(image, rows: height, columns: width, toColumns: toWidth, filter: filter, precision: precision,
+                         channels: channels)
         }
         guard toHeight != height else { return image }
         let columns = toWidth
-        var transposed = [UInt8](repeating: 0, count: columns * height * 3)
+        var transposed = [UInt8](repeating: 0, count: columns * height * channels)
         for row in 0 ..< height {
             for column in 0 ..< columns {
-                for channel in 0 ..< 3 {
-                    transposed[(column * height + row) * 3 + channel] = image[(row * columns + column) * 3 + channel]
+                for channel in 0 ..< channels {
+                    transposed[(column * height + row) * channels + channel] = image[(row * columns + column) * channels + channel]
                 }
             }
         }
         let scaled = pass(transposed, rows: columns, columns: height, toColumns: toHeight, filter: filter,
-                          precision: precision)
-        var result = [UInt8](repeating: 0, count: columns * toHeight * 3)
+                          precision: precision, channels: channels)
+        var result = [UInt8](repeating: 0, count: columns * toHeight * channels)
         for column in 0 ..< columns {
             for row in 0 ..< toHeight {
-                for channel in 0 ..< 3 {
-                    result[(row * columns + column) * 3 + channel] = scaled[(column * toHeight + row) * 3 + channel]
+                for channel in 0 ..< channels {
+                    result[(row * columns + column) * channels + channel] = scaled[(column * toHeight + row) * channels + channel]
                 }
             }
         }
@@ -363,24 +368,31 @@ enum NFKMLXPILResample {
     }
 
     private static func pass(_ pixels: [UInt8], rows: Int, columns: Int, toColumns: Int, filter: Filter,
-                             precision: Precision) -> [UInt8] {
+                             precision: Precision, channels: Int) -> [UInt8] {
         let (weights, bits) = quantizedCoefficients(from: columns, to: toColumns, filter: filter, precision: precision)
         let half = 1 << (bits - 1)
-        var result = [UInt8](repeating: 0, count: rows * toColumns * 3)
+        var result = [UInt8](repeating: 0, count: rows * toColumns * channels)
+        let fourth = channels == 4
         for row in 0 ..< rows {
             for column in 0 ..< toColumns {
                 let span = weights[column]
-                var sums = (half, half, half)
+                var sums = (half, half, half, half)
                 for (offset, weight) in span.weights.enumerated() {
-                    let source = (row * columns + span.start + offset) * 3
+                    let source = (row * columns + span.start + offset) * channels
                     sums.0 += Int(pixels[source]) * weight
                     sums.1 += Int(pixels[source + 1]) * weight
                     sums.2 += Int(pixels[source + 2]) * weight
+                    if fourth {
+                        sums.3 += Int(pixels[source + 3]) * weight
+                    }
                 }
-                let destination = (row * toColumns + column) * 3
+                let destination = (row * toColumns + column) * channels
                 result[destination] = clipped(sums.0, bits: bits)
                 result[destination + 1] = clipped(sums.1, bits: bits)
                 result[destination + 2] = clipped(sums.2, bits: bits)
+                if fourth {
+                    result[destination + 3] = clipped(sums.3, bits: bits)
+                }
             }
         }
         return result

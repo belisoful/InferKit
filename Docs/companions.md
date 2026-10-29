@@ -405,6 +405,17 @@ models.
   writes itself as OBJ, PLY, or GLB. The release's `model.ckpt` loads directly; the grid resolution,
   the density threshold, the foreground framing of an image with alpha, and the vertex colors are
   request parameters (`NFKMLXTripoSRParameterKey`).
+- **`NFKMLXStableFast3D`** — Stable Fast 3D, a reconstructor of a UV-textured object with a PBR material
+  from one image: a DINOv2-large tokenizer whose LayerNorms the camera modulates, a two-stream
+  transformer that trades attention between a 3 × 96 × 96 bank of triplane tokens and a set of latents,
+  a convolutional pixel-shuffle upsampler, and MLP heads for density, a vertex offset, the albedo, and a
+  perturbed normal, with an OpenCLIP ViT-B/32 that estimates the roughness and metalness. The backend
+  returns an `NFKMesh` under `NFKOutputMesh`: marching tetrahedra over the release's deformed
+  tetrahedral grid, a box-projection UV atlas, and a baked base color texture and tangent-space normal
+  texture in an `NFKMeshMaterial`, which the mesh's GLB embeds. The release's `model.safetensors`
+  loads directly beside the grid (`160_tets.npz`, from the release's code repository); the atlas size,
+  the density threshold, the foreground framing, the texture format, and the illumination estimate are
+  request parameters (`NFKMLXStableFast3DParameterKey`).
 - **`NFKMLXU2Net`** — a real single-forward background remover: the U²-Net nested-U saliency network
   in MLXNN, run through the matting backend (plate → foreground + alpha cutout). Full `u2net` + light `u2netp`.
 - **`NFKMLXBiRefNet`** — high-resolution background removal (MIT): a Swin-v1-L backbone, a neck that

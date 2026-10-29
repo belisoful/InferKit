@@ -176,6 +176,8 @@ static const void *const NFKPluginPublicInterface[] = {
 	(const void *)&NFKMultiArrayFromInterleaved,
 	(const void *)&NFKInterleavedFromMultiArray,
 	(const void *)&NFKMeshVectorMake,
+	(const void *)&NFKMeshTextureMIMETypePNG,
+	(const void *)&NFKMeshTextureMIMETypeJPEG,
 	(const void *)&NFKModelCatalogErrorDomain,
 	(const void *)&NFKModelCatalogManifestKind,
 	(const void *)&NFKModelMemoryBasisMeasured,

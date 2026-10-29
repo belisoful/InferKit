@@ -129,6 +129,16 @@ The figures have three limits:
 - ``NFKMLXTripoSRConfiguration``
 - ``NFKMLXTripoSRParameterKey``
 - ``NFKMLXTripoSROptions``
+- ``NFKMLXStableFast3D``
+- ``NFKMLXStableFast3DBackend``
+- ``NFKMLXStableFast3DNet``
+- ``NFKMLXStableFast3DConfiguration``
+- ``NFKMLXStableFast3DParameterKey``
+- ``NFKMLXStableFast3DOutputKey``
+- ``NFKMLXStableFast3DOptions``
+- ``NFKMLXStableFast3DReconstruction``
+- ``NFKMLXStableFast3DGeometry``
+- ``NFKMLXTetrahedralGrid``
 
 ### Image → map (depth & segmentation)
 

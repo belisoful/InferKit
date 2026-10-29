@@ -21,7 +21,7 @@ See also the [inference guide](inference-guide.md) for the concepts behind these
 - [Text → image and image → image](#text--image-and-image--image) — MLX Stable Diffusion
 - [Image → image](#image--image) — bring-your-own MLX, Core ML
 - [Image → image + mask](#image--image--mask) — matting
-- [Image → 3D object](#image--3d-object) — TripoSR, `NFKMesh`
+- [Image → 3D object](#image--3d-object) — TripoSR, Stable Fast 3D, `NFKMesh`, `NFKMeshMaterial`
 - [Many tensors in and out](#many-tensors-in-and-out)
 - [Diffusion: upscale, depth, inpaint](#diffusion-upscale-depth-inpaint) — bring-your-own MLX diffusion
 - [Text → video](#text--video) — LTX-Video and Wan, staged
@@ -61,7 +61,7 @@ the following cells; each links to its example.
 | text + image | image | `NFKMLXBackend` (image-to-image) | [Image → image](#text--image-and-image--image) |
 | image | image | `NFKMLXModuleBackend`, `NFKMLXRealESRGAN` (upscale), `NFKMLXDepthAnything` (depth), `NFKMLXNAFNet` (restore), `NFKCoreMLBackend` | [Image → image](#image--image) |
 | image (+ hint) | image + mask | `NFKMLXMattingBackend`, `NFKMLXU2Net` (bg removal), `NFKMLXSAM` (segment) | [Image → image + mask](#image--image--mask) |
-| image | mesh | `NFKMLXTripoSR` (one image to a 3D object) | [Image → 3D object](#image--3d-object) |
+| image | mesh | `NFKMLXTripoSR` (one image to a 3D object), `NFKMLXStableFast3D` (one image to a textured 3D object) | [Image → 3D object](#image--3d-object) |
 | image + mask | image | `NFKMLXLaMa` (inpaint) | [LaMa inpainting](#lama-inpainting-mtimlxlama-a-shipped-mlx-model) |
 | image(s) | image(s) | `NFKMLXTensorBackend`, `NFKMLXRIFE` (frame interpolation), `NFKMLXRAFT` (optical flow) | [Many tensors](#many-tensors-in-and-out) |
 | image (+ mask) | image | `NFKMLXDiffusionBackend` (upscale, depth, inpaint) | [Diffusion](#diffusion-upscale-depth-inpaint) |
@@ -2262,7 +2262,39 @@ frame: y up, and the object facing +z, so the GLB, OBJ, and PLY open upright in 
 
 `NFKMesh` reads the three formats it writes (`meshWithContentsOfURL:error:`), exposes each attribute as a
 packed float32 array with typed accessors (`positionAtIndex:`, `colorAtIndex:`, `faceAtIndex:`), and
-crosses the plugin and server wire as its PLY bytes.
+crosses the plugin and server wire as its PLY bytes, or as its GLB when it carries a material.
+
+Stable Fast 3D (`NFKMLXStableFast3D`) returns a UV-textured mesh instead: texture coordinates, vertex
+normals, and an `NFKMeshMaterial` holding a base color texture, a tangent-space normal texture, and the
+estimated roughness and metalness. The GLB embeds the textures, so a viewer shows the object as baked.
+The release directory holds the checkpoint (`model.safetensors`) and, beside it, the tetrahedral grid
+the surface is extracted on (`160_tets.npz`, from the release's code repository).
+
+```swift
+let stableFast3D = try NFKMLXStableFast3D.backend(directoryURL: releaseDirectoryURL)
+let request = NFKInferenceRequest(inputs: [NFKInputImage: photo],
+                                  parameters: [NFKMLXStableFast3DParameterKey.textureResolution: 1024])
+let textured = try stableFast3D.runInference(for: request).mesh!
+let roughness = textured.material?.roughnessFactor
+try textured.write(to: outputDirectory.appendingPathComponent("object.glb"))
+```
+
+<!-- objc-check: given NSURL *outputDirectory; NSURL *releaseDirectoryURL; -->
+```objc
+id<NFKInferenceBackend> stableFast3D = [NFKMLXStableFast3D backendWithDirectoryURL:releaseDirectoryURL error:&error];
+NFKInferenceResult *textured = [stableFast3D runInferenceForRequest:[NFKInferenceRequest requestWithInputs:@{ NFKInputImage: (__bridge id)photo }] error:&error];
+NFKMeshMaterial *material = textured.mesh.material;
+NSData *baseColorPNG = material.baseColorTexture.data;
+[textured.mesh writeToURL:[outputDirectory URLByAppendingPathComponent:@"object.glb"] error:&error];
+```
+
+The model expects a cut-out: an image with alpha is cropped to its foreground and framed on gray as the
+reference demo frames it (`NFKMLXStableFast3DParameterKey.foregroundRatio`, 0.85), after Pillow's
+resize of the RGBA image to 512. The release's demo removes an opaque image's background first, which
+the backend does not; pass a cut-out, such as a foreground mask from the core's Vision backend. The
+textures are PNG unless `.textureFormat` asks for the release's JPEG, the atlas is
+`.textureResolution` on a side (1024), and `.estimateIllumination` adds the illumination head's 24
+light amplitudes under `NFKMLXStableFast3DOutputKey.illuminationAmplitudes`.
 
 ## Image → image + mask
 
@@ -4277,6 +4309,7 @@ let depth = try NFKMLXDepthAnything.backend(variant: .small, weightsURL: nil)  /
 
 // 3D reconstruction (image → NFKMesh under NFKOutputMesh)
 let triposr = try NFKMLXTripoSR.backend(weightsURL: nil)                      // "triposr"; .resolution / .threshold / .foregroundRatio / .vertexColors under NFKMLXTripoSRParameterKey
+let stableFast3D = try NFKMLXStableFast3D.backend(weightsURL: nil, grid: .lattice(divisions: 8))  // "stable-fast-3d"; a textured mesh with an NFKMeshMaterial
 
 // Matting (plate → foreground image + alpha under NFKOutputMask)
 let cutout   = try NFKMLXU2Net.backend(variant: .full, weightsURL: nil)        // "u2net"

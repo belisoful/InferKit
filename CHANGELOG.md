@@ -127,6 +127,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   only those. `-removalPlanForModelSource:error:` removes the shards with the index.
 - An index that names a file the repository lacks fails the plan with `NFKDownloadErrorNotFound`.
 
+#### A mesh carries a material
+
+- `NFKMeshMaterial` is glTF's metallic-roughness material: a base color factor, a metallic and a
+  roughness factor, and an optional base color, normal, and metallic-roughness texture, each an
+  `NFKMeshTexture` holding an encoded PNG or JPEG and its MIME type. `NFKMesh.material` holds one, set
+  through `initWithPositions:normals:colors:textureCoordinates:indices:material:error:`, which refuses a
+  textured material on a mesh without texture coordinates.
+- The GLB writer embeds the material and its images, and the GLB reader reads them back. OBJ and PLY
+  carry no material.
+- On the wire, a mesh with a material travels as its GLB (`glb` inline, a `.glb` file in the file form),
+  so the material survives; a mesh without one keeps its PLY.
+
 #### A triangle mesh value type
 
 - `NFKMesh` is the core's triangle mesh: packed float32 positions, optional normals, vertex colors, and
@@ -1823,6 +1835,25 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   picture that is not square keeps its proportions. Before, it was resized straight to the square, as
   the reference does, and an 800 × 533 photograph came out squeezed across its front. A square opaque
   image is used as it is, and an image with alpha is framed as before.
+
+#### Stable Fast 3D reconstructs a textured object from one image
+
+- `NFKMLXStableFast3D` (`stable-fast-3d`) reconstructs an object with a PBR material from one image: a
+  DINOv2-large tokenizer modulated by the camera, a two-stream transformer over a 3 × 96 × 96 bank of
+  triplane tokens and a set of latents, a pixel-shuffle upsampler, and MLP heads for density, a vertex
+  offset, the albedo, and a perturbed normal. Marching tetrahedra over the release's deformed tetrahedral
+  grid gives the surface, a box projection unwraps it into an atlas, and the albedo and the normal are
+  baked into textures. An OpenCLIP ViT-B/32 estimates the roughness and metalness, and an illumination
+  head estimates 24 spherical-Gaussian light amplitudes.
+- The result is an `NFKMesh` under `NFKOutputMesh` with texture coordinates, normals, and an
+  `NFKMeshMaterial`, in glTF's frame. The release's `model.safetensors` loads directly beside the grid
+  (`160_tets.npz`, from the release's code repository); the catalog download fetches both.
+  `NFKMLXStableFast3DParameterKey` sets the atlas size, the density threshold, the foreground framing,
+  the texture format (PNG, or the release's JPEG), and the illumination estimate.
+- `NFKMLXStableFast3DParameterKey.referenceArithmetic` runs the network and its field decoder on the CPU
+  in float32, each operation as the release's torch runs it on Apple silicon. The run takes longer and
+  returns the release's own mesh, which the GPU path cannot reproduce: the unwrapper's atlas changes
+  with ulp-level differences in the scene code.
 
 #### TripoSR's mesh stands upright in glTF's frame
 

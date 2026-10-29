@@ -96,6 +96,14 @@ final class MLXModelGalleryExamples: XCTestCase {
                                           parameters: [NFKMLXTripoSRParameterKey.resolution: 16])
         let result = try triposr.runInference(for: request)
         XCTAssertNotNil(result.mesh, "a mesh with vertex colors under NFKOutputMesh")
+
+        // Stable Fast 3D reads its surface off the release's tetrahedral grid (`160_tets.npz`, beside the
+        // checkpoint); a coarse lattice and a small atlas keep the random-weight run short.
+        let stableFast3D = try NFKMLXStableFast3D.backend(weightsURL: nil, grid: NFKMLXTetrahedralGrid.lattice(divisions: 8))
+        XCTAssertEqual(stableFast3D.backendIdentifier, "stable-fast-3d")
+        let textured = try stableFast3D.runInference(for: NFKInferenceRequest(
+            inputs: [NFKInputImage: Self.solid(64)], parameters: [NFKMLXStableFast3DParameterKey.textureResolution: 64]))
+        XCTAssertNotNil(textured.mesh, "a mesh under NFKOutputMesh, textured with a material when it holds a surface")
     }
 
     // MARK: Depth (image → grayscale depth)

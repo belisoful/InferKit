@@ -176,6 +176,7 @@ let backend = try NFKMLXBiSeNetV2.backend(weightsURL: url)
 | Model | Entry class | Network | Configuration for the released weights | Registered name | Base backend |
 | --- | --- | --- | --- | --- | --- |
 | TripoSR | ``NFKMLXTripoSR`` | ``NFKMLXTripoSRNet`` | `NFKMLXTripoSRConfiguration.released`; `network(weightsURL:configuration:)` builds it | `triposr` | ``NFKMLXTripoSRBackend`` |
+| Stable Fast 3D | ``NFKMLXStableFast3D`` | ``NFKMLXStableFast3DNet`` | `NFKMLXStableFast3DConfiguration.released`; `network(weightsURL:configuration:)` builds it | `stable-fast-3d` | ``NFKMLXStableFast3DBackend`` |
 
 ```swift
 let backend = try NFKMLXTripoSR.backend(weightsURL: url)
@@ -185,6 +186,16 @@ let mesh = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputIm
 ```objc
 [NFKMLXTripoSR backendWithWeightsURL:url error:&error]
 // NFKMLXTripoSRParameterKey.resolution / .threshold / .foregroundRatio / .vertexColors set the grid, the surface, the framing, and the colors
+```
+
+```swift
+let backend = try NFKMLXStableFast3D.backend(directoryURL: releaseDirectory)   // model.safetensors beside 160_tets.npz
+let mesh = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputImage: image])).mesh   // with mesh.material
+```
+
+```objc
+[NFKMLXStableFast3D backendWithDirectoryURL:releaseDirectory error:&error]
+// NFKMLXStableFast3DParameterKey.textureResolution / .threshold / .foregroundRatio / .textureFormat / .estimateIllumination
 ```
 
 ### Matting, segmentation, and faces

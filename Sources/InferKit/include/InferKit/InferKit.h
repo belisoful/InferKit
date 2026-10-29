@@ -28,6 +28,7 @@
 #import <InferKit/NFKMIDISequence.h>
 #import <InferKit/NFKMusicBeat.h>
 #import <InferKit/NFKMesh.h>
+#import <InferKit/NFKMeshMaterial.h>
 #import <InferKit/NFKInferenceRequest.h>
 #import <InferKit/NFKInferenceResult.h>
 #import <InferKit/NFKInferenceJob.h>

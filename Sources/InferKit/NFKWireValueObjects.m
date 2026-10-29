@@ -21,14 +21,18 @@ static NSString * const NFKWireValueTag = @"$nfk";
 
 #pragma mark - Writing
 
-/*! A mesh's JSON object: its counts and attribute flags, with its binary PLY base64 under "ply" when
-	inline is set. The file form writes the PLY beside the object instead and names it under "path". */
+/*! A mesh's JSON object: its counts and attribute flags, with its bytes base64 when inline is set: a
+	binary PLY under "ply", or a GLB under "glb" for a mesh with a material, which a PLY cannot carry. The
+	file form writes those bytes beside the object instead and names the file under "path". */
 NSDictionary *NFKWireMeshJSON(NFKMesh *mesh, BOOL inlineBytes)
 {
 	NSMutableDictionary *entry = [@{ NFKWireValueTag: @"mesh", @"vertexCount": @(mesh.vertexCount), @"faceCount": @(mesh.faceCount),
 									 @"normals": @(mesh.normals != nil), @"colors": @(mesh.colors != nil),
-									 @"textureCoordinates": @(mesh.textureCoordinates != nil) } mutableCopy];
-	if (inlineBytes) {
+									 @"textureCoordinates": @(mesh.textureCoordinates != nil),
+									 @"material": @(mesh.material != nil) } mutableCopy];
+	if (inlineBytes && mesh.material != nil) {
+		entry[@"glb"] = [mesh.GLBData base64EncodedStringWithOptions:0];
+	} else if (inlineBytes) {
 		entry[@"ply"] = [mesh.PLYData base64EncodedStringWithOptions:0];
 	}
 	return entry;
@@ -376,14 +380,15 @@ id _Nullable NFKWireValueObjectFromJSON(NSString *tag, NSDictionary<NSString *, 
 								  ticksPerQuarterNote:NFKWireOptionalInteger(entry[@"ticksPerQuarterNote"], 480)];
 	}
 	if ([tag isEqualToString:@"mesh"]) {
-		NSString *encoded = [entry[@"ply"] isKindOfClass:NSString.class] ? entry[@"ply"] : nil;
-		NSData *ply = encoded != nil ? [[NSData alloc] initWithBase64EncodedString:encoded options:0] : nil;
-		if (ply == nil) {
-			return NFKWireFail(outReason, @"a mesh needs its PLY bytes under ply");
+		BOOL binaryGLTF = [entry[@"glb"] isKindOfClass:NSString.class];
+		NSString *encoded = binaryGLTF ? entry[@"glb"] : [entry[@"ply"] isKindOfClass:NSString.class] ? entry[@"ply"] : nil;
+		NSData *bytes = encoded != nil ? [[NSData alloc] initWithBase64EncodedString:encoded options:0] : nil;
+		if (bytes == nil) {
+			return NFKWireFail(outReason, @"a mesh needs its PLY bytes under ply or its GLB bytes under glb");
 		}
 		NSError *readError = nil;
-		NFKMesh *mesh = [NFKMesh meshWithPLYData:ply error:&readError];
-		return mesh ?: NFKWireFail(outReason, readError.localizedDescription ?: @"a mesh's PLY bytes are malformed");
+		NFKMesh *mesh = binaryGLTF ? [NFKMesh meshWithGLBData:bytes error:&readError] : [NFKMesh meshWithPLYData:bytes error:&readError];
+		return mesh ?: NFKWireFail(outReason, readError.localizedDescription ?: @"a mesh's bytes are malformed");
 	}
 	if ([tag isEqualToString:@"musicBeat"]) {
 		double time = 0;

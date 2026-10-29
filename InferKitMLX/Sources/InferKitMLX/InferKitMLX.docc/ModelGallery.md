@@ -56,11 +56,14 @@ Each writes its result under `NFKOutputImage`.
 ### Image → 3D object
 
 `NFKMLXTripoSR` reconstructs an object from one image and emits an `NFKMesh` under `NFKOutputMesh`:
-positions, triangles, and a color per vertex, written as OBJ, PLY, or GLB.
+positions, triangles, and a color per vertex, written as OBJ, PLY, or GLB. `NFKMLXStableFast3D` emits a
+UV-textured `NFKMesh` with an `NFKMeshMaterial` (a base color texture, a tangent-space normal texture,
+roughness, and metalness), written as GLB with the textures embedded.
 
 | Model | Name | Task |
 | --- | --- | --- |
 | ``NFKMLXTripoSR`` | `triposr` | single-image 3D reconstruction (vertex-colored mesh) |
+| ``NFKMLXStableFast3D`` | `stable-fast-3d` | single-image 3D reconstruction (UV-textured mesh with a PBR material) |
 
 ### Image → map
 
