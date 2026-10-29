@@ -382,8 +382,6 @@ updated through the parity checklist, not duplicated into the reference files.
 
 Required without exception:
 
-- **NEVER** run `git clone/mv/restore/rm/add/branch/commit/merge/rebase/reset/pull/push/fetch`
-  without developer approval first.
 - **NEVER** run `rm` on any path without developer approval first. One exception needs no approval: a
   session deletes its own scratch files (its scratchpad, mirrors, build directories, and logs, all
   outside the repository and the validation store) once their task is completely finished and its
