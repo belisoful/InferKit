@@ -516,6 +516,10 @@ header when set) and routes every file through the same `download` helper the as
   request with 416, which curl 8 reports as exit 0 with the file untouched and older curls as exit 33,
   and both count as complete
 - a release with no `repo` (a `git` or `hf` entry fetched by hand) → files are checked for presence only
+- a release that is one `file` at a plain `url` or a Google Drive id (`gdrive`), such as CMGAN and
+  NU-Wave 2 → that file is fetched into the release directory through `download` or `gdown`
+- a release's `inputs` (a `url` and a `file` each, such as CMGAN's noisy clip and Apollo's input
+  waveform) → fetched into the release directory after its files, whatever kind the release is
 
 A release prints `ready` only when every file landed; a failed file names its own reason.
 `Tools/validation-assets/test_fetch.py` covers the helper and the loop against a fake curl and a fake

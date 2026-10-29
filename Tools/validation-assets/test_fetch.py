@@ -173,6 +173,46 @@ class FetchReleaseTests(unittest.TestCase):
         self.assertEqual(failed, [("absent", "no repo to fetch from")])
         self.assertEqual(curl.calls, [])
 
+    def test_single_file_release_and_its_inputs_land_in_the_release_directory(self):
+        release = {"key": "CMGAN", "url": "https://example.invalid/ckpt", "directory": "cmgan", "file": "ckpt",
+                   "inputs": [{"url": "https://example.invalid/noisy.wav", "file": "noisy.wav"}],
+                   "config": {"IK_VAL_CMGAN": ""}}
+        curl = FakeCurl()
+        with mock.patch.object(fetch.subprocess, "run", curl):
+            failed = fetch.fetch_release(release, self.directory)
+        self.assertEqual(failed, [])
+        self.assertEqual([call[-1] for call in curl.calls],
+                         ["https://example.invalid/ckpt", "https://example.invalid/noisy.wav"])
+        for name in ("ckpt", "noisy.wav"):
+            self.assertEqual(os.path.getsize(os.path.join(self.directory, name)), len(PAYLOAD))
+
+    def test_drive_release_downloads_by_id_into_the_release_directory(self):
+        release = {"key": "NUWAVE2", "gdrive": "drive-id", "directory": "nuwave2", "file": "official.ckpt",
+                   "config": {"IK_VAL_NUWAVE2": "official.ckpt"}}
+        drive = mock.Mock(return_value=(True, "downloaded (gdown)"))
+        with mock.patch.object(fetch, "download_gdrive", drive):
+            failed = fetch.fetch_release(release, self.directory)
+        self.assertEqual(failed, [])
+        drive.assert_called_once_with("drive-id", os.path.join(self.directory, "official.ckpt"), 0)
+        self.assertTrue(os.path.isdir(self.directory))
+
+    def test_repository_release_fetches_its_inputs_after_its_files(self):
+        release = dict(self.RELEASE, inputs=[{"url": "https://example.invalid/input.wav", "file": "input.wav"}])
+        curl = FakeCurl(listing=self.listing())
+        with mock.patch.object(fetch.subprocess, "run", curl):
+            failed = fetch.fetch_release(release, self.directory)
+        self.assertEqual(failed, [])
+        self.assertEqual(curl.calls[-1][-1], "https://example.invalid/input.wav")
+        self.assertEqual(fetch.release_files(release), ["config.json", "model.safetensors", "input.wav"])
+
+    def test_failed_input_is_reported_by_its_file(self):
+        release = {"key": "CMGAN", "url": "https://example.invalid/ckpt", "directory": "cmgan", "file": "ckpt",
+                   "inputs": [{"url": "https://example.invalid/noisy.wav", "file": "noisy.wav"}], "config": {}}
+        downloads = mock.Mock(side_effect=[(True, "downloaded"), (False, "curl exited 22")])
+        with mock.patch.object(fetch, "download", downloads):
+            failed = fetch.fetch_release(release, self.directory)
+        self.assertEqual(failed, [("noisy.wav", "curl exited 22")])
+
 
 class ValidationRootTests(unittest.TestCase):
     def setUp(self):
@@ -263,6 +303,18 @@ class KeyFileResolutionTests(unittest.TestCase):
         self.assertEqual(os.path.getmtime(self.config), before)
         self.assertFalse(os.path.exists(self.root), "a check creates nothing under the root")
 
+    def test_an_unresolved_single_file_release_is_fetched_and_keyed(self):
+        self.manifest["releases"].append(
+            {"key": "CMGAN", "url": "https://example.invalid/ckpt", "directory": "cmgan", "file": "ckpt",
+             "inputs": [{"url": "https://example.invalid/noisy.wav", "file": "noisy.wav"}],
+             "config": {"IK_VAL_CMGAN": ""}})
+        status, curl = self.run_fetch()
+        self.assertEqual(status, 0)
+        self.assertEqual([call[-1] for call in curl.calls],
+                         ["https://example.invalid/ckpt", "https://example.invalid/noisy.wav"])
+        with open(self.config) as handle:
+            self.assertEqual(json.load(handle)["IK_VAL_CMGAN"], os.path.join(self.root, "cmgan"))
+
 
 class ManifestShapeTests(unittest.TestCase):
     """Each shipped manifest entry carries the fields its section's loop reads."""
@@ -278,6 +330,10 @@ class ManifestShapeTests(unittest.TestCase):
             with self.subTest(release=release.get("key")):
                 self.assertTrue("files" in release or "file" in release)
                 self.assertIsInstance(release.get("config"), dict)
+                if "file" in release:
+                    self.assertTrue(release.get("url") or release.get("gdrive"))
+                for item in release.get("inputs", []):
+                    self.assertTrue(item.get("url") and item.get("file"))
 
 
 if __name__ == "__main__":

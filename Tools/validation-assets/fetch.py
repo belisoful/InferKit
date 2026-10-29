@@ -157,12 +157,46 @@ def hub_file_sizes(repo, revision):
             if entry.get("type") == "file" and isinstance(entry.get("size"), int)}
 
 
+def release_files(release):
+    """Every file a release directory holds: its repository files or single file, then its inputs."""
+    names = list(release.get("files", []))
+    if release.get("file"):
+        names.append(release["file"])
+    return names + [item["file"] for item in release.get("inputs", [])]
+
+
 def fetch_release(release, directory):
     """Downloads every file of a release directory, resuming partial ones; returns the relatives that failed."""
-    if "repo" not in release:
+    if "repo" in release:
+        failed = fetch_repository_files(release, directory)
+    elif release.get("url") or release.get("gdrive"):
+        failed = fetch_single_file(release, directory)
+    else:
         # A release fetched by hand (a `git` or `hf` entry) is only checked for presence.
-        return [(relative, "no repo to fetch from") for relative in release["files"]
-                if not os.path.exists(os.path.join(directory, relative))]
+        failed = [(relative, "no repo to fetch from") for relative in release["files"]
+                  if not os.path.exists(os.path.join(directory, relative))]
+    for item in release.get("inputs", []):
+        os.makedirs(directory, exist_ok=True)
+        ok, detail = download(item["url"], os.path.join(directory, item["file"]), item.get("bytes", 0))
+        if not ok:
+            failed.append((item["file"], detail))
+    return failed
+
+
+def fetch_single_file(release, directory):
+    """Downloads a release that is one file at a plain `url` or a Google Drive id (`gdrive`)."""
+    os.makedirs(directory, exist_ok=True)
+    destination = os.path.join(directory, release["file"])
+    expected = release.get("bytes", 0)
+    if release.get("gdrive"):
+        ok, detail = download_gdrive(release["gdrive"], destination, expected)
+    else:
+        ok, detail = download(release["url"], destination, expected)
+    return [] if ok else [(release["file"], detail)]
+
+
+def fetch_repository_files(release, directory):
+    """Downloads a release's files from its Hugging Face repository."""
     revision = release.get("revision", "main")
     # A release's own sizes are not recorded in the manifest: these are directories of many files. The
     # Hub's tree listing supplies them, so a complete file is skipped without a request and a partial
@@ -344,7 +378,7 @@ def main():
             continue
         elsewhere = located.get(release.get("directory"))
         if (not release["config"] and elsewhere
-                and all(os.path.exists(os.path.join(elsewhere, name)) for name in release["files"])):
+                and all(os.path.exists(os.path.join(elsewhere, name)) for name in release_files(release))):
             print(f"{release['key']:<12} present  {elsewhere}")
             continue
         # A release without a directory of its own (an `hf` entry) names its paths from the root.
@@ -361,7 +395,7 @@ def main():
             failed.append((release["key"], f"{relative}: {detail}"))
         config.update(paths)
         if not release_failed:
-            print(f"{release['key']:<12} ready ({len(release['files'])} files)")
+            print(f"{release['key']:<12} ready ({len(release_files(release))} files)")
 
     if args.check:
         return 0
