@@ -1310,33 +1310,6 @@
         "IK_VAL_FLUX2_TOKENIZER",
         "IK_PARITY_FLUX2_PROMPT"
       ]
-    },
-    {
-      "key": "STABLE_AUDIO_OPEN",
-      "repo": "stabilityai/stable-audio-open-1.0",
-      "directory": "stable-audio-open-1.0",
-      "files": [
-        "LICENSE.md",
-        "model_index.json",
-        "model_config.json",
-        "scheduler/scheduler_config.json",
-        "text_encoder/config.json",
-        "text_encoder/model.safetensors",
-        "tokenizer/spiece.model",
-        "tokenizer/tokenizer.json",
-        "tokenizer/tokenizer_config.json",
-        "tokenizer/special_tokens_map.json",
-        "projection_model/config.json",
-        "projection_model/diffusion_pytorch_model.safetensors",
-        "transformer/config.json",
-        "transformer/diffusion_pytorch_model.safetensors",
-        "vae/config.json",
-        "vae/diffusion_pytorch_model.safetensors"
-      ],
-      "config": {
-        "IK_VAL_STABLE_AUDIO_OPEN": ""
-      },
-      "note": "Stable Audio Open 1.0, the diffusers layout only (the stable-audio-tools single files model.ckpt, model.safetensors, and vae_model.ckpt are duplicates and are not fetched). The repository is gated, and the weights are under the Stability AI Community License (free below USD 1M annual revenue). diffusers' StableAudioPipeline (>= 0.40.0, the music oracle environment) is the oracle; model_config.json carries the release's training configuration, which the fine-tune recipe reads its optimizer settings from."
     }
   ],
   "unresolved": [
@@ -5584,6 +5557,33 @@
         "IK_VAL_DINO_VITB16": ""
       },
       "note": "DINO ViT-B/16 (facebook/dino-vitb16, Meta, Apache-2.0), 0.34 GB. The TripoSR oracle builds transformers' `ViTModel` from this `config.json` before the TripoSR checkpoint overwrites its weights. The port reads nothing from it: the TripoSR checkpoint carries the tokenizer's weights."
+    },
+    {
+      "key": "STABLE_AUDIO_OPEN",
+      "repo": "stabilityai/stable-audio-open-1.0",
+      "directory": "stable-audio-open-1.0",
+      "files": [
+        "LICENSE.md",
+        "model_index.json",
+        "model_config.json",
+        "scheduler/scheduler_config.json",
+        "text_encoder/config.json",
+        "text_encoder/model.safetensors",
+        "tokenizer/spiece.model",
+        "tokenizer/tokenizer.json",
+        "tokenizer/tokenizer_config.json",
+        "tokenizer/special_tokens_map.json",
+        "projection_model/config.json",
+        "projection_model/diffusion_pytorch_model.safetensors",
+        "transformer/config.json",
+        "transformer/diffusion_pytorch_model.safetensors",
+        "vae/config.json",
+        "vae/diffusion_pytorch_model.safetensors"
+      ],
+      "config": {
+        "IK_VAL_STABLE_AUDIO_OPEN": ""
+      },
+      "note": "Stable Audio Open 1.0, the diffusers layout only (the stable-audio-tools single files model.ckpt, model.safetensors, and vae_model.ckpt are duplicates and are not fetched). The repository is gated, and the weights are under the Stability AI Community License (free below USD 1M annual revenue). diffusers' StableAudioPipeline (>= 0.40.0, the music oracle environment) is the oracle; model_config.json carries the release's training configuration, which the fine-tune recipe reads its optimizer settings from."
     }
   ],
   "oracle_environments": {

@@ -264,5 +264,21 @@ class KeyFileResolutionTests(unittest.TestCase):
         self.assertFalse(os.path.exists(self.root), "a check creates nothing under the root")
 
 
+class ManifestShapeTests(unittest.TestCase):
+    """Each shipped manifest entry carries the fields its section's loop reads."""
+
+    def test_every_asset_names_a_file_and_a_key_list(self):
+        for asset in fetch.load_manifest()["assets"]:
+            with self.subTest(asset=asset.get("key")):
+                self.assertIn("file", asset)
+                self.assertIsInstance(asset.get("config"), list)
+
+    def test_every_release_names_its_files_and_a_key_map(self):
+        for release in fetch.load_manifest()["releases"]:
+            with self.subTest(release=release.get("key")):
+                self.assertTrue("files" in release or "file" in release)
+                self.assertIsInstance(release.get("config"), dict)
+
+
 if __name__ == "__main__":
     unittest.main()
