@@ -16426,6 +16426,13 @@
           "kind" : "choice",
           "stage" : "request",
           "title" : "Tool-call format"
+        },
+        {
+          "help" : "A name for the conversation, whose prompt cache a later request of the same name continues from.",
+          "key" : "conversationKey",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Conversation key"
         }
       ],
       "outputModalities" : [
@@ -16725,6 +16732,13 @@
           "kind" : "choice",
           "stage" : "request",
           "title" : "Tool-call format"
+        },
+        {
+          "help" : "A name for the conversation, whose prompt cache a later request of the same name continues from.",
+          "key" : "conversationKey",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Conversation key"
         },
         {
           "choices" : [

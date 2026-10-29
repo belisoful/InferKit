@@ -106,6 +106,63 @@ final class NFKMLXGraniteHybridTests: XCTestCase {
         }
     }
 
+    /// A byte-level tokenizer over the tiny vocabulary: a few words, and every other id decoding to its
+    /// own bracketed number, so a reply's text names each token.
+    private func byteLevelTokenizer() throws -> NFKTokenizer {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("NFKMLXGraniteHybridTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        var vocabulary: [String: Int] = ["h": 0, "e": 1, "l": 2, "o": 3, "he": 4, "ll": 5, "hello": 6,
+                                         "Ġ": 7, "Ġhello": 8]
+        for id in 9 ..< tinyConfiguration.vocabularySize {
+            vocabulary["[\(id)]"] = id
+        }
+        try JSONSerialization.data(withJSONObject: vocabulary).write(to: directory.appendingPathComponent("vocab.json"))
+        try "#version: 0.2\nh e\nl l\nhe ll\nhell o\nĠ hello\n".write(
+            to: directory.appendingPathComponent("merges.txt"), atomically: true, encoding: .utf8)
+        return try NFKTokenizer(forManifest: ["tokenizer": ["type": "bpe-bytelevel"]], directory: directory)
+    }
+
+    /// A named conversation's turn whose prompt extends the last one continues from that prompt's
+    /// kept prefill: it reports those tokens cached and answers as a fresh run of the same prompt does.
+    /// A prompt that does not extend the last one starts again.
+    func testAConversationContinuesFromItsLastPromptsPrefill() throws {
+        try requireMLXRuntime()
+        MLXRandom.seed(43)
+        let net = NFKMLXGraniteHybrid.makeNet(tinyConfiguration)
+        try NFKMLXWeights.apply(net.parameters().flattened().map { ($0.0, MLXRandom.normal($0.1.shape) * 0.3) },
+                                to: net)
+        let backend = NFKMLXGraniteBackend(net: net, tokenizer: try byteLevelTokenizer(), identifier: "granite")
+        func run(_ prompt: String, conversation: String?) throws -> (text: String, input: Int, cached: Int) {
+            var parameters: [String: Any] = [NFKParameterMaxTokens: 6, NFKParameterTemperature: 0]
+            parameters[NFKParameterConversationKey] = conversation
+            let result = try backend.runInference(for: NFKInferenceRequest(inputs: [NFKInputPrompt: prompt],
+                                                                           parameters: parameters))
+            let usage = try XCTUnwrap(result.output(forKey: NFKOutputUsage) as? [String: Int])
+            return (result.text ?? "", usage[NFKUsageInputTokens] ?? -1, usage[NFKUsageCachedTokens] ?? -1)
+        }
+
+        let first = try run("hello hello", conversation: "chat")
+        XCTAssertEqual(first.cached, 0)
+        XCTAssertEqual(backend.conversationCacheCount, 1)
+        XCTAssertGreaterThan(backend.conversationCacheBytes, 0)
+
+        let second = try run("hello hello hello hello", conversation: "chat")
+        XCTAssertEqual(second.cached, first.input, "the turn continues from the last prompt's prefill")
+        let fresh = try run("hello hello hello hello", conversation: nil)
+        XCTAssertEqual(fresh.cached, 0)
+        XCTAssertEqual(second.text, fresh.text, "a continued turn answers as a fresh run of its prompt")
+        XCTAssertFalse(fresh.text.isEmpty)
+
+        XCTAssertEqual(try run("hello", conversation: "chat").cached, 0,
+                       "a prompt that does not extend the last starts again")
+        XCTAssertEqual(try run("hello hello", conversation: "other").cached, 0)
+        XCTAssertEqual(backend.conversationCacheCount, 2)
+        XCTAssertGreaterThan(backend.releaseIdleConversationCaches(), 0)
+        XCTAssertEqual(backend.conversationCacheCount, 0)
+    }
+
     func testParameterNamesFollowTheModuleLayout() throws {
         try requireMLXRuntime()
         let names = Set(NFKMLXGraniteHybrid.makeNet(tinyConfiguration).parameters().flattened().map(\.0))

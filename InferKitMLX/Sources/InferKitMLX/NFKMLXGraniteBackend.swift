@@ -22,14 +22,15 @@ import MLXRandom
 /// tokenizer are not `Sendable`, so the crossing is made explicit, as the other language backends do.
 final class NFKGraniteBackendHolder: @unchecked Sendable {
     let logits: (MLXArray) -> MLXArray
-    /// Starts a generation and answers its step: the logits of the tokens given, which continue the
-    /// ones before them. Nil runs the whole sequence through `logits` each step.
-    let startGeneration: (() -> (MLXArray) -> MLXArray)?
+    /// The decoder's layer kinds and its cached step: the logits of the tokens given, which continue
+    /// the positions the cache holds. Nil runs the whole sequence through `logits` each step.
+    let cached: (layerTypes: [NFKMLXGraniteLayerKind], logits: (MLXArray, NFKMLXGraniteCache) -> MLXArray)?
     let tokenizer: NFKTokenizer
-    init(logits: @escaping (MLXArray) -> MLXArray, startGeneration: (() -> (MLXArray) -> MLXArray)?,
+    init(logits: @escaping (MLXArray) -> MLXArray,
+         cached: (layerTypes: [NFKMLXGraniteLayerKind], logits: (MLXArray, NFKMLXGraniteCache) -> MLXArray)?,
          tokenizer: NFKTokenizer) {
         self.logits = logits
-        self.startGeneration = startGeneration
+        self.cached = cached
         self.tokenizer = tokenizer
     }
 }
@@ -51,19 +52,23 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
     /// The sampling the release's generation config sets: step 3 of ``NFKMLXGenerationOptions``' sampling order.
     private let releaseSampling: NFKMLXReleaseSampling?
     private let modelInfoCache = NFKMLXModelInfoCache()
+    /// One generation at a time: a run threads its caches through the shared decoder.
+    private let generationLock = NSLock()
+    /// The named conversations' kept prefills, read and written under `generationLock`.
+    private let conversations = NFKMLXConversationKeeper<NFKMLXGranitePromptCache>(byteBudget: 2 << 30)
 
     /// A backend over `net` that generates with the decoder's caches.
     convenience init(net: NFKMLXGraniteHybridNet, tokenizer: NFKTokenizer, identifier: String,
                      releaseDirectoryURL: URL? = nil) {
-        self.init(logits: { net($0) }, startGeneration: {
-            let cache = NFKMLXGraniteCache(layerTypes: net.config.layerTypes)
-            return { net($0, cache: cache) }
-        }, tokenizer: tokenizer, identifier: identifier, modules: [net], releaseDirectoryURL: releaseDirectoryURL)
+        self.init(logits: { net($0) }, cached: (net.config.layerTypes, { net($0, cache: $1) }),
+                  tokenizer: tokenizer, identifier: identifier, modules: [net],
+                  releaseDirectoryURL: releaseDirectoryURL)
     }
 
-    init(logits: @escaping (MLXArray) -> MLXArray, startGeneration: (() -> (MLXArray) -> MLXArray)? = nil,
+    init(logits: @escaping (MLXArray) -> MLXArray,
+         cached: (layerTypes: [NFKMLXGraniteLayerKind], logits: (MLXArray, NFKMLXGraniteCache) -> MLXArray)? = nil,
          tokenizer: NFKTokenizer, identifier: String, modules: [Module] = [], releaseDirectoryURL: URL? = nil) {
-        self.holder = NFKGraniteBackendHolder(logits: logits, startGeneration: startGeneration, tokenizer: tokenizer)
+        self.holder = NFKGraniteBackendHolder(logits: logits, cached: cached, tokenizer: tokenizer)
         self.identifier = identifier
         self.describedModules = modules
         self.releaseDirectoryURL = releaseDirectoryURL
@@ -93,8 +98,72 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
     /// The request parameters the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedParameterKeys: Set<String> {
         [NFKParameterTemperature, NFKParameterTopP, NFKParameterTopK, NFKParameterMaxTokens, NFKParameterSeed, NFKParameterTools,
-         NFKMLXGenerationParameterKey.toolCallFormat]
+         NFKMLXGenerationParameterKey.toolCallFormat, NFKParameterConversationKey]
     }
+
+    /// The bytes the conversations' prompt caches may hold together.
+    ///
+    /// @discussion A request that names its conversation under `NFKParameterConversationKey`
+    /// continues from the prefill of that conversation's last prompt where its own prompt extends
+    /// it, so each turn prefills only what it adds. When the caches outgrow the budget, the least
+    /// recently used conversations are dropped, never the one a request is running. Lowering the
+    /// budget drops down to it at once. Defaults to 2 GiB. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheByteBudget: Int {
+        get {
+            generationLock.lock(); defer { generationLock.unlock() }
+            return conversations.states.byteBudget
+        }
+        set {
+            generationLock.lock(); defer { generationLock.unlock() }
+            conversations.states.byteBudget = newValue
+            conversations.states.evict()
+            conversations.refresh()
+        }
+    }
+
+    /// How many conversations hold a prompt cache. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheCount: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversations.states.count
+    }
+
+    /// The bytes the conversations' prompt caches occupy. Introduced in InferKit 0.4.0.
+    @objc public var conversationCacheBytes: Int {
+        generationLock.lock(); defer { generationLock.unlock() }
+        return conversations.states.heldBytes
+    }
+
+    /// Drops one conversation's prompt cache. Introduced in InferKit 0.4.0.
+    @objc(resetPromptCacheForConversation:)
+    public func resetPromptCache(forConversation conversation: String) {
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversations.states.remove(conversation)
+        conversations.refresh()
+    }
+
+    /// Drops every conversation's prompt cache. Introduced in InferKit 0.4.0.
+    @objc public func resetPromptCache() {
+        generationLock.lock(); defer { generationLock.unlock() }
+        conversations.states.removeAll()
+        conversations.refresh()
+    }
+
+    /// Drops every conversation's prompt cache when no run is in progress, and returns the bytes they held;
+    /// returns 0 at once while a run holds them. `NFKInferenceServer` calls it to relieve memory. Introduced
+    /// in InferKit 0.4.0.
+    @objc public func releaseIdleConversationCaches() -> Int {
+        guard generationLock.try() else { return 0 }
+        defer { generationLock.unlock() }
+        let held = conversations.states.heldBytes
+        conversations.states.removeAll()
+        conversations.refresh()
+        return held
+    }
+
+    /// The conversation caches as of the last run or change: `conversation_caches`,
+    /// `conversation_cache_bytes`, and `conversation_cache_byte_budget`. `NFKInferenceServer` serves it
+    /// under the model's "status". It never waits on a run in progress. Introduced in InferKit 0.4.0.
+    @objc public var backendStatus: [String: Any] { conversations.status }
 
     /// The request inputs the backend reads. Introduced in InferKit 0.4.0.
     @objc public var supportedInputKeys: Set<String> { [NFKInputPrompt, NFKInputMessages] }
@@ -115,22 +184,24 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
             seed = value.uint64Value
         }
 
+        let conversation = NFKMLXConversation.name(of: request)
         if let (promptTokens, format) = try templatePrompt(for: request) {
-            let (produced, limit) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens, seed: seed,
-                                    stops: templateStopTokens)
+            let (produced, limit, cached) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens,
+                                                         seed: seed, stops: templateStopTokens,
+                                                         conversation: conversation)
             var outputs = NFKMLXToolCalling.outputs(answer: holder.tokenizer.decode(produced.map { NSNumber(value: $0) }),
                                                     reasoning: "", request: request, format: format, source: identifier)
             outputs[NFKOutputFinishReason] = NFKMLXContextRoom.finishReason(produced: produced.count, limit: limit, outputs: outputs)
-            outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
+            outputs[NFKOutputUsage] = NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: cached,
                                                           outputTokens: produced.count, reasoningTokens: nil)
             return NFKInferenceResult(outputs: outputs)
         }
         let promptTokens = try tokens(for: request)
-        let (produced, limit) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens, seed: seed,
-                                stops: stopTokens)
+        let (produced, limit, cached) = try generate(promptTokens, sampling: sampling, maxTokens: maximumTokens,
+                                                     seed: seed, stops: stopTokens, conversation: conversation)
         return NFKInferenceResult(outputs: [
             NFKOutputText: holder.tokenizer.decode(produced.map { NSNumber(value: $0) }),
-            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: 0,
+            NFKOutputUsage: NFKMLXUsage.outputs(inputTokens: promptTokens.count, cachedTokens: cached,
                                                 outputTokens: produced.count, reasoningTokens: nil),
             NFKOutputFinishReason: NFKMLXContextRoom.finishReason(produced: produced.count, limit: limit),
         ])
@@ -178,24 +249,47 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
     }
 
     /// Generation: the prompt runs through the decoder once, then each new token alone against the
-    /// decoder's caches. A backend built without a generation step runs the whole growing sequence
-    /// each step.
+    /// decoder's caches. A named conversation whose last prompt this one extends starts from that
+    /// prompt's kept prefill, and `cached` counts the tokens it held. A backend built without a cached
+    /// step runs the whole growing sequence each step.
     private func generate(_ promptTokens: [Int], sampling: NFKMLXStepSampling, maxTokens: Int?, seed: UInt64?,
-                          stops: Set<Int>) throws -> (tokens: [Int], limit: Int) {
-        let step = holder.startGeneration?()
-        var pending = promptTokens
-        var produced = [Int]()
+                          stops: Set<Int>, conversation: String?) throws -> (tokens: [Int], limit: Int, cached: Int) {
+        generationLock.lock(); defer { generationLock.unlock() }
         let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: promptTokens.count,
                                                   contextLength: contextLength, source: identifier)
+        var produced = [Int]()
+        guard let cached = holder.cached else {
+            var sequence = promptTokens
+            for index in 0 ..< max(limit, 0) {
+                let logits = holder.logits(MLXArray(sequence.map(Int32.init)).reshaped([1, sequence.count]))
+                let next = sampling.next(logits[0, sequence.count - 1], seed: seed, step: index)
+                if stops.contains(next) { break }
+                produced.append(next)
+                sequence.append(next)
+            }
+            return (produced, limit, 0)
+        }
+        let kept = conversation.map { name in conversations.states.state(for: name) { NFKMLXGranitePromptCache() } }
+        defer {
+            if let conversation {
+                conversations.states.evict(keeping: conversation)
+            }
+            conversations.refresh()
+        }
+        let (cache, start) = kept?.begin(promptTokens, layerTypes: cached.layerTypes)
+            ?? (NFKMLXGraniteCache(layerTypes: cached.layerTypes), 0)
+        var pending = Array(promptTokens[start...])
         for index in 0 ..< max(limit, 0) {
-            let input = MLXArray(pending.map(Int32.init)).reshaped([1, pending.count])
-            let logits = (step ?? holder.logits)(input)[0, pending.count - 1]
-            let next = sampling.next(logits, seed: seed, step: index)
+            let logits = cached.logits(MLXArray(pending.map(Int32.init)).reshaped([1, pending.count]), cache)
+            if index == 0 {
+                kept?.finish(promptTokens, cache: cache)
+            }
+            let next = sampling.next(logits[0, pending.count - 1], seed: seed, step: index)
             if stops.contains(next) { break }
             produced.append(next)
-            pending = step != nil ? [next] : pending + [next]
+            pending = [next]
         }
-        return (produced, limit)
+        return (produced, limit, start)
     }
 }
 

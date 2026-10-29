@@ -1799,6 +1799,18 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   on an image read from a file, and Face Alignment, RetinaFace, SigLIP 2, its probe, and the Qwen-VL
   Sa2VA releases took a `CGImage` alone.
 
+#### Granite 4.0-H continues a named conversation
+
+- A request that names its conversation under `NFKParameterConversationKey` continues from the
+  prefill of that conversation's last prompt where its own prompt extends it, and reports the kept
+  tokens under `cachedTokens`. A prompt that does not extend the last one starts again. On the
+  released 1B, a tool turn of 335 tokens with 295 kept answered in 3.08 s, against 5.82 s fresh, with
+  the same reply.
+- `NFKMLXGraniteBackend` takes the conversation-cache controls the other language backends have:
+  `conversationCacheByteBudget` (2 GiB), `conversationCacheCount`, `conversationCacheBytes`,
+  `resetPromptCache(forConversation:)`, `resetPromptCache()`, `releaseIdleConversationCaches()`,
+  and the cache figures in `backendStatus`. The catalog declares the conversation key.
+
 #### Granite 4.0-H generates against its caches
 
 - The Granite 4.0-H backend runs the prompt once and then each new token alone. The Mamba-2 layers

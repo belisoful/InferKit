@@ -437,8 +437,8 @@ attention and feed-forward.
   recently used first, skipping the conversation that ran, so one conversation over the budget
   keeps its cache. The unnamed retained cache is separate and keeps its old rule: a request that
   does not ask for reuse drops it. A named request leaves it alone. `NFKMLXLanguageBackend`,
-  `NFKMLXGemma3Backend`, and `NFKMLXDeepSeekBackend` keep conversation caches; Gemma 3n, the
-  multimodal backends, and the prefill-only backends do not. The store is generic
+  `NFKMLXGemma3Backend`, `NFKMLXDeepSeekBackend`, and `NFKMLXGraniteBackend` keep conversation caches;
+  Gemma 3n, the multimodal backends, and the prefill-only backends do not. The store is generic
   (`NFKMLXConversationStates<State>`) and `NFKMLXConversationKeeper` pairs it with the status
   snapshot; `NFKMLXConversation.name(of:)` reads the key for all three.
   - Gemma 3 (`NFKMLXGemma3PromptCache`) keeps rows the way the dense cache does, generated ones
@@ -1382,9 +1382,22 @@ attention and feed-forward.
   (`testCachedGenerationStepsMatchTheWholeSequence`). Before (to 2026-10-28) the backend reran the
   whole sequence each step. Measured on the released 1B (checkpoint precision, greedy, a 1076-token
   tool prompt, 28 tokens out): 14.6 s cached against 352.6 s rerun, the same text. The prefill
-  remains the cost: the fast scan steps through the prompt one position at a time. A conversation cache
-  across turns is not kept: the backend starts each run from an empty cache. A message list renders through the release's `chat_template.jinja`, which
-  the download fetches; a raw prompt is read verbatim. Given the joined text instead, the 1B instruct
+  remains the cost: the fast scan steps through the prompt one position at a time.
+
+  A request naming its conversation under `NFKParameterConversationKey` keeps that prompt's
+  prefill (`NFKMLXGranitePromptCache`): the token ids and a snapshot of every layer's cache, taken
+  after the prefill and before the first decoded token. A later prompt of the same name that
+  extends those ids exactly restores the snapshot and prefills the rest, and reports the kept ids as
+  `cachedTokens`; any other prompt starts from empty caches, since a Mamba layer's state holds no
+  earlier position to rewind to. The snapshot ends where the reply began, so a reply the template
+  renders back in other tokens than the model wrote still continues. A step replaces a layer's
+  arrays and never writes into them, so a snapshot is the evaluated references. Measured on the
+  released 1B (greedy, three tools): the first turn prefills 295 tokens in 5.74 s; the second turn,
+  335 tokens of which 295 are kept, answers in 3.08 s, against 5.82 s fresh, with the same text. A
+  kept conversation holds 60 MB, mostly the float32 scan states, under the 2 GiB default budget the
+  other conversation caches share.
+
+  A message list renders through the release's `chat_template.jinja`, which the download fetches; a raw prompt is read verbatim. Given the joined text instead, the 1B instruct
   release ends its reply before its first token (0 tokens out, measured 2026-10-28), and with the
   template it answers. A release without a template joins the messages. **Customization ships** (the first on-device language-decoder fine-tune):
   `NFKMLXGraniteHybrid.fineTune` adapts the attention query and value projections with LoRA, the Mamba

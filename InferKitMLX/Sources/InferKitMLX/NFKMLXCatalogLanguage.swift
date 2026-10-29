@@ -834,7 +834,8 @@ extension NFKMLXCatalogLanguage {
                 variants: [familyVariant(release.name, release.repository, displayName: release.displayName,
                                          isDefault: true, files: files)],
                 license: .apache2(), readsReasoning: false, outputs: toolCallingOutputs + [usageOutput, finishReasonOutput],
-                parameters: toolDecoderOptions(), residencies: residencies(routesExperts: release.routesExperts))
+                parameters: toolDecoderOptions() + [conversationKeyOption()],
+                residencies: residencies(routesExperts: release.routesExperts))
             entry.modelTypes = ["granitemoehybrid"]
             return entry
         }

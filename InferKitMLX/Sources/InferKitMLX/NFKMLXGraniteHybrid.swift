@@ -212,6 +212,59 @@ final class NFKMLXGraniteCache {
         mamba = layerTypes.map { $0 == .mamba ? NFKMLXMamba2Cache() : nil }
         attention = layerTypes.map { $0 == .attention ? NFKMLXGraniteAttentionCache() : nil }
     }
+
+    private var arrays: [MLXArray] {
+        mamba.flatMap { [$0?.convolutionInputs, $0?.state].compactMap { $0 } }
+            + attention.flatMap { [$0?.keys, $0?.values].compactMap { $0 } }
+    }
+
+    /// The bytes the cached arrays occupy.
+    var allocatedBytes: Int { arrays.reduce(0) { $0 + $1.nbytes } }
+
+    /// A cache holding the state this one holds now, evaluated. A step replaces a layer's arrays and
+    /// never writes into them, so the copy keeps this state while this cache moves on.
+    func snapshot() -> NFKMLXGraniteCache {
+        eval(arrays)
+        let copy = NFKMLXGraniteCache(layerTypes: mamba.map { $0 != nil ? .mamba : .attention })
+        for (kept, held) in zip(copy.mamba, mamba) {
+            kept?.convolutionInputs = held?.convolutionInputs
+            kept?.state = held?.state
+        }
+        for (kept, held) in zip(copy.attention, attention) {
+            kept?.keys = held?.keys
+            kept?.values = held?.values
+        }
+        return copy
+    }
+}
+
+/// What the Granite backend keeps for one named conversation: the last prompt's token ids and the
+/// caches as its prefill left them, before any token was decoded.
+///
+/// @discussion A Mamba layer's state holds no earlier position to return to, so a prompt continues
+/// from the kept caches only where it extends the last prompt exactly; any other prompt starts from
+/// empty caches. The kept state ends where the reply began, so a reply the chat template renders in
+/// other tokens than the model wrote still continues.
+final class NFKMLXGranitePromptCache: NFKMLXConversationState {
+    private(set) var tokens: [Int] = []
+    private var kept: NFKMLXGraniteCache?
+
+    var allocatedBytes: Int { kept?.allocatedBytes ?? 0 }
+
+    /// The caches to prefill `prompt` into and the position the prefill starts at: the last prompt's
+    /// end where `prompt` extends it, else 0.
+    func begin(_ prompt: [Int], layerTypes: [NFKMLXGraniteLayerKind]) -> (cache: NFKMLXGraniteCache, start: Int) {
+        guard let kept, prompt.count > tokens.count, prompt.starts(with: tokens) else {
+            return (NFKMLXGraniteCache(layerTypes: layerTypes), 0)
+        }
+        return (kept.snapshot(), tokens.count)
+    }
+
+    /// Keeps `cache` as the prefill of `prompt` left it.
+    func finish(_ prompt: [Int], cache: NFKMLXGraniteCache) {
+        tokens = prompt
+        kept = cache.snapshot()
+    }
 }
 
 final class NFKGraniteAttention: Module {
