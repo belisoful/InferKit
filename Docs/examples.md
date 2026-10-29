@@ -2250,8 +2250,9 @@ NFKMesh *mesh = result.mesh;
 
 The model expects the object on a plain background. An image with alpha is prepared the way the
 reference demo prepares it: cropped to its foreground, framed so the object fills
-`NFKMLXTripoSRParameterKey.foregroundRatio` of a square (0.85), and composited on mid-gray; an opaque
-image is used as it is. `.resolution` is the side of the marching-cubes grid (256; its cube sets the
+`NFKMLXTripoSRParameterKey.foregroundRatio` of a square (0.85), and composited on mid-gray. An opaque
+image is centered on a mid-gray square of its longer side, so a picture that is not square keeps its
+proportions. `.resolution` is the side of the marching-cubes grid (256; its cube sets the
 time and memory of the surface pass), `.threshold` the density the surface is drawn at (25), and
 `.vertexColors` turns the per-vertex color off. Positions lie in a cube of half-side 0.87 in glTF's
 frame: y up, and the object facing +z, so the GLB, OBJ, and PLY open upright in a y-up viewer.

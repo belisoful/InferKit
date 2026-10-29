@@ -439,7 +439,8 @@ public final class NFKMLXTripoSRParameterKey: NSObject {
     /// The density the surface is drawn at (NSNumber, default 25).
     @objc public static let threshold = "NFKMLXParameterDensityThreshold"
     /// The share of the image's side the object is scaled to fill when the image carries alpha (NSNumber in
-    /// 0...1, default 0.85). An image without alpha is used as it is.
+    /// 0...1, default 0.85). An opaque image is centered on a mid-gray square of its longer side and not
+    /// scaled.
     @objc public static let foregroundRatio = "NFKMLXParameterForegroundRatio"
     /// Whether each vertex is colored by the decoder (NSNumber boolean, default YES).
     @objc public static let vertexColors = "NFKMLXParameterVertexColors"
@@ -524,8 +525,8 @@ extension NFKMLXTripoSRNet {
 
     /// The whole run from a bridged image `[H, W, 4]` in 0...1: the reference demo's preparation (an image
     /// with alpha is cropped to its foreground, padded to `foregroundRatio` of a square, and composited on
-    /// mid-gray), the antialiased bilinear resize to the conditioning size, the forward, the density grid,
-    /// marching cubes, and the vertex colors.
+    /// mid-gray; an opaque one is centered on a mid-gray square), the antialiased bilinear resize to the
+    /// conditioning size, the forward, the density grid, marching cubes, and the vertex colors.
     func reconstruct(rgba: MLXArray, options: NFKMLXTripoSROptions) throws -> NFKMesh {
         let prepared = NFKMLXTripoSR.prepare(rgba: rgba, foregroundRatio: options.foregroundRatio)
         let conditioning = NFKMLXTripoSR.resizeAntialiased(prepared, side: configuration.imageSize)
@@ -758,8 +759,11 @@ public final class NFKMLXTripoSR: NSObject {
     }
 
     /// The reference demo's preparation of an image `[H, W, 4]` in 0...1. An image whose alpha is all one
-    /// is returned as RGB. Otherwise the foreground (alpha above zero) is cropped to its box, padded to a
-    /// square, padded again so the object fills `foregroundRatio` of the side, and composited on mid-gray.
+    /// is centered on a mid-gray square of its longer side, so a picture that is not square keeps its
+    /// proportions through the square resize; a square one is returned as RGB. The reference resizes such an
+    /// image straight to the square, stretching it, and asks for one already framed on gray. Otherwise the
+    /// foreground (alpha above zero) is cropped to its box, padded to a square, padded again so the object
+    /// fills `foregroundRatio` of the side, and composited on mid-gray.
     static func prepare(rgba: MLXArray, foregroundRatio: Float) -> MLXArray {
         let (height, width) = (rgba.dim(0), rgba.dim(1))
         let alpha = rgba[0..., 0..., 3]
@@ -773,7 +777,11 @@ public final class NFKMLXTripoSR: NSObject {
         }
         let opaque = alphaValues.allSatisfy { $0 >= 1 }
         if opaque || maxY < minY || maxX < minX {
-            return rgba[0..., 0..., 0 ..< 3]
+            let side = max(height, width)
+            let top = (side - height) / 2, left = (side - width) / 2
+            return padded(rgba[0..., 0..., 0 ..< 3], widths: [IntOrPair((top, side - height - top)),
+                                                             IntOrPair((left, side - width - left)), IntOrPair(0)],
+                          value: MLXArray(Float(0.5)))
         }
         // `resize_foreground`: `image[y1:y2, x1:x2]` is half open, so the last row and column are dropped.
         let cropHeight = max(1, maxY - minY), cropWidth = max(1, maxX - minX)

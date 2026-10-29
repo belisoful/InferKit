@@ -58,7 +58,11 @@ the mesh type, the surface extraction, and the writers every later port uses.
     A later image-to-3D port states its reference's frame here and turns it into glTF's at the output.
   - Preparation mirrors the reference demo (`run.py`): an image with alpha below one is cropped to its
     foreground (the half-open `image[y1:y2, x1:x2]` drops the last row and column), padded to a square, padded
-    again to `foregroundRatio` (0.85), composited on mid-gray; an opaque image is used as it is. The model's
+    again to `foregroundRatio` (0.85), composited on mid-gray. An opaque image is centered on a mid-gray
+    square of its longer side (a square one is used as it is). The reference resizes an opaque image
+    straight to the square, stretching a picture that is not square, and its `--no-remove-bg` help asks
+    for one already framed on gray; the square keeps a photograph's proportions, which the stretch lost
+    (an 800 × 533 photograph came out 1.02 × 0.966 across its front, measured 2026-10-28). The model's
     own resize is `F.interpolate(bilinear, align_corners=False, antialias=True)` to 512, a triangle filter
     whose support widens with the scale (`antialiasBilinearMatrix`).
   - Request keys (`NFKMLXTripoSRParameterKey`): `resolution` (256), `threshold` (25), `foregroundRatio`

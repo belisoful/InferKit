@@ -1636,7 +1636,7 @@ enum NFKMLXCatalogImage {
         [model(NFKMLXTripoSR.modelName, "TripoSR", family: "triposr",
                summary: "A reconstructor of a textured object from one image.",
                tasks: [NFKModelTaskImageTo3D],
-               inputs: [imageInput("The object to reconstruct, on a plain background. An image with alpha is cropped to its foreground and framed on gray.")],
+               inputs: [imageInput("The object to reconstruct, on a plain background. An image with alpha is cropped to its foreground and framed on gray; an opaque one is centered on a gray square, keeping its proportions.")],
                outputs: [.output(NFKOutputMesh, required: true, title: "Mesh",
                                  help: "The object as a triangle mesh with vertex colors, in a cube of half-side 0.87.")],
                parameters: [

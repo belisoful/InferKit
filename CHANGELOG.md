@@ -1792,6 +1792,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### TripoSR keeps an opaque picture's proportions
+
+- An opaque image is centered on a mid-gray square of its longer side before the square resize, so a
+  picture that is not square keeps its proportions. Before, it was resized straight to the square, as
+  the reference does, and an 800 × 533 photograph came out squeezed across its front. A square opaque
+  image is used as it is, and an image with alpha is framed as before.
+
 #### TripoSR's mesh stands upright in glTF's frame
 
 - TripoSR returns its `NFKMesh` in glTF's frame, which `NFKMesh` documents: y up, and the object facing

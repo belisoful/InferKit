@@ -61980,7 +61980,7 @@
       ],
       "inputs" : [
         {
-          "help" : "The object to reconstruct, on a plain background. An image with alpha is cropped to its foreground and framed on gray.",
+          "help" : "The object to reconstruct, on a plain background. An image with alpha is cropped to its foreground and framed on gray; an opaque one is centered on a gray square, keeping its proportions.",
           "key" : "image",
           "required" : true,
           "title" : "Image",

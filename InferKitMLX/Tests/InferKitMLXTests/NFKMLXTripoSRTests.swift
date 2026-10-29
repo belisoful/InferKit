@@ -211,11 +211,24 @@ final class NFKMLXTripoSRTests: XCTestCase {
 
     // MARK: - Preparation and resampling
 
-    func testAnOpaqueImageIsUsedAsItIsAndATransparentOneIsFramedOnGray() throws {
-        let opaque = concatenated([MLXRandom.uniform(0 ..< 1, [6, 5, 3], key: MLXRandom.key(1)), MLXArray.ones([6, 5, 1])], axis: -1)
-        let kept = NFKMLXTripoSR.prepare(rgba: opaque, foregroundRatio: 0.85)
-        XCTAssertEqual(kept.shape, [6, 5, 3])
-        XCTAssertEqual(cosine(kept, opaque[0..., 0..., 0 ..< 3]), 1, accuracy: 1e-7)
+    func testAnOpaqueImageIsSquaredOnGrayAndATransparentOneIsFramedOnGray() throws {
+        let square = concatenated([MLXRandom.uniform(0 ..< 1, [6, 6, 3], key: MLXRandom.key(1)), MLXArray.ones([6, 6, 1])], axis: -1)
+        let kept = NFKMLXTripoSR.prepare(rgba: square, foregroundRatio: 0.85)
+        XCTAssertEqual(kept.shape, [6, 6, 3])
+        XCTAssertEqual(abs(kept - square[0..., 0..., 0 ..< 3]).max().item(Float.self), 0, "a square opaque image is used as it is")
+
+        // A 3 × 6 opaque picture is centered on a 6 × 6 mid-gray square: one gray row above, two below.
+        let wide = concatenated([MLXRandom.uniform(0 ..< 1, [3, 6, 3], key: MLXRandom.key(2)), MLXArray.ones([3, 6, 1])], axis: -1)
+        let squared = NFKMLXTripoSR.prepare(rgba: wide, foregroundRatio: 0.85)
+        XCTAssertEqual(squared.shape, [6, 6, 3])
+        XCTAssertEqual(abs(squared[1 ..< 4, 0..., 0...] - wide[0..., 0..., 0 ..< 3]).max().item(Float.self), 0,
+                       "the picture is kept whole, unscaled")
+        XCTAssertEqual(abs(squared[0, 0..., 0...] - 0.5).max().item(Float.self), 0, "the row above is gray")
+        XCTAssertEqual(abs(squared[4 ..< 6, 0..., 0...] - 0.5).max().item(Float.self), 0, "the rows below are gray")
+        let tall = concatenated([MLXRandom.uniform(0 ..< 1, [5, 2, 3], key: MLXRandom.key(3)), MLXArray.ones([5, 2, 1])], axis: -1)
+        let squaredTall = NFKMLXTripoSR.prepare(rgba: tall, foregroundRatio: 0.85)
+        XCTAssertEqual(squaredTall.shape, [5, 5, 3])
+        XCTAssertEqual(abs(squaredTall[0..., 1 ..< 3, 0...] - tall[0..., 0..., 0 ..< 3]).max().item(Float.self), 0)
 
         // A 4×6 opaque block at rows 2..<6, columns 3..<9 of a 10×12 transparent image: the half-open crop
         // keeps 3 rows × 5 columns, the square is 5, and 5 / 0.5 = 10 is the framed side.
