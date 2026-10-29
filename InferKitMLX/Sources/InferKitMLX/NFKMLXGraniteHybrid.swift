@@ -194,6 +194,26 @@ final class NFKGraniteRMSNorm: Module {
 }
 
 /// Grouped-query attention with no positional embedding (NoPE) and Granite's custom logit scale.
+/// What an attention layer carries between the steps of one generation: the keys and values of every
+/// position so far, `[B, keyValueHeads, positions, headDim]`.
+final class NFKMLXGraniteAttentionCache {
+    var keys: MLXArray?
+    var values: MLXArray?
+}
+
+/// The per-layer caches of one generation over a Granite 4.0-H decoder, so each new token runs alone
+/// against the state its predecessors left: a Mamba layer's convolution inputs and scan state, and
+/// an attention layer's keys and values.
+final class NFKMLXGraniteCache {
+    let mamba: [NFKMLXMamba2Cache?]
+    let attention: [NFKMLXGraniteAttentionCache?]
+
+    init(layerTypes: [NFKMLXGraniteLayerKind]) {
+        mamba = layerTypes.map { $0 == .mamba ? NFKMLXMamba2Cache() : nil }
+        attention = layerTypes.map { $0 == .attention ? NFKMLXGraniteAttentionCache() : nil }
+    }
+}
+
 final class NFKGraniteAttention: Module {
     @ModuleInfo(key: "q_proj") var queryProjection: Linear
     @ModuleInfo(key: "k_proj") var keyProjection: Linear
@@ -216,18 +236,31 @@ final class NFKGraniteAttention: Module {
         super.init()
     }
 
-    func callAsFunction(_ hidden: MLXArray) -> MLXArray {
+    /// `hidden` `[B, L, hiddenSize]` → `[B, L, hiddenSize]`. With `cache`, the positions follow the
+    /// ones the cache holds and attend to them, and their keys and values join it.
+    func callAsFunction(_ hidden: MLXArray, cache: NFKMLXGraniteAttentionCache? = nil) -> MLXArray {
         let batch = hidden.dim(0), length = hidden.dim(1)
         // No rotary: Granite 4.0-H uses NoPE.
         let q = queryProjection(hidden).reshaped([batch, length, headCount, headDimensions]).transposed(0, 2, 1, 3)
-        let k = keyProjection(hidden).reshaped([batch, length, keyValueHeadCount, headDimensions]).transposed(0, 2, 1, 3)
-        let v = valueProjection(hidden).reshaped([batch, length, keyValueHeadCount, headDimensions]).transposed(0, 2, 1, 3)
+        var k = keyProjection(hidden).reshaped([batch, length, keyValueHeadCount, headDimensions]).transposed(0, 2, 1, 3)
+        var v = valueProjection(hidden).reshaped([batch, length, keyValueHeadCount, headDimensions]).transposed(0, 2, 1, 3)
+        let offset = cache?.keys?.dim(2) ?? 0
+        if let cache {
+            k = cache.keys.map { concatenated([$0, k], axis: 2) } ?? k
+            v = cache.values.map { concatenated([$0, v], axis: 2) } ?? v
+            cache.keys = k
+            cache.values = v
+        }
         let out: MLXArray
         if NFKReferenceRounding.isReduced(q) {
             out = NFKReferenceRounding.attention(queries: q, keys: k, values: v, scale: scale,
-                                                 mask: NFKMLXLanguageNet.causalMask(length, offset: 0))
-        } else {
+                                                 mask: NFKMLXLanguageNet.causalMask(length, offset: offset))
+        } else if offset == 0 {
             out = MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v, scale: scale, mask: .causal)
+        } else {
+            let mask: MLXFast.ScaledDotProductAttentionMaskMode = length == 1
+                ? .none : .array(NFKMLXLanguageNet.causalMask(length, offset: offset).asType(q.dtype))
+            out = MLXFast.scaledDotProductAttention(queries: q, keys: k, values: v, scale: scale, mask: mask)
         }
         return outputProjection(out.transposed(0, 2, 1, 3).reshaped([batch, length, headCount * headDimensions]))
     }
@@ -356,13 +389,14 @@ final class NFKMLXGraniteBlock: Module {
         super.init()
     }
 
-    func callAsFunction(_ hidden: MLXArray) -> MLXArray {
+    func callAsFunction(_ hidden: MLXArray, mambaCache: NFKMLXMamba2Cache? = nil,
+                        attentionCache: NFKMLXGraniteAttentionCache? = nil) -> MLXArray {
         var residual = hidden
         var h = inputNorm(hidden)
         if let mamba {
-            h = mamba(h)
+            h = mamba(h, cache: mambaCache)
         } else if let attention {
-            h = attention(h)
+            h = attention(h, cache: attentionCache)
         }
         h = residual + NFKReferenceRounding.scaled(h, by: residualMultiplier)
         residual = h
@@ -426,7 +460,20 @@ public final class NFKMLXGraniteHybridNet: Module {
     }
 
     public func callAsFunction(_ tokens: MLXArray) -> MLXArray {
-        let hidden = hiddenStates(tokens)
+        logits(fromHidden: hiddenStates(tokens))
+    }
+
+    /// The logits of `tokens`, which continue the positions `cache` has seen; the cache advances past
+    /// them. A generation prefills its prompt once and then runs one token a step.
+    func callAsFunction(_ tokens: MLXArray, cache: NFKMLXGraniteCache) -> MLXArray {
+        var hidden = model.embedTokens(tokens) * config.embeddingMultiplier
+        for (index, layer) in model.layers.enumerated() {
+            hidden = layer(hidden, mambaCache: cache.mamba[index], attentionCache: cache.attention[index])
+        }
+        return logits(fromHidden: model.norm(hidden))
+    }
+
+    private func logits(fromHidden hidden: MLXArray) -> MLXArray {
         let logits = lmHead.map { $0(hidden) } ?? model.embedTokens.asLinear(hidden)
         return logits / config.logitsScaling
     }

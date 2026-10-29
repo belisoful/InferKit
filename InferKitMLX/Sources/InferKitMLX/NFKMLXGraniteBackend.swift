@@ -3,8 +3,8 @@
 //  InferKitMLX
 //
 //  A text-generation backend for the Granite 4.0-H decoder. The decoder is hybrid: its Mamba-2 layers
-//  carry a recurrent state rather than a key-value cache, so generation re-runs the growing sequence
-//  each step, as the pure-Mamba backend does. The tiny per-token cost of a short reply tolerates it.
+//  carry a convolution window and a recurrent scan state, and its attention layers a key-value cache.
+//  A generation prefills the prompt once and then runs one token a step against those caches.
 //
 //  The tokenizer is Granite's byte-level BPE (the GPT-2 family), read from the release's `tokenizer.json`
 //  through the shared release-tokenizer reader. A raw prompt is encoded after the begin-of-sequence
@@ -22,14 +22,19 @@ import MLXRandom
 /// tokenizer are not `Sendable`, so the crossing is made explicit, as the other language backends do.
 final class NFKGraniteBackendHolder: @unchecked Sendable {
     let logits: (MLXArray) -> MLXArray
+    /// Starts a generation and answers its step: the logits of the tokens given, which continue the
+    /// ones before them. Nil runs the whole sequence through `logits` each step.
+    let startGeneration: (() -> (MLXArray) -> MLXArray)?
     let tokenizer: NFKTokenizer
-    init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKTokenizer) {
+    init(logits: @escaping (MLXArray) -> MLXArray, startGeneration: (() -> (MLXArray) -> MLXArray)?,
+         tokenizer: NFKTokenizer) {
         self.logits = logits
+        self.startGeneration = startGeneration
         self.tokenizer = tokenizer
     }
 }
 
-/// A prefill-only text-generation backend over a Granite 4.0-H decoder.
+/// A text-generation backend over a Granite 4.0-H decoder.
 @objc(NFKMLXGraniteBackend)
 public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
     private let holder: NFKGraniteBackendHolder
@@ -47,9 +52,18 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
     private let releaseSampling: NFKMLXReleaseSampling?
     private let modelInfoCache = NFKMLXModelInfoCache()
 
-    init(logits: @escaping (MLXArray) -> MLXArray, tokenizer: NFKTokenizer, identifier: String,
-         modules: [Module] = [], releaseDirectoryURL: URL? = nil) {
-        self.holder = NFKGraniteBackendHolder(logits: logits, tokenizer: tokenizer)
+    /// A backend over `net` that generates with the decoder's caches.
+    convenience init(net: NFKMLXGraniteHybridNet, tokenizer: NFKTokenizer, identifier: String,
+                     releaseDirectoryURL: URL? = nil) {
+        self.init(logits: { net($0) }, startGeneration: {
+            let cache = NFKMLXGraniteCache(layerTypes: net.config.layerTypes)
+            return { net($0, cache: cache) }
+        }, tokenizer: tokenizer, identifier: identifier, modules: [net], releaseDirectoryURL: releaseDirectoryURL)
+    }
+
+    init(logits: @escaping (MLXArray) -> MLXArray, startGeneration: (() -> (MLXArray) -> MLXArray)? = nil,
+         tokenizer: NFKTokenizer, identifier: String, modules: [Module] = [], releaseDirectoryURL: URL? = nil) {
+        self.holder = NFKGraniteBackendHolder(logits: logits, startGeneration: startGeneration, tokenizer: tokenizer)
         self.identifier = identifier
         self.describedModules = modules
         self.releaseDirectoryURL = releaseDirectoryURL
@@ -163,20 +177,23 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
         return (holder.tokenizer.encode(text).map(\.intValue), nil)
     }
 
-    /// Prefill-only generation: the whole growing sequence runs through the decoder each step.
+    /// Generation: the prompt runs through the decoder once, then each new token alone against the
+    /// decoder's caches. A backend built without a generation step runs the whole growing sequence
+    /// each step.
     private func generate(_ promptTokens: [Int], sampling: NFKMLXStepSampling, maxTokens: Int?, seed: UInt64?,
                           stops: Set<Int>) throws -> (tokens: [Int], limit: Int) {
-        var tokens = promptTokens
+        let step = holder.startGeneration?()
+        var pending = promptTokens
         var produced = [Int]()
         let limit = try NFKMLXContextRoom.bounded(maxTokens, promptTokens: promptTokens.count,
                                                   contextLength: contextLength, source: identifier)
-        for step in 0 ..< max(limit, 0) {
-            let input = MLXArray(tokens.map(Int32.init)).reshaped([1, tokens.count])
-            let logits = holder.logits(input)[0, tokens.count - 1]
-            let next = sampling.next(logits, seed: seed, step: step)
+        for index in 0 ..< max(limit, 0) {
+            let input = MLXArray(pending.map(Int32.init)).reshaped([1, pending.count])
+            let logits = (step ?? holder.logits)(input)[0, pending.count - 1]
+            let next = sampling.next(logits, seed: seed, step: index)
             if stops.contains(next) { break }
             produced.append(next)
-            tokens.append(next)
+            pending = step != nil ? [next] : pending + [next]
         }
         return (produced, limit)
     }
@@ -186,8 +203,7 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
 public extension NFKMLXGraniteHybrid {
 
     /// Builds a text-generation backend from a released Granite 4.0-H directory, reading its
-    /// `config.json`, weights, and `tokenizer.json`. Run inference off the render thread; the decoder
-    /// re-runs the growing sequence each step (its Mamba layers carry a recurrent state, not a cache).
+    /// `config.json`, weights, and `tokenizer.json`. Run inference off the render thread.
     static func backend(directoryURL: URL,
                         precision: NFKMLXWeightPrecision = .checkpoint) throws -> any NFKInferenceBackend {
         guard let tokenizer = NFKMLXLanguage.releaseTokenizer(inDirectory: directoryURL) else {
@@ -195,8 +211,8 @@ public extension NFKMLXGraniteHybrid {
         }
         let net = makeNet(try configuration(fromDirectory: directoryURL))
         try loadWeights(into: net, fromDirectory: directoryURL, precision: precision)
-        return NFKMLXGraniteBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: graniteModelName,
-                                    modules: [net], releaseDirectoryURL: directoryURL)
+        return NFKMLXGraniteBackend(net: net, tokenizer: tokenizer, identifier: graniteModelName,
+                                    releaseDirectoryURL: directoryURL)
     }
 
     /// Builds a text-generation backend from a released Granite 4.0-H directory with a mixture size's
@@ -286,7 +302,7 @@ extension NFKMLXGraniteHybrid {
         }
         let net = makeNet(try configuration(fromDirectory: directoryURL))
         try loadWeights(into: net, fromDirectory: directoryURL, precision: precision, residency: residency)
-        return NFKMLXGraniteBackend(logits: { net($0) }, tokenizer: tokenizer, identifier: identifier,
-                                    modules: [net], releaseDirectoryURL: directoryURL)
+        return NFKMLXGraniteBackend(net: net, tokenizer: tokenizer, identifier: identifier,
+                                    releaseDirectoryURL: directoryURL)
     }
 }

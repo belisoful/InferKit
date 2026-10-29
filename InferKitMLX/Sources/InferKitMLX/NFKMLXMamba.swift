@@ -14,8 +14,9 @@
 //
 //  The fast arithmetic runs the explicit sequential recurrence, mathematically equal to the chunked
 //  segment-sum form HF's slow path runs, and the reference arithmetic runs that chunked form itself
-//  (`NFKReferenceRounding.torchMamba2ChunkScan`). Both are prefill-only, like the hybrid and DeepSeek
-//  decoders beside it; an incremental single-step cache is a separate generation feature.
+//  (`NFKReferenceRounding.torchMamba2ChunkScan`). A `NFKMLXMamba2Cache` carries the convolution's
+//  last inputs and the scan's state from one call to the next, so a generation runs each new token
+//  alone; Granite 4.0-H generates through it.
 //
 //  Reference: HF `transformers` `Mamba2Mixer.torch_forward`, the CPU slow path (no CUDA kernel needed).
 //
@@ -237,13 +238,15 @@ final class NFKMambaDepthwiseConv1d: Module {
     }
 
     /// In half precision the window sums in float32 and rounds once, then the SiLU rounds once, as
-    /// torch's `Conv1d` and `silu` do.
-    func callAsFunction(_ x: MLXArray) -> MLXArray {
+    /// torch's `Conv1d` and `silu` do. `history`, the `kernel - 1` inputs before `x`, stands in for
+    /// the zeros a sequence starts from, so a cached step reads the window a whole sequence would.
+    func callAsFunction(_ x: MLXArray, history: MLXArray? = nil) -> MLXArray {
         let length = x.dim(1)
         let reduced = NFKReferenceRounding.isReduced(x)
         let input = reduced ? x.asType(.float32) : x
         // Left-pad the time axis so position t reads positions t-(kernel-1) ... t.
-        let padded = padded(input, widths: [.init((0, 0)), .init((kernel - 1, 0)), .init((0, 0))])
+        let padded = history.map { concatenated([reduced ? $0.asType(.float32) : $0, input], axis: 1) }
+            ?? padded(input, widths: [.init((0, 0)), .init((kernel - 1, 0)), .init((0, 0))])
         let taps = reduced ? weight.asType(.float32) : weight
         var accumulator = (reduced ? bias.asType(.float32) : bias).reshaped([1, 1, -1])
         for k in 0 ..< kernel {
@@ -253,6 +256,15 @@ final class NFKMambaDepthwiseConv1d: Module {
         guard reduced else { return accumulator * sigmoid(accumulator) }
         return NFKReferenceRounding.silu(accumulator.asType(x.dtype))
     }
+}
+
+/// What a Mamba-2 layer carries between the steps of one generation: the last `kernel - 1` inputs of
+/// its convolution and the state of its scan, so each new token runs without the tokens before it.
+final class NFKMLXMamba2Cache {
+    /// `[B, kernel - 1, convolutionWidth]`, the convolution's inputs before the next token.
+    var convolutionInputs: MLXArray?
+    /// `[B, heads, headDim, state]` in float32, the scan's state after the last token.
+    var state: MLXArray?
 }
 
 /// The Mamba-2 mixer: the fused input projection, the depthwise causal convolution over `x`/`B`/`C`,
@@ -287,9 +299,10 @@ final class NFKMLXMamba2Mixer: Module {
     }
 
     /// The selective state-space scan. `x` `[B, L, heads, headDim]`, `b`/`c` `[B, L, heads, state]`,
-    /// `dt` `[B, L, heads]`, `a` `[heads]` (already negative). Returns `[B, L, heads, headDim]`.
+    /// `dt` `[B, L, heads]`, `a` `[heads]` (already negative). Returns `[B, L, heads, headDim]` and the
+    /// state after the last position. `initial` is the state before the first, zero by default.
     private func selectiveScan(x: MLXArray, b: MLXArray, c: MLXArray, dt: MLXArray,
-                               a: MLXArray) -> MLXArray {
+                               a: MLXArray, initial: MLXArray? = nil) -> (MLXArray, MLXArray) {
         let batch = x.dim(0), length = x.dim(1), heads = x.dim(2), headDim = x.dim(3)
         let state = b.dim(3)
         // dA `[B, L, heads]` = exp(dt · A); the decay applied at each step before reading the state.
@@ -298,7 +311,7 @@ final class NFKMLXMamba2Mixer: Module {
         let dBx = dt.reshaped([batch, length, heads, 1, 1])
             * x.reshaped([batch, length, heads, headDim, 1])
             * b.reshaped([batch, length, heads, 1, state])
-        var current = MLXArray.zeros([batch, heads, headDim, state], dtype: x.dtype)
+        var current = initial ?? MLXArray.zeros([batch, heads, headDim, state], dtype: x.dtype)
         var outputs = [MLXArray]()
         outputs.reserveCapacity(length)
         for t in 0 ..< length {
@@ -308,11 +321,17 @@ final class NFKMLXMamba2Mixer: Module {
             let ct = c[0..., t, 0..., 0...].reshaped([batch, heads, 1, state])
             outputs.append((current * ct).sum(axis: -1))
         }
-        return stacked(outputs, axis: 1)
+        return (stacked(outputs, axis: 1), current)
     }
 
     /// `hidden` `[B, L, hiddenSize]` → `[B, L, hiddenSize]`.
     func callAsFunction(_ hidden: MLXArray) -> MLXArray {
+        callAsFunction(hidden, cache: nil)
+    }
+
+    /// `hidden` `[B, L, hiddenSize]` → `[B, L, hiddenSize]`. With `cache`, the positions continue the
+    /// ones the cache has seen, and the cache advances past them.
+    func callAsFunction(_ hidden: MLXArray, cache: NFKMLXMamba2Cache?) -> MLXArray {
         let batch = hidden.dim(0), length = hidden.dim(1)
         let heads = config.headCount, headDim = config.headDimensions
         let groups = config.groupCount, state = config.stateSize
@@ -323,7 +342,13 @@ final class NFKMLXMamba2Mixer: Module {
         let convInput = projected[0..., 0..., intermediate ..< (intermediate + config.convolutionWidth)]
         let dtRaw = projected[0..., 0..., (intermediate + config.convolutionWidth)...]
 
-        let convolved = conv1d(convInput)                                 // [B, L, convDim]
+        let convolved = conv1d(convInput, history: cache?.convolutionInputs)    // [B, L, convDim]
+        if let cache {
+            let window = concatenated([cache.convolutionInputs ?? MLXArray.zeros(
+                [batch, config.convolutionKernel - 1, config.convolutionWidth], dtype: convInput.dtype),
+                                       convInput], axis: 1)
+            cache.convolutionInputs = window[0..., (window.dim(1) - (config.convolutionKernel - 1))..., 0...]
+        }
         var offset = 0
         let xPart = convolved[0..., 0..., offset ..< (offset + intermediate)]
         offset += intermediate
@@ -356,11 +381,20 @@ final class NFKMLXMamba2Mixer: Module {
 
         // The per-head skip connection D · x, added before the reshape. The reference arithmetic takes the
         // reference's chunked scan, which sums in other orders from 8 state values a head.
-        let y = NFKReferenceRounding.computesReferenceScans && state >= 8
-            ? NFKReferenceRounding.torchMamba2ChunkScan(x: xHeads, dt: dt, a: a, b: bHeads, c: cHeads,
-                                                        d: d.asType(.float32), chunkSize: config.chunkSize)
-            : selectiveScan(x: xHeads, b: bHeads, c: cHeads, dt: dt, a: a)
-                + d.asType(.float32).reshaped([1, 1, heads, 1]) * xHeads
+        let skip = d.asType(.float32).reshaped([1, 1, heads, 1]) * xHeads
+        let y: MLXArray
+        if let cache {
+            // The sequential scan even under reference arithmetic: the chunked form starts from no state,
+            // and reference arithmetic measures a prefill, never a cached generation.
+            let (scanned, final) = selectiveScan(x: xHeads, b: bHeads, c: cHeads, dt: dt, a: a, initial: cache.state)
+            cache.state = final
+            y = scanned + skip
+        } else if NFKReferenceRounding.computesReferenceScans && state >= 8 {
+            y = NFKReferenceRounding.torchMamba2ChunkScan(x: xHeads, dt: dt, a: a, b: bHeads, c: cHeads,
+                                                          d: d.asType(.float32), chunkSize: config.chunkSize)
+        } else {
+            y = selectiveScan(x: xHeads, b: bHeads, c: cHeads, dt: dt, a: a).0 + skip
+        }
         let normalized = norm(y.reshaped([batch, length, intermediate]), gate: gate, dtype: hidden.dtype)
         return outProjection(normalized)
     }

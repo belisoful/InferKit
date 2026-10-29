@@ -1372,8 +1372,18 @@ attention and feed-forward.
   through the shared release-tokenizer reader (`NFKMLXLanguage.releaseTokenizer`), token-exact against the
   `tokenizers` fast library; the release ships no `bos_token`, so the backend prepends none, matching the
   reference's raw-id generation. `NFKMLXGraniteHybrid.backend(directoryURL:)` (`@objc
-  graniteBackendWithDirectoryURL:error:`) builds a prefill-only text-generation backend that stops at the
-  end-of-sequence marker. A message list renders through the release's `chat_template.jinja`, which
+  graniteBackendWithDirectoryURL:error:`) builds a text-generation backend that stops at the
+  end-of-sequence marker. It generates against per-layer caches (`NFKMLXGraniteCache`): a Mamba layer
+  carries its convolution's last `kernel - 1` inputs and its scan's float32 state
+  (`NFKMLXMamba2Cache`), and an attention layer its keys and values, under a causal mask offset by the
+  positions cached (NoPE, so nothing else moves). The prompt runs once and each new token alone. On
+  the tiny dense and mixture geometries the cached steps give the whole sequence's logits within
+  9.3e-7, and the same steps from an empty cache differ by 0.85
+  (`testCachedGenerationStepsMatchTheWholeSequence`). Before (to 2026-10-28) the backend reran the
+  whole sequence each step. Measured on the released 1B (checkpoint precision, greedy, a 1076-token
+  tool prompt, 28 tokens out): 14.6 s cached against 352.6 s rerun, the same text. The prefill
+  remains the cost: the fast scan steps through the prompt one position at a time. A conversation cache
+  across turns is not kept: the backend starts each run from an empty cache. A message list renders through the release's `chat_template.jinja`, which
   the download fetches; a raw prompt is read verbatim. Given the joined text instead, the 1B instruct
   release ends its reply before its first token (0 tokens out, measured 2026-10-28), and with the
   template it answers. A release without a template joins the messages. **Customization ships** (the first on-device language-decoder fine-tune):

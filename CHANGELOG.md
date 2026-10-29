@@ -1799,6 +1799,16 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   on an image read from a file, and Face Alignment, RetinaFace, SigLIP 2, its probe, and the Qwen-VL
   Sa2VA releases took a `CGImage` alone.
 
+#### Granite 4.0-H generates against its caches
+
+- The Granite 4.0-H backend runs the prompt once and then each new token alone. The Mamba-2 layers
+  carry their convolution's last inputs and their scan's state (`NFKMLXMamba2Cache`), and the
+  attention layers their keys and values. Before, every token reran the whole sequence. On the
+  released 1B, a 1076-token tool prompt answered in 14.6 s where it took 352.6 s, with the same 28
+  greedy tokens.
+- The cached steps give the whole sequence's logits within 9.3e-7 on the tiny dense and mixture
+  geometries.
+
 #### Granite 4.0-H answers a chat
 
 - A message list renders through the release's chat template, plain chats as well as tool requests,

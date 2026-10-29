@@ -73,6 +73,39 @@ final class NFKMLXGraniteHybridTests: XCTestCase {
         try NFKMLXWeights.apply(weights, to: net)
     }
 
+    /// A prompt prefilled in two pieces, then one token a step against the caches, gives the logits the
+    /// whole sequence gives at every position, on the dense and the mixture geometry.
+    func testCachedGenerationStepsMatchTheWholeSequence() throws {
+        try requireMLXRuntime()
+        for configuration in [tinyConfiguration, tinyMoEConfiguration] {
+            MLXRandom.seed(41)
+            let net = NFKMLXGraniteHybrid.makeNet(configuration)
+            let random = net.parameters().flattened().map { name, value in
+                (name, MLXRandom.normal(value.shape) * 0.3)
+            }
+            try NFKMLXWeights.apply(random, to: net)
+            let tokens = (0 ..< 14).map { Int32(($0 * 37 + 5) % configuration.vocabularySize) }
+            let whole = net(MLXArray(tokens).reshaped([1, tokens.count]))
+
+            let cache = NFKMLXGraniteCache(layerTypes: configuration.layerTypes)
+            var pieces = [net(MLXArray(Array(tokens[0 ..< 5])).reshaped([1, 5]), cache: cache),
+                          net(MLXArray(Array(tokens[5 ..< 8])).reshaped([1, 3]), cache: cache)]
+            for token in tokens[8...] {
+                pieces.append(net(MLXArray([token]).reshaped([1, 1]), cache: cache))
+            }
+            let stepped = concatenated(pieces, axis: 1)
+            XCTAssertEqual(stepped.shape, whole.shape)
+            let difference = abs(stepped - whole).max().item(Float.self)
+            XCTAssertLessThan(difference, 1e-4, "experts: \(configuration.expertCount)")
+
+            let forgotten = net(MLXArray(Array(tokens[8...])).reshaped([1, tokens.count - 8]),
+                                cache: NFKMLXGraniteCache(layerTypes: configuration.layerTypes))
+            let control = abs(forgotten - whole[0..., 8..., 0...]).max().item(Float.self)
+            XCTAssertGreaterThan(control, 100 * difference, "the cache carries the positions before the steps")
+            print("VALIDATION granite cached steps experts=\(configuration.expertCount) max|Δ|=\(difference) control=\(control)")
+        }
+    }
+
     func testParameterNamesFollowTheModuleLayout() throws {
         try requireMLXRuntime()
         let names = Set(NFKMLXGraniteHybrid.makeNet(tinyConfiguration).parameters().flattened().map(\.0))
