@@ -269,6 +269,16 @@ final class NFKMLXTripoSRTests: XCTestCase {
 
     // MARK: - Marching cubes
 
+    /// The reference's up (+z) becomes glTF's (+y), its front (+x) glTF's (+z), and its right (+y) glTF's
+    /// (+x); the map keeps handedness, so right × up stays the front.
+    func testTheMeshTurnsIntoGLTFsFrame() {
+        let turned = NFKMLXTripoSR.gltfFrame([0, 0, 1, 1, 0, 0, 0, 1, 0, 0.25, -0.5, 0.75])
+        XCTAssertEqual(turned, [0, 1, 0, 0, 0, 1, 1, 0, 0, -0.5, 0.75, 0.25])
+        let up = simd_float3(turned[0], turned[1], turned[2]), front = simd_float3(turned[3], turned[4], turned[5])
+        let right = simd_float3(turned[6], turned[7], turned[8])
+        XCTAssertEqual(simd_cross(right, up), front)
+    }
+
     func testMarchingCubesDrawsAClosedSphereAtTheRightRadius() throws {
         let resolution = 24
         var values = [Float](repeating: 0, count: resolution * resolution * resolution)
@@ -421,9 +431,10 @@ final class NFKMLXTripoSRTests: XCTestCase {
             let p = mesh.position(at: UInt(index))
             return simd_make_float3(p.x, p.y, p.z)
         }
+        // The reference writes its own frame, which the backend turns into glTF's.
+        let referenceValues = NFKMLXTripoSR.gltfFrame(referenceVertices.reshaped([-1]).asArray(Float.self))
         let theirs = stride(from: 0, to: referenceVertices.dim(0) * 3, by: 3).map { index -> simd_float3 in
-            let values = referenceVertices.reshaped([-1]).asArray(Float.self)
-            return simd_make_float3(values[index], values[index + 1], values[index + 2])
+            simd_make_float3(referenceValues[index], referenceValues[index + 1], referenceValues[index + 2])
         }
         let forward = meanNearest(from: ours, to: theirs), backward = meanNearest(from: theirs, to: ours)
         print("TripoSR mesh: \(mesh.faceCount) faces against \(referenceFaces.dim(0)); nearest-vertex distance "

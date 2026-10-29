@@ -535,7 +535,7 @@ extension NFKMLXTripoSRNet {
     }
 
     /// The mesh of one scene code: density on a `resolution³` grid over the object's cube, marching cubes at
-    /// `threshold`, and the decoder's color at each vertex when asked.
+    /// `threshold`, and the decoder's color at each vertex when asked, in glTF's frame (``gltfFrame(_:)``).
     func mesh(sceneCode: MLXArray, options: NFKMLXTripoSROptions) throws -> NFKMesh {
         let resolution = options.resolution
         let density = densityGrid(sceneCode: sceneCode, resolution: resolution)
@@ -552,7 +552,7 @@ extension NFKMLXTripoSRNet {
             let values = NFKMLXTripoSR.chunked(points, size: 1 << 16) { chunk in self.query(chunk, sceneCode: sceneCode).color }
             colors = values.asArray(Float.self).withUnsafeBufferPointer { Data(buffer: $0) }
         }
-        let positionData = positions.withUnsafeBufferPointer { Data(buffer: $0) }
+        let positionData = NFKMLXTripoSR.gltfFrame(positions).withUnsafeBufferPointer { Data(buffer: $0) }
         let indexData = surface.indices.withUnsafeBufferPointer { Data(buffer: $0) }
         return try NFKMesh(positions: positionData, normals: nil, colors: colors, textureCoordinates: nil, indices: indexData)
     }
@@ -741,6 +741,20 @@ public final class NFKMLXTripoSR: NSObject {
             start = end
         }
         return pieces.count == 1 ? pieces[0] : concatenated(pieces, axis: 0)
+    }
+
+    /// Packed `x, y, z` positions from the reference's frame into glTF's: `(x, y, z) → (y, z, x)`. The
+    /// reference reconstructs the picture with its up along +z, its right along +y, and its front toward
+    /// +x (measured on the released weights, 2026-10-28); glTF's frame has the up along +y and the front
+    /// toward +z. The map is a rotation, so the triangles keep their winding.
+    static func gltfFrame(_ positions: [Float]) -> [Float] {
+        var rotated = positions
+        for vertex in stride(from: 0, to: positions.count - 2, by: 3) {
+            rotated[vertex] = positions[vertex + 1]
+            rotated[vertex + 1] = positions[vertex + 2]
+            rotated[vertex + 2] = positions[vertex]
+        }
+        return rotated
     }
 
     /// The reference demo's preparation of an image `[H, W, 4]` in 0...1. An image whose alpha is all one

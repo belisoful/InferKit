@@ -43,7 +43,9 @@ NS_INLINE NFKMeshVector NFKMeshVectorMake(float x, float y, float z)
 	@abstract   A triangle mesh: vertex positions and triangle indices, with optional normals, vertex
 				colors, and texture coordinates.
 	@discussion A 3D-generation backend (an image or a prompt in, an object out) returns one of these
-				under NFKOutputMesh. Positions are in the backend's object space, right-handed, y up.
+				under NFKOutputMesh. Positions are in the backend's object space in glTF's frame:
+				right-handed, y up, and an object reconstructed from a picture facing +z, toward the
+				camera that took it.
 				Each attribute is one packed little-endian float32 array in vertex order: three floats a
 				position, three a normal, three a color in 0...1 (red, green, blue), two a texture
 				coordinate (u, v with v up, the glTF and OBJ convention). The indices are three uint32 a

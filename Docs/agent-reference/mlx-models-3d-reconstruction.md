@@ -48,6 +48,14 @@ the mesh type, the surface extraction, and the writers every later port uses.
     face, an ambiguous face keeping its inside corners apart, the loops fanned and wound outward by a
     trilinear indicator test) instead of a typed table; the reference uses torchmcubes, so the two meshes
     are compared by nearest-vertex distance and face count, not vertex by vertex.
+  - The frame: the reference reconstructs the picture with its up along +z, its right along +y, and its
+    front toward +x. Measured on the released weights (2026-10-28) with a picture whose right and top
+    carry their own colors: the right's vertices sit +0.378 along y, the top's +0.422 along z, and the
+    depth is the thinnest extent (0.73 along x, against 0.91 and 1.01). `NFKMesh` holds glTF's frame (y
+    up, a reconstructed object facing +z), so the backend turns the positions `(x, y, z) → (y, z, x)`
+    after the color query, which reads the decoder in its own frame (`NFKMLXTripoSR.gltfFrame`). The map
+    is a rotation, so the winding holds. The parity test turns the reference's vertices the same way.
+    A later image-to-3D port states its reference's frame here and turns it into glTF's at the output.
   - Preparation mirrors the reference demo (`run.py`): an image with alpha below one is cropped to its
     foreground (the half-open `image[y1:y2, x1:x2]` drops the last row and column), padded to a square, padded
     again to `foregroundRatio` (0.85), composited on mid-gray; an opaque image is used as it is. The model's

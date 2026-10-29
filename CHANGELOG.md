@@ -126,6 +126,8 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   itself as a Wavefront OBJ, a binary PLY, or a glTF binary (GLB), and reads each of the three.
 - A 3D-generation backend returns one under `NFKOutputMesh`, which `NFKInferenceResult.mesh` reads. The
   catalog names the value type `NFKModelValueTypeMesh` and the task `NFKModelTaskImageTo3D`.
+- A mesh is in glTF's frame: right-handed, y up, and an object reconstructed from a picture facing +z,
+  toward the camera that took it.
 - On the wire, a mesh is a JSON object of its counts with its PLY bytes inline, or, in the file form,
   beside the JSON as a `.ply`; `NFKValueCoding` reads a mesh from an OBJ, PLY, or GLB file.
 
@@ -1789,6 +1791,13 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKOutputUsage`.
 
 ### InferKitMLX (companion)
+
+#### TripoSR's mesh stands upright in glTF's frame
+
+- TripoSR returns its `NFKMesh` in glTF's frame, which `NFKMesh` documents: y up, and the object facing
+  +z, toward the camera that took the picture. The reference's own frame has the up along +z and the
+  front toward +x, so a GLB, PLY, or OBJ written from the mesh lay on its side and edge-on in a y-up
+  viewer. The positions turn `(x, y, z) → (y, z, x)`, a rotation that keeps the winding.
 
 #### Every MLX image input takes a pixel buffer
 
