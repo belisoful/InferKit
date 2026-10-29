@@ -303,6 +303,24 @@ attention and feed-forward.
   difference from Llama); `normWeightInFloat32` builds that norm for gpt-oss, which took its first
   layer at bf16 from 0.885 of the floor to 3.4e-12. A `.float32` load keeps the MXFP4 blocks and
   scales as stored and widens the floating tensors alone.
+  Hunyuan's mixture is read too (`hy_v3`: Hy-MT2-30B-A3B, Apache-2.0, `NFKMLXHunyuanMoE`), three flags on
+  the same feed-forward. Its first `first_k_dense_replace` layers (one) keep the dense SwiGLU at
+  `intermediate_size` (`denseLeadingLayerCount`). The router scores each expert with a sigmoid of a
+  float32 logit taken from the float32 hidden state, ranks the scores plus a learned per-expert bias
+  (`expert_bias`, held in float32) for the choice alone, and weighs the chosen experts by their unbiased
+  scores renormalized to sum to one (an `1e-20` guard on the sum) and multiplied by
+  `router_scaling_factor` 2.826 (`sigmoidRouterScale`). One shared expert of `moe_intermediate_size` adds
+  ungated (`gatesSharedExpert` false). Queries and keys take Qwen3's per-head norms before the rotary
+  embedding (`qk_norm`), and `rope_theta` 11,158,840 is stated directly. The release names its router
+  `mlp.router.gate` and its shared expert `mlp.shared_mlp`, which `moduleKey(forRelease:)` maps to the
+  module's `gate` and `shared_expert`; the experts are per-expert tensors, stacked as Qwen3-MoE's are.
+  The reader refuses a config that turns off the sigmoid, the renormalization, or the bias, which
+  transformers always applies, one that sums the shared expert in float32 (`enable_moe_fp32_combine`),
+  and one that interleaves dense layers among the expert layers. transformers 5 dispatches the experts
+  to `grouped_mm` on this machine (torch 2.14), which sums the weighted outputs in float32 and rounds
+  once; the port sums them the same way (`sumsExpertsInFloat32`, `NFKReferenceRounding.groupedCombined`,
+  as Gemma 4's experts do). The release config's `use_grouped_mm: false` is not a field transformers
+  reads.
 
   The released mixtures are measured on cuts at both precisions
   (`testMixtureCutPrefixesMatchTheReferenceAtBothPrecisionsRoutedAsTheReference`): Qwen1.5-MoE-A2.7B

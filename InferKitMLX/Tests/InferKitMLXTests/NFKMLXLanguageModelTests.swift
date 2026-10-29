@@ -809,6 +809,82 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         """#), "dynamic scaling without alpha")
     }
 
+    func testAHunyuanMixtureConfigurationIsRead() throws {
+        func configuration(_ json: String) throws -> NFKMLXLanguageConfiguration {
+            try NFKMLXLanguage.configuration(fromJSON: try XCTUnwrap(
+                JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]))
+        }
+        let release = try configuration(#"""
+        {"architectures":["HYV3ForCausalLM"],"model_type":"hy_v3","hidden_size":2048,"num_hidden_layers":48,
+         "num_attention_heads":32,"num_key_value_heads":4,"head_dim":128,"intermediate_size":6912,
+         "moe_intermediate_size":768,"num_experts":128,"num_experts_per_tok":8,"num_shared_experts":1,
+         "first_k_dense_replace":1,"moe_router_use_sigmoid":true,"moe_router_enable_expert_bias":true,
+         "route_norm":true,"router_scaling_factor":2.826,"enable_moe_fp32_combine":false,"qk_norm":true,
+         "rope_theta":11158840.0,"rms_norm_eps":1e-05,"tie_word_embeddings":false,"vocab_size":120832,
+         "max_position_embeddings":262144}
+        """#)
+        XCTAssertEqual(release.expertCount, 128)
+        XCTAssertEqual(release.activeExpertCount, 8)
+        XCTAssertEqual(release.expertIntermediateSize, 768)
+        XCTAssertEqual(release.sharedExpertIntermediateSize, 768)
+        XCTAssertFalse(release.gatesSharedExpert)
+        XCTAssertEqual(release.denseLeadingLayerCount, 1)
+        XCTAssertEqual(release.sigmoidRouterScale, 2.826)
+        XCTAssertTrue(release.sumsExpertsInFloat32, "transformers 5 dispatches grouped_mm")
+        XCTAssertTrue(release.normalizesQueryAndKey, "the norms precede the rotary embedding")
+        XCTAssertFalse(release.normalizesRotatedQueryAndKey)
+        XCTAssertEqual(release.ropeTheta, 11_158_840)
+        XCTAssertFalse(release.tiesWordEmbeddings)
+        XCTAssertThrowsError(try configuration(#"""
+        {"architectures":["HYV3ForCausalLM"],"model_type":"hy_v3","num_experts":8,"num_experts_per_tok":2,
+         "moe_intermediate_size":16,"enable_moe_fp32_combine":true}
+        """#), "a float32 shared-expert sum")
+        XCTAssertThrowsError(try configuration(#"""
+        {"architectures":["HYV3ForCausalLM"],"model_type":"hy_v3","num_experts":8,"num_experts_per_tok":2,
+         "moe_intermediate_size":16,"mlp_layer_types":["dense","sparse","dense"]}
+        """#), "dense layers among the expert layers")
+        XCTAssertEqual(NFKMLXLanguage.moduleKey(forRelease: "model.layers.3.mlp.router.gate.weight"),
+                       "model.layers.3.mlp.gate.weight")
+        XCTAssertEqual(NFKMLXLanguage.moduleKey(forRelease: "model.layers.3.mlp.shared_mlp.up_proj.weight"),
+                       "model.layers.3.mlp.shared_expert.up_proj.weight")
+        XCTAssertEqual(NFKMLXLanguage.moduleKey(forRelease: "model.layers.3.mlp.expert_bias"), "model.layers.3.mlp.expert_bias")
+    }
+
+    // hy_v3's router chooses by the sigmoid scores plus a per-expert bias and weighs the chosen experts by
+    // their unbiased scores, renormalized and scaled; its first layer stays dense and its shared expert
+    // adds ungated. The block's output is rebuilt by hand from its own modules.
+    func testTheSigmoidRouterChoosesByItsBiasAndWeighsByTheScores() throws {
+        try requireMLXRuntime()
+        var configuration = NFKMLXLanguageConfiguration.tinyMixture
+        configuration.sigmoidRouterScale = 2.5
+        configuration.sharedExpertIntermediateSize = 24
+        configuration.gatesSharedExpert = false
+        configuration.denseLeadingLayerCount = 1
+        let net = NFKMLXLanguage.makeNet(configuration)
+        XCTAssertTrue(net.model.layers[0].feedForward is NFKLMFeedForward, "the leading layer stays dense")
+        let mixture = try XCTUnwrap(net.model.layers[1].feedForward as? NFKLMMixtureFeedForward)
+        XCTAssertNil(mixture.sharedExpertGate)
+        let bias = MLXArray([Float(0), 0, 0, 0, 0, 0, 0, 5])
+        mixture.update(parameters: ModuleParameters.unflattened(["expert_bias": bias]))
+
+        let x = MLXRandom.normal([1, 3, configuration.hiddenSize])
+        let scores = sigmoid(matmul(x, mixture.router.weight.transposed()))
+        let (weights, chosen) = mixture.route(x)
+        let picked = chosen.asArray(Int32.self)
+        for token in 0 ..< 3 {
+            XCTAssertTrue(picked[(2 * token) ..< (2 * token + 2)].contains(7), "the bias puts expert 7 in every choice")
+        }
+        let kept = takeAlong(scores, chosen, axis: -1)
+        let expectedWeights = kept / kept.sum(axis: -1, keepDims: true) * 2.5
+        XCTAssertLessThan(abs(weights - expectedWeights).max().item(Float.self), 1e-6)
+        XCTAssertLessThan(abs(weights.sum(axis: -1) - 2.5).max().item(Float.self), 1e-5, "the kept weights sum to the scale")
+
+        let routed = (mixture.experts(x, experts: chosen) * weights.expandedDimensions(axis: -1)).sum(axis: -2)
+        let shared = try XCTUnwrap(mixture.sharedExpert)
+        let expected = routed + shared(x)
+        XCTAssertLessThan(abs(mixture(x) - expected).max().item(Float.self), 1e-5)
+    }
+
     // The norms that follow the rotary embedding see the rotated heads, which is what separates them from
     // Qwen3's norms that precede it: a norm weight that is not constant does not commute with the rotation.
     // The layer is rebuilt by hand from its own modules, and the cached decode reads normalized keys.

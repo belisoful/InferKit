@@ -1101,7 +1101,7 @@ kinds). Consumed keys:
 | gemma3 (text generation) | residency, precision, draftModel, draftBits (draft default 4 bits) | `NFKMLXGemma3.backend` / `model(…draftDirectoryURL:…draftBits:)` |
 | gemma3 (translation: TranslateGemma) | residency, precision, draftModel, draftBits | `NFKMLXTranslateGemma` |
 | seed-x | residency, precision | `NFKMLXSeedX` |
-| hy-mt (`hy-mt1.5`, `hy-mt2`) | residency, precision, quantizationBits, quantizationGroupSize | `NFKMLXHYMT` |
+| hy-mt (`hy-mt1.5`, `hy-mt2`, `hy-mt2-30b-a3b`, `hunyuan-mt`, `hunyuan-mt-chimera`) | residency, precision, quantizationBits, quantizationGroupSize | `NFKMLXHYMT` |
 | gemma3n | precision | `NFKMLXGemma3n.backend(directoryURL:precision:)` |
 | gemma4 (not the multimodal entry) | residency, precision | `NFKMLXGemmaLanguage.backend(directoryURL:precision:residency:)` |
 | qwen3.5 | precision | `NFKMLXHybridLanguage.backend(directoryURL:precision:)` |

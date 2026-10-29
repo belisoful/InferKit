@@ -43,6 +43,26 @@ final class NFKMLXTranslationTests: XCTestCase {
         return dot / (sqrtf(na) * sqrtf(nb) + 1e-20)
     }
 
+    /// ``cosine(_:_:)`` with the sums in Double, for the logits of a whole sequence: over millions of
+    /// elements a Float sum drifts by more than the figure resolves (Chimera's 119 positions read 1.000488).
+    private func wideCosine(_ mine: MLXArray, _ reference: MLXArray) -> Double {
+        eval(mine)
+        let a = mine.reshaped([-1]).asArray(Float.self), b = reference.reshaped([-1]).asArray(Float.self)
+        var dot = 0.0, na = 0.0, nb = 0.0
+        a.withUnsafeBufferPointer { a in
+            b.withUnsafeBufferPointer { b in
+                let count = min(a.count, b.count)
+                var i = 0
+                while i < count {
+                    let x = Double(a[i]), y = Double(b[i])
+                    dot += x * y; na += x * x; nb += y * y
+                    i += 1
+                }
+            }
+        }
+        return dot / (na.squareRoot() * nb.squareRoot() + 1e-300)
+    }
+
     private static let sentences = [
         "Hello world! How are you?",
         "The quick brown fox jumps over the lazy dog.",
@@ -1254,7 +1274,7 @@ final class NFKMLXTranslationTests: XCTestCase {
 
     /// The two template forms the HY-MT releases come in: the 1.8B releases' `<｜hy_…｜>` markers under
     /// the three-Split pre-tokenization, and the 7B releases' `<|…|>` markers under Qwen2's.
-    private enum TinyHYMTForm { case small, large }
+    private enum TinyHYMTForm { case small, large, mixture }
 
     /// A tiny HY-MT translator: a random two-layer Hunyuan-geometry decoder and a byte-level tokenizer with
     /// no merges, written as a release directory so the reader, the markers, and the end tokens are read
@@ -1273,7 +1293,16 @@ final class NFKMLXTranslationTests: XCTestCase {
         }
         let byteLevel: [String: Any] = ["type": "ByteLevel", "add_prefix_space": false, "trim_offsets": true, "use_regex": false]
         let markers: [String], ends: Any, splits: [[String: Any]]
+        var plainMarkers = [String]()
         switch form {
+        case .mixture:
+            markers = ["<｜hy_begin▁of▁sentence｜>", "<eos:6124c78e>", "<｜hy_User｜>", "<｜hy_Assistant｜>",
+                       "<｜hy_place▁holder▁no▁8｜>"]
+            plainMarkers = ["<｜reasoning_mode｜>", "<think>", "</think>"]
+            ends = 257
+            splits = NFKMLXLanguage.hunyuanPretokenizationPatterns.map {
+                ["type": "Split", "pattern": ["Regex": $0 ?? ""], "behavior": "Isolated", "invert": false]
+            }
         case .small:
             markers = ["<｜hy_begin▁of▁sentence｜>", "<｜hy_place▁holder▁no▁2｜>", "<｜hy_User｜>", "<｜hy_Assistant｜>",
                        "<｜hy_place▁holder▁no▁8｜>"]
@@ -1291,7 +1320,9 @@ final class NFKMLXTranslationTests: XCTestCase {
             "model": ["type": "BPE", "vocab": vocabulary, "merges": [] as [Any], "ignore_merges": form == .large],
             "pre_tokenizer": ["type": "Sequence", "pretokenizers": splits + [byteLevel]],
             "decoder": ["type": "ByteLevel", "add_prefix_space": true, "trim_offsets": true, "use_regex": true],
-            "added_tokens": markers.enumerated().map { ["id": 256 + $0.offset, "content": $0.element, "special": true] },
+            "added_tokens": (markers + plainMarkers).enumerated().map {
+                ["id": 256 + $0.offset, "content": $0.element, "special": $0.offset < markers.count]
+            },
         ]
         func write(_ object: Any, _ name: String) throws {
             try JSONSerialization.data(withJSONObject: object).write(to: directory.appendingPathComponent(name))
@@ -1343,6 +1374,60 @@ final class NFKMLXTranslationTests: XCTestCase {
         XCTAssertEqual(large.promptTokens(text: "Hi", sourceCode: "en", targetCode: "de"), largeIds,
                        "the 7B template ends the user turn one way")
         XCTAssertEqual(large.targetTokens(translation: "Hallo").last, 257, "a target ends with <|eos|>")
+    }
+
+    func testHyMT2MixtureOpensItsTemplateWithoutReasoning() throws {
+        try requireMLXRuntime()
+        let translator = try tinyHYMT(.mixture, release: .hyMT2)
+        let reasoning = translator.tokenizer.encode("reasoning_effort:no_think").map(\.intValue)
+        let ids = translator.promptTokens(text: "Hi", sourceCode: "en", targetCode: "de")
+        XCTAssertEqual(Array(ids.prefix(2 + reasoning.count + 1)), [256, 261] + reasoning + [258],
+                       "<｜hy_begin▁of▁sentence｜><｜reasoning_mode｜>reasoning_effort:no_think<｜hy_User｜>")
+        XCTAssertEqual(Array(ids.suffix(3)), [259, 262, 263], "<｜hy_Assistant｜><think></think>")
+        XCTAssertEqual(translator.defaultDecoding.endToken, 257, "<eos:6124c78e>")
+        translator.opensAssistantTurn = false
+        XCTAssertEqual(translator.promptTokens(text: "Hi", sourceCode: "en", targetCode: "de"), Array(ids.dropLast(3)),
+                       "the template without a generation prompt ends with the instruction")
+        XCTAssertEqual(NFKMLXHYMTVariant.hyMT2_30B_A3B.registryName, "hy-mt2-30b-a3b")
+        XCTAssertEqual(NFKMLXHYMTVariant.hyMT2_30B_A3B.release, .hyMT2)
+    }
+
+    func testHunyuanMTRendersItsCardsPromptAndChimeraFusesCandidates() throws {
+        try requireMLXRuntime()
+        let translator = try tinyHYMT(.large, release: .hunyuanMT)
+        XCTAssertEqual(translator.identifier, "hunyuan-mt")
+        XCTAssertEqual(translator.prompt(text: "Hi", sourceCode: "en", targetCode: "de"),
+                       "Translate the following segment into German, without additional explanation.\nHi")
+        XCTAssertEqual(translator.prompt(text: "你好", sourceCode: "zh", targetCode: "en"),
+                       "把下面的文本翻译成英语，不要额外解释。\n你好")
+        XCTAssertFalse(translator.refinesCandidates)
+
+        let chimera = try tinyHYMT(.large, release: .hunyuanMTChimera)
+        XCTAssertTrue(chimera.refinesCandidates)
+        XCTAssertEqual(chimera.refinementPrompt(text: "Hi", candidates: ["Hallo", "Servus"], sourceCode: "en", targetCode: "de"),
+                       "Analyze the following multiple German translations of the English segment surrounded in triple "
+                       + "backticks and generate a single refined German translation. Only output the refined translation, "
+                       + "do not explain.\nThe English segment:\n```Hi```\nThe multiple German translations:\n"
+                       + "1. ```Hallo```\n2. ```Servus```")
+        let ids = chimera.refinementTokens(text: "Hi", candidates: ["Hallo"], sourceCode: "en", targetCode: "de")
+        XCTAssertEqual(ids.first, 256, "<|startoftext|>")
+        XCTAssertEqual(ids.last, 258, "<|extra_0|>")
+        var decoding = chimera.defaultDecoding
+        decoding.maxTokens = 2
+        XCTAssertThrowsError(try chimera.translate("Hi", from: "en", to: "de", decoding: decoding),
+                             "Chimera fuses candidates and translates nothing on its own")
+        XCTAssertThrowsError(try chimera.refine("Hi", candidates: [], from: "en", to: "de", decoding: decoding))
+        XCTAssertNoThrow(try chimera.refine("Hi", candidates: ["Hallo"], from: "en", to: "de", decoding: decoding))
+
+        let key = NFKMLXTranslationParameterKey.candidateTranslations
+        let refining = NFKMLXTranslationBackend(translator: chimera)
+        XCTAssertTrue(refining.supportedParameterKeys.contains(key))
+        let request = NFKInferenceRequest(inputs: [NFKInputPrompt: "Hi"], parameters: [
+            NFKParameterSourceLanguage: "en", NFKParameterTargetLanguage: "de", NFKParameterMaxTokens: 2, key: ["Hallo"]])
+        XCTAssertNotNil(try refining.runInference(for: request).outputs[NFKOutputText] as? String)
+        let plain = NFKMLXTranslationBackend(translator: translator)
+        XCTAssertFalse(plain.supportedParameterKeys.contains(key))
+        XCTAssertThrowsError(try plain.runInference(for: request), "a translator refuses candidates")
     }
 
     func testHYMTResolvesLanguageTagsToTheReleasesThirtyEight() throws {
@@ -1447,6 +1532,46 @@ final class NFKMLXTranslationTests: XCTestCase {
                       precision: .checkpoint, name: "hy-mt2-1.8b")
     }
 
+    func testATinyHyMT2MixtureMatchesTransformers() throws {
+        try checkHYMT(weightsKey: "IK_VAL_HYMT_MOE_TINY", recordKey: "IK_PARITY_HYMT_MOE_TINY", release: .hyMT2,
+                      precision: .float32, name: "hy-mt2-moe-tiny")
+    }
+
+    func testATinyHyMT2MixturePagesItsExpertsAsTransformersRunsThem() throws {
+        try checkHYMT(weightsKey: "IK_VAL_HYMT_MOE_TINY", recordKey: "IK_PARITY_HYMT_MOE_TINY", release: .hyMT2,
+                      precision: .float32, residency: .paged, name: "hy-mt2-moe-tiny-paged")
+    }
+
+    func testHyMT2MixtureBF16MatchesTheBFloat16Reference() throws {
+        try checkHYMT(weightsKey: "IK_VAL_HYMT2_30B_A3B", recordKey: "IK_PARITY_HYMT2_30B_A3B", release: .hyMT2,
+                      precision: .checkpoint, residency: .paged, name: "hy-mt2-30b-a3b")
+    }
+
+    func testHyMT2MixtureAtFloat32MatchesTheReference() throws {
+        try checkHYMT(weightsKey: "IK_VAL_HYMT2_30B_A3B", recordKey: "IK_PARITY_HYMT2_30B_A3B_F32", release: .hyMT2,
+                      precision: .float32, residency: .paged, name: "hy-mt2-30b-a3b-f32")
+    }
+
+    func testHunyuanMTBF16MatchesTheBFloat16Reference() throws {
+        try checkHYMT(weightsKey: "IK_VAL_HUNYUAN_MT_7B", recordKey: "IK_PARITY_HUNYUAN_MT_7B", release: .hunyuanMT,
+                      precision: .checkpoint, name: "hunyuan-mt-7b")
+    }
+
+    func testHunyuanMTChineseToEnglishMatchesTheReference() throws {
+        try checkHYMT(weightsKey: "IK_VAL_HUNYUAN_MT_7B", recordKey: "IK_PARITY_HUNYUAN_MT_7B_ZH", release: .hunyuanMT,
+                      precision: .checkpoint, source: "zh", target: "en", name: "hunyuan-mt-7b-zh-en")
+    }
+
+    func testHunyuanMTStreamedAtFloat32MatchesTheReference() throws {
+        try checkHYMT(weightsKey: "IK_VAL_HUNYUAN_MT_7B", recordKey: "IK_PARITY_HUNYUAN_MT_7B_F32", release: .hunyuanMT,
+                      precision: .float32, name: "hunyuan-mt-7b-f32")
+    }
+
+    func testHunyuanMTChimeraBF16MatchesTheBFloat16Reference() throws {
+        try checkHYMT(weightsKey: "IK_VAL_HUNYUAN_MT_CHIMERA_7B", recordKey: "IK_PARITY_HUNYUAN_MT_CHIMERA_7B",
+                      release: .hunyuanMTChimera, precision: .checkpoint, name: "hunyuan-mt-chimera-7b")
+    }
+
     func testHYMT15SevenBBF16MatchesTheBFloat16Reference() throws {
         try checkHYMT(weightsKey: "IK_VAL_HYMT15_7B", recordKey: "IK_PARITY_HYMT15_7B", release: .hyMT15,
                       precision: .checkpoint, name: "hy-mt1.5-7b")
@@ -1509,25 +1634,33 @@ final class NFKMLXTranslationTests: XCTestCase {
     }
 
     private func checkHYMT(weightsKey: String, recordKey: String, release generation: NFKMLXHYMTRelease,
-                           precision: NFKMLXWeightPrecision, source: String = "en", target: String = "de",
+                           precision: NFKMLXWeightPrecision, residency: NFKMLXResidency = .automatic,
+                           source: String = "en", target: String = "de",
                            opensAssistantTurn: Bool = true, name: String) throws {
         try requireMLXRuntime()
         let (directory, record) = try release(weightsKey, recordKey)
-        let translator = try NFKMLXHYMT.translator(directoryURL: directory, release: generation, precision: precision)
+        let translator = try NFKMLXHYMT.translator(directoryURL: directory, release: generation, precision: precision,
+                                                   residency: residency)
         translator.opensAssistantTurn = opensAssistantTurn
         let stream = translator.net.layerStream
         let sentences = Self.probes[source] ?? Self.sentences
-        for (index, sentence) in sentences.enumerated() {
-            XCTAssertEqual(translator.promptTokens(text: sentence, sourceCode: source, targetCode: target),
-                           ints(record["tokens_\(index)"]!), "the prompt ids of \(sentence)")
+        func promptTokens(_ sentence: String) -> [Int] {
+            guard translator.refinesCandidates else {
+                return translator.promptTokens(text: sentence, sourceCode: source, targetCode: target)
+            }
+            return translator.refinementTokens(text: sentence, candidates: Self.chimeraCandidates, sourceCode: source,
+                                               targetCode: target)
         }
-        let ids = translator.promptTokens(text: sentences[1], sourceCode: source, targetCode: target)
+        for (index, sentence) in sentences.enumerated() {
+            XCTAssertEqual(promptTokens(sentence), ints(record["tokens_\(index)"]!), "the prompt ids of \(sentence)")
+        }
+        let ids = promptTokens(sentences[1])
         XCTAssertEqual(ids, ints(record["tokens"]!))
         let endTokens = Set(ints(record["end_tokens"]!))
         XCTAssertEqual(Set([translator.defaultDecoding.endToken] + translator.defaultDecoding.additionalEndTokens), endTokens)
         let input = MLXArray(ids.map { Int32($0) }).reshaped([1, ids.count])
         let logits = translator.net(input)[0]
-        let logitCosine = cosine(logits, record["output"]!)
+        let logitCosine = wideCosine(logits, record["output"]!)
         // A float32 load reproduces the reference to float error; a .checkpoint load compares bfloat16
         // against a bfloat16 reference, where the two accumulation orders drift apart over the stack.
         XCTAssertGreaterThan(logitCosine, precision == .float32 ? 0.999 : 0.995)
@@ -1560,12 +1693,25 @@ final class NFKMLXTranslationTests: XCTestCase {
                   + String(format: "%.1f GB read at %.2f GB/s", Double(bytes) / 1e9, Double(bytes) / 1e9 / max(seconds, 1e-9))
                   + Self.memoryReading)
         }
+        if let store = translator.net.expertStore {
+            print("\(name): experts paged, \(store.materializeCount) materialized, \(store.cacheHitCount) cache hits, "
+                  + String(format: "%.1f GB mapped, %.1f GB held", Double(store.mappedBytes) / 1e9, Double(store.heldBytes) / 1e9)
+                  + Self.memoryReading)
+        }
     }
 
     // MARK: Language probes
 
     /// One probe set per source language, the table `run_reference.py` records (`TRANSLATION_PROBES`);
     /// index 1 is the sentence the seams, the generations, and the loss use.
+    /// The candidates the Hunyuan-MT-Chimera record fuses, as the oracle's `HYMT_CHIMERA_CANDIDATES` lists
+    /// them: the greedy German of HY-MT1.5 1.8B, Hy-MT2 1.8B, and HY-MT1.5 7B for probe sentence 1.
+    private static let chimeraCandidates = [
+        "Der schnelle braune Fuchs springt über den trägen Hund.",
+        "Der schnelle braune Fuchs springt über den faulen Hund.",
+        "Die schnelle braune Füchsin springt über den faulen Hund.",
+    ]
+
     private static let probes: [String: [String]] = {
         var table: [String: [String]] = [
             "en": sentences,

@@ -318,7 +318,7 @@ encoder frozen, over the reference's teacher-forced `labels=` loss.
 | `NFKMLXMADLAD` | ships | LoRA | public | On the T5 decoder's projections. The 3B release is 11.8 GB at float32. A streamed load, the 7B at float32 on 32 GB, does not train. |
 | `NFKMLXTranslateGemma` | ships | LoRA | public | With the prompt positions masked, the reference's `labels=-100` rule. 12B and 27B stay offline. |
 | `NFKMLXSeedX` | ships | LoRA | public | The language family's recipe on the attention `q_proj` / `v_proj`, the prompt masked and the target closed by `</s>`, as the release's reward-model demonstration lays a pair out. A float32 load is 30 GB, so on 32 GB it streams and does not train. |
-| `NFKMLXHYMT` | ships | LoRA | public | The language family's recipe on the attention `q_proj` / `v_proj`, the prompt masked and the target closed by the release's first end token, as the release's chat template closes an assistant turn. A 1.8B release trains at float32; a 7B float32 load is 32 GB, so on 32 GB it streams and does not train. |
+| `NFKMLXHYMT` | ships | LoRA | public | The language family's recipe on the attention `q_proj` / `v_proj`, the prompt masked and the target closed by the release's first end token, as the release's chat template closes an assistant turn. A 1.8B release trains at float32; a 7B float32 load is 32 GB, so on 32 GB it streams and does not train. Hunyuan-MT and Chimera are 7B and train as the 7B releases do. Hy-MT2-30B-A3B pages its experts on 32 GB, and a paged decoder does not train (the recipe refuses an expert store); its LoRA path is the language family's, on a machine that holds it. |
 
 ## Music transcription and structure
 

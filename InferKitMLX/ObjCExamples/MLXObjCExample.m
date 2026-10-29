@@ -329,7 +329,14 @@
 	XCTAssertNotEqual(NFKMLXSeedXVariantPpo, NFKMLXSeedXVariantInstruct);
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"hy-mt1.5"]);
 	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"hy-mt2"]);
-	// HY-MT downloads any of its four releases by variant, at the precision named:
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"hy-mt2-30b-a3b"]);
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"hunyuan-mt"]);
+	XCTAssertTrue([NFKMLXModelRegistry isModelRegistered:@"hunyuan-mt-chimera"]);
+	// Hunyuan-MT-Chimera fuses the candidate translations a request names:
+	//   parameters:@{NFKParameterTargetLanguage: @"de",
+	//                NFKMLXTranslationParameterKey.candidateTranslations: @[candidate1, candidate2]}
+	XCTAssertEqualObjects(NFKMLXTranslationParameterKey.candidateTranslations, @"NFKMLXParameterCandidateTranslations");
+	// HY-MT downloads any of its releases by variant, at the precision named:
 	//   id<NFKInferenceBackend> hymt = [NFKMLXHYMT backendWithVariant:NFKMLXHYMTVariantHyMT2_1_8B revision:nil
 	//                                                cacheDirectoryURL:nil precision:NFKMLXWeightPrecisionCheckpoint
 	//                                                            error:&error];

@@ -25,6 +25,10 @@ public final class NFKMLXTranslationParameterKey: NSObject {
     /// Splits the input into sentences and translates each (NSNumber, boolean). Off by default: the
     /// whole input goes through the model as one sequence, paragraph by paragraph.
     @objc public static let splitsSentences = "NFKMLXParameterSplitsSentences"
+    /// Translations of the whole input that a refining model fuses into one (NSArray of NSString), such
+    /// as Hunyuan-MT-Chimera. A refining model needs them and reads the input as one segment; any other
+    /// model refuses a request that names them. Introduced in InferKit 0.4.0.
+    @objc public static let candidateTranslations = "NFKMLXParameterCandidateTranslations"
 }
 
 /// A text-to-text translator the backend drives: a tokenizer-and-network pair with its language set.
@@ -51,6 +55,17 @@ public protocol NFKMLXTranslator: AnyObject {
 
 extension NFKMLXTranslator {
     public var layerStreams: [NFKMLXLayerStream] { [] }
+}
+
+/// A translator that can also fuse candidate translations of a segment into one.
+///
+/// Introduced in InferKit 0.4.0.
+public protocol NFKMLXTranslationRefiner: NFKMLXTranslator {
+    /// Whether this model fuses candidates, which it then needs, rather than translating on its own.
+    var refinesCandidates: Bool { get }
+    /// Fuses `candidates`, translations of `text` from `source` into `target`, into one translation.
+    func refine(_ text: String, candidates: [String], from source: String, to target: String,
+                decoding: NFKMLXSeq2SeqDecoding) throws -> String
 }
 
 /// The `NFKInferenceBackend` face of an MLX translation model.
@@ -85,9 +100,11 @@ public final class NFKMLXTranslationBackend: NSObject, NFKInferenceBackend {
 
     /// The request parameters the backend reads.
     @objc public var supportedParameterKeys: Set<String> {
-        [NFKParameterSourceLanguage, NFKParameterTargetLanguage, NFKParameterMaxTokens,
-         NFKMLXTranslationParameterKey.beamCount, NFKMLXTranslationParameterKey.lengthPenalty,
-         NFKMLXTranslationParameterKey.splitsSentences]
+        let keys: Set<String> = [NFKParameterSourceLanguage, NFKParameterTargetLanguage, NFKParameterMaxTokens,
+                                 NFKMLXTranslationParameterKey.beamCount, NFKMLXTranslationParameterKey.lengthPenalty,
+                                 NFKMLXTranslationParameterKey.splitsSentences]
+        guard (translator as? any NFKMLXTranslationRefiner)?.refinesCandidates == true else { return keys }
+        return keys.union([NFKMLXTranslationParameterKey.candidateTranslations])
     }
 
     /// The request inputs the backend reads.
@@ -115,9 +132,29 @@ public final class NFKMLXTranslationBackend: NSObject, NFKInferenceBackend {
         if let value = request.parameter(forKey: NFKMLXTranslationParameterKey.lengthPenalty) as? NSNumber {
             decoding.lengthPenalty = value.floatValue
         }
+        if let candidates = request.parameter(forKey: NFKMLXTranslationParameterKey.candidateTranslations) as? [String] {
+            let refined = try refine(text, candidates: candidates, from: source, to: target, decoding: decoding)
+            return NFKInferenceResult(outputs: [NFKOutputText: refined])
+        }
         let splitsSentences = (request.parameter(forKey: NFKMLXTranslationParameterKey.splitsSentences) as? NSNumber)?.boolValue ?? false
         let translated = try translate(text, from: source, to: target, decoding: decoding, splitsSentences: splitsSentences)
         return NFKInferenceResult(outputs: [NFKOutputText: translated])
+    }
+
+    /// Fuses `candidates`, whole translations of `text`, into one through a refining model, the input
+    /// read as one segment. The source is detected when absent, since the refining prompt names it.
+    public func refine(_ text: String, candidates: [String], from source: String?, to target: String,
+                       decoding: NFKMLXSeq2SeqDecoding? = nil) throws -> String {
+        guard let refiner = translator as? any NFKMLXTranslationRefiner, refiner.refinesCandidates else {
+            throw Self.error(.error_InferenceUnsupported, "\(translator.identifier) translates; it does not fuse candidate translations")
+        }
+        let (resolvedSource, resolvedTarget) = try resolveLanguages(text: text, source: source, target: target)
+        guard let resolvedSource else {
+            throw Self.error(.error_InferenceMissingInput,
+                             "\(translator.identifier) names the source language, which a request gives under NFKParameterSourceLanguage")
+        }
+        return try refiner.refine(text, candidates: candidates, from: resolvedSource, to: resolvedTarget,
+                                  decoding: decoding ?? translator.defaultDecoding)
     }
 
     /// Translates `text`, resolving the languages against the model and splitting paragraphs.

@@ -305,6 +305,7 @@ The figures have three limits:
 - ``NFKMLXHYMTTranslator``
 - ``NFKMLXHYMTRelease``
 - ``NFKMLXHYMTVariant``
+- ``NFKMLXTranslationRefiner``
 - ``NFKMLXTranslationBackend``
 - ``NFKMLXTranslationParameterKey``
 - ``NFKMLXTranslator``

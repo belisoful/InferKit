@@ -1290,6 +1290,9 @@ public final class NFKMLXLanguage: NSObject {
             try NFKMLXHunyuanDense.read(json, into: &configuration)
             return configuration
         }
+        if modelType == NFKMLXHunyuanMoE.modelType {
+            try NFKMLXHunyuanMoE.read(json, into: &configuration)
+        }
         // A release that extended its window says so here. An unimplemented kind throws rather than
         // loading under the wrong rotary, which would run and be wrong.
         configuration.ropeScaling = try NFKMLXRoPEScaling.read(
@@ -1343,6 +1346,8 @@ public final class NFKMLXLanguage: NSObject {
             }
             return (integer("num_local_experts", 0), integer("num_experts_per_tok", 0),
                     integer("intermediate_size", 0), true, 0)
+        case NFKMLXHunyuanMoE.modelType:
+            return NFKMLXHunyuanMoE.experts(json)
         case "gpt_oss":
             // The router takes the softmax over the selected logits, which is the renormalized form.
             return (integer("num_local_experts", 0), integer("num_experts_per_tok", 0),
@@ -1351,7 +1356,7 @@ public final class NFKMLXLanguage: NSObject {
             if json["num_experts"] != nil || json["num_local_experts"] != nil || json["n_routed_experts"] != nil {
                 throw NFKMLXError.unsupportedConfiguration(
                     "the config describes a mixture-of-experts family (\(modelType)) this network does "
-                    + "not implement; qwen3_moe, qwen2_moe, mixtral, and gpt_oss are the families it reads")
+                    + "not implement; qwen3_moe, qwen2_moe, mixtral, gpt_oss, and hy_v3 are the families it reads")
             }
             return nil
         }
@@ -1362,6 +1367,13 @@ public final class NFKMLXLanguage: NSObject {
     /// `experts`, gpt-oss's `router` is the module's `gate` and its fused expert tensors gain the
     /// `.weight` the module's layers carry, and every other name passes through.
     static func moduleKey(forRelease key: String) -> String {
+        // hy_v3 nests its router's projection one level deeper and names its shared expert `shared_mlp`.
+        if key.contains(".mlp.router.gate.") {
+            return key.replacingOccurrences(of: ".mlp.router.gate.", with: ".mlp.gate.")
+        }
+        if key.contains(".mlp.shared_mlp.") {
+            return key.replacingOccurrences(of: ".mlp.shared_mlp.", with: ".mlp.shared_expert.")
+        }
         if key.contains(".switch_mlp.") {
             return moduleKey(forRelease: key.replacingOccurrences(of: ".switch_mlp.", with: ".experts."))
         }

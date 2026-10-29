@@ -32,6 +32,7 @@ Requires: torch, safetensors, transformers.
 """
 
 import argparse
+import collections.abc
 import json
 import math
 import os
@@ -23130,14 +23131,37 @@ HYMT_LANGUAGES = {
 }
 
 
+# The candidates the Hunyuan-MT-Chimera record fuses: the greedy German of HY-MT1.5 1.8B, Hy-MT2 1.8B, and
+# HY-MT1.5 7B for probe sentence 1.
+HYMT_CHIMERA_CANDIDATES = [
+    "Der schnelle braune Fuchs springt \u00fcber den tr\u00e4gen Hund.",
+    "Der schnelle braune Fuchs springt \u00fcber den faulen Hund.",
+    "Die schnelle braune F\u00fcchsin springt \u00fcber den faulen Hund.",
+]
+
+
 def _hymt_prompt(text, source, target):
-    """The model card's default instruction for HYMT_RELEASE (`1.5`, the default, or `2`) and two tags: the
-    Chinese instruction naming the target's Chinese name when either side is Chinese, the English one
-    otherwise; HY-MT1.5's template puts one line break before the text, Hy-MT2's two."""
-    second = os.environ.get("HYMT_RELEASE", "1.5") == "2"
+    """The model card's default instruction for HYMT_RELEASE (`1.5`, the default, `2`, `mt` for
+    Hunyuan-MT, or `chimera` for Hunyuan-MT-Chimera) and two tags: the Chinese instruction naming the
+    target's Chinese name when either side is Chinese, the English one otherwise; HY-MT1.5's and
+    Hunyuan-MT's templates put one line break before the text, Hy-MT2's two. Chimera's instruction names
+    both languages in English and numbers HYMT_CHIMERA_CANDIDATES, each in triple backticks."""
+    release = os.environ.get("HYMT_RELEASE", "1.5")
+    second = release == "2"
     english, chinese = HYMT_LANGUAGES[target]
     separator = "\n\n" if second else "\n"
-    if source in ("zh", "zh-Hant") or target in ("zh", "zh-Hant"):
+    if release == "chimera":
+        source_name = HYMT_LANGUAGES[source][0]
+        lines = [f"Analyze the following multiple {english} translations of the {source_name} segment surrounded in "
+                 f"triple backticks and generate a single refined {english} translation. Only output the refined "
+                 f"translation, do not explain.", f"The {source_name} segment:", f"```{text}```",
+                 f"The multiple {english} translations:"]
+        lines += [f"{index}. ```{candidate}```" for index, candidate in enumerate(HYMT_CHIMERA_CANDIDATES, 1)]
+        return "\n".join(lines)
+    chinese_pair = source in ("zh", "zh-Hant") or target in ("zh", "zh-Hant")
+    if release == "mt" and chinese_pair:
+        return f"\u628a\u4e0b\u9762\u7684\u6587\u672c\u7ffb\u8bd1\u6210{chinese}\uff0c\u4e0d\u8981\u989d\u5916\u89e3\u91ca\u3002\n{text}"
+    if chinese_pair:
         return (f"\u5c06\u4ee5\u4e0b\u6587\u672c\u7ffb\u8bd1\u4e3a{chinese}\uff0c\u6ce8\u610f\u53ea\u9700\u8981"
                 f"\u8f93\u51fa\u7ffb\u8bd1\u540e\u7684\u7ed3\u679c\uff0c\u4e0d\u8981\u989d\u5916\u89e3\u91ca\uff1a"
                 f"{separator}{text}")
@@ -23153,7 +23177,8 @@ def _hymt_ids(tokenizer, text, source, target):
     ids = tokenizer.apply_chat_template([{"role": "user", "content": _hymt_prompt(text, source, target)}],
                                         add_generation_prompt=os.environ.get("HYMT_ASSISTANT", "1") == "1",
                                         tokenize=True)
-    return list(ids["input_ids"] if isinstance(ids, dict) else ids)
+    # transformers 5's TokenizersBackend returns a BatchEncoding, a Mapping that is not a dict.
+    return list(ids["input_ids"] if isinstance(ids, collections.abc.Mapping) else ids)
 
 
 def _hymt_model(checkpoint):
@@ -23163,12 +23188,16 @@ def _hymt_model(checkpoint):
     measures against). HYMT_LAYERWISE=1 builds the
     model on the meta device and reads each decoder layer as the forward reaches it, as `_seedx_model`
     does, for the 7B at float32 (32 GB); the embedding, which the head shares, and the final norm are read
-    once and the rotary table is built on the CPU."""
-    from transformers import AutoConfig, AutoTokenizer, GenerationConfig, HunYuanDenseV1ForCausalLM
+    once and the rotary table is built on the CPU. A `hy_v3` release (Hy-MT2-30B-A3B) always reads layer by
+    layer through `_hymt_mixture_model`."""
+    from transformers import AutoConfig, AutoTokenizer, GenerationConfig
 
     dtype = getattr(torch, os.environ.get("HYMT_DTYPE", "bfloat16"))
     tokenizer = AutoTokenizer.from_pretrained(checkpoint)
     attention = os.environ.get("HYMT_ATTENTION")
+    if AutoConfig.from_pretrained(checkpoint).model_type == "hy_v3":
+        return _hymt_mixture_model(checkpoint, dtype, attention, tokenizer)
+    from transformers import HunYuanDenseV1ForCausalLM
     if os.environ.get("HYMT_LAYERWISE") != "1":
         options = {"attn_implementation": attention} if attention else {}
         return (HunYuanDenseV1ForCausalLM.from_pretrained(checkpoint, dtype=dtype, **options).eval(), tokenizer,
@@ -23186,6 +23215,69 @@ def _hymt_model(checkpoint):
     model.model.norm.weight = torch.nn.Parameter(read("model.norm.weight"), requires_grad=False)
     model.model.rotary_emb = type(model.model.rotary_emb)(config=config)
     _read_layers_in_turn(model.model.layers, "model.", entries, read)
+    return model, tokenizer, close
+
+
+def _hymt_mixture_model(checkpoint, dtype, attention, tokenizer):
+    """Hy-MT2-30B-A3B's `HYV3ForCausalLM` (transformers 5.6 or later: the nemovenv), built on the meta device
+    with each decoder layer read from the release as the forward reaches it, since the release (60 GB of
+    bfloat16) exceeds memory. A layer's tensors take transformers' names as its conversion mapping gives
+    them: `router.gate` → `gate`, `expert_bias` → `e_score_correction_bias` (kept in float32, as the model
+    keeps it), `shared_mlp` → `shared_experts`, and each expert's gate and up projections concatenated into
+    the fused `gate_up_proj` with the down projections stacked. The experts run the implementation
+    transformers dispatches by default (`grouped_mm` on this machine: the weighted outputs summed in
+    float32 and rounded once) unless HYMT_EXPERTS names another; the release config's `use_grouped_mm:
+    false` is not a field transformers reads. The embedding, final norm, and untied head are read once."""
+    from transformers import AutoConfig, GenerationConfig, HYV3ForCausalLM
+
+    config = AutoConfig.from_pretrained(checkpoint)
+    entries, read, close = _layerwise_release(checkpoint, dtype)
+    experts = {"experts_implementation": os.environ["HYMT_EXPERTS"]} if os.environ.get("HYMT_EXPERTS") else {}
+    with torch.device("meta"):
+        model = HYV3ForCausalLM._from_config(config, dtype=dtype, attn_implementation=attention or "sdpa", **experts)
+    model.eval()
+    model.generation_config = GenerationConfig.from_model_config(config)
+    embed = torch.nn.Embedding(config.vocab_size, config.hidden_size, config.pad_token_id)
+    embed.weight = torch.nn.Parameter(read("model.embed_tokens.weight"), requires_grad=False)
+    model.model.embed_tokens = embed
+    model.lm_head.weight = torch.nn.Parameter(read("lm_head.weight"), requires_grad=False)
+    model.model.norm.weight = torch.nn.Parameter(read("model.norm.weight"), requires_grad=False)
+    model.model.rotary_emb = type(model.model.rotary_emb)(config=config)
+
+    def layer_state(prefix):
+        state = {}
+        experts = {}
+        for key in entries:
+            if not key.startswith(prefix):
+                continue
+            name = key[len(prefix):]
+            parts = name.split(".")
+            if parts[:2] == ["mlp", "experts"]:
+                experts.setdefault(int(parts[2]), {})[parts[3]] = key
+                continue
+            name = name.replace("mlp.router.gate.", "mlp.gate.").replace("mlp.shared_mlp.", "mlp.shared_experts.")
+            if name == "mlp.expert_bias":
+                state["mlp.e_score_correction_bias"] = read(key).float()
+                continue
+            state[name] = read(key)
+        if experts:
+            count = len(experts)
+            state["mlp.experts.gate_up_proj"] = torch.stack(
+                [torch.cat([read(experts[e]["gate_proj"]), read(experts[e]["up_proj"])], dim=0) for e in range(count)])
+            state["mlp.experts.down_proj"] = torch.stack([read(experts[e]["down_proj"]) for e in range(count)])
+        return state
+
+    for index, layer in enumerate(model.model.layers):
+        prefix = f"model.layers.{index}."
+
+        def install(module, args, prefix=prefix):
+            module.load_state_dict(layer_state(prefix), strict=True, assign=True)
+
+        def vacate(module, args, output):
+            module.to("meta")
+
+        layer.register_forward_pre_hook(install)
+        layer.register_forward_hook(vacate)
     return model, tokenizer, close
 
 
@@ -23243,6 +23335,73 @@ def run_hymt(image, checkpoint):
         extra[f"hidden_last.{index}"] = state[0, -1].float().contiguous()
     globals()["_extra"] = extra
     return out.logits[0].float().contiguous()
+
+
+def run_hymt_moe_tiny(image, checkpoint):
+    """A tiny Hy-MT2-30B-A3B written from a seeded random `HYV3ForCausalLM` in float32 (three layers, the
+    first dense, eight experts with three active and a shared expert, the release's vocabulary so its
+    tokenizer and template apply), saved under the release's own tensor names and config fields, and then
+    recorded as `run_hymt` records a release, at float32 with Hy-MT2's instruction.
+
+    `--checkpoint` is the Hy-MT2-30B-A3B release directory, whose tokenizer files and chat template the
+    tiny release copies; HYMT_TINY_OUT is the directory it is written to, which InferKit's tiny parity
+    test loads. The norms and the experts' bias are random, so the bias moves the choice. The record adds
+    `whole_difference`: the largest logit difference between the recorded layer-by-layer run and
+    `from_pretrained`, which reads the same files through transformers' conversion mapping and is zero
+    where the release's names map as transformers maps them."""
+    import shutil
+    from safetensors.torch import save_file as save_tensors
+    from transformers import AutoConfig, HYV3ForCausalLM
+
+    out = os.environ["HYMT_TINY_OUT"]
+    os.makedirs(out, exist_ok=True)
+    for name in ["tokenizer.json", "tokenizer_config.json", "special_tokens_map.json", "chat_template.jinja"]:
+        shutil.copy(os.path.join(checkpoint, name), os.path.join(out, name))
+    release = json.load(open(os.path.join(checkpoint, "config.json")))
+    release.update({"hidden_size": 64, "num_hidden_layers": 3, "num_attention_heads": 4, "num_key_value_heads": 2,
+                    "head_dim": 16, "intermediate_size": 96, "moe_intermediate_size": 24, "expert_hidden_dim": 24,
+                    "num_experts": 8, "num_experts_per_tok": 3})
+    with open(os.path.join(out, "config.json"), "w") as handle:
+        json.dump(release, handle, indent=2)
+    config = AutoConfig.from_pretrained(out)
+    torch.manual_seed(67)
+    model = HYV3ForCausalLM._from_config(config, dtype=torch.float32).eval()
+    with torch.no_grad():
+        for name, parameter in model.named_parameters():
+            if name.endswith("norm.weight"):
+                parameter.copy_(1 + torch.randn_like(parameter) * 0.3)
+            else:
+                parameter.copy_(torch.randn_like(parameter) * 0.05)
+        for name, buffer in model.named_buffers():
+            if name.endswith("e_score_correction_bias"):
+                buffer.copy_(torch.randn_like(buffer) * 0.5)
+    tensors = {}
+    for name, value in model.state_dict().items():
+        if name.endswith("mlp.experts.gate_up_proj"):
+            stem, width = name[: -len("gate_up_proj")], value.shape[1] // 2
+            for expert in range(value.shape[0]):
+                tensors[f"{stem}{expert}.gate_proj.weight"] = value[expert, :width].contiguous()
+                tensors[f"{stem}{expert}.up_proj.weight"] = value[expert, width:].contiguous()
+            continue
+        if name.endswith("mlp.experts.down_proj"):
+            stem = name[: -len("down_proj")]
+            for expert in range(value.shape[0]):
+                tensors[f"{stem}{expert}.down_proj.weight"] = value[expert].contiguous()
+            continue
+        name = (name.replace("mlp.gate.weight", "mlp.router.gate.weight")
+                .replace("mlp.e_score_correction_bias", "mlp.expert_bias").replace("mlp.shared_experts.", "mlp.shared_mlp."))
+        tensors[name] = value.contiguous()
+    save_tensors(tensors, os.path.join(out, "model.safetensors"))
+
+    os.environ["HYMT_DTYPE"] = "float32"
+    os.environ["HYMT_RELEASE"] = "2"
+    logits = run_hymt(image, out)
+    whole = HYV3ForCausalLM.from_pretrained(out, dtype=torch.float32).eval()
+    with torch.no_grad():
+        reference = whole(input_ids=globals()["_extra"]["tokens"].long()[None]).logits[0].float()
+    globals()["_extra"]["whole_difference"] = (reference - logits).abs().max().reshape(1)
+    print("whole_difference:", globals()["_extra"]["whole_difference"].item())
+    return logits
 
 
 def run_hymt_beam(image, checkpoint):
@@ -24580,7 +24739,7 @@ MODELS = {"qwen25vl_vision_tiny": run_qwen25vl_vision_tiny, "llava_tiny": run_ll
           "rope_scaling": run_rope_scaling, "silero_vad": run_silero_vad, "dac": run_dac,
           "snac": run_snac, "siglip2_probe": run_siglip2_probe, "clip_probe": run_clip_probe, "siglip2": run_siglip2, "taesd": run_taesd, "ltx_vae": run_ltx_vae, "ltx_transformer": run_ltx_transformer, "ltx_t5": run_ltx_t5, "z_image": run_z_image, "glue_rounding": run_glue_rounding, "gelu_rounding": run_gelu_rounding, "sana": run_sana, "sd3": run_sd3, "flux": run_flux, "sd3_controlnet": run_sd3_controlnet, "sd3_controlnet_single": run_sd3_controlnet_single, "flux_controlnet": run_flux_controlnet, "flux_controlnet_hint": run_flux_controlnet_hint, "wan": run_wan, "wan_animate": run_wan_animate, "sam2_video": run_sam2_video, "sam3_vision": run_sam3_vision, "sam3_text": run_sam3_text, "sam3_detector": run_sam3_detector, "sam2_loss": run_sam2_loss, "sam3_loss": run_sam3_loss, "flux_vae": run_flux_vae, "dc_ae": run_dc_ae, "wan_vae": run_wan_vae, "dpm_solver": run_dpm_solver, "unipc": run_unipc, "gemma2": run_gemma2, "gemma3_tiny": run_gemma3_tiny, "gemma3n_tiny": run_gemma3n_tiny, "gemma3n_audio": run_gemma3n_audio, "gemma3_bidirectional_tiny": run_gemma3_bidirectional_tiny, "umt5": run_umt5, "wan_vae_21": run_wan_vae_21, "dc_ae_real": run_dc_ae_real, "ip_adapter": run_ip_adapter, "rtdetr": run_rtdetr, "rtdetr_v2": run_rtdetr_v2, "rf_detr": run_rf_detr,
           "gemma4_shared_kv": run_gemma4_shared_kv}
-CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "clip_text_probe": run_clip_text_probe, "sd_vae_probe": run_sd_vae_probe, "gemma3n_audio_probe": run_gemma3n_audio_probe, "sd_unet_probe": run_sd_unet_probe, "z_image_release_probe": run_z_image_release_probe, "wan_release_probe": run_wan_release_probe, "sa2va_llava_probe": run_sa2va_llava_probe, "whisper_f16_probe": run_whisper_f16_probe, "t5_seq2seq_probe": run_t5_seq2seq_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "pplx_decider": run_pplx_decider, "pplx_decider_tiny": run_pplx_decider_tiny, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "dense_layerwise": run_dense_layerwise, "pixtral_fused_layerwise": run_pixtral_fused_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "seedx": run_seedx, "hymt": run_hymt, "hymt_beam": run_hymt_beam, "hymt_tokenizer": run_hymt_tokenizer, "madlad_layerwise": run_madlad_layerwise, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_qwen_generate": run_sa2va_qwen_generate, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
+CHECKPOINT_MODELS = {"hf_layer_probe": run_hf_layer_probe, "t5_layer_probe": run_t5_layer_probe, "sa2va_probe": run_sa2va_probe, "sa2va_grounding_probe": run_sa2va_grounding_probe, "sa2va_qwen_probe": run_sa2va_qwen_probe, "clip_text_probe": run_clip_text_probe, "sd_vae_probe": run_sd_vae_probe, "gemma3n_audio_probe": run_gemma3n_audio_probe, "sd_unet_probe": run_sd_unet_probe, "z_image_release_probe": run_z_image_release_probe, "wan_release_probe": run_wan_release_probe, "sa2va_llava_probe": run_sa2va_llava_probe, "whisper_f16_probe": run_whisper_f16_probe, "t5_seq2seq_probe": run_t5_seq2seq_probe, "sa2va_sam3_probe": run_sa2va_sam3_probe, "gemma3_vision_probe": run_gemma3_vision_probe, "gemma4_vision_probe": run_gemma4_vision_probe, "gemma3n_vision_probe": run_gemma3n_vision_probe, "hf_bf16_spread": run_hf_bf16_spread, "flux2_prompt": run_flux2_prompt, "flux2_real": run_flux2_real, "flux2_real_f32": run_flux2_real_f32, "flux2_real_truncated": run_flux2_real_truncated, "flux2_kv_real": run_flux2_kv_real, "flux2_kv_real_truncated": run_flux2_kv_real_truncated, "flux2_vae_real": run_flux2_vae_real, "flux2_text_real": run_flux2_text_real, "flux2_text_real_bf16": run_flux2_text_real_bf16, "flux2_text_real_truncated": run_flux2_text_real_truncated, "laya": run_laya, "laya_loss": run_laya_loss, "laya_episode": run_laya_episode, "open_jev_deberta": run_open_jev_deberta, "open_jev_deberta_budget": run_open_jev_deberta_budget, "open_jev": run_open_jev, "pplx_decider": run_pplx_decider, "pplx_decider_tiny": run_pplx_decider_tiny, "translategemma": run_translategemma, "translategemma_layerwise": run_translategemma_layerwise, "dense_layerwise": run_dense_layerwise, "pixtral_fused_layerwise": run_pixtral_fused_layerwise, "florence2": run_florence2, "florence2_generate": run_florence2_generate, "florence2_loss": run_florence2_loss, "trocr": run_trocr, "trocr_loss": run_trocr_loss, "marian": run_marian, "m2m100": run_m2m100, "small100": run_small100, "nllb": run_nllb, "madlad": run_madlad, "seedx": run_seedx, "hymt": run_hymt, "hymt_moe_tiny": run_hymt_moe_tiny, "hymt_beam": run_hymt_beam, "hymt_tokenizer": run_hymt_tokenizer, "madlad_layerwise": run_madlad_layerwise, "hft": run_hft, "qwenimage21_text": run_qwenimage21_text, "qwenimage21_pipeline": run_qwenimage21_pipeline, "qwenimage21_vae": run_qwenimage21_vae, "qwenimage21_scheduler": run_qwenimage21_scheduler, "qwenimage21_real": run_qwenimage21_real, "muscriptor_real": run_muscriptor_real, "basic_pitch": run_basic_pitch, "basic_pitch_training": run_basic_pitch_training, "chatterbox_mtl_tokens": run_chatterbox_mtl_tokens, "rf_detr_seg": run_rf_detr_seg, "chatterbox_mtl_t3": run_chatterbox_mtl_t3, "allin1": run_allin1, "sam_encoder": run_sam_encoder, "sam2_encoder": run_sam2_encoder, "sa2va_teacher": run_sa2va_teacher, "sa2va_loss": run_sa2va_loss, "sa2va_qwen": run_sa2va_qwen, "sa2va_qwen_generate": run_sa2va_qwen_generate, "sa2va_processor": run_sa2va_processor, "internvit_qknorm_tiny": run_internvit_qknorm_tiny, "internlm2_tiny": run_internlm2_tiny, "internlm2_tokenizer": run_internlm2_tokenizer, "sa2va_llava_teacher": run_sa2va_llava_teacher, "sam2_decoder": run_sam2_decoder, "sam2_memory": run_sam2_memory, "sam": run_sam, "sam_decoder": run_sam_decoder,
                      "swinir": run_swinir,
                      "sd_unet": run_sd_unet, "sd_vae": run_sd_vae, "sd_text_encoder": run_sd_text_encoder, "sd_text_to_image": run_sd_text_to_image, "convtasnet": run_convtasnet, "demucs": run_demucs, "htdemucs": run_htdemucs, "htdemucs_bag": run_htdemucs_bag, "denoiser": run_denoiser,
                      "vad": run_vad, "vad_training": run_vad_training, "deeplab": run_deeplab, "u2net": run_u2net, "isnet": run_isnet, "adain": run_adain, "hat": run_hat, "pose": run_pose,

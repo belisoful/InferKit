@@ -604,6 +604,9 @@ final class NFKMLXRepositoryMatchingTests: XCTestCase {
         (NFKMLXPplxDeciderVariant.twentySevenB.registryName, "IK_VAL_PPLX_DECIDER_27B"),
         (NFKMLXHYMTRelease.hyMT15.modelName, "IK_VAL_HYMT15_1_8B"), (NFKMLXHYMTRelease.hyMT15.modelName, "IK_VAL_HYMT15_7B"),
         (NFKMLXHYMTRelease.hyMT2.modelName, "IK_VAL_HYMT2_1_8B"), (NFKMLXHYMTRelease.hyMT2.modelName, "IK_VAL_HYMT2_7B"),
+        (NFKMLXHYMTRelease.hunyuanMT.modelName, "IK_VAL_HUNYUAN_MT_7B"),
+        (NFKMLXHYMTRelease.hunyuanMTChimera.modelName, "IK_VAL_HUNYUAN_MT_CHIMERA_7B"),
+        (NFKMLXHYMTVariant.hyMT2_30B_A3B.registryName, "IK_VAL_HYMT2_30B_A3B"),
     ]
 
     func testEveryStoredReleaseIsReadByItsOwnFamilysJudgment() throws {

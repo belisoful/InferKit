@@ -1678,11 +1678,14 @@ final class MLXModelGalleryExamples: XCTestCase {
         XCTAssertEqual(NFKMLXSeedXTranslator.languages["de"], "German")
 
         // HY-MT is the shipped language decoder behind each model card's instruction and the release's chat
-        // template: NFKMLXHYMT.backend(release:directoryURL:precision:) loads tencent/HY-MT1.5-* or Hy-MT2-*
-        // (NFKMLXHYMTVariant), 38 languages. Without a release the factory refuses.
+        // template: NFKMLXHYMT.backend(release:directoryURL:precision:) loads tencent/HY-MT1.5-*, Hy-MT2-*
+        // (the 30B-A3B a mixture of experts that pages), Hunyuan-MT-7B, or Hunyuan-MT-Chimera-7B
+        // (NFKMLXHYMTVariant), 38 languages. Chimera fuses candidate translations a request names under
+        // NFKMLXTranslationParameterKey.candidateTranslations. Without a release the factory refuses.
         XCTAssertThrowsError(try NFKMLXHYMT.translator(directoryURL: URL(fileURLWithPath: "/nonexistent/hy-mt"),
                                                        release: .hyMT2, precision: .checkpoint))
         XCTAssertEqual(NFKMLXHYMTTranslator.languages["de"]?.english, "German")
+        XCTAssertEqual(NFKMLXHYMTVariant.hyMT2_30B_A3B.registryName, "hy-mt2-30b-a3b")
 
         // TranslateGemma is the shipped Gemma 3 behind the release's translation template:
         // NFKMLXTranslateGemma.backend(directoryURL:precision:) loads a gated google/translategemma-*-it

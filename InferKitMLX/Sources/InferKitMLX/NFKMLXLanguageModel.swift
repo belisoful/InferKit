@@ -196,6 +196,25 @@ public struct NFKMLXLanguageConfiguration: Sendable {
     /// to every layer, gated by `sigmoid(shared_expert_gate(x))`, and sums it with the routed experts'
     /// output. Qwen3-MoE and Mixtral have none.
     public var sharedExpertIntermediateSize: Int = 0
+    /// Whether a scalar sigmoid gate scales the shared expert's output (Qwen2-MoE). hy_v3 adds its
+    /// shared expert ungated. Introduced in InferKit 0.4.0.
+    public var gatesSharedExpert: Bool = true
+    /// How many leading layers keep the dense feed-forward at ``intermediateSize`` in a
+    /// mixture-of-experts stack (hy_v3's `first_k_dense_replace`); 0 routes every layer. Introduced in
+    /// InferKit 0.4.0.
+    public var denseLeadingLayerCount: Int = 0
+    /// hy_v3's router, or nil for the softmax router.
+    ///
+    /// @discussion The router scores each expert with a sigmoid of its float32 logit, the logit taken
+    /// from the float32 hidden state. A learned per-expert bias (`expert_bias`) shifts the scores for
+    /// the choice alone. The kept scores are renormalized to sum to one and multiplied by this scale
+    /// (`router_scaling_factor`). Introduced in InferKit 0.4.0.
+    public var sigmoidRouterScale: Float?
+    /// Whether the routed experts' weighted outputs sum in float32 and round once at half precision, as
+    /// transformers 5's `grouped_mm` experts implementation combines them, where the eager loop rounds each
+    /// product and each add in ascending expert order. hy_v3 is read under transformers 5, whose default
+    /// dispatches `grouped_mm`. Introduced in InferKit 0.4.0.
+    public var sumsExpertsInFloat32: Bool = false
 
     /// Whether the feed-forward is a mixture of experts.
     public var isMixtureOfExperts: Bool { expertCount > 0 }
@@ -1065,9 +1084,10 @@ final class NFKLMAttention: Module {
 
 /// The feed-forward a block holds, dense or routed.
 class NFKLMMLP: Module {
-    /// Builds the form the configuration asks for.
-    static func make(_ c: NFKMLXLanguageConfiguration) -> NFKLMMLP {
-        c.isMixtureOfExperts ? NFKLMMixtureFeedForward(c) : NFKLMFeedForward(c)
+    /// Builds the form the configuration asks for at `layer`: the dense feed-forward for a dense stack
+    /// and for a mixture's leading dense layers, the mixture of experts otherwise.
+    static func make(_ c: NFKMLXLanguageConfiguration, layer: Int = 0) -> NFKLMMLP {
+        c.isMixtureOfExperts && layer >= c.denseLeadingLayerCount ? NFKLMMixtureFeedForward(c) : NFKLMFeedForward(c)
     }
 
     func callAsFunction(_ x: MLXArray) -> MLXArray { fatalError("a feed-forward subclass implements this") }
@@ -1325,11 +1345,15 @@ final class NFKLMMixtureFeedForward: NFKLMMLP {
     /// otherwise, so a strict load stays strict for the families without one.
     @ModuleInfo(key: "shared_expert") var sharedExpert: NFKLMFeedForward?
     @ModuleInfo(key: "shared_expert_gate") var sharedExpertGate: Linear?
+    /// hy_v3's per-expert bias on the router's scores, which shifts the choice alone.
+    @ParameterInfo(key: "expert_bias") var expertBias: MLXArray?
 
     let activeExpertCount: Int
     let normalizesWeights: Bool
     /// gpt-oss ranks the raw logits and softmaxes only the kept ones, in the logits' own type.
     let softmaxesKeptLogits: Bool
+    let sigmoidRouterScale: Float?
+    let sumsExpertsInFloat32: Bool
 
     init(_ c: NFKMLXLanguageConfiguration) {
         precondition(c.activeExpertCount > 0 && c.activeExpertCount <= c.expertCount,
@@ -1337,22 +1361,26 @@ final class NFKLMMixtureFeedForward: NFKLMMLP {
         activeExpertCount = c.activeExpertCount
         normalizesWeights = c.normalizesExpertWeights
         softmaxesKeptLogits = c.clampedSwiGLU != nil
+        sigmoidRouterScale = c.sigmoidRouterScale
+        sumsExpertsInFloat32 = c.sumsExpertsInFloat32
         _router.wrappedValue = Linear(c.hiddenSize, c.expertCount, bias: c.routerBias)
         _experts.wrappedValue = NFKLMExperts.make(c)
         _sharedExpert.wrappedValue = c.sharedExpertIntermediateSize > 0
             ? NFKLMFeedForward(hiddenSize: c.hiddenSize, intermediateSize: c.sharedExpertIntermediateSize) : nil
-        _sharedExpertGate.wrappedValue = c.sharedExpertIntermediateSize > 0
+        _sharedExpertGate.wrappedValue = c.sharedExpertIntermediateSize > 0 && c.gatesSharedExpert
             ? Linear(c.hiddenSize, 1, bias: false) : nil
+        _expertBias.wrappedValue = c.sigmoidRouterScale != nil ? MLXArray.zeros([c.expertCount]) : nil
         super.init()
     }
 
     override func callAsFunction(_ x: MLXArray) -> MLXArray {
         let (weights, chosen) = route(x)
-        var routed = NFKReferenceRounding.combined(experts(x, experts: chosen), weights: weights, chosen: chosen)
-        if let sharedExpert, let sharedExpertGate {
-            routed = routed + NFKReferenceRounding.sigmoid(sharedExpertGate(x)) * sharedExpert(x)
-        }
-        return routed
+        let outputs = experts(x, experts: chosen)
+        let routed = sumsExpertsInFloat32 ? NFKReferenceRounding.groupedCombined(outputs, weights: weights)
+            : NFKReferenceRounding.combined(outputs, weights: weights, chosen: chosen)
+        guard let sharedExpert else { return routed }
+        guard let sharedExpertGate else { return routed + sharedExpert(x) }
+        return routed + NFKReferenceRounding.sigmoid(sharedExpertGate(x)) * sharedExpert(x)
     }
 
     /// The experts kept in place of the router's own choice; nil keeps its own. See
@@ -1361,6 +1389,14 @@ final class NFKLMMixtureFeedForward: NFKLMMLP {
 
     /// The routing weights and chosen experts, `[..., active]` each, as the reference's router forms them.
     func route(_ x: MLXArray) -> (weights: MLXArray, chosen: MLXArray) {
+        if let sigmoidRouterScale {
+            let logits = matmul(x.asType(.float32), router.weight.asType(.float32).transposed())
+            let scores = sigmoid(logits)
+            let bias = expertBias.map { $0.asType(.float32) } ?? MLXArray(Float(0))
+            let chosen = NFKReferenceRounding.chosen(scores + bias, active: activeExpertCount, forced: forcedChoice)
+            let kept = takeAlong(scores, chosen, axis: -1)
+            return (kept / (kept.sum(axis: -1, keepDims: true) + 1e-20) * sigmoidRouterScale, chosen)
+        }
         let logits = router(x)
         let weights: MLXArray, chosen: MLXArray
         if softmaxesKeptLogits && NFKReferenceRounding.isReduced(logits) {
@@ -1407,7 +1443,7 @@ final class NFKLMBlock: Module {
 
     init(_ c: NFKMLXLanguageConfiguration, layer: Int = 0) {
         _attention.wrappedValue = NFKLMAttention(c, layer: layer)
-        _feedForward.wrappedValue = NFKLMMLP.make(c)
+        _feedForward.wrappedValue = NFKLMMLP.make(c, layer: layer)
         _attentionNorm.wrappedValue = NFKLMFloat32WeightRMSNorm.make(c)
         _feedForwardNorm.wrappedValue = NFKLMFloat32WeightRMSNorm.make(c)
         super.init()

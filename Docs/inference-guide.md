@@ -1396,9 +1396,10 @@ Each of these unlocks a category rather than a model.
   outputs exact) with LoRA fine-tuning, and `NFKMLXTranslationProvider` sits ahead of Apple's
   translator in the capability chain. TranslateGemma (`NFKMLXTranslateGemma`, 4B / 12B / 27B) is
   Gemma 3 driven by its translation template, at reference parity on every size. Seed-X (`NFKMLXSeedX`,
-  PPO and Instruct 7B) is a Mistral 7B prompted for 28 languages, at reference parity. HY-MT1.5 and Hy-MT2
-  (`NFKMLXHYMT`, 1.8B and 7B) are Tencent's Hunyuan decoders prompted for 38 languages, at reference
-  parity. SeamlessM4T is not
+  PPO and Instruct 7B) is a Mistral 7B prompted for 28 languages, at reference parity. HY-MT1.5, Hy-MT2,
+  and Hunyuan-MT (`NFKMLXHYMT`, 1.8B and 7B, and Hy-MT2's 30B-A3B mixture of experts) are Tencent's
+  Hunyuan decoders prompted for 38 languages, and Hunyuan-MT-Chimera fuses candidate translations into
+  one, all at reference parity. SeamlessM4T is not
   ported: its text path is NLLB's architecture, and its speech paths add a unit decoder and a vocoder.
 - **Text embeddings and reranking — SHIPPED.** Two embedders and a reranker. `Qwen3-Embedding-0.6B`
   (`NFKMLXQwen3Embedding`) is the dense decoder read one layer earlier, last-token pooled over an

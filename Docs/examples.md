@@ -1348,8 +1348,11 @@ four sizes from 600M to 3.3B); MADLAD-400 covers 400+ through a `<2xx>` marker;
 TranslateGemma (`NFKMLXTranslateGemma`, gated on Hugging Face) is Gemma 3 driven by its translation
 template, the strongest of the four and the largest. Seed-X (`NFKMLXSeedX`) is a Mistral 7B trained to
 translate among 28 languages, prompted as its model card writes it; it needs the source language, which
-the backend detects when a request omits it. HY-MT1.5 and Hy-MT2 (`NFKMLXHYMT`) are Tencent's Hunyuan
-decoders trained to translate among 38 languages; each model card's instruction names only the target.
+the backend detects when a request omits it. HY-MT1.5, Hy-MT2, and Hunyuan-MT (`NFKMLXHYMT`) are
+Tencent's Hunyuan decoders trained to translate among 38 languages; each model card's instruction names
+only the target. Hy-MT2-30B-A3B (`hy-mt2-30b-a3b`) is their mixture of experts, which pages its experts
+from the release. Hunyuan-MT-Chimera fuses candidate translations of the whole text, which a request
+names under `NFKMLXTranslationParameterKey.candidateTranslations`, into one.
 
 ```swift
 let translator = try NFKMLXMarian.backend(sourceLanguage: "en", targetLanguage: "de", cacheDirectoryURL: nil)

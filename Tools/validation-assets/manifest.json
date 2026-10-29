@@ -4764,6 +4764,126 @@
       "note": "Hy-MT2 7B (Tencent, Apache-2.0), HY-MT1.5 7B's geometry, tokenizer, and template, 16.1 GB of bfloat16 in four shards. Parity record under llmvenv (transformers 4.57.6, `HunYuanDenseV1ForCausalLM`): `HYMT_RELEASE=2 run_reference.py hymt <out> --checkpoint <this directory>` (bfloat16) → IK_PARITY_HYMT2_7B (records/hymt2-7b-bf16.safetensors)."
     },
     {
+      "key": "HUNYUAN_MT_7B",
+      "directory": "hunyuan-mt-7b",
+      "repo": "tencent/Hunyuan-MT-7B",
+      "revision": "9305c78383f0bcc94358e08667ee2c76107877e3",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "model-0001-of-0004.safetensors",
+        "model-0002-of-0004.safetensors",
+        "model-0003-of-0004.safetensors",
+        "model-0004-of-0004.safetensors",
+        "model.safetensors.index.json",
+        "License.txt"
+      ],
+      "config": {
+        "IK_VAL_HUNYUAN_MT_7B": "",
+        "IK_PARITY_HUNYUAN_MT_7B": "reference/hunyuan-mt-7b-bf16.safetensors",
+        "IK_PARITY_HUNYUAN_MT_7B_ZH": "reference/hunyuan-mt-7b-zh-en.safetensors",
+        "IK_PARITY_HUNYUAN_MT_7B_F32": "reference/hunyuan-mt-7b-f32.safetensors"
+      },
+      "note": "Hunyuan-MT 7B (Tencent, Tencent Hunyuan Community License, which excludes the EU, UK, and South Korea), HY-MT1.5 7B's geometry with alpha 100000 and a 32768-position window, its tokenizer file byte for byte, 16.1 GB of bfloat16 in four shards. Parity records under llmvenv (transformers 4.57.6, `HunYuanDenseV1ForCausalLM`), the Hunyuan-MT card's instruction: `HYMT_RELEASE=mt run_reference.py hymt <out> --checkpoint <this directory>` (bfloat16) → IK_PARITY_HUNYUAN_MT_7B; `HYMT_RELEASE=mt TRANSLATION_SOURCE_LANG=zh TRANSLATION_TARGET_LANG=en` → IK_PARITY_HUNYUAN_MT_7B_ZH; `HYMT_RELEASE=mt HYMT_DTYPE=float32 HYMT_LAYERWISE=1`, each layer read as the forward reaches it → IK_PARITY_HUNYUAN_MT_7B_F32; the test streams the decoder at float32."
+    },
+    {
+      "key": "HUNYUAN_MT_CHIMERA_7B",
+      "directory": "hunyuan-mt-chimera-7b",
+      "repo": "tencent/Hunyuan-MT-Chimera-7B",
+      "revision": "3d9e4551dad0ae6b9fb6be5e96eee942bfcea047",
+      "files": [
+        "config.json",
+        "generation_config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "model-0001-of-0004.safetensors",
+        "model-0002-of-0004.safetensors",
+        "model-0003-of-0004.safetensors",
+        "model-0004-of-0004.safetensors",
+        "model.safetensors.index.json",
+        "LICENSE"
+      ],
+      "config": {
+        "IK_VAL_HUNYUAN_MT_CHIMERA_7B": "",
+        "IK_PARITY_HUNYUAN_MT_CHIMERA_7B": "reference/hunyuan-mt-chimera-7b-bf16.safetensors"
+      },
+      "note": "Hunyuan-MT-Chimera 7B (Tencent, Tencent Hunyuan Community License), Hunyuan-MT 7B's geometry, tokenizer, and template, fine-tuned to fuse candidate translations into one; 16.1 GB of bfloat16 in four shards. Parity record under llmvenv: `HYMT_RELEASE=chimera run_reference.py hymt <out> --checkpoint <this directory>` (bfloat16; the refinement instruction over HYMT_CHIMERA_CANDIDATES, three German translations) → IK_PARITY_HUNYUAN_MT_CHIMERA_7B."
+    },
+    {
+      "key": "HYMT2_30B_A3B",
+      "directory": "hy-mt2-30b-a3b",
+      "repo": "tencent/Hy-MT2-30B-A3B",
+      "revision": "d3ead4dba61c09aac60a261a96ad1df3e705febb",
+      "files": [
+        "config.json",
+        "tokenizer.json",
+        "tokenizer_config.json",
+        "special_tokens_map.json",
+        "chat_template.jinja",
+        "model.safetensors.index.json",
+        "model-00000-of-00051.safetensors",
+        "model-00001-of-00051.safetensors",
+        "model-00002-of-00051.safetensors",
+        "model-00003-of-00051.safetensors",
+        "model-00004-of-00051.safetensors",
+        "model-00005-of-00051.safetensors",
+        "model-00006-of-00051.safetensors",
+        "model-00007-of-00051.safetensors",
+        "model-00008-of-00051.safetensors",
+        "model-00009-of-00051.safetensors",
+        "model-00010-of-00051.safetensors",
+        "model-00011-of-00051.safetensors",
+        "model-00012-of-00051.safetensors",
+        "model-00013-of-00051.safetensors",
+        "model-00014-of-00051.safetensors",
+        "model-00015-of-00051.safetensors",
+        "model-00016-of-00051.safetensors",
+        "model-00017-of-00051.safetensors",
+        "model-00018-of-00051.safetensors",
+        "model-00019-of-00051.safetensors",
+        "model-00020-of-00051.safetensors",
+        "model-00021-of-00051.safetensors",
+        "model-00022-of-00051.safetensors",
+        "model-00023-of-00051.safetensors",
+        "model-00024-of-00051.safetensors",
+        "model-00025-of-00051.safetensors",
+        "model-00026-of-00051.safetensors",
+        "model-00027-of-00051.safetensors",
+        "model-00028-of-00051.safetensors",
+        "model-00029-of-00051.safetensors",
+        "model-00030-of-00051.safetensors",
+        "model-00031-of-00051.safetensors",
+        "model-00032-of-00051.safetensors",
+        "model-00033-of-00051.safetensors",
+        "model-00034-of-00051.safetensors",
+        "model-00035-of-00051.safetensors",
+        "model-00036-of-00051.safetensors",
+        "model-00037-of-00051.safetensors",
+        "model-00038-of-00051.safetensors",
+        "model-00039-of-00051.safetensors",
+        "model-00040-of-00051.safetensors",
+        "model-00041-of-00051.safetensors",
+        "model-00042-of-00051.safetensors",
+        "model-00043-of-00051.safetensors",
+        "model-00044-of-00051.safetensors",
+        "model-00045-of-00051.safetensors",
+        "model-00046-of-00051.safetensors",
+        "model-00047-of-00051.safetensors",
+        "model-00048-of-00051.safetensors",
+        "model-00049-of-00051.safetensors",
+        "model-00050-of-00051.safetensors",
+        "LICENSE.txt"
+      ],
+      "config": {
+        "IK_VAL_HYMT2_30B_A3B": "",
+        "IK_PARITY_HYMT2_30B_A3B": "reference/hymt2-30b-a3b-bf16.safetensors",
+        "IK_PARITY_HYMT2_30B_A3B_F32": "reference/hymt2-30b-a3b-f32.safetensors"
+      },
+      "note": "Hy-MT2 30B-A3B (Tencent, Apache-2.0), Hunyuan's mixture of experts (hy_v3: 48 layers, the first dense, 128 experts with eight active and one shared), 60.1 GB of bfloat16 in 51 shards; the test pages its experts from this directory. Parity records under the nemo environment (transformers 5.16.1, `HYV3ForCausalLM`, each layer read as the forward reaches it, the experts as transformers dispatches them): `HYMT_RELEASE=2 run_reference.py hymt <out> --checkpoint <this directory>` (bfloat16) → IK_PARITY_HYMT2_30B_A3B; `HYMT_DTYPE=float32` → IK_PARITY_HYMT2_30B_A3B_F32. A tiny seeded release in this release's names and config fields: `HYMT_TINY_OUT=<dir> run_reference.py hymt_moe_tiny <out> --checkpoint <this directory>` (nemo) → IK_VAL_HYMT_MOE_TINY (the directory, reference/hymt-moe-tiny) and IK_PARITY_HYMT_MOE_TINY (reference/hymt-moe-tiny-r3.safetensors)."
+    },
+    {
       "key": "TRANSLATEGEMMA_4B",
       "directory": "translategemma-4b-it",
       "repo": "google/translategemma-4b-it",
@@ -5629,7 +5749,8 @@
         "parakeet",
         "canary",
         "vad",
-        "vad_training"
+        "vad_training",
+        "hymt_moe_tiny"
       ]
     },
     "phi4mm": {
@@ -6330,6 +6451,14 @@
       "config": "IK_VAL_QWEN3_MOE_CUT4",
       "record": "qwen3_moe_cut4",
       "note": "Qwen3-30B-A3B (Apache-2.0): 128 experts, 8 kept, every layer sparse. Records: hf_layer_probe in the llm oracle environment, bf16 with IK_PROBE_DTYPE=bfloat16 IK_PROBE_ROUTES=1 (each mixture layer's kept experts as route.L.index, so the port routes as the reference routed) and float32 streamed from a bf16 load (IK_PROBE_STREAM_F32=1)."
+    },
+    {
+      "repo": "tencent/Hy-MT2-30B-A3B",
+      "layers": 4,
+      "directory": "hy-mt2-30b-a3b-cut4",
+      "config": "IK_VAL_HYMT2_MOE_CUT4",
+      "record": "hymt2_moe_cut4",
+      "note": "Hy-MT2-30B-A3B (Apache-2.0): the dense first layer and three mixture layers of 128 experts, 8 kept by the sigmoid router, one shared. Records: hf_layer_probe in the nemo oracle environment (transformers 5.16.1, the experts as it dispatches them, grouped_mm), bf16 with IK_PROBE_DTYPE=bfloat16 IK_PROBE_ROUTES=1 IK_PROBE_BLOCK_FLOOR=1 (each mixture layer's kept experts as route.L.index, so the port routes as the reference routed) and float32 streamed from a bf16 load (IK_PROBE_STREAM_F32=1)."
     },
     {
       "repo": "mistralai/Mixtral-8x7B-Instruct-v0.1",

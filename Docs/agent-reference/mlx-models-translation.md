@@ -246,7 +246,8 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
 
 - `NFKMLXHYMT` (`@objc`) / `NFKMLXHYMTTranslator` — HY-MT (Tencent; HY-MT1.5 under the Tencent HY Community
   License, which does not cover the European Union, the United Kingdom, or South Korea, and Hy-MT2 under
-  Apache-2.0; 1.8B and 7B each, `NFKMLXHYMTVariant`, the generation `NFKMLXHYMTRelease`):
+  Apache-2.0; 1.8B and 7B each, `NFKMLXHYMTVariant`, the generation `NFKMLXHYMTRelease`; Hunyuan-MT,
+  Hunyuan-MT-Chimera, and Hy-MT2-30B-A3B follow the figures below):
   `HunYuanDenseV1ForCausalLM` decoders (`hunyuan_v1_dense`; the 1.8B 32 layers at 2048 with 4 key-value heads
   and a 120,818-piece vocabulary, the 7B 32 layers at 4096 with 8 key-value heads and 128,167 pieces, both
   with tied embeddings) trained to translate among 38 languages. The two generations share their geometry,
@@ -271,23 +272,23 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   primary subtag, Chinese by its script (`zh-TW` → `zh-Hant`), and `fil` reads as `tl`. The 1.8B tokenizer
   splits in three stages, digits in runs of at most three, then CJK and kana runs, then a word pattern
   (the core's `hunyuan` pre-tokenization); the 7B's is Qwen2's split with `ignore_merges`. Registered as
-  `hy-mt1.5` and `hy-mt2`, loaded at the release's bfloat16 (4.1 GB and 16.1 GB); a `.float32` 7B is 32 GB
+  `hy-mt1.5` and `hy-mt2` (with `hy-mt2-30b-a3b`, `hunyuan-mt`, and `hunyuan-mt-chimera` below), loaded at the release's bfloat16 (4.1 GB and 16.1 GB); a `.float32` 7B is 32 GB
   and streams. It takes the language family's residencies, the precision ladder, and runtime weight
   quantization; the translation backend reads no cache parameter, and the 1.8B cannot draft for the 7B,
   whose vocabulary differs. Every figure below is English to German against transformers 4.57.6 unless
   noted, with the prompt ids exact on the five probe sentences and the greedy translation token-exact.
-  HY-MT1.5-1.8B at float32: logit cosine 0.99999994 with argmax 24/24, worst last-position layer state
+  HY-MT1.5-1.8B at float32: logit cosine 0.99999999 with argmax 24/24, worst last-position layer state
   0.9999997 at layer 3, and the fine-tuning loss 0.073117785 against 0.07311491 ("Der schnelle braune Fuchs
   springt über den trägen Hund."). Chinese to English at float32, the Chinese instruction and the CJK
-  split: 0.99999964 with argmax 29/29, worst layer 0.9999996 at layer 24, loss 0.86784077 against
-  0.8678408 ("The agile brown fox jumped over the lazy dog."). The closed user turn at float32: argmax
-  24/24, worst layer 0.99999964 at layer 4, loss 0.07896699 against 0.07896289, the same translation.
+  split: 0.99999999 with argmax 29/29, worst layer 0.9999996 at layer 24, loss 0.86784077 against
+  0.8678408 ("The agile brown fox jumped over the lazy dog."). The closed user turn at float32: logit
+  cosine 0.99999999 with argmax 24/24, worst layer 0.99999964 at layer 4, loss 0.07896699 against 0.07896289, the same translation.
   At bfloat16 against bfloat16 (the reference's default SDPA attention): HY-MT1.5-1.8B logit cosine
-  0.9993807 with argmax 23/24, worst layer 0.9998556 at layer 18, loss 0.07741504 against 0.07265944;
-  Hy-MT2-1.8B 0.9993057 with argmax 33/34, worst layer 0.99989164 at layer 19, loss 0.016963959 against
-  0.015993766 ("Der schnelle braune Fuchs springt über den faulen Hund."); HY-MT1.5-7B 0.99981064 with
+  0.99967189 with argmax 23/24, worst layer 0.9998556 at layer 18, loss 0.07741504 against 0.07265944;
+  Hy-MT2-1.8B 0.99930989 with argmax 33/34, worst layer 0.99989164 at layer 19, loss 0.016963959 against
+  0.015993766 ("Der schnelle braune Fuchs springt über den faulen Hund."); HY-MT1.5-7B 0.99993070 with
   argmax 23/23, worst layer 0.9999002 at layer 31, loss 0.310143 against 0.31012538 ("Die schnelle braune
-  Füchsin springt über den faulen Hund."); Hy-MT2-7B argmax 33/33, worst layer 0.999898 at layer 31, loss
+  Füchsin springt über den faulen Hund."); Hy-MT2-7B 0.99992902 with argmax 33/33, worst layer 0.999898 at layer 31, loss
   0.0030132532 against 0.0028200727. A bfloat16 stream against another diverges past its first flipped
   element: the reference's eager and SDPA runs sit 2.9e-4 apart in `1 - cosine` at the logits, more than
   either sits from float32 (1.8e-4), so the bfloat16 rounding is held by `NFKMLXBFloat16ParityTests`
@@ -303,13 +304,58 @@ and the contract they answer. The contract itself lives in the core (`NFKParamet
   competitor's bfloat16 logit stands one step (0.125) higher against the target's than in either reference,
   which raises that token's cross-entropy by 0.074 to 0.085 (HY-MT1.5) and 0.019 to 0.024 (Hy-MT2) against
   the three references. Every other target token is within 0.0045 of the eager reference. HY-MT1.5-7B at float32
-  against a reference that reads each layer as its forward reaches it: logit cosine 1.0 with argmax 23/23,
-  worst layer 0.9999996 at layer 25, loss 0.30692232 against 0.30692142; 16 of 32 layers streamed, 146.6 GB
-  read at 3.84 GB/s, an MLX peak of 17.5 GB. Hy-MT2-1.8B's four-beam search against transformers'
+  against a reference that reads each layer as its forward reaches it: logit cosine 0.99999999 with argmax 23/23,
+  worst layer 0.9999996 at layer 25, loss 0.30692232 against 0.30692142; 16 of 32 layers streamed, 147.0 GB
+  read at 1.74 GB/s, an MLX peak of 18.3 GB. Hy-MT2-1.8B's four-beam search against transformers'
   `generate(num_beams=4)` at float32: the best hypothesis token-exact and text-exact on the five probe
   sentences and on the search cut at six tokens, every score within 5.3e-5 of the reference's. Both
   tokenizers encode 14 cases as the tokenizers library does, among them CJK and kana runs beside Latin
   words, digit runs, full-width forms, and punctuation leading Latin and non-Latin words.
+  Hunyuan-MT 7B and Hunyuan-MT-Chimera 7B (September 2025, the Tencent Hunyuan Community License, whose
+  terms and territory are HY-MT1.5's) are HY-MT1.5-7B's geometry with `alpha` 100,000 and a 32,768-position
+  window, the same tokenizer file byte for byte, and the same 7B template; their generation configs sample
+  at top-p 0.6. Hunyuan-MT's card prompts a Chinese pair with `把下面的文本翻译成{中文名}，不要额外解释。` and
+  one line break, and every other pair with HY-MT1.5's English instruction (`NFKMLXHYMTRelease.hunyuanMT`,
+  `hunyuan-mt`). Chimera translates nothing on its own: it fuses candidate translations of a segment into
+  one (`.hunyuanMTChimera`, `hunyuan-mt-chimera`). Its instruction names both languages in English, gives
+  the source in triple backticks, and numbers each candidate in triple backticks
+  (`refinementPrompt(text:candidates:sourceCode:targetCode:)`); the card shows six, and the translator
+  takes any number from one. A request names them under `NFKMLXTranslationParameterKey.candidateTranslations`
+  and the backend reads the input as one segment, through `NFKMLXTranslationRefiner`; Chimera refuses a
+  request without them and every other translator refuses one with them. Hunyuan-MT at bfloat16 against
+  bfloat16: logit cosine 0.99991954 with argmax 23/23, worst layer 0.9999145 at layer 31, loss 0.40880346
+  against 0.4161034 ("Die schnelle, braune Füchsin springt über den faulen Hund."); Chinese to English,
+  the Hunyuan-MT instruction: 0.99981104 with argmax 21/21, worst layer 0.99994236 at layer 31, loss
+  1.9041041 against 1.9097618 ("The agile brown fox jumped over the lazy dog."). At float32 against a
+  reference that reads each layer in its turn: logit cosine 0.99999999 with argmax 23/23, worst layer
+  0.9999997 at layer 28, loss 0.40456414 against 0.40456125, the same translation; 16 of 32 layers
+  streamed, 154.0 GB read at 3.59 GB/s, an MLX peak of 17.5 GB. Chimera at bfloat16 against bfloat16,
+  fusing the three German translations HY-MT1.5 1.8B, Hy-MT2 1.8B, and HY-MT1.5 7B give the probe:
+  logit cosine 0.99993918 with argmax 119/119, worst layer 0.99992985 at layer 31, loss 0.00065398216
+  against 0.0006556491 ("Der schnelle braune Fuchs springt über den faulen Hund.").
+  Hy-MT2-30B-A3B (Apache-2.0, `hy-mt2-30b-a3b`, `NFKMLXHYMTVariant.hyMT2_30B_A3B`) is Hunyuan's mixture of
+  experts (`hy_v3`, `mlx-models-language.md`): 48 layers at 2048 with 32 heads over 4 key-value heads, the
+  first dense and the rest 128 experts with eight active and one shared, an untied head, and the 1.8B
+  tokenizer's pieces with its own special tokens. It prompts with Hy-MT2's instruction inside its own
+  template, `<｜hy_begin▁of▁sentence｜><｜reasoning_mode｜>reasoning_effort:no_think<｜hy_User｜>…<｜hy_Assistant｜><think></think>`,
+  whose reasoning marker and think tags are added tokens that are not special; the release ships no
+  generation config, so decoding stops at its `<eos:6124c78e>` (120025). It registers apart from
+  `hy-mt2`, since its experts page from the release (60 GB of bfloat16) where the dense releases stream.
+  A tiny seeded release in the release's own names and config fields (`hymt_moe_tiny`, three layers,
+  eight experts with three active, a random expert bias that moves the choice) matches transformers at
+  float32 resident and paged alike: logit cosine 0.99999999 with argmax 46/46, worst layer 0.9999999 at
+  layer 1, loss 11.7681465 against 11.768147. The release against transformers 5.16.1 with each layer read
+  in its turn and the experts as it dispatches them (`grouped_mm`), the experts paged: at float32, logit
+  cosine 0.99999999 with argmax 46/46, worst layer 0.99999976 at layer 7, loss 0.004486296 against
+  0.004486533 ("Der schnelle braune Fuchs springt über den faulen Hund."); at bfloat16 against bfloat16,
+  0.99664993 with argmax 43/46, worst layer 0.99797565 at layer 34, loss 0.0030297174 against
+  0.0034258484, the same translation. Paged, the float32 run materializes 64,713 expert tensors with no cache
+  hits and the bfloat16 run 54,296 with 10,441 hits, both over 56.8 GB mapped, an MLX peak of 18.3 GB. A
+  bfloat16 mixture routes apart from the reference where two
+  experts' scores round together, so the rounding itself is held on a four-layer cut routed as the
+  reference routed (`model-parity.md`): at float32 every state matches to 0.99999999; at bfloat16 every
+  layer alone is at most 0.0029 of the accumulated floor and 0.0519 of its own block floor (median
+  0.0170), and the logits sit at 1.972e-04 from float32 against the reference's own 2.060e-04.
 
 ## Customization
 
@@ -364,15 +410,26 @@ records Seed-X's, the prompt rendered through the release's own `apply_chat_temp
 the oracle writes from the card, and the greedy decode run with the release's sampling and repetition
 penalty off (transformers applies `repetition_penalty` under `do_sample=False`), and each target token's
 cross-entropy kept as `loss_tokens`. `HYMT_RELEASE` picks the
-generation's instruction (`1.5` by default, or `2`), `HYMT_ASSISTANT=0` closes the 1.8B user turn without
+generation's instruction (`1.5` by default, `2`, `mt` for Hunyuan-MT, or `chimera` for Chimera over
+`HYMT_CHIMERA_CANDIDATES`), `HYMT_ASSISTANT=0` closes the 1.8B user turn without
 opening the assistant turn, `HYMT_DTYPE` picks the precision (bfloat16 by default), `HYMT_ATTENTION` the
 attention implementation (transformers' SDPA by default, or `eager`), and `HYMT_LAYERWISE=1`
-reads each layer as the forward reaches it, the head taking the embedding it ties to. `hymt_beam` records
+reads each layer as the forward reaches it, the head taking the embedding it ties to. A `hy_v3` release
+always reads layer by layer (`_hymt_mixture_model`, the nemovenv's transformers 5.16), its tensors
+renamed and the experts' gate and up projections fused as transformers' conversion mapping fuses them,
+and its experts run the implementation transformers dispatches by default, `grouped_mm` here
+(`HYMT_EXPERTS` names another). `hymt_moe_tiny` writes the tiny
+release to `HYMT_TINY_OUT` from the release directory's tokenizer files and records it as `hymt` does,
+with `whole_difference`, the largest logit difference from `from_pretrained`, which is zero. `hymt_beam` records
 the four-beam search through `_decoder_beam_record`, which now passes `generate` overrides through, here
 `repetition_penalty=1.0`, and `hymt_tokenizer` records the tokenizers library's ids for
 `HYMT_TOKENIZER_CASES`. Keys `IK_VAL_HYMT15_1_8B`, `IK_VAL_HYMT15_7B`, `IK_VAL_HYMT2_1_8B`, `IK_VAL_HYMT2_7B`;
 records `IK_PARITY_HYMT15_1_8B` (and `_F32`, `_ZH`, `_CLOSED`), `IK_PARITY_HYMT2_1_8B` (and `_BEAM`),
-`IK_PARITY_HYMT15_7B` (and `_F32`), `IK_PARITY_HYMT2_7B`, and `IK_PARITY_HYMT_TOKENIZER_1_8B` / `_7B`. The
+`IK_PARITY_HYMT15_7B` (and `_F32`), `IK_PARITY_HYMT2_7B`, and `IK_PARITY_HYMT_TOKENIZER_1_8B` / `_7B`;
+`IK_VAL_HUNYUAN_MT_7B`, `IK_VAL_HUNYUAN_MT_CHIMERA_7B`, `IK_VAL_HYMT2_30B_A3B`, and the tiny release
+`IK_VAL_HYMT_MOE_TINY`, with records `IK_PARITY_HUNYUAN_MT_7B` (and `_ZH`, `_F32`),
+`IK_PARITY_HUNYUAN_MT_CHIMERA_7B`, `IK_PARITY_HYMT2_30B_A3B` (and `_F32`), the cut `IK_VAL_HYMT2_MOE_CUT4` with `records/hymt2_moe_cut4_bf16` /
+`_f32`, and `IK_PARITY_HYMT_MOE_TINY`. The
 bfloat16 harness reads `hf_layer_probe` records under `records/` (`hymt15_1_8b`, `hymt2_1_8b`, and
 `hymt15_7b`, `_bf16_probe` and `_f32_probe`), made with the release's translation prompt in
 `IK_PROBE_PROMPT_FILE`. transformers 4.57.6 warns of "an incorrect regex pattern" when it loads Hy-MT2's
@@ -486,9 +543,5 @@ not block a port. Each entry below names the port cost, not a bar.
   medium port; the whole model is a large one.
 - TowerInstruct 7B / 13B (CC-BY-NC-4.0, Llama-2 decoders) and Tower+ 9B (Gemma 2 decoder): the
   decoder is shipped, so each is a chat template over `NFKMLXLanguageNet`, the TranslateGemma pattern.
-- Hunyuan-MT 7B and Hunyuan-MT-Chimera 7B (Tencent, September 2025): `hunyuan_v1_dense` with HY-MT 7B's
-  tokenizer file, so the `hymt` judge reads them through Hy-MT2's entry. Neither is measured, and
-  Chimera's own prompt is not rendered.
-- Hy-MT2-30B-A3B (Apache-2.0, `hy_v3`, a mixture of experts, 60 GB): a new architecture.
 - TranslateGemma is gated: a machine whose token has not accepted the Gemma terms on the model page
   gets a `403` on `config.json`, which is what the download factory surfaces.

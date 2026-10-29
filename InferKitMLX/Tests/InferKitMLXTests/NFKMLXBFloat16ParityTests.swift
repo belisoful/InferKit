@@ -2047,7 +2047,8 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
         try requireMLXRuntime()
         var measured = 0
         for (name, key) in [("qwen3_moe_cut4", "IK_VAL_QWEN3_MOE_CUT4"), ("qwen2_moe_cut4", "IK_VAL_QWEN2_MOE_CUT4"),
-                            ("mixtral_cut2", "IK_VAL_MIXTRAL_CUT2"), ("gpt_oss_cut2", "IK_VAL_GPT_OSS_CUT2")] {
+                            ("mixtral_cut2", "IK_VAL_MIXTRAL_CUT2"), ("gpt_oss_cut2", "IK_VAL_GPT_OSS_CUT2"),
+                            ("hymt2_moe_cut4", "IK_VAL_HYMT2_MOE_CUT4")] {
             guard let path = config[key], FileManager.default.fileExists(atPath: path),
                   let bf16 = try? record("\(name)_bf16.safetensors"),
                   let f32 = try? record("\(name)_f32.safetensors") else { continue }
@@ -2069,7 +2070,7 @@ final class NFKMLXBFloat16ParityTests: XCTestCase {
             measured += 1
         }
         if measured == 0 {
-            throw XCTSkip("set IK_VAL_QWEN3_MOE_CUT4, IK_VAL_QWEN2_MOE_CUT4, IK_VAL_MIXTRAL_CUT2 or IK_VAL_GPT_OSS_CUT2")
+            throw XCTSkip("set IK_VAL_QWEN3_MOE_CUT4, IK_VAL_QWEN2_MOE_CUT4, IK_VAL_MIXTRAL_CUT2, IK_VAL_GPT_OSS_CUT2 or IK_VAL_HYMT2_MOE_CUT4")
         }
     }
 

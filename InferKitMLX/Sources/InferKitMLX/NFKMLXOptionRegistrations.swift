@@ -217,8 +217,8 @@ enum NFKMLXOptionRegistrations {
                                                                   NFKModelLoadOptionPrecision])) { url, _, options in
             NFKMLXTranslationBackend(translator: try NFKMLXSeedX.translator(directoryURL: url, loadOptions: options))
         }
-        for release in [NFKMLXHYMTRelease.hyMT15, .hyMT2] {
-            registerDirectoryModels([release.modelName],
+        for (name, release) in NFKMLXHYMT.registryNames {
+            registerDirectoryModels([name],
                                     consumes: quantizationKeys.union([NFKModelLoadOptionResidency,
                                                                       NFKModelLoadOptionPrecision])) { url, _, options in
                 NFKMLXTranslationBackend(translator: try NFKMLXHYMT.translator(directoryURL: url, release: release,

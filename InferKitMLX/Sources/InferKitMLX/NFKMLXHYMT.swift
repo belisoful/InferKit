@@ -59,25 +59,79 @@ enum NFKMLXHunyuanDense {
     }
 }
 
-/// The two HY-MT generations, which share their geometry and tokenizers and differ in the instruction
-/// their model cards prompt with. Introduced in InferKit 0.4.0.
+/// Reads Hunyuan's mixture-of-experts decoder (`hy_v3`, `HYV3ForCausalLM`) into the language family's
+/// configuration: the dense stack with per-head query and key norms before the rotary embedding, a
+/// dense first layer (`first_k_dense_replace`), and after it experts routed by
+/// ``NFKMLXLanguageConfiguration/sigmoidRouterScale`` and summed in float32
+/// (``NFKMLXLanguageConfiguration/sumsExpertsInFloat32``) beside one ungated shared expert.
+enum NFKMLXHunyuanMoE {
+    static let modelType = "hy_v3"
+
+    /// The expert geometry: `num_experts`, `num_experts_per_tok`, `moe_intermediate_size`, and the shared
+    /// experts' combined width.
+    static func experts(_ json: [String: Any]) -> (count: Int, active: Int, width: Int, normalizes: Bool, shared: Int) {
+        func integer(_ key: String, _ fallback: Int) -> Int { (json[key] as? NSNumber)?.intValue ?? fallback }
+        let width = integer("moe_intermediate_size", 0)
+        return (integer("num_experts", 0), integer("num_experts_per_tok", 0), width, true,
+                width * integer("num_shared_experts", 1))
+    }
+
+    static func read(_ json: [String: Any], into configuration: inout NFKMLXLanguageConfiguration) throws {
+        func flag(_ key: String) -> Bool? { (json[key] as? NSNumber)?.boolValue }
+        for key in ["moe_router_use_sigmoid", "route_norm", "moe_router_enable_expert_bias"] where flag(key) == false {
+            throw NFKMLXError.unsupportedConfiguration(
+                "the config turns \(key) off, where transformers' hy_v3 router always applies it")
+        }
+        if flag("enable_moe_fp32_combine") == true {
+            throw NFKMLXError.unsupportedConfiguration(
+                "the config adds the shared expert in float32 (enable_moe_fp32_combine), which this network does not implement")
+        }
+        if let layerTypes = json["mlp_layer_types"] as? [String] {
+            let leading = layerTypes.prefix { $0 == "dense" }.count
+            guard layerTypes.dropFirst(leading).allSatisfy({ $0 == "sparse" }) else {
+                throw NFKMLXError.unsupportedConfiguration(
+                    "the config interleaves dense layers among the expert layers, which this network does not implement")
+            }
+            configuration.denseLeadingLayerCount = leading
+        } else {
+            configuration.denseLeadingLayerCount = (json["first_k_dense_replace"] as? NSNumber)?.intValue ?? 1
+        }
+        configuration.normalizesQueryAndKey = flag("qk_norm") ?? true
+        configuration.gatesSharedExpert = false
+        configuration.sumsExpertsInFloat32 = true
+        configuration.sigmoidRouterScale = (json["router_scaling_factor"] as? NSNumber)?.floatValue ?? 2.826
+        if json["rope_theta"] == nil, (json["rope_parameters"] as? [String: Any])?["rope_theta"] == nil {
+            configuration.ropeTheta = 11_158_840
+        }
+    }
+}
+
+/// The Hunyuan translation generations, which share their 7B geometry, tokenizer, and chat template
+/// and differ in the instruction their model cards prompt with. Introduced in InferKit 0.4.0.
 @objc(NFKMLXHYMTRelease)
-public enum NFKMLXHYMTRelease: Int, Sendable {
+public enum NFKMLXHYMTRelease: Int, Sendable, CaseIterable {
     /// HY-MT1.5 (December 2025), under the Tencent HY Community License.
     case hyMT15
     /// Hy-MT2 (May 2026), under Apache-2.0.
     case hyMT2
+    /// Hunyuan-MT (September 2025), under the Tencent Hunyuan Community License.
+    case hunyuanMT
+    /// Hunyuan-MT-Chimera (September 2025), under the Tencent Hunyuan Community License: it fuses
+    /// candidate translations of a segment into one.
+    case hunyuanMTChimera
 
     /// The registered name of the generation's translator.
     public var modelName: String {
         switch self {
         case .hyMT15: return "hy-mt1.5"
         case .hyMT2: return "hy-mt2"
+        case .hunyuanMT: return "hunyuan-mt"
+        case .hunyuanMTChimera: return "hunyuan-mt-chimera"
         }
     }
 }
 
-/// The four HY-MT translation releases. Introduced in InferKit 0.4.0.
+/// The Hunyuan translation releases. Introduced in InferKit 0.4.0.
 @objc(NFKMLXHYMTVariant)
 public enum NFKMLXHYMTVariant: Int, Sendable, CaseIterable {
     /// `tencent/HY-MT1.5-1.8B`.
@@ -88,6 +142,12 @@ public enum NFKMLXHYMTVariant: Int, Sendable, CaseIterable {
     case hyMT2_1_8B
     /// `tencent/Hy-MT2-7B`.
     case hyMT2_7B
+    /// `tencent/Hy-MT2-30B-A3B`, a mixture of experts (`hy_v3`).
+    case hyMT2_30B_A3B
+    /// `tencent/Hunyuan-MT-7B`.
+    case hunyuanMT_7B
+    /// `tencent/Hunyuan-MT-Chimera-7B`.
+    case hunyuanMTChimera_7B
 
     /// The variant's Hugging Face repository.
     public var repository: String {
@@ -96,25 +156,38 @@ public enum NFKMLXHYMTVariant: Int, Sendable, CaseIterable {
         case .hyMT15_7B: return "tencent/HY-MT1.5-7B"
         case .hyMT2_1_8B: return "tencent/Hy-MT2-1.8B"
         case .hyMT2_7B: return "tencent/Hy-MT2-7B"
+        case .hyMT2_30B_A3B: return "tencent/Hy-MT2-30B-A3B"
+        case .hunyuanMT_7B: return "tencent/Hunyuan-MT-7B"
+        case .hunyuanMTChimera_7B: return "tencent/Hunyuan-MT-Chimera-7B"
         }
+    }
+
+    /// The name the variant registers under: its generation's, except Hy-MT2-30B-A3B's own, since a
+    /// mixture of experts pages where the dense releases stream.
+    public var registryName: String {
+        self == .hyMT2_30B_A3B ? "hy-mt2-30b-a3b" : release.modelName
     }
 
     /// The generation the variant belongs to, which decides its prompt.
     public var release: NFKMLXHYMTRelease {
         switch self {
         case .hyMT15_1_8B, .hyMT15_7B: return .hyMT15
-        case .hyMT2_1_8B, .hyMT2_7B: return .hyMT2
+        case .hyMT2_1_8B, .hyMT2_7B, .hyMT2_30B_A3B: return .hyMT2
+        case .hunyuanMT_7B: return .hunyuanMT
+        case .hunyuanMTChimera_7B: return .hunyuanMTChimera
         }
     }
 }
 
-/// A loaded HY-MT release.
+/// A loaded HY-MT or Hunyuan-MT release.
 ///
 /// @discussion The prompt is the model card's default instruction for the generation, naming only the
 /// target language: the Chinese instruction with the language's Chinese name when either language is
 /// Chinese (`zh`, `zh-Hant`, `yue`), and the English one with its English name otherwise. The text
-/// follows the instruction after one line break in HY-MT1.5 and two in Hy-MT2, as each card's template
-/// lays it out. The instruction goes inside the release's chat template, whose form follows the
+/// follows the instruction after one line break in HY-MT1.5 and Hunyuan-MT and two in Hy-MT2, as each
+/// card's template lays it out. Hunyuan-MT-Chimera translates nothing on its own: it fuses candidate
+/// translations, which ``refine(_:candidates:from:to:decoding:)`` places in its card's prompt with the
+/// source and both languages' English names. The instruction goes inside the release's chat template, whose form follows the
 /// tokenizer: the 1.8B releases open `<｜hy_begin▁of▁sentence｜><｜hy_User｜>` and the 7B releases
 /// `<|startoftext|>`, and each ends the user turn as ``opensAssistantTurn`` says. The languages are the
 /// 38 the cards list; a BCP-47 tag resolves by its primary subtag, Chinese by its script (`zh-TW` →
@@ -125,7 +198,7 @@ public enum NFKMLXHYMTVariant: Int, Sendable, CaseIterable {
 /// every special token, as the cards decode (`skip_special_tokens`).
 ///
 /// Introduced in InferKit 0.4.0.
-public final class NFKMLXHYMTTranslator: NFKMLXTranslator {
+public final class NFKMLXHYMTTranslator: NFKMLXTranslationRefiner {
     public let net: NFKMLXLanguageNet
     public let tokenizer: NFKTokenizer
     public let release: NFKMLXHYMTRelease
@@ -172,7 +245,12 @@ public final class NFKMLXHYMTTranslator: NFKMLXTranslator {
             }
             return id
         }
-        if specials["<｜hy_User｜>"] != nil {
+        if let reasoning = Self.addedTokenIDs(inDirectory: directory)["<｜reasoning_mode｜>"] {
+            opening = [try marker("<｜hy_begin▁of▁sentence｜>"), reasoning]
+                + tokenizer.encode("reasoning_effort:no_think").map(\.intValue) + [try marker("<｜hy_User｜>")]
+            assistantOpening = [try marker("<｜hy_Assistant｜>")] + tokenizer.encode("<think></think>").map(\.intValue)
+            closing = []
+        } else if specials["<｜hy_User｜>"] != nil {
             opening = [try marker("<｜hy_begin▁of▁sentence｜>"), try marker("<｜hy_User｜>")]
             assistantOpening = [try marker("<｜hy_Assistant｜>")]
             closing = [try marker("<｜hy_place▁holder▁no▁8｜>")]
@@ -190,6 +268,19 @@ public final class NFKMLXHYMTTranslator: NFKMLXTranslator {
         let ends = Self.endTokens(inDirectory: directory) ?? [tokenizer.eosTokenId]
         defaultDecoding = NFKMLXSeq2SeqDecoding(beams: 1, maxTokens: 512, startToken: opening[0], endToken: ends[0],
                                                 additionalEndTokens: Array(ends.dropFirst()))
+    }
+
+    /// Every added token of a release's `tokenizer.json`, special or not, by its text.
+    static func addedTokenIDs(inDirectory directory: URL) -> [String: Int] {
+        guard let data = try? Data(contentsOf: directory.appendingPathComponent("tokenizer.json")),
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return [:] }
+        var ids = [String: Int]()
+        for entry in json["added_tokens"] as? [[String: Any]] ?? [] {
+            if let content = entry["content"] as? String, let id = (entry["id"] as? NSNumber)?.intValue {
+                ids[content] = id
+            }
+        }
+        return ids
     }
 
     /// The end tokens a release's `generation_config.json` names (one id or a list), or nil where it
@@ -224,23 +315,47 @@ public final class NFKMLXHYMTTranslator: NFKMLXTranslator {
     public func prompt(text: String, sourceCode: String?, targetCode: String) -> String {
         let names = Self.languages[targetCode] ?? (targetCode, targetCode)
         let chinese = Self.chineseCodes.contains(targetCode) || sourceCode.map(Self.chineseCodes.contains) == true
-        let separator = release == .hyMT15 ? "\n" : "\n\n"
-        if chinese {
-            return "将以下文本翻译为\(names.chinese)，注意只需要输出翻译后的结果，不要额外解释：\(separator)\(text)"
-        }
         switch release {
-        case .hyMT15:
-            return "Translate the following segment into \(names.english), without additional explanation.\(separator)\(text)"
+        case .hyMT15 where chinese:
+            return "将以下文本翻译为\(names.chinese)，注意只需要输出翻译后的结果，不要额外解释：\n\(text)"
+        case .hyMT2 where chinese:
+            return "将以下文本翻译为\(names.chinese)，注意只需要输出翻译后的结果，不要额外解释：\n\n\(text)"
+        case .hunyuanMT where chinese, .hunyuanMTChimera where chinese:
+            return "把下面的文本翻译成\(names.chinese)，不要额外解释。\n\(text)"
+        case .hyMT15, .hunyuanMT, .hunyuanMTChimera:
+            return "Translate the following segment into \(names.english), without additional explanation.\n\(text)"
         case .hyMT2:
             return "Translate the following text into \(names.english). Note that you should only output the translated "
-                + "result without any additional explanation:\(separator)\(text)"
+                + "result without any additional explanation:\n\n\(text)"
         }
+    }
+
+    /// Hunyuan-MT-Chimera's instruction: the source segment and its numbered candidate translations,
+    /// each in triple backticks, with the two languages' English names.
+    public func refinementPrompt(text: String, candidates: [String], sourceCode: String, targetCode: String) -> String {
+        let source = Self.languages[sourceCode]?.english ?? sourceCode
+        let target = Self.languages[targetCode]?.english ?? targetCode
+        let numbered = candidates.enumerated().map { "\($0.offset + 1). ```\($0.element)```" }
+        return (["Analyze the following multiple \(target) translations of the \(source) segment surrounded in triple "
+                 + "backticks and generate a single refined \(target) translation. Only output the refined translation, "
+                 + "do not explain.",
+                 "The \(source) segment:", "```\(text)```", "The multiple \(target) translations:"] + numbered)
+            .joined(separator: "\n")
+    }
+
+    /// The template's ids around `instruction`: the opening, the instruction, and the user turn's end.
+    func templateTokens(_ instruction: String) -> [Int] {
+        opening + tokenizer.encode(instruction).map(\.intValue) + (opensAssistantTurn ? assistantOpening : closing)
     }
 
     /// The prompt's ids: the template's opening, the instruction and text, and the user turn's end.
     public func promptTokens(text: String, sourceCode: String?, targetCode: String) -> [Int] {
-        opening + tokenizer.encode(prompt(text: text, sourceCode: sourceCode, targetCode: targetCode)).map(\.intValue)
-            + (opensAssistantTurn ? assistantOpening : closing)
+        templateTokens(prompt(text: text, sourceCode: sourceCode, targetCode: targetCode))
+    }
+
+    /// Hunyuan-MT-Chimera's prompt ids for `text` and its candidate translations.
+    public func refinementTokens(text: String, candidates: [String], sourceCode: String, targetCode: String) -> [Int] {
+        templateTokens(refinementPrompt(text: text, candidates: candidates, sourceCode: sourceCode, targetCode: targetCode))
     }
 
     /// The greedy continuation of `ids`, without the end token that ends it. Throws a failed read of a
@@ -273,10 +388,38 @@ public final class NFKMLXHYMTTranslator: NFKMLXTranslator {
 
     public func translate(_ text: String, from source: String?, to target: String,
                           decoding: NFKMLXSeq2SeqDecoding) throws -> String {
+        guard !refinesCandidates else {
+            throw NFKMLXTranslationBackend.error(
+                .error_InferenceMissingInput,
+                "\(identifier) fuses candidate translations, which a request names under NFKMLXParameterCandidateTranslations")
+        }
         guard let targetCode = code(for: target) else {
             throw NFKMLXTranslationBackend.error(.error_InferenceUnsupported, "\(identifier) does not translate into \(target)")
         }
-        let ids = promptTokens(text: text, sourceCode: source.flatMap(code(for:)), targetCode: targetCode)
+        return try decode(promptTokens(text: text, sourceCode: source.flatMap(code(for:)), targetCode: targetCode),
+                          decoding: decoding)
+    }
+
+    public var refinesCandidates: Bool { release == .hunyuanMTChimera }
+
+    public func refine(_ text: String, candidates: [String], from source: String, to target: String,
+                       decoding: NFKMLXSeq2SeqDecoding) throws -> String {
+        guard refinesCandidates else {
+            throw NFKMLXTranslationBackend.error(.error_InferenceUnsupported, "\(identifier) translates; it does not fuse candidates")
+        }
+        guard !candidates.isEmpty else {
+            throw NFKMLXTranslationBackend.error(.error_InferenceMissingInput, "\(identifier) fuses at least one candidate translation")
+        }
+        guard let sourceCode = code(for: source), let targetCode = code(for: target) else {
+            throw NFKMLXTranslationBackend.error(.error_InferenceUnsupported, "\(identifier) does not refine \(source) into \(target)")
+        }
+        return try decode(refinementTokens(text: text, candidates: candidates, sourceCode: sourceCode, targetCode: targetCode),
+                          decoding: decoding)
+    }
+
+    /// The translation `decoding` produces from prompt `ids`: a beam search for more than one beam,
+    /// greedy otherwise.
+    func decode(_ ids: [Int], decoding: NFKMLXSeq2SeqDecoding) throws -> String {
         let produced = decoding.beams > 1 ? try beamSearch(promptTokens: ids, decoding: decoding)
             : try generate(promptTokens: ids, maxTokens: decoding.maxTokens)
         return translation(of: produced)
@@ -302,8 +445,9 @@ public final class NFKMLXHYMTTranslator: NFKMLXTranslator {
 /// 16.1 GB in four shards with their index. At `.checkpoint` precision, the registry's choice, a release
 /// loads at its bfloat16; at `.float32` it doubles, which a residency streams where it does not fit
 /// (``NFKMLXResidency/automatic`` holds what fits and reads the other layers in their turn). HY-MT1.5 is
-/// under the Tencent HY Community License, which does not cover the European Union, the United Kingdom,
-/// or South Korea; Hy-MT2 is under Apache-2.0.
+/// under the Tencent HY Community License and Hunyuan-MT under the Tencent Hunyuan Community License,
+/// which share their terms and do not cover the European Union, the United Kingdom, or South Korea;
+/// Hy-MT2 is under Apache-2.0.
 ///
 /// Introduced in InferKit 0.4.0.
 @objc(NFKMLXHYMT)
@@ -386,16 +530,24 @@ public final class NFKMLXHYMT: NSObject {
         }
     }
 
-    /// Registers `hy-mt1.5` and `hy-mt2` with `NFKMLXModelRegistry`; the registry's URL is the release
-    /// directory, loaded at its bfloat16.
+    /// Registers `hy-mt1.5`, `hy-mt2`, `hy-mt2-30b-a3b`, `hunyuan-mt`, and `hunyuan-mt-chimera` with
+    /// `NFKMLXModelRegistry`; the registry's URL is the release directory, loaded at its bfloat16.
     @objc public static func register() {
-        for release in [NFKMLXHYMTRelease.hyMT15, .hyMT2] {
-            NFKMLXModelRegistry.register(name: release.modelName) { url in
+        for (name, release) in registryNames {
+            NFKMLXModelRegistry.register(name: name) { url in
                 guard let url else {
-                    throw NFKMLXError.unsupportedConfiguration("\(release.modelName) builds from a release directory, not without weights")
+                    throw NFKMLXError.unsupportedConfiguration("\(name) builds from a release directory, not without weights")
                 }
                 return try backend(release: release, directoryURL: url, precision: .checkpoint)
             }
+        }
+    }
+
+    /// Each registered name and the generation whose prompt it builds with.
+    static var registryNames: [(name: String, release: NFKMLXHYMTRelease)] {
+        var seen = Set<String>()
+        return NFKMLXHYMTVariant.allCases.compactMap { variant in
+            seen.insert(variant.registryName).inserted ? (variant.registryName, variant.release) : nil
         }
     }
 

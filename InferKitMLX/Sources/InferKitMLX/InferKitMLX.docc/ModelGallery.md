@@ -179,7 +179,7 @@ Every translator reads `NFKInputPrompt` with `NFKParameterTargetLanguage` (BCP-4
 | ``NFKMLXMADLAD`` | `madlad400-3b-mt` | MADLAD-400 3B-MT, 400+ languages over T5, float32 or bfloat16 |
 | ``NFKMLXTranslateGemma`` | `translategemma` | TranslateGemma 4B / 12B / 27B, Gemma 3 driven by its translation template; greedy |
 | ``NFKMLXSeedX`` | `seed-x` | Seed-X PPO 7B / Instruct 7B, a Mistral 7B prompted for 28 languages; greedy |
-| ``NFKMLXHYMT`` | `hy-mt1.5`, `hy-mt2` | HY-MT1.5 / Hy-MT2 1.8B and 7B, Hunyuan decoders prompted for 38 languages; greedy |
+| ``NFKMLXHYMT`` | `hy-mt1.5`, `hy-mt2`, `hy-mt2-30b-a3b`, `hunyuan-mt`, `hunyuan-mt-chimera` | HY-MT1.5 / Hy-MT2 1.8B and 7B, Hy-MT2 30B-A3B (a mixture of experts that pages), and Hunyuan-MT 7B, Hunyuan decoders prompted for 38 languages; Hunyuan-MT-Chimera 7B fuses candidate translations; greedy |
 
 ### Vision-language
 

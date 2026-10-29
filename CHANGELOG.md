@@ -1941,6 +1941,24 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
   `NFKModelSourceKindPage` sources. NU-Wave 2 downloads the release's checkpoint from Google Drive's
   direct address (20,887,965 bytes), so it has a download size and downloads through `NFKHFHub`.
 
+#### Hunyuan-MT, Hunyuan-MT-Chimera, and Hy-MT2-30B-A3B translate
+
+- `NFKMLXHYMT` translates with Tencent's Hunyuan-MT 7B (Tencent Hunyuan Community License) through its
+  card's instruction (`NFKMLXHYMTRelease.hunyuanMT`, `hunyuan-mt`), and with Hy-MT2-30B-A3B (Apache-2.0),
+  Hunyuan's mixture of experts, whose experts page from the release (`NFKMLXHYMTVariant.hyMT2_30B_A3B`,
+  `hy-mt2-30b-a3b`, its own template with reasoning turned off). Both are at reference parity against
+  transformers.
+- Hunyuan-MT-Chimera 7B fuses candidate translations of a segment into one (`.hunyuanMTChimera`,
+  `hunyuan-mt-chimera`). A request names the candidates under
+  `NFKMLXTranslationParameterKey.candidateTranslations`; a translator that fuses candidates adopts
+  `NFKMLXTranslationRefiner`, and every other translator refuses a request that names them.
+- The language decoder reads Hunyuan's mixture of experts (`hy_v3`): a dense first layer
+  (`denseLeadingLayerCount`), a sigmoid router whose per-expert bias shifts the choice and whose kept
+  scores are renormalized and scaled (`sigmoidRouterScale`), an ungated shared expert
+  (`gatesSharedExpert`), and the experts summed in float32 as transformers 5 dispatches them
+  (`sumsExpertsInFloat32`). The resolver's `hymt` judge reads a `hy_v3` repository through
+  Hy-MT2-30B-A3B's entry.
+
 #### HY-MT1.5 and Hy-MT2 translate 38 languages
 
 - `NFKMLXHYMT` translates with Tencent's HY-MT1.5 (Tencent HY Community License) and Hy-MT2 (Apache-2.0),

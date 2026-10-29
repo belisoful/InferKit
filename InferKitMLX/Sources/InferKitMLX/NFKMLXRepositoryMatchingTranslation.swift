@@ -58,14 +58,17 @@ extension NFKMLXFamilyJudge {
             return Reading()
         })
 
-    /// HY-MT (`hunyuan_v1_dense`), read by the language decoder's configuration reader and tokenizer, with
-    /// one of the two chat templates' markers among `tokenizer.json`'s added tokens. A repository reads
-    /// through Hy-MT2's entry, whose instruction is the current generation's; the two generations share
-    /// their tokenizers and templates.
+    /// HY-MT (`hunyuan_v1_dense`, and `hy_v3` for the mixture of experts), read by the language decoder's
+    /// configuration reader and tokenizer, with one of the chat templates' markers among `tokenizer.json`'s
+    /// added tokens. A dense repository reads through Hy-MT2's entry, whose instruction is the current
+    /// generation's, and a mixture of experts through Hy-MT2-30B-A3B's, which pages its experts; the
+    /// generations share their tokenizers and templates.
     static let hymt = NFKMLXFamilyJudge(
         reads: { $0.family == "hy-mt" && !$0.modelTypes.isEmpty },
-        template: { _, template in
-            NFKMLXModelDescriptors.entries.first { $0.identifier == NFKMLXHYMTRelease.hyMT2.modelName } ?? template
+        template: { repository, template in
+            let name = repository.configuration["model_type"] as? String == NFKMLXHunyuanMoE.modelType
+                ? NFKMLXHYMTVariant.hyMT2_30B_A3B.registryName : NFKMLXHYMTRelease.hyMT2.modelName
+            return NFKMLXModelDescriptors.entries.first { $0.identifier == name } ?? template
         },
         verify: { repository, template in
             let configuration = repository.configuration
