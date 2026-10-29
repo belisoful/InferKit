@@ -18680,6 +18680,683 @@
       ]
     },
     {
+      "displayName" : "Hunyuan-MT",
+      "engine" : "mlx",
+      "family" : "hy-mt",
+      "id" : "hunyuan-mt",
+      "inputModalities" : [
+        "text"
+      ],
+      "inputs" : [
+        {
+          "help" : "The text to translate, paragraph by paragraph.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Text",
+          "valueType" : "text"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "name" : "Tencent Hunyuan Community License Agreement",
+        "note" : "The license does not cover the European Union, the United Kingdom, or South Korea. A licensee whose products passed 100 million monthly active users on the release date requests a license from Tencent. Neither the model nor its output may improve an AI model other than Tencent Hunyuan and its derivatives. Use follows Tencent's Acceptable Use Policy, and a distribution carries these use restrictions as an enforceable term.",
+        "restrictsCommercialUse" : true,
+        "url" : "https://huggingface.co/tencent/Hunyuan-MT-7B/blob/main/License.txt"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
+      },
+      "modelTypes" : [
+        "hunyuan_v1_dense"
+      ],
+      "options" : [
+        {
+          "help" : "The BCP-47 language of the text. Without it the language is detected.",
+          "key" : "sourceLanguage",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Source language"
+        },
+        {
+          "help" : "The BCP-47 language to translate into. Every request names it.",
+          "key" : "targetLanguage",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Target language"
+        },
+        {
+          "help" : "The most tokens one translated paragraph runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 32768,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        },
+        {
+          "default" : 1,
+          "help" : "The beams the decoder searches. 1 decodes greedily.",
+          "key" : "NFKMLXParameterBeamCount",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Beams"
+        },
+        {
+          "default" : 1,
+          "help" : "Divides a finished hypothesis's log-probability by its length to this power.",
+          "key" : "NFKMLXParameterLengthPenalty",
+          "kind" : "number",
+          "stage" : "request",
+          "title" : "Length penalty"
+        },
+        {
+          "default" : false,
+          "help" : "Translates each sentence on its own. Off translates each paragraph whole.",
+          "key" : "NFKMLXParameterSplitsSentences",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Split sentences"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 16060538880,
+                "residentBytes" : 16060538880
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2973803520,
+                "residentBytes" : 2973803520
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 16060538880,
+                "residentBytes" : 16060538880
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 32121077760,
+                "residentBytes" : 32121077760
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 16060538880,
+                "residentBytes" : 16060538880
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9024921600,
+                "residentBytes" : 9024921600
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 7148756992,
+                "residentBytes" : 7148756992
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 6210674688,
+                "residentBytes" : 6210674688
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 5272592384,
+                "residentBytes" : 5272592384
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4334510080,
+                "residentBytes" : 4334510080
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 3396427776,
+                "residentBytes" : 3396427776
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "text"
+      ],
+      "outputs" : [
+        {
+          "help" : "The translated text.",
+          "key" : "text",
+          "required" : true,
+          "title" : "Translation",
+          "valueType" : "text"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "hunyuan-mt",
+      "requirements" : {
+        "minimumMemoryBytes" : 23947654325,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "Hunyuan-MT 7B, a dense Hunyuan decoder trained to translate among 38 languages.",
+      "tasks" : [
+        "translation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Hunyuan-MT 7B",
+          "downloadBytes" : 16076998514,
+          "id" : "hunyuan-mt-7b",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 16060538880,
+                  "checkpoint" : 16060538880,
+                  "float32" : 32121077760
+                },
+                "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 436224512,
+                  "checkpoint" : 436224512,
+                  "float32" : 872449024
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 13959184384,
+                  "checkpoint" : 13959184384,
+                  "float32" : 27918368768
+                },
+                "layerCount" : 32,
+                "quantizableElements" : 7504658432,
+                "title" : "decoder"
+              }
+            ],
+            "vocabularySize" : 128256
+          },
+          "minimumMemoryBytes" : 23947654325,
+          "parameterCount" : 8030269440,
+          "peakBytes" : 16060538880,
+          "precision" : "bfloat16",
+          "registryName" : "hunyuan-mt",
+          "residentBytes" : 16060538880,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 1335,
+                "optional" : false,
+                "path" : "config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 16388221,
+                "optional" : false,
+                "path" : "tokenizer.json",
+                "role" : "tokenizer",
+                "sha256" : "4185389a69284fdd3ebf737c6120bbeee36cbed9763151fa5bac5986a39e05d4"
+              },
+              {
+                "bytes" : 892,
+                "optional" : false,
+                "path" : "tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 205,
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 27605,
+                "optional" : true,
+                "path" : "model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "optional" : true,
+                "path" : "model.safetensors",
+                "role" : "weights"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "9305c78383f0bcc94358e08667ee2c76107877e3",
+            "repository" : "tencent/Hunyuan-MT-7B",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "Hunyuan-MT-Chimera",
+      "engine" : "mlx",
+      "family" : "hy-mt",
+      "id" : "hunyuan-mt-chimera",
+      "inputModalities" : [
+        "text"
+      ],
+      "inputs" : [
+        {
+          "help" : "The text to translate, paragraph by paragraph.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Text",
+          "valueType" : "text"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "name" : "Tencent Hunyuan Community License Agreement",
+        "note" : "The license does not cover the European Union, the United Kingdom, or South Korea. A licensee whose products passed 100 million monthly active users on the release date requests a license from Tencent. Neither the model nor its output may improve an AI model other than Tencent Hunyuan and its derivatives. Use follows Tencent's Acceptable Use Policy, and a distribution carries these use restrictions as an enforceable term.",
+        "restrictsCommercialUse" : true,
+        "url" : "https://huggingface.co/tencent/Hunyuan-MT-Chimera-7B/blob/main/LICENSE"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
+      },
+      "modelTypes" : [
+        "hunyuan_v1_dense"
+      ],
+      "options" : [
+        {
+          "help" : "Translations of the whole text, which the model fuses into one. Every request names them.",
+          "key" : "NFKMLXParameterCandidateTranslations",
+          "kind" : "text-list",
+          "stage" : "request",
+          "title" : "Candidate translations"
+        },
+        {
+          "help" : "The BCP-47 language of the text. Without it the language is detected.",
+          "key" : "sourceLanguage",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Source language"
+        },
+        {
+          "help" : "The BCP-47 language to translate into. Every request names it.",
+          "key" : "targetLanguage",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Target language"
+        },
+        {
+          "help" : "The most tokens one translated paragraph runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 32768,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        },
+        {
+          "default" : 1,
+          "help" : "The beams the decoder searches. 1 decodes greedily.",
+          "key" : "NFKMLXParameterBeamCount",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Beams"
+        },
+        {
+          "default" : 1,
+          "help" : "Divides a finished hypothesis's log-probability by its length to this power.",
+          "key" : "NFKMLXParameterLengthPenalty",
+          "kind" : "number",
+          "stage" : "request",
+          "title" : "Length penalty"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 16060538880,
+                "residentBytes" : 16060538880
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 2973803520,
+                "residentBytes" : 2973803520
+              },
+              "title" : "Streamed",
+              "value" : "streamed"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 16060538880,
+                "residentBytes" : 16060538880
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 32121077760,
+                "residentBytes" : 32121077760
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 16060538880,
+                "residentBytes" : 16060538880
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9024921600,
+                "residentBytes" : 9024921600
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 7148756992,
+                "residentBytes" : 7148756992
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 6210674688,
+                "residentBytes" : 6210674688
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 5272592384,
+                "residentBytes" : 5272592384
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 4334510080,
+                "residentBytes" : 4334510080
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 3396427776,
+                "residentBytes" : 3396427776
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "text"
+      ],
+      "outputs" : [
+        {
+          "help" : "The translated text.",
+          "key" : "text",
+          "required" : true,
+          "title" : "Translation",
+          "valueType" : "text"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "hunyuan-mt-chimera",
+      "requirements" : {
+        "minimumMemoryBytes" : 23947654325,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "streamed"
+      ],
+      "standIn" : false,
+      "summary" : "Hunyuan-MT-Chimera 7B, a dense Hunyuan decoder that fuses candidate translations of a segment into one, among 38 languages.",
+      "tasks" : [
+        "translation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Hunyuan-MT-Chimera 7B",
+          "downloadBytes" : 16076998514,
+          "id" : "hunyuan-mt-chimera-7b",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 16060538880,
+                  "checkpoint" : 16060538880,
+                  "float32" : 32121077760
+                },
+                "id" : "decoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 436224512,
+                  "checkpoint" : 436224512,
+                  "float32" : 872449024
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 13959184384,
+                  "checkpoint" : 13959184384,
+                  "float32" : 27918368768
+                },
+                "layerCount" : 32,
+                "quantizableElements" : 7504658432,
+                "title" : "decoder"
+              }
+            ],
+            "vocabularySize" : 128256
+          },
+          "minimumMemoryBytes" : 23947654325,
+          "parameterCount" : 8030269440,
+          "peakBytes" : 16060538880,
+          "precision" : "bfloat16",
+          "registryName" : "hunyuan-mt-chimera",
+          "residentBytes" : 16060538880,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 1335,
+                "optional" : false,
+                "path" : "config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 16388221,
+                "optional" : false,
+                "path" : "tokenizer.json",
+                "role" : "tokenizer",
+                "sha256" : "4185389a69284fdd3ebf737c6120bbeee36cbed9763151fa5bac5986a39e05d4"
+              },
+              {
+                "bytes" : 892,
+                "optional" : false,
+                "path" : "tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 205,
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 27605,
+                "optional" : true,
+                "path" : "model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "optional" : true,
+                "path" : "model.safetensors",
+                "role" : "weights"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "3d9e4551dad0ae6b9fb6be5e96eee942bfcea047",
+            "repository" : "tencent/Hunyuan-MT-Chimera-7B",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
       "displayName" : "HY-MT1.5",
       "engine" : "mlx",
       "family" : "hy-mt",
@@ -19742,6 +20419,337 @@
             "layout" : "directory",
             "measuredRevision" : "9b0eb4e8f001def3e5ff6469a0ac96fdb39ec223",
             "repository" : "tencent/Hy-MT2-7B",
+            "requiresConversion" : false
+          }
+        }
+      ]
+    },
+    {
+      "displayName" : "Hy-MT2 30B-A3B",
+      "engine" : "mlx",
+      "family" : "hy-mt",
+      "id" : "hy-mt2-30b-a3b",
+      "inputModalities" : [
+        "text"
+      ],
+      "inputs" : [
+        {
+          "help" : "The text to translate, paragraph by paragraph.",
+          "key" : "prompt",
+          "required" : true,
+          "title" : "Text",
+          "valueType" : "text"
+        }
+      ],
+      "introducedVersion" : "0.4.0",
+      "license" : {
+        "gated" : false,
+        "id" : "Apache-2.0",
+        "name" : "Apache License 2.0",
+        "restrictsCommercialUse" : false,
+        "url" : "https://www.apache.org/licenses/LICENSE-2.0"
+      },
+      "memoryModel" : {
+        "precision" : "precision",
+        "quantizationBits" : "quantizationBits",
+        "residency" : "residency"
+      },
+      "modelTypes" : [
+        "hy_v3"
+      ],
+      "options" : [
+        {
+          "help" : "The BCP-47 language of the text. Without it the language is detected.",
+          "key" : "sourceLanguage",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Source language"
+        },
+        {
+          "help" : "The BCP-47 language to translate into. Every request names it.",
+          "key" : "targetLanguage",
+          "kind" : "text",
+          "stage" : "request",
+          "title" : "Target language"
+        },
+        {
+          "help" : "The most tokens one translated paragraph runs to.",
+          "key" : "maxTokens",
+          "kind" : "integer",
+          "maximum" : 262144,
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Maximum tokens"
+        },
+        {
+          "default" : 1,
+          "help" : "The beams the decoder searches. 1 decodes greedily.",
+          "key" : "NFKMLXParameterBeamCount",
+          "kind" : "integer",
+          "minimum" : 1,
+          "stage" : "request",
+          "step" : 1,
+          "title" : "Beams"
+        },
+        {
+          "default" : 1,
+          "help" : "Divides a finished hypothesis's log-probability by its length to this power.",
+          "key" : "NFKMLXParameterLengthPenalty",
+          "kind" : "number",
+          "stage" : "request",
+          "title" : "Length penalty"
+        },
+        {
+          "default" : false,
+          "help" : "Translates each sentence on its own. Off translates each paragraph whole.",
+          "key" : "NFKMLXParameterSplitsSentences",
+          "kind" : "boolean",
+          "stage" : "request",
+          "title" : "Split sentences"
+        },
+        {
+          "choices" : [
+            {
+              "title" : "Automatic",
+              "value" : "automatic"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 60129463808,
+                "residentBytes" : 60129463808
+              },
+              "title" : "Resident",
+              "value" : "resident"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 7650332160,
+                "residentBytes" : 7650332160
+              },
+              "title" : "Paged",
+              "value" : "paged"
+            }
+          ],
+          "default" : "automatic",
+          "group" : "Loading",
+          "help" : "How the model holds its weights. Automatic holds every stage where the stages fit this Mac, and otherwise pages, streams, or stages them.",
+          "key" : "residency",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Residency"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 60129463808,
+                "residentBytes" : 60129463808
+              },
+              "title" : "As published",
+              "value" : "checkpoint"
+            },
+            {
+              "memory" : {
+                "peakBytes" : 120258903552,
+                "residentBytes" : 120258903552
+              },
+              "title" : "Float32",
+              "value" : "float32"
+            }
+          ],
+          "default" : "checkpoint",
+          "group" : "Loading",
+          "help" : "The precision the weights load at. As published keeps the release's own weights; another choice converts them as they load.",
+          "key" : "precision",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Precision"
+        },
+        {
+          "choices" : [
+            {
+              "memory" : {
+                "peakBytes" : 60129463808,
+                "residentBytes" : 60129463808
+              },
+              "title" : "None",
+              "value" : 0
+            },
+            {
+              "memory" : {
+                "peakBytes" : 32175984128,
+                "residentBytes" : 32175984128
+              },
+              "title" : "8-bit",
+              "value" : 8
+            },
+            {
+              "memory" : {
+                "peakBytes" : 24721722880,
+                "residentBytes" : 24721722880
+              },
+              "title" : "6-bit",
+              "value" : 6
+            },
+            {
+              "memory" : {
+                "peakBytes" : 20994592256,
+                "residentBytes" : 20994592256
+              },
+              "title" : "5-bit",
+              "value" : 5
+            },
+            {
+              "memory" : {
+                "peakBytes" : 17267461632,
+                "residentBytes" : 17267461632
+              },
+              "title" : "4-bit",
+              "value" : 4
+            },
+            {
+              "memory" : {
+                "peakBytes" : 13540331008,
+                "residentBytes" : 13540331008
+              },
+              "title" : "3-bit",
+              "value" : 3
+            },
+            {
+              "memory" : {
+                "peakBytes" : 9813200384,
+                "residentBytes" : 9813200384
+              },
+              "title" : "2-bit",
+              "value" : 2
+            }
+          ],
+          "default" : 0,
+          "group" : "Loading",
+          "help" : "Packs the decoder's weights to 2 to 8 bits in groups of 64 as it loads. Every width approximates the published weights, and fewer bits hold less memory and lose more precision.",
+          "key" : "quantizationBits",
+          "kind" : "choice",
+          "stage" : "load",
+          "title" : "Weight quantization"
+        }
+      ],
+      "outputModalities" : [
+        "text"
+      ],
+      "outputs" : [
+        {
+          "help" : "The translated text.",
+          "key" : "text",
+          "required" : true,
+          "title" : "Translation",
+          "valueType" : "text"
+        }
+      ],
+      "presets" : [
+        {
+          "help" : "Loads the weights at float32, the precision the parity records were measured at.",
+          "id" : "precise",
+          "loadOptions" : {
+            "precision" : "float32"
+          },
+          "suggested" : true,
+          "title" : "Precise"
+        }
+      ],
+      "registryName" : "hy-mt2-30b-a3b",
+      "requirements" : {
+        "minimumMemoryBytes" : 75793448358,
+        "minimumOS" : {
+          "iOS" : "17.0",
+          "macOS" : "14.0"
+        },
+        "requiresAppleSilicon" : true
+      },
+      "residencies" : [
+        "resident",
+        "paged"
+      ],
+      "standIn" : false,
+      "summary" : "Hy-MT2 30B-A3B, a Hunyuan mixture of experts trained to translate among 38 languages, 3B of its 30B parameters active per token.",
+      "tasks" : [
+        "translation"
+      ],
+      "variants" : [
+        {
+          "displayName" : "Hy-MT2 30B-A3B",
+          "downloadBytes" : 60143046089,
+          "id" : "hy-mt2-30b-a3b",
+          "isDefault" : true,
+          "memoryFacts" : {
+            "basis" : "measured",
+            "loadOverheadBytes" : 0,
+            "stages" : [
+              {
+                "bytesByPrecision" : {
+                  "bfloat16" : 60129451776,
+                  "checkpoint" : 60129463808,
+                  "float32" : 120258903552
+                },
+                "id" : "decoder",
+                "pageableBytesByPrecision" : {
+                  "bfloat16" : 56774098944,
+                  "checkpoint" : 56774098944,
+                  "float32" : 113548197888
+                },
+                "quantizableElements" : 29817044992,
+                "title" : "decoder"
+              }
+            ],
+            "vocabularySize" : 120832
+          },
+          "minimumMemoryBytes" : 75793448358,
+          "parameterCount" : 30064725888,
+          "peakBytes" : 60129463808,
+          "precision" : "bfloat16",
+          "registryName" : "hy-mt2-30b-a3b",
+          "residentBytes" : 60129463808,
+          "source" : {
+            "files" : [
+              {
+                "bytes" : 1127,
+                "optional" : false,
+                "path" : "config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 9527108,
+                "optional" : false,
+                "path" : "tokenizer.json",
+                "role" : "tokenizer"
+              },
+              {
+                "bytes" : 165617,
+                "optional" : false,
+                "path" : "tokenizer_config.json",
+                "role" : "tokenizer"
+              },
+              {
+                "optional" : true,
+                "path" : "generation_config.json",
+                "role" : "config"
+              },
+              {
+                "bytes" : 1607405,
+                "optional" : true,
+                "path" : "model.safetensors.index.json",
+                "role" : "weights"
+              },
+              {
+                "optional" : true,
+                "path" : "model.safetensors",
+                "role" : "weights"
+              }
+            ],
+            "kind" : "huggingface",
+            "layout" : "directory",
+            "measuredRevision" : "d3ead4dba61c09aac60a261a96ad1df3e705febb",
+            "repository" : "tencent/Hy-MT2-30B-A3B",
             "requiresConversion" : false
           }
         }
