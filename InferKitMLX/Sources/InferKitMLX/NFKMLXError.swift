@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import MLX
 
 /// The errors InferKitMLX throws.
 ///
@@ -41,6 +42,9 @@ public enum NFKMLXError: Error {
     case unsupportedConfiguration(String)
     /// A checkpoint's bytes do not parse as the format its header claims. See `NFKMLXTorchFormat`.
     case malformedCheckpoint(String)
+    /// MLX refused an operation of a run, such as an allocation past the device's largest buffer. The
+    /// detail is MLX's own message. Introduced in InferKit 0.4.0.
+    case runtimeFailure(String)
 }
 
 extension NFKMLXError: LocalizedError {
@@ -58,6 +62,46 @@ extension NFKMLXError: LocalizedError {
         case .nothingToTrain(let detail): return detail
         case .unsupportedConfiguration(let detail): return detail
         case .malformedCheckpoint(let detail): return detail
+        case .runtimeFailure(let detail): return "MLX failed: \(detail)"
+        }
+    }
+}
+
+/// MLX's errors as thrown errors for the work run on the calling thread.
+///
+/// @discussion mlx-swift ends the process on an MLX error unless a handler is installed. Inside
+/// ``run(_:)`` the error is recorded instead, and the run throws it as ``NFKMLXError/runtimeFailure(_:)``.
+/// The arrays a failed evaluation leaves hold no values, and a read of one answers zero, so a loop that
+/// evaluates step after step reads ``hasFailed`` and stops at the first failure. Scopes nest; the
+/// innermost records the error.
+enum NFKMLXErrorScope {
+    @TaskLocal private static var errors: ErrorBox?
+
+    /// Runs `body`, throwing the first MLX error it raised in place of whatever `body` returned or threw.
+    static func run<T>(_ body: () throws -> T) throws -> T {
+        try withError { box in
+            let value: T
+            do {
+                value = try $errors.withValue(box) { try body() }
+            } catch {
+                throw translated(box) ?? error
+            }
+            if let failure = translated(box) { throw failure }
+            return value
+        }
+    }
+
+    /// Whether an MLX error has been raised in the innermost scope.
+    static var hasFailed: Bool { errors?.firstError != nil }
+
+    /// The innermost scope's first MLX error, or nil.
+    static var failure: NFKMLXError? { errors.flatMap(translated) }
+
+    private static func translated(_ box: ErrorBox) -> NFKMLXError? {
+        switch box.firstError {
+        case .none: return nil
+        case .some(MLXError.caught(let message)): return .runtimeFailure(message)
+        case .some(let other): return .runtimeFailure(other.localizedDescription)
         }
     }
 }

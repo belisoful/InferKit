@@ -121,7 +121,15 @@ attention and feed-forward.
   the truncated xcodebuild run still printed "0 failures" (read the exit code). **Prefill chunks** (`prefillChunkSize`): a long prompt runs through
   the cache in slices, so the attention peak is bounded by the chunk rather than the prompt. It is
   Exact — each chunk attends through the cache to exactly the keys a single pass would — pinned by
-  `testChunkedPrefillMatchesASinglePass`. The backend applies a chat template on request
+  `testChunkedPrefillMatchesASinglePass`. An unset size means `defaultPrefillChunk` (2048), and
+  `prefillPassLength` halves a pass while `headCount × pass × (cached + pass) × 4` bytes of scores pass
+  `prefillScoreBudget` (1 GiB), so a prompt past 2048 tokens never runs as one pass
+  (`testALongPromptPrefillsInPassesAndMatchesASinglePass`). The cause (2026-10-29): Qwen3-1.7B
+  in bfloat16 takes the reference attention, which writes the float32 scores out whole; one pass over
+  22 956 tokens asked for 16 × 22 956² × 4 = 33.7 GB against M1 Max's 20.1 GB largest buffer. At that
+  prompt the passes run 2048 tokens to about 6 000 cached, 1024 to about 15 000, then 512. Intermediate
+  passes evaluate the hidden state alone; the last pass returns its logits. DeepSeek, Granite, and Gemma 3
+  keep their own prefills, which still run one pass when no chunk size is set. The backend applies a chat template on request
   (`chatTemplate: .chatML`): an instruct release is trained on `<|im_start|>role … <|im_end|>` turns,
   and the old message-flattening prompted it outside that format; `.chatML` renders the turns with the
   release's own special tokens (which the byte-level tokenizer resolves), off by default because a base

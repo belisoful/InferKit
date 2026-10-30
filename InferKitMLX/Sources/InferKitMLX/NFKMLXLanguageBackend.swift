@@ -223,14 +223,15 @@ public struct NFKMLXGenerationOptions: Sendable {
     /// precision at 4 bits and makes 8 bits near-lossless; see ``NFKMLXKeyValueCache/Quantization/KeyAxis``.
     public var cacheQuantization: NFKMLXKeyValueCache.Quantization?
 
-    /// Runs the prompt through the cache in slices of at most this many tokens, or `nil` for one pass.
+    /// Runs the prompt through the cache in slices of at most this many tokens, or `nil` for
+    /// ``NFKMLXLanguageNet/defaultPrefillChunk``.
     ///
     /// @discussion A long prompt run as a single forward builds an attention over its whole length at
     /// once, whose peak is what a large context runs out of. Feeding the prompt in chunks makes each
     /// pass attend to its slice plus the cached prefix, so the peak is bounded by the chunk rather than
-    /// the prompt. It is EXACT, not an approximation: the cache makes a chunk attend to exactly the
-    /// keys a single forward would, so the logits match. Off by default, since a short prompt needs no
-    /// chunking.
+    /// the prompt. The cache makes a chunk attend to exactly the keys a single forward would, so the
+    /// logits match. A pass is shortened further while its attention scores would pass
+    /// ``NFKMLXLanguageNet/prefillScoreBudget``, so a long prompt stays within memory at any setting.
     public var prefillChunkSize: Int?
 
     /// How many tokens a draft model proposes per round when the backend was built with one.
@@ -312,9 +313,9 @@ public extension NFKMLXLanguageNet {
 
     /// Generates continuation tokens for `prompt`, calling `onToken` with each as it is produced.
     ///
-    /// @discussion The prompt runs as one forward pass that fills the cache, then each step feeds back
-    /// a single token. Returning false from `onToken` stops the run, which is how a job's cancellation
-    /// reaches generation.
+    /// @discussion The prompt fills the cache through ``prefill(_:cache:chunkSize:)``, then each step
+    /// feeds back a single token. Returning false from `onToken` stops the run, which is how a job's
+    /// cancellation reaches generation.
     func generate(prompt: [Int], options: NFKMLXGenerationOptions = NFKMLXGenerationOptions(),
                   promptCache: NFKMLXPromptCache? = nil,
                   onToken: ((Int) -> Bool)? = nil) -> [Int] {
@@ -325,8 +326,9 @@ public extension NFKMLXLanguageNet {
         var logits = prefill(tail, cache: cache, chunkSize: options.prefillChunkSize)
         promptCache?.record(tail)
         var produced = [Int]()
-        // A streamed layer that could not be read leaves nothing to decode from.
-        guard !streamFailed else { return produced }
+        // A streamed layer that could not be read leaves nothing to decode from, and neither does a
+        // failed evaluation.
+        guard !streamFailed, !NFKMLXErrorScope.hasFailed else { return produced }
         let cursor = options.constraint?.makeCursor()
 
         for _ in 0 ..< options.maxTokens {
@@ -335,6 +337,8 @@ public extension NFKMLXLanguageNet {
                 row = row + cursor.allowedTokenMask().asType(row.dtype)
             }
             let next = NFKMLXLanguageNet.sample(row, options: options)
+            // A failed evaluation samples as token 0.
+            if NFKMLXErrorScope.hasFailed { break }
             if options.stopTokens.contains(next) || (cursor != nil && next == cursor?.endToken) { break }
             produced.append(next)
             cursor?.accept(next)
@@ -391,23 +395,49 @@ public extension NFKMLXLanguageNet {
         return (promptCache.cache, Array(prompt[shared...]))
     }
 
-    /// Fills the cache with the prompt and returns the logits after its last token: one forward pass,
-    /// or several bounded ones when a chunk size is set. Chunking is exact — each chunk attends
-    /// through the cache to the same prefix a single pass would — so only the peak differs.
+    /// Fills the cache with the prompt and returns the logits of the last pass, whose last row follows
+    /// the prompt's last token.
+    ///
+    /// @discussion The prompt runs in passes of at most `chunkSize` tokens, or ``defaultPrefillChunk``
+    /// where it is nil or not positive. Each pass attends through the cache to the prefix before it, so
+    /// the logits are those of a single pass and only the peak differs. A pass is shortened further
+    /// while its attention scores would pass ``prefillScoreBudget`` (``prefillPassLength(cached:remaining:limit:budget:)``):
+    /// a reduced-precision layer's reference attention holds them whole, and a single pass over 23 000
+    /// tokens on a 16-head decoder asks Metal for one 34 GB buffer. A failed evaluation ends the passes.
     func prefill(_ prompt: [Int], cache: NFKMLXKeyValueCache, chunkSize: Int?) -> MLXArray {
-        guard let chunkSize, chunkSize > 0, prompt.count > chunkSize else {
-            return self(MLXArray(prompt.map { Int32($0) }).reshaped([1, prompt.count]), cache: cache)
-        }
-        var logits = MLXArray(0)
+        let limit = chunkSize.flatMap { $0 > 0 ? $0 : nil } ?? NFKMLXLanguageNet.defaultPrefillChunk
         var start = 0
-        while start < prompt.count {
-            let end = Swift.min(start + chunkSize, prompt.count)
-            let slice = prompt[start ..< end].map { Int32($0) }
-            logits = self(MLXArray(slice).reshaped([1, slice.count]), cache: cache)
-            eval(logits)                                        // free a chunk's activations before the next
-            start = end
+        var hidden: MLXArray
+        repeat {
+            let length = prefillPassLength(cached: cache.maskCacheLength, remaining: prompt.count - start, limit: limit)
+            let slice = prompt[start ..< start + length].map { Int32($0) }
+            hidden = hiddenStates(fromEmbeddings: embed(MLXArray(slice).reshaped([1, length])), cache: cache)
+            start += length
+            if start < prompt.count {
+                eval(hidden)                                    // free a pass's activations before the next
+            }
+        } while start < prompt.count && !streamFailed && !NFKMLXErrorScope.hasFailed
+        return logits(fromHidden: hidden)
+    }
+
+    /// The most prompt tokens one prefill pass runs when the options set no chunk size: mlx_lm's
+    /// `prefill_step_size`. Introduced in InferKit 0.4.0.
+    static let defaultPrefillChunk = 2048
+
+    /// The most bytes one prefill pass's attention scores take, counted at four bytes a score: one per
+    /// head, query, and key the pass sees. Introduced in InferKit 0.4.0.
+    static let prefillScoreBudget = 1 << 30
+
+    /// The tokens the next prefill pass runs: the smaller of `remaining` and `limit`, halved while the
+    /// scores of its queries over `cached` earlier keys and its own would pass `budget` bytes, and at
+    /// least one. Introduced in InferKit 0.4.0.
+    func prefillPassLength(cached: Int, remaining: Int, limit: Int,
+                           budget: Int = NFKMLXLanguageNet.prefillScoreBudget) -> Int {
+        var length = Swift.min(remaining, limit)
+        while length > 1 && configuration.headCount * length * (cached + length) * 4 > budget {
+            length = (length + 1) / 2
         }
-        return logits
+        return length
     }
 
     /// Picks the next token from a `[vocabulary]` row of logits.
@@ -1041,6 +1071,12 @@ public final class NFKMLXLanguageBackend: NSObject, NFKInferenceBackend {
             produced = net.generate(prompt: tokens, options: options, draft: draft, promptCache: cache, onToken: onToken)
         } else {
             produced = net.generate(prompt: tokens, options: options, promptCache: cache, onToken: onToken)
+        }
+        if let failure = NFKMLXErrorScope.failure {
+            // The failed evaluation left rows no later request may extend.
+            cache?.reset()
+            refreshCacheStatus()
+            throw failure
         }
         do {
             try net.verifyStream()

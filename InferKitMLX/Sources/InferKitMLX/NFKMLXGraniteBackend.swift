@@ -272,6 +272,10 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
         let kept = conversation.map { name in conversations.states.state(for: name) { NFKMLXGranitePromptCache() } }
         defer {
             if let conversation {
+                // A failed evaluation left a prefill no later prompt may extend.
+                if NFKMLXErrorScope.hasFailed {
+                    conversations.states.remove(conversation)
+                }
                 conversations.states.evict(keeping: conversation)
             }
             conversations.refresh()
@@ -285,7 +289,8 @@ public final class NFKMLXGraniteBackend: NSObject, NFKInferenceBackend {
                 kept?.finish(promptTokens, cache: cache)
             }
             let next = sampling.next(logits[0, pending.count - 1], seed: seed, step: index)
-            if stops.contains(next) { break }
+            // A failed evaluation samples as token 0.
+            if NFKMLXErrorScope.hasFailed || stops.contains(next) { break }
             produced.append(next)
             pending = [next]
         }

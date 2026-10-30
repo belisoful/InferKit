@@ -70,7 +70,9 @@ public extension NFKMLXDeepSeekNet {
                 row = row + cursor.allowedTokenMask().asType(row.dtype)
             }
             let next = NFKMLXLanguageNet.sample(row, options: options)
-            if options.stopTokens.contains(next) || (cursor != nil && next == cursor?.endToken) {
+            // A failed evaluation samples as token 0.
+            if NFKMLXErrorScope.hasFailed || options.stopTokens.contains(next)
+                || (cursor != nil && next == cursor?.endToken) {
                 break
             }
             produced.append(next)
@@ -474,6 +476,10 @@ public final class NFKMLXDeepSeekBackend: NSObject, NFKInferenceBackend {
         }
         defer {
             if let conversation {
+                // A failed evaluation left a prefill no later prompt may extend.
+                if NFKMLXErrorScope.hasFailed {
+                    conversations.states.remove(conversation)
+                }
                 conversations.states.evict(keeping: conversation)
             }
             conversations.refresh()
@@ -550,7 +556,9 @@ public extension NFKMLXDeepSeekNet {
 
         var produced = [Int]()
         func emit(_ token: Int) -> Bool {
-            guard produced.count < options.maxTokens, !options.stopTokens.contains(token) else {
+            // A failed evaluation samples as token 0.
+            guard !NFKMLXErrorScope.hasFailed, produced.count < options.maxTokens,
+                  !options.stopTokens.contains(token) else {
                 return false
             }
             produced.append(token)

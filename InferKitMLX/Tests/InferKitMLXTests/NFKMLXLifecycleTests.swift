@@ -242,6 +242,22 @@ final class NFKMLXLifecycleTests: XCTestCase {
         XCTAssertGreaterThan(backend.residentByteCount, 0, "the reload is measured")
     }
 
+    // A run's MLX error, here an allocation past Metal's largest buffer, fails the run and leaves the
+    // process and the next run working.
+    func testAnMLXErrorInARunThrowsAndTheNextRunComputes() throws {
+        try requireMLXRuntime()
+        let lifecycle = NFKMLXLifecycle(MLXArray([1, 2, 3] as [Float]))
+        XCTAssertThrowsError(try lifecycle.withState { _ in
+            (MLXArray.zeros([1 << 20, 1 << 20]) + 1).sum().item(Float.self)
+        }) { error in
+            guard case NFKMLXError.runtimeFailure(let detail) = error else {
+                return XCTFail("expected runtimeFailure, got \(error)")
+            }
+            XCTAssertTrue(detail.contains("maximum allowed buffer size"), detail)
+        }
+        XCTAssertEqual(try lifecycle.withState { ($0 * 2).sum().item(Float.self) }, 12)
+    }
+
     func testPrepareLoadsAnUnloadedModel() throws {
         try requireMLXRuntime()
         registerModule()

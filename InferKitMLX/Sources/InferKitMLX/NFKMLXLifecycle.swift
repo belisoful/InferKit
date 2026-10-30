@@ -173,11 +173,13 @@ final class NFKMLXLifecycle<State>: @unchecked Sendable {
         return state
     }
 
-    /// Runs `body` on the loaded state, loading it first when it was unloaded.
+    /// Runs `body` on the loaded state, loading it first when it was unloaded. An MLX error `body` raises
+    /// throws as ``NFKMLXError/runtimeFailure(_:)`` (``NFKMLXErrorScope``) and leaves the process running.
     func withState<T>(_ body: (State) throws -> T) throws -> T {
         try begin()
         defer { end() }
-        return try body(try loadedState())
+        let state = try loadedState()
+        return try NFKMLXErrorScope.run { try body(state) }
     }
 
     /// Runs `body` on the state when it is loaded, and returns nil without loading when it is not.

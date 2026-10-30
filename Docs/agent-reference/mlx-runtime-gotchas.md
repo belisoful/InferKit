@@ -16,6 +16,21 @@ Hazards measured in this package against mlx-swift; the public catalogue is `Doc
   `xcodebuild test -scheme InferKitMLX -destination 'platform=macOS' -skipPackagePluginValidation`
   (the `-skip…` flag gets past the unrelated `CudaBuild` plugin's validation). The matting round-trip
   tests auto-detect this: they skip when the test bundle is under `.build` and run under xcodebuild.
+- An MLX error ends the process: mlx-swift's default handler calls `fatalError`, so an allocation past
+  Metal's largest buffer (`[metal::malloc] Attempting to allocate … greater than the maximum allowed
+  buffer size`) killed a whole server over one request. `NFKMLXErrorScope.run` installs mlx-swift's
+  `withError` handler, task-local and synchronous on the calling thread, and throws
+  `NFKMLXError.runtimeFailure`; `NFKMLXLifecycle.withState` runs every lifecycle body inside it. A failed
+  evaluation leaves its arrays without values and an `item` read answers 0, so a loop reads
+  `NFKMLXErrorScope.hasFailed` after each evaluation and stops: the language loop checks after each
+  sample, the speculative loop in `emit`, and prefill between passes. The size check runs before any
+  allocation, and a later evaluation in the same process computes correctly
+  (`testAnMLXErrorInARunThrowsAndTheNextRunComputes`). Loading is outside the scope on purpose, since a
+  load that continued past an error would hold weights without values. Granite, DeepSeek, and Gemma 3
+  keep no lifecycle of their own; the registry and the catalog wrap them in `NFKMLXReloadableBackend`,
+  whose runs take the scope, and the Granite and DeepSeek loops stop at a failure and drop the
+  conversation's kept prefill. One of them built directly, outside any lifecycle, still ends the
+  process.
 - Runtime hazards are catalogued publicly in `Docs/mlx-runtime-hazards.md`, with an executable
   probe for each in `NFKMLXRuntimeHazardTests`. Four hazards reported elsewhere against mlx-swift
   0.31.6 — the fused attention dropping the cached tail at query length 1, `MLXFast.RoPE` disagreeing

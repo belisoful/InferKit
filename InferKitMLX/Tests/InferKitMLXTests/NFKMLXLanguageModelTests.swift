@@ -257,6 +257,64 @@ final class NFKMLXLanguageModelTests: XCTestCase {
         XCTAssertLessThan(worst, 2e-3, "chunked prefill agrees with a single pass")
     }
 
+    func testAPrefillPassIsHalvedUntilItsScoresFitTheBudget() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        let heads = net.configuration.headCount
+        XCTAssertEqual(net.prefillPassLength(cached: 0, remaining: 5000, limit: 2048), 2048)
+        XCTAssertEqual(net.prefillPassLength(cached: 0, remaining: 7, limit: 2048), 7)
+        let budget = heads * 512 * (1000 + 512) * 4
+        XCTAssertEqual(net.prefillPassLength(cached: 1000, remaining: 5000, limit: 2048, budget: budget), 512)
+        XCTAssertEqual(net.prefillPassLength(cached: 1000, remaining: 5000, limit: 2048, budget: budget - 1), 256)
+        XCTAssertEqual(net.prefillPassLength(cached: 1000, remaining: 5000, limit: 2048, budget: 0), 1)
+    }
+
+    // A prompt past the default chunk prefills in several passes and lands the logits of one.
+    func testALongPromptPrefillsInPassesAndMatchesASinglePass() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        let vocabulary = net.configuration.vocabularySize
+        let prompt = (0 ..< NFKMLXLanguageNet.defaultPrefillChunk + 300).map { ($0 * 37 + 11) % vocabulary }
+
+        let whole = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount)
+        let single = net(MLXArray(prompt.map { Int32($0) }).reshaped([1, prompt.count]), cache: whole)
+        let expected = single[0, -1].asArray(Float.self)
+
+        let passes = NFKMLXKeyValueCache(layerCount: net.configuration.layerCount)
+        let stepped = net.prefill(prompt, cache: passes, chunkSize: nil)
+        XCTAssertEqual(stepped.dim(1), 300, "the last pass holds the prompt's last 300 tokens")
+        let actual = stepped[0, -1].asArray(Float.self)
+
+        XCTAssertEqual(passes.offset, prompt.count)
+        let worst = zip(actual, expected).map { abs($0 - $1) }.max() ?? 0
+        XCTAssertLessThan(worst, 2e-3, "a prefill in passes agrees with a single pass")
+    }
+
+    // An MLX error during generation ends the run with no token, and the scope throws it.
+    func testGenerationStopsAtAnMLXErrorAndTheScopeThrowsIt() throws {
+        try requireMLXRuntime()
+        let net = tinyNet()
+        var reported = 0
+        var produced = [Int]()
+        XCTAssertThrowsError(try NFKMLXErrorScope.run {
+            eval(MLXArray.zeros([1 << 20, 1 << 20]) + 1)
+            var options = NFKMLXGenerationOptions()
+            options.maxTokens = 20
+            produced = net.generate(prompt: [3, 17, 42], options: options) { _ in
+                reported += 1
+                return true
+            }
+        }) { error in
+            guard case NFKMLXError.runtimeFailure(let detail) = error else {
+                return XCTFail("expected runtimeFailure, got \(error)")
+            }
+            XCTAssertTrue(detail.contains("malloc"), detail)
+        }
+        XCTAssertEqual(produced, [])
+        XCTAssertEqual(reported, 0)
+        XCTAssertFalse(NFKMLXErrorScope.hasFailed, "the failure belongs to the scope that ended")
+    }
+
     // The declared-facts check: a checkpoint whose shape disagrees with a config-built module is
     // rejected when verifyShapes is on, and adopted silently when it is off (the default, which a
     // placeholder-width model relies on).

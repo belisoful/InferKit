@@ -59,7 +59,9 @@ public extension NFKMLXLanguageNet {
         var produced = [Int]()
         // Appends a token to the output, or returns false when generation must stop here.
         func emit(_ token: Int) -> Bool {
-            guard produced.count < options.maxTokens, !options.stopTokens.contains(token) else {
+            // A failed evaluation samples as token 0.
+            guard !NFKMLXErrorScope.hasFailed, produced.count < options.maxTokens,
+                  !options.stopTokens.contains(token) else {
                 return false
             }
             produced.append(token)

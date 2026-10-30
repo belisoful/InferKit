@@ -1812,6 +1812,24 @@ breaking, so `from: "0.1.0"` resolves 0.1.x only and a consumer opts into each m
 
 ### InferKitMLX (companion)
 
+#### A long prompt prefills within memory
+
+- The language decoder (`NFKMLXLanguageNet`) prefills a prompt in passes of at most 2048 tokens
+  (`defaultPrefillChunk`, mlx_lm's step) when `prefillChunkSize` is unset. A pass is shortened further
+  while its attention scores, four bytes for each head, query, and key it sees, would pass 1 GiB
+  (`prefillScoreBudget`). Each pass attends through the cache to the prefix before it, so the logits
+  are those of one pass. Before, an unset chunk size ran the prompt as one pass: a 23 000-token prompt
+  on Qwen3-1.7B in bfloat16 asked Metal for 34 GB of scores at once and ended the process.
+
+#### An MLX error fails the run
+
+- A run through an MLX backend's lifecycle records an MLX error and throws it as
+  `NFKMLXError.runtimeFailure`, with MLX's message, in place of mlx-swift ending the process. The
+  language, Granite, and DeepSeek backends stop generating at the first failed evaluation and empty the
+  prompt cache or the conversation cache the run wrote into. Loading a model still ends the process on
+  an MLX error, as does a run on a Granite, DeepSeek, or Gemma 3 backend built directly rather than
+  through the registry or the catalog.
+
 #### Vision processors treat alpha as their references do
 
 - Pixtral and SmolVLM2 composite an image with alpha onto white before resizing, as their reference
