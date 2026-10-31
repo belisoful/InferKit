@@ -117,16 +117,15 @@ arithmetic as before.
   Oracle `run_ltx2` (no checkpoint, the `qwenimage` environment), `IK_PARITY_LTX2`. Held to the
   released headers by shape on LTX-2.3 22B, 4186 tensors, 0 missing / mismatched / unaccounted.
 
-  **LTX-2.5 versus LTX-2.3, and what the gate withholds.** Every LTX-2.5 repository is gated
-  (`Lightricks/LTX-2.5`, `-Diffusers`, `-Pre-Trained`), so the structural check runs against LTX-2.3,
-  the same class, whose diffusers conversion is ungated. LTX-2.5's three declared differences are
-  switches, not shapes: the video feed-forward drops its bias, the text cross-attention's key/value
-  modulation becomes timestep-independent (`use_prompt_adaln_single` false, which drops the two prompt
-  adaptive-norm heads and lets a sampler cache the text key and value across denoising steps), and a
-  learned absolute-position embedding marks generated-keyframe tokens. All three are measured — the
-  oracle records both arrangements — so the arithmetic of every switch is verified even where which
-  switch the release sets cannot be read. `.ltx25` declares them; the rest of its geometry is
-  LTX-2.3's and is unverified until the gate opens. `configuration(fromHuggingFace:)` REFUSES BY NAME
+  **LTX-2.5 versus LTX-2.3.** LTX-2.5's transformer (`Lightricks/LTX-2.5-Diffusers`, read 2026-10-31 once the
+  gate was accepted) is LTX-2.3's geometry with two switches set: the video feed-forward drops its bias, and
+  a learned absolute-position embedding marks generated-keyframe tokens (`use_keyframes_abs_pos_embedding`;
+  text-to-video marks none, so the embedding is carried and unread there). The prompt modulation stays
+  timestep-dependent (`use_prompt_adaln_single` true), as in LTX-2.3. `.ltx25` is that configuration, held
+  to the released headers by shape (4091 tensors: LTX-2.3's 4186 less the 96 feed-forward biases, plus the
+  keyframe embedding). The oracle's `l25` arrangement also turns the prompt modulation off, a path no
+  release sets, so the arithmetic of all three switches is measured.
+  `configuration(fromHuggingFace:)` REFUSES BY NAME
   every arrangement it does not build, rather than ignoring the field: the interleaved rotary, the text
   cross-attention modulation turned off (that arrangement carries six modulation parameters instead of
   nine, and a module built for nine would read the wrong slices of a vector that still loaded), the
@@ -215,16 +214,30 @@ arithmetic as before.
   6.3 GB, transformer and decoders 41.6 GB as published (79.6 GB at float32); the download is 94.9 GB. A
   512 GB Mac holds every stage resident at float32.
 
-  **LTX-2.5.** The repositories are gated and this machine's token has not accepted the gate (2026-10-31:
-  the API's detail endpoint answers, every file answers 403). Its tree is public: the text encoder is 23.9
-  GB (Gemma 4 12B at bfloat16), the connectors, the autoencoders and the vocoder are LTX-2.3's sizes, and
-  `transformer/` holds two 38 GB shard sets of which its gated index names one. `.ltx25`'s three switches
-  are measured (`run_ltx2`'s `l25` half); its geometry, its connectors' configuration, and its text
-  encoder's `model_type` are unverified until the gate opens, and the catalog's LTX-2.5 memory facts count
-  both shard sets. The generator tells the releases apart by the transformer's switches, and the registry
-  refuses one release's directory under the other's name. LTX-2.5's modular pipeline decodes video with a
-  diffusion decoder by default; `LTX2Pipeline`, which this port follows, decodes with the autoencoder.
-  Neither the diffusion decoder, the duration head, the prompt enhancer, nor the latent upsamplers are built.
+  **LTX-2.5.** `Lightricks/LTX-2.5-Diffusers` ships the same component layout. Its autoencoders and vocoder
+  are LTX-2.3's files byte for byte (the same LFS sha256), so their released-weight figures above are
+  LTX-2.5's too. Its connectors keep LTX-2.3's configuration with retrained weights, and its text encoder is
+  Gemma 4 12B (`gemma4_unified_text`, 48 layers, 49 states), which the generator reads through
+  `NFKMLXGemma4UnifiedNet`. Held to the released headers by shape: transformer 4091, text decoder 666 (the
+  vision tower unread), connectors 262 tensors, 0 missing / mismatched / unaccounted
+  (`testLTX25StagesMatchTheReleasedShapes`). The default `transformer/` is the DISTILLED transformer, and the
+  release's scheduler turns dynamic shifting and the terminal stretch off so that the distilled sigma
+  schedule (`DISTILLED_SIGMA_VALUES`, eight sigmas, `NFKMLXLTX2Generator.distilledSigmas`) is used as given,
+  unguided: classifier-free guidance 1, spatio-temporal guidance 0, modality guidance 1. The generator reads
+  `scheduler/scheduler_config.json` and takes those defaults for LTX-2.5;
+  `NFKMLXFlowMatchScheduler.setTimesteps(sigmas:sequenceLength:)` warps a caller's ramp as the reference's
+  `set_timesteps(sigmas:)` does. Measured in that arrangement at tiny configurations of every stage
+  (`ltx2_pipeline25`, `IK_PARITY_LTX2_PIPELINE25`, three of the distilled sigmas, one transformer pass a
+  step): sigmas exact, final video latent 0.9999999999999916, clip 0.9999999999995777, waveform
+  0.99999999999915. Download 70.1 GB; held as published the stages are 23.9 GB (text encoder), 6.3 GB
+  (connectors), and 41.6 GB (transformer, decoders, vocoder), and every stage fits a 512 GB Mac resident at
+  float32.
+
+  The generator tells the releases apart by the transformer's two switches, and the registry refuses one
+  release's directory under the other's name. Not built: `transformer_full/` (the SFT transformer, outside
+  `model_index.json`, which samples with dynamic shifting turned back on), the diffusion decoder LTX-2.5's
+  modular pipeline decodes with by default (`LTX2Pipeline`, which this port follows, decodes with the
+  autoencoder), the duration head, the prompt enhancer, and the latent upsamplers.
 
   Customization is offline-only: no size of this model fits a consumer machine.
 

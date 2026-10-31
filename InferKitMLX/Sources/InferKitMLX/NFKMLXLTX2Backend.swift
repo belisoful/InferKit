@@ -133,7 +133,7 @@ extension NFKMLXLTX2Generator {
     /// Downloads `variant`'s release (its ``NFKMLXLTX2Variant/releaseRepo`` when `repo` is nil) and returns
     /// the model behind the InferKit contract.
     ///
-    /// @discussion LTX-2.3 is about 101 GB to download; LTX-2.5's repository is gated. A file already in
+    /// @discussion LTX-2.3 is about 95 GB to download and LTX-2.5, whose repository is gated, about 70 GB. A file already in
     /// the cache is not fetched again. The call blocks on the network, so run it off the main and render
     /// threads. Introduced in InferKit 0.4.0.
     @objc(backendWithVariant:repo:revision:cacheDirectoryURL:residency:error:)

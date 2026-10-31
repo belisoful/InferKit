@@ -179,9 +179,24 @@ public struct NFKMLXFlowMatchScheduler {
         } else {
             end = configuration.baseShift / train / (1 + (configuration.baseShift - 1) / train)
         }
-        var s = (0 ..< steps).map { index -> Float in
+        let ramp = (0 ..< steps).map { index -> Float in
             1 - (1 - end) * Float(index) / Float(max(steps - 1, 1))
         }
+        setShifted(ramp, sequenceLength: sequenceLength)
+    }
+
+    /// Builds the schedule from a caller's own sigma ramp, which the shift and the terminal stretch then
+    /// warp as they warp the default ramp: the reference's `set_timesteps(sigmas:)`. A distilled release
+    /// samples this way, its schedule given rather than derived from a step count. Introduced in InferKit
+    /// 0.4.0.
+    public mutating func setTimesteps(sigmas ramp: [Float], sequenceLength: Int) {
+        setShifted(ramp, sequenceLength: sequenceLength)
+    }
+
+    private mutating func setShifted(_ ramp: [Float], sequenceLength: Int) {
+        let train = Float(configuration.trainTimesteps)
+        let steps = ramp.count
+        var s = ramp
         if configuration.useDynamicShifting {
             let expMu = exp(shift(forSequenceLength: sequenceLength, steps: steps))
             s = s.map { expMu / (expMu + (1 / $0 - 1)) }                 // exponential time shift

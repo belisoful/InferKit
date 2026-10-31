@@ -24355,6 +24355,12 @@ def run_ltx2_pipeline(image):
     video, the mel spectrogram, and the waveform. Runs under the `qwenimage` oracle env. `image`
     unused.
     """
+    return _ltx2_pipeline_record()
+
+
+def _ltx2_pipeline_record(transformer=None, scheduler=None, call=None):
+    """The tiny LTX-2 pipeline record `run_ltx2_pipeline` describes, its transformer, scheduler, and call
+    arguments overridden by the release arrangement a caller names."""
     from diffusers import FlowMatchEulerDiscreteScheduler
     from diffusers.pipelines.ltx2.pipeline_ltx2 import LTX2Pipeline
     from transformers import Gemma3ForCausalLM, Gemma3TextConfig
@@ -24372,7 +24378,8 @@ def run_ltx2_pipeline(image):
     connectors = _randomized(_ltx2_connectors_tiny(
         video_connector_attention_head_dim=16, video_hidden_dim=32,
         audio_connector_attention_head_dim=8, audio_hidden_dim=16), seed=47, scale=0.2)
-    transformer = _randomized(_ltx2_tiny(audio_in_channels=8, audio_out_channels=8), seed=49)
+    transformer = _randomized(_ltx2_tiny(audio_in_channels=8, audio_out_channels=8, **(transformer or {})),
+                              seed=49)
     vae = _randomized(_ltx2_video_vae_tiny(), seed=51, scale=0.2)
     audio_vae = _randomized(_ltx2_audio_vae_tiny(), seed=53, scale=0.2)
     # The vocoder reads the stereo mel spectrogram flattened over its 16 bins.
@@ -24383,11 +24390,16 @@ def run_ltx2_pipeline(image):
         for owner in (vae, audio_vae):
             owner.latents_mean.copy_(torch.randn(owner.latents_mean.shape) * 0.1)
             owner.latents_std.copy_(torch.rand(owner.latents_std.shape) * 0.5 + 0.75)
-    scheduler = FlowMatchEulerDiscreteScheduler(
+    scheduler_base = FlowMatchEulerDiscreteScheduler(
         base_image_seq_len=1024, base_shift=0.95, invert_sigmas=False, max_image_seq_len=4096,
         max_shift=2.05, num_train_timesteps=1000, shift=1.0, shift_terminal=0.1,
         stochastic_sampling=False, time_shift_type="exponential", use_beta_sigmas=False,
         use_dynamic_shifting=True, use_exponential_sigmas=False, use_karras_sigmas=False)
+    if scheduler:
+        settings = {k: v for k, v in scheduler_base.config.items() if not k.startswith("_")}
+        scheduler = FlowMatchEulerDiscreteScheduler(**{**settings, **scheduler})
+    else:
+        scheduler = scheduler_base
 
     # A prompt of five tokens and a negative prompt of two, left-padded to eight: the connectors'
     # four registers divide the length, as the release's 128 divide its 1024.
@@ -24425,14 +24437,16 @@ def run_ltx2_pipeline(image):
         lambda m, i: seams.__setitem__("audio_latent", i[0].detach().clone()))
     vocoder.register_forward_pre_hook(lambda m, i: seams.__setitem__("mel", i[0].detach().clone()))
     with torch.no_grad():
+        arguments = dict(
+            num_inference_steps=steps, guidance_scale=3.0, stg_scale=1.0, modality_scale=3.0,
+            guidance_rescale=0.7, audio_guidance_scale=7.0, audio_stg_scale=1.0,
+            audio_modality_scale=3.0, audio_guidance_rescale=0.7, spatio_temporal_guidance_blocks=[1])
+        arguments.update(call or {})
         video, audio = pipe(
             prompt_embeds=embeds[1:], prompt_attention_mask=mask[1:],
             negative_prompt_embeds=embeds[:1], negative_prompt_attention_mask=mask[:1],
             height=height, width=width, num_frames=frames, frame_rate=frame_rate,
-            num_inference_steps=steps, guidance_scale=3.0, stg_scale=1.0, modality_scale=3.0,
-            guidance_rescale=0.7, audio_guidance_scale=7.0, audio_stg_scale=1.0,
-            audio_modality_scale=3.0, audio_guidance_rescale=0.7, spatio_temporal_guidance_blocks=[1],
-            latents=latents, audio_latents=audio_latents, output_type="pt", return_dict=False)
+            latents=latents, audio_latents=audio_latents, output_type="pt", return_dict=False, **arguments)
 
     extra = {"ids": ids.to(torch.int32).contiguous(), "mask": mask.to(torch.int32).contiguous(),
              "embeds": embeds.contiguous(), "latents": latents.contiguous(),
@@ -25280,6 +25294,25 @@ CHECKPOINT_MODELS["seedx_beam"] = run_seedx_beam
 CHECKPOINT_MODELS["seedx_beam_scores"] = run_seedx_beam_scores
 CHECKPOINT_MODELS["translategemma_beam"] = run_translategemma_beam
 CHECKPOINT_MODELS["ltx_pipeline"] = run_ltx_pipeline
+
+
+def run_ltx2_pipeline25(image):
+    """`run_ltx2_pipeline` in LTX-2.5's arrangement, as `Lightricks/LTX-2.5-Diffusers` ships it: the
+    transformer drops the video feed-forward's bias and adds the keyframe embedding (which text-to-video
+    never marks, so it is carried and unread), the scheduler turns dynamic shifting and the terminal
+    stretch off, and the distilled transformer samples a caller's own sigmas unguided (classifier-free
+    guidance 1, spatio-temporal guidance 0, modality guidance 1). Three of the distilled sigmas stand in
+    for its eight. Runs under the `qwenimage` oracle env. `image` unused.
+    """
+    return _ltx2_pipeline_record(
+        transformer=dict(ff_bias=False, use_keyframes_abs_pos_embedding=True),
+        scheduler=dict(use_dynamic_shifting=False, shift_terminal=None),
+        call=dict(num_inference_steps=None, sigmas=[1.0, 0.909375, 0.421875], guidance_scale=1.0,
+                  audio_guidance_scale=1.0, stg_scale=0.0, audio_stg_scale=0.0, modality_scale=1.0,
+                  audio_modality_scale=1.0))
+
+
+MODELS["ltx2_pipeline25"] = run_ltx2_pipeline25
 
 
 def run_ltx2_real_decoders(image, checkpoint):

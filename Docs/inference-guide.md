@@ -1862,7 +1862,7 @@ alternatives.
     midpoint in seconds and pixels. At reference parity against diffusers in both released
     arrangements (LTX-2.3 video 0.9999999999996182 / audio 0.9999999999999584; LTX-2.5 video
     0.9999999999996512 / audio 0.9999999999996835) and held to the released LTX-2.3 headers by shape
-    (4186 tensors, 0 missing / mismatched / unaccounted). Every LTX-2.5 repository is gated, so the
+    (4186 tensors, 0 missing / mismatched / unaccounted), and LTX-2.5 too (4091 tensors). Every LTX-2.5 repository was gated when the transformer shipped, so the
     shape check runs against LTX-2.3, the same class. The video and audio decoders, the text
     connectors, the vocoder with bandwidth extension, and the pipeline with its three guidance passes
     ship at parity too (tiny pipeline clip 0.9999999999993114, waveform 0.9999999999988513), each

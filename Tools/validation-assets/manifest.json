@@ -6029,6 +6029,7 @@
         "ltx2_connectors",
         "ltx2_guidance",
         "ltx2_pipeline",
+        "ltx2_pipeline25",
         "ltx2_real_decoders",
         "ltx2_real_connectors",
         "flux2_vae",
@@ -6322,7 +6323,7 @@
       "repo": "diffusers/LTX-2.3-Diffusers",
       "subfolder": "transformer",
       "directory": "ltx2-23-22b",
-      "note": "LTX-2.3 22B audio-video transformer (`LTX2VideoTransformer3DModel`, 4186 tensors across 8 shards, 19.0 GB bf16). Every LTX-2.5 repository is gated (`Lightricks/LTX-2.5`, `LTX-2.5-Diffusers`, `LTX-2.5-Pre-Trained`), and accepting a license is a user action, so the structural check runs against LTX-2.3, the same class at the arrangement its `config.json` declares (`rope_type` split, `cross_attn_mod` true, `use_prompt_embeddings` false). LTX-2.5's three declared differences — `ff_bias` false, `use_prompt_adaln_single` false, `use_keyframes_abs_pos_embedding` true — are measured numerically instead, by the `l25` half of `run_reference.py ltx2`. `Lightricks/LTX-2.3` itself ships a single-file checkpoint with no config, which is why the diffusers organization's conversion is the source here."
+      "note": "LTX-2.3 22B audio-video transformer (`LTX2VideoTransformer3DModel`, 4186 tensors across 8 shards, 19.0 GB bf16). Every LTX-2.5 repository was gated when the transformer shipped (the gate was accepted 2026-10-31, and `ltx2-25-transformer` below is its own inventory), so this structural check ran against LTX-2.3, the same class at the arrangement its `config.json` declares (`rope_type` split, `cross_attn_mod` true, `use_prompt_embeddings` false). LTX-2.5's three declared differences — `ff_bias` false, `use_prompt_adaln_single` false, `use_keyframes_abs_pos_embedding` true — are measured numerically instead, by the `l25` half of `run_reference.py ltx2`. `Lightricks/LTX-2.3` itself ships a single-file checkpoint with no config, which is why the diffusers organization's conversion is the source here."
     },
     {
       "repo": "diffusers/LTX-2.3-Diffusers",
@@ -6347,6 +6348,24 @@
       "subfolder": "connectors",
       "directory": "ltx2-23-connectors",
       "note": "The LTX-2.3 text connectors (`LTX2TextConnectors`, 262 tensors, 6.3 GB bf16). The release stores them twice, as one file and as two shards with an index; shapes.py reads the shard index."
+    },
+    {
+      "repo": "Lightricks/LTX-2.5-Diffusers",
+      "subfolder": "transformer",
+      "directory": "ltx2-25-transformer",
+      "note": "The LTX-2.5 distilled transformer (4091 tensors across 4 shards, 38.0 GB bf16; the gated repository also stores an older 8-shard set the index does not name, and `transformer_full/`, the SFT transformer). NFKMLXLTX2StageTests.testLTX25StagesMatchTheReleasedShapes holds `.ltx25` to it. Gated with automatic approval; HF_TOKEN must be set."
+    },
+    {
+      "repo": "Lightricks/LTX-2.5-Diffusers",
+      "subfolder": "text_encoder",
+      "directory": "ltx2-25-text_encoder",
+      "note": "LTX-2.5's Gemma 4 12B text encoder (`Gemma4UnifiedForConditionalGeneration`, 677 tensors across 5 shards, 23.9 GB bf16). The decoder's 666 tensors under `model.language_model.` are held to it; the vision tower is unread."
+    },
+    {
+      "repo": "Lightricks/LTX-2.5-Diffusers",
+      "subfolder": "connectors",
+      "directory": "ltx2-25-connectors",
+      "note": "LTX-2.5's text connectors (262 tensors, 6.3 GB bf16): LTX-2.3's configuration with retrained weights. The autoencoders and the vocoder are LTX-2.3's files byte for byte, so they carry no LTX-2.5 entry."
     },
     {
       "repo": "black-forest-labs/FLUX.2-klein-base-9B",

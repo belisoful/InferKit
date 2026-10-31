@@ -132,11 +132,10 @@ public struct NFKMLXLTX2Configuration: Sendable {
     /// LTX-2.3 22B (`Lightricks/LTX-2.3`), the ungated release this port is held to structurally.
     public static let ltx23 = NFKMLXLTX2Configuration()
 
-    /// LTX-2.5 22B (`Lightricks/LTX-2.5`). The three switches below are the declared differences from
-    /// LTX-2.3. The rest of the geometry is LTX-2.3's: LTX-2.5's own `config.json` is behind
-    /// Lightricks' gate, so the remaining fields are unverified against the release.
-    public static let ltx25 = NFKMLXLTX2Configuration(
-        usesPromptAdaptiveNorm: false, feedForwardBias: false, usesKeyframeEmbedding: true)
+    /// LTX-2.5 22B (`Lightricks/LTX-2.5-Diffusers`, its `transformer/config.json`): LTX-2.3's geometry with
+    /// the video feed-forward's bias dropped and the keyframe embedding added. The prompt modulation stays
+    /// timestep-dependent, as in LTX-2.3.
+    public static let ltx25 = NFKMLXLTX2Configuration(feedForwardBias: false, usesKeyframeEmbedding: true)
 
     /// A tiny random configuration for reference parity.
     public static let tiny = NFKMLXLTX2Configuration(
@@ -145,7 +144,9 @@ public struct NFKMLXLTX2Configuration: Sendable {
         audioInChannels: 6, audioOutChannels: 6, audioNumAttentionHeads: 2,
         audioAttentionHeadDim: 8, audioCrossAttentionDim: 16, numLayers: 2, captionChannels: 14)
 
-    /// The tiny configuration with LTX-2.5's three switches.
+    /// The tiny configuration with the three switches that differ across the LTX-2 transformers: the
+    /// video feed-forward's bias dropped, the keyframe embedding added, and the prompt modulation made
+    /// timestep-independent.
     public static let tiny25 = NFKMLXLTX2Configuration(
         inChannels: 8, outChannels: 8, numAttentionHeads: 2, attentionHeadDim: 16,
         crossAttentionDim: 32, baseHeight: 64, baseWidth: 64,

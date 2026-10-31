@@ -112,11 +112,15 @@ public final class NFKMLXLTX2Pipeline {
     /// Denoises from `video` `[1, F·H·W, C]` and `audio` `[1, L, C·M]` (normalized latents) over `steps`
     /// flow steps. `text` and `audioText` hold the positive prompt's streams, or the negative's and then the
     /// positive's when classifier-free guidance runs; `perturbedBlocks` are the blocks spatio-temporal
-    /// guidance perturbs. `onStep` receives each completed step's index.
+    /// guidance perturbs. `schedule` is the release's flow schedule, and `sigmas`, where given, is the
+    /// ramp it warps in place of the pipeline's `linspace(1, 1 / steps, steps)`; a distilled release
+    /// samples from its own sigmas and `steps` is then their count. `onStep` receives each completed
+    /// step's index.
     public func denoise(video initialVideo: MLXArray, audio initialAudio: MLXArray, text: MLXArray,
                         audioText: MLXArray, frames: Int, height: Int, width: Int, audioFrames: Int,
                         frameRate: Float, steps: Int, videoGuidance: NFKMLXLTX2Guidance = .video,
                         audioGuidance: NFKMLXLTX2Guidance = .audio, perturbedBlocks: Set<Int>,
+                        schedule: NFKMLXFlowMatchConfiguration = .ltxVideoPipeline, sigmas: [Float]? = nil,
                         onStep: ((Int) -> Void)? = nil) throws -> (video: MLXArray, audio: MLXArray) {
         let usesText = videoGuidance.textScale > 1 || audioGuidance.textScale > 1
         let usesPerturbation = (videoGuidance.spatioTemporalScale > 0 || audioGuidance.spatioTemporalScale > 0)
@@ -125,8 +129,13 @@ public final class NFKMLXLTX2Pipeline {
         let positiveText = usesText ? text[1 ..< 2] : text
         let positiveAudioText = usesText ? audioText[1 ..< 2] : audioText
 
-        var scheduler = NFKMLXFlowMatchScheduler(.ltxVideoPipeline)
-        scheduler.setTimesteps(steps, sequenceLength: initialVideo.dim(1))
+        var scheduler = NFKMLXFlowMatchScheduler(schedule)
+        if let sigmas {
+            scheduler.setTimesteps(sigmas: sigmas, sequenceLength: initialVideo.dim(1))
+        } else {
+            scheduler.setTimesteps(steps, sequenceLength: initialVideo.dim(1))
+        }
+        let steps = scheduler.timesteps.count
         var video = initialVideo.asType(.float32), audio = initialAudio.asType(.float32)
         let dtype = transformer.projIn.weight.dtype
 

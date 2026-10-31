@@ -21,8 +21,8 @@ import MLXRandom
 public enum NFKMLXLTX2Variant: Int, CaseIterable, Sendable {
     /// LTX-2.3, `diffusers/LTX-2.3-Diffusers`: the 22B transformer, Gemma 3 12B as the text encoder.
     case ltx23 = 0
-    /// LTX-2.5, `Lightricks/LTX-2.5-Diffusers` (gated): the 22B transformer with its three switches, Gemma
-    /// 4 12B as the text encoder.
+    /// LTX-2.5, `Lightricks/LTX-2.5-Diffusers` (gated): the distilled 22B transformer without the video
+    /// feed-forward's bias and with the keyframe embedding, Gemma 4 12B as the text encoder.
     case ltx25 = 1
 
     /// The registry name.
@@ -215,8 +215,14 @@ public final class NFKMLXLTX2Generator: NSObject {
     private let audio: NFKMLXLTX2AudioVAEConfiguration
     private let layerCount: Int
 
-    /// The denoising steps, 30 by the reference's default.
+    /// The denoising steps, 30 by the reference's default. Unread where ``sigmas`` is set.
     @objc public var steps: Int = 30
+    /// The sigma ramp to sample from in place of `linspace(1, 1 / steps, steps)`, warped by the release's
+    /// schedule. LTX-2.5's distilled transformer samples from ``distilledSigmas``, its default; nil
+    /// elsewhere.
+    @objc public var sigmas: [NSNumber]?
+    /// The release's flow schedule.
+    let schedule: NFKMLXFlowMatchConfiguration
     /// The video's classifier-free guidance scale, 3 by the reference's default.
     @objc public var guidance: Float = NFKMLXLTX2Guidance.video.textScale
     /// The audio's classifier-free guidance scale, 7 by the reference's default.
@@ -246,7 +252,7 @@ public final class NFKMLXLTX2Generator: NSObject {
 
     init(variant: NFKMLXLTX2Variant, resident: Bool, tokenizer: NFKMLXGemmaTokenizer,
          video: NFKMLXLTX2VideoVAEConfiguration, audio: NFKMLXLTX2AudioVAEConfiguration, layerCount: Int,
-         audioSampleRate: Int, loadText: @escaping () throws -> NFKLTX2TextStage,
+         audioSampleRate: Int, schedule: NFKMLXFlowMatchConfiguration = .ltxVideoPipeline, loadText: @escaping () throws -> NFKLTX2TextStage,
          loadConnectors: @escaping () throws -> NFKMLXLTX2ConnectorsNet,
          loadPipeline: @escaping () throws -> NFKMLXLTX2Pipeline) {
         self.variant = variant
@@ -259,8 +265,14 @@ public final class NFKMLXLTX2Generator: NSObject {
         self.audio = audio
         self.layerCount = layerCount
         self.audioSampleRate = audioSampleRate
+        self.schedule = schedule
         super.init()
         perturbedBlocks = [min(28, layerCount - 1)]
+        if variant == .ltx25 {
+            // The distilled transformer LTX-2.5's `transformer/` holds samples its own sigmas unguided.
+            sigmas = Self.distilledSigmas.map { NSNumber(value: $0) }
+            (guidance, audioGuidance, spatioTemporalGuidance, modalityGuidance) = (1, 1, 0, 1)
+        }
     }
 
     /// Loads every stage now, for a resident release.
@@ -348,7 +360,8 @@ public final class NFKMLXLTX2Generator: NSObject {
         let generator = NFKMLXLTX2Generator(
             variant: variant, resident: plan.holdsStagesResident, tokenizer: tokenizer, video: videoConfiguration,
             audio: audioConfiguration, layerCount: transformerConfiguration.numLayers,
-            audioSampleRate: vocoderConfiguration.outputSampleRate, loadText: {
+            audioSampleRate: vocoderConfiguration.outputSampleRate,
+            schedule: try schedule(fromHuggingFace: directory("scheduler/scheduler_config.json")), loadText: {
                 try text.load(directory: directory("text_encoder"), converting: textLoadType, streamed: textStreamed)
             },
             loadConnectors: {
@@ -382,10 +395,21 @@ public final class NFKMLXLTX2Generator: NSObject {
         return generator
     }
 
-    /// The release a transformer configuration describes: LTX-2.5's three switches, or LTX-2.3.
+    /// The release a transformer configuration describes: LTX-2.5 adds the keyframe embedding and drops the
+    /// video feed-forward's bias.
     static func variant(of configuration: NFKMLXLTX2Configuration) -> NFKMLXLTX2Variant {
-        configuration.usesKeyframeEmbedding && !configuration.usesPromptAdaptiveNorm && !configuration.feedForwardBias
-            ? .ltx25 : .ltx23
+        configuration.usesKeyframeEmbedding && !configuration.feedForwardBias ? .ltx25 : .ltx23
+    }
+
+    /// The sigmas LTX-2.5's distilled transformer samples from, the reference's `DISTILLED_SIGMA_VALUES`.
+    public static let distilledSigmas: [Float] = [1.0, 0.99375, 0.9875, 0.98125, 0.975, 0.909375, 0.725, 0.421875]
+
+    /// Reads `scheduler/scheduler_config.json`: dynamic shifting from its bounds, else the static `shift`,
+    /// the terminal stretch where it names one, over the pipeline's `1 / steps` ramp.
+    static func schedule(fromHuggingFace url: URL) throws -> NFKMLXFlowMatchConfiguration {
+        var schedule = try NFKMLXSD3Release.schedule(fromHuggingFace: url)
+        schedule.rampEndsAtStepFraction = true
+        return schedule
     }
 
     /// The component folders a download fetches.
@@ -409,8 +433,8 @@ public final class NFKMLXLTX2Generator: NSObject {
     /// Downloads `variant`'s release (its ``NFKMLXLTX2Variant/releaseRepo`` when `repo` is nil) and assembles
     /// the model, holding it as `residency` says.
     ///
-    /// @discussion LTX-2.3 is about 101 GB: the 48.8 GB float32 text encoder, the 38 GB transformer, and the
-    /// 12.7 GB of connectors stored twice over (the single file is fetched). LTX-2.5's repository is gated:
+    /// @discussion LTX-2.3 is about 95 GB: the 48.8 GB float32 text encoder, the 38 GB transformer, and the
+    /// 6.3 GB connectors; LTX-2.5 about 70 GB. LTX-2.5's repository is gated:
     /// its license is accepted once on the Hub, and the token is `NFKHFHub.defaultAccessToken`. A file
     /// already in the cache is not fetched again. The call blocks on the network, so run it off the main
     /// and render threads. Introduced in InferKit 0.4.0.
@@ -500,7 +524,8 @@ public final class NFKMLXLTX2Generator: NSObject {
                     video: videoNoise, audio: audioNoise, text: streams[0].asType(dtype),
                     audioText: streams[1].asType(dtype), frames: grid.frames, height: grid.height, width: grid.width,
                     audioFrames: grid.audioFrames, frameRate: frameRate, steps: steps, videoGuidance: videoGuidance,
-                    audioGuidance: audioGuidanceScales, perturbedBlocks: perturbedBlocks, onStep: onStep)
+                    audioGuidance: audioGuidanceScales, perturbedBlocks: perturbedBlocks, schedule: schedule,
+                    sigmas: sigmas?.map(\.floatValue), onStep: onStep)
                 let clip = MLX.clip(pipeline.decodeVideo(videoLatents, frames: grid.frames, height: grid.height,
                                                          width: grid.width)[0] / 2 + 0.5, min: 0, max: 1)
                 eval(clip)

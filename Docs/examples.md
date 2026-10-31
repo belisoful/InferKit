@@ -3371,7 +3371,7 @@ NFKAudioAsset *soundtrack = [clip outputForKey:NFKOutputAudio];  // the soundtra
 
 The release's transformer says which release it is, and `generator(variant:repo:revision:cacheDirectoryURL:residency:)`
 downloads one by `NFKMLXLTX2Variant`: `.ltx23` reads `diffusers/LTX-2.3-Diffusers` (about 95 GB) and `.ltx25`
-the gated `Lightricks/LTX-2.5-Diffusers`. The stages load in turn where they do not fit together, and a stage
+the gated `Lightricks/LTX-2.5-Diffusers` (about 70 GB), whose distilled transformer samples `NFKMLXLTX2Generator.distilledSigmas` unguided by default. The stages load in turn where they do not fit together, and a stage
 that does not fit alone streams its layers from the release on every pass. The 22B transformer is 38 GB at
 the released bfloat16, so LTX-2 runs streamed on a 32 GB machine and resident on a large one.
 

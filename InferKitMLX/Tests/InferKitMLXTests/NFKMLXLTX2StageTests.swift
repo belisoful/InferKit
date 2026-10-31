@@ -223,7 +223,30 @@ extension NFKMLXLTX2StageTests {
     // spatio-temporal guidance, modality isolation, and the rescale), both decodes, and the vocoder.
     // A disagreement localizes to the text front end, the loop, or a decode.
     func testLTX2PipelineMatchesTheReference() throws {
-        let arrays = try record("IK_PARITY_LTX2_PIPELINE", oracle: "ltx2_pipeline")
+        try assertPipelineParity(key: "IK_PARITY_LTX2_PIPELINE", oracle: "ltx2_pipeline", label: "ltx2-pipeline",
+                                 transformerSwitches: { _ in }, schedule: .ltxVideoPipeline, sigmas: nil,
+                                 videoGuidance: .video, audioGuidance: .audio)
+    }
+
+    // LTX-2.5's arrangement as its release ships it: the transformer without the video feed-forward's bias
+    // and with the keyframe embedding, the static schedule without the terminal stretch, a caller's own
+    // sigmas, and no guidance pass, so each step runs the transformer once.
+    func testLTX25PipelineMatchesTheReference() throws {
+        let unguided = NFKMLXLTX2Guidance(textScale: 1, spatioTemporalScale: 0, modalityScale: 1, rescale: 0.7)
+        var schedule = NFKMLXFlowMatchConfiguration(baseShift: 1, shiftTerminal: nil, useDynamicShifting: false)
+        schedule.rampEndsAtStepFraction = true
+        try assertPipelineParity(key: "IK_PARITY_LTX2_PIPELINE25", oracle: "ltx2_pipeline25", label: "ltx2.5-pipeline",
+                                 transformerSwitches: { $0.feedForwardBias = false; $0.usesKeyframeEmbedding = true },
+                                 schedule: schedule, sigmas: [1.0, 0.909375, 0.421875], videoGuidance: unguided,
+                                 audioGuidance: unguided)
+    }
+
+    private func assertPipelineParity(key: String, oracle: String, label: String,
+                                      transformerSwitches: (inout NFKMLXLTX2Configuration) -> Void,
+                                      schedule: NFKMLXFlowMatchConfiguration, sigmas: [Float]?,
+                                      videoGuidance: NFKMLXLTX2Guidance, audioGuidance: NFKMLXLTX2Guidance) throws {
+        let arrays = try record(key, oracle: oracle)
+        let guided = videoGuidance.textScale > 1 || audioGuidance.textScale > 1
 
         let gemma = NFKMLXGemma3Net(try NFKMLXGemma3Language.configuration(fromJSON: [
             "model_type": "gemma3_text", "vocab_size": 64, "hidden_size": 12, "intermediate_size": 24,
@@ -250,19 +273,20 @@ extension NFKMLXLTX2StageTests {
         for row in 0 ..< 2 {
             let valid = (0 ..< length).filter { mask[row * length + $0] != 0 }
             let states = NFKMLXLTX2Pipeline.textStates(gemma, tokens: valid.map { Int(ids[row * length + $0]) })
-            compare("ltx2-pipeline text states row \(row)", states,
+            compare("\(label) text states row \(row)", states,
                     embeds[row].take(MLXArray(valid.map(Int32.init)), axis: 0).expandedDimensions(axis: 0))
             let (video, audio) = connectors(validStates: states, length: length)
             videoStreams.append(video)
             audioStreams.append(audio)
         }
         let text = concatenated(videoStreams, axis: 0), audioText = concatenated(audioStreams, axis: 0)
-        compare("ltx2-pipeline connector video", text, arrays["seam.connector_video"])
-        compare("ltx2-pipeline connector audio", audioText, arrays["seam.connector_audio"])
+        compare("\(label) connector video", guided ? text : text[1 ..< 2], arrays["seam.connector_video"])
+        compare("\(label) connector audio", guided ? audioText : audioText[1 ..< 2], arrays["seam.connector_audio"])
 
         var transformerConfiguration = NFKMLXLTX2Configuration.tiny
         transformerConfiguration.audioInChannels = 8
         transformerConfiguration.audioOutChannels = 8
+        transformerSwitches(&transformerConfiguration)
         let transformer = NFKMLXLTX2TransformerNet(transformerConfiguration)
         try NFKMLXWeights.apply(weights(arrays, prefix: "transformer"), to: transformer)
         let videoDecoder = NFKMLXLTX2VideoDecoderNet(.tiny)
@@ -284,26 +308,33 @@ extension NFKMLXLTX2StageTests {
         let grid = NFKMLXLTX2Pipeline.grid(frames: 9, width: 96, height: 64, frameRate: 24, video: .tiny,
                                            audio: .tiny)
         XCTAssertEqual([grid.frames, grid.height, grid.width, grid.audioFrames], [2, 2, 3, 9])
-        var scheduler = NFKMLXFlowMatchScheduler(.ltxVideoPipeline)
-        scheduler.setTimesteps(3, sequenceLength: 12)
-        compare("ltx2-pipeline sigmas", MLXArray(scheduler.sigmas), arrays["sigmas"])
+        var scheduler = NFKMLXFlowMatchScheduler(schedule)
+        if let sigmas {
+            scheduler.setTimesteps(sigmas: sigmas, sequenceLength: 12)
+        } else {
+            scheduler.setTimesteps(3, sequenceLength: 12)
+        }
+        compare("\(label) sigmas", MLXArray(scheduler.sigmas), arrays["sigmas"])
 
+        // Unguided, the reference conditions on the positive prompt alone.
         let (video, audio) = try pipeline.denoise(
             video: try XCTUnwrap(arrays["latents"]), audio: pipeline.normalizedAudio(try XCTUnwrap(arrays["audio_latents"])),
-            text: text, audioText: audioText, frames: grid.frames, height: grid.height, width: grid.width,
-            audioFrames: grid.audioFrames, frameRate: 24, steps: 3, perturbedBlocks: [1])
+            text: guided ? text : text[1 ..< 2], audioText: guided ? audioText : audioText[1 ..< 2], frames: grid.frames,
+            height: grid.height, width: grid.width, audioFrames: grid.audioFrames, frameRate: 24, steps: 3,
+            videoGuidance: videoGuidance, audioGuidance: audioGuidance, perturbedBlocks: [1], schedule: schedule,
+            sigmas: sigmas)
         let unpackedVideo = video.reshaped([1, 2, 2, 3, 8]) * videoStatistics.std + videoStatistics.mean
-        let videoLatent = compare("ltx2-pipeline final video latent", channelsFirst(unpackedVideo),
+        let videoLatent = compare("\(label) final video latent", channelsFirst(unpackedVideo),
                                   arrays["seam.video_latent"])
         let unpackedAudio = (audio * audioStatistics.std + audioStatistics.mean).reshaped([1, 9, 2, 4])
-        compare("ltx2-pipeline final audio latent", unpackedAudio.transposed(0, 2, 1, 3), arrays["seam.audio_latent"])
+        compare("\(label) final audio latent", unpackedAudio.transposed(0, 2, 1, 3), arrays["seam.audio_latent"])
 
         let clip = clip(pipeline.decodeVideo(video, frames: 2, height: 2, width: 3) / 2 + 0.5, min: 0, max: 1)
-        let videoSimilarity = compare("ltx2-pipeline video", clip.transposed(0, 1, 4, 2, 3), arrays["video"])
-        compare("ltx2-pipeline mel", pipeline.decodeMel(audio).transposed(0, 3, 1, 2), arrays["seam.mel"])
-        let audioSimilarity = compare("ltx2-pipeline audio", pipeline.decodeAudio(audio).transposed(0, 2, 1),
+        let videoSimilarity = compare("\(label) video", clip.transposed(0, 1, 4, 2, 3), arrays["video"])
+        compare("\(label) mel", pipeline.decodeMel(audio).transposed(0, 3, 1, 2), arrays["seam.mel"])
+        let audioSimilarity = compare("\(label) audio", pipeline.decodeAudio(audio).transposed(0, 2, 1),
                                       arrays["audio"])
-        print("VALIDATION PARITY ltx2-pipeline: final video latent cosine \(videoLatent), clip \(videoSimilarity), "
+        print("VALIDATION PARITY \(label): final video latent cosine \(videoLatent), clip \(videoSimilarity), "
               + "waveform \(audioSimilarity)")
     }
 }
@@ -329,8 +360,9 @@ extension NFKMLXLTX2StageTests {
             try MLX.save(arrays: selected, url: root.appendingPathComponent(path))
         }
         try write(["_class_name": "LTX2Pipeline"], "model_index.json")
-        try write(["_class_name": "FlowMatchEulerDiscreteScheduler", "base_shift": 0.95, "max_shift": 2.05,
-                   "shift_terminal": 0.1, "use_dynamic_shifting": true], "scheduler/scheduler_config.json")
+        try write(["_class_name": "FlowMatchEulerDiscreteScheduler", "base_image_seq_len": 1024, "base_shift": 0.95,
+                   "max_image_seq_len": 4096, "max_shift": 2.05, "shift": 1.0, "shift_terminal": 0.1,
+                   "use_dynamic_shifting": true], "scheduler/scheduler_config.json")
         try write(["model_type": "gemma3_text", "vocab_size": 64, "hidden_size": 12, "intermediate_size": 24,
                    "num_hidden_layers": 2, "num_attention_heads": 2, "num_key_value_heads": 1, "head_dim": 8,
                    "query_pre_attn_scalar": 8, "sliding_window": 4,
@@ -575,5 +607,42 @@ extension NFKMLXLTX2StageTests {
         let videoSimilarity = compare("ltx2-23-real connectors video", video, arrays["video"])
         let audioSimilarity = compare("ltx2-23-real connectors audio", audio, arrays["audio"])
         print("VALIDATION PARITY ltx2-23-real-connectors: video text cosine \(videoSimilarity), audio \(audioSimilarity)")
+    }
+}
+
+extension NFKMLXLTX2StageTests {
+
+    // LTX-2.5 (`Lightricks/LTX-2.5-Diffusers`): the transformer built from the released configuration is
+    // `.ltx25` and the generator reads it as LTX-2.5; it, the Gemma 4 unified text decoder, and the
+    // connectors are held to the released headers. The autoencoders and the vocoder are LTX-2.3's files,
+    // byte for byte.
+    func testLTX25StagesMatchTheReleasedShapes() throws {
+        let transformer = try releasedShapes("ltx2-25-transformer")
+        let configuration = try NFKMLXLTX2TransformerNet.configuration(fromHuggingFace: transformer.config)
+        XCTAssertEqual(NFKMLXLTX2Generator.variant(of: configuration), .ltx25)
+        XCTAssertFalse(configuration.feedForwardBias)
+        XCTAssertTrue(configuration.usesKeyframeEmbedding)
+        XCTAssertTrue(configuration.usesPromptAdaptiveNorm, "LTX-2.5 keeps the timestep-dependent prompt modulation")
+        for keyPath in [\NFKMLXLTX2Configuration.numLayers, \.numAttentionHeads, \.attentionHeadDim,
+                        \.audioNumAttentionHeads, \.audioAttentionHeadDim, \.crossAttentionDim, \.inChannels] {
+            XCTAssertEqual(configuration[keyPath: keyPath], NFKMLXLTX2Configuration.ltx25[keyPath: keyPath])
+        }
+        XCTAssertEqual(configuration.feedForwardBias, NFKMLXLTX2Configuration.ltx25.feedForwardBias)
+        XCTAssertEqual(configuration.usesPromptAdaptiveNorm, NFKMLXLTX2Configuration.ltx25.usesPromptAdaptiveNorm)
+        XCTAssertEqual(transformer.shapes.count, 4091, "LTX-2.3's 4186 less the 96 feed-forward biases, plus the keyframe embedding")
+        assertMatches("ltx2-25-transformer", NFKMLXLTX2TransformerNet(configuration), released: transformer.shapes) { _, shape in shape }
+
+        let text = try releasedShapes("ltx2-25-text_encoder")
+        guard case .gemma4Unified(let textConfiguration) = try NFKLTX2TextEncoder.reading(text.config) else {
+            return XCTFail("LTX-2.5's text encoder is Gemma 4 unified")
+        }
+        XCTAssertEqual(textConfiguration.layerCount + 1, 49, "the connectors read 49 hidden states")
+        assertMatches("ltx2-25-text_encoder", NFKMLXGemma4UnifiedNet(textConfiguration), released: text.shapes,
+                      prefix: "model.language_model.") { _, shape in shape }
+
+        let connectors = try releasedShapes("ltx2-25-connectors")
+        assertMatches("ltx2-25-connectors",
+                      NFKMLXLTX2ConnectorsNet(try NFKMLXLTX2Connectors.configuration(fromHuggingFace: connectors.config)),
+                      released: connectors.shapes) { _, shape in shape }
     }
 }

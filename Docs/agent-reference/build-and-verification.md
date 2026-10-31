@@ -215,7 +215,7 @@ method assigns the out-parameter after the block has run. A sweep of every `.m` 
    -skipPackagePluginValidation` throughout):
 
    ```
-   xcodebuild test -scheme InferKitMLXTests        …    # 3113 — the model and API suite
+   xcodebuild test -scheme InferKitMLXTests        …    # 3115 — the model and API suite
    xcodebuild test -scheme InferKitMLXExamples     …    #  154 — the Swift documented snippets
    xcodebuild test -scheme InferKitMLXObjCExamples …    #   63 — the Objective-C ones
    ```

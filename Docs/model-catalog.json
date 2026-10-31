@@ -25361,7 +25361,10 @@
       "memoryModel" : {
         "precision" : "precision",
         "quantizationBits" : "quantizationBits",
-        "residency" : "residency"
+        "residency" : "residency",
+        "stagePrecisions" : {
+          "text_encoder" : "bfloat16"
+        }
       },
       "options" : [
         {
@@ -25475,24 +25478,24 @@
             },
             {
               "memory" : {
-                "peakBytes" : 108042976358,
-                "residentBytes" : 108042976358
+                "peakBytes" : 71873392652,
+                "residentBytes" : 71873392652
               },
               "title" : "Resident",
               "value" : "resident"
             },
             {
               "memory" : {
-                "peakBytes" : 77778938814,
-                "residentBytes" : 77778938814
+                "peakBytes" : 41609477036,
+                "residentBytes" : 41609477036
               },
               "title" : "Staged",
               "value" : "staged"
             },
             {
               "memory" : {
-                "peakBytes" : 77778938814,
-                "residentBytes" : 77778938814
+                "peakBytes" : 6035388076,
+                "residentBytes" : 6035388076
               },
               "title" : "Streamed",
               "value" : "streamed"
@@ -25510,16 +25513,16 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 77778938814,
-                "residentBytes" : 77778938814
+                "peakBytes" : 41609477036,
+                "residentBytes" : 41609477036
               },
               "title" : "As published",
               "value" : "checkpoint"
             },
             {
               "memory" : {
-                "peakBytes" : 77778938814,
-                "residentBytes" : 77778938814
+                "peakBytes" : 79585195436,
+                "residentBytes" : 79585195436
               },
               "title" : "Float32",
               "value" : "float32"
@@ -25537,56 +25540,56 @@
           "choices" : [
             {
               "memory" : {
-                "peakBytes" : 77778938814,
-                "residentBytes" : 77778938814
+                "peakBytes" : 41609477036,
+                "residentBytes" : 41609477036
               },
               "title" : "None",
               "value" : 0
             },
             {
               "memory" : {
-                "peakBytes" : 77778938814,
-                "residentBytes" : 77778938814
+                "peakBytes" : 24079416236,
+                "residentBytes" : 24079416236
               },
               "title" : "8-bit",
               "value" : 8
             },
             {
               "memory" : {
-                "peakBytes" : 77778938814,
-                "residentBytes" : 77778938814
+                "peakBytes" : 19404733356,
+                "residentBytes" : 19404733356
               },
               "title" : "6-bit",
               "value" : 6
             },
             {
               "memory" : {
-                "peakBytes" : 77778938814,
-                "residentBytes" : 77778938814
+                "peakBytes" : 17067391916,
+                "residentBytes" : 17067391916
               },
               "title" : "5-bit",
               "value" : 5
             },
             {
               "memory" : {
-                "peakBytes" : 77778938814,
-                "residentBytes" : 77778938814
+                "peakBytes" : 14730050476,
+                "residentBytes" : 14730050476
               },
               "title" : "4-bit",
               "value" : 4
             },
             {
               "memory" : {
-                "peakBytes" : 77778938814,
-                "residentBytes" : 77778938814
+                "peakBytes" : 12392709036,
+                "residentBytes" : 12392709036
               },
               "title" : "3-bit",
               "value" : 3
             },
             {
               "memory" : {
-                "peakBytes" : 77778938814,
-                "residentBytes" : 77778938814
+                "peakBytes" : 10055367596,
+                "residentBytes" : 10055367596
               },
               "title" : "2-bit",
               "value" : 2
@@ -25643,7 +25646,7 @@
       ],
       "registryName" : "ltx-2.5",
       "requirements" : {
-        "minimumMemoryBytes" : 96557536600,
+        "minimumMemoryBytes" : 54005228626,
         "minimumOS" : {
           "iOS" : "17.0",
           "macOS" : "14.0"
@@ -25663,43 +25666,86 @@
       "variants" : [
         {
           "displayName" : "LTX-2.5",
-          "downloadBytes" : 108075674304,
+          "downloadBytes" : 70090002800,
           "id" : "default",
           "isDefault" : true,
-          "measurementNote" : "tensor headers unread: vae/diffusion_pytorch_model.safetensors (HTTP 403), audio_vae/diffusion_pytorch_model.safetensors (HTTP 403), vocoder/diffusion_pytorch_model.safetensors (HTTP 403) and 18 more",
           "memoryFacts" : {
-            "basis" : "stored-dtype",
+            "basis" : "measured",
             "loadOverheadBytes" : 0,
             "stages" : [
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 23919548424
+                  "bfloat16" : 23919460448,
+                  "checkpoint" : 23919460448,
+                  "float32" : 47838920896
                 },
                 "id" : "text_encoder",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 483688450,
+                  "checkpoint" : 483688450,
+                  "float32" : 967376900
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 21801427040,
+                  "checkpoint" : 21801427040,
+                  "float32" : 43602854080
+                },
+                "layerCount" : 48,
+                "quantizableElements" : 10899947520,
                 "title" : "text_encoder",
                 "widenedPrecision" : "float32"
               },
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 6344489120
+                  "bfloat16" : 6344455168,
+                  "checkpoint" : 6344455168,
+                  "float32" : 12688910336
                 },
                 "id" : "connectors",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 403005504,
+                  "checkpoint" : 403005504,
+                  "float32" : 806011008
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 3224044032,
+                  "checkpoint" : 3224044032,
+                  "float32" : 6448088064
+                },
+                "layerCount" : 8,
+                "quantizableElements" : 3170893824,
                 "title" : "connectors"
               },
               {
                 "bytesByPrecision" : {
-                  "checkpoint" : 77778938814
+                  "bfloat16" : 41609477036,
+                  "checkpoint" : 41609477036,
+                  "float32" : 79585195436,
+                  "loaded" : 41609477036
                 },
                 "id" : "transformer",
+                "largestLayerBytesByPrecision" : {
+                  "bfloat16" : 773349760,
+                  "checkpoint" : 773349760,
+                  "float32" : 1546699520
+                },
+                "layerBytesByPrecision" : {
+                  "bfloat16" : 37120788480,
+                  "checkpoint" : 37120788480,
+                  "float32" : 74241576960
+                },
+                "layerCount" : 48,
+                "quantizableElements" : 18698731520,
                 "title" : "transformer, vae, audio_vae, vocoder"
               }
             ]
           },
-          "minimumMemoryBytes" : 96557536600,
-          "peakBytes" : 77778938814,
+          "minimumMemoryBytes" : 54005228626,
+          "parameterCount" : 35028256667,
+          "peakBytes" : 41609477036,
+          "precision" : "bfloat16",
           "registryName" : "ltx-2.5",
-          "residentBytes" : 77778938814,
-          "residentEstimate" : "stored-dtype",
+          "residentBytes" : 41609477036,
           "source" : {
             "files" : [
               {
@@ -25735,7 +25781,8 @@
                 "bytes" : 32169626,
                 "optional" : false,
                 "path" : "tokenizer/tokenizer.json",
-                "role" : "tokenizer"
+                "role" : "tokenizer",
+                "sha256" : "cc8d3a0ce36466ccc1278bf987df5f71db1719b9ca6b4118264f45cb627bfe0f"
               },
               {
                 "bytes" : 3735,
@@ -25758,7 +25805,8 @@
                 "bytes" : 6344489120,
                 "optional" : true,
                 "path" : "connectors/diffusion_pytorch_model.safetensors",
-                "role" : "weights"
+                "role" : "weights",
+                "sha256" : "3100defaa2f7464acf98fc97e8712860428f2ba3a0156e7763aa9a708d41b786"
               },
               {
                 "bytes" : 30629,
@@ -25793,7 +25841,8 @@
                 "bytes" : 1452233194,
                 "optional" : false,
                 "path" : "vae/diffusion_pytorch_model.safetensors",
-                "role" : "weights"
+                "role" : "weights",
+                "sha256" : "425f0dfa227dee5d0ff3d9720563370810409a439c302ca74f0f944057ce55c5"
               },
               {
                 "bytes" : 505,
@@ -25805,7 +25854,8 @@
                 "bytes" : 106507972,
                 "optional" : false,
                 "path" : "audio_vae/diffusion_pytorch_model.safetensors",
-                "role" : "weights"
+                "role" : "weights",
+                "sha256" : "45dcb1c3cffc8c8b7710a04dd19500e481daff31f5ea8e8529f2cf697c439d12"
               },
               {
                 "bytes" : 1478,
@@ -25817,7 +25867,8 @@
                 "bytes" : 258305056,
                 "optional" : false,
                 "path" : "vocoder/diffusion_pytorch_model.safetensors",
-                "role" : "weights"
+                "role" : "weights",
+                "sha256" : "c99dde145a982974bc4c39608b3b929f232f0126a55d8326a47ad54f486ae23c"
               }
             ],
             "kind" : "huggingface",
